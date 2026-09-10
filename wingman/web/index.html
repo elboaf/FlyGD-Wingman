@@ -1061,6 +1061,50 @@
         </details>
       </section>
 
+      <section class="card" id="fleet-sharing">
+        <h2>Fleet sharing</h2>
+        <p class="hint" id="sharing-connection" role="status">Reading connection state…</p>
+        <p class="field-msg" id="sharing-browser-error" role="status"></p>
+        <div class="row">
+          <button class="btn" id="sharing-connect" disabled>Connect…</button>
+          <button class="btn" id="sharing-refresh" disabled>Refresh</button>
+        </div>
+        <div class="row">
+          <label class="check">
+            <input type="checkbox" id="sharing-enabled" disabled><span class="box"></span>
+            Share my fleet telemetry
+          </label>
+          <button class="btn" id="sharing-confirm-on" hidden>Confirm sharing On</button>
+        </div>
+        <p class="field-msg" id="sharing-preference" role="status"></p>
+        <p class="hint" id="sharing-consent" role="status"></p>
+        <h3>Roster verification</h3>
+        <p class="hint">Start verifies your boss. One boss authorization covers eligible account-linked alts automatically.</p>
+        <div class="row">
+          <label class="lab" for="sharing-boss">Owned fleet boss</label>
+          <select class="field" id="sharing-boss" disabled><option value="">Waiting for owned characters</option></select>
+        </div>
+        <p class="hint" id="sharing-grant-status"></p>
+        <div class="row">
+          <button class="btn" id="sharing-grant" disabled>Grant Fleet Read…</button>
+          <button class="btn" id="sharing-start" disabled>Start verification</button>
+        </div>
+        <p class="field-msg" id="sharing-action" role="status"></p>
+        <h3>Account sources</h3>
+        <p class="hint" id="sharing-source-status">Source state is not known yet.</p>
+        <div class="sharing-sources" id="sharing-sources"></div>
+        <details id="sharing-eligible" class="fleet-characters">
+          <summary>Sharing details and eligible characters</summary>
+          <p class="hint">Only current DPS and scram / point state leave this PC, never raw logs or history.
+            Pairing, Fleet Read and Start do not turn telemetry sharing on.</p>
+          <p class="hint">Other participants and alts need no Fleet Read. Start can remain pending or paused
+            until authGD verifies the boss. Source controls work with sharing and local displays off;
+            closing this view never Stops a source.</p>
+          <p class="hint" id="sharing-eligibility"></p>
+          <ul class="sharing-list" id="sharing-eligible-list"></ul>
+        </details>
+      </section>
+
       <section class="card" id="preview-keybind-options">
         <h2>Global keybinds</h2>
         <!-- THE precedence statement, and after round 5's C5 the only
@@ -2594,6 +2638,7 @@
   <script src="characters.js"></script>
   <script src="bookmarks.js"></script>
   <script src="previews.js"></script>
+  <script src="fleetsharing.js"></script>
   <script src="alerts.js"></script>
   <script src="evesettings.js"></script>
   <script src="formations.js"></script>

@@ -31,6 +31,10 @@
   function fit() {
     var shell = document.querySelector('.fleet-shell');
     if (!shell) return Promise.resolve(null);
+    // Use monitor bounds, not viewport height: the native window starts at
+    // 90px and grows to content. A vh cap would trap it at that initial size.
+    var table = document.querySelector('.fleet-table');
+    if (table) table.style.maxHeight = Math.max(30, Math.min(480, screen.availHeight - 100)) + 'px';
     var width = shell.offsetWidth;
     var height = shell.offsetHeight;
     return send('fit_fleet_bar', width, height).then(function () {
@@ -161,8 +165,9 @@
     node.setAttribute('aria-label',
       dpsAriaPart('Outgoing', out) + ', ' + dpsAriaPart('incoming', incoming));
 
+    var stale = row.remote === true && row.state === 'stale';
     node.appendChild(damageHalf('out', out, fillRatio(out, maxOutgoing),
-      (out !== null && out > 0) ? 'live' : null));
+      (!stale && out !== null && out > 0) ? 'live' : null));
     node.appendChild(axisNode());
     // Positive IN shares --warn with active EWAR; OUT never does.
     node.appendChild(damageHalf('in', incoming, fillRatio(incoming, maxIncoming),
@@ -206,13 +211,26 @@
       var line = document.createElement('div');
       var ewar = (Array.isArray(row.ewar) && row.ewar.length)
         ? row.ewar.join(' \u00b7 ') : '\u2014';
-      line.className = 'fleet-grid fleet-row';
+      var stale = row.remote === true && row.state === 'stale';
+      line.className = 'fleet-grid fleet-row' + (stale ? ' stale' : '');
       line.setAttribute('role', 'row');
       var character = cell('fleet-character', row.character || '\u2014');
       character.title = character.textContent;
-      line.appendChild(character);
+      character.removeAttribute('role');
+      var identity = cell('fleet-identity', '');
+      identity.appendChild(character);
+      if (row.remote === true) {
+        var marker = document.createElement('span');
+        marker.className = 'fleet-remote';
+        marker.textContent = stale ? 'REMOTE \u00b7 STALE' : 'REMOTE';
+        identity.appendChild(marker);
+      }
+      line.appendChild(identity);
       line.appendChild(damageCell(row, maxOutgoing, maxIncoming));
-      line.appendChild(cell('fleet-ewar' + (ewar !== '\u2014' ? ' active' : ''), ewar));
+      var incoming = cell('fleet-ewar' +
+        (!stale && ewar !== '\u2014' ? ' active' : ''), ewar);
+      incoming.title = incoming.textContent;
+      line.appendChild(incoming);
       rowsNode.appendChild(line);
     });
 
@@ -223,7 +241,7 @@
     if (empty.textContent !== emptyText) {
       empty.textContent = emptyText;
     }
-    healthNode.textContent = healthLabel(health);
+    healthNode.textContent = 'LOCAL ' + healthLabel(health);
     healthNode.classList.toggle('warn', health.state === 'stale' ||
       health.state === 'missing_folder');
     healthNode.classList.toggle('err', health.state === 'error');

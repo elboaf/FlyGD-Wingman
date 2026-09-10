@@ -8,6 +8,52 @@
   if (window.pywebview) return;
   if (!/[?&]dev=1/.test(window.location.search)) return;
 
+  // The standalone Fleet Bar has no app.js/WM. Branch before main-page data
+  // construction and never fabricate an API without the explicit dev flag.
+  if (document.querySelector('.fleet-shell')) {
+    // The native creator supplies this fragment in production. Only the
+    // explicitly opted-in standalone harness fabricates one, before capture.
+    window.location.hash = '#fleet-page=' + new Array(65).join('d');
+    var fleetRevision = 0;
+    function fleetFixture(kind) {
+      var local = {character: 'Local pilot', outgoing_dps: 612, incoming_dps: 180, ewar: ['SCRAM', 'POINT', 'NEUT'], log_status: null};
+      var remote = {character: 'Remote pilot', outgoing_dps: 240, incoming_dps: null, ewar: ['SCRAM/POINT'], log_status: null, remote: true, state: 'live'};
+      var rows = kind === 'local' ? [local] : kind === 'mixed' ? [local, remote] : kind === 'empty' ? [] : [remote];
+      if (kind === 'stale') remote.state = 'stale';
+      if (kind === 'hidden') remote.character = 'Other remote';
+      if (kind === 'long') remote.character = new Array(11).join('Long character name ');
+      if (kind === 'max') remote.outgoing_dps = 10000000;
+      if (kind === 'zero' || kind === 'maxlocal' || kind === 'defensive') {
+        local.outgoing_dps = local.incoming_dps = kind === 'zero' ? 0 : kind === 'maxlocal' ? 10000000 : 10000001;
+        rows = [local];
+      }
+      if (kind === 'nolog') {
+        local.outgoing_dps = local.incoming_dps = null;
+        local.ewar = [];
+        local.log_status = 'NO LOG';
+        rows = [local];
+      }
+      if (kind === 'roster') {
+        rows = [];
+        for (var f = 0; f < 128; f += 1) {
+          rows.push({character: 'Remote pilot ' + (f + 1), outgoing_dps: f, incoming_dps: null, log_status: null, ewar: [], remote: true, state: 'live'});
+        }
+      }
+      return {revision: ++fleetRevision, rows: rows,
+        running_count: rows.indexOf(local) !== -1 || kind === 'hidden' ? 1 : 0,
+        stream_health: {state: rows.indexOf(local) !== -1 ? 'active' : 'stopped', detail: null}, metric_error: null};
+    }
+    window.pywebview = {api: {
+      fleet_bar_snapshot: function () { return Promise.resolve(fleetFixture('mixed')); },
+      fleet_bar_ready: function () { return Promise.resolve(null); },
+      fit_fleet_bar: function () { return Promise.resolve(null); },
+      move_fleet_bar: function () { return Promise.resolve(null); },
+      save_fleet_bar_pos: function () { return Promise.resolve(null); }
+    }};
+    window.DEV = {fleetBar: function (kind) { return window.onFleetSnapshot(fleetFixture(kind)); }};
+    return;
+  }
+
   var devSearch = new URLSearchParams(window.location.search);
 
   var log = function (name) {
@@ -19,6 +65,149 @@
   };
 
   var api = {};
+  var sharingOrder = 0;
+  var sharingPresentationOrder = 0;
+  var sharingSaveFails = false;
+  var sharingStalePreference = null;
+  var sharingHoldRead = false;
+  var sharingReadReply = null;
+  var sharingHoldAction = false;
+  var sharingActionReply = null;
+  var sharingCalls = [];
+  var sharing = null;
+  var sharingHoldPreference = false;
+  var sharingPreferenceReplies = [];
+  var sharingUUID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  function sharingScenario(kind) {
+    var paired = kind !== 'unpaired';
+    var characters = [];
+    var count = kind === 'long' ? 256 : kind === 'empty' ? 0 : 3;
+    for (var i = 1; i <= count; i += 1) {
+      characters.push({character_id: i,
+        character_name: i === 1 ? 'Ariadne' : 'Owned pilot ' + i + (kind === 'long' ? ' — long character name' : ''),
+        character_link_epoch: sharingUUID, has_fleet_read: i !== 2, token_usable: i !== 3});
+    }
+    sharing = {
+      state: paired ? 'active' : 'stopped', detail: null,
+      participation: null, participation_intent_id: null, participation_order: 0,
+      source_control: null, pairing: null,
+      local_inhibited: true, pending_sources: [], source_results: [], pairing_action_id: null,
+      order: ++sharingOrder, presentation_order: ++sharingPresentationOrder, preference_order: 0, preference_error: null,
+      available: kind !== 'unavailable', enabled: false,
+      telemetry_available: kind !== 'unavailable', runtime_error: null,
+      browser_error: null, browser_retry: null,
+      configured_origin: 'https://authgd.example',
+      metadata: {loaded: kind !== 'loading', binding: paired ? 'dev-owned-binding' : null,
+        paired_origin: paired ? 'https://authgd.example' : null,
+        device_id: paired ? sharingUUID : null, has_session: paired,
+        session_expires_at: paired ? '2026-09-07T12:30:00.000Z' : null,
+        feature_enabled: paired ? kind !== 'disabled' : null,
+        approved_capabilities: paired ? ['shared-source-v1'] : null,
+        session_approved_capabilities: paired ? ['shared-source-v1'] : null,
+        acknowledged_capabilities: paired ? ['shared-source-v1'] : null},
+      sources: paired && kind !== 'unknown' && kind !== 'loading' ? {sources: [], characters: characters} : null,
+      eligibility: paired ? {state: 'participation_off', participation_generation: 2, characters: []} : null,
+      observed_participation: paired ? {enabled: false, generation: 2} : null
+    };
+    if (kind === 'browser-failed' || kind === 'browser-failed-other-origin' || kind === 'grant-browser-failed') {
+      sharing.browser_retry = kind === 'grant-browser-failed' ? 'grant' : 'pair';
+      sharing.browser_error = sharing.browser_retry === 'pair' ? 'Could not open your browser. Use Retry setup to try again.' : 'Could not open your browser. Choose Grant Fleet Read to try again.';
+      if (sharing.browser_retry === 'pair') sharing.pairing = 'awaiting_approval';
+      if (kind === 'browser-failed-other-origin') sharing.configured_origin = 'https://other-authgd.example';
+    }
+    if (kind === 'disabled') sharing.detail = 'feature_disabled';
+    if (kind === 'revoked') { sharing.detail = 'needs_fresh_key'; sharing.metadata.has_session = false; }
+    if (kind === 'upgrade') { sharing.detail = 'needs_upgrade'; sharing.metadata.approved_capabilities = []; }
+    if (kind === 'paused' || kind === 'active' || kind === 'pending' || kind === 'ended') {
+      sharing.sources.sources = [{source_id: sharingUUID, generation: 3,
+        character_id: kind === 'ended' ? null : 1, state: kind,
+        reason: kind === 'paused' ? 'boss_lost' : kind === 'ended' ? 'stopped' : null,
+        pending_expires_at: kind === 'pending' ? '2026-09-07T12:01:00.000Z' : null}];
+    }
+    if (kind === 'expired') sharing.source_results = [{source_id: sharingUUID, operation: 'start', character_id: 1, stage: 'expired'}];
+    if (kind === 'unknown') sharing.pending_sources = [{source_id: sharingUUID, operation: 'start', character_id: 1, stage: 'persisted'}];
+    if (kind === 'save-failed' || kind === 'on-pending') {
+      sharing.enabled = true; sharing.participation = 'queued';
+      if (kind === 'save-failed') sharing.preference_error = 'Applied for this session only. Your saved choice may return after restart.';
+    }
+    if (kind === 'long') {
+      sharing.eligibility = {state: 'ready', participation_generation: 2,
+        characters: characters.map(function (ch) {return {character_id: ch.character_id,
+          source_id: sharingUUID, source_generation: 3, authority_generation: 1,
+          expires_at: '2026-09-07T12:30:00.000Z'};})};
+    }
+    if (window.onFleetSharingState) window.onFleetSharingState(sharing);
+    return sharing;
+  }
+  function sharingCopy() { return JSON.parse(JSON.stringify(sharing)); }
+  api.fleet_sharing_state = function () {return Promise.resolve(sharingCopy());};
+  api.fleet_sharing_watch = function (open) {
+    sharingCalls.push(['watch', open]);
+    var captured = sharingCopy();
+    if (sharingHoldRead) return new Promise(function (resolve) {
+      sharingReadReply = function () { resolve({queued: true, state: captured}); };
+    });
+    return Promise.resolve({queued: true, state: captured});
+  };
+  api.fleet_sharing_set_enabled = function (value) {
+    sharingCalls.push(['enabled', value]);
+    sharing.local_inhibited = true;
+    sharing.participation = 'queued'; sharing.preference_order += 1;
+    sharing.order = ++sharingOrder;
+    sharing.presentation_order = ++sharingPresentationOrder;
+    if (sharingHoldPreference) {
+      sharingStalePreference = sharingCopy();
+      window.onFleetSharingState(sharingCopy());
+      return new Promise(function (resolve) {
+        sharingPreferenceReplies.push(function () {
+          sharing.enabled = value;
+          sharing.preference_error = sharingSaveFails ? 'Applied for this session only. Your saved choice may return after restart.' : null;
+          sharing.presentation_order = ++sharingPresentationOrder;
+          resolve({applied: true, persisted: !sharingSaveFails, error: sharing.preference_error,
+            queued: true, intent_id: sharingUUID, state: sharingCopy()});
+        });
+      });
+    }
+    sharing.enabled = value;
+    sharing.preference_error = null;
+    sharing.presentation_order = ++sharingPresentationOrder;
+    return Promise.resolve({applied: true, persisted: true, error: null,
+      queued: true, intent_id: sharingUUID, state: sharingCopy()});
+  };
+  function sharingActionResult(result) {
+    if (sharingHoldAction) {
+      sharingHoldAction = false;
+      return new Promise(function (resolve) { sharingActionReply = function () { resolve(result); }; });
+    }
+    return Promise.resolve(result);
+  }
+  api.fleet_sharing_pair = function (mode) {
+    sharingCalls.push(['pair', mode]); sharing.pairing = 'queued'; sharing.order = ++sharingOrder;
+    sharing.browser_error = null; sharing.browser_retry = null;
+    sharing.presentation_order = ++sharingPresentationOrder;
+    return sharingActionResult({queued: true, action_id: sharingUUID, state: sharingCopy()});
+  };
+  api.fleet_sharing_start_source = function (character, epoch, binding) {
+    sharingCalls.push(['start', character, epoch, binding]);
+    sharing.pending_sources.push({source_id: sharingUUID, operation: 'start', character_id: character, stage: 'queued'});
+    sharing.order = ++sharingOrder;
+    sharing.presentation_order = ++sharingPresentationOrder;
+    window.onFleetSharingState(sharingCopy());
+    return sharingActionResult({queued: true, source_id: sharingUUID, state: sharingCopy()});
+  };
+  api.fleet_sharing_stop_source = function (id, binding) {
+    sharingCalls.push(['stop', id, binding]);
+    sharing.pending_sources = [{source_id: id, operation: 'stop', character_id: null, stage: 'queued'}];
+    sharing.order = ++sharingOrder;
+    sharing.presentation_order = ++sharingPresentationOrder;
+    window.onFleetSharingState(sharingCopy());
+    return sharingActionResult({queued: true, source_id: id, state: sharingCopy()});
+  };
+  api.fleet_sharing_grant_fleet_read = function (character, binding) {
+    sharingCalls.push(['grant', character, binding]);
+    return Promise.resolve({queued: true, error: null});
+  };
+  sharingScenario('unpaired');
   // The roster is deliberately derived below: visible follows hidden, as it
   // does in Api.fleet_bar_settings(), so the harness cannot paint a state
   // Python would never return. The three base rows show running-visible,
@@ -2554,6 +2743,20 @@
       var payload = JSON.parse(JSON.stringify(DEV_TOOL_SCREENSHOT_FIXTURE.crop));
       payload.preview = JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE));
       WM.previewCropScreenshot(payload);
+    },
+    fleetSharing: sharingScenario,
+    fleetSharingCalls: function () { return sharingCalls.slice(); },
+    holdSharingPreference: function (saveFails) { sharingHoldPreference = true; sharingSaveFails = !!saveFails; },
+    staleSharingPreferencePush: function () { window.onFleetSharingState(sharingStalePreference); },
+    holdSharingRead: function () { sharingHoldRead = true; },
+    finishSharingRead: function () { sharingHoldRead = false; if (sharingReadReply) sharingReadReply(); },
+    sharingReadHeld: function () { return !!sharingReadReply; },
+    holdNextSharingAction: function () { sharingHoldAction = true; },
+    sharingActionHeld: function () { return !!sharingActionReply; },
+    finishSharingAction: function () { if (sharingActionReply) { sharingActionReply(); sharingActionReply = null; } },
+    finishSharingPreferences: function () {
+      sharingHoldPreference = false;
+      sharingPreferenceReplies.splice(0).forEach(function (finish) { finish(); });
     },
     // previewCrops('offline'|'crop-only'|'cap-full'|'pending'|'failed-save'|
     // 'degraded'|'stopping'|'master-off'|'event-before-receipt'|'no-op').

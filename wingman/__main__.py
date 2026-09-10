@@ -620,25 +620,11 @@ def build_telemetry(state, host, alert_policy):
 
 
 def build_fleet_sharing_worker(state):
-    """The fleet-sharing publication worker.
+    """Cheap, platform-neutral sole sharing-state owner, retained by Api.
 
-    Platform-neutral, unlike build_preview_host: the only Windows-specific
-    piece anywhere behind it is DPAPI key unwrapping, reached lazily
-    through wingman.fleetsharing.state's own injected seam -- and only
-    once a persisted device identity actually exists on disk, which no
-    code path in this tracer writes (fleet_sharing has no pairing UI yet).
-
-    Constructed unconditionally (mirroring build_preview_host's own
-    "always construct, start only when enabled" split, and
-    start_engine_if_enabled's identical convention for the hotkey engine):
-    this is a cheap object with no thread of its own. main() below only
-    calls .start() -- which is what actually spawns the worker's OS
-    thread -- while fleet_sharing.enabled is true, so a disabled install
-    never runs an idle background thread at all. The worker's own
-    sharing_enabled callable re-checks the same live setting on every pass
-    it does run, as defence in depth for any caller (every direct
-    construction in this module's own tests, or a future toggle that
-    flips the setting without a restart) that starts it anyway.
+    Api starts one resume_pending probe even Off: a durable Stop/Off must not
+    be stranded by a disabled startup. Dormant turns do no recurring disk or
+    key work. Explicit source watching is independent of telemetry collection.
     """
     try:
         from .fleetsharing.client import FleetRelayClient
@@ -892,31 +878,20 @@ def main() -> int:
     preview_host = build_preview_host(state, api_box)
     alert_policy = build_alert_policy(state, preview_host)
     telemetry = build_telemetry(state, preview_host, alert_policy)
-    if telemetry is not None and preview_host is not None:
-        preview_host.set_discovery_request(telemetry.request_discovery)
-    # Private to main(): no other module holds this reference. Built
-    # unconditionally (build_fleet_sharing_worker spawns no thread on its
-    # own), but .start() -- which does spawn its OS thread -- only runs
-    # while fleet_sharing.enabled is true AND telemetry exists to
-    # subscribe to, so a disabled install never runs an idle background
-    # thread at all; see build_fleet_sharing_worker's own docstring.
     sharing_worker = build_fleet_sharing_worker(state)
-    sharing_unsubscribe = None
-    if (
-        telemetry is not None
-        and sharing_worker is not None
-        and bool(state.settings.get("fleet_sharing", {}).get("enabled"))
-        and sharing_worker.start()
-    ):
-        sharing_unsubscribe = telemetry.subscribe_fleet(sharing_worker.submit)
     api = api_mod.Api(
         state,
         preview_host=preview_host,
         telemetry=telemetry,
+        fleet_sharing=sharing_worker,
+        telemetry_factory=lambda: build_telemetry(state, preview_host, alert_policy),
     )
     api_box["api"] = api
     if telemetry is not None and not api._start_fleet_presentation():
         logger.error("Fleet presentation could not start")
+    if preview_host is not None:
+        preview_host.set_discovery_request(api._request_eve_discovery)
+    api._start_fleet_sharing()
     # Migration and authority composition happen after Api construction so
     # warnings have a durable route payload and callbacks bind eagerly. They
     # still happen before the window starts and before any EVE feature work.
@@ -938,6 +913,7 @@ def main() -> int:
         # create() returns, so a very fast click can land in the gap.
         if window is not None:
             window.show()
+            api._set_sharing_window_visible(True)
 
     def destroy_windows() -> None:
         """Destroy each window once, retrying only targets that failed."""
@@ -952,7 +928,9 @@ def main() -> int:
             # Close acceptance and detach BEFORE joining or destroying any
             # target. A timed-out WebView owner stays tracked but cannot start
             # a later delivery stage; no native/presentation lock covers join.
+            api._close_eve_runtime()
             api._stop_fleet_presentation()
+            api.shutdown_fleet_sharing()
             with api._fleetbar_lifecycle_lock:
                 api._fleetbar_quitting = True
                 fleet = api._fleetbar_window
@@ -1039,6 +1017,8 @@ def main() -> int:
         def _restore_floating_bars(api=api):
             from .ui import fleetbar, sigbar
 
+            api._set_sharing_window_visible(True)
+
             for restore, label in (
                 (sigbar.restore, "Sig bar"),
                 (fleetbar.restore, "Fleet Bar"),
@@ -1112,7 +1092,9 @@ def main() -> int:
     window_mod.run(api._page_ready)  # Blocks until the window is destroyed.
 
     # Also covers GUI exit paths that did not request destroy_windows().
+    api._close_eve_runtime()
     api._stop_fleet_presentation()
+    api.shutdown_fleet_sharing()
     icon.stop()
     if scheduler is not None:
         scheduler.stop()
@@ -1121,21 +1103,8 @@ def main() -> int:
     # worker pushes and removes a ready file on ordinary Quit while retaining
     # the persistent on-disk marker/file pair already handed to Setup.
     api.shutdown_updates()
-    # Sharing detaches and stops before telemetry itself is torn down
-    # below (inside shutdown_previews()): a coordinator torn down with
-    # this subscriber still attached would have nowhere to route its last
-    # queued snapshots, and a worker stopped after unsubscribing can no
-    # longer receive one mid-teardown.
-    if sharing_unsubscribe is not None:
-        try:
-            sharing_unsubscribe()
-        except Exception:
-            logger.exception("Fleet sharing subscriber did not detach cleanly")
-    if sharing_worker is not None:
-        try:
-            sharing_worker.stop()
-        except Exception:
-            logger.exception("Fleet sharing worker did not stop cleanly")
+    # Api owns sharing's watch, subscriptions and bounded stop; its preview
+    # teardown closes those before stopping the shared telemetry coordinator.
     # Last, and unconditional: a preview thread that outlives the window
     # still owns HWNDs, and Wingman leaves the tray but stays in Task
     # Manager. A live loopback socket on the fixed redirect port would

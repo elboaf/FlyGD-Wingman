@@ -59,7 +59,7 @@
                  'onSigBarState', 'onFleetBarState', 'onUpdateStatus',
                  'onSkills', 'onSkillsProgress',
                  'onFittingsChanged', 'onFittingsProgress',
-                 'onFittingsScreenshotState'];
+                 'onFittingsScreenshotState', 'onFleetSharingState'];
 
   WM.handle = function (name, fn) {
     if (WM.HANDLERS.indexOf(name) === -1) {

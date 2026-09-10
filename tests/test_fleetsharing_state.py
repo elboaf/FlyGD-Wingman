@@ -100,7 +100,10 @@ def test_persisted_document_holds_only_the_documented_fields(tmp_path):
     target = tmp_path / "fleet_sharing.json"
     original = SharingState(
         identity=DeviceIdentity(
-            protected_private_key_b64="cHJvdGVjdGVk", public_key_spki_b64="c3BraQ=="
+            protected_private_key_b64="cHJvdGVjdGVk",
+            public_key_spki_b64=crypto.canonical_device_public_key_b64(
+                crypto.public_key_spki(crypto.generate_private_key())
+            ),
         ),
         relay_origin="https://relay.example.test",
         session_id="opaque-session-id",
@@ -116,6 +119,18 @@ def test_persisted_document_holds_only_the_documented_fields(tmp_path):
         "relay_origin",
         "session_id",
         "last_revision",
+        "device_id",
+        "session_expires_at",
+        "feature_enabled",
+        "approved_capabilities",
+        "session_approved_capabilities",
+        "acknowledged_capabilities",
+        "observed_participation",
+        "pending_recovery",
+        "pending_source_commands",
+        "pending_pairing",
+        "pending_participation",
+        "auth_pause",
     }
     assert document["last_revision"] == 7
     assert set(document["identity"]) == {

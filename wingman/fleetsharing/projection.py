@@ -20,13 +20,10 @@ from __future__ import annotations
 from ..telemetry.model import FleetSnapshot
 from .model import FleetCatalogue, PublishRow
 
-# The only EWAR value the wire schema (and authGD's `fleet_telemetry_row`
-# CHECK constraint, Task 3) ever accepts. Anything else observed locally is
-# silently dropped here rather than rejected outright -- ECM/JAM stays
-# unshipped in local telemetry today (wingman/telemetry/metrics.py), so this
-# is defence in depth against a future local tag this module was not
-# updated for, not a case that can currently occur.
-_ALLOWED_EWAR = frozenset({"SCRAM/POINT"})
+# Local telemetry distinguishes scram and point; the wire deliberately does
+# not. Collapse all tackle observations to its one permitted value. Other
+# local observations (including NEUT) never become shared telemetry.
+_LOCAL_TACKLE = frozenset({"SCRAM", "POINT", "SCRAM/POINT"})
 
 # authGD's own wire limits on a published batch (Task 3's
 # `fleet_telemetry_row` CHECK constraint and Task 6's route-level bounds):
@@ -52,8 +49,21 @@ def _normalize(name: str) -> str:
     return name.strip().casefold()
 
 
+def verified_character_ids(catalogue: FleetCatalogue) -> dict[str, int]:
+    """Resolve against FULL ownership before any permission/display filtering."""
+    matches: dict[str, list[int]] = {}
+    for character in catalogue.characters:
+        matches.setdefault(_normalize(character.character_name), []).append(
+            character.character_id
+        )
+    return {name: ids[0] for name, ids in matches.items() if len(ids) == 1}
+
+
 def project_snapshot(
-    snapshot: FleetSnapshot, catalogue: FleetCatalogue
+    snapshot: FleetSnapshot,
+    catalogue: FleetCatalogue,
+    *,
+    eligible_character_ids: frozenset[int],
 ) -> tuple[PublishRow, ...]:
     """The sparse rows *snapshot* would publish against *catalogue*.
 
@@ -70,10 +80,9 @@ def project_snapshot(
         non-empty: "quiet but currently tackling" is exactly the case the
         design calls out by name.
 
-    EWAR filtering: only "SCRAM/POINT" ever survives into a published row;
-    any other tag is dropped from the row's own `ewar` tuple before the
-    inclusion test above runs, so a row whose only EWAR was an unknown tag
-    is treated as EWAR-empty, not published-with-something-unexpected.
+    EWAR normalization: local SCRAM, POINT and SCRAM/POINT collapse to exactly
+    one SCRAM/POINT before the inclusion test. Every other tag is dropped;
+    in particular, NEUT alone cannot publish a quiet row.
 
     Character resolution: every local row's `character` and every
     catalogue entry's `character_name` are matched through `_normalize`
@@ -82,28 +91,29 @@ def project_snapshot(
     and never logged, since an ambiguous or unmatched name is exactly as
     ordinary as any other ineligible row.
 
+    Eligibility intersects AFTER full-catalogue resolution, so an ineligible
+    name collision still makes a match ambiguous. An empty eligible set grants
+    no publication permission, not permission to publish every owned character.
+
     Output is sorted by integer `character_id` ascending, which is also
     what makes ambiguous catalogue names ("two characters share one
     normalized name") a stable, order-independent property to test.
     """
-    catalogue_ids_by_name: dict[str, list[int]] = {}
-    for character in catalogue.characters:
-        key = _normalize(character.character_name)
-        catalogue_ids_by_name.setdefault(key, []).append(character.character_id)
+    catalogue_ids_by_name = verified_character_ids(catalogue)
 
     rows: list[PublishRow] = []
     for row in snapshot.rows:
         if row.dps is None:
             # Local log unavailable (NO LOG): nothing current to publish.
             continue
-        ewar = tuple(tag for tag in row.ewar if tag in _ALLOWED_EWAR)
+        ewar = ("SCRAM/POINT",) if _LOCAL_TACKLE.intersection(row.ewar) else ()
         if row.dps <= 0 and not ewar:
             continue
-        matches = catalogue_ids_by_name.get(_normalize(row.character))
-        if matches is None or len(matches) != 1:
-            # No catalogue match, or an ambiguous one: never guess, never log.
+        character_id = catalogue_ids_by_name.get(_normalize(row.character))
+        if character_id is None or character_id not in eligible_character_ids:
+            # No verified eligible match: never guess, never log.
             continue
-        rows.append(PublishRow(character_id=matches[0], dps=row.dps, ewar=ewar))
+        rows.append(PublishRow(character_id=character_id, dps=row.dps, ewar=ewar))
 
     return tuple(sorted(rows, key=lambda published: published.character_id))
 

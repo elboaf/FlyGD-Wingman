@@ -17,9 +17,14 @@ from wingman.telemetry.model import StreamHealth
 class FakeTelemetry:
     def __init__(self, health=None, characters=()):
         self.reconciled = 0
+        self.subscribers = []
         self.stopped = 0
         self._health = health or StreamHealth(state="stopped")
         self._characters = tuple(characters)
+
+    def subscribe_fleet(self, callback):
+        self.subscribers.append(callback)
+        return lambda: self.subscribers.remove(callback)
 
     def reconcile(self):
         self.reconciled += 1

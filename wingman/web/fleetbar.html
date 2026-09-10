@@ -16,10 +16,6 @@
       user-select: none;
     }
     .fleet-shell {
-      /* style.css's .pywebview-drag-region is title-bar geometry as well as
-         drag behavior (flex:1, height:100%, display:flex). This page needs
-         only the behavior; reset the geometry or the table fills the whole
-         WebView and lays its header, rows and note side by side. */
       display: block;
       width: 420px;
       height: max-content;
@@ -31,6 +27,10 @@
       box-shadow: 0 8px 24px var(--titlebar-edge);
     }
     .fleet-title {
+      /* Only the header drags: the roster must remain scrollable. Reset the
+         main title bar's shared drag-region sizing for this standalone page. */
+      height: auto;
+      flex: none;
       display: flex;
       align-items: baseline;
       justify-content: space-between;
@@ -57,7 +57,20 @@
       grid-template-columns: minmax(0, 1fr) 160px 148px;
       align-items: center;
     }
+    .fleet-table {
+      max-height: 480px;
+      overflow-y: auto;
+      scrollbar-gutter: stable;
+    }
+    .fleet-table:focus-visible {
+      /* Keep the ring inside the overflow-clipped shell. */
+      outline: 2px solid var(--focus-ring);
+      outline-offset: -2px;
+    }
     .fleet-head {
+      position: sticky;
+      top: 0;
+      z-index: 1;
       min-height: 24px;
       padding: 0 10px;
       background: var(--sunken);
@@ -77,7 +90,18 @@
       font-size: var(--fs-body);
     }
     .fleet-row:last-child { border-bottom: 0; }
+    .fleet-identity { min-width: 0; padding: 5px 0; }
+    .fleet-remote {
+      display: block;
+      color: var(--text-faint);
+      font-family: var(--mono);
+      font-size: var(--fs-label);
+      /* Damage keeps both numeric tracks. Let the complete remote/stale
+         label wrap within the remaining identity track, never over a value. */
+      white-space: normal;
+    }
     .fleet-character {
+      display: block;
       overflow: hidden;
       padding-right: 10px;
       font-weight: 620;
@@ -192,12 +216,12 @@
   </style>
 </head>
 <body>
-  <section class="fleet-shell pywebview-drag-region" aria-label="Fleet combat telemetry">
-    <header class="fleet-title">
+  <section class="fleet-shell" aria-label="Fleet combat telemetry">
+    <header class="fleet-title pywebview-drag-region">
       <span>Fleet telemetry</span>
       <span class="fleet-health" id="fleet-health">WAITING</span>
     </header>
-    <div role="table" aria-label="Character damage and incoming EWAR">
+    <div class="fleet-table" role="table" aria-label="Character damage and incoming EWAR" tabindex="0">
       <div class="fleet-grid fleet-head" role="row">
         <span role="columnheader">CHARACTER</span>
         <span class="fleet-damage-head" role="columnheader">
@@ -214,6 +238,7 @@
     <div class="fleet-empty" id="fleet-empty" role="status">Waiting for EVE clients&hellip;</div>
     <div class="fleet-note" id="fleet-note" role="status" hidden></div>
   </section>
+  <script src="dev.js"></script>
   <script src="fleetbar.js"></script>
 </body>
 </html>

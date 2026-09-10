@@ -50,7 +50,13 @@ def startup(monkeypatch, tmp_path):
     """
     order = []
     captured = {}
+    real_init = main_mod.api_mod.Api.__init__
 
+    def capture_init(api, *args, **kwargs):
+        real_init(api, *args, **kwargs)
+        captured["api"] = api
+
+    monkeypatch.setattr(main_mod.api_mod.Api, "__init__", capture_init)
     monkeypatch.setattr(main_mod, "set_dpi_awareness", lambda: None)
     monkeypatch.setattr(main_mod, "acquire_single_instance", lambda: object())
     monkeypatch.setattr(main_mod.paths, "ensure_dirs", lambda: None)
@@ -148,8 +154,13 @@ def startup(monkeypatch, tmp_path):
     def spy_shutdown_updates(self):
         order.append("shutdown_updates")
 
+    shutdown_previews = main_mod.api_mod.Api.shutdown_previews
+
     def spy_shutdown_previews(self):
         order.append("shutdown_previews")
+        # Ownership moved into Api: observe ordering without swallowing the
+        # real sharing probe's teardown (it starts even with Settings Off).
+        shutdown_previews(self)
 
     def spy_shutdown_skills(self):
         order.append("shutdown_skills")
@@ -173,7 +184,12 @@ def startup(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(main_mod.api_mod.Api, "shutdown_skills", spy_shutdown_skills)
 
-    return SimpleNamespace(order=order, captured=captured)
+    yield SimpleNamespace(order=order, captured=captured)
+    # A failed startup assertion can precede window creation and main's normal
+    # teardown. Keep its real sharing probe/presentation owner from leaking.
+    api = captured.get("api")
+    if api is not None:
+        api.shutdown_previews()
 
 
 def test_fleet_closes_detaches_and_stops_before_native_destruction(
@@ -186,15 +202,23 @@ def test_fleet_closes_detaches_and_stops_before_native_destruction(
     telemetry = FakeTelemetry()
 
     def subscribe(callback):
-        order.append("fleet_subscribe")
+        api = startup.captured["api"]
+        local = callback == api._receive_fleet_snapshot
+        owner = "fleet" if local else "sharing"
+        if local:
+            assert api._fleet_worker._running
+        else:
+            assert callback == api._fleet_sharing.submit
+        order.append(owner + "_subscribe")
 
         def detach():
-            api = startup.captured["api"]
             assert api._fleet_expected_generation is None
             assert api._fleetbar_quitting
             assert api._fleetbar_page_id is None
             assert not api._fleetbar_ready
-            order.append("fleet_detach")
+            if not local:
+                assert api._sharing_closed
+            order.append(owner + "_detach")
 
         return detach
 
@@ -234,9 +258,47 @@ def test_fleet_closes_detaches_and_stops_before_native_destruction(
     assert main_mod.main() == 0
     assert order.count("fleet_subscribe") == 1
     assert order.count("fleet_detach") == 1
+    assert order.count("sharing_subscribe") == 1
+    assert order.count("sharing_detach") == 1
+    assert order.index("sharing_detach") < order.index("fleet_destroy")
     assert order.index("fleet_detach") < order.index("fleet_stop")
     assert order.index("fleet_stop") < order.index("fleet_destroy")
     assert order.index("fleet_destroy") < order.index("destroy_window")
+
+
+def test_sharing_stop_failure_does_not_skip_remaining_teardown(startup, monkeypatch):
+    attempts = []
+
+    def during_run():
+        worker = startup.captured["api"]._fleet_sharing
+        stop = worker.stop
+
+        def fail_once(timeout=5.0):
+            attempts.append(True)
+            if len(attempts) == 1:
+                raise RuntimeError("join failed")
+            return stop(timeout)
+
+        monkeypatch.setattr(worker, "stop", fail_once)
+
+    startup.captured["during_run"] = during_run
+    assert main_mod.main() == 0
+    assert len(attempts) >= 2
+    assert "shutdown_updates" in startup.order
+    assert "shutdown_previews" in startup.order
+    assert "shutdown_skills" in startup.order
+    assert startup.captured["api"]._sharing_closed
+
+
+def test_disabled_startup_closes_the_retained_sharing_owner(startup):
+    try:
+        assert main_mod.main() == 0
+        assert not startup.captured["api"]._start_fleet_sharing()
+    finally:
+        # Keep a regressed fixture from leaking a non-daemon probe past pytest.
+        api = startup.captured.get("api")
+        if api is not None:
+            api.shutdown_fleet_sharing()
 
 
 def test_nothing_touches_the_page_before_the_gui_loop_starts(startup):

@@ -76,12 +76,16 @@ After cloning, once: `git config blame.ignoreRevsFile .git-blame-ignore-revs`.
 mutexes (new and legacy) → `paths.migrate_state_dir()` → logging → settings
 → `preflight.require_webview2()` (before *anything* imports pywebview; exits
 `EXIT_NO_WEBVIEW2=2`) → `AppState`, `HotkeyEngine`, preview host, alert
-policy, telemetry coordinator, fleet-sharing worker (subscribed to
-telemetry), `Api` → pystray tray icon on its own thread → the window, whose
-`run()` blocks the main thread. Shutdown runs in the reverse order and the
-order is load-bearing: a telemetry subscriber must detach **before** the
-coordinator stops, or its last cycle routes snapshots into a window that
-is already gone (`__main__.py` states this above the sharing teardown).
+policy, telemetry coordinator, fleet-sharing worker, `Api` → pystray tray
+icon on its own thread → the window, whose `run()` blocks the main thread.
+`Api` owns the sharing subscription and one startup pending-command probe,
+including with sharing Off or telemetry unavailable. A failed telemetry build
+can be retried lazily; the Preview discovery callback is bound before host start.
+The separate `ui/fleetpresentation.py` worker owns local Fleet presentation and
+its subscription; the dispatcher only hands off state to both workers.
+Shutdown closes runtime admission and detaches both subscribers **before**
+native window destruction or coordinator stop. Joins run outside their state
+locks; timed-out owners remain tracked, never replaced by a second owner.
 
 `webview.start()` carries no event loop of its own, and that fact shapes two
 modules: `ui/scheduler.py` (self-rescheduling timer loop replacing the old
@@ -201,7 +205,7 @@ sees it), `scheduler.py`, and two auxiliary always-on-top windows,
 
 **Web layer** (`wingman/web/`): `app.js` is the shell and bridge client with a
 strict `WM.HANDLERS` allowlist; one route/screen per JS file, loaded by
-`index.html` in this order: `characters`, `bookmarks`, `previews`, `alerts`,
+`index.html` in this order: `characters`, `bookmarks`, `previews`, `fleetsharing`, `alerts`,
 `evesettings` (the Profiles route), `formations`, `uisetup`, `list`, `panel` (upload
 panel, status strip, dialog layer), `settings`, `skills`, `fittings`,
 `firstrun`, `dev`. `WM.route` switches destinations, `WM.section` switches

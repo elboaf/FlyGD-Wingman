@@ -1,807 +1,1769 @@
-"""Non-blocking coalescing publisher between the coordinator and the relay.
+"""One cadence-aware owner of the fleet device, session, journals and transport.
 
-`TelemetryCoordinator.subscribe_fleet` delivers every completed
-`FleetSnapshot` on its OWN dispatcher thread, and that thread also owns the
-one-second cadence every other consumer (Preview, Alerts, the Fleet Bar
-window) depends on. `FleetSharingWorker.submit` is the only thing the
-coordinator ever calls: it swaps an immutable "latest" reference (with its
-own submission timestamp) under a small lock and sets an `Event`, nothing
-else -- no HTTP, no signing, no DPAPI, no disk read. A relay that is slow,
-down, or blocked mid-request therefore costs this worker's own
-publication, never the coordinator's cadence or local DPS decay.
+Telemetry's dispatcher only replaces the latest immutable snapshot. Controls
+likewise submit immutable values; none load state, unwrap a key, sign or send.
+The non-daemon worker (or serialized iterate_once seam) does all I/O. A signed
+attempt is durably allocated before dispatch, including refusals and lost replies.
 
-Everything that actually touches the network -- device-state loading, key
-unwrapping, catalogue refresh, sparse projection, revision allocation,
-signing (inside `wingman.fleetsharing.client.FleetRelayClient`), and
-retry/backoff -- runs on this module's OWN non-daemon worker thread, one
-iteration at a time, serialized against the deterministic `iterate_once`
-test seam by `_iteration_lock` (mirroring
-`TelemetryCoordinator._dispatch_lock`/`dispatch_once`).
-
-Gating
-------
-`sharing_enabled()` is read live, fail-closed, before anything else this
-worker's own thread does: a raised exception or a `False` result skips
-`load_state()` entirely (no disk stat/read at all) and enters the same
-inert "stopped" state an unpaired device reports, at a slow
-`INERT_POLL_S` cadence rather than the healthy one-second poll. Production
-wiring (`wingman.__main__.build_fleet_sharing_worker`) additionally never
-calls `start()` at all while the setting is off, so a disabled install
-never spawns this thread in the first place; the live predicate here is
-defence in depth for whatever calls `start()` anyway (every existing test
-that constructs this worker directly, and any future toggle that flips
-the setting without a restart).
-
-Revision handling
-------------------
-Every signed request this worker sends -- `fetch_catalogue`,
-`publish_snapshot`, AND `renew_session` alike -- consumes a freshly
-incremented revision, whether or not the attempt succeeds, and that new
-revision is PERSISTED (via `save_state`, into
-`wingman.fleetsharing.state.SharingState.last_revision`) BEFORE the
-network call is ever made -- never after. All three draw from the exact
-SAME sequence, never one each: authGD's own fleet-v1 protocol shares one
-monotonic `last_revision` counter per session across every signed request
-kind, and a client that let two of them race in flight at once could see
-its own strictly-increasing revision refused purely by commit order
-(`docs/fleet-protocol.md`, authGD repo) -- which is exactly why this
-worker's single `_iterate()` pass runs catalogue refresh, session
-renewal, and publish strictly one at a time, serialized by
-`_iteration_lock`, rather than any two of them ever running concurrently.
-A crash between the persisted write and the network reply can only waste
-one revision number, never reuse one authGD may already have seen;
-persisting only after a reply would risk exactly that reuse across a
-restart. A retry after a failed or uncertain attempt therefore always
-carries a NEW revision and a freshly signed request; it never resends the
-previous attempt's exact signed bytes, matching `client.py`'s own
-reasoning for never retrying a publish internally. The in-memory sequence
-resumes from the persisted `last_revision` the first time THIS PROCESS
-observes a given session id (a genuine restart with the same still-valid
-session), and restarts at zero only when the session id actually changes
-during THIS process's own lifetime (a fresh pairing), matching "a new
-session starts a new revision sequence" from the design. If persisting the
-new revision fails, the network call is skipped entirely for that pass and
-the failure is treated like any other relay error (status `"error"`,
-bounded backoff) rather than proceeding with an unpersisted revision.
-
-Session renewal
-----------------
-`PUT /api/fleet/v1/session` extends this device's OWN session in place
-without a new browser approval, on a fixed `SESSION_RENEWAL_INTERVAL_S`
-cadence checked every pass (`_session_needs_renewal`) -- comfortably under
-authGD's own 30-minute session TTL, so a healthy device never sees that
-cliff. This worker never tracks the `expires_at` authGD's response
-reports: like `CATALOGUE_REFRESH_INTERVAL_S`, renewal runs on its own
-fixed schedule rather than one derived from a server-reported value, which
-would need this worker to trust its own clock against authGD's. Checked
-(and, if due, sent) BEFORE catalogue refresh and publish in every pass --
-still just one more sequential step in the same single-file pass every
-other signed request already goes through, never a concurrent one.
-
-Coalescing, staleness, and heartbeats
---------------------------------------
-`submit` overwrites a single mutable "latest" slot together with the
-monotonic time it was submitted -- there is no queue of snapshots, so
-three rapid submissions collapse to whichever was latest by the time the
-worker thread is free to look. A submission older than
-`MAX_SNAPSHOT_AGE_S` by the time this worker gets to it is dropped rather
-than published: local combat state moves fast (a `SCRAM/POINT` or a
-non-zero DPS reading can end within a second), and this worker's own
-publish cadence can lag behind submission (backoff, an inert poll while
-unpaired) for far longer than that -- publishing a snapshot that old would
-risk re-arming a remote row with a value nobody currently believes is
-true. A dropped snapshot is simply treated as "nothing new to publish"
-this pass, exactly like an idle cycle with no submission at all; it never
-forces a withdrawal either, matching the design's own "a network loss does
-not [clear rows]" posture generalized to a local data gap.
-
-The projected publish rows are also compared against the last rows this
-worker actually sent: an unchanged projection is not re-sent on every
-pass, but any CHANGE -- including a transition to an empty row list -- is
-sent immediately, so a normal local omission withdraws its remote row
-promptly rather than waiting out a cadence. An UNCHANGED but NON-EMPTY
-projection is still re-sent as a heartbeat at least every
-`HEARTBEAT_INTERVAL_S` (safely under authGD's own three-second staleness
-boundary): the design's server-clock liveness rule ages a row to `stale`
-by three seconds of receive-time inactivity even when nothing about the
-underlying combat state has changed, so a steady, unchanging fight would
-otherwise flicker stale/live under readers' own eyes for no reason. An
-empty (already-withdrawn) projection never needs a heartbeat -- there is
-nothing left on the relay to keep alive.
-
-Status
-------
-`status()` reports one of `SharingStatus.state`'s six values, updated by
-this worker's own thread as it moves through a pass: `"stopped"` while
-disabled or unpaired, `"connecting"` on a session's first-ever contact
-attempt, `"verifying"` on a later periodic catalogue refresh, `"refused"`
-after a `forbidden`/`unauthorized` relay response (eligibility or the
-device session itself may be gone -- the cached catalogue is discarded so
-the next successful contact re-verifies it from scratch), and `"error"`
-for every other relay/transport/protocol failure, INCLUDING a relay
-client that could not even be constructed for the paired origin (a
-corrupted or malformed `relay_origin` reports `"error"` and backs off; it
-never raises out of this worker's own loop). `"active"` is reported ONLY
-immediately following a pass that made real, successful relay contact
-(a catalogue fetch or a publish/heartbeat) -- never asserted merely
-because a pass happened to raise no exception. A pass that had nothing
-due (catalogue fresh, nothing changed, no heartbeat owed) makes no status
-claim of its own and simply leaves whatever was last reported in place.
-Every failure enters a bounded exponential backoff with jitter before the
-next attempt, and that backoff (like the inert disabled/unpaired poll) is
-enforced against an actual wall-clock deadline: a steady stream of
-`submit()` calls during backoff wakes the loop but does not let it
-retry early, only a genuinely elapsed deadline (or `stop()`) does.
+Local Off inhibits immediately. Remote deletion, consent and new sessions are
+never inferred from queue acceptance or transport failure. Lifecycle, identity,
+session and relevant command fences surround dispatch and completion; abandoned
+requests leave journals for reconciliation, not an obsolete acknowledgement.
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import logging
 import random
+import secrets
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from typing import Literal
+from uuid import uuid4
 
 from ..telemetry.model import FleetSnapshot
-from . import projection
-from . import state as state_mod
+from . import crypto, projection
+from . import protocol as p
+from . import state as s
 from .client import FleetRelayClient, FleetRelayError
+from .config import resolve_relay_origin
 from .model import FleetCatalogue, PublishRow
+from .scheduling import OPERATIONS, Scheduler, Work
 
 logger = logging.getLogger(__name__)
-
-# Bounded exponential backoff (with jitter) for any failed relay contact --
-# a 429, a 403/401, a network failure, or a malformed/protocol-mismatched
-# response are all paced identically here: none of them expose a
-# server-supplied Retry-After value to this layer (`client.py`'s
-# `FleetRelayError` deliberately carries only a coarse `.code`, never
-# response headers or body), so this worker paces every failure class with
-# its own ladder rather than trusting a value it cannot safely read.
 BASE_BACKOFF_S = 1.0
 MAX_BACKOFF_S = 30.0
-
-# The design's own "bounded one-second cadence" for a healthy poll/publish
-# loop -- also the idle wake interval so a catalogue-refresh interval or a
-# newly-paired transition is noticed promptly even with no new submit().
-IDLE_POLL_S = 1.0
-
-# While disabled (fleet_sharing.enabled is false) or unpaired: there is
-# nothing useful this worker can do but watch for that to change, and
-# doing so every second forever -- a disk stat/read on every single pass,
-# for the overwhelming majority of real installs, which ship no pairing UI
-# at all -- is needless work this worker does not need to perform that
-# often. Slower than IDLE_POLL_S, but still bounded so a future pairing
-# completing (or the setting being turned on) is noticed within seconds,
-# not forgotten.
+IDLE_POLL_S = 0.5
 INERT_POLL_S = 15.0
-
-# How often an established session refreshes its device catalogue even
-# with no relay-side push to signal a change (a linked-character add,
-# rename, or removal). The design calls this refresh mandatory ("a
-# catalogue revision change ... forces a refresh") but names no cadence;
-# one minute bounds how long a stale link can misroute or drop a row
-# without hammering the relay every publish cycle.
 CATALOGUE_REFRESH_INTERVAL_S = 60.0
-
-# How often an established session renews itself in place (`PUT
-# /api/fleet/v1/session`) without waiting for a browser to re-approve it.
-# authGD's own session TTL (`DEVICE_SESSION_TTL_MS`, fleet-pairing.ts) is
-# 30 minutes; ten comfortably clears that with margin to spare for a
-# missed cycle or two (backoff, a slow relay) before the session would
-# actually lapse. Renewal counts as real relay contact for `_iterate_inner`'s
-# "active" status rule, and consumes a revision from the SAME shared
-# sequence catalogue/publish already use (`docs/fleet-protocol.md`, authGD
-# repo) -- never a sequence of its own.
 SESSION_RENEWAL_INTERVAL_S = 600.0
-
-# A submitted snapshot older than this by the time this worker gets around
-# to it is never published -- see the module docstring's "Coalescing,
-# staleness, and heartbeats" section. Comfortably above IDLE_POLL_S (a
-# submission arrives roughly every second in healthy operation, so this
-# never fires under ordinary conditions) and comfortably below authGD's
-# own ten-second hard-expiry, so a snapshot old enough to be refused here
-# would already be close to expiring server-side even if it had been sent.
 MAX_SNAPSHOT_AGE_S = 5.0
+# A 2s heartbeat plus a read that just misses it exhausts the 3s live budget,
+# even on healthy low-latency links. Leave room for read service and full RTT.
+HEARTBEAT_INTERVAL_S = 1.0
+CAPABILITIES = (p.SHARED_CAPABILITY,)
+# Only these classifications may reach status. Never render an exception body.
+ERROR_CODES = frozenset(
+    (
+        "unauthorized",
+        "forbidden",
+        "conflict",
+        "revision_replayed",
+        "rate_limited",
+        "transport_error",
+        "server_error",
+        "bad_request",
+        "bad_headers",
+        "not_found",
+        "invalid_intent",
+        "capability_required",
+        "fleet_read_required",
+        "update_required",
+        "service_unavailable",
+        "feature_disabled",
+        "malformed_response",
+        "protocol_mismatch",
+    )
+)
 
-# An unchanged, non-empty publication is re-sent no less often than this,
-# safely under authGD's own three-second stale boundary (design: "live for
-# the first 3 seconds, stale through 10 seconds"). Two full idle-poll
-# cycles of slack rather than an exact 2.9s -- this only needs to beat the
-# server's OWN clock, not this worker's.
-HEARTBEAT_INTERVAL_S = 2.0
+
+@dataclass(frozen=True)
+class SharingMetadata:
+    """Safe observations only. The binding fingerprints the SAVED key/origin."""
+
+    loaded: bool = False
+    binding: str | None = None
+    paired_origin: str | None = None
+    device_id: str | None = None
+    has_session: bool = False
+    session_expires_at: str | None = None
+    feature_enabled: bool | None = None
+    approved_capabilities: tuple[str, ...] | None = None
+    session_approved_capabilities: tuple[str, ...] | None = None
+    acknowledged_capabilities: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
+class PendingSourceStatus:
+    source_id: str
+    operation: str
+    character_id: int | None
+    stage: str
 
 
 @dataclass(frozen=True)
 class SharingStatus:
-    """The sharing worker's current, UI-facing state.
-
-    `detail` is always a fixed classification string (a `FleetRelayError`
-    `.code`, or a short fixed phrase) -- never a raw response body, a
-    session id, or anything else server-controlled, matching every other
-    redacted-error posture in this subpackage.
-    """
-
     state: Literal["stopped", "connecting", "active", "verifying", "refused", "error"]
     detail: str | None = None
+    participation: str | None = None
+    participation_intent_id: str | None = None
+    participation_order: int = 0
+    source_control: str | None = None
+    pairing: str | None = None
+    approval_url: str | None = None
+    sources: p.Sources | None = None
+    eligibility: p.Eligibility | None = None
+    observed_participation: p.Participation | None = None
+    local_inhibited: bool = False
+    metadata: SharingMetadata = SharingMetadata()
+    pending_sources: tuple[PendingSourceStatus, ...] = ()
+    # Bounded session-only terminal results for absent IDs (not source history).
+    source_results: tuple[PendingSourceStatus, ...] = ()
+    order: int = 0
+    pairing_action_id: str | None = None
 
 
-def _noop_thread_factory(
-    *, target: Callable, args: tuple, name: str, daemon: bool
-) -> threading.Thread:
-    """Test seam: return a Thread-shaped object that never starts."""
+@dataclass(frozen=True)
+class RemoteEvent:
+    rows: tuple[p.ObservedRemoteRow, ...]
+    receipt_monotonic: float
+    request_elapsed: float
+    lifecycle_epoch: int
+    identity_epoch: int
+    kind: Literal["replace", "clear"]
+    order: int
+    binding: str | None
 
+
+@dataclass(frozen=True)
+class CatalogueEvent:
+    catalogue: FleetCatalogue | None
+    binding: str | None
+    lifecycle_epoch: int
+    identity_epoch: int
+    order: int
+
+
+@dataclass(frozen=True)
+class _Command:
+    sequence: int
+    kind: str
+    payload: object
+    identity_epoch: int
+    binding: str | None
+
+
+@dataclass(frozen=True)
+class _Fence:
+    lifecycle: int
+    identity: int
+    session: str | None
+    participation: int
+    source: tuple[tuple[str, int], ...]
+
+
+class _Obsolete(Exception):
+    pass
+
+
+class _PersistenceFailed(Exception):
+    pass
+
+
+def _noop_thread_factory(*, target, args, name, daemon):
     class _NoopThread:
-        def __init__(self) -> None:
+        def __init__(self):
             self.daemon = daemon
 
-        def start(self) -> None:
+        def start(self):
             pass
 
-        def is_alive(self) -> bool:
+        def is_alive(self):
             return False
 
-        def join(self, timeout: float | None = None) -> None:
+        def join(self, timeout=None):
             pass
 
-    return _NoopThread()  # type: ignore[return-value]
+    return _NoopThread()
 
 
-def _real_thread_factory(
-    *, target: Callable, args: tuple, name: str, daemon: bool
-) -> threading.Thread:
-    return threading.Thread(target=target, args=args, name=name, daemon=daemon)
-
-
-def _no_op_save_state(_state: state_mod.SharingState) -> None:
-    """Default `save_state`: revision persistence becomes a no-op.
-
-    Production wiring always supplies a real writer
-    (`wingman.fleetsharing.state.save`, bound to
-    `paths.fleet_sharing_file()`); tests that do not care about
-    cross-restart revision recovery can omit it entirely and keep their
-    existing construction unchanged.
-    """
+def _no_op_save_state(_state):
+    """Compatibility seam; production must supply the atomic file writer."""
 
 
 class FleetSharingWorker:
-    """One device's non-blocking publisher.
-
-    Public interface:
-        submit(snapshot) -> None      -- non-blocking, coordinator callback
-        start() -> bool
-        stop(timeout=5.0) -> bool
-        status() -> SharingStatus
-        iterate_once()                -- deterministic test seam
-
-    *load_state* is read live on every iteration (never captured), matching
-    every other settings/state read in this codebase: a future pairing
-    feature can populate `wingman.fleetsharing.state`'s document at any
-    time, and this worker must notice on its very next pass rather than on
-    a restart. *save_state* is the symmetric write seam used to persist an
-    about-to-be-used revision before it is ever sent (see the module
-    docstring's "Revision handling"). *client_factory(origin) -> relay
-    client* builds the signed transport for the paired relay origin;
-    production wiring supplies `FleetRelayClient` itself, tests supply a
-    fake -- a `client_factory` that raises for a malformed origin reports
-    `"error"` status and backs off rather than propagating out of this
-    worker's loop. *unwrap_private_key* defaults to
-    `wingman.fleetsharing.state.unwrap_private_key` (the DPAPI seam); it is
-    only ever reached once a persisted device identity actually exists.
-    *sharing_enabled* defaults to always-true, matching every existing
-    caller's expectations; production wiring supplies a live
-    `fleet_sharing.enabled` settings read.
-    """
-
     def __init__(
         self,
         *,
-        load_state: Callable[[], state_mod.SharingState],
-        client_factory: Callable[[str], object] = FleetRelayClient,
-        unwrap_private_key: Callable[
-            [str], bytes | None
-        ] = state_mod.unwrap_private_key,
-        sharing_enabled: Callable[[], bool] = lambda: True,
-        save_state: Callable[[state_mod.SharingState], None] = _no_op_save_state,
-        _thread_factory: Callable[..., threading.Thread] = _real_thread_factory,
-        _clock: Callable[[], float] = time.monotonic,
-        _jitter: Callable[[], float] = random.random,
-    ) -> None:
+        load_state: Callable[[], s.SharingState],
+        client_factory=FleetRelayClient,
+        unwrap_private_key=s.unwrap_private_key,
+        sharing_enabled=lambda: True,
+        save_state=_no_op_save_state,
+        wrap_private_key=s.wrap_private_key,
+        _generate_private_key=crypto.generate_private_key,
+        _thread_factory=threading.Thread,
+        _clock=time.monotonic,
+        _utc_clock=lambda: datetime.now(UTC),
+        _jitter=random.random,
+    ):
         self._load_state = load_state
+        self._save_state = save_state
         self._client_factory = client_factory
         self._unwrap_private_key = unwrap_private_key
+        self._wrap_private_key = wrap_private_key
+        self._generate_private_key = _generate_private_key
         self._sharing_enabled = sharing_enabled
-        self._save_state = save_state
         self._thread_factory = _thread_factory
         self._clock = _clock
+        self._utc_clock = _utc_clock
         self._jitter = _jitter
-
-        # submit()'s one-slot mailbox: (snapshot, submitted-at monotonic
-        # time). Never touched by anything but submit() and the read
-        # inside _iterate(): no network, crypto, or DPAPI call may ever
-        # happen under this lock.
         self._lock = threading.Lock()
+        self._status_lock = threading.Lock()
+        self._lifecycle_lock = threading.Lock()
+        self._iteration_lock = threading.Lock()
         self._latest: tuple[FleetSnapshot, float] | None = None
         self._pending = threading.Event()
-
-        self._status_lock = threading.Lock()
-        self._status = SharingStatus(state="stopped")
-
-        # Dispatcher-thread-only state (serialized by _iteration_lock
-        # against the real worker and the iterate_once() test seam, never
-        # touched by submit()).
-        self._iteration_lock = threading.Lock()
-        self._session_id: str | None = None
-        self._revision = 0
-        self._catalogue: FleetCatalogue | None = None
-        self._catalogue_refreshed_at: float | None = None
-        self._session_renewed_at: float | None = None
-        self._last_published: tuple[PublishRow, ...] = ()
-        self._last_publish_at: float | None = None
-        self._backoff = 0.0
-        self._client = None
-        self._client_origin: str | None = None
-
-        self._lifecycle_lock = threading.Lock()
-        self._worker: threading.Thread | None = None
+        self._commands: dict[str, _Command] = {}
+        self._sequence = 0
+        self._presentation_order = 0
+        self._remote_order = 0
+        self._catalogue_order = 0
+        self._participation_generation = 0
+        self._source_generations: dict[str, int] = {}
+        self._identity_epoch = 0
+        # Submission fences completions; only a durably changed key/origin
+        # invalidates older queued controls (not a rejected/same-key upgrade).
+        self._identity_floor = 0
+        self._epoch = 0
+        self._inhibit = False
+        self._watch = False
+        self._probe_queued = False
+        self._probe_used = False
+        self._restart_requested = False
+        self._status = SharingStatus("stopped")
+        self._durable_sources: tuple[PendingSourceStatus, ...] = ()
+        self._pairing_action_id = None
+        self._subscribers: dict[str, dict[object, Callable]] = {
+            "status": {},
+            "remote": {},
+            "catalogue": {},
+        }
+        self._worker = None
         self._running = False
         self._stop_event = threading.Event()
 
-    # ------------------------------------------------------------------
-    # Coordinator-facing callback
-    # ------------------------------------------------------------------
+        # Owner-only state, never reconstructed from a stale pass-local copy.
+        self._state: s.SharingState | None = None
+        self._client = None
+        self._client_origin = None
+        self._scheduler = Scheduler()
+        self._local_retry_at = 0.0
+        self._needs_device = True
+        self._resume_metadata = False
+        self._fresh_on: str | None = None
+        self._part_observe = True
+        self._needs_fresh_intent = False
+        self._source_observe: set[str] = set()
+        self._withdraw_needed = False
+        self._catalogue: FleetCatalogue | None = None
+        self._eligibility: p.Eligibility | None = None
+        self._sources: p.Sources | None = None
+        self._due = dict.fromkeys(
+            ("device", "catalogue", "eligibility", "read", "sources"), 0.0
+        )
+        self._expiry_binding = None
+        self._renew_at = 0.0
+        self._expires_at = 0.0
+        self._last_published: tuple[PublishRow, ...] = ()
+        self._last_publish_at = 0.0
+        self._pause_binding = None
+        self._pause_until = 0.0
 
     def submit(self, snapshot: FleetSnapshot) -> None:
-        """Record the newest fleet snapshot and wake the worker.
-
-        Called on `TelemetryCoordinator`'s own dispatcher thread. Must
-        never block: swapping a reference and setting an `Event` is the
-        entire cost, so a relay stuck mid-request never stalls the
-        coordinator's one-second cadence for anyone else.
-        """
         with self._lock:
             self._latest = (snapshot, self._clock())
         self._pending.set()
+
+    def _queue(self, key, kind, payload, *, binding=None):
+        with self._lock:
+            if binding is not None and binding != self._status.metadata.binding:
+                return None
+            if (
+                kind == "source"
+                and key not in self._commands
+                and sum(c.kind == "source" for c in self._commands.values())
+                >= p.MAX_SOURCE_INTENTS
+            ):
+                return None
+            changes = {}
+            if kind == "pairing":
+                self._identity_epoch += 1
+                self._inhibit = True
+                changes = dict(
+                    pairing="queued",
+                    approval_url=None,
+                    local_inhibited=True,
+                    pairing_action_id=payload[2],
+                )
+            elif kind == "participation":
+                self._participation_generation += 1
+                self._inhibit = True
+                changes = dict(
+                    participation="queued",
+                    local_inhibited=True,
+                    eligibility=None,
+                    participation_intent_id=payload.intent_id,
+                    participation_order=self._sequence + 1,
+                )
+            elif kind == "source":
+                source_id = payload.source_id
+                self._source_generations[source_id] = (
+                    self._source_generations.get(source_id, 0) + 1
+                )
+                changes = dict(
+                    source_control="queued",
+                    source_results=tuple(
+                        item
+                        for item in self._status.source_results
+                        if item.source_id.lower() != source_id.lower()
+                    ),
+                )
+            self._sequence += 1
+            command = _Command(
+                self._sequence, kind, payload, self._identity_epoch, binding
+            )
+            self._commands[key] = command
+            clear = (
+                self._remote_event_locked((), self._clock(), 0, "clear")
+                if kind == "pairing"
+                or (kind == "participation" and not payload.enabled)
+                else None
+            )
+            # Publish queue status before the owner can consume this command.
+            # Callbacks are deliberately deferred until BOTH locks are released.
+            with self._status_lock:
+                self._status = status = replace(
+                    self._status,
+                    **changes,
+                    order=self._status.order + 1,
+                    pending_sources=self._pending_sources_locked(),
+                )
+        self._pending.set()
+        if clear is not None:
+            self._notify("remote", clear)
+        self._notify("status", status)
+        return command
+
+    def request_pairing(
+        self, *, mode="initial", configured_origin=None, action_id=None
+    ) -> bool:
+        """Queue initial/retry, same-key upgrade, or explicitly authorized fresh setup.
+
+        Fresh is admitted by the owner only after proved terminal auth or an
+        explicit origin change. This never opens a browser; status exposes a
+        validated URL only after the admission journal is durable.
+        """
+        if mode not in ("initial", "upgrade", "fresh") or (
+            configured_origin is not None and not isinstance(configured_origin, str)
+        ):
+            return False
+        if action_id is not None:
+            try:
+                p.uuid(action_id)
+            except ValueError:
+                return False
+        return (
+            self._queue("pairing", "pairing", (mode, configured_origin, action_id))
+            is not None
+        )
+
+    def request_participation(self, enabled: bool) -> str | None:
+        """Return an explicit intent UUID, not a durable or server acknowledgement."""
+        if type(enabled) is not bool:
+            return None
+        intent = s.PendingParticipation(str(uuid4()), enabled)
+        # New On remains inhibited until its fresh observation/CAS is known.
+        if self._queue("participation", "participation", intent) is None:
+            return None
+        return intent.intent_id
+
+    def request_source_start(
+        self, character_id: int, character_link_epoch: str, *, binding=None
+    ) -> str | None:
+        """Create identity/time at the explicit action, never at a later retry."""
+        try:
+            command = p.StartSource(
+                str(uuid4()),
+                p.integer(character_id, 1, p.JS_SAFE_MAX),
+                p.uuid(character_link_epoch),
+                self._utc_text(),
+            )
+        except (ValueError, TypeError):
+            return None
+        return (
+            command.source_id if self._queue_source(command, binding=binding) else None
+        )
+
+    def request_source_stop(
+        self, source_id: str, *, expected_generation: int = 0, binding=None
+    ) -> bool:
+        try:
+            command = p.StopSource(
+                p.uuid(source_id).lower(),
+                p.integer(expected_generation, 0, p.INT4_MAX - 1),
+            )
+        except ValueError:
+            return False
+        return self._queue_source(command, binding=binding)
+
+    def _queue_source(self, command, *, binding=None):
+        return (
+            self._queue(
+                "source:" + command.source_id, "source", command, binding=binding
+            )
+            is not None
+        )
+
+    @staticmethod
+    def _source_summary(command, stage):
+        return PendingSourceStatus(
+            command.source_id,
+            "start" if isinstance(command, p.StartSource) else "stop",
+            command.character_id if isinstance(command, p.StartSource) else None,
+            stage,
+        )
+
+    def _command_binding_current(self, command, metadata):
+        # A queued setup reserves a future epoch before its key is saved. Bound
+        # controls from the still-visible old identity must not inherit that key.
+        return command.identity_epoch >= self._identity_floor and (
+            command.binding is None or command.binding == metadata.binding
+        )
+
+    def _pending_sources_locked(self, metadata=None):
+        metadata = metadata or self._status.metadata
+        pending = {item.source_id.lower(): item for item in self._durable_sources}
+        for command in self._commands.values():
+            if command.kind == "source" and self._command_binding_current(
+                command, metadata
+            ):
+                item = self._source_summary(command.payload, "queued")
+                pending[item.source_id.lower()] = item
+        return tuple(pending.values())
+
+    def _project_saved(self):
+        """Owner-only projection; queue threads merge against this immutable cache."""
+        state = self._state
+        binding = None
+        if state.identity is not None:
+            binding = hashlib.sha256(
+                (
+                    state.relay_origin + "\n" + state.identity.public_key_spki_b64
+                ).encode()
+            ).hexdigest()
+        metadata = SharingMetadata(
+            loaded=True,
+            binding=binding,
+            paired_origin=state.relay_origin,
+            device_id=state.device_id,
+            has_session=state.session_id is not None,
+            session_expires_at=state.session_expires_at,
+            feature_enabled=state.feature_enabled,
+            approved_capabilities=state.approved_capabilities,
+            session_approved_capabilities=state.session_approved_capabilities,
+            acknowledged_capabilities=state.acknowledged_capabilities,
+        )
+        with self._lock:
+            self._durable_sources = tuple(
+                self._source_summary(command, "persisted")
+                for command in state.pending_source_commands
+            )
+        changes = {}
+        if self.status().metadata.binding != binding:
+            changes = dict(
+                sources=None,
+                eligibility=None,
+                source_results=(),
+                observed_participation=state.observed_participation,
+            )
+        self._update_status(metadata=metadata, **changes)
+
+    def set_source_watch(self, enabled: bool) -> bool:
+        if type(enabled) is not bool:
+            return False
+        with self._lock:
+            self._watch = enabled
+        self._pending.set()
+        return True
+
+    def resume_pending(self) -> bool:
+        """Queue ONE startup metadata probe, even Off. Never unwrap an idle key."""
+        with self._lock:
+            if self._probe_used:
+                return False
+            self._probe_used = self._probe_queued = True
+        self._pending.set()
+        return True
 
     def status(self) -> SharingStatus:
         with self._status_lock:
             return self._status
 
-    def _set_status(self, status: SharingStatus) -> None:
-        with self._status_lock:
-            self._status = status
+    def subscribe_status(self, callback: Callable[[SharingStatus], None]):
+        return self._subscribe("status", callback)
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
+    def subscribe_remote(self, callback: Callable[[RemoteEvent], None]):
+        return self._subscribe("remote", callback)
+
+    def subscribe_catalogue(self, callback: Callable[[CatalogueEvent], None]):
+        return self._subscribe("catalogue", callback)
+
+    def _subscribe(self, kind, callback):
+        token = object()
+        with self._status_lock:
+            self._subscribers[kind][token] = callback
+
+        def unsubscribe():
+            with self._status_lock:
+                self._subscribers[kind].pop(token, None)
+
+        return unsubscribe
+
+    def _notify(self, kind, value):
+        with self._status_lock:
+            callbacks = tuple(self._subscribers[kind].values())
+        for callback in callbacks:
+            if kind == "status" and self.status() != value:
+                break
+            if kind in ("remote", "catalogue"):
+                with self._lock:
+                    obsolete = (
+                        (
+                            self._epoch,
+                            self._identity_epoch,
+                            self._status.metadata.binding,
+                        )
+                        != (value.lifecycle_epoch, value.identity_epoch, value.binding)
+                        or value.order
+                        != (
+                            self._remote_order
+                            if kind == "remote"
+                            else self._catalogue_order
+                        )
+                        or (
+                            kind == "remote"
+                            and value.kind == "replace"
+                            and self._inhibit
+                        )
+                    )
+                if obsolete:
+                    break
+            try:
+                callback(value)
+            except Exception:  # noqa: BLE001 - a subscriber cannot kill the single I/O owner
+                logger.warning("Fleet sharing subscriber failed")
+
+    def _update_status(self, *, fence=None, **changes):
+        # Ingestion notifications share the submission lock: an old persisted
+        # stage must not overwrite a replacement queued during a save/callback.
+        with self._lock:
+            if fence is not None and self._fence_locked() != fence:
+                raise _Obsolete
+            with self._status_lock:
+                status = replace(
+                    self._status,
+                    **changes,
+                    pending_sources=self._pending_sources_locked(
+                        changes.get("metadata")
+                    ),
+                )
+                changed = self._status != status
+                if changed:
+                    status = replace(status, order=self._status.order + 1)
+                self._status = status
+        if changed:
+            self._notify("status", status)
+
+    def _remote_event_locked(self, rows, receipt, elapsed, kind):
+        self._presentation_order += 1
+        self._remote_order = self._presentation_order
+        return RemoteEvent(
+            rows,
+            receipt,
+            elapsed,
+            self._epoch,
+            self._identity_epoch,
+            kind,
+            self._remote_order,
+            self._status.metadata.binding,
+        )
+
+    def _clear_remote(self):
+        with self._lock:
+            event = self._remote_event_locked((), self._clock(), 0, "clear")
+        self._notify("remote", event)
+
+    def _set_catalogue(self, catalogue, *, fence=None):
+        with self._lock:
+            if fence is not None:
+                current = self._fence_locked()
+                if (current.lifecycle, current.identity, current.session) != (
+                    fence.lifecycle,
+                    fence.identity,
+                    fence.session,
+                ):
+                    raise _Obsolete
+            self._catalogue = catalogue
+            self._presentation_order += 1
+            self._catalogue_order = self._presentation_order
+            event = CatalogueEvent(
+                catalogue,
+                self._status.metadata.binding,
+                self._epoch,
+                self._identity_epoch,
+                self._catalogue_order,
+            )
+        self._notify("catalogue", event)
 
     def start(self) -> bool:
-        """Start the non-daemon worker thread. Idempotent.
-
-        Refuses with `False` while a previous timed-out `stop()`'s worker
-        is still alive, mirroring `GameLogStream.start`/
-        `TelemetryCoordinator._start_dispatcher`.
-        """
         with self._lifecycle_lock:
             if self._running:
                 return True
             if self._worker is not None and self._worker.is_alive():
                 return False
+            with self._lock:
+                self._epoch += 1
+                self._restart_requested = True
             self._running = True
             self._stop_event = threading.Event()
-            stop_ev = self._stop_event
             try:
                 worker = self._thread_factory(
                     target=self._run,
-                    args=(stop_ev,),
+                    args=(self._stop_event,),
                     name="fleet-sharing-worker",
                     daemon=False,
                 )
                 self._worker = worker
                 worker.start()
-            except Exception:
-                logger.exception("Could not start fleet sharing worker")
+            except Exception:  # noqa: BLE001 - failed thread construction must leave a restartable owner
                 self._running = False
                 self._worker = None
                 return False
             return True
 
     def stop(self, timeout: float = 5.0) -> bool:
-        """Stop the worker and report bounded completion.
-
-        A request already in flight cannot be interrupted -- there is no
-        way to cancel a blocking `urllib` call -- so a timed-out join
-        leaves the worker reference intact for a caller to retry, exactly
-        like `TelemetryCoordinator.stop`/`GameLogStream.stop`. `False`
-        here must never be treated as "sharing stopped".
-        """
         with self._lifecycle_lock:
             worker = self._worker
-            stop_ev = self._stop_event
             self._running = False
+            self._stop_event.set()
+            with self._lock:
+                self._epoch += 1
+                clear = self._remote_event_locked((), self._clock(), 0, "clear")
+            self._pending.set()
+        self._notify("remote", clear)
         if worker is None:
             return True
-        stop_ev.set()
-        # Wakes an idle/backoff/inert wait immediately regardless of the
-        # deadline it is honouring; a request already blocked inside the
-        # relay client cannot be woken by this, which is exactly what
-        # makes the bound below observable instead of silent.
-        self._pending.set()
         worker.join(timeout)
         with self._lifecycle_lock:
             if worker.is_alive():
                 return False
-            self._worker = None
+            # A concurrent start after this join must keep its new reference.
+            if self._worker is worker:
+                self._worker = None
         return True
 
-    def _run(self, stop_event: threading.Event) -> None:
-        deadline = self._clock()
-        interruptible = True
+    def _run(self, stop_event):
         while not stop_event.is_set():
-            remaining = deadline - self._clock()
-            while remaining > 0 and not stop_event.is_set():
-                woke = self._pending.wait(remaining)
-                if stop_event.is_set():
-                    return
-                if woke:
-                    self._pending.clear()
-                    if interruptible:
-                        # A healthy idle-poll wait: a fresh submission is
-                        # itself the reason to look again right away.
-                        remaining = 0.0
-                        break
-                    # A backoff or inert (disabled/unpaired) wait: a
-                    # steady stream of submissions must not collapse this
-                    # deadline to zero -- keep waiting out what is left.
-                remaining = deadline - self._clock()
-            if stop_event.is_set():
-                return
             self._pending.clear()
             with self._iteration_lock:
-                wait_s, interruptible = self._iterate()
-            deadline = self._clock() + wait_s
+                if stop_event.is_set():
+                    break
+                wait, _ = self._iterate()
+            self._pending.wait(wait)
 
-    def iterate_once(self) -> None:
-        """Drive one iteration synchronously. Deterministic test seam.
-
-        Mirrors `TelemetryCoordinator.dispatch_once`: refuses to run
-        beside a live worker thread, since both would mutate revision/
-        catalogue state concurrently.
-        """
+    def iterate_once(self):
         with self._lifecycle_lock:
-            worker_alive = self._worker is not None and self._worker.is_alive()
-        if worker_alive:
-            raise RuntimeError("iterate_once cannot run beside the sharing worker")
+            if self._worker is not None and self._worker.is_alive():
+                raise RuntimeError("iterate_once cannot run beside the sharing worker")
         with self._iteration_lock:
+            with self._lifecycle_lock:
+                if self._worker is not None and self._worker.is_alive():
+                    raise RuntimeError(
+                        "iterate_once cannot run beside the sharing worker"
+                    )
             self._iterate()
 
-    # ------------------------------------------------------------------
-    # One pass: caller owns _iteration_lock
-    # ------------------------------------------------------------------
-
-    def _iterate(self) -> tuple[float, bool]:
-        """Run one pass, converting any unexpected exception into a bounded
-        backoff rather than letting it kill this worker's own thread --
-        the same "a corrupted or unreachable relay costs a retry, not a
-        crash" posture already applied to every specific failure below,
-        extended here as a last-resort net around the whole pass (a
-        malformed `relay_origin` reaching `_client_factory`, in
-        particular, is exactly the kind of failure this net exists for).
-        """
+    def _utc_now(self):
         try:
-            return self._iterate_inner()
-        except Exception:
-            logger.exception("Fleet sharing worker iteration failed unexpectedly")
-            self._set_status(SharingStatus(state="error", detail="unexpected failure"))
-            return self._enter_backoff()
+            now = self._utc_clock()
+            if not isinstance(now, datetime) or now.tzinfo is None:
+                raise ValueError
+            return now.astimezone(UTC)
+        except Exception:  # noqa: BLE001 - clock failures cannot extend consent or session authority
+            raise ValueError("UTC clock unavailable") from None
 
-    def _iterate_inner(self) -> tuple[float, bool]:
-        if not self._safe_sharing_enabled():
-            self._enter_stopped()
-            return INERT_POLL_S, False
+    def _utc_text(self):
+        return self._utc_now().isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
-        sharing_state = self._safe_load_state()
-        if not self._is_paired(sharing_state):
-            self._enter_stopped()
-            return INERT_POLL_S, False
+    def _remaining(self, text):
+        return (
+            datetime.fromisoformat(p.utc_date(text)) - self._utc_now()
+        ).total_seconds()
 
-        private_key = self._safe_unwrap(
-            sharing_state.identity.protected_private_key_b64
-        )
-        if private_key is None:
-            self._set_status(
-                SharingStatus(state="error", detail="device key unavailable")
-            )
-            return self._enter_backoff()
-
-        if sharing_state.session_id != self._session_id:
-            # self._session_id is None either on this process's very
-            # first observation of any session (in which case resuming
-            # from the persisted last_revision is safe and required -- see
-            # the module docstring's "Revision handling") or after this
-            # worker has explicitly forgotten a session (_enter_stopped);
-            # a session actually changing while one was already tracked in
-            # memory is a genuinely new pairing, which starts its own
-            # revision sequence at zero.
-            last_revision = (
-                sharing_state.last_revision if self._session_id is None else 0
-            )
-            self._begin_session(sharing_state.session_id, last_revision=last_revision)
-
-        client = self._client_for(sharing_state.relay_origin)
-        if client is None:
-            self._set_status(
-                SharingStatus(state="error", detail="invalid relay origin")
-            )
-            return self._enter_backoff()
-
-        contacted = False
-
-        if self._session_needs_renewal():
-            if not self._renew_session(client, sharing_state, private_key):
-                return self._enter_backoff()
-            contacted = True
-
-        if self._catalogue_needs_refresh():
-            if not self._refresh_catalogue(client, sharing_state, private_key):
-                return self._enter_backoff()
-            contacted = True
-
-        with self._lock:
-            latest = self._latest
-            if latest is not None and (self._clock() - latest[1]) > MAX_SNAPSHOT_AGE_S:
-                # Too old to trust by the time this worker got to it --
-                # dropped, not published; see "Coalescing, staleness, and
-                # heartbeats" above. Consumed here so a stale value is not
-                # re-evaluated (and re-logged) on every subsequent pass.
-                self._latest = None
-                latest = None
-
-        if latest is not None:
-            snapshot, _submitted_at = latest
-            rows = projection.project_snapshot(snapshot, self._catalogue)
-            changed = rows != self._last_published
-            due_for_heartbeat = (
-                not changed
-                and rows
-                and (
-                    self._last_publish_at is None
-                    or (self._clock() - self._last_publish_at) >= HEARTBEAT_INTERVAL_S
-                )
-            )
-            if changed or due_for_heartbeat:
-                if not self._publish(client, sharing_state, private_key, rows):
-                    return self._enter_backoff()
-                self._last_published = rows
-                self._last_publish_at = self._clock()
-                contacted = True
-
-        if contacted:
-            # "active" is asserted ONLY immediately following a pass that
-            # actually made successful relay contact -- never merely
-            # because nothing raised. A pass with nothing due leaves
-            # whatever status was last reported untouched.
-            self._set_status(SharingStatus(state="active"))
-            self._backoff = 0.0
-        return IDLE_POLL_S, True
-
-    def _safe_sharing_enabled(self) -> bool:
+    def _enabled(self):
         try:
             return bool(self._sharing_enabled())
-        except Exception:
-            logger.exception("Could not read the fleet sharing enabled predicate")
+        except Exception:  # noqa: BLE001 - preference access fails closed without affecting local telemetry
             return False
+
+    def _fence_locked(self):
+        return _Fence(
+            self._epoch,
+            self._identity_epoch,
+            self._state.session_id if self._state else None,
+            self._participation_generation,
+            tuple(sorted(self._source_generations.items())),
+        )
+
+    def _fence(self):
+        with self._lock:
+            return self._fence_locked()
+
+    def _check(self, fence, *, work=None):
+        current = self._fence()
+        if work is not None:
+            with self._lock:
+                queued = tuple(self._commands.values())
+            if any(
+                command.kind == "pairing"
+                or (
+                    command.kind == "participation"
+                    and work.operation
+                    in (
+                        "fetch_device",
+                        "acknowledge_capabilities",
+                        "set_participation",
+                        "read_snapshot",
+                        "publish_snapshot",
+                        "fetch_eligibility",
+                    )
+                )
+                or (
+                    command.kind == "source"
+                    and (
+                        work.operation == "fetch_sources"
+                        or (
+                            work.operation == "control_source"
+                            and command.payload.source_id == work.payload.source_id
+                        )
+                    )
+                )
+                for command in queued
+            ):
+                raise _Obsolete
+        if (current.lifecycle, current.identity, current.session) != (
+            fence.lifecycle,
+            fence.identity,
+            fence.session,
+        ):
+            raise _Obsolete
+        if current.participation != fence.participation and (
+            work is None
+            or work.operation
+            in (
+                "fetch_device",
+                "acknowledge_capabilities",
+                "set_participation",
+                "read_snapshot",
+                "publish_snapshot",
+                "fetch_eligibility",
+            )
+        ):
+            raise _Obsolete
+        if current.source != fence.source and (
+            work is None or work.operation in ("fetch_sources", "control_source")
+        ):
+            raise _Obsolete
+
+    def _persist(self, candidate, fence, *, work=None):
+        self._check(fence, work=work)
+        try:
+            self._save_state(candidate)
+        except Exception:  # noqa: BLE001 - no network may follow a failed atomic journal write
+            raise _PersistenceFailed from None
+        # This is the only assignment of a successfully saved candidate. Queue
+        # submission during a save is processed on the next serialized turn.
+        if (candidate.identity, candidate.relay_origin) != (
+            self._state.identity,
+            self._state.relay_origin,
+        ):
+            self._identity_floor = fence.identity
+        self._state = candidate
+        self._project_saved()
+        self._check(replace(fence, session=candidate.session_id), work=work)
+
+    def _reset_session(self):
+        self._needs_device = True
+        self._part_observe = True
+        self._source_observe.update(
+            c.source_id for c in self._state.pending_source_commands
+        )
+        self._eligibility = self._sources = None
+        self._clear_remote()
+        self._set_catalogue(None)
+        self._expiry_binding = None
+        self._last_published = ()
+        self._due = dict.fromkeys(self._due, 0.0)
+        self._update_status(
+            sources=None,
+            eligibility=None,
+            observed_participation=self._state.observed_participation,
+        )
+
+    def _load(self):
+        if self._state is not None:
+            return
+        self._state = self._load_state()
+        self._project_saved()
+        # The previous process may have just completed an attempt. Its monotonic
+        # clock cannot be persisted, so pay one conservative bucket interval on
+        # startup rather than causing our own refusal after an immediate restart.
+        if self._state.identity is not None:
+            self._scheduler.deadlines["bootstrap"] = self._clock() + 1.0
+            if self._state.last_revision:
+                self._scheduler.deadlines["read"] = self._clock() + 0.5
+                self._scheduler.deadlines["publication"] = self._clock() + 0.5
+        self._reset_session()
+        pending = self._state.pending_participation
+        if pending is not None:
+            self._withdraw_needed = not pending.enabled
+            with self._lock:
+                self._inhibit = True
+            self._update_status(participation="persisted", local_inhibited=True)
+        # An attempted pairing completion may have registered the key even if no
+        # session was saved. Reconnect by proof rather than replaying one-use work.
+        if (
+            self._state.pending_pairing
+            and self._state.pending_pairing.completion_attempted
+        ):
+            self._needs_device = True
+
+    def _ingest(self):
+        with self._lock:
+            fence = self._fence_locked()
+            # Validate the identity transition before deciding which controls
+            # belong to it. Sequence order alone drops Stop queued before upgrade.
+            commands = tuple(
+                sorted(
+                    self._commands.items(),
+                    key=lambda item: (item[1].kind != "pairing", item[1].sequence),
+                )
+            )
+        for key, command in commands:
+            with self._lock:
+                if self._commands.get(key) != command:
+                    continue
+            # Only our own session installation may advance this snapshot's
+            # fence. Reentrant On/Off/Stop/setup submissions never may.
+            fence = replace(fence, session=self._state.session_id)
+            self._check(fence)
+            if command.kind == "pairing":
+                self._ingest_pairing(command, fence)
+            elif self._command_binding_current(command, self.status().metadata):
+                self._ingest_control(command, fence)
+            self._drop_command(key, command)
+
+    def _drop_command(self, key, command):
+        with self._lock:
+            if self._commands.get(key) == command:
+                self._commands.pop(key)
+        self._update_status()
+
+    def _ingest_pairing(self, command, fence):
+        mode, configured, action_id = command.payload
+        state = self._state
+        changed_origin = False
+        try:
+            if mode == "fresh" and configured is not None:
+                origin = resolve_relay_origin(configured_origin=configured)
+                changed_origin = origin != state.relay_origin
+            else:
+                origin = resolve_relay_origin(
+                    paired_origin=state.relay_origin, configured_origin=configured
+                )
+        except ValueError:
+            self._update_status(
+                fence=fence, state="refused", detail="local_failure", pairing="rejected"
+            )
+            return
+        terminal = state.auth_pause and state.auth_pause.result in (
+            "device_revoked",
+            "device_key_conflict",
+        )
+        if mode == "fresh" and not (terminal or changed_origin):
+            self._update_status(
+                fence=fence,
+                state="refused",
+                detail="fresh_key_not_authorized",
+                pairing="rejected",
+            )
+            return
+        if mode == "upgrade" and (state.identity is None or terminal):
+            self._update_status(
+                state="refused",
+                detail="needs_fresh_key" if terminal else "needs_pairing",
+                pairing="rejected",
+                fence=fence,
+            )
+            return
+        if (
+            mode == "initial"
+            and state.identity is not None
+            and state.pending_pairing is None
+        ):
+            self._update_status(
+                fence=fence,
+                state="refused",
+                detail="use_key_recovery",
+                pairing="rejected",
+            )
+            return
+        if state.identity is None or mode == "fresh":
+            raw = self._generate_private_key()
+            identity = s.DeviceIdentity(
+                self._wrap_private_key(raw),
+                crypto.canonical_device_public_key_b64(crypto.public_key_spki(raw)),
+            )
+            candidate = s.SharingState(
+                identity=identity,
+                relay_origin=origin,
+                pending_pairing=s.PendingPairing(mode),
+            )
+        else:
+            candidate = replace(
+                s.replace_session(state, None),
+                pending_pairing=s.PendingPairing(mode),
+                pending_recovery=None,
+                auth_pause=None,
+            )
+        self._persist(candidate, fence)
+        self._reset_session()
+        self._pairing_action_id = action_id
+        self._update_status(
+            fence=replace(fence, session=self._state.session_id),
+            state="connecting",
+            detail=None,
+            pairing="persisted",
+            approval_url=None,
+        )
+
+    def _ingest_control(self, command, fence):
+        if self._state.identity is None:
+            self._update_status(state="refused", detail="needs_pairing")
+            return
+        if command.kind == "participation":
+            intent = command.payload
+            self._persist(replace(self._state, pending_participation=intent), fence)
+            self._fresh_on = intent.intent_id if intent.enabled else None
+            self._needs_fresh_intent = False
+            self._part_observe = self._needs_device = True
+            self._withdraw_needed = not intent.enabled
+            self._eligibility = None
+            self._update_status(fence=fence, participation="persisted")
+        else:
+            incoming = command.payload
+            commands = self._state.pending_source_commands
+            old = next(
+                (
+                    c
+                    for c in commands
+                    if c.source_id.lower() == incoming.source_id.lower()
+                ),
+                None,
+            )
+            if isinstance(incoming, p.StopSource) and isinstance(old, p.StartSource):
+                incoming = p.StopSource(old.source_id, 0)
+            candidate = (
+                *(
+                    c
+                    for c in commands
+                    if c.source_id.lower() != incoming.source_id.lower()
+                ),
+                incoming,
+            )
+            if len(candidate) > p.MAX_SOURCE_INTENTS:
+                self._update_status(state="error", detail="source_queue_full")
+                return
+            self._persist(
+                replace(self._state, pending_source_commands=candidate), fence
+            )
+            if isinstance(incoming, p.StopSource) and incoming != old:
+                self._source_observe.add(incoming.source_id)
+            self._update_status(fence=fence, source_control="persisted")
+
+    def _iterate(self):
+        try:
+            now = self._clock()
+            if now < self._local_retry_at:
+                return IDLE_POLL_S, False
+            enabled = self._enabled()
+            with self._lock:
+                explicit = bool(self._commands) or self._watch or self._probe_queued
+            pending = self._state and (
+                self._state.pending_participation
+                or self._state.pending_source_commands
+                or self._state.pending_pairing
+                or self._state.pending_recovery
+            )
+            if not (
+                enabled
+                or explicit
+                or pending
+                or self._withdraw_needed
+                or self._resume_metadata
+            ):
+                return INERT_POLL_S, False
+            self._load()
+            with self._lock:
+                self._probe_queued = False
+                restart = self._restart_requested
+                self._restart_requested = False
+                retained = {c.source_id for c in self._state.pending_source_commands}
+                retained.update(
+                    c.payload.source_id
+                    for c in self._commands.values()
+                    if c.kind == "source"
+                )
+                self._source_generations = {
+                    key: value
+                    for key, value in self._source_generations.items()
+                    if key in retained
+                }
+            if restart:
+                self._reset_session()
+            self._ingest()
+            self._prune_source_work()
+            fence = self._fence()
+            work = self._work(enabled)
+            chosen = self._scheduler.choose(tuple(work), self._clock())
+            if chosen is not None:
+                # Planning may durably replace our own expired session, but it
+                # must not adopt the generation of a newly queued user control.
+                self._execute(chosen, replace(fence, session=self._state.session_id))
+                # Re-plan in a new owner turn: another bucket may already be due.
+                # _work has durable side effects and the completed request may
+                # have replaced authority, so never re-use this turn's Work.
+                return 0.0, True
+            return min(IDLE_POLL_S, self._scheduler.delay(work, self._clock())), True
+        except _Obsolete:
+            # Persisted uncertainty is intentionally left for the next owner turn.
+            return IDLE_POLL_S, True
+        except _PersistenceFailed:
+            self._local_retry_at = self._clock() + BASE_BACKOFF_S
+            self._update_status(state="error", detail="persistence_failed")
+            return BASE_BACKOFF_S, False
+        except Exception:  # noqa: BLE001 - fail closed, without leaking key/response/exception context
+            self._local_retry_at = self._clock() + BASE_BACKOFF_S
+            self._update_status(state="error", detail="local_failure")
+            return BASE_BACKOFF_S, False
+
+    def _expiry(self):
+        binding = (self._state.session_id, self._state.session_expires_at)
+        if binding != self._expiry_binding:
+            remaining = self._remaining(binding[1])
+            self._expires_at = self._clock() + max(0, remaining)
+            self._renew_at = self._clock() + max(
+                0, min(SESSION_RENEWAL_INTERVAL_S, remaining - 60)
+            )
+            self._expiry_binding = binding
+
+    def _work(self, enabled):
+        state = self._state
+        if state.identity is None or state.relay_origin is None:
+            return ()
+        with self._lock:
+            watching, inhibited = self._watch, self._inhibit
+        pending = (
+            state.pending_participation
+            or state.pending_source_commands
+            or state.pending_pairing
+            or state.pending_recovery
+        )
+        if not (
+            enabled
+            or watching
+            or pending
+            or self._withdraw_needed
+            or self._resume_metadata
+        ):
+            return ()
+        fence = self._fence()
+        if state.auth_pause:
+            pause = state.auth_pause
+            if pause.retry_not_before is None:
+                self._update_status(state="refused", detail="needs_fresh_key")
+                return ()
+            if pause != self._pause_binding:
+                self._pause_binding = pause
+                self._pause_until = self._clock() + max(
+                    0, self._remaining(pause.retry_not_before)
+                )
+            if self._clock() < self._pause_until:
+                self._update_status(state="refused", detail=pause.result)
+                return ()
+            self._persist(replace(state, auth_pause=None), fence)
+            state = self._state
+        pairing = state.pending_pairing
+        if pairing:
+            if pairing.completion_attempted:
+                # A lost response may mean either registration or no commit at
+                # all. Keep initial provenance for an explicit SAME-key retry;
+                # a generic recovery 401 proves neither revocation nor consent.
+                return self._recovery_work()
+            if pairing.pairing_id is None:
+                return (Work("begin_pairing", "pairing", priority=1),)
+            if self._remaining(pairing.expires_at) <= 0:
+                self._update_status(
+                    state="refused",
+                    detail="pairing_expired",
+                    pairing="needs_retry",
+                    approval_url=None,
+                )
+                return ()
+            return (Work("complete_pairing", "pairing", priority=1),)
+        if state.pending_recovery or not state.session_id:
+            return self._recovery_work()
+        if state.session_expires_at is not None:
+            self._expiry()
+            if self._clock() >= self._expires_at:
+                self._persist(s.replace_session(state, None), fence)
+                self._reset_session()
+                return self._recovery_work()
+        if self._needs_device or state.session_expires_at is None:
+            return (Work("fetch_device", "device", priority=1),)
+        if not state.feature_enabled:
+            self._update_status(state="refused", detail="feature_disabled")
+            return (
+                Work("fetch_device", "device", due=self._due["device"], periodic=True),
+            )
+        if p.SHARED_CAPABILITY not in (state.approved_capabilities or ()):
+            self._update_status(state="refused", detail="needs_upgrade")
+            return ()
+        if p.SHARED_CAPABILITY not in (state.session_approved_capabilities or ()):
+            self._persist(s.replace_session(state, None), fence)
+            self._reset_session()
+            return self._recovery_work()
+        if p.SHARED_CAPABILITY not in (state.acknowledged_capabilities or ()):
+            return (Work("acknowledge_capabilities", "ack", priority=1),)
+        work = []
+        if self._withdraw_needed:
+            work.append(Work("publish_snapshot", "withdraw", priority=0, payload=()))
+        if self._clock() >= self._renew_at:
+            work.append(Work("renew_session", "renew", due=self._renew_at, priority=1))
+        intent = state.pending_participation
+        if intent and not self._needs_fresh_intent:
+            if self._part_observe:
+                work.append(
+                    Work(
+                        "fetch_device",
+                        "device",
+                        priority=0 if not intent.enabled else 2,
+                    )
+                )
+            elif intent.expected_generation is not None:
+                work.append(
+                    Work(
+                        "set_participation",
+                        "participation",
+                        priority=0 if not intent.enabled else 2,
+                        payload=intent,
+                    )
+                )
+        for command in state.pending_source_commands:
+            critical = isinstance(command, p.StopSource)
+            if command.source_id in self._source_observe or (
+                isinstance(command, p.StartSource)
+                and self._remaining(command.intent_created_at) <= -60
+            ):
+                self._source_observe.add(command.source_id)
+                work.append(
+                    Work(
+                        "fetch_sources",
+                        "sources-reconcile",
+                        priority=0 if critical else 2,
+                    )
+                )
+            else:
+                work.append(
+                    Work(
+                        "control_source",
+                        self._source_work_key(command),
+                        priority=0 if critical else 2,
+                        payload=command,
+                    )
+                )
+        if watching:
+            work.append(
+                Work(
+                    "fetch_sources", "sources", due=self._due["sources"], periodic=True
+                )
+            )
+        if (
+            enabled
+            and not inhibited
+            and state.observed_participation
+            and state.observed_participation.enabled
+            and intent is None
+        ):
+            work.extend(
+                (
+                    Work(
+                        "fetch_device", "device", due=self._due["device"], periodic=True
+                    ),
+                    Work(
+                        "fetch_catalogue",
+                        "catalogue",
+                        due=self._due["catalogue"],
+                        periodic=True,
+                    ),
+                    Work(
+                        "fetch_eligibility",
+                        "eligibility",
+                        due=self._due["eligibility"],
+                        periodic=True,
+                    ),
+                    Work("read_snapshot", "read", due=self._due["read"], periodic=True),
+                )
+            )
+            rows = self._publication()
+            if rows is not None and (rows != self._last_published or rows):
+                work.append(
+                    Work(
+                        "publish_snapshot",
+                        "publication",
+                        due=self._last_publish_at + HEARTBEAT_INTERVAL_S
+                        if rows == self._last_published
+                        else 0,
+                        periodic=True,
+                        payload=rows,
+                        priority=0 if not rows else 2,
+                    )
+                )
+        return tuple(work)
 
     @staticmethod
-    def _is_paired(sharing_state: state_mod.SharingState | None) -> bool:
-        return (
-            sharing_state is not None
-            and sharing_state.identity is not None
-            and bool(sharing_state.relay_origin)
-            and bool(sharing_state.session_id)
+    def _source_work_key(command):
+        # Stop supersedes Start, but repeated Stop/CAS rebasing is still the
+        # SAME retry owner. Submission generations would let clicks defeat backoff.
+        kind = "stop" if isinstance(command, p.StopSource) else "start"
+        return "source:" + kind + ":" + command.source_id.lower()
+
+    def _prune_source_work(self):
+        self._scheduler.retain(
+            "source:",
+            {self._source_work_key(c) for c in self._state.pending_source_commands},
         )
 
-    def _enter_stopped(self) -> None:
-        if self._session_id is not None:
-            self._begin_session(None)
-        self._set_status(SharingStatus(state="stopped"))
-        self._backoff = 0.0
-
-    def _begin_session(self, session_id: str | None, *, last_revision: int = 0) -> None:
-        self._session_id = session_id
-        self._revision = last_revision
-        self._catalogue = None
-        self._catalogue_refreshed_at = None
-        # `self._clock()`, not `None`: unlike the catalogue (which genuinely
-        # has no in-memory data yet either way), this worker has no way to
-        # learn how much of authGD's 30-minute session TTL was already spent
-        # before this process observed this session id (a fresh pairing, or
-        # an already-live session resumed across a restart) -- treating
-        # "just observed" as the renewal baseline avoids forcing an
-        # unconditional extra network call on every single session
-        # observation, at the cost of not renewing a resumed, near-expiry
-        # session as promptly as a freshly-paired one. If that session has
-        # in fact already lapsed, the next signed request of any kind simply
-        # reports the same `unauthorized`/`forbidden` refusal a revoked
-        # device would (`_handle_relay_error`) -- never a crash, and no
-        # worse than this worker's pre-renewal behaviour.
-        self._session_renewed_at = self._clock()
-        # () rather than None: a fresh session has no rows on the relay to
-        # withdraw yet, so an equally-empty first projection must not cost
-        # a network call. Any NON-empty first projection still counts as
-        # "changed" against this baseline and is sent immediately.
-        self._last_published = ()
-        self._last_publish_at = None
-
-    def _client_for(self, origin: str):
-        if self._client is not None and self._client_origin == origin:
-            return self._client
-        try:
-            client = self._client_factory(origin)
-        except Exception:
-            # A corrupted/malformed persisted relay_origin (or any other
-            # construction failure) must cost this pass a bounded backoff,
-            # never this worker's own thread -- see the module docstring's
-            # "Gating"/"_iterate" note and the class docstring's
-            # `client_factory` paragraph.
-            logger.exception(
-                "Could not build a fleet relay client for the paired origin"
-            )
-            self._client = None
-            self._client_origin = None
+    def _publication(self):
+        if self._catalogue is None or self._eligibility is None:
             return None
-        self._client = client
-        self._client_origin = origin
-        return client
-
-    def _catalogue_needs_refresh(self) -> bool:
-        if self._catalogue is None or self._catalogue_refreshed_at is None:
-            return True
-        return (
-            self._clock() - self._catalogue_refreshed_at
-        ) >= CATALOGUE_REFRESH_INTERVAL_S
-
-    def _session_needs_renewal(self) -> bool:
-        return (
-            self._session_renewed_at is None
-            or (self._clock() - self._session_renewed_at) >= SESSION_RENEWAL_INTERVAL_S
-        )
-
-    def _renew_session(
-        self, client, sharing_state: state_mod.SharingState, private_key: bytes
-    ) -> bool:
-        revision = self._next_revision(sharing_state)
-        if revision is None:
-            return False
-        try:
-            client.renew_session(
-                session_id=sharing_state.session_id,
-                private_key=private_key,
-                revision=revision,
-            )
-        except FleetRelayError as exc:
-            self._handle_relay_error(exc)
-            return False
-        except Exception:
-            logger.exception("Fleet sharing session renewal failed unexpectedly")
-            self._set_status(SharingStatus(state="error", detail="unexpected failure"))
-            return False
-        self._session_renewed_at = self._clock()
-        return True
-
-    def _refresh_catalogue(
-        self, client, sharing_state: state_mod.SharingState, private_key: bytes
-    ) -> bool:
-        # "verifying" for a periodic re-check of an already-established
-        # session; "connecting" the first time this session has ever
-        # reached the relay (no catalogue yet at all).
-        self._set_status(
-            SharingStatus(
-                state="verifying" if self._catalogue is not None else "connecting"
-            )
-        )
-        revision = self._next_revision(sharing_state)
-        if revision is None:
-            return False
-        try:
-            catalogue = client.fetch_catalogue(
-                session_id=sharing_state.session_id,
-                private_key=private_key,
-                revision=revision,
-            )
-        except FleetRelayError as exc:
-            self._handle_relay_error(exc)
-            return False
-        except Exception:
-            logger.exception("Fleet sharing catalogue fetch failed unexpectedly")
-            self._set_status(SharingStatus(state="error", detail="unexpected failure"))
-            return False
-        self._catalogue = catalogue
-        self._catalogue_refreshed_at = self._clock()
-        return True
-
-    def _publish(
-        self,
-        client,
-        sharing_state: state_mod.SharingState,
-        private_key: bytes,
-        rows: tuple[PublishRow, ...],
-    ) -> bool:
-        revision = self._next_revision(sharing_state)
-        if revision is None:
-            return False
-        try:
-            client.publish_snapshot(
-                session_id=sharing_state.session_id,
-                private_key=private_key,
-                revision=revision,
-                rows=rows,
-            )
-        except FleetRelayError as exc:
-            self._handle_relay_error(exc)
-            return False
-        except Exception:
-            logger.exception("Fleet sharing publish failed unexpectedly")
-            self._set_status(SharingStatus(state="error", detail="unexpected failure"))
-            return False
-        return True
-
-    def _next_revision(self, sharing_state: state_mod.SharingState) -> int | None:
-        """Increment and PERSIST the revision before returning it -- never
-        after the network call. `None` if persistence itself fails; the
-        caller must then skip the network call entirely for this pass
-        rather than send an unpersisted revision (see the module
-        docstring's "Revision handling").
-        """
-        candidate = self._revision + 1
-        try:
-            self._save_state(replace(sharing_state, last_revision=candidate))
-        except Exception:
-            logger.exception("Could not persist the fleet sharing device revision")
-            self._set_status(
-                SharingStatus(state="error", detail="revision persistence failed")
-            )
+        with self._lock:
+            latest = self._latest
+            if latest and self._clock() - latest[1] > MAX_SNAPSHOT_AGE_S:
+                self._latest = latest = None
+        if latest is None:
             return None
-        self._revision = candidate
-        return candidate
+        eligible = {
+            c.character_id
+            for c in self._eligibility.characters
+            if self._remaining(c.expires_at) > 0
+        }
+        if (
+            self._eligibility.state != "ready"
+            or self._eligibility.participation_generation
+            != getattr(self._state.observed_participation, "generation", None)
+        ):
+            eligible = set()
+        return projection.project_snapshot(
+            latest[0], self._catalogue, eligible_character_ids=frozenset(eligible)
+        )
 
-    def _handle_relay_error(self, exc: FleetRelayError) -> None:
-        logger.warning("Fleet sharing relay request failed: %s", exc.code)
-        if exc.code in ("forbidden", "unauthorized"):
-            self._set_status(SharingStatus(state="refused", detail=exc.code))
-            # Eligibility or the device session itself may be gone; a
-            # stale catalogue must not keep matching rows against links
-            # that no longer hold, so the next successful contact
-            # re-verifies it from scratch rather than trusting the cache.
-            self._catalogue = None
-            self._catalogue_refreshed_at = None
+    def _recovery_work(self):
+        pending = self._state.pending_recovery
+        fence = self._fence()
+        if pending is not None:
+            expired = (
+                self._remaining(pending.challenge.expires_at) <= 0
+                if pending.challenge
+                else not -60 < self._remaining(pending.issued_at) <= 60
+            )
+            if expired:
+                pending = None
+        if pending is None:
+            pending = s.PendingRecovery(secrets.token_urlsafe(32), self._utc_text())
+            self._persist(replace(self._state, pending_recovery=pending), fence)
+        operation = "complete_recovery" if pending.challenge else "begin_recovery"
+        return (Work(operation, "recovery", priority=1),)
+
+    def _execute(self, work, fence):
+        self._check(fence, work=work)
+        sent = failed = False
+        try:
+            state = self._state
+            origin = resolve_relay_origin(paired_origin=state.relay_origin)
+            if self._client is None or self._client_origin != origin:
+                self._client = self._client_factory(origin)
+                self._client_origin = origin
+            private_key = self._unwrap_private_key(
+                state.identity.protected_private_key_b64
+            )
+            if (
+                not isinstance(private_key, bytes)
+                or len(private_key) != crypto.RAW_PRIVATE_KEY_BYTES
+            ):
+                raise ValueError("Key unavailable")
+            args = {}
+            operation = work.operation
+            if OPERATIONS[operation] != "bootstrap":
+                candidate = replace(
+                    self._state, last_revision=self._state.last_revision + 1
+                )
+                if operation == "set_participation":
+                    candidate = replace(
+                        candidate,
+                        pending_participation=replace(
+                            candidate.pending_participation, attempted=True
+                        ),
+                    )
+                self._persist(candidate, fence, work=work)
+                args = {
+                    "session_id": self._state.session_id,
+                    "private_key": private_key,
+                    "revision": self._state.last_revision,
+                    "now": self._utc_now(),
+                }
+                if operation == "publish_snapshot":
+                    args["rows"] = work.payload
+                elif operation == "set_participation":
+                    args.update(
+                        enabled=work.payload.enabled,
+                        expected_generation=work.payload.expected_generation,
+                    )
+                    self._part_observe = True
+                elif operation == "control_source":
+                    args["command"] = work.payload
+                    self._source_observe.add(work.payload.source_id)
+                elif operation == "acknowledge_capabilities":
+                    args["capabilities"] = CAPABILITIES
+            elif operation == "begin_recovery":
+                pending = self._state.pending_recovery
+                args = dict(
+                    private_key=private_key,
+                    request_id=pending.request_id,
+                    issued_at=pending.issued_at,
+                )
+            elif operation == "complete_recovery":
+                args = dict(
+                    private_key=private_key,
+                    challenge=self._state.pending_recovery.challenge,
+                )
+            elif operation == "begin_pairing":
+                args = dict(
+                    public_key_spki=base64.b64decode(
+                        state.identity.public_key_spki_b64
+                    ),
+                    requested_capabilities=CAPABILITIES,
+                )
+            elif operation == "complete_pairing":
+                pairing = self._state.pending_pairing
+                self._persist(
+                    replace(
+                        self._state,
+                        pending_pairing=replace(pairing, completion_attempted=True),
+                    ),
+                    fence,
+                    work=work,
+                )
+                args = dict(
+                    pairing_id=pairing.pairing_id,
+                    challenge=crypto.pairing_challenge_preimage(pairing.pairing_id),
+                    private_key=private_key,
+                )
+            self._check(fence, work=work)
+            if (
+                operation in ("read_snapshot", "publish_snapshot")
+                and work.key != "withdraw"
+            ):
+                with self._lock:
+                    inhibited = self._inhibit
+                if inhibited or not self._enabled():
+                    raise _Obsolete
+            sent = True
+            started = self._clock()
+            result = getattr(self._client, operation)(**args)
+            receipt = self._clock()
+            self._check(fence, work=work)
+            self._accept(work, result, fence, started, receipt)
+        except FleetRelayError as exc:
+            failed = True
+            self._check(fence, work=work)
+            self._relay_error(work, exc, fence)
+        finally:
+            if sent:
+                self._scheduler.completed(
+                    work,
+                    self._clock(),
+                    failed=failed,
+                    jitter=self._jitter() if failed else 0,
+                )
+                # Completion may retire a journal (or be obsolete). Do not keep
+                # historical UUID backoff, or resurrect it after reconciliation.
+                self._prune_source_work()
+
+    def _accept(self, work, result, fence, started, receipt):
+        operation = work.operation
+        if operation in ("fetch_device", "acknowledge_capabilities"):
+            self._accept_device(result, fence, work)
+        elif operation == "renew_session":
+            self._persist(
+                replace(self._state, session_expires_at=result), fence, work=work
+            )
+            self._expiry_binding = None
+        elif operation == "fetch_catalogue":
+            self._set_catalogue(result, fence=fence)
+            self._due["catalogue"] = self._clock() + CATALOGUE_REFRESH_INTERVAL_S
+        elif operation == "fetch_eligibility":
+            self._eligibility = result
+            self._due["eligibility"] = self._clock() + 2.0
+            self._update_status(eligibility=result)
+        elif operation == "publish_snapshot":
+            self._last_published = work.payload
+            self._last_publish_at = self._clock()
+            if work.key == "withdraw":
+                self._withdraw_needed = False
+        elif operation == "read_snapshot":
+            self._due["read"] = self._clock() + 1.0
+            with self._lock:
+                if self._fence_locked() != fence:
+                    raise _Obsolete
+                event = self._remote_event_locked(
+                    result, receipt, max(0, receipt - started), "replace"
+                )
+            self._notify("remote", event)
+        elif operation == "set_participation":
+            self._persist(
+                replace(
+                    self._state,
+                    observed_participation=result,
+                    pending_participation=None,
+                ),
+                fence,
+                work=work,
+            )
+            self._participation_ack(result.enabled)
+        elif operation == "fetch_sources":
+            self._accept_sources(result, fence, work)
+        elif operation == "control_source":
+            self._finish_source(work.payload, result, fence, work)
+        elif operation == "begin_recovery":
+            self._persist(
+                replace(
+                    self._state,
+                    pending_recovery=replace(
+                        self._state.pending_recovery, challenge=result
+                    ),
+                ),
+                fence,
+                work=work,
+            )
+        elif operation == "complete_recovery":
+            self._accept_recovery(result, fence, work)
+        elif operation == "begin_pairing":
+            pairing = replace(
+                self._state.pending_pairing,
+                pairing_id=result.pairing_id,
+                approval_url=result.approval_url,
+                expires_at=result.expires_at,
+            )
+            self._persist(
+                replace(self._state, pending_pairing=pairing), fence, work=work
+            )
+            self._update_status(
+                fence=fence,
+                pairing="awaiting_approval",
+                approval_url=pairing.approval_url,
+                pairing_action_id=self._pairing_action_id,
+            )
+        elif operation == "complete_pairing":
+            candidate = replace(
+                s.replace_session(self._state, result.session_id),
+                pending_pairing=None,
+                pending_recovery=None,
+            )
+            self._persist(candidate, fence, work=work)
+            self._reset_session()
+            self._resume_metadata = True
+            self._update_status(pairing="acknowledged", approval_url=None)
+        self._check(replace(fence, session=self._state.session_id), work=work)
+        if not self._needs_fresh_intent and self._state.auth_pause is None:
+            self._update_status(state="active", detail=None)
+
+    def _accept_device(self, device, fence, work):
+        candidate = replace(
+            self._state,
+            device_id=device.device_id,
+            session_expires_at=device.session_expires_at,
+            feature_enabled=device.feature_enabled,
+            approved_capabilities=device.approved_capabilities,
+            session_approved_capabilities=device.session_approved_capabilities,
+            acknowledged_capabilities=device.acknowledged_capabilities,
+            observed_participation=device.participation,
+        )
+        intent = candidate.pending_participation
+        acknowledged = False
+        if intent is not None:
+            if (
+                intent.enabled
+                and intent.expected_generation is None
+                and intent.intent_id != self._fresh_on
+            ) or (
+                intent.enabled
+                and intent.expected_generation is not None
+                and device.participation.generation > intent.expected_generation
+                and not device.participation.enabled
+            ):
+                self._needs_fresh_intent = True
+            elif device.participation.enabled == intent.enabled:
+                candidate = replace(candidate, pending_participation=None)
+                acknowledged = True
+            elif not intent.enabled or intent.expected_generation is None:
+                candidate = replace(
+                    candidate,
+                    pending_participation=replace(
+                        intent,
+                        expected_generation=device.participation.generation,
+                        attempted=False,
+                    ),
+                )
+        self._persist(candidate, fence, work=work)
+        self._needs_device = self._part_observe = False
+        self._resume_metadata = False
+        self._due["device"] = self._clock() + 60.0
+        self._expiry()
+        if self._needs_fresh_intent:
+            self._update_status(
+                state="refused",
+                detail="needs_fresh_intent",
+                participation="needs_confirmation",
+            )
+        elif acknowledged:
+            self._participation_ack(device.participation.enabled)
+        elif intent is None and device.participation.enabled:
+            with self._lock:
+                self._inhibit = False
+            self._update_status(local_inhibited=False)
+        if not device.participation.enabled:
+            self._eligibility = None
+            self._clear_remote()
+        self._update_status(observed_participation=device.participation)
+
+    def _participation_ack(self, enabled):
+        with self._lock:
+            self._inhibit = not enabled
+        self._fresh_on = None
+        self._needs_fresh_intent = self._part_observe = False
+        self._eligibility = None
+        self._due["eligibility"] = 0
+        if not enabled:
+            self._clear_remote()
+        self._update_status(
+            participation="acknowledged",
+            local_inhibited=not enabled,
+            eligibility=None,
+            observed_participation=self._state.observed_participation,
+        )
+
+    def _accept_sources(self, result, fence, work):
+        commands = self._state.pending_source_commands
+        updated = []
+        clear = expired = False
+        expired_results = []
+        for command in commands:
+            if command.source_id not in self._source_observe:
+                updated.append(command)
+                continue
+            view = next(
+                (
+                    v
+                    for v in result.sources
+                    if v.source_id.lower() == command.source_id.lower()
+                ),
+                None,
+            )
+            if isinstance(command, p.StopSource):
+                if view and view.state == "ended":
+                    clear = True
+                    continue
+                updated.append(
+                    p.StopSource(command.source_id, view.generation if view else 0)
+                )
+            elif view is None:
+                if self._remaining(command.intent_created_at) > -60:
+                    updated.append(command)
+                else:
+                    expired = True
+                    expired_results.append(self._source_summary(command, "expired"))
+            # An already admitted ID is acknowledged, even ended. An absent
+            # expired Start is finished without ever minting another consent.
+        self._persist(
+            replace(self._state, pending_source_commands=tuple(updated)),
+            fence,
+            work=work,
+        )
+        self._source_observe.clear()
+        if self._sources:
+            live = {v.source_id for v in self._sources.sources if v.state != "ended"}
+            current = {v.source_id for v in result.sources if v.state != "ended"}
+            clear |= bool(live - current)
+        self._sources = result
+        self._due["sources"] = self._clock() + 2.0
+        if clear:
+            self._clear_remote()
+        self._update_status(
+            fence=fence,
+            sources=result,
+            source_results=(*self.status().source_results, *expired_results)[
+                -p.MAX_SOURCE_INTENTS :
+            ],
+            source_control="persisted"
+            if updated
+            else "expired"
+            if expired
+            else "acknowledged",
+        )
+
+    def _finish_source(self, command, view, fence, work):
+        commands = tuple(
+            c
+            for c in self._state.pending_source_commands
+            if c.source_id.lower() != command.source_id.lower()
+        )
+        self._persist(
+            replace(self._state, pending_source_commands=commands), fence, work=work
+        )
+        self._source_observe.discard(command.source_id)
+        self._due["sources"] = 0
+        # The individual response is an observation of THIS UUID, not every
+        # queued row. Retain it until the next complete owned-source read.
+        if self._sources is not None:
+            self._sources = replace(
+                self._sources,
+                sources=(
+                    *(
+                        v
+                        for v in self._sources.sources
+                        if v.source_id.lower() != view.source_id.lower()
+                    ),
+                    view,
+                ),
+            )
+        if view.state == "ended":
+            self._clear_remote()
+        self._update_status(source_control="acknowledged", sources=self._sources)
+
+    def _accept_recovery(self, result, fence, work):
+        if result.result == "reconnected":
+            pairing = self._state.pending_pairing
+            candidate = replace(
+                s.replace_session(
+                    self._state, result.session_id, expires_at=result.session_expires_at
+                ),
+                device_id=result.device_id,
+                approved_capabilities=result.approved_capabilities,
+                observed_participation=result.participation,
+                pending_recovery=None,
+                auth_pause=None,
+                pending_pairing=None,
+            )
+            self._persist(candidate, fence, work=work)
+            self._reset_session()
+            if pairing is not None:
+                self._resume_metadata = True
+                self._update_status(
+                    fence=replace(fence, session=self._state.session_id),
+                    pairing="acknowledged",
+                    approval_url=None,
+                )
         else:
-            self._set_status(SharingStatus(state="error", detail=exc.code))
+            deadline = None
+            if result.retry_after_ms is not None:
+                floor = 60 if result.result == "account_ineligible" else 1
+                deadline = (
+                    (
+                        self._utc_now()
+                        + timedelta(seconds=max(floor, result.retry_after_ms / 1000))
+                    )
+                    .isoformat(timespec="milliseconds")
+                    .replace("+00:00", "Z")
+                )
+            self._persist(
+                replace(
+                    self._state,
+                    pending_recovery=None,
+                    auth_pause=s.AuthPause(result.result, deadline),
+                ),
+                fence,
+                work=work,
+            )
+            self._update_status(
+                state="refused",
+                detail="needs_fresh_key"
+                if result.requires_fresh_key_setup
+                else result.result,
+            )
 
-    def _enter_backoff(self) -> tuple[float, bool]:
-        self._backoff = min(
-            MAX_BACKOFF_S, self._backoff * 2 if self._backoff else BASE_BACKOFF_S
-        )
-        # Not interruptible: a steady stream of submit() calls must not
-        # collapse this wait -- only the deadline elapsing (or stop())
-        # ends it. See the module docstring's "Status" paragraph and
-        # _run()'s own handling of the returned flag.
-        return self._backoff + self._jitter() * BASE_BACKOFF_S, False
+    def _relay_error(self, work, exc, fence):
+        code = exc.code if exc.code in ERROR_CODES else "server_error"
+        self._update_status(state="error", detail=code)
+        operation = work.operation
+        if operation == "complete_pairing":
+            if exc.status == 409:
+                # Unapproved/expired/consumed is coarse conflict, NOT proof of
+                # revocation. Polling remains bounded by the bootstrap scheduler.
+                pairing = replace(
+                    self._state.pending_pairing, completion_attempted=False
+                )
+                self._persist(
+                    replace(self._state, pending_pairing=pairing), fence, work=work
+                )
+            return
+        if (
+            operation == "begin_recovery"
+            and exc.status == 401
+            and self._state.pending_pairing is not None
+            and self._state.pending_pairing.mode == "initial"
+        ):
+            self._update_status(pairing="needs_retry", approval_url=None)
+        if operation == "complete_recovery":
+            # One-use completion might already have committed. A fresh challenge
+            # with this registered key is the only safe way to learn a new session.
+            self._persist(replace(self._state, pending_recovery=None), fence, work=work)
+            return
+        if exc.status == 401 and OPERATIONS[operation] != "bootstrap":
+            self._persist(s.replace_session(self._state, None), fence, work=work)
+            self._reset_session()
+        elif operation == "set_participation":
+            self._part_observe = self._needs_device = True
+        elif operation == "control_source":
+            self._source_observe.add(work.payload.source_id)
+        elif exc.code in ("forbidden", "capability_required", "feature_disabled"):
+            self._needs_device = True
+            self._eligibility = None
+            self._set_catalogue(None)
+            self._due["catalogue"] = self._due["eligibility"] = 0
 
-    def _safe_load_state(self) -> state_mod.SharingState | None:
-        try:
-            return self._load_state()
-        except Exception:
-            logger.exception("Could not load fleet sharing state")
-            return None
 
-    def _safe_unwrap(self, blob: str) -> bytes | None:
-        try:
-            return self._unwrap_private_key(blob)
-        except Exception:
-            logger.exception("Could not unwrap the fleet sharing device key")
-            return None
-
-
-__all__ = ["FleetSharingWorker", "SharingStatus"]
+__all__ = [
+    "CatalogueEvent",
+    "FleetSharingWorker",
+    "PendingSourceStatus",
+    "RemoteEvent",
+    "SharingMetadata",
+    "SharingStatus",
+]

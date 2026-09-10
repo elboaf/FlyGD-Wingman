@@ -14,6 +14,7 @@ import io
 import json
 import urllib.error
 from datetime import UTC, datetime
+from email.message import Message
 
 import pytest
 from cryptography.hazmat.primitives.serialization import load_der_public_key
@@ -37,7 +38,8 @@ def _headers_of(request) -> dict:
 class FakeTransport:
     """Records every request and serves one canned JSON body."""
 
-    def __init__(self, payload, status=200):
+    def __init__(self, payload, status=200, *, publication=False):
+        self.publication = publication
         self.body = json.dumps(payload).encode("utf-8")
         self.status = status
         self.requests = []
@@ -47,8 +49,29 @@ class FakeTransport:
         self.requests.append(request)
         self.timeouts.append(timeout)
         body, status = self.body, self.status
+        response_headers = Message()
+        if self.publication:
+            headers = _headers_of(request)
+            assert headers["x-fleet-snapshot-format"] == "publication-v1"
+            canonical = "\n".join(
+                (
+                    "fleet-v1",
+                    request.get_method(),
+                    "/api/fleet/v1/snapshot",
+                    headers["x-fleet-session"],
+                    headers["x-fleet-issued-at"],
+                    headers["x-fleet-revision"],
+                    headers["x-fleet-body-sha256"],
+                )
+            )
+            response_headers["X-Fleet-Snapshot-Format"] = "publication-v1"
+            response_headers["X-Fleet-Request-Binding"] = hashlib.sha256(
+                b"fleet-snapshot-publication-v1\n" + canonical.encode()
+            ).hexdigest()
 
         class Response:
+            headers = response_headers
+
             def __enter__(self_inner):
                 return self_inner
 
@@ -65,13 +88,17 @@ class FakeTransport:
         return Response()
 
 
-def error_transport(status: int):
+def error_transport(status: int, payload=None):
     """A transport that raises HTTPError, the way urllib does for a
     non-2xx response."""
 
     def transport(request, timeout=None):
         raise urllib.error.HTTPError(
-            request.full_url, status, "Error", {}, io.BytesIO(b"{}")
+            request.full_url,
+            status,
+            "Error",
+            {},
+            io.BytesIO(json.dumps(payload or {}).encode()),
         )
 
     return transport

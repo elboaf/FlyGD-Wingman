@@ -2374,6 +2374,82 @@ pytest — the engine is AutoHotkey.
 - [ ] `AutoHotkey-COPYING.txt` and `ffmpeg-COPYING.txt` are installed beside
       the application as **files**, not as directories containing a licence
 
+## Remote Fleet Bar (Task 9b, production shared mode still disabled)
+
+Use `fleetbar.html?dev=1` in a fresh owned browser profile and an isolated
+loopback server, not an existing authenticated browser. `DEV.fleetBar(kind)`
+provides local, remote, mixed, stale, empty, hidden, long, max, maxlocal, defensive,
+zero, nolog and roster fixtures. The dev-only branch supplies its creation fragment
+before the real page captures it; do not bypass production token admission.
+This exercises the actual standalone handler, not `app.js` or a second fake API.
+
+- [ ] At the actual 420px shell, verify full REMOTE / REMOTE · STALE meaning,
+      wrapping within the identity column rather than overlapping Damage. Check
+      subdued stale outgoing DPS/tackle, full long-name hover titles, readable
+      10000000 in both local Damage halves and truthful LOCAL health alongside
+      remote-only rows. Remote IN is an unavailable dash with no fill or warning,
+      never zero or NO LOG; local NO LOG occupies one Damage cell. Check zero,
+      independent OUT/IN scales and defensive >10m separately.
+- [ ] Scroll the long roster to its final row with mouse and keyboard. Column
+      headers stay aligned with data; only the header drags the widget. The
+      inset focus ring remains visible and focus survives live repaint. Check
+      fit, saved placement and monitor clamping on Wingman's own window.
+- [ ] With the real worker and synthetic relay, stop successful reads and local
+      telemetry: remote rows still stale at three seconds and expire at ten.
+      Repeated same-publication observations, Off/On and source clear never
+      rejuvenate old metrics. Empty successful reads withdraw immediately.
+- [ ] A hidden, quiet or NO LOG verified local suppresses its matching remote;
+      another remote remains. Unverified same-name characters remain separate.
+      No remote enters the local visibility list, seen settings or publication.
+- [ ] Fleet Bar Off hides display without changing sharing; shutdown detaches
+      remote/catalogue subscribers before bounded joins. No late row returns.
+- [ ] Repeat on installed Windows/WebView2, including native 420×90 startup and
+      real DPI/monitor behavior. Chrome evidence is not native acceptance.
+      Live two-client HTTPS/server proof belongs to Task 10; no production mode
+      enablement, OAuth or EVE interaction is authorized by this checklist.
+
+## Fleet sharing setup and source controls
+
+The setup card lives in Settings > Previews, beside Fleet combat bar and outside
+its Preview master-switch block. Use an isolated fixture relay/account for these
+checks; no production pairing, OAuth, or real EVE-window manipulation is needed
+for the synthetic render pass.
+
+- [ ] A clean/Off startup reads connection metadata once without creating a key,
+      changing the preference, publishing telemetry, or opening a browser.
+- [ ] Enter/leave Previews and hide/reopen the Wingman window. Source watching
+      follows visibility; closing never sends Stop. Source controls work with
+      sharing, previews and Fleet Bar Off and without a local telemetry runtime.
+- [ ] Connect/upgrade opens only this explicit action's saved approval URL,
+      once. Restart, hydration, expiry, and generic 401 recovery open no browser.
+      Fresh setup asks about new-key/old-pending-intent consequences and is
+      admitted only after worker proof or an explicit configured-origin change.
+- [ ] Use an owned boss with missing Fleet Read. The browser goes only to the
+      paired origin's `/auth/eve/fleet-read?character=<owned-id>`. A different
+      browser account asks for the correct account, never replacement keys.
+      Grant completion alone neither Starts verification nor enables sharing.
+- [ ] Check empty, 256-character, unavailable, feature-disabled, paused, revoked,
+      ended and unknown-source states. Eligible IDs are distinct from the boss
+      selector. Unknown pending UUIDs remain stoppable; one source's response
+      never acknowledges another. An expired unobserved Start names its UUID.
+- [ ] Tab/Space/Enter operate checkbox, boss selector, Start and keyed Stop.
+      Watch refresh preserves selector selection and Stop focus. A queued On
+      leaves Off reachable even while preference saving is held. A failed save
+      leaves the actual session choice visible with a restart-risk warning.
+- [ ] Sharing On reconciles local telemetry without restarting Wingman. Restart
+      recovers pending Off/Stop with the same IDs even while the preference is
+      Off. Quit closes delivery/watch, detaches subscribers, then bounded-stops
+      sharing before telemetry; a still-stopping worker is not replaced.
+- [ ] Hiding EVE tools refuses while sharing, pending actions, live sources or
+      unknown bound source state need controls. Enabling EVE tools stays usable.
+- [ ] **Real installed-window scaling remains required:** repeat at the actual
+      840×625 / 839×621 CSS floors on Windows at 100/125/150/200%, without CSS
+      zoom. The Task 8 artifact records Chrome plus an isolated pywebview 6.2.1
+      DEV-page run at current DPR 2 and both viewport sizes. That is not proof
+      of the installed frameless window's resize/DPI behavior or other scalings.
+- [ ] Real DPAPI, frozen packaging, live pairing/OAuth and multi-device relay
+      acceptance require their separately authorized release smoke pass.
+
 ## EVE client previews
 
 Requires a Windows machine with at least two EVE clients running. None of
@@ -3086,7 +3162,7 @@ independent of both preview thumbnails and alert preferences.
 - [ ] **All-hidden state remains usable.** Hide every running character.
       Expected: the still-open bar says `All running characters are hidden.`,
       has no row/count/badge that exposes a hidden name, and can be dragged from
-      the empty message as well as its header. Restore one character and confirm
+      its header only, leaving the roster area scrollable. Restore one character and confirm
       its row returns immediately.
 - [ ] **Visibility never resets live metrics.** While one character has live
       outgoing DPS and/or an active `SCRAM/POINT`, hide it and restore it before
