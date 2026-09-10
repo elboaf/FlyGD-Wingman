@@ -2876,18 +2876,25 @@ def sharing_codec(request, monkeypatch):
     monkeypatch.setattr(codec, "_run", filter_bytes)
 
 
-@pytest.mark.parametrize("outcome", ["saved", "stale", "prune-failure"])
+# Round-trip every geometry on both codecs; stale-revision rejection and
+# post-publication pruning do not inspect coordinates, so fractional covers
+# those outcomes without repeating every numeric boundary through each failure.
 @pytest.mark.parametrize(
-    "x,scan_range",
+    "x,scan_range,outcome",
     [
-        pytest.param(1000, 149597870700, id="whole"),
-        pytest.param(1000.125, 184688731163.59283, id="fractional"),
-        pytest.param(-1e16, 149597.8707, id="minimum"),
-        pytest.param(-9999999999999998, 149597.87070000003, id="minimum-neighbor"),
-        pytest.param(1e16, 9804046054195200, id="maximum"),
-        pytest.param(9999999999999998, 9804046054195198, id="maximum-neighbor"),
-        pytest.param(0, 187.25000012345 * 149597870700, id="fractional-au"),
-        pytest.param(-1250.5, 18469.135803 * 149597870700, id="fractional-large-au"),
+        pytest.param(x, scan_range, outcome, id=f"{geometry}-{outcome}")
+        for geometry, x, scan_range in [
+            ("whole", 1000, 149597870700),
+            ("fractional", 1000.125, 184688731163.59283),
+            ("minimum", -1e16, 149597.8707),
+            ("minimum-neighbor", -9999999999999998, 149597.87070000003),
+            ("maximum", 1e16, 9804046054195200),
+            ("maximum-neighbor", 9999999999999998, 9804046054195198),
+            ("fractional-au", 0, 187.25000012345 * 149597870700),
+            ("fractional-large-au", -1250.5, 18469.135803 * 149597870700),
+        ]
+        for outcome in ("saved", "stale", "prune-failure")
+        if outcome == "saved" or geometry == "fractional"
     ],
 )
 def test_shared_formation_lifecycle_between_accounts(
