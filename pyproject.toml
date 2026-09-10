@@ -66,7 +66,7 @@ Releases = "https://github.com/elboaf/FlyGD-Wingman/releases"
 "Terms of Service" = "https://wingman.zoolanders.vip/terms"
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff==0.16.4"]
+dev = ["pytest", "ruff==0.16.6"]
 
 # PyInstaller is build-only: its exact version is declared here and locked
 # in uv.lock, not installed with the application's runtime or dev extra.
