@@ -92,10 +92,15 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
+from ..alerts.custom import MAX_CUSTOM_RULES, AlertRuntimeSnapshot, rule_is_current
+from .gamelogs import MAX_FILES
 from .model import (
     CombatFact,
+    CustomMatch,
     FleetSnapshot,
     RosterSnapshot,
+    SourceLifecycle,
+    StreamBatch,
     StreamHealth,
     TelemetryEnvelope,
 )
@@ -125,6 +130,9 @@ _ALERT_EVENTS = {
 _WAKE = object()
 _FLEET_REFRESH = object()
 _ALERT_RESET = object()
+_CUSTOM_DRAIN = object()
+_CUSTOM_SOURCE_RESET = object()
+CUSTOM_PENDING_MAX = MAX_FILES * MAX_CUSTOM_RULES
 
 
 class _FleetMode(NamedTuple):
@@ -197,6 +205,7 @@ class TelemetryCoordinator:
         preview_host=None,
         alert_policy=None,
         sharing_enabled: Callable[[], bool] = lambda: False,
+        custom_snapshot: Callable[[], AlertRuntimeSnapshot] | None = None,
         _thread_factory: Callable[..., threading.Thread] = _real_thread_factory,
         _queue_factory: Callable[[], queue.Queue] = queue.Queue,
         _clock: Callable[[], float] = time.monotonic,
@@ -215,12 +224,24 @@ class TelemetryCoordinator:
         self._clock = _clock
 
         self._queue: queue.Queue = _queue_factory()
+        # Only custom pressure is bounded. Ingress seals a stream batch against
+        # the dispatcher's final empty observation, never against consumption.
+        self._ingress_lock = threading.Lock()
+        self._custom_snapshot = custom_snapshot
+        self._custom_pending: dict[tuple[str, str, int], CustomMatch] = {}
+        self._custom_drain_queued = False
+        self._stream_delivery_epoch = 0
+        self._custom_alert_epoch = 0
+        self._custom_admission_open = False
+        self._custom_closed = False
         self._subscribers: list[Callable[[FleetSnapshot], None]] = []
 
         # Dispatcher-thread-only state.  Nothing else may touch these: the
         # sequence in particular is the one thing whose ordering guarantee
         # would be destroyed by a second writer.
         self._sequence = 0
+        self._custom_sources: dict[str, SourceLifecycle] = {}
+        self._custom_batch_epoch = (0, 0)
         self._sessions: dict[str, object] = {}
         self._fleet_active = False
         self._fleet_roster_generation: int | None = None
@@ -458,6 +479,7 @@ class TelemetryCoordinator:
         # A folder move uses the same stop-before-start path.
         if current is not None and (folder != current or unsub is None):
             if unsub is not None:
+                self._advance_custom_delivery(open_admission=False)
                 unsub()
                 with self._lock:
                     self._stream_unsub = None
@@ -474,8 +496,12 @@ class TelemetryCoordinator:
             refresh_consumers = True
 
         if folder is not None and current is None:
-            unsub = self._stream.subscribe(self._on_stream_event)
+            epoch = self._advance_custom_delivery(open_admission=True)
+            unsub = self._stream.subscribe_batches(
+                lambda batch: self._on_stream_batch(batch, epoch)
+            )
             if not self._completed(self._stream.start(folder)):
+                self._advance_custom_delivery(open_admission=False)
                 unsub()
                 if refresh_consumers:
                     self._queue_stream_refreshes()
@@ -492,7 +518,7 @@ class TelemetryCoordinator:
         if self._wants_metrics():
             self._queue.put(_FLEET_REFRESH)
         if self._wants_alert_policy():
-            self._queue.put(_ALERT_RESET)
+            self._queue_alert_reset()
 
     def _request_fleet_mode(self, enabled: bool) -> int:
         """Order a Fleet consumer transition with producer payloads."""
@@ -514,7 +540,13 @@ class TelemetryCoordinator:
             if enabled == self._alerts_requested:
                 return
             self._alerts_requested = enabled
-        self._queue.put(_ALERT_RESET)
+        self._queue_alert_reset()
+
+    def _queue_alert_reset(self) -> None:
+        with self._ingress_lock:
+            self._custom_alert_epoch += 1
+            self._custom_pending.clear()
+            self._queue.put(_ALERT_RESET)
 
     def request_discovery(self) -> None:
         """Ask for an immediate roster scan.  Safe from any thread.
@@ -611,9 +643,82 @@ class TelemetryCoordinator:
         """Discovery's scan thread.  Must not do work; see module docstring."""
         self._queue.put(snapshot)
 
-    def _on_stream_event(self, event) -> None:
-        """Any stream delivery context. Must only enqueue; see module docstring."""
-        self._queue.put(event)
+    def _on_stream_batch(self, batch: StreamBatch, delivery_epoch: int) -> None:
+        """Admit semantic siblings atomically with their bounded custom work."""
+        with self._ingress_lock:
+            for event in batch.events:
+                self._queue.put(event)
+            # A detached callback still owns its semantic delivery. Only its
+            # custom siblings are subject to this epoch and admission gate.
+            if (
+                not batch.custom_matches
+                or not self._custom_admission_open
+                or delivery_epoch != self._stream_delivery_epoch
+            ):
+                return
+            snapshot = self._read_custom_snapshot()
+            if snapshot is None:
+                return
+            # Prune before checking capacity: an edit must not leave old tokens
+            # occupying every slot and refuse its own replacement generation.
+            self._custom_pending = {
+                key: match
+                for key, match in self._custom_pending.items()
+                if rule_is_current(
+                    snapshot, match.rule_id, match.generation, match.activation_epoch
+                )
+            }
+            for match in batch.custom_matches:
+                if rule_is_current(
+                    snapshot, match.rule_id, match.generation, match.activation_epoch
+                ):
+                    self._stage_custom(match)
+            if self._custom_pending and not self._custom_drain_queued:
+                self._custom_drain_queued = True
+                self._queue.put(_CUSTOM_DRAIN)
+
+    def _stage_custom(self, match: CustomMatch) -> bool:
+        """Caller owns ingress; source lifecycles are checked only at delivery."""
+        key = (match.character, match.rule_id, match.generation)
+        if (
+            key not in self._custom_pending
+            and len(self._custom_pending) >= CUSTOM_PENDING_MAX
+        ):
+            return False
+        self._custom_pending[key] = match
+        return True
+
+    def _read_custom_snapshot(self) -> AlertRuntimeSnapshot | None:
+        if self._custom_snapshot is None:
+            return None
+        try:
+            return self._custom_snapshot()
+        except Exception:  # noqa: BLE001 — isolate custom failure without logging private text.
+            logger.warning("Could not read custom alert authority.")
+            return None
+
+    def _advance_custom_delivery(self, *, open_admission: bool) -> int:
+        with self._ingress_lock:
+            if not open_admission and not self._custom_admission_open:
+                # Repeated stops have already fenced this owner. In particular,
+                # don't enqueue orphaned controls after its dispatcher exited.
+                return self._stream_delivery_epoch
+            self._stream_delivery_epoch += 1
+            self._custom_admission_open = open_admission and not self._custom_closed
+            self._custom_pending.clear()
+            # Source authority remains dispatcher-owned and resets in semantic
+            # order, even when the old worker cannot finish its bounded join.
+            self._queue.put(_CUSTOM_SOURCE_RESET)
+            return self._stream_delivery_epoch
+
+    def close_custom_admission(self) -> None:
+        """One-way final shutdown gate; no consumer calls or joins."""
+        with self._ingress_lock:
+            self._custom_closed = True
+            self._custom_admission_open = False
+            self._stream_delivery_epoch += 1
+            self._custom_pending.clear()
+            # Keep sentinel ownership until cutoff; it may still be queued.
 
     # ------------------------------------------------------------------
     # Dispatcher
@@ -675,6 +780,7 @@ class TelemetryCoordinator:
     def _finalize_dead_dispatcher(self) -> None:
         """Clear one confirmed-dead generation; caller owns lifecycle lock."""
         self._worker = None
+        self._custom_sources.clear()
         self._sessions = {}
         self._fleet_active = False
         self._fleet_active_generation = 0
@@ -691,11 +797,14 @@ class TelemetryCoordinator:
         self._reset_alert_policy()
 
     def _drain_queue(self) -> None:
-        while True:
-            try:
-                self._queue.get_nowait()
-            except queue.Empty:
-                return
+        with self._ingress_lock:
+            self._custom_pending.clear()
+            self._custom_drain_queued = False
+            while True:
+                try:
+                    self._queue.get_nowait()
+                except queue.Empty:
+                    return
 
     def _run(self, stop_event: threading.Event) -> None:
         while not stop_event.is_set():
@@ -713,6 +822,7 @@ class TelemetryCoordinator:
         """
         deadline = self._clock() + max(0.0, timeout)
         with self._reconcile_lock:
+            self._advance_custom_delivery(open_admission=False)
             services_stopped = False
             for _ in range(2):
                 self._reconcile_discovery(False, deadline=deadline)
@@ -778,10 +888,23 @@ class TelemetryCoordinator:
         # once per call (a cross-thread read into the preview pump), which
         # is exactly the cost the Tailer's per-poll batching avoided.
         while True:
-            try:
-                item = self._queue.get_nowait()
-            except queue.Empty:
-                break
+            with self._ingress_lock:
+                try:
+                    item = self._queue.get_nowait()
+                except queue.Empty:
+                    # Take custom work ONCE, not at each sentinel encountered
+                    # during a prolonged semantic batch. The next producer
+                    # owns a new mailbox and cannot split this sealed batch.
+                    custom_matches = tuple(self._custom_pending.values())
+                    self._custom_pending.clear()
+                    self._custom_drain_queued = False
+                    self._custom_batch_epoch = (
+                        self._stream_delivery_epoch,
+                        self._custom_alert_epoch,
+                    )
+                    break
+            if stop_event.is_set():
+                return
             if item is _WAKE:
                 # A wake is only ever put by a reconcile or a stop; when it
                 # is the stop's, everything behind it belongs to a
@@ -794,7 +917,7 @@ class TelemetryCoordinator:
 
         if stop_event.is_set():
             return
-        self._dispatch_alerts(alerts)
+        self._dispatch_alerts(alerts, custom_matches)
         self._publish()
 
     def _process(self, payload, alerts: list[AlertEvent]) -> None:
@@ -807,7 +930,13 @@ class TelemetryCoordinator:
                 self._reset_fleet_state(prime=True)
             return
         if payload is _ALERT_RESET:
+            alerts.clear()
             self._reset_alert_policy()
+            return
+        if payload is _CUSTOM_DRAIN:
+            return
+        if payload is _CUSTOM_SOURCE_RESET:
+            self._custom_sources.clear()
             return
 
         self._sequence += 1
@@ -832,6 +961,12 @@ class TelemetryCoordinator:
                 self._fleet_has_complete_roster = True
                 self._republish_sources(payload)
             return
+
+        if isinstance(payload, SourceLifecycle) and self._custom_snapshot is not None:
+            if payload.active and payload.available and payload.source_id is not None:
+                self._custom_sources[payload.character] = payload
+            else:
+                self._custom_sources.pop(payload.character, None)
 
         if self._fleet_active:
             self._consume_metrics(envelope)
@@ -941,8 +1076,10 @@ class TelemetryCoordinator:
             except Exception:
                 logger.exception("Could not request the log source for %s", character)
 
-    def _dispatch_alerts(self, alerts: list[AlertEvent]) -> None:
-        if not alerts:
+    def _dispatch_alerts(
+        self, alerts: list[AlertEvent], custom_matches: tuple[CustomMatch, ...] = ()
+    ) -> None:
+        if not alerts and not custom_matches:
             return
         policy = self._alert_policy
         if policy is None or not self._wants_alert_policy():
@@ -951,8 +1088,39 @@ class TelemetryCoordinator:
             # reconciles, and the honest answer is the one that holds when
             # the event is actually dispatched.
             return
+        if custom_matches:
+            with self._ingress_lock:
+                snapshot = self._read_custom_snapshot()
+                if (
+                    not self._custom_admission_open
+                    or self._custom_batch_epoch
+                    != (self._stream_delivery_epoch, self._custom_alert_epoch)
+                    or snapshot is None
+                ):
+                    custom_matches = ()
+                else:
+                    custom_matches = tuple(
+                        match
+                        for match in custom_matches
+                        if (source := self._custom_sources.get(match.character))
+                        is not None
+                        and source.generation == match.source_generation
+                        and source.source_id == match.source_id
+                        and rule_is_current(
+                            snapshot,
+                            match.rule_id,
+                            match.generation,
+                            match.activation_epoch,
+                        )
+                    )
+        if not alerts and not custom_matches:
+            return
         try:
-            policy.handle(alerts, self._clock())
+            if custom_matches:
+                policy.handle(alerts, self._clock(), custom_matches=custom_matches)
+            else:
+                # Built-in-only delivery preserves the legacy policy contract.
+                policy.handle(alerts, self._clock())
         except Exception:
             logger.exception("Alert policy raised while handling telemetry facts")
 

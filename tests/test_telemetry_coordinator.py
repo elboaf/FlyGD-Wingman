@@ -34,6 +34,7 @@ from wingman.telemetry.model import (
     RosterSnapshot,
     SourceId,
     SourceLifecycle,
+    StreamBatch,
     StreamHealth,
 )
 
@@ -181,12 +182,25 @@ class FakeStream:
         self.stops = 0
         self.requested = []
         self.subscribers = []
+        self.legacy_subscriptions = []
+        self.batch_subscriptions = []
         self.sources = {}
         self._health = health
         self.start_results = list(start_results or [])
         self.stop_results = list(stop_results or [])
 
     def subscribe(self, callback):
+        self.legacy_subscriptions.append(callback)
+        self.subscribers.append(callback)
+
+        def _unsub():
+            if callback in self.subscribers:
+                self.subscribers.remove(callback)
+
+        return _unsub
+
+    def subscribe_batches(self, callback):
+        self.batch_subscriptions.append(callback)
         self.subscribers.append(callback)
 
         def _unsub():
@@ -222,8 +236,15 @@ class FakeStream:
         return self._health
 
     def publish(self, event):
+        self.publish_batch(StreamBatch(events=(event,)))
+
+    def publish_batch(self, batch):
         for callback in list(self.subscribers):
-            callback(event)
+            if callback in self.batch_subscriptions:
+                callback(batch)
+            else:
+                for event in batch.events:
+                    callback(event)
 
 
 class RecordingMetrics:
@@ -271,14 +292,16 @@ class FakePreviewHost:
 class FakePolicy:
     def __init__(self, *, raises=False):
         self.calls = []
+        self.custom_calls = []
         self.raises = raises
         self.resets = 0
 
     def reset(self):
         self.resets += 1
 
-    def handle(self, events, now):
+    def handle(self, events, now, *, custom_matches=()):
         self.calls.append((list(events), now))
+        self.custom_calls.append(custom_matches)
         if self.raises:
             raise RuntimeError("policy exploded")
         return []
