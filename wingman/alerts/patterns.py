@@ -14,7 +14,8 @@ EVENTS = ("combat", "warp_scramble", "decloak")
 # warp_scramble outranks combat because "I cannot leave" changes a different
 # decision than "I am taking damage". A live higher-severity alert is never
 # repainted by a lower one.
-SEVERITY = {"warp_scramble": 3, "combat": 2, "decloak": 1}
+# Custom is a renderer kind only — never a built-in parser event.
+SEVERITY = {"warp_scramble": 3, "combat": 2, "decloak": 1, "custom": 0}
 
 # decloak carries no attacker source, so there is nothing for the NPC heuristic
 # to test and it must not be applied.

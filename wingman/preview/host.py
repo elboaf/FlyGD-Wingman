@@ -17,11 +17,13 @@ import itertools
 import logging
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import Future, TimeoutError
 from ctypes import wintypes
 from dataclasses import dataclass, replace
 from queue import Empty, SimpleQueue
 
+from ..alerts.patterns import SEVERITY
 from ..telemetry.model import RosterClient, RosterSnapshot
 from . import (
     cycle,
@@ -138,6 +140,14 @@ def _legacy_snapshot(clients) -> RosterSnapshot:
             for client in clients
         ),
     )
+
+
+@dataclass(frozen=True)
+class _PendingAlert:
+    character: str
+    event: str
+    spec: dict
+    severity: int
 
 
 @dataclass(frozen=True)
@@ -290,7 +300,9 @@ class PreviewHost:
         crop_store=None,
         on_crops_changed=None,
         crop_controller_factory=None,
+        custom_alert_current: Callable[[str, int, int], bool] | None = None,
     ):
+        self._custom_alert_current = custom_alert_current
         self._crop_controller_factory = crop_controller_factory
         self._crop_controller = None
         self._crop_store = crop_store
@@ -463,7 +475,7 @@ class PreviewHost:
         # PostMessageW carries integers only, so the payload travels in a
         # field under the lock and only the signal is posted. A list, not
         # one slot, because two clients can be alerted between ticks.
-        self._pending_alerts = []
+        self._pending_alerts: list[_PendingAlert] = []
         # Same shape as _desired_hotkeys/_pending_alerts: PostMessageW
         # carries integers only, so a typed size travels in a field under
         # the lock and only the signal is posted. A dict, keyed by stable
@@ -991,20 +1003,33 @@ class PreviewHost:
         WM_APP_ALERT, and in normal operation that is within ~80ms. Only
         a pump that is not running at all -- previews disabled, the host
         window not yet created -- lets this grow, and there the right
-        answer is dropping the oldest, not remembering an unbounded
-        session's worth of fights for whenever the pump comes back.
+        answer is refusing excess work, not remembering an unbounded
+        session's worth of fights for whenever the pump comes back. A
+        higher-severity arrival may replace the oldest strictly lower
+        entry, but never displaces an equal or higher-severity warning.
         """
+        incoming = _PendingAlert(character, event, dict(spec), SEVERITY[event])
         with self._lock:
-            self._pending_alerts.append((character, event, dict(spec)))
-            if len(self._pending_alerts) > PENDING_ALERTS_MAX:
-                del self._pending_alerts[:-PENDING_ALERTS_MAX]
+            if len(self._pending_alerts) == PENDING_ALERTS_MAX:
+                victim = next(
+                    (
+                        i
+                        for i, old in enumerate(self._pending_alerts)
+                        if old.severity < incoming.severity
+                    ),
+                    None,
+                )
+                if victim is None:
+                    return
+                del self._pending_alerts[victim]
+            self._pending_alerts.append(incoming)
         self._post(win32.WM_APP_ALERT)
 
     def _post(self, msg) -> None:
         if self._hwnd:
             win32.bind().user32.PostMessageW(self._hwnd, msg, 0, 0)
 
-    def _drain_alerts(self) -> list:
+    def _drain_alerts(self) -> list[_PendingAlert]:
         with self._lock:
             pending, self._pending_alerts = self._pending_alerts, []
         return pending
@@ -2494,7 +2519,33 @@ class PreviewHost:
             self._minimize_after_activation(libs, pending)
         return result
 
-    def _apply_alerts(self, libs, pending) -> None:
+    def _custom_alert_is_current(self, spec: dict) -> bool:
+        current = self._custom_alert_current
+        if current is None:
+            return False
+        rule_id = spec.get("custom_rule_id")
+        generation = spec.get("custom_generation")
+        epoch = spec.get("custom_activation_epoch")
+        if (
+            not isinstance(rule_id, str)
+            or not rule_id
+            or type(generation) is not int
+            or type(epoch) is not int
+        ):
+            return False
+        # Zero is reserved for controller-created Test, never runtime work.
+        if (generation, epoch) == (0, 0):
+            if spec.get("custom_test") is not True:
+                return False
+        elif generation < 1 or epoch < 1:
+            return False
+        try:
+            return current(rule_id, generation, epoch)
+        except Exception as exc:  # noqa: BLE001 — a broken custom predicate must not stop built-in arming or the native pump.
+            logger.warning("Custom alert validation failed (%s)", type(exc).__name__)
+            return False
+
+    def _apply_alerts(self, libs, pending: list[_PendingAlert]) -> None:
         """Arm the preview each event names, then make sure the tick timer
         matches reality.
 
@@ -2519,7 +2570,8 @@ class PreviewHost:
         enable in Settings for anyone who wants the opposite.
         """
         now = time.monotonic()
-        for character, event, spec in pending:
+        for alert in pending:
+            character, event, spec = alert.character, alert.event, alert.spec
             win = self._windows.get(character)
             if win is None:
                 logger.debug(
@@ -2527,6 +2579,10 @@ class PreviewHost:
                     character,
                     event,
                 )
+                continue
+            # A committed edit or final close may have happened after the drain.
+            # Check here, outside the mailbox lock, at the native arm boundary.
+            if event == "custom" and not self._custom_alert_is_current(spec):
                 continue
             win.arm_alert(event, spec, now)
         self._update_alert_timer(libs)

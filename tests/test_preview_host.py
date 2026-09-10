@@ -2242,6 +2242,7 @@ def test_teardown_clears_pending_alerts_and_selection():
     # window -- so _post's `if self._hwnd:` guard skips the real Win32 call
     # this fake libs object does not need to answer for.
     h.raise_alert("Alice", "combat", {"color": "#ff4d4d"})
+    h.raise_alert("Alice", "custom", _custom_alert_spec())
     h._hwnd = 0x99
     h._selected_key = "Alice"
     h._focused_key = "Alice"
@@ -2281,19 +2282,303 @@ def test_teardown_clears_active_hotkeys_and_group_history():
     assert h._last_group_cycled == {}, "_teardown must clear _last_group_cycled"
 
 
-def test_raise_alert_drops_oldest_beyond_the_cap():
-    """The queue is drained every ~80ms in normal operation (WM_APP_ALERT
-    fires _apply_alerts on the pump), so anything beyond a handful means
-    nothing is draining -- previews disabled, or the host window not yet
-    created. An hour of accumulated alerts must not all replay once the
-    pump comes back; only the most recent ones should."""
-    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+def _custom_alert_spec(**changes):
+    return {
+        "color": "#ff8c42",
+        "pulses": 3,
+        "flash_rate": "normal",
+        "persist_until_selected": False,
+        "custom_rule_id": "rule",
+        "custom_generation": 1,
+        "custom_activation_epoch": 1,
+        **changes,
+    }
+
+
+@pytest.fixture
+def alert_mailbox(monkeypatch):
+    def make(**kwargs):
+        h = host.PreviewHost(on_layout_changed=lambda *a: None, **kwargs)
+        posted, armed = [], []
+        monkeypatch.setattr(h, "_post", posted.append)
+        h._windows = {
+            "Alice": SimpleNamespace(
+                arm_alert=lambda event, spec, now: armed.append((event, spec)),
+            )
+        }
+        return h, posted, armed
+
+    return make
+
+
+def test_alert_queue_equal_rank_full_refuses_newest_and_retains_fifo(alert_mailbox):
+    h, posted, armed = alert_mailbox()
     for i in range(host.PENDING_ALERTS_MAX + 5):
-        h.raise_alert(str(i), "combat", {})
+        h.raise_alert("Alice", "combat", {"sequence": i})
     assert len(h._pending_alerts) == host.PENDING_ALERTS_MAX
-    # Oldest dropped, newest kept.
-    kept = [character for character, _event, _spec in h._pending_alerts]
-    assert kept == [str(i) for i in range(5, host.PENDING_ALERTS_MAX + 5)]
+    h._apply_alerts(None, h._drain_alerts())
+    assert [spec["sequence"] for _, spec in armed] == list(range(10))
+    assert posted == [host.win32.WM_APP_ALERT] * 10
+
+
+def test_alert_queue_custom_full_scram_replaces_oldest_lower(alert_mailbox):
+    h, posted, armed = alert_mailbox(custom_alert_current=lambda *args: True)
+    for i in range(host.PENDING_ALERTS_MAX):
+        h.raise_alert("Alice", "custom", _custom_alert_spec(sequence=i))
+    h.raise_alert("Alice", "warp_scramble", {"sequence": 10})
+    assert len(h._pending_alerts) == host.PENDING_ALERTS_MAX
+    assert armed == []  # Admission must never arm on the producer's thread.
+    h._apply_alerts(None, h._drain_alerts())
+    assert [spec["sequence"] for _, spec in armed] == list(range(1, 11))
+    assert armed[-1][0] == "warp_scramble"
+    assert posted == [host.win32.WM_APP_ALERT] * 11
+
+
+def test_alert_queue_builtin_full_refuses_custom(alert_mailbox):
+    h, posted, armed = alert_mailbox()
+    for i in range(host.PENDING_ALERTS_MAX):
+        h.raise_alert("Alice", "decloak", {"sequence": i})
+    h.raise_alert("Alice", "custom", _custom_alert_spec(sequence=10))
+    h._apply_alerts(None, h._drain_alerts())
+    assert [(event, spec["sequence"]) for event, spec in armed] == [
+        ("decloak", i) for i in range(10)
+    ]
+    assert posted == [host.win32.WM_APP_ALERT] * 10
+
+
+def test_alert_queue_mixed_replaces_oldest_strictly_lower_not_lowest(alert_mailbox):
+    h, posted, armed = alert_mailbox(custom_alert_current=lambda *args: True)
+    events = ["warp_scramble", "combat", "decloak", "custom"] + ["combat"] * 6
+    for i, event in enumerate(events):
+        h.raise_alert("Alice", event, _custom_alert_spec(sequence=i))
+    h.raise_alert("Alice", "combat", {"sequence": 10})
+    h._apply_alerts(None, h._drain_alerts())
+    # The scram and equal-rank combat survive; decloak is older than custom.
+    assert [spec["sequence"] for _, spec in armed] == [0, 1, 3, 4, 5, 6, 7, 8, 9, 10]
+    assert posted == [host.win32.WM_APP_ALERT] * 11
+
+
+def test_pending_alert_custom_payload_is_copied_and_checked_only_at_arm(alert_mailbox):
+    checked = []
+    h, _, armed = alert_mailbox(
+        custom_alert_current=lambda *tokens: checked.append(tokens) or True
+    )
+    assert checked == []  # Construction must remain inert.
+    spec = _custom_alert_spec()
+    h.raise_alert("Alice", "custom", spec)
+    spec.update(color="#000000", custom_generation=99)
+    assert checked == []
+    assert armed == []
+    h._apply_alerts(None, h._drain_alerts())
+    assert checked == [("rule", 1, 1)]
+    assert armed == [("custom", _custom_alert_spec())]
+
+
+@pytest.mark.parametrize("outcome", ["absent", "false", "raises"])
+def test_pending_alert_custom_predicate_failure_leaves_builtins_working(
+    alert_mailbox, outcome, caplog
+):
+    def current(*tokens):
+        if outcome == "raises":
+            raise RuntimeError("private match text")
+        return False
+
+    kwargs = {} if outcome == "absent" else {"custom_alert_current": current}
+    h, _, armed = alert_mailbox(**kwargs)
+    h.raise_alert("Alice", "custom", _custom_alert_spec())
+    h.raise_alert("Alice", "combat", {})
+    h._apply_alerts(None, h._drain_alerts())
+    assert armed == [("combat", {})]
+    assert "private match text" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"custom_rule_id": None},
+        {"custom_rule_id": ""},
+        {"custom_rule_id": []},
+        {"custom_generation": None},
+        {"custom_generation": True},
+        {"custom_generation": 1.0},
+        {"custom_generation": "1"},
+        {"custom_generation": -1},
+        {"custom_activation_epoch": None},
+        {"custom_activation_epoch": True},
+        {"custom_activation_epoch": 1.0},
+        {"custom_generation": 0},
+        {"custom_activation_epoch": 0},
+        {"custom_generation": 0, "custom_activation_epoch": 0},
+        {"custom_generation": 0, "custom_activation_epoch": 0, "custom_test": 1},
+    ],
+)
+def test_pending_alert_custom_malformed_tokens_never_reach_predicate(
+    alert_mailbox, changes
+):
+    checked = []
+    h, _, armed = alert_mailbox(
+        custom_alert_current=lambda *tokens: checked.append(tokens) or True
+    )
+    h.raise_alert("Alice", "custom", _custom_alert_spec(**changes))
+    h._apply_alerts(None, h._drain_alerts())
+    assert checked == []
+    assert armed == []
+
+
+def test_pending_alert_custom_explicit_test_zero_tokens_are_revalidated(alert_mailbox):
+    checked = []
+    h, _, armed = alert_mailbox(
+        custom_alert_current=lambda *tokens: checked.append(tokens) or True
+    )
+    spec = _custom_alert_spec(
+        custom_test=True, custom_generation=0, custom_activation_epoch=0
+    )
+    h.raise_alert("Alice", "custom", spec)
+    h._apply_alerts(None, h._drain_alerts())
+    assert checked == [("rule", 0, 0)]
+    assert armed == [("custom", spec)]
+
+
+@pytest.mark.parametrize("event", ["custom", "combat"])
+def test_pending_alert_without_preview_is_a_drained_noop(alert_mailbox, event):
+    h, _, armed = alert_mailbox(custom_alert_current=lambda *tokens: True)
+    h._windows.clear()
+    h.raise_alert("Absent", event, _custom_alert_spec())
+    h._apply_alerts(None, h._drain_alerts())
+    assert armed == []
+    assert h._drain_alerts() == []
+
+
+@pytest.mark.parametrize("change", ["edit", "remove", "disable", "off-on", "close"])
+@pytest.mark.parametrize("test_presentation", [False, True])
+def test_pending_alert_custom_rechecks_controller_authority_after_drain(
+    alert_mailbox, tmp_path, change, test_presentation
+):
+    from wingman import settings
+    from wingman.alerts.controller import AlertsController, AlertsPorts
+    from wingman.telemetry.model import CustomMatcherHealth
+
+    path = tmp_path / "settings.json"
+    document = settings.load(path)
+    with settings.update(document, path) as data:
+        data["preview"]["enabled"] = True
+        data["preview"]["alerts"]["enabled"] = True
+        data["preview"]["alerts"]["custom_rules"] = [
+            {"id": "rule", "name": "Custom", "search": "fleet invite", "enabled": True}
+        ]
+    controller = AlertsController(
+        document,
+        ports=AlertsPorts(
+            update_settings=lambda: settings.update(document, path),
+            reader_state=dict,
+            matcher_health=lambda: CustomMatcherHealth("waiting"),
+            preview_characters=lambda: ("Alice",),
+            preview_available=lambda: True,
+            raise_alert=lambda *args: h.raise_alert(*args),
+            play_sound=lambda *args: None,
+        ),
+    )
+    h, _, armed = alert_mailbox(custom_alert_current=controller.is_current)
+    snapshot = controller.runtime_snapshot()
+    row = snapshot.executable[0]
+    if test_presentation:
+        assert controller.test(
+            "rule", {"color": "#ff8c42", "sound": "none", "cooldown_s": 8}
+        )["applied"]
+    else:
+        h.raise_alert(
+            "Alice",
+            "custom",
+            _custom_alert_spec(
+                custom_generation=row.generation,
+                custom_activation_epoch=snapshot.activation_epoch,
+            ),
+        )
+    pending = h._drain_alerts()
+    assert armed == []
+    if change == "close":
+        controller.close_runtime()
+    elif change == "remove":
+        assert controller.remove("rule")["applied"]
+    elif change == "disable":
+        assert controller.set_enabled("rule", False)["applied"]
+    elif change == "edit":
+        draft = controller.state()["rules"][0]
+        draft["search"] = "different query"
+        assert controller.edit("rule", draft)["applied"]
+    else:
+        for enabled in (False, True):
+            with settings.update(document, path) as data:
+                data["preview"]["alerts"]["enabled"] = enabled
+    h._apply_alerts(None, pending)
+    # Test is style-only: edits/master changes do not revoke an existing ID.
+    assert bool(armed) is (test_presentation and change not in {"close", "remove"})
+
+
+@pytest.mark.parametrize(
+    "persist,focused", [(False, False), (True, False), (True, True)]
+)
+def test_custom_arming_uses_real_preview_ring_and_timer(
+    alert_mailbox, monkeypatch, persist, focused
+):
+    clock = [10.0]
+    monkeypatch.setattr(host.time, "monotonic", lambda: clock[0])
+    h, _, _ = alert_mailbox(custom_alert_current=lambda *tokens: True)
+    timers, frames = [], []
+    libs = SimpleNamespace(
+        user32=SimpleNamespace(
+            SetTimer=lambda *args: timers.append("start"),
+            KillTimer=lambda *args: timers.append("stop"),
+        )
+    )
+    win = host.PreviewWindow(
+        libs,
+        _FakeClient("Alice", hwnd=0x1234),
+        geometry.Rect(0, 0, 320, 210),
+        on_activate=lambda *args: None,
+        on_rect_changed=lambda *args: None,
+        neighbours=list,
+        screen=lambda: geometry.Rect(0, 0, 1920, 1080),
+        show_labels=False,
+    )
+    monkeypatch.setattr(win, "redraw", lambda **kwargs: None)
+    monkeypatch.setattr(
+        alertframes,
+        "FrameCache",
+        SimpleNamespace(
+            build=lambda libs, size, color: SimpleNamespace(
+                size=size,
+                colour=color,
+                push=lambda *args: frames.append("push"),
+                close=lambda *args: frames.append("close"),
+            )
+        ),
+    )
+    win.focused = focused
+    win.selected = True  # Sticky selection must not count as foreground focus.
+    h._windows = {"Alice": win}
+    h._hwnd = 0x99
+    h.raise_alert("Alice", "custom", _custom_alert_spec(persist_until_selected=persist))
+    assert not win.alert_is_armed()
+    h._apply_alerts(libs, h._drain_alerts())
+    assert win._alert.event == "custom"
+    assert win._alert.color == "#ff8c42"
+    assert win._alert.duration_ms == 1200
+    assert win._alert.pulses == 3
+    assert win._inset == alertframes.ALERT_BORDER
+    assert timers == ["start"]
+    h._tick_alerts(libs)
+    assert frames == ["push"]
+    clock[0] = 12.0
+    h._tick_alerts(libs)
+    if persist and not focused:
+        assert win.alert_is_armed()
+        win.set_focused(True)
+        h._update_alert_timer(libs)
+    assert not win.alert_is_armed()
+    assert win._inset == host.window_mod.BORDER
+    assert frames[-1] == "close"
+    assert timers == ["start", "stop"]
 
 
 def test_coalesce_hotkey_ids_uses_exact_filter_and_preserves_other_messages():
