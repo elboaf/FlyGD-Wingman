@@ -39,6 +39,8 @@ class NodeScenarioError(RuntimeError):
         if stderr:
             detail = f"{detail} [stderr: {stderr}]"
         super().__init__(detail)
+        if stack:
+            self.add_note(stack)
 
 
 class NodeScenarioFailure(NodeScenarioError):
@@ -83,8 +85,6 @@ class _ProcessState:
     stderr_tail: _StderrTail
     stdout_thread: threading.Thread
     stderr_thread: threading.Thread
-    stdout_started: threading.Event
-    stderr_started: threading.Event
 
 
 class NodeScenarioWorker:
@@ -160,7 +160,13 @@ class NodeScenarioWorker:
                         str(item),
                         stderr=stderr,
                     )
-                reply = self._validate_reply(item)
+                try:
+                    reply = self._validate_reply(item)
+                except _ProtocolError as error:
+                    stderr = self._discard_process(reason="invalid reply schema")
+                    raise NodeScenarioCrash(
+                        scenario, str(error), stderr=stderr
+                    ) from error
                 if reply["id"] != request_id:
                     stderr = self._discard_process(reason="reply id mismatch")
                     raise NodeScenarioCrash(
@@ -242,8 +248,6 @@ class NodeScenarioWorker:
                     stderr_tail=stderr_tail,
                     stdout_thread=stdout_thread,
                     stderr_thread=stderr_thread,
-                    stdout_started=stdout_started,
-                    stderr_started=stderr_started,
                 )
                 self._state = state
                 self._proc = proc
@@ -259,8 +263,6 @@ class NodeScenarioWorker:
             stderr_tail=stderr_tail,
             stdout_thread=stdout_thread,
             stderr_thread=stderr_thread,
-            stdout_started=stdout_started,
-            stderr_started=stderr_started,
         )
         self._state = state
         self._proc = proc

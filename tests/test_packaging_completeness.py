@@ -370,9 +370,7 @@ def test_workflow_setup_prerequisites_precede_pytest_without_optional_gates(
 
 
 @pytest.mark.parametrize(("workflow", "job"), PYTEST_JOBS)
-def test_every_full_test_workflow_keeps_the_independent_codec_regression(
-    workflow, job
-):
+def test_every_full_test_workflow_keeps_the_independent_codec_regression(workflow, job):
     steps = _workflow_steps(workflow, job)
     names = [step.get("name") for step in steps]
     assert "Test settings codec" in names, (

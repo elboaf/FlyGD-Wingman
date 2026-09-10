@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const readline = require('node:readline');
 const vm = require('node:vm');
+const {isNativeError} = require('node:util').types;
 const {spawnSync} = require('node:child_process');
 const {performance} = require('node:perf_hooks');
 
@@ -926,7 +927,7 @@ await main();
 await tick();
 if (unhandledRejections.length) {
   const error = unhandledRejections[0];
-  throw error instanceof Error ? error : new Error(String(error));
+  throw isNativeError(error) ? error : new Error(String(error));
 }
 const encodingBoundary = encodingBoundaries[0] || '';
 assert.ok(encodingBoundaries.every(value => value === encodingBoundary),
@@ -962,8 +963,8 @@ async function serve() {
         scenario: request && typeof request.scenario === 'string' ? request.scenario : '',
         ok: false,
         duration_ms: performance.now() - requestStarted,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack || '' : ''
+        error: isNativeError(error) ? error.message : String(error),
+        stack: isNativeError(error) ? error.stack || '' : ''
       }) + '\n');
     }
   }

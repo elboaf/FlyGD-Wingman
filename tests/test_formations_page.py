@@ -5,6 +5,7 @@ import os
 import random
 import shutil
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -137,19 +138,35 @@ def formations_worker(formations_page_markup: Path):
         ],
         cwd=ROOT,
     )
-    initial = worker.request("commit-keeps-newer-edit", {"env": {}}, timeout=60.0)
-    process = worker._proc
-    assert initial["output"] == "PASS commit-keeps-newer-edit"
     try:
         yield worker
     finally:
+        worker.close()
+
+
+def test_formations_fixture_yields_without_running_a_business_scenario(
+    formations_page_markup: Path,
+):
+    with contextmanager(formations_worker.__wrapped__)(
+        formations_page_markup
+    ) as worker:
+        assert worker._proc is None
+
+
+def test_formations_fixture_closes_worker_after_scenario_failure(
+    formations_page_markup: Path,
+):
+    with (
+        pytest.raises(NodeScenarioFailure, match="Unknown scenario"),
+        contextmanager(formations_worker.__wrapped__)(formations_page_markup) as worker,
+    ):
         try:
-            assert worker._proc is process, (
-                "formations worker restarted during the session"
-            )
-            assert process is not None and process.poll() is None
+            worker.request("not-a-formations-scenario", {"env": {}})
         finally:
-            worker.close()
+            process = worker._proc
+
+    assert process is not None and process.poll() is not None
+    assert worker._proc is None
 
 
 def test_formations_worker_protocol_reuses_process_and_isolates_requests(
@@ -184,6 +201,50 @@ def test_formations_worker_protocol_reuses_process_and_isolates_requests(
     assert formations_worker._proc is process
 
 
+@pytest.mark.parametrize("failure_mode", ["throw", "reject"])
+def test_formations_worker_preserves_vm_error_stack(
+    formations_page_markup: Path, tmp_path: Path, failure_mode: str
+):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    source = (WEB / "formations.js").read_text(encoding="utf-8")
+    module = tmp_path / "formations-vm-error.js"
+    trigger = (
+        "vmOriginFailure();"
+        if failure_mode == "throw"
+        else "Promise.resolve().then(vmOriginFailure);"
+    )
+    module.write_text(
+        source
+        + "\nfunction vmOriginFailure() { throw new Error('VM-only sentinel'); }\n"
+        + trigger,
+        encoding="utf-8",
+    )
+    worker = NodeScenarioWorker(
+        [
+            node,
+            str(ROOT / "tests/fixtures/formations_page.cjs"),
+            str(formations_page_markup),
+            str(module),
+            sys.executable,
+        ],
+        cwd=ROOT,
+    )
+    try:
+        with pytest.raises(NodeScenarioFailure) as failure:
+            worker.request("commit-keeps-newer-edit", {"env": {}})
+        assert "vmOriginFailure" in failure.value.stack
+        assert "formations-vm-error.js:" in failure.value.stack
+        assert failure.value.reply["error"] == "VM-only sentinel"
+        process = worker._proc
+        module.write_text(source, encoding="utf-8")
+        assert worker.request("commit-keeps-newer-edit", {"env": {}})["ok"] is True
+        assert worker._proc is process
+    finally:
+        worker.close()
+
+
 def test_formations_worker_consumes_encoding_overlay_without_mutating_parent(
     formations_worker: NodeScenarioWorker,
 ):
@@ -207,8 +268,8 @@ def test_formations_worker_order_isolation(formations_worker: NodeScenarioWorker
             for scenario in order
         }
 
-    process = formations_worker._proc
     forward = run(ORDER_ISOLATION_SCENARIOS)
+    process = formations_worker._proc
     reverse = run(list(reversed(ORDER_ISOLATION_SCENARIOS)))
     seed = 20260305
     shuffled = ORDER_ISOLATION_SCENARIOS.copy()

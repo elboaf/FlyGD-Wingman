@@ -4,6 +4,7 @@ import argparse
 import json
 import sys
 import xml.etree.ElementTree as ET
+from functools import cache
 from pathlib import Path
 
 
@@ -11,10 +12,18 @@ class TimingError(Exception):
     """Raised when junit timing input is malformed."""
 
 
+@cache
 def _file_key(classname: str) -> str:
     if classname.startswith("tests."):
-        module_path = classname.removeprefix("tests.").replace(".", "/")
-        return f"tests/{module_path}.py"
+        parts = classname.split(".")
+        root = Path(__file__).resolve().parents[1]
+        # Pytest appends class names; resolve the module without importing tests
+        # or depending on the timing command's current working directory.
+        for end in range(len(parts), 1, -1):
+            candidate = "/".join(parts[:end]) + ".py"
+            if (root / candidate).is_file():
+                return candidate
+        return "/".join(parts) + ".py"
     return "<unknown>"
 
 

@@ -303,6 +303,57 @@ def test_setup_page_worker_protocol_reuses_process_and_correlates_unknown_scenar
     assert setup_page_worker._proc is process
 
 
+@pytest.mark.parametrize("failure_mode", ["throw", "reject"])
+def test_setup_page_worker_preserves_vm_error_stack(
+    setup_page_markup: Path,
+    setup_page_static_fixtures: Path,
+    tmp_path: Path,
+    failure_mode: str,
+):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    source = (WEB / "uisetup.js").read_text(encoding="utf-8")
+    module = tmp_path / "setup-vm-error.js"
+    trigger = (
+        "vmOriginFailure();"
+        if failure_mode == "throw"
+        else "Promise.resolve().then(vmOriginFailure);"
+    )
+    module.write_text(
+        source
+        + "\nfunction vmOriginFailure() { throw new Error('VM-only sentinel'); }\n"
+        + trigger,
+        encoding="utf-8",
+    )
+    worker = NodeScenarioWorker(
+        [
+            node,
+            str(ROOT / "tests/fixtures/ui_setup_page.cjs"),
+            str(setup_page_markup),
+            str(setup_page_static_fixtures),
+            str(module),
+            sys.executable,
+        ],
+        cwd=ROOT,
+    )
+    try:
+        with pytest.raises(NodeScenarioFailure) as failure:
+            worker.request("copy-unavailable", {"mode": "export", "env": {}})
+        assert "vmOriginFailure" in failure.value.stack
+        assert "setup-vm-error.js:" in failure.value.stack
+        assert failure.value.reply["error"] == "VM-only sentinel"
+        process = worker._proc
+        module.write_text(source, encoding="utf-8")
+        assert (
+            worker.request("copy-unavailable", {"mode": "export", "env": {}})["ok"]
+            is True
+        )
+        assert worker._proc is process
+    finally:
+        worker.close()
+
+
 def test_setup_page_worker_consumes_encoding_overlay_without_mutating_parent(
     setup_page_worker: NodeScenarioWorker,
 ):

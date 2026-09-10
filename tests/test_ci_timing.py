@@ -45,6 +45,29 @@ def test_summarize_aggregates_file_totals_and_slowest_cases(tmp_path: Path):
     }
 
 
+def test_summarize_groups_test_classes_with_their_module(tmp_path: Path, monkeypatch):
+    junit_xml = tmp_path / "junit.xml"
+    junit_xml.write_text(
+        """<testsuite>
+  <testcase classname="tests.test_client_discovery" name="test_module" time="1" />
+  <testcase classname="tests.test_client_discovery.TestStableSessions" name="test_class" time="2" />
+  <testcase classname="tests.test_client_discovery.TestStableSessions.TestNested" name="test_nested" time="3" />
+</testsuite>""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    result = summarize(junit_xml)
+
+    assert result["files"] == {
+        "tests/test_client_discovery.py": {"seconds": 6.0, "cases": 3}
+    }
+    assert result["case_count"] == 3
+    assert result["slowest"][0]["node_id"] == (
+        "tests.test_client_discovery.TestStableSessions.TestNested.test_nested"
+    )
+
+
 def test_summarize_raises_timing_error_for_malformed_xml(tmp_path: Path):
     malformed = tmp_path / "malformed.xml"
     malformed.write_text("<testsuites><testsuite>", encoding="utf-8")

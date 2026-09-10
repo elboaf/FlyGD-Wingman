@@ -47,7 +47,7 @@ rl.on('line', (line) => {
     reply(request, {
       ok: false,
       error: 'synthetic failure',
-      stack: 'AssertionError [ERR_ASSERTION]: synthetic failure'
+      stack: 'AssertionError [ERR_ASSERTION]: synthetic failure\n    at syntheticScenario (scenario-worker.cjs:42:7)'
     });
     return;
   }
@@ -77,6 +77,12 @@ rl.on('line', (line) => {
       error: '',
       stack: ''
     }) + '\n');
+    return;
+  }
+
+  if (request.scenario === 'bad-schema') {
+    process.stderr.write('synthetic schema stderr\n');
+    process.stdout.write(JSON.stringify(request.payload.reply) + '\n');
     return;
   }
 
@@ -159,6 +165,15 @@ def test_real_node_worker_reuses_utf8_process_then_recovers_from_failure_timeout
     assert final_proc.poll() is not None
 
 
+def test_failure_renders_javascript_stack_in_pytest_diagnostics(node_worker):
+    with pytest.raises(NodeScenarioFailure) as failure:
+        node_worker.request("fail")
+
+    rendered = str(failure.getrepr(style="short"))
+    assert "synthetic failure" in rendered
+    assert "at syntheticScenario (scenario-worker.cjs:42:7)" in rendered
+
+
 def test_reply_ids_cannot_cross_requests_or_poison_the_next_restart(
     node_worker: NodeScenarioWorker,
 ):
@@ -179,6 +194,49 @@ def test_reply_ids_cannot_cross_requests_or_poison_the_next_restart(
     assert restarted["ok"] is True
     assert restarted["text"] == "fresh after mismatch"
     assert restarted["id"] == 3
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        None,
+        {},
+        {
+            "id": 2,
+            "scenario": "bad-schema",
+            "ok": "true",
+            "duration_ms": 1.0,
+            "error": "",
+            "stack": "",
+        },
+        {
+            "id": 2,
+            "scenario": "bad-schema",
+            "ok": True,
+            "duration_ms": True,
+            "error": "",
+            "stack": "",
+        },
+    ],
+    ids=["not-object", "missing-fields", "wrong-ok-type", "wrong-duration-type"],
+)
+def test_invalid_reply_schema_discards_process_with_context_and_restarts(
+    node_worker: NodeScenarioWorker, reply
+):
+    node_worker.request("echo")
+    process = node_worker._proc
+
+    with pytest.raises(NodeScenarioCrash, match="reply") as crashed:
+        node_worker.request("bad-schema", {"reply": reply})
+
+    assert crashed.value.scenario == "bad-schema"
+    assert "synthetic schema stderr" in crashed.value.stderr
+    assert process.poll() is not None
+    assert node_worker._proc is None
+    restarted = node_worker.request("echo-after-restart", {"text": "fresh"})
+    assert restarted["text"] == "fresh"
+    assert restarted["id"] == 3
+    assert node_worker._proc.pid != process.pid
 
 
 def test_startup_failure_names_the_calling_scenario(tmp_path: Path):
