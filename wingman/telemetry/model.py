@@ -78,6 +78,22 @@ class CombatFact:
 
 
 @dataclass(frozen=True)
+class CustomMatch:
+    character: str
+    source_generation: int
+    source_id: SourceId
+    rule_id: str
+    generation: int
+    activation_epoch: int
+
+
+@dataclass(frozen=True)
+class StreamBatch:
+    events: tuple[SourceLifecycle | CombatFact, ...] = ()
+    custom_matches: tuple[CustomMatch, ...] = ()
+
+
+@dataclass(frozen=True)
 class TelemetryEnvelope(Generic[T]):
     sequence: int
     payload: T
