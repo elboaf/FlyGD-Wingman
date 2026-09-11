@@ -84,6 +84,7 @@ class Element {
   get textContent() { return (this.text || '') + this.children.map(x => x.textContent).join(''); }
   setAttribute(key, value) { this.attrs[key] = String(value); }
   getAttribute(key) { return this.attrs[key] ?? null; }
+  removeAttribute(key) { delete this.attrs[key]; }
   contains(target) { return target === this || this.children.some(child => child.contains(target)); }
   closest(selector) {
     if (selector === '.route' && this.className.split(/\s+/).includes('route')) return this;
