@@ -209,8 +209,9 @@ strict `WM.HANDLERS` allowlist; one route/screen per JS file, loaded by
 `evesettings` (the Profiles route), `formations`, `uisetup`, `list`, `panel` (upload
 panel, status strip, dialog layer), `settings`, `skills`, `fittings`,
 `firstrun`, `dev`. `fleet.js` owns Fleet telemetry's local display settings and
-its global status-strip toggle; its one boot hydration is independent of section
-visibility. `fleetsharing.js` owns the shared setup view, not worker lifetime.
+its global status-strip toggle; its boot hydration is independent of section
+visibility. Section re-entry retries only failed initial hydration, never adds
+reads after success. `fleetsharing.js` owns the shared setup view, not worker lifetime.
 `WM.route` switches destinations, `WM.section` switches
 Settings groups; both have enter/leave contracts, and leaving is load-bearing
 (keybind capture listeners must disarm). `dev.js` renders the page with fake

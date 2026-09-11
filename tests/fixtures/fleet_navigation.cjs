@@ -18,7 +18,8 @@ const calls = [];
 WM.send = (method, ...args) => {
   calls.push([method, ...args]);
   return Promise.resolve(method === 'get_bookmarks' ? data.bookmarks
-    : method === 'get_preview_hotkey_state' ? data.previews : null);
+    : method === 'get_preview_hotkey_state' ? data.previews
+    : method === 'fleet_bar_settings' ? data.fleet : null);
 };
 load('bookmarks');
 load('fleet');

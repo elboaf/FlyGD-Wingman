@@ -265,6 +265,7 @@
   // does in Api.fleet_bar_settings(), so the harness cannot paint a state
   // Python would never return. The three base rows show running-visible,
   // running-hidden, and known-offline character states.
+  var fleetBarReadFails = devSearch.get('fleetbar-read') === 'null';
   var fleetBar = {
     enabled: true,
     x: null,
@@ -2100,7 +2101,7 @@
 
   api.fleet_bar_settings = function () {
     console.log('DEV api.fleet_bar_settings()');
-    return Promise.resolve(fleetBarState());
+    return Promise.resolve(fleetBarReadFails ? null : fleetBarState());
   };
 
   api.toggle_fleet_bar = function (enabled) {
@@ -2920,6 +2921,7 @@
     previewCrops: _devCropScenario,
     previewBindCaptured: function () { window.onPreviewBindCaptured({gesture: 'Ctrl+Alt+F9'}); },
     finishPreviewCrop: function () { if (_devCropFinish) { _devCropFinish(); } },
+    failFleetBarRead: function (value) { fleetBarReadFails = !!value; },
     // `DEV.fleetHiddenLimit()` makes the backend's exact cap reachable from
     // the browser console: Ariadne stays visible, the other 64 known names
     // are hidden, and clicking Ariadne exercises the inline refusal/rollback.

@@ -2470,6 +2470,11 @@ isolated browser pass. All synthetic states below live in `dev.js`; these checks
 never require live pairing, consent, fleet commands, or a deployed authGD change.
 Record browser evidence separately from installed Windows/WebView2 acceptance.
 
+- [ ] With `?dev=1&fleetbar-read=null`, Fleet Bar controls stay disabled and name
+      the failed settings read. Set `DEV.failFleetBarRead(false)`, then enter
+      Fleet telemetry: controls recover. Later healthy re-entry does not refetch
+      or erase a session-only warning. The global toggle still works while the
+      section is closed.
 - [ ] Settings rail → Fleet telemetry shows local Fleet Bar controls (including
       Reset width and Characters) separately from shared setup. Previews retains
       client, cycle, layout, crop and keybind controls. Its Fleet shortcut enters

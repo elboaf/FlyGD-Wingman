@@ -111,7 +111,9 @@ The extraction received a focused independent polish review with **no findings**
 at that checkpoint its complete IIFE body equalled #204, and only one
 `onFleetBarState` registration and one `fleet_bar_settings` boot fetch remained.
 The later CodeRabbit-driven local row-reconciliation fix below is the only
-behavioral change to that extracted controller. The new controller harness passed
+behavioral change to that extracted controller at the first CodeRabbit checkpoint.
+The second pass also added failed-initial-hydration feedback and bounded section
+re-entry recovery, without extra reads after successful hydration. The new controller harness passed
 **7/7** cases. The review's broader selection passed **412 tests** with **one
 unbuilt-codec skip**; that was not a full-suite run or native acceptance. The
 parent's final scoped verification below has no skips.
@@ -144,7 +146,75 @@ The full suite also caught the new section's missing screenshot registry entry.
 screenshot test module then passed **82 tests in 6.38s**. No new screenshot
 fixture data was introduced outside `dev.js`.
 
-## Automated Wingman verification
+### Second CodeRabbit pass and final polish
+
+The committed candidate was reviewed again with:
+
+```bash
+coderabbit review --committed \
+  --base-commit 3143d2c5c14b81756c0abe15c51bd0a8535e2788 --agent
+```
+
+Second-pass dispositions:
+
+- Failed local boot hydration feedback/recovery: addressed with a single-flight
+  read, visible failure guidance, and a Fleet-entry retry only while still
+  unhydrated. Successful normal entry adds no reads; pushed recovery and existing
+  mutation warnings survive delayed failures. No redundant rejection handler was
+  added: `WM.send` resolves failed transport as null.
+- Explicit UTF-8 subprocess decoding and a success-marker assertion in the
+  navigation harness: both applied.
+- Guarding the required `preview-fleet-settings` element: rejected as unnecessary.
+  `previews.js` is loaded only by `index.html`, which contains that static control;
+  missing required markup should fail the existing page/module contracts rather
+  than silently omit navigation.
+
+The independent `/polish` report identified one remaining equal-version race:
+identical delayed replies or pushes could clear or suppress failed-Refresh state.
+A regression reproduced it. Recovery now requires a higher presentation order or
+an explicitly successful current watch read. A fresh successful Refresh can still
+recover with an unchanged order. The focused independent fix-wave recheck passed
+with **no remaining blocker**, **33 pytest cases**, and **18/18 controller runtime
+cases**. Two CodeRabbit passes and the independent polish/fix-wave review were
+performed; this is not a claim of a third CodeRabbit pass with zero findings.
+
+## Final pre-PR verification
+
+From the linked worktree, installed locked dev dependencies and built/installed
+the release settings codec using the recipe in
+`docs/overview-layout-sharing-verification.md#local-verification-prerequisites`.
+Node was v26.5.0. The first full run found the screenshot registry omission noted
+above; that was fixed before the final run.
+
+```bash
+uv sync --locked --extra dev
+cargo build --locked --release --manifest-path packaging/settings-codec/Cargo.toml \
+  --target-dir packaging/settings-codec/target
+# Install target/release/wingman-settings-codec into packaging/bin and assert
+# wingman.evesettings.codec.codec_available(), as the prerequisite recipe specifies.
+uv run --no-sync python -m pytest tests/ -q -rs
+cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml
+uv run --no-sync ruff check .
+uv run --no-sync ruff format --check .
+node scripts/test_previews_fleetbar_runtime.js
+node scripts/js_smoke.js
+git diff --check
+```
+
+Final results: **10,543 passed, 11 skipped in 287.34s**; **1 Cargo test passed**;
+**Ruff lint passed**, **382 files formatted**; **18/18 local Fleet controller
+runtime cases passed**; **all page modules loaded**; whitespace checks passed.
+All eleven skips require Windows: junctions (5), DPAPI (1), WinDLL (1), a real
+message pump/window station (1), or Win32 bindings (3). **No Node or codec skips.**
+No production code changed after this run; the following update only records
+evidence and prepares the PR.
+
+The final actual-dev-page Chromium pass also passed at both requested floor
+sizes, including local character checkbox focus through unchanged heartbeats,
+failed local boot reads and bounded section-entry recovery. The test fixtures are
+in `dev.js`; the browser automation script remains a temporary local artifact.
+
+## Earlier scoped Wingman verification
 
 Commands below ran from the Wingman linked worktree. The existing development
 virtualenv supplied the interpreter/tools; tests imported this worktree's source.
@@ -162,9 +232,9 @@ PYTHONDONTWRITEBYTECODE=1 /mnt/c/dev/flygd-wingman/.venv/bin/python -m pytest \
 updated cross-module ordering guard. This includes Fleet API/runtime subscription
 and pending-command ownership, sharing transport/state, local Fleet controls,
 bridge contracts, page conventions, shell navigation, and executable JS tests.
-The full repository pytest suite and independent settings-codec Cargo tests were
-not run; no codec/native source changed. This is scoped coverage, not a full-suite
-claim.
+At this earlier checkpoint the full repository pytest suite and independent
+settings-codec Cargo tests had not run; the final pre-PR gates above supersede
+that coverage limit.
 
 ```bash
 /mnt/c/dev/flygd-wingman/.venv/bin/ruff check .
@@ -217,6 +287,10 @@ exercised:
 - Global status-strip toggle while Settings is closed still synchronizes the
   Settings checkbox without a sharing mutation. Settings Reset calls the
   tokenless endpoint with no arguments and does not toggle the bar.
+- Local character focus survives unchanged heartbeats. With
+  `?dev=1&fleetbar-read=null`, boot failure is visible and controls stay disabled;
+  `DEV.failFleetBarRead(false)` plus Fleet entry recovers them. Healthy later
+  entries make no additional local reads.
 
 Screenshots were visually inspected. Local temporary artifacts (not shipped):
 

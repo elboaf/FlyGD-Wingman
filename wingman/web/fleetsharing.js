@@ -243,9 +243,10 @@
       control.disabled = true;
     });
   }
-  function render(payload) {
+  function render(payload, successfulRead) {
     if (!payload) return false;
     if (state && payload.presentation_order < state.presentation_order) return false;
+    var newer = !state || payload.presentation_order > state.presentation_order;
     if (state && payload.metadata.binding !== state.metadata.binding) {
       boss.value = '';
       desiredBoss = '';
@@ -260,7 +261,9 @@
       history.open = false;
     }
     state = payload;
-    readFailed = false;
+    // Identical cached replies can arrive after a failed Refresh. Only newer
+    // evidence or a successful current watch read may restore read authority.
+    if (newer || successfulRead) readFailed = false;
     if (state.sources) {
       knownSources = state.sources.sources;
       knownCharacters = state.sources.characters;
@@ -411,12 +414,15 @@
       return WM.send('fleet_sharing_watch', open);
     }).then(function (result) {
       if (current !== watchGeneration || !open || !visible()) return;
-      if (result && result.state) render(result.state);
-      // An unversioned failure cannot supersede a push received during this
-      // read. Retain known rows but disarm their authority; Off stays reachable
-      // even behind an in-flight On because preference ownership is separate.
+      if (result && result.state) render(result.state, true);
+      // An unversioned failure cannot supersede newer evidence received during
+      // this read. Equal-version copies are still the same last-known state.
+      // Off stays reachable because preference ownership is separate.
       else if (!state) unavailable();
-      else if (state === requestedState) { readFailed = true; paint(); }
+      else if (requestedState && state.presentation_order === requestedState.presentation_order) {
+        readFailed = true;
+        paint();
+      }
     });
   }
   WM.el('sharing-refresh').addEventListener('click', watch);

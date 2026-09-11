@@ -12,6 +12,8 @@
   var lastState = null;
   var lastRevision = -1;
   var hydrated = false;
+  var hydrationInFlight = false;
+  var hydrationFailure = false;
   var pending = Object.create(null);
   var defaultStatus = status ? status.textContent : '';
 
@@ -193,6 +195,10 @@
 
   function render(section) {
     if (!accept(section)) return;
+    if (hydrationFailure) {
+      hydrationFailure = false;
+      setStatusMessage(defaultStatus);
+    }
     lastState = section;
     lastGood = !!section.enabled;
     WM.fleet_bar_on = lastGood;
@@ -256,7 +262,22 @@
     });
   }
 
-  WM.send('fleet_bar_settings').then(function (section) {
-    if (section) render(section);
+  function hydrate() {
+    if (hydrated || hydrationInFlight) return;
+    hydrationInFlight = true;
+    WM.send('fleet_bar_settings').then(function (section) {
+      hydrationInFlight = false;
+      if (section) render(section);
+      else if (!hydrated) {
+        // A push may already have recovered the controls while this read waited.
+        hydrationFailure = true;
+        setStatusMessage('Could not read Fleet Bar settings. Reopen Fleet telemetry to retry.');
+      }
+    });
+  }
+
+  document.addEventListener('wm:section', function (event) {
+    if (event.detail === 'fleet') hydrate();
   });
+  hydrate();
 }());

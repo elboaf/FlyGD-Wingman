@@ -26,6 +26,7 @@ def test_fleet_navigation_releases_capture_without_writing_binds(tmp_path):
                     "page": tree.root,
                     "bookmarks": api.get_bookmarks(),
                     "previews": api.get_preview_hotkey_state(),
+                    "fleet": api.fleet_bar_settings(),
                 }
             ),
             encoding="utf-8",
@@ -39,9 +40,14 @@ def test_fleet_navigation_releases_capture_without_writing_binds(tmp_path):
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=20,
             check=False,
         )
         assert result.returncode == 0, result.stdout + result.stderr
+        assert (
+            "PASS Fleet navigation releases both capture owners without mutations"
+            in result.stdout
+        )
     finally:
         api.shutdown_fleet_sharing()

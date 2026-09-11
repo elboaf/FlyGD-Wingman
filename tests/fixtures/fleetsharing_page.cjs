@@ -356,7 +356,7 @@ async function historyScenario(first) {
     assert.match(feedback(), /Choose an owned boss with usable Fleet Read/);
     assert.doesNotMatch(feedback(), /progress|Requesting/i);
     assert.equal(mutationCount(), 1, 'navigation never retries activation');
-  } else if (scenario === 'stale-preference-after-failed-refresh') {
+  } else if (scenario === 'stale-preference-after-failed-refresh' || scenario === 'equal-preference-after-failed-refresh') {
     const rows = [source(A, 'active', null), source(B)];
     push(payload(rows)); chooseBoss(); history.open = true;
     const row = currentRows()[0]; const oldHistory = historyRows()[0];
@@ -364,8 +364,10 @@ async function historyScenario(first) {
     ids['sharing-enabled'].dispatchEvent({type: 'change'}); await turn();
     const preference = calls.find(c => c.method === 'fleet_sharing_set_enabled');
     const oldReply = payload(rows, {enabled: true});
-    push(payload(rows, {enabled: true}));
+    const pushed = scenario === 'equal-preference-after-failed-refresh' ? clone(oldReply) : payload(rows, {enabled: true});
+    push(pushed);
     ids['sharing-refresh'].dispatchEvent({type: 'click'}); await turn();
+    if (scenario === 'equal-preference-after-failed-refresh') push(clone(pushed));
     watches().at(-1).resolve(null); await turn();
     assert.match(status(), /Current source state unknown/);
     assert.equal(row.lastChild.disabled, true);
@@ -381,8 +383,13 @@ async function historyScenario(first) {
     assert.equal(ids['sharing-enabled'].disabled, false, 'Off remains reachable');
     ids['sharing-start'].dispatchEvent({type: 'click'}); row.lastChild.dispatchEvent({type: 'click'}); await turn();
     assert.equal(mutationCount(), 1, 'unknown source controls cannot submit after a stale preference reply');
-    push(payload(rows, {enabled: true}));
-    assert.equal(ids['sharing-start'].disabled, false, 'a genuinely new snapshot restores authority');
+    if (scenario === 'equal-preference-after-failed-refresh') {
+      push(clone(pushed));
+      assert.match(status(), /Current source state unknown/, 'an identical delayed push cannot clear failed-read state');
+      ids['sharing-refresh'].dispatchEvent({type: 'click'}); await turn();
+      watches().at(-1).resolve({state: clone(pushed)}); await turn();
+    } else push(payload(rows, {enabled: true}));
+    assert.equal(ids['sharing-start'].disabled, false, 'a newer snapshot or successful fresh read restores authority');
     assert.doesNotMatch(status(), /unknown/i);
   } else if (scenario === 'boss-selection-across-unknown') {
     chooseBoss(); assert.equal(ids['sharing-boss'].value, '1');
@@ -473,7 +480,7 @@ async function run() {
     'retained-unknown', 'failed-refresh-history', 'binding-invalidation', 'inflight-stop', 'bridge-source-rejection',
     'inflight-start-leave', 'inflight-binding-reply', 'stable-history-focus', 'visibility-ownership',
     'retained-local-result', 'concurrent-stop-replies', 'inflight-reenter',
-    'stale-preference-after-failed-refresh', 'boss-selection-across-unknown'].includes(scenario)) {
+    'stale-preference-after-failed-refresh', 'equal-preference-after-failed-refresh', 'boss-selection-across-unknown'].includes(scenario)) {
     await historyScenario(first);
   } else {
     if (scenario === 'reject') first.reject(new Error('controlled bridge failure'));

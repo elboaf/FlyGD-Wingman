@@ -80,6 +80,7 @@ def test_missing_worker_watch_returns_unavailable_without_startup(
         "concurrent-stop-replies",
         "inflight-reenter",
         "stale-preference-after-failed-refresh",
+        "equal-preference-after-failed-refresh",
         "boss-selection-across-unknown",
     ],
 )

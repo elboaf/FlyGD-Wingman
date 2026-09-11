@@ -76,7 +76,9 @@ final scope correction, extract the self-contained Fleet Bar controller from
 `previews.js` into `fleet.js`, loaded immediately before `previews.js`. Preserve
 the controller's one pushed handler, boot hydration, and global status-strip
 synchronization even when Fleet telemetry is closed. Do not duplicate or
-section-gate that controller.
+section-gate that controller. If the initial read fails, show a failure message
+and retry only on Fleet section re-entry while still unhydrated, with at most one
+read in flight. Successful hydration keeps later section changes read-free.
 
 Include #204's `#fleetbar-reset`, tokenless Settings `reset_fleet_bar_width` call,
 hydration, failure/session-only warnings, and status-strip synchronization.
@@ -206,7 +208,11 @@ history disclosure for that connection. Invalidate old request generations so a
 delayed response cannot repopulate the prior connection's rows or feedback after
 navigation or re-entry. Preserve existing presentation-order and action-reply
 guards. An ordinary same-binding session reset makes observations unknown, not a
-new connection; keep only the last-known presentation allowed above.
+new connection; keep only the last-known presentation allowed above. An identical
+presentation order is not newer evidence, including delayed preference replies
+and repeated pushes. Only newer evidence or a successful current watch read
+clears failed-read state; a fresh successful Refresh may reuse an unchanged
+presentation order.
 
 This matches the worker's identity reset (which clears observations and local
 results) and session reset (which clears observations even without a binding

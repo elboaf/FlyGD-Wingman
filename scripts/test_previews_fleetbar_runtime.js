@@ -133,7 +133,11 @@ function page() {
     'fleetbar-enabled-status', 'fleetbar-character-list',
     'fleetbar-characters-empty', 'fleetbar-characters-status', 'section-fleet'
   ];
-  const document = { activeElement: null, body: null };
+  const document = {
+    activeElement: null, body: null, listeners: {},
+    addEventListener: Element.prototype.addEventListener,
+    dispatchEvent: Element.prototype.dispatchEvent
+  };
   const elements = Object.fromEntries(ids.map(id => [id, new Element(id, 'div', document)]));
   elements['btn-fleetbar'].tagName = 'BUTTON';
   elements['fleetbar-enabled'].tagName = 'INPUT';
@@ -141,8 +145,7 @@ function page() {
   elements['fleetbar-reset'].tagName = 'BUTTON';
   elements['fleetbar-enabled-status'].textContent = 'Default hint';
   const body = new Element('body', 'BODY', document);
-  // Never enter Fleet: the status-strip control remains outside its closed
-  // Settings section, and no section lifecycle event is delivered.
+  // Start outside Fleet so boot hydration cannot depend on section entry.
   elements['section-fleet'].hidden = true;
   body.appendChild(elements['btn-fleetbar']);
   body.appendChild(elements['section-fleet']);
@@ -169,7 +172,8 @@ function page() {
       let resolve, reject;
       const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
       calls.push({method, args, resolve, reject});
-      return promise;
+      // WM.send in app.js converts bridge rejections into resolved nulls.
+      return promise.catch(() => null);
     }
   };
   vm.runInNewContext(fleetSource, {window: {WM}, WM, document, Promise}, {
@@ -199,6 +203,12 @@ function page() {
     async push(payload) {
       assert.equal(typeof handlers.onFleetBarState, 'function');
       handlers.onFleetBarState(payload);
+      await turn();
+    },
+    async section(name) {
+      WM.current_section = name;
+      elements['section-fleet'].hidden = name !== 'fleet';
+      document.dispatchEvent({type: 'wm:section', detail: name});
       await turn();
     },
     focus(id) { document.activeElement = elements[id]; },
@@ -233,6 +243,118 @@ test('controls stay disarmed before boot hydration without entering Fleet Settin
   for (const id of ['btn-fleetbar', 'fleetbar-enabled', 'fleetbar-reset']) {
     assert.equal(p.el(id).disabled, false, id + ' must enable after hydration');
   }
+});
+
+test('failed boot hydration explains how to retry and keeps controls disarmed', async () => {
+  const p = page();
+  await p.reply('fleet_bar_settings', null, []);
+  assert.equal(p.el('fleetbar-enabled-status').textContent,
+    'Could not read Fleet Bar settings. Reopen Fleet telemetry to retry.');
+  for (const id of ['btn-fleetbar', 'fleetbar-enabled', 'fleetbar-reset']) {
+    assert.equal(p.el(id).disabled, true, id + ' must stay disabled after a failed read');
+  }
+  await p.click('btn-fleetbar');
+  await p.click('fleetbar-reset');
+  await p.toggle(true);
+  assert.deepEqual(p.calls, [], 'failed hydration cannot admit writes or retry automatically');
+});
+
+test('only Fleet reentry retries failed hydration and coalesces pending reads', async () => {
+  const p = page();
+  await p.section('fleet');
+  await p.section('general');
+  await p.section('fleet');
+  assert.deepEqual(p.calls.map(call => call.method), ['fleet_bar_settings'],
+    'section entry during the boot read must not duplicate it');
+  await p.reply('fleet_bar_settings', null, []);
+  await p.section('general');
+  await p.section('previews');
+  assert.deepEqual(p.calls, [], 'other sections must not retry Fleet hydration');
+
+  await p.section('fleet');
+  await p.section('fleet');
+  await p.section('general');
+  await p.section('fleet');
+  assert.deepEqual(p.calls.map(call => call.method), ['fleet_bar_settings'],
+    'repeated entry must share one pending retry');
+  await p.reply('fleet_bar_settings', state(true, 2), []);
+  assert.equal(p.el('fleetbar-enabled-status').textContent, 'Default hint');
+  assert.equal(p.el('fleetbar-enabled').checked, true);
+  for (const id of ['btn-fleetbar', 'fleetbar-enabled', 'fleetbar-reset']) {
+    assert.equal(p.el(id).disabled, false, id + ' must enable after recovery');
+  }
+  await p.section('general');
+  await p.section('fleet');
+  assert.deepEqual(p.calls, [], 'healthy reentry must not read or write');
+});
+
+test('healthy boot hydration needs no extra reads on Fleet entry', async () => {
+  const p = page();
+  await p.reply('fleet_bar_settings', state(false, 1), []);
+  for (const section of ['fleet', 'general', 'fleet', 'previews', 'fleet']) {
+    await p.section(section);
+  }
+  assert.deepEqual(p.calls, [], 'healthy entry must not read or write');
+});
+
+test('an authoritative push clears the hydration failure without needing a retry', async () => {
+  const p = page();
+  await p.reply('fleet_bar_settings', null, []);
+  assert.match(p.el('fleetbar-enabled-status').textContent, /Could not read Fleet Bar settings/);
+  await p.push(state(true, 2));
+  assert.equal(p.el('fleetbar-enabled-status').textContent, 'Default hint');
+  assert.equal(p.el('fleetbar-enabled').checked, true);
+  assert.equal(p.el('fleetbar-reset').disabled, false);
+  await p.section('fleet');
+  assert.deepEqual(p.calls, []);
+});
+
+test('a newer push suppresses a delayed null boot response', async () => {
+  const p = page();
+  await p.push(state(true, 2));
+  await p.reply('fleet_bar_settings', null, []);
+  assert.equal(p.el('fleetbar-enabled-status').textContent, 'Default hint');
+  assert.equal(p.WM.fleet_bar_on, true);
+  assert.equal(p.el('fleetbar-enabled').checked, true);
+  assert.equal(p.el('btn-fleetbar').getAttribute('aria-pressed'), 'true');
+  assert.equal(p.el('fleetbar-reset').disabled, false);
+  await p.section('fleet');
+  assert.deepEqual(p.calls, []);
+});
+
+for (const [control, method, warning] of [
+  ['btn-fleetbar', 'toggle_fleet_bar', toggleWarning],
+  ['fleetbar-reset', 'reset_fleet_bar_width', resetWarning]
+]) {
+  test('pushes and late boot failure preserve the ' + method + ' session-only warning', async () => {
+    const p = page();
+    await p.push(state(true, 2));
+    await p.click(control);
+    await p.reply(method, {applied: true, persisted: false, error: warning});
+    await p.push(state(true, 3));
+    await p.reply('fleet_bar_settings', null, []);
+    await p.section('fleet');
+    assert.equal(p.el('fleetbar-enabled-status').textContent, warning);
+    assert.equal(p.WM.fleet_bar_on, true);
+    assert.equal(p.el('fleetbar-enabled').checked, true);
+    assert.deepEqual(p.calls, []);
+  });
+}
+
+test('late hydration recovery cannot clear a newer mutation failure', async () => {
+  const p = page();
+  await p.reply('fleet_bar_settings', null, []);
+  await p.section('fleet');
+  await p.push(state(true, 3));
+  await p.click('fleetbar-reset');
+  await p.reply('reset_fleet_bar_width', {
+    applied: false, persisted: false, error: 'Width reset was refused.'
+  }, []);
+  await p.reply('fleet_bar_settings', state(false, 2), []);
+  await p.push(state(true, 4));
+  assert.equal(p.el('fleetbar-enabled-status').textContent, 'Width reset was refused.');
+  assert.equal(p.WM.fleet_bar_on, true);
+  assert.equal(p.el('fleetbar-enabled').checked, true);
 });
 
 test('a newer push wins over the late boot response while Fleet Settings stays closed', async () => {
