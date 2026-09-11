@@ -65,6 +65,9 @@ class PreviewRuntime:
         self._published = None
         self._revision = 0
         self._demand = FamilyDemand(0, False, False)
+        self._admitting = False
+        self._pending_demand = None
+        self._pending_off = {}
         self._producer_revisions = {"eve": -1, "companions": -1}
         self._epochs = {"eve": 0, "companions": 0}
         self._minimum_active = {"eve": 1, "companions": 1}
@@ -161,24 +164,63 @@ class PreviewRuntime:
                     enabled if family == "companions" else self._demand.companions,
                 )
             if changed and not enabled:
-                # An off/on cannot re-use an old active acknowledgment while
-                # the intervening native cleanup is still in flight.
+                # Require newer authority, not two more transitions: a stopped
+                # acknowledgment may already prove cleanup. With no observed
+                # epoch yet, exclude the pending first activation (epoch one).
                 self._minimum_active[family] = max(
-                    self._minimum_active[family], self._epochs[family] + 2
+                    self._minimum_active[family], self._epochs[family] + 1, 2
                 )
             self._retry = self._retry or (enabled and self._pump == "failed")
             if self._host is None and enabled:
                 self._pump = "failed"
                 self._error = "Previews are unavailable"
             self._revision += 1
-            demand = self._demand
-        # set_families is admission-only. In particular, revocation must not
-        # wait behind a startup/stop join on the transition executor.
-        if self._host is not None:
-            self._host.set_families(demand)
+            self._pending_demand = self._demand
+            if changed and not enabled:
+                self._pending_off[family] = self._demand
+            drain = not self._admitting
+            if drain:
+                self._admitting = True
+        if drain:
+            self._drain_demands()
         with self._condition:
             self._wake()
             return self._snapshot()
+
+    def _drain_demands(self):
+        # One producer owns admission, independently of the executor's joins.
+        # Concurrent/reentrant producers return after reservation. Keep only
+        # the latest snapshot and latest off edge per family (at most three
+        # slots); a newer on cannot overtake an undelivered revocation.
+        try:
+            while True:
+                with self._condition:
+                    if self._closed:
+                        self._pending_demand = None
+                        self._pending_off.clear()
+                    if self._pending_demand is None and not self._pending_off:
+                        self._admitting = False
+                        self._wake()
+                        return
+                    demand = (
+                        min(self._pending_off.values(), key=lambda item: item.revision)
+                        if self._pending_off
+                        else self._pending_demand
+                    )
+                    self._pending_off = {
+                        family: item
+                        for family, item in self._pending_off.items()
+                        if item.revision > demand.revision
+                    }
+                    if self._pending_demand == demand:
+                        self._pending_demand = None
+                if self._host is not None:
+                    self._host.set_families(demand)
+        except BaseException:
+            with self._condition:
+                self._admitting = False
+                self._wake()
+            raise
 
     def set_eve(self, enabled: bool, revision: int) -> RuntimeState:
         return self._set("eve", enabled, revision)
@@ -240,10 +282,11 @@ class PreviewRuntime:
 
     def _ack(self, owner, ack):
         with self._condition:
-            if (
-                owner is not self._host
-                or ack.pump_epoch != self._pump_epoch
-                or not self._owned
+            if owner is not self._host or ack.pump_epoch != self._pump_epoch:
+                return
+            if not self._owned and not (
+                ack.outcome in ("eve-stopped", "companions-stopped")
+                or (ack.outcome == "pump-stopped" and self._stop_waiting)
             ):
                 return
             family, _, outcome = ack.outcome.partition("-")
@@ -260,7 +303,11 @@ class PreviewRuntime:
                     self._lease = None
                     self._stop_waiting = True
                     self._stop_ack = True
-                    self._pump = "failed" if outcome == "failed" else "stopping"
+                    self._pump = (
+                        "failed"
+                        if outcome == "failed" or self._pump == "failed"
+                        else "stopping"
+                    )
                     if outcome == "failed":
                         self._error = "Preview pump could not start"
                 else:
@@ -306,6 +353,8 @@ class PreviewRuntime:
         # Caller holds the condition. A timed-out stop is retried only after
         # actual host completion, or once to upgrade it to final storage close.
         if self._closed and not self._shutdown:
+            return None
+        if self._admitting:
             return None
         if self._shutdown and not self._final_attempted:
             self._final_attempted = True
@@ -366,8 +415,13 @@ class PreviewRuntime:
                     with self._condition:
                         self._pump = "failed" if kind == "start" else "stopping"
                         self._error = "Preview runtime transition failed"
-                        # Retain ownership after exceptions: native/storage
-                        # cleanup is not proven just because a call raised.
+                        # A failed start still owns any partial launch/storage.
+                        # Retire through stop(), then honor an explicit retry.
+                        if kind == "start":
+                            self._lease = None
+                            self._stop_waiting = True
+                            self._stop_ack = True
+                            self._dirty = True
                         self._revision += 1
             self._publish()
             with self._condition:

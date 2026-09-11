@@ -643,7 +643,7 @@ class Api:
 
     # ----- Python -> page -------------------------------------------------
 
-    def _push(self, handler: str, payload) -> None:
+    def _push(self, handler: str, payload, *, delivery_allowed=None) -> None:
         """Fire-and-forget one message at the page.
 
         The `handler &&` guard is not defensive padding: pushes can land
@@ -657,6 +657,8 @@ class Api:
         mid-upload must cost a status line, not the upload.
         """
         script = f"window.{handler} && window.{handler}({_page_payload(payload)})"
+        if delivery_allowed is not None and not delivery_allowed():
+            return
         try:
             self._window.evaluate_js(script)
         except Exception:
@@ -665,6 +667,8 @@ class Api:
         # one timer, one reader of the engine's status file, two renderers.
         # Its failures cost the same nothing the main window's do.
         if self._sigbar_window is not None:
+            if delivery_allowed is not None and not delivery_allowed():
+                return
             try:
                 self._sigbar_window.evaluate_js(script)
             except Exception:
@@ -4556,10 +4560,15 @@ class Api:
         # returned None (settings.js:181 documents the same trap).
         return True
 
+    def _preview_publication_open(self) -> bool:
+        return not self._eve_runtime_closed
+
     def push_preview_crops(self, state: dict) -> None:
         """Semantic committed state; safe before a crop page handler is registered."""
         if not self._eve_runtime_closed:
-            self._push("onPreviewCrops", state)
+            self._push(
+                "onPreviewCrops", state, delivery_allowed=self._preview_publication_open
+            )
 
     def shutdown_previews(self) -> None:
         """Tear the preview thread down on the way out.
@@ -4916,7 +4925,11 @@ class Api:
     def push_bind_captured(self, gesture) -> None:
         """A registered chord, redirected to the armed bind row."""
         if not self._eve_runtime_closed:
-            self._push("onPreviewBindCaptured", {"gesture": gesture})
+            self._push(
+                "onPreviewBindCaptured",
+                {"gesture": gesture},
+                delivery_allowed=self._preview_publication_open,
+            )
 
     def _preview_layout_entries(self) -> dict:
         """Latest valid layouts, including the host's undebounced state."""
@@ -5138,7 +5151,9 @@ class Api:
             return
         # Read current authority rather than restoring a detached registration
         # snapshot delivered after EVE off/on. The host caches before notifying.
-        self._push("onPreviewHotkeys", payload)
+        self._push(
+            "onPreviewHotkeys", payload, delivery_allowed=self._preview_publication_open
+        )
 
     # ---- Preview settings, generic writer --------------------------------
 

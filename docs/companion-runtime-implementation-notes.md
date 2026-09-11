@@ -54,39 +54,68 @@ windows, budget, dependencies, or changes to source-window geometry/input policy
   admission immediately. Picker/token/deadline implementation is not included in
   Phase 1. Reserved companion message IDs have no empty processors.
 
+## Review-fix wave — base `7d497faf`
+
+The twelve reproduced review findings are addressed together. Numbered
+`test_review_XX_*` regressions in `tests/test_preview_runtime_review.py` identify
+each boundary; all use controlled Events, real storage or fake-native pump
+execution rather than an alternate lifecycle arbitrator.
+
+| Finding | Change |
+| --- | --- |
+| 1 | Canceled unstarted EVE admission settles without launching a pump. An admitted offline submission retains its barrier until it completes, rather than either losing the write or wedging EVE. |
+| 2 | Native/offline retirement clears prepared crop authority; reactivation opens a fresh store epoch. |
+| 3 | Companion off admission is retained separately from latest desired state, producing stopped then active epochs across a coalesced off/on without revoking the lease. |
+| 4–5 | An admitted-primary counter keeps cleanup behind actual FIFO delivery, including an older family wake and the early-close interval. Revoked resize/reset work performs persistence without native movement. |
+| 6 | Failed HWND creation submits pre-window primary and crop intents through the offline path; completed barriers are preserved across repeated stop calls. |
+| 7 | Failed hotkey/hook releases remain tracked. EVE stopped/replacement is withheld until release succeeds at an existing pump boundary; no spin repost or retry owner. |
+| 8 | Offline barrier completion acknowledges actual no-native/no-storage ownership and wakes the existing runtime executor, including a timed-out final stop with no pump ever started. |
+| 9 | A raised start schedules retained-owner retirement through stop before an explicit retry can launch again. |
+| 10 | Preview-only delivery authorization is carried into the real push path and rechecked after serialization and before each WebView/mirror delivery. Other domains' push behavior is unchanged. |
+| 11 | Active-ack floors exclude old authority without blindly reserving another cleanup transition after stopped was already observed. |
+| 12 | One admission drainer runs outside the runtime lock and independently of executor joins. Pending work is bounded to latest demand plus latest off edge per family; concurrent producers cannot deliver a newer on ahead of an accepted off. |
+
+No public runtime record/signature changed. No owner replacement, second
+executor, companion feature, settings schema, or frontend was added. Push spies
+were updated to forward the delivery guard or exercise real serialization.
+Independent parent re-review of all twelve closures remains required.
+
 ## Verification record
 
-All automated work here is Linux/headless with fake-native resources; no native
-GUI was launched and no source window was manipulated.
+No native GUI was launched and no source window was manipulated. Initial
+implementation Linux full-suite evidence was 10,580 passed / 11 Windows-only
+skips; the following fresh results include the review-fix wave and all existing
+coverage.
 
-- Test-first runtime truth table, independent/stale revisions, blocked startup
-  and stop, retained timeout owner, callback threading, lease revocation,
-  same-value failure retry, and old-epoch rejection.
-- Fake-native tests exercise companion-only inactivity, same-HWND family
-  roundtrips, retained picker/fonts and storage saves, detached native callbacks,
-  pending activation revocation, real-runtime pump retirement/lease epochs,
-  and custom-alert priority before and after family roundtrip.
-Final fresh verification used
+Linux commands used
 `UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-runtime-venv uv run --no-sync`:
 
-- `python -m pytest tests/test_preview_runtime.py -q --tb=short` — **18 passed**.
-  The terminal-pump lease regression first failed for both failed/stopped
-  outcomes, then passed with retained-cleanup and stale-epoch assertions.
-- Focused pytest over `test_preview_runtime.py`, `test_preview_host.py`,
-  `test_preview_wiring.py`, `test_api_crops.py`, `test_main.py`,
-  `test_main_engine.py`, `test_fleet_runtime_integration.py`,
-  `test_alerts_wiring.py`, `test_telemetry_coordinator.py`, and
-  `test_custom_alert*.py` — **1,189 passed, 1 Windows-only skip**, 26.04 seconds.
-- `python -m pytest tests/ -q -rs --tb=short` with a 900-second command timeout
-  — **10,580 passed, 11 Windows-only skips**, 225.53 seconds. Skips require real
-  Windows junctions, DPAPI/WinDLL, Win32 binding, or a native message pump.
-  No Node or codec tests skipped. `codec_available()` separately returned true.
-  An earlier 240-second command timeout was not counted as a completed run.
-- `ruff check .` and `ruff format --check .` — **passed** (385 Python files).
-- `cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml`
-  — **1 passed**. `node scripts/js_smoke.js` — **all page modules loaded**.
+- Focused pytest over `test_preview_runtime_review.py`, `test_preview_runtime.py`,
+  `test_preview_host.py`, `test_preview_wiring.py`, `test_api_crops.py`,
+  `test_api_settings_fields.py`, `test_main.py`, `test_main_engine.py`,
+  `test_fleet_runtime_integration.py`, `test_alerts_wiring.py`,
+  `test_telemetry_coordinator.py`, and `test_custom_alert*.py`, with
+  `-q -rs --tb=short` — **1,273 passed, 1 Windows-only skip**, 27.70 seconds.
+- `python -m pytest tests/ -q -rs --tb=short`, 900-second command timeout —
+  **10,600 passed, 11 Windows-only skips**, 231.57 seconds. No Node or codec
+  tests skipped; actual release-codec availability was separately verified.
+- `ruff check .` and `ruff format --check .` — **passed** (386 Python files).
+- `cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml` —
+  **1 passed**. `node scripts/js_smoke.js` — **all page modules loaded**.
 - `git diff --check` — **passed**.
 
-Remaining review: parent performs independent polish/review and prepared Windows
-verification. Manual EVE on/off regression during alert/crop activity remains an
-honest Windows smoke check, not a new capacity qualification requirement.
+Windows focused verification used the prepared
+`C:\Users\tng\AppData\Local\Temp\wingman-preview-runtime-f30d\venv` and portable
+Node 26.5.0, with actual Windows codec availability and checkout import path
+verified. The same focused modules, with
+`-k "not stop_from_another_thread_really_exits_the_pump"`, yielded
+**1,273 passed, 1 deselected**, 20.22 seconds. That single real-pump test was
+excluded solely to honor the no-native-GUI constraint; no test code was skipped
+or weakened to hide failures.
+
+The parent's Windows full run at `7d497faf` reported six unchanged
+`WinError 1314` symlink-privilege failures in `test_setup_catalog.py` and
+`test_ui_setup_controller.py`. Those environment failures were not changed,
+suppressed, or addressed through elevation/Developer Mode. Windows full was
+not rerun here. Manual EVE on/off regression during alert/crop activity remains
+a Windows smoke check, not a capacity qualification requirement.

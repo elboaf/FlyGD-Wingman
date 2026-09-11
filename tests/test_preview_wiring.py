@@ -388,10 +388,8 @@ def test_build_preview_host_retains_lazy_crop_store_and_publishes_commits(
     assert host._crop_store._executor is None
     assert host._crop_store._flush_primary == host._flush_layouts
     assert not host.is_running
-    pushed = []
-    monkeypatch.setattr(
-        api, "_push", lambda name, payload: pushed.append((name, payload))
-    )
+    from tests.test_api import pushes
+
     box["api"] = api
     try:
         receipt = host.request_crop("enabled", "Alice", False)
@@ -401,6 +399,7 @@ def test_build_preview_host_retains_lazy_crop_store_and_publishes_commits(
         assert state["definitions"]["Alice"]["enabled"] is False
         assert state["statuses"]["Alice"] == "disabled"
         assert state["operations"][receipt["operation_id"]]["persisted"]
+        pushed = pushes(api._window)
         assert pushed[-1][0] == "onPreviewCrops"
         assert pushed[-1][1]["definitions"]["Alice"]["enabled"] is False
         assert "generations" not in state
