@@ -1,12 +1,30 @@
 # Custom gamelog alerts — verification and acceptance record
 
-## Current status and authority
+## PR #202 follow-up
+
+The later report-only polish found a built-in controls hydration race: a health
+poll could finish first and suppress an otherwise valid entry response.
+`da32abf` separates health and controls ordering while preserving newer-response
+and view fences. Two new reproductions failed before the fix; all **82 Node
+cases** pass afterward, including adjacent stale-response and pending-edit cases.
+
+Windows CI then identified six UTF-8 test failures caused by host text-mode
+newline translation, not decoder corruption. `d6f41a7` uses explicit binary LF
+and CRLF fixtures and checks the retained carriage return; reader behavior is
+unchanged. All **919 covering pytest cases passed without skips** after both
+corrections. Repository Ruff check/format, JS syntax and all-page smoke passed;
+scoped independent review found no further issues. The full suite and browser
+were not rerun locally for this follow-up; the results below are the earlier
+checkpoint. Fresh hosted CI and native acceptance remain separate gates.
+
+## Implementation checkpoint and authority
 
 **Implementation, local engineering verification and code review are complete.**
 The verified source revision is `28e6f6e84d9fabc15c93811aaf60d18fb7bbf915`.
 All reported Important findings were corrected and cleared by scoped rereview.
 This is **not Windows/WebView2 or release acceptance**; those gates remain open.
-The branch has not been pushed or merged.
+At this checkpoint the branch had not been pushed or merged; it is now published
+in draft PR [#202](https://github.com/elboaf/FlyGD-Wingman/pull/202).
 
 - Branch: `feature/custom-gamelog-alerts`; linked checkout:
   `/mnt/c/dev/flygd-wingman/.worktrees/custom-gamelog-alerts-plan`.
