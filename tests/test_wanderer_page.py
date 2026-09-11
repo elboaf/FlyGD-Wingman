@@ -44,18 +44,18 @@ vm.runInContext(source.slice(source.indexOf('  // Wanderer dev connection'),
     context.wandererScenario(kind);
     scenarios[kind] = await api.wanderer_state();
   }
-  const failed = await api.set_wanderer_url('https://refused.example');
+  const failed = await api.test_wanderer_connection('https://refused.example', 'new-map', String.fromCharCode(120));
   context.wandererScenario('connected');
-  const removed = await api.remove_wanderer_connection();
-  const changed = await api.set_wanderer_map('new-map');
-  const bound = await api.replace_wanderer_token(String.fromCharCode(120),
-    'https://wanderer.example', 'wrong-map');
-  const replaced = await api.replace_wanderer_token(String.fromCharCode(120),
-    'https://wanderer.example', 'new-map');
+  const revision = (await api.wanderer_state()).revision;
+  const staleRemove = await api.remove_wanderer_connection(revision - 1);
+  const removed = await api.remove_wanderer_connection(revision);
+  const blank = await api.test_wanderer_connection('https://wanderer.example', 'new-map', '');
+  const replaced = await api.test_wanderer_connection('https://wanderer.example', 'new-map', String.fromCharCode(120));
+  const rebound = await api.test_wanderer_connection('https://other.example', 'new-map', '');
   await api.set_wanderer_enabled(false);
-  const admitted = await api.test_wanderer_connection();
+  const admitted = await api.test_wanderer_connection('https://wanderer.example', 'new-map', '');
   const after = await api.wanderer_state();
-  console.log(JSON.stringify({scenarios, failed, removed, changed, bound, replaced,
+  console.log(JSON.stringify({scenarios, failed, staleRemove, removed, blank, rebound, replaced,
     admitted, after, pushes}));
 })().catch(error => {console.error(error); process.exitCode = 1;});
 """
@@ -76,6 +76,7 @@ vm.runInContext(source.slice(source.indexOf('  // Wanderer dev connection'),
         "revision",
         "credential_present",
         "credential_error",
+        "persistence_error",
         "generation",
         "automatic_ready",
         "status",
@@ -101,10 +102,16 @@ vm.runInContext(source.slice(source.indexOf('  // Wanderer dev connection'),
     assert data["scenarios"]["no-tracked"]["matched"] == 0
     assert data["failed"]["applied"] is False
     assert data["removed"]["acknowledged"]["credential_present"] is False
-    assert data["changed"]["acknowledged"]["credential_present"] is False
-    assert data["bound"]["applied"] is False
+    assert data["removed"]["acknowledged"]["base_url"] == ""
+    assert data["removed"]["acknowledged"]["map_identifier"] == ""
+    assert data["removed"]["acknowledged"]["enabled"] is True
+    assert data["staleRemove"]["applied"] is False
+    assert data["blank"]["applied"] is False
+    assert data["rebound"]["applied"] is False
     assert data["replaced"]["acknowledged"]["credential_present"] is True
     assert data["admitted"]["applied"] is True
+    assert data["admitted"]["test_accepted"] is True
+    assert data["admitted"]["test_generation"] == data["after"]["generation"]
     assert data["after"]["enabled"] is False
     assert data["after"]["test_result"] == "success"
     assert any(p["test_pending"] for p in data["pushes"])
@@ -122,7 +129,7 @@ def test_wanderer_card_is_in_previews_with_accessible_safe_controls():
     assert re.search(r'id="wanderer-remove"[^>]*>Remove connection</button>', previews)
     for field in ("url", "map", "token"):
         assert f'for="wanderer-{field}"' in previews
-        assert f'id="wanderer-{field}-apply"' in previews
+        assert f'id="wanderer-{field}-apply"' not in previews
         assert f'aria-describedby="wanderer-{field}' in previews
     token = re.search(r'<input[^>]*id="wanderer-token"[^>]*>', previews)
     assert token
@@ -135,6 +142,8 @@ def test_wanderer_card_is_in_previews_with_accessible_safe_controls():
         previews,
     )
     assert re.search(r'id="wanderer-health"[^>]*role="status"', previews)
+    assert 'id="wanderer-connection-error"' in previews
+    assert "saves the URL, map and token" in previews
     scripts = re.findall(r'<script src="([^"]+)"', html)
     assert scripts[scripts.index("previews.js") + 1] == "wanderer.js"
 
@@ -145,9 +154,6 @@ def test_wanderer_owns_its_literal_bridge_and_no_other_settings_inputs():
     assert set(re.findall(r"WM\.send\('([^']+)'", source)) == {
         "wanderer_state",
         "set_wanderer_enabled",
-        "set_wanderer_url",
-        "set_wanderer_map",
-        "replace_wanderer_token",
         "test_wanderer_connection",
         "remove_wanderer_connection",
     }

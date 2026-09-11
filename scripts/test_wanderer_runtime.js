@@ -12,7 +12,7 @@ function test(name, run) { tests.push({name, run}); }
 function turn() { return new Promise(resolve => setImmediate(resolve)); }
 function state(overrides = {}) {
   return Object.assign({enabled: false, base_url: 'https://wanderer.example/prefix',
-    map_identifier: 'home', revision: 1, credential_present: false, credential_error: false,
+    map_identifier: 'home', revision: 1, credential_present: false, credential_error: false, persistence_error: false,
     generation: 1, automatic_ready: false, status: 'off', error_code: null, paused: false,
     in_flight: false, test_pending: false, test_in_flight: false, test_result: null,
     last_success_monotonic: null, next_request_monotonic: null,
@@ -24,8 +24,9 @@ function result(overrides = {}, error = null) {
   const p = state(overrides);
   const acknowledged = {};
   for (const key of ['enabled', 'base_url', 'map_identifier', 'revision',
-    'credential_present', 'credential_error']) acknowledged[key] = p[key];
-  return {applied: !error, persisted: !error, error, acknowledged};
+    'credential_present', 'credential_error', 'persistence_error']) acknowledged[key] = p[key];
+  return {applied: !error, persisted: !error, error, acknowledged,
+    test_accepted: !error, test_error: null, test_generation: p.generation};
 }
 class Element {
   constructor(id) {
@@ -122,38 +123,40 @@ test('failed hydration is retryable and later hydration never repaints drafts', 
   assert.match(p.el('health').textContent, /Connecting/);
 });
 
-for (const [field, method, key, value] of [
-  ['url', 'set_wanderer_url', 'base_url', 'https://accepted.example'],
-  ['map', 'set_wanderer_map', 'map_identifier', 'accepted']
+for (const [field, key, value] of [
+  ['url', 'base_url', 'https://accepted.example'],
+  ['map', 'map_identifier', 'accepted']
 ]) {
+  const method = 'test_wanderer_connection';
   test(field + ' refusal restores last acknowledged canonical submission', async () => {
     const p = page(); await p.hydrate();
     await p.apply(field, ' ' + value + ' ');
-    await p.reply(method, result({[key]: value, revision: 2}));
+    await p.reply(method, Object.assign(result({[key]: value, revision: 2}), {test_accepted: false, test_error: 'Saved; Test unavailable.'}));
     assert.equal(p.el(field).value, value);
     await p.apply(field, 'invalid');
     await p.reply(method, result({[key]: value, revision: 2}, 'Could not save.'));
     assert.equal(p.el(field).value, value);
-    assert.match(p.el(field + '-error').textContent, /Could not save/);
+    assert.match(p.el('connection-error').textContent, /Could not save/);
     await p.apply(field, value); p.edit(field, 'newer draft');
     await p.reply(method, result({[key]: value, revision: 2}));
     assert.equal(p.el(field).value, 'newer draft');
-    assert.equal(p.el(field + '-error').textContent, '');
-    assert.match(p.el(field + '-draft').textContent, /Apply|Enter/);
+    assert.equal(p.el('connection-error').textContent, '');
+    assert.match(p.el(field + '-draft').textContent, /Test|Enter/);
   });
-  test(field + ' queued writes serialize; older failure never clobbers newer draft', async () => {
+  test(field + ' pending form write never clobbers a newer field draft on refusal', async () => {
     const p = page(); await p.hydrate();
-    await p.apply(field, 'first'); await p.apply(field, 'second');
-    assert.equal(p.calls.length, 1);
-    await p.reply(method, result({}, 'Old refusal'), ['first']);
+    await p.apply(field, 'first'); p.edit(field, 'second');
+    await p.click('test');
+    assert.equal(p.calls.length, 1, 'one form mutation at a time');
+    await p.reply(method, result({}, 'Old refusal'));
     assert.equal(p.el(field).value, 'second');
-    assert.equal(p.el(field + '-error').textContent, '');
+    await p.apply(field, 'accepted');
     p.edit(field, 'third draft');
-    await p.reply(method, result({[key]: 'second', revision: 2}), ['second']);
+    await p.reply(method, Object.assign(result({[key]: 'accepted', revision: 2}), {test_accepted: false}));
     assert.equal(p.el(field).value, 'third draft');
     await p.apply(field, 'invalid');
     await p.reply(method, null);
-    assert.equal(p.el(field).value, 'second');
+    assert.equal(p.el(field).value, 'accepted');
   });
 }
 
@@ -172,10 +175,10 @@ test('concurrent field replies and retries keep independent errors and baselines
   await p.apply('url', 'bad'); await p.toggle(true);
   assert.equal(p.calls.length, 2, 'enabled is independent of the connection lane');
   await p.reply('set_wanderer_enabled', result({}, 'Enable refused'));
-  await p.reply('set_wanderer_url', result({}, 'URL refused'));
+  await p.reply('test_wanderer_connection', result({}, 'Connection refused'));
   await p.apply('url', 'https://ok.example');
-  await p.reply('set_wanderer_url', result({base_url: 'https://ok.example', revision: 2}));
-  assert.equal(p.el('url-error').textContent, '');
+  await p.reply('test_wanderer_connection', result({base_url: 'https://ok.example', revision: 2}));
+  assert.equal(p.el('connection-error').textContent, '');
   assert.equal(p.el('enabled-error').textContent, 'Enable refused');
 });
 
@@ -187,7 +190,7 @@ test('pushes never touch inputs; stale mutation cannot rewind safe acknowledgeme
     credential_present: true}));
   assert.equal(p.el('url').value, 'https://accepted.example');
   assert.equal(p.el('map').value, 'unsent');
-  await p.reply('set_wanderer_url', result({base_url: 'https://accepted.example', revision: 2}));
+  await p.reply('test_wanderer_connection', result({base_url: 'https://accepted.example', revision: 2}));
   assert.equal(p.el('url').value, 'https://latest.example');
   assert.match(p.el('credential').textContent, /stored|Stored/);
   p.push(state({revision: 1, generation: 1}));
@@ -216,51 +219,48 @@ test('a new config revision cannot reuse old worker-generation coverage', async 
   assert.match(p.el('coverage').textContent, /0 of 3/);
 });
 
-test('text only commits on Enter or its Apply, never blur or change', async () => {
+test('text commits as one form on Test, never blur or change', async () => {
   const p = page(); await p.hydrate();
   for (const field of ['url', 'map', 'token']) {
     p.edit(field, 'draft'); p.fire(field, 'blur'); p.fire(field, 'change');
   }
   await turn(); assert.equal(p.calls.length, 0);
-  await p.click('url-apply');
-  assert.equal(p.calls[0].method, 'set_wanderer_url');
+  await p.click('test');
+  assert.equal(p.calls[0].method, 'test_wanderer_connection');
+  assert.deepEqual(p.calls[0].args, ['draft', 'draft', 'draft']);
 });
 
-test('URL and map writes serialize and token cannot use dirty or pending binding', async () => {
-  const p = page(); await p.hydrate();
-  p.edit('url', 'https://next.example');
-  await p.apply('token', 'ephemeral-input');
-  assert.equal(p.calls.length, 0);
-  assert.match(p.el('token-draft').textContent, /URL|map|connection/i);
-  await p.click('url-apply'); await p.apply('map', 'next');
-  await p.click('token-apply'); assert.equal(p.calls.length, 1);
-  await p.reply('set_wanderer_url', result({base_url: 'https://next.example', revision: 2}));
-  assert.equal(p.calls[0].method, 'set_wanderer_map');
-  await p.reply('set_wanderer_map', result({base_url: 'https://next.example', map_identifier: 'next', revision: 3}));
-  await p.click('token-apply'); assert.equal(p.calls.length, 0, 'dirty-binding token never silently rebinds');
-  p.edit('token', ''); p.edit('token', 'new-ephemeral-input');
-  await p.click('token-apply');
-  assert.deepEqual(p.calls[0].args, ['new-ephemeral-input', 'https://next.example', 'next']);
-});
+for (const order of [['token', 'map', 'url'], ['url', 'token', 'map'], ['map', 'url', 'token']]) {
+  test('first setup accepts reordered fields and Enter from ' + order[2], async () => {
+    const p = page(); await p.hydrate({base_url: '', map_identifier: ''});
+    const values = {url: 'https://new.example', map: 'next', token: 'ephemeral-input'};
+    for (const field of order) p.edit(field, values[field]);
+    await p.apply(order[2]);
+    assert.deepEqual(p.calls[0].args, [values.url, values.map, values.token]);
+    assert.equal(p.el('token').value, '');
+    assert.equal(p.el('enabled').checked, false);
+    for (const field of order) assert.equal(p.el(field).disabled, false);
+  });
+}
 
-test('token draft stays bound across later connection commits until re-entered', async () => {
-  const p = page(); await p.hydrate(); p.edit('token', 'ephemeral-input');
-  await p.apply('map', 'next');
-  await p.reply('set_wanderer_map', result({map_identifier: 'next', revision: 2}));
-  await p.click('token-apply');
-  assert.equal(p.calls.length, 0);
-  assert.match(p.el('token-draft').textContent, /re-enter/);
+test('partial setup still allows Test to explain refusal and owns only submitted fields', async () => {
+  const p = page(); await p.hydrate({base_url: '', map_identifier: ''});
+  p.edit('token', 'ephemeral-input'); await p.click('test');
+  assert.deepEqual(p.calls[0].args, ['', '', 'ephemeral-input']);
+  p.edit('map', 'newer-map');
+  await p.reply('test_wanderer_connection', result({base_url: '', map_identifier: ''}, 'Enter a valid URL, map and token.'));
+  assert.equal(p.el('map').value, 'newer-map');
+  assert.match(p.el('connection-error').textContent, /URL/);
 });
 
 test('token clears on submission, never on response over a newer token draft', async () => {
   const p = page(); await p.hydrate();
   await p.apply('token', 'ephemeral-input');
   assert.equal(p.el('token').value, '');
-  assert.deepEqual(p.calls[0].args, ['ephemeral-input', 'https://wanderer.example/prefix', 'home']);
+  assert.deepEqual(p.calls[0].args, ['https://wanderer.example/prefix', 'home', 'ephemeral-input']);
   p.edit('token', 'newer-ephemeral-input');
-  await p.reply('replace_wanderer_token', result({}, 'Could not protect the token.'));
+  await p.reply('test_wanderer_connection', result({}, 'Could not protect the token.'));
   assert.equal(p.el('token').value, 'newer-ephemeral-input');
-  assert.equal(p.el('token-error').textContent, '', 'old refusal has no ownership');
   p.push(state({revision: 2, credential_present: true}));
   assert.equal(p.el('token').value, 'newer-ephemeral-input');
   assert.equal(p.logs.length, 0);
@@ -269,23 +269,29 @@ test('token clears on submission, never on response over a newer token draft', a
   }
 });
 
-test('queued token never sends if a newer acknowledged binding arrives before dispatch', async () => {
+test('captured token is sent only with submitted fields despite newer health and typing', async () => {
   const p = page(); await p.hydrate();
   p.edit('token', 'ephemeral-input'); p.fire('token', 'keydown', {key: 'Enter'});
   p.push(state({revision: 2, generation: 2, map_identifier: 'next'}));
+  p.edit('map', 'later-map');
   await turn();
-  assert.equal(p.calls.length, 0);
+  assert.deepEqual(p.calls[0].args, ['https://wanderer.example/prefix', 'home', 'ephemeral-input']);
   assert.equal(p.el('token').value, '');
-  assert.match(p.el('token-error').textContent, /Connection changed/);
+  await p.reply('test_wanderer_connection', result({revision: 3, generation: 3, credential_present: true}));
+  assert.equal(p.el('map').value, 'later-map');
 });
 
-test('token submission precedes later binding write and is not rebound', async () => {
-  const p = page(); await p.hydrate(); await p.apply('token', 'ephemeral-input');
-  await p.apply('map', 'next'); assert.equal(p.calls.length, 1);
-  await p.reply('replace_wanderer_token', result({credential_present: true, revision: 2}),
-    ['ephemeral-input', 'https://wanderer.example/prefix', 'home']);
-  await p.reply('set_wanderer_map', result({map_identifier: 'next', revision: 3}), ['next']);
-  assert.match(p.el('credential').textContent, /No token/);
+test('blank token reuse is decided against submitted normalized binding by the controller', async () => {
+  const p = page(); await p.hydrate({credential_present: true});
+  await p.apply('url', ' HTTPS://WANDERER.example:443/prefix/ ');
+  assert.deepEqual(p.calls[0].args, [' HTTPS://WANDERER.example:443/prefix/ ', 'home', '']);
+  await p.reply('test_wanderer_connection', Object.assign(result({credential_present: true}), {test_accepted: false}));
+  assert.equal(p.el('url').value, 'https://wanderer.example/prefix');
+  await p.apply('map', 'new-map');
+  assert.deepEqual(p.calls[0].args, ['https://wanderer.example/prefix', 'new-map', '']);
+  await p.reply('test_wanderer_connection', result({credential_present: true}, 'Enter a token for this URL and map.'));
+  assert.equal(p.el('map').value, 'home');
+  assert.match(p.el('connection-error').textContent, /token/);
 });
 
 test('Test admission is separate from auto health, waits for push and never enables', async () => {
@@ -375,33 +381,39 @@ test('delayed post-admission read cannot replace generation cancellation with ol
   assert.match(p.el('test-error').textContent, /changed|unknown|interrupt/i);
 });
 
-test('Test refuses dirty binding and reports admission refusal without clearing another error', async () => {
+test('saved configuration and refused Test admission remain distinct from independent errors', async () => {
   const p = page(); await p.hydrate({credential_present: true});
-  p.edit('map', 'draft'); await p.click('test'); assert.equal(p.calls.length, 0);
-  p.edit('map', 'home'); await p.toggle(true);
+  await p.toggle(true);
   await p.reply('set_wanderer_enabled', result({credential_present: true}, 'Enable refused'));
-  await p.click('test'); await p.reply('test_wanderer_connection', result({credential_present: true}, 'Wait for current test.'));
-  assert.match(p.el('test-error').textContent, /Wait/);
+  p.edit('map', ' next '); p.edit('token', 'ephemeral-input'); await p.click('test');
+  await p.reply('test_wanderer_connection', Object.assign(result({credential_present: true, map_identifier: 'next', revision: 2, generation: 2}),
+    {test_accepted: false, test_error: 'Connection saved, but Test could not start.'}));
+  assert.equal(p.el('map').value, 'next');
+  assert.equal(p.el('connection-error').textContent, '');
+  assert.match(p.el('test-error').textContent, /saved/);
   assert.match(p.el('enabled-error').textContent, /Enable refused/);
+  assert.equal(p.el('test').disabled, false);
 });
 
-test('Remove is page-confirmed, retains setup and preserves a newer token draft', async () => {
+test('Remove is page-confirmed, clears connection and preserves newer field drafts', async () => {
   const p = page(); await p.hydrate({credential_present: true});
   await p.click('remove'); assert.equal(p.calls.length, 0);
   assert.match(p.confirmations[0].args.join(' '), /token/i);
   p.confirmations.shift().resolve(false); await turn(); assert.equal(p.calls.length, 0);
   await p.click('remove'); p.confirmations.shift().resolve(true); await turn();
   assert.equal(p.calls[0].method, 'remove_wanderer_connection');
-  p.edit('token', 'newer-ephemeral-input');
-  await p.reply('remove_wanderer_connection', result({revision: 2}));
-  assert.equal(p.el('url').value, 'https://wanderer.example/prefix');
-  assert.equal(p.el('map').value, 'home');
+  assert.deepEqual(p.calls[0].args, [1]);
+  p.edit('token', 'newer-ephemeral-input'); p.edit('map', 'newer-map');
+  await p.reply('remove_wanderer_connection', result({revision: 2, base_url: '', map_identifier: ''}));
+  assert.equal(p.el('url').value, '');
+  assert.equal(p.el('map').value, 'newer-map');
   assert.equal(p.el('token').value, 'newer-ephemeral-input');
   assert.equal(p.el('enabled').checked, false);
 });
 
 test('a connection edit or section exit invalidates an open Remove confirmation', async () => {
-  for (const invalidate of [p => p.edit('map', 'draft'), p => p.enter('general')]) {
+  for (const invalidate of [p => p.edit('map', 'draft'), p => p.enter('general'),
+    p => p.push(state({revision: 2, generation: 2}))]) {
     const p = page(); await p.hydrate({credential_present: true}); await p.click('remove');
     invalidate(p); p.confirmations.shift().resolve(true); await turn();
     assert.equal(p.calls.length, 0);
@@ -468,7 +480,7 @@ test('previous Test result in an early push is not a new Test outcome', async ()
   await p.click('test');
   p.push(state({credential_present: true, test_result: 'success',
     test_result_text: 'Connected to Wanderer.', last_success_monotonic: 10}));
-  assert.match(p.el('test-status').textContent, /queued|Waiting/i);
+  assert.match(p.el('test-status').textContent, /Saving/i);
   await p.reply('test_wanderer_connection', result({credential_present: true}));
   // A post-admission read can settle a coalesced repeated outcome without
   // pretending the old push has a sequence number the API does not provide.
@@ -487,6 +499,55 @@ test('Test read failure releases admission feedback without claiming a new succe
   assert.match(p.el('test-error').textContent, /status|read/i);
   assert.doesNotMatch(p.el('test-status').textContent, /queued|Connected/);
   assert.equal(p.el('test').disabled, false);
+});
+
+for (const early of [true, false]) {
+  test('grouped save owns new Test revision with outcome ' + (early ? 'before' : 'after') + ' acknowledgement', async () => {
+    const p = page(); await p.hydrate();
+    p.edit('url', 'https://new.example'); p.edit('map', 'new'); p.edit('token', 'ephemeral-input');
+    await p.click('test');
+    const next = {base_url: 'https://new.example', map_identifier: 'new', credential_present: true,
+      revision: 2, generation: 2};
+    const completed = state(Object.assign({}, next, {test_result: 'success', test_result_text: 'Connected to Wanderer.'}));
+    if (early) p.push(completed);
+    await p.reply('test_wanderer_connection', result(next));
+    if (!early) {
+      assert.match(p.el('test-status').textContent, /queued/i);
+      p.push(completed);
+    }
+    assert.match(p.el('test-status').textContent, /Connected/);
+    assert.equal(p.el('test').disabled, false);
+    assert.equal(p.el('enabled').checked, false);
+  });
+}
+
+test('grouped save cancellation after its admitted generation does not wait forever', async () => {
+  const p = page(); await p.hydrate(); p.edit('token', 'ephemeral-input');
+  await p.click('test');
+  const next = {revision: 2, generation: 2, credential_present: true};
+  p.push(state(Object.assign({}, next, {generation: 3, host_available: false})));
+  await p.reply('test_wanderer_connection', result(next));
+  assert.match(p.el('test-error').textContent, /changed|unknown|interrupt/i);
+  assert.equal(p.el('test').disabled, false);
+});
+
+test('reopened failed-compensation state cannot advertise a retained old Test success', async () => {
+  const p = page(); await p.hydrate({enabled: true, persistence_error: true, credential_error: true,
+    status: 'persistence_error', test_result: 'success', test_result_text: 'Connected to Wanderer.'});
+  assert.match(p.el('health').textContent, /restart|stopped|restore/i);
+  assert.doesNotMatch(p.el('test-status').textContent, /Connected/);
+});
+
+test('failed compensation never paints a healthy saved credential or an old Test result', async () => {
+  const p = page(); await p.hydrate({enabled: true, credential_present: true, status: 'connected',
+    test_result: 'success', test_result_text: 'Connected to Wanderer.'});
+  p.edit('token', 'ephemeral-input'); await p.click('test');
+  await p.reply('test_wanderer_connection', result({enabled: true, revision: 2, persistence_error: true,
+    credential_error: true}, 'Could not restore the saved connection. Restart Wingman.'));
+  assert.match(p.el('health').textContent, /restart|stopped|restore/i);
+  assert.doesNotMatch(p.el('health').textContent, /^Connected/);
+  assert.doesNotMatch(p.el('credential').textContent, /^Token stored/);
+  assert.doesNotMatch(p.el('test-status').textContent, /Connected/);
 });
 
 // The controller regression supplies an actual barrier-controlled read trace.

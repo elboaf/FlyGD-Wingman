@@ -1046,28 +1046,24 @@
         <p class="hint">Uses map-local names for your current named previews. Character labels must be shown.</p>
         <div class="row">
           <label class="lab" for="wanderer-url">Application URL (HTTPS)</label>
-          <input class="field" id="wanderer-url" type="url" disabled spellcheck="false" autocomplete="off" placeholder="https://wanderer.example" aria-describedby="wanderer-url-draft wanderer-url-error">
-          <button class="btn" id="wanderer-url-apply" type="button" disabled>Apply URL</button>
+          <input class="field" id="wanderer-url" type="url" disabled spellcheck="false" autocomplete="off" placeholder="https://wanderer.example" aria-describedby="wanderer-url-draft wanderer-connection-error">
         </div>
         <p class="hint" id="wanderer-url-draft"></p>
-        <p class="field-msg" id="wanderer-url-error" hidden></p>
         <div class="row">
           <label class="lab" for="wanderer-map">Map slug or UUID</label>
-          <input class="field" id="wanderer-map" type="text" disabled spellcheck="false" autocomplete="off" aria-describedby="wanderer-map-draft wanderer-map-error">
-          <button class="btn" id="wanderer-map-apply" type="button" disabled>Apply map</button>
+          <input class="field" id="wanderer-map" type="text" disabled spellcheck="false" autocomplete="off" aria-describedby="wanderer-map-draft wanderer-connection-error">
         </div>
         <p class="hint" id="wanderer-map-draft"></p>
-        <p class="field-msg" id="wanderer-map-error" hidden></p>
         <div class="row">
           <label class="lab" for="wanderer-token">Map API token</label>
-          <input class="field" id="wanderer-token" type="password" disabled spellcheck="false" autocomplete="new-password" aria-describedby="wanderer-token-draft wanderer-token-error wanderer-credential">
-          <button class="btn" id="wanderer-token-apply" type="button" disabled>Replace token</button>
+          <input class="field" id="wanderer-token" type="password" disabled spellcheck="false" autocomplete="new-password" aria-describedby="wanderer-token-draft wanderer-connection-error wanderer-credential">
         </div>
         <p class="hint" id="wanderer-credential">No token stored for this connection.</p>
-        <p class="hint" id="wanderer-token-draft">Apply the URL and map before entering a token.</p>
-        <p class="field-msg" id="wanderer-token-error" hidden></p>
+        <p class="hint" id="wanderer-token-draft">Stored only on this PC, protected by Windows. Leave blank to reuse only the same saved URL and map.</p>
+        <p class="hint" id="wanderer-save-note">Test connection saves the URL, map and token, then checks access. It does not turn names on.</p>
+        <p class="field-msg" id="wanderer-connection-error" hidden></p>
         <div class="row">
-          <button class="btn" id="wanderer-test" type="button" disabled aria-describedby="wanderer-test-status wanderer-test-error">Test connection</button>
+          <button class="btn" id="wanderer-test" type="button" disabled aria-describedby="wanderer-save-note wanderer-connection-error wanderer-test-status wanderer-test-error">Test connection</button>
           <button class="btn danger" id="wanderer-remove" type="button" disabled aria-describedby="wanderer-remove-error">Remove connection</button>
         </div>
         <p class="field-msg" id="wanderer-test-error" hidden></p>

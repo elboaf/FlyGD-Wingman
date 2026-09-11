@@ -13,8 +13,6 @@
   var interaction = 0;
   var confirming = false;
   var connectionTail = Promise.resolve();
-  var tokenBinding = null;
-  var tokenStarted = false;
   var testWaiting = false;
   var testObserved = false;
   var testRevision = -1;
@@ -23,7 +21,7 @@
   var testPriorResult = null;
   var fields = {};
   var keys = {enabled: 'enabled', url: 'base_url', map: 'map_identifier'};
-  ['enabled', 'url', 'map', 'token', 'test', 'remove'].forEach(function (name) {
+  ['enabled', 'url', 'map', 'token', 'connection', 'test', 'remove'].forEach(function (name) {
     fields[name] = {edit: 0, request: 0, pending: 0, error: '', tail: Promise.resolve()};
   });
 
@@ -34,19 +32,6 @@
     else if (keys[name]) el(name).value = acknowledged[keys[name]];
   }
   function dirty(name) { return acknowledged && value(name) !== acknowledged[keys[name]]; }
-  function binding() { return [acknowledged.base_url, acknowledged.map_identifier]; }
-  function sameBinding(expected) {
-    return expected && acknowledged && expected[0] === acknowledged.base_url
-      && expected[1] === acknowledged.map_identifier;
-  }
-  function bindingClean() {
-    return hydrated && !dirty('url') && !dirty('map')
-      && !fields.url.pending && !fields.map.pending
-      && acknowledged.base_url && acknowledged.map_identifier;
-  }
-  function tokenReady() {
-    return bindingClean() && el('token').value && sameBinding(tokenBinding);
-  }
   function connectionBusy() {
     return fields.url.pending || fields.map.pending || fields.token.pending || fields.remove.pending;
   }
@@ -58,16 +43,17 @@
         || (acknowledged && p.revision < acknowledged.revision)) return false;
     acknowledged = {revision: p.revision, enabled: p.enabled, base_url: p.base_url,
       map_identifier: p.map_identifier, credential_present: p.credential_present,
-      credential_error: p.credential_error};
+      credential_error: p.credential_error, persistence_error: p.persistence_error};
     if (testWaiting && testRevision !== p.revision) testWaiting = false;
     return true;
   }
 
   function connectionText(p) {
+    if (acknowledged.persistence_error) return 'Saved connection could not be restored — names stopped. Restart Wingman and re-enter the connection.';
     if (!acknowledged.enabled) return 'Off — connection settings remain editable.';
-    if (acknowledged.credential_error) return 'Token unreadable — replace or remove it.';
+    if (acknowledged.credential_error) return 'Token unreadable — enter it again or remove the connection.';
     if (!acknowledged.base_url || !acknowledged.map_identifier || !acknowledged.credential_present) {
-      return 'Setup needed — apply the URL, map and token.';
+      return 'Setup needed — enter the URL, map and token, then test the connection.';
     }
     if (!p || p.revision < acknowledged.revision) return 'Connecting…';
     if (!p.previews_enabled || !p.host_available) return 'Waiting for previews — enable them to show names.';
@@ -92,29 +78,23 @@
       el(name).disabled = !hydrated;
     });
     ['url', 'map'].forEach(function (name) {
-      el(name + '-apply').disabled = !hydrated;
-      el(name + '-draft').textContent = fields[name].pending ? 'Applying…'
-        : dirty(name) ? 'Not applied — press Enter or Apply.' : '';
+      el(name + '-draft').textContent = fields[name].pending ? 'Saving submitted connection…'
+        : dirty(name) ? 'Not saved — press Enter or Test connection.' : '';
     });
-    Object.keys(fields).forEach(function (name) {
+    ['enabled', 'connection', 'test', 'remove'].forEach(function (name) {
       var slot = el(name + '-error');
       slot.textContent = fields[name].error;
       slot.className = 'field-msg err';
       slot.hidden = !fields[name].error;
     });
-    el('token-apply').disabled = !tokenReady();
-    el('token-draft').textContent = !bindingClean()
-      ? 'Apply the URL and map before replacing the token.'
-      : el('token').value && !sameBinding(tokenBinding)
-        ? 'Connection changed — clear and re-enter the token.'
-        : 'Stored only on this PC, protected by Windows. Replacement clears this entry.';
+    el('token-draft').textContent = 'Stored only on this PC, protected by Windows. Leave blank to reuse only the same saved URL and map.';
     var currentHealth = health && acknowledged && health.revision === acknowledged.revision ? health : null;
     var testing = testWaiting || (currentHealth && (currentHealth.test_pending || currentHealth.test_in_flight));
-    el('test').disabled = !bindingClean() || !acknowledged.credential_present
-      || !!connectionBusy() || !!fields.test.pending || !!testing;
+    el('test').disabled = !hydrated || confirming || !!connectionBusy() || !!testing;
     // Remove can also delete a credential left bound to an earlier URL/map.
     el('remove').disabled = !hydrated || confirming || !!connectionBusy();
-    el('test-status').textContent = fields.test.error ? ''
+    el('test-status').textContent = fields.test.pending && !testObserved ? 'Saving connection and requesting Test…'
+      : fields.test.error || fields.connection.error || (acknowledged && acknowledged.persistence_error) ? ''
       : currentHealth && currentHealth.test_in_flight ? 'Testing connection…'
       : testing ? 'Test queued — waiting for the request lane.'
         : currentHealth && currentHealth.test_result_text ? 'Test: ' + currentHealth.test_result_text : '';
@@ -170,13 +150,19 @@
     paint();
   }
 
-  // Separate per-field request/edit counters and errors, even on the shared
-  // connection lane. Ignoring old replies alone cannot order Python's threads.
+  // The connection writes as a group, but a reply owns each field separately.
+  // Enable has its own lane; neither response may erase newer connection drafts.
   function commit(name, send) {
     if (!hydrated) return;
     var field = fields[name];
     var request = ++field.request;
     var edit = ++field.edit;
+    var owned = {};
+    var inputs = name === 'enabled' ? ['enabled'] : ['url', 'map', 'token'];
+    inputs.forEach(function (key) {
+      owned[key] = fields[key].edit;
+      if (key !== name) fields[key].pending += 1;
+    });
     field.pending += 1;
     delivery += 1;
     interaction += 1;
@@ -186,17 +172,37 @@
       delivery += 1;
       var owns = request === field.request && edit === field.edit;
       acceptAcknowledged(res && res.acknowledged);
-      if (res && res.applied && res.persisted) {
-        if (name !== 'test' || !testInterrupted) field.error = '';
-        if (owns && keys[name]) restore(name);
-      } else if (owns) {
-        field.error = res && res.error ? res.error : 'Could not reach the app. Nothing was changed.';
-        if (keys[name]) restore(name);
-      }
+      inputs.forEach(function (key) {
+        if (key !== name) fields[key].pending -= 1;
+        if (owned[key] === fields[key].edit && keys[key]) restore(key);
+      });
+      var saved = res && res.applied && res.persisted;
+      var errorField = name === 'test' ? fields.connection : field;
+      if (saved) errorField.error = '';
+      else if (owns) errorField.error = res && res.error ? res.error
+        : 'Could not reach the app. Reopen Previews to check the saved connection.';
       if (name === 'test' && request === field.request) {
-        if (!res || !res.applied || testInterrupted || testRevision !== acknowledged.revision) testWaiting = false;
-        else if (testObserved) testWaiting = !!(health && (health.test_pending || health.test_in_flight));
-        else if (testPriorResult !== null) {
+        if (!saved || !res.test_accepted) {
+          testWaiting = false;
+          field.error = saved ? res.test_error || 'Connection saved, but Test could not start.' : '';
+        } else if (res.acknowledged.revision !== testRevision
+            && res.acknowledged.revision === acknowledged.revision) {
+          // A grouped save advances configuration before Test admission. Adopt
+          // its actual fenced generation, not a pre-save result or coverage.
+          testRevision = res.acknowledged.revision;
+          testGeneration = res.test_generation;
+          testWaiting = true;
+          testObserved = testInterrupted = false;
+          testPriorResult = null;
+          field.error = '';
+          if (health && health.revision === testRevision
+              && health.generation >= testGeneration) receive(health, true);
+        } else if (testInterrupted || testRevision !== acknowledged.revision) testWaiting = false;
+        else {
+          field.error = '';
+          if (testObserved) testWaiting = !!(health && (health.test_pending || health.test_in_flight));
+        }
+        if (saved && res.test_accepted && testWaiting && !testObserved && testPriorResult !== null) {
           // No per-Test sequence exists in the state contract. A repeated
           // outcome with coalesced progress needs a read AFTER admission;
           // an early push of the previous result cannot prove completion.
@@ -219,30 +225,24 @@
     paint();
   }
 
-  function applyURL() {
-    var submitted = el('url').value;
-    commit('url', function () { return WM.send('set_wanderer_url', submitted); });
-  }
-  function applyMap() {
-    var submitted = el('map').value;
-    commit('map', function () { return WM.send('set_wanderer_map', submitted); });
-  }
-  function applyToken() {
-    if (!tokenReady()) { paint(); return; }
-    var submitted = el('token').value;
-    var expected = tokenBinding;
-    // Clear at submission, not acknowledgement. The promise never owns a
-    // future password draft, and no secret becomes an acknowledged baseline.
+  function testConnection() {
+    if (el('test').disabled) return;
+    var base = el('url').value;
+    var map = el('map').value;
+    var token = el('token').value;
+    // Clear at submission, never on a later reply over a newer password draft.
+    // The secret has no acknowledged baseline or binding history on the page.
     el('token').value = '';
-    tokenBinding = null;
-    tokenStarted = false;
-    commit('token', function () {
-      if (!sameBinding(expected)) {
-        submitted = null;
-        return {applied: false, persisted: false, error: 'Connection changed — re-enter the token.'};
-      }
-      var response = WM.send('replace_wanderer_token', submitted, expected[0], expected[1]);
-      submitted = null;
+    testWaiting = true;
+    testObserved = false;
+    testRevision = acknowledged.revision;
+    testGeneration = healthGeneration;
+    testInterrupted = false;
+    testPriorResult = health && health.revision === testRevision ? health.test_result : null;
+    fields.test.error = '';
+    commit('test', function () {
+      var response = WM.send('test_wanderer_connection', base, map, token);
+      token = null;
       return response;
     });
   }
@@ -251,43 +251,29 @@
     el(name).addEventListener('input', function () {
       fields[name].edit += 1;
       interaction += 1;
-      if (name === 'token') {
-        if (!el(name).value) { tokenStarted = false; tokenBinding = null; }
-        else if (!tokenStarted) { tokenStarted = true; tokenBinding = bindingClean() ? binding() : null; }
-      }
       paint();
     });
-    var apply = name === 'url' ? applyURL : name === 'map' ? applyMap : applyToken;
     el(name).addEventListener('keydown', function (event) {
-      if (event.key === 'Enter') { event.preventDefault(); apply(); }
+      if (event.key === 'Enter') { event.preventDefault(); testConnection(); }
     });
-    el(name + '-apply').addEventListener('click', apply);
   });
   el('enabled').addEventListener('change', function () {
     var submitted = el('enabled').checked;
     commit('enabled', function () { return WM.send('set_wanderer_enabled', submitted); });
   });
-  el('test').addEventListener('click', function () {
-    if (el('test').disabled) return;
-    testWaiting = true;
-    testObserved = false;
-    testRevision = acknowledged.revision;
-    testGeneration = healthGeneration;
-    testInterrupted = false;
-    testPriorResult = health && health.revision === testRevision ? health.test_result : null;
-    commit('test', function () { return WM.send('test_wanderer_connection'); });
-  });
+  el('test').addEventListener('click', testConnection);
   el('remove').addEventListener('click', function () {
     if (el('remove').disabled) return;
     var owner = interaction;
     var revision = acknowledged.revision;
     confirming = true;
     paint();
-    WM.confirm('Remove Wanderer connection?', 'Deletes the protected token from this PC. '
-      + 'The URL, map and enabled preference stay unchanged. You will need to enter a token again.').then(function (ok) {
+    WM.confirm('Remove Wanderer connection?', 'Deletes the saved URL, map and protected token from this PC. '
+      + 'The enabled preference stays unchanged. You will need to enter the connection again.').then(function (ok) {
       confirming = false;
       if (ok && owner === interaction && revision === acknowledged.revision) {
-        commit('remove', function () { return WM.send('remove_wanderer_connection'); });
+        el('token').value = '';
+        commit('remove', function () { return WM.send('remove_wanderer_connection', revision); });
       }
       paint();
     });
