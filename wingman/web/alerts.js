@@ -586,6 +586,11 @@
   var customAdd = WM.el('custom-alert-add');
   var customHealth = WM.el('custom-alert-health');
   var customStatus = WM.el('custom-alert-status');
+  var customRecovery = WM.el('custom-alert-recovery');
+  var customRetry = WM.el('custom-alert-retry');
+  var customReadFailed = false;
+  var controlsReadPending = 0;
+  var addRecoveryMessage = false;
   var customRows = Object.create(null);
   var tombstones = Object.create(null);
   var customState = null;
@@ -634,8 +639,8 @@
   }
   function customMessage(row) {
     var draft = textDirty(row) ? 'Name or search has unapplied changes. Press Enter or Apply.' : '';
-    sayRow(row, [row.error, draft, row.notice].filter(function (s) { return !!s; }).join(' '),
-      row.error ? 'err' : (draft || row.notice ? 'warn' : ''));
+    sayRow(row, [row.error, draft, row.recoveryMessage, row.notice].filter(function (s) { return !!s; }).join(' '),
+      row.error ? 'err' : (draft || row.recoveryMessage || row.notice ? 'warn' : ''));
   }
   function paintCustom(row, kind, intents) {
     function owns(key) { return !intents || intents[key] === row.intents[key]; }
@@ -664,6 +669,13 @@
     customAdd.disabled = !visible || !customReady || addPending || addUncertain || count >= limit;
     customAdd.textContent = addPending ? 'Adding…' : 'Add alert';
     customAdd.title = customState && count >= limit ? 'Limit of ' + limit + ' custom alerts reached.' : '';
+    var needsAuthority = !customReady || addUncertain || Object.keys(customRows).some(function (id) {
+      return !customRows[id].dead && customRows[id].uncertain;
+    });
+    if (!needsAuthority) { customReadFailed = false; }
+    customRecovery.hidden = !visible || !customReadFailed || !needsAuthority;
+    customRetry.disabled = customRecovery.hidden || !!controlsReadPending;
+    customRetry.textContent = controlsReadPending ? 'Retrying…' : 'Retry';
     Object.keys(customRows).forEach(function (id) { controlsReady(customRows[id]); });
   }
   function openEditor(row) {
@@ -679,7 +691,7 @@
   }
   function makeCustomRow(rule) {
     var row = {ack: rule, counter: 0, queue: [], busy: null, dead: false,
-      uncertain: false, removing: false, error: '', notice: '', controls: [], testSerial: 0,
+      uncertain: false, removing: false, error: '', notice: '', recoveryMessage: '', controls: [], testSerial: 0,
       intents: {name: 0, search: 0, color: 0, sound: 0, cooldown_s: 0, enabled: 0}};
     row.root = node('div', 'custom-alert-row');
     row.root.setAttribute('data-rule-id', rule.id);
@@ -876,7 +888,7 @@
       focused: row.root.contains(document.activeElement)};
     row.queue.push(request);
     if (kind === 'remove') { row.removing = true; }
-    row.notice = ''; updateAdmission();
+    row.notice = ''; row.recoveryMessage = ''; updateAdmission();
     // Disabling a focused Remove can move focus to the document. That is
     // not the user choosing another control; capture the post-disable owner.
     request.focus = document.activeElement;
@@ -915,7 +927,9 @@
       if (!res) {
         row.uncertain = true; row.recovery = request;
         row.recoverySerial = readSerial + 1;
-        row.error = 'Could not reach the app. The outcome is unknown; checking saved settings.';
+        // Recovery owns a separate message, not the preceding save error or
+        // a Test result that may arrive while the authority read is pending.
+        row.recoveryMessage = 'Could not reach the app. The outcome is unknown; checking saved settings.';
       } else {
         row.removing = false;
         row.error = res.applied ? '' : res.error || 'That change was not accepted.';
@@ -947,6 +961,7 @@
   function readCustom(controls) {
     if (!visible) { return; }
     var epoch = viewEpoch, serial = ++readSerial;
+    if (controls) { controlsReadPending = serial; updateAdmission(); }
     WM.send('get_custom_alert_state').then(finished, function () { finished(null); });
     function finished(state) {
       if (!ownsView(epoch)) { return; }
@@ -960,17 +975,27 @@
       }
       if (!controls || serial < hydratedSerial) { return; }
       hydratedSerial = serial;
-      if (!state || state.revision < committedRevision) { return; }
+      if (serial === controlsReadPending) { controlsReadPending = 0; }
+      if (!state || state.revision < committedRevision) {
+        customReadFailed = true; updateAdmission(); return;
+      }
       customReady = true;
       // A read already in flight when a write became uncertain cannot prove
       // its outcome, even at the same revision. Each recovery fences issuance,
       // independently of health/hydration completion order and other rows.
-      if (addUncertain && serial >= addRecoverySerial) { addUncertain = false; }
+      if (addUncertain && serial >= addRecoverySerial) {
+        addUncertain = false;
+        if (addRecoveryMessage) {
+          setText(customStatus, 'Saved settings reloaded. Review the list before adding another alert.');
+          addRecoveryMessage = false;
+        }
+      }
       adoptCustom(state, true);
       Object.keys(customRows).forEach(function (id) {
         var row = customRows[id];
         if (row.uncertain && serial >= row.recoverySerial) {
           row.uncertain = false; row.removing = false;
+          row.recoveryMessage = 'Saved settings reloaded. Review before retrying changes.';
           finishDraft(row, row.recovery); row.recovery = null;
         }
         drainCustom(row);
@@ -978,11 +1003,18 @@
       updateAdmission();
     }
   }
+  if (customRetry) {
+    customRetry.addEventListener('click', function () {
+      // Only a fresh controls read can release uncertainty. Health polling
+      // stays health-only, and Retry never replays the ambiguous mutation.
+      if (visible && !customRecovery.hidden && !customRetry.disabled) { readCustom(true); }
+    });
+  }
   if (customAdd) {
     customAdd.addEventListener('click', function () {
       if (!visible || !customReady || addPending || addUncertain || customState.rules.length >= customState.limit) { return; }
       var epoch = viewEpoch;
-      addPending = true; updateAdmission(); setText(customStatus, '');
+      addPending = true; addRecoveryMessage = false; updateAdmission(); setText(customStatus, '');
       var focus = document.activeElement;
       WM.send('add_custom_alert').then(finished, function () { finished(null); });
       function finished(res) {
@@ -991,6 +1023,7 @@
         addPending = false; addUncertain = !res;
         if (!res) { addRecoverySerial = readSerial + 1; }
         if (owned) {
+          addRecoveryMessage = !res;
           setText(customStatus, !res ? 'Could not reach the app. Add may have completed; checking saved settings before another Add.'
             : res.error || (res.applied && !res.persisted ? 'Added for this session, but it will not survive a restart.' : ''));
           updateAdmission();
@@ -1207,7 +1240,10 @@
   // so the section listener above never hears about it and the poll would
   // outlive the screen.
   function leaveAlerts() {
-    if (visible) { viewEpoch++; visible = false; customReady = false; updateAdmission(); }
+    if (visible) {
+      viewEpoch++; visible = false; customReady = false;
+      customReadFailed = false; controlsReadPending = 0; updateAdmission();
+    }
     stopPolling();
   }
   document.addEventListener('wm:route', function (event) {

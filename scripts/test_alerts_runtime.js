@@ -336,7 +336,9 @@ for (const reject of [false, true]) {
     assert.equal(pending(p, 'add_custom_alert').length, 0); assert.equal(p.el('custom-alert-add').disabled, true);
     assert.match(p.el('custom-alert-status').textContent, /reach/);
     await p.reply('get_custom_alert_state', state(2, [rule()]));
-    assert.equal(p.rows().length, 1); assert.match(p.el('custom-alert-status').textContent, /reach/);
+    assert.equal(p.rows().length, 1);
+    assert.match(p.el('custom-alert-status').textContent, /saved settings reloaded.*review/i);
+    assert.doesNotMatch(p.el('custom-alert-status').textContent, /checking|added|saved successfully/i);
   });
 }
 
@@ -653,6 +655,157 @@ test('null recovery keeps the row queue blocked until a later owned authority re
   await p.reply('get_custom_alert_state', state(1, [rule('r1', {search: 'accepted'})]));
   assert.equal(pending(p, 'edit_custom_alert')[0].args[1].search, 'accepted');
 });
+
+for (const reject of [false, true]) {
+  test('failed initial authority has explicit read-only Retry despite healthy polls, rejected=' + reject, async () => {
+    const p = page(); p.enter();
+    await p.reply('get_custom_alert_state', null, 0, reject);
+    for (let n = 0; n < 3; n++) {
+      p.tick(); await p.reply('get_custom_alert_state', state(2, [rule()], watching));
+    }
+    assert.equal(p.el('custom-alert-add').disabled, true);
+    assert.match(p.el('custom-alert-list').textContent, /Loading/);
+    assert.equal(p.el('custom-alert-recovery').hidden, false, 'failed hydration must expose its recovery route');
+    assert.match(p.el('custom-alert-recovery').textContent, /saved settings.*Retry/i);
+    assert.match(p.el('custom-alert-retry').getAttribute('aria-label'), /loading.*settings/i);
+    p.fire('custom-alert-retry', 'click'); p.fire('custom-alert-retry', 'click');
+    assert.equal(pending(p, 'get_custom_alert_state').length, 1);
+    assert.equal(pending(p, 'add_custom_alert').length, 0);
+    assert.equal(p.el('custom-alert-retry').disabled, true);
+    await p.reply('get_custom_alert_state', state(2, [rule()]));
+    assert.equal(p.rows().length, 1); assert.equal(p.el('custom-alert-add').disabled, false);
+    assert.equal(p.el('custom-alert-recovery').hidden, true);
+    p.fire('custom-alert-retry', 'click'); assert.equal(pending(p, 'get_custom_alert_state').length, 0);
+  });
+}
+
+test('Retry is absent during ordinary loading, mutations and health-only failures', async () => {
+  const p = page(); p.enter();
+  assert.equal(p.el('custom-alert-recovery').hidden, true);
+  await p.reply('get_custom_alert_state', initial);
+  p.fire('custom-alert-add', 'click');
+  assert.equal(p.el('custom-alert-recovery').hidden, true);
+  await p.reply('add_custom_alert', result(1, [], {applied: false, persisted: false, error: 'Cannot save Add'}));
+  p.tick(); await p.reply('get_custom_alert_state', null);
+  assert.equal(p.el('custom-alert-recovery').hidden, true);
+  assert.match(p.el('custom-alert-status').textContent, /Cannot save Add/);
+});
+
+test('Retry unstrands queued work on a fresh baseline without replaying the uncertain edit', async () => {
+  const rules = [rule('r1', {search: 'accepted'}), rule('r2')];
+  const p = await loaded(rules);
+  p.toggle('custom-alert-r2-enabled', true);
+  await p.reply('set_custom_alert_enabled', result(1, rules,
+    {applied: false, persisted: false, error: 'Other row needs search'}));
+  edit(p, 'possibly saved'); apply(p); p.choose('custom-alert-r1-sound', 'sly');
+  p.toggle('custom-alert-r1-enabled', true); edit(p, 'newer draft');
+  await p.reply('edit_custom_alert', null); await p.reply('get_custom_alert_state', null);
+  for (let n = 0; n < 3; n++) {
+    p.tick(); await p.reply('get_custom_alert_state', state(2, [rule('r1', {search: 'possibly saved'}), rules[1]]));
+  }
+  assert.equal(p.el('custom-alert-r1-apply').disabled, true);
+  assert.equal(pending(p, 'edit_custom_alert').length, 0);
+  assert.equal(p.el('custom-alert-recovery').hidden, false);
+  p.fire('custom-alert-retry', 'click');
+  assert.equal(pending(p, 'edit_custom_alert').length, 0, 'Retry itself only issues a read');
+  await p.reply('get_custom_alert_state', state(2, [rule('r1', {search: 'possibly saved'}), rules[1]]));
+  assert.equal(p.el('custom-alert-r1-apply').disabled, false);
+  assert.equal(p.el('custom-alert-recovery').hidden, true);
+  assert.equal(pending(p, 'edit_custom_alert').length, 1);
+  const draft = pending(p, 'edit_custom_alert')[0].args[1];
+  assert.equal(draft.search, 'possibly saved'); assert.equal(draft.sound, 'sly'); assert.equal(draft.enabled, false);
+  assert.equal(p.rows()[0].search, 'newer draft'); assert.equal(p.rows()[0].enabled, true);
+  assert.match(p.el('custom-alert-r1-msg').textContent, /saved settings reloaded.*review/i);
+  assert.match(p.el('custom-alert-r1-msg').textContent, /unapplied.*Apply/);
+  assert.doesNotMatch(p.el('custom-alert-r1-msg').textContent, /checking|saved successfully/i);
+  assert.match(p.el('custom-alert-r2-msg').textContent, /Other row needs search/);
+  await p.reply('edit_custom_alert', result(3, [rule('r1', draft), rules[1]]));
+  assert.deepEqual(pending(p, 'set_custom_alert_enabled')[0].args, ['r1', true]);
+  await p.reply('set_custom_alert_enabled', result(4, [rule('r1', {...draft, enabled: true}), rules[1]]));
+  assert.equal(pending(p, 'edit_custom_alert').length, 0); assert.equal(p.rows()[0].search, 'newer draft');
+});
+
+test('successful recovery retires only its own row message, not a save error or later Test result', async () => {
+  const p = await loaded(); edit(p, 'refused'); apply(p);
+  await p.reply('edit_custom_alert', result(1, [rule('r1', {search: 'accepted'})],
+    {applied: false, persisted: false, error: 'Disk is full'}));
+  edit(p, 'uncertain'); apply(p); p.fire('custom-alert-r1-test', 'click');
+  await p.reply('edit_custom_alert', null);
+  await p.reply('test_custom_alert', {applied: false, persisted: false, error: 'No preview to test'});
+  await p.reply('get_custom_alert_state', state(1, [rule('r1', {search: 'accepted'})]));
+  assert.equal(p.rows()[0].search, 'accepted'); assert.equal(p.el('custom-alert-r1-apply').disabled, false);
+  const message = p.el('custom-alert-r1-msg').textContent;
+  assert.match(message, /saved settings reloaded.*review/i);
+  assert.match(message, /Disk is full/); assert.match(message, /No preview to test/);
+  assert.doesNotMatch(message, /checking|outcome is unknown|saved successfully/i);
+});
+
+test('failed Add recovery Retry never resubmits Add or clears a newer refusal', async () => {
+  const p = await loaded([]); p.fire('custom-alert-add', 'click');
+  await p.reply('add_custom_alert', null); await p.reply('get_custom_alert_state', null);
+  p.fire('custom-alert-retry', 'click'); p.enter(); // overlapping later controls read
+  await p.reply('get_custom_alert_state', state(2, [rule()]));
+  assert.equal(p.rows().length, 1); assert.equal(pending(p, 'add_custom_alert').length, 0);
+  assert.match(p.el('custom-alert-status').textContent, /saved settings reloaded.*review/i);
+  p.fire('custom-alert-add', 'click');
+  await p.reply('add_custom_alert', result(2, [rule()], {applied: false, persisted: false, error: 'New Add refused'}));
+  edit(p, 'newer draft'); p.el('custom-alert-r1-search').focus();
+  await p.reply('get_custom_alert_state', state(2, [rule()]));
+  assert.match(p.el('custom-alert-status').textContent, /New Add refused/);
+  assert.equal(p.rows()[0].search, 'newer draft'); assert.equal(p.document.activeElement.id, 'custom-alert-r1-search');
+});
+
+test('a stale-revision Retry remains available and cannot release an uncertain row', async () => {
+  const rules = [rule('r1', {search: 'accepted'}), rule('r2')];
+  const p = await loaded(rules); edit(p, 'unknown'); apply(p);
+  await p.reply('edit_custom_alert', null); await p.reply('get_custom_alert_state', null);
+  p.fire('custom-alert-retry', 'click'); p.toggle('custom-alert-r2-enabled', true);
+  await p.reply('set_custom_alert_enabled', result(3, rules,
+    {applied: false, persisted: false, error: 'Needs search'}));
+  await p.reply('get_custom_alert_state', state(2, rules));
+  assert.equal(p.el('custom-alert-r1-apply').disabled, true);
+  assert.equal(p.el('custom-alert-recovery').hidden, false); assert.equal(p.el('custom-alert-retry').disabled, false);
+  assert.match(p.el('custom-alert-r1-msg').textContent, /checking/);
+  p.fire('custom-alert-retry', 'click'); await p.reply('get_custom_alert_state', state(3, rules));
+  assert.equal(p.el('custom-alert-r1-apply').disabled, false);
+  assert.match(p.el('custom-alert-r2-msg').textContent, /Needs search/);
+});
+
+test('Retry cannot release a sibling uncertainty newer than its issuance', async () => {
+  const rules = [rule('r1', {search: 'first'}), rule('r2', {search: 'second'})];
+  const p = await loaded(rules);
+  edit(p, 'first updated'); apply(p); p.choose('custom-alert-r1-sound', 'sly');
+  edit(p, 'second updated', 'r2'); apply(p, 'r2'); p.choose('custom-alert-r2-sound', 'sly');
+  await p.reply('edit_custom_alert', null); await p.reply('get_custom_alert_state', null);
+  p.fire('custom-alert-retry', 'click');
+  await p.reply('edit_custom_alert', null); // sibling now needs a later read than Retry
+  await p.reply('get_custom_alert_state', state(2, [rule('r1', {search: 'first updated'}), rules[1]]));
+  assert.equal(pending(p, 'edit_custom_alert').length, 1);
+  assert.equal(pending(p, 'edit_custom_alert')[0].args[0], 'r1');
+  assert.equal(p.el('custom-alert-r2-apply').disabled, true);
+  assert.match(p.el('custom-alert-r2-msg').textContent, /checking/);
+  await p.reply('get_custom_alert_state', null);
+  assert.equal(p.el('custom-alert-recovery').hidden, false); assert.equal(p.el('custom-alert-retry').disabled, false);
+  p.fire('custom-alert-retry', 'click');
+  await p.reply('get_custom_alert_state', state(3, [rule('r1', {search: 'first updated'}), rule('r2', {search: 'second updated'})]));
+  assert.equal(pending(p, 'edit_custom_alert').length, 2);
+  assert.equal(pending(p, 'edit_custom_alert')[1].args[1].search, 'second updated');
+});
+
+for (const kind of ['section', 'route']) {
+  test('old Retry cannot hydrate or release the new ' + kind + ' view request', async () => {
+    const p = page(); p.enter(); await p.reply('get_custom_alert_state', null);
+    p.fire('custom-alert-retry', 'click'); p.leave(kind);
+    assert.equal(p.el('custom-alert-recovery').hidden, true);
+    p.enter(); await p.reply('get_custom_alert_state', null, 1);
+    p.fire('custom-alert-retry', 'click');
+    await p.reply('get_custom_alert_state', state(2, [rule()])); // old view's Retry
+    assert.equal(p.rows().length, 0); assert.equal(p.el('custom-alert-add').disabled, true);
+    assert.equal(p.el('custom-alert-retry').disabled, true, 'old completion cannot settle new request');
+    await p.reply('get_custom_alert_state', initial);
+    assert.equal(p.el('custom-alert-add').disabled, false); assert.equal(p.el('custom-alert-recovery').hidden, true);
+  });
+}
 
 (async function () {
   let failures = 0;
