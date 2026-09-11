@@ -16,7 +16,40 @@ together. Patching settings_file() would also break test_paths.py:16-19,
 which sets this same variable and then asserts on the real function.
 """
 
+import re
+import secrets
+
 import pytest
+
+
+@pytest.fixture
+def tmp_path(request, tmp_path_factory):
+    """Keep pytest's lifecycle without scanning all earlier cases for a suffix."""
+    original_mktemp = tmp_path_factory.mktemp
+
+    def mktemp(basename, numbered=True):
+        if not numbered:
+            return original_mktemp(basename, numbered=False)
+        # Keep each leaf within 31 ASCII characters, even in large sessions.
+        stem = re.sub(r"[^A-Za-z0-9_]", "_", basename)[:14]
+        attempts = 0
+        while True:
+            attempts += 1
+            try:
+                return original_mktemp(f"{stem}-{secrets.token_hex(8)}", numbered=False)
+            except FileExistsError:
+                if attempts == 10:
+                    raise
+
+    # A dynamic same-name request obtains the overridden builtin fixture. It
+    # still owns its generator finalizer, report stash and retention policy.
+    # Only this factory instance is adapted, only during allocation — session
+    # fixtures and direct factory users retain normal numbered/exact semantics.
+    with pytest.MonkeyPatch.context() as patch:
+        # Restore attribute ownership too — setattr would leave a bound method
+        # on the instance, shadowing the class method after the context exits.
+        patch.setitem(vars(tmp_path_factory), "mktemp", mktemp)
+        return request.getfixturevalue("tmp_path")
 
 
 @pytest.fixture(autouse=True)
