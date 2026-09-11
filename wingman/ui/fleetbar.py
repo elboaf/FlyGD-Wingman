@@ -179,7 +179,7 @@ def activate_bar(bar, *, user32=None) -> tuple[bool, int | None]:
     handle = window_hwnd(bar)
     if user32 is None or handle is None:
         return False, None
-    previous = int(user32.GetForegroundWindow() or 0) or None
+    previous = int(user32.GetForegroundWindow() or 0)
     if not set_bar_clickable(bar, True, user32=user32):
         return False, previous
     user32.SetForegroundWindow(handle)
@@ -270,13 +270,14 @@ def create(api, hidden: bool = True):
                     current_work_area(bar),
                 )
             )
-            apply_geometry(
-                bar,
-                applied_x,
-                applied_y,
-                applied_outer_width,
-                applied_outer_height,
-            )
+            if not hidden:
+                apply_geometry(
+                    bar,
+                    applied_x,
+                    applied_y,
+                    applied_outer_width,
+                    applied_outer_height,
+                )
             api._publish_fleet_page_locked(
                 bar,
                 page_id,

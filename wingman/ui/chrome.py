@@ -152,8 +152,8 @@ def hit_code(rect, x, y, scale=1.0, *, edges=ALL_EDGES):
 
 # Every attached callback, kept alive forever. A ctypes callback collected
 # while Windows still holds its address takes the process down at the next
-# message, and the crash lands nowhere near this file. Never pruned: an
-# entry costs a pointer, and the only window that attaches one lives for
+# message, and the crash lands nowhere near this file. Never pruned: the
+# entries cost pointers, and more than one tool window can keep one live for
 # the life of the process.
 _KEEPALIVE = []
 
@@ -242,10 +242,10 @@ def _on_ui_thread(native, fn) -> None:
 
     Two callers need this for different reasons. Assigning Padding triggers
     a layout pass over the WebView2 control, and doing that cross-thread
-    deadlocks the process into a window that cannot be closed. Installing
-    the WndProc needs it so that publishing the callback and storing the
-    original are ATOMIC with respect to message dispatch -- see
-    enable_resize. pywebview guards its own equivalents the same way
+    deadlocks the process into a window that cannot be closed. _attach_resize
+    owns both the inset layout pass and the WndProc install, so publishing
+    the callback and storing the original are ATOMIC with respect to message
+    dispatch. pywebview guards its own equivalents the same way
     (winforms.py:546, :597).
     """
     from System import Action
@@ -331,16 +331,46 @@ def _remove_inset(native, *, edges=ALL_EDGES) -> None:
         )
 
 
+def _physical_insets(native, *, fallback: ResizeInsets) -> ResizeInsets:
+    try:
+        client = native.ClientRectangle
+        display = native.DisplayRectangle
+        left = display.X
+        top = display.Y
+        right = client.Width - display.Width - display.X
+        bottom = client.Height - display.Height - display.Y
+        return ResizeInsets(
+            left=max(0, int(left)),
+            top=max(0, int(top)),
+            right=max(0, int(right)),
+            bottom=max(0, int(bottom)),
+        )
+    except Exception:
+        logger.debug("Could not read back physical resize insets", exc_info=True)
+        return fallback
+
+
 def _bound_horizontal_track_width(
-    lparam, MINMAXINFO, insets: ResizeInsets, min_content_width, max_content_width
+    lparam,
+    MINMAXINFO,
+    *,
+    scale: float,
+    physical_insets: ResizeInsets,
+    min_content_width,
+    max_content_width,
 ) -> None:
     if min_content_width is None and max_content_width is None:
         return
+    factor = scale or 1.0
     mmi = ctypes.cast(lparam, ctypes.POINTER(MINMAXINFO)).contents
     if min_content_width is not None:
-        mmi.ptMinTrackSize.x = min_content_width + insets.horizontal
+        mmi.ptMinTrackSize.x = (
+            round(min_content_width * factor) + physical_insets.horizontal
+        )
     if max_content_width is not None:
-        mmi.ptMaxTrackSize.x = max_content_width + insets.horizontal
+        mmi.ptMaxTrackSize.x = (
+            round(max_content_width * factor) + physical_insets.horizontal
+        )
 
 
 def _attach_resize(
@@ -389,6 +419,7 @@ def _attach_resize(
     # see _apply_inset.
     scale = _scale_for(user32, handle)
     requested = _requested_insets(pad, edges)
+    requested_physical = _requested_insets(max(1, int(pad * scale)), edges)
 
     try:
         _apply_inset(native, max(1, int(pad * scale)), edges=edges)
@@ -401,6 +432,7 @@ def _attach_resize(
         return None
 
     insets = _logical_insets(native, scale, fallback=requested)
+    physical_insets = _physical_insets(native, fallback=requested_physical)
     chained = []
 
     def _clamp(lparam):
@@ -471,7 +503,12 @@ def _attach_resize(
                 result = user32.CallWindowProcW(original, hwnd_, msg, wparam, lparam)
                 _clamp(lparam)
                 _bound_horizontal_track_width(
-                    lparam, MINMAXINFO, insets, min_content_width, max_content_width
+                    lparam,
+                    MINMAXINFO,
+                    scale=scale,
+                    physical_insets=physical_insets,
+                    min_content_width=min_content_width,
+                    max_content_width=max_content_width,
                 )
                 return result
         except Exception:

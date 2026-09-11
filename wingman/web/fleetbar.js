@@ -17,6 +17,7 @@
   var resizeTimer = 0;
   var resizePending = false;
   var resizeSettling = false;
+  var resizeSettleVersion = 0;
   var fitDeferred = false;
   var activationPromise = null;
   var activationActive = false;
@@ -76,8 +77,20 @@
     if (node.textContent !== text) node.textContent = text;
   }
 
-  function fieldResult(result) {
-    if (result && result.error) showTitleError(result.error);
+  function isFieldResult(result) {
+    return !!result && typeof result === 'object'
+      && typeof result.applied === 'boolean'
+      && typeof result.persisted === 'boolean'
+      && Object.prototype.hasOwnProperty.call(result, 'error')
+      && (result.error === null || typeof result.error === 'string');
+  }
+
+  function fieldResult(result, failureMessage) {
+    if (!isFieldResult(result)) {
+      showTitleError(failureMessage);
+      return null;
+    }
+    if (result.error) showTitleError(result.error);
     else clearTitleError();
     return result;
   }
@@ -113,19 +126,20 @@
     var width = currentContentWidth();
     var changed = settledContentWidth === null || Math.abs(width - settledContentWidth) > 1;
     var work = Promise.resolve(null);
+    var version = 0;
     if (changed) {
       resizeSettling = true;
+      version = ++resizeSettleVersion;
       work = send('settle_fleet_bar_resize', width, window.screenX).then(function (result) {
+        if (version !== resizeSettleVersion) return null;
         resizeSettling = false;
-        if (result && result.error) showTitleError(result.error);
-        else settledContentWidth = width;
+        result = fieldResult(result, 'The Fleet Bar could not be resized.');
+        if (result && !result.error) settledContentWidth = width;
         return result;
-      }, function (err) {
-        resizeSettling = false;
-        throw err;
       });
     }
     return work.then(function () {
+      if (version && version !== resizeSettleVersion) return null;
       return drainDeferredFit();
     });
   }
@@ -465,12 +479,16 @@
   bindTableActionTraversal();
 
   bindAction('fleet-reset-width', function () {
-    return send('reset_fleet_bar_page_width').then(fieldResult);
+    return send('reset_fleet_bar_page_width').then(function (result) {
+      return fieldResult(result, 'Could not reset Fleet Bar width.');
+    });
   });
   bindAction('fleet-hide', function () {
     activationActive = false;
     activationPromise = null;
-    return send('hide_fleet_bar').then(fieldResult);
+    return send('hide_fleet_bar').then(function (result) {
+      return fieldResult(result, 'Could not hide the Fleet Bar.');
+    });
   });
 
   var fontsReady = (document.fonts && document.fonts.ready)

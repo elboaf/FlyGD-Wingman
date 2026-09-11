@@ -551,6 +551,60 @@ test('resize bursts settle once after 150ms and unchanged width within one pixel
   assert.deepEqual(p.errors, []);
 });
 
+test('resize settlement rejection shows a generic failure and keeps the previous baseline', async () => {
+  const p = await page();
+  await settle(p.fonts);
+  await settle(p.calls('fleet_bar_snapshot')[0], snapshot());
+  await settle(p.calls('fit_fleet_bar_height')[0]);
+  await settle(p.calls('fleet_bar_ready')[0], true);
+  await p.advance(500);
+  await settle(p.calls('fit_fleet_bar_height')[1]);
+
+  await p.resize(531);
+  await p.advance(150);
+  assert.deepEqual(p.calls('settle_fleet_bar_resize')[0].args, [A, 531, 20]);
+  await fail(p.calls('settle_fleet_bar_resize')[0]);
+  assert.equal(p.el('fleet-title-error').textContent, 'The Fleet Bar could not be resized.');
+
+  await p.resize(530);
+  await p.advance(150);
+  assert.deepEqual(p.calls('settle_fleet_bar_resize').map(call => call.args), [
+    [A, 531, 20],
+    [A, 530, 20]
+  ]);
+  assert.deepEqual(p.errors.map(error => error[0]), ['bridge: settle_fleet_bar_resize failed']);
+});
+
+test('fit pauses until the latest overlapping resize settlement completes', async () => {
+  const p = await page();
+  await settle(p.fonts);
+  await settle(p.calls('fleet_bar_snapshot')[0], snapshot());
+  await settle(p.calls('fit_fleet_bar_height')[0]);
+  await settle(p.calls('fleet_bar_ready')[0], true);
+  await p.advance(500);
+  await settle(p.calls('fit_fleet_bar_height')[1]);
+  const fits = p.calls('fit_fleet_bar_height').length;
+
+  await p.resize(480);
+  await p.advance(150);
+  assert.deepEqual(p.calls('settle_fleet_bar_resize')[0].args, [A, 480, 20]);
+
+  await p.resize(500);
+  p.shell.offsetHeight = 190;
+  await p.push(snapshot(2, 'While resizing'));
+  assertRendered(p, 'While resizing');
+  assert.equal(p.calls('fit_fleet_bar_height').length, fits, 'fit still waits while the second settle is pending');
+  await p.advance(150);
+  assert.deepEqual(p.calls('settle_fleet_bar_resize')[1].args, [A, 500, 20]);
+
+  await settle(p.calls('settle_fleet_bar_resize')[0], { applied: true, persisted: true, error: null });
+  assert.equal(p.calls('fit_fleet_bar_height').length, fits, 'older replies cannot drain deferred fit');
+
+  await settle(p.calls('settle_fleet_bar_resize')[1], { applied: true, persisted: true, error: null });
+  assert.deepEqual(p.calls('fit_fleet_bar_height')[fits].args, [A, 190]);
+  assert.deepEqual(p.errors, []);
+});
+
 test('fit pauses during resizing and resumes once after settlement', async () => {
   const p = await page();
   await settle(p.fonts);
@@ -672,6 +726,28 @@ test('Hide uses only the token-bound endpoint and action errors do not change he
   assert.equal(p.el('fleet-title').offsetHeight, before);
   assert.deepEqual(p.errors, []);
 });
+
+for (const [id, method, message] of [
+  ['fleet-reset-width', 'reset_fleet_bar_page_width', 'Could not reset Fleet Bar width.'],
+  ['fleet-hide', 'hide_fleet_bar', 'Could not hide the Fleet Bar.']
+]) {
+  test(id + ' null result shows a generic action failure', async () => {
+    const p = await page();
+    await settle(p.fonts);
+    await settle(p.calls('fleet_bar_snapshot')[0], snapshot());
+    await settle(p.calls('fit_fleet_bar_height')[0]);
+    await settle(p.calls('fleet_bar_ready')[0], true);
+
+    await p.pointerdown(id);
+    await p.click(id);
+    await settle(p.calls('activate_fleet_bar')[0], true);
+    assert.deepEqual(p.calls(method)[0].args, [A]);
+    await settle(p.calls(method)[0]);
+
+    assert.equal(p.el('fleet-title-error').textContent, message);
+    assert.deepEqual(p.errors, []);
+  });
+}
 
 test('native dragging stays native; only mouseup saves current coordinates and rejection is best-effort', async () => {
   const p = await page();

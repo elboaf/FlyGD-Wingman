@@ -95,6 +95,13 @@
       opacity: 0;
       pointer-events: none;
     }
+    .fleet-title:focus-within .fleet-title-end.error-active .fleet-title-status {
+      opacity: 0;
+    }
+    .fleet-title:focus-within .fleet-title-end.error-active .fleet-title-actions {
+      opacity: 1;
+      pointer-events: auto;
+    }
     .fleet-health,
     .fleet-title-error {
       display: block;
@@ -168,6 +175,7 @@
          label wrap within the remaining identity track, never over a value. */
       white-space: normal;
     }
+    .fleet-row.threat .fleet-remote { color: var(--text-label); }
     .fleet-character {
       display: block;
       overflow: hidden;

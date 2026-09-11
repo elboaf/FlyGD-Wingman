@@ -3274,8 +3274,9 @@ until they are actually run on Windows.
       window; rows stay scrollable and the action buttons never start a drag.
 - [ ] **Left and right edges resize, with native cursor feedback.** At 100%,
       125%, 150%, and 200% Windows display scaling, the left and right edges
-      show the standard horizontal resize cursor and resize width live. Top,
-      bottom, and corners do not resize.
+      show the standard horizontal resize cursor and resize width live. Top
+      and bottom do not resize. The corners keep the same horizontal-only
+      cursor and width change as their nearest side, never a vertical resize.
 - [ ] **Content width, not outer width, is what persists.** Save widths at
       420, 500, 720, and one in-between width. Expected: the rendered Fleet Bar
       content width persists; the native outer width is wider by the current
@@ -3311,10 +3312,11 @@ until they are actually run on Windows.
       page body it returns to that character's current checkbox, but deliberate
       focus movement to another control is never stolen.
 - [ ] **Hide and Reset width failures stay honest.** With an instrumented
-      persistence failure, a visible Hide/Reset result remains applied for the
-      session but warns it will not survive restart. With an instrumented
-      native hide or reset failure, the action refuses without pretending it
-      succeeded.
+      Fleet Bar setting save refusal, clicking Hide refuses and leaves the bar
+      visible. If a later native hide or reset applies but its save fails, the
+      visible session state remains applied and warns it will not survive
+      restart. With an instrumented native hide or reset failure, the action
+      refuses without pretending it succeeded.
 - [ ] **Fixed-width fallback stays usable when resize chrome cannot attach.**
       In an instrumented build that disables horizontal resize chrome, Fleet
       Bar still opens at the clamped preferred width, omits the native resize

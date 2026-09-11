@@ -476,6 +476,16 @@ function measurementExpression(width, proofMode) {
     await window.DEV.fleetBar(kind);
     await frame();
   }
+  function stateSnapshot() {
+    return {
+      rowCount: q('#fleet-rows').children.length,
+      emptyHidden: q('#fleet-empty').hidden,
+      emptyText: q('#fleet-empty').textContent,
+      noteHidden: q('#fleet-note').hidden,
+      noteText: q('#fleet-note').textContent,
+      healthText: q('#fleet-health').textContent
+    };
+  }
   if (!window.DEV || typeof window.DEV.fleetBar !== 'function') {
     throw new Error('DEV.fleetBar is unavailable');
   }
@@ -515,18 +525,33 @@ function measurementExpression(width, proofMode) {
     drag: rect(drag),
     actions: rect(actions)
   };
+  q('#fleet-health').hidden = true;
+  q('#fleet-title-error').hidden = false;
+  q('#fleet-title-error').textContent = 'Example error';
+  titleEnd.classList.add('error-active');
+  reset.focus();
+  await frame();
+  var errorFocused = {
+    actionsOpacity: Number(getComputedStyle(actions).opacity),
+    actionsPointerEvents: getComputedStyle(actions).pointerEvents
+  };
+  titleEnd.classList.remove('error-active');
+  q('#fleet-title-error').hidden = true;
+  q('#fleet-title-error').textContent = '';
+  q('#fleet-health').hidden = false;
   var surfaces = {
-    threat: getComputedStyle(threatRow).backgroundColor
+    threat: getComputedStyle(threatRow).backgroundColor,
+    threatSample: {
+      x: Math.max(0, Math.floor(threatRow.getBoundingClientRect().left + 4)),
+      y: Math.max(0, Math.floor(threatRow.getBoundingClientRect().top + 4))
+    }
   };
   var emphasis = {
     incomingColor: getComputedStyle(threatIncoming).color,
     incomingFontWeight: getComputedStyle(threatIncoming).fontWeight,
     ewarColor: getComputedStyle(threatEwar).color,
     ewarFontWeight: getComputedStyle(threatEwar).fontWeight,
-    backgroundSample: {
-      x: Math.max(0, Math.floor(threatRow.getBoundingClientRect().left + 4)),
-      y: Math.max(0, Math.floor(threatRow.getBoundingClientRect().top + 4))
-    }
+    backgroundSample: surfaces.threatSample
   };
   table.focus();
   await frame();
@@ -534,6 +559,10 @@ function measurementExpression(width, proofMode) {
   await show('zero');
   fixtures.zero = overflowSnapshot();
   surfaces.neutral = getComputedStyle(q('.fleet-row')).backgroundColor;
+  surfaces.neutralSample = {
+    x: Math.max(0, Math.floor(q('.fleet-row').getBoundingClientRect().left + 4)),
+    y: Math.max(0, Math.floor(q('.fleet-row').getBoundingClientRect().top + 4))
+  };
 
   await show('long');
   fixtures.long = overflowSnapshot();
@@ -557,6 +586,24 @@ function measurementExpression(width, proofMode) {
     ewar: textMetrics(q('.fleet-ewar'))
   };
 
+  await show('empty');
+  fixtures.empty = stateSnapshot();
+
+  await show('allhidden');
+  fixtures.allhidden = stateSnapshot();
+
+  await show('nolog');
+  fixtures.nolog = stateSnapshot();
+
+  await show('missing');
+  fixtures.missing = stateSnapshot();
+
+  await show('waiting');
+  fixtures.waiting = stateSnapshot();
+
+  await show('error');
+  fixtures.error = stateSnapshot();
+
   await show('roster');
   fixtures.roster = overflowSnapshot();
   var headTopBefore = round(head.getBoundingClientRect().top);
@@ -577,7 +624,8 @@ function measurementExpression(width, proofMode) {
     fixtures: fixtures,
     header: {
       before: beforeHeader,
-      after: afterHeader
+      after: afterHeader,
+      errorFocused: errorFocused
     },
     surfaces: surfaces,
     emphasis: emphasis,
@@ -777,6 +825,44 @@ async function captureBackgroundPixel(cdp, point) {
   };
 }
 
+function fixtureEvidenceExpression(kind) {
+  return `
+(async function () {
+  function q(selector, root) {
+    var node = (root || document).querySelector(selector);
+    if (!node) throw new Error('Missing ' + selector + ' for ${kind} evidence');
+    return node;
+  }
+  await window.DEV.fleetBar(${JSON.stringify(kind)});
+  await new Promise(function (resolve) {
+    requestAnimationFrame(function () { requestAnimationFrame(resolve); });
+  });
+  var row = q('.fleet-row');
+  var result = {
+    surfaceColor: getComputedStyle(row).backgroundColor,
+    backgroundSample: {
+      x: Math.max(0, Math.floor(row.getBoundingClientRect().left + 4)),
+      y: Math.max(0, Math.floor(row.getBoundingClientRect().top + 4))
+    }
+  };
+  if (${JSON.stringify(kind)} === 'threat') {
+    var incoming = q('.fleet-damage-in .fleet-damage-value', row);
+    var ewar = q('.fleet-ewar.active', row);
+    result.incomingColor = getComputedStyle(incoming).color;
+    result.incomingFontWeight = getComputedStyle(incoming).fontWeight;
+    result.ewarColor = getComputedStyle(ewar).color;
+    result.ewarFontWeight = getComputedStyle(ewar).fontWeight;
+  }
+  if (${JSON.stringify(kind)} === 'remote') {
+    var marker = q('.fleet-remote', row);
+    result.markerColor = getComputedStyle(marker).color;
+    result.markerFontWeight = getComputedStyle(marker).fontWeight;
+  }
+  return result;
+})()
+`;
+}
+
 function clipped(label, metric) {
   return metric.scrollWidth > metric.clientWidth + EPSILON
     ? label + ' clipped (' + metric.scrollWidth + ' > ' + metric.clientWidth + ')'
@@ -849,6 +935,11 @@ function validateMeasurement(measurement) {
   if (!measurement.emphasis.backgroundColor) {
     errors.push(width + ': missing sampled threat-row background color');
   }
+  if (!measurement.surfaces.neutralBackgroundColor) {
+    errors.push(width + ': missing sampled neutral-row background color');
+  } else if (measurement.emphasis.backgroundColor === measurement.surfaces.neutralBackgroundColor) {
+    errors.push(width + ': threat-row and neutral-row sampled backgrounds are identical');
+  }
   if (!measurement.emphasis.ewarStrength || !measurement.emphasis.incomingStrength) {
     errors.push(width + ': missing rendered emphasis strengths');
   } else {
@@ -879,6 +970,11 @@ function validateMeasurement(measurement) {
         + ' to ' + measurement.header.after.titleEndWidth
     );
   }
+  if (!measurement.header.errorFocused
+      || measurement.header.errorFocused.actionsOpacity < 0.99
+      || measurement.header.errorFocused.actionsPointerEvents !== 'auto') {
+    errors.push(width + ': focused header actions disappear under error-active');
+  }
   if (measurement.header.after.actions.left + EPSILON < measurement.header.after.drag.right) {
     errors.push(
       width + ': actions overlap drag region ('
@@ -892,6 +988,60 @@ function validateMeasurement(measurement) {
         + ' to ' + measurement.sticky.afterTop
     );
   }
+  const states = {
+    empty: {
+      rowCount: 0,
+      emptyHidden: false,
+      healthText: 'LOCAL WAITING',
+      noteHidden: true
+    },
+    allhidden: {
+      rowCount: 0,
+      emptyHidden: false,
+      emptyText: 'All running characters are hidden.',
+      healthText: 'LOCAL LIVE'
+    },
+    nolog: {
+      rowCount: 1,
+      emptyHidden: true,
+      noteHidden: true,
+      healthText: 'LOCAL LIVE'
+    },
+    missing: {
+      rowCount: 0,
+      emptyHidden: false,
+      noteHidden: false,
+      noteText: 'Set the Gamelog folder in Settings › Alerts.',
+      healthText: 'LOCAL NO LOG FOLDER'
+    },
+    waiting: {
+      rowCount: 0,
+      emptyHidden: false,
+      healthText: 'LOCAL WAITING',
+      noteHidden: true
+    },
+    error: {
+      rowCount: 0,
+      emptyHidden: false,
+      noteHidden: false,
+      noteText: 'Gamelogs could not be read.',
+      healthText: 'LOCAL ERROR'
+    }
+  };
+  for (const name of Object.keys(states)) {
+    const actual = measurement.fixtures[name];
+    if (!actual) {
+      errors.push(width + ': missing rendered state fixture ' + name);
+      continue;
+    }
+    const expected = states[name];
+    for (const key of Object.keys(expected)) {
+      if (actual[key] !== expected[key]) {
+        errors.push(width + ': ' + name + ' ' + key + ' is ' + JSON.stringify(actual[key])
+          + ' not ' + JSON.stringify(expected[key]));
+      }
+    }
+  }
   if (measurement.roster.rowCount !== 128) {
     errors.push(width + ': roster fixture rendered ' + measurement.roster.rowCount + ' rows instead of 128');
   }
@@ -903,6 +1053,14 @@ function validateMeasurement(measurement) {
   }
   if (measurement.roster.clientHeight > 480 + EPSILON) {
     errors.push(width + ': roster client height exceeds 480px cap (' + measurement.roster.clientHeight + ')');
+  }
+  if (!measurement.remote.markerStrength) {
+    errors.push(width + ': missing rendered REMOTE threat contrast evidence');
+  } else if (measurement.remote.markerStrength.contrast < 4.5) {
+    errors.push(
+      width + ': threat-row REMOTE contrast '
+        + measurement.remote.markerStrength.contrast + ' is below 4.5:1'
+    );
   }
   return errors;
 }
@@ -1017,17 +1175,37 @@ async function run() {
 })()
       `);
       const measurement = await evaluate(cdp, measurementExpression(width, args.proof));
-      const background = await captureBackgroundPixel(cdp, measurement.emphasis.backgroundSample);
-      measurement.emphasis.backgroundColor = 'rgba(' + [background.r, background.g, background.b, Number((background.a / 255).toFixed(3))].join(', ') + ')';
+      const threatEvidence = await evaluate(cdp, fixtureEvidenceExpression('threat'));
+      measurement.surfaces.threat = threatEvidence.surfaceColor;
+      const threatBackground = await captureBackgroundPixel(cdp, threatEvidence.backgroundSample);
+      measurement.emphasis.backgroundColor = 'rgba(' + [threatBackground.r, threatBackground.g, threatBackground.b, Number((threatBackground.a / 255).toFixed(3))].join(', ') + ')';
+      measurement.emphasis.ewarColor = threatEvidence.ewarColor;
+      measurement.emphasis.ewarFontWeight = threatEvidence.ewarFontWeight;
+      measurement.emphasis.incomingColor = threatEvidence.incomingColor;
+      measurement.emphasis.incomingFontWeight = threatEvidence.incomingFontWeight;
       measurement.emphasis.ewarStrength = emphasisStrength(
-        measurement.emphasis.ewarColor,
-        measurement.emphasis.ewarFontWeight,
-        background
+        threatEvidence.ewarColor,
+        threatEvidence.ewarFontWeight,
+        threatBackground
       );
       measurement.emphasis.incomingStrength = emphasisStrength(
-        measurement.emphasis.incomingColor,
-        measurement.emphasis.incomingFontWeight,
-        background
+        threatEvidence.incomingColor,
+        threatEvidence.incomingFontWeight,
+        threatBackground
+      );
+      const neutralEvidence = await evaluate(cdp, fixtureEvidenceExpression('zero'));
+      measurement.surfaces.neutral = neutralEvidence.surfaceColor;
+      const neutralBackground = await captureBackgroundPixel(cdp, neutralEvidence.backgroundSample);
+      measurement.surfaces.neutralBackgroundColor = 'rgba(' + [neutralBackground.r, neutralBackground.g, neutralBackground.b, Number((neutralBackground.a / 255).toFixed(3))].join(', ') + ')';
+      const remoteEvidence = await evaluate(cdp, fixtureEvidenceExpression('remote'));
+      const remoteBackground = await captureBackgroundPixel(cdp, remoteEvidence.backgroundSample);
+      measurement.remote.markerColor = remoteEvidence.markerColor;
+      measurement.remote.markerFontWeight = remoteEvidence.markerFontWeight;
+      measurement.remote.backgroundColor = 'rgba(' + [remoteBackground.r, remoteBackground.g, remoteBackground.b, Number((remoteBackground.a / 255).toFixed(3))].join(', ') + ')';
+      measurement.remote.markerStrength = emphasisStrength(
+        remoteEvidence.markerColor,
+        remoteEvidence.markerFontWeight,
+        remoteBackground
       );
       measurements.push(measurement);
       errors.push.apply(errors, validateMeasurement(measurement));

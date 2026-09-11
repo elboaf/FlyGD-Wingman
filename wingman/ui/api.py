@@ -3202,6 +3202,14 @@ class Api:
                     height=height,
                 )
             )
+            if not fleetbar.is_visible(bar):
+                self._remember_fleetbar_rect_locked(
+                    target_x,
+                    target_y,
+                    target_width,
+                    target_height,
+                )
+                return
         for _ in range(12):
             with self._fleetbar_lifecycle_lock:
                 if self._fleet_page_window_locked(
@@ -3243,6 +3251,8 @@ class Api:
         return "The Fleet Bar width changed, but it will not survive restart."
 
     def _reset_fleet_bar_width_locked(self, bar) -> dict:
+        from wingman.ui import fleetbar
+
         default_width = settings_mod.FLEET_BAR_DEFAULT_PREFERRED_CONTENT_WIDTH
         if bar is None:
             try:
@@ -3262,18 +3272,24 @@ class Api:
                 content_width=default_width,
             )
         )
+        if self.fleet_bar_settings().get("enabled") and fleetbar.is_visible(bar):
+            try:
+                fleetbar.apply_geometry(
+                    bar,
+                    target_x,
+                    target_y,
+                    target_width,
+                    target_height,
+                )
+            except Exception:
+                logger.debug("Fleet Bar width reset failed", exc_info=True)
+                return self._field_refused("The Fleet Bar width could not be reset.")
         self._remember_fleetbar_rect_locked(
             target_x,
             target_y,
             target_width,
             target_height,
         )
-        if self.fleet_bar_settings().get("enabled"):
-            try:
-                self._apply_fleetbar_rect_locked(bar)
-            except Exception:
-                logger.debug("Fleet Bar width reset failed", exc_info=True)
-                return self._field_refused("The Fleet Bar width could not be reset.")
         try:
             settings_mod.update_section(
                 self._state.settings,
@@ -3294,7 +3310,7 @@ class Api:
         return self._field_ok()
 
     def fleet_bar_ready(self, page_id: str | None = None) -> bool | None:
-        """Reveal the enabled creation after the page's best-effort boot fit."""
+        """Reveal the enabled creation after the page's boot render chain; fit remains best-effort."""
         from wingman.ui import fleetbar
 
         with self._fleetbar_lifecycle_lock:
@@ -3316,10 +3332,12 @@ class Api:
                 self._queue_fleet_presentation()
             except Exception:
                 logger.exception("Fleet Bar window could not be revealed")
-                self._toggle_fleet_bar(False)
+                self._hide_fleet_bar_locked()
             return resize_enabled
 
     def save_fleet_bar_pos(self, page_id: str | None = None, x=None, y=None) -> None:
+        from wingman.ui import fleetbar
+
         with self._fleetbar_lifecycle_lock:
             bar = self._fleet_page_window_locked(page_id)
             if bar is None:
@@ -3335,14 +3353,26 @@ class Api:
                     y=y,
                 )
             )
+            if target_x != x or target_y != y:
+                try:
+                    fleetbar.apply_geometry(
+                        bar,
+                        target_x,
+                        target_y,
+                        target_width,
+                        target_height,
+                    )
+                except Exception:
+                    logger.debug(
+                        "Fleet Bar drag-position correction failed", exc_info=True
+                    )
+                    return
             self._remember_fleetbar_rect_locked(
                 target_x,
                 target_y,
                 target_width,
                 target_height,
             )
-            setattr(bar, "x", target_x)
-            setattr(bar, "y", target_y)
             settings_mod.update_section(
                 self._state.settings, "fleet_bar", {"x": target_x, "y": target_y}
             )

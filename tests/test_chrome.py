@@ -344,11 +344,20 @@ def _fake_horizontal_attach(
     )
 
 
-def test_enable_horizontal_resize_reports_logical_insets_and_outer_track_widths(
-    monkeypatch,
+@pytest.mark.parametrize(
+    ("scale", "physical_insets", "expected_tracks"),
+    [
+        pytest.param(1.0, (6, 0, 6, 0), (432, 732), id="100%"),
+        pytest.param(1.25, (7, 0, 8, 0), (540, 915), id="125%"),
+        pytest.param(1.5, (9, 0, 9, 0), (648, 1098), id="150%"),
+        pytest.param(2.0, (12, 0, 12, 0), (864, 1464), id="200%"),
+    ],
+)
+def test_enable_horizontal_resize_reports_logical_insets_and_physical_outer_track_widths(
+    monkeypatch, scale, physical_insets, expected_tracks
 ):
     attached = _fake_horizontal_attach(
-        monkeypatch, scale=1.25, physical_insets=(7, 0, 8, 0)
+        monkeypatch, scale=scale, physical_insets=physical_insets
     )
 
     insets = chrome.enable_horizontal_resize(
@@ -364,7 +373,7 @@ def test_enable_horizontal_resize_reports_logical_insets_and_outer_track_widths(
     )
 
     assert result == 777
-    assert (info.ptMinTrackSize.x, info.ptMaxTrackSize.x) == (432, 732)
+    assert (info.ptMinTrackSize.x, info.ptMaxTrackSize.x) == expected_tracks
     assert (info.ptMinTrackSize.y, info.ptMaxTrackSize.y) == (250, 900)
 
 

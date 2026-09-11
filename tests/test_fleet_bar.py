@@ -54,6 +54,43 @@ class FleetWindow(FakeWindow):
         self.y = y
 
 
+class ReadOnlyFleetWindow(FakeWindow):
+    def __init__(self, *, width=0, height=0, x=0, y=0, work_area=None):
+        super().__init__()
+        self.hidden = False
+        self.resized = []
+        self.moved = []
+        self.width = width
+        self.height = height
+        self._x = x
+        self._y = y
+        self.work_area = work_area
+
+    @property
+    def x(self):
+        return self._x
+
+    @property
+    def y(self):
+        return self._y
+
+    def show(self):
+        self.hidden = False
+
+    def hide(self):
+        self.hidden = True
+
+    def resize(self, width, height):
+        self.resized.append((width, height))
+        self.width = width
+        self.height = height
+
+    def move(self, x, y):
+        self.moved.append((x, y))
+        self._x = x
+        self._y = y
+
+
 class _Handle:
     def __init__(self, value):
         self._value = value
@@ -1134,7 +1171,7 @@ def test_save_position_height_fit_and_resize_settlement_ignore_invalid_values(ap
     api.fit_fleet_bar_height(api._fleetbar_page_id, "bad")
     assert api.settle_fleet_bar_resize(api._fleetbar_page_id, 0, "bad") is None
     assert api._fleetbar_window.resized == [(500, 112)]
-    assert api._fleetbar_window.moved == []
+    assert api._fleetbar_window.moved == [(25, -40)]
     assert api._state.settings["fleet_bar"]["x"] == 25
     assert api._state.settings["fleet_bar"]["y"] == -40
 
@@ -1191,7 +1228,7 @@ def test_settings_and_status_strip_expose_the_same_fleet_toggle():
     assert 'id="btn-fleetbar"' in html
     assert "Show Fleet Bar" in html
     assert "Drag Fleet Bar by its header." in html
-    assert "Resize from the left or right edge." in html
+    assert "If edge resize is available, use the left or right edge." in html
     assert "Wingman remembers width and position." in html
     assert "Puts Fleet Bar back to its default 500px content width." in html
     assert "Fleet combat bar" not in html
@@ -1701,6 +1738,9 @@ def test_page_identity_real_replacement_rejects_predecessor(
     if method == "fleet_bar_snapshot":
         assert isinstance(result, dict)
     elif method == "fit_fleet_bar_height":
+        assert second.resized == second.moved == []
+        assert api._fleetbar_applied_outer_height == 112
+        assert _page_call(api, "fleet_bar_ready", second_token) is False
         assert second.resized == [(500, 112)]
     elif method == "save_fleet_bar_pos":
         assert api._state.settings["fleet_bar"]["x"] == 25
@@ -1826,13 +1866,30 @@ def test_create_attaches_horizontal_resize_before_publication(tmp_path, monkeypa
     def create_window(title, url, **kwargs):
         calls.update(title=title, url=url, kwargs=kwargs)
         token.append(url.partition("#fleet-page=")[2])
-        return FleetWindow(
+        bar = FleetWindow(
             width=kwargs["width"],
             height=kwargs["height"],
             x=kwargs["x"],
             y=kwargs["y"],
             work_area=(0, -100, 900, 900),
         )
+        bar.hidden = kwargs["hidden"]
+
+        def resize(width, height):
+            bar.resized.append((width, height))
+            bar.width = width
+            bar.height = height
+            bar.hidden = False
+
+        def move(x, y):
+            bar.moved.append((x, y))
+            bar.x = x
+            bar.y = y
+            bar.hidden = False
+
+        bar.resize = resize
+        bar.move = move
+        return bar
 
     def enable_horizontal_resize(bar, **kwargs):
         attached.append(
@@ -1862,12 +1919,17 @@ def test_create_attaches_horizontal_resize_before_publication(tmp_path, monkeypa
     assert calls["kwargs"]["width"] == 500
     assert styled == [created]
     assert attached == [(None, None, False)]
-    assert created.resized == [(512, 90)]
+    assert created.hidden is True
+    assert created.resized == []
+    assert created.moved == []
     assert api._fleetbar_window is created
     assert api._fleetbar_page_id == token[0]
     assert api._fleetbar_resize_enabled is True
     assert api._fleetbar_resize_insets == chrome.ResizeInsets(6, 0, 6, 0)
+    assert api._fleetbar_applied_x == 25
+    assert api._fleetbar_applied_y == -40
     assert api._fleetbar_applied_outer_width == 512
+    assert api._fleetbar_applied_outer_height == 90
 
 
 def test_create_without_resize_chrome_falls_back_to_fixed_width_without_stale_inset(
@@ -1924,6 +1986,74 @@ def test_new_page_geometry_callbacks_reject_omitted_and_stale_tokens(api, method
     assert api._state.settings["fleet_bar"] == before
     assert api._fleetbar_window.resized == []
     assert api._fleetbar_window.moved == []
+
+
+def test_save_fleet_bar_pos_uses_geometry_helper_for_read_only_window(api):
+    bar = ReadOnlyFleetWindow(
+        width=512,
+        height=90,
+        x=40,
+        y=60,
+        work_area=(0, 0, 600, 900),
+    )
+    api._state.settings["fleet_bar"]["enabled"] = True
+    api._fleetbar_window = bar
+    api._fleetbar_resize_insets = chrome.ResizeInsets(6, 0, 6, 0)
+    api._fleetbar_resize_enabled = True
+    api._fleetbar_applied_x = 40
+    api._fleetbar_applied_y = 60
+    api._fleetbar_applied_outer_width = 512
+    api._fleetbar_applied_outer_height = 90
+
+    api.save_fleet_bar_pos(PAGE_A, 150, 60)
+
+    assert bar.resized == []
+    assert bar.moved == [(88, 60)]
+    assert (bar.x, bar.y) == (88, 60)
+    assert (api._fleetbar_applied_x, api._fleetbar_applied_y) == (88, 60)
+    assert api._state.settings["fleet_bar"]["x"] == 88
+    assert api._state.settings["fleet_bar"]["y"] == 60
+
+
+def test_fit_fleet_bar_height_stages_hidden_geometry_until_ready(api):
+    _set_resizable_bar(api)
+    bar = api._fleetbar_window
+    bar.hidden = True
+    api._fleetbar_ready = False
+    events = []
+
+    def resize(width, height):
+        events.append(("resize", width, height))
+        bar.width = width
+        bar.height = height
+        bar.hidden = False
+
+    def move(x, y):
+        events.append(("move", x, y))
+        bar.x = x
+        bar.y = y
+        bar.hidden = False
+
+    def show():
+        events.append(("show",))
+        bar.hidden = False
+
+    bar.resize = resize
+    bar.move = move
+    bar.show = show
+
+    api.fit_fleet_bar_height(PAGE_A, 112)
+
+    assert events == []
+    assert bar.hidden is True
+    assert api._fleetbar_applied_x == 40
+    assert api._fleetbar_applied_y == 60
+    assert api._fleetbar_applied_outer_width == 512
+    assert api._fleetbar_applied_outer_height == 112
+
+    assert api.fleet_bar_ready(PAGE_A) is True
+    assert events == [("resize", 512, 112), ("show",)]
+    assert bar.hidden is False
 
 
 def test_fit_fleet_bar_height_preserves_current_outer_width_on_every_retry(
@@ -2206,6 +2336,11 @@ def test_reset_fleet_bar_page_width_refuses_native_resize_failure(api):
     assert result["applied"] is False
     assert result["persisted"] is False
     assert api._state.settings["fleet_bar"]["preferred_content_width"] == 720
+    assert api._fleetbar_window.width == 420
+    assert api._fleetbar_window.moved == []
+    assert (api._fleetbar_applied_x, api._fleetbar_applied_y) == (40, 60)
+    assert api._fleetbar_applied_outer_width == 420
+    assert api._fleetbar_applied_outer_height == 90
 
 
 def test_reset_fleet_bar_page_width_keeps_session_geometry_when_persistence_fails(
@@ -2244,6 +2379,37 @@ def test_fleet_bar_ready_returns_resize_capability(api):
     api._fleetbar_window.hidden = True
     api._fleetbar_resize_enabled = False
     assert api.fleet_bar_ready(PAGE_A) is False
+
+
+def test_fleet_bar_ready_reveal_failure_hides_without_a_second_reveal(api, monkeypatch):
+    from wingman.ui import fleetbar
+
+    _set_resizable_bar(api)
+    api._fleetbar_ready = False
+    bar = api._fleetbar_window
+    bar.hidden = True
+    reveals = []
+    hides = []
+
+    def reveal(_bar):
+        reveals.append(True)
+        if len(reveals) == 1:
+            raise RuntimeError("boom")
+        _bar.hidden = False
+
+    def hide(_bar):
+        hides.append(True)
+        _bar.hidden = True
+
+    monkeypatch.setattr(fleetbar, "reveal_bar", reveal)
+    monkeypatch.setattr(fleetbar, "hide_bar", hide)
+
+    assert api.fleet_bar_ready(PAGE_A) is True
+
+    assert len(reveals) == 1
+    assert hides == [True]
+    assert bar.hidden is True
+    assert api._state.settings["fleet_bar"]["enabled"] is False
 
 
 def test_activate_bar_records_foreground_and_clears_only_noactivate():
@@ -2285,6 +2451,22 @@ def test_activate_bar_restores_noactivate_immediately_on_foreground_refusal():
     assert fleetbar.activate_bar(bar, user32=user32) == (False, 0x101)
     assert user32.styles[0x202] == style
     assert user32.calls[-1] == ("SetWindowLongW", 0x202, -20, style)
+
+
+def test_activate_bar_preserves_zero_foreground_for_later_noactivate_restore():
+    from wingman.ui import fleetbar
+
+    bar = _attach_hwnd(FleetWindow(), 0x202)
+    bar.hidden = False
+    style = 0x08000000 | 0x80 | 0x04000000
+    user32 = _FakeUser32(
+        foreground=0,
+        styles={0x202: style},
+        alive={0x202},
+    )
+
+    assert fleetbar.activate_bar(bar, user32=user32) == (True, 0)
+    assert user32.styles[0x202] == style & ~0x08000000
 
 
 @pytest.mark.parametrize(

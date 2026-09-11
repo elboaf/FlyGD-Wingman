@@ -267,6 +267,9 @@ def test_remote_events_do_not_change_creation_callback_admission(
     if method == "fleet_bar_snapshot":
         assert result["rows"][0]["state"] == "stale"
     elif method == "fit_fleet_bar_height":
+        assert second.resized == second.moved == []
+        assert api._fleetbar_applied_outer_height == args[0]
+        assert api.fleet_bar_ready(current) is False
         assert second.resized == [(second.width, args[0])]
     elif method == "save_fleet_bar_pos":
         assert (
