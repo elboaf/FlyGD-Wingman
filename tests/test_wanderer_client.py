@@ -127,7 +127,10 @@ def test_success_headers_fail_closed(changes, code):
 
 
 @pytest.mark.parametrize(
-    "body", [b"<html>private-test-token</html>", b"{}", b"x" * 1048577]
+    "body",
+    [b"<html>private-test-token</html>", b"{}", b"x" * 1048577],
+    # Pytest puts the ID in PYTEST_CURRENT_TEST; Windows caps it at 32767 chars.
+    ids=["html", "empty-object", "oversized"],
 )
 def test_malformed_or_oversized_success_is_not_partially_accepted(body):
     result, _, _ = roundtrip(body=body)
