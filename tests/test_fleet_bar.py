@@ -1269,6 +1269,20 @@ def test_main_wires_subscription_restore_and_shutdown_destruction():
     assert "api.shutdown_previews()" in source
 
 
+def test_fleet_smoke_checklist_uses_content_width_and_default_width_wording():
+    text = (
+        Path(__file__)
+        .parents[1]
+        .joinpath("docs/smoke-checklist.md")
+        .read_text(encoding="utf-8")
+    )
+
+    assert "At the actual 420px shell" not in text
+    assert "native 420\u00d790 startup" not in text
+    assert "420px content-width test case" in text
+    assert "default 500px content width" in text
+
+
 def test_fleet_page_keeps_header_actions_outside_drag_and_stable_columns():
     from wingman.ui import window as window_mod
 

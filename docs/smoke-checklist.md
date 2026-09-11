@@ -2383,13 +2383,14 @@ zero, nolog and roster fixtures. The dev-only branch supplies its creation fragm
 before the real page captures it; do not bypass production token admission.
 This exercises the actual standalone handler, not `app.js` or a second fake API.
 
-- [ ] At the actual 420px shell, verify full REMOTE / REMOTE · STALE meaning,
-      wrapping within the identity column rather than overlapping Damage. Check
-      subdued stale outgoing DPS/tackle, full long-name hover titles, readable
-      10000000 in both local Damage halves and truthful LOCAL health alongside
-      remote-only rows. Remote IN is an unavailable dash with no fill or warning,
-      never zero or NO LOG; local NO LOG occupies one Damage cell. Check zero,
-      independent OUT/IN scales and defensive >10m separately.
+- [ ] At the 420px content-width test case, verify full REMOTE / REMOTE · STALE
+      meaning, wrapping within the identity column rather than overlapping the
+      DPS · 10s column. Check subdued stale outgoing DPS/tackle, full long-name
+      hover titles, readable `10000000` in both local OUT and IN values, and
+      truthful LOCAL health alongside remote-only rows. Remote IN is an
+      unavailable dash with no fill or warning, never zero or NO LOG; local NO
+      LOG occupies one DPS cell. Check zero, independent OUT/IN scales, and
+      defensive >10m separately.
 - [ ] Scroll the long roster to its final row with mouse and keyboard. Column
       headers stay aligned with data; only the header drags the widget. The
       inset focus ring remains visible and focus survives live repaint. Check
@@ -2403,10 +2404,12 @@ This exercises the actual standalone handler, not `app.js` or a second fake API.
       No remote enters the local visibility list, seen settings or publication.
 - [ ] Fleet Bar Off hides display without changing sharing; shutdown detaches
       remote/catalogue subscribers before bounded joins. No late row returns.
-- [ ] Repeat on installed Windows/WebView2, including native 420×90 startup and
-      real DPI/monitor behavior. Chrome evidence is not native acceptance.
-      Live two-client HTTPS/server proof belongs to Task 10; no production mode
-      enablement, OAuth or EVE interaction is authorized by this checklist.
+- [ ] Repeat on installed Windows/WebView2 from the default 500px content width,
+      confirming that native outer width reflects the current left/right resize
+      insets and that startup height, monitor clamp, and real DPI behavior stay
+      correct. Chrome evidence is not native acceptance. Live two-client
+      HTTPS/server proof belongs to Task 10; no production mode enablement,
+      OAuth or EVE interaction is authorized by this checklist.
 
 ## Fleet sharing setup and source controls
 
