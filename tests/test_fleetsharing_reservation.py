@@ -59,6 +59,107 @@ def retain_originals(original, store, client, replaced=()):
     )
 
 
+def assert_tail_originals(original, state, store, client):
+    # A retained UUID with a rewritten payload is not preservation, even if an
+    # earlier attempt of that UUID was acknowledged by the relay.
+    pending = {c.source_id: c for c in state.pending_source_commands}
+    assert all(c in original.pending_source_commands for c in pending.values())
+    for command in original.pending_source_commands:
+        if command.source_id in pending:
+            assert pending[command.source_id] == command
+        else:
+            assert client.source_intents.get(command.source_id) == command
+    assert state.identity == original.identity
+    assert all(saved.identity == original.identity for saved in store.saved)
+    assert all(
+        c in original.pending_source_commands
+        for c in client.controls
+        if isinstance(c, p.StartSource)
+    )
+    assert not store.rejected and not client.cadence_refusals
+
+
+def drive_control_tail(
+    worker, mono, turns, original, store, client, completed, *, fetch_sources=False
+):
+    # The old total turn count is a failure budget, not a per-phase allowance.
+    # Completion callbacks assert disk immediately at the first cheap candidate:
+    # another turn must not repair a missing write and hide an early publication.
+    attempts, acknowledgements, errors = [], [], []
+    fetches = 0
+    control, fetch = client.control_source, client.fetch_sources
+
+    def observe_control(**args):
+        attempts.append(args["command"])
+        result = control(**args)
+        acknowledgements.append((args["command"], result))
+        return result
+
+    def observe_fetch(**args):
+        nonlocal fetches
+        result = fetch(**args)
+        fetches += 1  # Failed attempts do not constitute resumption.
+        return result
+
+    def observe_status(status):
+        # Capacity deferral is the fixture's premise, not a relay refusal.
+        if status.state == "refused" or (
+            status.state == "error" and status.detail != "source_queue_full"
+        ):
+            errors.append((status.state, status.detail))
+
+    client.control_source, client.fetch_sources = observe_control, observe_fetch
+    unsubscribe = worker.subscribe_status(observe_status)
+    prior = None
+    resumed = fetched = False
+    try:
+        for _ in range(turns):
+            drive(worker, mono, 1)
+            assert not errors
+            if prior is None:
+                state = completed()
+                if state is None:
+                    continue
+                assert_tail_originals(original, state, store, client)
+                # Deliberately exclude pre-existing acknowledgements. The Stop
+                # replacement fixture already has one before its stale read.
+                candidates = [
+                    c
+                    for c in original.pending_source_commands
+                    if c in state.pending_source_commands
+                    and client.source_intents.get(c.source_id) != c
+                ]
+                assert candidates, "no unacknowledged original Start at transition"
+                prior = candidates[0]
+                attempt_floor = len(attempts)
+                ack_floor = len(acknowledgements)
+                fetch_floor = fetches
+                continue
+            if not resumed and client.source_intents.get(prior.source_id) == prior:
+                assert prior in attempts[attempt_floor:], "original Start not resumed"
+                replies = [v for c, v in acknowledgements[ack_floor:] if c == prior]
+                assert replies, "original Start lacks a NEW successful acknowledgement"
+                assert all(v.source_id == prior.source_id for v in replies)
+                assert all(v.state == "active" for v in replies)
+                state = store.load()
+                assert all(
+                    c.source_id != prior.source_id
+                    for c in state.pending_source_commands
+                ), "resumed Start retirement was not persisted"
+                assert_tail_originals(original, state, store, client)
+                resumed = True
+            fetched = fetches > fetch_floor
+            if resumed and (not fetch_sources or fetched):
+                break
+        assert prior is not None, "target did not complete within original turn budget"
+        assert resumed, "original Start did not resume within original turn budget"
+        assert not fetch_sources or fetched, "no NEW successful post-transition fetch"
+        return prior
+    finally:
+        unsubscribe()
+        client.control_source, client.fetch_sources = control, fetch
+
+
 @pytest.mark.parametrize("bound", [False, True])
 def test_legacy_batch_reserves_generation_growth_and_recreates_after_deferred_save(
     tmp_path, monkeypatch, bound
@@ -326,7 +427,31 @@ def test_deferred_off_allows_bootstrap_and_prior_sources_not_old_participation(
         assert store.load().pending_participation == old
         assert worker.status().participation == "queued"
         assert worker.status().local_inhibited
-        drive(worker, mono, 40)
+
+        def completed():
+            if worker.status().participation != "acknowledged":
+                return None
+            state = store.load()
+            assert worker.status().participation_intent_id == off
+            assert not worker._commands
+            assert state.pending_participation is None
+            assert state.observed_participation == client.device.participation
+            assert not state.observed_participation.enabled
+            assert worker.status().local_inhibited
+            assert all(status.local_inhibited for status in statuses)
+            assert all(not enabled for enabled, _ in client.participation_calls)
+            assert any(c[0] == "acknowledge_capabilities" for c in client.calls)
+            if recovery:
+                assert client.recoveries == 1 and not client.pair_keys
+                assert state.pending_recovery is None
+            return state
+
+        resumed = drive_control_tail(
+            worker, mono, 40, original, store, client, completed
+        )
+        assert resumed in original.pending_source_commands
+        assert client.source_intents.get(resumed.source_id) == resumed
+        assert resumed not in store.load().pending_source_commands
         assert not client.device.participation.enabled
         assert store.load().pending_participation is None
         assert not worker._commands
@@ -474,7 +599,7 @@ def test_control_url_reserve_uses_validated_scalar_width(character):
 
 @pytest.mark.parametrize("boundary", ["selection", "reply", "save"])
 def test_replacement_of_deferred_off_invalidates_old_device_effects(tmp_path, boundary):
-    store, _ = dense_store(tmp_path)
+    store, original = dense_store(tmp_path)
     mono = [1000.0]
     client = FakeRelayClient(device=DEVICE)
     worker = _worker(
@@ -533,7 +658,26 @@ def test_replacement_of_deferred_off_invalidates_old_device_effects(tmp_path, bo
         if boundary == "reply":
             assert store.load().observed_participation == DEVICE.participation
             client.device = DEVICE
-        drive(worker, mono, 40)
+
+        def completed():
+            if worker.status().participation != "acknowledged":
+                return None
+            state = store.load()
+            assert worker.status().participation_intent_id == replacements[0]
+            assert not worker._commands
+            assert state.pending_participation is None
+            assert state.observed_participation == DEVICE.participation
+            assert client.device.participation == DEVICE.participation
+            assert not worker.status().local_inhibited
+            assert not client.participation_calls  # No obsolete Off CAS.
+            return state
+
+        resumed = drive_control_tail(
+            worker, mono, 40, original, store, client, completed
+        )
+        assert resumed in original.pending_source_commands
+        assert client.source_intents.get(resumed.source_id) == resumed
+        assert resumed not in store.load().pending_source_commands
         assert not worker._commands
         assert worker.status().participation_intent_id == replacements[0]
         assert worker.status().participation == "acknowledged"
@@ -594,22 +738,30 @@ def test_hot_api_submission_inside_pairing_save_preserves_reserved_batch(tmp_pat
         assert api.fleet_sharing_state()["sources"] is not None
         binding = api.fleet_sharing_state()["metadata"]["binding"]
         old_status = worker.status()
-        injected = []
+        injected, submissions, callback_errors = [], [], []
         save = worker._save_state
 
         def save_then_submit(candidate):
             save(candidate)
             if candidate.pending_pairing and not injected:
                 injected.append(True)
-                assert all(
-                    api.fleet_sharing_stop_source(t, binding)["queued"]
-                    for t in targets[:-1]
-                )
-                assert api.fleet_sharing_set_enabled(False)["queued"]
+                try:
+                    for target in targets[:-1]:
+                        submissions.append(
+                            api.fleet_sharing_stop_source(target, binding)
+                        )
+                    submissions.append(api.fleet_sharing_set_enabled(False))
+                except Exception as error:  # noqa: BLE001 - assert outside the owner's save-failure swallowing
+                    callback_errors.append(error)
 
         worker._save_state = save_then_submit
-        assert api.fleet_sharing_pair("upgrade")["queued"]
+        pairing = api.fleet_sharing_pair("upgrade")
+        assert pairing["queued"]
         worker.iterate_once()
+        assert not callback_errors
+        assert len(submissions) == len(targets)
+        assert all(result["queued"] for result in submissions)
+        off = submissions[-1]["intent_id"]
         assert injected and store.load().pending_pairing
         assert api.fleet_sharing_state()["sources"] is not None
         assert worker.stop() and worker.start()
@@ -619,7 +771,45 @@ def test_hot_api_submission_inside_pairing_save_preserves_reserved_batch(tmp_pat
         assert api.fleet_sharing_state()["sources"] is None
         assert not api.fleet_sharing_stop_source(targets[-1], binding)["queued"]
         assert store.load().pending_pairing.approval_url == approval_url()
-        drive(worker, mono, len(targets) + 55)
+
+        def completed():
+            if not (
+                all(client.source_views[t].state == "ended" for t in targets[:-1])
+                and not client.device.participation.enabled
+                and worker.status().pairing == "acknowledged"
+            ):
+                return None
+            state = store.load()
+            status = worker.status()
+            assert not callback_errors
+            assert not worker._commands
+            assert state.pending_pairing is None and state.pending_recovery is None
+            assert state.session_id == client.active_session != original.session_id
+            assert status.pairing_action_id == pairing["action_id"]
+            assert status.approval_url is None
+            assert status.participation_intent_id == off
+            assert status.participation == "acknowledged" and status.local_inhibited
+            assert state.pending_participation is None
+            assert state.observed_participation == client.device.participation
+            assert client.source_views[targets[-1]].state == "active"
+            assert not any(
+                isinstance(c, p.StopSource) for c in state.pending_source_commands
+            )
+            return state
+
+        resumed = drive_control_tail(
+            worker,
+            mono,
+            len(targets) + 55,
+            original,
+            store,
+            client,
+            completed,
+            fetch_sources=True,
+        )
+        assert resumed in original.pending_source_commands
+        assert client.source_intents.get(resumed.source_id) == resumed
+        assert resumed not in store.load().pending_source_commands
         assert all(client.source_views[t].state == "ended" for t in targets[:-1])
         assert client.source_views[targets[-1]].state == "active"
         assert not client.device.participation.enabled
@@ -706,7 +896,23 @@ def test_replacement_of_deferred_stop_fences_source_observation(tmp_path, bounda
             if boundary == "save"
             else original.pending_source_commands
         )
-        drive(worker, mono, 30)
+
+        def completed():
+            view = client.source_views.get(target)
+            if view is None or view.state != "ended":
+                return None
+            state = store.load()
+            assert not worker._commands
+            assert all(c.source_id != target for c in state.pending_source_commands)
+            assert worker.status().source_control == "acknowledged"
+            return state
+
+        resumed = drive_control_tail(
+            worker, mono, 30, original, store, client, completed
+        )
+        assert resumed in original.pending_source_commands
+        assert client.source_intents.get(resumed.source_id) == resumed
+        assert resumed not in store.load().pending_source_commands
         assert client.source_views[target].state == "ended"
         assert not store.rejected and not client.cadence_refusals
         retain_originals(original, store, client)
