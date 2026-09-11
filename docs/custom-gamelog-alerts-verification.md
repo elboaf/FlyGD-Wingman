@@ -1,111 +1,135 @@
 # Custom gamelog alerts — verification and acceptance record
 
-## Checkpoint and authority
+## Current status and authority
 
-**Task 10 focused verification passes; final full-suite verification is PENDING.**
-The first full run found four test-contract mismatches, corrected with parent
-approval and freshly verified below. This is not final engineering or release
-acceptance. Windows/WebView2/native audio/real EVE acceptance is **OPEN**.
-Parent-owned broad polish and whole-branch review are not yet complete; broad
-polish has reported two UI recovery shortcomings for a separate parent-owned
-fix. No UI code was changed by Task 10.
-Tasks 1–9 and Task 9's three review findings were reported reviewed/resolved by
-the parent before this task; that does not substitute for the final broad review.
+**Implementation, local engineering verification and code review are complete.**
+The verified source revision is `28e6f6e84d9fabc15c93811aaf60d18fb7bbf915`.
+All reported Important findings were corrected and cleared by scoped rereview.
+This is **not Windows/WebView2 or release acceptance**; those gates remain open.
+The branch has not been pushed or merged.
 
-- User approved plan commit `7faa7d6b0bdf81a14905eb2a8ed551a08fe3d228` for
-  test-first implementation, including **both §3.1 interpretations**:
-  1. A new or cleared blank search is valid disabled configuration. Executable
+- Branch: `feature/custom-gamelog-alerts`; linked checkout:
+  `/mnt/c/dev/flygd-wingman/.worktrees/custom-gamelog-alerts-plan`.
+- User-approved plan: `7faa7d6b0bdf81a14905eb2a8ed551a08fe3d228`,
+  [custom-gamelog-alerts-plan.md](custom-gamelog-alerts-plan.md).
+- Authoritative design: `2a22f640b09000dc49e6f1beb7b9b3852d7852bf`,
+  `docs/custom-gamelog-alerts-design.md` on its design branch, not copied here.
+- The user explicitly approved both plan §3.1 interpretations:
+  1. New/cleared blank searches are valid **disabled** configuration. Executable
      searches require 3–200 normalized characters; blank cannot be enabled.
   2. Initial, known and retired sources baseline at EOF; genuinely new paths
      discovered after startup read from byte zero. Truncation baselines rewritten
-     contents at EOF. Shared-reader replay semantics must not change silently.
-- Authoritative design: `2a22f640b09000dc49e6f1beb7b9b3852d7852bf`,
-  `docs/custom-gamelog-alerts-design.md` (design branch, not copied here).
-- Task 10 input/runtime/UI source: `66c4abc4fcfdf5b30425f9f37200ff0db1409c40`,
-  `fix(alerts): preserve control intent and fence uncertainty recovery`.
-- Branch: `feature/custom-gamelog-alerts`; linked checkout:
-  `/mnt/c/dev/flygd-wingman/.worktrees/custom-gamelog-alerts-plan`.
-- Original Task 10 scope: `tests/test_custom_alert_integration.py`, this record
-  and `docs/smoke-checklist.md`. After the first full run, the parent explicitly
-  approved narrow test-contract adaptations in `tests/test_alerts_patterns.py`,
-  `tests/test_api_crops.py`, `tests/test_fleetsharing_worker.py` and
-  `tests/test_settings.py`, preserving their behavioral assertions.
-  No production correction, dependency, settings defaults-version, release-version
-  or packaging-list change was needed.
-  The task's commit is identified by subject
-  `test(alerts): verify custom alerts across runtime boundaries` and recorded
-  with its exact SHA in the task report after commit.
+     contents at EOF. The shared reader's replay policy is preserved.
 
-The approved immutable plan still contains planning-time pending-approval text.
-The user's explicit approval above supersedes that historical status; neither
-interpretation was silently changed during implementation.
+The immutable plan retains planning-time approval language; the approval above
+supersedes that historical status. No new dependency, defaults-version bump,
+release-version change, or package-list change was required.
+
+## What changed and how it works
+
+Settings > Alerts now provides up to eight custom literal, case-insensitive
+rules, with inline name/search editing, colour, bundled sound, cooldown,
+enable/disable, removal and presentation-only Test. Text commits on Enter or
+Apply, never blur. Clearing a search disables the rule atomically. Retry reloads
+uncertain authority without replaying an ambiguous mutation.
+
+`AlertsController` owns settings transactions behind six small Api facades.
+A successful save publishes one prepared composite: detached Preview state and
+an immutable `AlertRuntimeSnapshot`. Failed saves retain prior committed
+behavior. Producer/policy/native readers do not acquire the settings I/O lock.
+
+The existing `GameLogStream` performs matching only when both masters and at
+least one executable rule permit it. Ordered batches carry semantic facts and
+custom matches together. Custom-only staging is bounded in both the stream and
+coordinator; ordinary semantic/lifecycle/Fleet traffic retains its existing
+lossless behavior. Independent matcher health does not poison reader/Fleet
+health, and recovery requires a real successful current matcher invocation.
+
+The policy chooses one audible winner across the whole coordinator batch while
+retaining eligible visuals. Custom severity ranks below every built-in.
+Rule generations, activation epochs, source identities and close admission
+reject stale work through the native mailbox boundary. Test neither persists
+configuration nor consumes real matching cooldowns. Raw matching lines and
+queries are not added to downstream health, preview or Fleet payloads.
+
+The UI separates committed authority, per-control intent and per-view ownership.
+Late acknowledgments reconcile against fresh authority without erasing newer
+drafts, moving focus, reviving removed rows or releasing uncertainty through an
+older read. Source-local incremental UTF-8 decoding preserves valid characters
+split across polls; matching still waits for newline.
+
+## Scope rulings made during implementation
+
+These are the implementation rulings, in order, rather than new product scope.
+The two semantic interpretations above were approved by the user beforehand.
+
+| Ruling | Why | Cost if wrong / review focus |
+| --- | --- | --- |
+| Use the existing colour regex with `fullmatch` in custom validation, without changing built-in validation. | Reject a trailing newline at the new strict boundary. | Custom colour compatibility; built-ins remain unchanged. |
+| Adapt the existing private committed-snapshot test to the prepared composite. | The publication representation changed by design. | Preserve its identity/rollback assertions rather than weakening them. |
+| Add the planned coordinator `custom_matcher_health()` delegation. | Api should not reach into the private stream. | Small interface addition; startup/lazy wiring tests cover it. |
+| Update four older test contracts/fakes after the first full run. | Renderer severity now includes custom; constructors/batch subscriptions and defaults changed as approved. | Preserve original severity, crop revocation, sharing cadence and defaults assertions. |
+| Add explicit read-only Retry and recovery-owned settled messages. | Temporary failed authority reads otherwise stranded editing or left misleading “checking” text. | UI-only recovery ownership; no mutation replay or new bridge endpoint. |
+| Close Api's presentation owner in the adapted crop regression's outer `finally`. | Review exposed an existing real worker leak behind the repaired constructor mismatch. | Narrow test cleanup; original session/crop assertions remain intact. |
+| Correct source-local incremental UTF-8 decoding and reset behavior. | The combined Unicode/partial-line contract failed on a valid split code point. | Shared-reader input handling; preserve malformed replacement, cursor and replay semantics. |
+
+Other review corrections stayed within the planned behavior: independent
+control acknowledgment reconciliation, post-outcome recovery-read fences,
+scoped select sizing, and navigation-safe deferred acknowledgments.
 
 ## Integrated proof and boundaries
 
-`live_alerts` writes real temporary settings before constructing readers, then
-uses the production `build_alerts_controller`, `build_alert_policy` and
-`build_telemetry` composition plus a real `Api`. Explicit scans consume real
-Listener files through `GameLogStream`, coordinator admission, `AlertPolicy`,
-and the real `PreviewHost` mailbox/token checks. Windows discovery, native pump
-lifetime, window `arm_alert`, and audio playback are doubles. Existing no-op
-thread factories keep scans/dispatches explicit; Event barriers control races
-without sleeps. FleetMetrics and local/outbound pure projections remain real.
+`tests/test_custom_alert_integration.py` uses real temporary settings and Listener
+files through production builders, Api/controller, stream, coordinator,
+FleetMetrics, policy and the real PreviewHost mailbox. Native discovery/pump
+lifetime, final window arming and audio are doubles. Existing no-op thread
+factories keep scans/dispatch explicit; Event barriers control races without
+sleeps. Local/outbound pure Fleet projections remain real.
 
-The integrated tests cover:
-
-| Regression boundary | Observable evidence |
+| Boundary | Observable evidence |
 | --- | --- |
-| Disabled Add → Api edit/enable → marked-up broadcast | Two custom rules flash for both Listeners; only Alice receives the built-in scram; five valid visuals and one `obey` sound; Fleet attributes SCRAM only to Alice. |
-| Queued edit/clear/removal | Coordinator and native-mailbox generations are invalidated; fresh edited query can alert; clear disables atomically. Already started sound is explicitly not retracted. |
-| Blocked save, commit and rollback | Scans and dispatch complete while persistence waits; prior snapshot, file and style remain effective. Successful save switches query/style; refusal retains old authority. |
-| Startup, source replacement and partial lines | Active-rule restart does not replay history; known/new/retired/truncated paths obey approved EOF/byte-zero semantics; retired queued matches do not arm; partial text waits for newline. |
-| Matcher exception/recovery and privacy | Exception injected inside real normalization contains sentinel query/line text; Fleet damage still advances. Idle poll and rename do not recover health; a successful zero-match invocation does. Logs captured through DEBUG, queues, health, native payloads and Fleet projections omit both sentinels. |
-| Fleet-only off/on | Both master switches retire queued activation without replacing stream/dispatcher; inactive scans do zero custom normalization while Fleet damage continues. Immediate off/on before dispatch also rejects old work. |
-| Capacity and stalled stream drainer | 64 real sources × eight rules fill the derived custom bound; repeated blocked-drain scans stay bounded, one coordinator sentinel remains, and all 192 outgoing damage facts reach Fleet (90 DPS per character). Native admission stays at its own ten-entry bound; one sound. |
-| Focus and missing preview | Focused owner is timed/silent; another focused owner permits configured volume/persistence; an absent preview can sound but cannot redirect its ring to another character. |
-| Test isolation | Test neither persists nor changes the committed snapshot or real cooldown; it draws timed previews and plays once. A subsequent real line still alerts, then real cooldown suppresses repeats. |
-| Shutdown during delivery/save | Final close fences remaining custom audio and native arming; a pending edit may finish persistence but cannot reopen the closed runtime or Test endpoint. |
+| Add/edit/enable and marked-up broadcast | Two custom rules match both Listeners; only the proven owner receives built-in scram; multiple visuals, one sound, correct Fleet attribution. |
+| Queued edit, clear and removal | Coordinator/native generations invalidate stale work; fresh queries work; clear disables atomically. Already started sound is not retracted. |
+| Blocked save and rollback | Reading/dispatch continue on old authority while persistence waits; success switches behavior and refusal retains old file/snapshot/style. |
+| Source replay and partial input | Startup/known/retired/truncated EOF and new-path byte-zero behavior remain; no match before newline. Split 2-, 3- and 4-byte UTF-8, source isolation and resets have real-file regressions. |
+| Matcher failure and privacy | Fleet damage continues; idle polls or renames do not fake recovery. A successful zero-match invocation recovers health. DEBUG logs, queues, health and projections omit private matching sentinels. |
+| Fleet-only and master transitions | Inactive scans do zero custom normalization without stopping Fleet; off/on invalidates old work without replacing the owner. |
+| Capacity | 64 sources × eight rules remain within the custom bound during blocked draining; one coordinator sentinel; all 192 outgoing damage facts reach Fleet. Native admission retains its own bound. |
+| Focus, missing previews and Test | Focused owners are timed/silent; missing previews never redirect rings; Test does not save or consume real cooldown. |
+| Shutdown and cleanup | Closing rejects pending custom presentation; late persistence cannot reopen runtime/Test. Started owners and subscriptions are cleaned up, including assertion-failure paths. |
 
-Every fixture finally stops the coordinator/stream and verifies exactly one
-constructed stream/coordinator and disabled production sharing. All inputs and
-settings are temporary. No app launch, live profile/window manipulation, active
-EVE logfile modification, credential use or relay/network-share activation was
-performed by this task. Native rendering and timing cannot be inferred from the
-doubles, and bounded-count tests are not a native-latency benchmark.
+Fixtures keep production sharing Off and stop their owners. No live app launch,
+profile/window manipulation, EVE logfile modification, credential use or relay
+activation was performed. Native rendering/timing cannot be inferred from
+these doubles, and bounded-count tests are not latency benchmarks.
 
-### Test-first trace
+### Test-first and review evidence
 
-Tests were written before documentation or any proposed production correction.
-The first focused invocation had a test import error (`project` instead of the
-actual `project_snapshot` API). After correcting the test helper, 18 passed and
-four failed because the test's plain damage line omitted EVE's load-bearing
-colour/`to</font>` markup. Reusing the existing marked-up outgoing-damage fixture
-resolved those test-data failures: **22 passed in 3.46s**. These were harness
-errors, **not production RED evidence**. Further focus and activation assertions
-were added during local self-review. No artificial RED or production fix was
-manufactured for behavior that already worked.
+Feature tasks used test-first development. Integrated coverage added after those
+tasks already passed existing behavior; its initial import/fixture mistakes were
+**not** counted as production RED evidence.
 
-## Final automated gates
+The first full run found **4 failed, 10,655 passed, 11 Windows-only skips**.
+All four failures reproduced independently and were corrected as test-contract
+adaptations, not hidden by skipping tests. Scoped coverage then passed.
 
-All commands run from the linked checkout on Linux. For every `uv` command,
-the explicit prefix is
-`UV_PROJECT_ENVIRONMENT=/tmp/wingman-custom-alerts-plan-venv`.
-The preinstalled release codec uses
-`/tmp/wingman-custom-alerts-codec-target`; this avoids build overhead on the
-Windows-mounted filesystem without weakening native-codec integration.
+Review and polish caught control-intent/recovery races, inner CSS overflow,
+a test-owned worker leak, navigation reconciliation, and split UTF-8. Each
+behavioral correction had a discriminating failing regression before its fix.
+The final combined wave specifically reproduced **11 Node failures and nine
+Python failures**, then passed **75 Node cases and 501 focused pytest cases**.
+Whole-branch review plus scoped rereviews cleared all reported Important
+findings. No source change followed the final verified revision.
 
-The single full-suite invocation completed with **4 failed, 10,655 passed,
-11 skipped in 427.59s**. All **25** new integration cases passed in that run.
-JUnit: `/tmp/wingman-custom-alerts-full.xml` (10,670 cases, zero collection errors).
-No second full-suite invocation was run: the parent owns the final full run
-after separate polish fixes. Exact initial gate commands:
+## Final automated verification
+
+All commands below ran from the linked checkout on Linux at source `28e6f6e8`.
+The locked development environment and built release codec were installed before
+testing. The installed codec was checked byte-for-byte against its release
+build; `codec_available()` was true. Node was **v26.5.0**.
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/tmp/wingman-custom-alerts-plan-venv uv sync --locked --extra dev
-node --version
-cargo build --locked --release --manifest-path packaging/settings-codec/Cargo.toml --target-dir /tmp/wingman-custom-alerts-codec-target
-UV_PROJECT_ENVIRONMENT=/tmp/wingman-custom-alerts-plan-venv uv run --no-sync python -m pytest tests/test_custom_alert_integration.py -q
-UV_PROJECT_ENVIRONMENT=/tmp/wingman-custom-alerts-plan-venv uv run --no-sync python -m pytest tests/ -q -rs --junitxml=/tmp/wingman-custom-alerts-full.xml
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-custom-alerts-plan-venv uv run --no-sync python -m pytest tests/ -q -rs --basetemp=/tmp/wingman-custom-alerts-parent-final-fixed --junitxml=/tmp/wingman-custom-alerts-parent-final-fixed.xml
 UV_PROJECT_ENVIRONMENT=/tmp/wingman-custom-alerts-plan-venv uv run --no-sync ruff check .
 UV_PROJECT_ENVIRONMENT=/tmp/wingman-custom-alerts-plan-venv uv run --no-sync ruff format --check .
 node --check wingman/web/alerts.js
@@ -113,135 +137,82 @@ node --check wingman/web/dev.js
 node scripts/test_alerts_runtime.js
 node scripts/js_smoke.js
 cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml --target-dir /tmp/wingman-custom-alerts-codec-target
+node .superpowers/sdd/custom-gamelog-alerts-plan/browser-check.cjs
 git diff --check
 ```
 
-| Gate | Actual result |
+| Gate | Actual final result |
 | --- | --- |
-| Locked sync / Node | 56 packages resolved, 39 checked; Node **v26.5.0**. |
-| Release codec | Build passed (0.16s); installed `packaging/bin/wingman-settings-codec` byte-identical to the release target; `codec_available()` true. |
-| Final focused integration | **25 passed in 4.27s**, no skips. |
-| First full pytest | **4 failed, 10,655 passed, 11 skipped in 427.59s**; retained historical result, not a passing final gate. |
-| Four repaired node IDs | **4 passed in 5.89s**. |
-| All four affected files plus integration | **273 passed in 24.07s**, no skips. |
-| Final full pytest | **PENDING**, parent-owned after separate polish fixes. |
-| Repo Ruff check / format | Passed; **378 files already formatted**. |
-| JS syntax | Both `node --check` commands passed. |
-| Alerts runtime harness | **51/51 passed**. |
-| Executable JS smoke | Every module of index, Fleet Bar and Sig Bar loaded; passed. |
+| Full pytest | **10,673 passed, 11 skipped in 411.24s**; zero failures/errors. |
+| JUnit inspection | **10,684 cases**; all 11 skips require Windows; no Node/native-codec skips. |
+| Repository Ruff check / format | Passed; **378 files already formatted**. |
+| JS syntax | Both production-module syntax checks passed. |
+| Executing Alerts Node harness | **75/75 passed**. |
+| Executable JS smoke | Every module of index, Fleet Bar and Sig Bar loaded. |
 | Cargo regression | **1 passed**, zero failed/ignored. |
+| Browser | **20 scenario/viewport checks passed**, no page/console errors. |
 | Whitespace | `git diff --check` passed. |
 
-Codec availability was checked without rewriting the already installed binary:
+Earlier Ruff LSP checking of ten changed backend/runtime files returned zero
+diagnostics; this was lint, not a separate Python type-checker. Final repository
+Ruff was rerun after the last source correction.
 
-```bash
-UV_PROJECT_ENVIRONMENT=/tmp/wingman-custom-alerts-plan-venv uv run --no-sync python -c "from pathlib import Path; from wingman.evesettings import codec; source = Path('/tmp/wingman-custom-alerts-codec-target/release/wingman-settings-codec'); target = Path('packaging/bin/wingman-settings-codec'); assert target.read_bytes() == source.read_bytes(); assert codec.codec_available(); print('Installed release codec byte-identical; codec_available=True')"
-```
-
-### First full-suite failures and approved test-only corrections
-
-Before correction, all four reproduced without loading the new integration file
-(**4 failed in 4.78s**). They were older test-contract/fake mismatches with the
-implemented feature, not evidence of pollution from the new fixtures:
-
-- `tests/test_alerts_patterns.py::test_events_and_severity_agree`: assumes renderer
-  severity keys equal built-in EVENTS, despite approved custom-only renderer rank.
-- `tests/test_api_crops.py::test_tentative_failed_master_off_does_not_drop_telemetry_session_revocation`:
-  passes `FakeStream` as constructor; it rejects new `custom_snapshot` keyword.
-- `tests/test_fleetsharing_worker.py::test_coordinator_cadence_and_local_metrics_continue_while_publish_is_held`:
-  local stream double lacks `subscribe_batches` required by the coordinator.
-- `tests/test_settings.py::test_defaults_are_the_documented_values`: expected
-  defaults omit the new empty `custom_rules` list.
-
-Focused reproduction command (same uv prefix as above):
-
-```bash
-UV_PROJECT_ENVIRONMENT=/tmp/wingman-custom-alerts-plan-venv uv run --no-sync python -m pytest tests/test_alerts_patterns.py::test_events_and_severity_agree tests/test_api_crops.py::test_tentative_failed_master_off_does_not_drop_telemetry_session_revocation tests/test_fleetsharing_worker.py::test_coordinator_cadence_and_local_metrics_continue_while_publish_is_held tests/test_settings.py::test_defaults_are_the_documented_values -q
-```
-
-The parent approved all four narrow test-only corrections after inspecting the
-failures. Renderer coverage now compares built-in EVENTS against severity keys
-excluding `custom`, and asserts custom ranks below every built-in. The crop
-constructor adapter explicitly accepts `custom_snapshot` and verifies no Alerts
-owner was supplied; it does not swallow arbitrary keyword arguments. The local
-sharing stream fake exposes `subscribe_batches`. The exact defaults expectation
-now includes `custom_rules: []`. Original crop revocation, sharing cadence and
-defaults assertions remain intact; no production code changed.
-
-The four-node reproduction command above then passed **4 tests in 5.89s**.
-Fresh file-level verification (including all new integration tests) passed
-**273 tests in 24.07s with no skips**:
-
-```bash
-UV_PROJECT_ENVIRONMENT=/tmp/wingman-custom-alerts-plan-venv uv run --no-sync python -m pytest tests/test_alerts_patterns.py tests/test_api_crops.py tests/test_fleetsharing_worker.py tests/test_settings.py tests/test_custom_alert_integration.py -q -rs
-```
-
-Repository Ruff check/format and `git diff --check` passed again after these
-corrections. A focused pass does not turn the first full-run result into a full
-pass. Final full-suite verification remains pending with the parent.
-
-### Skip inspection
-
-All 11 JUnit skip entries were inspected. **No Node or native-codec tests
-skipped.** Remaining skips require Windows facilities:
+### Inspected Windows-only skips
 
 | Location | Count | Reason |
 | --- | ---: | --- |
-| `test_evesettings_profilecopy.py:279,318,650` | 3 | Requires a real Windows junction. |
-| `test_eveskills_dpapi.py:45` | 1 | Requires real DPAPI. |
-| `test_eveskills_dpapi.py:52` | 1 | Requires real WinDLL. |
-| `test_preview_host.py:1361` | 1 | Needs a real message pump and window station. |
-| `test_preview_win32.py:147,162,186` | 3 | Binds user32/gdi32/dwmapi. |
-| `test_ui_setup_profile.py:458` | 2 | Requires real Windows junction (`core_char_31.dat`, `prefs.ini`). |
+| `test_evesettings_profilecopy.py:279,318,650` | 3 | Real Windows junction. |
+| `test_eveskills_dpapi.py:45` | 1 | Real DPAPI. |
+| `test_eveskills_dpapi.py:52` | 1 | Real WinDLL. |
+| `test_preview_host.py:1361` | 1 | Real message pump/window station. |
+| `test_preview_win32.py:147,162,186` | 3 | user32/gdi32/dwmapi bindings. |
+| `test_ui_setup_profile.py:458` | 2 | Real Windows junction, for `core_char_31.dat` and `prefs.ini`. |
 
-Local self-review/polish is scoped to Task 10 since the named input `66c4abc4`,
-including the uncommitted test/document additions. No subagents were dispatched;
-parent owns the broader `7faa7d6..HEAD` polish and whole-branch review after this
-commit. Ruff import ordering/formatting was applied only to the new test file;
-the four approved test-contract adaptations required no formatting changes.
-Local review confirmed those adapters preserve original behavioral assertions;
-there is no final engineering approval implied by this checkpoint.
+## Browser evidence — not native acceptance
 
-## Browser evidence — supplied by parent, not native acceptance
+The temporary runner above executed from the SDD workspace. Its runner,
+`browser-report.json` and screenshots were retained locally at
+`/tmp/wingman-custom-alerts-browser-evidence/` before removing that plan's
+orchestration workspace. These are session artifacts, not shipped files.
+The final report identifies source `28e6f6e8`, **Chrome/152.0.7977.64**,
+`ok: true`, 20 checks and `errors: []`. An isolated browser context served the
+actual dev page over loopback, blocked external requests and was cleaned up.
+The shared browser/profile and existing tabs were not closed or altered.
 
-Read-only parent artifacts in
-`.superpowers/sdd/custom-gamelog-alerts-plan/`:
-`browser-check.cjs`, `browser-report.json`, and `browser-*.png`.
-They were not modified or rerun by this task.
+At both **840×625** and **839×621**, device scale factor 1, checks cover `full`,
+`literal`, `custom-only`, `master-off`, `reader-error`, `no-characters`, `waiting`,
+`degraded`, `failed-save`, and failed-initial-read Retry recovery. Retry performs
+fresh state reads with zero mutation calls. Screenshots were inspected for the
+expanded editor and representative states.
 
-The final report identifies source
-`66c4abc4fcfdf5b30425f9f37200ff0db1409c40`, browser
-**Chrome/152.0.7977.64**, `ok: true`, and **18 scenario/viewport combinations**:
-`full`, `literal`, `custom-only`, `master-off`, `reader-error`, `no-characters`,
-`waiting`, `degraded`, and `failed-save`, each at **840x625** and **839x621**
-(deviceScaleFactor 1). The actual dev page runs in an isolated Chromium context
-against a loopback static server; external requests are blocked. `errors: []`
-records no page/console errors. This is Chromium evidence, not Windows WebView2.
+The expanded eight-row editor's cooldown is 120px wide and ends at the card
+content edge, 795px. Settings scroll/client widths are **626/626** and **625/625**.
+The original document-width check missed an inner horizontal overflow; the
+strengthened check measures each editor control against card content and checks
+ancestor scrollports. Cancel restores focus to the row's Edit button.
 
-The eight-row expanded editor fits its card's right content edge at **795px**;
-the cooldown control is **120px** wide and also ends at 795px. Settings-pane
-`scrollWidth == clientWidth`: **626/626** at 840px and **625/625** at 839px.
-The parent inspected the final full-editor screenshot and confirmed the inner
-horizontal overflow had been fixed. The previous root-only overflow check had
-missed that problem; the final harness measures card content and ancestor
-scrollports. Cancel restored focus to `custom-alert-dev-custom-1-edit`.
+This is not evidence of WebView2 scaling, actual audio/native focus/rings, a full
+keyboard/screen-reader pass, measured contrast, or live EVE behavior. Node
+coverage of dynamic/async workflows is separate from rendered browser evidence.
 
-This evidence does not assert Windows scaling, actual audio, native focus,
-real-client rings, a complete keyboard/screen-reader pass or measured contrast.
-Zero-rule/dynamic workflows and stale responses have Node coverage; the recorded
-browser scenario list is not represented as broader manual acceptance.
+## Reviewer focus and knowledge check
 
-## Open acceptance and review gates
+Concentrate on committed publication, custom-only admission, source/activation
+fences, current-authority UI reconciliation and real native acceptance.
 
-- [ ] Parent's final full-suite run after separate polish fixes. The four
-      original failures have fresh focused passes, not a replacement full pass.
-- [ ] Parent's separate fixes for two UI recovery shortcomings found by broad
-      polish, then completion of broad polish and whole-branch review.
-- [ ] CI on both Ubuntu and Windows, including native codec and packaging/import
-      regressions. Local Linux execution is not evidence of a Windows CI pass.
+1. Why must the prepared Preview/alert composite be published only after persistence succeeds?
+2. How do custom admission bounds preserve ordinary Fleet traffic while enforcing one audible batch winner?
+3. Which identities and close gates reject stale matches between reading a line and native arming?
+4. Why can a fresh owned authority read reconcile a checkbox while preserving newer text, and why is a health poll insufficient?
+5. Which decoder reset and native acceptance boundaries are not established merely by a passing Node harness?
+
+## Remaining acceptance gates
+
+- [ ] Ubuntu and Windows CI, including codec and packaging/import regressions.
+      Local Linux results do not prove a Windows CI pass.
 - [ ] Real Windows/WebView2 acceptance: complete every item in
       [the custom-alert checklist](smoke-checklist.md#custom-gamelog-alerts--windowswebview2-acceptance-gate).
-      No Windows operator, candidate build, OS/WebView2 versions or native
-      results have been recorded at this checkpoint.
-- [ ] Record operator/date/build/scaling and failures, then obtain final release
-      acceptance. Do not mark these gates complete from Linux/Node/Chromium.
+      Record operator/date/build, OS/WebView2 versions, scaling, focus, ring/audio,
+      and shutdown results. No such native results were obtained in this session.
+- [ ] Final release acceptance after those results. Do not mark it complete from
+      Linux, Node or Chromium evidence alone.
