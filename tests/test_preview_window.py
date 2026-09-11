@@ -1415,15 +1415,38 @@ def test_secondary_label_moves_resizes_and_follows_alert_inset_without_rebuildin
 def test_two_line_cache_repaints_when_ellipsis_changes_but_dimensions_do_not(
     monkeypatch,
 ):
+    from PIL import Image
+
+    # Real font metrics differ across Windows/Linux. Give measurement and
+    # rendering the same controlled collision, leaving the window cache real.
+    layouts = {
+        116: ((100, 47), "Pilot…", "HOME"),
+        117: ((100, 47), "Pilot A…", "HOME"),
+    }
+    rendered = []
+
+    def layout(label, max_w, font_size, secondary):
+        assert label == "Pilot Alpha" and secondary == "HOME"
+        return layouts[max_w]
+
+    def render(label, max_w, font_size, secondary):
+        size, primary, second = layout(label, max_w, font_size, secondary)
+        image = Image.new("RGBA", size)
+        image.putpixel((0, 0), (len(primary), len(second), 0, 255))
+        rendered.append(image)
+        return image
+
+    monkeypatch.setattr(window.chrome, "label_layout", layout)
+    monkeypatch.setattr(window.chrome, "render_label", render)
     monkeypatch.setattr(window.layered, "push", lambda *args: None)
     w, _ = _overlay_window()
-    w.client.character = "W" * 30
-    w.rect = Rect(100, 100, 66, 90)  # 62px available after the border.
-    w.set_system_name("i" * 50)
+    w.client.character = "Pilot Alpha"
+    w.rect = Rect(100, 100, 120, 90)
+    w.set_system_name("HOME")
     w._ensure_label_overlay()
     before = w._label_img
-    w.move(Rect(100, 100, 67, 90))
-    expected = window.chrome.render_label("W" * 30, 63, secondary="i" * 50)
-    assert before.size == expected.size
-    assert before.tobytes() != expected.tobytes()
-    assert w._label_img.tobytes() == expected.tobytes()
+    w.move(Rect(100, 100, 121, 90))
+    assert len(rendered) == 2
+    assert before.size == w._label_img.size == (100, 47)
+    assert before.getpixel((0, 0)) == (6, 4, 0, 255)
+    assert w._label_img.getpixel((0, 0)) == (8, 4, 0, 255)

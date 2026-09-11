@@ -416,6 +416,75 @@ def test_restarted_host_waits_for_a_new_worker_generation(runtime):
     assert h._windows["Alice"]._system_name == "NEW"
 
 
+@pytest.mark.parametrize("during_destroy", [1000, 999], ids=["primary", "host"])
+def test_generation_fence_during_retirement_cannot_steal_next_pump_wake(
+    runtime, during_destroy
+):
+    h, c = runtime.host, client()
+    runtime.roster(1, c)
+    h.set_metadata_generation(1)
+    h.submit_metadata(1, {c.session: "OLD"})
+    h._apply_metadata()
+    runtime.posted.clear()
+    destroyed = runtime.native.user32.DestroyWindow
+    observed = []
+
+    def fence_while_destroying(hwnd):
+        if hwnd == during_destroy:
+            # The primary is destroyed after mailbox cleanup but before host
+            # HWND retirement. The host callback tests retirement itself.
+            observed.append((h._hwnd, h._metadata_wake_pending))
+            h.set_metadata_generation(2)
+        destroyed(hwnd)
+
+    runtime.native.user32.DestroyWindow = fence_while_destroying
+    h._teardown(runtime.native)
+    assert observed == [(999 if during_destroy == 1000 else None, False)]
+    assert h._hwnd is None and not h._metadata_wake_pending
+    assert host.win32.WM_APP_METADATA not in runtime.posted
+
+    # Model a new pump and prove its actual message route applies publications
+    # and expiry, rather than relying on incidental roster reconciliation.
+    h._stopping = False
+    h._hwnd = 1999
+    h._notify_metadata()
+    runtime.roster(2, c)
+    h.set_metadata_generation(3)
+    h.submit_metadata(3, {c.session: "NEW"})
+    assert runtime.posted.count(host.win32.WM_APP_METADATA) == 1
+    h._host_proc(1999, host.win32.WM_APP_METADATA, 0, 0)
+    assert h._windows["Alice"]._system_name == "NEW"
+    h.submit_metadata(3, {c.session: None})
+    assert runtime.posted.count(host.win32.WM_APP_METADATA) == 2
+    h._host_proc(1999, host.win32.WM_APP_METADATA, 0, 0)
+    assert h._windows["Alice"]._system_name is None
+
+
+def test_new_host_hwnd_does_not_inherit_a_retired_metadata_wake(runtime, monkeypatch):
+    h, c = runtime.host, client()
+    h._hwnd = None
+    h._metadata_wake_pending = True
+    h.set_metadata_generation(1)
+    monkeypatch.setattr(h, "_create_host_window", lambda libs: 1999)
+    monkeypatch.setattr(h, "_install_hook", lambda libs: None)
+    monkeypatch.setattr(
+        runtime.native.user32,
+        "SetThreadDpiAwarenessContext",
+        lambda context: 1,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        runtime.native.user32, "GetMessageW", lambda *args: 0, raising=False
+    )
+    h._run()  # Real startup body; the native-double loop has no queued messages.
+    runtime.roster(1, c)
+    h.set_metadata_generation(2)
+    h.submit_metadata(2, {c.session: "NEW"})
+    assert runtime.posted.count(host.win32.WM_APP_METADATA) == 1
+    h._host_proc(1999, host.win32.WM_APP_METADATA, 0, 0)
+    assert h._windows["Alice"]._system_name == "NEW"
+
+
 def test_callback_failure_does_not_kill_roster_or_native_reconciliation(
     runtime, caplog
 ):

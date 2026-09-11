@@ -1046,7 +1046,12 @@ class PreviewHost:
     def _wake_metadata_locked(self) -> None:
         # Signal under the lifecycle lock so an old sender cannot target a
         # replacement HWND. No bitmap work or outward callback under this lock.
-        if self._hwnd and not self._metadata_wake_pending:
+        if (
+            self._hwnd
+            and not self._stopping
+            and not self._closing
+            and not self._metadata_wake_pending
+        ):
             self._metadata_wake_pending = bool(
                 win32.bind().user32.PostMessageW(
                     self._hwnd, win32.WM_APP_METADATA, 0, 0
@@ -1444,7 +1449,11 @@ class PreviewHost:
         )
         logger.debug("Preview thread DPI override accepted: %s", bool(prev))
 
-        self._hwnd = self._create_host_window(libs)
+        hwnd = self._create_host_window(libs)
+        with self._lock:
+            # The wake belongs to this HWND's queue, never the previous pump.
+            self._hwnd = hwnd
+            self._metadata_wake_pending = False
         self._notify_metadata()
         if not self._hwnd:
             logger.error(
@@ -3542,7 +3551,6 @@ class PreviewHost:
             self._crop_roster = None
             self._latest_roster = None
             self._metadata_values.clear()
-            self._metadata_wake_pending = False
             self._last_roster_generation = 0
             self._pending_resize = {}
             self._pending_resize_all = None
@@ -3558,10 +3566,14 @@ class PreviewHost:
         for win in list(self._windows.values()):
             win.close()  # 2. thumbnails + windows
         self._windows.clear()
-        if self._hwnd:
+        with self._lock:
+            # Retire the posting target and its wake together before native
+            # destruction can release the GIL or invoke another callback.
+            hwnd, self._hwnd = self._hwnd, None
+            self._metadata_wake_pending = False
+        if hwnd:
             if self._alert_timer:
-                libs.user32.KillTimer(self._hwnd, ctypes.c_void_p(ALERT_TIMER_ID))
+                libs.user32.KillTimer(hwnd, ctypes.c_void_p(ALERT_TIMER_ID))
                 self._alert_timer = False
-            libs.user32.DestroyWindow(self._hwnd)  # 3. host window
-            self._hwnd = None
+            libs.user32.DestroyWindow(hwnd)  # 3. host window
         libs.user32.PostQuitMessage(0)  # 4. end the pump
