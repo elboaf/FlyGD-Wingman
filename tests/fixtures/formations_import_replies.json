@@ -1,0 +1,96 @@
+{
+  "exchanges": {
+    "parse-single": {
+      "method": "eve_settings_parse_formations",
+      "args": ["{\"format\":\"wingman-preset\",\"version\":1,\"type\":\"probe-formations\",\"formations\":[{\"name\":\"Incoming\",\"probes\":[{\"x\":-1250.5,\"y\":3000,\"z\":2500.25,\"range\":149597870700}]}]}", ["Original"]],
+      "response": {"ok": true, "formations": [{"id": null, "name": "Incoming", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}]}], "conflicts": []}
+    },
+    "parse-edited": {
+      "method": "eve_settings_parse_formations",
+      "args": ["{\"format\":\"wingman-preset\",\"version\":1,\"type\":\"probe-formations\",\"formations\":[{\"name\":\"Edited\",\"probes\":[{\"x\":-1250.5,\"y\":3000,\"z\":2500.25,\"range\":149597870700}]}]}", ["Original"]],
+      "response": {"ok": true, "formations": [{"id": null, "name": "Edited", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}]}], "conflicts": []}
+    },
+    "parse-draft": {
+      "method": "eve_settings_parse_formations",
+      "args": ["{\"format\":\"wingman-preset\",\"version\":1,\"type\":\"probe-formations\",\"formations\":[{\"name\":\"Incoming\",\"probes\":[{\"x\":-1250.5,\"y\":3000,\"z\":2500.25,\"range\":149597870700}]}]}", ["Unsaved <draft>"]],
+      "response": {"ok": true, "formations": [{"id": null, "name": "Incoming", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}]}], "conflicts": []}
+    },
+    "parse-pair": {
+      "method": "eve_settings_parse_formations",
+      "args": ["{\"format\":\"wingman-preset\",\"version\":1,\"type\":\"probe-formations\",\"formations\":[{\"name\":\"Incoming\",\"probes\":[{\"x\":-1250.5,\"y\":3000,\"z\":2500.25,\"range\":149597870700}]},{\"name\":\"Second\",\"probes\":[{\"x\":-1250.5,\"y\":3000,\"z\":2500.25,\"range\":149597870700},{\"x\":25000000,\"y\":0,\"z\":0,\"range\":149597870700}]}]}", ["Original"]],
+      "response": {"ok": true, "formations": [{"id": null, "name": "Incoming", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}]}, {"id": null, "name": "Second", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}, {"x": 25000000, "y": 0, "z": 0, "range": 149597870700}]}], "conflicts": []}
+    },
+    "parse-empty": {
+      "method": "eve_settings_parse_formations",
+      "args": ["{\"format\":\"wingman-preset\",\"version\":1,\"type\":\"probe-formations\",\"formations\":[{\"name\":\"Incoming\",\"probes\":[{\"x\":-1250.5,\"y\":3000,\"z\":2500.25,\"range\":149597870700}]},{\"name\":\"Second\",\"probes\":[{\"x\":-1250.5,\"y\":3000,\"z\":2500.25,\"range\":149597870700},{\"x\":25000000,\"y\":0,\"z\":0,\"range\":149597870700}]}]}", []],
+      "response": {"ok": true, "formations": [{"id": null, "name": "Incoming", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}]}, {"id": null, "name": "Second", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}, {"x": 25000000, "y": 0, "z": 0, "range": 149597870700}]}], "conflicts": []}
+    },
+    "parse-origin": {
+      "method": "eve_settings_parse_formations",
+      "args": ["{\"format\":\"wingman-preset\",\"version\":1,\"type\":\"probe-formations\",\"formations\":[{\"name\":\"Incoming\",\"probes\":[{\"x\":0,\"y\":0,\"z\":0,\"range\":149597870700}]}]}", ["Original"]],
+      "response": {"ok": true, "formations": [{"id": null, "name": "Incoming", "probes": [{"x": 0, "y": 0, "z": 0, "range": 149597870700}]}], "conflicts": []}
+    },
+    "add-pair": {
+      "method": "eve_settings_validate_formation_import",
+      "args": [[{"id": null, "name": "Incoming", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}]}, {"id": null, "name": "Second", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}, {"x": 25000000, "y": 0, "z": 0, "range": 149597870700}]}], ["Original"]],
+      "response": {"ok": true, "formations": [{"id": null, "name": "Incoming", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}]}, {"id": null, "name": "Second", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}, {"x": 25000000, "y": 0, "z": 0, "range": 149597870700}]}], "conflicts": []}
+    },
+    "add-empty": {
+      "method": "eve_settings_validate_formation_import",
+      "args": [[{"id": null, "name": "Incoming", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}]}, {"id": null, "name": "Second", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}, {"x": 25000000, "y": 0, "z": 0, "range": 149597870700}]}], []],
+      "response": {"ok": true, "formations": [{"id": null, "name": "Incoming", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}]}, {"id": null, "name": "Second", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}, {"x": 25000000, "y": 0, "z": 0, "range": 149597870700}]}], "conflicts": []}
+    },
+    "add-renamed": {
+      "method": "eve_settings_validate_formation_import",
+      "args": [[{"id": null, "name": "Renamed before Add", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}]}, {"id": null, "name": "Second", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}, {"x": 25000000, "y": 0, "z": 0, "range": 149597870700}]}], ["Original"]],
+      "response": {"ok": true, "formations": [{"id": null, "name": "Renamed before Add", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}]}, {"id": null, "name": "Second", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}, {"x": 25000000, "y": 0, "z": 0, "range": 149597870700}]}], "conflicts": []}
+    },
+    "add-later": {
+      "method": "eve_settings_validate_formation_import",
+      "args": [[{"id": null, "name": "Later name", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}]}, {"id": null, "name": "Second", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}, {"x": 25000000, "y": 0, "z": 0, "range": 149597870700}]}], ["Original"]],
+      "response": {"ok": true, "formations": [{"id": null, "name": "Later name", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}]}, {"id": null, "name": "Second", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}, {"x": 25000000, "y": 0, "z": 0, "range": 149597870700}]}], "conflicts": []}
+    },
+    "add-draft": {
+      "method": "eve_settings_validate_formation_import",
+      "args": [[{"id": null, "name": "Incoming", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}]}, {"id": null, "name": "Second", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}, {"x": 25000000, "y": 0, "z": 0, "range": 149597870700}]}], ["Changed draft"]],
+      "response": {"ok": true, "formations": [{"id": null, "name": "Incoming", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}]}, {"id": null, "name": "Second", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}, {"x": 25000000, "y": 0, "z": 0, "range": 149597870700}]}], "conflicts": []}
+    },
+    "add-conflict": {
+      "method": "eve_settings_validate_formation_import",
+      "args": [[{"id": null, "name": "Incoming", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}]}, {"id": null, "name": "Second", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}, {"x": 25000000, "y": 0, "z": 0, "range": 149597870700}]}], ["INCOMING"]],
+      "response": {"ok": true, "formations": [{"id": null, "name": "Incoming", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}]}, {"id": null, "name": "Second", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}, {"x": 25000000, "y": 0, "z": 0, "range": 149597870700}]}], "conflicts": [0]}
+    },
+    "add-corrected": {
+      "method": "eve_settings_validate_formation_import",
+      "args": [[{"id": null, "name": "Corrected", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}]}, {"id": null, "name": "Second", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}, {"x": 25000000, "y": 0, "z": 0, "range": 149597870700}]}], ["Original"]],
+      "response": {"ok": true, "formations": [{"id": null, "name": "Corrected", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}]}, {"id": null, "name": "Second", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}, {"x": 25000000, "y": 0, "z": 0, "range": 149597870700}]}], "conflicts": []}
+    },
+    "add-duplicate": {
+      "method": "eve_settings_validate_formation_import",
+      "args": [[{"id": null, "name": "Second", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}]}, {"id": null, "name": "Second", "probes": [{"x": -1250.5, "y": 3000, "z": 2500.25, "range": 149597870700}, {"x": 25000000, "y": 0, "z": 0, "range": 149597870700}]}], ["Original"]],
+      "response": {"ok": false, "error": "The name 'Second' is used twice."}
+    }
+  },
+  "scenarios": {
+    "preview-import-key": ["parse-origin"],
+    "paste-cancel-draft": ["parse-draft"],
+    "paste-empty": ["parse-empty", "add-empty"],
+    "paste-invalid-destination": ["parse-pair", "add-pair"],
+    "paste-byte-limit": ["parse-single"],
+    "paste-invalid-renames": ["parse-pair", "add-duplicate", "add-corrected"],
+    "paste-text-during-parse": ["parse-single", "parse-edited"],
+    "paste-name-during-add": ["parse-pair", "add-pair", "add-later"],
+    "paste-text-during-add": ["parse-pair", "add-pair"],
+    "paste-new-target-conflict": ["parse-pair", "add-conflict"],
+    "paste-draft-during-add": ["parse-pair", "add-pair", "add-draft"],
+    "paste-route-during-parse": ["parse-single"],
+    "paste-route-during-add": ["parse-pair", "add-renamed"],
+    "paste-account-during-parse": ["parse-single"],
+    "paste-account-during-add": ["parse-pair", "add-pair"],
+    "paste-reopen-during-add": ["parse-pair", "add-pair"],
+    "paste-cancel-during-add": ["parse-pair", "add-pair"],
+    "paste-double-add": ["parse-pair", "add-pair"],
+    "paste-rejected-parse": ["parse-single"],
+    "paste-rejected-add": ["parse-pair", "add-pair", "add-pair"]
+  }
+}

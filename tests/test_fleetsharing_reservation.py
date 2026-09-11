@@ -12,7 +12,12 @@ from tests.fleetsharing_capacity_helpers import (
     start_boundary,
 )
 from tests.test_fleetsharing_capacity import DiskStore
-from tests.test_fleetsharing_utf8 import approval_url, legacy_save, legacy_upgrade
+from tests.test_fleetsharing_utf8 import (
+    admitted_upgrade,
+    approval_url,
+    legacy_save,
+    legacy_upgrade,
+)
 from tests.test_fleetsharing_worker import (
     DATE,
     DEVICE,
@@ -58,31 +63,64 @@ def retain_originals(original, store, client, replaced=()):
 def test_legacy_batch_reserves_generation_growth_and_recreates_after_deferred_save(
     tmp_path, monkeypatch, bound
 ):
-    # Removing control reservation saves every small-generation Stop before the
-    # older URL arrives. It then cannot admit that URL or make any server progress.
+    # Unbound: the first response must fit without a retry or restart. Bound:
+    # maximum-width observations must survive deferred I/O and both owner restarts.
     original = replace(legacy_upgrade(), identity=maximal_state().identity)
     store = disk_legacy(tmp_path, original)
+    assert store.path.stat().st_size <= 65536
     mono = [1000.0]
     client = FakeRelayClient(device=DEVICE)
     begin = client.begin_pairing
-    client.begin_pairing = lambda **kw: replace(
-        begin(**kw), approval_url=approval_url()
-    )
+    responses = []
+
+    def long_url(**kwargs):
+        response = replace(begin(**kwargs), approval_url=approval_url())
+        responses.append(response)
+        return response
+
+    client.begin_pairing = long_url
     worker = _worker(
         client, store=store, clock=lambda: mono[0], sharing_enabled=lambda: False
     )
+    publications, journals, callback_errors = [], [], []
+
+    def observe_url(status):
+        # Capture first exposure, not completion's intermediate metadata push
+        # after it clears the pairing journal but before it clears the old URL.
+        if status.approval_url is not None and not publications:
+            try:
+                publications.append((status.approval_url, store.load().pending_pairing))
+            except Exception as error:  # noqa: BLE001 - assert in the test, outside subscriber swallowing
+                callback_errors.append(error)
+
+    unsubscribe = worker.subscribe_status(observe_url)
+    call = client._call
+
+    def journal_before_send(operation, args, apply):
+        if "revision" in args:
+            try:
+                journals.append((operation, args, store.load()))
+            except Exception as error:  # noqa: BLE001 - assert in the test, outside owner swallowing
+                callback_errors.append(error)
+        return call(operation, args, apply)
+
+    client._call = journal_before_send
     restarted = None
     try:
         worker.resume_pending()
         worker.iterate_once()
+        assert not client.calls  # Loading still owes the startup bootstrap deadline.
         binding = worker.status().metadata.binding if bound else None
+        if bound:
+            assert binding is not None
+        generation = p.INT4_MAX - 1 if bound else 1
         targets = tuple(
             source_id(i)
             for i in range(len(original.pending_source_commands), p.MAX_SOURCE_INTENTS)
         )
         for target in targets:
             client.source_views[target] = p.SourceView(
-                target, p.INT4_MAX - 1, 1, "active", None, None
+                target, generation, 1, "active", None, None
             )
             assert worker.request_source_stop(target, binding=binding)
         off = worker.request_participation(False)
@@ -92,6 +130,7 @@ def test_legacy_batch_reserves_generation_growth_and_recreates_after_deferred_sa
         assert worker.status().local_inhibited
         assert store.load().pending_participation.intent_id == off
         assert not worker.status().source_results
+        assert not client.calls
         summaries = {
             item.source_id: item.stage for item in worker.status().pending_sources
         }
@@ -101,42 +140,62 @@ def test_legacy_batch_reserves_generation_growth_and_recreates_after_deferred_sa
         assert set(targets) <= {
             c.source_id for c in store.load().pending_source_commands
         } | {c.payload.source_id for c in queued.values()}
-        assert worker.stop() and worker.start()  # Same owner retains unsaved choices.
-        before = store.path.read_bytes()
-        calls = len(client.calls)
-        with monkeypatch.context() as patch:
+        retain_originals(original, store, client)
+        if bound:
+            assert worker.stop() and worker.start()
+            assert worker._commands == queued, (
+                "same-owner restart discarded deferred controls"
+            )
+            before = store.path.read_bytes()
+            calls = len(client.calls)
+            with monkeypatch.context() as patch:
 
-            def fail(*args):
-                raise OSError("controlled atomic failure")
+                def fail(*args):
+                    raise OSError("controlled atomic failure")
 
-            patch.setattr(s.atomicio, "write_atomic", fail)
-            drive(worker, mono, 3)
-            assert store.path.read_bytes() == before
-            assert worker._commands == queued
-            assert worker.status().detail == "persistence_failed"
-            # Pair admission may be sent once, but its failed save cannot lead
-            # to completion/device/control sends or a fabricated durable URL.
-            assert all(call[0] == "begin_pairing" for call in client.calls[calls:])
-            assert store.load().pending_pairing.pairing_id is None
-        # Check the actual disk journal before every signed send, not a planner
-        # approximation. It must preserve the attempted revision and CAS intent.
-        call = client._call
-
-        def journal_before_send(operation, args, apply):
-            saved = store.load()
-            if "revision" in args:
-                assert saved.last_revision == args["revision"]
-                if operation == "control_source":
-                    assert args["command"] in saved.pending_source_commands
-                if operation == "set_participation":
-                    assert saved.pending_participation.attempted
-                    assert (
-                        saved.pending_participation.expected_generation
-                        == args["expected_generation"]
-                    )
-            return call(operation, args, apply)
-
-        client._call = journal_before_send
+                patch.setattr(s.atomicio, "write_atomic", fail)
+                drive(worker, mono, 3)
+                assert store.path.read_bytes() == before
+                assert worker._commands == queued
+                assert worker.status().detail == "persistence_failed"
+                # A response was received, but a failed save must not expose it
+                # or authorize completion/device/control sends.
+                assert len(responses) == 1
+                assert all(call[0] == "begin_pairing" for call in client.calls[calls:])
+                assert store.load().pending_pairing.pairing_id is None
+                assert not publications, (
+                    "approval URL published before durable response"
+                )
+                assert worker.status().approval_url is None
+        else:
+            # Stop AT the first successful response, before any later turn can
+            # retry admission or complete pairing and erase its durable evidence.
+            for _ in range(4):
+                drive(worker, mono, 1)
+                if responses:
+                    break
+            assert len(responses) == 1
+            response = responses[0]
+            admitted = store.load()
+            assert admitted.pending_pairing == s.PendingPairing(
+                "upgrade",
+                response.pairing_id,
+                response.approval_url,
+                response.expires_at,
+            ), "first pairing response was not saved"
+            assert store.saved[-1] == admitted
+            assert (
+                worker.status().approval_url == response.approval_url == approval_url()
+            )
+            assert not callback_errors
+            assert publications == [(approval_url(), admitted.pending_pairing)], (
+                "approval URL published before durable response"
+            )
+            assert store.path.stat().st_size <= 65536
+            assert [item[0] for item in client.calls] == ["begin_pairing"]
+            assert not client.controls and not client.participation_calls
+            assert admitted.pending_participation.intent_id == off
+            assert worker.status().local_inhibited
         for _ in range(20):
             drive(worker, mono, 1)
             if not worker._commands:
@@ -147,23 +206,52 @@ def test_legacy_batch_reserves_generation_growth_and_recreates_after_deferred_sa
             and saved.pending_pairing.approval_url == approval_url()
             for saved in store.saved
         )
+        assert publications and not callback_errors
+        assert all(
+            pairing is not None and pairing.approval_url == url
+            for url, pairing in publications
+        ), "approval URL published before durable response"
         assert store.load().pending_participation.intent_id == off
-        assert worker.stop()
-        restarted = _worker(
-            client, store=store, clock=lambda: mono[0], sharing_enabled=lambda: False
-        )
-        restarted.resume_pending()
-        drive(restarted, mono, len(targets) + 40)
+        active = worker
+        if bound:
+            assert worker.stop()
+            restarted = _worker(
+                client,
+                store=store,
+                clock=lambda: mono[0],
+                sharing_enabled=lambda: False,
+            )
+            restarted.resume_pending()
+            active = restarted
+        drive(active, mono, len(targets) + 40)
         assert not client.device.participation.enabled
         assert all(client.source_views[target].state == "ended" for target in targets)
         assert all(
-            c.expected_generation == p.INT4_MAX - 1
+            c.expected_generation == generation
             for c in client.controls
             if isinstance(c, p.StopSource)
         )
+        # These snapshots came from the real loader BEFORE signed sends. Assert
+        # here: an assertion in _call would be swallowed by the owner's fail-close.
+        assert not callback_errors
+        assert {"control_source", "set_participation"} <= {j[0] for j in journals}
+        for operation, args, saved in journals:
+            assert saved.last_revision == args["revision"]
+            if operation == "control_source":
+                assert args["command"] in saved.pending_source_commands
+            if operation == "set_participation":
+                assert saved.pending_participation.intent_id == off
+                assert saved.pending_participation.attempted
+                assert (
+                    saved.pending_participation.expected_generation
+                    == args["expected_generation"]
+                )
+        if not bound:
+            assert len(responses) == len(client.pair_keys) == 1
         assert not store.rejected and not client.cadence_refusals
         retain_originals(original, store, client)
     finally:
+        unsubscribe()
         assert worker.stop()
         if restarted is not None:
             assert restarted.stop()
@@ -264,6 +352,39 @@ def test_control_reserve_dominates_current_mutable_fields_without_unused_slots(
     original = replace(legacy_upgrade(), identity=maximum.identity)
     if not pairing:
         original = replace(original, pending_pairing=None)
+    else:
+        # Independent full-count witness: even true UTF-8 cannot save all 256
+        # commands plus the response. Reservation must defer some Stops, not
+        # merely pick a more compact encoding or silently lose the old journal.
+        response = replace(
+            original,
+            pending_source_commands=(
+                *original.pending_source_commands,
+                *(
+                    p.StopSource(source_id(i), 0)
+                    for i in range(len(original.pending_source_commands), 256)
+                ),
+            ),
+            pending_pairing=admitted_upgrade().pending_pairing,
+            pending_participation=s.PendingParticipation(UUID, False),
+        )
+        assert len(response.pending_source_commands) == 256
+        data = json.dumps(
+            s._to_dict(response),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        assert s._parse_v3(p.decode_json(data)) == response
+        assert len(data) > 65536
+        path = tmp_path / "overflow.json"
+        legacy_save(path, original)
+        before = path.read_bytes()
+        assert len(before) <= 65536
+        with pytest.raises(s.CapacityError, match="size limit"):
+            s.save(path, response)
+        assert path.read_bytes() == before
+        assert s.load(path) == original
     # Existing legacy work is not new admission: its immutable Start payloads
     # must not be charged AGAIN as every unused future Stop slot.
     with pytest.raises(s.CapacityError):
@@ -320,7 +441,7 @@ def test_control_reserve_dominates_current_mutable_fields_without_unused_slots(
     for name, value in raw.items():
         assert len(s._compact_utf8({name: value}).encode()) <= len(
             s._compact_utf8({name: envelope[name]}).encode()
-        )
+        ), f"control reserve undercharges {name}"
     path = tmp_path / "future.json"
     s.save(path, future)
     assert path.stat().st_size <= s.MAX_STATE_FILE_BYTES

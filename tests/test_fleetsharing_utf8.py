@@ -135,62 +135,6 @@ def test_old_writer_upgrade_url_off_stop_and_sources_survive_restart(tmp_path):
     assert client.cadence_refusals == 0
 
 
-def test_legacy_upgrade_with_queued_stops_keeps_room_for_approval(tmp_path):
-    # The old writer could save this identity and 200 Starts. Stop is not a new
-    # Start/pairing admission: queued safety controls may occupy remaining slots
-    # before the old pending pairing gets its URL. No remote failure is injected.
-    original = replace(legacy_upgrade(), identity=maximal_state().identity)
-    path = tmp_path / "legacy-stop-growth.json"
-    legacy_save(path, original)
-    assert path.stat().st_size <= 65536
-    assert s.load(path) == original
-    store = DiskStore.__new__(DiskStore)
-    store.path, store.saved, store.rejected = path, [], []
-    mono = [1000.0]
-    client = FakeRelayClient(device=DEVICE)
-    begin_pairing = client.begin_pairing
-
-    def long_url(*args, **kwargs):
-        return replace(begin_pairing(*args, **kwargs), approval_url=approval_url())
-
-    client.begin_pairing = long_url
-    worker = _worker(
-        client, store=store, clock=lambda: mono[0], sharing_enabled=lambda: False
-    )
-    worker.resume_pending()
-    worker.iterate_once()  # Load only: startup bootstrap deadline is still paid.
-    targets = tuple(source_id(i) for i in range(200, p.MAX_SOURCE_INTENTS))
-    for target in targets:
-        client.source_views[target] = p.SourceView(target, 1, 1, "active", None, None)
-        assert worker.request_source_stop(target)
-    off = worker.request_participation(False)
-    worker.iterate_once()  # Save all accepted controls, still before pair admission.
-    saved = store.load()
-    assert saved.pending_participation.intent_id == off
-    retained = {c.source_id for c in saved.pending_source_commands}
-    retained.update(
-        c.payload.source_id for c in worker._commands.values() if c.kind == "source"
-    )
-    assert set(targets) <= retained
-    assert all(c.source_id in retained for c in original.pending_source_commands)
-    response = replace(
-        saved,
-        pending_source_commands=(
-            *original.pending_source_commands,
-            *(p.StopSource(target, 0) for target in targets),
-        ),
-        pending_pairing=admitted_upgrade().pending_pairing,
-    )
-    data = json.dumps(
-        s._to_dict(response), ensure_ascii=False, separators=(",", ":"), allow_nan=False
-    ).encode()
-    assert s._parse_v3(p.decode_json(data)) == response
-    assert len(data) > 65536
-    drive(worker, mono, 160)
-    assert not client.device.participation.enabled
-    assert all(client.source_views[target].state == "ended" for target in targets)
-
-
 def test_utf8_fallback_retains_exact_values_and_real_file_bound(tmp_path):
     candidate = admitted_upgrade()
     # Quotes are escaped by JSON; non-ASCII scalar values are not. Preserve the
