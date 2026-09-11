@@ -940,6 +940,10 @@ def main() -> int:
     if preview_host is not None:
         preview_host.set_discovery_request(api._request_eve_discovery)
     api._start_fleet_sharing()
+    # Bind metadata before host start; callbacks only cache detached readiness
+    # and sessions. The retained controller owns HTTP and off-pump health.
+    if not api._wanderer.start():
+        logger.warning("Wanderer runtime is unavailable")
     # Migration and authority composition happen after Api construction so
     # warnings have a durable route payload and callbacks bind eagerly. They
     # still happen before the window starts and before any EVE feature work.

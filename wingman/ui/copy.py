@@ -16,6 +16,40 @@ import datetime
 
 from .. import discord, library, uploader
 
+
+def wanderer_status(status: str, error_code: str | None) -> str:
+    """Explain safe semantic health only, never a server body or exception."""
+    if status == "error":
+        return {
+            "invalid_token": "Wanderer rejected the token. Replace it, then test again.",
+            "forbidden": "Wanderer denied access. Check the token and map permissions.",
+            "scope_forbidden": "The token needs tracked-character location read access.",
+            "wrong_map": "This token belongs to another map.",
+            "disabled": "This Wanderer connection is disabled on the server.",
+            "subscription_required": "This map needs an eligible Wanderer subscription.",
+            "map_not_found": "Wanderer could not find this map.",
+            "rate_limited": "Wanderer is limiting requests. Wait before testing again.",
+            "unsupported_version": "This Wanderer server uses an unsupported API version.",
+            "redirect_refused": "Wanderer redirected the request. Check the application URL.",
+            "tls_error": "The secure connection to Wanderer could not be verified.",
+            "timeout": "Wanderer did not respond in time.",
+            "invalid_snapshot": "Wanderer returned invalid location data. Existing names expire normally.",
+        }.get(
+            error_code, "Wanderer could not be reached or returned an invalid response."
+        )
+    return {
+        "off": "Wanderer names are off.",
+        "setup_incomplete": "Apply an application URL, map and token to finish setup.",
+        "previews_unavailable": "Waiting for previews to be enabled and available.",
+        "connecting": "Connecting to Wanderer…",
+        "connected": "Connected to Wanderer.",
+        "stale": "Location confirmations have expired. Waiting for fresh data.",
+        "stopped": "Wanderer has stopped.",
+        "worker_failed": "Wanderer could not run. Restart Wingman to retry.",
+        "credential_error": "The protected token could not be read. Replace or remove it.",
+    }.get(status, "Wanderer is unavailable.")
+
+
 # --- main window -----------------------------------------------------------
 
 

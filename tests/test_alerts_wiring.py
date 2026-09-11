@@ -60,6 +60,21 @@ class FakePreviewHost:
         self.hotkeys = None
         self.is_stopping = False
 
+    def set_metadata_callback(self, callback):
+        self.metadata_callback = callback
+        if callback is not None:
+            # This alert double never creates a native primary preview.
+            callback(0, frozenset(), False)
+
+    def set_metadata_generation(self, generation):
+        self.metadata_generation = generation
+
+    def submit_metadata(self, generation, updates):
+        pass
+
+    def close_metadata_admission(self):
+        self.metadata_closed = True
+
     def focused_character(self):
         return self._focused
 
