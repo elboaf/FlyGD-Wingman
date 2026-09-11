@@ -11,6 +11,7 @@ from pathlib import Path
 
 from . import combatlog, discord, hotkeys, obsconfig, paths, stitch, watcher
 from . import settings as settings_mod
+from .alerts.controller import AlertsController, AlertsPorts
 from .eveauth import application
 from .ui import api as api_mod
 from .ui import preflight
@@ -361,10 +362,9 @@ def build_preview_host(state, api_box):
     toggle asks it to. Returning None off Windows keeps every call site in
     api.py a plain no-op rather than a platform check.
 
-    `api_box` is a late-bound holder for the Api instance: the host is
-    constructed as an argument to Api(...), so the name `api` does not
-    exist yet when the callbacks below are defined. A plain dict rather
-    than a closure over `api` for the same reason.
+    `api_box` is the late-bound holder for Api and the Alerts controller.
+    The host is constructed first; main assigns both targets before any
+    thread starts or these callbacks can run.
     """
     if sys.platform != "win32":
         return None
@@ -549,6 +549,9 @@ def build_preview_host(state, api_box):
             snap=snap,
             lock_aspect=lock_aspect,
             selection_color=selection_color,
+            custom_alert_current=lambda rid, gen, epoch: api_box["alerts"].is_current(
+                rid, gen, epoch
+            ),
         )
     except Exception:
         # Previews are secondary to the upload workflow. A failure to
@@ -557,25 +560,56 @@ def build_preview_host(state, api_box):
         return None
 
 
-def build_alert_policy(state, host):
+def build_alerts_controller(state, host, api_box) -> AlertsController:
+    """Thread-free authority; late health ports resolve Api's retained runtime."""
+    from .alerts.service import play_sound
+
+    return AlertsController(
+        state.settings,
+        ports=AlertsPorts(
+            update_settings=lambda: settings_mod.update(state.settings),
+            reader_state=lambda: api_box["api"]._custom_reader_state(),
+            matcher_health=lambda: api_box["api"]._custom_matcher_health(),
+            preview_characters=lambda: (
+                tuple(host.characters()) if host is not None else ()
+            ),
+            preview_available=lambda: host is not None,
+            raise_alert=lambda character, event, spec: host.raise_alert(
+                character, event, spec
+            ),
+            play_sound=play_sound,
+        ),
+    )
+
+
+def build_alert_policy(state, host, alerts_controller=None):
     """Alert decisions without a private file-reader thread."""
     if host is None:
         return None
     try:
         from .alerts.service import AlertPolicy, play_sound
 
+        preview_config = settings_mod.committed_preview(state.settings)
         return AlertPolicy(
-            config=lambda: state.settings.get("preview", {}).get("alerts", {}),
+            config=lambda: preview_config.get("alerts", {}),
             sound=play_sound,
             focused=host.focused_character,
             on_alert=host.raise_alert,
+            runtime_snapshot=(
+                alerts_controller.runtime_snapshot
+                if alerts_controller is not None
+                else None
+            ),
+            custom_current=(
+                alerts_controller.is_current if alerts_controller is not None else None
+            ),
         )
     except Exception:
         logger.exception("Alert policy unavailable")
         return None
 
 
-def build_telemetry(state, host, alert_policy):
+def build_telemetry(state, host, alert_policy, alerts_controller=None):
     """Shared EVE discovery/gamelog runtime, or None off Windows."""
     if sys.platform != "win32":
         return None
@@ -584,6 +618,13 @@ def build_telemetry(state, host, alert_policy):
         from .telemetry.coordinator import TelemetryCoordinator
         from .telemetry.gamelogs import GameLogStream
         from .telemetry.metrics import FleetMetrics
+
+        preview_config = settings_mod.committed_preview(state.settings)
+        custom_snapshot = (
+            alerts_controller.runtime_snapshot
+            if alerts_controller is not None
+            else None
+        )
 
         def gamelogs_folder():
             configured = state.settings.get("gamelogs_dir")
@@ -596,23 +637,22 @@ def build_telemetry(state, host, alert_policy):
             preview_enabled=lambda: (
                 host.runtime_enabled
                 if host is not None
-                else bool(state.settings.get("preview", {}).get("enabled"))
+                else preview_config.alerts_snapshot().preview_enabled
             ),
             fleet_enabled=lambda: bool(
                 state.settings.get("fleet_bar", {}).get("enabled")
             ),
-            alerts_enabled=lambda: bool(
-                state.settings.get("preview", {}).get("alerts", {}).get("enabled")
-            ),
+            alerts_enabled=lambda: preview_config.alerts_snapshot().alerts_enabled,
             sharing_enabled=lambda: bool(
                 state.settings.get("fleet_sharing", {}).get("enabled")
             ),
             gamelogs_folder=gamelogs_folder,
             discovery=ClientDiscovery(),
-            stream=GameLogStream(),
+            stream=GameLogStream(custom_snapshot=custom_snapshot),
             metrics=FleetMetrics(),
             preview_host=host,
             alert_policy=alert_policy,
+            custom_snapshot=custom_snapshot,
         )
     except Exception:
         logger.exception("Shared EVE telemetry unavailable")
@@ -874,17 +914,25 @@ def main() -> int:
     reclaim_orphaned_engine(engine)
     start_engine_if_enabled(engine, state.settings["eve_bookmarks"])
 
+    # Retain registration until the host/controller take ownership; the weak
+    # registry intentionally does not keep settings documents alive itself.
+    _preview_config = settings_mod.committed_preview(state.settings)
     api_box = {}
     preview_host = build_preview_host(state, api_box)
-    alert_policy = build_alert_policy(state, preview_host)
-    telemetry = build_telemetry(state, preview_host, alert_policy)
+    alerts_controller = build_alerts_controller(state, preview_host, api_box)
+    api_box["alerts"] = alerts_controller
+    alert_policy = build_alert_policy(state, preview_host, alerts_controller)
+    telemetry = build_telemetry(state, preview_host, alert_policy, alerts_controller)
     sharing_worker = build_fleet_sharing_worker(state)
     api = api_mod.Api(
         state,
         preview_host=preview_host,
         telemetry=telemetry,
         fleet_sharing=sharing_worker,
-        telemetry_factory=lambda: build_telemetry(state, preview_host, alert_policy),
+        alerts_controller=alerts_controller,
+        telemetry_factory=lambda: build_telemetry(
+            state, preview_host, alert_policy, alerts_controller
+        ),
     )
     api_box["api"] = api
     if telemetry is not None and not api._start_fleet_presentation():

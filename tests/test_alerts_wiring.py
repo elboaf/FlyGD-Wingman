@@ -10,8 +10,9 @@ redefined. It takes tmp_path positionally and forwards **kwargs to Api().
 import re
 
 from tests.test_api import make_api
+from wingman import settings
 from wingman.alerts import service as alert_service
-from wingman.telemetry.model import StreamHealth
+from wingman.telemetry.model import CustomMatcherHealth, StreamHealth
 
 
 class FakeTelemetry:
@@ -19,6 +20,7 @@ class FakeTelemetry:
         self.reconciled = 0
         self.subscribers = []
         self.stopped = 0
+        self.custom_closed = False
         self._health = health or StreamHealth(state="stopped")
         self._characters = tuple(characters)
 
@@ -31,6 +33,12 @@ class FakeTelemetry:
 
     def stop(self):
         self.stopped += 1
+
+    def close_custom_admission(self):
+        self.custom_closed = True
+
+    def custom_matcher_health(self):
+        return CustomMatcherHealth("waiting")
 
     def stream_health(self):
         return self._health
@@ -134,8 +142,9 @@ def test_shared_telemetry_health_drives_alert_state(tmp_path):
         characters=("Alice", "Bob"),
     )
     api = make_api(tmp_path, telemetry=telemetry, preview_host=FakePreviewHost())
-    api._state.settings["preview"] = {"enabled": True, "alerts": _alerts_section()}
-    api._state.settings["gamelogs_dir"] = str(tmp_path)
+    with settings.update(api._state.settings) as document:
+        document["preview"] = {"enabled": True, "alerts": _alerts_section()}
+        document["gamelogs_dir"] = str(tmp_path)
 
     state = api.get_alert_state()
 
@@ -147,10 +156,11 @@ def test_shared_telemetry_health_drives_alert_state(tmp_path):
 def test_fleet_owned_stream_does_not_make_disabled_alerts_look_armed(tmp_path):
     telemetry = FakeTelemetry(StreamHealth(state="active"), characters=("Alice",))
     api = make_api(tmp_path, telemetry=telemetry)
-    api._state.settings["preview"] = {
-        "enabled": True,
-        "alerts": _alerts_section(enabled=False),
-    }
+    with settings.update(api._state.settings) as document:
+        document["preview"] = {
+            "enabled": True,
+            "alerts": _alerts_section(enabled=False),
+        }
 
     state = api.get_alert_state()
 

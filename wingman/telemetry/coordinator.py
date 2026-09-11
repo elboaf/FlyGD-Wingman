@@ -97,6 +97,7 @@ from .gamelogs import MAX_FILES
 from .model import (
     CombatFact,
     CustomMatch,
+    CustomMatcherHealth,
     FleetSnapshot,
     RosterSnapshot,
     SourceLifecycle,
@@ -585,6 +586,9 @@ class TelemetryCoordinator:
     def stream_health(self) -> StreamHealth:
         """Current shared reader health for the existing Alerts card."""
         return self._health()
+
+    def custom_matcher_health(self) -> CustomMatcherHealth:
+        return self._stream.custom_health()
 
     def stream_characters(self) -> tuple[str, ...]:
         """Characters with active log sources, or none if unavailable."""

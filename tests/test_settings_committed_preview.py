@@ -506,6 +506,77 @@ def test_alert_projection_failure_preserves_document_disk_and_tokens(
     assert reader.alerts_snapshot().rules_revision == old_alerts.rules_revision + 1
 
 
+@pytest.mark.parametrize("with_controller", [False, True])
+@pytest.mark.parametrize("save_fails", [False, True], ids=["commit", "rollback"])
+def test_production_policy_and_alert_predicate_keep_committed_values(
+    monkeypatch, tmp_path, with_controller, save_fails
+):
+    from wingman.alerts import service
+    from wingman.telemetry.coordinator import AlertEvent
+
+    document = settings.load()
+    document["preview"]["enabled"] = True
+    document["preview"]["alerts"]["enabled"] = True
+    document["preview"]["alerts"]["events"]["combat"].update(cooldown_s=0, sound="obey")
+    state = SimpleNamespace(settings=document)
+    host = SimpleNamespace(
+        runtime_enabled=True,
+        focused_character=lambda: None,
+        raise_alert=lambda *args: None,
+    )
+    controller = (
+        main_mod.build_alerts_controller(state, host, {}) if with_controller else None
+    )
+    played = []
+    monkeypatch.setattr(
+        service, "play_sound", lambda sid, vol: played.append((sid, vol))
+    )
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    policy = main_mod.build_alert_policy(state, host, controller)
+    runtime = main_mod.build_telemetry(state, host, policy, controller)
+    assert runtime is not None and policy is not None
+    entered, release = Event(), Event()
+    original_save = settings._save_locked
+
+    def held_save(data, path=None):
+        entered.set()
+        assert release.wait(5)
+        if save_fails:
+            raise OSError("read-only")
+        original_save(data, path)
+
+    def change():
+        with settings.update(document):
+            document["preview"]["enabled"] = False
+            document["preview"]["alerts"].update(enabled=False, volume=23)
+
+    def consume():
+        policy.handle([AlertEvent("Alice", "combat", "Bob Smith")], 100)
+        return runtime._alerts_enabled(), runtime._preview_enabled()
+
+    monkeypatch.setattr(settings, "_save_locked", held_save)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        writer = pool.submit(change)
+        try:
+            assert entered.wait(3)
+            assert pool.submit(consume).result(timeout=1) == (True, True)
+            assert played == [("obey", 100)]
+        finally:
+            release.set()
+        if save_fails:
+            with pytest.raises(OSError, match="read-only"):
+                writer.result(timeout=3)
+        else:
+            writer.result(timeout=3)
+    assert runtime._alerts_enabled() is save_fails
+    # A committed Preview Off still cannot revoke roster delivery before the
+    # host has applied it: that distinct runtime predicate protects sessions.
+    assert runtime._preview_enabled() is True
+    consume()
+    assert played[-1] == ("obey", 100 if save_fails else 23)
+    assert runtime.stop()
+
+
 def test_failed_initial_alert_projection_does_not_register(monkeypatch):
     document = settings.load()
     before = copy.deepcopy(document)
