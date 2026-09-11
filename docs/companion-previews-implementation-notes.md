@@ -140,9 +140,12 @@ reported correction items. Final diff and formatter edits were inspected.
 
 ## Windows feature smoke and limitations
 
-**Production companion smoke: NOT YET RUN.** No whole/region capture, activation,
-restart, source geometry or Quit observation is inferred from the prototype,
-OS doubles or Chromium fixtures. The short checklist is in
+**Initial production tryout: operator feedback received; full smoke incomplete.**
+The operator reported forced aspect ratio, an oversized source dropdown, and a
+preference for a separate tab. The follow-up below addresses those observations.
+No complete whole/region, activation, restart, source geometry or Quit result is
+inferred from that report, the prototype, OS doubles or Chromium fixtures.
+The short checklist is in
 `docs/smoke-checklist.md#companion-previews`; no capacity/DPI matrix is required.
 No specific application's visual DWM limitations have been established by this
 production build yet. Protected, cloaked, inaccessible, hung and ambiguous
@@ -152,6 +155,41 @@ The branch contains the already-reviewed runtime foundation beneath the feature.
 Nothing has been merged or released. Remaining review attention should focus on
 native Windows presentation and the ordinary independent-family/quit smoke,
 not another foundation-only test program.
+
+## Operator-feedback follow-up — `697ff87`, `1513f02`
+
+- Companion right-drag no longer supplies an aspect ratio to `resize_result`.
+  Width and height respond independently, including the minimum size. Existing
+  EVE preview aspect settings and source rectangles are unchanged. Six real
+  message-path regressions failed before the fix and pass after it.
+- Companions now has its own Settings rail entry after Uploading. It remains
+  accessible when EVE tools are hidden; remembered sections, hydration, drafts,
+  source-flow ownership and keybind capture follow the new section. No saved
+  definitions or settings schema changed.
+- Source choice opts into a compact dialog and bounds native option captions
+  to 44 Unicode code points, preventing long titles from sizing the popup.
+  The full selected application/title remains wrapped below the dropdown and
+  is associated with it for accessibility. Ordinary copy dialogs retain their
+  original dimensions, captions and field label.
+
+Fresh verification after polish and independent review:
+
+- Linux full: **10,838 passed, 11 Windows-only skips**, 228.99 seconds, using
+  the same venv/pytest command with `/tmp/companion-usability-linux.xml`.
+- Windows focused preview, companion, Settings, shared dialogs, setup-page and
+  screenshot-tool tests: **2,549 passed, no skips**, 22.86 seconds.
+- Companion Node harness: **31/31**. Ruff lint/format, Cargo's one regression,
+  all-page JavaScript smoke and diff checks passed.
+- Chromium at 840×625: source dialog **360px**, select **318px**, three long-title
+  options each bounded to 44 code points; selected 525-character application/title
+  wraps without horizontal overflow. Open-popup screenshot inspected. Subsequent
+  ordinary copy dialog remained **460px** with no compact styling or stale detail.
+- Independent scoped review passed. Full verification also caught the setup DOM
+  double missing standard `removeAttribute` and the screenshot inventory missing
+  Companions; those test seams were updated without relaxing their assertions.
+
+The running application must restart to load these changes. Operator recheck of
+free resizing and the new chooser remains distinct from the automated evidence.
 
 ## Reviewer knowledge check
 
