@@ -56,10 +56,10 @@ windows, budget, dependencies, or changes to source-window geometry/input policy
 
 ## Review-fix wave — base `7d497faf`
 
-The twelve reproduced review findings are addressed together. Numbered
+The first fix wave targeted all twelve reproduced findings. Numbered
 `test_review_XX_*` regressions in `tests/test_preview_runtime_review.py` identify
-each boundary; all use controlled Events, real storage or fake-native pump
-execution rather than an alternate lifecycle arbitrator.
+its boundaries. Independent re-review closed most findings but identified the
+remaining A–G boundaries recorded below; this table is not final approval.
 
 | Finding | Change |
 | --- | --- |
@@ -78,28 +78,76 @@ execution rather than an alternate lifecycle arbitrator.
 No public runtime record/signature changed. No owner replacement, second
 executor, companion feature, settings schema, or frontend was added. Push spies
 were updated to forward the delivery guard or exercise real serialization.
-Independent parent re-review of all twelve closures remains required.
+The subsequent independent review and remaining-boundary work follow.
+
+## Remaining-boundary wave — base `05c2d703`
+
+`tests/test_preview_runtime_boundaries.py` adds eleven real-host, Event/OS-double
+cases. The initial A–G run failed all seven cases (G also failed teardown by
+joining an unstarted Thread). The combined B/C late-registration-return case
+also failed before its dispatch-revision fix. No RecordingHost substitution was
+used for those native boundaries.
+
+- **A:** Recheck late cancellation in the same critical section that releases
+  offline submission ownership. Retain that ownership for another pass when a
+  barrier or accepted batch arrived after the earlier decision. All submissions
+  remain outside the host lock; no HWND or later caller is needed to finish.
+- **B:** Record each successful OS acquisition in `_registered_text` before
+  testing revocation. Failed release retains the physical ID independently of
+  whether any dispatch action remains authorized.
+- **C:** Binding commits advance a revision, while registration/dispatch maps
+  stay pump-owned. A genuine OS hotkey ahead of REBIND refreshes against the
+  committed table; a late RegisterHotKey return cannot restore removed binding
+  authority. Failed-release ownership remains tracked and unchanged live
+  bindings remain usable. Status reads also respect the committed revision.
+- **D:** The accepted primary FIFO now carries payload batches. Adjacent requests
+  coalesce, but RESET and bulk resize separate per-key batches. The same delivery
+  helper serves native and pre-window/offline delivery; cleanup still waits for
+  actual accepted delivery, and revoked work performs no native movement.
+- **E/F — approved private refinement:** `_admission_epochs()` returns an
+  immutable pump/EVE/companion tuple under the host lock. Runtime reads it only
+  outside its condition, after actual `set_families()` delivery. Logical On can
+  coalesce away, or native post-cleanup admission can precede a delayed active
+  acknowledgment; demand/observed-outcome arithmetic cannot distinguish those
+  histories. The query supplies authority floors, never activeness: only a
+  genuine HostAck can establish active state. During admission, at most one
+  latest active acknowledgment per family is deferred; failed/stopped outcomes
+  still reach retained cleanup using the relevant family epoch. A pre-start
+  snapshot cannot alter the reserved pump epoch or retire a selection lease.
+  Host-owned post-cleanup reactivation and all public record/signatures remain
+  unchanged. Test doubles expose actual or explicitly supplied native admission
+  facts through this same private seam, not inferred UI transition counts.
+- **G:** A failed `Thread.start()` drops only an unstarted Thread (`ident is None`)
+  from the join slot; already-started threads remain retained. The existing stop
+  path still owns storage retirement before retry. Both failure positions are
+  tested with a real Thread subclass and an Event-held storage barrier.
+
+The local changed-code polish pass was scoped to these boundaries and conducted
+without subagents. No additional public-contract change or feature was needed.
+Parent independent A–G re-review remains required; passing tests are not final
+Phase 1 approval.
 
 ## Verification record
 
 No native GUI was launched and no source window was manipulated. Initial
 implementation Linux full-suite evidence was 10,580 passed / 11 Windows-only
 skips; the following fresh results include the review-fix wave and all existing
-coverage.
+coverage, including the remaining-boundary wave.
 
 Linux commands used
 `UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-runtime-venv uv run --no-sync`:
 
-- Focused pytest over `test_preview_runtime_review.py`, `test_preview_runtime.py`,
+- Focused pytest over `test_preview_runtime_boundaries.py`,
+  `test_preview_runtime_review.py`, `test_preview_runtime.py`,
   `test_preview_host.py`, `test_preview_wiring.py`, `test_api_crops.py`,
   `test_api_settings_fields.py`, `test_main.py`, `test_main_engine.py`,
   `test_fleet_runtime_integration.py`, `test_alerts_wiring.py`,
   `test_telemetry_coordinator.py`, and `test_custom_alert*.py`, with
-  `-q -rs --tb=short` — **1,273 passed, 1 Windows-only skip**, 27.70 seconds.
+  `-q -rs --tb=short` — **1,284 passed, 1 Windows-only skip**, 27.93 seconds.
 - `python -m pytest tests/ -q -rs --tb=short`, 900-second command timeout —
-  **10,600 passed, 11 Windows-only skips**, 231.57 seconds. No Node or codec
+  **10,611 passed, 11 Windows-only skips**, 228.11 seconds. No Node or codec
   tests skipped; actual release-codec availability was separately verified.
-- `ruff check .` and `ruff format --check .` — **passed** (386 Python files).
+- `ruff check .` and `ruff format --check .` — **passed** (387 Python files).
 - `cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml` —
   **1 passed**. `node scripts/js_smoke.js` — **all page modules loaded**.
 - `git diff --check` — **passed**.
@@ -109,7 +157,7 @@ Windows focused verification used the prepared
 Node 26.5.0, with actual Windows codec availability and checkout import path
 verified. The same focused modules, with
 `-k "not stop_from_another_thread_really_exits_the_pump"`, yielded
-**1,273 passed, 1 deselected**, 20.22 seconds. That single real-pump test was
+**1,284 passed, 1 deselected**, 15.92 seconds. That single real-pump test was
 excluded solely to honor the no-native-GUI constraint; no test code was skipped
 or weakened to hide failures.
 

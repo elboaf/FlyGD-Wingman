@@ -285,6 +285,7 @@ def test_review_07_failed_unregister_retains_owner_until_existing_pump_boundary(
     r.call(
         lambda: (
             h._registered.update({1: ("focus", ("Alice",))}),
+            h._registered_text.update({1: "Ctrl+F1"}),
             setattr(h, "_hook", 99),
         )
     )

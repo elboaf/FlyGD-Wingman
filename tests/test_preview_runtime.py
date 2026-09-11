@@ -19,6 +19,13 @@ class RecordingHost:
         self.stop_gate.set()
         self.stop_result = True
         self.is_running = False
+        # Explicit native admission facts; a deliberately delayed outcome does
+        # not rewrite them, and this recorder never infers them from UI demand.
+        self.admission_epochs = (0, 0, 0)
+
+    def _admission_epochs(self):
+        with self.changed:
+            return self.admission_epochs
 
     def record(self, name, value=None):
         with self.changed:
@@ -246,6 +253,7 @@ def test_old_pump_and_family_ack_cannot_revive_revoked_family_or_lease(owner):
     host.wait("start")
     host.ack("pump-started")
     host.ack("eve-active", eve=1)
+    host.admission_epochs = (1, 2, 1)  # Actual off admission, ahead of its outcome.
     runtime.set_eve(False, 2)
     runtime.set_eve(True, 3)
     host.ack("eve-active", eve=1)
@@ -282,6 +290,7 @@ def test_coalesced_on_off_during_cleanup_does_not_invent_host_epochs(owner):
     host.wait("start")
     host.ack("pump-started")
     host.ack("eve-active", eve=1)
+    host.admission_epochs = (1, 2, 1)  # Cleanup retains this native epoch below.
     runtime.set_eve(False, 2)
     runtime.set_eve(True, 3)
     runtime.set_eve(False, 4)

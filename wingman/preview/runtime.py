@@ -66,6 +66,8 @@ class PreviewRuntime:
         self._revision = 0
         self._demand = FamilyDemand(0, False, False)
         self._admitting = False
+        self._inflight_demand = None
+        self._deferred_active = {}
         self._pending_demand = None
         self._pending_off = {}
         self._producer_revisions = {"eve": -1, "companions": -1}
@@ -115,6 +117,11 @@ class PreviewRuntime:
             if (
                 fact == "active"
                 and self._epochs[family] >= self._minimum_active[family]
+                and family not in self._pending_off
+                and (
+                    self._inflight_demand is None
+                    or getattr(self._inflight_demand, family)
+                )
             ):
                 return "active"
             return "starting"
@@ -163,13 +170,6 @@ class PreviewRuntime:
                     enabled if family == "eve" else self._demand.eve,
                     enabled if family == "companions" else self._demand.companions,
                 )
-            if changed and not enabled:
-                # Require newer authority, not two more transitions: a stopped
-                # acknowledgment may already prove cleanup. With no observed
-                # epoch yet, exclude the pending first activation (epoch one).
-                self._minimum_active[family] = max(
-                    self._minimum_active[family], self._epochs[family] + 1, 2
-                )
             self._retry = self._retry or (enabled and self._pump == "failed")
             if self._host is None and enabled:
                 self._pump = "failed"
@@ -200,25 +200,49 @@ class PreviewRuntime:
                         self._pending_off.clear()
                     if self._pending_demand is None and not self._pending_off:
                         self._admitting = False
+                        deferred = tuple(self._deferred_active.values())
+                        self._deferred_active.clear()
                         self._wake()
-                        return
-                    demand = (
-                        min(self._pending_off.values(), key=lambda item: item.revision)
-                        if self._pending_off
-                        else self._pending_demand
-                    )
-                    self._pending_off = {
-                        family: item
-                        for family, item in self._pending_off.items()
-                        if item.revision > demand.revision
-                    }
-                    if self._pending_demand == demand:
-                        self._pending_demand = None
+                        demand = None
+                    else:
+                        demand = (
+                            min(
+                                self._pending_off.values(),
+                                key=lambda item: item.revision,
+                            )
+                            if self._pending_off
+                            else self._pending_demand
+                        )
+                        self._pending_off = {
+                            family: item
+                            for family, item in self._pending_off.items()
+                            if item.revision > demand.revision
+                        }
+                        if self._pending_demand == demand:
+                            self._pending_demand = None
+                        self._inflight_demand = demand
+                if demand is None:
+                    for ack in deferred:
+                        self._ack(self._host, ack)
+                    return
                 if self._host is not None:
                     self._host.set_families(demand)
+                    # Only the host knows whether an On actually acquired an
+                    # epoch or stayed pending behind cleanup. This private read
+                    # follows delivery, outside the owner condition. It fences
+                    # authority, never establishes activeness or retires a lease
+                    # (the host may still report the prospective pump's epoch 0).
+                    _pump, eve, companions = self._host._admission_epochs()
+                    with self._condition:
+                        for family, epoch in (("eve", eve), ("companions", companions)):
+                            self._minimum_active[family] = max(
+                                self._minimum_active[family], epoch
+                            )
+                        self._inflight_demand = None
         except BaseException:
             with self._condition:
                 self._admitting = False
+                self._inflight_demand = None
                 self._wake()
             raise
 
@@ -314,6 +338,27 @@ class PreviewRuntime:
                     return
             elif family in self._facts:
                 epoch = ack.eve_epoch if family == "eve" else ack.companion_epoch
+                if outcome == "active" and self._admitting:
+                    # A synchronous or delayed active callback cannot overtake
+                    # the post-delivery authority snapshot. At most one latest
+                    # active ack per family; failures/stops still reach cleanup.
+                    previous = self._deferred_active.get(family)
+                    previous_epoch = (
+                        (
+                            previous.eve_epoch
+                            if family == "eve"
+                            else previous.companion_epoch
+                        )
+                        if previous
+                        else -1
+                    )
+                    if (
+                        previous is None
+                        or ack.pump_epoch > previous.pump_epoch
+                        or epoch >= previous_epoch
+                    ):
+                        self._deferred_active[family] = ack
+                    return
                 if epoch < self._epochs[family] or outcome not in (
                     "active",
                     "stopped",

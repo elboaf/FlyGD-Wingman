@@ -6396,7 +6396,10 @@ def test_resize_preview_stashes_the_payload_and_posts_only_a_signal(monkeypatch)
     under the lock -- set_hotkeys' shape."""
     h = _placement_host(monkeypatch)
     h.resize_preview("Alice", (640, 392))
-    assert h._pending_resize == {"Alice": (640, 392)}
+    assert h._primary_intents[0] == (
+        host.win32.WM_APP_RESIZE_ONE,
+        {"Alice": (640, 392)},
+    )
 
 
 def test_reset_layouts_clears_saved_and_calls_the_injected_clear(monkeypatch):
@@ -6463,7 +6466,7 @@ def test_apply_resizes_moves_the_window_and_records_it_like_a_drag(monkeypatch):
     h._windows = {"Alice": win}
 
     h.resize_preview("Alice", (640, 392))
-    h._apply_resizes()
+    h._apply_primary(host.win32.WM_APP_RESIZE_ONE)
 
     expected = geometry.Rect(10, 20, 640, 392)
     assert win.rect == expected
@@ -6479,7 +6482,7 @@ def test_resize_all_stashes_one_size_and_posts_only_a_signal(monkeypatch):
     same way a per-key one does -- a field under the lock, a signal out."""
     h = _placement_host(monkeypatch)
     h.resize_all((640, 392))
-    assert h._pending_resize_all == (640, 392)
+    assert h._primary_intents[0] == (host.win32.WM_APP_RESIZE_ALL, (640, 392))
 
 
 def test_apply_resize_all_moves_every_window_and_records_like_a_drag(monkeypatch):
@@ -6493,7 +6496,7 @@ def test_apply_resize_all_moves_every_window_and_records_like_a_drag(monkeypatch
     h._windows = {"Alice": alice, "Bravo": bravo}
 
     h.resize_all((640, 392))
-    h._apply_resize_all()
+    h._apply_primary(host.win32.WM_APP_RESIZE_ALL)
 
     assert alice.rect == geometry.Rect(10, 20, 640, 392)
     assert bravo.rect == geometry.Rect(400, 500, 640, 392)
@@ -6511,7 +6514,7 @@ def test_apply_resize_all_without_a_pending_size_is_a_no_op(monkeypatch):
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
     win = _MovableWindow(geometry.Rect(10, 20, 320, 210))
     h._windows = {"Alice": win}
-    h._apply_resize_all()
+    h._apply_primary(host.win32.WM_APP_RESIZE_ALL)
     assert win.rect == geometry.Rect(10, 20, 320, 210)
     assert h._saved == {}
 

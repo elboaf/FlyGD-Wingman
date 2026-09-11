@@ -17,6 +17,7 @@ import itertools
 import logging
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from concurrent.futures import Future, TimeoutError
 from ctypes import wintypes
@@ -320,6 +321,7 @@ class PreviewHost:
         self._companion_admitted = False
         self._companion_stopping = False
         self._primary_pending = 0
+        self._primary_intents = deque()
         self._offline_stop_ack = None
         self._custom_alert_current = custom_alert_current
         self._crop_controller_factory = crop_controller_factory
@@ -481,6 +483,8 @@ class PreviewHost:
         # a dict, so the value travels in a field and only the signal is
         # posted -- the same shape _saved already uses.
         self._desired_hotkeys = {}
+        self._hotkey_revision = 0
+        self._hotkey_authority_revision = 0
         self._registered = {}  # hotkey_id -> action
         self._hotkey_status = {}  # gesture text -> registered?
         self._last_cycled = None
@@ -495,16 +499,6 @@ class PreviewHost:
         # field under the lock and only the signal is posted. A list, not
         # one slot, because two clients can be alerted between ticks.
         self._pending_alerts: list[_PendingAlert] = []
-        # Same shape as _desired_hotkeys/_pending_alerts: PostMessageW
-        # carries integers only, so a typed size travels in a field under
-        # the lock and only the signal is posted. A dict, keyed by stable
-        # key, because more than one resize can be requested between ticks.
-        self._pending_resize = {}
-        # The "apply to open previews" size, or None. A scalar, not a dict:
-        # the request is always "every window, one size", and unlike
-        # _pending_resize there is no keying to do. Swapped to None under
-        # the lock when drained, same as the dict above.
-        self._pending_resize_all = None
         # Complete copied layouts waiting to be applied on the preview thread.
         # Persistence and the in-memory cache are updated before they enter
         # this queue; the message only performs monitor-safe live movement.
@@ -579,6 +573,11 @@ class PreviewHost:
             self._crop_roster = None
             self._pending_alerts = []
 
+    def _admission_epochs(self) -> tuple[int, int, int]:
+        """Private authority snapshot; lifecycle outcomes still travel via HostAck."""
+        with self._lock:
+            return self._pump_epoch, self._eve_epoch, self._companion_epoch
+
     def _ack(self, outcome, *, epochs=None) -> None:
         with self._lock:
             callback = self._lifecycle_callback
@@ -626,7 +625,7 @@ class PreviewHost:
                     or self._crop_commands
                     or self._primary_pending
                     or self._crop_epoch_prepared
-                    or self._registered
+                    or self._registered_text
                     or self._hook
                 )
                 self._eve_phase = "stopping" if self._eve_stopping else "stopped"
@@ -759,7 +758,15 @@ class PreviewHost:
                 self._thread = threading.Thread(
                     target=self._run, daemon=True, name="wingman-preview"
                 )
-                self._thread.start()
+                try:
+                    self._thread.start()
+                except RuntimeError:
+                    # Thread.start can fail before any thread exists to join.
+                    # A wrapper raising after successful launch still owns a
+                    # real thread (ident survives exit), so retain that owner.
+                    if self._thread.ident is None:
+                        self._thread = None
+                    raise
         finally:
             with self._lock:
                 self._starting = False
@@ -813,7 +820,7 @@ class PreviewHost:
             self._hwnd is not None
             or self._crop_controller is not None
             or self._hook
-            or self._registered
+            or self._registered_text
         ):
             logger.warning("Preview native cleanup remains owned by an exited pump")
             return False
@@ -925,6 +932,7 @@ class PreviewHost:
                 return self._stop_future
             self._crop_dispatching = True
             commands, self._crop_commands = self._crop_commands, []
+        released = False
         try:
             while True:
                 for action, name, value, token in commands:
@@ -962,21 +970,45 @@ class PreviewHost:
                         self._crop_store.close() if final else self._crop_store.drain()
                     )
                     self._watch_crop_stop(future, epoch, final=final)
+                with self._lock:
+                    # Cancellation can arrive after the earlier barrier decision.
+                    # Recheck it atomically with releasing submission ownership;
+                    # if it arrived late, retain ownership for one more pass.
+                    native = self._eve_delivery_owned() or (
+                        self._eve_stopping and self._hwnd is not None
+                    )
+                    late_barrier = (self._stopping or self._eve_stopping) and (
+                        self._stop_future is None
+                        or (self._closing and not self._stop_final)
+                    )
+                    if not native and (self._crop_commands or late_barrier):
+                        commands, self._crop_commands = self._crop_commands, []
+                        continue
+                    self._crop_dispatching = False
+                    released = True
+                    pending = bool(self._crop_commands)
+                    stop_future = self._stop_future
+                    self._post(
+                        win32.WM_APP_SHUTDOWN
+                        if self._stopping
+                        else win32.WM_APP_CROP_COMMAND
+                    )
+                    self._post(win32.WM_APP_CROP_COMPLETE)
+                    self._post(win32.WM_APP_FAMILIES)
                 break
         finally:
-            with self._lock:
-                self._crop_dispatching = False
-                pending = bool(self._crop_commands)
-                stopping = self._stopping
-                stop_future = self._stop_future
-                # Signal before releasing lifecycle ownership: a completed drain
-                # permits start() to replace both the HWND and the stop Future.
-                # PostMessage only queues; no store calls or callbacks under here.
-                self._post(
-                    win32.WM_APP_SHUTDOWN if stopping else win32.WM_APP_CROP_COMMAND
-                )
-                self._post(win32.WM_APP_CROP_COMPLETE)
-                self._post(win32.WM_APP_FAMILIES)
+            if not released:
+                with self._lock:
+                    self._crop_dispatching = False
+                    pending = bool(self._crop_commands)
+                    stop_future = self._stop_future
+                    self._post(
+                        win32.WM_APP_SHUTDOWN
+                        if self._stopping
+                        else win32.WM_APP_CROP_COMMAND
+                    )
+                    self._post(win32.WM_APP_CROP_COMPLETE)
+                    self._post(win32.WM_APP_FAMILIES)
         self._settle_offline_stop()
         if pending:
             return self._drain_offline_crop_commands()
@@ -1077,14 +1109,24 @@ class PreviewHost:
         with self._lock:
             signals, self._pending_primary_signals = self._pending_primary_signals, []
         for signal in signals:
-            if signal == win32.WM_APP_RESET_LAYOUTS:
+            self._apply_primary(signal)
+
+    def _apply_primary(self, message) -> bool:
+        with self._lock:
+            if not self._primary_intents or self._primary_intents[0][0] != message:
+                return False
+            _message, payload = self._primary_intents.popleft()
+        try:
+            if message == win32.WM_APP_RESET_LAYOUTS:
                 self._reset_layouts()
-            elif signal == win32.WM_APP_RESIZE_ONE:
-                self._apply_resizes()
+            elif message == win32.WM_APP_RESIZE_ONE:
+                self._apply_resizes(payload)
             else:
-                self._apply_resize_all()
+                self._apply_resize_all(payload)
+        finally:
             with self._lock:
                 self._primary_pending -= 1
+        return True
 
     def _settle_offline_stop(self) -> None:
         """A storage barrier can finish without an HWND to carry its wake."""
@@ -1097,7 +1139,7 @@ class PreviewHost:
                 or self._hwnd is not None
                 or self._crop_controller is not None
                 or self._hook
-                or self._registered
+                or self._registered_text
                 or self._crop_dispatching
                 or self._stop_submitting
                 or self._primary_pending
@@ -1265,6 +1307,7 @@ class PreviewHost:
         """
         with self._lock:
             self._desired_hotkeys = dict(table or {})
+            self._hotkey_revision += 1
             if self._eve_valid():
                 self._post(win32.WM_APP_REBIND)
 
@@ -1319,7 +1362,15 @@ class PreviewHost:
         exists (__main__.py:476-478), so a conflict found at launch has
         nowhere to be pushed and would otherwise be lost for the session.
         """
-        return dict(self._hotkey_status)
+        with self._lock:
+            if self._hotkey_authority_revision == self._hotkey_revision:
+                return dict(self._hotkey_status)
+            table = dict(self._desired_hotkeys)
+            held = set(self._registered_text.values())
+        return {
+            text: text in held
+            for _ident, text, _action in plan_registrations(self._registerable(table))
+        }
 
     def resize_preview(self, stable_key: str, size) -> bool:
         """Set one preview's size on demand. Safe from any thread.
@@ -1331,8 +1382,9 @@ class PreviewHost:
         with self._lock:
             if not self._eve_valid():
                 return False
-            self._pending_resize[stable_key] = (int(size[0]), int(size[1]))
-            self._post_primary_intent(win32.WM_APP_RESIZE_ONE)
+            self._post_primary_intent(
+                win32.WM_APP_RESIZE_ONE, {stable_key: (int(size[0]), int(size[1]))}
+            )
         return True
 
     def resize_all(self, size) -> bool:
@@ -1346,8 +1398,9 @@ class PreviewHost:
         with self._lock:
             if not self._eve_valid():
                 return False
-            self._pending_resize_all = (int(size[0]), int(size[1]))
-            self._post_primary_intent(win32.WM_APP_RESIZE_ALL)
+            self._post_primary_intent(
+                win32.WM_APP_RESIZE_ALL, (int(size[0]), int(size[1]))
+            )
         return True
 
     def _mirror_resize(self, driver_key: str, rect) -> None:
@@ -1432,10 +1485,17 @@ class PreviewHost:
             self._post(win32.WM_APP_APPLY_LAYOUTS)
         return COPY_OK
 
-    def _post_primary_intent(self, message) -> None:
-        # Caller holds _lock, also used to post shutdown. These three messages
-        # contain deferred persistence, not just native updates: place accepted
-        # intents BEFORE shutdown in the native FIFO, including the HWND gap.
+    def _post_primary_intent(self, message, payload=None) -> None:
+        # Payload and wake share the same FIFO, including the HWND gap. Only
+        # adjacent requests coalesce: RESET/bulk resize delimit per-key batches.
+        # These are the existing admitted intents, not a second work journal.
+        if self._primary_intents and self._primary_intents[-1][0] == message:
+            if message == win32.WM_APP_RESIZE_ONE:
+                self._primary_intents[-1][1].update(payload)
+            else:
+                self._primary_intents[-1] = (message, payload)
+            return
+        self._primary_intents.append((message, payload))
         self._primary_pending += 1
         if self._hwnd:
             self._post(message)
@@ -1716,26 +1776,12 @@ class PreviewHost:
         if msg == win32.WM_APP_FAMILIES:
             self._apply_families(libs)
             return 0
-        if (
-            msg
-            in (
-                win32.WM_APP_RESIZE_ONE,
-                win32.WM_APP_RESIZE_ALL,
-                win32.WM_APP_RESET_LAYOUTS,
-            )
-            and self._primary_pending
+        if msg in (
+            win32.WM_APP_RESIZE_ONE,
+            win32.WM_APP_RESIZE_ALL,
+            win32.WM_APP_RESET_LAYOUTS,
         ):
-            try:
-                if msg == win32.WM_APP_RESIZE_ONE:
-                    self._apply_resizes()
-                elif msg == win32.WM_APP_RESIZE_ALL:
-                    self._apply_resize_all()
-                else:
-                    self._reset_layouts()
-            finally:
-                with self._lock:
-                    self._primary_pending -= 1
-            if self._stopping or self._eve_stopping:
+            if self._apply_primary(msg) and (self._stopping or self._eve_stopping):
                 self._begin_stop(libs)
             return 0
         if self._stopping or self._eve_stopping:
@@ -1787,15 +1833,6 @@ class PreviewHost:
             return 0
         if msg == win32.WM_APP_RESTYLE:
             self._restyle(libs)
-            return 0
-        if msg == win32.WM_APP_RESIZE_ONE:
-            self._apply_resizes()
-            return 0
-        if msg == win32.WM_APP_RESIZE_ALL:
-            self._apply_resize_all()
-            return 0
-        if msg == win32.WM_APP_RESET_LAYOUTS:
-            self._reset_layouts()
             return 0
         if msg == win32.WM_APP_APPLY_LAYOUTS:
             self._apply_layouts()
@@ -2340,14 +2377,40 @@ class PreviewHost:
         }
         return table
 
+    def _authorize_hotkeys(self, table, plan) -> None:
+        # A held OS registration is cleanup ownership, not permission to invoke
+        # a binding which the committed table removed or reassigned.
+        desired = {text: action for _ident, text, action in plan}
+        self._registered = {
+            ident: desired[text]
+            for ident, text in self._registered_text.items()
+            if text in desired
+        }
+        self._active_hotkeys = dict(table)
+        held = set(self._registered_text.values())
+        self._hotkey_status = {text: text in held for text in desired}
+
+    def _refresh_hotkey_authority(self) -> int:
+        # Registration/dispatch dictionaries stay pump-owned. Ingress changes
+        # only the committed table/revision; even an OS hotkey ahead of REBIND
+        # must refresh against it before dispatching a retained registration.
+        with self._lock:
+            revision = self._hotkey_revision
+            if revision == self._hotkey_authority_revision:
+                return revision
+            table = dict(self._desired_hotkeys)
+        self._authorize_hotkeys(table, plan_registrations(self._registerable(table)))
+        self._hotkey_authority_revision = revision
+        return revision
+
     def _release_hotkeys(self, libs) -> bool:
-        for ident in list(self._registered):
+        for ident in list(self._registered_text):
             if libs.user32.UnregisterHotKey(self._hwnd, ident):
-                self._registered.pop(ident)
+                self._registered.pop(ident, None)
                 self._registered_text.pop(ident, None)
             else:
                 logger.warning("Preview hotkey %s remains registered", ident)
-        return not self._registered
+        return not self._registered_text
 
     def _release_eve_registrations(self, libs) -> bool:
         hotkeys_released = self._release_hotkeys(libs)
@@ -2360,26 +2423,37 @@ class PreviewHost:
 
     def _apply_hotkeys(self, libs, table) -> None:
         """Unregister everything, then register the new table."""
+        with self._lock:
+            revision = self._hotkey_revision
+            if revision:
+                table = dict(self._desired_hotkeys)
+        plan = plan_registrations(self._registerable(table))
+        self._authorize_hotkeys(table, plan)
+        self._hotkey_authority_revision = revision
         if not self._release_hotkeys(libs):
+            self._authorize_hotkeys(table, plan)
+            self._refresh_hotkey_authority()
             return
 
         epoch = self._eve_epoch
         status = {}
-        for ident, text, action in plan_registrations(self._registerable(table)):
+        for ident, text, action in plan:
             if not self._eve_valid(epoch):
                 return
             parsed = gestures.parse(text)
             ok = bool(
                 libs.user32.RegisterHotKey(self._hwnd, ident, parsed.mods, parsed.vk)
             )
+            if ok:
+                # Record acquisition BEFORE checking revocation. A failed
+                # compensating release must keep this ID reachable by cleanup.
+                self._registered_text[ident] = text
             if not self._eve_valid(epoch):
-                if ok:
-                    libs.user32.UnregisterHotKey(self._hwnd, ident)
+                self._release_hotkeys(libs)
                 return
             status[text] = ok
             if ok:
                 self._registered[ident] = action
-                self._registered_text[ident] = text
             else:
                 # A chord another application already owns. User-actionable,
                 # not a bug -- and the parent design requires it be visible
@@ -2390,9 +2464,10 @@ class PreviewHost:
                     text,
                 )
         self._hotkey_status = status
-        # Snapshot the table so dispatch reads consistent membership even if
-        # a new rebind signal arrives before the next WM_HOTKEY.
-        self._active_hotkeys = dict(table) if isinstance(table, dict) else {}
+        # RegisterHotKey may have returned after a newer binding commit.
+        # Ownership survives; obsolete dispatch/status must not be resurrected.
+        self._refresh_hotkey_authority()
+        status = dict(self._hotkey_status)
         # Remove history for groups that no longer exist in the applied table.
         # A stale entry is harmless to dispatch (.get returns None for unknown
         # IDs) but wastes memory and can confuse diagnostics for long sessions.
@@ -2430,6 +2505,7 @@ class PreviewHost:
     def _on_hotkeys(self, libs, idents: list[int]) -> None:
         if not self._eve_valid():
             return
+        binding_revision = self._refresh_hotkey_authority()
         registered = []
         for ident in idents:
             action = self._registered.get(ident)
@@ -2448,6 +2524,8 @@ class PreviewHost:
         newest_text = (
             self._registered_text.get(registered[-1][0]) if registered else None
         )
+        if binding_revision != self._hotkey_revision:
+            return
         if self._take_capture(newest_text):
             if newest_text is not None and len(registered) > 1:
                 logger.debug(
@@ -2562,8 +2640,10 @@ class PreviewHost:
             logger.debug("Preview hotkey target %r is not running", target)
             return
         # Folding ends in one host-owned switch, including its pending-restore
-        # and minimize decisions.
-        self._activate_client(libs, client)
+        # and minimize decisions. A removed binding cannot authorize a detached
+        # batch after a newer commit, even if its OS release is still failing.
+        if binding_revision == self._hotkey_revision:
+            self._activate_client(libs, client)
 
     def _take_capture(self, text) -> bool:
         """Hand *text* to an armed capture. Returns whether it was taken.
@@ -3511,7 +3591,7 @@ class PreviewHost:
             if win is not None and self._eve_valid(epoch):
                 win.move(geometry.clamp_to_monitors(entry.rect, monitors))
 
-    def _apply_resizes(self) -> None:
+    def _apply_resizes(self, pending) -> None:
         """Apply every pending typed size to its still-open window.
 
         A stable_key with no current window is dropped rather than
@@ -3523,8 +3603,6 @@ class PreviewHost:
         window exists. Closing this one properly needs a round trip the
         bridge does not have.
         """
-        with self._lock:
-            pending, self._pending_resize = dict(self._pending_resize), {}
         for key, (w, h) in pending.items():
             win = self._windows.get(key)
             if win is None:
@@ -3539,7 +3617,7 @@ class PreviewHost:
             # must survive a restart exactly as a dragged position does.
             self._layout_changed(key, rect, win.locked)
 
-    def _apply_resize_all(self) -> None:
+    def _apply_resize_all(self, size) -> None:
         """Apply the pending bulk size to every open window.
 
         Recorded, unlike _reset_layouts: these sizes ARE the user's
@@ -3548,10 +3626,6 @@ class PreviewHost:
         undid itself on restart. Position (x, y) is kept per window; only
         w and h change.
         """
-        with self._lock:
-            size, self._pending_resize_all = self._pending_resize_all, None
-        if size is None:
-            return
         w, h = size
         for key, win in self._windows.items():
             rect = win.rect._replace(w=w, h=h)
@@ -3791,8 +3865,6 @@ class PreviewHost:
             # offline. New ingress (including the post-open seed) repopulates it.
             self._crop_roster = None
             self._last_roster_generation = 0
-            self._pending_resize = {}
-            self._pending_resize_all = None
             self._pending_layouts = {}
             self._pending_primary_signals = []
         self._focused_key = None

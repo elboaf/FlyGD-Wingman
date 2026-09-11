@@ -55,6 +55,9 @@ class HostLifecycle:
                 )
         return True
 
+    def _admission_epochs(self):
+        return self._pump_epoch, self._eve_epoch, self._companion_epoch
+
     def _emit(self, outcome):
         self._lifecycle_callback(
             HostAck(self._pump_epoch, self._eve_epoch, self._companion_epoch, outcome)
