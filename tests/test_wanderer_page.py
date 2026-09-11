@@ -118,6 +118,8 @@ def test_wanderer_card_is_in_previews_with_accessible_safe_controls():
         0
     ]
     assert 'id="wanderer-settings"' in previews
+    assert re.search(r"<h2[^>]*>Wanderer names</h2>", previews)
+    assert re.search(r'id="wanderer-remove"[^>]*>Remove connection</button>', previews)
     for field in ("url", "map", "token"):
         assert f'for="wanderer-{field}"' in previews
         assert f'id="wanderer-{field}-apply"' in previews

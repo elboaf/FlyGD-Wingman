@@ -316,6 +316,65 @@ test('Test completion push before admission response does not return to pending'
   assert.equal(p.el('test').disabled, false);
 });
 
+for (const stage of ['unobserved', 'queued', 'inflight']) {
+  for (const admission of ['before', 'after']) {
+    for (const delivery of ['push', 'read']) {
+      test(`Test ${stage} generation cancellation via ${delivery}, admission ${admission}`, async () => {
+        const p = page(); await p.hydrate({credential_present: true, generation: 4});
+        await p.click('test');
+        if (admission === 'before') await p.reply('test_wanderer_connection', result({credential_present: true}));
+        if (stage !== 'unobserved') p.push(state({credential_present: true, generation: 4,
+          test_pending: stage === 'queued', test_in_flight: stage === 'inflight'}));
+        if (stage === 'inflight') {
+          p.push(state({credential_present: true, generation: 5, host_available: false, test_in_flight: true}));
+          assert.equal(p.el('test').disabled, true, 'retired HTTP owner still occupies the lane');
+        }
+        const canceled = state({credential_present: true, generation: 5, host_available: false});
+        if (delivery === 'push') p.push(canceled);
+        else { p.enter(); await p.reply('wanderer_state', canceled); }
+        assert.doesNotMatch(p.el('test-status').textContent, /queued|Testing/i);
+        assert.match(p.el('test-error').textContent, /changed|unknown|interrupt/i);
+        if (admission === 'after') await p.reply('test_wanderer_connection', result({credential_present: true}));
+        assert.equal(p.el('test').disabled, false);
+        assert.match(p.el('test-error').textContent, /changed|unknown|interrupt/i);
+        p.push(state({credential_present: true, generation: 4, test_result: 'success', test_result_text: 'Connected to Wanderer.'}));
+        p.enter(); await p.reply('wanderer_state', canceled);
+        assert.equal(p.el('test').disabled, false, 'section re-entry cannot resurrect canceled ownership');
+        assert.doesNotMatch(p.el('test-status').textContent, /queued|Connected/i);
+        await p.click('test');
+        await p.reply('test_wanderer_connection', result({credential_present: true}));
+        p.push(state({credential_present: true, generation: 5, test_result: 'success', test_result_text: 'Connected to Wanderer.'}));
+        assert.match(p.el('test-status').textContent, /Connected/);
+        assert.equal(p.el('enabled').checked, false);
+      });
+    }
+  }
+}
+
+test('Test admitted in the newer generation recovers uncertain ownership before late admission reply', async () => {
+  const p = page(); await p.hydrate({credential_present: true, generation: 4}); await p.click('test');
+  p.push(state({credential_present: true, generation: 5}));
+  assert.match(p.el('test-error').textContent, /changed|unknown|interrupt/i);
+  p.push(state({credential_present: true, generation: 5, test_pending: true}));
+  assert.equal(p.el('test-error').textContent, '');
+  assert.match(p.el('test-status').textContent, /queued/i);
+  p.push(state({credential_present: true, generation: 5, test_result: 'success', test_result_text: 'Connected to Wanderer.'}));
+  await p.reply('test_wanderer_connection', result({credential_present: true}));
+  assert.match(p.el('test-status').textContent, /Connected/);
+  assert.equal(p.el('test').disabled, false);
+});
+
+test('delayed post-admission read cannot replace generation cancellation with old Test success', async () => {
+  const previous = {credential_present: true, generation: 4, test_result: 'success', test_result_text: 'Connected to Wanderer.'};
+  const p = page(); await p.hydrate(previous); await p.click('test');
+  await p.reply('test_wanderer_connection', result({credential_present: true}));
+  p.push(state({credential_present: true, generation: 5}));
+  await p.reply('wanderer_state', state(previous));
+  assert.equal(p.el('test').disabled, false);
+  assert.doesNotMatch(p.el('test-status').textContent, /queued|Connected/);
+  assert.match(p.el('test-error').textContent, /changed|unknown|interrupt/i);
+});
+
 test('Test refuses dirty binding and reports admission refusal without clearing another error', async () => {
   const p = page(); await p.hydrate({credential_present: true});
   p.edit('map', 'draft'); await p.click('test'); assert.equal(p.calls.length, 0);
@@ -429,6 +488,21 @@ test('Test read failure releases admission feedback without claiming a new succe
   assert.doesNotMatch(p.el('test-status').textContent, /queued|Connected/);
   assert.equal(p.el('test').disabled, false);
 });
+
+// The controller regression supplies an actual barrier-controlled read trace.
+// Replaying it here pins both sampling coherence and the page's handoff fence.
+if (process.argv[2] === '--handoff-trace') {
+  const [initial, raced, settled] = JSON.parse(process.argv[3]);
+  test('controller reverse-handoff trace recovers connected coverage on section read', async () => {
+    const p = page(); p.enter(); await p.reply('wanderer_state', initial);
+    p.edit('map', 'unsubmitted draft');
+    p.push(raced);
+    p.enter(); await p.reply('wanderer_state', settled);
+    assert.match(p.el('health').textContent, /Connected/);
+    assert.match(p.el('coverage').textContent, /2 of 2/);
+    assert.equal(p.el('map').value, 'unsubmitted draft');
+  });
+}
 
 (async () => {
   let failed = 0;

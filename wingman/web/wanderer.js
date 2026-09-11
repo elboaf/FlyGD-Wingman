@@ -18,6 +18,8 @@
   var testWaiting = false;
   var testObserved = false;
   var testRevision = -1;
+  var testGeneration = -1;
+  var testInterrupted = false;
   var testPriorResult = null;
   var fields = {};
   var keys = {enabled: 'enabled', url: 'base_url', map: 'map_identifier'};
@@ -139,14 +141,30 @@
     }
     healthGeneration = p.generation;
     health = p;
-    if (testWaiting && p.revision === testRevision) {
-      if (p.test_pending || p.test_in_flight) testObserved = true;
-      // The publisher is ordered, but can coalesce pending/in-flight away.
-      // A result is the HTTP outcome; the mutation reply is admission only.
-      if (p.test_result !== null && p.test_result !== undefined
-          && (testObserved || afterTestAdmission || p.test_result !== testPriorResult)) {
-        testObserved = true;
+    if ((testWaiting || testInterrupted) && p.revision === testRevision) {
+      var newerGeneration = p.generation > testGeneration;
+      var hasResult = p.test_result !== null && p.test_result !== undefined;
+      if (newerGeneration && !p.test_pending && !p.test_in_flight && !hasResult) {
+        // Preview readiness can replace the worker generation without changing
+        // Wanderer settings. A retired Test has no outcome to keep waiting for.
         testWaiting = false;
+        testInterrupted = true;
+        testObserved = false;
+        fields.test.error = 'Preview state changed — Test outcome is unknown. Test again.';
+      } else if (testWaiting || (newerGeneration && (p.test_pending || hasResult))) {
+        if (testInterrupted) fields.test.error = '';
+        testInterrupted = false;
+        testWaiting = true;
+        // Pending proves admission in this generation; in-flight alone can
+        // still describe the old, retained HTTP owner draining after configure.
+        if (newerGeneration && p.test_pending) testGeneration = p.generation;
+        if (p.test_pending || p.test_in_flight) testObserved = true;
+        // A new-generation result cannot be the previous Test's cached result.
+        if (hasResult && (testObserved || afterTestAdmission || newerGeneration
+            || p.test_result !== testPriorResult)) {
+          testObserved = true;
+          testWaiting = false;
+        }
       }
     }
     paint();
@@ -169,14 +187,14 @@
       var owns = request === field.request && edit === field.edit;
       acceptAcknowledged(res && res.acknowledged);
       if (res && res.applied && res.persisted) {
-        field.error = '';
+        if (name !== 'test' || !testInterrupted) field.error = '';
         if (owns && keys[name]) restore(name);
       } else if (owns) {
         field.error = res && res.error ? res.error : 'Could not reach the app. Nothing was changed.';
         if (keys[name]) restore(name);
       }
       if (name === 'test' && request === field.request) {
-        if (!res || !res.applied || testRevision !== acknowledged.revision) testWaiting = false;
+        if (!res || !res.applied || testInterrupted || testRevision !== acknowledged.revision) testWaiting = false;
         else if (testObserved) testWaiting = !!(health && (health.test_pending || health.test_in_flight));
         else if (testPriorResult !== null) {
           // No per-Test sequence exists in the state contract. A repeated
@@ -254,6 +272,8 @@
     testWaiting = true;
     testObserved = false;
     testRevision = acknowledged.revision;
+    testGeneration = healthGeneration;
+    testInterrupted = false;
     testPriorResult = health && health.revision === testRevision ? health.test_result : null;
     commit('test', function () { return WM.send('test_wanderer_connection'); });
   });
@@ -263,7 +283,7 @@
     var revision = acknowledged.revision;
     confirming = true;
     paint();
-    WM.confirm('Remove Wanderer token?', 'Deletes the protected token from this PC. '
+    WM.confirm('Remove Wanderer connection?', 'Deletes the protected token from this PC. '
       + 'The URL, map and enabled preference stay unchanged. You will need to enter a token again.').then(function (ok) {
       confirming = false;
       if (ok && owner === interaction && revision === acknowledged.revision) {

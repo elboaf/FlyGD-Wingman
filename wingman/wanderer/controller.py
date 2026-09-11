@@ -196,13 +196,27 @@ class WandererController:
         }
 
     def state(self) -> dict:
-        with self._condition:
-            acknowledged = self._acknowledged_locked()
-            previews, available = self._previews_enabled, self._available
-            faulted = self._faulted
+        while True:
+            with self._condition:
+                acknowledged = self._acknowledged_locked()
+                previews, available = self._previews_enabled, self._available
+                faulted = self._faulted
+            worker_state = self._worker.state()
+            # Never pair an old acknowledgement with a newly configured worker:
+            # the page would spend that generation under the previous binding.
+            # Retry without nesting the callback and worker locks. The opposite
+            # handoff (new acknowledgement, old worker) remains safely fenced
+            # by the page until runtime applies the committed configuration.
+            with self._condition:
+                if acknowledged["revision"] == self._revision and (
+                    previews,
+                    available,
+                    faulted,
+                ) == (self._previews_enabled, self._available, self._faulted):
+                    break
         # Only WorkerState is safe to serialize. WorkerConfig contains a secret.
         payload = {
-            **asdict(self._worker.state()),
+            **asdict(worker_state),
             **acknowledged,
             "previews_enabled": previews,
             "host_available": available,

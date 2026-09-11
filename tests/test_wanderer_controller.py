@@ -1,7 +1,10 @@
 """Committed transactions and real retained owners; no timing sleeps."""
 
 import json
+import shutil
+import subprocess
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -214,6 +217,99 @@ def test_polling_handoff_and_health_are_nonsecret_current_session_counts(rig):
             lambda: any(s["status"] == "connected" for s in rig.delivered), 2
         )
     assert all(TOKEN not in json.dumps(s) for s in rig.delivered)
+
+
+def test_state_retries_reverse_handoff_and_page_recovers_coverage(rig, monkeypatch):
+    rig.start()
+    rig.client.call(1).reply(success())
+    before = rig.wait(lambda s: s["status"] == "connected")
+    worker_state = rig.worker.state
+    entered, release = threading.Event(), threading.Event()
+    sampled = []
+    reader = threading.Thread(target=lambda: sampled.append(rig.controller.state()))
+
+    def gated_state():
+        if threading.current_thread() is reader:
+            entered.set()
+            assert release.wait(3)
+        return worker_state()
+
+    monkeypatch.setattr(rig.worker, "state", gated_state)
+    reader.start()
+    try:
+        assert entered.wait(2)
+        # The read has captured old acknowledgement. Commit/reconfigure and
+        # finish a new snapshot before allowing its worker sample to continue.
+        assert rig.controller.replace_token(TOKEN, BASE, "map")["applied"]
+        with rig.worker_cv:
+            rig.clock.now = 102
+            rig.worker_cv.notify_all()
+        rig.client.call(2).reply(success(102))
+        settled = rig.wait(lambda s: s["status"] == "connected")
+    finally:
+        release.set()
+        reader.join(3)
+    assert not reader.is_alive()
+    node = shutil.which("node")
+    assert node, "Node is required for the real Wanderer handoff trace"
+    run = subprocess.run(
+        [
+            node,
+            str(
+                Path(__file__).resolve().parents[1] / "scripts/test_wanderer_runtime.js"
+            ),
+            "--handoff-trace",
+            json.dumps([before, sampled[0], settled]),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=False,
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "controller reverse-handoff trace recovers connected coverage" in run.stdout
+    assert sampled[0]["revision"] == settled["revision"] > before["revision"]
+    assert sampled[0]["generation"] == settled["generation"] > before["generation"]
+
+
+@pytest.mark.parametrize("change", ["previews", "host"])
+def test_state_retries_readiness_change_during_worker_sample(rig, monkeypatch, change):
+    rig.start()
+    rig.client.call(1).reply(success())
+    before = rig.wait(lambda s: s["status"] == "connected")
+    worker_state = rig.worker.state
+    entered, release = threading.Event(), threading.Event()
+    sampled = []
+    reader = threading.Thread(target=lambda: sampled.append(rig.controller.state()))
+
+    def gated_state():
+        if threading.current_thread() is reader:
+            entered.set()
+            assert release.wait(3)
+        return worker_state()
+
+    monkeypatch.setattr(rig.worker, "state", gated_state)
+    reader.start()
+    try:
+        assert entered.wait(2)
+        if change == "previews":
+            rig.controller.set_previews_enabled(False)
+        else:
+            rig.host.notify(1, rig.host.sessions, False)
+            rig.wait(lambda s: not s["automatic_ready"])
+    finally:
+        release.set()
+        reader.join(3)
+    assert not reader.is_alive()
+    snapshot = sampled[0]
+    assert (
+        snapshot["previews_enabled" if change == "previews" else "host_available"]
+        is False
+    )
+    assert snapshot["generation"] > before["generation"]
+    assert snapshot["revision"] == before["revision"]
+    assert snapshot["available"] == 0
 
 
 def test_failed_save_retains_committed_generation_and_acknowledgement(rig, monkeypatch):
