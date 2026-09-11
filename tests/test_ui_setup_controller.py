@@ -6,6 +6,7 @@ import errno
 import io
 import json
 import logging
+import os
 from dataclasses import fields, replace
 from pathlib import Path
 from uuid import UUID
@@ -13,7 +14,12 @@ from uuid import UUID
 import pytest
 
 from tests import fakes, test_setup_catalog
-from tests.setup_fixtures import install_lossless_codec, seed_profile, wire
+from tests.setup_fixtures import (
+    ProfileFixture,
+    install_lossless_codec,
+    seed_profile,
+    wire,
+)
 from tests.test_evesettings_controller import QueuedThreads, build_controller
 from tests.test_ui_setup_documents import value
 from wingman import atomicio
@@ -26,6 +32,7 @@ from wingman.evesettings import (
     setup_profile,
     setup_sharing,
 )
+from wingman.evesettings.controller import _SetupReview
 from wingman.ui import api as api_mod
 
 catalog_fixture = test_setup_catalog.catalog_fixture
@@ -391,18 +398,44 @@ def test_export_uses_real_source_without_preferences_or_destination(setup):
     assert controller._setup_review is None
 
 
-@pytest.mark.parametrize("operation", ["export", "review"])
 @pytest.mark.parametrize(
-    "refusal", ["EVE is running.", "Could not verify EVE is closed.", "exception"]
+    "refusal",
+    ["EVE is running.", "Could not verify EVE is closed.", "exception", ""],
+    ids=["running", "unverified", "probe-exception", "empty-refusal"],
 )
+def test_closed_guard_requires_none_not_truthiness(tmp_path, monkeypatch, refusal):
+    controller = build_controller(tmp_path)
+    monkeypatch.setattr(codec, "codec_available", lambda: True)
+    # None alone authorizes the boundary; no documents or codec transport needed.
+    controller._setup_require_closed()
+    failure = OSError("probe unavailable")
+
+    def probe():
+        if refusal == "exception":
+            raise failure
+        return refusal
+
+    controller._ports = replace(controller._ports, profile_copy_refusal=probe)
+    with pytest.raises(setup_model.SetupError) as caught:
+        controller._setup_require_closed()
+    assert caught.value.code == "eve_not_closed"
+    if refusal == "exception":
+        assert caught.value.__cause__ is failure
+        assert str(caught.value) == (
+            "Wingman could not verify that EVE is closed. Close EVE and retry."
+        )
+    else:
+        assert str(caught.value) == refusal
+
+
+@pytest.mark.parametrize("operation", ["export", "review"])
+@pytest.mark.parametrize("refusal", ["EVE is running."])
 def test_snapshots_require_positive_closed_state(
     setup, monkeypatch, operation, refusal
 ):
     controller, source, base = setup
 
     def probe():
-        if refusal == "exception":
-            raise OSError("probe unavailable")
         return refusal
 
     controller._ports = replace(controller._ports, profile_copy_refusal=probe)
@@ -421,19 +454,23 @@ def test_snapshots_require_positive_closed_state(
 
 
 @pytest.mark.parametrize(
-    "mutation",
+    "operation,mutation",
     [
-        "unlinked",
-        "ambiguous",
-        "deleted",
-        "missing",
-        "wrong-profile",
-        "escape",
-        "directory",
-        "hardlink",
+        (operation, mutation)
+        for operation in ("export", "review")
+        for mutation in (
+            "unlinked",
+            "ambiguous",
+            "deleted",
+            "missing",
+            "wrong-profile",
+            "escape",
+            "directory",
+            "hardlink",
+        )
+        if operation == "export" or mutation in ("unlinked", "hardlink")
     ],
 )
-@pytest.mark.parametrize("operation", ["export", "review"])
 def test_pairs_require_unambiguous_confirmed_links_and_real_local_files(
     setup, tmp_path, mutation, operation
 ):
@@ -604,9 +641,7 @@ def test_busy_requests_return_without_effects_or_clearing_offer(setup, operation
     assert controller._alerts == controller._done_pushes == []
 
 
-@pytest.mark.parametrize(
-    "changed", ["account", "character", "extra", "addition", "removal", "preferences"]
-)
+@pytest.mark.parametrize("changed", ["character", "addition"])
 def test_review_checks_full_manifest_around_document_reads(setup, monkeypatch, changed):
     controller, _, base = setup
     extra = base.profile / "core_char_31.dat"
@@ -617,20 +652,20 @@ def test_review_checks_full_manifest_around_document_reads(setup, monkeypatch, c
         snapshot = real_read(path)
         if Path(path) == base.character_path:
             target = {
-                "account": base.account_path,
                 "character": base.character_path,
-                "extra": extra,
                 "addition": base.profile / "core_user_99.dat",
-                "removal": extra,
-                "preferences": base.profile / "prefs.ini",
             }[changed]
-            if changed == "removal":
-                target.unlink()
-            else:
-                target.write_bytes(b"external")
+            target.write_bytes(b"external")
         return snapshot
 
     monkeypatch.setattr(codec, "read_snapshot", race)
+    monkeypatch.setattr(
+        setup_documents,
+        "apply_setup",
+        lambda *a, **kw: pytest.fail(
+            "read-time manifest refusal must precede apply_setup"
+        ),
+    )
     reply = review(controller, base)
     assert not reply["ok"] and reply["error"]
     assert controller._setup_review is None
@@ -980,6 +1015,45 @@ def files_under(root):
     return {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
 
 
+def observe_setup_effects(monkeypatch, after_stage=None):
+    """Observe real staging/publication, including a call whose context never yields."""
+    calls, stages = [], []
+    real_stage = setup_profile.stage_setup
+    real_publish = profilecopy.publish_new
+
+    @contextlib.contextmanager
+    def entered(context):
+        with context as staged:
+            stages.append(staged)
+            if after_stage is not None:
+                after_stage(staged)
+            yield staged
+
+    def stage(*args, **kwargs):
+        calls.append("stage")
+        return entered(real_stage(*args, **kwargs))
+
+    def publish(staged):
+        calls.append("publish")
+        return real_publish(staged)
+
+    monkeypatch.setattr(setup_profile, "stage_setup", stage)
+    monkeypatch.setattr(profilecopy, "publish_new", publish)
+    return calls, stages
+
+
+def assert_no_setup_effects(calls, stages, when):
+    assert calls == (["stage"] if when == "publication" else []), (
+        f"{when} refusal crossed its staging/publication boundary: {calls}"
+    )
+    if when == "publication":
+        assert len(stages) == 1, "publication refusal must follow real staging"
+        assert not stages[0].published
+        assert not stages[0].path.exists(), "refused stage must be cleaned"
+    else:
+        assert stages == []
+
+
 def queue_create(controller, base):
     reply = review(controller, base)
     assert reply["ok"], reply
@@ -1163,14 +1237,133 @@ CREATE_CHANGES = [
 ]
 
 
-@pytest.mark.parametrize("change,code", CREATE_CHANGES)
+@pytest.mark.parametrize(
+    "change,code", CREATE_CHANGES, ids=[c for c, _ in CREATE_CHANGES]
+)
+def test_offer_and_manifest_guards_reject_changed_authority(tmp_path, change, code):
+    # Ordinary sentinel bytes keep discovery, plan and hashing real without paying
+    # for review, document projection, codec I/O or staging to test these guards.
+    controller = build_controller(tmp_path)
+    root = tmp_path / "EVE"
+    server = root / "c_eve_sharedcache_tq_tranquility"
+    source = server / "settings_Source"
+    source.mkdir(parents=True)
+    (source / "core_user_10.dat").write_bytes(b"original-change")
+    (source / "core_char_11.dat").write_bytes(b"original-change")
+    profile = server / "settings_Base"
+    profile.mkdir()
+    for name in (
+        "core_user_20.dat",
+        "core_char_30.dat",
+        "core_char_31.dat",
+        "prefs.ini",
+        "core_public__.yaml",
+    ):
+        (profile / name).write_bytes(b"original-change")
+    base = ProfileFixture(
+        root,
+        server,
+        profile,
+        profile / "core_user_20.dat",
+        profile / "core_char_30.dat",
+    )
+    if change == "remove-unselected":
+        (profile / "core_char_99.dat").write_bytes(b"original-change")
+    controller._settings["eve_settings"].update(
+        root=str(root),
+        server=str(server),
+        profile=str(source),
+        account_characters={"10": ["11"], "20": ["30", "31"]},
+    )
+    found, context = controller._setup_found(str(profile))
+    plan = profilecopy.prepare_copy(found, str(profile), "new", "Imported")
+    offer = _SetupReview(
+        "guard-only",
+        "",  # These authorities never parse setup text.
+        False,
+        context,
+        controller._eve_generation(),
+        plan,
+        base.account_path.name,
+        base.character_path.name,
+        "20",
+        "30",
+        setup_profile.capture_manifest(plan),
+    )
+    controller._setup_require_offer(offer)
+    setup_profile.require_manifest(plan, offer.manifest)
+    before = {p: p.stat() for p in profile.iterdir()}
+    change_authority(controller, base, change)
+    # Content checks must beat size/mtime shortcuts, not just notice a large edit.
+    for path, info in before.items():
+        if path.exists():
+            assert path.stat().st_size == info.st_size
+            os.utime(path, ns=(info.st_atime_ns, info.st_mtime_ns))
+
+    if change in (
+        "account",
+        "character",
+        "unselected",
+        "remove-unselected",
+        "prefs",
+        "yaml",
+    ):
+        controller._setup_require_offer(offer)  # The offer is not the byte authority.
+        with pytest.raises(ValueError) as caught:
+            setup_profile.require_manifest(plan, offer.manifest)
+        assert type(caught.value) is ValueError
+        assert str(caught.value) == "The base profile changed. Review the setup again."
+        if change == "unselected":
+            # Addition above and same-size modification of an existing unselected
+            # file are independently refused against the same valid baseline.
+            (profile / "core_char_99.dat").unlink()
+            setup_profile.require_manifest(plan, offer.manifest)
+            extra = profile / "core_char_31.dat"
+            extra.write_bytes(b"external-change")
+            info = before[extra]
+            os.utime(extra, ns=(info.st_atime_ns, info.st_mtime_ns))
+            controller._setup_require_offer(offer)
+            with pytest.raises(ValueError) as caught:
+                setup_profile.require_manifest(plan, offer.manifest)
+            assert type(caught.value) is ValueError
+            assert (
+                str(caught.value) == "The base profile changed. Review the setup again."
+            )
+    else:
+        with pytest.raises(setup_model.SetupError) as caught:
+            controller._setup_require_offer(offer)
+        assert caught.value.code == code, f"offer guard owns {change}"
+
+
+# Predicate breadth lives in the direct guard cases above; these witnesses keep
+# each orchestration boundary real, including distinct offer/manifest error owners.
+@pytest.mark.parametrize(
+    "change,code",
+    [
+        row
+        for row in CREATE_CHANGES
+        if row[0] in ("selection", "prefs", "remove-prefs", "collision")
+    ],
+)
 @pytest.mark.parametrize("when", ["admission", "worker", "publication"])
 def test_create_revalidates_authority_and_complete_base(
     setup, monkeypatch, change, code, when
 ):
     controller, _, base = setup
-    if change == "remove-unselected":
-        (base.profile / "core_char_99.dat").write_bytes(b"unselected recipient")
+    before = None
+
+    def after_stage(staged):
+        nonlocal before
+        change_authority(controller, base, change)
+        before = {
+            p: data
+            for p, data in files_under(base.root).items()
+            if staged.path not in p.parents
+        }
+
+    calls, stages = observe_setup_effects(
+        monkeypatch, after_stage if when == "publication" else None
+    )
     if when == "admission":
         assert review(controller, base)["ok"]
         offer = controller._setup_review
@@ -1180,75 +1373,57 @@ def test_create_revalidates_authority_and_complete_base(
         assert not result["accepted"] and result["error"]
         assert controller._done_pushes == []
         assert not controller._eve_mutation.locked()
+        assert controller._setup_review is offer
     else:
         offer, queued = queue_create(controller, base)
         if when == "worker":
             change_authority(controller, base, change)
             before = files_under(base.root)
-        else:
-            real_stage = setup_profile.stage_setup
-            before = None
-
-            @contextlib.contextmanager
-            def stage(*args, **kwargs):
-                nonlocal before
-                with real_stage(*args, **kwargs) as staged:
-                    change_authority(controller, base, change)
-                    before = {
-                        p: data
-                        for p, data in files_under(base.root).items()
-                        if staged.path not in p.parents
-                    }
-                    yield staged
-
-            monkeypatch.setattr(setup_profile, "stage_setup", stage)
         queued.run_next()
+        assert_no_setup_effects(calls, stages, when)
         assert_create_done(controller, offer, code)
+        assert controller._setup_review is None
         assert not controller.setup_create(offer.review_id, "replay")["accepted"]
+    assert_no_setup_effects(calls, stages, when)
     assert files_under(base.root) == before
 
 
 @pytest.mark.parametrize("when", ["admission", "worker", "publication"])
-@pytest.mark.parametrize(
-    "refusal", ["EVE is running.", "Could not verify EVE is closed.", "exception", ""]
-)
+@pytest.mark.parametrize("refusal", ["EVE is running."])
 def test_create_requires_positive_closed_at_every_boundary(
     setup, monkeypatch, when, refusal
 ):
     controller, _, base = setup
 
     def probe():
-        if refusal == "exception":
-            raise OSError("probe unavailable")
         return refusal
 
+    def after_stage(staged):
+        controller._ports = replace(controller._ports, profile_copy_refusal=probe)
+
+    calls, stages = observe_setup_effects(
+        monkeypatch, after_stage if when == "publication" else None
+    )
     if when == "admission":
         assert review(controller, base)["ok"]
+        offer = controller._setup_review
+        before = files_under(base.root)
         controller._ports = replace(controller._ports, profile_copy_refusal=probe)
-        assert not controller.setup_create(
-            controller._setup_review.review_id, "create-1"
-        )["accepted"]
+        assert not controller.setup_create(offer.review_id, "create-1")["accepted"]
         assert controller._done_pushes == []
         assert not controller._eve_mutation.locked()
+        assert controller._setup_review is offer
+        assert_no_setup_effects(calls, stages, when)
+        assert files_under(base.root) == before
         return
     offer, queued = queue_create(controller, base)
     before = files_under(base.root)
     if when == "worker":
         controller._ports = replace(controller._ports, profile_copy_refusal=probe)
-    else:
-        real_stage = setup_profile.stage_setup
-
-        @contextlib.contextmanager
-        def stage(*args, **kwargs):
-            with real_stage(*args, **kwargs) as staged:
-                controller._ports = replace(
-                    controller._ports, profile_copy_refusal=probe
-                )
-                yield staged
-
-        monkeypatch.setattr(setup_profile, "stage_setup", stage)
     queued.run_next()
+    assert_no_setup_effects(calls, stages, when)
     assert_create_done(controller, offer, "eve_not_closed")
+    assert controller._setup_review is None
     assert files_under(base.root) == before
 
 
@@ -1322,17 +1497,34 @@ def test_create_is_new_only_correlated_and_single_use_even_before_start_reply(
     assert review(controller, base, destination_name="Next")["ok"]
 
 
-@pytest.mark.parametrize("phase", ["spawn", "start"])
 @pytest.mark.parametrize(
-    "change", [None, "generation", "selection", "association", "prefs", "collision"]
+    "change,phase",
+    [
+        (change, phase)
+        for change in (
+            None,
+            "generation",
+            "selection",
+            "association",
+            "prefs",
+            "collision",
+        )
+        for phase in ("spawn", "start")
+        if phase == "spawn" or change is None
+    ],
 )
-def test_create_start_failure_restores_only_still_valid_offer(setup, phase, change):
+def test_create_start_failure_restores_only_still_valid_offer(
+    setup, monkeypatch, phase, change
+):
     controller, _, base = setup
     assert review(controller, base)["ok"]
     offer = controller._setup_review
     original_spawn = controller._ports.spawn
+    calls, stages = observe_setup_effects(monkeypatch)
+    throw_sites = []
 
     def fail():
+        throw_sites.append(phase)
         if change:
             change_authority(controller, base, change)
         raise RuntimeError("start failed")
@@ -1351,8 +1543,13 @@ def test_create_start_failure_restores_only_still_valid_offer(setup, phase, chan
     result = controller.setup_create(offer.review_id, "create-1")
     assert not result["accepted"] and result["error"]
     assert (controller._setup_review is offer) is (change is None)
+    assert throw_sites == [phase]
     assert controller._done_pushes == []
     assert not controller._eve_mutation.locked()
+    assert_no_setup_effects(calls, stages, "restoration")
+    if change is not None:
+        assert controller._setup_review is None
+        assert not controller.setup_create(offer.review_id, "replay")["accepted"]
     if change is None:
         controller._ports = replace(controller._ports, spawn=original_spawn)
         assert controller.setup_create(offer.review_id, "create-1")["accepted"]
@@ -1481,8 +1678,6 @@ def test_create_publication_survives_housekeeping_failures(setup, monkeypatch, e
     "change,code",
     [
         ("selection", "stale_review"),
-        ("association", "stale_review"),
-        ("generation", "stale_review"),
         ("prefs", "stale_review"),
         ("collision", "destination_exists"),
     ],
@@ -1491,19 +1686,15 @@ def test_create_does_not_trust_authority_from_before_slow_closed_probe(
     setup, monkeypatch, when, change, code
 ):
     controller, _, base = setup
+
+    def after_stage(staged):
+        controller._ports = replace(controller._ports, profile_copy_refusal=probe)
+
+    calls, stages = observe_setup_effects(
+        monkeypatch, after_stage if when == "publication" else None
+    )
     if when == "publication":
         offer, queued = queue_create(controller, base)
-        real_stage = setup_profile.stage_setup
-
-        @contextlib.contextmanager
-        def stage(*args, **kwargs):
-            with real_stage(*args, **kwargs) as staged:
-                controller._ports = replace(
-                    controller._ports, profile_copy_refusal=probe
-                )
-                yield staged
-
-        monkeypatch.setattr(setup_profile, "stage_setup", stage)
     else:
         assert review(controller, base)["ok"]
         offer = controller._setup_review
@@ -1513,6 +1704,7 @@ def test_create_does_not_trust_authority_from_before_slow_closed_probe(
 
     if when == "publication":
         queued.run_next()
+        assert_no_setup_effects(calls, stages, when)
         assert_create_done(controller, offer, code)
     else:
         if when == "admission":
@@ -1532,6 +1724,9 @@ def test_create_does_not_trust_authority_from_before_slow_closed_probe(
         assert controller._done_pushes == []
         if when == "restoration":
             assert controller._setup_review is None
+        else:
+            assert controller._setup_review is offer
+        assert_no_setup_effects(calls, stages, when)
 
 
 @pytest.mark.parametrize("change", ["generation", "deleted", "discovery-generation"])
