@@ -180,8 +180,8 @@ not extend it. Authorization rejection clears names immediately and pauses
 automatic polling; ordinary failures retain names only until their deadlines.
 **Show labels** hides both lines. No game window is moved or resized.
 
-URL/map text applies only on Enter or Apply, not blur. The token is stored
-separately in `%LOCALAPPDATA%\FlyGD Wingman\wanderer_credentials.json`:
+The token is stored separately in
+`%LOCALAPPDATA%\FlyGD Wingman\wanderer_credentials.json`:
 Windows DPAPI protects the token **and its normalized URL/map binding**. It is
 never returned to the page, written into ordinary settings, or logged by this
 integration. DPAPI protects storage at rest, not against code running as your

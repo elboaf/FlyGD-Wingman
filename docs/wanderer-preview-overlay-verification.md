@@ -4,11 +4,11 @@
 
 After baseline `d81ed329`, the approved connection-form simplification is implemented
 in `19699ca2` (protected snapshots), `c4d2b5ff` (grouped controller/API), and
-`69d65d3f` (ES5 form/dev fixtures). **The remainder of this record describes the
-previous candidate, not fresh full-suite, browser or frozen-build acceptance for
-this follow-up.** Those broader checks and final polish remain with the parent.
-No running app, test-profile credential or live service was inspected or changed
-by this scoped implementation.
+`69d65d3f` (ES5 form/dev fixtures). The parent completed the post-polish checks
+below against **`fdeca0c305e81a7b5460c9e5f8652e94d36a9dd3`**; the subsequent
+changes are documentation only. **Sections after this follow-up describe the
+previous candidate, not fresh acceptance of this form.** No running app,
+test-profile credential or live service was inspected or changed by this work.
 
 Test connection now saves submitted URL/map/token together, then requests Test
 without changing the enable preference. Blank token reuse requires the currently
@@ -56,10 +56,60 @@ git diff --check
 Results: **1,255 passed, 1 skipped** in 36.62s; the sole skip is real Windows
 user-bound DPAPI (`test_real_windows_credential_document_roundtrip_replace_binding_and_remove`).
 Node ownership: **60 passed, 0 failed**. JS smoke: all three pages passed.
-Ruff lint passed; **398 files already formatted**. No full-suite or new
-browser/WebView2/frozen artifact result is implied. Manual follow-up is listed in
-smoke-checklist item 11; prior native and automated observations below are not
-relabelled as validation of the simplified form.
+Ruff lint passed; **398 files already formatted**. These are the implementation
+checkpoint results, not the parent-owned post-polish gates below.
+
+### Parent post-polish verification
+
+The scoped `polish-core --fix` pass covered `d81ed329..fdeca0c3`. It found no
+blocking correctness/security issue and no safe code edits. One obsolete README
+sentence still named Apply; that sentence was removed and the edit inspected.
+The following fresh verification ran afterward without production changes:
+
+| Gate | Result |
+|---|---|
+| Complete Linux pytest | **11,095 passed, 12 Windows-only skips**, 228.10s |
+| Windows Wanderer/bridge/page/packaging selection | **783 passed, 1 skipped**, 8.33s; sole skip is an unrelated packaging symlink-privilege test |
+| Node ownership harness | **60 passed, 0 failed** |
+| Executable JS smoke | All three pages passed |
+| Ruff lint / format | Passed; **398 files already formatted** |
+| Browser/CDP at 839/840/1280px | No horizontal overflow, all controls within card, no page/resource errors; URL draft survived health push |
+| Windows PyInstaller build and archive/asset inspection | Passed; all six Wanderer modules present, current web bytes match source, bundled Inter bytes match and font loads |
+
+Commands used the existing locked environments and Node/native codec prerequisites:
+
+```sh
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-wanderer-venv uv run --no-sync python -m pytest tests/ -q -rs --basetemp=/tmp/wanderer-form-final-linux --junitxml=/tmp/wanderer-form-final-linux.xml
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-wanderer-venv uv run --no-sync ruff check .
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-wanderer-venv uv run --no-sync ruff format --check .
+node scripts/test_wanderer_runtime.js
+node scripts/js_smoke.js
+node .superpowers/sdd/wanderer-preview-overlay-plan/browser-check.cjs
+```
+
+Windows PowerShell, with `UV_PROJECT_ENVIRONMENT=%TEMP%\wingman-wanderer-venv`
+and the previously prepared Node directory on the process PATH:
+
+```powershell
+$tests = Get-ChildItem tests/test_wanderer*.py | Select-Object -ExpandProperty FullName
+uv run --no-sync python -m pytest @tests tests/test_bridge_contract.py tests/test_page_conventions.py tests/test_packaging_completeness.py -q -rs --tb=short --basetemp="$env:TEMP\wanderer-form-final-windows"
+uv run --no-sync python -m PyInstaller packaging/uploader.spec --noconfirm --clean --distpath dist/wanderer-form-check --workpath build/wanderer-form-check
+uv run --no-sync python .superpowers/sdd/wanderer-preview-overlay-plan/inspect_frozen.py dist/wanderer-form-check/Wingman
+```
+
+New artifact: `dist/wanderer-form-check/Wingman/Wingman.exe`, SHA-256
+`36cb5188425a91f4b6103eed20b92a1491a0ba29bc0fcda358e156c4281375ce`.
+Built separately: the running earlier executable and isolated test profile were
+not overwritten. This new executable has **not yet been launched**. The user
+reported that the earlier local candidate worked, but that is not acceptance of
+this new form or completion of the live/native matrix. The full Windows suite
+was not repeated for this follow-up; its earlier six symlink-privilege fixture
+failures remain documented below. No privilege changes or unrelated fixes were
+made. Browser observations use synthetic dev data and are not WebView2 acceptance.
+
+Manual follow-up is in smoke-checklist item 11. Reviewer focus remains bounded
+protected-byte compensation, canonical blank-token binding, independent saved/Test
+outcomes and per-input ownership under one grouped submission.
 
 ## Status and authority
 
