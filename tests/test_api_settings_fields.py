@@ -647,6 +647,7 @@ class _FakeSizeHost:
     def __init__(self, characters=(), is_running=True, layouts=None, copy_result=None):
         self._characters = list(characters)
         self.is_running = is_running
+        self.runtime_enabled = is_running
         self.captures = []
         self.layouts = dict(layouts or {})
         self.copies = []

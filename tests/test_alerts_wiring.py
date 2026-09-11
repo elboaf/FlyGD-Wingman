@@ -9,6 +9,7 @@ redefined. It takes tmp_path positionally and forwards **kwargs to Api().
 
 import re
 
+from tests.preview_runtime_helpers import HostLifecycle
 from tests.test_api import make_api
 from wingman import settings
 from wingman.alerts import service as alert_service
@@ -47,7 +48,7 @@ class FakeTelemetry:
         return self._characters
 
 
-class FakePreviewHost:
+class FakePreviewHost(HostLifecycle):
     """Enough of PreviewHost for these tests: is_running, characters(),
     focused_character(), raise_alert(), and the lifecycle calls the preview
     bridge methods make regardless of whether alerts are involved."""
@@ -65,9 +66,11 @@ class FakePreviewHost:
 
     def start(self):
         self.started += 1
+        self.ack_started()
 
     def stop(self, timeout=5.0, *, final=False):
         self.stopped += 1
+        return self.ack_stopped()
 
     def set_hotkeys(self, table):
         self.hotkeys = table
@@ -237,6 +240,7 @@ def test_a_test_alert_is_never_persistent(tmp_path):
     nothing would acknowledge it -- it would pulse until they alt-tabbed
     to that client."""
     host = FakePreviewHost(characters=["Alice"])
+    host.started = 1  # Explicit EVE authorization, not just a retained roster.
     api = make_api(tmp_path, preview_host=host)
     api._state.settings["preview"] = {"alerts": _alerts_section()}
 
@@ -266,6 +270,7 @@ def test_a_test_alert_plays_the_sound_once_per_preview_count(monkeypatch, tmp_pa
         alert_service, "play_sound", lambda sid, vol: played.append((sid, vol))
     )
     host = FakePreviewHost(characters=["Alice", "Bob", "Carol"])
+    host.started = 1
     api = make_api(tmp_path, preview_host=host)
     api._state.settings["preview"] = {"alerts": _alerts_section()}
 
@@ -305,7 +310,8 @@ def test_a_test_alert_with_no_named_clients_still_plays_the_sound(
     monkeypatch.setattr(
         alert_service, "play_sound", lambda sid, vol: played.append((sid, vol))
     )
-    host = FakePreviewHost(characters=[])  # host present, nothing named
+    host = FakePreviewHost(characters=[])  # EVE active, nothing named
+    host.started = 1
     api = make_api(tmp_path, preview_host=host)
     api._state.settings["preview"] = {"alerts": _alerts_section()}
 

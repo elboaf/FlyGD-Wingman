@@ -45,13 +45,30 @@ DAMAGE = OUTGOING_DAMAGE_LINE.replace("11:30:00", "12:00:00")
 class NativeHost(PreviewHost):
     """Retain real mailbox/token checks, replacing only native pump lifetime."""
 
+    def set_families(self, demand):
+        accepted = super().set_families(demand)
+        if accepted:
+            # No native cleanup in this mailbox-only seam. Report completed
+            # family facts; PreviewRuntime still decides all start/stop calls.
+            self._eve_stopping = False
+            self._eve_admitted = demand.eve
+            self._eve_phase = "active" if demand.eve else "stopped"
+            if self._starting:
+                self._ack("eve-active" if demand.eve else "eve-stopped")
+        return accepted
+
     def start(self):
+        self._pump_epoch += 1
         self._starting = True
+        self._ack("pump-started")
+        if self._eve_admitted:
+            self._ack("eve-active")
         return True
 
     def stop(self, timeout=5.0, *, final=False):
         self._starting = False
         self._closing = final
+        self._ack("pump-stopped")
         return True
 
 
@@ -658,7 +675,9 @@ def test_shutdown_mid_policy_delivery_fences_remaining_native_and_audio_work(
         finally:
             release.set()
         dispatch.result(timeout=3)
-    assert len(r.host._pending_alerts) == 1
+    # Final admission now clears the EVE mailbox immediately, not at the
+    # later native stop. The detached delivery still cannot arm or play.
+    assert r.host._pending_alerts == []
     r.host._apply_alerts(None, r.host._drain_alerts())
     assert r.sounds == r.visuals == []
     r.api.shutdown_previews()

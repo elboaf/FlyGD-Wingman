@@ -123,6 +123,10 @@ WM_APP_ROSTER = WM_APP + 9
 WM_APP_CROP_COMMAND = WM_APP + 10
 WM_APP_CROP_COMPLETE = WM_APP + 11
 WM_APP_CROP_STOP_READY = WM_APP + 12
+WM_APP_FAMILIES = WM_APP + 13
+# Reserved for the later companion slice; no empty command processor yet.
+WM_APP_COMPANION_COMMAND = WM_APP + 14
+WM_APP_COMPANION_COMPLETE = WM_APP + 15
 
 # --- Crop context menu --------------------------------------------------
 MF_STRING = 0x0000

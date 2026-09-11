@@ -171,6 +171,433 @@ def crop_pump(monkeypatch):
             r.store.close().result(5)
 
 
+@pytest.fixture
+def family_pump(crop_pump):
+    from queue import Queue
+
+    from wingman.preview.runtime import FamilyDemand
+
+    def make(**kwargs):
+        r = crop_pump(**kwargs)
+        acknowledgments = Queue()
+        r.host.set_lifecycle_callback(acknowledgments.put)
+        r.host.set_families(FamilyDemand(1, False, True))
+        r.host.start()
+        assert r.host._ready.wait(5)
+
+        def wait(outcome):
+            while True:
+                ack = acknowledgments.get(timeout=5)
+                if ack.outcome == outcome:
+                    return ack
+
+        r.wait = wait
+        r.wait("companions-active")
+        return r
+
+    return make
+
+
+def test_companion_only_pump_has_no_eve_authority_or_resources(
+    family_pump, monkeypatch
+):
+    from tests.test_preview_cropcontroller import client
+    from wingman.telemetry.model import RosterSnapshot
+
+    r = family_pump()
+    h = r.host
+    assert h.is_running and not h.runtime_enabled
+    assert h._crop_controller is None and h._crop_epoch == 0
+    assert r.native.windows == {42: "host"}
+    sweeps = []
+    monkeypatch.setattr(h, "_request_discovery", lambda: sweeps.append(True))
+    h.apply_roster(RosterSnapshot(2, (client(),)))
+    h.raise_alert("Alice", "warp_scramble", {})
+    h.set_hotkeys({"characters": {"Alice": "F1"}})
+    h.set_capture(True)
+    h.request_sweep()
+    assert not h.resize_all((500, 400))
+    assert not h.reset_layouts()
+    assert not h.request_crop("select", "Alice")["applied"]
+    r.call(lambda: None)
+    assert not sweeps and not h._registered and not h._capture_until
+    assert h._pending_roster is None and h._crop_roster is None
+    assert not h._pending_alerts and not r.native.thumbnails
+    # Config-only commands must not strand themselves on the unrelated pump.
+    receipt = h.request_crop("enabled", "Alice", False)
+    r.store.drain().result(5)
+    assert h.crop_state()["operations"][receipt["operation_id"]]["persisted"]
+
+
+def test_eve_family_roundtrip_keeps_same_pump_and_requires_fresh_roster(family_pump):
+    from tests.test_preview_cropcontroller import client
+    from wingman.preview.runtime import FamilyDemand
+    from wingman.telemetry.model import RosterSnapshot
+
+    r = family_pump()
+    h = r.host
+    thread = h._thread
+    h.set_families(FamilyDemand(2, True, True))
+    active = r.wait("eve-active")
+    h.apply_roster(RosterSnapshot(2, (client(),)))
+    r.call(lambda: None)
+    old = h._crop_controller
+    assert old.live and r.native.thumbnails
+    h.set_families(FamilyDemand(3, False, True))
+    assert not h.runtime_enabled
+    stopped = r.wait("eve-stopped")
+    assert stopped.eve_epoch > active.eve_epoch
+    assert h._thread is thread and h._hwnd == 42 and h.is_running
+    assert h._crop_controller is None and not r.native.thumbnails
+    h.set_families(FamilyDemand(4, True, True))
+    again = r.wait("eve-active")
+    assert again.eve_epoch > stopped.eve_epoch
+    assert h._crop_controller is not old and not h._crop_controller.live
+    h.apply_roster(RosterSnapshot(3, (client(serial=2),)))
+    r.call(lambda: None)
+    assert h._crop_controller.live and h._thread is thread
+
+
+def test_family_off_on_retains_font_owner_but_not_unrelated_pump_dispatch(family_pump):
+    from tests.test_preview_cropcontroller import client
+    from wingman.preview.runtime import FamilyDemand
+    from wingman.telemetry.model import RosterSnapshot
+
+    r = family_pump()
+    h = r.host
+    h.set_families(FamilyDemand(2, True, True))
+    r.wait("eve-active")
+    h.apply_roster(RosterSnapshot(2, (client(),)))
+    h.request_crop("select", "Alice")
+    r.call(lambda: None)
+
+    def hold_fonts():
+        picker = h._crop_controller.picker
+        r.native.held_fonts.update(r.native.fonts)
+        picker.selection = geometry.Rect(
+            picker.destination.x + 20, picker.destination.y + 20, 100, 80
+        )
+        picker._confirm()
+        return h._crop_controller
+
+    controller = r.call(hold_fonts)
+    h.set_families(FamilyDemand(3, False, True))
+    h.set_families(FamilyDemand(4, True, True))
+    r.store.drain().result(5)
+    r.call(lambda: None)
+    assert h._crop_controller is controller and controller.picker is not None
+    assert r.native.fonts and not h.runtime_enabled
+    assert h.is_running and h._hwnd == 42
+    r.native.held_fonts.clear()
+    h._post(0)
+    r.wait("eve-stopped")
+    r.wait("eve-active")
+    assert h._crop_controller is not controller
+    assert h.runtime_enabled and not r.native.fonts
+
+
+def test_family_off_drains_accepted_save_before_native_cleanup(family_pump):
+    from threading import Event
+
+    from tests.test_preview_cropcontroller import client
+    from wingman.preview.runtime import FamilyDemand
+    from wingman.telemetry.model import RosterSnapshot
+
+    entered, release = Event(), Event()
+
+    def flush():
+        entered.set()
+        assert release.wait(5)
+        return True
+
+    r = family_pump(primary_flush=flush)
+    h = r.host
+    h.set_families(FamilyDemand(2, True, True))
+    r.wait("eve-active")
+    h.apply_roster(RosterSnapshot(2, (client(),)))
+    r.call(lambda: None)
+    controller = h._crop_controller
+    try:
+        h.set_families(FamilyDemand(3, False, True))
+        assert entered.wait(5)
+        assert h._crop_controller is controller
+        assert r.call(lambda: h._hwnd) == 42
+        assert r.native.thumbnails and not h.runtime_enabled
+    finally:
+        release.set()
+    r.wait("eve-stopped")
+    assert not r.native.thumbnails and h.is_running
+
+
+def test_detached_alert_batch_cannot_arm_new_family_windows(family_pump, monkeypatch):
+    from wingman.preview.runtime import FamilyDemand
+
+    r = family_pump()
+    h = r.host
+    h.set_families(FamilyDemand(2, True, True))
+    r.wait("eve-active")
+
+    def detach():
+        h.raise_alert("Alice", "combat", {})
+        return h._drain_alerts()
+
+    pending = r.call(detach)
+    h.set_families(FamilyDemand(3, False, True))
+    r.wait("eve-stopped")
+    h.set_families(FamilyDemand(4, True, True))
+    r.wait("eve-active")
+    armed = []
+    window = SimpleNamespace(
+        arm_alert=lambda *args: armed.append(args),
+        alert_is_armed=lambda: False,
+        _mode=None,
+        locked=False,
+        set_hidden=lambda hidden: None,
+        close=lambda: None,
+    )
+    r.call(lambda: h._windows.update(Alice=window))
+    r.call(lambda: h._apply_alerts(r.native.lib, pending))
+    assert not armed
+
+
+def test_old_foreground_callback_and_os_hotkeys_are_fenced_before_id_reuse(
+    family_pump, monkeypatch
+):
+    from wingman.preview.runtime import FamilyDemand
+
+    r = family_pump()
+    h = r.host
+    callbacks, drained, registered = [], [], []
+    monkeypatch.setattr(host.win32, "winevent_proc_type", lambda: lambda cb: cb)
+    monkeypatch.setattr(
+        r.native,
+        "SetWinEventHook",
+        lambda *args: callbacks.append(args[3]) or 99,
+        raising=False,
+    )
+    monkeypatch.setattr(r.native, "UnhookWinEvent", lambda *args: 1, raising=False)
+    monkeypatch.setattr(
+        h, "_install_hook", lambda libs: host.PreviewHost._install_hook(h, libs)
+    )
+    monkeypatch.setattr(
+        r.native, "PeekMessageW", lambda *args: drained.append(True) and False
+    )
+    monkeypatch.setattr(
+        r.native,
+        "RegisterHotKey",
+        lambda *args: registered.append(len(drained)) or 1,
+        raising=False,
+    )
+    monkeypatch.setattr(r.native, "UnregisterHotKey", lambda *args: 1, raising=False)
+    h.set_hotkeys({"characters": {"Alice": "Ctrl+F1"}})
+    h.set_families(FamilyDemand(2, True, True))
+    r.wait("eve-active")
+    old = callbacks[0]
+    h.set_families(FamilyDemand(3, False, True))
+    r.wait("eve-stopped")
+    h.set_families(FamilyDemand(4, True, True))
+    r.wait("eve-active")
+    old(None, 0, 1234, 0, 0, 0, 0)
+    assert h._foreground == 0
+    assert len(registered) == 2 and registered[1] > registered[0] > 0
+
+
+def test_real_runtime_reaps_native_pump_and_selection_uses_next_epoch(crop_pump):
+    from threading import Event
+
+    from wingman.preview.runtime import PreviewRuntime
+
+    r = crop_pump()
+    runtime = PreviewRuntime(r.host)
+    active, stopped = Event(), Event()
+
+    def state_changed(state):
+        if state.pump == "active":
+            active.set()
+        if state.pump == "stopped":
+            stopped.set()
+
+    runtime.set_state_callback(state_changed)
+    runtime.set_companions(True, 1)
+    try:
+        assert active.wait(5)
+        first = r.host._thread
+        runtime.set_companions(False, 2)
+        assert stopped.wait(5)
+        assert not first.is_alive()
+        active.clear()
+        lease = runtime.acquire_selection(12)
+        assert lease is not None and lease.pump_epoch == 2
+        assert active.wait(5)
+        assert r.host._thread is not first
+        assert not r.host.runtime_enabled and r.host._crop_controller is None
+        assert runtime.snapshot().pump_epoch == lease.pump_epoch
+    finally:
+        assert runtime.shutdown(5)
+    r.native.assert_closed()
+
+
+def test_failed_eve_activation_keeps_companion_pump_and_retries_only_on_request(
+    crop_pump,
+):
+    from threading import Event
+
+    from wingman.preview.runtime import PreviewRuntime
+
+    r = crop_pump()
+    h = r.host
+    runtime = PreviewRuntime(h)
+    companions, failed, active = Event(), Event(), Event()
+
+    def report(state):
+        if state.companions == "active":
+            companions.set()
+        if state.eve == "failed":
+            failed.set()
+        if state.eve == "active":
+            active.set()
+
+    runtime.set_state_callback(report)
+    runtime.set_companions(True, 1)
+    assert companions.wait(5)
+    thread = h._thread
+    calls = []
+
+    def factory(*args, **kwargs):
+        calls.append(True)
+        raise OSError("crop native initialization failed")
+
+    h._crop_controller_factory = factory
+    runtime.set_eve(True, 1)
+    try:
+        assert failed.wait(5)
+        r.store.drain().result(5)
+        r.call(lambda: None)
+        assert runtime.snapshot().eve == "failed"
+        assert len(calls) == 1 and h._hwnd == 42 and h._thread is thread
+        assert not h.runtime_enabled
+        h._crop_controller_factory = None
+        runtime.set_eve(True, 1)
+        assert active.wait(5)
+        assert runtime.snapshot().error is None and h._thread is thread
+    finally:
+        assert runtime.shutdown(5)
+
+
+def test_retired_primary_callbacks_cannot_activate_or_persist_in_new_family(
+    family_pump, monkeypatch
+):
+    from tests.test_preview_cropcontroller import client
+    from wingman.preview.runtime import FamilyDemand
+    from wingman.telemetry.model import RosterSnapshot
+
+    r = family_pump()
+    h = r.host
+    h.set_families(FamilyDemand(2, True, True))
+    r.wait("eve-active")
+    callbacks, records, activations = {}, [], []
+
+    def create(libs, source, rect, **kwargs):
+        callbacks.update(kwargs)
+        window = _RosterWindow(source, rect)
+        window._mode = None
+        window.set_hidden = lambda hidden: None
+        return window
+
+    monkeypatch.setattr(host.PreviewWindow, "create", create)
+    monkeypatch.setattr(h, "_on_layout_changed", lambda *args: records.append(args))
+    monkeypatch.setattr(
+        host.window_mod, "activate", lambda *args: activations.append(args)
+    )
+    snapshot = RosterSnapshot(1, (client(),))
+    r.call(lambda: host.PreviewHost._reconcile_roster(h, None, snapshot))
+    rect = geometry.Rect(20, 30, 320, 210)
+    callbacks["on_rect_changed"]("Alice", rect, False)
+    assert len(records) == 1
+    h.set_families(FamilyDemand(3, False, True))
+    r.wait("eve-stopped")
+    h.set_families(FamilyDemand(4, True, True))
+    r.wait("eve-active")
+    callbacks["on_activate"](host._preview_client(snapshot.clients[0]))
+    callbacks["on_rect_changed"]("Alice", rect, False)
+    callbacks["on_resize_all"](rect)
+    callbacks["on_toggle_crop"](snapshot.clients[0])
+    assert not activations and len(records) == 1
+    assert not h._crop_commands
+
+
+def test_revocation_during_pending_activation_cannot_commit_foreground(monkeypatch):
+    from wingman.preview.runtime import FamilyDemand
+
+    h = host.PreviewHost(on_layout_changed=lambda *args: None)
+    source = _FakeClient("Alice", hwnd=0x1234)
+    h._clients = {"Alice": source}
+    h._pending_switch = host._PendingSwitch("Alice", source.hwnd, None, 0, False)
+
+    def activate(*args):
+        h.set_families(FamilyDemand(1, False, True))
+        return host.window_mod.ActivationResult.ACTIVATED
+
+    monkeypatch.setattr(host.window_mod, "activate", activate)
+    h._retry_pending_activation(None)
+    assert h._foreground == 0 and h._pending_switch is None
+
+
+@pytest.mark.parametrize(
+    "events,incoming,expected",
+    [
+        (["combat"] * 10, "combat", list(range(10))),
+        (["decloak"] * 10, "custom", list(range(10))),
+        (["custom"] * 10, "warp_scramble", list(range(1, 11))),
+        (
+            ["warp_scramble", "combat", "decloak", "custom"] + ["combat"] * 6,
+            "combat",
+            [0, 1, 3, 4, 5, 6, 7, 8, 9, 10],
+        ),
+    ],
+)
+def test_custom_priority_mailbox_preserved_across_shared_family_roundtrip(
+    family_pump, events, incoming, expected
+):
+    from wingman.preview.runtime import FamilyDemand
+
+    r = family_pump()
+    h = r.host
+    h._custom_alert_current = lambda *args: True
+    for revision in (2, 4):
+        h.set_families(FamilyDemand(revision, True, True))
+        r.wait("eve-active")
+        armed = []
+        window = SimpleNamespace(
+            arm_alert=lambda event, spec, now: armed.append(spec["sequence"]),
+            alert_is_armed=lambda: False,
+            _mode=None,
+            locked=False,
+            set_hidden=lambda hidden: None,
+            close=lambda: None,
+        )
+
+        def deliver():
+            h._windows["Alice"] = window
+            for sequence, event in enumerate(events):
+                h.raise_alert("Alice", event, _custom_alert_spec(sequence=sequence))
+            h.raise_alert("Alice", incoming, _custom_alert_spec(sequence=10))
+            h._apply_alerts(r.native.lib, h._drain_alerts())
+
+        r.call(deliver)
+        assert armed == expected
+        h.set_families(FamilyDemand(revision + 1, False, True))
+        r.wait("eve-stopped")
+        assert h._hwnd == 42
+
+
+def test_shared_family_message_ids_do_not_alias_existing_commands():
+    values = [
+        value for name, value in vars(host.win32).items() if name.startswith("WM_APP_")
+    ]
+    assert len(values) == len(set(values))
+
+
 @pytest.mark.parametrize("available_at_acceptance", [False, True])
 def test_enable_admission_uses_acceptance_session_not_delivery_roster(
     crop_pump, monkeypatch, available_at_acceptance
@@ -506,9 +933,10 @@ def test_crop_restart_reseeds_roster_and_ignores_old_ready(crop_pump):
     old_epoch = h._crop_epoch
     assert h.stop(timeout=5)
     old_future = h._stop_future
-    h.apply_roster(RosterSnapshot(2, (client(serial=2),)))
     h.start()
     assert h._ready.wait(5)
+    # Off-family rosters are deliberately not cached for a later activation.
+    h.apply_roster(RosterSnapshot(2, (client(serial=2),)))
     new_window = r.call(lambda: h._crop_controller.live["Alice"].window)
     h._stop_ready.put((old_epoch, old_future))
     h._post(host.win32.WM_APP_CROP_STOP_READY)
@@ -576,7 +1004,10 @@ def test_final_close_retains_blocked_offline_store_and_refuses_restart(
         store.close().result(5)
 
 
-def test_primary_settings_accepted_before_stop_keep_fifo_order(crop_pump, monkeypatch):
+@pytest.mark.parametrize("shared", [False, True])
+def test_primary_settings_accepted_before_stop_keep_fifo_order(
+    crop_pump, monkeypatch, shared
+):
     from threading import Event
 
     from tests.test_preview_store import FakeTimer
@@ -584,6 +1015,14 @@ def test_primary_settings_accepted_before_stop_keep_fifo_order(crop_pump, monkey
 
     r = crop_pump()
     h = r.host
+    from queue import Queue
+
+    from wingman.preview.runtime import FamilyDemand
+
+    acknowledgments = Queue()
+    if shared:
+        h.set_lifecycle_callback(acknowledgments.put)
+        h.set_families(FamilyDemand(1, True, True))
     layouts = LayoutStore(r.transaction.update, timer=FakeTimer)
     h._on_layout_changed = lambda name, rect, locked: layouts.record(
         name, layout.Entry(rect, locked)
@@ -625,13 +1064,21 @@ def test_primary_settings_accepted_before_stop_keep_fifo_order(crop_pump, monkey
         assert h.reset_layouts() is True
         assert h.resize_preview("Alice", (400, 250)) is True
         assert h.resize_all((500, 300)) is True
-        assert h.stop(timeout=0) is False
+        if shared:
+            h.set_families(FamilyDemand(2, False, True))
+        else:
+            assert h.stop(timeout=0) is False
         assert h.resize_preview("Alice", (900, 900)) is False
     finally:
         release.set()
         caller.join(5)
-    h._thread.join(5)
-    assert not h.is_running
+    if shared:
+        while acknowledgments.get(timeout=5).outcome != "eve-stopped":
+            pass
+        assert h.is_running and h._hwnd == 42
+    else:
+        h._thread.join(5)
+        assert not h.is_running
     assert r.transaction.document["preview"]["layouts"]["Alice"]["w"] == 500
     assert r.transaction.document["preview"]["layouts"]["Alice"]["h"] == 300
     assert primary.hidden

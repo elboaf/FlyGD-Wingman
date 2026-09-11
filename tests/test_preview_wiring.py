@@ -11,10 +11,69 @@ import re
 import threading
 import types
 
+from tests.preview_runtime_helpers import HostLifecycle
 from tests.test_api import make_api
 
 
-class FakeHost:
+def test_api_delivers_only_committed_revisions_to_injected_runtime(
+    tmp_path, monkeypatch
+):
+    from wingman.preview.runtime import PreviewRuntime
+
+    calls = []
+    runtime = PreviewRuntime(None)
+    original = runtime.set_eve
+
+    def record(enabled, revision):
+        calls.append((enabled, revision))
+        return original(enabled, revision)
+
+    monkeypatch.setattr(runtime, "set_eve", record)
+    api = make_api(tmp_path, preview_runtime=runtime)
+    api._state.settings["preview"] = {"enabled": False}
+    api.start_previews_if_enabled()
+    assert calls == [(False, 0)]
+    assert api.set_preview_enabled(True)
+    assert calls[-1] == (True, 1)
+    assert api.set_preview_enabled(True)
+    assert calls[-1] == (True, 1)  # retry without saving or a new producer revision
+    before = list(calls)
+
+    def fail(*args):
+        raise OSError("disk blocked")
+
+    monkeypatch.setattr("wingman.settings._save_locked", fail)
+    assert not api.set_preview_enabled(False)
+    assert calls == before
+
+
+def test_companion_pump_cannot_restore_eve_hotkey_publication(tmp_path):
+    from wingman.preview.runtime import PreviewRuntime
+
+    fake = FakeHost()
+    fake.started = 1
+    fake._admission_closed = True
+    fake.hotkey_status = lambda: {"Ctrl+F1": True}
+    fake.characters = lambda: ["Alice"]
+    api = make_api(tmp_path, preview_host=fake, preview_runtime=PreviewRuntime(None))
+    api._state.settings["preview"] = {"enabled": False}
+    assert api.get_preview_hotkey_state()["registration"] == {}
+    api.push_preview_hotkeys({"Ctrl+F1": True})
+    from tests.test_api import pushes
+
+    assert pushes(api._window)[-1][1]["registration"] == {}
+
+
+def test_early_close_fences_detached_crop_and_bind_publications(tmp_path):
+    api = make_api(tmp_path)
+    api._close_eve_runtime()
+    api.push_preview_crops({"revision": 9})
+    api.push_bind_captured("Ctrl+F1")
+    api.push_preview_hotkeys({"Ctrl+F1": True})
+    assert not api._window.evaluated
+
+
+class FakeHost(HostLifecycle):
     def __init__(self):
         self.started = self.stopped = 0
         self.flushed = 0
@@ -27,10 +86,12 @@ class FakeHost:
 
     def start(self):
         self.started += 1
+        self.ack_started()
 
     def stop(self, timeout=5.0, *, final=False):
         self.stopped += 1
         self.closed = self.closed or final
+        return self.ack_stopped()
 
     def request_sweep(self):
         self.sweeps += 1
@@ -85,6 +146,7 @@ def test_enabled_at_startup_starts_it(tmp_path):
     api = make_api(tmp_path, preview_host=host)
     api._state.settings["preview"] = {"enabled": True}
     api.start_previews_if_enabled()
+    assert host.started_event.wait(5)
     assert host.started == 1
 
 
@@ -93,8 +155,10 @@ def test_enabling_starts_it_and_disabling_stops_it(tmp_path):
     api = make_api(tmp_path, preview_host=host)
     api._state.settings["preview"] = {"enabled": False}
     api.set_preview_enabled(True)
+    assert host.started_event.wait(5)
     assert host.started == 1
     api.set_preview_enabled(False)
+    assert host.stopped_event.wait(5)
     assert host.stopped == 1
 
 
@@ -106,6 +170,7 @@ def test_enabling_twice_does_not_start_two_threads(tmp_path):
     api._state.settings["preview"] = {"enabled": False}
     api.set_preview_enabled(True)
     api.set_preview_enabled(True)
+    assert host.started_event.wait(5)
     assert host.started == 1
 
 
@@ -190,7 +255,9 @@ def test_concurrent_master_request_is_refused_while_transaction_is_tentative(
         worker.join(5)
         later.join(5)
     assert first == [True] and second == [False]
-    assert host.started == 0 and host.stopped == 1
+    assert host.started == 0 and host.stopped == 0
+    # There was no owned pump: a committed off demand need not call stop.
+    assert not api._preview_runtime._demand.eve
     assert not api._state.settings["preview"]["enabled"]
 
 
@@ -549,6 +616,7 @@ def test_the_position_toggle_does_not_move_the_previews_already_open(
     api = make_api(tmp_path, preview_host=host)
     api._state.settings["preview"] = {"enabled": True}
     api.start_previews_if_enabled()
+    assert host.started_event.wait(5)
     api.set_restore_preview_positions(False)
     assert host.started == 1 and host.stopped == 0
     assert host.sweeps == 0
@@ -843,6 +911,7 @@ def test_get_preview_hotkey_state_reports_which_characters_can_be_sized(
     # never consults `layouts`.
     api._preview_host = types.SimpleNamespace(
         is_running=True,
+        runtime_enabled=True,
         characters=lambda: ["Zuelo Parvi"],
         hotkey_status=dict,
         client_sizes=dict,

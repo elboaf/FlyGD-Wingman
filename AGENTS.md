@@ -135,7 +135,17 @@ reached through injected seams or lazy `windll` binding):
   windows, gestures, cycle keybinds, per-character geometry store, and the
   cropped-preview family (`crops.py` pure geometry, `cropstore.py` committed
   authority, `cropcontroller.py`/`cropwindow.py`/`croppicker.py` pump-owned
-  natives). `host.py` is the pump thread and owns every HWND.
+  natives). `runtime.py` is the sole production start/stop owner, merging
+  independent family demands and one temporary selection lease through one
+  retained executor. `host.py` owns every HWND on one shared pump;
+  `runtime_enabled` authorizes EVE delivery, while `is_running` means only pump
+  liveness. EVE-off fences its epoch immediately and drains admitted storage
+  and retained picker/font cleanup before reactivation, without destroying a
+  pump another family/lease needs. Final admission/publication closes before
+  WebView destruction; joins never hold runtime locks. Companion demand is
+  production-off in this foundation — no companion windows or settings yet.
+  A future Wanderer metadata channel must use this same EVE epoch and be
+  fenced/drained on EVE-off, not consume companion demand or alert capacity.
   **Wingman must never move or resize a real EVE client window** — EVE reads a
   resize as a resolution change and rewrites its own config.
 - `telemetry/` — the one serialized coordinator (`coordinator.py`) over a

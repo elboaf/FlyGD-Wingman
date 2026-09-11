@@ -63,6 +63,7 @@ from ..preview import gestures as preview_gestures
 from ..preview import host as preview_host_mod
 from ..preview import layout as preview_layout
 from ..preview import window as preview_window
+from ..preview.runtime import PreviewRuntime
 from ..telemetry.model import CustomMatcherHealth
 from ..upload.controller import (
     PROBE_DRAIN_S,
@@ -365,6 +366,7 @@ class Api:
         probe=library.probe,
         timer=threading.Timer,
         preview_host=None,
+        preview_runtime=None,
         skills=None,
         telemetry=None,
         fleet_sharing=None,
@@ -459,6 +461,13 @@ class Api:
         # None off Windows and in most tests: the preview subsystem is
         # optional and every call site below tolerates its absence.
         self._preview_host = preview_host
+        self._preview_runtime = (
+            preview_runtime
+            if preview_runtime is not None
+            else PreviewRuntime(preview_host)
+        )
+        self._preview_revision = 0
+        self._preview_runtime_authorized = False
 
         # None off the happy path -- when the subsystem failed to build, and
         # in most tests. Every call site below tolerates its absence and
@@ -581,6 +590,7 @@ class Api:
         # Bind only after the worker and runtime collaborators exist. The
         # adapters resolve the window and replaceable effects when invoked;
         # construction itself must not touch the page or start Profiles work.
+        self._preview_runtime.set_state_callback(self._preview_runtime_changed)
         self._profiles = self._build_profiles_controller()
         if self._fleet_sharing is not None:
             self._sharing_status_unsubscribe = self._fleet_sharing.subscribe_status(
@@ -4439,8 +4449,21 @@ class Api:
             telemetry = self._telemetry
         # This only fences ingress; no consumer callback or join. Keep the
         # retained owner even when its later bounded stop cannot finish.
+        self._preview_runtime.close_admission()
         if telemetry is not None:
             telemetry.close_custom_admission()
+
+    def _preview_runtime_changed(self, state) -> None:
+        # Activation is asynchronous. The off-pump owner callback reconciles
+        # telemetry after the family can actually consume discovery results.
+        if self._eve_runtime_closed:
+            return
+        authorized = (
+            self._preview_host is not None and self._preview_host.runtime_enabled
+        )
+        if authorized != self._preview_runtime_authorized or state.eve == "failed":
+            self._preview_runtime_authorized = authorized
+            self._reconcile_eve_runtime()
 
     def _stop_eve_telemetry(self) -> None:
         if self._telemetry is not None:
@@ -4463,18 +4486,14 @@ class Api:
         Fleet can independently start discovery and gamelog workers while
         Preview stays off. The preview pump and foreground hook remain lazy.
         """
-        if self._preview_host is None:
-            self._start_fleet_telemetry_if_enabled()
-            return
         section = self._state.settings.get("preview", {})
-        # Pushed before start(): the first registration pass runs inside
-        # start(), and a table applied only after it would leave every
-        # binding unregistered until the next explicit save.
-        self._preview_host.set_hotkeys(section.get("hotkeys") or {})
-        if section.get("enabled"):
-            self._preview_host.start()
-        # After host start(), so Preview roster delivery has a live pump.
-        # Telemetry follows this committed runtime, not tentative settings I/O.
+        if self._preview_host is not None:
+            self._preview_host.set_hotkeys(section.get("hotkeys") or {})
+        # Phase 1 exposes no companion configuration or native feature.
+        self._preview_runtime.set_companions(False, revision=0)
+        self._preview_runtime.set_eve(
+            bool(section.get("enabled")), self._preview_revision
+        )
         self._start_fleet_telemetry_if_enabled()
 
     def _start_fleet_telemetry_if_enabled(self) -> None:
@@ -4521,18 +4540,16 @@ class Api:
                     raise _SettingUnchanged
                 section["enabled"] = enabled
         except _SettingUnchanged:
-            # True, not None: a serialized no-op is success, but must not
-            # rewrite the document or restart an already-running host.
+            # Retry a failed start without another settings save or owner.
+            self._preview_runtime.set_eve(enabled, self._preview_revision)
             return True
         except OSError:
             # Only a committed master setting authorizes runtime changes.
             logger.exception("Could not persist the preview setting")
             return False
-        if self._preview_host is not None:
-            if enabled:
-                self._preview_host.start()
-            else:
-                self._preview_host.stop()
+        else:
+            self._preview_revision += 1
+        self._preview_runtime.set_eve(enabled, self._preview_revision)
         self._reconcile_eve_runtime()
         # Truthy on success: WM.send resolves to null on a bridge failure
         # and cannot otherwise distinguish that from a method that simply
@@ -4541,7 +4558,8 @@ class Api:
 
     def push_preview_crops(self, state: dict) -> None:
         """Semantic committed state; safe before a crop page handler is registered."""
-        self._push("onPreviewCrops", state)
+        if not self._eve_runtime_closed:
+            self._push("onPreviewCrops", state)
 
     def shutdown_previews(self) -> None:
         """Tear the preview thread down on the way out.
@@ -4556,11 +4574,11 @@ class Api:
         # and remote presentation before either owner can block in a join.
         self._stop_fleet_presentation()
         self.shutdown_fleet_sharing()
-        if self._preview_host is not None:
-            try:
-                self._preview_host.stop(final=True)
-            except Exception:
-                logger.exception("Preview host did not stop cleanly")
+        try:
+            if not self._preview_runtime.shutdown():
+                logger.warning("Preview runtime is still stopping")
+        except Exception:
+            logger.exception("Preview runtime did not stop cleanly")
         # A returning in-flight reconcile owes eventual stop only after both
         # subscriptions have detached, not merely because admission closed.
         with self._eve_runtime_lock:
@@ -4888,14 +4906,17 @@ class Api:
         unregistered chord still comes through the page's own keydown
         listener, which is the path that always worked.
         """
-        if self._preview_host is None:
+        if self._preview_host is None or (
+            armed and not self._preview_host.runtime_enabled
+        ):
             return False
         self._preview_host.set_capture(bool(armed))
         return True
 
     def push_bind_captured(self, gesture) -> None:
         """A registered chord, redirected to the armed bind row."""
-        self._push("onPreviewBindCaptured", {"gesture": gesture})
+        if not self._eve_runtime_closed:
+            self._push("onPreviewBindCaptured", {"gesture": gesture})
 
     def _preview_layout_entries(self) -> dict:
         """Latest valid layouts, including the host's undebounced state."""
@@ -5000,14 +5021,9 @@ class Api:
         """
         section = self._state.settings.get("preview", {})
         host = self._preview_host
-        # is_running, not merely "host is not None": there is a window
-        # between stop() clearing the thread handle and _teardown running
-        # on the preview thread itself where the host object still exists
-        # but owns no chords and no windows. Gating on is_running closes
-        # it -- a stopped host reports the same empty state as no host at
-        # all, rather than serving whatever characters()/hotkey_status()
-        # last held.
-        live = host is not None and host.is_running
+        # A companion/selection pump does not authorize EVE delivery. The
+        # family fence also hides retained native reports during cleanup.
+        live = host is not None and host.runtime_enabled
         online = set(host.characters() if live else [])
         layout_sources = [
             {"name": name, "online": name in online if live else None}
@@ -5118,8 +5134,10 @@ class Api:
         """Announce a change to a page that is already up. Never the only
         path -- see get_preview_hotkey_state."""
         payload = self.get_preview_hotkey_state()
-        if status is not None:
-            payload["registration"] = status
+        if self._eve_runtime_closed:
+            return
+        # Read current authority rather than restoring a detached registration
+        # snapshot delivered after EVE off/on. The host caches before notifying.
         self._push("onPreviewHotkeys", payload)
 
     # ---- Preview settings, generic writer --------------------------------
@@ -5338,7 +5356,7 @@ class Api:
         would refuse would let the page and the windows disagree.
         """
         host = self._preview_host
-        if host is None or not host.is_running:
+        if host is None or not host.runtime_enabled:
             return self._field_refused("Start previews first.")
         section = self._state.settings.get("preview", {})
         if host.resize_all((section.get("width"), section.get("height"))) is False:
@@ -5370,7 +5388,7 @@ class Api:
         if width < floor_w or height < floor_h:
             return self._field_refused(f"The smallest preview is {floor_w}x{floor_h}.")
         host = self._preview_host
-        if host is not None and host.is_running and name in host.characters():
+        if host is not None and host.runtime_enabled and name in host.characters():
             if host.resize_preview(name, (width, height)) is False:
                 return self._field_refused("Previews are stopping.")
             return self._field_ok()
@@ -5405,7 +5423,7 @@ class Api:
             (section.get("hotkeys") or {}).get("characters") or {}
         )
         host = self._preview_host
-        if host is not None and host.is_running:
+        if host is not None and host.runtime_enabled:
             names |= set(host.characters())
         return {name for name in names if self._usable_preview_character(name)}
 
@@ -5471,7 +5489,7 @@ class Api:
         giving the host a way to answer, which is a larger change than the
         failure justifies.
         """
-        if self._preview_host is not None and self._preview_host.is_running:
+        if self._preview_host is not None and self._preview_host.runtime_enabled:
             if self._preview_host.reset_layouts() is False:
                 return self._field_refused("Previews are stopping.")
             return self._field_ok()
@@ -5517,7 +5535,7 @@ class Api:
                 continue
         host = self._preview_host
         names = set(section.get("seen") or [])
-        if host is not None and host.is_running:
+        if host is not None and host.runtime_enabled:
             names |= set(host.characters())
         for name in names:
             out.setdefault(name, list(default))
@@ -5677,9 +5695,13 @@ class Api:
                 preview_characters=lambda: (
                     tuple(self._preview_host.characters())
                     if self._preview_host is not None
+                    and self._preview_host.runtime_enabled
                     else ()
                 ),
-                preview_available=lambda: self._preview_host is not None,
+                preview_available=lambda: (
+                    self._preview_host is not None
+                    and self._preview_host.runtime_enabled
+                ),
                 raise_alert=lambda character, event, spec: (
                     self._preview_host.raise_alert(character, event, spec)
                 ),
@@ -5856,7 +5878,7 @@ class Api:
                 .get("alerts", {})
                 .get("volume", 100),
             )
-        if self._preview_host is None:
+        if self._preview_host is None or not self._preview_host.runtime_enabled:
             return {
                 "applied": True,
                 "persisted": False,
@@ -6132,9 +6154,8 @@ class Api:
             if chord
         }
         host = self._preview_host
-        # is_running, not `host is not None` -- the same window between
-        # stop() and _teardown that get_preview_hotkey_state() gates on.
-        live = host is not None and host.is_running
+        # Pump liveness includes companions and retained EVE cleanup.
+        live = host is not None and host.runtime_enabled
         if not live:
             return {"active": [], "latent": sorted(chords)}
         status = host.hotkey_status()

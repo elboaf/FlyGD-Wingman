@@ -40,6 +40,7 @@ from .cropcontroller import CropController
 from .croppicker import CropPicker
 from .crops import MAX_LIVE_CROPS
 from .cropwindow import CropWindow
+from .runtime import FamilyDemand, HostAck
 from .window import PreviewWindow
 
 logger = logging.getLogger(__name__)
@@ -148,6 +149,7 @@ class _PendingAlert:
     event: str
     spec: dict
     severity: int
+    epoch: int
 
 
 @dataclass(frozen=True)
@@ -162,6 +164,7 @@ class _PendingSwitch:
     attempts: int = 0
     phase: window_mod.ActivationResult | None = None
     deadline: float = 0.0
+    epoch: int = 0
 
 
 def coalesce_hotkey_ids(peek, hwnd, first_ident) -> list[int]:
@@ -302,6 +305,18 @@ class PreviewHost:
         crop_controller_factory=None,
         custom_alert_current: Callable[[str, int, int], bool] | None = None,
     ):
+        # Standalone/manual callers retain EVE-only start(). Binding a runtime
+        # callback opts into explicit composite demands before any pump exists.
+        self._lifecycle_callback = None
+        self._families = FamilyDemand(-1, True, False)
+        self._pump_epoch = 0
+        self._eve_epoch = 0
+        self._companion_epoch = 0
+        self._eve_admitted = True
+        self._eve_phase = "stopped"
+        self._eve_stopping = False
+        self._eve_failed = False
+        self._companion_active = False
         self._custom_alert_current = custom_alert_current
         self._crop_controller_factory = crop_controller_factory
         self._crop_controller = None
@@ -547,6 +562,89 @@ class PreviewHost:
         self._focused_key = None
         self._selected_key = None
 
+    def set_lifecycle_callback(self, callback: Callable[[HostAck], None]) -> None:
+        with self._lock:
+            if self._thread is not None or self._lifecycle_callback is not None:
+                raise RuntimeError(
+                    "preview lifecycle callback must bind once before start"
+                )
+            self._lifecycle_callback = callback
+            self._families = FamilyDemand(0, False, False)
+            self._eve_admitted = False
+            self._pending_roster = None
+            self._crop_roster = None
+            self._pending_alerts = []
+
+    def _ack(self, outcome, *, epochs=None) -> None:
+        with self._lock:
+            callback = self._lifecycle_callback
+            epochs = epochs or (
+                self._pump_epoch,
+                self._eve_epoch,
+                self._companion_epoch,
+            )
+        if callback is not None:
+            callback(HostAck(*epochs, outcome))
+
+    def _eve_valid(self, epoch=None) -> bool:
+        # Native callbacks also use this fence: many arrive through a preview's
+        # own wndproc and never visit the host message dispatcher.
+        return (
+            self._eve_admitted
+            and not self._eve_stopping
+            and not self._stopping
+            and not self._closing
+            and (epoch is None or epoch == self._eve_epoch)
+        )
+
+    def _eve_delivery_owned(self) -> bool:
+        return self._eve_valid() and (self._starting or self.is_running)
+
+    def set_families(self, demand: FamilyDemand) -> bool:
+        with self._lock:
+            if self._closing or demand.revision < self._families.revision:
+                return False
+            if demand.revision == self._families.revision and demand != self._families:
+                return False
+            self._families = demand
+            self._eve_failed = False
+            fence = None
+            if not demand.eve and self._eve_admitted:
+                self._eve_admitted = False
+                self._eve_epoch += 1
+                self._eve_stopping = True
+                self._eve_phase = "stopping"
+                self._capture_until = 0.0
+                self._pending_roster = None
+                self._crop_roster = None
+                self._pending_alerts = []
+                self._pending_layouts = {}
+                fence = self._crop_epoch
+            elif demand.eve and not self._eve_admitted and not self._eve_stopping:
+                self._eve_epoch += 1
+                self._eve_admitted = True
+                self._eve_phase = "starting"
+            # Primary settings messages accepted before this fence are ahead
+            # of FAMILIES, including their pre-HWND list. Coalescing desired on
+            # must never erase the independently retained off-cleanup owner.
+            self._post(win32.WM_APP_FAMILIES)
+        if fence is not None and self._crop_store is not None:
+            self._crop_store.fence_epoch(fence)
+        return True
+
+    def close_admission(self) -> None:
+        """Final nonblocking publication/native fence, before WebView destruction."""
+        with self._lock:
+            self._closing = True
+            self._capture_until = 0.0
+            self._eve_admitted = False
+            self._pending_alerts = []
+            self._pending_roster = None
+            self._crop_roster = None
+            epoch = self._crop_epoch
+        if self._crop_store is not None:
+            self._crop_store.fence_epoch(epoch)
+
     @property
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -555,16 +653,12 @@ class PreviewHost:
     def runtime_enabled(self) -> bool:
         """Committed runtime delivery, including launch before the first HWND."""
         with self._lock:
-            return (
-                (self._starting or self.is_running)
-                and not self._stopping
-                and not self._closing
-            )
+            return self._eve_delivery_owned()
 
     @property
     def is_stopping(self) -> bool:
         with self._lock:
-            return self._stop_incomplete()
+            return self._eve_stopping or self._stop_incomplete()
 
     def _stop_incomplete(self) -> bool:
         # Caller holds _lock. A timeout never transfers ownership. A dead pump
@@ -575,6 +669,8 @@ class PreviewHost:
             or self.is_running
             or (self._stop_future is not None and not self._stop_future.done())
             or self._crop_dispatching
+            or self._hwnd is not None
+            or self._crop_controller is not None
         )
 
     def _open_crop_epoch(self) -> None:
@@ -586,7 +682,7 @@ class PreviewHost:
         # Re-read AFTER opening; its high-water mark rejects an older seed.
         with self._lock:
             snapshot = self._crop_roster
-            stopping = self._stopping
+            stopping = self._stopping or self._eve_stopping or not self._eve_admitted
             self._crop_epoch_prepared = True
         if snapshot is not None:
             self._crop_store.observe_roster(epoch, snapshot)
@@ -604,6 +700,12 @@ class PreviewHost:
                 return
             self._starting = True
             self._stopping = False
+            self._pump_epoch += 1
+            if self._lifecycle_callback is None:
+                self._eve_admitted = True
+            if self._eve_admitted and self._eve_phase == "stopped":
+                self._eve_epoch += 1
+                self._eve_phase = "starting"
             self._stop_future = None
             self._stop_final = False
             self._stop_cleanup_epoch = None
@@ -613,7 +715,7 @@ class PreviewHost:
             self._ready.clear()
             self._launch_done.clear()
         try:
-            if self._crop_store is not None:
+            if self._crop_store is not None and self._eve_admitted:
                 self._open_crop_epoch()
             with self._lock:
                 # stop() can reserve shutdown before there is even an HWND.
@@ -678,6 +780,9 @@ class PreviewHost:
             with self._lock:
                 if self._thread is thread:
                     self._thread = None
+        if self._hwnd is not None or self._crop_controller is not None:
+            logger.warning("Preview native cleanup remains owned by an exited pump")
+            return False
         if self._crop_store is not None:
             future = self._drain_offline_crop_commands()
             if future is None:
@@ -711,9 +816,9 @@ class PreviewHost:
         with self._lock:
             if self._crop_store is None or self._closing:
                 return self._crop_refused("Crops are unavailable")
-            if self._stop_incomplete():
+            if self._eve_stopping or self._stop_incomplete():
                 return self._crop_refused("Previews are stopping")
-            running = self._starting or self.is_running
+            running = self._eve_delivery_owned()
             session = None
             if action in ("select", "toggle") and not running:
                 return self._crop_refused("Enable previews before selecting a crop")
@@ -766,7 +871,11 @@ class PreviewHost:
         if self._crop_store is None:
             return None
         with self._lock:
-            if self._crop_dispatching or self._starting or self.is_running:
+            if (
+                self._crop_dispatching
+                or self._eve_delivery_owned()
+                or self._eve_stopping
+            ):
                 return self._stop_future
             self._crop_dispatching = True
             commands, self._crop_commands = self._crop_commands, []
@@ -785,7 +894,7 @@ class PreviewHost:
                             lambda done: self._queue_crop_completion(done.result())
                         )
                 with self._lock:
-                    if self._starting or self.is_running:
+                    if self._eve_delivery_owned() or self._eve_stopping:
                         # Only this detached batch belongs to offline ingress.
                         # The pump owns later requests, after we release delivery.
                         break
@@ -819,6 +928,7 @@ class PreviewHost:
                     win32.WM_APP_SHUTDOWN if stopping else win32.WM_APP_CROP_COMMAND
                 )
                 self._post(win32.WM_APP_CROP_COMPLETE)
+                self._post(win32.WM_APP_FAMILIES)
         if pending:
             return self._drain_offline_crop_commands()
         # The caller's result belongs to this drain, not a replacement runtime.
@@ -839,13 +949,9 @@ class PreviewHost:
             )
             runtime = self._crop_runtime_state
             stopping = (
-                self._stop_incomplete() and self._stop_cleanup_epoch != self._crop_epoch
-            )
-            enabled = (
-                (self._starting or self.is_running)
-                and not self._stopping
-                and not self._closing
-            )
+                self._eve_stopping or self._stop_incomplete()
+            ) and self._stop_cleanup_epoch != self._crop_epoch
+            enabled = self._eve_delivery_owned()
             state.pop("generations", None)
             state.pop("revision", None)
             statuses = {}
@@ -952,7 +1058,7 @@ class PreviewHost:
 
     def request_sweep(self) -> None:
         """Ask the sole shared discovery service for an immediate scan."""
-        if self._request_discovery is not None:
+        if self._eve_valid() and self._request_discovery is not None:
             self._request_discovery()
 
     def apply_roster(self, snapshot: RosterSnapshot) -> None:
@@ -971,6 +1077,8 @@ class PreviewHost:
         and reopen them a moment later at a default rect.
         """
         with self._lock:
+            if not self._eve_valid():
+                return
             pending = self._pending_roster
             if pending is not None and snapshot.generation <= pending.generation:
                 return
@@ -1008,8 +1116,12 @@ class PreviewHost:
         higher-severity arrival may replace the oldest strictly lower
         entry, but never displaces an equal or higher-severity warning.
         """
-        incoming = _PendingAlert(character, event, dict(spec), SEVERITY[event])
         with self._lock:
+            if not self._eve_valid():
+                return
+            incoming = _PendingAlert(
+                character, event, dict(spec), SEVERITY[event], self._eve_epoch
+            )
             if len(self._pending_alerts) == PENDING_ALERTS_MAX:
                 victim = next(
                     (
@@ -1027,7 +1139,7 @@ class PreviewHost:
 
     def _post(self, msg) -> None:
         if self._hwnd:
-            win32.bind().user32.PostMessageW(self._hwnd, msg, 0, 0)
+            win32.bind().user32.PostMessageW(self._hwnd, msg, self._eve_epoch, 0)
 
     def _drain_alerts(self) -> list[_PendingAlert]:
         with self._lock:
@@ -1043,8 +1155,8 @@ class PreviewHost:
         """
         with self._lock:
             self._desired_hotkeys = dict(table or {})
-        if self._hwnd:
-            win32.bind().user32.PostMessageW(self._hwnd, win32.WM_APP_REBIND, 0, 0)
+            if self._eve_valid():
+                self._post(win32.WM_APP_REBIND)
 
     def request_rebind(self) -> None:
         """Re-apply the table already held, without supplying one.
@@ -1071,7 +1183,11 @@ class PreviewHost:
         it invites the keystroke.
         """
         with self._lock:
-            self._capture_until = time.monotonic() + CAPTURE_TIMEOUT_S if armed else 0.0
+            self._capture_until = (
+                time.monotonic() + CAPTURE_TIMEOUT_S
+                if armed and self._eve_valid()
+                else 0.0
+            )
 
     def restyle(self) -> None:
         """Ask every open preview to re-read show_labels, opacity, locked
@@ -1103,7 +1219,7 @@ class PreviewHost:
         posted.
         """
         with self._lock:
-            if self._stopping:
+            if not self._eve_valid():
                 return False
             self._pending_resize[stable_key] = (int(size[0]), int(size[1]))
             self._post_primary_intent(win32.WM_APP_RESIZE_ONE)
@@ -1118,7 +1234,7 @@ class PreviewHost:
         sized individually afterwards simply overwrites its entry again.
         """
         with self._lock:
-            if self._stopping:
+            if not self._eve_valid():
                 return False
             self._pending_resize_all = (int(size[0]), int(size[1]))
             self._post_primary_intent(win32.WM_APP_RESIZE_ALL)
@@ -1199,7 +1315,7 @@ class PreviewHost:
             saved = dict(self._saved)
             saved[target] = entry
             self._saved = saved
-            should_post = bool(self._hwnd)
+            should_post = bool(self._hwnd) and self._eve_valid()
             if should_post:
                 self._pending_layouts[target] = entry
         if should_post:
@@ -1218,7 +1334,7 @@ class PreviewHost:
     def reset_layouts(self) -> bool:
         """Forget every saved position and re-place. Safe from any thread."""
         with self._lock:
-            if self._stopping:
+            if not self._eve_valid():
                 return False
             self._post_primary_intent(win32.WM_APP_RESET_LAYOUTS)
         return True
@@ -1257,6 +1373,15 @@ class PreviewHost:
     # ---- everything below runs ON the preview thread -------------------
 
     def _run(self) -> None:
+        try:
+            self._run_pump()
+        except Exception:
+            logger.exception("Preview pump failed")
+            self._ack("pump-failed")
+        else:
+            self._ack("pump-stopped" if self._stopping else "pump-failed")
+
+    def _run_pump(self) -> None:
         libs = win32.bind()
 
         # First, before any window exists. Thread-local, so the process
@@ -1280,48 +1405,15 @@ class PreviewHost:
                 self._begin_stop(libs)
             return
 
-        self._init_crop_controller(libs)
+        self._ack("pump-started")
         with self._lock:
             primary_signals, self._pending_primary_signals = (
                 self._pending_primary_signals,
                 [],
             )
         for signal in primary_signals:
-            self._host_proc(self._hwnd, signal, 0, 0)
-        if self._stopping:
-            self._begin_stop(libs)
-        # Shared discovery owns enumeration cadence. Request its first
-        # snapshot only after the pump HWND exists, so apply_roster can post
-        # a signal rather than relying solely on the pending slot.
-        self.request_sweep()
-        # apply_roster is safe from any thread and start() returns before
-        # this window exists, so a snapshot published in that gap was retained
-        # with no PostMessageW to carry it. Drain the slot once here; the
-        # ordinary WM_APP_ROSTER path must not apply it a second time.
-        try:
-            self._apply_pending_roster(libs)
-        except Exception:
-            # Unlike the WM_APP_ROSTER path, this call is NOT inside a
-            # wndproc: an escape here unwinds _run itself, and the thread
-            # dies before the hook, the timer, _ready and the pump exist --
-            # previews inert for the session, and stop() then blocking for
-            # its whole timeout posting to a window nothing is pumping for.
-            # The same reasoning as the guarded _on_clients_changed call in
-            # reconciliation, one level up. _apply_pending_roster has put
-            # the snapshot back, so a later publication (or an explicit
-            # retry of the same generation) applies it; deliberately NOT
-            # reposted here, which would be a retry loop against a failure
-            # that is very likely to repeat.
-            logger.exception("Could not apply the startup roster")
-        if not self._stopping:
-            self._install_hook(libs)
-            with self._lock:
-                initial = dict(self._desired_hotkeys)
-            self._apply_hotkeys(libs, initial)
-            if self._crop_controller is not None:
-                self._apply_crop_commands(libs)
-                self._apply_crop_completions(libs)
-            self._apply_alerts(libs, self._drain_alerts())
+            self._host_proc(self._hwnd, signal, self._eve_epoch, 0)
+        self._apply_families(libs)
         self._ready.set()
 
         msg = wintypes.MSG()
@@ -1335,10 +1427,104 @@ class PreviewHost:
             if not consumed:
                 libs.user32.TranslateMessage(ctypes.byref(msg))
                 libs.user32.DispatchMessageW(ctypes.byref(msg))
-            if self._stopping:
+            if self._stopping or self._eve_stopping:
                 # A ready drain may still own a picker's fonts. Retry only at
                 # existing message boundaries, after native callbacks unwind.
                 self._finish_crop_stop(libs)
+
+    def _apply_families(self, libs) -> None:
+        if self._stopping:
+            self._begin_stop(libs)
+            return
+        with self._lock:
+            companions = self._families.companions and not self._closing
+            changed = companions != self._companion_active
+            if changed:
+                self._companion_active = companions
+                self._companion_epoch += 1
+                companion_epochs = (
+                    self._pump_epoch,
+                    self._eve_epoch,
+                    self._companion_epoch,
+                )
+        if changed:
+            # Phase 1 companions own no native resources. This acknowledges
+            # only family authorization, never a fabricated window/controller.
+            self._ack(
+                "companions-active" if companions else "companions-stopped",
+                epochs=companion_epochs,
+            )
+        if self._eve_stopping:
+            self._begin_stop(libs)
+            return
+        with self._lock:
+            if (
+                self._closing
+                or self._eve_failed
+                or self._crop_dispatching
+                or not self._families.eve
+            ):
+                return
+            if not self._eve_admitted:
+                self._eve_epoch += 1
+                self._eve_admitted = True
+                self._eve_phase = "starting"
+            activate = self._eve_phase in ("stopped", "starting")
+            if activate:
+                self._eve_phase = "starting"
+        if activate:
+            epochs = (self._pump_epoch, self._eve_epoch, self._companion_epoch)
+            try:
+                self._activate_eve_family(libs)
+            except Exception:
+                # Failure belongs to EVE, not to the unrelated pump. Retain
+                # partial resources through the normal storage/native barrier;
+                # only another explicit demand may retry this activation.
+                logger.exception("EVE preview family activation failed")
+                with self._lock:
+                    self._eve_failed = True
+                    self._eve_admitted = False
+                    self._eve_stopping = True
+                    self._eve_epoch += 1
+                    epoch = self._crop_epoch
+                if self._crop_store is not None:
+                    self._crop_store.fence_epoch(epoch)
+                self._ack("eve-failed", epochs=epochs)
+                self._begin_stop(libs)
+
+    def _activate_eve_family(self, libs) -> None:
+        epoch = self._eve_epoch
+        self._init_crop_controller(libs)
+        if not self._eve_valid(epoch):
+            self._begin_stop(libs)
+            return
+        # WM_HOTKEY has no epoch. Empty the old OS mailbox before reusing
+        # deterministic registration IDs for this activation.
+        coalesce_hotkey_ids(libs.user32.PeekMessageW, self._hwnd, 0)
+        self._install_hook(libs)
+        with self._lock:
+            initial = dict(self._desired_hotkeys)
+        self._apply_hotkeys(libs, initial)
+        if not self._eve_valid(epoch):
+            self._begin_stop(libs)
+            return
+        with self._lock:
+            self._eve_phase = "active"
+            epochs = (self._pump_epoch, epoch, self._companion_epoch)
+        # Telemetry is reconciled off-pump by the owner callback. Readiness
+        # must precede roster demand, otherwise neither side starts the other.
+        self._ack("eve-active", epochs=epochs)
+        self.request_sweep()
+        try:
+            self._apply_pending_roster(libs)
+        except Exception:
+            # Retain the roster for the next producer publication, not a spin
+            # repost of a failure which is likely to recur.
+            logger.exception("Could not apply the startup roster")
+        if self._crop_controller is not None:
+            self._apply_crop_commands(libs)
+            self._apply_crop_completions(libs)
+        self._apply_alerts(libs, self._drain_alerts())
 
     def _create_host_window(self, libs):
         """A message-only window that outlives every preview.
@@ -1394,7 +1580,10 @@ class PreviewHost:
         if msg == win32.WM_APP_SHUTDOWN:
             self._begin_stop(libs)
             return 0
-        if self._stopping:
+        if msg == win32.WM_APP_FAMILIES:
+            self._apply_families(libs)
+            return 0
+        if self._stopping or self._eve_stopping:
             # Stop ingress fences native authority immediately. Already-posted
             # primary settings intents still run, in FIFO order BEFORE freeze;
             # once draining starts only completions/cleanup may reach natives.
@@ -1412,6 +1601,24 @@ class PreviewHost:
                     self._apply_resize_all()
                 else:
                     self._reset_layouts()
+            return 0
+        if not self._eve_valid():
+            return libs.user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+        if (
+            msg
+            in (
+                win32.WM_APP_ROSTER,
+                win32.WM_APP_CROP_COMMAND,
+                win32.WM_APP_REBIND,
+                win32.WM_APP_ALERT,
+                win32.WM_APP_RESTYLE,
+                win32.WM_APP_RESIZE_ONE,
+                win32.WM_APP_RESIZE_ALL,
+                win32.WM_APP_RESET_LAYOUTS,
+                win32.WM_APP_APPLY_LAYOUTS,
+            )
+            and wparam != self._eve_epoch
+        ):
             return 0
         if msg == win32.WM_TIMER and wparam == ACTIVATE_RETRY_TIMER_ID:
             self._retry_pending_activation(libs)
@@ -1462,13 +1669,16 @@ class PreviewHost:
         callback arrives on an arbitrary thread, and touching HWNDs from
         there is the thread-affinity violation that hangs."""
 
+        epoch = self._eve_epoch
+
         def on_event(hook, event, hwnd, obj, child, tid, ms):
-            # Recorded, not resolved: this callback arrives on an arbitrary
-            # thread and must not touch a preview. _reconcile_roster
-            # resolves it, which is also the only place _clients is
-            # refreshed -- so a just-launched client's first focus cannot
-            # resolve against a stale registry.
-            self._foreground = int(hwnd) if hwnd else 0
+            # The hook is an arbitrary-thread ingress, unlike window callbacks.
+            # Admission and assignment must share the family fence lock so an
+            # old callback cannot write foreground after off/on cleanup.
+            with self._lock:
+                if not self._eve_valid(epoch):
+                    return
+                self._foreground = int(hwnd) if hwnd else 0
             self.request_sweep()
 
         cb = win32.winevent_proc_type()(on_event)
@@ -1523,7 +1733,7 @@ class PreviewHost:
     def _crop_authorized(self, epoch, client=None) -> bool:
         """Current ingress fence, not the pump's possibly stale roster copy."""
         with self._lock:
-            if self._stopping or self._closing or epoch != self._crop_epoch:
+            if not self._eve_valid() or epoch != self._crop_epoch:
                 return False
             return client is None or (
                 self._crop_roster is not None
@@ -1535,7 +1745,7 @@ class PreviewHost:
             )
 
     def _activate_crop(self, libs, name) -> None:
-        if self._stopping:
+        if not self._eve_valid():
             return
         self._apply_pending_roster(libs)
         current = self._crop_controller.sessions.get(name)
@@ -1566,7 +1776,7 @@ class PreviewHost:
         # Order the mailbox decision with start; a stopped host needs no native
         # completion history (the store already bounds its terminal outcomes).
         with self._lock:
-            running = self._starting or self.is_running or self._hwnd is not None
+            running = self._eve_delivery_owned() or self._crop_controller is not None
             if running:
                 self._crop_completions.put(result)
         if running:
@@ -1579,7 +1789,7 @@ class PreviewHost:
         with self._lock:
             if (
                 self._crop_dispatching
-                or self._stopping
+                or not self._eve_valid()
                 or self._crop_controller is None
             ):
                 return
@@ -1616,7 +1826,7 @@ class PreviewHost:
                 # reconciled (equal-generation roster retry is supported).
                 with self._lock:
                     snapshot = self._crop_roster
-                if snapshot is not None and not self._stopping:
+                if snapshot is not None and self._eve_valid():
                     self._crop_controller.reconcile(snapshot)
 
     def _sweep(self, libs) -> None:
@@ -1646,12 +1856,13 @@ class PreviewHost:
         failure means there -- but never at the cost of the snapshot.
         """
         with self._lock:
-            if self._stopping or self._crop_dispatching:
+            if not self._eve_valid() or self._crop_dispatching:
                 # An offline batch accepted before launch still owns delivery.
                 # Even a native window's close callback must not overtake it.
                 return
             snapshot, self._pending_roster = self._pending_roster, None
-        if snapshot is None:
+            epoch = self._eve_epoch
+        if snapshot is None or not self._eve_valid(epoch):
             return
         if snapshot.generation <= self._last_roster_generation:
             logger.debug(
@@ -1666,7 +1877,7 @@ class PreviewHost:
             finally:
                 # A primary failure must not retain a stale crop/picker's
                 # native authorization. Both consumers share the retry fence.
-                if self._crop_controller is not None:
+                if self._crop_controller is not None and self._eve_valid(epoch):
                     self._crop_controller.reconcile(snapshot)
         except Exception:
             # Put it back. It was popped before reconciliation ran, so
@@ -1680,7 +1891,9 @@ class PreviewHost:
             # the producer publishes again on its own cadence anyway.
             with self._lock:
                 pending = self._pending_roster
-                if pending is None or pending.generation < snapshot.generation:
+                if self._eve_valid(epoch) and (
+                    pending is None or pending.generation < snapshot.generation
+                ):
                     self._pending_roster = snapshot
             raise
         # Recorded only once reconciliation has actually returned. A raise in
@@ -1698,6 +1911,9 @@ class PreviewHost:
         the caller's ordering problem (_apply_pending_roster owns it), so
         _sweep can reach here without one.
         """
+        epoch = self._eve_epoch
+        if not self._eve_valid(epoch):
+            return
         clients = {c.stable_key: c for c in map(_preview_client, snapshot.clients)}
         # A title change from a named character to character selection changes
         # the stable key even though the physical client continues. Capture the
@@ -1770,6 +1986,8 @@ class PreviewHost:
         monitors = self._monitors() if added else []
 
         for key in added:
+            if not self._eve_valid(epoch):
+                return
             client = clients[key]
             entry = self._layout_entry(key)
             continuity = continuity_rects.get(key)
@@ -1782,8 +2000,10 @@ class PreviewHost:
                 libs,
                 client,
                 rect,
-                on_activate=lambda c: self._activate_client(libs, c),
-                on_rect_changed=self._layout_changed,
+                on_activate=lambda c, e=epoch: self._activate_client(libs, c, epoch=e),
+                on_rect_changed=lambda *args, e=epoch: (
+                    self._layout_changed(*args) if self._eve_valid(e) else None
+                ),
                 neighbours=lambda k=key: [
                     w.rect for k2, w in self._windows.items() if k2 != k
                 ],
@@ -1807,10 +2027,17 @@ class PreviewHost:
                 # Bound per window: the mirror must skip the very window
                 # that is driving the drag, and the key is only known
                 # here, at creation.
-                on_resize_all=lambda rect, k=key: self._mirror_resize(k, rect),
-                on_toggle_crop=lambda client: self._toggle_crop(libs, client),
+                on_resize_all=lambda rect, k=key, e=epoch: (
+                    self._mirror_resize(k, rect) if self._eve_valid(e) else None
+                ),
+                on_toggle_crop=lambda client, e=epoch: (
+                    self._toggle_crop(libs, client) if self._eve_valid(e) else None
+                ),
             )
             if win is not None:
+                if not self._eve_valid(epoch):
+                    win.close()
+                    return
                 self._windows[key] = win
 
         if added or removed:
@@ -1819,7 +2046,11 @@ class PreviewHost:
             )
 
         now = self.characters()
-        if now != before and self._on_clients_changed is not None:
+        if (
+            self._eve_valid(epoch)
+            and now != before
+            and self._on_clients_changed is not None
+        ):
             # Guarded like _flush_layouts in _teardown: this runs inside
             # _run(), before SetTimer/_ready.set() on the very first sweep.
             # An exception here would unwind out of _run and kill the pump
@@ -1974,12 +2205,19 @@ class PreviewHost:
         self._registered.clear()
         self._registered_text.clear()
 
+        epoch = self._eve_epoch
         status = {}
         for ident, text, action in plan_registrations(self._registerable(table)):
+            if not self._eve_valid(epoch):
+                return
             parsed = gestures.parse(text)
             ok = bool(
                 libs.user32.RegisterHotKey(self._hwnd, ident, parsed.mods, parsed.vk)
             )
+            if not self._eve_valid(epoch):
+                if ok:
+                    libs.user32.UnregisterHotKey(self._hwnd, ident)
+                return
             status[text] = ok
             if ok:
                 self._registered[ident] = action
@@ -2016,7 +2254,7 @@ class PreviewHost:
             sum(1 for ok in status.values() if ok),
             sum(1 for ok in status.values() if not ok),
         )
-        if self._on_hotkey_status is not None:
+        if self._eve_valid(epoch) and self._on_hotkey_status is not None:
             # Guarded for the same reason as _on_clients_changed above: the
             # initial pass runs in _run() before SetTimer/_ready.set(), and
             # a raise here would otherwise kill the pump and strand
@@ -2032,6 +2270,8 @@ class PreviewHost:
         self._on_hotkeys(libs, [ident])
 
     def _on_hotkeys(self, libs, idents: list[int]) -> None:
+        if not self._eve_valid():
+            return
         registered = []
         for ident in idents:
             action = self._registered.get(ident)
@@ -2184,8 +2424,9 @@ class PreviewHost:
             if not text:
                 return True
             self._capture_until = 0.0
+            epoch = self._eve_epoch
         logger.debug("Preview hotkey %s taken by an armed bind capture", text)
-        if self._on_bind_captured is not None:
+        if self._eve_valid(epoch) and self._on_bind_captured is not None:
             try:
                 self._on_bind_captured(text)
             except Exception:
@@ -2222,7 +2463,7 @@ class PreviewHost:
 
     def _arm_pending_activation(self, libs, pending: _PendingSwitch) -> bool:
         """Retain an armable activation request and report whether it was kept."""
-        if not self._hwnd or libs is None:
+        if not self._eve_valid(pending.epoch) or not self._hwnd or libs is None:
             # This can be reached by a pending retry racing teardown. A request
             # without its host window has no path back into the pump, so keeping
             # its saved minimize would make stale intent look live forever.
@@ -2269,7 +2510,7 @@ class PreviewHost:
         SW_SHOWMINNOACTIVE minimizes without activating the next top-level
         window, narrowing the late-delivery risk after a rapid return.
         """
-        if not pending.minimize:
+        if not pending.minimize or not self._eve_valid(pending.epoch):
             return
         previous = self._clients.get(pending.previous_key)
         if previous is None or previous.hwnd != pending.previous_hwnd:
@@ -2283,6 +2524,8 @@ class PreviewHost:
 
     def _mark_client_activated(self, libs, client) -> None:
         """Commit foreground-derived host state after an observed success."""
+        if not self._eve_valid():
+            return
         self._foreground = client.hwnd
         self._apply_selection(libs)
 
@@ -2290,6 +2533,9 @@ class PreviewHost:
         """Advance one pending phase without waiting inside the pump."""
         pending = self._pending_switch
         if pending is None:
+            return
+        if not self._eve_valid(pending.epoch):
+            self._clear_pending_activation(libs)
             return
         if pending.phase is window_mod.ActivationResult.PENDING_FOREGROUND:
             self._observe_pending_foreground(libs, pending)
@@ -2311,6 +2557,9 @@ class PreviewHost:
                 pending.stable_key,
                 pending.hwnd,
             )
+            self._clear_pending_activation(libs)
+            return
+        if not self._eve_valid(pending.epoch):
             self._clear_pending_activation(libs)
             return
         if result is window_mod.ActivationResult.ACTIVATED:
@@ -2423,6 +2672,9 @@ class PreviewHost:
             )
             self._clear_pending_activation(libs)
             return
+        if not self._eve_valid(pending.epoch):
+            self._clear_pending_activation(libs)
+            return
         if result is window_mod.ActivationResult.ACTIVATED:
             self._clear_pending_activation(libs)
             self._mark_client_activated(libs, client)
@@ -2442,7 +2694,9 @@ class PreviewHost:
         self._clear_pending_activation(libs)
         logger.info("Deadline activation of %s was refused", pending.stable_key)
 
-    def _activate_client(self, libs, client) -> window_mod.ActivationResult:
+    def _activate_client(
+        self, libs, client, *, epoch=None
+    ) -> window_mod.ActivationResult:
         """Activate *client*, then asynchronously minimize the exact outgoing client.
 
         The host records the outgoing client before foreground changes. Pending
@@ -2450,7 +2704,8 @@ class PreviewHost:
         activation updates selection and requests its async minimize, which
         prevents the minimize-first desktop gap found in Windows smoke.
         """
-        if self._stopping:
+        epoch = self._eve_epoch if epoch is None else epoch
+        if not self._eve_valid(epoch):
             return window_mod.ActivationResult.REFUSED
         # A newer click or hotkey supersedes an outstanding pending target.
         superseded = self._pending_switch
@@ -2491,6 +2746,7 @@ class PreviewHost:
             previous_key,
             previous_hwnd,
             minimize,
+            epoch=epoch,
         )
         try:
             result = window_mod.activate(libs, client.hwnd)
@@ -2502,6 +2758,8 @@ class PreviewHost:
                 "Activation of 0x%x raised; outgoing client left unchanged", client.hwnd
             )
             raise
+        if not self._eve_valid(epoch):
+            return window_mod.ActivationResult.REFUSED
         if result in (
             window_mod.ActivationResult.PENDING_RESTORE,
             window_mod.ActivationResult.PENDING_FOREGROUND,
@@ -2571,6 +2829,8 @@ class PreviewHost:
         """
         now = time.monotonic()
         for alert in pending:
+            if not self._eve_valid(alert.epoch):
+                continue
             character, event, spec = alert.character, alert.event, alert.spec
             win = self._windows.get(character)
             if win is None:
@@ -2584,7 +2844,8 @@ class PreviewHost:
             # Check here, outside the mailbox lock, at the native arm boundary.
             if event == "custom" and not self._custom_alert_is_current(spec):
                 continue
-            win.arm_alert(event, spec, now)
+            if self._eve_valid(alert.epoch):
+                win.arm_alert(event, spec, now)
         self._update_alert_timer(libs)
 
     def _update_alert_timer(self, libs) -> None:
@@ -3036,9 +3297,12 @@ class PreviewHost:
         cannot claim ownership, so a restyle while Wingman itself holds the
         foreground would hide every preview.
         """
+        epoch = self._eve_epoch
         show_labels = self._labels_shown()
         opacity = self._current_opacity()
         for key, win in self._windows.items():
+            if not self._eve_valid(epoch):
+                return
             # set_labels, not an attribute write: the label is a window
             # now (see PreviewWindow._ensure_label_overlay), so showing
             # or hiding it is the method's whole job.
@@ -3080,12 +3344,13 @@ class PreviewHost:
         """
         with self._lock:
             pending, self._pending_layouts = dict(self._pending_layouts), {}
+            epoch = self._eve_epoch
         if not pending:
             return
         monitors = self._monitors()
         for key, entry in pending.items():
             win = self._windows.get(key)
-            if win is not None:
+            if win is not None and self._eve_valid(epoch):
                 win.move(geometry.clamp_to_monitors(entry.rect, monitors))
 
     def _apply_resizes(self) -> None:
@@ -3172,7 +3437,8 @@ class PreviewHost:
                 or self._stop_cleanup_epoch == self._crop_epoch
             ):
                 return
-            self._stopping = True
+            self._eve_stopping = True
+            self._eve_phase = "stopping"
             self._capture_until = 0.0
             dispatching = self._crop_dispatching
             commands = []
@@ -3180,6 +3446,14 @@ class PreviewHost:
                 commands, self._crop_commands = self._crop_commands, []
             epoch = self._crop_epoch
         self._clear_pending_activation(libs)
+        for ident in list(self._registered):
+            libs.user32.UnregisterHotKey(self._hwnd, ident)
+        self._registered.clear()
+        self._registered_text.clear()
+        self._hotkey_status = {}
+        if self._hook:
+            libs.user32.UnhookWinEvent(self._hook)
+            self._hook = None
         for key, window in list(self._windows.items()):
             # Primary drags commit on button-up, unlike crops' per-move deltas.
             # Freeze a real in-progress move, never an untouched monitor rescue.
@@ -3196,7 +3470,7 @@ class PreviewHost:
             return
         if self._crop_store is None:
             # Optional primary-only seam retains its historical teardown path.
-            self._teardown(libs)
+            self._finish_eve_stop(libs)
             return
         if self._crop_controller is not None:
             future = self._crop_controller.begin_stop(epoch)
@@ -3262,10 +3536,32 @@ class PreviewHost:
                 self._stop_cleanup_epoch = epoch
                 self._crop_controller = None
                 self._crop_runtime_state = {}
-            self._teardown(libs, flush=False)
+            self._finish_eve_stop(libs, flush=False)
             self._notify_crop_state()
 
+    def _finish_eve_stop(self, libs, *, flush=True) -> None:
+        self._teardown_eve(libs, flush=flush)
+        with self._lock:
+            epochs = (self._pump_epoch, self._eve_epoch, self._companion_epoch)
+            self._eve_phase = "stopped"
+            self._eve_stopping = False
+            self._eve_admitted = False
+            final_pump = self._stopping
+            if not final_pump:
+                self._stop_future = None
+                self._stop_final = False
+                self._stop_cleanup_epoch = None
+        self._ack("eve-stopped", epochs=epochs)
+        if final_pump:
+            self._destroy_pump(libs)
+        else:
+            self._apply_families(libs)
+
     def _teardown(self, libs, *, flush=True) -> None:
+        self._teardown_eve(libs, flush=flush)
+        self._destroy_pump(libs)
+
+    def _teardown_eve(self, libs, *, flush=True) -> None:
         """Ordered native teardown; production storage was drained off-pump."""
         # Primary-only callers retain their legacy flush hook. Production
         # reaches here only after the retained crop worker flushed both stores;
@@ -3330,16 +3626,25 @@ class PreviewHost:
         self._selected_key = None
         self._foreground = 0
         self._last_character_by_process = {}
+        self._client_sizes = {}
+        self._registered_text = {}
+        self._last_cycled = None
         if self._hook:
             libs.user32.UnhookWinEvent(self._hook)  # 1. hook
             self._hook = None
         for win in list(self._windows.values()):
             win.close()  # 2. thumbnails + windows
         self._windows.clear()
+        if self._hwnd and self._alert_timer:
+            libs.user32.KillTimer(self._hwnd, ctypes.c_void_p(ALERT_TIMER_ID))
+            self._alert_timer = False
+
+    def _destroy_pump(self, libs) -> None:
+        if self._companion_active:
+            self._companion_active = False
+            self._companion_epoch += 1
+            self._ack("companions-stopped")
         if self._hwnd:
-            if self._alert_timer:
-                libs.user32.KillTimer(self._hwnd, ctypes.c_void_p(ALERT_TIMER_ID))
-                self._alert_timer = False
-            libs.user32.DestroyWindow(self._hwnd)  # 3. host window
+            libs.user32.DestroyWindow(self._hwnd)
             self._hwnd = None
-        libs.user32.PostQuitMessage(0)  # 4. end the pump
+        libs.user32.PostQuitMessage(0)

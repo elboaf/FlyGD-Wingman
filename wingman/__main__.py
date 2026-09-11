@@ -571,9 +571,11 @@ def build_alerts_controller(state, host, api_box) -> AlertsController:
             reader_state=lambda: api_box["api"]._custom_reader_state(),
             matcher_health=lambda: api_box["api"]._custom_matcher_health(),
             preview_characters=lambda: (
-                tuple(host.characters()) if host is not None else ()
+                tuple(host.characters())
+                if host is not None and host.runtime_enabled
+                else ()
             ),
-            preview_available=lambda: host is not None,
+            preview_available=lambda: host is not None and host.runtime_enabled,
             raise_alert=lambda character, event, spec: host.raise_alert(
                 character, event, spec
             ),
@@ -918,7 +920,10 @@ def main() -> int:
     # registry intentionally does not keep settings documents alive itself.
     _preview_config = settings_mod.committed_preview(state.settings)
     api_box = {}
+    from .preview.runtime import PreviewRuntime
+
     preview_host = build_preview_host(state, api_box)
+    preview_runtime = PreviewRuntime(preview_host)
     alerts_controller = build_alerts_controller(state, preview_host, api_box)
     api_box["alerts"] = alerts_controller
     alert_policy = build_alert_policy(state, preview_host, alerts_controller)
@@ -927,6 +932,7 @@ def main() -> int:
     api = api_mod.Api(
         state,
         preview_host=preview_host,
+        preview_runtime=preview_runtime,
         telemetry=telemetry,
         fleet_sharing=sharing_worker,
         alerts_controller=alerts_controller,
