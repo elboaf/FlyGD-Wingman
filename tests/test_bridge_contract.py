@@ -348,6 +348,51 @@ def test_profiles_facade_methods_delegate_lexically_to_private_controller_method
         assert call.keywords == [], method_name
 
 
+@pytest.mark.parametrize(
+    "facade,delegate,args",
+    [
+        ("get_custom_alert_state", "state", []),
+        ("add_custom_alert", "add", []),
+        ("edit_custom_alert", "edit", ["rule_id", "draft"]),
+        ("set_custom_alert_enabled", "set_enabled", ["rule_id", "enabled"]),
+        ("remove_custom_alert", "remove", ["rule_id"]),
+        ("test_custom_alert", "test", ["rule_id", "draft"]),
+    ],
+)
+def test_custom_alert_facades_are_exact_single_line_delegates(facade, delegate, args):
+    from wingman.ui.api import Api
+
+    assert list(inspect.signature(getattr(Api, facade)).parameters) == ["self", *args]
+    tree = ast.parse(API.read_text(encoding="utf-8"))
+    method = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == facade
+    )
+    assert len(method.body) == 1
+    assert isinstance(method.body[0], ast.Return)
+    assert (
+        ast.unparse(method.body[0])
+        == f"return self._alerts_controller.{delegate}({', '.join(args)})"
+    )
+
+
+def test_custom_alerts_have_no_push_channel_or_ui_import():
+    assert not any("alert" in name.lower() for name in allowlist() + pushed_names())
+    source = (API.parent.parent / "alerts" / "controller.py").read_text(
+        encoding="utf-8"
+    )
+    assert "WM.handle(" not in (WEB / "alerts.js").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            assert "ui" not in (node.module or "").split(".")
+        elif isinstance(node, ast.Import):
+            assert not any("ui" in alias.name.split(".") for alias in node.names)
+        elif isinstance(node, ast.Attribute):
+            assert node.attr not in {"_push", "evaluate_js", "_window"}
+
+
 UPLOAD_CONTROLLER = API.parent.parent / "upload" / "controller.py"
 
 

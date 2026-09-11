@@ -73,6 +73,9 @@ class FakeTelemetry:
     def snapshot(self):
         return self.latest
 
+    def close_custom_admission(self):
+        pass
+
     def stop(self):
         pass
 

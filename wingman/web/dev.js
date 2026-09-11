@@ -413,18 +413,111 @@
     return Promise.resolve({applied: true, persisted: false, error: null});
   };
 
+  // Bounded, mutable custom-alert authority for the existing Alerts card.
+  // Query examples: ?dev=1&custom=full, literal, empty, custom-only,
+  // master-off, reader-error, no-characters, waiting, degraded, failed-save.
+  var DEV_CUSTOM_ALERT_LIMIT = 8;
+  var DEV_CUSTOM_ALERT_DEFAULTS = {name: 'Custom alert', search: '', enabled: false,
+    color: '#ff8c42', sound: 'none', cooldown_s: 8};
+  var customScenario = devSearch.get('custom') || 'empty';
+  var devCustomRevision = 1, devCustomNextId = 0;
+  var devCustomRules = [];
+  function devCustomCopy(value) { return JSON.parse(JSON.stringify(value)); }
+  if (customScenario !== 'empty') {
+    var customCount = customScenario === 'full' ? DEV_CUSTOM_ALERT_LIMIT : 1;
+    for (var cr = 0; cr < customCount; cr++) {
+      devCustomRules.push(Object.assign({id: 'dev-custom-' + (++devCustomNextId)}, DEV_CUSTOM_ALERT_DEFAULTS,
+        {name: customScenario === 'literal' ? '<b>Literal name</b>' : 'Fleet cue',
+          search: customScenario === 'literal' ? '<b>literal search</b>' : 'fleet cue', enabled: true,
+          color: customScenario === 'literal' ? '#123abc' : DEV_CUSTOM_ALERT_DEFAULTS.color}));
+    }
+  }
+  function devCustomState() {
+    return {revision: devCustomRevision, rules: devCustomCopy(devCustomRules), limit: DEV_CUSTOM_ALERT_LIMIT,
+      previews_enabled: customScenario !== 'master-off', alerts_enabled: customScenario !== 'master-off',
+      reader: {running: customScenario !== 'reader-error',
+        last_error: customScenario === 'reader-error' ? 'Gamelogs folder is unavailable.' : null,
+        characters: customScenario === 'no-characters' ? [] : ['Aiga Otsolen', 'Zuelo Parvi'],
+        gamelogs_folder: customScenario === 'reader-error' ? null : 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs'},
+      matcher: {state: customScenario === 'master-off' || !devCustomRules.some(function (r) { return r.enabled; })
+        ? 'inactive' : customScenario === 'degraded' ? 'degraded' : customScenario === 'waiting' ? 'waiting' : 'active',
+        detail: customScenario === 'degraded' ? 'custom_match_failed' : null}};
+  }
+  function devCustomResult(id, error) {
+    return Promise.resolve({applied: !error, persisted: !error, error: error || null,
+      rule_id: id, state: devCustomState()});
+  }
+  function devCustomIndex(id) { return devCustomRules.map(function (r) { return r.id; }).indexOf(id); }
+  function devCustomLength(text) {
+    return text.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '_').length;
+  }
+  function devCustomError(id) {
+    if (devCustomIndex(id) === -1) { return 'This custom alert no longer exists.'; }
+    return customScenario === 'failed-save' ? 'Could not save custom alerts. Your previous settings are unchanged.' : null;
+  }
+  function devCustomStyleError(draft) {
+    var options = document.getElementById('alert-event-combat-sound').options;
+    var sounds = Array.prototype.map.call(options, function (opt) { return opt.value; });
+    return !draft || !/^#[a-fA-F0-9]{6}$/.test(draft.color) || sounds.indexOf(draft.sound) === -1
+      || typeof draft.cooldown_s !== 'number' || draft.cooldown_s % 1 !== 0
+      || draft.cooldown_s < 0 || draft.cooldown_s > 120 ? 'Choose a valid colour, sound and cooldown.' : null;
+  }
+  api.get_custom_alert_state = function () { return Promise.resolve(devCustomState()); };
+  api.add_custom_alert = function () {
+    if (customScenario === 'failed-save') { return devCustomResult(null, 'Could not save custom alerts. Your previous settings are unchanged.'); }
+    if (devCustomRules.length >= DEV_CUSTOM_ALERT_LIMIT) { return devCustomResult(null, 'You can have at most ' + DEV_CUSTOM_ALERT_LIMIT + ' custom alerts.'); }
+    var rule = Object.assign({id: 'dev-custom-' + (++devCustomNextId)}, DEV_CUSTOM_ALERT_DEFAULTS);
+    devCustomRules.push(rule); devCustomRevision++;
+    return devCustomResult(rule.id);
+  };
+  api.edit_custom_alert = function (id, draft) {
+    var error = devCustomError(id) || devCustomStyleError(draft);
+    if (error) { return devCustomResult(id, error); }
+    if (typeof draft.name !== 'string' || !draft.name.trim() || devCustomLength(draft.name.trim()) > 80
+        || typeof draft.search !== 'string' || typeof draft.enabled !== 'boolean'
+        || /[\u0000-\u001f\u007f-\u009f]/.test(draft.name + draft.search)) {
+      return devCustomResult(id, 'Provide a name and search without control characters.');
+    }
+    var search = draft.search.trim(), visible = search.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+    if (search && (devCustomLength(visible) < 3 || devCustomLength(visible) > 200)) { return devCustomResult(id, 'Search must contain 3–200 visible characters.'); }
+    var next = {id: id, name: draft.name.trim(), search: search, enabled: !!search && draft.enabled,
+      color: draft.color.toLowerCase(), sound: draft.sound, cooldown_s: draft.cooldown_s};
+    var index = devCustomIndex(id);
+    if (JSON.stringify(next) !== JSON.stringify(devCustomRules[index])) { devCustomRules[index] = next; devCustomRevision++; }
+    return devCustomResult(id);
+  };
+  api.set_custom_alert_enabled = function (id, enabled) {
+    var error = devCustomError(id);
+    if (error) { return devCustomResult(id, error); }
+    var rule = devCustomRules[devCustomIndex(id)];
+    if (typeof enabled !== 'boolean' || (enabled && !rule.search)) { return devCustomResult(id, 'Enter a search before enabling this alert.'); }
+    if (rule.enabled !== enabled) { rule.enabled = enabled; devCustomRevision++; }
+    return devCustomResult(id);
+  };
+  api.remove_custom_alert = function (id) {
+    var error = devCustomError(id);
+    if (error) { return devCustomResult(id, error); }
+    devCustomRules.splice(devCustomIndex(id), 1); devCustomRevision++;
+    return devCustomResult(id);
+  };
+  api.test_custom_alert = function (id, draft) {
+    var error = devCustomIndex(id) === -1 ? 'This custom alert no longer exists.' : devCustomStyleError(draft);
+    return Promise.resolve({applied: !error, persisted: false, error: error || 'Browser demo: no native sound or preview played.'});
+  };
+
   // get_alert_state is a read (like get_preview_hotkey_state), not a
   // push -- see alerts.js. Kept in one place so the Alerts card can be
   // eyeballed under ?dev=1 without launching Python.
   api.get_alert_state = function () {
     console.log('DEV api.get_alert_state()');
+    var custom = devCustomState();
     return Promise.resolve({
-      previews_enabled: true,
+      previews_enabled: custom.previews_enabled,
       alerts: settingsPayload().settings.preview.alerts,
-      running: true,
-      last_error: null,
-      characters: ['Aiga Otsolen', 'Zuelo Parvi'],
-      gamelogs_folder: 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs'
+      running: custom.previews_enabled && custom.alerts_enabled && custom.reader.running,
+      last_error: custom.reader.last_error,
+      characters: custom.reader.characters,
+      gamelogs_folder: custom.reader.gamelogs_folder
     });
   };
 
@@ -1815,7 +1908,8 @@
             // default cannot show that settings.js reads the payload
             // rather than leaving the box at its markup state.
             hide_on_lost_focus: true,
-            alerts: { enabled: true, pve_filter: true,
+            alerts: { enabled: customScenario !== 'master-off', pve_filter: true,
+              custom_rules: devCustomCopy(devCustomRules),
               persist_until_selected: true,
               // 70, against a shipped default of 100, for the same reason
               // hide_on_lost_focus is true above: a fixture matching the
@@ -1823,12 +1917,12 @@
               // rather than sitting where the markup left it.
               volume: 70,
               events: {
-                combat: { enabled: true, cooldown_s: 1, flash_rate: 'fast',
+                combat: { enabled: customScenario !== 'custom-only', cooldown_s: 1, flash_rate: 'fast',
                   pulses: 3, color: '#ff4d4d', sound: 'system-fault' },
-                warp_scramble: { enabled: true, cooldown_s: 8,
+                warp_scramble: { enabled: customScenario !== 'custom-only', cooldown_s: 8,
                   flash_rate: 'normal', pulses: 3, color: '#ffd24d',
                   sound: 'obey' },
-                decloak: { enabled: true, cooldown_s: 8, flash_rate: 'slow',
+                decloak: { enabled: customScenario !== 'custom-only', cooldown_s: 8, flash_rate: 'slow',
                   pulses: 5, color: '#4dd2ff', sound: 'sly' }
               }
             }

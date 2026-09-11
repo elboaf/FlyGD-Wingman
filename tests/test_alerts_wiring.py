@@ -10,8 +10,9 @@ redefined. It takes tmp_path positionally and forwards **kwargs to Api().
 import re
 
 from tests.test_api import make_api
+from wingman import settings
 from wingman.alerts import service as alert_service
-from wingman.telemetry.model import StreamHealth
+from wingman.telemetry.model import CustomMatcherHealth, StreamHealth
 
 
 class FakeTelemetry:
@@ -19,6 +20,7 @@ class FakeTelemetry:
         self.reconciled = 0
         self.subscribers = []
         self.stopped = 0
+        self.custom_closed = False
         self._health = health or StreamHealth(state="stopped")
         self._characters = tuple(characters)
 
@@ -31,6 +33,12 @@ class FakeTelemetry:
 
     def stop(self):
         self.stopped += 1
+
+    def close_custom_admission(self):
+        self.custom_closed = True
+
+    def custom_matcher_health(self):
+        return CustomMatcherHealth("waiting")
 
     def stream_health(self):
         return self._health
@@ -134,8 +142,9 @@ def test_shared_telemetry_health_drives_alert_state(tmp_path):
         characters=("Alice", "Bob"),
     )
     api = make_api(tmp_path, telemetry=telemetry, preview_host=FakePreviewHost())
-    api._state.settings["preview"] = {"enabled": True, "alerts": _alerts_section()}
-    api._state.settings["gamelogs_dir"] = str(tmp_path)
+    with settings.update(api._state.settings) as document:
+        document["preview"] = {"enabled": True, "alerts": _alerts_section()}
+        document["gamelogs_dir"] = str(tmp_path)
 
     state = api.get_alert_state()
 
@@ -147,10 +156,11 @@ def test_shared_telemetry_health_drives_alert_state(tmp_path):
 def test_fleet_owned_stream_does_not_make_disabled_alerts_look_armed(tmp_path):
     telemetry = FakeTelemetry(StreamHealth(state="active"), characters=("Alice",))
     api = make_api(tmp_path, telemetry=telemetry)
-    api._state.settings["preview"] = {
-        "enabled": True,
-        "alerts": _alerts_section(enabled=False),
-    }
+    with settings.update(api._state.settings) as document:
+        document["preview"] = {
+            "enabled": True,
+            "alerts": _alerts_section(enabled=False),
+        }
 
     state = api.get_alert_state()
 
@@ -489,10 +499,9 @@ def test_get_alert_state_hides_a_gamelogs_folder_that_no_longer_exists(tmp_path)
 
 # ---- The Alerts card itself -------------------------------------------------
 #
-# No JS test harness exists (test_preview_wiring.py's comment above
-# test_an_absent_registration_entry_is_its_own_state explains why), so these
-# assert on source text like that file does. That is a real limit: they pin
-# the mechanism, not the rendered result.
+# Lexical bridge/convention guards complement scripts/test_alerts_runtime.js,
+# which executes production listeners with delayed replies. Neither renders
+# the card or establishes Windows/WebView2 acceptance.
 
 
 def _web(name):
@@ -540,6 +549,27 @@ def test_the_alerts_card_has_its_own_section_and_polls_on_it():
         "D1 the card is only rendered in #section-alerts"
     )
     assert "'previews'" not in listener
+
+
+def test_custom_card_is_between_builtin_controls_and_the_folder():
+    html = _web("index.html")
+    section = html.split('id="section-alerts"')[1].split('id="section-')[0]
+    assert section.index('id="alert-volume"') < section.index('id="custom-alerts"')
+    assert section.index('id="custom-alerts"') < section.index('id="f-gamelogs"')
+    for suffix in ("list", "add", "health", "status"):
+        assert f'id="custom-alert-{suffix}"' in section
+    js = _web("alerts.js")
+    for method in (
+        "get_custom_alert_state",
+        "add_custom_alert",
+        "edit_custom_alert",
+        "set_custom_alert_enabled",
+        "remove_custom_alert",
+        "test_custom_alert",
+    ):
+        assert f"WM.send('{method}'" in js
+    assert "WM.confirm('Remove custom alert'" in js
+    assert "state.alerts.custom_rules" in js
 
 
 def test_the_alerts_script_is_loaded():

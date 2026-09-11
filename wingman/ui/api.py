@@ -53,6 +53,7 @@ from .. import settings as settings_mod
 from .. import updates as updates_mod
 from ..alerts import patterns as alert_patterns
 from ..alerts import service as alert_service
+from ..alerts.controller import AlertsController, AlertsPorts
 from ..eveauth import application as eveauth_application
 from ..evesettings.controller import ProfilesController, ProfilesPorts
 from ..fleetsharing.projection import verified_character_ids
@@ -62,6 +63,7 @@ from ..preview import gestures as preview_gestures
 from ..preview import host as preview_host_mod
 from ..preview import layout as preview_layout
 from ..preview import window as preview_window
+from ..telemetry.model import CustomMatcherHealth
 from ..upload.controller import (
     PROBE_DRAIN_S,
     UploaderController,
@@ -367,6 +369,7 @@ class Api:
         telemetry=None,
         fleet_sharing=None,
         telemetry_factory=None,
+        alerts_controller=None,
         authority=None,
         fittings=None,
         authority_warnings=(),
@@ -375,6 +378,7 @@ class Api:
         is_frozen=lambda: bool(getattr(sys, "frozen", False)),
     ):
         self._state = state
+        self._preview_config = settings_mod.committed_preview(state.settings)
         self._window = None  # assigned by ui.window.create()
         # Assigned by ui.sigbar.create(), same underscore-only rule as
         # _window above: a public attribute here reaches the js_api proxy
@@ -466,6 +470,11 @@ class Api:
         # an inert preview/alert/fleet state.
         self._telemetry = telemetry
         self._telemetry_factory = telemetry_factory
+        self._alerts_controller = (
+            alerts_controller
+            if alerts_controller is not None
+            else self._build_alerts_controller()
+        )
         self._eve_runtime_lock = threading.RLock()
         self._eve_runtime_closed = False
         self._eve_runtime_stop_requested = False
@@ -3791,6 +3800,12 @@ class Api:
         """Reject new reconciliation before subscriptions or windows are removed."""
         with self._eve_runtime_lock:
             self._eve_runtime_closed = True
+            self._alerts_controller.close_runtime()
+            telemetry = self._telemetry
+        # This only fences ingress; no consumer callback or join. Keep the
+        # retained owner even when its later bounded stop cannot finish.
+        if telemetry is not None:
+            telemetry.close_custom_admission()
 
     def _stop_eve_telemetry(self) -> None:
         if self._telemetry is not None:
@@ -5017,6 +5032,77 @@ class Api:
 
     # ---- Gamelog alerts --------------------------------------------------
 
+    def _build_alerts_controller(self) -> AlertsController:
+        return AlertsController(
+            self._state.settings,
+            ports=AlertsPorts(
+                update_settings=lambda: settings_mod.update(self._state.settings),
+                reader_state=self._custom_reader_state,
+                matcher_health=self._custom_matcher_health,
+                preview_characters=lambda: (
+                    tuple(self._preview_host.characters())
+                    if self._preview_host is not None
+                    else ()
+                ),
+                preview_available=lambda: self._preview_host is not None,
+                raise_alert=lambda character, event, spec: (
+                    self._preview_host.raise_alert(character, event, spec)
+                ),
+                play_sound=alert_service.play_sound,
+            ),
+        )
+
+    def get_custom_alert_state(self) -> dict:
+        return self._alerts_controller.state()
+
+    def add_custom_alert(self) -> dict:
+        return self._alerts_controller.add()
+
+    def edit_custom_alert(self, rule_id, draft) -> dict:
+        return self._alerts_controller.edit(rule_id, draft)
+
+    def set_custom_alert_enabled(self, rule_id, enabled) -> dict:
+        return self._alerts_controller.set_enabled(rule_id, enabled)
+
+    def remove_custom_alert(self, rule_id) -> dict:
+        return self._alerts_controller.remove(rule_id)
+
+    def test_custom_alert(self, rule_id, draft) -> dict:
+        return self._alerts_controller.test(rule_id, draft)
+
+    def _custom_matcher_health(self) -> CustomMatcherHealth:
+        telemetry = self._telemetry
+        if telemetry is not None:
+            return telemetry.custom_matcher_health()
+        snapshot = self._preview_config.alerts_snapshot()
+        return CustomMatcherHealth(
+            "waiting" if snapshot.executable else "inactive",
+            snapshot.rules_revision,
+            snapshot.activation_epoch,
+        )
+
+    def _custom_reader_state(self) -> dict:
+        """Shared reader availability, independent of custom matching activation."""
+        gamelogs = self._state.settings.get("gamelogs_dir")
+        folder = Path(gamelogs) if gamelogs else combatlog.find_gamelogs_dir()
+        # A folder valid at write time may since have been unmounted or removed.
+        if folder is not None and not folder.is_dir():
+            folder = None
+        telemetry = self._telemetry
+        if telemetry is not None:
+            health = telemetry.stream_health()
+            running = health.state in {"running", "active"}
+            last_error = health.detail if health.state in {"stale", "error"} else None
+            characters = list(telemetry.stream_characters())
+        else:
+            running, last_error, characters = False, None, []
+        return {
+            "running": running,
+            "last_error": last_error,
+            "characters": characters,
+            "gamelogs_folder": str(folder) if folder is not None else None,
+        }
+
     def _write_alert_setting(self, path: tuple, value) -> dict:
         """Persist one value under preview.alerts, no-op guarded.
 
@@ -5032,7 +5118,8 @@ class Api:
     def set_alert_enabled(self, enabled) -> dict:
         """Turn the gamelog alert poller on or off."""
         result = self._write_alert_setting(("enabled",), bool(enabled))
-        self._reconcile_eve_runtime()
+        if result["applied"]:
+            self._reconcile_eve_runtime()
         return result
 
     def set_alert_pve_filter(self, enabled) -> dict:
@@ -5161,36 +5248,20 @@ class Api:
         be pushed into a window that is not there yet and _push swallows
         it. The page asks for this on load instead.
         """
-        section = self._state.settings.get("preview", {})
+        section = self._preview_config.snapshot()
         alerts = section.get("alerts", {})
-        gamelogs = self._state.settings.get("gamelogs_dir")
-        folder = Path(gamelogs) if gamelogs else combatlog.find_gamelogs_dir()
-        # Same test as the coordinator's resolver: a folder that was valid
-        # and stopped being one (an unmounted drive, an unlinked OneDrive
-        # folder, a settings.json carried from another machine) must show
-        # the no-folder banner, not the healthy card, even though the
-        # setting still holds a path.
-        if folder is not None and not folder.is_dir():
-            folder = None
-        alerts_wanted = bool(
+        reader = self._custom_reader_state()
+        if not (
             self._preview_host is not None
             and section.get("enabled")
             and alerts.get("enabled")
-        )
-        if self._telemetry is not None and alerts_wanted:
-            health = self._telemetry.stream_health()
-            running = health.state in {"running", "active"}
-            last_error = health.detail if health.state in {"stale", "error"} else None
-            characters = list(self._telemetry.stream_characters())
-        else:
-            running, last_error, characters = False, None, []
+        ):
+            # Fleet may own a healthy reader without Alerts being armed.
+            reader.update(running=False, last_error=None, characters=[])
         return {
             "previews_enabled": bool(section.get("enabled")),
             "alerts": dict(alerts),
-            "running": running,
-            "last_error": last_error,
-            "characters": characters,
-            "gamelogs_folder": str(folder) if folder is not None else None,
+            **reader,
         }
 
     # ---- Where a preview opens ------------------------------------------

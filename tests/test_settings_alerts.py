@@ -137,6 +137,9 @@ def test_a_layout_write_does_not_reset_the_alerts_section(tmp_path):
     data = settings._fresh_defaults()
     data["preview"]["alerts"]["events"]["combat"]["color"] = "#00ff00"
     data["preview"]["alerts"]["persist_until_selected"] = False
+    data["preview"]["alerts"]["custom_rules"] = [
+        {"id": "r1", "search": "Fleet Invite", "enabled": True, "sound": "alarm"}
+    ]
     settings.save(data, path)
 
     live = settings.load(path)
@@ -146,3 +149,5 @@ def test_a_layout_write_does_not_reset_the_alerts_section(tmp_path):
     on_disk = json.loads(path.read_text(encoding="utf-8"))["preview"]["alerts"]
     assert on_disk["events"]["combat"]["color"] == "#00ff00"
     assert on_disk["persist_until_selected"] is False
+    assert on_disk["custom_rules"][0]["search"] == "Fleet Invite"
+    assert on_disk["custom_rules"][0]["sound"] == "system-fault"

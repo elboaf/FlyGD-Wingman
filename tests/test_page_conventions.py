@@ -1953,6 +1953,57 @@ def test_two_enabled_alerts_on_one_colour_are_flagged():
     assert "Their preview pulses are indistinguishable." in alerts
 
 
+def test_custom_alerts_reuse_checked_sound_options_and_scoped_disclosure_styles():
+    js = _strip_js_comments((WEB / "alerts.js").read_text(encoding="utf-8"))
+    assert "WM.el('alert-event-combat-sound').options" in js
+    assert "option.value = options[i].value" in js
+    assert "option.textContent" in js or "options[i].textContent" in js
+    from dataclasses import asdict
+
+    import pytest
+
+    from wingman import settings
+    from wingman.alerts.custom import MIN_CUSTOM_SEARCH, CustomRule, RuleValidationError
+
+    assert f"At least {MIN_CUSTOM_SEARCH} visible characters" in js
+    bounds = re.search(r"for \(var n = (\d+); n <= (\d+); n\+\+\)", js)
+    assert bounds
+    low, high = map(int, bounds.groups())
+    for value in range(low, high + 1):
+        draft = asdict(CustomRule("test", cooldown_s=value))
+        assert settings.validate_custom_rule_edit("test", draft).cooldown_s == value
+    for value in (low - 1, high + 1):
+        with pytest.raises(RuleValidationError):
+            settings.validate_custom_rule_edit(
+                "test", asdict(CustomRule("test", cooldown_s=value))
+            )
+    assert CustomRule("test").color in js
+    assert "'Orange'" in js
+    assert "state.limit" in js or "customState.limit" in js
+    assert "row.enabled.type = 'checkbox'" in js
+    assert "node('span', 'box')" in js
+    for selector in (
+        "#custom-alerts .custom-alert-editor",
+        "#custom-alerts .custom-alert-summary",
+        "#custom-alerts .custom-alert-style",
+        "#custom-alerts .custom-alert-actions",
+    ):
+        assert selector + "[hidden]" in CSS
+    assert "suffix === 'remove' ? 'btn danger' : 'btn'" in js
+    assert "row.msg.setAttribute('role', 'status')" in js
+
+
+def test_custom_alert_selects_shrink_to_their_grid_track_not_the_shared_basis():
+    # The shared Settings select has a fixed 150px flex basis. width:100%
+    # alone left the custom 120px Cooldown track overflowing its card.
+    scoped = re.search(
+        r"#custom-alerts \.custom-alert-style > \.row > select\.field\s*\{([^}]+)\}",
+        CSS,
+    )
+    assert scoped, "custom style selects need their own flex-basis override"
+    assert re.search(r"flex:\s*0\s+1\s+100%\s*;", scoped[1])
+
+
 def test_the_alert_rows_offer_exactly_the_sounds_that_exist():
     """index.html hand-writes nine <option>s for three events, and
     settings.py owns the list they must match.

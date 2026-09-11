@@ -104,6 +104,45 @@ def test_frame_index_is_in_range():
         assert 0 <= state.frame_index(a, i * 0.08) < len(state.FRAME_ALPHAS)
 
 
+@pytest.mark.parametrize("event", ["decloak", "combat", "warp_scramble"])
+def test_custom_cannot_repaint_an_active_builtin(event):
+    high = state.arm(None, event, "#4dd2ff", 0.0, **ARM)
+    actual = state.arm(high, "custom", "#ff8c42", 0.1, **ARM)
+    assert actual.event == event
+    assert actual.color == "#4dd2ff"
+    assert actual.expires == pytest.approx(1.3)
+
+
+@pytest.mark.parametrize("event", ["decloak", "combat", "warp_scramble"])
+def test_every_builtin_replaces_an_active_custom(event):
+    low = state.arm(None, "custom", "#ff8c42", 0.0, **ARM)
+    actual = state.arm(low, event, "#4dd2ff", 0.1, **ARM)
+    assert actual.event == event
+    assert actual.color == "#4dd2ff"
+
+
+def test_custom_is_renderer_only_and_has_a_unique_lowest_rank():
+    from wingman.alerts.patterns import EVENTS, SEVERITY
+
+    assert "custom" not in EVENTS
+    assert SEVERITY["custom"] == 0
+    assert all(SEVERITY[event] > 0 for event in EVENTS)
+
+
+@pytest.mark.parametrize(
+    "persist,focused", [(False, False), (True, False), (True, True)]
+)
+def test_custom_expiry_and_acknowledgement_use_existing_ring_policy(persist, focused):
+    alert = _arm(None, "custom", 0.0, persist=persist, target_is_selected=focused)
+    if persist and not focused:
+        assert state.clear_expired(alert, 99.0) == alert
+        assert state.acknowledge(alert) is None
+    else:
+        assert alert.expires == pytest.approx(1.2)
+        assert state.clear_expired(alert, 1.2) is None
+        assert state.acknowledge(alert) == alert
+
+
 # ---- flash speed -----------------------------------------------------------
 # `duration_ms` is derived, not stored: an event holds how many flashes it
 # gets (`pulses`) and how fast they go (`flash_rate`), and the duration is

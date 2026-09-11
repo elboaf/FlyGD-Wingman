@@ -3271,8 +3271,74 @@ independent of both preview thumbnails and alert preferences.
 
 When a player shoots, scrambles or decloaks one of your logged-in
 characters, that client's preview pulses in a colour and a sound plays.
-This subsystem is window and audio-only — nothing in it can be tested
-headless.
+Policy, settings, source ownership and delivery admission have headless tests;
+actual rendering, focus hooks and audio still require Windows.
+
+### Custom gamelog alerts — Windows/WebView2 acceptance gate
+
+**OPEN until an operator records real Windows results.** Linux integration,
+Node and Chromium dev-page evidence in
+[custom-gamelog-alerts-verification.md](custom-gamelog-alerts-verification.md)
+do not replace this gate. Use an isolated settings document and a dedicated
+local gamelog folder with controlled Listener files. Synthetic appends belong
+only in that folder, never active EVE logs or live character profiles. Restore
+the user's selected folder/settings after the authorized test. Do not enable
+production fleet sharing, move/resize EVE clients or send gameplay input.
+
+- [ ] **Minimum-size layout at 100%, 125%, 150% and 200% scaling.** Open
+      Settings > Alerts at the actual minimum window size (840x625 logical
+      pixels; also check the 839x621 rounding case). Check zero and eight rules,
+      the open editor, long/duplicate names, every control, the Add-at-capacity
+      note, vertical scroll reachability and no horizontal clipping in either
+      the card or its inner scrollport. Title-bar drag/close controls remain
+      unchanged. Check keyboard flow, visible focus, 4.5:1 text and 3:1 focus
+      contrast on the actual WebView2 rendering.
+- [ ] **Atomic editing and acknowledgment.** Add/edit with Enter and Apply,
+      leave an uncommitted name/search draft, change style, Test, navigate away
+      and back, and remove with Cancel then Confirm. Verify no blur write,
+      no stale response overwrite, focus restoration and a current acknowledged
+      baseline after a refused write. A blank new/cleared rule stays disabled;
+      enabling blank text is refused, not a match-everything rule.
+- [ ] **Bundled sounds and real replacement.** Select bundled sounds and Test
+      volume 0/intermediate/100. Verify actual playback, one sound rather than
+      one per preview, real `winsound` replacement, and built-in scram precedence
+      over custom cues across two characters in one controlled batch.
+- [ ] **Focus and absent previews.** Focus the matched EVE client: timed flash
+      without sound or persistence. Focus another client: configured sound and
+      persistence apply. An excluded or closed preview may still sound without
+      drawing a different client's ring.
+- [ ] **Native ring priority.** Verify orange/custom rendering, protection of
+      every higher built-in severity, persistent acknowledgment and timed expiry.
+      Repeat with built-in alerts both queued and already armed. Test remains
+      timed and does not consume the real rule's cooldown.
+- [ ] **Listener attribution.** Append timestamped, marked-up matching lines
+      to each controlled Listener file, including the same fleet-broadcast scram
+      line in two files. Custom rules apply to each Listener; the built-in scram
+      belongs only to its parsed target, not every recipient of the broadcast.
+- [ ] **Replay and complete lines.** No startup/history replay or partial-line
+      match before newline. Preserve the approved source contract: initial,
+      already-known and retired sources baseline at EOF; a genuinely new path
+      discovered after startup reads from byte zero. Truncation baselines the
+      rewritten contents at EOF; only subsequent complete appends alert.
+- [ ] **Changes while work is queued.** While lines arrive, change the query,
+      clear it, remove the rule, toggle Alerts and Preview off/on, and force a
+      save refusal in isolated settings. Old queued generations cannot arm;
+      failed edits leave the prior matcher/configuration effective. An already
+      started sound or already armed ring is not retroactively retracted.
+- [ ] **Fleet-only and independent health.** Keep telemetry active with only
+      Fleet Bar: custom controls report inactive, no custom sounds occur, and
+      Fleet continues. Re-enable without a second reader. Exercise missing
+      folder/no characters and injected matcher degradation/recovery; reader
+      and Fleet health remain independent. An idle poll or edit alone must not
+      claim matcher recovery.
+- [ ] **Exit during a batch and pending edit.** No post-close custom sound/ring,
+      hanging process or replacement native owner after a timeout. Confirm all
+      live settings/client geometry remained untouched outside the authorized
+      isolated test and no gameplay input or network sharing was activated.
+
+Record candidate commit/build, Windows and WebView2 versions, scaling, operator,
+date, each result and any failures in the verification record. Unchecked items
+remain release-acceptance blockers, not assumed passes.
 
 ### Verifiable now
 
