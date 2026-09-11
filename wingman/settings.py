@@ -1054,8 +1054,8 @@ def _save_locked(data: dict, path: Path | None = None) -> None:
     payload = {k: data.get(k, DEFAULTS[k]) for k in DEFAULTS}
     # Guarantee the persisted shape is normalized even when save() is called
     # directly (bypassing the _normalize() that update() runs first).
-    # Other nested sections are not touched here -- only fleet_bar and
-    # fleet_sharing get this extra guard here; extending the rest is a
+    # Other nested sections are not touched here -- fleet_bar, fleet_sharing
+    # and wanderer get this extra guard here; extending the rest is a
     # separate decision that would need its own tests. fleet_sharing gets
     # it deliberately: it is the one predicate that decides whether local
     # telemetry ever leaves the machine, and it must never come up

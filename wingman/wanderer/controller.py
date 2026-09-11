@@ -209,10 +209,19 @@ class WandererController:
         }
         if faulted:
             payload["status"] = "worker_failed"
-        elif acknowledged["credential_error"]:
+        elif payload["status"] != "stopped" and acknowledged["credential_error"]:
             payload["status"] = "credential_error"
         payload["status_text"] = self._ports.describe_status(
             payload["status"], payload["error_code"]
+        )
+        result = payload["test_result"]
+        payload["test_result_text"] = (
+            self._ports.describe_status(
+                "connected" if result == "success" else "error",
+                None if result == "success" else result,
+            )
+            if result is not None
+            else ""
         )
         return payload
 
@@ -282,7 +291,7 @@ class WandererController:
                     credential_error = False
                 with self._ports.update_settings() as cfg:
                     cfg["wanderer"] = section
-            except OSError:
+            except Exception:  # noqa: BLE001 — storage boundary: never expose paths, token material or exception context to the bridge.
                 return self._result(False, "Could not save the Wanderer connection.")
             self._commit(section, token, credential_error)
             return self._result(True)
@@ -327,7 +336,7 @@ class WandererController:
                 )
             try:
                 self._credentials.replace(base, map, token)
-            except OSError:
+            except Exception:  # noqa: BLE001 — protected-storage failures must return only fixed nonsecret context.
                 return self._result(
                     False, "Could not protect and save the Wanderer token."
                 )
@@ -341,7 +350,7 @@ class WandererController:
                 return refusal
             try:
                 self._credentials.remove()
-            except OSError:
+            except Exception:  # noqa: BLE001 — removal failure retains the acknowledged credential, never its exception.
                 return self._result(False, "Could not remove the Wanderer token.")
             with self._condition:
                 section = dict(self._section)
@@ -369,11 +378,12 @@ class WandererController:
             )
 
     def close_admission(self) -> None:
-        # Gate callbacks before detach. No mutation/handoff lock, persistence,
-        # page call or join can delay terminal host/worker admission closure.
+        # Gate callbacks before detach, without taking mutation/handoff locks
+        # or waiting on persistence, the page or worker joins.
         with self._condition:
             self._closed = True
             self._token = None
+            self._applied_key = None
             self._sessions = frozenset()
             self._available = False
             self._condition.notify_all()

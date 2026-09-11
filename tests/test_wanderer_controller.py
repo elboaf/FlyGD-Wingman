@@ -177,6 +177,23 @@ def rig(tmp_path):
         value.close()
 
 
+def test_host_generation_is_fenced_before_each_worker_configuration(rig, monkeypatch):
+    configure = rig.worker.configure
+    observed = []
+
+    def configure_after_fence(config, *, generation):
+        assert rig.host.generation == generation
+        observed.append(generation)
+        return configure(config, generation=generation)
+
+    monkeypatch.setattr(rig.worker, "configure", configure_after_fence)
+    rig.start()
+    rig.client.call(1).reply(success())
+    rig.wait(lambda s: not s["in_flight"])
+    assert rig.controller.set_enabled(False)["persisted"]
+    assert len(observed) == 2 and observed[1] > observed[0]
+
+
 def test_polling_handoff_and_health_are_nonsecret_current_session_counts(rig):
     rig.start()
     call = rig.client.call(1)
@@ -328,6 +345,17 @@ def test_coalesced_host_restart_with_same_configuration_gets_new_generation(rig)
     assert rig.host.generation == state["generation"]
 
 
+def test_out_of_order_host_restart_cannot_reuse_equal_ready_generation(rig):
+    rig.start()
+    rig.client.call(1).reply(success())
+    before = rig.wait(lambda s: s["status"] == "connected")["generation"]
+    with rig.controller._handoff_lock:
+        rig.host.callback(2, frozenset({FIRST, HIDDEN}), True)
+        rig.host.callback(1, frozenset(), False)
+    state = rig.wait(lambda s: s["generation"] > before)
+    assert state["host_available"] and state["previewed"] == 2
+
+
 def test_off_test_is_async_does_not_enable_and_shutdown_retains_owners(tmp_path):
     rig = Rig(tmp_path, enabled=False, previews=False)
     try:
@@ -365,10 +393,281 @@ def test_blocked_health_delivery_does_not_block_handoff_or_expiry(tmp_path):
         rig.start()
         rig.client.call(1).reply(success())
         assert entered.wait(2)
+        with rig.worker_cv:
+            rig.clock.now = 116
+            rig.worker_cv.notify_all()
+        rig.wait(lambda s: s["stale"] == 2 and s["available"] == 0)
+        with rig.host.cv:
+            assert rig.host.cv.wait_for(lambda: not any(rig.host.values.values()), 2)
         rig.host.notify(1, frozenset({FIRST}), False)
         rig.wait(lambda s: not s["automatic_ready"])
         assert not any(rig.host.values.values())
         assert not rig.controller.stop(0)
     finally:
         release.set()
+        rig.close()
+
+
+@pytest.mark.parametrize("operation", ["settings", "replace", "remove"])
+def test_unexpected_storage_exception_never_reaches_bridge(rig, monkeypatch, operation):
+    def fail(*args):
+        raise RuntimeError(TOKEN)
+
+    if operation == "settings":
+        monkeypatch.setattr(settings, "_save_locked", fail)
+
+        def call():
+            return rig.controller.set_map("other")
+    elif operation == "replace":
+        monkeypatch.setattr(rig.store, "replace", fail)
+
+        def call():
+            return rig.controller.replace_token("new-token", BASE, "map")
+    else:
+        monkeypatch.setattr(rig.store, "remove", fail)
+        call = rig.controller.remove_connection
+    result = call()
+    assert not result["applied"] and not result["persisted"]
+    assert result["acknowledged"]["credential_present"]
+    assert result["acknowledged"]["map_identifier"] == "map"
+    assert TOKEN not in json.dumps(result)
+
+
+def test_close_during_admitted_save_never_reopens_runtime_or_retains_cached_token(
+    rig, monkeypatch
+):
+    rig.start()
+    rig.client.call(1).reply(success())
+    rig.wait(lambda s: not s["in_flight"])
+    entered, release = threading.Event(), threading.Event()
+    original = settings._save_locked
+    results = []
+
+    def save(*args):
+        entered.set()
+        assert release.wait(3)
+        original(*args)
+
+    monkeypatch.setattr(settings, "_save_locked", save)
+    owner = threading.Thread(
+        target=lambda: results.append(rig.controller.set_enabled(False))
+    )
+    owner.start()
+    assert entered.wait(2)
+    try:
+        rig.controller.close_admission()
+        assert rig.host.callback is None and rig.host.closed
+        assert rig.controller.state()["status"] == "stopped"
+        assert TOKEN not in repr(rig.controller._applied_key)
+        assert rig.controller._applied_key is None
+    finally:
+        release.set()
+        owner.join(3)
+    assert results[0]["persisted"]
+    assert not rig.controller.state()["enabled"]
+    assert rig.controller._token is None
+    assert rig.controller.state()["status"] == "stopped"
+
+
+@pytest.mark.parametrize(
+    "gate", ["off", "previews", "host", "url", "map", "credential"]
+)
+def test_every_automatic_gate_prevents_network_but_test_does_not_enable(tmp_path, gate):
+    rig = Rig(tmp_path, enabled=gate != "off", previews=gate != "previews")
+    try:
+        if gate == "host":
+            rig.host.available = False
+        if gate == "url":
+            assert rig.controller.set_url("")["persisted"]
+        if gate == "map":
+            assert rig.controller.set_map("")["persisted"]
+        if gate == "credential":
+            assert rig.controller.remove_connection()["persisted"]
+        rig.start()
+        assert not rig.controller.state()["automatic_ready"]
+        assert rig.worker._request_thread is None
+        before = rig.controller.state()["enabled"]
+        result = rig.controller.test_connection()
+        assert result["applied"] is (gate in {"off", "previews", "host"})
+        assert rig.controller.state()["enabled"] is before
+        if result["applied"]:
+            rig.client.call(1).reply(success())
+            state = rig.wait(lambda s: s["test_result"] == "success")
+            assert state["available"] == 0
+    finally:
+        rig.close()
+
+
+def test_test_admission_waits_behind_poll_on_one_http_lane(rig):
+    rig.start()
+    poll = rig.client.call(1)
+    assert rig.controller.test_connection()["applied"]
+    assert rig.controller.state()["test_pending"]
+    assert not rig.controller.state()["test_in_flight"]
+    poll.reply(success())
+    rig.wait(lambda s: not s["in_flight"])
+    with rig.worker_cv:
+        rig.clock.now = 102
+        rig.worker_cv.notify_all()
+    test = rig.client.call(2)
+    assert rig.controller.state()["test_in_flight"]
+    test.reply(success(102))
+    state = rig.wait(lambda s: s["test_result"] == "success")
+    assert not state["test_pending"] and not state["test_in_flight"]
+    assert rig.client.maximum_active == 1
+
+
+def test_callback_never_waits_for_credential_protection(rig, monkeypatch):
+    rig.start()
+    entered, release, returned = threading.Event(), threading.Event(), threading.Event()
+    replace = rig.store.replace
+
+    def protect(*args):
+        entered.set()
+        assert release.wait(3)
+        replace(*args)
+
+    monkeypatch.setattr(rig.store, "replace", protect)
+    owner = threading.Thread(
+        target=lambda: rig.controller.replace_token("new-token", BASE, "map")
+    )
+    owner.start()
+    assert entered.wait(2)
+
+    def notify():
+        rig.host.notify(5, frozenset({FIRST}), False)
+        returned.set()
+
+    callback = threading.Thread(target=notify)
+    callback.start()
+    try:
+        assert returned.wait(1)
+        rig.wait(lambda s: not s["automatic_ready"] and s["previewed"] == 1)
+    finally:
+        release.set()
+        owner.join(3)
+        callback.join(3)
+
+
+@pytest.mark.parametrize("code,status", [("invalid_token", 401), ("wrong_map", 403)])
+def test_early_auth_denial_clears_names_before_final_http_result(rig, code, status):
+    from wingman.wanderer.client import Failure
+
+    rig.start()
+    rig.client.call(1).reply(success())
+    rig.wait(lambda s: s["available"] == 2)
+    with rig.worker_cv:
+        rig.clock.now = 102
+        rig.worker_cv.notify_all()
+    call = rig.client.call(2)
+    call.on_authentication_failure(Failure(code, status))
+    state = rig.wait(lambda s: s["paused"])
+    assert state["available"] == state["matched"] == 0
+    assert state["in_flight"]
+    with rig.host.cv:
+        assert rig.host.cv.wait_for(lambda: not any(rig.host.values.values()), 2)
+    call.reply(Failure(code, status))
+
+
+def test_inert_startup_credential_failure_is_safe_and_explicit_remove_recovers(
+    tmp_path, monkeypatch
+):
+    from wingman.wanderer.controller import WandererController
+
+    rig = Rig(tmp_path)
+    original = rig.controller
+    original.close_admission()
+
+    def fail(*args):
+        raise OSError(TOKEN)
+
+    monkeypatch.setattr(rig.store, "load", fail)
+    rig.controller = WandererController(
+        rig.cfg["wanderer"], ports=original._ports, credentials=rig.store
+    )
+    try:
+        state = rig.controller.state()
+        assert state["credential_error"] and not state["credential_present"]
+        assert state["status"] == "credential_error"
+        assert TOKEN not in json.dumps(state)
+        assert rig.controller.remove_connection()["persisted"]
+        assert not rig.controller.state()["credential_error"]
+    finally:
+        rig.close()
+
+
+def test_closed_health_takes_precedence_over_saved_credential_error(
+    tmp_path, monkeypatch
+):
+    from wingman.wanderer.controller import WandererController
+
+    rig = Rig(tmp_path)
+    rig.controller.close_admission()
+
+    def fail(*args):
+        raise OSError(TOKEN)
+
+    monkeypatch.setattr(rig.store, "load", fail)
+    rig.controller = WandererController(
+        rig.cfg["wanderer"], ports=rig.controller._ports, credentials=rig.store
+    )
+    try:
+        rig.controller.close_admission()
+        assert rig.controller.state()["credential_error"]
+        assert rig.controller.state()["status"] == "stopped"
+    finally:
+        rig.close()
+
+
+def test_test_outcome_text_does_not_change_when_next_automatic_request_fails(rig):
+    from wingman.wanderer.client import Failure
+
+    rig.start()
+    rig.client.call(1).reply(success())
+    rig.wait(lambda s: not s["in_flight"])
+    assert rig.controller.test_connection()["applied"]
+    with rig.worker_cv:
+        rig.clock.now = 102
+        rig.worker_cv.notify_all()
+    rig.client.call(2).reply(success(102))
+    rig.wait(lambda s: s["test_result"] == "success")
+    with rig.worker_cv:
+        rig.clock.now = 104
+        rig.worker_cv.notify_all()
+    rig.client.call(3).reply(Failure("timeout"))
+    state = rig.wait(lambda s: s["error_code"] == "timeout")
+    assert state["status_text"] == "error"
+    assert state["test_result"] == "success"
+    assert state["test_result_text"] == "connected"
+
+
+def test_partial_owner_start_failure_is_terminal_and_safe(tmp_path):
+    from wingman.wanderer.controller import WandererController
+
+    rig = Rig(tmp_path, enabled=False)
+    original = rig.controller
+    original.close_admission()
+    created = []
+
+    def spawn(**kwargs):
+        if created:
+            raise RuntimeError(TOKEN)
+        owner = threading.Thread(**kwargs)
+        created.append(owner)
+        return owner
+
+    rig.controller = WandererController(
+        rig.cfg["wanderer"],
+        ports=original._ports,
+        credentials=rig.store,
+        thread_factory=spawn,
+    )
+    try:
+        assert not rig.controller.start()
+        assert rig.controller.state()["status"] == "worker_failed"
+        assert TOKEN not in json.dumps(rig.controller.state())
+        assert not rig.controller.start()
+        assert len(created) == 1
+        assert rig.host.closed and rig.host.callback is None
+    finally:
         rig.close()
