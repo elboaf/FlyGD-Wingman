@@ -9,7 +9,13 @@ from types import SimpleNamespace
 import pytest
 
 from tests.test_api import make_api
-from tests.test_fleet_bar import PAGE_A, PAGE_CALLBACKS, FleetWindow, _set_resizable_bar
+from tests.test_fleet_bar import (
+    PAGE_A,
+    PAGE_CALLBACKS,
+    FleetWindow,
+    _complete_resize,
+    _set_resizable_bar,
+)
 from tests.test_fleet_bar import (
     _headless_fleet_window_helpers as _headless_fleet_window_helpers,
 )
@@ -587,6 +593,7 @@ def test_remote_events_do_not_change_resize_reset_page_identity(tmp_path):
     assert api._fleetbar_window.moved == []
 
     api.fit_fleet_bar_height(PAGE_A, 112)
+    _complete_resize(api, 480, 40)
     settled = api.settle_fleet_bar_resize(PAGE_A, 480, 40)
     reset = api.reset_fleet_bar_page_width(PAGE_A)
 

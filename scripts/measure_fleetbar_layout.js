@@ -253,6 +253,7 @@ class CdpClient {
     this._waiters = [];
     this._closed = false;
     this._socket = null;
+    this._requestOrigin = null;
   }
 
   async connect() {
@@ -286,6 +287,15 @@ class CdpClient {
       ? event.data
       : Buffer.from(event.data).toString('utf8');
     const message = JSON.parse(raw);
+    if (message.method === 'Fetch.requestPaused') {
+      const request = message.params;
+      const allowed = new URL(request.request.url).origin === this._requestOrigin;
+      this.send(allowed ? 'Fetch.continueRequest' : 'Fetch.failRequest',
+        allowed ? { requestId: request.requestId }
+          : { requestId: request.requestId, errorReason: 'BlockedByClient' }
+      ).catch(error => { console.error(error); process.exitCode = 1; });
+      return;
+    }
     if (Object.prototype.hasOwnProperty.call(message, 'id')) {
       const pending = this._pending.get(message.id);
       if (!pending) return;
@@ -580,6 +590,16 @@ function measurementExpression(width, proofMode) {
     ewar: textMetrics(q('.fleet-ewar', exactRow))
   };
 
+  await show('mixed');
+  fixtures.mixed = overflowSnapshot();
+  var mixed = {
+    header: rect(q('.fleet-damage-head')),
+    rows: Array.from(document.querySelectorAll('.fleet-row')).map(function (row) {
+      return { damage: rect(q('.fleet-damage', row)), axis: rect(q('.fleet-damage-axis', row)),
+        remote: Boolean(q('.fleet-remote', row)) };
+    })
+  };
+
   await show('remote');
   fixtures.remote = overflowSnapshot();
   var remote = {
@@ -631,6 +651,7 @@ function measurementExpression(width, proofMode) {
     emphasis: emphasis,
     longName: longName,
     exact10m: exact10m,
+    mixed: mixed,
     remote: remote,
     sticky: {
       beforeTop: headTopBefore,
@@ -875,7 +896,21 @@ function validateMeasurement(measurement) {
   if (Math.abs(measurement.shellWidth - width) > EPSILON) {
     errors.push(width + ': shell width ' + measurement.shellWidth + ' != requested ' + width);
   }
-  for (const fixtureName of ['long', 'exact10m', 'remote', 'roster']) {
+  if (measurement.mixed.rows.length !== 2 || !measurement.mixed.rows.some(row => row.remote)) {
+    errors.push(width + ': mixed-row alignment fixture is incomplete');
+  }
+  const header = measurement.mixed.header;
+  for (const row of measurement.mixed.rows) {
+    for (const edge of ['left', 'right']) {
+      if (Math.abs(row.damage[edge] - header[edge]) > EPSILON) {
+        errors.push(width + ': mixed DPS ' + edge + ' does not align with header');
+      }
+    }
+    if (Math.abs((row.axis.left + row.axis.right) / 2 - (header.left + header.right) / 2) > EPSILON) {
+      errors.push(width + ': mixed DPS axis does not align with header center');
+    }
+  }
+  for (const fixtureName of ['long', 'exact10m', 'remote', 'mixed', 'roster']) {
     const fixture = measurement.fixtures[fixtureName];
     if (!fixture) {
       errors.push(width + ': missing fixture widths for ' + fixtureName);
@@ -1152,6 +1187,10 @@ async function run() {
     await cdp.connect();
     await cdp.send('Page.enable');
     await cdp.send('Runtime.enable');
+    // Intercept before the first page navigation, in this process's new profile
+    // and ephemeral CDP port. Fixtures may load only our owned loopback origin.
+    cdp._requestOrigin = serverInfo.baseUrl;
+    await cdp.send('Fetch.enable', { patterns: [{ urlPattern: '*', requestStage: 'Request' }] });
 
     const pageUrl = serverInfo.baseUrl + '/fleetbar.html?dev=1';
     const measurements = [];

@@ -15,6 +15,7 @@
     // explicitly opted-in standalone harness fabricates one, before capture.
     window.location.hash = '#fleet-page=' + new Array(65).join('d');
     var fleetRevision = 0;
+    var fleetDragId = 0;
     function fleetFixture(kind) {
       var local = {character: 'Local pilot', outgoing_dps: 612, incoming_dps: 180, ewar: ['SCRAM', 'POINT', 'NEUT'], log_status: null};
       var support = {character: 'Support pilot', outgoing_dps: 80, incoming_dps: 25, ewar: [], log_status: null};
@@ -62,12 +63,16 @@
       fleet_bar_ready: function () { return Promise.resolve(true); },
       fit_fleet_bar_height: function () { return Promise.resolve(null); },
       settle_fleet_bar_resize: function () {
-        return Promise.resolve({applied: true, persisted: true, error: null});
+        // Browser viewport changes have no completed native resize intent.
+        return Promise.resolve({status: 'ignored'});
       },
       reset_fleet_bar_page_width: function () {
         return Promise.resolve({applied: true, persisted: true, error: null});
       },
-      save_fleet_bar_pos: function () { return Promise.resolve(null); },
+      save_fleet_bar_pos: function (_page, _x, _y, phase) {
+        return Promise.resolve(phase === 'begin'
+          ? {status: 'dragging', drag_id: ++fleetDragId} : null);
+      },
       activate_fleet_bar: function () { return Promise.resolve(true); },
       deactivate_fleet_bar: function () { return Promise.resolve(true); },
       hide_fleet_bar: function () {

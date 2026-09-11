@@ -27,7 +27,8 @@ def test_damage_tracks_keep_complete_remote_markers_and_header_only_drag():
     web = Path(__file__).resolve().parents[1] / "wingman" / "web"
     html = (web / "fleetbar.html").read_text(encoding="utf-8")
     grid = re.search(r"\.fleet-grid\s*\{([^}]*)\}", html)
-    assert "minmax(96px, 1fr) clamp(132px, 30vw, 184px) max-content" in grid[1]
+    assert "minmax(96px, 1fr) clamp(132px, 30vw, 184px) 145px" in grid[1]
+    assert "max-content" not in grid[1]
     marker = re.search(r"\.fleet-remote\s*\{([^}]*)\}", html)
     assert "white-space: normal" in marker[1]
     assert "text-overflow" not in marker[1]
@@ -84,6 +85,13 @@ async function main() {
   await new Promise(setImmediate);
   assert.equal(typeof window.DEV.fleetBar,'function');
   assert.match(window.location.hash,/^#fleet-page=[0-9a-f]{64}$/);
+  const feedback=await window.pywebview.api.settle_fleet_bar_resize('page',588,0);
+  assert.equal(feedback.status,'ignored');
+  assert(!Object.hasOwn(feedback,'persisted'));
+  const begun=await window.pywebview.api.save_fleet_bar_pos('page',20,30,'begin');
+  assert.equal(begun.status,'dragging');
+  assert.equal(typeof begun.drag_id,'number');
+  assert.equal(await window.pywebview.api.save_fleet_bar_pos('page',20,30,'end',begun.drag_id),null);
   const valueOf=half=>half.children.find(c=>c.className==='fleet-damage-value').textContent;
   const fillOf=half=>half.children.find(c=>c.className==='fleet-damage-track').children[0];
   for (const kind of ['zero','outgoing','incoming','ewar','threat','remote','stale','empty','allhidden','long','exact10m','defensive','roster','nolog','missing','waiting','error']) {

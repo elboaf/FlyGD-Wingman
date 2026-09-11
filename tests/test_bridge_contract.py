@@ -739,7 +739,7 @@ def test_fleet_page_interfaces_are_token_first_and_standalone_only():
         "fit_fleet_bar_height": ("page_id", "height"),
         "settle_fleet_bar_resize": ("page_id", "content_width", "x"),
         "reset_fleet_bar_page_width": ("page_id",),
-        "save_fleet_bar_pos": ("page_id", "x", "y"),
+        "save_fleet_bar_pos": ("page_id", "x", "y", "phase", "drag_id"),
         "fleet_bar_ready": ("page_id",),
         "activate_fleet_bar": ("page_id",),
         "deactivate_fleet_bar": ("page_id",),

@@ -3203,6 +3203,39 @@ until they are actually run on Windows.
       reserved header-action geometry, sticky header, and bounded 128-row
       roster scrolling. Chromium layout evidence only; not Windows/WebView2
       native acceptance.
+- [ ] **Mixed rows share their columns.** At 420, 500, and 720 content widths,
+      render `DEV.fleetBar('mixed')`: the header, full local EWAR row and combined
+      remote tackle row must share both DPS edges and the center axis. Repeat
+      with stale/quiet rows and a scrolling roster. The measurement script checks
+      mixed-row coordinates, not just whether one row fits.
+- [ ] **Programmatic geometry is not a saved user resize (Windows only).** Save
+      720 content width, move the Fleet Bar to a narrower monitor, and trigger
+      content-height fitting. The applied rectangle may clamp; the preferred
+      width must remain 720 after resize feedback and restart. Reset, startup
+      reveal, and height corrections must not cause a second width save or clear
+      a session-only warning. Then resize from each side, including a pause longer
+      than 150ms before release: the final width saves once, and left-edge x saves
+      with it. Immediately drag the header after resize, both before and after
+      that 150ms settlement: the width and final header position must survive
+      restart together, including on a monitor left of the primary. A header
+      click without movement must not save or dismiss a width warning. A later
+      position-only drag must preserve an earlier failed width-save warning.
+      With an instrumented delayed end reply, move the header a second time:
+      the first end must not snap it back, and final position plus pending width
+      must save together. With a delayed failed width-save reply, let its native
+      clamp emit resize feedback first: the session-only warning must still appear.
+      Repeat while a position-only header is paused and after it completes: transient
+      resizing/ignored feedback must not swallow the delayed failed-save warning.
+      A second real resize returning to a session-only applied width must be able
+      to persist that width; a repeated geometry callback must not.
+- [ ] **Older height work cannot undo newer placement (Windows only).** While
+      the roster changes, drag or resize the Fleet Bar, use Reset width, and
+      hide/re-enable it. Old height-fit retries must not snap width, position or
+      newer fitted height backward, including when the gesture begins while the
+      older native effect is queued on the UI pump. Repeat with a header move before
+      its begin is admitted, and between a fit's own monitor correction and its retry.
+      The hidden bar must not reappear, and none
+      of these operations may move/resize EVE or activate the Fleet Bar implicitly.
 - [ ] **Enable from Settings › Fleet telemetry.** Tick `Show Fleet Bar`. Expected:
       a compact three-column window opens with `CHARACTER`, `DPS · 10s`
       (with `OUT` and `IN` beneath the shared center axis), and `EWAR`;

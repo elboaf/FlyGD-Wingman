@@ -148,6 +148,34 @@ def apply_geometry(bar, x, y, width, height) -> None:
         bar.move(x, y)
 
 
+def _apply_geometry_if_current(
+    bar, x, y, width, height, *, admit
+) -> tuple[int, int] | None:
+    """Order ownership admission and both effects on the Fleet form's pump.
+
+    Pinned pywebview resize/move call SetWindowPos directly, without Invoke.
+    Checking on a bridge worker then marshaling would reopen the native race.
+    The caller keeps lifecycle admission; admit must not acquire that lock here
+    or hold the gesture-record lock while applying geometry.
+    """
+    applied_position = None
+
+    def apply():
+        nonlocal applied_position
+        if not admit():
+            return
+        apply_geometry(bar, x, y, width, height)
+        # Capture our effect before returning to the pump: a later header move
+        # must not become the expected position of this operation's next retry.
+        applied_position = (int(bar.x), int(bar.y))
+
+    if sys.platform == "win32":
+        chrome._on_ui_thread(getattr(bar, "native", None), apply)
+    else:
+        apply()
+    return applied_position
+
+
 def set_bar_clickable(bar, clickable: bool, *, user32=None) -> bool:
     user32 = _user32(user32)
     handle = window_hwnd(bar)
@@ -250,12 +278,14 @@ def create(api, hidden: bool = True):
 
             resize_insets = ZERO_INSETS
             resize_enabled = False
+            resize_gesture = chrome.ResizeGesture()
             if sys.platform == "win32":
                 sigbar_mod._apply_tool_style(bar)
                 attached = chrome.enable_horizontal_resize(
                     bar,
                     min_content_width=settings_mod.FLEET_BAR_MIN_PREFERRED_CONTENT_WIDTH,
                     max_content_width=settings_mod.FLEET_BAR_MAX_PREFERRED_CONTENT_WIDTH,
+                    gesture=resize_gesture,
                 )
                 if attached is not None:
                     resize_insets = attached
@@ -283,6 +313,7 @@ def create(api, hidden: bool = True):
                 page_id,
                 resize_insets=resize_insets,
                 resize_enabled=resize_enabled,
+                resize_gesture=resize_gesture if resize_enabled else None,
                 applied_x=applied_x,
                 applied_y=applied_y,
                 applied_outer_width=applied_outer_width,
