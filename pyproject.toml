@@ -96,6 +96,7 @@ packages = [
     "wingman.evefittings",
     "wingman.fleetsharing",
     "wingman.upload",
+    "wingman.wanderer",
 ]
 
 [tool.setuptools.package-data]
