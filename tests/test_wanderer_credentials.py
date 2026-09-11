@@ -276,6 +276,56 @@ def test_other_windows_user_or_tampered_blob_cannot_be_read(tmp_path, cipher):
         store_at(path, different_user).load(BASE, MAP)
 
 
+def test_protected_snapshot_compensates_replacement_and_absence(tmp_path, cipher):
+    path = tmp_path / "credentials.json"
+    store = store_at(path, cipher)
+    assert store.snapshot() is None
+    store.replace(BASE, MAP, TOKEN)
+    before = path.read_bytes()
+    snapshot = store.snapshot()
+    assert snapshot == before and TOKEN.encode() not in snapshot
+    store.replace("https://other.example", "other", "candidate")
+    store.restore(snapshot)
+    assert path.read_bytes() == before
+    assert store.load(BASE, MAP) == TOKEN
+    store.restore(None)
+    assert not path.exists()
+
+
+def test_snapshot_is_bounded_and_never_decrypts(tmp_path, cipher, monkeypatch):
+    from wingman.wanderer.credentials import MAX_DOCUMENT_BYTES, CredentialError
+
+    path = tmp_path / "credentials.json"
+    store = store_at(path, cipher)
+    store.replace(BASE, MAP, TOKEN)
+    monkeypatch.setattr(store, "_unprotect", failing_crypto)
+    snapshot = store.snapshot()
+    store.remove()
+    store.restore(snapshot)
+    assert path.read_bytes() == snapshot
+    path.write_bytes(b"x" * (MAX_DOCUMENT_BYTES + 1))
+    with pytest.raises(CredentialError) as caught:
+        store.snapshot()
+    assert_safe(caught)
+
+
+def test_failed_snapshot_restore_keeps_safe_error_context(
+    tmp_path, cipher, monkeypatch
+):
+    from wingman import atomicio
+    from wingman.wanderer.credentials import CredentialError
+
+    store = store_at(tmp_path / "credentials.json", cipher)
+    store.replace(BASE, MAP, TOKEN)
+    snapshot = store.snapshot()
+    monkeypatch.setattr(
+        atomicio, "write_bytes_atomic", lambda *args: failing_crypto(None)
+    )
+    with pytest.raises(CredentialError) as caught:
+        store.restore(snapshot)
+    assert_safe(caught)
+
+
 def test_oversized_crypto_output_never_replaces_disk(tmp_path, cipher):
     from wingman.wanderer.credentials import CredentialError, CredentialStore
 

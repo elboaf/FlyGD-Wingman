@@ -151,6 +151,37 @@ class CredentialStore:
             pass
         raise CredentialError("Wanderer credential could not be saved.")
 
+    def snapshot(self) -> bytes | None:
+        """Bounded protected bytes for one controller-owned compensation only.
+
+        No decrypt/re-protect round trip: even an unreadable credential can be
+        restored exactly if the paired settings write fails. Nothing is cached.
+        """
+        try:
+            try:
+                with self._path.open("rb") as stream:
+                    raw = stream.read(MAX_DOCUMENT_BYTES + 1)
+            except FileNotFoundError:
+                return None
+            if len(raw) > MAX_DOCUMENT_BYTES:
+                raise ValueError("Invalid protected document.")
+            return raw
+        except Exception:  # noqa: BLE001, S110 — discard filesystem context, including user paths.
+            pass
+        raise CredentialError("Wanderer credential could not be snapshotted.")
+
+    def restore(self, snapshot: bytes | None) -> None:
+        """Compensate from snapshot(), without ever retaining plaintext history."""
+        try:
+            if snapshot is None:
+                self.remove()
+            else:
+                atomicio.write_bytes_atomic(self._path, snapshot)
+            return
+        except Exception:  # noqa: BLE001, S110 — compensation failures carry fixed nonsecret context only.
+            pass
+        raise CredentialError("Wanderer credential could not be restored.")
+
     def remove(self) -> None:
         """Idempotently delete only Wingman's credential, not configuration."""
         try:
