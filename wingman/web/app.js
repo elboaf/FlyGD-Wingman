@@ -229,6 +229,8 @@
   };
 
   function selectSection(name) {
+    // Deep links and remembered entry obey the same gate as the visible rail.
+    if (WM.eve_shown === false && WM.EVE_SECTIONS.indexOf(name) !== -1) name = 'general';
     WM.current_section = name;
     Array.prototype.forEach.call(
       document.querySelectorAll('.settings-pane > .settings'),
@@ -243,7 +245,7 @@
 
   WM.section = function (name) {
     selectSection(name);
-    WM.notify_section(name);
+    WM.notify_section(WM.current_section);
   };
 
   WM.openSettingsSection = function (name) {
@@ -276,14 +278,9 @@
   // them and there is no way back.
   WM.EVE_ROUTES = ['evesettings', 'skills', 'fittings', 'formations',
                    'accountidentity', 'backups', 'uisetup'];
-  // Alerts and Characters are EVE-gated for the same reason Bookmarks and
-  // Previews are: with the gate off they configure nothing that can happen
-  // without an EVE install or an authenticated EVE account. Of the six
-  // Settings entries, these four are the EVE-gated ones, so hiding them
-  // leaves the two non-EVE entries -- Uploading and General -- which is the
-  // whole of E1's argument that the merge axis is the product's own
-  // independence claim.
-  WM.EVE_SECTIONS = ['characters', 'bookmarks', 'previews', 'alerts'];
+  // EVE configuration stays separate from Uploading and General. Fleet has
+  // its own section but no additional runtime owner or activation path.
+  WM.EVE_SECTIONS = ['characters', 'bookmarks', 'previews', 'fleet', 'alerts'];
 
   WM.apply_eve_gate = function (shown, fleetEnabled) {
     WM.eve_shown = shown !== false;

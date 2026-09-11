@@ -10,14 +10,26 @@
   var watchChain = Promise.resolve();
   var preferenceAttempt = 0;
   var actionAttempt = 0;
+  var bindingGeneration = 0;
+  var sourceRequests = [];
+  var actionMessage = '';
+  // Last-known labels/observations are presentation only, never a roster or
+  // permission to mutate. Only an authoritative snapshot replaces this set.
+  var knownSources = [];
+  var knownCharacters = [];
+  var readFailed = false;
   var preferencePending = false;
   var preferenceWanted = false;
+  var desiredBoss = '';
   var boss = WM.el('sharing-boss');
   var enabled = WM.el('sharing-enabled');
   var connect = WM.el('sharing-connect');
   var start = WM.el('sharing-start');
   var grant = WM.el('sharing-grant');
   var sources = WM.el('sharing-sources');
+  var history = WM.el('sharing-history');
+  var historySources = WM.el('sharing-history-sources');
+  var historySummary = WM.el('sharing-history-summary');
   var pairingMode = 'initial';
   var changeOrigin = false;
   var unavailableMessage = 'Fleet sharing is unavailable in this session.';
@@ -45,7 +57,7 @@
   };
 
   function visible() {
-    return WM.current_route === 'settings' && WM.current_section === 'previews' && !document.hidden;
+    return WM.current_route === 'settings' && WM.current_section === 'fleet' && !document.hidden;
   }
   function text(id, value) { WM.el(id).textContent = value || ''; }
   function binding() { return state && state.metadata.binding; }
@@ -54,8 +66,10 @@
       return String(row.character_id) === boss.value;
     })[0];
   }
+  function sourceKey(id) { return id.toLowerCase(); }
+  function sourceUnknown() { return !state.sources || !state.available || readFailed; }
   function nameFor(id) {
-    var character = ((state && state.sources && state.sources.characters) || []).filter(function (row) {
+    var character = knownCharacters.filter(function (row) {
       return row.character_id === id;
     })[0];
     return character ? character.character_name : (id ? 'Character ' + id : 'Unknown character');
@@ -63,10 +77,11 @@
   function paintBoss() {
     var character = selected();
     var ready = !!(character && character.has_fleet_read && character.token_usable);
-    grant.disabled = !hydrated || !character || !state.available;
-    start.disabled = !hydrated || !ready || !state.available || state.metadata.feature_enabled === false;
+    grant.disabled = !hydrated || !character || sourceUnknown();
+    start.disabled = !hydrated || !ready || sourceUnknown() || state.metadata.feature_enabled === false;
     text('sharing-grant-status', !state.metadata.loaded ? 'Reading saved connection…'
       : !binding() ? 'Connect to read your owned characters.'
+      : readFailed ? 'Current character state unknown. Refresh to retry.'
       : !state.sources ? 'Loading owned characters. Refresh if needed.'
       : !state.sources.characters.length ? 'No owned characters found in this account.'
       : !character ? 'Choose your fleet boss.'
@@ -74,7 +89,6 @@
       : 'Grant Fleet Read using the paired account, then Refresh.');
   }
   function paintCharacters() {
-    var previous = boss.value;
     var characters = state.sources ? state.sources.characters : [];
     // Do not rebuild a focused native select on every watch heartbeat.
     var signature = JSON.stringify(characters);
@@ -87,41 +101,75 @@
         option.value = String(character.character_id);
         boss.appendChild(option);
       });
-      boss.value = previous;
       boss.setAttribute('data-roster', signature);
     }
-    boss.disabled = !state.available || !characters.length;
+    var value = state.sources ? desiredBoss : '';
+    if (boss.value !== value) boss.value = value;
+    boss.disabled = sourceUnknown() || !characters.length;
     paintBoss();
     var list = WM.el('sharing-eligible-list');
     list.textContent = '';
-    text('sharing-eligibility', !state.eligibility ? 'Eligibility has not been observed.'
-      : state.eligibility.state === 'ready' ? 'Currently eligible for sparse telemetry:'
-      : state.eligibility.state === 'participation_off' ? 'Server participation is Off.'
+    var eligibility = readFailed ? null : state.eligibility;
+    text('sharing-eligibility', readFailed ? 'Current eligibility unknown. Refresh to retry.'
+      : !eligibility ? 'Eligibility has not been observed.'
+      : eligibility.state === 'ready' ? 'Currently eligible for sparse telemetry:'
+      : eligibility.state === 'participation_off' ? 'Server participation is Off.'
       : 'No verified roster currently makes these characters eligible.');
-    ((state.eligibility && state.eligibility.characters) || []).forEach(function (row) {
+    ((eligibility && eligibility.characters) || []).forEach(function (row) {
       list.appendChild(WM.make('li', '', nameFor(row.character_id)));
     });
+  }
+  function nextStart() {
+    var characters = state.sources ? state.sources.characters : [];
+    var character = selected();
+    if (!binding()) return 'Connect to read your owned characters.';
+    if (!characters.length) return 'No owned characters found in this account.';
+    if (state.metadata.feature_enabled === false) return details.feature_disabled;
+    if (character && (!character.has_fleet_read || !character.token_usable)) {
+      return 'Grant Fleet Read using the paired account, then Refresh.';
+    }
+    if (!characters.some(function (row) { return row.has_fleet_read && row.token_usable; })) {
+      return 'Choose your current fleet boss, grant Fleet Read using the paired account, then Refresh.';
+    }
+    return 'Choose your current fleet boss, then Start verification to try again.';
+  }
+  function paintAction() {
+    var messages = actionMessage ? [actionMessage] : [];
+    sourceRequests.forEach(function (request) {
+      if (!request.source_id) messages.push('Start request in progress for ' + request.name + '…');
+    });
+    text('sharing-action', messages.join(' '));
   }
   function paintSources() {
     var rows = Object.create(null);
     var existing = Object.create(null);
-    Array.prototype.forEach.call(sources.children, function (row) { existing[row.getAttribute('data-source')] = row; });
-    ((state.sources && state.sources.sources) || []).forEach(function (row) {
-      rows[row.source_id] = {observed: row, pending: null};
+    [sources, historySources].forEach(function (container) {
+      Array.prototype.forEach.call(container.children, function (row) { existing[row.getAttribute('data-source')] = row; });
     });
-    (state.source_results || []).forEach(function (result) {
-      if (!rows[result.source_id]) rows[result.source_id] = {observed: null, result: result};
+    function item(id) {
+      var key = sourceKey(id);
+      if (!rows[key]) rows[key] = {};
+      return rows[key];
+    }
+    knownSources.forEach(function (row) { item(row.source_id).observed = row; });
+    (state.source_results || []).forEach(function (result) { item(result.source_id).result = result; });
+    (state.pending_sources || []).forEach(function (pending) { item(pending.source_id).pending = pending; });
+    sourceRequests.forEach(function (request) {
+      if (request.source_id) item(request.source_id).request = request;
     });
-    (state.pending_sources || []).forEach(function (pending) {
-      if (!rows[pending.source_id]) rows[pending.source_id] = {observed: null};
-      rows[pending.source_id].pending = pending;
-    });
-    var position = 0;
+    var positions = [0, 0];
+    var reasons = Object.create(null);
+    var focusTarget = null;
     Object.keys(rows).forEach(function (id) {
-      var item = rows[id];
-      var observed = item.observed;
-      var pending = item.pending;
-      var result = item.result;
+      var entry = rows[id];
+      var observed = entry.observed;
+      var pending = entry.pending;
+      var result = entry.result;
+      var request = entry.request;
+      // Retained observations are not fresh acknowledgements of a current
+      // local result. A real observation supersedes that result; a cache cannot.
+      var localResult = result && (!observed || sourceUnknown());
+      var ended = !!(observed && observed.state === 'ended' && !pending && !request && !localResult);
       var row = existing[id];
       if (!row) {
         row = WM.make('div', 'sharing-source');
@@ -129,33 +177,61 @@
         row.appendChild(WM.make('div', 'sharing-source-text'));
         var stop = WM.make('button', 'btn', 'Stop');
         stop.addEventListener('click', function () {
-          if (!hydrated) return;
+          if (!hydrated || stop.disabled) return;
           action('fleet_sharing_stop_source', id, binding());
         });
         row.appendChild(stop);
       }
       delete existing[id];
-      var label = nameFor(observed ? observed.character_id : pending ? pending.character_id : result.character_id);
+      var focused = row.contains(document.activeElement) ? document.activeElement : null;
+      var characterId = (observed && observed.character_id) || (pending && pending.character_id)
+        || (result && result.character_id) || (request && request.character_id);
+      var label = nameFor(characterId);
       if (label === 'Unknown character') label = 'Source ' + id.slice(0, 8);
-      var description = label + ' · ' + (observed ? observed.state : result && !pending
-        ? result.stage === 'rejected' ? 'Start not saved. Too many pending source controls.' : 'Start expired. Start again explicitly.'
-        : 'Not yet observed');
-      if (observed && observed.reason) description += ' — ' + observed.reason.replace(/_/g, ' ');
+      var description = label + ' · ' + (localResult && !pending
+        ? result.stage === 'rejected' ? 'Start not saved. Too many pending source controls. Wait, then Start again explicitly.' : 'Start expired. Start again explicitly.'
+        : observed ? observed.state : 'Not yet observed');
+      if (observed && (!localResult || pending)) {
+        if (observed.reason) description += ' — ' + observed.reason.replace(/_/g, ' ');
+        if (sourceUnknown()) description += ' · Last known';
+      }
       if (pending) description += ' · ' + (pending.operation === 'stop' ? 'Stop' : 'Start')
         + (pending.stage === 'queued' ? ' queued locally' : ' saved, awaiting authGD');
+      if (request) description += ' · Stop request in progress…';
       row.firstChild.textContent = description;
       row.firstChild.title = 'Source ' + id;
-      row.lastChild.disabled = !state.available || (!pending && (result || (observed && observed.state === 'ended')));
+      // A page request, like worker-pending work, does not itself disable Stop.
+      // Disabling on click would blur the control before settlement can move
+      // its focus to history. Only current source/pending evidence authorizes it.
+      row.lastChild.disabled = !hydrated || !state.available || readFailed
+        || (!pending && (sourceUnknown() || !observed || !!localResult || ended));
       row.lastChild.setAttribute('aria-label', 'Stop source for ' + label + ' ' + id);
+      var index = ended ? 1 : 0;
+      var container = ended ? historySources : sources;
+      var position = positions[index]++;
       // Even appendChild(existingRow) drops native keyboard focus in Chrome.
-      // Do not move an already-correct keyed row on a watch heartbeat.
-      if (sources.children[position] !== row) sources.insertBefore(row, sources.children[position] || null);
-      position += 1;
+      // Reconcile both lists together, moving only rows whose position changed.
+      if (container.children[position] !== row) {
+        container.insertBefore(row, container.children[position] || null);
+        if (focused && !focused.disabled) focusTarget = focused;
+      }
+      if (ended) {
+        var reason = observed.reason ? observed.reason.replace(/_/g, ' ') : 'No reason reported';
+        reasons[reason] = (reasons[reason] || 0) + 1;
+        if (focused && (!history.open || focused.disabled)) focusTarget = historySummary;
+      }
     });
     Object.keys(existing).forEach(function (id) { existing[id].remove(); });
+    history.hidden = positions[1] === 0;
+    historySummary.textContent = 'Previous attempts (' + positions[1] + ')';
+    if (focusTarget) focusTarget.focus();
+    var requestingStart = sourceRequests.some(function (request) { return !request.source_id; });
     text('sharing-source-status', !binding() ? 'Connect to view account sources.'
-      : !state.sources ? 'Source state unknown. Saved requests remain stoppable below.'
-      : !Object.keys(rows).length ? 'No sources reported for this account.' : '');
+      : sourceUnknown() ? 'Current source state unknown. Last-known attempts and current local requests are shown below.'
+      : !positions[0] && !requestingStart && positions[1] ? 'No current verification. Previous attempts: '
+        + Object.keys(reasons).sort().map(function (reason) { return reason + ' (' + reasons[reason] + ')'; }).join('; ')
+        + '. ' + nextStart()
+      : !positions[0] && !requestingStart && !positions[1] ? 'No sources reported for this account.' : '');
   }
   function unavailable() {
     // A failed read is not a payload or a saved preference. Keep mutations
@@ -167,15 +243,42 @@
       control.disabled = true;
     });
   }
-  function render(payload) {
-    if (!payload || !visible()) return false;
+  function render(payload, successfulRead) {
+    if (!payload) return false;
     if (state && payload.presentation_order < state.presentation_order) return false;
+    var newer = !state || payload.presentation_order > state.presentation_order;
     if (state && payload.metadata.binding !== state.metadata.binding) {
       boss.value = '';
+      desiredBoss = '';
       actionAttempt += 1;
-      text('sharing-action', '');
+      bindingGeneration += 1;
+      sourceRequests = [];
+      actionMessage = '';
+      knownSources = [];
+      knownCharacters = [];
+      sources.textContent = '';
+      historySources.textContent = '';
+      history.open = false;
     }
     state = payload;
+    // Identical cached replies can arrive after a failed Refresh. Only newer
+    // evidence or a successful current watch read may restore read authority.
+    if (newer || successfulRead) readFailed = false;
+    if (state.sources) {
+      knownSources = state.sources.sources;
+      knownCharacters = state.sources.characters;
+      // Clearing a native select's options also clears its value. Keep the
+      // user's choice separately through unknown reads, but revalidate on every
+      // authoritative roster, including one delivered while the section is hidden.
+      if (!knownCharacters.some(function (row) { return String(row.character_id) === desiredBoss; })) desiredBoss = '';
+    }
+    // Delivery while hidden still settles requests and invalidates bindings.
+    // Only painting and watching belong to section visibility.
+    paint();
+    return true;
+  }
+  function paint() {
+    if (!state || !visible()) return;
     hydrated = true;
     var meta = state.metadata;
     enabled.checked = preferencePending ? preferenceWanted : state.enabled;
@@ -185,6 +288,7 @@
       : !meta.loaded ? 'Reading saved connection…'
       : !meta.binding ? 'Not connected. Connect to ' + state.configured_origin + '.'
       : 'Paired with ' + meta.paired_origin + '.' + (meta.has_session ? '' : ' Reconnecting…');
+    if (readFailed) connection += ' Could not refresh current source state. Refresh to retry.';
     if (state.runtime_error) connection += ' ' + state.runtime_error;
     else if (state.enabled && !state.telemetry_available) connection += ' Local telemetry is unavailable. Source controls still work.';
     if (state.detail) connection += ' ' + (details[state.detail] || state.detail.replace(/_/g, ' ') + '.');
@@ -214,27 +318,46 @@
     text('sharing-consent', consent);
     paintCharacters();
     paintSources();
+    paintAction();
     if (!state.available) unavailable();
-    return true;
   }
   function action(method) {
     var args = Array.prototype.slice.call(arguments);
     if (!hydrated) return;
     var attempt = ++actionAttempt;
     var requestedBinding = binding();
-    text('sharing-action', '');
+    var generation = bindingGeneration;
+    actionMessage = '';
+    var sourceAction = method === 'fleet_sharing_start_source' || method === 'fleet_sharing_stop_source';
+    if (sourceAction) {
+      // Start has no UUID until Python returns one. Keep character feedback,
+      // not a fabricated source row. A Stop already identifies its keyed row.
+      sourceRequests.push({attempt: attempt,
+        source_id: method === 'fleet_sharing_stop_source' ? sourceKey(args[1]) : null,
+        character_id: method === 'fleet_sharing_start_source' ? args[1] : null,
+        name: method === 'fleet_sharing_start_source' ? nameFor(args[1]) : ''});
+    }
+    paintSources();
+    paintAction();
     WM.send.apply(WM, args).then(function (result) {
-      if (attempt !== actionAttempt || requestedBinding !== binding()) return;
-      if (result && result.state && !render(result.state)) return;
-      if (attempt !== actionAttempt) return;
+      if (generation !== bindingGeneration || requestedBinding !== binding()) return;
+      // Every actual bridge completion retires only its own request, even when
+      // a newer action owns the message. Worker pending stages remain separate.
+      sourceRequests = sourceRequests.filter(function (request) { return request.attempt !== attempt; });
+      if (!sourceAction && attempt !== actionAttempt) { paint(); return; }
+      // Another source action may own the message, but this versioned payload
+      // can still report pending worker work for the source that just replied.
+      if (result && result.state && !render(result.state)) { paint(); return; }
+      if (attempt !== actionAttempt) { paint(); return; }
       // Historical acceptance, not an ongoing waiting claim. Exact queued /
       // saved / server stages belong to the corresponding source row below.
       var accepted = method === 'fleet_sharing_start_source' ? 'Start requested.'
         : method === 'fleet_sharing_stop_source' ? 'Stop requested.'
         : method === 'fleet_sharing_grant_fleet_read' ? 'Fleet Read browser requested. Use the paired account, then Refresh.'
         : 'Setup requested.';
-      text('sharing-action', result && result.queued ? accepted
-        : (result && result.error) || 'The action could not be queued. Refresh and retry.');
+      actionMessage = result && result.queued ? accepted
+        : (result && result.error) || 'The action could not be queued. Refresh and retry.';
+      paint();
     });
   }
   function preference(value) {
@@ -249,7 +372,7 @@
       if (attempt !== preferenceAttempt) return;
       preferencePending = false;
       if (result && result.state) {
-        if (!render(result.state)) render(state);
+        if (!render(result.state)) paint();
       } else {
         if (!result || !result.applied) enabled.checked = state.enabled;
         text('sharing-preference', !result ? 'Could not apply the sharing choice.' : result.error || '');
@@ -258,14 +381,19 @@
   }
   enabled.addEventListener('change', function () { preference(enabled.checked); });
   WM.el('sharing-confirm-on').addEventListener('click', function () { preference(true); });
-  boss.addEventListener('change', paintBoss);
+  boss.addEventListener('change', function () {
+    if (!hydrated || boss.disabled) return;
+    desiredBoss = boss.value;
+    paintBoss();
+    paintSources();
+  });
   start.addEventListener('click', function () {
     var character = selected();
-    if (character) action('fleet_sharing_start_source', character.character_id, character.character_link_epoch, binding());
+    if (character && !start.disabled) action('fleet_sharing_start_source', character.character_id, character.character_link_epoch, binding());
   });
   grant.addEventListener('click', function () {
     var character = selected();
-    if (character) action('fleet_sharing_grant_fleet_read', character.character_id, binding());
+    if (character && !grant.disabled) action('fleet_sharing_grant_fleet_read', character.character_id, binding());
   });
   connect.addEventListener('click', function () {
     if (!hydrated) return;
@@ -278,13 +406,23 @@
   function watch() {
     var current = ++watchGeneration;
     var open = visible();
+    var requestedState;
+    paint();
     // Serialize enter/leave so a slow bridge enter cannot overtake its leave.
-    watchChain = watchChain.then(function () { return WM.send('fleet_sharing_watch', open); }).then(function (result) {
+    watchChain = watchChain.then(function () {
+      requestedState = state;
+      return WM.send('fleet_sharing_watch', open);
+    }).then(function (result) {
       if (current !== watchGeneration || !open || !visible()) return;
-      if (result && result.state) render(result.state);
-      // Failed initial hydration must finish. A later unversioned failure
-      // cannot replace known state or disable Off behind an in-flight On.
+      if (result && result.state) render(result.state, true);
+      // An unversioned failure cannot supersede newer evidence received during
+      // this read. Equal-version copies are still the same last-known state.
+      // Off stays reachable because preference ownership is separate.
       else if (!state) unavailable();
+      else if (requestedState && state.presentation_order === requestedState.presentation_order) {
+        readFailed = true;
+        paint();
+      }
     });
   }
   WM.el('sharing-refresh').addEventListener('click', watch);

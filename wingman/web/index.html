@@ -385,6 +385,7 @@
       <button class="rail-item" data-section="characters">Characters</button>
       <button class="rail-item" data-section="bookmarks">Bookmarks</button>
       <button class="rail-item" data-section="previews">Previews</button>
+      <button class="rail-item" data-section="fleet">Fleet telemetry</button>
       <!-- Its own entry since round 5's D1. It was a card at the bottom of
            Previews, which is where PRODUCT.md's rule put it -- alerts act
            on a preview window -- but that rule is about DESTINATION versus
@@ -728,7 +729,7 @@
     <div class="settings" id="section-previews">
       <div class="preview-jumps">
         <button class="btn" type="button" data-preview-jump="preview-window-options">Preview windows</button>
-        <button class="btn" type="button" data-preview-jump="preview-fleet-options">Fleet Bar</button>
+        <button class="btn" type="button" id="preview-fleet-settings">Fleet telemetry settings</button>
         <button class="btn" type="button" data-preview-jump="preview-keybind-options">Global keybinds</button>
       </div>
       <section class="card" id="preview-window-options">
@@ -1035,78 +1036,6 @@
             back to its default size and place.</span></div>
       </section>
 
-      <section class="card" id="preview-fleet-options">
-        <h2>Fleet Bar</h2>
-        <p class="hint">A separate always-on-top row for every running,
-          logged-in EVE client. It shows outgoing and incoming DPS over the
-          last 10 seconds plus scram, point, and neut activity. It works
-          whether client previews and alerts are on or off. A client without
-          an active gamelog says NO LOG instead of showing a guessed zero.</p>
-        <div class="row">
-          <label class="check">
-            <input type="checkbox" id="fleetbar-enabled"><span class="box"></span>
-            Show Fleet Bar
-          </label>
-        </div>
-        <div class="row"><span class="lab"></span>
-          <span class="hint" id="fleetbar-enabled-status">Drag Fleet Bar by its header. If edge resize is available, use the left or right edge. Wingman remembers width and position.</span></div>
-        <div class="row">
-          <button class="btn" id="fleetbar-reset">Reset Fleet Bar width</button>
-          <span class="hint">Puts Fleet Bar back to its default 500px content width.</span></div>
-        <details class="fleet-characters" id="fleetbar-characters">
-          <summary>Characters</summary>
-          <div class="fleet-character-list" id="fleetbar-character-list"></div>
-          <p class="hint fleet-character-empty" id="fleetbar-characters-empty">
-            Characters appear here after Wingman sees them running.
-          </p>
-          <p class="field-msg" id="fleetbar-characters-status" role="status" hidden></p>
-        </details>
-      </section>
-
-      <section class="card" id="fleet-sharing">
-        <h2>Fleet sharing</h2>
-        <p class="hint" id="sharing-connection" role="status">Reading connection state…</p>
-        <p class="field-msg" id="sharing-browser-error" role="status"></p>
-        <div class="row">
-          <button class="btn" id="sharing-connect" disabled>Connect…</button>
-          <button class="btn" id="sharing-refresh" disabled>Refresh</button>
-        </div>
-        <div class="row">
-          <label class="check">
-            <input type="checkbox" id="sharing-enabled" disabled><span class="box"></span>
-            Share my fleet telemetry
-          </label>
-          <button class="btn" id="sharing-confirm-on" hidden>Confirm sharing On</button>
-        </div>
-        <p class="field-msg" id="sharing-preference" role="status"></p>
-        <p class="hint" id="sharing-consent" role="status"></p>
-        <h3>Roster verification</h3>
-        <p class="hint">Start verifies your boss. One boss authorization covers eligible account-linked alts automatically.</p>
-        <div class="row">
-          <label class="lab" for="sharing-boss">Owned fleet boss</label>
-          <select class="field" id="sharing-boss" disabled><option value="">Waiting for owned characters</option></select>
-        </div>
-        <p class="hint" id="sharing-grant-status"></p>
-        <div class="row">
-          <button class="btn" id="sharing-grant" disabled>Grant Fleet Read…</button>
-          <button class="btn" id="sharing-start" disabled>Start verification</button>
-        </div>
-        <p class="field-msg" id="sharing-action" role="status"></p>
-        <h3>Account sources</h3>
-        <p class="hint" id="sharing-source-status">Source state is not known yet.</p>
-        <div class="sharing-sources" id="sharing-sources"></div>
-        <details id="sharing-eligible" class="fleet-characters">
-          <summary>Sharing details and eligible characters</summary>
-          <p class="hint">Only current DPS and scram / point state leave this PC, never raw logs or history.
-            Pairing, Fleet Read and Start do not turn telemetry sharing on.</p>
-          <p class="hint">Other participants and alts need no Fleet Read. Start can remain pending or paused
-            until authGD verifies the boss. Source controls work with sharing and local displays off;
-            closing this view never Stops a source.</p>
-          <p class="hint" id="sharing-eligibility"></p>
-          <ul class="sharing-list" id="sharing-eligible-list"></ul>
-        </details>
-      </section>
-
       <section class="card" id="preview-keybind-options">
         <h2>Global keybinds</h2>
         <!-- THE precedence statement, and after round 5's C5 the only
@@ -1169,6 +1098,85 @@
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-copy-status"
                 role="status" hidden></span></div>
+      </section>
+    </div>
+
+    <div class="settings" id="section-fleet">
+      <section class="card" id="preview-fleet-options">
+        <h2>Fleet Bar</h2>
+        <p class="hint">A separate always-on-top row for every running,
+          logged-in EVE client. It shows outgoing and incoming DPS over the
+          last 10 seconds plus scram, point, and neut activity. It works
+          whether client previews and alerts are on or off. A client without
+          an active gamelog says NO LOG instead of showing a guessed zero.</p>
+        <div class="row">
+          <label class="check">
+            <input type="checkbox" id="fleetbar-enabled"><span class="box"></span>
+            Show Fleet Bar
+          </label>
+        </div>
+        <p class="hint">Local display only. Hiding the bar does not turn sharing Off or Stop verification.</p>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="fleetbar-enabled-status">Drag Fleet Bar by its header. If edge resize is available, use the left or right edge. Wingman remembers width and position.</span></div>
+        <div class="row">
+          <button class="btn" id="fleetbar-reset">Reset Fleet Bar width</button>
+          <span class="hint">Puts Fleet Bar back to its default 500px content width.</span></div>
+        <details class="fleet-characters" id="fleetbar-characters">
+          <summary>Characters</summary>
+          <div class="fleet-character-list" id="fleetbar-character-list"></div>
+          <p class="hint fleet-character-empty" id="fleetbar-characters-empty">
+            Characters appear here after Wingman sees them running.
+          </p>
+          <p class="field-msg" id="fleetbar-characters-status" role="status" hidden></p>
+        </details>
+      </section>
+
+      <section class="card" id="fleet-sharing">
+        <h2>Fleet sharing</h2>
+        <p class="hint" id="sharing-connection" role="status">Reading connection state…</p>
+        <p class="field-msg" id="sharing-browser-error" role="status"></p>
+        <div class="row">
+          <button class="btn" id="sharing-connect" disabled>Connect…</button>
+          <button class="btn" id="sharing-refresh" disabled>Refresh</button>
+        </div>
+        <div class="row">
+          <label class="check">
+            <input type="checkbox" id="sharing-enabled" disabled><span class="box"></span>
+            Share my fleet telemetry
+          </label>
+          <button class="btn" id="sharing-confirm-on" hidden>Confirm sharing On</button>
+        </div>
+        <p class="field-msg" id="sharing-preference" role="status"></p>
+        <p class="hint" id="sharing-consent" role="status"></p>
+        <h3>Roster verification</h3>
+        <p class="hint">Start verifies your boss. One boss authorization covers eligible account-linked alts automatically.</p>
+        <div class="row">
+          <label class="lab" for="sharing-boss">Owned fleet boss</label>
+          <select class="field" id="sharing-boss" disabled><option value="">Waiting for owned characters</option></select>
+        </div>
+        <p class="hint" id="sharing-grant-status"></p>
+        <div class="row">
+          <button class="btn" id="sharing-grant" disabled>Grant Fleet Read…</button>
+          <button class="btn" id="sharing-start" disabled>Start verification</button>
+        </div>
+        <p class="field-msg" id="sharing-action" role="status"></p>
+        <h3>Account sources</h3>
+        <p class="hint" id="sharing-source-status">Source state is not known yet.</p>
+        <div class="sharing-sources" id="sharing-sources"></div>
+        <details id="sharing-history" class="fleet-characters" hidden>
+          <summary id="sharing-history-summary">Previous attempts (0)</summary>
+          <div id="sharing-history-sources" class="sharing-sources"></div>
+        </details>
+        <details id="sharing-eligible" class="fleet-characters">
+          <summary>Sharing details and eligible characters</summary>
+          <p class="hint">Only current DPS and scram / point state leave this PC, never raw logs or history.
+            Pairing, Fleet Read and Start do not turn telemetry sharing on.</p>
+          <p class="hint">Other participants and alts need no Fleet Read. Start can remain pending or paused
+            until authGD verifies the boss. Source controls work with sharing and local displays off;
+            closing this view never Stops a source.</p>
+          <p class="hint" id="sharing-eligibility"></p>
+          <ul class="sharing-list" id="sharing-eligible-list"></ul>
+        </details>
       </section>
     </div>
 
@@ -2654,6 +2662,7 @@
   <script src="app.js"></script>
   <script src="characters.js"></script>
   <script src="bookmarks.js"></script>
+  <script src="fleet.js"></script>
   <script src="previews.js"></script>
   <script src="fleetsharing.js"></script>
   <script src="alerts.js"></script>
