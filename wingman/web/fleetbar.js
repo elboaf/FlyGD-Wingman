@@ -58,7 +58,7 @@
     var nodes = titleNodes();
     if (!nodes.error || !nodes.health) return;
     var message = text || '';
-    nodes.error.textContent = message;
+    setText(nodes.error, message);
     nodes.error.hidden = !message;
     nodes.health.hidden = Boolean(message);
     if (nodes.end && nodes.end.classList) {
@@ -68,6 +68,12 @@
 
   function clearTitleError() {
     showTitleError('');
+  }
+
+  function setText(node, text) {
+    if (!node) return;
+    text = text || '';
+    if (node.textContent !== text) node.textContent = text;
   }
 
   function fieldResult(result) {
@@ -215,9 +221,22 @@
     return value;
   }
 
+  function isStaleRemote(row) {
+    return row && row.remote === true && row.state === 'stale';
+  }
+
+  function hasIncomingThreat(row) {
+    return !isStaleRemote(row) && readDps(row, 'incoming_dps') > 0;
+  }
+
+  function hasEwarThreat(row) {
+    return !isStaleRemote(row) && Array.isArray(row && row.ewar) && row.ewar.length > 0;
+  }
+
   function maxDps(rows, key) {
     var max = 0;
     rows.forEach(function (row) {
+      if (isStaleRemote(row)) return;
       var value = readDps(row, key);
       if (value !== null && value > max) max = value;
     });
@@ -309,14 +328,31 @@
     node.setAttribute('aria-label',
       dpsAriaPart('Outgoing', out) + ', ' + dpsAriaPart('incoming', incoming));
 
-    var stale = row.remote === true && row.state === 'stale';
-    node.appendChild(damageHalf('out', out, fillRatio(out, maxOutgoing),
+    var stale = isStaleRemote(row);
+    node.appendChild(damageHalf('out', out, stale ? 0 : fillRatio(out, maxOutgoing),
       (!stale && out !== null && out > 0) ? 'live' : null));
     node.appendChild(axisNode());
-    // Positive IN shares --warn with active EWAR; OUT never does.
-    node.appendChild(damageHalf('in', incoming, fillRatio(incoming, maxIncoming),
-      (incoming !== null && incoming > 0) ? 'warn' : null));
+    node.appendChild(damageHalf('in', incoming, stale ? 0 : fillRatio(incoming, maxIncoming),
+      hasIncomingThreat(row) ? 'warn' : null));
     return node;
+  }
+
+  function ewarText(row) {
+    return (Array.isArray(row && row.ewar) && row.ewar.length)
+      ? row.ewar.join(' · ') : '—';
+  }
+
+  function ewarAriaLabel(row) {
+    var ewar = Array.isArray(row && row.ewar) ? row.ewar : [];
+    var labels = [];
+    ewar.forEach(function (effect) {
+      if (row && row.remote === true && effect === 'SCRAM/POINT') {
+        labels.push('Remote tackle: scram or point.');
+      } else {
+        labels.push(effect);
+      }
+    });
+    return labels.length ? labels.join(', ') : null;
   }
 
   function healthLabel(health) {
@@ -327,6 +363,15 @@
     if (state === 'stale') return 'STALE';
     if (state === 'error') return 'ERROR';
     return 'WAITING';
+  }
+
+  function recoveryNote(payload, health) {
+    if (payload && payload.metric_error) return payload.metric_error;
+    var state = (health && health.state) || 'stopped';
+    if (state === 'missing_folder') return 'Set the Gamelog folder in Settings › Alerts.';
+    if (state === 'stale') return 'Gamelogs have stopped updating.';
+    if (state === 'error') return 'Gamelogs could not be read.';
+    return '';
   }
 
   function render(payload) {
@@ -353,10 +398,14 @@
     var maxIncoming = maxDps(rows, 'incoming_dps');
     rows.forEach(function (row) {
       var line = document.createElement('div');
-      var ewar = (Array.isArray(row.ewar) && row.ewar.length)
-        ? row.ewar.join(' · ') : '—';
-      var stale = row.remote === true && row.state === 'stale';
-      line.className = 'fleet-grid fleet-row' + (stale ? ' stale' : '');
+      var ewar = ewarText(row);
+      var stale = isStaleRemote(row);
+      var ewarThreat = hasEwarThreat(row);
+      var threat = ewarThreat || hasIncomingThreat(row);
+      line.className = 'fleet-grid fleet-row'
+        + (stale ? ' stale' : '')
+        + (threat ? ' threat' : '')
+        + (ewarThreat ? ' ewar-threat' : '');
       line.setAttribute('role', 'row');
       var character = cell('fleet-character', row.character || '—');
       character.title = character.textContent;
@@ -371,9 +420,10 @@
       }
       line.appendChild(identity);
       line.appendChild(damageCell(row, maxOutgoing, maxIncoming));
-      var incoming = cell('fleet-ewar' +
-        (!stale && ewar !== '—' ? ' active' : ''), ewar);
+      var incoming = cell('fleet-ewar' + (ewarThreat ? ' active' : ''), ewar);
       incoming.title = incoming.textContent;
+      var ariaLabel = ewarAriaLabel(row);
+      if (ariaLabel) incoming.setAttribute('aria-label', ariaLabel);
       line.appendChild(incoming);
       rowsNode.appendChild(line);
     });
@@ -382,21 +432,15 @@
     var emptyText = runningCount > 0
       ? 'All running characters are hidden.'
       : 'Waiting for EVE clients…';
-    if (empty.textContent !== emptyText) {
-      empty.textContent = emptyText;
-    }
-    healthNode.textContent = 'LOCAL ' + healthLabel(health);
+    setText(empty, emptyText);
+    setText(healthNode, 'LOCAL ' + healthLabel(health));
     healthNode.classList.toggle('warn', health.state === 'stale' ||
       health.state === 'missing_folder');
     healthNode.classList.toggle('err', health.state === 'error');
 
-    var detail = payload.metric_error ||
-      ((health.state === 'stale' || health.state === 'error') ? health.detail : null);
-    var noteText = detail || '';
+    var noteText = recoveryNote(payload, health);
     note.hidden = !noteText;
-    if (note.textContent !== noteText) {
-      note.textContent = noteText;
-    }
+    setText(note, noteText);
     note.classList.toggle('err', Boolean(payload.metric_error) || health.state === 'error');
     return fitHeight();
   }

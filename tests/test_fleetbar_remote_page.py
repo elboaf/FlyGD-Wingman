@@ -27,15 +27,28 @@ def test_damage_tracks_keep_complete_remote_markers_and_header_only_drag():
     web = Path(__file__).resolve().parents[1] / "wingman" / "web"
     html = (web / "fleetbar.html").read_text(encoding="utf-8")
     grid = re.search(r"\.fleet-grid\s*\{([^}]*)\}", html)
-    assert "minmax(0, 1fr) 160px 148px" in grid[1]
+    assert "minmax(96px, 1fr) clamp(132px, 30vw, 184px) max-content" in grid[1]
     marker = re.search(r"\.fleet-remote\s*\{([^}]*)\}", html)
     assert "white-space: normal" in marker[1]
     assert "text-overflow" not in marker[1]
+    body = re.findall(r"\n\s*body\s*\{([^}]*)\}", html)
+    shell = re.search(r"\.fleet-shell\s*\{([^}]*)\}", html)
+    assert body
+    assert "min-width: 420px" in body[-1]
+    assert "width: fit-content" in body[-1]
+    assert "min-width: 420px" in shell[1]
+    assert "width: 100vw" in shell[1]
+    assert "max-width: 720px" in shell[1]
+    assert "border-left" not in html
     assert html.count("pywebview-drag-region") == 1
     assert '<div class="fleet-drag pywebview-drag-region" id="fleet-drag">' in html
     assert 'id="fleet-reset-width"' in html and 'id="fleet-hide"' in html
     assert "opacity: 0" in html and "pointer-events: none" in html
     assert "visibility: hidden" not in html
+    assert "Fleet Bar" in html
+    assert "Fleet telemetry" not in html
+    assert "DPS · 10s" in html
+    assert ">DAMAGE<" not in html
     assert 'aria-label="Character damage and incoming EWAR"' in html
 
 
@@ -73,24 +86,42 @@ async function main() {
   assert.match(window.location.hash,/^#fleet-page=[0-9a-f]{64}$/);
   const valueOf=half=>half.children.find(c=>c.className==='fleet-damage-value').textContent;
   const fillOf=half=>half.children.find(c=>c.className==='fleet-damage-track').children[0];
-  for (const kind of ['local','remote','mixed','stale','empty','hidden','long','max','maxlocal','defensive','zero','roster','nolog']) {
+  for (const kind of ['zero','outgoing','incoming','ewar','threat','remote','stale','empty','allhidden','long','exact10m','defensive','roster','nolog','missing','waiting','error']) {
     await window.DEV.fleetBar(kind);
     const rows=nodes['fleet-rows'].children;
+    if (kind==='missing') {
+      assert.equal(nodes['fleet-note'].textContent,'Set the Gamelog folder in Settings \u203a Alerts.');
+      continue;
+    }
+    if (kind==='waiting') {
+      assert.equal(nodes['fleet-health'].textContent,'LOCAL WAITING');
+      continue;
+    }
+    if (kind==='error') {
+      assert.equal(nodes['fleet-note'].textContent,'Gamelogs could not be read.');
+      continue;
+    }
     assert(nodes['fleet-health'].textContent.startsWith('LOCAL '));
     if (kind==='empty') { assert.equal(rows.length,0); assert.equal(nodes['fleet-empty'].hidden,false); continue; }
+    if (kind==='allhidden') { assert.equal(rows.length,0); assert.equal(nodes['fleet-empty'].textContent,'All running characters are hidden.'); continue; }
     assert(rows.every(row=>row.children.length===3));
-    if (kind==='local') { assert.equal(rows[0].children[0].children.length,1); assert.equal(nodes['fleet-health'].textContent,'LOCAL LIVE'); }
-    if (kind==='remote') assert.equal(rows[0].children[0].children[1].textContent,'REMOTE');
-    if (kind==='stale') {
-      assert.equal(rows[0].children[0].children[1].textContent,'REMOTE · STALE');
-      assert(!rows[0].children[1].children[0].className.includes('live'));
-      assert(!rows[0].children[2].className.includes('active'));
+    if (kind==='remote') {
+      assert.equal(rows[0].children[0].children[1].textContent,'REMOTE');
+      assert.equal(rows[0].children[2].getAttribute('aria-label'),'Remote tackle: scram or point.');
+      assert(rows[0].className.includes('ewar-threat'));
     }
-    if (kind==='hidden') assert.equal(rows[0].children[0].children[0].title,'Other remote');
+    if (kind==='stale') {
+      assert.equal(rows[1].children[0].children[1].textContent,'REMOTE · STALE');
+      assert.equal(fillOf(rows[1].children[1].children[0]).style.transform,'scaleX(0)');
+      assert(!rows[1].className.includes('threat'));
+      assert(!rows[1].children[2].className.includes('active'));
+    }
+    if (kind==='outgoing') assert(!rows[0].className.includes('threat'));
+    if (kind==='incoming') { assert(rows[0].className.includes('threat')); assert(!rows[0].className.includes('ewar-threat')); }
+    if (kind==='ewar' || kind==='threat' || kind==='exact10m' || kind==='defensive') assert(rows[0].className.includes('ewar-threat'));
     if (kind==='long') assert(rows[0].children[0].children[0].title.length>=100);
-    if (kind==='max') { assert.equal(valueOf(rows[0].children[1].children[0]),'10000000'); assert.equal(rows[0].children[2].textContent,'SCRAM/POINT'); }
-    if (kind==='maxlocal' || kind==='defensive' || kind==='zero') {
-      const expected=kind==='maxlocal'?'10000000':kind==='defensive'?'>10m':'0';
+    if (kind==='exact10m' || kind==='defensive' || kind==='zero') {
+      const expected=kind==='exact10m'?'10000000':kind==='defensive'?'>10m':'0';
       assert.equal(valueOf(rows[0].children[1].children[0]),expected);
       assert.equal(valueOf(rows[0].children[1].children[2]),expected);
     }

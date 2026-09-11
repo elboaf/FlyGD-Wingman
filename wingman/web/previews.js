@@ -4,6 +4,7 @@
 (function () {
   var button = WM.el('btn-fleetbar');
   var check = WM.el('fleetbar-enabled');
+  var reset = WM.el('fleetbar-reset');
   var status = WM.el('fleetbar-enabled-status');
   var characterHost = WM.el('fleetbar-character-list');
   var empty = WM.el('fleetbar-characters-empty');
@@ -17,6 +18,23 @@
 
   if (button) { button.disabled = true; }
   if (check) { check.disabled = true; }
+  if (reset) { reset.disabled = true; }
+
+  function setStatusMessage(text) {
+    if (!status) return;
+    text = text || '';
+    if (status.textContent !== text) { status.textContent = text; }
+  }
+
+  function fieldResult(result) {
+    if (result && result.state) render(result.state);
+    if (result && result.applied) {
+      setStatusMessage(defaultStatus);
+      return true;
+    }
+    setStatusMessage(result && result.error);
+    return false;
+  }
 
   function accept(section) {
     var revision = Number(section && section.revision);
@@ -177,12 +195,13 @@
       check.disabled = false;
       if (check !== document.activeElement) check.checked = lastGood;
     }
+    if (reset) { reset.disabled = false; }
     renderCharacters(section.characters);
   }
 
-  function failed() {
-    if (check) { check.checked = lastGood; }
-    if (status) { status.textContent = 'Could not change the Fleet Bar.'; }
+  function failed(restoreCheck, message) {
+    if (restoreCheck && check) { check.checked = lastGood; }
+    setStatusMessage(message);
   }
 
   WM.handle('onFleetBarState', render);
@@ -191,18 +210,38 @@
     button.addEventListener('click', function () {
       if (!hydrated) return;
       WM.send('toggle_fleet_bar', !lastGood).then(function (res) {
-        if (!res || !res.applied) { failed(); }
-        else if (status) { status.textContent = defaultStatus; }
-      }, failed);
+        if (!fieldResult(res)) {
+          if (!res || !res.error) { failed(true, 'Could not change the Fleet Bar.'); }
+          else if (check) { check.checked = lastGood; }
+        }
+      }, function () {
+        failed(true, 'Could not change the Fleet Bar.');
+      });
     });
   }
   if (check) {
     check.addEventListener('change', function () {
       if (!hydrated) return;
       WM.send('toggle_fleet_bar', check.checked).then(function (res) {
-        if (!res || !res.applied) { failed(); }
-        else if (status) { status.textContent = defaultStatus; }
-      }, failed);
+        if (!fieldResult(res)) {
+          if (!res || !res.error) { failed(true, 'Could not change the Fleet Bar.'); }
+          else { check.checked = lastGood; }
+        }
+      }, function () {
+        failed(true, 'Could not change the Fleet Bar.');
+      });
+    });
+  }
+  if (reset) {
+    reset.addEventListener('click', function () {
+      if (!hydrated) return;
+      WM.send('reset_fleet_bar_width').then(function (res) {
+        if (!fieldResult(res) && (!res || !res.error)) {
+          failed(false, 'Could not reset Fleet Bar width.');
+        }
+      }, function () {
+        failed(false, 'Could not reset Fleet Bar width.');
+      });
     });
   }
 

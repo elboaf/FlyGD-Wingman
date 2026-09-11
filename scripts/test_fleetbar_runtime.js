@@ -821,6 +821,12 @@ test('normal-range payload: OUT/IN DOM order, independent ratios, exact values',
   // Named accessible descriptions: exact numbers, no character name inside.
   assert.equal(alice.getAttribute('aria-label'), 'Outgoing 100 DPS, incoming 50 DPS');
   assert.equal(bravo.getAttribute('aria-label'), 'Outgoing 25 DPS, incoming 200 DPS');
+  assert.ok(rows[0].classList.contains('threat'));
+  assert.ok(rows[0].classList.contains('ewar-threat'));
+  assert.ok(rows[1].classList.contains('threat'));
+  assert.ok(!rows[1].classList.contains('ewar-threat'));
+  assert.ok(!rows[2].classList.contains('threat'));
+  assert.ok(!rows[2].classList.contains('ewar-threat'));
 
   // Bravo's empty EWAR list is the neutral "zero" case: a dash, not warm.
   const bravoEwar = rows[1].children[2];
@@ -902,9 +908,11 @@ test('mixed-null payload without log_status: each direction renders independentl
     charlie.getAttribute('aria-label'),
     'Outgoing 43 DPS, incoming unavailable'
   );
+  assert.ok(!rows[0].classList.contains('threat'));
+  assert.ok(!rows[0].classList.contains('ewar-threat'));
 });
 
-test('remote Damage keeps incoming unknown, independent maxima and stale emphasis', async () => {
+test('remote rows keep incoming unknown, include live values in maxima, and clear stale threat and rails truthfully', async () => {
   const p = await page();
   const remote = {
     character: 'Remote pilot', outgoing_dps: 400, incoming_dps: null,
@@ -921,15 +929,18 @@ test('remote Damage keeps incoming unknown, independent maxima and stale emphasi
     assert.equal(identity.children[1].textContent, stale ? 'REMOTE · STALE' : 'REMOTE');
     assert.equal(damage.getAttribute('aria-label'), 'Outgoing 400 DPS, incoming unavailable');
     assert.equal(damage.classList.contains('unavailable'), false);
+    assert.equal(line.classList.contains('threat'), !stale);
+    assert.equal(line.classList.contains('ewar-threat'), !stale);
     const [out, , incoming] = damage.children;
     assert.equal(valueOf(out).textContent, '400');
-    assert.equal(fillOf(out).style.transform, 'scaleX(1)');
+    assert.equal(fillOf(out).style.transform, stale ? 'scaleX(0)' : 'scaleX(1)');
     assert.equal(out.classList.contains('live'), !stale);
     assert.equal(valueOf(incoming).textContent, '—');
     assert.equal(fillOf(incoming).style.transform, 'scaleX(0)');
     assert.equal(incoming.classList.contains('warn'), false);
     assert.equal(ewar.classList.contains('active'), !stale);
     assert.equal(ewar.title, 'SCRAM/POINT');
+    assert.equal(ewar.getAttribute('aria-label'), 'Remote tackle: scram or point.');
   };
   assertRemote(rows[3], false);
   await p.push({ revision: 2, rows: [{ ...remote, state: 'stale' }], running_count: 0 });
@@ -938,10 +949,42 @@ test('remote Damage keeps incoming unknown, independent maxima and stale emphasi
   assert.deepEqual(p.errors, []);
 });
 
-test('exact ten million stays numeric in both Damage directions', async () => {
+test('exact ten million stays numeric beside combined EWAR', async () => {
   const p = await page();
-  await p.push(snapshot(1, 'Bound', 10000000, 10000000));
-  assertRendered(p, 'Bound', 10000000, 10000000);
+  await p.push({
+    revision: 1,
+    rows: [{
+      character: 'Bound', outgoing_dps: 10000000, incoming_dps: 10000000,
+      ewar: ['SCRAM', 'POINT', 'NEUT'], log_status: null
+    }],
+    running_count: 1,
+    stream_health: { state: 'active' }
+  });
+  const row = p.el('fleet-rows').children[0];
+  assert.equal(valueOf(row.children[1].children[0]).textContent, '10000000');
+  assert.equal(valueOf(row.children[1].children[2]).textContent, '10000000');
+  assert.equal(row.children[2].textContent, 'SCRAM · POINT · NEUT');
+  assert.ok(row.classList.contains('ewar-threat'));
+});
+
+test('health states use the approved Fleet Bar recovery copy', async () => {
+  const p = await page();
+  await p.push({
+    revision: 1, rows: [], running_count: 0,
+    stream_health: { state: 'missing_folder', detail: 'ignored' }
+  });
+  assert.equal(p.el('fleet-note').hidden, false);
+  assert.equal(p.el('fleet-note').textContent, 'Set the Gamelog folder in Settings › Alerts.');
+  await p.push({
+    revision: 2, rows: [], running_count: 0,
+    stream_health: { state: 'stale', detail: 'Local log stale' }
+  });
+  assert.equal(p.el('fleet-note').textContent, 'Gamelogs have stopped updating.');
+  await p.push({
+    revision: 3, rows: [], running_count: 0,
+    stream_health: { state: 'error', detail: 'permission denied' }
+  });
+  assert.equal(p.el('fleet-note').textContent, 'Gamelogs could not be read.');
 });
 
 const ALL_ZERO_ROWS = [

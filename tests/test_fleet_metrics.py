@@ -334,6 +334,20 @@ class TestBinding:
         snap = metrics.snapshot(2, HEALTH)
         assert [r.character for r in snap.rows] == ["Alice", "bob"]
 
+    def test_metric_only_updates_keep_existing_membership_order(self):
+        metrics, _, _ = _metrics()
+        metrics.consume(_env(1, _roster(_session("bob"), _session("Alice"))))
+        metrics.consume(_env(2, _lifecycle("bob")))
+        metrics.consume(_env(3, _lifecycle("Alice")))
+        before = [r.character for r in metrics.snapshot(4, HEALTH).rows]
+
+        metrics.consume(_env(5, _damage("bob", 500, NOW)))
+        metrics.consume(_env(6, _damage("Alice", 50, NOW, kind="incoming_damage")))
+        after = [r.character for r in metrics.snapshot(7, HEALTH).rows]
+
+        assert before == ["Alice", "bob"]
+        assert after == before
+
 
 # ---------------------------------------------------------------------------
 # Fixed-window DPS

@@ -263,6 +263,11 @@
   /* The progress groove. Derived, not retyped: it is the panel border
      weight, and the two have never been meant to differ. */
   --track: var(--panel-border);
+  /* Fleet Bar threat surfaces stay tokens for the same reason as the rest
+     of the sheet: the row tint and restrained incoming emphasis are one
+     colour decision, not local literals smuggled into fleetbar.html. */
+  --fleet-threat-surface: rgb(210 153 34 / 0.12);
+  --fleet-incoming-threat: #caa45c;
 
   /* ---- rows ----
      One vocabulary shared by the recording list, the Skills roster and

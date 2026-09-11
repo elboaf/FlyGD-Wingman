@@ -672,21 +672,11 @@ def test_fleet_page_changes_empty_live_text_only_for_a_new_message():
         js.index("function render(payload)") : js.index("window.onFleetSnapshot")
     ]
 
+    assert "function setText(node, text)" in js
     assert "var emptyText = runningCount > 0" in render
-    assert re.search(
-        r"if\s*\(empty\.textContent !== emptyText\)\s*\{\s*"
-        r"empty\.textContent = emptyText;\s*\}",
-        render,
-    )
-    assert render.count("empty.textContent =") == 1
-
-    assert "var noteText = detail || '';" in render
-    assert re.search(
-        r"if\s*\(note\.textContent !== noteText\)\s*\{\s*"
-        r"note\.textContent = noteText;\s*\}",
-        render,
-    )
-    assert render.count("note.textContent =") == 1
+    assert "setText(empty, emptyText);" in render
+    assert "var noteText = recoveryNote(payload, health);" in render
+    assert "setText(note, noteText);" in render
 
 
 def test_fleet_settings_groups_running_offline_and_hidden(api):
@@ -1197,9 +1187,17 @@ def test_settings_and_status_strip_expose_the_same_fleet_toggle():
     app = (window_mod._web_dir() / "app.js").read_text(encoding="utf-8")
 
     assert 'id="fleetbar-enabled"' in html
+    assert 'id="fleetbar-reset"' in html
     assert 'id="btn-fleetbar"' in html
+    assert "Show Fleet Bar" in html
+    assert "Fleet combat bar" not in html
+    assert "Floating Fleet DPS / EWAR bar" not in html
+    assert 'title="Fleet Bar"' in html
+    assert 'aria-label="Fleet Bar"' in html
     assert "WM.handle('onFleetBarState'" in js
+    assert "function fieldResult(result)" in js
     assert "check.checked = lastGood" in js
+    assert "reset_fleet_bar_width" in js
     assert "'onFleetBarState'" in app
     assert js.count("toggle_fleet_bar") == 2
     assert js.index("WM.handle('onFleetBarState'") < js.index("var host =")
@@ -1276,9 +1274,11 @@ def test_fleet_page_keeps_header_actions_outside_drag_and_stable_columns():
     assert html.count("pywebview-drag-region") == 1
     assert '<div class="fleet-drag pywebview-drag-region" id="fleet-drag">' in html
     assert "CHARACTER" in html
-    assert ">DAMAGE<" in html and ">OUT<" in html and ">IN<" in html
+    assert ">DPS · 10s<" in html and ">OUT<" in html and ">IN<" in html
     assert ">EWAR<" in html
-    assert ">DPS<" not in html  # split into the Damage column's OUT/IN halves
+    assert ">DAMAGE<" not in html
+    assert "Fleet telemetry" not in html
+    assert "Fleet Bar" in html
     assert ">INCOMING<" not in html  # renamed EWAR; incoming DPS moved into Damage
     assert "<button" in html and "<input" not in html
     assert "Reset Fleet Bar width" in html and "Hide Fleet Bar" in html
@@ -1293,13 +1293,16 @@ def test_fleet_page_keeps_header_actions_outside_drag_and_stable_columns():
     assert "settle_fleet_bar_resize" in js
     assert "activate_fleet_bar" in js and "hide_fleet_bar" in js
     assert "move_fleet_bar" not in js and "fit_fleet_bar(" not in js
+    assert "function isStaleRemote(row)" in js
     assert "function damageCell(row, maxOutgoing, maxIncoming)" in js
     assert "function readDps(row, key)" in js
     assert "function maxDps(rows, key)" in js
     assert "function fillRatio(value, maximum)" in js
     assert "function displayDps(value)" in js
+    assert "Gamelogs have stopped updating." in js
+    assert "Gamelogs could not be read." in js
+    assert "Set the Gamelog folder in Settings \u203a Alerts." in js
     assert "row.log_status" in js  # NO LOG now lives in the Damage cell, not EWAR
-    assert "SCRAM" not in js  # rendered from telemetry, never guessed here
 
 
 PAGE_A = "a" * 64

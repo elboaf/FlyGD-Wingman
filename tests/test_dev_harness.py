@@ -670,6 +670,32 @@ def test_disabled_fleet_dev_state_marks_characters_unknown():
     )
 
 
+def test_standalone_fleet_bar_dev_fixtures_cover_task_6_states():
+    body = _fixture_body("function fleetFixture(kind)")
+
+    for kind in (
+        "zero",
+        "outgoing",
+        "incoming",
+        "ewar",
+        "threat",
+        "remote",
+        "stale",
+        "nolog",
+        "missing",
+        "waiting",
+        "error",
+        "allhidden",
+        "long",
+        "roster",
+        "exact10m",
+        "defensive",
+    ):
+        assert f"kind === '{kind}'" in body, kind
+    assert "Remote tackle: scram or point." not in body
+    assert "Gamelogs have stopped updating." not in body
+
+
 def test_standalone_fleet_bar_dev_doubles_match_the_final_page_bridge():
     start = DEV_JS.index("window.pywebview = {api: {")
     end = DEV_JS.index("window.DEV = {fleetBar", start)

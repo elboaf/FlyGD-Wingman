@@ -810,6 +810,15 @@ def test_no_colour_is_decided_outside_the_root_token_block():
     )
 
 
+def test_fleet_bar_threat_tokens_are_declared_in_root():
+    """Fleet Bar threat colour remains a shared token decision."""
+    root = re.search(r":root\s*\{(.*?)\n\}", CSS, flags=re.DOTALL)
+    assert root, "style.css has no :root block?"
+    values = dict(re.findall(r"(--[\w-]+)\s*:\s*([^;]+);", root.group(1)))
+    assert "--fleet-threat-surface" in values
+    assert "--fleet-incoming-threat" in values
+
+
 def test_the_type_scale_comment_still_describes_the_type_scale():
     """:root's type-scale note prints a size-and-ratio table. Check it.
 

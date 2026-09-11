@@ -152,6 +152,59 @@ def test_directional_local_and_remote_rows_keep_local_order_and_health(tmp_path)
     assert payload["stream_health"] == {"state": "stale", "detail": "Local log stale"}
 
 
+def test_metric_only_local_updates_preserve_the_supplied_local_first_sequence(tmp_path):
+    api, _ = setup(tmp_path)
+    api._install_fleet_generation(1)
+    api._receive_fleet_snapshot(
+        FleetSnapshot(
+            (
+                FleetRow("Zulu", 12, incoming_dps=80),
+                FleetRow("Alpha", 0, incoming_dps=90),
+            ),
+            StreamHealth("active"),
+            activation_generation=1,
+        )
+    )
+    remote(
+        api,
+        rows=(
+            row(character_id=20, character_name="Remote Z"),
+            row(character_id=10, character_name="Remote A"),
+        ),
+    )
+    first = api.fleet_bar_snapshot(PAGE_A)
+
+    api._receive_fleet_snapshot(
+        FleetSnapshot(
+            (
+                FleetRow("Zulu", 99, incoming_dps=1),
+                FleetRow("Alpha", 5, incoming_dps=250),
+            ),
+            StreamHealth("active"),
+            activation_generation=1,
+        )
+    )
+    second = api.fleet_bar_snapshot(PAGE_A)
+
+    assert [r["character"] for r in first["rows"]] == [
+        "Zulu",
+        "Alpha",
+        "Remote A",
+        "Remote Z",
+    ]
+    assert [r["character"] for r in second["rows"]] == [
+        "Zulu",
+        "Alpha",
+        "Remote A",
+        "Remote Z",
+    ]
+    assert [(r["outgoing_dps"], r["incoming_dps"]) for r in second["rows"][:2]] == [
+        (99, 1),
+        (5, 250),
+    ]
+    assert second["revision"] > first["revision"]
+
+
 @pytest.mark.parametrize("method,args", PAGE_CALLBACKS)
 def test_remote_events_do_not_change_creation_callback_admission(
     tmp_path, monkeypatch, method, args
