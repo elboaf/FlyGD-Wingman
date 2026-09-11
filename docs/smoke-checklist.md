@@ -22,9 +22,14 @@ practical feature check, not a hardware/DPI/resource qualification matrix. Recor
 results and any applications DWM cannot capture in
 `docs/companion-previews-implementation-notes.md`.
 
-- [ ] In Settings → Previews, add an ordinary whole-window companion.
+- [ ] In Settings → Companions, add an ordinary whole-window companion.
 - [ ] Add a selected-region companion and confirm the intended region is shown.
-- [ ] Move both with left-drag and resize both with right-drag.
+- [ ] Move both with left-drag and resize both with right-drag. Width and height
+      change independently; neither whole nor region mode forces an aspect ratio.
+- [ ] Choose a source with a long title. The compact chooser must remain narrow;
+      the selected window's full title remains readable below its dropdown.
+- [ ] Hide EVE tools in General. Companions stays accessible in the Settings rail;
+      its controls do not require visiting or enabling EVE previews.
 - [ ] Click each preview and confirm its own source activates.
 - [ ] Restart a source application. Confirm automatic rebinding or an honest
       Waiting for window / Needs selection state, never an unrelated source.

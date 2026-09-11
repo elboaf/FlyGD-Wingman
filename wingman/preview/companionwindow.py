@@ -194,14 +194,8 @@ class CompanionWindow:
         if self._mode == "move":
             rect = drag_target(self._start, point, self._start_rect)
         else:
-            source = self.source_rect or Rect(0, 0, *self.binding.client_size)
             rect = resize_result(
-                self._start,
-                point,
-                self._start_rect,
-                min_size=(32, 32),
-                aspect=source.w / source.h,
-                chrome=(0, 0),
+                self._start, point, self._start_rect, min_size=(32, 32)
             )
         self.move(rect, notify=True)
 

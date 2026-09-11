@@ -1383,8 +1383,8 @@
     });
   }
 
-  // Companion dialogs share this Settings section; capture consumes their
-  // keyboard input unless explicitly disarmed before opening an overlay.
+  // Companion dialogs share the page's keyboard listeners; keep the explicit
+  // disarm adapter as well as section-leave cleanup before opening an overlay.
   WM.endPreviewCapture = endCapture;
 
   function endCapture() {

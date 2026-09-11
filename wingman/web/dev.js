@@ -2469,11 +2469,12 @@
       label_max_chars: 80, title_hint_max_chars: 512, last_title_max_chars: 512,
       window_class_max_chars: 256, executable_path_max_chars: 32768},
     rows: [], operations: []};
-  var _devCompanionSources = [
+  var _devCompanionDefaultSources = [
     {candidate_token: 'dev-mapper', application: 'mapper.exe', title: 'Chain map — Home'},
     {candidate_token: 'dev-notes', application: 'notepad.exe', title: 'Fleet notes'},
     {candidate_token: 'dev-browser', application: 'browser.exe', title: 'Tripwire — Fleet map'}
   ];
+  var _devCompanionSources = _devCompanionDefaultSources;
   function _devCompanionCopy() { return JSON.parse(JSON.stringify(_devCompanionState)); }
   function _devCompanionPublish() {
     _devCompanionState.revision += 1;
@@ -2568,6 +2569,12 @@
   };
   window._devCompanions = function (scenario) {
     _devCompanionScenario = scenario;
+    _devCompanionSources = _devCompanionDefaultSources.map(function (source) {
+      if (scenario !== 'long-sources') return source;
+      return {candidate_token: source.candidate_token, application: source.application,
+        title: (source.title + ' — ' + Array(40).join('Fleet planning <not markup> / '))
+          .slice(0, _devCompanionState.limits.last_title_max_chars)};
+    });
     _devCompanionState.rows = []; _devCompanionState.operations = [];
     _devCompanionState.available = scenario !== 'unavailable';
     _devCompanionState.enabled = scenario === 'waiting' || scenario === 'long' || scenario === 'full';

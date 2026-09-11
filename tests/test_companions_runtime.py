@@ -23,7 +23,9 @@ def test_companion_page_operations_and_drafts():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("scenario", ["empty", "one", "full", "long", "waiting"])
+@pytest.mark.parametrize(
+    "scenario", ["empty", "one", "full", "long", "waiting", "long-sources"]
+)
 def test_browser_fixtures_are_valid_companion_definitions(scenario):
     from wingman.preview.companions import (
         LABEL_MAX_CHARS,
@@ -60,6 +62,11 @@ api.companion_previews_state().then(state => console.log(JSON.stringify(state)))
     assert limits["title_hint_max_chars"] == TITLE_MAX_CHARS
     assert isinstance(state["operations"], list)
     assert len(validate_definitions(state["rows"])) == len(state["rows"])
+    if scenario == "long-sources":
+        assert len(state["rows"]) == 3
+        titles = [row["source"]["last_title"] for row in state["rows"]]
+        assert all(len(title) == TITLE_MAX_CHARS for title in titles)
+        assert len({title[:30] for title in titles}) == 3
     if scenario == "full":
         assert len(state["rows"]) == MAX_DEFINITIONS
         assert sum(row["enabled"] for row in state["rows"]) == MAX_ENABLED

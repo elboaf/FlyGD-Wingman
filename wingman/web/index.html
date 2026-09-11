@@ -347,8 +347,8 @@
   </div>
 
   <div class="route" id="route-settings">
-    <!-- A rail, not one long column, and SIX groups rather than the seven
-         this screen carried until round 5's E1. Seven entries gave equal
+    <!-- A rail, not one long column. Round 5's E1 merged the groups
+         this screen carried then. Seven entries gave equal
          weight to five holding ten controls between them and two holding
          about seventy.
 
@@ -361,8 +361,8 @@
          General.
 
          The proof the axis is the right one is what the rail does when the
-         EVE gate is off: it goes to TWO entries, Uploading and General,
-         which is exactly the app the README describes in that mode. Built
+         EVE gate is off: Uploading, Companions and General stay available,
+         since none requires EVE. Built
          from the same pieces as .skills-rail rather than a second rail
          idiom. -->
     <aside class="settings-rail" id="settings-rail">
@@ -382,6 +382,7 @@
            product off, which is a legitimate control and a poor first
            impression of the app's configuration surface. -->
       <button class="rail-item active" data-section="uploading">Uploading</button>
+      <button class="rail-item" data-section="companions">Companions</button>
       <button class="rail-item" data-section="characters">Characters</button>
       <button class="rail-item" data-section="bookmarks">Bookmarks</button>
       <button class="rail-item" data-section="previews">Previews</button>
@@ -566,6 +567,47 @@
 
     </div>
 
+    <div class="settings" id="section-companions">
+      <section class="card" id="companion-previews">
+        <h2>Companion previews</h2>
+        <div class="pv-master">
+          <label class="check"><input type="checkbox" id="companion-enabled" disabled><span class="box"></span>Show companion previews</label>
+          <p class="hint" id="companion-off-note">Companion previews are off. You can still add and configure them.</p>
+          <p class="hint" id="companion-master-status" role="status"></p>
+        </div>
+        <p class="hint">Keep a non-EVE window or a selected region in view. Independent of your EVE previews.</p>
+        <div class="companion-toolbar">
+          <button class="btn" type="button" id="companion-add" disabled>Add companion…</button>
+          <span class="hint" id="companion-count"></span>
+        </div>
+        <div class="companion-add-form" id="companion-add-form" hidden>
+          <div class="row">
+            <label class="lab" for="companion-add-label">Label</label>
+            <input class="field" id="companion-add-label" type="text" placeholder="For example, Mapper" autocomplete="off" disabled>
+          </div>
+          <div class="row">
+            <span class="lab" id="companion-add-mode-label">Capture</span>
+            <div class="companion-actions" role="radiogroup" aria-labelledby="companion-add-mode-label">
+              <label class="radio"><input type="radio" name="companion-add-mode" id="companion-add-whole" value="whole" checked disabled><span class="ring"></span>Whole window</label>
+              <label class="radio"><input type="radio" name="companion-add-mode" id="companion-add-region" value="region" disabled><span class="ring"></span>Selected region</label>
+            </div>
+          </div>
+          <div class="companion-actions">
+            <button class="btn" type="button" id="companion-add-source" disabled>Choose source…</button>
+            <button class="btn" type="button" id="companion-add-cancel">Cancel</button>
+          </div>
+          <p class="hint">Open the source window first. For a region, drag the area in the picker, then confirm it.</p>
+        </div>
+        <p class="hint" id="companion-status" role="status"></p>
+        <div id="companion-list" class="companion-list"></div>
+        <p class="hint" id="companion-empty">No companions yet. Add a mapper, notes, or another non-EVE window.</p>
+        <details class="hint-more">
+          <summary>How companions behave</summary>
+          <p class="hint">Click a preview to switch to its source. Drag to move; right-drag or use the bottom-right corner to resize. Positions are remembered. A closed source waits to return; multiple matches need you to select one. Minimized or protected windows may not provide a live image.</p>
+        </details>
+      </section>
+    </div>
+
     <div class="settings" id="section-characters">
 
       <!-- Authorization starts one EVE-owned flow. EVE chooses the character,
@@ -727,44 +769,6 @@
          windows that appear elsewhere on the desktop and shows nothing of
          its own. -->
     <div class="settings" id="section-previews">
-      <section class="card" id="companion-previews">
-        <h2>Companion previews</h2>
-        <div class="pv-master">
-          <label class="check"><input type="checkbox" id="companion-enabled" disabled><span class="box"></span>Show companion previews</label>
-          <p class="hint" id="companion-off-note">Companion previews are off. You can still add and configure them.</p>
-          <p class="hint" id="companion-master-status" role="status"></p>
-        </div>
-        <p class="hint">Keep a non-EVE window or a selected region in view. Independent of your EVE previews.</p>
-        <div class="companion-toolbar">
-          <button class="btn" type="button" id="companion-add" disabled>Add companion…</button>
-          <span class="hint" id="companion-count"></span>
-        </div>
-        <div class="companion-add-form" id="companion-add-form" hidden>
-          <div class="row">
-            <label class="lab" for="companion-add-label">Label</label>
-            <input class="field" id="companion-add-label" type="text" placeholder="For example, Mapper" autocomplete="off" disabled>
-          </div>
-          <div class="row">
-            <span class="lab" id="companion-add-mode-label">Capture</span>
-            <div class="companion-actions" role="radiogroup" aria-labelledby="companion-add-mode-label">
-              <label class="radio"><input type="radio" name="companion-add-mode" id="companion-add-whole" value="whole" checked disabled><span class="ring"></span>Whole window</label>
-              <label class="radio"><input type="radio" name="companion-add-mode" id="companion-add-region" value="region" disabled><span class="ring"></span>Selected region</label>
-            </div>
-          </div>
-          <div class="companion-actions">
-            <button class="btn" type="button" id="companion-add-source" disabled>Choose source…</button>
-            <button class="btn" type="button" id="companion-add-cancel">Cancel</button>
-          </div>
-          <p class="hint">Open the source window first. For a region, drag the area in the picker, then confirm it.</p>
-        </div>
-        <p class="hint" id="companion-status" role="status"></p>
-        <div id="companion-list" class="companion-list"></div>
-        <p class="hint" id="companion-empty">No companions yet. Add a mapper, notes, or another non-EVE window.</p>
-        <details class="hint-more">
-          <summary>How companions behave</summary>
-          <p class="hint">Click a preview to switch to its source. Drag to move; right-drag or use the bottom-right corner to resize. Positions are remembered. A closed source waits to return; multiple matches need you to select one. Minimized or protected windows may not provide a live image.</p>
-        </details>
-      </section>
       <div class="preview-jumps">
         <button class="btn" type="button" data-preview-jump="preview-window-options">Preview windows</button>
         <button class="btn" type="button" id="preview-fleet-settings">Fleet telemetry settings</button>
@@ -2689,6 +2693,7 @@
                spellcheck="false" autocomplete="off" hidden>
         <label class="lab" id="dlg-select-label" for="dlg-select" hidden></label>
         <select class="field" id="dlg-select" hidden></select>
+        <p class="hint" id="dlg-select-detail" hidden></p>
         <div class="buttons">
           <button class="btn" id="dlg-cancel" hidden>Cancel</button>
           <button class="btn acc" id="dlg-ok">OK</button>

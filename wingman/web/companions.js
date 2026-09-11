@@ -309,7 +309,7 @@
       WM.choose('Choose companion source', 'Select a non-EVE window to preview.',
         [{label: 'Open windows', options: result.sources.map(function (source) {
           return {value: source.candidate_token, label: source.application + ' — ' + source.title};
-        })}], 'Choose', 'Source').then(function (token) {
+        })}], 'Choose', 'Source', {compact: true}).then(function (token) {
         if (owner !== epoch || attempt !== flow) return;
         sourceBusy = false;
         if (!current() || token === null) { paint(); return; }
@@ -412,7 +412,7 @@
     flow += 1; sourceBusy = false; message = ''; WM.el('companion-add-form').hidden = true; paint();
   });
   document.addEventListener('wm:section', function (event) {
-    active = event.detail === 'previews'; hydrated = false; epoch += 1; flow += 1;
+    active = event.detail === 'companions'; hydrated = false; epoch += 1; flow += 1;
     recovering = active; recoveryOperation = null; recoveryMessage = '';
     // Only local reply ownership ends here. The controller retains admitted
     // operations; the next state read recovers them even if a promise was lost.

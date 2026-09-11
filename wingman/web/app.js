@@ -220,7 +220,7 @@
   //
   // Round 5's E1 merged Account/Uploads/Folders/Discord into Uploading, so
   // the landing moved with the section that absorbed it. It is one of the
-  // two sections that survive the EVE gate being switched off, which is
+  // sections that survive the EVE gate being switched off, which is
   // why it is a landing that always exists. Held in step with the rail's
   // `active` class and the pane's by test_page_conventions.py.
   WM.current_section = 'uploading';
@@ -279,7 +279,7 @@
   // them and there is no way back.
   WM.EVE_ROUTES = ['evesettings', 'skills', 'fittings', 'formations',
                    'accountidentity', 'backups', 'uisetup'];
-  // EVE configuration stays separate from Uploading and General. Fleet has
+  // EVE configuration stays separate from Uploading, Companions and General. Fleet has
   // its own section but no additional runtime owner or activation path.
   WM.EVE_SECTIONS = ['characters', 'bookmarks', 'previews', 'fleet', 'alerts'];
 

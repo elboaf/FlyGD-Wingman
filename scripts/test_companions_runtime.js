@@ -23,8 +23,18 @@ class Element {
     this.hidden = false; this.disabled = false; this.dataset = {}; this.attributes = {}; this.style = {};
     this.children = []; this.parentNode = null; this.listeners = {}; this._text = '';
   }
+  get options() { return this.querySelectorAll('option'); }
+  get selectedIndex() { return this.options.findIndex(option => option.value === this.value); }
+  get value() {
+    if (this.tagName === 'SELECT' && !this._value) return this.options[0]?.value || '';
+    return this._value;
+  }
+  set value(value) { this._value = value; }
   get textContent() { return this._text + this.children.map(x => x.textContent).join(''); }
-  set textContent(value) { this.children.slice().forEach(x => x.remove()); this._text = String(value); }
+  set textContent(value) {
+    this.children.slice().forEach(x => x.remove()); this._text = String(value);
+    if (this.tagName === 'SELECT') this._value = '';
+  }
   set innerHTML(value) { throw new Error('Unexpected HTML interpolation: ' + value); }
   appendChild(node) { node.remove(); this.children.push(node); node.parentNode = this; return node; }
   remove() {
@@ -116,6 +126,11 @@ async function page(payload = state(), integrated = false) {
     node.textContent = html.slice(match.index + match[0].length).split('<')[0];
     document.body.appendChild(node);
   }
+  for (const match of html.matchAll(/<button class="(rail-item[^"]*)" data-section="([^"]+)">([^<]+)<\/button>/g)) {
+    const node = document.createElement('button'); node.className = match[1];
+    node.dataset.section = match[2]; node.setAttribute('data-section', match[2]);
+    node.textContent = match[3]; document.body.appendChild(node);
+  }
   const window = {document, addEventListener() {}, location: {search: ''}, getComputedStyle() { return {visibility: 'visible'}; }};
   const calls = [], dialogs = [], errors = []; let disarmed = 0;
   const context = vm.createContext({window, document, Promise, console: {
@@ -145,7 +160,7 @@ async function page(payload = state(), integrated = false) {
     WM, window, calls, dialogs, errors, document,
     el: name => document.getElementById(name),
     field(name, owner = id) { return document.getElementById('companion-' + owner + '-' + name); },
-    async enter() { WM.openSettingsSection('previews'); await turn(); },
+    async enter() { WM.openSettingsSection('companions'); await turn(); },
     async leave() { WM.route('main'); await turn(); },
     async fire(node, type, extra = {}) {
       assert.ok(node, 'control exists'); node.dispatchEvent({type, ...extra}); await turn();
@@ -188,6 +203,40 @@ test('nothing commits before hydration, configuration remains live with master o
   assert.match(p.el('companion-off-note').textContent, /off/i);
 });
 
+test('Companions rail stays available with EVE hidden and Settings remembers it', async () => {
+  const p = await page(null);
+  assert.equal(p.WM.current_section, 'uploading');
+  p.WM.apply_eve_gate(false);
+  assert.deepEqual(p.document.querySelectorAll('.rail-item').filter(node => !node.hidden)
+    .map(node => node.dataset.section), ['uploading', 'companions', 'general']);
+  p.WM.route('settings'); await turn();
+  await p.fire(p.document.querySelector('.rail-item[data-section="companions"]'), 'click');
+  await p.reply('companion_previews_state', state());
+  assert.equal(p.WM.current_section, 'companions');
+  assert.equal(p.el('section-companions').classList.contains('active'), true);
+  assert.equal(p.el('section-previews').classList.contains('active'), false);
+  assert.equal(p.el('companion-add').disabled, false);
+  p.WM.apply_eve_gate(false);
+  assert.equal(p.WM.current_section, 'companions');
+  await p.leave(); p.WM.route('settings'); await turn();
+  await p.reply('companion_previews_state', state());
+  assert.equal(p.WM.current_section, 'companions');
+  assert.equal(p.el('companion-add').disabled, false);
+});
+
+test('Previews does not hydrate companions; leaving Companions discards only local drafts', async () => {
+  const p = await page(null);
+  p.WM.openSettingsSection('previews'); await turn();
+  assert.equal(p.calls.length, 0);
+  await p.enter(); await p.reply('companion_previews_state', state(1, [row()]));
+  await p.edit('label', 'Unsubmitted');
+  p.WM.section('previews'); await turn();
+  assert.equal(p.field('label').disabled, true);
+  await p.enter(); await p.reply('companion_previews_state', state(1, [row()]));
+  assert.equal(p.field('label').value, 'Mapper');
+  assert.equal(p.calls.length, 0);
+});
+
 test('zero sources explains recovery without a chooser or mutation', async () => {
   const p = await page(); await p.startAdd();
   await p.reply('companion_previews_sources', receipt(1, {sources: [], revision: 1}));
@@ -220,15 +269,18 @@ test('operation event beating initial pending source reply still opens chooser o
   assert.equal(p.dialogs.length, 1);
 });
 
-test('leaving during enumeration or an open chooser never submits a local selection', async () => {
-  for (const stage of ['enumerating', 'choosing']) {
-    const p = await page(); await p.startAdd();
-    if (stage === 'choosing') await p.reply('companion_previews_sources', receipt(1, {sources, revision: 1}));
-    await p.leave();
-    if (stage === 'enumerating') await p.reply('companion_previews_sources', receipt(1, {sources, revision: 1}));
-    else await p.choose('opaque-one');
-    assert.equal(p.calls.filter(x => x.method === 'companion_preview_select').length, 0);
-    assert.equal(p.dialogs.length, 0);
+test('leaving Settings or Companions during source choice never submits a local selection', async () => {
+  for (const navigation of ['route', 'section']) {
+    for (const stage of ['enumerating', 'choosing']) {
+      const p = await page(); await p.startAdd();
+      if (stage === 'choosing') await p.reply('companion_previews_sources', receipt(1, {sources, revision: 1}));
+      if (navigation === 'route') await p.leave();
+      else { p.WM.section('previews'); await turn(); }
+      if (stage === 'enumerating') await p.reply('companion_previews_sources', receipt(1, {sources, revision: 1}));
+      else await p.choose('opaque-one');
+      assert.equal(p.calls.filter(x => x.method === 'companion_preview_select').length, 0);
+      assert.equal(p.dialogs.length, 0);
+    }
   }
 });
 
@@ -382,8 +434,9 @@ test('runtime unavailability is visible and never invents a working capture cont
   assert.match(p.el('companion-status').textContent, /unavailable/);
 });
 
-test('real preview capture disarms before real source chooser and Escape never writes a keybind', async () => {
-  const p = await page(state(), true);
+test('real preview capture disarms on leaving for Companions before its source chooser', async () => {
+  const p = await page(null, true);
+  p.WM.openSettingsSection('previews'); await turn();
   p.window.onPreviewHotkeys({hotkeys: {characters: {}, cycle_next: '', cycle_prev: '', groups: [], group_by_character: {}},
     characters: [], roster: [], registration: {}, bookmark_chords: {active: [], latent: []},
     enabled: true, locked: [], lock_default: false, never_minimize: [], excluded: [], sizes: {},
@@ -392,9 +445,11 @@ test('real preview capture disarms before real source chooser and Escape never w
   const capture = p.el('preview-binds').querySelector('.bindbtn'); assert.ok(capture);
   await p.fire(capture, 'click'); await p.reply('set_bind_capture', true, [true]);
   assert.equal(capture.classList.contains('capturing'), true);
-  await p.startAdd();
+  await p.enter();
   await p.reply('set_bind_capture', true, [false]);
   assert.equal(capture.classList.contains('capturing'), false);
+  await p.reply('companion_previews_state', state());
+  await p.startAdd();
   await p.reply('companion_previews_sources', receipt(1, {sources, revision: 1}));
   assert.equal(p.el('overlay').hidden, false);
   assert.equal(p.el('dlg-select-label').textContent, 'Source');
@@ -404,6 +459,41 @@ test('real preview capture disarms before real source chooser and Escape never w
   assert.equal(p.el('overlay').hidden, true);
   assert.equal(p.calls.filter(call => call.method === 'capture_preview_bind').length, 0);
   assert.equal(p.calls.filter(call => call.method === 'companion_preview_select').length, 0);
+});
+
+test('real compact source chooser bounds Unicode captions, reveals full selected text, and resets for copy', async () => {
+  const p = await page(state(), true);
+  const title = '😀'.repeat(50) + ' <img src=x onerror=bad()>', application = 'notes.exe';
+  const longSources = [{candidate_token: 'opaque-long', application, title}, sources[0]];
+  await p.startAdd();
+  await p.reply('companion_previews_sources', receipt(1, {sources: longSources, revision: 1}));
+  assert.equal(p.el('dialog').classList.contains('compact-choice'), true);
+  const select = p.el('dlg-select'), detail = p.el('dlg-select-detail');
+  const options = select.querySelectorAll('option');
+  assert.equal(options[0].textContent, 'notes.exe — ' + '😀'.repeat(31) + '…');
+  assert.equal(Array.from(options[0].textContent).length, 44);
+  assert.equal(options[0].textContent.isWellFormed(), true);
+  assert.equal(options[0].value, 'opaque-long');
+  assert.equal(options[1].textContent, 'mapper.exe — Map');
+  assert.equal(detail.hidden, false);
+  assert.equal(detail.textContent, application + ' — ' + title);
+  assert.equal(select.getAttribute('aria-describedby'), 'dlg-select-detail');
+  assert.equal(detail.querySelectorAll('img').length, 0);
+  select.value = 'opaque-one'; await p.fire(select, 'change');
+  assert.equal(detail.textContent, 'mapper.exe — Map');
+  select.value = 'opaque-long'; await p.fire(select, 'change');
+  await p.click('dlg-ok');
+  await p.reply('companion_preview_select', receipt(2, {applied: false, persisted: false, error: 'Refused', revision: 1}),
+    [null, 'opaque-long', 'whole', 'Notes', 'exact', title, null]);
+  const ordinary = p.WM.choose('Copy preview geometry', 'Copy size and position.',
+    [{label: 'Saved', options: [{value: 'copy-token', label: title}]}]);
+  assert.equal(p.el('dialog').classList.contains('compact-choice'), false);
+  assert.equal(select.querySelectorAll('option')[0].textContent, title);
+  assert.equal(p.el('dlg-select-label').textContent, 'Copy from');
+  assert.equal(detail.hidden, true);
+  assert.equal(detail.textContent, '');
+  assert.equal(select.getAttribute('aria-describedby'), null);
+  await p.click('dlg-ok'); assert.equal(await ordinary, 'copy-token');
 });
 
 test('duplicate and hostile labels stay literal, keyed independently, and name their enabled controls', async () => {

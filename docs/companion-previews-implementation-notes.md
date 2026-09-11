@@ -2,7 +2,7 @@
 
 ## Current direction
 
-Implement the actual user-facing feature now: Settings > Previews, explicitly
+Implement the actual user-facing feature now: Settings > Companions, explicitly
 selected auxiliary windows, whole-window and selected-region modes, persisted
 definitions, independent family toggles, movement/resizing/activation, reselection
 and removal. Default off, at most eight enabled companions. No build-time flag,
@@ -89,7 +89,8 @@ Destination geometry is debounced by the controller and generation/revision
 fenced. A failed geometry save leaves the current physical position with a
 session-only warning, not a false durable success.
 
-The card is first in Settings → Previews. It uses existing page-owned dialogs,
+The card lives in its own Settings → Companions section, independent of the
+EVE-tools navigation gate. It uses existing page-owned dialogs,
 field commits and keyed drafts; terminal operation receipts remain recoverable
 when events beat replies or the page is left and re-entered. Existing EVE-tools
 navigation remains unchanged. `WM.choose` gained an optional field label so this
