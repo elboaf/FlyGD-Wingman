@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.test_api import make_api
-from tests.test_fleet_bar import PAGE_A, PAGE_CALLBACKS, FleetWindow
+from tests.test_fleet_bar import PAGE_A, PAGE_CALLBACKS, FleetWindow, _set_resizable_bar
 from tests.test_fleet_bar import (
     _headless_fleet_window_helpers as _headless_fleet_window_helpers,
 )
@@ -152,6 +152,59 @@ def test_directional_local_and_remote_rows_keep_local_order_and_health(tmp_path)
     assert payload["stream_health"] == {"state": "stale", "detail": "Local log stale"}
 
 
+def test_metric_only_local_updates_preserve_the_supplied_local_first_sequence(tmp_path):
+    api, _ = setup(tmp_path)
+    api._install_fleet_generation(1)
+    api._receive_fleet_snapshot(
+        FleetSnapshot(
+            (
+                FleetRow("Zulu", 12, incoming_dps=80),
+                FleetRow("Alpha", 0, incoming_dps=90),
+            ),
+            StreamHealth("active"),
+            activation_generation=1,
+        )
+    )
+    remote(
+        api,
+        rows=(
+            row(character_id=20, character_name="Remote Z"),
+            row(character_id=10, character_name="Remote A"),
+        ),
+    )
+    first = api.fleet_bar_snapshot(PAGE_A)
+
+    api._receive_fleet_snapshot(
+        FleetSnapshot(
+            (
+                FleetRow("Zulu", 99, incoming_dps=1),
+                FleetRow("Alpha", 5, incoming_dps=250),
+            ),
+            StreamHealth("active"),
+            activation_generation=1,
+        )
+    )
+    second = api.fleet_bar_snapshot(PAGE_A)
+
+    assert [r["character"] for r in first["rows"]] == [
+        "Zulu",
+        "Alpha",
+        "Remote A",
+        "Remote Z",
+    ]
+    assert [r["character"] for r in second["rows"]] == [
+        "Zulu",
+        "Alpha",
+        "Remote A",
+        "Remote Z",
+    ]
+    assert [(r["outgoing_dps"], r["incoming_dps"]) for r in second["rows"][:2]] == [
+        (99, 1),
+        (5, 250),
+    ]
+    assert second["revision"] > first["revision"]
+
+
 @pytest.mark.parametrize("method,args", PAGE_CALLBACKS)
 def test_remote_events_do_not_change_creation_callback_admission(
     tmp_path, monkeypatch, method, args
@@ -164,7 +217,12 @@ def test_remote_events_do_not_change_creation_callback_admission(
 
     def create_window(title, url, **kwargs):
         urls.append(url)
-        bar = FleetWindow()
+        bar = FleetWindow(
+            width=kwargs["width"],
+            height=kwargs["height"],
+            x=kwargs["x"],
+            y=kwargs["y"],
+        )
         bar.hidden = True
         return bar
 
@@ -185,8 +243,7 @@ def test_remote_events_do_not_change_creation_callback_admission(
     api.fleet_bar_ready(token)
     assert api._fleetbar_ready and first.hidden
     api.save_fleet_bar_pos(token, 25, -40)
-    api.fit_fleet_bar(token, 380, 112)
-    api.move_fleet_bar(token, 30, 45)
+    api.fit_fleet_bar_height(token, 112)
     assert first.resized == first.moved == []
     assert api.toggle_fleet_bar(True)["applied"]
     assert api._fleetbar_window is first and api._fleetbar_page_id == token
@@ -209,10 +266,11 @@ def test_remote_events_do_not_change_creation_callback_admission(
     result = call(current, *args)
     if method == "fleet_bar_snapshot":
         assert result["rows"][0]["state"] == "stale"
-    elif method == "fit_fleet_bar":
-        assert second.resized == [args]
-    elif method == "move_fleet_bar":
-        assert second.moved == [args]
+    elif method == "fit_fleet_bar_height":
+        assert second.resized == second.moved == []
+        assert api._fleetbar_applied_outer_height == args[0]
+        assert api.fleet_bar_ready(current) is False
+        assert second.resized == [(second.width, args[0])]
     elif method == "save_fleet_bar_pos":
         assert (
             api._state.settings["fleet_bar"]["x"],
@@ -512,3 +570,26 @@ def test_real_coordinator_and_publisher_never_persist_or_rebroadcast_remote(tmp_
         assert all(not r.get("remote") for r in api.fleet_bar_snapshot(PAGE_A)["rows"])
     finally:
         api.shutdown_previews()
+
+
+def test_remote_events_do_not_change_resize_reset_page_identity(tmp_path):
+    api, _ = setup(tmp_path)
+    _set_resizable_bar(api)
+    before = dict(api._state.settings["fleet_bar"])
+
+    remote(api)
+
+    assert api.fit_fleet_bar_height("b" * 64, 112) is None
+    assert api.settle_fleet_bar_resize("b" * 64, 480, 40) is None
+    assert api.reset_fleet_bar_page_width("b" * 64) is None
+    assert api._state.settings["fleet_bar"] == before
+    assert api._fleetbar_window.resized == []
+    assert api._fleetbar_window.moved == []
+
+    api.fit_fleet_bar_height(PAGE_A, 112)
+    settled = api.settle_fleet_bar_resize(PAGE_A, 480, 40)
+    reset = api.reset_fleet_bar_page_width(PAGE_A)
+
+    assert api._fleetbar_window.resized == [(512, 112), (492, 112), (512, 112)]
+    assert settled == {"applied": True, "persisted": True, "error": None}
+    assert reset == {"applied": True, "persisted": True, "error": None}

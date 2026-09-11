@@ -88,7 +88,7 @@ missing when the title bar filled up:
 | Previews | primary | twice, ever | a Settings section |
 | Bookmarks | primary | twice, ever | a Settings section |
 | Alerts | part of previews | twice, ever | a Settings section |
-| Fleet combat bar | part of client awareness | twice, ever | Settings › Previews and a status-strip toggle |
+| Fleet Bar | part of client awareness | twice, ever | Settings › Previews and a status-strip toggle |
 | Fleet sharing | optional shared client awareness | setup and boss changes | Settings › Previews |
 | Skills | secondary | rarely | a destination |
 | Fittings | secondary | rarely | a destination |
@@ -165,12 +165,16 @@ The corollary for the UI: an alert you configured and cannot tell is
 running is the failure mode, not a missed pulse. The card says whether it
 is watching and which characters it can see, in one sentence, on purpose.
 
-### The Fleet combat bar is observation, not automation
+### The Fleet Bar is observation, not automation
 
-The Fleet combat bar is a display-only companion to client previews: one
-stable row per running, logged-in client, with recent outgoing and incoming
-DPS, plus incoming scram, point, and energy neutralization read from EVE's
-gamelogs.
+The Fleet Bar is a display-only companion to client previews: one stable
+row per running, logged-in client, with recent outgoing and incoming DPS plus
+incoming scram, point, and energy neutralization read from EVE's gamelogs. It
+keeps a saved preferred content width between 420px and 720px, defaults to
+500px, and may clamp its applied rectangle to the current monitor without
+overwriting that preference. Only the header moves it, height stays
+content-fit, Hide turns the view Off, and Reset width returns the saved
+default.
 In Settings, users can persistently hide individual known characters from the
 bar and restore them later, including when they are offline. That choice
 changes only the bar: collection continues, and Preview and Alert behavior
@@ -183,7 +187,7 @@ EWAR event. A missing log is shown as missing data, never as a fabricated zero,
 and the bar never moves an EVE client or sends input to one.
 
 
-### Fleet sharing setup stays beside the Fleet combat bar
+### Fleet sharing setup stays beside the Fleet Bar
 
 Settings › Previews holds the optional connection, **Share my fleet telemetry**,
 and owned-boss **Start / Stop** controls. Pairing, granting Fleet Read, and

@@ -85,6 +85,29 @@ def test_the_window_is_frameless_with_drag_left_to_the_page(fake_webview):
     assert kwargs["easy_drag"] is False
 
 
+def test_the_main_window_keeps_the_all_edge_resize_callback(fake_webview, monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        window_mod.chrome,
+        "enable_resize",
+        lambda window: calls.append(("all-edge", window)) or True,
+    )
+    monkeypatch.setattr(
+        window_mod.chrome,
+        "enable_horizontal_resize",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("main window must not use horizontal-only resize chrome")
+        ),
+        raising=False,
+    )
+
+    window_mod.create(_bare_api())
+    fake_webview["shown_handlers"][0]()
+
+    assert calls == [("all-edge", fake_webview["window"])]
+
+
 def test_the_window_has_a_resize_border_attached_once_it_is_shown(fake_webview):
     """The border is attached on `shown`, not at create time.
 

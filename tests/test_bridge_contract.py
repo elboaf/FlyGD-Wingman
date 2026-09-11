@@ -718,7 +718,8 @@ def test_the_call_sweep_sees_the_bars_and_the_wrappers():
     wrapper call sites hold the only literal spelling of their methods."""
     called = bridge_calls()
     assert "fleetbar.js" in called.get("fleet_bar_snapshot", set())
-    assert "fleetbar.js" in called.get("fit_fleet_bar", set())
+    assert "fleetbar.js" in called.get("fit_fleet_bar_height", set())
+    assert "fleetbar.js" in called.get("activate_fleet_bar", set())
     assert "sigbar.js" in called.get("fit_sig_bar", set())
     assert "sigbar.js" in called.get("save_sig_bar_pos", set())
     assert "alerts.js" in called.get("set_alert_enabled", set())
@@ -735,10 +736,14 @@ def test_fleet_page_interfaces_are_token_first_and_standalone_only():
     calls = bridge_calls()
     expected = {
         "fleet_bar_snapshot": ("page_id",),
-        "fit_fleet_bar": ("page_id", "width", "height"),
-        "move_fleet_bar": ("page_id", "x", "y"),
+        "fit_fleet_bar_height": ("page_id", "height"),
+        "settle_fleet_bar_resize": ("page_id", "content_width", "x"),
+        "reset_fleet_bar_page_width": ("page_id",),
         "save_fleet_bar_pos": ("page_id", "x", "y"),
         "fleet_bar_ready": ("page_id",),
+        "activate_fleet_bar": ("page_id",),
+        "deactivate_fleet_bar": ("page_id",),
+        "hide_fleet_bar": ("page_id",),
     }
     for method, parameters in expected.items():
         params = signature(getattr(Api, method)).parameters

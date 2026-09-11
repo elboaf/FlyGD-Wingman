@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Wingman Fleet Bar</title>
+  <title>Fleet Bar</title>
   <link rel="stylesheet" href="style.css">
   <style>
     html, body {
@@ -11,13 +11,16 @@
     }
     [hidden] { display: none !important; }
     body {
-      width: 420px;
+      min-width: 420px;
+      width: fit-content;
       cursor: default;
       user-select: none;
     }
     .fleet-shell {
       display: block;
-      width: 420px;
+      min-width: 420px;
+      width: 100vw;
+      max-width: 720px;
       height: max-content;
       flex: none;
       overflow: hidden;
@@ -32,8 +35,8 @@
       height: auto;
       flex: none;
       display: flex;
-      align-items: baseline;
-      justify-content: space-between;
+      align-items: stretch;
+      gap: 12px;
       min-height: 29px;
       padding: 7px 10px 6px;
       border-bottom: 1px solid var(--panel-border);
@@ -43,18 +46,89 @@
       letter-spacing: .12em;
       text-transform: uppercase;
     }
-    .fleet-health {
-      color: var(--text-faint);
+    .fleet-drag {
+      min-width: 0;
+      flex: 1 1 auto;
+      display: flex;
+      align-items: baseline;
+    }
+    .fleet-title-end {
+      flex: none;
+      min-width: 230px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      align-items: center;
+      justify-items: end;
+    }
+    .fleet-title-status,
+    .fleet-title-actions {
+      grid-area: 1 / 1;
+      justify-self: end;
+    }
+    .fleet-title-status {
+      min-width: 100%;
+      text-align: right;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .fleet-title-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .fleet-title:hover .fleet-title-actions,
+    .fleet-title:focus-within .fleet-title-actions {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .fleet-title:hover .fleet-title-status,
+    .fleet-title:focus-within .fleet-title-status {
+      opacity: 0;
+    }
+    .fleet-title-end.error-active .fleet-title-status {
+      opacity: 1;
+    }
+    .fleet-title-end.error-active .fleet-title-actions {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .fleet-title:focus-within .fleet-title-end.error-active .fleet-title-status {
+      opacity: 0;
+    }
+    .fleet-title:focus-within .fleet-title-end.error-active .fleet-title-actions {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .fleet-health,
+    .fleet-title-error {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
       font-family: var(--mono);
       font-size: var(--fs-label);
       font-weight: 400;
       letter-spacing: .04em;
     }
+    .fleet-health { color: var(--text-faint); }
     .fleet-health.warn { color: var(--warn); }
     .fleet-health.err { color: var(--err); }
+    .fleet-title-error {
+      color: var(--warn);
+      letter-spacing: .02em;
+      text-transform: none;
+    }
+    .fleet-title-action {
+      min-width: 0;
+      padding: 4px 8px;
+      white-space: nowrap;
+    }
     .fleet-grid {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 160px 148px;
+      grid-template-columns: minmax(96px, 1fr) clamp(132px, 30vw, 184px) max-content;
       align-items: center;
     }
     .fleet-table {
@@ -89,6 +163,7 @@
       color: var(--text);
       font-size: var(--fs-body);
     }
+    .fleet-row.threat { background: var(--fleet-threat-surface); }
     .fleet-row:last-child { border-bottom: 0; }
     .fleet-identity { min-width: 0; padding: 5px 0; }
     .fleet-remote {
@@ -100,6 +175,7 @@
          label wrap within the remaining identity track, never over a value. */
       white-space: normal;
     }
+    .fleet-row.threat .fleet-remote { color: var(--text-label); }
     .fleet-character {
       display: block;
       overflow: hidden;
@@ -193,8 +269,8 @@
     .fleet-damage-out.live .fleet-damage-fill { color: var(--text); }
     .fleet-damage-out.live .fleet-damage-fill { background: var(--text); }
     .fleet-damage-in.warn .fleet-damage-value,
-    .fleet-damage-in.warn .fleet-damage-fill { color: var(--warn); }
-    .fleet-damage-in.warn .fleet-damage-fill { background: var(--warn); }
+    .fleet-damage-in.warn .fleet-damage-fill { color: var(--fleet-incoming-threat); }
+    .fleet-damage-in.warn .fleet-damage-fill { background: var(--fleet-incoming-threat); }
     .fleet-damage-axis {
       flex: none;
       width: 1px;
@@ -216,16 +292,29 @@
   </style>
 </head>
 <body>
-  <section class="fleet-shell" aria-label="Fleet combat telemetry">
-    <header class="fleet-title pywebview-drag-region">
-      <span>Fleet telemetry</span>
-      <span class="fleet-health" id="fleet-health">WAITING</span>
+  <section class="fleet-shell" id="fleet-shell" aria-label="Fleet Bar">
+    <header class="fleet-title" id="fleet-title">
+      <div class="fleet-drag pywebview-drag-region" id="fleet-drag">
+        <span>Fleet Bar</span>
+      </div>
+      <div class="fleet-title-end" id="fleet-title-end">
+        <div class="fleet-title-status">
+          <span class="fleet-health" id="fleet-health">WAITING</span>
+          <span class="fleet-title-error" id="fleet-title-error" role="status" hidden></span>
+        </div>
+        <div class="fleet-title-actions" id="fleet-title-actions">
+          <button class="btn fleet-title-action" id="fleet-reset-width" type="button"
+                  title="Reset Fleet Bar width" aria-label="Reset Fleet Bar width">Reset width</button>
+          <button class="btn fleet-title-action" id="fleet-hide" type="button"
+                  title="Hide Fleet Bar" aria-label="Hide Fleet Bar">Hide</button>
+        </div>
+      </div>
     </header>
-    <div class="fleet-table" role="table" aria-label="Character damage and incoming EWAR" tabindex="0">
+    <div class="fleet-table" id="fleet-table" role="table" aria-label="Character damage and incoming EWAR" tabindex="0">
       <div class="fleet-grid fleet-head" role="row">
         <span role="columnheader">CHARACTER</span>
         <span class="fleet-damage-head" role="columnheader">
-          <span class="fleet-damage-head-title" role="presentation">DAMAGE</span>
+          <span class="fleet-damage-head-title" role="presentation">DPS · 10s</span>
           <span class="fleet-damage-head-sub" role="presentation">
             <span role="presentation">OUT</span>
             <span role="presentation">IN</span>
