@@ -169,6 +169,21 @@ reached through injected seams or lazy `windll` binding):
   bundled sidecar (`packaging/settings-codec/`, our own crate) that is a pure
   stdin/stdout filter and never opens a file. `formations.py` and
   `formation_sharing.py` are pure and speak meters.
+- `wanderer/` — default-off, read-only map names for current primary preview
+  sessions. `model.py` pins the deployed v1 snapshot contract; `credentials.py`
+  DPAPI-protects the entire URL/map/token binding separately from settings.
+  `client.py` makes one bounded HTTPS attempt; `worker.py` retains one HTTP lane
+  (Test included) and an independent monotonic expiry owner. A 304 never renews
+  location deadlines; 401/403 headers clear cached names before body reads finish.
+  `controller.py` persists before reconfiguration and fences the host generation
+  before worker admission. Host callbacks only cache detached revision/session
+  snapshots; separate controller handoff/health owners do the work. No network,
+  disk, DPAPI or page work belongs on discovery, telemetry, expiry or the native
+  pump. PreviewHost's coalescing metadata mailbox is keyed by full ClientSessionId,
+  bounded by its current admitted roster (not recent-name CAP64); only its pump
+  touches the existing two-line label. Final shutdown detaches/closes metadata
+  admission before native destruction and retains timed-out owners. No location
+  history, ESI/OAuth, map writes, fleet-sharing publication or companion dependency.
 - `fleetsharing/` — default-off publisher of projected fleet telemetry to an
   external relay: `projection.py`, `crypto.py`, `model.py`, `state.py` are pure
   or local-persistence seams; `client.py` is the signed transport; `worker.py`
@@ -205,13 +220,15 @@ sees it), `scheduler.py`, and two auxiliary always-on-top windows,
 
 **Web layer** (`wingman/web/`): `app.js` is the shell and bridge client with a
 strict `WM.HANDLERS` allowlist; one route/screen per JS file, loaded by
-`index.html` in this order: `characters`, `bookmarks`, `fleet`, `previews`, `fleetsharing`, `alerts`,
+`index.html` in this order: `characters`, `bookmarks`, `fleet`, `previews`, `wanderer`, `fleetsharing`, `alerts`,
 `evesettings` (the Profiles route), `formations`, `uisetup`, `list`, `panel` (upload
 panel, status strip, dialog layer), `settings`, `skills`, `fittings`,
 `firstrun`, `dev`. `fleet.js` owns Fleet telemetry's local display settings and
 its global status-strip toggle; its boot hydration is independent of section
 visibility. Section re-entry retries only failed initial hydration, never adds
 reads after success. `fleetsharing.js` owns the shared setup view, not worker lifetime.
+`wanderer.js` owns the Wanderer names card in Settings > Previews; health pushes
+never overwrite field drafts, and token submissions carry the acknowledged binding.
 `WM.route` switches destinations, `WM.section` switches
 Settings groups; both have enter/leave contracts, and leaving is load-bearing
 (keybind capture listeners must disarm). `dev.js` renders the page with fake

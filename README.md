@@ -159,6 +159,40 @@ measurements prove layout and handler behavior only; Windows/WebView2 hit
 targets, focus, activation, no-activate restoration, DPI, mixed-monitor, and
 installed/frozen checks remain separate manual acceptance.
 
+### Wanderer names — native/live acceptance pending
+
+**Settings → Previews → Wanderer names** can add a smaller system-name line
+under each named preview's character label. This is **off by default**. Apply
+one HTTPS Wanderer application URL (including any deployment prefix), one map
+slug/UUID, and that map's read-only integration token. Use the tracked-character
+locations integration credential, not a write-capable public API key.
+**Test connection** makes a real request without enabling names; automatic
+polling also requires Client previews and an available preview host.
+
+Wingman consumes the map's effective name; fresh hidden/unmapped locations fall
+back to a real raw system name when supplied. Untracked, offline, unavailable,
+or expired locations show no system line. Freshness uses Wanderer's observation
+age and a local monotonic deadline, at most 15 seconds after receipt. A 304 does
+not extend it. Authorization rejection clears names immediately and pauses
+automatic polling; ordinary failures retain names only until their deadlines.
+**Show labels** hides both lines. No game window is moved or resized.
+
+URL/map text applies only on Enter or Apply, not blur. The token is stored
+separately in `%LOCALAPPDATA%\FlyGD Wingman\wanderer_credentials.json`:
+Windows DPAPI protects the token **and its normalized URL/map binding**. It is
+never returned to the page, written into ordinary settings, or logged by this
+integration. DPAPI protects storage at rest, not against code running as your
+Windows user. Changing the URL/map does not rebind an old token; explicitly
+apply a token for the new connection. Turning names off retains the credential.
+**Remove connection** deletes only Wingman's protected token, retaining URL,
+map and the enabled preference; it does not revoke or change anything in Wanderer.
+
+Only current preview-session names are matched locally; no local character
+roster is sent, and no location history is saved or shared. See the
+[verification record](docs/wanderer-preview-overlay-verification.md) for the
+exact API authority and pending Windows/deployed acceptance. Automated and
+browser checks do not establish live-EVE, mixed-DPI or installed-build behavior.
+
 ### Character crops — unreleased, release gates blocked
 
 The production crop implementation on this branch is configured under
@@ -340,8 +374,9 @@ in your per-user profile directory, and the application asks the operating
 system for owner-only permissions on it. On Linux and macOS (used for
 development and CI) that request is enforced. **On Windows it is not** —
 Python's `os.chmod` only toggles the read-only attribute there and does not
-set a real ACL. The file is **not encrypted**, and Wingman does **not** use
-Windows Credential Manager or DPAPI. Treat it as a plaintext credential
+set a real ACL. This Google credential file is **not encrypted** and does
+**not** use Windows Credential Manager or DPAPI (the separate EVE and Wanderer
+stores do use DPAPI). Treat it as a plaintext credential
 sitting in your user profile: anyone who can read your profile directory, or
 who is an administrator on the machine, can read it.
 
@@ -451,6 +486,7 @@ is never acted on.
 | Bookmark keybinds | off, one bound | Enabling starts the AutoHotkey engine. Only EvE-Scout conversion ships bound; the rest are yours to set. |
 | Client previews | off | Enabling starts a discovery sweep and a foreground hook. |
 | Reopen previews in place | on | Off opens each preview in a default stack instead. Positions are remembered either way. |
+| Wanderer names | off | One HTTPS instance/map and a separately protected read-only token. Test does not enable polling; Remove connection deletes only the local token. |
 
 Settings are stored at `%LOCALAPPDATA%\FlyGD Wingman\settings.json`.
 
@@ -469,10 +505,12 @@ These features make the following network connections:
 | CCP EVE SSO and ESI (`login.eveonline.com`, `esi.evetech.net`) | You authorize or reconnect a character from Settings → Characters; Wingman refreshes that character's skills, queue, and attributes, refreshes its Personal Fittings when you ask Fittings to do so, or resolves uncached skill plans through unauthenticated universe ID/name (`/universe/ids`), type metadata, and group metadata lookups. Profiles looks up local character IDs first through unauthenticated `/characters/{id}/` requests, then uses `/universe/names` for remaining display names. | EVE SSO receives Wingman's registered client ID, redirect URI, the four Skills-and-Fittings scopes declared in `wingman/eveauth/application.py`, and PKCE values, then the authorization code or stored EVE refresh token at its token endpoint. Authenticated ESI skills, queue, and attributes requests carry the character ID and EVE bearer access token. Authenticated ESI fitting reads and writes carry the character ID and EVE bearer access token. Unauthenticated name and metadata lookups carry skill names, type/group IDs, or the Profiles character IDs being resolved, with no EVE token. Wingman does not send CCP its settings, local EVE `.dat` files, Google credentials, Discord webhook or combat logs, filenames, or recordings. |
 | Google / YouTube APIs | You sign in, or upload a video | OAuth sign-in, and the video files you selected plus the title, description, privacy, and category you set |
 | A Discord webhook you configure | You press **Upload** while a webhook is configured, after the video publishes successfully | A zip of the local EVE log files covering the selected recordings, plus a short summary message |
+| The HTTPS Wanderer instance you configure | **Wanderer names** is enabled with a complete connection, Client previews enabled and an available host: one conditional snapshot request at a time, normally two seconds after completion; failures/backoff can only slow it. **Test connection** explicitly requests the same snapshot even with names off. | The configured map selector in the URL, its read-only bearer integration token in Authorization, contract-version/Accept headers, an optional prior ETag, and ordinary network metadata. No local character roster, EVE/Google credentials, logs, recordings or settings document is sent. Returned current locations stay in memory; only current preview sessions receive labels, never a history store or fleet-sharing publication. |
 
 Your Google account data and OAuth token go only to Google, never to Discord,
-GitHub, or CCP. EVE tokens go only to CCP's EVE SSO and ESI endpoints. Full
-statement:
+GitHub, or CCP. EVE tokens go only to CCP's EVE SSO and ESI endpoints.
+Wanderer's integration token goes only to the configured HTTPS endpoint;
+Wingman refuses redirects rather than forwarding Authorization. Full statement:
 [Privacy Policy](https://wingman.zoolanders.vip/privacy) ·
 [Terms of Service](https://wingman.zoolanders.vip/terms).
 
