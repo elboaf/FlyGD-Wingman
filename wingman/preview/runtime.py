@@ -365,7 +365,15 @@ class PreviewRuntime:
                     "failed",
                 ):
                     return
-                if outcome == "active" and epoch < self._minimum_active[family]:
+                if outcome == "active" and (
+                    epoch < self._minimum_active[family]
+                    or (
+                        epoch == self._epochs[family]
+                        and self._facts[family] in ("failed", "stopped")
+                    )
+                ):
+                    # Terminal facts dominate a delayed active for this epoch;
+                    # only a newer native lifetime can restore authority.
                     return
                 self._epochs[family] = epoch
                 self._facts[family] = outcome

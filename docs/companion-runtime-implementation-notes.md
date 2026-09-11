@@ -124,10 +124,49 @@ used for those native boundaries.
 
 The local changed-code polish pass was scoped to these boundaries and conducted
 without subagents. No additional public-contract change or feature was needed.
-Parent independent A–G re-review remains required; passing tests are not final
-Phase 1 approval.
+Parent re-review closed the original A–G cases; the two adjacent findings below
+remained. Passing tests are not native acceptance or final Phase 1 approval.
 
-## Verification record
+## Narrow follow-up — base `9434bf75`
+
+Two further Event-controlled regressions in
+`tests/test_preview_runtime_boundaries.py` reproduced the remaining findings:
+
+- A real post-active `_apply_crop_commands` fault emits failed1 after active1
+  was deferred behind an admission snapshot already captured as `(1, 1, 1)`.
+  With cleanup's storage flush held, replay formerly changed failed1 back to
+  active1. Terminal failed/stopped facts now dominate active for the same family
+  epoch, without another epoch constant. The test verifies failure remains
+  visible through cleanup2 and explicit same-value retry succeeds at real epoch3.
+- Production monitor enumeration is held inside the `EnumDisplayMonitors` OS
+  double while EVE-off commits. The regression observed production
+  `PreviewWindow.move` reaching `SetWindowPos` after revocation. RESET now captures
+  its EVE epoch and rechecks it after rectangle resolution before every move.
+  Revoked windows abandon drag state, while RESET's persisted clear completes.
+
+Both regressions failed for their intended boundaries before the fixes and then
+passed (**2 passed, 11 deselected** in the targeted red/green selection). The
+portable monitor callback ABI is doubled; `_monitors`, rectangle resolution,
+RESET and `PreviewWindow.move` remain production code. No public API, HostAck,
+UI, lifecycle owner, or broader hardening change was added.
+
+Fresh verification for this follow-up:
+
+- Same focused Linux modules/arguments listed below — **1,286 passed, 1 expected
+  Windows-only skip**, 27.66 seconds.
+- Same focused Windows modules with only the real-pump test deselected —
+  **1,286 passed, 1 deselected**, 15.22 seconds. Configured Node and actual Windows
+  codec availability were asserted.
+- `ruff check .`, `ruff format --check .` — **passed**, 387 Python files.
+- `git diff --check` — **passed**; local diff review remained scoped to these two
+  fixes. No subagents or native GUI were used.
+
+The full Linux suite, Cargo and JS smoke were not rerun for this narrow follow-up;
+the following full-gate results belong to the prior baseline. Parent will
+independently re-review these two fixes and run fresh full gates. No native
+acceptance is claimed.
+
+## Prior verification — through `9434bf75`
 
 No native GUI was launched and no source window was manipulated. Initial
 implementation Linux full-suite evidence was 10,580 passed / 11 Windows-only

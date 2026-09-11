@@ -401,3 +401,129 @@ def test_active_ack_deferral_is_bounded_while_stop_ack_reaches_cleanup(
         off.result(5)
     r.wait_state(lambda state: state.eve == "active" and state.eve_epoch == 5)
     assert not r.runtime._deferred_active
+
+
+def test_deferred_active_cannot_overwrite_same_epoch_postactive_failure(
+    runtime_pump, monkeypatch
+):
+    queried, release_query, flushing, release_flush = Event(), Event(), Event(), Event()
+
+    def flush():
+        flushing.set()
+        assert release_flush.wait(5)
+
+    r = runtime_pump(primary_flush=flush)
+    query, commands = r.host._admission_epochs, r.host._apply_crop_commands
+    faulted = []
+
+    def held_query():
+        epochs = query()
+        assert epochs == (1, 1, 1)
+        queried.set()
+        assert release_query.wait(5)
+        return epochs
+
+    def fault_once(libs):
+        if not faulted:
+            assert r.host._eve_phase == "active"
+            assert r.runtime._deferred_active["eve"].eve_epoch == 1
+            faulted.append(True)
+            raise OSError("post-active crop command fault")
+        return commands(libs)
+
+    monkeypatch.setattr(r.host, "_admission_epochs", held_query)
+    monkeypatch.setattr(r.host, "_apply_crop_commands", fault_once)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        try:
+            with parked(r):
+                admission = pool.submit(r.runtime.set_eve, True, 1)
+                assert queried.wait(5)
+            assert flushing.wait(5)
+            assert r.host._eve_epoch == 2 and not r.host.runtime_enabled
+            assert r.runtime.snapshot().eve == "failed"
+            release_query.set()
+            admission.result(5)
+            # The stored active1 arrives after genuine failed1; cleanup2 is
+            # still blocked, so its later stopped ack cannot hide this race.
+            assert r.runtime.snapshot().eve == "failed"
+            assert r.runtime.snapshot().error is not None
+        finally:
+            release_query.set()
+            release_flush.set()
+    r.wait_state(lambda state: state.eve_epoch == 2 and not r.host.is_stopping)
+    assert r.runtime.snapshot().eve == "failed" and r.runtime.snapshot().error
+    assert r.host._eve_failed
+    monkeypatch.setattr(r.host, "_admission_epochs", query)
+    r.runtime.set_eve(True, 1)  # Explicit same-value retry, with genuine epoch3.
+    r.wait_state(lambda state: state.eve == "active" and state.eve_epoch == 3)
+    assert r.runtime.snapshot().error is None
+
+
+def test_reset_rechecks_epoch_after_native_monitor_enumeration(
+    runtime_pump, monkeypatch
+):
+    from wingman.preview.window import PreviewWindow
+
+    r = runtime_pump()
+    eve_on(r)
+    h = r.host
+    entered, release = Event(), Event()
+    moves = []
+    store = LayoutStore(r.transaction.update, timer=FakeTimer)
+    h._clear_layouts = store.clear
+    h._on_layout_changed = lambda name, rect, locked: store.record(
+        name, layout.Entry(rect, locked)
+    )
+    r.store._flush_primary = store.flush
+
+    def install_primary():
+        rect = geometry.Rect(20, 30, *h._default_size())
+        window = PreviewWindow(
+            r.native.lib,
+            host_mod._preview_client(client()),
+            rect,
+            lambda source: None,
+            h._layout_changed,
+            list,
+            h._screen,
+            show_labels=False,
+        )
+        window.hwnd = 100
+        r.native.windows[100] = "primary"
+        h._windows["Alice"] = window
+        h._layout_changed("Alice", rect, False)
+        store.flush()
+
+    def enumerate_monitors(hdc, clip, callback, data):
+        entered.set()
+        assert release.wait(5)
+        return callback(1, None, None, data)
+
+    def monitor_info(handle, pointer):
+        pointer._obj.rcMonitor = win32.RECT(0, 0, 1920, 1080)
+        return True
+
+    r.call(install_primary)
+    assert r.transaction.document["preview"]["layouts"]
+    # Only the Win32 callback ABI is replaced on the portable OS double.
+    monkeypatch.setattr(
+        win32, "monitor_enum_proc_type", lambda: lambda callback: callback
+    )
+    monkeypatch.setattr(h, "_monitors", host_mod.PreviewHost._monitors.__get__(h))
+    monkeypatch.setattr(
+        r.native, "EnumDisplayMonitors", enumerate_monitors, raising=False
+    )
+    monkeypatch.setattr(r.native, "GetMonitorInfoW", monitor_info, raising=False)
+    monkeypatch.setattr(
+        r.native, "SetWindowPos", lambda *args: moves.append(args) or True
+    )
+    try:
+        assert h.reset_layouts()
+        assert entered.wait(5)
+        r.runtime.set_eve(False, 2)
+        assert not h.runtime_enabled
+    finally:
+        release.set()
+    r.wait_state(lambda state: state.eve == "stopped" and not h.is_stopping)
+    assert r.transaction.document["preview"]["layouts"] == {}
+    assert not moves  # Production PreviewWindow.move must never reach the OS.

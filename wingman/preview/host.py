@@ -3643,19 +3643,26 @@ class PreviewHost:
         writing them back would repopulate the very table this just cleared --
         a reset that leaves the file exactly as full as it found it.
         """
+        epoch = self._eve_epoch
         had_layouts = bool(self.layout_entries())
         if self._clear_layouts is not None:
             self._clear_layouts()
         self.clear_layout_entries()
         if had_layouts:
             self._announce_layouts_changed()
-        if not self._eve_valid():
+        if not self._eve_valid(epoch):
             for win in self._windows.values():
                 win._mode = None
             return
         monitors = self._monitors()
         for index, (key, win) in enumerate(self._windows.items()):
-            win.move(self._resolve_rect(key, index, monitors, None))
+            rect = self._resolve_rect(key, index, monitors, None)
+            # Enumeration/resolution may outlive this family's authority. Keep
+            # RESET's persisted clear, without moving or later freezing a drag.
+            if not self._eve_valid(epoch):
+                win._mode = None
+                continue
+            win.move(rect)
 
     def _record_client_sizes(self, libs, clients) -> None:
         """Sample each client's client-area size, on the preview thread.
