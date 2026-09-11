@@ -3157,7 +3157,7 @@ class Api:
         from wingman.ui import fleetbar
 
         default_width = settings_mod.FLEET_BAR_DEFAULT_PREFERRED_CONTENT_WIDTH
-        if bar is None or not self.fleet_bar_settings().get("enabled"):
+        if bar is None:
             try:
                 settings_mod.update_section(
                     self._state.settings,
