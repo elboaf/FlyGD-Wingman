@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.test_api import make_api
-from tests.test_fleet_bar import PAGE_A, PAGE_CALLBACKS, FleetWindow
+from tests.test_fleet_bar import PAGE_A, PAGE_CALLBACKS, FleetWindow, _set_resizable_bar
 from tests.test_fleet_bar import (
     _headless_fleet_window_helpers as _headless_fleet_window_helpers,
 )
@@ -164,7 +164,12 @@ def test_remote_events_do_not_change_creation_callback_admission(
 
     def create_window(title, url, **kwargs):
         urls.append(url)
-        bar = FleetWindow()
+        bar = FleetWindow(
+            width=kwargs["width"],
+            height=kwargs["height"],
+            x=kwargs["x"],
+            y=kwargs["y"],
+        )
         bar.hidden = True
         return bar
 
@@ -512,3 +517,26 @@ def test_real_coordinator_and_publisher_never_persist_or_rebroadcast_remote(tmp_
         assert all(not r.get("remote") for r in api.fleet_bar_snapshot(PAGE_A)["rows"])
     finally:
         api.shutdown_previews()
+
+
+def test_remote_events_do_not_change_resize_reset_page_identity(tmp_path):
+    api, _ = setup(tmp_path)
+    _set_resizable_bar(api)
+    before = dict(api._state.settings["fleet_bar"])
+
+    remote(api)
+
+    assert api.fit_fleet_bar_height("b" * 64, 112) is None
+    assert api.settle_fleet_bar_resize("b" * 64, 480, 40) is None
+    assert api.reset_fleet_bar_page_width("b" * 64) is None
+    assert api._state.settings["fleet_bar"] == before
+    assert api._fleetbar_window.resized == []
+    assert api._fleetbar_window.moved == []
+
+    api.fit_fleet_bar_height(PAGE_A, 112)
+    settled = api.settle_fleet_bar_resize(PAGE_A, 480, 40)
+    reset = api.reset_fleet_bar_page_width(PAGE_A)
+
+    assert api._fleetbar_window.resized == [(512, 112), (492, 112), (512, 112)]
+    assert settled == {"applied": True, "persisted": True, "error": None}
+    assert reset == {"applied": True, "persisted": True, "error": None}
