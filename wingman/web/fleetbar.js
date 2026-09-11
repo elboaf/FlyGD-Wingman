@@ -188,6 +188,17 @@
     });
   }
 
+  function bindTableActionTraversal() {
+    var table = document.getElementById('fleet-table');
+    var reset = document.getElementById('fleet-reset-width');
+    if (!table || !reset) return;
+    table.addEventListener('keydown', function (event) {
+      if (!event || event.key !== 'Tab' || event.shiftKey) return;
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      focusAction(reset);
+    });
+  }
+
   function cell(className, text, role) {
     var node = document.createElement('span');
     node.className = className;
@@ -406,6 +417,8 @@
   document.addEventListener('mouseup', function () {
     send('save_fleet_bar_pos', window.screenX, window.screenY);
   });
+
+  bindTableActionTraversal();
 
   bindAction('fleet-reset-width', function () {
     return send('reset_fleet_bar_page_width').then(fieldResult);

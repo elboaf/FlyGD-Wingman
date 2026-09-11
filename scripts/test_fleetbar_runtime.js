@@ -104,7 +104,8 @@ class Element extends EventTarget {
     };
   }
   focus() {
-    if (this.disabled) return;
+    if (this.ownerDocument && typeof this.ownerDocument.canFocus === 'function' &&
+        !this.ownerDocument.canFocus(this)) return;
     const previous = this.ownerDocument.activeElement;
     if (previous && previous !== this) previous.dispatchEvent({ type: 'blur' });
     this.ownerDocument.activeElement = this;
@@ -139,13 +140,36 @@ async function page(options = {}) {
   const document = new EventTarget();
   document.activeElement = null;
   for (const node of nodes.values()) node.ownerDocument = document;
-  const shell = new Element(document, 'fleet-shell-shell');
+  const shell = nodes.get('fleet-shell');
   shell.offsetWidth = options.width ?? 420;
   shell.rectWidth = options.width ?? 420;
   shell.offsetHeight = options.height ?? 114;
-  const table = new Element(document, 'fleet-table-shell');
+  const title = nodes.get('fleet-title');
+  title.offsetHeight = 29;
+  const titleEnd = nodes.get('fleet-title-end');
+  const actions = nodes.get('fleet-title-actions');
+  const reset = nodes.get('fleet-reset-width');
+  const hide = nodes.get('fleet-hide');
+  const table = nodes.get('fleet-table');
+  table.offsetHeight = options.tableHeight ?? 95;
+  title.parentNode = shell;
+  titleEnd.parentNode = title;
+  actions.parentNode = titleEnd;
+  reset.parentNode = actions;
+  hide.parentNode = actions;
+  table.parentNode = shell;
   const fonts = deferred();
   if (options.fonts !== false) document.fonts = { ready: fonts.promise };
+  const actionsNeedVisibleFocus = /\.fleet-title-actions[\s\S]*?visibility:\s*hidden/.test(html);
+  document.canFocus = node => {
+    if (!node || node.disabled || node.hidden) return false;
+    if ((node.id === 'fleet-reset-width' || node.id === 'fleet-hide') &&
+        actionsNeedVisibleFocus &&
+        document.activeElement !== node) {
+      return false;
+    }
+    return true;
+  };
   document.getElementById = id => nodes.get(id) || null;
   document.createElement = () => new Element(document);
   document.querySelector = selector => selector === '.fleet-shell' ? shell
@@ -240,10 +264,36 @@ async function page(options = {}) {
     },
     keydown: async key => {
       const event = { type: 'keydown', key };
+      const target = document.activeElement;
+      if (target) target.dispatchEvent(event);
       window.dispatchEvent(event);
       document.dispatchEvent(event);
       await flush();
       return event;
+    },
+    tab: async () => {
+      const focusables = ['fleet-reset-width', 'fleet-hide', 'fleet-table']
+        .map(id => document.getElementById(id))
+        .filter(Boolean)
+        .filter(node => !node.disabled && !node.hidden);
+      const current = document.activeElement;
+      const event = { type: 'keydown', key: 'Tab' };
+      if (current) current.dispatchEvent(event);
+      if (!event.defaultPrevented) {
+        const index = current ? focusables.indexOf(current) : -1;
+        const next = focusables[index + 1] || null;
+        if (next) next.focus();
+      }
+      window.dispatchEvent(event);
+      document.dispatchEvent(event);
+      await flush();
+      return document.activeElement;
+    },
+    actionsVisible: () => {
+      const title = document.getElementById('fleet-title');
+      const titleEnd = document.getElementById('fleet-title-end');
+      const active = document.activeElement;
+      return !titleEnd.classList.contains('error-active') && contains(title, active);
     },
     blur: async () => {
       document.activeElement = null;
@@ -274,6 +324,14 @@ function fillOf(half) {
 
 function valueOf(half) {
   return half.children.find(child => child.className.indexOf('fleet-damage-value') === 0);
+}
+
+function contains(node, target) {
+  while (target) {
+    if (target === node) return true;
+    target = target.parentNode;
+  }
+  return false;
 }
 
 function assertRendered(p, character = 'Pilot', outgoing = 43, incoming = 20) {
@@ -513,6 +571,25 @@ test('fit pauses during resizing and resumes once after settlement', async () =>
   assert.equal(p.calls('fit_fleet_bar_height').length, fits, 'fit still waits for the settle reply');
   await settle(p.calls('settle_fleet_bar_resize')[0], { applied: true, persisted: true, error: null });
   assert.deepEqual(p.calls('fit_fleet_bar_height')[fits].args, [A, 190]);
+  assert.deepEqual(p.errors, []);
+});
+
+test('table keyboard traversal reaches Reset then Hide and reveals the action region on focus', async () => {
+  const p = await page();
+  await settle(p.fonts);
+  await settle(p.calls('fleet_bar_snapshot')[0], snapshot());
+  await settle(p.calls('fit_fleet_bar_height')[0]);
+  await settle(p.calls('fleet_bar_ready')[0], true);
+
+  p.el('fleet-table').focus();
+  assert.equal(p.document.activeElement, p.el('fleet-table'));
+  assert.equal(p.actionsVisible(), false);
+  await p.tab();
+  assert.equal(p.document.activeElement, p.el('fleet-reset-width'));
+  assert.equal(p.actionsVisible(), true);
+  await p.tab();
+  assert.equal(p.document.activeElement, p.el('fleet-hide'));
+  assert.equal(p.actionsVisible(), true);
   assert.deepEqual(p.errors, []);
 });
 

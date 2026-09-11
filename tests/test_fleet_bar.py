@@ -1282,7 +1282,8 @@ def test_fleet_page_keeps_header_actions_outside_drag_and_stable_columns():
     assert ">INCOMING<" not in html  # renamed EWAR; incoming DPS moved into Damage
     assert "<button" in html and "<input" not in html
     assert "Reset Fleet Bar width" in html and "Hide Fleet Bar" in html
-    assert "opacity: 0" in html and "visibility: hidden" in html
+    assert "opacity: 0" in html and "pointer-events: none" in html
+    assert "visibility: hidden" not in html
     assert "window.onFleetSnapshot" in js
     assert "Waiting for EVE clients" in html
     assert "flex: none" in html  # overrides title-bar drag-region geometry

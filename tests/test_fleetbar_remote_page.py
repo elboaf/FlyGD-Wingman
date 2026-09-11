@@ -34,7 +34,8 @@ def test_damage_tracks_keep_complete_remote_markers_and_header_only_drag():
     assert html.count("pywebview-drag-region") == 1
     assert '<div class="fleet-drag pywebview-drag-region" id="fleet-drag">' in html
     assert 'id="fleet-reset-width"' in html and 'id="fleet-hide"' in html
-    assert "opacity: 0" in html and "visibility: hidden" in html
+    assert "opacity: 0" in html and "pointer-events: none" in html
+    assert "visibility: hidden" not in html
     assert 'aria-label="Character damage and incoming EWAR"' in html
 
 
