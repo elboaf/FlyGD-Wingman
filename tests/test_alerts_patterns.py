@@ -265,9 +265,11 @@ def test_decloak_is_not_filtered():
 
 
 def test_events_and_severity_agree():
-    """settings.py builds its schema from EVENTS. If the two lists drift,
-    the schema grows an event the renderer cannot draw."""
-    assert set(patterns.EVENTS) == set(patterns.SEVERITY)
+    """Every built-in setting has a renderer rank; custom is renderer-only."""
+    assert set(patterns.EVENTS) == set(patterns.SEVERITY) - {"custom"}
+    assert patterns.SEVERITY["custom"] < min(
+        patterns.SEVERITY[event] for event in patterns.EVENTS
+    )
 
 
 def test_a_third_party_scramble_does_not_alert():

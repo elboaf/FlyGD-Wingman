@@ -365,10 +365,15 @@ def test_tentative_failed_master_off_does_not_drop_telemetry_session_revocation(
     h = r.host
     api._preview_host = h
     discovery = FakeDiscovery()
+
+    def stream_factory(*, custom_snapshot):
+        assert custom_snapshot is None  # This crop-only runtime has no Alerts owner.
+        return FakeStream()
+
     with monkeypatch.context() as build:
         build.setattr(main_mod.sys, "platform", "win32")
         build.setattr("wingman.telemetry.clients.ClientDiscovery", lambda: discovery)
-        build.setattr("wingman.telemetry.gamelogs.GameLogStream", FakeStream)
+        build.setattr("wingman.telemetry.gamelogs.GameLogStream", stream_factory)
         runtime = main_mod.build_telemetry(api._state, h, None)
     assert runtime is not None
     runtime._thread_factory = _noop_thread_factory

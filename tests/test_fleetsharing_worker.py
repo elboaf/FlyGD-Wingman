@@ -1476,7 +1476,7 @@ def test_coordinator_cadence_and_local_metrics_continue_while_publish_is_held(tm
             return RosterSnapshot(generation=1, clients=())
 
     class Stream:
-        def subscribe(self, callback):
+        def subscribe_batches(self, callback):
             return lambda: None
 
         def start(self, folder):
