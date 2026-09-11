@@ -11,7 +11,7 @@ const staticFixtures = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
 const productionModule = process.argv[4];
 const pythonExe = process.argv[5];
 
-async function runScenario(request, staticFixtures) {
+async function runScenario(request, staticFixtures, probe = null) {
 const scenario = request.scenario;
 assert.ok(staticFixtures.scenarios.includes(scenario), 'unknown scenario: ' + scenario);
 assert.ok(request.payload && ['import', 'export'].includes(request.payload.mode), 'unknown setup mode');
@@ -124,6 +124,19 @@ const catalogs = [], catalogReads = [], confirmations = [];
 let handlers = {}; let formationsCompletions = 0;
 const ordinaryCopies = [], rootPicks = [], identityChecks = [], identityConfirms = [];
 let nameResolutions = 0;
+// Check the actual request resources before production wiring can hide a reused
+// draft or fail incidentally while registering a duplicate handler.
+assert.equal(document.activeElement?.id, undefined, 'request DOM must not inherit focus');
+assert.deepEqual(document.listeners, {}, 'request DOM must not inherit listeners');
+assert.equal(ids['setup-name'].value, '', 'request DOM must not inherit a draft');
+assert.equal(ids['setup-text'].value, '', 'request DOM must not inherit setup text');
+assert.deepEqual(Object.keys(handlers), [], 'request handlers must start empty');
+for (const [name, queue] of Object.entries({contexts, limits, snapshots, saves,
+  clipboardWrites, mutations, reviews, discards, creates, reads, clipboardReads,
+  profilesReads, catalogs, catalogReads, confirmations, ordinaryCopies, rootPicks,
+  identityChecks, identityConfirms})) {
+  assert.equal(queue.length, 0, 'request bridge queue must start empty: ' + name);
+}
 const devCatalog = scenario.startsWith('catalog-dev-') ? {} : null;
 if (devCatalog) {
   const source = fs.readFileSync(require('node:path').dirname(productionModule) + '/dev.js', 'utf8');
@@ -340,6 +353,17 @@ function assertRetry() {
   assert.equal(WM.el('us-back').disabled, false);
 }
 async function main() {
+  if (probe) {
+    // Leave a real draft and a real unresolved bridge request, not fake state
+    // in an unrelated oracle. The next ordinary scenario must start fresh.
+    await importOpen(); click('setup-review');
+    assert.equal(WM.current_route, 'uisetup');
+    assert.equal(WM.el('setup-name').value, 'Imported');
+    assert.equal(WM.el('setup-review').disabled, true);
+    assert.equal(reviews.length, 1, 'cleanup probe leaves a pending review');
+    assert.equal(reviews[0].args[0], exported.text);
+    return 'PASS cleanup probe success';
+  }
   if (request.payload.mode === 'import') { await importMain(); return 'PASS ' + scenario; }
   assert.equal(WM.el('us-copy').disabled, true);
   assert.equal(WM.el('us-save').disabled, true);
@@ -1523,12 +1547,55 @@ if (unhandledRejections.length) {
   const error = unhandledRejections[0];
   throw isNativeError(error) ? error : new Error(String(error));
 }
+if (probe) {
+  // No await between scheduling and finally: this native timer is genuinely
+  // pending on both exits. Advance real timers only after cleanup has run.
+  requestSetTimeout(() => {
+    input('setup-name', 'uncancelled timer edited the old draft');
+    probe.events.push('leaked');
+  }, 0);
+  probe.pendingTimers = requestTimers.size;
+  probe.timers = requestTimers;
+  // Same native call-through and delay as the cancelled timer. An uncancelled
+  // positive control proves that callbacks can run; no sleeps or fake clock.
+  probe.afterCleanup = () => new Promise(resolve => requestSetTimeout(() => {
+    probe.events.push('control'); resolve();
+  }, 0));
+  if (request.payload.cleanup_probe === 'failure') {
+    throw new Error('cleanup probe failure after pending timer');
+  }
+}
 return {duration_ms: performance.now() - started, output, encoding_boundary: encodingBoundary};
 } finally {
   process.removeListener('unhandledRejection', onUnhandledRejection);
   for (const timer of requestTimers) clearTimeout(timer);
   requestTimers.clear();
 }
+}
+
+async function runCleanupProbe(request) {
+  assert.ok(['success', 'failure'].includes(request.payload.cleanup_probe), 'unknown cleanup probe');
+  const probe = {events: []};
+  const survivor = () => {};
+  process.on('unhandledRejection', survivor);
+  const baseline = process.listeners('unhandledRejection');
+  try {
+    let result, failure;
+    try { result = await runScenario(request, staticFixtures, probe); }
+    catch (error) { failure = error; }
+    if (failure && !probe.afterCleanup) throw failure;
+    assert.equal(probe.pendingTimers, 1, 'cleanup must start with a pending tracked timer');
+    await probe.afterCleanup();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(probe.events, ['control'], 'request timer callback must be cancelled before reply');
+    assert.equal(probe.timers.size, 0, 'request timer tracking must be cleared');
+    assert.deepEqual(process.listeners('unhandledRejection'), baseline,
+      'request rejection listener must be removed without removing the baseline survivor');
+    if (failure) throw failure;
+    return result;
+  } finally {
+    process.removeListener('unhandledRejection', survivor);
+  }
 }
 
 async function serve() {
@@ -1538,7 +1605,8 @@ async function serve() {
     const requestStarted = performance.now();
     try {
       request = JSON.parse(line);
-      const result = await runScenario(request, staticFixtures);
+      const result = await (request.payload && request.payload.cleanup_probe
+        ? runCleanupProbe(request) : runScenario(request, staticFixtures));
       process.stdout.write(JSON.stringify({
         id: request.id,
         scenario: request.scenario,
