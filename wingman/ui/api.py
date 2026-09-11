@@ -3127,6 +3127,34 @@ class Api:
         )
         return int(x), int(y), int(width), int(height)
 
+    def _fleetbar_observed_rect_locked(self, bar, *, fallback=None):
+        """Best readable window rectangle, falling back to the cached plan.
+
+        A failed native reset can leave the visible Fleet Bar between two
+        rectangles before `_fleetbar_applied_*` is updated. Recovery needs the
+        window's readable post-call shape so the private rect can stay aligned
+        with what the user still sees.
+        """
+        if fallback is None:
+            fallback = self._fleetbar_current_rect_locked(bar)
+        observed = []
+        for attr, default in zip(("x", "y", "width", "height"), fallback):
+            try:
+                value = getattr(bar, attr)
+            except Exception:  # noqa: BLE001 -- a torn-down or half-built test/native window should fall back to the last authoritative rect, not raise during recovery.
+                value = default
+            try:
+                observed.append(int(value))
+            except (TypeError, ValueError):
+                observed.append(int(default))
+        return tuple(observed)
+
+    @staticmethod
+    def _fleetbar_rect_matches(first, second) -> bool:
+        return all(
+            abs(int(left) - int(right)) <= 1 for left, right in zip(first, second)
+        )
+
     def _remember_fleetbar_rect_locked(self, x, y, width, height) -> None:
         self._fleetbar_applied_x = int(x)
         self._fleetbar_applied_y = int(y)
@@ -3266,6 +3294,7 @@ class Api:
                 return self._field_refused("Could not save this to settings.")
             return self._field_ok()
 
+        original_rect = self._fleetbar_observed_rect_locked(bar)
         target_x, target_y, target_width, target_height = (
             self._fleetbar_target_rect_locked(
                 bar,
@@ -3283,7 +3312,32 @@ class Api:
                 )
             except Exception:
                 logger.debug("Fleet Bar width reset failed", exc_info=True)
-                return self._field_refused("The Fleet Bar width could not be reset.")
+                after_failure = self._fleetbar_observed_rect_locked(
+                    bar, fallback=original_rect
+                )
+                if self._fleetbar_rect_matches(after_failure, original_rect):
+                    self._remember_fleetbar_rect_locked(*original_rect)
+                    return self._field_refused(
+                        "The Fleet Bar width could not be reset."
+                    )
+                try:
+                    fleetbar.apply_geometry(bar, *original_rect)
+                except Exception:
+                    logger.exception("Fleet Bar width reset rollback failed")
+                final_rect = self._fleetbar_observed_rect_locked(
+                    bar, fallback=after_failure
+                )
+                if self._fleetbar_rect_matches(final_rect, original_rect):
+                    self._remember_fleetbar_rect_locked(*original_rect)
+                    return self._field_refused(
+                        "The Fleet Bar width could not be reset."
+                    )
+                self._remember_fleetbar_rect_locked(*final_rect)
+                return {
+                    "applied": True,
+                    "persisted": False,
+                    "error": self._fleetbar_restart_warning(),
+                }
         self._remember_fleetbar_rect_locked(
             target_x,
             target_y,

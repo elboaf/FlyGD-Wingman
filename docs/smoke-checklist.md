@@ -3313,10 +3313,12 @@ until they are actually run on Windows.
       focus movement to another control is never stolen.
 - [ ] **Hide and Reset width failures stay honest.** With an instrumented
       Fleet Bar setting save refusal, clicking Hide refuses and leaves the bar
-      visible. If a later native hide or reset applies but its save fails, the
-      visible session state remains applied and warns it will not survive
-      restart. With an instrumented native hide or reset failure, the action
-      refuses without pretending it succeeded.
+      visible. Reset can still warn session-only if its save fails after the
+      visible width changes. Hide shows a restart warning only in the narrower
+      double-failure path: native hide fails, the rollback keeps the bar
+      visibly on for the session, and persisting that rollback fails too. With
+      an instrumented native hide or reset failure, the action refuses without
+      pretending it succeeded.
 - [ ] **Fixed-width fallback stays usable when resize chrome cannot attach.**
       In an instrumented build that disables horizontal resize chrome, Fleet
       Bar still opens at the clamped preferred width, omits the native resize

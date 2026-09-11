@@ -137,6 +137,12 @@
         if (result && !result.error) settledContentWidth = width;
         return result;
       });
+    } else if (resizeSettling) {
+      // Returning to the accepted baseline still supersedes the older in-flight
+      // settle: no save is needed, but the stale reply must not advance the
+      // baseline or be the callback that drains deferred height work.
+      version = ++resizeSettleVersion;
+      resizeSettling = false;
     }
     return work.then(function () {
       if (version && version !== resizeSettleVersion) return null;

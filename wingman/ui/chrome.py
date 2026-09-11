@@ -15,7 +15,7 @@ subclassed WndProc. Two facts from the spike shape everything here:
     is the whole window -- so the Chromium child covers every border pixel
     and the parent sees NOTHING. Measured: zero hit-tests reached the form
     while a human dragged the edges. The control MUST be inset first; that
-    is `window.py`'s job, and without it this module is decoration.
+    is `_attach_resize`'s job, and without it this module is decoration.
   * MinimumSize survives only if WM_GETMINMAXINFO chains to the original
     proc BEFORE the max fields are overridden. WinForms fills in
     ptMinTrackSize there. Reversed, min_size is silently discarded.

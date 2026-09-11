@@ -575,6 +575,43 @@ test('resize settlement rejection shows a generic failure and keeps the previous
   assert.deepEqual(p.errors.map(error => error[0]), ['bridge: settle_fleet_bar_resize failed']);
 });
 
+test('returning to the accepted baseline supersedes an older resize settle without sending another save', async () => {
+  const p = await page();
+  await settle(p.fonts);
+  await settle(p.calls('fleet_bar_snapshot')[0], snapshot());
+  await settle(p.calls('fit_fleet_bar_height')[0]);
+  await settle(p.calls('fleet_bar_ready')[0], true);
+  await p.advance(500);
+  await settle(p.calls('fit_fleet_bar_height')[1]);
+  const fits = p.calls('fit_fleet_bar_height').length;
+
+  await p.resize(480);
+  await p.advance(150);
+  assert.deepEqual(p.calls('settle_fleet_bar_resize')[0].args, [A, 480, 20]);
+
+  await p.resize(420);
+  p.shell.offsetHeight = 190;
+  await p.push(snapshot(2, 'Back at baseline'));
+  assertRendered(p, 'Back at baseline');
+  assert.equal(p.calls('fit_fleet_bar_height').length, fits, 'fit still waits while baseline return is pending');
+
+  await p.advance(150);
+  assert.equal(p.calls('settle_fleet_bar_resize').length, 1, 'baseline return must not send a corrective save');
+  assert.equal(p.calls('fit_fleet_bar_height').length, fits + 1, 'baseline return should drain the deferred fit before the stale reply');
+  assert.deepEqual(p.calls('fit_fleet_bar_height')[fits].args, [A, 190]);
+
+  await settle(p.calls('settle_fleet_bar_resize')[0], { applied: true, persisted: true, error: null });
+  assert.equal(p.calls('fit_fleet_bar_height').length, fits + 1, 'stale reply must not drain fit again');
+
+  await p.resize(479);
+  await p.advance(150);
+  assert.deepEqual(p.calls('settle_fleet_bar_resize').map(call => call.args), [
+    [A, 480, 20],
+    [A, 479, 20]
+  ]);
+  assert.deepEqual(p.errors, []);
+});
+
 test('fit pauses until the latest overlapping resize settlement completes', async () => {
   const p = await page();
   await settle(p.fonts);

@@ -148,10 +148,11 @@ roster, and automatic telemetry updates do not own width. A left-edge resize
 also saves `x`; a right-edge resize leaves `x` alone. If monitor bounds clamp
 the applied rectangle, the saved preferred width is kept for the next larger
 opening. Reset width restores the 500px default. Hide first saves Off; if
-that save is refused, the bar stays visible and reports the refusal. If a
-later native hide or reset applies but its save fails, the visible session
-state stays changed with a restart warning rather than pretending it
-persisted.
+that save is refused, the bar stays visible and reports the refusal. Reset can
+still warn session-only if its save fails after the visible width changes. Hide
+uses that restart warning only in the narrower double-failure case: native hide
+fails, rollback keeps the bar visibly on for the session, and persisting that
+rollback fails too.
 
 Shared mode remains disabled in production. Browser fixtures and Chromium
 measurements prove layout and handler behavior only; Windows/WebView2 hit

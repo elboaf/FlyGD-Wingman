@@ -2343,6 +2343,100 @@ def test_reset_fleet_bar_page_width_refuses_native_resize_failure(api):
     assert api._fleetbar_applied_outer_height == 90
 
 
+def test_reset_fleet_bar_page_width_refuses_partial_resize_after_successful_rollback(
+    api,
+):
+    _set_resizable_bar(api, x=150, outer_width=420, work_area=(0, 0, 600, 900))
+    bar = ReadOnlyFleetWindow(
+        width=420,
+        height=90,
+        x=150,
+        y=60,
+        work_area=(0, 0, 600, 900),
+    )
+    api._fleetbar_window = bar
+    api._state.settings["fleet_bar"]["preferred_content_width"] = 720
+    before = dict(api._state.settings["fleet_bar"])
+
+    def resize(width, height):
+        bar.resized.append((width, height))
+        bar.width = width
+        bar.height = height
+
+    def move(x, y):
+        bar.moved.append((x, y))
+        raise RuntimeError("move failed after resize")
+
+    bar.resize = resize
+    bar.move = move
+
+    result = api.reset_fleet_bar_page_width(PAGE_A)
+
+    assert result == {
+        "applied": False,
+        "persisted": False,
+        "error": "The Fleet Bar width could not be reset.",
+    }
+    assert bar.resized == [(512, 90), (420, 90)]
+    assert bar.moved == [(88, 60)]
+    assert (bar.x, bar.y, bar.width, bar.height) == (150, 60, 420, 90)
+    assert (api._fleetbar_applied_x, api._fleetbar_applied_y) == (150, 60)
+    assert api._fleetbar_applied_outer_width == 420
+    assert api._fleetbar_applied_outer_height == 90
+    assert api._state.settings["fleet_bar"] == before
+
+
+def test_reset_fleet_bar_page_width_syncs_actual_geometry_when_rollback_fails(api):
+    from wingman import paths
+
+    _set_resizable_bar(api, x=150, outer_width=420, work_area=(0, 0, 600, 900))
+    bar = ReadOnlyFleetWindow(
+        width=420,
+        height=90,
+        x=150,
+        y=60,
+        work_area=(0, 0, 600, 900),
+    )
+    api._fleetbar_window = bar
+    api._state.settings["fleet_bar"]["preferred_content_width"] = 720
+    before = dict(api._state.settings["fleet_bar"])
+    settings.save(api._state.settings, paths.settings_file())
+    calls = 0
+
+    def resize(width, height):
+        nonlocal calls
+        calls += 1
+        bar.resized.append((width, height))
+        if calls == 1:
+            bar.width = width
+            bar.height = height
+            return
+        raise RuntimeError("rollback resize failed")
+
+    def move(x, y):
+        bar.moved.append((x, y))
+        raise RuntimeError("move failed after resize")
+
+    bar.resize = resize
+    bar.move = move
+
+    result = api.reset_fleet_bar_page_width(PAGE_A)
+
+    assert result == {
+        "applied": True,
+        "persisted": False,
+        "error": "The Fleet Bar width changed, but it will not survive restart.",
+    }
+    assert bar.resized == [(512, 90), (420, 90)]
+    assert bar.moved == [(88, 60)]
+    assert (bar.x, bar.y, bar.width, bar.height) == (150, 60, 512, 90)
+    assert (api._fleetbar_applied_x, api._fleetbar_applied_y) == (150, 60)
+    assert api._fleetbar_applied_outer_width == 512
+    assert api._fleetbar_applied_outer_height == 90
+    assert api._state.settings["fleet_bar"] == before
+    assert settings.load(paths.settings_file())["fleet_bar"] == before
+
+
 def test_reset_fleet_bar_page_width_keeps_session_geometry_when_persistence_fails(
     api, monkeypatch
 ):
