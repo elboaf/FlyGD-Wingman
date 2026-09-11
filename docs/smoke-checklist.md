@@ -3132,6 +3132,15 @@ The Fleet Bar is a separate always-on-top WebView fed by the shared EVE
 client discovery and gamelog stream. It is display-only and must remain
 independent of both preview thumbnails and alert preferences.
 
+- [ ] **Browser-only CSS measurements stay separate from native acceptance.**
+      Run `node scripts/measure_fleetbar_layout.js --chrome /usr/bin/google-chrome`.
+      Expected: PASS at 420, 500, and 720 content widths for shell width,
+      no horizontal overflow, exact `10,000,000` values, full local
+      `SCRAM · POINT · NEUT` and remote `SCRAM/POINT`, long-name ellipsis
+      metadata, distinct threat/neutral surfaces, stronger EWAR emphasis,
+      reserved header-action geometry, sticky header, and bounded 128-row
+      roster scrolling. Chromium layout evidence only; not Windows/WebView2
+      native acceptance.
 - [ ] **Enable from Settings › Previews.** Tick `Show the floating Fleet DPS /
       EWAR bar`. Expected: a compact three-column window opens with
       `CHARACTER`, `DAMAGE` (with `OUT` and `IN` sublabels either side of a
