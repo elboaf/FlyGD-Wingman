@@ -1993,6 +1993,17 @@ def test_custom_alerts_reuse_checked_sound_options_and_scoped_disclosure_styles(
     assert "row.msg.setAttribute('role', 'status')" in js
 
 
+def test_custom_alert_selects_shrink_to_their_grid_track_not_the_shared_basis():
+    # The shared Settings select has a fixed 150px flex basis. width:100%
+    # alone left the custom 120px Cooldown track overflowing its card.
+    scoped = re.search(
+        r"#custom-alerts \.custom-alert-style > \.row > select\.field\s*\{([^}]+)\}",
+        CSS,
+    )
+    assert scoped, "custom style selects need their own flex-basis override"
+    assert re.search(r"flex:\s*0\s+1\s+100%\s*;", scoped[1])
+
+
 def test_the_alert_rows_offer_exactly_the_sounds_that_exist():
     """index.html hand-writes nine <option>s for three events, and
     settings.py owns the list they must match.

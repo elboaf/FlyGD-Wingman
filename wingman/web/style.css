@@ -3152,6 +3152,8 @@ button.btn:disabled,
 #custom-alerts .custom-alert-editor .field { width: 100%; min-width: 0; }
 #custom-alerts .custom-alert-style { display: grid; grid-template-columns: 168px minmax(120px, 1fr) 120px; gap: 12px; align-items: start; }
 #custom-alerts .custom-alert-style > .row { margin: 0; min-width: 0; }
+/* Shared Settings selects have a 150px flex basis; the grid owns this width. */
+#custom-alerts .custom-alert-style > .row > select.field { flex: 0 1 100%; }
 #custom-alerts .custom-alert-colour > .lab { display: block; color: var(--text-dim); margin-bottom: 4px; }
 #custom-alerts .custom-alert-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 #custom-alerts .field-msg { overflow-wrap: anywhere; }

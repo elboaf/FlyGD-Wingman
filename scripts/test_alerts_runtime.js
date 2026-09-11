@@ -512,6 +512,148 @@ test('an uncertain removed row retains focus ownership through its recovery read
   assert.equal(p.document.activeElement.id, 'custom-alert-add');
 });
 
+test('enable refusal reconciles its checkbox while queued style and newer text remain owned', async () => {
+  const p = await loaded([rule('r1'), rule('r2')]);
+  p.toggle('custom-alert-r2-enabled', true);
+  await p.reply('set_custom_alert_enabled', result(1, [rule('r1'), rule('r2')],
+    {applied: false, persisted: false, error: 'Second row requires search'}));
+  p.toggle('custom-alert-r1-enabled', true); p.choose('custom-alert-r1-sound', 'sly');
+  edit(p, 'unsubmitted query'); p.edit('custom-alert-r1-name', 'unsubmitted name');
+  await p.reply('set_custom_alert_enabled', result(1, [rule('r1'), rule('r2')],
+    {applied: false, persisted: false, error: 'Enter a search before enabling this alert.'}));
+  assert.equal(p.rows()[0].enabled, false, 'unrelated newer drafts do not own enabled');
+  assert.equal(p.rows()[0].sound, 'sly'); assert.equal(p.rows()[0].search, 'unsubmitted query');
+  assert.match(p.el('custom-alert-r1-msg').textContent, /Enter a search/);
+  const draft = pending(p, 'edit_custom_alert')[0].args[1];
+  assert.equal(draft.enabled, false); assert.equal(draft.search, ''); assert.equal(draft.name, 'Custom alert');
+  await p.reply('edit_custom_alert', result(2, [rule('r1', draft), rule('r2')]));
+  assert.equal(p.rows()[0].enabled, false); assert.equal(p.rows()[0].name, 'unsubmitted name');
+  assert.match(p.el('custom-alert-r1-msg').textContent, /Apply/);
+  assert.match(p.el('custom-alert-r2-msg').textContent, /Second row requires search/);
+});
+
+test('clear-to-disable reconciles enabled independently of queued style and newer text', async () => {
+  const p = await loaded([rule('r1', {search: 'accepted', enabled: true})]);
+  edit(p, ''); apply(p); p.choose('custom-alert-r1-sound', 'sly'); edit(p, 'new draft');
+  await p.reply('edit_custom_alert', result(2, [rule()]));
+  assert.equal(p.rows()[0].enabled, false); assert.equal(p.rows()[0].search, 'new draft');
+  assert.equal(p.rows()[0].sound, 'sly');
+  const draft = pending(p, 'edit_custom_alert')[0].args[1];
+  assert.equal(draft.enabled, false); assert.equal(draft.search, '');
+  await p.reply('edit_custom_alert', result(3, [rule('r1', draft)]));
+  assert.equal(p.rows()[0].enabled, false); assert.equal(p.rows()[0].search, 'new draft');
+});
+
+test('mixed-kind acknowledgments preserve genuinely newer enabled intents in FIFO order', async () => {
+  const p = await loaded();
+  p.toggle('custom-alert-r1-enabled', true); p.choose('custom-alert-r1-sound', 'sly');
+  p.toggle('custom-alert-r1-enabled', false); p.toggle('custom-alert-r1-enabled', true);
+  await p.reply('set_custom_alert_enabled', result(1, [rule('r1', {search: 'accepted'})],
+    {applied: false, persisted: false, error: 'Enable refused'}));
+  assert.equal(p.rows()[0].enabled, true);
+  const draft = pending(p, 'edit_custom_alert')[0].args[1]; assert.equal(draft.enabled, false);
+  await p.reply('edit_custom_alert', result(2, [rule('r1', draft)]));
+  assert.equal(p.rows()[0].enabled, true, 'queued toggle still owns enabled after style acknowledgment');
+  assert.deepEqual(pending(p, 'set_custom_alert_enabled')[0].args, ['r1', false]);
+  await p.reply('set_custom_alert_enabled', result(2, [rule('r1', draft)]));
+  assert.equal(p.rows()[0].enabled, true);
+  assert.deepEqual(pending(p, 'set_custom_alert_enabled')[0].args, ['r1', true]);
+  await p.reply('set_custom_alert_enabled', result(3, [rule('r1', {...draft, enabled: true})]));
+  assert.equal(p.rows()[0].enabled, true);
+});
+
+test('Apply canonicalizes unchanged name while a newer search and style keep their intent', async () => {
+  const p = await loaded(); p.edit('custom-alert-r1-name', ' Trimmed '); edit(p, 'submitted'); apply(p);
+  edit(p, 'newer search'); p.choose('custom-alert-r1-sound', 'sly');
+  await p.reply('edit_custom_alert', result(2, [rule('r1', {name: 'Trimmed', search: 'submitted'})]));
+  assert.equal(p.rows()[0].name, 'Trimmed'); assert.equal(p.rows()[0].search, 'newer search');
+  assert.equal(p.rows()[0].sound, 'sly');
+});
+
+test('style refusal restores its unchanged controls without repainting a newer checkbox', async () => {
+  const p = await loaded(); p.color('r1', '#4dff7a'); p.toggle('custom-alert-r1-enabled', true);
+  await p.reply('edit_custom_alert', result(1, [rule('r1', {search: 'accepted'})],
+    {applied: false, persisted: false, error: 'Style refused'}));
+  assert.equal(p.rows()[0].color, '#ff8c42'); assert.equal(p.rows()[0].enabled, true);
+  assert.match(p.el('custom-alert-r1-msg').textContent, /Style refused/);
+});
+
+test('one style field can reconcile while another holds newer intent', async () => {
+  const p = await loaded(); p.color('r1', '#4dff7a'); p.choose('custom-alert-r1-sound', 'sly');
+  await p.reply('edit_custom_alert', result(1, [rule('r1', {search: 'accepted'})],
+    {applied: false, persisted: false, error: 'Colour refused'}));
+  assert.equal(p.rows()[0].color, '#ff8c42'); assert.equal(p.rows()[0].sound, 'sly');
+  // A later full style submission can retry the captured colour explicitly.
+  assert.equal(pending(p, 'edit_custom_alert')[0].args[1].color, '#4dff7a');
+});
+
+for (const reject of [false, true]) {
+  test('entry issued before uncertain Add cannot release admission, rejected=' + reject, async () => {
+    const p = await loaded([]); p.fire('custom-alert-add', 'click'); p.leave(); p.enter();
+    await p.reply('add_custom_alert', null, 0, reject);
+    assert.equal(pending(p, 'get_custom_alert_state').length, 2);
+    await p.reply('get_custom_alert_state', initial);
+    assert.equal(p.el('custom-alert-add').disabled, true, 'pre-outcome entry is not recovery authority');
+    p.fire('custom-alert-add', 'click'); assert.equal(pending(p, 'add_custom_alert').length, 0);
+    await p.reply('get_custom_alert_state', state(2, [rule()]));
+    assert.equal(p.el('custom-alert-add').disabled, false); assert.equal(p.rows().length, 1);
+    assert.equal(pending(p, 'add_custom_alert').length, 0);
+  });
+}
+
+test('pre-edit hydration cannot resume a queued style after uncertain persistence', async () => {
+  const p = await loaded(); p.enter();
+  edit(p, 'possibly persisted'); apply(p); p.choose('custom-alert-r1-sound', 'sly'); edit(p, 'newer typing');
+  await p.reply('edit_custom_alert', null);
+  assert.equal(pending(p, 'edit_custom_alert').length, 0);
+  await p.reply('get_custom_alert_state', state(1, [rule('r1', {search: 'accepted'})]));
+  assert.equal(pending(p, 'edit_custom_alert').length, 0, 'old hydration cannot resume the FIFO');
+  assert.equal(p.el('custom-alert-r1-apply').disabled, true);
+  await p.reply('get_custom_alert_state', state(2, [rule('r1', {search: 'possibly persisted'})]));
+  const draft = pending(p, 'edit_custom_alert')[0].args[1];
+  assert.equal(draft.search, 'possibly persisted'); assert.equal(draft.sound, 'sly');
+  assert.equal(p.rows()[0].search, 'newer typing');
+  await p.reply('edit_custom_alert', result(3, [rule('r1', draft)]));
+  assert.equal(p.rows()[0].search, 'newer typing');
+});
+
+test('each uncertain row requires a read issued after its own outcome', async () => {
+  const rules = [rule('r1', {search: 'first'}), rule('r2', {search: 'second'})];
+  const p = await loaded(rules);
+  edit(p, 'first updated'); apply(p); p.choose('custom-alert-r1-sound', 'sly');
+  edit(p, 'second updated', 'r2'); apply(p, 'r2'); p.choose('custom-alert-r2-sound', 'sly');
+  await p.reply('edit_custom_alert', null); // issues first recovery read
+  await p.reply('edit_custom_alert', null); // issues second recovery read
+  await p.reply('get_custom_alert_state', state(2, [rule('r1', {search: 'first updated'}), rules[1]]));
+  assert.equal(pending(p, 'edit_custom_alert').length, 1);
+  assert.equal(pending(p, 'edit_custom_alert')[0].args[0], 'r1');
+  assert.equal(p.el('custom-alert-r2-apply').disabled, true);
+  await p.reply('get_custom_alert_state', state(3, [rule('r1', {search: 'first updated'}), rule('r2', {search: 'second updated'})]));
+  const second = pending(p, 'edit_custom_alert').find(call => call.args[0] === 'r2');
+  assert.equal(second.args[1].search, 'second updated');
+});
+
+test('fresh equal-revision recovery can release Add; old-view recovery cannot', async () => {
+  const p = await loaded([]); p.fire('custom-alert-add', 'click');
+  await p.reply('add_custom_alert', null); p.leave(); p.enter();
+  await p.reply('get_custom_alert_state', initial); // recovery belongs to the left view
+  assert.equal(p.el('custom-alert-add').disabled, true);
+  await p.reply('get_custom_alert_state', initial); // fresh current-view read, no commit occurred
+  assert.equal(p.el('custom-alert-add').disabled, false);
+  assert.equal(pending(p, 'add_custom_alert').length, 0);
+});
+
+test('null recovery keeps the row queue blocked until a later owned authority read', async () => {
+  const p = await loaded(); edit(p, 'unknown'); apply(p); p.choose('custom-alert-r1-sound', 'sly');
+  await p.reply('edit_custom_alert', null); await p.reply('get_custom_alert_state', null);
+  assert.equal(pending(p, 'edit_custom_alert').length, 0);
+  p.tick(); await p.reply('get_custom_alert_state', state(1, [rule('r1', {search: 'accepted'})]));
+  assert.equal(pending(p, 'edit_custom_alert').length, 0, 'health alone cannot release uncertainty');
+  p.leave(); p.enter();
+  await p.reply('get_custom_alert_state', state(1, [rule('r1', {search: 'accepted'})]));
+  assert.equal(pending(p, 'edit_custom_alert')[0].args[1].search, 'accepted');
+});
+
 (async function () {
   let failures = 0;
   for (const {name, run} of tests) {

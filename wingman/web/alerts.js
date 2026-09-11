@@ -598,6 +598,7 @@
   var hydratedSerial = 0;
   var addPending = false;
   var addUncertain = false;
+  var addRecoverySerial = 0;
   var disclosure = null;
   var builtinReadSerial = 0;
   var builtinRenderedSerial = 0;
@@ -636,17 +637,20 @@
     sayRow(row, [row.error, draft, row.notice].filter(function (s) { return !!s; }).join(' '),
       row.error ? 'err' : (draft || row.notice ? 'warn' : ''));
   }
-  function paintCustom(row, kind) {
+  function paintCustom(row, kind, intents) {
+    function owns(key) { return !intents || intents[key] === row.intents[key]; }
     if (!kind || kind === 'apply') {
-      row.name.value = row.ack.name;
-      row.search.value = row.ack.search;
+      if (owns('name')) { row.name.value = row.ack.name; }
+      if (owns('search')) { row.search.value = row.ack.search; }
     }
     if (!kind || kind === 'apply' || kind === 'style') {
-      paintSwatches(row, 'custom-' + row.ack.id, row.ack.color, true);
-      row.sound.value = row.ack.sound;
-      row.cooldown.value = String(row.ack.cooldown_s);
+      if (owns('color')) { paintSwatches(row, 'custom-' + row.ack.id, row.ack.color, true); }
+      if (owns('sound')) { row.sound.value = row.ack.sound; }
+      if (owns('cooldown_s')) { row.cooldown.value = String(row.ack.cooldown_s); }
     }
-    if (!kind || kind === 'apply' || kind === 'enabled') { row.enabled.checked = row.ack.enabled; }
+    // A full edit can disable a cleared search. New text/style intent does
+    // not own the checkbox; only a newer enabled intent may protect it.
+    if (kind !== 'remove' && owns('enabled')) { row.enabled.checked = row.ack.enabled; }
   }
   function controlsReady(row) {
     var ready = visible && customReady && !row.dead && !row.removing && !row.uncertain;
@@ -675,7 +679,8 @@
   }
   function makeCustomRow(rule) {
     var row = {ack: rule, counter: 0, queue: [], busy: null, dead: false,
-      uncertain: false, removing: false, error: '', notice: '', controls: [], testSerial: 0};
+      uncertain: false, removing: false, error: '', notice: '', controls: [], testSerial: 0,
+      intents: {name: 0, search: 0, color: 0, sound: 0, cooldown_s: 0, enabled: 0}};
     row.root = node('div', 'custom-alert-row');
     row.root.setAttribute('data-rule-id', rule.id);
     var top = node('div', 'custom-alert-summary');
@@ -751,6 +756,7 @@
     button('apply', 'Apply', actions, function () { submitCustom(row, 'apply'); });
     button('cancel', 'Cancel', actions, function () {
       row.counter++;
+      Object.keys(row.intents).forEach(function (key) { row.intents[key]++; });
       paintCustom(row); customMessage(row);
       row.editor.hidden = true; row.edit.setAttribute('aria-expanded', 'false');
       disclosure = null; row.edit.focus();
@@ -769,16 +775,19 @@
     row.editor.appendChild(actions); row.root.appendChild(row.editor);
     row.msg = node('div', 'field-msg'); row.msg.id = customId(rule.id, 'msg');
     row.msg.setAttribute('role', 'status'); row.msg.hidden = true; row.root.appendChild(row.msg);
-    [row.name, row.search].forEach(function (input) {
-      input.addEventListener('input', function () { row.counter++; row.notice = ''; customMessage(row); });
+    ['name', 'search'].forEach(function (key) {
+      var input = row[key];
+      input.addEventListener('input', function () {
+        row.counter++; row.intents[key]++; row.notice = ''; customMessage(row);
+      });
       input.addEventListener('keydown', function (event) {
         if (event.key === 'Enter') { event.preventDefault(); row.apply.click(); }
       });
     });
     row.enabled.addEventListener('change', function () { submitCustom(row, 'enabled'); });
-    row.colors.addEventListener('change', function () { submitCustom(row, 'style'); });
-    row.sound.addEventListener('change', function () { submitCustom(row, 'style'); });
-    row.cooldown.addEventListener('change', function () { submitCustom(row, 'style'); });
+    row.colors.addEventListener('change', function () { submitCustom(row, 'style', 'color'); });
+    row.sound.addEventListener('change', function () { submitCustom(row, 'style', 'sound'); });
+    row.cooldown.addEventListener('change', function () { submitCustom(row, 'style', 'cooldown_s'); });
     paintCustom(row);
     return row;
   }
@@ -802,7 +811,7 @@
       present[rule.id] = true;
       var row = customRows[rule.id];
       if (row && !row.dead) {
-        var repaint = paint && !row.busy && !row.queue.length && clean(row);
+        var repaint = paint && !row.busy && !row.uncertain && !row.queue.length && clean(row);
         row.ack = rule;
         if (repaint) { paintCustom(row); }
       }
@@ -853,10 +862,15 @@
     updateAdmission();
     if (lostFocus) { focusCustomNeighbour(); }
   }
-  function submitCustom(row, kind) {
+  function submitCustom(row, kind, field) {
     if (!visible || !customReady || row.dead || row.removing || row.uncertain) { return; }
     row.counter++;
-    var request = {kind: kind, counter: row.counter, epoch: viewEpoch,
+    var intents = {};
+    Object.keys(row.intents).forEach(function (key) {
+      if (kind === 'apply' || key === field || (kind === 'enabled' && key === 'enabled')) { row.intents[key]++; }
+      intents[key] = row.intents[key];
+    });
+    var request = {kind: kind, intents: intents, epoch: viewEpoch,
       draft: kind === 'apply' ? fullDraft(row, false) : null,
       style: kind === 'style' ? styleDraft(row) : null, enabled: row.enabled.checked,
       focused: row.root.contains(document.activeElement)};
@@ -869,7 +883,7 @@
     drainCustom(row);
   }
   function finishDraft(row, request) {
-    if (request.counter === row.counter) { paintCustom(row, request.kind); }
+    paintCustom(row, request.kind, request.intents);
     customMessage(row);
   }
   function drainCustom(row) {
@@ -900,6 +914,7 @@
       }
       if (!res) {
         row.uncertain = true; row.recovery = request;
+        row.recoverySerial = readSerial + 1;
         row.error = 'Could not reach the app. The outcome is unknown; checking saved settings.';
       } else {
         row.removing = false;
@@ -946,10 +961,15 @@
       if (!controls || serial < hydratedSerial) { return; }
       hydratedSerial = serial;
       if (!state || state.revision < committedRevision) { return; }
-      customReady = true; addUncertain = false; adoptCustom(state, true);
+      customReady = true;
+      // A read already in flight when a write became uncertain cannot prove
+      // its outcome, even at the same revision. Each recovery fences issuance,
+      // independently of health/hydration completion order and other rows.
+      if (addUncertain && serial >= addRecoverySerial) { addUncertain = false; }
+      adoptCustom(state, true);
       Object.keys(customRows).forEach(function (id) {
         var row = customRows[id];
-        if (row.uncertain) {
+        if (row.uncertain && serial >= row.recoverySerial) {
           row.uncertain = false; row.removing = false;
           finishDraft(row, row.recovery); row.recovery = null;
         }
@@ -969,6 +989,7 @@
         var owned = ownsView(epoch);
         if (res && res.state) { adoptCustom(res.state, owned); }
         addPending = false; addUncertain = !res;
+        if (!res) { addRecoverySerial = readSerial + 1; }
         if (owned) {
           setText(customStatus, !res ? 'Could not reach the app. Add may have completed; checking saved settings before another Add.'
             : res.error || (res.applied && !res.persisted ? 'Added for this session, but it will not survive a restart.' : ''));
