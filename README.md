@@ -162,12 +162,15 @@ installed/frozen checks remain separate manual acceptance.
 ### Wanderer names — native/live acceptance pending
 
 **Settings → Previews → Wanderer names** can add a smaller system-name line
-under each named preview's character label. This is **off by default**. Apply
+under each named preview's character label. This is **off by default**. Enter
 one HTTPS Wanderer application URL (including any deployment prefix), one map
 slug/UUID, and that map's read-only integration token. Use the tracked-character
 locations integration credential, not a write-capable public API key.
-**Test connection** makes a real request without enabling names; automatic
-polling also requires Client previews and an available preview host.
+**Test connection** saves the entered URL, map and token together, then requests
+a real test without enabling names. Enter in any connection field does the same;
+blur does not save. Automatic polling also requires Client previews and an
+available preview host. A saved connection and a Test that could not start are
+reported separately.
 
 Wingman consumes the map's effective name; fresh hidden/unmapped locations fall
 back to a real raw system name when supplied. Untracked, offline, unavailable,
@@ -182,10 +185,17 @@ separately in `%LOCALAPPDATA%\FlyGD Wingman\wanderer_credentials.json`:
 Windows DPAPI protects the token **and its normalized URL/map binding**. It is
 never returned to the page, written into ordinary settings, or logged by this
 integration. DPAPI protects storage at rest, not against code running as your
-Windows user. Changing the URL/map does not rebind an old token; explicitly
-apply a token for the new connection. Turning names off retains the credential.
-**Remove connection** deletes only Wingman's protected token, retaining URL,
-map and the enabled preference; it does not revoke or change anything in Wanderer.
+Windows user. Leave the token blank to reuse it only for the same saved,
+normalized URL and map. Changing either requires a supplied token. Turning names
+off retains the connection. **Remove connection** confirms and clears Wingman's
+saved URL, map and protected token together, retaining the independent enabled
+preference; it does not revoke or change anything in Wanderer.
+
+Settings and credentials are separate files, not a crash-atomic transaction.
+If settings cannot be saved, Wingman restores the prior protected bytes and
+keeps the prior runtime. If that restoration also fails, names stop and Wingman
+reports uncertain persistence; restart and re-enter the connection before
+relying on it.
 
 Only current preview-session names are matched locally; no local character
 roster is sent, and no location history is saved or shared. See the
@@ -486,7 +496,7 @@ is never acted on.
 | Bookmark keybinds | off, one bound | Enabling starts the AutoHotkey engine. Only EvE-Scout conversion ships bound; the rest are yours to set. |
 | Client previews | off | Enabling starts a discovery sweep and a foreground hook. |
 | Reopen previews in place | on | Off opens each preview in a default stack instead. Positions are remembered either way. |
-| Wanderer names | off | One HTTPS instance/map and a separately protected read-only token. Test does not enable polling; Remove connection deletes only the local token. |
+| Wanderer names | off | One HTTPS instance/map and a separately protected read-only token. Test saves the connection without enabling names; Remove clears URL/map/token, not the enabled preference. |
 
 Settings are stored at `%LOCALAPPDATA%\FlyGD Wingman\settings.json`.
 

@@ -1,5 +1,66 @@
 # Wanderer preview overlay — verification record
 
+## Connection-form follow-up — separate scoped evidence
+
+After baseline `d81ed329`, the approved connection-form simplification is implemented
+in `19699ca2` (protected snapshots), `c4d2b5ff` (grouped controller/API), and
+`69d65d3f` (ES5 form/dev fixtures). **The remainder of this record describes the
+previous candidate, not fresh full-suite, browser or frozen-build acceptance for
+this follow-up.** Those broader checks and final polish remain with the parent.
+No running app, test-profile credential or live service was inspected or changed
+by this scoped implementation.
+
+Test connection now saves submitted URL/map/token together, then requests Test
+without changing the enable preference. Blank token reuse requires the currently
+acknowledged normalized URL/map; an older matching credential file is not reused.
+Remove confirms against a configuration revision and clears URL/map/token, keeping
+the independent enable preference. Each input retains draft ownership even though
+the save is grouped. The old Apply/Replace buttons and per-field bridge endpoints
+are removed. Existing HTTP serialization, expiry scheduling and native rendering
+are unchanged.
+
+The persistence boundary snapshots at most 16 KiB of protected document bytes,
+writes the candidate protected credential, saves settings, then commits runtime
+once. Settings failure restores the exact prior protected bytes (or absence)
+without admitting candidate work. Compensation failure closes admission and
+returns an explicit safe `persistence_error` acknowledgement; the page must not
+advertise a retained old Test success. This is bounded in-process compensation,
+**not a crash-atomic transaction or durable recovery journal**.
+
+The bridge now exposes `test_wanderer_connection(base, map, token)` and
+`remove_wanderer_connection(revision)`, alongside unchanged `wanderer_state()` and
+`set_wanderer_enabled(enabled)`. Test returns configuration
+`applied/persisted/error/acknowledged` separately from
+`test_accepted/test_error/test_generation`; asynchronous outcomes remain in health
+state. A successful save is never reported as a persistence refusal merely because
+Test could not start.
+
+Observed test-first checkpoints: credential snapshot tests **3 failed / 45 passed**
+before implementation, then **48 passed**; grouped controller tests **29 failed /
+20 passed** before implementation, then **49 passed**; production Node form tests
+**20 failed / 39 passed** before implementation. A final self-review regression
+caught a retained old Test success after reopening failed-compensation state
+(**1 failed / 59 passed**) before its presentation fix.
+
+Fresh Linux verification on the completed code, using the existing locked venv:
+
+```sh
+/tmp/wingman-wanderer-venv/bin/python -m pytest tests/test_wanderer*.py tests/test_preview_metadata.py tests/test_preview_wiring.py tests/test_api.py tests/test_api_settings_fields.py tests/test_settings_transactions.py tests/test_settings_page.py tests/test_settings_runtime.py tests/test_dev_harness.py tests/test_bridge_contract.py tests/test_page_conventions.py tests/test_js_smoke.py tests/test_packaging_completeness.py -q -rs --tb=short
+node scripts/test_wanderer_runtime.js
+node scripts/js_smoke.js
+/tmp/wingman-wanderer-venv/bin/ruff check .
+/tmp/wingman-wanderer-venv/bin/ruff format --check .
+git diff --check
+```
+
+Results: **1,255 passed, 1 skipped** in 36.62s; the sole skip is real Windows
+user-bound DPAPI (`test_real_windows_credential_document_roundtrip_replace_binding_and_remove`).
+Node ownership: **60 passed, 0 failed**. JS smoke: all three pages passed.
+Ruff lint passed; **398 files already formatted**. No full-suite or new
+browser/WebView2/frozen artifact result is implied. Manual follow-up is listed in
+smoke-checklist item 11; prior native and automated observations below are not
+relabelled as validation of the simplified form.
+
 ## Status and authority
 
 **Implementation, focused review, post-implementation polish, full Linux tests,

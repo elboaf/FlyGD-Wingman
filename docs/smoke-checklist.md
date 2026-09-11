@@ -77,14 +77,21 @@ implementation task.
       version on the test connection. Settings distinguishes safe outcomes; 401/403
       clears cached names as soon as headers arrive, even with a stalled error
       body, and pauses automatic polling. No fallback to another map or ESI.
-- [ ] **11 — Credential and field lifecycle (NOT RUN).** Test while names are Off:
-      one real request, no enablement or labels. Apply URL/map with Enter and Apply
-      (never blur); change a binding while a token draft/reply is pending. Old
-      credentials must not silently rebind, and submitted passwords clear without
-      later pushes erasing newer drafts. Replace a token, toggle Off/on, and use
-      the page-owned Remove connection confirmation. Remove deletes only the
-      protected local token; URL/map/enabled remain. With an induced save refusal,
-      the acknowledged connection/runtime must remain unchanged.
+- [ ] **11 — Credential and field lifecycle (NOT RUN for the simplified form).**
+      Enter URL/map/token in any order while names are Off. Test connection (or
+      Enter in any field) saves the complete connection and requests a real test,
+      without enabling names or labels; blur/change never saves. No Apply or
+      Replace buttons remain. A blank token reuses only the same normalized saved
+      URL/map; changing either requires a token. Edit each field while its grouped
+      reply is pending: only still-owned drafts normalize/revert, and a submitted
+      password clears without erasing a newer password. Health pushes do not edit
+      inputs. Toggle Off/on independently. Remove confirms and clears URL/map/token,
+      not the enable preference; editing, navigating or a newer acknowledgement
+      invalidates an open confirmation. With induced settings failure, prior
+      protected bytes and acknowledged runtime must remain unchanged; failed
+      compensation explicitly stops names rather than claiming healthy rollback.
+      Distinguish saved connection from refused Test admission and exercise
+      generation-cancelled Test recovery. Use only a disposable isolated profile.
 - [ ] **12 — Wanderer restart (NOT RUN).** With operator approval, restart the
       test service while Wingman is polling. Old names expire during outage;
       after recovery only a valid fresh snapshot can restore them. Record the

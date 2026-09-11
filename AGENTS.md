@@ -228,7 +228,9 @@ its global status-strip toggle; its boot hydration is independent of section
 visibility. Section re-entry retries only failed initial hydration, never adds
 reads after success. `fleetsharing.js` owns the shared setup view, not worker lifetime.
 `wanderer.js` owns the Wanderer names card in Settings > Previews; health pushes
-never overwrite field drafts, and token submissions carry the acknowledged binding.
+never overwrite field drafts. Test saves submitted URL/map/token as one connection;
+blank tokens reuse only the current normalized binding, and Remove clears all three
+while retaining the independent enable preference.
 `WM.route` switches destinations, `WM.section` switches
 Settings groups; both have enter/leave contracts, and leaving is load-bearing
 (keybind capture listeners must disarm). `dev.js` renders the page with fake
@@ -277,8 +279,10 @@ Hard rules from `DESIGN.md` worth knowing before you touch a screen:
 - Colours are decided only by `:root` tokens. 4.5:1 text contrast, 3:1 focus.
 - Settings has no Save button: every field commits through a per-field endpoint
   returning `{applied, persisted, error}`. Discrete controls commit on change;
-  free text commits on Enter or an explicit button, never on blur. Nothing
-  commits before the first payload renders.
+  free text commits on Enter or an explicit button, never on blur. Wanderer's
+  bound URL/map/token are the scoped grouped exception: Test saves the connection,
+  while each field still owns its drafts. Nothing commits before the first payload
+  renders.
 - Title-bar space is the scarce resource; `MIN_WIDTH`/`MIN_HEIGHT` in
   `ui/window.py` are **logical** pixels, measured not derived, so the CSS
   viewport floor is 840x625 at every scaling — not 840/scale. Do the
