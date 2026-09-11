@@ -2410,7 +2410,7 @@ This exercises the actual standalone handler, not `app.js` or a second fake API.
 
 ## Fleet sharing setup and source controls
 
-The setup card lives in Settings > Previews, beside Fleet combat bar and outside
+The setup card lives in Settings > Previews, beside Fleet Bar and outside
 its Preview master-switch block. Use an isolated fixture relay/account for these
 checks; no production pairing, OAuth, or real EVE-window manipulation is needed
 for the synthetic render pass.
@@ -3126,11 +3126,18 @@ manual check by construction.
       Settings page. Expected: the picker hydrates to the stored colour,
       and the bar wears it live without a restart.
 
-## Floating Fleet combat bar
+## Fleet Bar
 
 The Fleet Bar is a separate always-on-top WebView fed by the shared EVE
 client discovery and gamelog stream. It is display-only and must remain
 independent of both preview thumbnails and alert preferences.
+
+The automated coverage for this feature stops at Python state, Node handler
+execution, and Chromium layout measurement. Those checks do **not** establish
+installed Windows/WebView2 behavior for native resize insets, hit targets,
+cursors, DPI, focus, activation, no-activate restoration, mixed-monitor
+clamping, frozen packaging, or screen readers. Keep those items UNVERIFIED
+until they are actually run on Windows.
 
 - [ ] **Browser-only CSS measurements stay separate from native acceptance.**
       Run `node scripts/measure_fleetbar_layout.js --chrome /usr/bin/google-chrome`.
@@ -3141,14 +3148,13 @@ independent of both preview thumbnails and alert preferences.
       reserved header-action geometry, sticky header, and bounded 128-row
       roster scrolling. Chromium layout evidence only; not Windows/WebView2
       native acceptance.
-- [ ] **Enable from Settings › Previews.** Tick `Show the floating Fleet DPS /
-      EWAR bar`. Expected: a compact three-column window opens with
-      `CHARACTER`, `DAMAGE` (with `OUT` and `IN` sublabels either side of a
-      center axis), and `EWAR`; the Settings checkbox and status-strip `DPS`
-      button both show active.
+- [ ] **Enable from Settings › Previews.** Tick `Show Fleet Bar`. Expected:
+      a compact three-column window opens with `CHARACTER`, `DPS · 10s`
+      (with `OUT` and `IN` beneath the shared center axis), and `EWAR`;
+      the Settings checkbox and status-strip `DPS` button both show active.
 - [ ] **OUT is always left, IN is always right, adjacent to EWAR.** With at
       least two visible characters showing nonzero outgoing and incoming
-      values, confirm each row's Damage cell reads outgoing value, its rail
+      values, confirm each row's damage cell reads outgoing value, its rail
       growing left from the center axis, then the axis, then incoming value
       and rail growing right, immediately followed by the EWAR cell. Expected:
       this OUT-left/IN-right order never changes between quiet and active
@@ -3166,13 +3172,13 @@ independent of both preview thumbnails and alert preferences.
       Expected: every logged-in character appears exactly once in alphabetical
       order, including the preview-excluded one; the character-select client has
       no row until its title identifies a character.
-- [ ] **Character grouping is truthful.** In Settings › Previews ›
-      Fleet combat bar, open **Characters** after Wingman has seen several
-      characters. With Fleet Bar on, running names are under `Running` and
-      remembered logged-out names are under `Offline`; no name appears twice.
-      Turn Fleet Bar off: the same choices are editable under `Known characters`,
-      without calling anyone Offline. Turn it on and wait for its first roster:
-      the Running/Offline groups replace Known characters.
+- [ ] **Character grouping is truthful.** In Settings › Previews › Fleet Bar,
+      open **Characters** after Wingman has seen several characters. With Fleet
+      Bar on, running names are under `Running` and remembered logged-out names
+      are under `Offline`; no name appears twice. Turn Fleet Bar off: the same
+      choices are editable under `Known characters`, without calling anyone
+      Offline. Turn it on and wait for its first roster: the Running/Offline
+      groups replace Known characters.
 - [ ] **Hide and restore every position.** With at least three visible running
       characters, hide then restore the first, middle, and final row from the
       Characters disclosure. Expected: each change immediately removes or
@@ -3181,8 +3187,8 @@ independent of both preview thumbnails and alert preferences.
 - [ ] **All-hidden state remains usable.** Hide every running character.
       Expected: the still-open bar says `All running characters are hidden.`,
       has no row/count/badge that exposes a hidden name, and can be dragged from
-      its header only, leaving the roster area scrollable. Restore one character and confirm
-      its row returns immediately.
+      its header only while the roster area remains scrollable. Restore one
+      character and confirm its row returns immediately.
 - [ ] **Visibility never resets live metrics.** While one character has live
       outgoing DPS and/or an active `SCRAM/POINT`, hide it and restore it before
       the metric naturally expires. Expected: its current DPS/tackle state
@@ -3199,7 +3205,7 @@ independent of both preview thumbnails and alert preferences.
       previews/alerts/keybinds nor is changed by Preview exclusion.
 - [ ] **No log is not zero, for either direction.** Point Gamelogs at a folder
       with no current log for one running character. Expected: that row's
-      Damage cell says `NO LOG` once, spanning both OUT and IN, rather than a
+      damage cell says `NO LOG` once, spanning both OUT and IN, rather than a
       fabricated `0` on either side; restoring a current log changes it to
       numeric outgoing and incoming values without reopening the bar. A
       character genuinely dealing and receiving no damage instead shows `0` on
@@ -3254,14 +3260,44 @@ independent of both preview thumbnails and alert preferences.
       changes to `STALE` or `ERROR` and retains the last good rows. Recovery
       clears the diagnostic. Removing the folder entirely shows `NO LOG FOLDER`
       and resets source bindings instead of carrying old DPS into a new folder.
-- [ ] **Drag, pinning, and persistence.** Drag from the name, number, header,
-      and empty-state surfaces. Expected: every pixel moves the bar, no text is
-      interactive, and it remains above both EVE and other applications. At
-      100%, 125%, 150%, and 200% scaling, open and close the Characters
-      disclosure, add/remove visible rows near every work-area edge, and confirm
-      both the Settings card and bar fit without clipping. Quit and relaunch at
-      each scale; the bar restores at the saved logical position with no clipping
-      or white first-frame flash.
+
+### Installed Windows/WebView2 only — still UNVERIFIED until run
+
+- [ ] **Header drag is dedicated and actions stay out of it.** Drag only from
+      the `Fleet Bar` header strip. Hover or keyboard-focus the header:
+      `Reset width` and `Hide` appear without changing header height. Try
+      dragging from the health label, either header action, the table, and the
+      empty-state copy. Expected: only the dedicated drag strip moves the
+      window; rows stay scrollable and the action buttons never start a drag.
+- [ ] **Left and right edges resize, with native cursor feedback.** At 100%,
+      125%, 150%, and 200% Windows display scaling, the left and right edges
+      show the standard horizontal resize cursor and resize width live. Top,
+      bottom, and corners do not resize.
+- [ ] **Content width, not outer width, is what persists.** Save widths at
+      420, 500, 720, and one in-between width. Expected: the rendered Fleet Bar
+      content width persists; the native outer width is wider by the current
+      left and right resize insets. A right-edge resize keeps `x`; a left-edge
+      resize also saves the new `x`.
+- [ ] **Resize settlement is authoritative and telemetry never owns width.**
+      While live telemetry is updating, resize repeatedly, stop, wait for the
+      drag to settle, then quit and relaunch. Expected: the final settled width
+      persists, automatic telemetry/header updates do not snap it, and only
+      height changes as rows come and go.
+- [ ] **Monitor clamp is temporary, including across mixed monitors.** Save a
+      wider preferred width on a larger monitor, reopen near an edge or on a
+      smaller work area, and move the bar between monitors with different DPI.
+      Expected: the applied rectangle clamps to fit the current work area
+      without overwriting the saved preferred width, and the bar neither
+      doubles nor halves as it crosses monitors.
+- [ ] **Height-only fitting preserves width before, during, and after resize.**
+      Add and remove rows, hover/focus header actions, and open/close
+      Characters. Expected: Fleet Bar grows and shrinks by height only; no
+      width snapback occurs during or after a manual resize.
+- [ ] **Passive reveal stays no-activate; header actions use explicit
+      activation.** Merely showing Fleet Bar does not take focus. Clicking
+      `Reset width` or `Hide` activates it only for that action; Tab reaches
+      Reset then Hide, Escape or blur ends the session, and focus returns only
+      to a valid EVE or Wingman window.
 - [ ] **Characters disclosure preserves state and keyboard focus.** In real
       WebView2, open and close **Characters** with Enter and Space. Expected:
       closed content is not visible; an open disclosure stays open across live
@@ -3271,6 +3307,24 @@ independent of both preview thumbnails and alert preferences.
       After every terminal path the checkbox is re-enabled; if focus fell to the
       page body it returns to that character's current checkbox, but deliberate
       focus movement to another control is never stolen.
+- [ ] **Hide and Reset width failures stay honest.** With an instrumented
+      persistence failure, a visible Hide/Reset result remains applied for the
+      session but warns it will not survive restart. With an instrumented
+      native hide or reset failure, the action refuses without pretending it
+      succeeded.
+- [ ] **Fixed-width fallback stays usable when resize chrome cannot attach.**
+      In an instrumented build that disables horizontal resize chrome, Fleet
+      Bar still opens at the clamped preferred width, omits the native resize
+      affordance, keeps header drag and Hide working, and Reset width still
+      applies the 500px default through programmatic fitting.
+- [ ] **Installed and frozen behavior still matches the browser evidence.** In
+      the installed build, Fleet Bar still renders its title, `DPS · 10s`,
+      REMOTE badges, `Reset width`, and `Hide`, with no packaging omission or
+      white first-frame flash.
+- [ ] **Screen-reader pass — still UNVERIFIED until run.** In real WebView2
+      with NVDA or Narrator, the title, `DPS · 10s`, row values, REMOTE /
+      REMOTE · STALE, `Incoming unavailable`, `Reset Fleet Bar width`, and
+      `Hide Fleet Bar` are announced sensibly.
 - [ ] **Shutdown leaves one clean generation.** Toggle Fleet, Previews, and
       Alerts through several combinations, then quit. Expected: no duplicate
       discovery/gamelog/dispatcher threads ever appear, and Wingman leaves Task

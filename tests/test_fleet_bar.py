@@ -1190,6 +1190,10 @@ def test_settings_and_status_strip_expose_the_same_fleet_toggle():
     assert 'id="fleetbar-reset"' in html
     assert 'id="btn-fleetbar"' in html
     assert "Show Fleet Bar" in html
+    assert "Drag Fleet Bar by its header." in html
+    assert "Resize from the left or right edge." in html
+    assert "Wingman remembers width and position." in html
+    assert "Puts Fleet Bar back to its default 500px content width." in html
     assert "Fleet combat bar" not in html
     assert "Floating Fleet DPS / EWAR bar" not in html
     assert 'title="Fleet Bar"' in html

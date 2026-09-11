@@ -586,7 +586,7 @@ def test_fleet_identity_shutdown_revokes_before_failed_destroy_retry(
     with caplog.at_level(logging.ERROR, logger=main_mod.__name__):
         assert main_mod.main() == 0
     assert admission == [(None, False), (None, False)]
-    assert replies == [None] * 8
+    assert replies == [None] * (len(PAGE_CALLBACKS) + len(PAGE_SESSION_CALLBACKS))
     assert deactivated == [0x404]
     assert attempts == ["fleet", "fleet"]
     assert startup.captured["api"]._fleetbar_window is None
