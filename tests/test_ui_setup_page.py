@@ -415,26 +415,80 @@ def test_setup_page_worker_isolation_sentinel(
     assert second_a["id"] == first_a["id"] + 2
 
 
+@pytest.mark.parametrize("exit_kind", ["success", "failure"])
+def test_setup_page_worker_cleanup_before_reply(
+    setup_page_worker: NodeScenarioWorker, exit_kind: str
+):
+    # The fixture probes the real runScenario/finally, not worker.close(), which
+    # terminates Node. Both exits leave real page work and a native timer pending.
+    # Capture identity before the probe, including when either parameter runs alone.
+    warmup = setup_page_worker.request(
+        "copy-unavailable", _setup_payload("copy-unavailable")
+    )
+    assert warmup["output"] == "PASS copy-unavailable"
+    process = setup_page_worker._proc
+    pid = process.pid
+    payload = {**_setup_payload("copy-unavailable"), "cleanup_probe": exit_kind}
+    if exit_kind == "failure":
+        with pytest.raises(NodeScenarioFailure) as failure:
+            setup_page_worker.request("copy-unavailable", payload)
+        reply = failure.value.reply
+        assert reply is not None
+        assert reply["error"] == "cleanup probe failure after pending timer"
+    else:
+        reply = setup_page_worker.request("copy-unavailable", payload)
+        assert reply["output"] == "PASS cleanup probe success"
+
+    assert setup_page_worker._proc is process, (
+        "cleanup probe replaced the worker process"
+    )
+    assert setup_page_worker._proc.pid == pid
+    assert reply["id"] == warmup["id"] + 1
+    recovered = setup_page_worker.request(
+        "copy-unavailable", _setup_payload("copy-unavailable")
+    )
+    assert recovered["output"] == "PASS copy-unavailable"
+    assert recovered["id"] == reply["id"] + 1
+    assert setup_page_worker._proc is process
+    assert setup_page_worker._proc.pid == pid
+    assert process.poll() is None
+
+
 def test_setup_page_worker_order_isolation(setup_page_worker: NodeScenarioWorker):
-    scenarios = SCENARIOS + IMPORT_SCENARIOS
+    # All business cases still run individually below. Replay only the audited
+    # spine: clipboard absence, dev fixture, queued panel, coupled completion,
+    # and stale Profiles read. This samples predecessor orders, not every pair.
+    # These do not leave timers pending; cleanup is proved separately above.
+    scenarios = [
+        "copy-unavailable",
+        "catalog-dev-ordinary",
+        "catalog-dialog-pending-file-queued-accept",
+        "detached-ordinary-copy",
+        "profiles-refresh-older-null",
+    ]
+    processes = []
 
     def run(order: list[str]) -> dict[str, str]:
-        return {
-            scenario: setup_page_worker.request(
+        results = {}
+        for scenario in order:
+            results[scenario] = setup_page_worker.request(
                 scenario, _setup_payload(scenario), timeout=60.0
             )["output"]
-            for scenario in order
-        }
+            processes.append(setup_page_worker._proc)
+        return results
 
+    seed = 20260304
+    print(f"setup page worker isolation seed: {seed}; spine: {scenarios}")
     forward = run(scenarios)
     reverse = run(list(reversed(scenarios)))
-    seed = 20260304
     shuffled = scenarios.copy()
     random.Random(seed).shuffle(shuffled)
-    print(f"setup page worker isolation seed: {seed}")
     seeded = run(shuffled)
 
-    assert forward == reverse == seeded
+    assert forward == reverse == seeded == {name: f"PASS {name}" for name in scenarios}
+    assert all(process is processes[0] for process in processes)
+    assert len({process.pid for process in processes}) == 1
+    assert processes[0].poll() is None
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
