@@ -58,6 +58,7 @@ Injected seams for testing
 
 from __future__ import annotations
 
+import codecs
 import contextlib
 import datetime
 import logging
@@ -175,7 +176,15 @@ def _default_get_file_size(path: Path) -> int:
 class _Tracked:
     """Per-character file cursor and partial-line buffer."""
 
-    __slots__ = ("character", "generation", "partial", "path", "position", "source_id")
+    __slots__ = (
+        "character",
+        "decoder",
+        "generation",
+        "partial",
+        "path",
+        "position",
+        "source_id",
+    )
 
     def __init__(
         self,
@@ -191,6 +200,7 @@ class _Tracked:
         self.source_id = source_id
         self.generation = generation
         self.partial = ""
+        self.decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
 
 class GameLogStream:
@@ -873,6 +883,7 @@ class GameLogStream:
             # zero would replay historical alerts; only later appends count.
             tracked.position = size
             tracked.partial = ""
+            tracked.decoder.reset()
             events.append(
                 SourceLifecycle(
                     character=character,
@@ -903,7 +914,9 @@ class GameLogStream:
         except OSError as exc:
             return events, f"read: {exc}"
 
-        text = tracked.partial + chunk.decode("utf-8", errors="replace")
+        # A poll can end inside a valid code point. EOF is only a pause in a
+        # live source, so retain decoder bytes until another append or reset.
+        text = tracked.partial + tracked.decoder.decode(chunk)
         lines = text.split("\n")
         tracked.partial = lines.pop()
 

@@ -690,7 +690,7 @@
     row.name.focus();
   }
   function makeCustomRow(rule) {
-    var row = {ack: rule, counter: 0, queue: [], busy: null, dead: false,
+    var row = {ack: rule, counter: 0, queue: [], busy: null, dead: false, deferredAcks: {},
       uncertain: false, removing: false, error: '', notice: '', recoveryMessage: '', controls: [], testSerial: 0,
       intents: {name: 0, search: 0, color: 0, sound: 0, cooldown_s: 0, enabled: 0}};
     row.root = node('div', 'custom-alert-row');
@@ -936,6 +936,10 @@
         row.notice = res.applied && !res.persisted
           ? 'Applied for this session, but it will not survive a restart.' : '';
       }
+      // Losing the view defers reconciliation; it does not turn an optimistic
+      // control into a new draft. Later requests of the same kind subsume the
+      // earlier field intents, so retain only one acknowledgment per kind.
+      if (res && !owned) { row.deferredAcks[request.kind] = request; }
       if (owned) { if (res) { finishDraft(row, request); } else { customMessage(row); } updateAdmission(); }
       if (visible && (!owned || !res)) { readCustom(true); }
       drainCustom(row);
@@ -997,6 +1001,14 @@
           row.uncertain = false; row.removing = false;
           row.recoveryMessage = 'Saved settings reloaded. Review before retrying changes.';
           finishDraft(row, row.recovery); row.recovery = null;
+        }
+        if (!row.uncertain) {
+          // Reuse field ownership against current authority, not an old result's
+          // state/message/focus. New drafts and newer failures remain theirs.
+          Object.keys(row.deferredAcks).forEach(function (kind) {
+            finishDraft(row, row.deferredAcks[kind]);
+          });
+          row.deferredAcks = {};
         }
         drainCustom(row);
       });

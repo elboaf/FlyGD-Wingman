@@ -807,6 +807,130 @@ for (const kind of ['section', 'route']) {
   });
 }
 
+for (const exit of ['section', 'route']) {
+  for (const field of ['enabled', 'color', 'sound', 'cooldown_s']) {
+    test(exit + ' reentry reconciles an unowned ' + field + ' refusal, not unrelated text or focus', async () => {
+      const rules = [rule('r1', {search: 'accepted'})];
+      const p = await loaded(rules);
+      if (field === 'enabled') p.toggle('custom-alert-r1-enabled', true);
+      else if (field === 'color') p.color('r1', '#4dff7a');
+      else p.choose('custom-alert-r1-' + (field === 'cooldown_s' ? 'cooldown' : field), field === 'sound' ? 'sly' : '12');
+      edit(p, 'unsubmitted search'); p.edit('custom-alert-r1-name', 'Unsubmitted name');
+      const optimistic = p.rows()[0];
+      p.leave(exit); p.el('alert-enabled').focus();
+      await p.reply(field === 'enabled' ? 'set_custom_alert_enabled' : 'edit_custom_alert',
+        result(1, rules, {applied: false, persisted: false, error: 'Disk is full'}));
+      assert.deepEqual(p.rows()[0], optimistic, 'hidden response cannot paint');
+      assert.equal(p.document.activeElement.id, 'alert-enabled');
+      p.enter(); await p.reply('get_custom_alert_state', state(1, rules));
+      assert.equal(p.rows()[0][field], rules[0][field], 'refused discrete value is not a new draft');
+      assert.equal(p.rows()[0].name, 'Unsubmitted name'); assert.equal(p.rows()[0].search, 'unsubmitted search');
+      assert.equal(p.document.activeElement.id, 'alert-enabled');
+      assert.match(p.el('custom-alert-r1-msg').textContent, /Disk is full/);
+      assert.match(p.el('custom-alert-r1-msg').textContent, /Apply/);
+      apply(p);
+      assert.equal(pending(p, 'edit_custom_alert')[0].args[1][field], rules[0][field], 'later Apply must not revive refusal');
+    });
+  }
+  test(exit + ' reentry canonicalizes an unowned Apply while preserving newer search intent', async () => {
+    const p = await loaded(); p.edit('custom-alert-r1-name', ' Trimmed '); edit(p, 'submitted'); apply(p);
+    edit(p, 'genuinely newer'); p.leave(exit);
+    const rules = [rule('r1', {name: 'Trimmed', search: 'submitted'})];
+    await p.reply('edit_custom_alert', result(2, rules));
+    assert.equal(p.rows()[0].name, ' Trimmed ');
+    p.enter(); await p.reply('get_custom_alert_state', state(2, rules));
+    assert.equal(p.rows()[0].name, 'Trimmed'); assert.equal(p.rows()[0].search, 'genuinely newer');
+    assert.match(p.el('custom-alert-r1-msg').textContent, /Apply/);
+  });
+}
+
+test('deferred acknowledgments survive another exit and preserve newer field intent and error', async () => {
+  const rules = [rule('r1', {search: 'accepted'})];
+  const p = await loaded(rules);
+  p.toggle('custom-alert-r1-enabled', true); p.color('r1', '#4dff7a');
+  p.leave(); p.enter();
+  await p.reply('get_custom_alert_state', state(1, rules));
+  await p.reply('set_custom_alert_enabled', result(1, rules,
+    {applied: false, persisted: false, error: 'Old enable refusal'}));
+  await p.reply('edit_custom_alert', result(1, rules,
+    {applied: false, persisted: false, error: 'Old colour refusal'}));
+  p.choose('custom-alert-r1-sound', 'sly');
+  await p.reply('edit_custom_alert', result(1, rules,
+    {applied: false, persisted: false, error: 'New sound refusal'}));
+  p.toggle('custom-alert-r1-enabled', true); edit(p, 'new draft');
+  p.leave(); p.enter();
+  // Both old controls reads are unowned, even at the current revision.
+  await p.reply('get_custom_alert_state', state(1, rules));
+  await p.reply('get_custom_alert_state', state(1, rules));
+  await p.reply('get_custom_alert_state', state(1, rules));
+  p.el('custom-alert-r1-search').focus();
+  assert.equal(p.rows()[0].enabled, true, 'a new toggle owns the checkbox');
+  assert.equal(p.rows()[0].color, '#ff8c42'); assert.equal(p.rows()[0].sound, 'none');
+  assert.equal(p.rows()[0].search, 'new draft');
+  assert.match(p.el('custom-alert-r1-msg').textContent, /New sound refusal/);
+  assert.doesNotMatch(p.el('custom-alert-r1-msg').textContent, /Old .* refusal/);
+  await p.reply('set_custom_alert_enabled', result(2, [rule('r1', {search: 'accepted', enabled: true})]));
+  await p.reply('get_custom_alert_state', state(2, [rule('r1', {search: 'accepted', enabled: true})]));
+  assert.equal(p.document.activeElement.id, 'custom-alert-r1-search');
+  assert.equal(p.rows()[0].search, 'new draft');
+});
+
+test('deferred Apply uses fresh authority while newer style, search, focus and error remain owned', async () => {
+  const p = await loaded(); p.edit('custom-alert-r1-name', ' Trimmed '); edit(p, 'submitted'); apply(p);
+  p.leave(); p.enter();
+  await p.reply('get_custom_alert_state', state(1, [rule('r1', {search: 'accepted'})]));
+  const saved = [rule('r1', {name: 'Trimmed', search: 'submitted'})];
+  await p.reply('edit_custom_alert', result(2, saved));
+  p.choose('custom-alert-r1-sound', 'sly');
+  await p.reply('edit_custom_alert', result(2, saved,
+    {applied: false, persisted: false, error: 'New sound refusal'}));
+  edit(p, 'newer search'); p.color('r1', '#4dff7a');
+  const radio = p.el('custom-alert-r1-color').querySelector('input:checked'); radio.focus();
+  await p.reply('get_custom_alert_state', state(3, [rule('r1', {name: 'Later authority', search: 'submitted'})]));
+  assert.equal(p.rows()[0].name, 'Later authority', 'deferred acknowledgment never replays its stale state');
+  assert.equal(p.rows()[0].search, 'newer search'); assert.equal(p.rows()[0].color, '#4dff7a');
+  assert.equal(p.document.activeElement, radio);
+  assert.match(p.el('custom-alert-r1-msg').textContent, /New sound refusal/);
+  assert.equal(pending(p, 'edit_custom_alert').length, 1, 'hydration does not replay a completed mutation');
+});
+
+test('multiple hidden style acknowledgments reconcile their latest field intents on reentry', async () => {
+  const rules = [rule('r1', {search: 'accepted'})];
+  const p = await loaded(rules); p.color('r1', '#4dff7a'); p.choose('custom-alert-r1-sound', 'sly');
+  p.choose('custom-alert-r1-cooldown', '12'); p.leave();
+  for (const error of ['Colour refused', 'Sound refused', 'Cooldown refused']) {
+    await p.reply('edit_custom_alert', result(1, rules, {applied: false, persisted: false, error}));
+  }
+  p.enter(); await p.reply('get_custom_alert_state', state(1, rules));
+  assert.deepEqual(p.rows(), rules);
+  assert.match(p.el('custom-alert-r1-msg').textContent, /Cooldown refused/);
+  assert.doesNotMatch(p.el('custom-alert-r1-msg').textContent, /Colour refused|Sound refused/);
+  assert.equal(pending(p, 'edit_custom_alert').length, 0);
+});
+
+test('deferred reconciliation cannot release a later uncertain write through a pre-outcome read', async () => {
+  const rules = [rule('r1', {search: 'accepted'})];
+  const p = await loaded(rules);
+  p.color('r1', '#4dff7a'); p.toggle('custom-alert-r1-enabled', true);
+  p.leave(); p.enter();
+  await p.reply('edit_custom_alert', result(1, rules,
+    {applied: false, persisted: false, error: 'Colour refused'}));
+  await p.reply('set_custom_alert_enabled', null);
+  // Entry and the known-outcome read both predate uncertainty.
+  await p.reply('get_custom_alert_state', state(1, rules));
+  await p.reply('get_custom_alert_state', state(1, rules));
+  assert.equal(p.el('custom-alert-r1-apply').disabled, true);
+  await p.reply('get_custom_alert_state', null);
+  assert.equal(p.el('custom-alert-recovery').hidden, false);
+  p.fire('custom-alert-retry', 'click');
+  await p.reply('get_custom_alert_state', state(1, rules));
+  assert.equal(p.rows()[0].color, '#ff8c42'); assert.equal(p.rows()[0].enabled, false);
+  assert.match(p.el('custom-alert-r1-msg').textContent, /Colour refused/);
+  assert.match(p.el('custom-alert-r1-msg').textContent, /saved settings reloaded.*review/i);
+  assert.equal(pending(p, 'edit_custom_alert').length, 0);
+  assert.equal(pending(p, 'set_custom_alert_enabled').length, 0);
+});
+
 (async function () {
   let failures = 0;
   for (const {name, run} of tests) {

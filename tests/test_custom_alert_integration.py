@@ -414,6 +414,34 @@ def test_partial_line_waits_for_newline_and_does_not_replay(live_alerts):
     assert len(r.visuals) == 1
 
 
+def test_split_utf8_reaches_custom_presentation_and_fleet_only_after_newline(
+    live_alerts,
+):
+    r = live_alerts
+    rule_id, _ = _add_rule(r, "Straße")
+    line = DAMAGE.replace("Mara Veld", "Straße").encode("utf-8")
+    cut = line.index(b"\xc3\x9f") + 1
+    with r.alice_log.open("ab") as output:
+        output.write(line[:cut])
+    _scan_dispatch(r)
+    _scan_dispatch(r)
+    assert r.sounds == r.visuals == []
+    assert not r.coordinator._custom_pending
+    with r.alice_log.open("ab") as output:
+        output.write(line[cut:-1])
+    _scan_dispatch(r)
+    assert r.sounds == r.visuals == []
+    _append(r.alice_log, "\n")
+    _scan_dispatch(r)
+    _scan_dispatch(r)
+    assert r.sounds == [("sly", 100)]
+    assert [(name, kind, spec["custom_rule_id"]) for name, kind, spec in r.visuals] == [
+        ("Alice", "custom", rule_id)
+    ]
+    assert r.fleet[-1].rows[0].dps == 30
+    assert r.api.get_custom_alert_state()["matcher"]["state"] == "active"
+
+
 def test_matcher_failure_is_private_and_fleet_continues_until_real_recovery(
     live_alerts, monkeypatch, caplog
 ):

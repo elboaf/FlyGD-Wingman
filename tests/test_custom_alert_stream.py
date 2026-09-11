@@ -109,6 +109,138 @@ def _events(batches):
 
 
 @pytest.mark.parametrize(
+    "prefix, character, suffix, cut, search",
+    [
+        ("Stra", "ß", "e", 1, "STRASSE"),
+        ("ISK ", "€", "100", 1, "ISK €100"),
+        ("ISK ", "€", "100", 2, "ISK €100"),
+        ("fleet ", "🚀", "", 1, "fleet 🚀"),
+        ("fleet ", "🚀", "", 2, "fleet 🚀"),
+        ("fleet ", "🚀", "", 3, "fleet 🚀"),
+    ],
+)
+def test_split_utf8_matches_only_after_the_complete_line(
+    tmp_path, prefix, character, suffix, cut, search
+):
+    snapshot = prepare_alert_snapshot(_preview(search))
+    stream = _stream(custom_snapshot=lambda: snapshot)
+    path = _log(tmp_path, "Alice")
+    batches = []
+    stream.subscribe_batches(batches.append)
+    encoded = character.encode("utf-8")
+    try:
+        stream.start(tmp_path)
+        stream.scan_once(NOW)
+        with path.open("ab") as output:
+            output.write(("(notify) " + prefix).encode("utf-8") + encoded[:cut])
+        stream.scan_once(NOW)
+        stream.scan_once(NOW)  # Idle EOF is not the end of an encoded character.
+        assert not _matches(batches)
+        with path.open("ab") as output:
+            output.write(encoded[cut:] + suffix.encode("utf-8"))
+        stream.scan_once(NOW)
+        assert not _matches(batches)
+        _append(path, "\n")
+        stream.scan_once(NOW)
+        assert [(m.character, m.rule_id) for m in _matches(batches)] == [
+            ("Alice", "r1")
+        ]
+        stream.scan_once(NOW)
+        assert len(_matches(batches)) == 1
+        assert stream._tracked["Alice"].partial == ""
+    finally:
+        stream.stop()
+
+
+def test_split_utf8_decoder_is_source_local_and_malformed_bytes_still_replace(tmp_path):
+    snapshot = prepare_alert_snapshot(_preview("Straße"))
+    lines = []
+
+    def observe(line, projection):
+        lines.append(line)
+        return custom.match_line(line, projection)
+
+    stream = _stream(custom_snapshot=lambda: snapshot, custom_matcher=observe)
+    alice = _log(tmp_path, "Alice", stem="alice")
+    bob = _log(tmp_path, "Bob", stem="bob")
+    batches = []
+    stream.subscribe_batches(batches.append)
+    try:
+        stream.start(tmp_path)
+        stream.scan_once(NOW)
+        with alice.open("ab") as output:
+            output.write(b"(notify) Stra\xc3")
+        stream.scan_once(NOW)
+        with bob.open("ab") as output:
+            output.write(b"\x9fe\ninvalid \xff\xe2")
+        stream.scan_once(NOW)
+        assert lines == ["�e"]
+        _append(bob, "\n")
+        stream.scan_once(NOW)
+        assert lines == ["�e", "invalid ��"]
+        assert not _matches(batches)
+        with alice.open("ab") as output:
+            output.write(b"\x9fe\n")
+        stream.scan_once(NOW)
+        assert lines[-1] == "(notify) Straße"
+        assert [(m.character, m.rule_id) for m in _matches(batches)] == [
+            ("Alice", "r1")
+        ]
+    finally:
+        stream.stop()
+
+
+@pytest.mark.parametrize("reset", ["truncated", "known", "new", "retired", "restart"])
+def test_pending_utf8_and_partial_text_reset_at_source_boundaries(tmp_path, reset):
+    snapshot = prepare_alert_snapshot(_preview("fleet invite"))
+    lines = []
+
+    def observe(line, projection):
+        lines.append(line)
+        return custom.match_line(line, projection)
+
+    stream = _stream(custom_snapshot=lambda: snapshot, custom_matcher=observe)
+    path = _log(tmp_path, "Alice", "fleet invite\n" * 20)
+    if reset == "known":
+        _log(tmp_path, "EVE", stem="replacement", session="2026.08.25 11:30:00")
+    batches = []
+    stream.subscribe_batches(batches.append)
+    try:
+        stream.start(tmp_path)
+        stream.scan_once(NOW)
+        with path.open("ab") as output:
+            output.write(b"old partial\xc3")
+        stream.scan_once(NOW)
+        assert lines == []
+        if reset == "truncated":
+            path.write_text(
+                HEADER.format(name="Alice", session="2026.08.25 11:00:00"),
+                encoding="utf-8",
+            )
+        elif reset == "restart":
+            assert stream.stop()
+            assert stream.start(tmp_path)
+        elif reset == "retired":
+            expired = (NOW - MAX_AGE - datetime.timedelta(minutes=1)).timestamp()
+            os.utime(path, (expired, expired))
+            stream.scan_once(NOW)
+            os.utime(path, (NOW.timestamp(), NOW.timestamp()))
+        else:
+            path = _log(
+                tmp_path, "Alice", stem="replacement", session="2026.08.25 11:30:00"
+            )
+        stream.scan_once(NOW)
+        lines.clear()  # New-path headers retain their existing byte-zero behavior.
+        assert not _matches(batches)
+        _append(path, "fleet invite\n")
+        stream.scan_once(NOW)
+        assert lines == ["fleet invite"]
+        assert len(_matches(batches)) == 1
+    finally:
+        stream.stop()
+
+
+@pytest.mark.parametrize(
     "inactive", ["preview", "alerts", "rules", "blank", "no_provider"]
 )
 def test_inactive_matching_never_normalizes_but_fleet_still_reads(
