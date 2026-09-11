@@ -11,8 +11,10 @@ would ship with no automated coverage at all. That this module imports is
 itself part of what these tests assert.
 """
 
+import ctypes
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -130,6 +132,256 @@ def test_the_grab_band_never_exceeds_the_inset():
     unscaled constants is the whole check.
     """
     assert chrome.BORDER <= chrome.INSET
+
+
+@pytest.mark.parametrize(
+    "x, y, expected",
+    [
+        (102, 400, chrome.HTLEFT),
+        (102, 102, chrome.HTLEFT),
+        (102, 698, chrome.HTLEFT),
+        (1098, 400, chrome.HTRIGHT),
+        (1098, 102, chrome.HTRIGHT),
+        (1098, 698, chrome.HTRIGHT),
+    ],
+)
+def test_horizontal_hit_zones_use_only_left_and_right_edges(x, y, expected):
+    assert chrome.hit_code(RECT, x, y, edges=chrome.HORIZONTAL_EDGES) == expected
+
+
+@pytest.mark.parametrize("x, y", [(600, 102), (600, 698)])
+def test_horizontal_hit_zones_ignore_top_and_bottom(x, y):
+    assert chrome.hit_code(RECT, x, y, edges=chrome.HORIZONTAL_EDGES) is None
+
+
+def test_horizontal_hit_zones_leave_the_page_interior_alone():
+    assert chrome.hit_code(RECT, 600, 400, edges=chrome.HORIZONTAL_EDGES) is None
+
+
+def test_horizontal_hit_zones_keep_negative_coordinates_signed():
+    rect = (-500, 100, 500, 700)
+    assert (
+        chrome.hit_code(rect, -498, 400, edges=chrome.HORIZONTAL_EDGES) == chrome.HTLEFT
+    )
+
+
+@pytest.mark.parametrize(
+    "scale, x, y, expected",
+    [
+        (1.0, 600, 105, chrome.HTTOP),
+        (1.25, 600, 106, chrome.HTTOP),
+        (1.5, 600, 108, chrome.HTTOP),
+        (2.0, 600, 111, chrome.HTTOP),
+    ],
+)
+def test_explicit_all_edges_preserves_the_default_hit_policy(scale, x, y, expected):
+    assert chrome.hit_code(RECT, x, y, scale=scale) == expected
+    assert chrome.hit_code(RECT, x, y, scale=scale, edges=chrome.ALL_EDGES) == expected
+
+
+class _FakeHandle:
+    def __init__(self, value=123):
+        self._value = value
+
+    def ToInt64(self):
+        return self._value
+
+
+class _FakeNative:
+    def __init__(self):
+        self.Handle = _FakeHandle()
+        self.InvokeRequired = False
+        self.Padding = 0
+        self.DeviceDpi = 96
+        self.ClientRectangle = SimpleNamespace(Width=500, Height=300)
+        self.DisplayRectangle = SimpleNamespace(X=0, Y=0, Width=500, Height=300)
+
+
+class _Point(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+class _Rect(ctypes.Structure):
+    _fields_ = [
+        ("left", ctypes.c_long),
+        ("top", ctypes.c_long),
+        ("right", ctypes.c_long),
+        ("bottom", ctypes.c_long),
+    ]
+
+
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", ctypes.c_uint32),
+        ("rcMonitor", _Rect),
+        ("rcWork", _Rect),
+        ("dwFlags", ctypes.c_uint32),
+    ]
+
+
+class _MINMAXINFO(ctypes.Structure):
+    _fields_ = [
+        ("ptReserved", _Point),
+        ("ptMaxSize", _Point),
+        ("ptMaxPosition", _Point),
+        ("ptMinTrackSize", _Point),
+        ("ptMaxTrackSize", _Point),
+    ]
+
+
+def _fake_horizontal_attach(
+    monkeypatch, *, scale=1.0, physical_insets=None, install_ok=True
+):
+    monkeypatch.setattr(chrome.sys, "platform", "win32")
+    monkeypatch.setattr(chrome, "_KEEPALIVE", [])
+    monkeypatch.setattr(chrome, "_on_ui_thread", lambda native, fn: fn())
+    monkeypatch.setattr(chrome, "_log_geometry", lambda *args, **kwargs: None)
+
+    native = _FakeNative()
+    if physical_insets is not None:
+        native._physical_insets = physical_insets
+    window = SimpleNamespace(native=native)
+
+    wintypes = SimpleNamespace(
+        HWND=ctypes.c_void_p,
+        HANDLE=ctypes.c_void_p,
+        DWORD=ctypes.c_uint32,
+        RECT=_Rect,
+        POINT=_Point,
+        UINT=ctypes.c_uint,
+    )
+    WNDPROC = ctypes.CFUNCTYPE(
+        ctypes.c_ssize_t,
+        wintypes.HWND,
+        wintypes.UINT,
+        ctypes.c_size_t,
+        ctypes.c_ssize_t,
+    )
+
+    def previous_proc(hwnd, msg, wparam, lparam):
+        if msg == chrome.WM_GETMINMAXINFO:
+            info = ctypes.cast(lparam, ctypes.POINTER(_MINMAXINFO)).contents
+            info.ptMinTrackSize = _Point(320, 250)
+            info.ptMaxTrackSize = _Point(5000, 900)
+        return 777
+
+    previous_callback = WNDPROC(previous_proc)
+    previous_ptr = (
+        ctypes.cast(previous_callback, ctypes.c_void_p).value if install_ok else 0
+    )
+    state = {"previous_callback": previous_callback}
+
+    class _User32:
+        def CallWindowProcW(self, proc, hwnd, msg, wparam, lparam):
+            state.setdefault("call_window_proc", []).append(msg)
+            return proc(hwnd, msg, wparam, lparam)
+
+        def DefWindowProcW(self, hwnd, msg, wparam, lparam):
+            state.setdefault("def_window_proc", []).append(msg)
+            return -1
+
+        def GetWindowRect(self, hwnd, rect_ptr):
+            rect = ctypes.cast(rect_ptr, ctypes.POINTER(_Rect)).contents
+            rect.left, rect.top, rect.right, rect.bottom = RECT
+            return 1
+
+        def MonitorFromWindow(self, hwnd, flags):
+            return 1
+
+        def GetMonitorInfoW(self, monitor, info_ptr):
+            info = ctypes.cast(info_ptr, ctypes.POINTER(_MONITORINFO)).contents
+            info.rcMonitor = _Rect(0, 0, 1920, 1080)
+            info.rcWork = _Rect(0, 0, 1900, 1040)
+            return 1
+
+    user32 = _User32()
+
+    def set_ptr(handle, index, callback):
+        state["callback"] = callback
+        return previous_ptr
+
+    def fake_win32():
+        return user32, set_ptr, WNDPROC, _MONITORINFO, _MINMAXINFO, wintypes
+
+    def fake_apply_inset(native, *args, **kwargs):
+        pad = kwargs.get("pad")
+        if pad is None:
+            pad = args[0] if args else 0
+        edges = kwargs.get("edges")
+        if edges is None and len(args) > 1:
+            edges = args[1]
+        if edges is None:
+            edges = chrome.ALL_EDGES
+        if pad == 0:
+            left = top = right = bottom = 0
+        else:
+            left, top, right, bottom = getattr(
+                native,
+                "_physical_insets",
+                (
+                    pad if "left" in edges else 0,
+                    pad if "top" in edges else 0,
+                    pad if "right" in edges else 0,
+                    pad if "bottom" in edges else 0,
+                ),
+            )
+        native.Padding = pad
+        native.DisplayRectangle = SimpleNamespace(
+            X=left,
+            Y=top,
+            Width=native.ClientRectangle.Width - left - right,
+            Height=native.ClientRectangle.Height - top - bottom,
+        )
+
+    monkeypatch.setattr(chrome, "_win32", fake_win32)
+    monkeypatch.setattr(chrome, "_scale_for", lambda user32, handle: scale)
+    monkeypatch.setattr(chrome, "_apply_inset", fake_apply_inset)
+    return SimpleNamespace(
+        window=window,
+        native=native,
+        state=state,
+        MINMAXINFO=_MINMAXINFO,
+    )
+
+
+def test_enable_horizontal_resize_reports_logical_insets_and_outer_track_widths(
+    monkeypatch,
+):
+    attached = _fake_horizontal_attach(
+        monkeypatch, scale=1.25, physical_insets=(7, 0, 8, 0)
+    )
+
+    insets = chrome.enable_horizontal_resize(
+        attached.window, min_content_width=420, max_content_width=720
+    )
+
+    assert insets == chrome.ResizeInsets(left=6, top=0, right=6, bottom=0)
+    assert insets.horizontal == 12
+
+    info = attached.MINMAXINFO()
+    result = attached.state["callback"](
+        123, chrome.WM_GETMINMAXINFO, 0, ctypes.addressof(info)
+    )
+
+    assert result == 777
+    assert (info.ptMinTrackSize.x, info.ptMaxTrackSize.x) == (432, 732)
+    assert (info.ptMinTrackSize.y, info.ptMaxTrackSize.y) == (250, 900)
+
+
+def test_enable_horizontal_resize_removes_the_inset_if_wndproc_install_fails(
+    monkeypatch,
+):
+    attached = _fake_horizontal_attach(monkeypatch, install_ok=False)
+
+    assert (
+        chrome.enable_horizontal_resize(
+            attached.window, min_content_width=420, max_content_width=720
+        )
+        is None
+    )
+    assert attached.native.Padding == 0
+    assert attached.native.DisplayRectangle.X == 0
+    assert attached.native.DisplayRectangle.Y == 0
 
 
 class _Explosive:
