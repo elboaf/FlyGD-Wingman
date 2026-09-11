@@ -152,7 +152,10 @@ def test_split_utf8_matches_only_after_the_complete_line(
         stream.stop()
 
 
-def test_split_utf8_decoder_is_source_local_and_malformed_bytes_still_replace(tmp_path):
+@pytest.mark.parametrize("newline, retained_cr", [(b"\n", ""), (b"\r\n", "\r")])
+def test_split_utf8_decoder_is_source_local_and_malformed_bytes_still_replace(
+    tmp_path, newline, retained_cr
+):
     snapshot = prepare_alert_snapshot(_preview("Straße"))
     lines = []
 
@@ -175,9 +178,11 @@ def test_split_utf8_decoder_is_source_local_and_malformed_bytes_still_replace(tm
             output.write(b"\x9fe\ninvalid \xff\xe2")
         stream.scan_once(NOW)
         assert lines == ["�e"]
-        _append(bob, "\n")
+        # Match the exact bytes under test, not the host's text-mode newline.
+        with bob.open("ab") as output:
+            output.write(newline)
         stream.scan_once(NOW)
-        assert lines == ["�e", "invalid ��"]
+        assert lines == ["�e", "invalid ��" + retained_cr]
         assert not _matches(batches)
         with alice.open("ab") as output:
             output.write(b"\x9fe\n")
@@ -190,8 +195,11 @@ def test_split_utf8_decoder_is_source_local_and_malformed_bytes_still_replace(tm
         stream.stop()
 
 
+@pytest.mark.parametrize("newline, retained_cr", [(b"\n", ""), (b"\r\n", "\r")])
 @pytest.mark.parametrize("reset", ["truncated", "known", "new", "retired", "restart"])
-def test_pending_utf8_and_partial_text_reset_at_source_boundaries(tmp_path, reset):
+def test_pending_utf8_and_partial_text_reset_at_source_boundaries(
+    tmp_path, reset, newline, retained_cr
+):
     snapshot = prepare_alert_snapshot(_preview("fleet invite"))
     lines = []
 
@@ -232,9 +240,10 @@ def test_pending_utf8_and_partial_text_reset_at_source_boundaries(tmp_path, rese
         stream.scan_once(NOW)
         lines.clear()  # New-path headers retain their existing byte-zero behavior.
         assert not _matches(batches)
-        _append(path, "fleet invite\n")
+        with path.open("ab") as output:
+            output.write(b"fleet invite" + newline)
         stream.scan_once(NOW)
-        assert lines == ["fleet invite"]
+        assert lines == ["fleet invite" + retained_cr]
         assert len(_matches(batches)) == 1
     finally:
         stream.stop()
