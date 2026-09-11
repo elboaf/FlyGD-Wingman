@@ -3137,6 +3137,32 @@ button.btn:disabled,
   outline: 2px solid var(--focus-ring); outline-offset: 2px;
 }
 
+/* Custom rules share the Settings card and its pane's one scrollbar.
+   Rows are separators, not nested cards; only one inline editor is open.
+   At the 840px floor the existing pane affords about 586px: the style
+   tracks need 168 + 120 + 120 + 24px, leaving room without a breakpoint. */
+#custom-alerts .hint { overflow-wrap: anywhere; }
+#custom-alert-list { margin: 12px 0; }
+#custom-alerts .custom-alert-row { padding: 12px 0; border-top: 1px solid var(--field-border); }
+#custom-alerts .custom-alert-summary { display: flex; align-items: center; gap: 8px; }
+#custom-alerts .custom-alert-summary > .check { flex: 1; min-width: 0; }
+#custom-alerts .custom-alert-name { overflow-wrap: anywhere; min-width: 0; }
+#custom-alerts .custom-alert-editor { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+#custom-alerts .custom-alert-editor > .row { margin: 0; }
+#custom-alerts .custom-alert-editor .field { width: 100%; min-width: 0; }
+#custom-alerts .custom-alert-style { display: grid; grid-template-columns: 168px minmax(120px, 1fr) 120px; gap: 12px; align-items: start; }
+#custom-alerts .custom-alert-style > .row { margin: 0; min-width: 0; }
+#custom-alerts .custom-alert-colour > .lab { display: block; color: var(--text-dim); margin-bottom: 4px; }
+#custom-alerts .custom-alert-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+#custom-alerts .field-msg { overflow-wrap: anywhere; }
+/* Author display rules must not reopen a collapsed editor or hidden row. */
+#custom-alerts[hidden], #custom-alert-list[hidden],
+#custom-alerts .custom-alert-summary[hidden],
+#custom-alerts .custom-alert-editor[hidden],
+#custom-alerts .custom-alert-style[hidden],
+#custom-alerts .custom-alert-actions[hidden],
+#custom-alerts .custom-alert-colour > .lab[hidden] { display: none; }
+
 /* An event row reports its OWN failures. Twelve controls used to write
    into one shared .hint at the top of the card, each message overwriting
    the last, ~400px from the control that produced it -- so a session-only

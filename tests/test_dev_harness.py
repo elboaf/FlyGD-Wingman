@@ -83,6 +83,123 @@ def _fixture_body(marker: str) -> str:
     return re.sub(r"(?m)^\s*//.*$", "", block)
 
 
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "empty",
+        "full",
+        "literal",
+        "master-off",
+        "reader-error",
+        "no-characters",
+        "degraded",
+        "waiting",
+        "failed-save",
+    ],
+)
+def test_custom_alert_dev_authority_is_bounded_mutable_and_matches_rule_contract(
+    scenario,
+):
+    from dataclasses import asdict
+
+    from wingman import settings
+    from wingman.alerts.custom import MAX_CUSTOM_RULES, CustomRule
+
+    node = shutil.which("node")
+    assert node, "Node is required for custom Alerts dev acceptance"
+    script = r"""
+const fs = require('node:fs'), vm = require('node:vm');
+const source = fs.readFileSync(process.argv[1], 'utf8'), api = {};
+const options = JSON.parse(process.argv[3]).map(value => ({value}));
+const context = {api, Promise, devSearch: new URLSearchParams('custom=' + process.argv[2]),
+  document: {getElementById: id => {if (id !== 'alert-event-combat-sound') throw Error(id); return {options};}}};
+vm.runInNewContext(source.slice(source.indexOf('  var DEV_CUSTOM_ALERT_LIMIT ='),
+  source.indexOf('  // get_alert_state is a read')), context);
+(async () => {
+  const first = await api.get_custom_alert_state();
+  const adds = []; for (let i = 0; i <= first.limit; i++) adds.push(await api.add_custom_alert());
+  const added = adds.find(res => res.applied);
+  let edited, enabled, tested, removed, blank, refused;
+  if (added) {
+    const id = added.rule_id;
+    refused = await api.set_custom_alert_enabled(id, true);
+    edited = await api.edit_custom_alert(id, {name: ' Changed ', search: ' Fleet cue ', enabled: false,
+      color: '#123abc', sound: 'sly', cooldown_s: 12});
+    enabled = await api.set_custom_alert_enabled(id, true);
+    tested = await api.test_custom_alert(id, {color: '#ff8c42', sound: 'none', cooldown_s: 8});
+    blank = await api.edit_custom_alert(id, {name: 'Changed', search: '', enabled: true,
+      color: '#123abc', sound: 'sly', cooldown_s: 12});
+    removed = await api.remove_custom_alert(id);
+  }
+  console.log(JSON.stringify({first, adds, edited, enabled, tested, removed, blank, refused}));
+})().catch(error => {console.error(error); process.exitCode = 1;});
+"""
+    run = subprocess.run(
+        [
+            node,
+            "-e",
+            script,
+            str(WEB / "dev.js"),
+            scenario,
+            json.dumps(sorted(settings.VALID_SOUNDS)),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=15,
+        check=False,
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    data = json.loads(run.stdout)
+    first = data["first"]
+    assert first["limit"] == MAX_CUSTOM_RULES
+    assert first["rules"] == settings.validated_custom_rules(first["rules"])
+    assert len(first["rules"]) == (
+        0 if scenario == "empty" else MAX_CUSTOM_RULES if scenario == "full" else 1
+    )
+    last = data["adds"][-1]
+    assert not last["applied"] and not last["persisted"] and last["error"]
+    for added in data["adds"]:
+        if added["applied"]:
+            rule_id = added["rule_id"]
+            actual = next(
+                row for row in added["state"]["rules"] if row["id"] == rule_id
+            )
+            assert actual == asdict(CustomRule(rule_id))
+    if "edited" in data:
+        assert data["edited"]["applied"] and data["enabled"]["applied"]
+        assert not data["refused"]["applied"]
+        assert data["tested"]["applied"] and not data["tested"]["persisted"]
+        assert "Browser demo" in data["tested"]["error"]
+        rule_id = data["edited"]["rule_id"]
+        cleared = next(
+            row for row in data["blank"]["state"]["rules"] if row["id"] == rule_id
+        )
+        assert cleared["search"] == "" and not cleared["enabled"]
+        assert all(row["id"] != rule_id for row in data["removed"]["state"]["rules"])
+    if scenario == "failed-save":
+        assert all(res["state"] == first for res in data["adds"])
+    if scenario in {"degraded", "waiting"}:
+        assert first["matcher"]["state"] == scenario
+    if scenario == "master-off":
+        assert not first["previews_enabled"] and not first["alerts_enabled"]
+    if scenario == "reader-error":
+        assert not first["reader"]["running"] and first["reader"]["last_error"]
+    if scenario == "no-characters":
+        assert not first["reader"]["characters"]
+
+
+def test_custom_alert_bridge_has_all_dev_doubles():
+    assert {
+        "get_custom_alert_state",
+        "add_custom_alert",
+        "edit_custom_alert",
+        "set_custom_alert_enabled",
+        "remove_custom_alert",
+        "test_custom_alert",
+    } <= _stubbed()
+
+
 def test_setup_bridge_has_dev_doubles():
     assert {
         "eve_settings_setup_context",
