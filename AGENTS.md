@@ -205,10 +205,13 @@ sees it), `scheduler.py`, and two auxiliary always-on-top windows,
 
 **Web layer** (`wingman/web/`): `app.js` is the shell and bridge client with a
 strict `WM.HANDLERS` allowlist; one route/screen per JS file, loaded by
-`index.html` in this order: `characters`, `bookmarks`, `previews`, `fleetsharing`, `alerts`,
+`index.html` in this order: `characters`, `bookmarks`, `fleet`, `previews`, `fleetsharing`, `alerts`,
 `evesettings` (the Profiles route), `formations`, `uisetup`, `list`, `panel` (upload
 panel, status strip, dialog layer), `settings`, `skills`, `fittings`,
-`firstrun`, `dev`. `WM.route` switches destinations, `WM.section` switches
+`firstrun`, `dev`. `fleet.js` owns Fleet telemetry's local display settings and
+its global status-strip toggle; its one boot hydration is independent of section
+visibility. `fleetsharing.js` owns the shared setup view, not worker lifetime.
+`WM.route` switches destinations, `WM.section` switches
 Settings groups; both have enter/leave contracts, and leaving is load-bearing
 (keybind capture listeners must disarm). `dev.js` renders the page with fake
 data in a plain browser via `?dev=1` — the only file that fabricates data,

@@ -325,9 +325,10 @@ a pill and a button, `Copy` over a radio pair) or by labelling a text input,
 which has no self-describing text.
 
 The third is round 5's E1, and it renames most of the first column: the
-rail is **six** entries now, not seven. `Account`, `Uploads`, `Folders`
-and `Discord` are one entry, `Uploading`; `Characters` and `Alerts` are
-entries of their own; `Bookmarks`, `Previews` and `General` are unchanged.
+rail merged `Account`, `Uploads`, `Folders` and `Discord` into one entry,
+`Uploading`; `Characters` and `Alerts` became entries of their own. Fleet telemetry
+now has a separate entry too. The rail order is Uploading, Characters, Bookmarks,
+Previews, Fleet telemetry, Alerts, General, asserted in `test_settings_page.py`.
 The rows above still describe the same cards, which is why the measurement
 stands — the first control's left edge is a property of the card, not of
 the rail entry it is reached through. With the EVE gate off the rail is
@@ -708,6 +709,20 @@ Wingman therefore starts one background GitHub check after the page is ready
 so the Settings gear can show availability before General opens. It does not
 run inside `get_settings()`, block hydration, poll, download, or push before
 readiness; General reads the cached state and offers an explicit retry.
+
+**Fleet telemetry is configuration, not a destination.** Its section separates
+local Fleet Bar display controls from shared connection, participation and roster
+verification. Section entry/exit changes only view watching, never sharing or
+source intent. Deep links and remembered sections obey the EVE-tools gate and
+use the same section notifications as the rail.
+
+Account sources keep current and locally pending attempts visible. Only settled
+ended records enter the native Previous attempts disclosure; its count comes
+from rendered history and its open state survives updates. Failed or stopped-only
+setups still show reported reasons and a next action outside collapsed history.
+There is no reliable terminal chronology: UUIDs and array order cannot identify
+a latest attempt. Retained same-connection observations are labelled last-known
+while current state is unknown, and discarded when the binding changes.
 
 Leaving is load-bearing, not bookkeeping. `bookmarks.js` and `previews.js`
 each install a document-level `keydown` listener while capturing a keybind,

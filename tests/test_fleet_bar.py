@@ -1223,7 +1223,7 @@ def test_settings_and_status_strip_expose_the_same_fleet_toggle():
     from wingman.ui import window as window_mod
 
     html = (window_mod._web_dir() / "index.html").read_text(encoding="utf-8")
-    js = (window_mod._web_dir() / "previews.js").read_text(encoding="utf-8")
+    js = (window_mod._web_dir() / "fleet.js").read_text(encoding="utf-8")
     app = (window_mod._web_dir() / "app.js").read_text(encoding="utf-8")
 
     assert 'id="fleetbar-enabled"' in html
@@ -1244,7 +1244,8 @@ def test_settings_and_status_strip_expose_the_same_fleet_toggle():
     assert "reset_fleet_bar_width" in js
     assert "'onFleetBarState'" in app
     assert js.count("toggle_fleet_bar") == 2
-    assert js.index("WM.handle('onFleetBarState'") < js.index("var host =")
+    # Fleet ownership is now a whole module loaded before Preview initialization.
+    assert html.index('src="fleet.js"') < html.index('src="previews.js"')
 
 
 def test_fleet_character_controls_use_the_dedicated_revisioned_state():
@@ -1252,7 +1253,7 @@ def test_fleet_character_controls_use_the_dedicated_revisioned_state():
     from wingman.ui import window as window_mod
 
     html = (window_mod._web_dir() / "index.html").read_text(encoding="utf-8")
-    js = (window_mod._web_dir() / "previews.js").read_text(encoding="utf-8")
+    js = (window_mod._web_dir() / "fleet.js").read_text(encoding="utf-8")
     fleet_iife_source = js[js.index("(function () {") : js.index("}());") + 5]
 
     assert 'id="fleetbar-character-list"' in html

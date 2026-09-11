@@ -6,15 +6,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const source = fs.readFileSync(path.join(__dirname, '../wingman/web/previews.js'), 'utf8');
-const fleetSource = source.split('// Preview hotkeys.', 1)[0];
+// Keep this harness filename stable; Settings and the global toggle now have
+// their own complete production module, independent of Preview initialization.
+const fleetPath = path.join(__dirname, '../wingman/web/fleet.js');
+assert.ok(fs.existsSync(fleetPath), 'Fleet Settings ownership must live in wingman/web/fleet.js');
+const fleetSource = fs.readFileSync(fleetPath, 'utf8');
 const tests = [];
 function test(name, run) { tests.push({name, run}); }
 function turn() { return new Promise(resolve => setImmediate(resolve)); }
 
 class Element {
-  constructor(id, tagName = 'div') {
+  constructor(id, tagName = 'div', ownerDocument = null) {
     this.id = id;
+    this.ownerDocument = ownerDocument;
     this.tagName = tagName.toUpperCase();
     this.checked = false;
     this.hidden = false;
@@ -37,12 +41,35 @@ class Element {
     for (const listener of this.listeners[event.type] || []) listener.call(this, event);
   }
   appendChild(child) {
+    return this.insertBefore(child, null);
+  }
+  insertBefore(child, reference) {
+    assert.ok(reference === null || this.children.includes(reference));
+    if (child === reference) reference = this.children[this.children.indexOf(child) + 1] || null;
+    // Native insertion relocates an existing node, blurring a focused descendant
+    // even when appending it to the same parent. Never duplicate the old entry.
+    child.remove();
+    const index = reference === null ? this.children.length : this.children.indexOf(reference);
+    this.children.splice(index, 0, child);
     child.parentNode = this;
-    this.children.push(child);
     return child;
+  }
+  contains(node) {
+    for (; node; node = node.parentNode) {
+      if (node === this) return true;
+    }
+    return false;
+  }
+  focus() {
+    if (!this.disabled && this.ownerDocument.body.contains(this)) {
+      this.ownerDocument.activeElement = this;
+    }
   }
   remove() {
     if (!this.parentNode) return;
+    if (this.ownerDocument && this.contains(this.ownerDocument.activeElement)) {
+      this.ownerDocument.activeElement = this.ownerDocument.body;
+    }
     this.parentNode.children = this.parentNode.children.filter(item => item !== this);
     this.parentNode = null;
   }
@@ -53,10 +80,25 @@ class Element {
     return this.attributes[name] ?? null;
   }
   querySelectorAll(selector) {
-    if (selector === '[data-fleet-character]' || selector === '[data-fleet-group]') return [];
-    if (selector === 'input[type="checkbox"]') return this.children.filter(child => child.tagName === 'INPUT' && child.type === 'checkbox');
-    if (selector === '.fleet-character-name') return this.children.filter(child => child.className === 'fleet-character-name');
-    return [];
+    const attribute = selector.match(/^\[(data-fleet-(?:character|group))(?:="([^"]*)")?\]$/);
+    let matches;
+    if (attribute) {
+      matches = child => attribute[2] === undefined
+        ? child.getAttribute(attribute[1]) !== null
+        : child.getAttribute(attribute[1]) === attribute[2];
+    } else if (selector === 'input[type="checkbox"]') {
+      matches = child => child.tagName === 'INPUT' && child.type === 'checkbox';
+    } else if (selector === '.fleet-character-name') {
+      matches = child => child.classList.contains('fleet-character-name');
+    } else {
+      throw new Error('Unsupported Fleet harness selector: ' + selector);
+    }
+    const result = [];
+    for (const child of this.children) {
+      if (matches(child)) result.push(child);
+      result.push(...child.querySelectorAll(selector));
+    }
+    return result;
   }
   querySelector(selector) {
     return this.querySelectorAll(selector)[0] || null;
@@ -81,30 +123,43 @@ class Element {
   }
 }
 
-function state(enabled, revision) {
-  return { enabled, revision, characters: [] };
+function state(enabled, revision, characters = []) {
+  return { enabled, revision, characters };
 }
 
 function page() {
   const ids = [
     'btn-fleetbar', 'fleetbar-enabled', 'fleetbar-reset',
     'fleetbar-enabled-status', 'fleetbar-character-list',
-    'fleetbar-characters-empty', 'fleetbar-characters-status'
+    'fleetbar-characters-empty', 'fleetbar-characters-status', 'section-fleet'
   ];
-  const elements = Object.fromEntries(ids.map(id => [id, new Element(id)]));
+  const document = { activeElement: null, body: null };
+  const elements = Object.fromEntries(ids.map(id => [id, new Element(id, 'div', document)]));
   elements['btn-fleetbar'].tagName = 'BUTTON';
   elements['fleetbar-enabled'].tagName = 'INPUT';
   elements['fleetbar-enabled'].type = 'checkbox';
   elements['fleetbar-reset'].tagName = 'BUTTON';
   elements['fleetbar-enabled-status'].textContent = 'Default hint';
-  const body = new Element('body', 'BODY');
-  const document = { activeElement: body, body };
+  const body = new Element('body', 'BODY', document);
+  // Never enter Fleet: the status-strip control remains outside its closed
+  // Settings section, and no section lifecycle event is delivered.
+  elements['section-fleet'].hidden = true;
+  body.appendChild(elements['btn-fleetbar']);
+  body.appendChild(elements['section-fleet']);
+  ids.filter(id => id !== 'btn-fleetbar' && id !== 'section-fleet').forEach(id => {
+    elements['section-fleet'].appendChild(elements[id]);
+  });
+  document.activeElement = body;
+  document.body = body;
   const handlers = {};
   const calls = [];
   const WM = {
+    current_route: 'main',
+    current_section: 'general',
+    eve_shown: true,
     el: id => elements[id] || null,
     make: (tag, className, text) => {
-      const node = new Element('', tag);
+      const node = new Element('', tag, document);
       node.className = className || '';
       node.textContent = text || '';
       return node;
@@ -118,9 +173,11 @@ function page() {
     }
   };
   vm.runInNewContext(fleetSource, {window: {WM}, WM, document, Promise}, {
-    filename: 'wingman/web/previews.js'
+    filename: 'wingman/web/fleet.js'
   });
   return {
+    WM,
+    document,
     el: id => elements[id],
     calls,
     async reply(method, result, args) {
@@ -161,6 +218,66 @@ function page() {
 const toggleWarning = 'Applied for this session only. Your saved choice may return after restart.';
 const resetWarning = 'The Fleet Bar width changed, but it will not survive restart.';
 
+test('controls stay disarmed before boot hydration without entering Fleet Settings', async () => {
+  const p = page();
+  for (const id of ['btn-fleetbar', 'fleetbar-enabled', 'fleetbar-reset']) {
+    assert.equal(p.el(id).disabled, true, id + ' must start disabled');
+  }
+  await p.click('btn-fleetbar');
+  await p.click('fleetbar-reset');
+  await p.toggle(true);
+  assert.deepEqual(p.calls.map(call => ({method: call.method, args: call.args})), [
+    {method: 'fleet_bar_settings', args: []}
+  ]);
+  await p.reply('fleet_bar_settings', state(false, 1), []);
+  for (const id of ['btn-fleetbar', 'fleetbar-enabled', 'fleetbar-reset']) {
+    assert.equal(p.el(id).disabled, false, id + ' must enable after hydration');
+  }
+});
+
+test('a newer push wins over the late boot response while Fleet Settings stays closed', async () => {
+  const p = page();
+  await p.push(state(true, 2));
+  await p.reply('fleet_bar_settings', state(false, 1), []);
+  assert.equal(p.WM.fleet_bar_on, true);
+  assert.equal(p.el('fleetbar-enabled').checked, true);
+  assert.equal(p.el('btn-fleetbar').getAttribute('aria-pressed'), 'true');
+  assert.equal(p.el('fleetbar-reset').disabled, false);
+});
+
+test('the global toggle and tokenless reset synchronize results while Fleet Settings stays closed', async () => {
+  const p = page();
+  await p.reply('fleet_bar_settings', state(false, 1), []);
+  await p.click('btn-fleetbar');
+  await p.reply('toggle_fleet_bar', {
+    applied: true, persisted: true, error: null, state: state(true, 2)
+  }, [true]);
+  assert.equal(p.WM.fleet_bar_on, true);
+  assert.equal(p.el('fleetbar-enabled').checked, true);
+  assert.equal(p.el('btn-fleetbar').getAttribute('aria-pressed'), 'true');
+  assert.ok(p.el('btn-fleetbar').classList.contains('active'));
+
+  await p.click('fleetbar-reset');
+  await p.push(state(false, 4));
+  await p.reply('reset_fleet_bar_width', {
+    applied: true, persisted: false, error: resetWarning, state: state(true, 3)
+  }, []);
+  assert.equal(p.WM.fleet_bar_on, false);
+  assert.equal(p.el('fleetbar-enabled').checked, false);
+  assert.equal(p.el('btn-fleetbar').getAttribute('aria-pressed'), 'false');
+  assert.equal(p.el('btn-fleetbar').classList.contains('active'), false);
+  assert.equal(p.el('fleetbar-enabled-status').textContent, resetWarning);
+
+  await p.click('btn-fleetbar');
+  await p.reply('toggle_fleet_bar', {
+    applied: true, persisted: true, error: null, state: state(true, 5)
+  }, [true]);
+  assert.equal(p.WM.fleet_bar_on, true);
+  assert.equal(p.el('fleetbar-enabled').checked, true);
+  assert.equal(p.el('btn-fleetbar').getAttribute('aria-pressed'), 'true');
+  assert.equal(p.el('fleetbar-enabled-status').textContent, 'Default hint');
+});
+
 test('toggle session-only result keeps authoritative state and shows the warning', async () => {
   const p = page();
   await p.reply('fleet_bar_settings', state(false, 1));
@@ -191,7 +308,7 @@ test('reset session-only result keeps its warning visible', async () => {
   const p = page();
   await p.reply('fleet_bar_settings', state(true, 1));
   await p.click('fleetbar-reset');
-  await p.reply('reset_fleet_bar_width', {applied: true, persisted: false, error: resetWarning});
+  await p.reply('reset_fleet_bar_width', {applied: true, persisted: false, error: resetWarning}, []);
   assert.equal(p.el('fleetbar-enabled').checked, true);
   assert.ok(p.el('btn-fleetbar').classList.contains('active'));
   assert.equal(p.el('fleetbar-enabled-status').textContent, resetWarning);
@@ -206,6 +323,91 @@ test('toggle bridge failure restores the last authoritative state and shows an e
   assert.equal(p.el('fleetbar-enabled-status').textContent, 'Could not change the Fleet Bar.');
 });
 
+for (const running of [true, null]) {
+  test('same-order local character heartbeats preserve keyed rows and focus with running=' + running, async () => {
+    const p = page();
+    const characters = [
+      {name: 'Alice Example', running, visible: true},
+      {name: 'Bravo Example', running: running === null ? null : false, visible: false}
+    ];
+    await p.reply('fleet_bar_settings', state(true, 1, characters));
+    p.el('section-fleet').hidden = false;
+    const host = p.el('fleetbar-character-list');
+    const original = host.children.slice();
+    const input = host.querySelector('input[type="checkbox"]');
+    assert.ok(input, 'nonempty local character payload must render a checkbox');
+    assert.equal(input.getAttribute('aria-label'), 'Show Alice Example in Fleet Bar');
+    assert.equal(host.querySelector('.fleet-character-name').textContent, 'Alice Example');
+    assert.equal(p.el('fleetbar-characters-empty').hidden, true);
+    input.focus();
+    assert.ok(p.document.activeElement === input, 'the local checkbox starts focused');
+
+    for (const revision of [2, 3]) {
+      await p.push(state(true, revision, characters));
+      assert.ok(p.document.activeElement === input, 'unchanged local Fleet heartbeat keeps checkbox focus');
+      assert.equal(host.children.length, original.length, 'heartbeat must not duplicate headings or rows');
+      original.forEach((node, index) => assert.equal(host.children[index], node));
+      assert.equal(host.querySelectorAll('input[type="checkbox"]')[1].checked, false);
+    }
+    assert.deepEqual(p.calls, [], 'heartbeats need no extra hydration or mutation calls');
+  });
+}
+
+test('local roster regrouping reuses rows and removes stale characters and headings', async () => {
+  const p = page();
+  await p.reply('fleet_bar_settings', state(true, 1, [
+    {name: 'Alice Example', running: true, visible: true},
+    {name: 'Bravo Example', running: false, visible: false},
+    {name: 'Cyra Example', running: false, visible: true}
+  ]));
+  const host = p.el('fleetbar-character-list');
+  const [alice, bravo, cyra] = host.querySelectorAll('[data-fleet-character]');
+  const [running, offline] = host.querySelectorAll('[data-fleet-group]');
+  function order() {
+    return host.children.map(node => node.getAttribute('data-fleet-group')
+      || node.getAttribute('data-fleet-character'));
+  }
+  assert.deepEqual(order(), ['Running', 'Alice Example', 'Offline', 'Bravo Example', 'Cyra Example']);
+
+  await p.push(state(true, 2, [
+    {name: 'Alice Example', running: false, visible: false},
+    {name: 'Bravo Example', running: true, visible: true},
+    {name: 'Delta Example', running: false, visible: true}
+  ]));
+  assert.deepEqual(order(), ['Running', 'Bravo Example', 'Offline', 'Alice Example', 'Delta Example']);
+  assert.equal(host.children[0], running);
+  assert.equal(host.children[1], bravo);
+  assert.equal(host.children[2], offline);
+  assert.equal(host.children[3], alice);
+  assert.equal(cyra.parentNode, null);
+  assert.equal(alice.querySelector('input[type="checkbox"]').checked, false);
+  assert.equal(bravo.querySelector('input[type="checkbox"]').checked, true);
+  const delta = host.children[4];
+
+  await p.push(state(true, 3, [
+    {name: 'Alice Example', running: null, visible: false},
+    {name: 'Bravo Example', running: null, visible: true},
+    {name: 'Delta Example', running: null, visible: true}
+  ]));
+  assert.deepEqual(order(), ['Known characters', 'Alice Example', 'Bravo Example', 'Delta Example']);
+  assert.equal(host.children[1], alice);
+  assert.equal(host.children[2], bravo);
+  assert.equal(host.children[3], delta);
+  assert.equal(running.parentNode, null);
+  assert.equal(offline.parentNode, null);
+  const known = host.children[0];
+
+  await p.push(state(true, 4, [{name: 'Bravo Example', running: true, visible: true}]));
+  assert.deepEqual(order(), ['Running', 'Bravo Example']);
+  assert.equal(host.children[1], bravo);
+  for (const removed of [known, alice, delta]) assert.equal(removed.parentNode, null);
+
+  await p.push(state(true, 5));
+  assert.deepEqual(order(), []);
+  assert.equal(bravo.parentNode, null);
+  assert.equal(p.el('fleetbar-characters-empty').hidden, false);
+});
+
 (async function () {
   let failures = 0;
   for (const {name, run} of tests) {
@@ -217,6 +419,6 @@ test('toggle bridge failure restores the last authoritative state and shows an e
       console.error('FAIL ' + name + '\n' + error.stack);
     }
   }
-  console.log(`${tests.length - failures}/${tests.length} previews Fleet Bar runtime tests passed`);
+  console.log(`${tests.length - failures}/${tests.length} Fleet Settings/status-strip runtime tests passed`);
   if (failures) process.exitCode = 1;
 }());

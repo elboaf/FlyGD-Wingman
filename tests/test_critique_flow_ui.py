@@ -18,13 +18,15 @@ def test_preview_help_matches_the_native_mouse_gestures():
     assert "Right-drag to move" not in text
 
 
-def test_preview_quick_navigation_targets_existing_cards_without_routing():
+def test_preview_scroll_shortcuts_target_cards_in_the_same_section():
     html = (WEB / "index.html").read_text(encoding="utf-8")
-    section = html.split('id="section-previews"', 1)[1].split('id="section-alerts"', 1)[
+    section = html.split('id="section-previews"', 1)[1].split('id="section-fleet"', 1)[
         0
     ]
     targets = re.findall(r'data-preview-jump="([^"]+)"', section)
-    assert len(targets) == 3
+    # Fleet now navigates to its own section; its executable capture/entry
+    # contract is covered by test_fleet_navigation.py, not this scroll guard.
+    assert set(targets) == {"preview-window-options", "preview-keybind-options"}
     assert len(set(targets)) == len(targets)
     for target in targets:
         assert f'id="{target}"' in section

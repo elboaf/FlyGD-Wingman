@@ -113,7 +113,7 @@ not an in-app publishing service.
 
 ### Fleet sharing setup
 
-In a build with **Fleet sharing** under **Settings → Previews**, choose
+In **Settings → Fleet telemetry → Fleet sharing**, choose
 **Connect…** and approve the device in the configured authGD site's browser
 page. Pairing does not enable telemetry. **Share my fleet telemetry** is a
 separate, default-off choice; only current DPS and scram / point state are

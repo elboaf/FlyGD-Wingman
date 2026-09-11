@@ -94,6 +94,7 @@
   var sharingSaveFails = false;
   var sharingStalePreference = null;
   var sharingHoldRead = false;
+  var sharingFailRead = false;
   var sharingReadReply = null;
   var sharingHoldAction = false;
   var sharingActionReply = null;
@@ -129,7 +130,7 @@
         approved_capabilities: paired ? ['shared-source-v1'] : null,
         session_approved_capabilities: paired ? ['shared-source-v1'] : null,
         acknowledged_capabilities: paired ? ['shared-source-v1'] : null},
-      sources: paired && kind !== 'unknown' && kind !== 'loading' ? {sources: [], characters: characters} : null,
+      sources: paired && kind !== 'unknown' && kind !== 'loading' && kind !== 'unavailable' ? {sources: [], characters: characters} : null,
       eligibility: paired ? {state: 'participation_off', participation_generation: 2, characters: []} : null,
       observed_participation: paired ? {enabled: false, generation: 2} : null
     };
@@ -147,6 +148,26 @@
         character_id: kind === 'ended' ? null : 1, state: kind,
         reason: kind === 'paused' ? 'boss_lost' : kind === 'ended' ? 'stopped' : null,
         pending_expires_at: kind === 'pending' ? '2026-09-07T12:01:00.000Z' : null}];
+    }
+    if (kind.indexOf('history') === 0) {
+      sharing.sources.sources = [
+        {source_id: sharingUUID, generation: 3, character_id: 1,
+          state: 'active', reason: null, pending_expires_at: null},
+        {source_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', generation: 2, character_id: 1,
+          state: 'ended', reason: 'expired', pending_expires_at: null},
+        {source_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', generation: 1, character_id: 2,
+          state: 'ended', reason: 'expired', pending_expires_at: null}
+      ];
+      if (kind === 'history-only') sharing.sources.sources.shift();
+      if (kind === 'history-long') {
+        characters[0].character_name = 'Ariadne Alexandrovna Long-Name Fleet Commander';
+        characters[1].character_name = 'BasiliskTheUnbrokenLongCharacterNameForLayoutChecks';
+      }
+      if (kind === 'history-pending-start' || kind === 'history-pending-stop') {
+        sharing.sources.sources[1].source_id = sharing.sources.sources[1].source_id.toUpperCase();
+        sharing.pending_sources = [{source_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          operation: kind === 'history-pending-stop' ? 'stop' : 'start', character_id: 1, stage: 'persisted'}];
+      }
     }
     if (kind === 'expired' || kind === 'rejected') sharing.source_results = [{source_id: sharingUUID, operation: 'start', character_id: 1, stage: kind}];
     if (kind === 'unknown') sharing.pending_sources = [{source_id: sharingUUID, operation: 'start', character_id: 1, stage: 'persisted'}];
@@ -168,7 +189,7 @@
   api.fleet_sharing_watch = function (open) {
     sharingCalls.push(['watch', open]);
     var failure = devSearch.get('sharing-watch');
-    if (failure === 'null') return Promise.resolve(null);
+    if (sharingFailRead || failure === 'null') return Promise.resolve(null);
     if (failure === 'missing-worker') return Promise.resolve({queued: false, error: 'Fleet sharing is unavailable.', state: sharingCopy()});
     if (failure === 'error-no-state') return Promise.resolve({queued: false, error: 'Fleet sharing is unavailable.'});
     var captured = sharingCopy();
@@ -2877,6 +2898,11 @@
     },
     fleetSharing: sharingScenario,
     fleetSharingCalls: function () { return sharingCalls.slice(); },
+    fleetSharingHeartbeat: function () {
+      sharing.presentation_order = ++sharingPresentationOrder;
+      window.onFleetSharingState(sharingCopy());
+    },
+    failSharingRead: function (value) { sharingFailRead = !!value; },
     holdSharingPreference: function (saveFails) { sharingHoldPreference = true; sharingSaveFails = !!saveFails; },
     staleSharingPreferencePush: function () { window.onFleetSharingState(sharingStalePreference); },
     holdSharingRead: function () { sharingHoldRead = true; },
@@ -2898,7 +2924,7 @@
     // the browser console: Ariadne stays visible, the other 64 known names
     // are hidden, and clicking Ariadne exercises the inline refusal/rollback.
     // This remains a helper rather than a URL scenario because it is a
-    // mutation checkpoint entered after the Settings › Previews card is open.
+    // mutation checkpoint entered after Settings › Fleet telemetry is open.
     fleetHiddenLimit: function () {
       var index, name;
       fleetBar.seen = ['Ariadne'];

@@ -334,7 +334,7 @@ def _fleet_bar_defaults() -> dict:
 def _fleet_sharing_defaults() -> dict:
     """Fresh nested structure every call. Never return the module global.
 
-    Off by default. Settings > Previews owns the explicit local preference;
+    Off by default. Settings > Fleet telemetry owns the explicit local preference;
     the sharing worker independently reconciles server consent before any
     sparse telemetry may leave this machine.
     """

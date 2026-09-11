@@ -134,6 +134,7 @@ SCREENS = (
         True,
         True,
     ),
+    Screen("settings-fleet", "Settings - Fleet telemetry", "settings", "fleet", True),
     Screen("settings-alerts", "Settings - Alerts", "settings", "alerts", True),
     Screen(
         "settings-alerts-advanced",

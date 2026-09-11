@@ -2727,7 +2727,7 @@ button.btn:disabled,
    removing the flex layout that applies while the panel is open. */
 .preview-group-manager:not([open]) > .group-manager-body { display: none; }
 
-/* Sharing is a sibling card, never subordinate to the Preview master. */
+/* Sharing and local display are separate cards in Fleet telemetry. */
 #fleet-sharing { overflow-wrap: anywhere; }
 #fleet-sharing > h3 { margin: 16px 0 8px; font-size: var(--fs-body); color: var(--text-dim); }
 #fleet-sharing > p { margin: 8px 0; }

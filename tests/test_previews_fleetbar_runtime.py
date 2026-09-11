@@ -1,4 +1,4 @@
-"""Execute the focused Fleet Bar slice of previews.js under Node."""
+"""Execute the complete Fleet Settings/status-strip owner, fleet.js, under Node."""
 
 import shutil
 import subprocess

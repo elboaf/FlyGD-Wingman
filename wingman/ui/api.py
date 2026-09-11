@@ -2081,7 +2081,7 @@ class Api:
             ):
                 return self._field_refused(
                     "Keep EVE tools visible while fleet sharing or roster sources need attention. "
-                    "Open Settings > Previews to turn sharing Off, Stop sources, or refresh unknown source state."
+                    "Open Settings > Fleet telemetry to turn sharing Off, Stop sources, or refresh unknown source state."
                 )
         return self._write_setting("show_eve_tools", enabled)
 

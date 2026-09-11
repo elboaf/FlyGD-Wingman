@@ -735,7 +735,8 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together(
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
-def test_open_settings_section_enters_characters_once_and_keeps_last_destination():
+@pytest.mark.parametrize("section", ["characters", "fleet"])
+def test_open_settings_section_enters_once_restores_and_respects_eve_gate(section):
     script = textwrap.dedent(
         f"""
         const vm = require('vm');
@@ -804,10 +805,11 @@ def test_open_settings_section_enters_characters_once_and_keeps_last_destination
           add('rail-characters', ['rail-item'], {{ section: 'characters' }}),
           add('rail-bookmarks', ['rail-item'], {{ section: 'bookmarks' }}),
           add('rail-previews', ['rail-item'], {{ section: 'previews' }}),
+          add('rail-fleet', ['rail-item'], {{ section: 'fleet' }}),
           add('rail-alerts', ['rail-item'], {{ section: 'alerts' }}),
           add('rail-general', ['rail-item'], {{ section: 'general' }}),
         ];
-        const sectionNames = ['uploading', 'characters', 'bookmarks', 'previews', 'alerts', 'general'];
+        const sectionNames = ['uploading', 'characters', 'bookmarks', 'previews', 'fleet', 'alerts', 'general'];
         const panes = sectionNames.map(function (name) {{
           return add('section-' + name, name === 'uploading' ? ['settings', 'active'] : ['settings']);
         }});
@@ -872,15 +874,38 @@ def test_open_settings_section_enters_characters_once_and_keeps_last_destination
 
         window.WM.route('skills');
         sectionEvents.length = 0;
-        window.WM.openSettingsSection('characters');
+        window.WM.openSettingsSection({json.dumps(section)});
+
+        const firstEvents = sectionEvents.slice();
+        const WM = window.WM;
+        const assert = require('node:assert/strict');
+        assert.equal(nodes['rail-' + {json.dumps(section)}].classList.contains('active'), true);
+        assert.equal(nodes['section-' + {json.dumps(section)}].classList.contains('active'), true);
+        nodes['btn-settings'].dispatchEvent({{type: 'click'}});
+        assert.equal(WM.current_route, 'skills');
+        nodes['btn-settings'].dispatchEvent({{type: 'click'}});
+        assert.equal(WM.current_section, {json.dumps(section)});
+        WM.apply_eve_gate(false);
+        assert.equal(nodes['rail-' + {json.dumps(section)}].hidden, true);
+        assert.equal(WM.current_section, 'general');
+        WM.openSettingsSection({json.dumps(section)});
+        assert.equal(WM.current_section, 'general', 'deep links cannot reopen a gated section');
+        WM.section({json.dumps(section)});
+        assert.equal(WM.current_section, 'general', 'direct selection cannot reopen a gated section');
+        WM.route('main');
+        nodes['btn-settings'].dispatchEvent({{type: 'click'}});
+        assert.equal(WM.current_section, 'general', 'the gear cannot restore a hidden section');
+        WM.apply_eve_gate(true);
+        WM.route('skills');
+        WM.openSettingsSection({json.dumps(section)});
 
         console.log(JSON.stringify({{
           currentRoute: window.WM.current_route,
           currentSection: window.WM.current_section,
           lastDestination: window.WM.last_destination,
-          sectionEvents: sectionEvents,
-          charactersRailActive: nodes['rail-characters'].classList.contains('active'),
-          charactersPaneActive: nodes['section-characters'].classList.contains('active'),
+          sectionEvents: firstEvents,
+          sectionRailActive: nodes['rail-' + {json.dumps(section)}].classList.contains('active'),
+          sectionPaneActive: nodes['section-' + {json.dumps(section)}].classList.contains('active'),
           settingsGearActive: nodes['btn-settings'].classList.contains('active')
         }}));
         """
@@ -903,10 +928,10 @@ def test_open_settings_section_enters_characters_once_and_keeps_last_destination
     result = json.loads(proc.stdout)
     assert result == {
         "currentRoute": "settings",
-        "currentSection": "characters",
+        "currentSection": section,
         "lastDestination": "skills",
-        "sectionEvents": ["characters"],
-        "charactersRailActive": True,
-        "charactersPaneActive": True,
+        "sectionEvents": [section],
+        "sectionRailActive": True,
+        "sectionPaneActive": True,
         "settingsGearActive": True,
     }

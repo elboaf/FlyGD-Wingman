@@ -88,8 +88,8 @@ missing when the title bar filled up:
 | Previews | primary | twice, ever | a Settings section |
 | Bookmarks | primary | twice, ever | a Settings section |
 | Alerts | part of previews | twice, ever | a Settings section |
-| Fleet Bar | part of client awareness | twice, ever | Settings › Previews and a status-strip toggle |
-| Fleet sharing | optional shared client awareness | setup and boss changes | Settings › Previews |
+| Fleet Bar | part of client awareness | twice, ever | Settings › Fleet telemetry and a status-strip toggle |
+| Fleet sharing | optional shared client awareness | setup and boss changes | Settings › Fleet telemetry |
 | Skills | secondary | rarely | a destination |
 | Fittings | secondary | rarely | a destination |
 
@@ -178,9 +178,9 @@ default.
 In Settings, users can persistently hide individual known characters from the
 bar and restore them later, including when they are offline. That choice
 changes only the bar: collection continues, and Preview and Alert behavior
-remains unchanged. It belongs under Settings › Previews because it is another
-floating desktop window, but its runtime is independent: turning previews or
-alerts off must not stop it. Because the log proves effect starts but has no
+remains unchanged. Settings › Fleet telemetry separates this local display from
+shared telemetry setup. Its runtime is independent: turning previews or alerts
+off must not stop it. Because the log proves effect starts but has no
 dependable incoming-effect-ended event, observed EWAR clears after 30 seconds
 without that character producing outgoing damage or receiving another tracked
 EWAR event. A missing log is shown as missing data, never as a fabricated zero,
@@ -189,7 +189,7 @@ and the bar never moves an EVE client or sends input to one.
 
 ### Fleet sharing setup stays beside the Fleet Bar
 
-Settings › Previews holds the optional connection, **Share my fleet telemetry**,
+Settings › Fleet telemetry holds the optional connection, **Share my fleet telemetry**,
 and owned-boss **Start / Stop** controls. Pairing, granting Fleet Read, and
 opening the source view never turn sharing on or start a source. One owned
 boss authorization covers eligible account-linked alts automatically; the
@@ -197,7 +197,11 @@ selector is not an alt publication checklist and does not prove boss status.
 Local preference, saved intent and server observations are separate facts.
 Off inhibits transmission immediately even if saving fails; server Off/Stop
 may still be pending. Source controls work with sharing and local displays off,
-and closing the view never Stops a source. The existing Fleet Bar also shows
+and closing the view never Stops a source. Current and locally pending attempts
+stay visible; settled ended attempts are retained under Previous attempts, not
+deleted. With no current verification, reported reasons and the next action stay
+visible outside history. Unknown state is not an empty or untouched setup.
+The existing Fleet Bar also shows
 eligible remote rows, marked REMOTE and REMOTE · STALE, without adding a
 destination or an activation action. Remote metrics stale at three seconds and
 expire at ten, independently of local log health. Verified local clients take

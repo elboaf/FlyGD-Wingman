@@ -2413,14 +2413,14 @@ This exercises the actual standalone handler, not `app.js` or a second fake API.
 
 ## Fleet sharing setup and source controls
 
-The setup card lives in Settings > Previews, beside Fleet Bar and outside
-its Preview master-switch block. Use an isolated fixture relay/account for these
+The setup card lives in Settings > Fleet telemetry, separate from the local
+Fleet Bar display card. Use an isolated fixture relay/account for these
 checks; no production pairing, OAuth, or real EVE-window manipulation is needed
 for the synthetic render pass.
 
 - [ ] A clean/Off startup reads connection metadata once without creating a key,
       changing the preference, publishing telemetry, or opening a browser.
-- [ ] Enter/leave Previews and hide/reopen the Wingman window. Source watching
+- [ ] Enter/leave Fleet telemetry and hide/reopen the Wingman window. Source watching
       follows visibility; closing never sends Stop. Source controls work with
       sharing, previews and Fleet Bar Off and without a local telemetry runtime.
 - [ ] Connect/upgrade opens only this explicit action's saved approval URL,
@@ -2433,7 +2433,7 @@ for the synthetic render pass.
       Grant completion alone neither Starts verification nor enables sharing.
 - [ ] **Unavailable setup must finish reading without enabling actions.** In an
       isolated browser use `?dev=1&sharing-watch=missing-worker`, then `null` and
-      `error-no-state`, and open Settings > Previews. Expect “Fleet sharing is
+      `error-no-state`, and open Settings > Fleet telemetry. Expect “Fleet sharing is
       unavailable in this session.”, disabled sharing/setup controls, and no
       promise that Refresh rebuilds the worker. Leave and re-enter; no consent,
       Start or browser action may run. Separately verify the missing-worker
@@ -2462,6 +2462,53 @@ for the synthetic render pass.
       of the installed frameless window's resize/DPI behavior or other scalings.
 - [ ] Real DPAPI, frozen packaging, live pairing/OAuth and multi-device relay
       acceptance require their separately authorized release smoke pass.
+
+### Fleet telemetry navigation and attempt history
+
+Use the actual `index.html?dev=1` page at **840×625** and **839×621** for the
+isolated browser pass. All synthetic states below live in `dev.js`; these checks
+never require live pairing, consent, fleet commands, or a deployed authGD change.
+Record browser evidence separately from installed Windows/WebView2 acceptance.
+
+- [ ] Settings rail → Fleet telemetry shows local Fleet Bar controls (including
+      Reset width and Characters) separately from shared setup. Previews retains
+      client, cycle, layout, crop and keybind controls. Its Fleet shortcut enters
+      the new section, not a hidden card. Leaving/reopening Settings restores it.
+- [ ] Hide EVE tools while runtime features are Off. Fleet telemetry disappears;
+      shortcuts and remembered selection cannot reopen it. Restore EVE tools and
+      verify it is reachable. Navigation alone never changes sharing or sources.
+- [ ] Arm a Preview keybind, then use the Fleet shortcut. Repeat from Bookmarks
+      using the Fleet rail item. Tab and printable keys in Fleet must not be
+      consumed as keybinds. No new bind write or sharing mutation appears.
+- [ ] `DEV.fleetSharing('history')`: one active source stays primary and the two
+      expired attempts appear only in collapsed **Previous attempts (2)**.
+      Tab to the summary, use Space/Enter, then `DEV.fleetSharingHeartbeat()`:
+      open/closed state and focused keyed controls survive. No history means no
+      disclosure, not an empty heading.
+- [ ] `DEV.fleetSharing('history-only')`: reported expiry and an explicit next
+      action remain visible outside history. `ended` says stopped, not untouched
+      setup; `expired`/`rejected` retain local Start failure guidance. No label
+      claims to identify the latest attempt by UUID or array order.
+- [ ] `history-pending-start` and `history-pending-stop` keep the pending command
+      visible despite its ended observation, including mixed-case source IDs.
+      Settle with `history`; only then does that attempt return to history. If
+      its action held focus, focus moves to the visible history summary.
+- [ ] `history-long`: long and unbroken names wrap without hiding Stop or causing
+      horizontal overflow. Check both floor sizes, summary focus rings, all
+      actions, eligible details, and vertical scrolling.
+- [ ] After `history`, use `DEV.failSharingRead(true)` and Refresh. Known state
+      stays visible. Restore with `DEV.failSharingRead(false)`. `unknown` retains
+      labelled last-known rows, not a false no-current claim. `unavailable`
+      disarms mutation controls. Changing to `unpaired` clears old identity-bound
+      rows and feedback; an authoritative empty `empty` state is not a failed read.
+- [ ] Hold Start/Stop replies with `DEV.holdNextSharingAction()`, navigate away
+      and back, then `DEV.finishSharingAction()`. Pending controls/feedback remain
+      truthful, no duplicate source is fabricated, and leaving never sends Stop.
+      Hold preference replies separately; an in-flight On must leave Off reachable.
+- [ ] **Windows/WebView2 acceptance remains separate:** repeat keyboard capture,
+      focus, native select/disclosure behavior, scaling, floating display controls
+      and view enter/leave with the installed app. Do not treat DOM doubles or
+      browser screenshots as proof of worker/native-window lifecycle behavior.
 
 ## EVE client previews
 
@@ -3151,7 +3198,7 @@ until they are actually run on Windows.
       reserved header-action geometry, sticky header, and bounded 128-row
       roster scrolling. Chromium layout evidence only; not Windows/WebView2
       native acceptance.
-- [ ] **Enable from Settings › Previews.** Tick `Show Fleet Bar`. Expected:
+- [ ] **Enable from Settings › Fleet telemetry.** Tick `Show Fleet Bar`. Expected:
       a compact three-column window opens with `CHARACTER`, `DPS · 10s`
       (with `OUT` and `IN` beneath the shared center axis), and `EWAR`;
       the Settings checkbox and status-strip `DPS` button both show active.
@@ -3175,7 +3222,7 @@ until they are actually run on Windows.
       Expected: every logged-in character appears exactly once in alphabetical
       order, including the preview-excluded one; the character-select client has
       no row until its title identifies a character.
-- [ ] **Character grouping is truthful.** In Settings › Previews › Fleet Bar,
+- [ ] **Character grouping is truthful.** In Settings › Fleet telemetry › Fleet Bar,
       open **Characters** after Wingman has seen several characters. With Fleet
       Bar on, running names are under `Running` and remembered logged-out names
       are under `Offline`; no name appears twice. Turn Fleet Bar off: the same
