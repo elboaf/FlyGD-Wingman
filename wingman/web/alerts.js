@@ -275,9 +275,16 @@
   // settings.json is a legitimate state -- and quietly rewriting a user's
   // choice the moment they open the card would be the card editing
   // settings it was only asked to display.
-  function paintSwatches(row, id, colour) {
+  function paintSwatches(row, id, colour, custom) {
     if (!row.colors) { return; }
     var wanted = COLOURS.slice();
+    if (custom) {
+      wanted.push('#ff8c42');
+      // Keep a stored extra choice when selecting a palette colour. Dropping
+      // it would rebuild the group and detach the radio holding focus.
+      var built = row.colors.getAttribute('data-built');
+      if (built && wanted.indexOf(colour) !== -1) { wanted = built.split(','); }
+    }
     if (colour && wanted.indexOf(colour) === -1) { wanted.push(colour); }
 
     if (row.colors.getAttribute('data-built') !== wanted.join(',')) {
@@ -297,7 +304,7 @@
         // someone comparing this against a hand-edited settings.json
         // still wants the second. An out-of-palette colour has no name and
         // gets the hex for both, unchanged.
-        var name = colourName(hex);
+        var name = custom && hex === '#ff8c42' ? 'Orange' : colourName(hex);
         label.title = name === hex ? hex : name + ' (' + hex + ')';
         input.setAttribute('aria-label', name);
         label.appendChild(input);
@@ -572,6 +579,475 @@
     });
   });
 
+  // ---- Custom rules: authority is not the editor ----------------------
+  // Each row serializes full mutations. Read replies and mutation snapshots
+  // can include later commits; neither is a copy of the submitted draft.
+  var customList = WM.el('custom-alert-list');
+  var customAdd = WM.el('custom-alert-add');
+  var customHealth = WM.el('custom-alert-health');
+  var customStatus = WM.el('custom-alert-status');
+  var customRecovery = WM.el('custom-alert-recovery');
+  var customRetry = WM.el('custom-alert-retry');
+  var customReadFailed = false;
+  var controlsReadPending = 0;
+  var addRecoveryMessage = false;
+  var customRows = Object.create(null);
+  var tombstones = Object.create(null);
+  var customState = null;
+  var committedRevision = 0;
+  var viewEpoch = 0;
+  var visible = false;
+  var customReady = false;
+  var readSerial = 0;
+  var renderedSerial = 0;
+  var hydratedSerial = 0;
+  var addPending = false;
+  var addUncertain = false;
+  var addRecoverySerial = 0;
+  var disclosure = null;
+  var builtinReadSerial = 0;
+  var builtinRenderedSerial = 0;
+  var builtinHydratedSerial = 0;
+
+  function ownsView(epoch) { return visible && epoch === viewEpoch; }
+  function customId(id, suffix) { return 'custom-alert-' + id + '-' + suffix; }
+  function node(tag, className, text) {
+    var el = document.createElement(tag);
+    el.className = className || '';
+    if (text) { el.textContent = text; }
+    return el;
+  }
+  function styleDraft(row) {
+    var selected = row.colors.querySelector('input:checked');
+    return {color: selected ? selected.value : row.ack.color,
+      sound: row.sound.value, cooldown_s: Number(row.cooldown.value)};
+  }
+  function fullDraft(row, textFromAuthority, style) {
+    style = style || styleDraft(row);
+    return {name: textFromAuthority ? row.ack.name : row.name.value,
+      search: textFromAuthority ? row.ack.search : row.search.value,
+      enabled: textFromAuthority ? row.ack.enabled : row.enabled.checked,
+      color: style.color, sound: style.sound, cooldown_s: style.cooldown_s};
+  }
+  function textDirty(row) {
+    return row.name.value !== row.ack.name || row.search.value !== row.ack.search;
+  }
+  function clean(row) {
+    var style = styleDraft(row);
+    return !textDirty(row) && row.enabled.checked === row.ack.enabled
+      && style.color === row.ack.color && style.sound === row.ack.sound
+      && style.cooldown_s === row.ack.cooldown_s;
+  }
+  function customMessage(row) {
+    var draft = textDirty(row) ? 'Name or search has unapplied changes. Press Enter or Apply.' : '';
+    sayRow(row, [row.error, draft, row.recoveryMessage, row.notice].filter(function (s) { return !!s; }).join(' '),
+      row.error ? 'err' : (draft || row.recoveryMessage || row.notice ? 'warn' : ''));
+  }
+  function paintCustom(row, kind, intents) {
+    function owns(key) { return !intents || intents[key] === row.intents[key]; }
+    if (!kind || kind === 'apply') {
+      if (owns('name')) { row.name.value = row.ack.name; }
+      if (owns('search')) { row.search.value = row.ack.search; }
+    }
+    if (!kind || kind === 'apply' || kind === 'style') {
+      if (owns('color')) { paintSwatches(row, 'custom-' + row.ack.id, row.ack.color, true); }
+      if (owns('sound')) { row.sound.value = row.ack.sound; }
+      if (owns('cooldown_s')) { row.cooldown.value = String(row.ack.cooldown_s); }
+    }
+    // A full edit can disable a cleared search. New text/style intent does
+    // not own the checkbox; only a newer enabled intent may protect it.
+    if (kind !== 'remove' && owns('enabled')) { row.enabled.checked = row.ack.enabled; }
+  }
+  function controlsReady(row) {
+    var ready = visible && customReady && !row.dead && !row.removing && !row.uncertain;
+    row.controls.forEach(function (el) { el.disabled = !ready; });
+    row.colors.querySelectorAll('input').forEach(function (el) { el.disabled = !ready; });
+  }
+  function updateAdmission() {
+    if (!customAdd) { return; }
+    var count = customState ? customState.rules.length : 0;
+    var limit = customState ? customState.limit : 0;
+    customAdd.disabled = !visible || !customReady || addPending || addUncertain || count >= limit;
+    customAdd.textContent = addPending ? 'Adding…' : 'Add alert';
+    customAdd.title = customState && count >= limit ? 'Limit of ' + limit + ' custom alerts reached.' : '';
+    var needsAuthority = !customReady || addUncertain || Object.keys(customRows).some(function (id) {
+      return !customRows[id].dead && customRows[id].uncertain;
+    });
+    if (!needsAuthority) { customReadFailed = false; }
+    customRecovery.hidden = !visible || !customReadFailed || !needsAuthority;
+    customRetry.disabled = customRecovery.hidden || !!controlsReadPending;
+    customRetry.textContent = controlsReadPending ? 'Retrying…' : 'Retry';
+    Object.keys(customRows).forEach(function (id) { controlsReady(customRows[id]); });
+  }
+  function openEditor(row) {
+    if (!visible || !customReady || row.dead) { return; }
+    if (disclosure && customRows[disclosure]) {
+      customRows[disclosure].editor.hidden = true;
+      customRows[disclosure].edit.setAttribute('aria-expanded', 'false');
+    }
+    disclosure = row.ack.id;
+    row.editor.hidden = false;
+    row.edit.setAttribute('aria-expanded', 'true');
+    row.name.focus();
+  }
+  function makeCustomRow(rule) {
+    var row = {ack: rule, counter: 0, queue: [], busy: null, dead: false, deferredAcks: {},
+      uncertain: false, removing: false, error: '', notice: '', recoveryMessage: '', controls: [], testSerial: 0,
+      intents: {name: 0, search: 0, color: 0, sound: 0, cooldown_s: 0, enabled: 0}};
+    row.root = node('div', 'custom-alert-row');
+    row.root.setAttribute('data-rule-id', rule.id);
+    var top = node('div', 'custom-alert-summary');
+    var label = node('label', 'check');
+    row.enabled = node('input');
+    row.enabled.type = 'checkbox';
+    label.appendChild(row.enabled);
+    label.appendChild(node('span', 'box'));
+    row.title = node('span', 'custom-alert-name');
+    label.appendChild(row.title);
+    row.enabled.id = customId(rule.id, 'enabled');
+    row.controls.push(row.enabled);
+    top.appendChild(label);
+    row.root.appendChild(top);
+    row.editor = node('div', 'custom-alert-editor');
+    row.editor.id = customId(rule.id, 'editor');
+    row.editor.hidden = true;
+    function button(suffix, text, parent, action) {
+      var button = node('button', suffix === 'remove' ? 'btn danger' : 'btn', text);
+      button.type = 'button'; button.id = customId(rule.id, suffix);
+      button.addEventListener('click', function () {
+        if (visible && customReady && !row.dead && !row.removing && !row.uncertain) { action(); }
+      });
+      parent.appendChild(button); row.controls.push(button); row[suffix] = button;
+      return button;
+    }
+    button('edit', 'Edit…', top, function () { openEditor(row); });
+    row.edit.setAttribute('aria-controls', row.editor.id);
+    row.edit.setAttribute('aria-expanded', 'false');
+    button('remove', 'Remove', top, function () {
+      var epoch = viewEpoch;
+      WM.confirm('Remove custom alert', 'Remove “' + row.ack.name + '”? This rule cannot be recovered.',
+        {destructive: true}).then(function (ok) {
+        if (!ok || !ownsView(epoch) || row.dead || customRows[rule.id] !== row) { return; }
+        submitCustom(row, 'remove');
+      });
+    });
+    function field(suffix, title, tag) {
+      var wrap = node('div', 'row');
+      var label = node('label', 'lab', title);
+      var input = node(tag || 'input', 'field');
+      input.id = customId(rule.id, suffix);
+      label.setAttribute('for', input.id);
+      input.setAttribute('aria-describedby', customId(rule.id, 'msg'));
+      wrap.appendChild(label); wrap.appendChild(input); row.editor.appendChild(wrap);
+      row.controls.push(input); return input;
+    }
+    row.name = field('name', 'Name');
+    row.search = field('search', 'Search text');
+    row.search.placeholder = 'At least 3 visible characters';
+    row.editor.appendChild(node('p', 'hint', 'Apply an empty search to switch this rule off.'));
+    var styles = node('div', 'custom-alert-style');
+    row.colors = node('div', 'swatches'); row.colors.id = customId(rule.id, 'color');
+    row.colors.setAttribute('role', 'radiogroup');
+    var colorWrap = node('div', 'custom-alert-colour');
+    var colorLabel = node('span', 'lab', 'Colour');
+    colorWrap.appendChild(colorLabel); colorWrap.appendChild(row.colors); styles.appendChild(colorWrap);
+    row.sound = field('sound', 'Sound', 'select');
+    // The existing built-in options are already checked against VALID_SOUNDS.
+    var options = WM.el('alert-event-combat-sound').options;
+    for (var i = 0; i < options.length; i++) {
+      var option = node('option', '', options[i].textContent);
+      option.value = options[i].value; row.sound.appendChild(option);
+    }
+    styles.appendChild(row.sound.parentNode);
+    row.cooldown = field('cooldown', 'Cooldown (seconds)', 'select');
+    for (var n = 0; n <= 120; n++) {
+      var seconds = node('option', '', String(n)); seconds.value = String(n); row.cooldown.appendChild(seconds);
+    }
+    styles.appendChild(row.cooldown.parentNode);
+    row.editor.appendChild(styles);
+    var actions = node('div', 'custom-alert-actions');
+    button('apply', 'Apply', actions, function () { submitCustom(row, 'apply'); });
+    button('cancel', 'Cancel', actions, function () {
+      row.counter++;
+      Object.keys(row.intents).forEach(function (key) { row.intents[key]++; });
+      paintCustom(row); customMessage(row);
+      row.editor.hidden = true; row.edit.setAttribute('aria-expanded', 'false');
+      disclosure = null; row.edit.focus();
+    });
+    button('test', 'Test', actions, function () {
+      var epoch = viewEpoch, serial = ++row.testSerial, counter = row.counter;
+      WM.send('test_custom_alert', rule.id, styleDraft(row)).then(finished, function () { finished(null); });
+      function finished(res) {
+        if (!ownsView(epoch) || row.dead || serial !== row.testSerial || counter !== row.counter) { return; }
+        row.notice = !res ? 'Could not reach the app. Test outcome is unknown.'
+          : res.error || (res.applied ? 'Test played. No settings changed.' : 'No sound or preview played.');
+        // Test never owns the persisted baseline or a mutation failure.
+        customMessage(row);
+      }
+    });
+    row.editor.appendChild(actions); row.root.appendChild(row.editor);
+    row.msg = node('div', 'field-msg'); row.msg.id = customId(rule.id, 'msg');
+    row.msg.setAttribute('role', 'status'); row.msg.hidden = true; row.root.appendChild(row.msg);
+    ['name', 'search'].forEach(function (key) {
+      var input = row[key];
+      input.addEventListener('input', function () {
+        row.counter++; row.intents[key]++; row.notice = ''; customMessage(row);
+      });
+      input.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') { event.preventDefault(); row.apply.click(); }
+      });
+    });
+    row.enabled.addEventListener('change', function () { submitCustom(row, 'enabled'); });
+    row.colors.addEventListener('change', function () { submitCustom(row, 'style', 'color'); });
+    row.sound.addEventListener('change', function () { submitCustom(row, 'style', 'sound'); });
+    row.cooldown.addEventListener('change', function () { submitCustom(row, 'style', 'cooldown_s'); });
+    paintCustom(row);
+    return row;
+  }
+  function labelCustom(row, position) {
+    setText(row.title, row.ack.name);
+    // Position disambiguates duplicate names for assistive technology; stable
+    // IDs, never names/positions, address every bridge operation.
+    var name = row.ack.name + ', custom alert ' + (position + 1);
+    row.enabled.setAttribute('aria-label', 'Enable ' + name);
+    row.colors.setAttribute('aria-label', 'Colour: ' + name);
+    ['edit', 'remove', 'apply', 'cancel', 'test'].forEach(function (key) {
+      row[key].setAttribute('aria-label', row[key].textContent + ': ' + name);
+    });
+    row.root.setAttribute('role', 'group'); row.root.setAttribute('aria-label', name);
+  }
+  function adoptCustom(state, paint) {
+    if (!state || state.revision < committedRevision) { return false; }
+    committedRevision = state.revision; customState = state;
+    var present = Object.create(null);
+    state.rules.forEach(function (rule) {
+      present[rule.id] = true;
+      var row = customRows[rule.id];
+      if (row && !row.dead) {
+        var repaint = paint && !row.busy && !row.uncertain && !row.queue.length && clean(row);
+        row.ack = rule;
+        if (repaint) { paintCustom(row); }
+      }
+    });
+    Object.keys(customRows).forEach(function (id) {
+      if (present[id]) { return; }
+      var row = customRows[id];
+      row.dead = true; row.queue = [];
+      tombstones[id] = committedRevision;
+    });
+    if (paint) { renderCustomRows(); }
+    return true;
+  }
+  function focusCustomNeighbour() {
+    var next = customState.rules[0];
+    if (next && customRows[next.id]) { customRows[next.id].edit.focus(); }
+    else { customAdd.focus(); }
+  }
+  function renderCustomRows() {
+    if (!customList || !customState) { return; }
+    var lostFocus = false;
+    Object.keys(customRows).forEach(function (id) {
+      var row = customRows[id];
+      if (!row.dead) { return; }
+      var recovery = row.recovery;
+      var focused = row.root.contains(document.activeElement)
+        || (recovery && recovery.kind === 'remove' && ownsView(recovery.epoch)
+          && recovery.focused && document.activeElement === recovery.focus);
+      if (row.root.parentNode) { row.root.parentNode.removeChild(row.root); }
+      delete customRows[id];
+      if (disclosure === id) { disclosure = null; }
+      if (focused) { lostFocus = true; }
+    });
+    if (!customState.rules.length) {
+      setText(customList, 'No custom alerts. Add an alert, then apply a search before enabling it.');
+    } else {
+      // Clear only the initial/empty hint, never live editor nodes.
+      if (!customList.querySelectorAll('[data-rule-id]').length) { customList.textContent = ''; }
+      customState.rules.forEach(function (rule, index) {
+        if (tombstones[rule.id] && customState.revision <= tombstones[rule.id]) { return; }
+        var row = customRows[rule.id];
+        if (!row) {
+          row = makeCustomRow(rule); customRows[rule.id] = row; customList.appendChild(row.root);
+        }
+        labelCustom(row, index); customMessage(row);
+      });
+    }
+    updateAdmission();
+    if (lostFocus) { focusCustomNeighbour(); }
+  }
+  function submitCustom(row, kind, field) {
+    if (!visible || !customReady || row.dead || row.removing || row.uncertain) { return; }
+    row.counter++;
+    var intents = {};
+    Object.keys(row.intents).forEach(function (key) {
+      if (kind === 'apply' || key === field || (kind === 'enabled' && key === 'enabled')) { row.intents[key]++; }
+      intents[key] = row.intents[key];
+    });
+    var request = {kind: kind, intents: intents, epoch: viewEpoch,
+      draft: kind === 'apply' ? fullDraft(row, false) : null,
+      style: kind === 'style' ? styleDraft(row) : null, enabled: row.enabled.checked,
+      focused: row.root.contains(document.activeElement)};
+    row.queue.push(request);
+    if (kind === 'remove') { row.removing = true; }
+    row.notice = ''; row.recoveryMessage = ''; updateAdmission();
+    // Disabling a focused Remove can move focus to the document. That is
+    // not the user choosing another control; capture the post-disable owner.
+    request.focus = document.activeElement;
+    drainCustom(row);
+  }
+  function finishDraft(row, request) {
+    paintCustom(row, request.kind, request.intents);
+    customMessage(row);
+  }
+  function drainCustom(row) {
+    if (row.busy || row.uncertain || row.dead || !row.queue.length) { return; }
+    var request = row.queue.shift(), promise;
+    row.busy = request;
+    if (request.kind === 'apply' || request.kind === 'style') {
+      var draft = request.kind === 'apply' ? request.draft : fullDraft(row, true, request.style);
+      promise = WM.send('edit_custom_alert', row.ack.id, draft);
+    } else if (request.kind === 'enabled') {
+      promise = WM.send('set_custom_alert_enabled', row.ack.id, request.enabled);
+    } else {
+      promise = WM.send('remove_custom_alert', row.ack.id);
+    }
+    promise.then(finished, function () { finished(null); });
+    function finished(res) {
+      var owned = ownsView(request.epoch);
+      var restoreFocus = owned && request.kind === 'remove' && request.focused
+        && (row.root.contains(document.activeElement) || document.activeElement === request.focus);
+      // A deleted row's request identity cannot address a later rendered row.
+      if (row.busy !== request) { return; }
+      if (res && res.state) { adoptCustom(res.state, owned); }
+      row.busy = null;
+      if (row.dead) {
+        if (owned) { renderCustomRows(); if (restoreFocus) { focusCustomNeighbour(); } }
+        else if (visible) { readCustom(true); }
+        return;
+      }
+      if (!res) {
+        row.uncertain = true; row.recovery = request;
+        row.recoverySerial = readSerial + 1;
+        // Recovery owns a separate message, not the preceding save error or
+        // a Test result that may arrive while the authority read is pending.
+        row.recoveryMessage = 'Could not reach the app. The outcome is unknown; checking saved settings.';
+      } else {
+        row.removing = false;
+        row.error = res.applied ? '' : res.error || 'That change was not accepted.';
+        row.notice = res.applied && !res.persisted
+          ? 'Applied for this session, but it will not survive a restart.' : '';
+      }
+      // Losing the view defers reconciliation; it does not turn an optimistic
+      // control into a new draft. Later requests of the same kind subsume the
+      // earlier field intents, so retain only one acknowledgment per kind.
+      if (res && !owned) { row.deferredAcks[request.kind] = request; }
+      if (owned) { if (res) { finishDraft(row, request); } else { customMessage(row); } updateAdmission(); }
+      if (visible && (!owned || !res)) { readCustom(true); }
+      drainCustom(row);
+    }
+  }
+  function customHealthText(state) {
+    if (!state.previews_enabled || !state.alerts_enabled) {
+      return 'Custom matching is inactive. Preferences remain editable; turn on Previews and Alerts to watch.';
+    }
+    var reader = state.reader;
+    if (!reader.running || reader.last_error) {
+      return 'Custom alerts are not watching — ' + (reader.last_error
+        || (!reader.gamelogs_folder ? 'set a valid Gamelogs folder below.' : 'the reader is unavailable.'));
+    }
+    if (!reader.characters.length) { return 'Custom alerts are not watching — no characters monitored yet.'; }
+    if (state.matcher.state === 'degraded') {
+      return 'Custom matching failed. Built-in alerts and Fleet remain independent.';
+    }
+    if (!state.rules.some(function (rule) { return rule.enabled; })) { return 'Custom matching is inactive — no custom alerts are enabled.'; }
+    if (state.matcher.state !== 'active') { return 'Custom alerts are waiting for a new gamelog line.'; }
+    return 'Custom matching is active — ' + reader.characters.slice().sort().join(', ') + '.';
+  }
+  function readCustom(controls) {
+    if (!visible) { return; }
+    var epoch = viewEpoch, serial = ++readSerial;
+    if (controls) { controlsReadPending = serial; updateAdmission(); }
+    WM.send('get_custom_alert_state').then(finished, function () { finished(null); });
+    function finished(state) {
+      if (!ownsView(epoch)) { return; }
+      // Health and configuration have separate read owners. A fast health
+      // poll must not strand a slow entry/recovery read, but that hydration
+      // must not replace the newer health (including an unreachable reply).
+      if (serial >= renderedSerial) {
+        renderedSerial = serial;
+        if (!state) { setText(customHealth, 'Could not reach the app. Custom alert health is unknown.'); }
+        else if (state.revision >= committedRevision) { setText(customHealth, customHealthText(state)); }
+      }
+      if (!controls || serial < hydratedSerial) { return; }
+      hydratedSerial = serial;
+      if (serial === controlsReadPending) { controlsReadPending = 0; }
+      if (!state || state.revision < committedRevision) {
+        customReadFailed = true; updateAdmission(); return;
+      }
+      customReady = true;
+      // A read already in flight when a write became uncertain cannot prove
+      // its outcome, even at the same revision. Each recovery fences issuance,
+      // independently of health/hydration completion order and other rows.
+      if (addUncertain && serial >= addRecoverySerial) {
+        addUncertain = false;
+        if (addRecoveryMessage) {
+          setText(customStatus, 'Saved settings reloaded. Review the list before adding another alert.');
+          addRecoveryMessage = false;
+        }
+      }
+      adoptCustom(state, true);
+      Object.keys(customRows).forEach(function (id) {
+        var row = customRows[id];
+        if (row.uncertain && serial >= row.recoverySerial) {
+          row.uncertain = false; row.removing = false;
+          row.recoveryMessage = 'Saved settings reloaded. Review before retrying changes.';
+          finishDraft(row, row.recovery); row.recovery = null;
+        }
+        if (!row.uncertain) {
+          // Reuse field ownership against current authority, not an old result's
+          // state/message/focus. New drafts and newer failures remain theirs.
+          Object.keys(row.deferredAcks).forEach(function (kind) {
+            finishDraft(row, row.deferredAcks[kind]);
+          });
+          row.deferredAcks = {};
+        }
+        drainCustom(row);
+      });
+      updateAdmission();
+    }
+  }
+  if (customRetry) {
+    customRetry.addEventListener('click', function () {
+      // Only a fresh controls read can release uncertainty. Health polling
+      // stays health-only, and Retry never replays the ambiguous mutation.
+      if (visible && !customRecovery.hidden && !customRetry.disabled) { readCustom(true); }
+    });
+  }
+  if (customAdd) {
+    customAdd.addEventListener('click', function () {
+      if (!visible || !customReady || addPending || addUncertain || customState.rules.length >= customState.limit) { return; }
+      var epoch = viewEpoch;
+      addPending = true; addRecoveryMessage = false; updateAdmission(); setText(customStatus, '');
+      var focus = document.activeElement;
+      WM.send('add_custom_alert').then(finished, function () { finished(null); });
+      function finished(res) {
+        var owned = ownsView(epoch);
+        if (res && res.state) { adoptCustom(res.state, owned); }
+        addPending = false; addUncertain = !res;
+        if (!res) { addRecoverySerial = readSerial + 1; }
+        if (owned) {
+          addRecoveryMessage = !res;
+          setText(customStatus, !res ? 'Could not reach the app. Add may have completed; checking saved settings before another Add.'
+            : res.error || (res.applied && !res.persisted ? 'Added for this session, but it will not survive a restart.' : ''));
+          updateAdmission();
+          var row = res && res.applied && customRows[res.rule_id];
+          if (row && !row.dead && document.activeElement === focus) { openEditor(row); }
+        }
+        if (visible && (!owned || !res)) { readCustom(true); }
+      }
+    });
+  }
+
   // The health line and the characters are ALWAYS one sentence, on
   // purpose: a list rendered on its own keeps reading "watching Alice,
   // Bob" after the shared reader has failed, which is a healthy-looking
@@ -631,7 +1107,9 @@
         ? 'Not watching gamelogs — ' + state.last_error
         : 'Not watching gamelogs.';
     }
-    if (!anyEventEnabled(state.alerts)) {
+    var customs = (state.alerts && state.alerts.custom_rules) || [];
+    var customEnabled = customs.some(function (rule) { return rule.enabled; });
+    if (!anyEventEnabled(state.alerts) && !customEnabled) {
       // Ahead of the character list on purpose, and instead of it: with no
       // event enabled it does not matter which clients are online, and
       // naming thirteen of them beside "nothing can alert" would be the
@@ -660,12 +1138,12 @@
   //      happening in game.
   //   3. Otherwise, the health line above (running + the characters).
   //
-  // `controls` is false on the status poll below: re-applying the stored
+  // read(controls) uses false on the status poll below: re-applying the stored
   // spec to the checkboxes, swatches and selects every two seconds would
   // fight a click whose write is still in flight, snapping the control
   // back to the old value for one frame. The poll is about what the app
   // is DOING; the controls belong to whoever last touched them.
-  function render(state, controls) {
+  function render(state) {
     if (offBanner) {
       offBanner.hidden = !!state.previews_enabled;
     }
@@ -677,22 +1155,31 @@
     // is what the user just clicked, and a refused or bridge-failed write
     // reverts it. This must describe what the app is actually doing.
     showDepends(!!(state.alerts && state.alerts.enabled));
-    if (controls) {
-      applyAlerts(state.alerts);
-      // Under `controls` with the rest: the two-second status poll must
-      // not drag the thumb back under a hand that is still moving it.
-      applyVolume(state.alerts);
-    }
   }
 
   function read(controls) {
+    if (!visible) { return; }
+    var epoch = viewEpoch, serial = ++builtinReadSerial;
     WM.send('get_alert_state').then(function (state) {
-      if (!state) { return; }
-      render(state, controls);
+      if (!ownsView(epoch)) { return; }
+      // A faster health poll cannot cancel entry hydration, and that delayed
+      // hydration cannot replace newer health or a newer controls response.
+      if (serial >= builtinRenderedSerial) {
+        builtinRenderedSerial = serial;
+        if (state) { render(state); }
+        else { setText(healthLine, 'Could not reach the app. Alert health is unknown.'); }
+      }
+      if (!controls || serial < builtinHydratedSerial) { return; }
+      builtinHydratedSerial = serial;
+      if (state) {
+        applyAlerts(state.alerts);
+        // Health-only polls must not drag the thumb under a moving hand.
+        applyVolume(state.alerts);
+      }
     });
   }
 
-  function refresh() { read(true); }
+  function refresh() { read(true); readCustom(true); }
 
   // The first setInterval in the page, so it is worth saying why.
   //
@@ -722,7 +1209,7 @@
   var poll = null;
 
   function startPolling() {
-    if (poll === null) { poll = window.setInterval(function () { read(false); },
+    if (poll === null) { poll = window.setInterval(function () { read(false); readCustom(false); },
                                                    STATUS_POLL_MS); }
   }
 
@@ -759,18 +1246,26 @@
   // and stop the moment they open Alerts.
   document.addEventListener('wm:section', function (event) {
     if (event.detail === 'alerts') {
+      if (!visible) { visible = true; viewEpoch++; customReady = false; updateAdmission(); }
       refresh();
       startPolling();
     } else {
-      stopPolling();
+      leaveAlerts();
     }
   });
 
   // A route change leaves Settings without dispatching wm:section at all,
   // so the section listener above never hears about it and the poll would
   // outlive the screen.
+  function leaveAlerts() {
+    if (visible) {
+      viewEpoch++; visible = false; customReady = false;
+      customReadFailed = false; controlsReadPending = 0; updateAdmission();
+    }
+    stopPolling();
+  }
   document.addEventListener('wm:route', function (event) {
-    if (event.detail !== 'settings') { stopPolling(); }
+    if (event.detail !== 'settings') { leaveAlerts(); }
   });
 
   // Belt and braces since round 5's D1, and KEPT deliberately.

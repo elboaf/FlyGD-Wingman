@@ -64,6 +64,7 @@ def test_defaults_are_the_documented_values():
                 "persist_until_selected": True,
                 "volume": 100,
                 "defaults_version": 1,
+                "custom_rules": [],
                 "events": {
                     "combat": {
                         "enabled": True,

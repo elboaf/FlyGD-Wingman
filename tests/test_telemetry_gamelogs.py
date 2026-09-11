@@ -238,6 +238,31 @@ class TestSourceLifecycleAndOrdering:
         stream.scan_once(NOW)
         assert len([e for e in received if isinstance(e, CombatFact)]) == 1
 
+    def test_split_utf8_preserves_semantic_source_text(self, tmp_path):
+        stream = _stream()
+        received = _collect(stream)
+        path = _log(tmp_path, "Alice")
+        line = DAMAGE_LINE.replace("Bob Smith", "Straße").encode("utf-8")
+        cut = line.index(b"\xc3\x9f") + 1
+        try:
+            stream.start(tmp_path)
+            stream.scan_once(NOW)
+            with path.open("ab") as output:
+                output.write(line[:cut])
+            stream.scan_once(NOW)
+            assert not [e for e in received if isinstance(e, CombatFact)]
+            with path.open("ab") as output:
+                output.write(line[cut:])
+            stream.scan_once(NOW)
+            facts = [e for e in received if isinstance(e, CombatFact)]
+            assert [(e.kind, e.source, e.amount) for e in facts] == [
+                ("incoming_damage", "Straße[BURN](Rifter)", 142)
+            ]
+            stream.scan_once(NOW)
+            assert [e for e in received if isinstance(e, CombatFact)] == facts
+        finally:
+            stream.stop()
+
     def test_truncation_retires_old_activates_new(self, tmp_path):
         stream = _stream()
         received = _collect(stream)

@@ -10,9 +10,11 @@ import json
 import re
 import threading
 import weakref
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from . import atomicio, bookmarks, paths
+from .alerts import custom as alert_custom
 from .alerts import patterns as alert_patterns
 from .alerts import state as alert_state
 from .preview import crops as preview_crops
@@ -102,6 +104,7 @@ def _alerts_defaults() -> dict:
         # compare against a retained table of v1 defaults -- building that
         # harness now would be speculative machinery with no caller.
         "defaults_version": 1,
+        "custom_rules": [],
         "events": {
             name: {
                 "enabled": True,
@@ -623,6 +626,53 @@ def _validated_alert_event(raw, defaults: dict) -> dict:
     return event
 
 
+def _validated_custom_style(raw: dict) -> dict:
+    defaults = alert_custom.CustomRule(raw["id"])
+    style = _validated_alert_event(
+        raw,
+        {
+            "color": defaults.color,
+            "sound": defaults.sound,
+            "cooldown_s": defaults.cooldown_s,
+        },
+    )
+    # The existing pattern's $ accepts a trailing newline with match(). Custom
+    # colours must consume the whole value before they can reach the renderer.
+    colour = raw.get("color")
+    if not isinstance(colour, str) or _HEX_RE.fullmatch(colour) is None:
+        style["color"] = defaults.color
+    return style
+
+
+def validated_custom_rules(raw) -> list[dict]:
+    """Rebuild valid siblings in order; only an accepted row claims its ID."""
+    if not isinstance(raw, list):
+        return []
+    rules, seen = [], set()
+    for entry in raw:
+        try:
+            rule = alert_custom.validate_rule(
+                entry, normalize_style=_validated_custom_style, strict_style=False
+            )
+        except alert_custom.RuleValidationError:
+            continue
+        if rule.id in seen:
+            continue
+        rules.append(asdict(rule))
+        seen.add(rule.id)
+        if len(rules) == alert_custom.MAX_CUSTOM_RULES:
+            break
+    return rules
+
+
+def validate_custom_rule_edit(rule_id: str, draft: object) -> alert_custom.CustomRule:
+    """Use the selected identity, refusing styles that would silently change."""
+    raw = {**draft, "id": rule_id} if isinstance(draft, dict) else draft
+    return alert_custom.validate_rule(
+        raw, normalize_style=_validated_custom_style, strict_style=True
+    )
+
+
 def validated_alerts(raw) -> dict:
     """Same two-tier posture as validated_preview: a malformed section
     falls back whole, a malformed event falls back alone."""
@@ -641,6 +691,7 @@ def validated_alerts(raw) -> dict:
     version = raw.get("defaults_version")
     if isinstance(version, int) and not isinstance(version, bool):
         section["defaults_version"] = max(1, version)
+    section["custom_rules"] = validated_custom_rules(raw.get("custom_rules"))
     raw_events = raw.get("events")
     if isinstance(raw_events, dict):
         # Iterating EVENTS rather than raw_events is what drops an unknown
@@ -888,12 +939,18 @@ def load(path: Path | None = None) -> dict:
 _SAVE_LOCK = threading.Lock()
 
 
+@dataclass(frozen=True)
+class _PreparedPreview:
+    section: dict
+    alerts: alert_custom.AlertRuntimeSnapshot
+
+
 class _CommittedPreview:
     """Document-scoped configuration for readers that cannot wait for disk."""
 
     __slots__ = ("__weakref__", "_document", "_snapshot")
 
-    def __init__(self, document: dict, snapshot: dict):
+    def __init__(self, document: dict, snapshot: _PreparedPreview):
         # Dicts cannot be weak-referenced. Retaining this document prevents
         # its identity being reused while a consumer still holds the reader.
         self._document = document
@@ -902,10 +959,13 @@ class _CommittedPreview:
     def get(self, key, default=None):
         # The pump never acquires _SAVE_LOCK. Published storage is detached
         # and never mutated, so copying a captured value needs no lock.
-        return copy.deepcopy(self._snapshot.get(key, default))
+        return copy.deepcopy(self._snapshot.section.get(key, default))
 
     def snapshot(self) -> dict:
-        return copy.deepcopy(self._snapshot)
+        return copy.deepcopy(self._snapshot.section)
+
+    def alerts_snapshot(self) -> alert_custom.AlertRuntimeSnapshot:
+        return self._snapshot.alerts
 
 
 # The consumers, not this index, own reader/document lifetime. A strong-value
@@ -917,6 +977,18 @@ _COMMITTED_PREVIEWS: weakref.WeakValueDictionary[int, _CommittedPreview] = (
 
 def _prepare_preview_snapshot(data: dict) -> dict:
     return copy.deepcopy(data.get("preview", {}))
+
+
+def _prepare_preview_publication(
+    data: dict, previous: _PreparedPreview | None = None
+) -> _PreparedPreview:
+    section = _prepare_preview_snapshot(data)
+    # Initial Preview readers retain their pre-migration values. Normalize only
+    # the separate alert projection; neither projection ever mutates the other.
+    alerts = alert_custom.prepare_alert_snapshot(
+        validated_preview(section), previous.alerts if previous is not None else None
+    )
+    return _PreparedPreview(section=section, alerts=alerts)
 
 
 def committed_preview(data: dict) -> _CommittedPreview:
@@ -931,7 +1003,7 @@ def committed_preview(data: dict) -> _CommittedPreview:
     with _SAVE_LOCK:
         reader = _COMMITTED_PREVIEWS.get(id(data))
         if reader is None:
-            reader = _CommittedPreview(data, _prepare_preview_snapshot(data))
+            reader = _CommittedPreview(data, _prepare_preview_publication(data))
             _COMMITTED_PREVIEWS[id(data)] = reader
         return reader
 
@@ -1042,7 +1114,7 @@ def update(data: dict, path: Path | None = None):
             yield data
             _normalize(data)
             if reader is not None:
-                prepared = _prepare_preview_snapshot(data)
+                prepared = _prepare_preview_publication(data, reader._snapshot)
             _save_locked(data, path)
         except BaseException:
             data.clear()

@@ -34,6 +34,7 @@ from wingman.telemetry.model import (
     RosterSnapshot,
     SourceId,
     SourceLifecycle,
+    StreamBatch,
     StreamHealth,
 )
 
@@ -181,12 +182,25 @@ class FakeStream:
         self.stops = 0
         self.requested = []
         self.subscribers = []
+        self.legacy_subscriptions = []
+        self.batch_subscriptions = []
         self.sources = {}
         self._health = health
         self.start_results = list(start_results or [])
         self.stop_results = list(stop_results or [])
 
     def subscribe(self, callback):
+        self.legacy_subscriptions.append(callback)
+        self.subscribers.append(callback)
+
+        def _unsub():
+            if callback in self.subscribers:
+                self.subscribers.remove(callback)
+
+        return _unsub
+
+    def subscribe_batches(self, callback):
+        self.batch_subscriptions.append(callback)
         self.subscribers.append(callback)
 
         def _unsub():
@@ -222,8 +236,15 @@ class FakeStream:
         return self._health
 
     def publish(self, event):
+        self.publish_batch(StreamBatch(events=(event,)))
+
+    def publish_batch(self, batch):
         for callback in list(self.subscribers):
-            callback(event)
+            if callback in self.batch_subscriptions:
+                callback(batch)
+            else:
+                for event in batch.events:
+                    callback(event)
 
 
 class RecordingMetrics:
@@ -271,14 +292,20 @@ class FakePreviewHost:
 class FakePolicy:
     def __init__(self, *, raises=False):
         self.calls = []
+        self.custom_calls = []
         self.raises = raises
         self.resets = 0
+        self.forgotten_custom_characters = []
 
     def reset(self):
         self.resets += 1
 
-    def handle(self, events, now):
+    def forget_custom_character(self, character):
+        self.forgotten_custom_characters.append(character)
+
+    def handle(self, events, now, *, custom_matches=()):
         self.calls.append((list(events), now))
+        self.custom_calls.append(custom_matches)
         if self.raises:
             raise RuntimeError("policy exploded")
         return []
@@ -1044,6 +1071,210 @@ class TestSequencing:
         ]
         assert [env.payload for env in roster_envelopes] == [current]
         assert h.stream.requested == ["Alice"]
+
+
+def _custom_policy_harness(tmp_path):
+    from wingman import settings
+    from wingman.alerts.custom import prepare_alert_snapshot, rule_is_current
+    from wingman.alerts.service import AlertPolicy
+
+    snapshot = prepare_alert_snapshot(
+        settings.validated_preview(
+            {
+                "enabled": True,
+                "alerts": {
+                    "enabled": True,
+                    "custom_rules": [
+                        {
+                            "id": rule_id,
+                            "search": "fleet invite",
+                            "enabled": True,
+                            "sound": "obey",
+                        }
+                        for rule_id in ("r1", "r2")
+                    ],
+                    "events": {"warp_scramble": {"sound": "system-fault"}},
+                },
+            }
+        )
+    )
+    sounds, visuals = [], []
+    policy = AlertPolicy(
+        dict,
+        lambda *args: sounds.append(args),
+        lambda: None,
+        lambda *args: visuals.append(args),
+        runtime_snapshot=lambda: snapshot,
+        custom_current=lambda *tokens: rule_is_current(snapshot, *tokens),
+    )
+    h = _harness(
+        tmp_path,
+        preview=True,
+        alerts=True,
+        fleet=False,
+        alert_policy=policy,
+        custom_snapshot=lambda: snapshot,
+    )
+    h.sounds, h.visuals, h.alert_snapshot = sounds, visuals, snapshot
+    h.coordinator.reconcile()
+    h.pump()
+    return h
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_same_line_builtin_and_multiple_custom_matches_share_one_sound(
+    tmp_path, reverse
+):
+    from tests.test_custom_alert_admission import _match
+
+    h = _custom_policy_harness(tmp_path)
+    try:
+        matches = tuple(_match(h.alert_snapshot, index=i) for i in range(2))
+        if reverse:
+            matches = tuple(reversed(matches))
+        h.stream.publish_batch(
+            StreamBatch(
+                (
+                    _lifecycle("Alice"),
+                    _fact("Alice", "incoming_scram", source="Player"),
+                ),
+                matches,
+            )
+        )
+        h.pump()
+        assert h.sounds == [("system-fault", 100)]
+        assert [(char, kind) for char, kind, _ in h.visuals] == [
+            ("Alice", "warp_scramble"),
+            ("Alice", "custom"),
+            ("Alice", "custom"),
+        ]
+    finally:
+        h.coordinator.stop()
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_cross_character_custom_and_scram_arbitrate_regardless_of_ingress_order(
+    tmp_path, reverse
+):
+    from tests.test_custom_alert_admission import _match
+
+    h = _custom_policy_harness(tmp_path)
+    try:
+        batches = [
+            StreamBatch((_lifecycle("Alice"),), (_match(h.alert_snapshot),)),
+            StreamBatch((_fact("Bob", "incoming_scram", source="Player"),)),
+        ]
+        if reverse:
+            batches.reverse()
+        for batch in batches:
+            h.stream.publish_batch(batch)
+        h.pump()
+        assert h.sounds == [("system-fault", 100)]
+        assert {(char, kind) for char, kind, _ in h.visuals} == {
+            ("Alice", "custom"),
+            ("Bob", "warp_scramble"),
+        }
+    finally:
+        h.coordinator.stop()
+
+
+def test_source_retirement_forgets_only_that_characters_custom_cooldowns(tmp_path):
+    from dataclasses import replace
+
+    from tests.test_custom_alert_admission import _match
+
+    h = _custom_policy_harness(tmp_path)
+    try:
+        alice = _match(h.alert_snapshot)
+        bob = _match(h.alert_snapshot, "Bob")
+        facts = tuple(
+            _fact(char, "incoming_damage", source="Player") for char in ("Alice", "Bob")
+        )
+        h.stream.publish_batch(
+            StreamBatch((_lifecycle("Alice"), _lifecycle("Bob"), *facts), (alice, bob))
+        )
+        h.pump()
+        h.visuals.clear()
+        h.sounds.clear()
+        h.mono[0] += 0.1
+        # Source republication (e.g. a roster refresh) is not source retirement.
+        h.stream.publish_batch(StreamBatch((_lifecycle("Alice"), *facts), (alice, bob)))
+        h.pump()
+        assert h.visuals == []
+        h.stream.publish(_lifecycle("Alice", active=False, available=False))
+        h.pump()
+        assert all(key[0] == "Bob" for key in h.policy._custom_cooldowns)
+        h.stream.publish_batch(
+            StreamBatch(
+                (_lifecycle("Alice", generation=2), *facts),
+                (replace(alice, source_generation=2), bob),
+            )
+        )
+        h.pump()
+        assert [(char, kind) for char, kind, _ in h.visuals] == [("Alice", "custom")]
+        assert h.sounds == [("obey", 100)]
+    finally:
+        h.coordinator.stop()
+
+
+def test_source_retirement_uses_explicit_policy_seam_without_global_reset(tmp_path):
+    from tests.test_custom_alert_admission import _snapshot
+
+    policy = FakePolicy()
+    h = _harness(
+        tmp_path,
+        preview=True,
+        alerts=True,
+        alert_policy=policy,
+        custom_snapshot=_snapshot,
+    )
+    try:
+        h.coordinator.reconcile()
+        h.pump()
+        resets = policy.resets
+        h.stream.publish(_lifecycle("Alice"))
+        h.stream.publish(_lifecycle("Bob"))
+        h.stream.publish(_lifecycle("Alice", active=False, available=False))
+        h.pump()
+        assert policy.forgotten_custom_characters == ["Alice"]
+        assert policy.resets == resets
+        assert h.metrics.envelopes[-1].payload == _lifecycle(
+            "Alice", active=False, available=False
+        )
+    finally:
+        h.coordinator.stop()
+
+
+def test_custom_retirement_failure_does_not_drop_metrics_or_later_alerts(
+    tmp_path, monkeypatch, caplog
+):
+    from tests.test_custom_alert_admission import _snapshot
+
+    policy = FakePolicy()
+
+    def fail(_character):
+        raise RuntimeError("retirement failed")
+
+    monkeypatch.setattr(policy, "forget_custom_character", fail)
+    h = _harness(
+        tmp_path,
+        preview=True,
+        alerts=True,
+        alert_policy=policy,
+        custom_snapshot=_snapshot,
+    )
+    try:
+        h.coordinator.reconcile()
+        h.pump()
+        lifecycle = _lifecycle("Alice", active=False, available=False)
+        fact = _fact("Bob", "incoming_damage", source="Player")
+        h.stream.publish_batch(StreamBatch((lifecycle, fact)))
+        h.pump()
+        assert [e.payload for e in h.metrics.envelopes][-2:] == [lifecycle, fact]
+        assert policy.calls[-1][0][0].character == "Bob"
+        assert "retiring a custom source" in caplog.text
+    finally:
+        h.coordinator.stop()
 
 
 class TestConsumerFailureIsolation:

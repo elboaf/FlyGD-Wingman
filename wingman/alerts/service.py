@@ -7,12 +7,25 @@ to filter, suppress, sound, and flash it.
 """
 
 import logging
+from collections.abc import Callable, Iterator
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .. import paths
+from ..telemetry.model import CustomMatch
 from . import patterns, sound
+from .custom import AlertRuntimeSnapshot, presentation_spec, rule_is_current
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _PlannedAlert:
+    character: str
+    event: str
+    spec: dict
+    priority: tuple[int, int, str]
+    match: CustomMatch | None = None
 
 
 class AlertPolicy:
@@ -23,17 +36,58 @@ class AlertPolicy:
     would make policy decisions against stale state.
     """
 
-    def __init__(self, config, sound, focused, on_alert):
+    def __init__(
+        self,
+        config,
+        sound,
+        focused,
+        on_alert,
+        *,
+        runtime_snapshot: Callable[[], AlertRuntimeSnapshot] | None = None,
+        custom_current: Callable[[str, int, int], bool] | None = None,
+    ):
         self._config = config
         self._sound = sound
         self._focused = focused
         self._on_alert = on_alert
+        self._runtime_snapshot = runtime_snapshot
+        self._custom_current = custom_current
         # (character, event) -> monotonic time it last dispatched.
         self._cooldowns = {}
+        self._custom_cooldowns: dict[tuple[str, str, int], float] = {}
 
     def reset(self) -> None:
         """Start a fresh lifecycle generation with no inherited cooldowns."""
         self._cooldowns.clear()
+        self._custom_cooldowns.clear()
+
+    def forget_custom_character(self, character: str) -> None:
+        """Retiring a log source must not reset another pilot or built-in state."""
+        self._custom_cooldowns = {
+            key: last
+            for key, last in self._custom_cooldowns.items()
+            if key[0] != character
+        }
+
+    def _prune_custom_cooldowns(self, snapshot: AlertRuntimeSnapshot) -> None:
+        current = {(row.rule.id, row.generation) for row in snapshot.custom_rules}
+        self._custom_cooldowns = {
+            key: last
+            for key, last in self._custom_cooldowns.items()
+            if key[1:] in current
+        }
+
+    def _custom_is_current(self, match: CustomMatch) -> bool:
+        if self._runtime_snapshot is None or self._custom_current is None:
+            return False
+        return rule_is_current(
+            self._runtime_snapshot(),
+            match.rule_id,
+            match.generation,
+            match.activation_epoch,
+        ) and self._custom_current(
+            match.rule_id, match.generation, match.activation_epoch
+        )
 
     def _focused_character(self):
         """Read focus without allowing a secondary suppression to lose a poll."""
@@ -45,16 +99,32 @@ class AlertPolicy:
             logger.debug("Could not read the focused client", exc_info=True)
             return None
 
-    def handle(self, events, now: float) -> list[tuple[str, str, str]]:
-        """Filter and dispatch one ordered coordinator batch."""
-        cfg = self._config() or {}
-        table = cfg.get("events") or {}
-        pve = bool(cfg.get("pve_filter"))
-        # Absent means full volume for settings documents predating the key.
-        volume = cfg.get("volume", 100)
+    def handle(
+        self, events, now: float, *, custom_matches: tuple[CustomMatch, ...] = ()
+    ) -> list[tuple[str, str, str]]:
+        """Plan every eligible visual, then sound one winner across all pilots."""
+        snapshot = self._runtime_snapshot() if self._runtime_snapshot else None
+        if snapshot is None:
+            cfg = self._config() or {}
+            table = cfg.get("events") or {}
+            pve = bool(cfg.get("pve_filter"))
+            persist = bool(cfg.get("persist_until_selected"))
+            # Absent means full volume for settings documents predating the key.
+            volume = cfg.get("volume", 100)
+        else:
+            # One committed projection supplies both families, never a second
+            # config read that could observe a different settings transaction.
+            table = {}
+            for builtin in snapshot.builtins:
+                spec = asdict(builtin)
+                table[spec.pop("event")] = spec
+            pve = snapshot.pve_filter
+            persist = snapshot.persist_until_selected
+            volume = snapshot.volume
+            self._prune_custom_cooldowns(snapshot)
         focused = self._focused_character()
-        dispatched = []
-        for event in events:
+        planned = []
+        for order, event in enumerate(events):
             spec = table.get(event.event)
             if not spec or not spec.get("enabled"):
                 continue
@@ -69,22 +139,87 @@ class AlertPolicy:
             if last is not None and now - last < spec.get("cooldown_s", 0):
                 continue
             self._cooldowns[key] = now
-            sound_id = spec.get("sound") or "none"
-            silent = event.character == focused
-            if sound_id != "none" and not silent:
-                self._sound(sound_id, volume)
-
             payload = dict(spec)
-            persist = bool(cfg.get("persist_until_selected"))
-            if silent:
-                # Sound and persistence share one focus observation. Reading
-                # focus again on Preview's pump could produce no sound plus a
-                # persistent ring if the client changed in between.
-                persist = False
-            payload["persist_until_selected"] = persist
-            self._on_alert(event.character, event.event, payload)
-            dispatched.append((event.character, event.event, spec.get("color")))
+            # Sound and persistence share one focus observation. Reading focus
+            # on the pump again could yield silence plus a persistent ring.
+            payload["persist_until_selected"] = persist and event.character != focused
+            planned.append(
+                _PlannedAlert(
+                    event.character,
+                    event.event,
+                    payload,
+                    (-patterns.SEVERITY[event.event], order, ""),
+                )
+            )
+        if snapshot is not None and self._custom_current is not None:
+            planned.extend(self._plan_custom(custom_matches, snapshot, focused, now))
+
+        dispatched = []
+        audible = []
+        for alert in planned:
+            if alert.match is not None:
+                # No effect callbacks between this admission check, cooldown
+                # consumption and host delivery. The host checks again at arm.
+                if not self._custom_is_current(alert.match):
+                    continue
+                match = alert.match
+                self._custom_cooldowns[
+                    (match.character, match.rule_id, match.generation)
+                ] = now
+            self._on_alert(alert.character, alert.event, alert.spec)
+            dispatched.append((alert.character, alert.event, alert.spec.get("color")))
+            if (
+                volume > 0
+                and alert.character != focused
+                and (alert.spec.get("sound") or "none") != "none"
+            ):
+                audible.append(alert)
+        for alert in sorted(audible, key=lambda item: item.priority):
+            # An edit/close during visual delivery may retire the first winner.
+            # Try the next candidate; never play a stale cue or queue losers.
+            if alert.match is not None and not self._custom_is_current(alert.match):
+                continue
+            self._sound(alert.spec["sound"], volume)
+            break
         return dispatched
+
+    def _plan_custom(
+        self,
+        matches: tuple[CustomMatch, ...],
+        snapshot: AlertRuntimeSnapshot,
+        focused: str | None,
+        now: float,
+    ) -> Iterator[_PlannedAlert]:
+        rows = {row.rule.id: row for row in snapshot.executable}
+        for match in matches:
+            row = rows.get(match.rule_id)
+            if (
+                row is None
+                or row.generation != match.generation
+                or snapshot.activation_epoch != match.activation_epoch
+            ):
+                continue
+            last = self._custom_cooldowns.get(
+                (match.character, match.rule_id, match.generation)
+            )
+            if last is not None and now - last < row.rule.cooldown_s:
+                continue
+            spec = presentation_spec(
+                row.rule,
+                persist=snapshot.persist_until_selected and match.character != focused,
+            )
+            spec.update(
+                custom_rule_id=match.rule_id,
+                custom_generation=match.generation,
+                custom_activation_epoch=match.activation_epoch,
+            )
+            yield _PlannedAlert(
+                match.character,
+                "custom",
+                spec,
+                (-patterns.SEVERITY["custom"], row.position, row.rule.id),
+                match,
+            )
 
 
 def sound_path(sound_id: str) -> Path | None:

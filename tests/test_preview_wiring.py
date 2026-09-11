@@ -308,11 +308,13 @@ def test_build_preview_host_retains_lazy_crop_store_and_publishes_commits(
 ):
     from tests.test_preview_cropcontroller import DEFINITION
     from wingman import __main__ as main_mod
+    from wingman import settings
     from wingman.preview.crops import serialize
 
     monkeypatch.setattr(main_mod.sys, "platform", "win32")
     api = make_api(tmp_path)
-    api._state.settings["preview"] = {"crops": serialize({"Alice": DEFINITION})}
+    with settings.update(api._state.settings) as document:
+        document["preview"] = {"crops": serialize({"Alice": DEFINITION})}
     box = {}
     host = main_mod.build_preview_host(api._state, box)
     assert host._crop_store is not None

@@ -58,17 +58,28 @@ Injected seams for testing
 
 from __future__ import annotations
 
+import codecs
 import contextlib
 import datetime
 import logging
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from .. import combatlog
+from ..alerts import custom
 from . import parsing
-from .model import CombatFact, SourceId, SourceLifecycle, StreamHealth
+from .model import (
+    CombatFact,
+    CustomMatch,
+    CustomMatcherHealth,
+    SourceId,
+    SourceLifecycle,
+    StreamBatch,
+    StreamHealth,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +91,33 @@ MAX_AGE = datetime.timedelta(hours=12)
 
 # Matches combatlog.MAX_FILES.
 MAX_FILES = 64
+_CUSTOM_PENDING_MAX = MAX_FILES * custom.MAX_CUSTOM_RULES
+
+# Both working sets use the same bounded merge. Poll-local entries have owner
+# zero until enqueue assigns the semantic batch that must precede delivery.
+_CustomPending = dict[tuple[str, str, int], tuple[int, CustomMatch]]
+
+
+@dataclass(frozen=True)
+class _QueuedBatch:
+    number: int
+    events: tuple[SourceLifecycle | CombatFact, ...]
+
+
+def _stage_custom(pending: _CustomPending, number: int, match: CustomMatch) -> None:
+    """Replace repeats and obsolete tokens, but never displace unrelated keys."""
+    key = (match.character, match.rule_id, match.generation)
+    token = (match.activation_epoch, match.generation, match.source_generation)
+    for old_key, (_, old) in pending.items():
+        if old_key[:2] != key[:2]:
+            continue
+        if token < (old.activation_epoch, old.generation, old.source_generation):
+            return
+        del pending[old_key]
+        break
+    if len(pending) < _CUSTOM_PENDING_MAX:
+        pending[key] = (number, match)
+
 
 # Worker cadence.
 POLL_INTERVAL_S = 1.0
@@ -138,7 +176,15 @@ def _default_get_file_size(path: Path) -> int:
 class _Tracked:
     """Per-character file cursor and partial-line buffer."""
 
-    __slots__ = ("character", "generation", "partial", "path", "position", "source_id")
+    __slots__ = (
+        "character",
+        "decoder",
+        "generation",
+        "partial",
+        "path",
+        "position",
+        "source_id",
+    )
 
     def __init__(
         self,
@@ -154,13 +200,16 @@ class _Tracked:
         self.source_id = source_id
         self.generation = generation
         self.partial = ""
+        self.decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
 
 class GameLogStream:
     """Shared, source-aware gamelog stream.
 
     Public interface:
-        subscribe(callback) -> unsubscribe callable
+        subscribe(callback) -> unsubscribe callable (semantic events only)
+        subscribe_batches(callback) -> unsubscribe callable
+        custom_health() -> CustomMatcherHealth
         start(folder)
         request_source(character)
         scan_once(now_utc)   -- deterministic test seam
@@ -173,6 +222,11 @@ class GameLogStream:
     def __init__(
         self,
         *,
+        custom_snapshot: Callable[[], custom.AlertRuntimeSnapshot] | None = None,
+        custom_matcher: Callable[
+            [str, custom.AlertRuntimeSnapshot], tuple[custom.RuntimeRule, ...]
+        ] = custom.match_line,
+        on_matcher_health: Callable[[CustomMatcherHealth], None] | None = None,
         _thread_factory: Callable[..., threading.Thread] = _real_thread_factory,
         _clock: Callable[[], float] = time.monotonic,
         _utc_now: Callable[[], datetime.datetime] | None = None,
@@ -182,6 +236,9 @@ class GameLogStream:
         ] = _default_read_header,
         _get_file_size: Callable[[Path], int] = _default_get_file_size,
     ) -> None:
+        self._custom_snapshot = custom_snapshot
+        self._custom_matcher = custom_matcher
+        self._on_matcher_health = on_matcher_health
         self._thread_factory = _thread_factory
         self._clock = _clock
         self._utc_now = _utc_now or (lambda: datetime.datetime.now(tz=UTC))
@@ -192,6 +249,7 @@ class GameLogStream:
         self._folder: Path | None = None
         self._tracked: dict[str, _Tracked] = {}
         self._subscribers: list[Callable] = []
+        self._batch_subscribers: list[Callable[[StreamBatch], None]] = []
         self._next_generation = 1
         self._seen_first_scan = False
         self._known_paths: set[str] = set()
@@ -212,13 +270,21 @@ class GameLogStream:
         # purpose: it is always released before delivery, so a reentrant
         # subscriber callback acquires it fresh instead of deadlocking.
         self._op_lock = threading.Lock()
-        # _lock: guards ALL mutable state.  Never call subscribers under it.
+        # _lock: guards reader state and subscriptions. Never call subscribers under it.
         self._lock = threading.Lock()
         # _dispatch_queue + _dispatch_lock: serialized event delivery.
         # Each operation appends an ordered batch; the single drainer
         # delivers them in FIFO order outside _lock and _dispatch_lock.
-        self._dispatch_queue: list[list[SourceLifecycle | CombatFact]] = []
+        self._dispatch_queue: list[_QueuedBatch] = []
         self._dispatch_lock = threading.Lock()
+        self._next_batch_number = 1
+        self._pending_custom: _CustomPending = {}
+        self._custom_delivery_epoch = 0
+        # Outcome and notification are separate: a blocked drainer must not
+        # conceal a new failure from queries or replay an obsolete success.
+        self._matcher_outcome: CustomMatcherHealth | None = None
+        self._pending_matcher_health: CustomMatcherHealth | None = None
+        self._notified_matcher_health: CustomMatcherHealth | None = None
         # _draining: identifies the one thread that owns delivery.
         self._draining = False
         # _lifecycle_lock: makes start/stop atomic.
@@ -238,6 +304,19 @@ class GameLogStream:
         def _unsub() -> None:
             with self._lock, contextlib.suppress(ValueError):
                 self._subscribers.remove(callback)
+
+        return _unsub
+
+    def subscribe_batches(
+        self, callback: Callable[[StreamBatch], None]
+    ) -> Callable[[], None]:
+        """Receive ordered semantic siblings and bounded custom matches together."""
+        with self._lock:
+            self._batch_subscribers.append(callback)
+
+        def _unsub() -> None:
+            with self._lock, contextlib.suppress(ValueError):
+                self._batch_subscribers.remove(callback)
 
         return _unsub
 
@@ -307,9 +386,13 @@ class GameLogStream:
                 worker = self._worker
                 stop_ev = self._stop_event
                 self._started = False
+                stop_ev.set()
+            with self._dispatch_lock:
+                self._custom_delivery_epoch += 1
+                self._pending_custom.clear()
+                self._pending_matcher_health = None
             if worker is None:
                 return True
-            stop_ev.set()
             worker.join(timeout)
             with self._lock:
                 if worker.is_alive():
@@ -401,14 +484,86 @@ class GameLogStream:
             return StreamHealth(state="active", detail=f"{tracked_count} character(s)")
         return StreamHealth(state="running")
 
+    def custom_health(self) -> CustomMatcherHealth:
+        """Project committed activation without mistaking a save for recovery."""
+        if self._custom_snapshot is None:
+            return CustomMatcherHealth("inactive")
+        snapshot = self._custom_snapshot()
+        with self._dispatch_lock:
+            outcome = self._matcher_outcome
+        if not snapshot.executable:
+            return CustomMatcherHealth(
+                "inactive", snapshot.rules_revision, snapshot.activation_epoch
+            )
+        if outcome is not None and (
+            outcome.state == "degraded"
+            or (
+                outcome.rules_revision == snapshot.rules_revision
+                and outcome.activation_epoch == snapshot.activation_epoch
+            )
+        ):
+            return outcome
+        return CustomMatcherHealth(
+            "waiting", snapshot.rules_revision, snapshot.activation_epoch
+        )
+
+    def _record_matcher_outcome(
+        self, outcome: CustomMatcherHealth, stop_event: threading.Event
+    ) -> None:
+        with self._dispatch_lock:
+            # Read after lock admission: a commit during contention must not
+            # let an old success erase degradation. This accessor is the
+            # lock-free committed projection, never settings I/O or delivery.
+            current = self._custom_snapshot()
+            if (
+                stop_event.is_set()
+                or outcome.rules_revision != current.rules_revision
+                or outcome.activation_epoch != current.activation_epoch
+            ):
+                return
+            if outcome != self._matcher_outcome:
+                self._matcher_outcome = outcome
+                self._pending_matcher_health = outcome
+
+    def _deliver_matcher_health(self) -> None:
+        with self._dispatch_lock:
+            pending = self._pending_matcher_health
+            self._pending_matcher_health = None
+            delivery_epoch = self._custom_delivery_epoch
+        if pending is None:
+            return
+        health = self.custom_health()
+        with self._dispatch_lock:
+            if (
+                delivery_epoch != self._custom_delivery_epoch
+                or health == self._notified_matcher_health
+            ):
+                return
+            self._notified_matcher_health = health
+        if self._on_matcher_health is not None:
+            try:
+                self._on_matcher_health(health)
+            except Exception:  # noqa: BLE001 — isolate callbacks without exposing private text.
+                logger.warning("Custom matcher health callback failed.")
+
     # ------------------------------------------------------------------
     # Dispatch queue
     # ------------------------------------------------------------------
 
-    def _enqueue(self, batch: list[SourceLifecycle | CombatFact]) -> None:
-        if batch:
-            with self._dispatch_lock:
-                self._dispatch_queue.append(batch)
+    def _enqueue(
+        self,
+        batch: list[SourceLifecycle | CombatFact],
+        pending: _CustomPending | None = None,
+        stop_event: threading.Event | None = None,
+    ) -> None:
+        with self._dispatch_lock:
+            number = self._next_batch_number
+            self._next_batch_number += 1
+            if pending and stop_event is not None and not stop_event.is_set():
+                for _, match in pending.values():
+                    _stage_custom(self._pending_custom, number, match)
+            if batch:
+                self._dispatch_queue.append(_QueuedBatch(number, tuple(batch)))
 
     def _drain_queue(self) -> None:
         """Deliver queued batches FIFO if we own delivery, else return.
@@ -430,22 +585,59 @@ class GameLogStream:
         try:
             while True:
                 with self._dispatch_lock:
-                    if not self._dispatch_queue:
+                    if (
+                        not self._dispatch_queue
+                        and not self._pending_custom
+                        and self._pending_matcher_health is None
+                    ):
                         # Emptiness check and ownership release in one hold:
                         # an appender either appends before this check (we
                         # take it) or claims ownership after it.
                         self._draining = False
                         owned = False
                         return
-                    batch = self._dispatch_queue.pop(0)
+                    if self._dispatch_queue:
+                        queued = self._dispatch_queue.pop(0)
+                    elif self._pending_custom:
+                        # Custom-only polls need no queued empty tuple apiece.
+                        # At FIFO exhaustion all semantic siblings have passed;
+                        # materialize their empty batch only when we drain it.
+                        queued = _QueuedBatch(self._next_batch_number - 1, ())
+                    else:
+                        queued = None
+                    custom_matches = tuple(
+                        match
+                        for owner, match in self._pending_custom.values()
+                        if queued is not None and owner <= queued.number
+                    )
+                    for match in custom_matches:
+                        del self._pending_custom[
+                            (match.character, match.rule_id, match.generation)
+                        ]
+                    delivery_epoch = self._custom_delivery_epoch
+                if queued is None:
+                    self._deliver_matcher_health()
+                    continue
                 with self._lock:
                     subs = list(self._subscribers)
-                for event in batch:
+                    batch_subs = list(self._batch_subscribers)
+                for event in queued.events:
                     for callback in subs:
                         try:
                             callback(event)
                         except Exception:
                             logger.exception("Subscriber raised during dispatch")
+                for callback in batch_subs:
+                    # A legacy callback may stop/restart reentrantly. Semantic
+                    # delivery is retained, but extracted custom work is fenced.
+                    with self._dispatch_lock:
+                        if delivery_epoch != self._custom_delivery_epoch:
+                            custom_matches = ()
+                    try:
+                        callback(StreamBatch(queued.events, custom_matches))
+                    except Exception:  # noqa: BLE001 — isolate callbacks without exposing private text.
+                        logger.warning("Stream batch subscriber failed.")
+                self._deliver_matcher_health()
         finally:
             # Only fires when delivery escaped abnormally; the normal exit
             # already released ownership under the lock.  Guarded by `owned`
@@ -646,12 +838,14 @@ class GameLogStream:
         """
         with self._lock:
             snapshot = list(self._tracked.items())
+            stop_event = self._stop_event
 
         all_events: list[SourceLifecycle | CombatFact] = []
+        pending: _CustomPending = {}
         poll_errors: dict[str, str] = {}
 
         for character, tracked in snapshot:
-            evts, err = self._read_source(character, tracked)
+            evts, err = self._read_source(character, tracked, pending, stop_event)
             all_events.extend(evts)
             if err:
                 poll_errors[character] = err
@@ -661,10 +855,14 @@ class GameLogStream:
             if not poll_errors:
                 self._last_successful_poll_mono = self._clock()
 
-        self._enqueue(all_events)
+        self._enqueue(all_events, pending, stop_event)
 
     def _read_source(
-        self, character: str, tracked: _Tracked
+        self,
+        character: str,
+        tracked: _Tracked,
+        pending: _CustomPending,
+        stop_event: threading.Event,
     ) -> tuple[list[SourceLifecycle | CombatFact], str | None]:
         """Read new data from one tracked file."""
         events: list[SourceLifecycle | CombatFact] = []
@@ -685,6 +883,7 @@ class GameLogStream:
             # zero would replay historical alerts; only later appends count.
             tracked.position = size
             tracked.partial = ""
+            tracked.decoder.reset()
             events.append(
                 SourceLifecycle(
                     character=character,
@@ -715,7 +914,9 @@ class GameLogStream:
         except OSError as exc:
             return events, f"read: {exc}"
 
-        text = tracked.partial + chunk.decode("utf-8", errors="replace")
+        # A poll can end inside a valid code point. EOF is only a pause in a
+        # live source, so retain decoder bytes until another append or reset.
+        text = tracked.partial + tracked.decoder.decode(chunk)
         lines = text.split("\n")
         tracked.partial = lines.pop()
 
@@ -745,5 +946,53 @@ class GameLogStream:
                         source=fact.source,
                     )
                 )
+            self._match_custom(line, character, gen, sid, pending, stop_event)
 
         return events, None
+
+    def _match_custom(
+        self,
+        line: str,
+        character: str,
+        generation: int,
+        source_id: SourceId,
+        pending: _CustomPending,
+        stop_event: threading.Event,
+    ) -> None:
+        if self._custom_snapshot is None or stop_event.is_set():
+            return
+        snapshot = self._custom_snapshot()
+        if not snapshot.executable:
+            return
+        try:
+            matches = self._custom_matcher(line, snapshot)
+        except Exception:  # noqa: BLE001 — a matcher failure must never interrupt semantic parsing.
+            outcome = CustomMatcherHealth(
+                "degraded",
+                snapshot.rules_revision,
+                snapshot.activation_epoch,
+                "Custom matching failed.",
+            )
+            matches = ()
+        else:
+            outcome = CustomMatcherHealth(
+                "active", snapshot.rules_revision, snapshot.activation_epoch
+            )
+        self._record_matcher_outcome(outcome, stop_event)
+        current = self._custom_snapshot()
+        for row in matches:
+            if custom.rule_is_current(
+                current, row.rule.id, row.generation, snapshot.activation_epoch
+            ):
+                _stage_custom(
+                    pending,
+                    0,
+                    CustomMatch(
+                        character=character,
+                        source_generation=generation,
+                        source_id=source_id,
+                        rule_id=row.rule.id,
+                        generation=row.generation,
+                        activation_epoch=snapshot.activation_epoch,
+                    ),
+                )
