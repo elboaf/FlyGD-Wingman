@@ -9,6 +9,7 @@ const {performance} = require('node:perf_hooks');
 const page = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const productionModule = process.argv[3];
 const pythonExe = process.argv[4];
+const importReplies = require('./formations_import_replies.json');
 
 async function runScenario(request) {
 const scenario = request.scenario;
@@ -74,6 +75,22 @@ document.createElementNS = (ns, tag) => new Element(tag);
 const window = new Element('window');
 const reads = [], saves = [], confirms = [], exportRequests = [], clipboardWrites = [];
 const parses = [], validations = [];
+// Finite authored exchanges assert exact requests even for rejected promises.
+// Keep parser/preparation integration in the five vertical witnesses. Encoding
+// tests opt into real transport independently of this default selection.
+const realImport = !!(request.payload && request.payload.real_import) ||
+  ['paste-batch', 'paste-conflict', 'paste-unicode-name', 'paste-range-cycles',
+    'paste-invalid-text'].includes(scenario);
+const expectedImports = importReplies.scenarios[scenario] || [];
+let importCall = 0;
+function checkImportRequest(method, request) {
+  const key = expectedImports[importCall++];
+  assert.ok(key, 'Unexpected import request for ' + scenario + ': ' + method);
+  request.exchange = importReplies.exchanges[key];
+  assert.equal(method, request.exchange.method, 'import request method/order');
+  assert.deepEqual(JSON.parse(JSON.stringify(request.args)), request.exchange.args,
+    'exact import request arguments: ' + scenario + ' / ' + key);
+}
 function deferred(args) {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -102,8 +119,10 @@ const WM = {
     if (method === 'eve_settings_formations') reads.push(request);
     else if (method === 'eve_settings_save_formations') saves.push(request);
     else if (method === 'eve_settings_export_formations') exportRequests.push(request);
-    else if (method === 'eve_settings_parse_formations') parses.push(request);
-    else if (method === 'eve_settings_validate_formation_import') validations.push(request);
+    else if (method === 'eve_settings_parse_formations' || method === 'eve_settings_validate_formation_import') {
+      if (importReplies.scenarios[scenario]) checkImportRequest(method, request);
+      (method === 'eve_settings_parse_formations' ? parses : validations).push(request);
+    }
     else assert.fail('Unexpected bridge call: ' + method);
     return request.promise;
   },
@@ -341,11 +360,22 @@ function pythonReply(method, args) {
   encodingBoundaries.push(reply.encoding);
   return reply.result;
 }
+function importReply(method, request) {
+  if (request.exchange) {
+    assert.deepEqual(plain(request.args), request.exchange.args,
+      'in-flight import request must remain a deep meter-valued snapshot');
+  }
+  if (realImport) return pythonReply(method, request.args);
+  assert.ok(request.exchange, 'Authored transport requires an exact known exchange');
+  // The page edits parsed candidates in place. Never share mutable replies.
+  return plain(request.exchange.response);
+}
 function deliverParse(request = parses.at(-1)) {
-  request.resolve(pythonReply('eve_settings_parse_formations', request.args));
+  request.delivered = importReply('eve_settings_parse_formations', request);
+  request.resolve(request.delivered);
 }
 function deliverAdd(request = validations.at(-1)) {
-  request.resolve(pythonReply('eve_settings_validate_formation_import', request.args));
+  request.resolve(importReply('eve_settings_validate_formation_import', request));
 }
 const plain = value => JSON.parse(JSON.stringify(value));
 function shared(name = 'Incoming', range = 149597870700) {
@@ -406,9 +436,7 @@ async function pasteScenario() {
   if (scenario === 'paste-invalid-text' || scenario === 'paste-byte-limit') {
     click('fm-paste');
     const texts = scenario === 'paste-byte-limit' ? ['é'.repeat(32769), '𐐀'.repeat(16385)]
-      : ['{', '['.repeat(2000) + ']'.repeat(2000), artifact().replace('"version":1', '"version":1,"version":1'), artifact().replace('"x":-1250.5', '"x":true'),
-        artifact([shared('Too small', 149597.87069999997)]), artifact([shared('Too big', 9804046054195202)]),
-        artifact().replace('"x":-1250.5', '"x":10000000000000001')];
+      : ['{']; // Parser permutations live in test_evesettings_formation_sharing.py.
     for (const text of texts) {
       inputText(text);
       if (scenario === 'paste-byte-limit') {
@@ -449,7 +477,10 @@ async function pasteScenario() {
         f.probes[0].x = coordinates[i]; return f;
       });
       const prior = rowButtons().length;
-      await review(items); click('fm-import-add'); deliverAdd(); await tick();
+      await review(items); click('fm-import-add');
+      assert.deepEqual(plain(validations.at(-1).args[0]), items.map(f => ({id: null, ...f})),
+        'Add must retain exact portable meters before any file-read normalization');
+      deliverAdd(); await tick();
       assert.equal(saves.length, cycle * 2, 'Add never invokes Save');
       click('fm-save'); const request = saves.at(-1);
       assert.equal(request.args[1][0].id, 7);
@@ -506,11 +537,10 @@ async function pasteScenario() {
     assert.equal(validations.length, 0, 'name typing must stay local');
   }
   if (scenario === 'paste-invalid-renames') {
-    for (const name of ['Second', '𐐀'.repeat(129), 'bad\u0000name', '']) {
-      importRename(0, name); click('fm-import-add'); deliverAdd(); await tick();
-      assertReview(true); assert.equal(rowButtons().length, 1); assert.ok(importStatus());
-      assert.equal(saves.length, 0);
-    }
+    // Exhaustive name validation stays below the page; keep rejection/recovery.
+    importRename(0, 'Second'); click('fm-import-add'); deliverAdd(); await tick();
+    assertReview(true); assert.equal(rowButtons().length, 1); assert.ok(importStatus());
+    assert.equal(saves.length, 0);
     importRename(0, 'Corrected');
   }
   if (scenario === 'paste-batch') {
@@ -534,6 +564,21 @@ async function pasteScenario() {
   click('fm-import-add'); const pending = validations.at(-1);
   assert.ok(pending, 'explicit Add must revalidate');
   assert.equal(pending.args.length, 2); assert.equal(saves.length, 0);
+  const expectedItems = items.map(f => ({id: null, ...plain(f)}));
+  if (scenario === 'paste-conflict') expectedItems[0].name = ' Resolved ';
+  if (scenario === 'paste-invalid-renames') expectedItems[0].name = 'Corrected';
+  if (scenario === 'paste-route-during-add') expectedItems[0].name = 'Renamed before Add';
+  assert.deepEqual(plain(pending.args), [expectedItems,
+    scenario === 'paste-empty' ? [] : [scenario === 'paste-conflict' ? 'STRASSE'
+      : scenario === 'paste-new-target-conflict' ? 'INCOMING' : 'Original']],
+    'Add must send the exact complete meter-valued batch and current draft names');
+  pending.args[0].forEach((f, i) => {
+    const candidate = parses.at(-1).delivered.formations[i];
+    assert.notEqual(f, candidate, 'Add must snapshot each mutable candidate');
+    assert.notEqual(f.probes, candidate.probes, 'Add must snapshot the probe list');
+    f.probes.forEach((p, j) => assert.notEqual(p, candidate.probes[j],
+      'Add must snapshot nested meter-valued probes'));
+  });
   const outstandingCount = validations.length;
   if (scenario === 'paste-double-add') { click('fm-import-add'); assert.equal(validations.length, outstandingCount); }
   if (scenario === 'paste-name-during-add') {
@@ -751,20 +796,18 @@ async function main() {
     assert.equal(context(), 'Account: Account B');
     assert.equal(WM.el('fm-account').title, 'Account B');
   }
-  else if (scenario === 'commit-keeps-newer-edit' || scenario === 'second-save-retained-draft') {
+  else if (scenario === 'second-save-retained-draft') {
     rename('Submitted'); click('fm-save'); const first = saves[0];
     rename('Newer'); complete(first, {warning: 'Saved, but retention failed.'});
     assertEditable('Newer'); assert.equal(reads.length, 1);
     assert.match(WM.el('fm-save-status').textContent, /retention failed/);
     click('fm-save'); assertSave(saves[1], B, 'Newer');
-    if (scenario === 'second-save-retained-draft') {
-      complete(first); assertBusy();
-      complete(saves[1], {content_revision: C});
-      reads.at(-1).resolve(reply(C, 'Newer'));
-      await tick();
-      assert.equal(WM.el('fm-save').disabled, true);
-      assert.equal(WM.el('fm-dirty').textContent, '');
-    }
+    complete(first); assertBusy();
+    complete(saves[1], {content_revision: C});
+    reads.at(-1).resolve(reply(C, 'Newer'));
+    await tick();
+    assert.equal(WM.el('fm-save').disabled, true);
+    assert.equal(WM.el('fm-dirty').textContent, '');
   } else if (scenario === 'ignored-read-keeps-baseline') {
     rename('Submitted'); click('fm-save'); complete(saves[0]);
     assert.equal(reads.length, 2);
@@ -924,6 +967,7 @@ async function main() {
   } else assert.fail('Unknown scenario: ' + scenario);
 }
 await main();
+assert.equal(importCall, expectedImports.length, 'all expected import requests must run');
 await tick();
 if (unhandledRejections.length) {
   const error = unhandledRejections[0];

@@ -15,8 +15,27 @@ from tests.node_scenario_worker import NodeScenarioFailure, NodeScenarioWorker
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "wingman" / "web"
+IMPORT_REPLIES = json.loads(
+    (ROOT / "tests/fixtures/formations_import_replies.json").read_text(encoding="utf-8")
+)
+
+
+@pytest.mark.parametrize("exchange", IMPORT_REPLIES["exchanges"])
+def test_authored_import_reply_matches_real_facade(exchange: str):
+    # No account/controller state: these endpoints must remain pure. Hand-authored
+    # meter values and complete replies are the oracle, never a parser round trip.
+    from wingman.evesettings.controller import ProfilesController
+    from wingman.ui.api import Api
+
+    api = Api.__new__(Api)
+    api._profiles = ProfilesController.__new__(ProfilesController)
+    case = IMPORT_REPLIES["exchanges"][exchange]
+    args = json.loads(json.dumps(case["args"]))
+    assert getattr(api, case["method"])(*args) == case["response"]
+    assert args == case["args"], "pure endpoints must not mutate the request"
+
+
 SCENARIOS = [
-    "commit-keeps-newer-edit",
     "ignored-read-keeps-baseline",
     "old-completion-ignored",
     "second-save-retained-draft",
@@ -107,7 +126,7 @@ SCENARIOS = [
 # worker's PR-time gain. These cases retain cross-branch state-leak coverage.
 ORDER_ISOLATION_SCENARIOS = [
     "ignored-read-keeps-baseline",  # Save completion and reread ownership.
-    "paste-cancel-draft",  # Real Python parse child plus draft restoration.
+    "paste-cancel-draft",  # Deferred parse reply plus draft restoration.
     "copy-denied",  # Clipboard rejection and recovery state.
     "delete-live-during-save",  # Delete/save completion ownership.
     "preview-rotation",  # SVG rendering and window event listeners.
@@ -173,18 +192,18 @@ def test_formations_worker_protocol_reuses_process_and_isolates_requests(
     formations_worker: NodeScenarioWorker,
 ):
     first_a = formations_worker.request(
-        "commit-keeps-newer-edit", {"env": {}}, timeout=60.0
+        "second-save-retained-draft", {"env": {}}, timeout=60.0
     )
     process = formations_worker._proc
     middle_b = formations_worker.request(
         "preview-origin-scale", {"env": {}}, timeout=60.0
     )
     second_a = formations_worker.request(
-        "commit-keeps-newer-edit", {"env": {}}, timeout=60.0
+        "second-save-retained-draft", {"env": {}}, timeout=60.0
     )
 
     assert middle_b["output"] == "PASS preview-origin-scale"
-    assert first_a["output"] == second_a["output"] == "PASS commit-keeps-newer-edit"
+    assert first_a["output"] == second_a["output"] == "PASS second-save-retained-draft"
     assert second_a["id"] == first_a["id"] + 2
     assert formations_worker._proc is process
 
@@ -196,7 +215,7 @@ def test_formations_worker_protocol_reuses_process_and_isolates_requests(
     assert failure.value.reply is not None
     assert failure.value.reply["id"] == second_a["id"] + 1
     assert failure.value.reply["scenario"] == unknown
-    assert "commit-keeps-newer-edit" not in str(failure.value)
+    assert "second-save-retained-draft" not in str(failure.value)
     assert "preview-origin-scale" not in str(failure.value)
     assert formations_worker._proc is process
 
@@ -233,13 +252,13 @@ def test_formations_worker_preserves_vm_error_stack(
     )
     try:
         with pytest.raises(NodeScenarioFailure) as failure:
-            worker.request("commit-keeps-newer-edit", {"env": {}})
+            worker.request("second-save-retained-draft", {"env": {}})
         assert "vmOriginFailure" in failure.value.stack
         assert "formations-vm-error.js:" in failure.value.stack
         assert failure.value.reply["error"] == "VM-only sentinel"
         process = worker._proc
         module.write_text(source, encoding="utf-8")
-        assert worker.request("commit-keeps-newer-edit", {"env": {}})["ok"] is True
+        assert worker.request("second-save-retained-draft", {"env": {}})["ok"] is True
         assert worker._proc is process
     finally:
         worker.close()
@@ -251,7 +270,7 @@ def test_formations_worker_consumes_encoding_overlay_without_mutating_parent(
     parent_encoding = os.environ.get("PYTHONIOENCODING")
     reply = formations_worker.request(
         "paste-cancel-draft",
-        {"env": {"PYTHONIOENCODING": "ascii"}},
+        {"env": {"PYTHONIOENCODING": "ascii"}, "real_import": True},
         timeout=60.0,
     )
 
@@ -297,7 +316,9 @@ def test_unicode_bridge_ignores_locale_encoding(
     # Node and its real Python child use explicit UTF-8 buffers even when the
     # child process advertises a Windows code page.
     result = formations_worker.request(
-        scenario, {"env": {"PYTHONIOENCODING": "cp1252"}}, timeout=60.0
+        scenario,
+        {"env": {"PYTHONIOENCODING": "cp1252"}, "real_import": True},
+        timeout=60.0,
     )
     assert result["output"] == f"PASS {scenario}"
     assert result["encoding_boundary"] == "cp1252"
