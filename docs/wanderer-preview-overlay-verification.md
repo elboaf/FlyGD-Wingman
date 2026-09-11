@@ -7,8 +7,9 @@ in `19699ca2` (protected snapshots), `c4d2b5ff` (grouped controller/API), and
 `69d65d3f` (ES5 form/dev fixtures). The parent completed the post-polish checks
 below against **`fdeca0c305e81a7b5460c9e5f8652e94d36a9dd3`**; the subsequent
 changes are documentation only. **Sections after this follow-up describe the
-previous candidate, not fresh acceptance of this form.** No running app,
-test-profile credential or live service was inspected or changed by this work.
+previous candidate, not fresh acceptance of this form.** During implementation, no running app,
+test-profile credential or live service was inspected or changed. The later local
+launch observation is recorded below.
 
 Test connection now saves submitted URL/map/token together, then requests Test
 without changing the enable preference. Blank token reuse requires the currently
@@ -100,9 +101,13 @@ uv run --no-sync python .superpowers/sdd/wanderer-preview-overlay-plan/inspect_f
 New artifact: `dist/wanderer-form-check/Wingman/Wingman.exe`, SHA-256
 `36cb5188425a91f4b6103eed20b92a1491a0ba29bc0fcda358e156c4281375ce`.
 Built separately: the running earlier executable and isolated test profile were
-not overwritten. This new executable has **not yet been launched**. The user
-reported that the earlier local candidate worked, but that is not acceptance of
-this new form or completion of the live/native matrix. The full Windows suite
+not overwritten. After verification, the earlier test instance was no longer
+running. The parent launched this new executable with the same isolated profile
+and confirmed PID 74720, window title `FlyGD Wingman`, and `Responding: true`.
+No process was killed and no token was read or returned to the conversation.
+Actual new-form interaction, token reuse and deployed outcomes still await the
+user's observation. The user reported that the earlier local candidate worked,
+but that is not acceptance of this new form or completion of the live/native matrix. The full Windows suite
 was not repeated for this follow-up; its earlier six symlink-privilege fixture
 failures remain documented below. No privilege changes or unrelated fixes were
 made. Browser observations use synthetic dev data and are not WebView2 acceptance.
