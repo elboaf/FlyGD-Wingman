@@ -2982,6 +2982,7 @@ class Api:
                     # its best-effort initial snapshot/render/fit chain.
                     bar = fleetbar.create(self, hidden=True)
                 elif self._fleetbar_ready:
+                    self._apply_fleetbar_rect_locked(bar)
                     fleetbar.reveal_bar(bar)
                     self._queue_fleet_presentation()
             elif fleetbar.is_alive(bar):
@@ -3048,6 +3049,11 @@ class Api:
         self._fleetbar_applied_y = int(y)
         self._fleetbar_applied_outer_width = int(width)
         self._fleetbar_applied_outer_height = int(height)
+
+    def _apply_fleetbar_rect_locked(self, bar) -> None:
+        from wingman.ui import fleetbar
+
+        fleetbar.apply_geometry(bar, *self._fleetbar_current_rect_locked(bar))
 
     def _fleetbar_target_rect_locked(
         self,
@@ -3154,8 +3160,6 @@ class Api:
         return "The Fleet Bar width changed, but it will not survive restart."
 
     def _reset_fleet_bar_width_locked(self, bar) -> dict:
-        from wingman.ui import fleetbar
-
         default_width = settings_mod.FLEET_BAR_DEFAULT_PREFERRED_CONTENT_WIDTH
         if bar is None:
             try:
@@ -3175,19 +3179,18 @@ class Api:
                 content_width=default_width,
             )
         )
-        try:
-            fleetbar.apply_geometry(
-                bar, target_x, target_y, target_width, target_height
-            )
-        except Exception:
-            logger.debug("Fleet Bar width reset failed", exc_info=True)
-            return self._field_refused("The Fleet Bar width could not be reset.")
         self._remember_fleetbar_rect_locked(
             target_x,
             target_y,
             target_width,
             target_height,
         )
+        if self.fleet_bar_settings().get("enabled"):
+            try:
+                self._apply_fleetbar_rect_locked(bar)
+            except Exception:
+                logger.debug("Fleet Bar width reset failed", exc_info=True)
+                return self._field_refused("The Fleet Bar width could not be reset.")
         try:
             settings_mod.update_section(
                 self._state.settings,
