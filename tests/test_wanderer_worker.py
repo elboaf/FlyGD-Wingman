@@ -63,8 +63,9 @@ class ObservedCondition(threading.Condition):
 
 
 class Call:
-    def __init__(self, args):
+    def __init__(self, args, on_authentication_failure):
         self.args = args
+        self.on_authentication_failure = on_authentication_failure
         self.replies = queue.Queue()
 
     def reply(self, result):
@@ -78,9 +79,9 @@ class Client:
         self.active = 0
         self.maximum_active = 0
 
-    def fetch(self, *args):
+    def fetch(self, *args, on_authentication_failure=None):
         with self.cv:
-            call = Call(args)
+            call = Call(args, on_authentication_failure)
             self.calls.append(call)
             self.active += 1
             self.maximum_active = max(self.maximum_active, self.active)
@@ -227,7 +228,8 @@ def test_expiry_runs_while_next_http_request_is_blocked(rig):
     assert state.in_flight and state.status == "stale"
     assert state.stale == 2 and state.available == 0
     call.reply(Unchanged(ETAG))
-    rig.wait(lambda s: s.last_success_monotonic == 114)
+    state = rig.wait(lambda s: s.last_success_monotonic == 114)
+    assert state.available == 0 and state.stale == 2
     assert rig.mailbox.current[FIRST] is None
 
 
@@ -264,6 +266,43 @@ def test_auth_clears_immediately_pauses_and_test_explicitly_recovers(rig, status
     call.reply(success(200))
     rig.wait(lambda s: not s.paused and s.test_result == "success")
     rig.mailbox.expect({FIRST: "HOME", HIDDEN: "Amarr"})
+
+
+@pytest.mark.parametrize("status,code", [(401, "invalid_token"), (403, "forbidden")])
+def test_auth_header_signal_clears_cache_while_error_body_is_still_blocked(
+    rig, status, code
+):
+    start_snapshot(rig)
+    rig.advance(102)
+    call = rig.client.call(2)
+    call.on_authentication_failure(Failure(code, status))
+    state = rig.wait(lambda s: s.paused and s.error_code == code)
+    assert state.in_flight and state.available == 0
+    rig.mailbox.expect({FIRST: None, HIDDEN: None})
+    assert rig.clock.now == 102
+    # Detailed body completion may refine classification, never restore data.
+    final = "wrong_map" if status == 403 else code
+    call.reply(Failure(final, status))
+    rig.wait(lambda s: s.error_code == final and not s.in_flight)
+
+
+def test_late_auth_header_signal_from_old_generation_is_ignored(rig):
+    start_snapshot(rig)
+    rig.advance(102)
+    call = rig.client.call(2)
+    assert rig.configure(2, token="new-token")
+    call.on_authentication_failure(Failure("invalid_token", 401))
+    assert not rig.worker.state().paused
+    assert rig.worker.state().error_code is None
+    call.reply(Failure("invalid_token", 401))
+    rig.wait(lambda s: not s.in_flight)
+    assert not rig.worker.state().paused
+    rig.advance(104)
+    current = rig.client.call(3)
+    call.on_authentication_failure(Failure("invalid_token", 401))
+    assert not rig.worker.state().paused  # Callback captured the old generation.
+    current.reply(success(104))
+    rig.mailbox.expect({FIRST: "HOME"})
 
 
 def test_auth_pause_survives_readiness_toggles_until_credential_change(rig):
@@ -322,6 +361,21 @@ def test_off_test_is_one_shot_not_enable_and_shares_cadence(rig):
     rig.client.call(3).reply(success(260))
     rig.wait(lambda s: s.test_result == "success" and not s.in_flight)
     assert rig.client.maximum_active == 1
+
+
+def test_cached_health_distinguishes_queued_and_executing_test(rig):
+    start_snapshot(rig)
+    assert rig.worker.test_connection()
+    state = rig.worker.state()
+    assert state.test_pending and not state.test_in_flight
+    rig.advance(102)
+    call = rig.client.call(2)
+    state = rig.worker.state()
+    assert state.in_flight and state.test_in_flight and not state.test_pending
+    assert state.test_result is None
+    call.reply(Unchanged(ETAG))
+    state = rig.wait(lambda s: s.test_result == "success")
+    assert not state.test_pending and not state.test_in_flight
 
 
 def test_test_queues_behind_poll_on_same_lane_and_cannot_bypass_rate_limit(rig):
@@ -467,10 +521,12 @@ def test_shutdown_does_not_join_stalled_publication_under_state_lock():
         rig.worker.set_sessions((FIRST,))
         assert rig.configure()
         assert entered.wait(2)
+        rig.client.call(1)  # HTTP proceeds even with the expiry callback stalled.
         request_owner = rig.worker._request_thread
         scheduler_owner = rig.worker._scheduler_thread
         rig.worker.close_admission()  # Must not acquire a lock held by publication.
         assert not rig.worker.stop(0)
+        assert request_owner.is_alive() and scheduler_owner.is_alive()
         assert not rig.configure(2)
         assert rig.worker._request_thread is request_owner
         assert rig.worker._scheduler_thread is scheduler_owner
@@ -507,6 +563,25 @@ def test_successful_empty_snapshot_clears_all_without_reporting_transport_failur
     assert state.status == "connected"
     assert state.matched == state.available == state.stale == 0
     assert state.error_code is None
+
+
+def test_inflight_off_test_result_cannot_acknowledge_a_new_configuration(rig):
+    assert rig.configure(enabled=False)
+    assert rig.worker.test_connection()
+    old = rig.client.call(1)
+    assert rig.configure(2, token="new-token", map_identifier="new-map")
+    assert not rig.worker.test_connection()  # The retained Test still owns HTTP.
+    old.reply(Failure("invalid_token", 401))
+    state = rig.wait(lambda s: not s.in_flight)
+    assert not state.paused and state.test_result is None
+    assert rig.worker.test_connection()
+    rig.advance(102)
+    call = rig.client.call(2)
+    assert call.args[1:] == ("new-map", "new-token", None)
+    call.reply(success(102))
+    state = rig.wait(lambda s: s.test_result == "success")
+    assert state.generation == 2 and not state.enabled
+    assert rig.client.maximum_active == 1
 
 
 def test_same_generation_repetition_is_noop_but_changed_config_is_rejected(rig):

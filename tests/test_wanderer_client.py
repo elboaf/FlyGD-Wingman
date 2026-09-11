@@ -262,7 +262,7 @@ class Socket:
         self.closed = True
 
 
-def scripted(wire, *, step=0, chunk=8192, failure=None):
+def scripted(wire, *, step=0, chunk=8192, failure=None, auth_seen=None):
     from wingman.wanderer.client import WandererClient
 
     clock = Clock()
@@ -279,7 +279,12 @@ def scripted(wire, *, step=0, chunk=8192, failure=None):
         ),
         clock=clock,
     )
-    return client.fetch(BASE, "map", TOKEN), raw, sock
+    callbacks = {}
+    if auth_seen is not None:
+        callbacks["on_authentication_failure"] = lambda result: auth_seen.append(
+            (result, clock())
+        )
+    return client.fetch(BASE, "map", TOKEN, **callbacks), raw, sock
 
 
 def wire(body=BODY, *, headers=b"", status=b"200 OK"):
@@ -341,6 +346,30 @@ def test_transport_failure_is_single_attempt_safe_and_closed(failure, code, capl
     assert result.code == code
     assert TOKEN not in repr(result) + caplog.text
     assert sock.closed
+
+
+@pytest.mark.parametrize(
+    "status,code",
+    [(b"401 Unauthorized", "invalid_token"), (b"403 Forbidden", "forbidden")],
+)
+def test_slow_auth_error_preserves_denial_despite_body_deadline(status, code):
+    result, raw, sock = scripted(wire(b"x" * 500, status=status), step=0.2, chunk=5)
+    assert result.authentication_failed and result.code == code
+    assert raw.bytes_read < 500
+    assert sock.closed
+
+
+@pytest.mark.parametrize("status", [b"401 Unauthorized", b"403 Forbidden"])
+def test_auth_signal_precedes_slow_body_and_contains_no_external_text(status):
+    auth_seen = []
+    result, raw, _ = scripted(
+        wire(b"x" * 500, status=status), step=0.2, chunk=5, auth_seen=auth_seen
+    )
+    assert len(auth_seen) == 1
+    signal, when = auth_seen[0]
+    assert signal.authentication_failed and signal.status == result.status
+    assert when < raw.clock.now  # The body then ran out its separate I/O budget.
+    assert TOKEN not in repr(signal)
 
 
 def test_default_factory_uses_verified_https(monkeypatch):

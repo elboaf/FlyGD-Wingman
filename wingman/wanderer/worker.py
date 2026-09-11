@@ -16,7 +16,15 @@ from types import MappingProxyType
 from typing import Literal, Protocol
 
 from ..telemetry.model import ClientSessionId
-from .client import MAX_RETRY_AFTER, ErrorCode, Failure, FetchResult, Success, Unchanged
+from .client import (
+    MAX_RETRY_AFTER,
+    AuthFailureCallback,
+    ErrorCode,
+    Failure,
+    FetchResult,
+    Success,
+    Unchanged,
+)
 from .credentials import validate_token
 from .model import (
     Snapshot,
@@ -43,7 +51,13 @@ WorkerStatus = Literal[
 
 class SnapshotClient(Protocol):
     def fetch(
-        self, base: str, map: str, token: str, etag: str | None = None
+        self,
+        base: str,
+        map: str,
+        token: str,
+        etag: str | None = None,
+        *,
+        on_authentication_failure: AuthFailureCallback | None = None,
     ) -> FetchResult: ...
 
 
@@ -91,6 +105,7 @@ class WorkerState:
     paused: bool
     in_flight: bool
     test_pending: bool
+    test_in_flight: bool
     test_result: Literal["success"] | ErrorCode | None
     last_success_monotonic: float | None
     next_request_monotonic: float | None
@@ -277,7 +292,9 @@ class WandererWorker:
             return self._next_allowed
         return None
 
-    def _projection_locked(self, now: float):
+    def _projection_locked(
+        self, now: float
+    ) -> tuple[dict[ClientSessionId, str | None], int, int, float | None]:
         visible = {}
         matched = stale = 0
         deadline = None
@@ -327,6 +344,7 @@ class WandererWorker:
             self._paused,
             self._in_flight,
             self._test_pending,
+            self._test_in_flight,
             self._test_result,
             self._last_success,
             self._request_due_locked(),
@@ -360,7 +378,13 @@ class WandererWorker:
                 self._refresh_locked()
             try:
                 result = self._client.fetch(
-                    config.base_url, config.map_identifier, config.token, etag
+                    config.base_url,
+                    config.map_identifier,
+                    config.token,
+                    etag,
+                    on_authentication_failure=lambda failure, generation=generation: (
+                        self._reject_authentication(generation, failure)
+                    ),
                 )
             except Exception:  # noqa: BLE001 — an injected/broken transport cannot leak a token or kill expiry.
                 result = Failure("transport_error")
@@ -382,6 +406,17 @@ class WandererWorker:
                     )
                 self._next_allowed = max(self._next_allowed, now + delay)
                 self._refresh_locked()
+
+    def _reject_authentication(self, generation: int, failure: Failure) -> None:
+        # Called synchronously by the HTTP owner before reading the error body.
+        # This is a cached-state handoff, never a publication/health/I/O callback.
+        with self._condition:
+            if self._closed or generation != self._generation:
+                return
+            self._snapshot = self._etag = None
+            self._paused = True
+            self._error = failure.code
+            self._refresh_locked()
 
     def _accept_locked(
         self, result: FetchResult, now: float, is_test: bool

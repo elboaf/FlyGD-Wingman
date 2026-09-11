@@ -82,6 +82,7 @@ class Failure:
 
 
 FetchResult = Success | Unchanged | Failure
+AuthFailureCallback = Callable[[Failure], None]
 ConnectionFactory = Callable[[str, int, float], http.client.HTTPConnection]
 _ETAG = re.compile(r'W/"[A-Za-z0-9._~-]+"')
 _ERRORS: dict[int, tuple[ErrorCode, ...]] = {
@@ -221,7 +222,10 @@ def _object(pairs):
     return result
 
 
-def _error(response: http.client.HTTPResponse) -> Failure:
+def _error(
+    response: http.client.HTTPResponse,
+    on_authentication_failure: AuthFailureCallback | None,
+) -> Failure:
     allowed = _ERRORS.get(response.status, ())
     fallback: ErrorCode = (
         allowed[0]
@@ -232,6 +236,10 @@ def _error(response: http.client.HTTPResponse) -> Failure:
     )
     retry = _retry_after(response)
     try:
+        # Denial is already authoritative at the headers. A slow/malformed body
+        # may refine diagnostics, but must not postpone invalidation of locations.
+        if response.status in (401, 403) and on_authentication_failure is not None:
+            on_authentication_failure(Failure(fallback, response.status, retry))
         body = _bounded_body(response, MAX_ERROR_BYTES)
         if _json_media(response):
             data = json.loads(body.decode("utf-8"), object_pairs_hook=_object)
@@ -258,8 +266,19 @@ class WandererClient:
         self._clock = clock
 
     def fetch(
-        self, base: str, map: str, token: str, etag: str | None = None
+        self,
+        base: str,
+        map: str,
+        token: str,
+        etag: str | None = None,
+        *,
+        on_authentication_failure: AuthFailureCallback | None = None,
     ) -> FetchResult:
+        """Signal known auth denial before body I/O; return final safe diagnostics.
+
+        The optional signal runs on this request's caller, not on the scheduler.
+        It must only hand off cached state, never wait on UI/native/disk work.
+        """
         try:
             base = normalize_base_url(base)
             map = normalize_map_identifier(map)
@@ -297,7 +316,7 @@ class WandererClient:
             if 300 <= response.status < 400 and response.status != 304:
                 return Failure("redirect_refused", response.status)
             if response.status not in (200, 304):
-                return _error(response)
+                return _error(response, on_authentication_failure)
             if _one(response, "X-Wanderer-Locations-Version") != "1":
                 return Failure("unsupported_version", response.status)
             received_etag = _one(response, "ETag")
