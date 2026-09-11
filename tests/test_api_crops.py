@@ -378,56 +378,61 @@ def test_tentative_failed_master_off_does_not_drop_telemetry_session_revocation(
     assert runtime is not None
     runtime._thread_factory = _noop_thread_factory
     api._telemetry = runtime
-    api.start_previews_if_enabled()
-    discovery.publish(RosterSnapshot(1, (client(),)))
-    runtime.dispatch_once(0)
-    r.call(lambda: None)
-    receipt = api.select_preview_crop("Alice")
-    r.call(lambda: None)
-    entered, release = Event(), Event()
-    attempted = Event()
-    save = settings._save_locked
-
-    def blocked_save(document, path):
-        if document["preview"]["enabled"] is False:
-            entered.set()
-            assert release.wait(5)
-            raise OSError("master save failed")
-        return save(document, path)
-
-    monkeypatch.setattr(settings, "_save_locked", blocked_save)
-    # This wrapper proves the crop worker reached the real settings-lock seam.
-    update = r.store._update_settings
-
-    def crop_update():
-        attempted.set()
-        return update()
-
-    monkeypatch.setattr(r.store, "_update_settings", crop_update)
-    result = []
-    worker = Thread(target=lambda: result.append(api.set_preview_enabled(False)))
-    worker.start()
+    presentation_thread = None
     try:
-        assert entered.wait(5)
-        assert api._state.settings["preview"]["enabled"] is False
-
-        def confirm():
-            picker = h._crop_controller.picker
-            picker.selection = Rect(
-                picker.destination.x + 20, picker.destination.y + 20, 100, 80
-            )
-            picker._confirm()
-
-        r.call(confirm)
-        assert attempted.wait(5)
-        # Deliver via the actual telemetry dispatcher, while settings is tentative.
-        discovery.publish(RosterSnapshot(2, (client(serial=2),)))
+        api.start_previews_if_enabled()
+        presentation_thread = api._fleet_worker._thread
+        assert presentation_thread is not None and presentation_thread.is_alive()
+        discovery.publish(RosterSnapshot(1, (client(),)))
         runtime.dispatch_once(0)
-        r.call(lambda: None)  # also proves delivery/native work never waits on settings
-    finally:
-        release.set()
-        worker.join(5)
-    try:
+        r.call(lambda: None)
+        receipt = api.select_preview_crop("Alice")
+        r.call(lambda: None)
+        entered, release = Event(), Event()
+        attempted = Event()
+        save = settings._save_locked
+
+        def blocked_save(document, path):
+            if document["preview"]["enabled"] is False:
+                entered.set()
+                assert release.wait(5)
+                raise OSError("master save failed")
+            return save(document, path)
+
+        monkeypatch.setattr(settings, "_save_locked", blocked_save)
+        # This wrapper proves the crop worker reached the real settings-lock seam.
+        update = r.store._update_settings
+
+        def crop_update():
+            attempted.set()
+            return update()
+
+        monkeypatch.setattr(r.store, "_update_settings", crop_update)
+        result = []
+        worker = Thread(target=lambda: result.append(api.set_preview_enabled(False)))
+        worker.start()
+        try:
+            assert entered.wait(5)
+            assert api._state.settings["preview"]["enabled"] is False
+
+            def confirm():
+                picker = h._crop_controller.picker
+                picker.selection = Rect(
+                    picker.destination.x + 20, picker.destination.y + 20, 100, 80
+                )
+                picker._confirm()
+
+            r.call(confirm)
+            assert attempted.wait(5)
+            # Deliver via the actual telemetry dispatcher, while settings is tentative.
+            discovery.publish(RosterSnapshot(2, (client(serial=2),)))
+            runtime.dispatch_once(0)
+            r.call(
+                lambda: None
+            )  # also proves delivery/native work never waits on settings
+        finally:
+            release.set()
+            worker.join(5)
         assert result == [False]
         r.store.drain().result(5)
         r.call(lambda: None)
@@ -438,7 +443,12 @@ def test_tentative_failed_master_off_does_not_drop_telemetry_session_revocation(
         assert h._crop_roster.clients[0].session == client(serial=2).session
         assert not r.native.thumbnails
     finally:
-        runtime.stop()
+        # Telemetry.stop() cannot detach/join Api's separate presentation owner.
+        # Cover startup and early assertion failures as well as the normal exit.
+        api.shutdown_previews()
+        assert presentation_thread is None or not presentation_thread.is_alive()
+        assert api._fleet_unsubscribe is None
+        assert runtime._subscribers == []
 
 
 def test_crop_state_getter_returns_independent_private_safe_snapshots(crop_api):
