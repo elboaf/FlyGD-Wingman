@@ -2521,7 +2521,7 @@ def test_hide_fleet_bar_keeps_session_enabled_when_hide_rollback_wont_persist(
     result = api.hide_fleet_bar(PAGE_A)
     api._fleet_worker.iterate_once()
 
-    assert result["applied"] is False
+    assert result["applied"] is True
     assert result["persisted"] is False
     assert "survive restart" in result["error"]
     assert deactivated == [0x101]

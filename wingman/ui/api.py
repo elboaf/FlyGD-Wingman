@@ -2610,7 +2610,7 @@ class Api:
                 self._reconcile_fleet_generation(transition=False)
                 self._push_fleet_bar_state()
                 return {
-                    "applied": False,
+                    "applied": True,
                     "persisted": False,
                     "error": self._fleetbar_hide_restart_warning(),
                 }
