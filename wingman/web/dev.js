@@ -94,6 +94,94 @@
   };
 
   var api = {};
+  // Wanderer dev connection — presence flags only, never fabricated secrets.
+  var wanderer = null;
+  var wandererRevision = 0;
+  var wandererFails = false;
+  function wandererScenario(kind) {
+    wandererFails = kind === 'failed-save';
+    var configured = kind !== 'off' && kind !== 'setup';
+    wanderer = {enabled: kind !== 'off', base_url: configured ? 'https://wanderer.example' : '',
+      map_identifier: configured ? 'home' : '', revision: ++wandererRevision,
+      credential_present: configured, credential_error: false, generation: wandererRevision,
+      automatic_ready: configured, status: kind === 'off' ? 'off' : configured ? 'connected' : 'setup_incomplete',
+      error_code: null, paused: false, in_flight: false,
+      test_pending: false, test_in_flight: false, test_result: null, test_result_text: '',
+      last_success_monotonic: configured ? 100 : null, next_request_monotonic: configured ? 102 : null,
+      previewed: configured ? 3 : 0, matched: configured ? 2 : 0, available: configured ? 2 : 0, stale: 0,
+      previews_enabled: true, host_available: true, status_text: ''};
+    if (kind === 'connecting') { wanderer.status = 'connecting'; wanderer.in_flight = true; wanderer.available = 0; wanderer.matched = 0; }
+    if (kind === 'no-tracked') { wanderer.matched = 0; wanderer.available = 0; }
+    if (kind === 'stale') { wanderer.status = 'stale'; wanderer.stale = 2; wanderer.available = 0; }
+    var errors = {auth: 'invalid_token', 'wrong-map': 'wrong_map', 'api-disabled': 'disabled', retrying: 'timeout'};
+    if (errors[kind]) {
+      wanderer.status = 'error'; wanderer.error_code = errors[kind];
+      wanderer.paused = kind !== 'retrying'; wanderer.available = 0;
+      wanderer.status_text = kind === 'retrying' ? 'Wanderer did not respond in time.' : 'Check the map and token.';
+    }
+    return wanderer;
+  }
+  function wandererCopy() { return JSON.parse(JSON.stringify(wanderer)); }
+  function wandererPush() { window.onWandererState(wandererCopy()); }
+  function wandererAck(error) {
+    var ack = {};
+    ['enabled', 'base_url', 'map_identifier', 'revision', 'credential_present', 'credential_error'].forEach(function (key) {
+      ack[key] = wanderer[key];
+    });
+    return {applied: !error, persisted: !error, error: error || null, acknowledged: ack};
+  }
+  function wandererChange(key, value) {
+    if (wandererFails) return Promise.resolve(wandererAck('Could not save the Wanderer connection.'));
+    if (wanderer[key] !== value) {
+      wanderer[key] = value;
+      if (key === 'base_url' || key === 'map_identifier') wanderer.credential_present = false;
+      wanderer.revision = ++wandererRevision; wanderer.generation = wandererRevision;
+      wanderer.test_pending = false; wanderer.test_in_flight = false;
+      wanderer.test_result = null; wanderer.test_result_text = '';
+      wanderer.automatic_ready = !!(wanderer.enabled && wanderer.base_url && wanderer.map_identifier && wanderer.credential_present);
+      wanderer.status = !wanderer.enabled ? 'off' : wanderer.automatic_ready ? 'connecting' : 'setup_incomplete';
+      wanderer.error_code = null; wanderer.status_text = ''; wanderer.paused = false;
+      wanderer.matched = 0; wanderer.available = 0; wanderer.stale = 0;
+      wandererPush();
+    }
+    return Promise.resolve(wandererAck());
+  }
+  api.wanderer_state = function () { return Promise.resolve(wandererCopy()); };
+  api.set_wanderer_enabled = function (enabled) { return wandererChange('enabled', enabled); };
+  api.set_wanderer_url = function (base) {
+    base = base.trim().replace(/\/+$/, '');
+    if (base && !/^https:\/\//.test(base)) return Promise.resolve(wandererAck('Enter an HTTPS application URL.'));
+    return wandererChange('base_url', base);
+  };
+  api.set_wanderer_map = function (map) { return wandererChange('map_identifier', map.trim()); };
+  api.replace_wanderer_token = function (token, base, map) {
+    // Never log, cache or echo the entry. Only a boolean reaches dev state.
+    if (!token || !base || !map || base !== wanderer.base_url || map !== wanderer.map_identifier) {
+      return Promise.resolve(wandererAck('The connection changed. Apply the token again.'));
+    }
+    return wandererChange('credential_present', true);
+  };
+  api.remove_wanderer_connection = function () { return wandererChange('credential_present', false); };
+  api.test_wanderer_connection = function () {
+    if (!wanderer.base_url || !wanderer.map_identifier || !wanderer.credential_present
+        || wanderer.test_pending || wanderer.test_in_flight) {
+      return Promise.resolve(wandererAck('Complete the connection or wait for the current test.'));
+    }
+    var revision = wanderer.revision;
+    wanderer.test_pending = true; wanderer.test_result = null; wanderer.test_result_text = '';
+    wandererPush();
+    setTimeout(function () {
+      if (wanderer.revision !== revision) return;
+      wanderer.test_pending = false; wanderer.test_in_flight = true; wandererPush();
+      setTimeout(function () {
+        if (wanderer.revision !== revision) return;
+        wanderer.test_in_flight = false; wanderer.test_result = 'success';
+        wanderer.test_result_text = 'Connected to Wanderer.'; wandererPush();
+      }, 400);
+    }, 200);
+    return Promise.resolve(wandererAck());
+  };
+  wandererScenario(devSearch.get('wanderer') || 'off');
   var sharingOrder = 0;
   var sharingPresentationOrder = 0;
   var sharingSaveFails = false;
@@ -2888,6 +2976,7 @@
   };
 
   window.DEV = {
+    wanderer: function (kind) { wandererScenario(kind); wandererPush(); },
     screenshotFormations: function () {
       WM.formationsScreenshot(JSON.parse(JSON.stringify(DEV_TOOL_SCREENSHOT_FIXTURE.formations)));
     },

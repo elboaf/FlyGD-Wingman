@@ -411,6 +411,7 @@ def test_wanderer_literal_push_and_controller_boundary():
         "_publish_wanderer_state"
     )
     assert "onWandererState" in allowlist()
+    assert registered_names().get("onWandererState") == ["wanderer.js"]
     tree = ast.parse(
         (API.parent.parent / "wanderer/controller.py").read_text(encoding="utf-8")
     )
