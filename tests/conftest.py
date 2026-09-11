@@ -43,8 +43,9 @@ def tmp_path(request, tmp_path_factory):
 
     # A dynamic same-name request obtains the overridden builtin fixture. It
     # still owns its generator finalizer, report stash and retention policy.
-    # Only this factory instance is adapted, only during allocation — session
-    # fixtures and direct factory users retain normal numbered/exact semantics.
+    # Only this instance is adapted, during builtin fixture setup. Direct calls
+    # outside that window keep normal numbered/exact semantics; setup hooks
+    # inside it also see the adapter.
     with pytest.MonkeyPatch.context() as patch:
         # Restore attribute ownership too — setattr would leave a bound method
         # on the instance, shadowing the class method after the context exits.
