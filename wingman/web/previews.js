@@ -29,7 +29,11 @@
   function fieldResult(result) {
     if (result && result.state) render(result.state);
     if (result && result.applied) {
-      setStatusMessage(defaultStatus);
+      if (result.persisted === false && result.error) {
+        setStatusMessage(result.error);
+      } else {
+        setStatusMessage(defaultStatus);
+      }
       return true;
     }
     setStatusMessage(result && result.error);
