@@ -19,6 +19,16 @@ const { test } = require('node:test');
 const web = path.join(__dirname, '..', 'wingman', 'web');
 const source = fs.readFileSync(path.join(web, 'fleetbar.js'), 'utf8');
 const html = fs.readFileSync(path.join(web, 'fleetbar.html'), 'utf8');
+assert.ok(process.env.WINGMAN_PYWEBVIEW_CUSTOMIZE,
+  'Run via tests/test_fleetbar_runtime.py or set WINGMAN_PYWEBVIEW_CUSTOMIZE to the installed pywebview js/customize.js');
+const customizeOptions = { text_select: 'True', easy_drag: 'False',
+  drag_region_direct_target_only: 'False', drag_selector: '.pywebview-drag-region',
+  zoomable: 'True', draggable: 'True' };
+const customize = fs.readFileSync(process.env.WINGMAN_PYWEBVIEW_CUSTOMIZE, 'utf8')
+  .replace(/%\((\w+)\)s/g, (_, name) => {
+    assert.ok(Object.hasOwn(customizeOptions, name), 'unrecognized pywebview option ' + name);
+    return customizeOptions[name];
+  });
 const A = '0123456789abcdef'.repeat(4);
 const B = 'b'.repeat(64);
 const fragment = token => '#fleet-page=' + token;
@@ -27,6 +37,9 @@ class EventTarget {
   constructor() { this.listeners = {}; }
   addEventListener(name, fn, options = {}) {
     (this.listeners[name] ||= []).push({ fn, once: options.once });
+  }
+  removeEventListener(name, fn) {
+    this.listeners[name] = (this.listeners[name] || []).filter(listener => listener.fn !== fn);
   }
   dispatchEvent(event) {
     event = event || {};
@@ -51,6 +64,7 @@ class Element extends EventTarget {
   constructor(document, id = '') {
     super();
     this.ownerDocument = document;
+    this.nodeType = 1;
     this.id = id;
     this.children = [];
     this.attributes = {};
@@ -138,13 +152,19 @@ async function page(options = {}) {
     nodes.set(match[1], new Element(null, match[1]));
   }
   const document = new EventTarget();
+  document.body = new Element(document);
+  document.documentElement = new Element(document);
   document.activeElement = null;
   for (const node of nodes.values()) node.ownerDocument = document;
   const shell = nodes.get('fleet-shell');
   shell.offsetWidth = options.width ?? 420;
   shell.rectWidth = options.width ?? 420;
   shell.offsetHeight = options.height ?? 114;
+  shell.parentNode = document.body;
   const title = nodes.get('fleet-title');
+  const drag = nodes.get('fleet-drag');
+  drag.parentNode = title;
+  drag.className = 'fleet-drag pywebview-drag-region';
   title.offsetHeight = 29;
   const titleEnd = nodes.get('fleet-title-end');
   const actions = nodes.get('fleet-title-actions');
@@ -172,6 +192,7 @@ async function page(options = {}) {
   };
   document.getElementById = id => nodes.get(id) || null;
   document.createElement = () => new Element(document);
+  document.querySelectorAll = selector => selector === '.pywebview-drag-region' ? [drag] : [];
   document.querySelector = selector => selector === '.fleet-shell' ? shell
     : selector === '.fleet-table' ? table : null;
 
@@ -209,7 +230,16 @@ async function page(options = {}) {
   window.location = { hash: options.hash ?? fragment(A) };
   window.screenX = options.x ?? 20;
   window.screenY = options.y ?? 30;
-  if (options.bridgeReady !== false) window.pywebview = { api };
+  const nativeMoves = [];
+  function attachNativeBridge() {
+    window.pywebview = { api, platform: 'edgechromium', _jsApiCallback: (method, args, id) => {
+      assert.equal(method, 'pywebviewMoveWindow');
+      assert.equal(id, 'move');
+      nativeMoves.push(Array.from(args));
+      [window.screenX, window.screenY] = args;
+    } };
+    vm.runInContext(customize, context, { filename: 'pywebview/customize.js' });
+  }
   const screen = options.screen ?? {
     availLeft: 0, availTop: 0, availWidth: 1280, availHeight: 720
   };
@@ -220,20 +250,38 @@ async function page(options = {}) {
     console: { error: (...args) => errors.push(args) },
     Promise
   });
+  if (options.bridgeReady !== false) attachNativeBridge();
   vm.runInContext(source, context, { filename: 'fleetbar.js' });
   await flush();
   return {
-    window, document, shell, table, fonts, api, errors,
+    window, document, shell, table, fonts, api, errors, nativeMoves,
     el: id => document.getElementById(id),
     calls: method => calls.filter(call => call.method === method),
     log: () => calls.map(({ method, args }) => [method, ...args]),
     attachBridge: async () => {
-      window.pywebview = { api };
+      attachNativeBridge();
       window.dispatchEvent({ type: 'pywebviewready' });
       await flush();
     },
     push: async payload => { window.onFleetSnapshot(payload); await flush(); },
-    mouseup: async () => { document.dispatchEvent({ type: 'mouseup' }); await flush(); },
+    mousedown: async (id = 'fleet-drag', button = 0) => {
+      const target = document.getElementById(id);
+      const event = { type: 'mousedown', target, button, clientX: 15, clientY: 10,
+        screenX: window.screenX + 15, screenY: window.screenY + 10 };
+      for (let node = target; node; node = node.parentNode) node.dispatchEvent(event);
+      document.dispatchEvent(event);
+      window.dispatchEvent(event);
+      await flush();
+    },
+    mousemove: async (x, y) => {
+      window.dispatchEvent({ type: 'mousemove', screenX: x + 15, screenY: y + 10 });
+      await flush();
+    },
+    mouseup: async () => {
+      document.dispatchEvent({ type: 'mouseup' });
+      window.dispatchEvent({ type: 'mouseup' });
+      await flush();
+    },
     resize: async width => {
       shell.offsetWidth = width;
       shell.rectWidth = width;
@@ -395,9 +443,12 @@ test('A keeps its identity through delayed bridge, fonts, snapshot, height fit a
   await a.advance(500);
   assert.deepEqual(a.calls('fit_fleet_bar_height')[1].args, [A, 190]);
   await settle(a.calls('fit_fleet_bar_height')[1]);
+  await a.mousedown();
   await a.mouseup();
-  assert.deepEqual(a.calls('save_fleet_bar_pos')[0].args, [A, 30, 950]);
-  await settle(a.calls('save_fleet_bar_pos')[0]);
+  assert.deepEqual(a.calls('save_fleet_bar_pos')[0].args, [A, 30, 950, 'begin']);
+  await settle(a.calls('save_fleet_bar_pos')[0], { status: 'dragging', drag_id: 9 });
+  assert.deepEqual(a.calls('save_fleet_bar_pos')[1].args, [A, 30, 950, 'end', 9]);
+  await settle(a.calls('save_fleet_bar_pos')[1]);
   assert.equal(b.log().length, 3, 'A continuations never call B\'s bridge');
   assert.deepEqual(a.errors.concat(b.errors), []);
 });
@@ -407,6 +458,7 @@ test('500ms fit, 150ms resize settlement, and mouseup queued before bridge readi
   await p.resize(480);
   await p.advance(150);
   await p.advance(350);
+  await p.mousedown();
   await p.mouseup();
   assert.deepEqual(p.log(), []);
   p.window.location.hash = fragment(B);
@@ -414,9 +466,15 @@ test('500ms fit, 150ms resize settlement, and mouseup queued before bridge readi
   assert.deepEqual(p.log(), [
     ['fleet_bar_snapshot', A],
     ['settle_fleet_bar_resize', A, 480, 50],
-    ['save_fleet_bar_pos', A, 50, 900]
+    ['save_fleet_bar_pos', A, 50, 900, 'begin']
   ]);
   await settle(p.calls('settle_fleet_bar_resize')[0], { applied: true, persisted: true, error: null });
+  assert.equal(p.calls('fit_fleet_bar_height').length, 0, 'header ownership supersedes the earlier resize reply');
+  await settle(p.calls('save_fleet_bar_pos')[0], { status: 'dragging', drag_id: 3 });
+  assert.deepEqual(p.calls('save_fleet_bar_pos')[1].args, [A, 50, 900, 'end', 3]);
+  await settle(p.calls('save_fleet_bar_pos')[1]);
+  await p.advance(150);
+  await settle(p.calls('settle_fleet_bar_resize')[1], { status: 'ignored' });
   assert.deepEqual(p.calls('fit_fleet_bar_height')[0].args, [A, 114]);
   assert.deepEqual(p.errors, []);
 });
@@ -429,10 +487,14 @@ test('later fragment removal cannot revoke or replace the captured creation iden
   await settle(p.calls('fleet_bar_snapshot')[0]);
   assert.deepEqual(p.calls('fleet_bar_ready')[0].args, [A]);
   await settle(p.calls('fleet_bar_ready')[0], true);
+  await p.mousedown();
   await p.mouseup();
+  await settle(p.calls('save_fleet_bar_pos')[0], { status: 'dragging', drag_id: 1 });
   assert.deepEqual(p.log(), [
-    ['fleet_bar_snapshot', A], ['fleet_bar_ready', A], ['save_fleet_bar_pos', A, 20, 30]
+    ['fleet_bar_snapshot', A], ['fleet_bar_ready', A],
+    ['save_fleet_bar_pos', A, 20, 30, 'begin'], ['save_fleet_bar_pos', A, 20, 30, 'end', 1]
   ]);
+  await settle(p.calls('save_fleet_bar_pos')[1]);
   assert.deepEqual(p.errors, []);
 });
 
@@ -524,7 +586,168 @@ test('initial and telemetry renders call only height fit; telemetry never persis
   assert.deepEqual(p.errors, []);
 });
 
-test('resize bursts settle once after 150ms and unchanged width within one pixel does not persist', async () => {
+test('programmatic feedback preserves a session-only warning and native resizing polls until complete', async () => {
+  const p = await page();
+  await p.resize(620);
+  await p.advance(150);
+  const warning = 'The Fleet Bar width changed, but it will not survive restart.';
+  await settle(p.calls('settle_fleet_bar_resize')[0], { applied: true, persisted: false, error: warning });
+  await p.resize(588);
+  await p.advance(150);
+  await settle(p.calls('settle_fleet_bar_resize')[1], { status: 'ignored' });
+  assert.equal(p.el('fleet-title-error').textContent, warning);
+  await p.resize(500);
+  await p.advance(150);
+  await settle(p.calls('settle_fleet_bar_resize')[2], { status: 'resizing' });
+  assert.equal(p.el('fleet-title-error').textContent, warning);
+  await p.advance(149);
+  assert.equal(p.calls('settle_fleet_bar_resize').length, 3);
+  await p.advance(1);
+  assert.deepEqual(p.calls('settle_fleet_bar_resize')[3].args, [A, 500, 20]);
+  await settle(p.calls('settle_fleet_bar_resize')[3], { applied: true, persisted: true, error: null });
+  assert.equal(p.el('fleet-title-error').hidden, true);
+  await p.advance(450);
+  assert.equal(p.calls('settle_fleet_bar_resize').length, 4, 'completion stops polling');
+});
+
+for (const ignoredFirst of [false, true]) {
+  test('clamp feedback before the width reply retains its actual outcome; ignored first=' + ignoredFirst, async () => {
+    const p = await page();
+    await p.resize(720);
+    await p.advance(150);
+    const submitted = p.calls('settle_fleet_bar_resize')[0];
+    assert.deepEqual(submitted.args, [A, 720, 20]);
+    // Python's clamp can emit this viewport event before its save reply.
+    await p.resize(588);
+    if (ignoredFirst) {
+      await p.advance(150);
+      await settle(p.calls('settle_fleet_bar_resize')[1], { status: 'ignored' });
+    }
+    await settle(submitted, { applied: true, persisted: false, error: 'Width is session-only' });
+    assert.equal(p.el('fleet-title-error').textContent, 'Width is session-only');
+    if (!ignoredFirst) {
+      await p.advance(150);
+      await settle(p.calls('settle_fleet_bar_resize')[1], { status: 'ignored' });
+    }
+    assert.equal(p.el('fleet-title-error').textContent, 'Width is session-only');
+  });
+}
+
+for (const result of [
+  { applied: true, persisted: true, error: null },
+  { applied: false, persisted: false, error: 'New refusal' }
+]) {
+  test('newer authoritative resize feedback supersedes delayed width outcome: ' + JSON.stringify(result), async () => {
+    const p = await page();
+    await p.resize(720);
+    await p.advance(150);
+    const old = p.calls('settle_fleet_bar_resize')[0];
+    await p.resize(620);
+    await p.advance(150);
+    await settle(p.calls('settle_fleet_bar_resize')[1], result);
+    await settle(old, { applied: true, persisted: false, error: 'Obsolete warning' });
+    assert.equal(p.el('fleet-title-error').textContent, result.error || '');
+  });
+}
+
+for (const warningWhen of ['before-status', 'after-status', 'after-end']) {
+  test('actual customize position-only header status cannot retire delayed width failure: ' + warningWhen, async () => {
+    const p = await page();
+    await p.resize(720);
+    await p.advance(150);
+    const first = p.calls('settle_fleet_bar_resize')[0];
+    await p.resize(588);
+    await p.advance(150);
+    const corrective = p.calls('settle_fleet_bar_resize')[1];
+    // The corrective call is pending when header begin reaches the API.
+    await p.mousedown();
+    await settle(p.calls('save_fleet_bar_pos')[0], { status: 'dragging', drag_id: 17 });
+    await p.mousemove(200, 240);
+    assert.deepEqual(p.nativeMoves, [[200, 240]]);
+    const warning = { applied: true, persisted: false, error: 'Width is session-only' };
+    if (warningWhen === 'before-status') await settle(first, warning);
+    await settle(corrective, { status: 'resizing' });
+    if (warningWhen === 'after-status') await settle(first, warning);
+    await p.mouseup();
+    assert.deepEqual(p.calls('save_fleet_bar_pos')[1].args, [A, 200, 240, 'end', 17]);
+    await settle(p.calls('save_fleet_bar_pos')[1]);
+    await p.advance(150);
+    await settle(p.calls('settle_fleet_bar_resize')[2], { status: 'ignored' });
+    if (warningWhen === 'after-end') await settle(first, warning);
+    assert.equal(p.el('fleet-title-error').textContent, 'Width is session-only');
+    assert.deepEqual(p.errors, []);
+  });
+}
+
+test('a native gesture that ends without a field outcome cannot discard an earlier width failure', async () => {
+  const p = await page();
+  await p.resize(720);
+  await p.advance(150);
+  const first = p.calls('settle_fleet_bar_resize')[0];
+  await p.resize(620);
+  await p.advance(150);
+  await settle(p.calls('settle_fleet_bar_resize')[1], { status: 'resizing' });
+  await p.advance(150);
+  await settle(p.calls('settle_fleet_bar_resize')[2], { status: 'ignored' });
+  await settle(first, { applied: true, persisted: false, error: 'Width is session-only' });
+  assert.equal(p.el('fleet-title-error').textContent, 'Width is session-only');
+});
+
+test('an unproven resize event does not discard actual successful width persistence', async () => {
+  const p = await page();
+  await p.resize(620);
+  await p.advance(150);
+  await settle(p.calls('settle_fleet_bar_resize')[0], {
+    applied: true, persisted: false, error: 'Session-only width'
+  });
+  await p.resize(600);
+  await p.advance(150);
+  const old = p.calls('settle_fleet_bar_resize')[1];
+  await p.resize(500);
+  await settle(old, { applied: true, persisted: true, error: null });
+  assert.equal(p.el('fleet-title-error').textContent, '');
+  await p.advance(149);
+  assert.equal(p.calls('settle_fleet_bar_resize').length, 2);
+  await p.advance(1);
+  await settle(p.calls('settle_fleet_bar_resize')[2], { status: 'ignored' });
+  assert.equal(p.el('fleet-title-error').textContent, '');
+});
+
+for (const [id, method] of [['fleet-reset-width', 'reset_fleet_bar_page_width'], ['fleet-hide', 'hide_fleet_bar']]) {
+  test(id + ' owns feedback over an older resize reply and cancels its poll', async () => {
+    const p = await page();
+    await p.resize(620);
+    await p.advance(150);
+    const old = p.calls('settle_fleet_bar_resize')[0];
+    await p.pointerdown(id);
+    await p.click(id);
+    await settle(p.calls('activate_fleet_bar')[0], true);
+    await settle(p.calls(method)[0], { applied: true, persisted: false, error: 'Action stayed session-only' });
+    await settle(old, { status: 'resizing' });
+    await p.advance(450);
+    assert.equal(p.calls('settle_fleet_bar_resize').length, 1);
+    assert.equal(p.el('fleet-title-error').textContent, 'Action stayed session-only');
+  });
+}
+
+for (const [id, method] of [['fleet-reset-width', 'reset_fleet_bar_page_width'], ['fleet-hide', 'hide_fleet_bar']]) {
+  test(id + ' actual result owns feedback over an older failed width save', async () => {
+    const p = await page();
+    await p.resize(720);
+    await p.advance(150);
+    const old = p.calls('settle_fleet_bar_resize')[0];
+    await p.pointerdown(id);
+    await p.click(id);
+    await settle(p.calls('activate_fleet_bar')[0], true);
+    await settle(p.calls(method)[0], { applied: true, persisted: true, error: null });
+    await settle(old, { applied: true, persisted: false, error: 'Obsolete width warning' });
+    assert.equal(p.el('fleet-title-error').textContent, '');
+    await p.advance(450);
+    assert.equal(p.calls('settle_fleet_bar_resize').length, 1);
+  });
+}
+
+test('resize bursts coalesce for 150ms and native provenance decides even a one-pixel report', async () => {
   const p = await page();
   await settle(p.fonts);
   await settle(p.calls('fleet_bar_snapshot')[0], snapshot());
@@ -547,7 +770,9 @@ test('resize bursts settle once after 150ms and unchanged width within one pixel
   await settle(p.calls('settle_fleet_bar_resize')[0], { applied: true, persisted: true, error: null });
   await p.resize(530);
   await p.advance(150);
-  assert.equal(p.calls('settle_fleet_bar_resize').length, 1);
+  assert.equal(p.calls('settle_fleet_bar_resize').length, 2);
+  await settle(p.calls('settle_fleet_bar_resize')[1], { status: 'ignored' });
+  assert.equal(p.el('fleet-title-error').hidden, true);
   assert.deepEqual(p.errors, []);
 });
 
@@ -575,7 +800,7 @@ test('resize settlement rejection shows a generic failure and keeps the previous
   assert.deepEqual(p.errors.map(error => error[0]), ['bridge: settle_fleet_bar_resize failed']);
 });
 
-test('returning to the accepted baseline supersedes an older resize settle without sending another save', async () => {
+test('returning to the accepted baseline still admits a fresh native gesture and supersedes older replies', async () => {
   const p = await page();
   await settle(p.fonts);
   await settle(p.calls('fleet_bar_snapshot')[0], snapshot());
@@ -596,8 +821,10 @@ test('returning to the accepted baseline supersedes an older resize settle witho
   assert.equal(p.calls('fit_fleet_bar_height').length, fits, 'fit still waits while baseline return is pending');
 
   await p.advance(150);
-  assert.equal(p.calls('settle_fleet_bar_resize').length, 1, 'baseline return must not send a corrective save');
-  assert.equal(p.calls('fit_fleet_bar_height').length, fits + 1, 'baseline return should drain the deferred fit before the stale reply');
+  assert.equal(p.calls('settle_fleet_bar_resize').length, 2, 'baseline equality must not swallow genuine native intent');
+  assert.deepEqual(p.calls('settle_fleet_bar_resize')[1].args, [A, 420, 20]);
+  await settle(p.calls('settle_fleet_bar_resize')[1], { applied: true, persisted: true, error: null });
+  assert.equal(p.calls('fit_fleet_bar_height').length, fits + 1, 'latest native settlement drains the deferred fit');
   assert.deepEqual(p.calls('fit_fleet_bar_height')[fits].args, [A, 190]);
 
   await settle(p.calls('settle_fleet_bar_resize')[0], { applied: true, persisted: true, error: null });
@@ -607,6 +834,7 @@ test('returning to the accepted baseline supersedes an older resize settle witho
   await p.advance(150);
   assert.deepEqual(p.calls('settle_fleet_bar_resize').map(call => call.args), [
     [A, 480, 20],
+    [A, 420, 20],
     [A, 479, 20]
   ]);
   assert.deepEqual(p.errors, []);
@@ -786,24 +1014,117 @@ for (const [id, method, message] of [
   });
 }
 
-test('native dragging stays native; only mouseup saves current coordinates and rejection is best-effort', async () => {
-  const p = await page();
-  await settle(p.fonts);
-  await settle(p.calls('fleet_bar_snapshot')[0]);
-  await fail(p.calls('fleet_bar_ready')[0]);
-  const before = p.log();
-  p.document.dispatchEvent({ type: 'mousedown', screenX: 20, screenY: 30 });
-  p.document.dispatchEvent({ type: 'mousemove', screenX: 70, screenY: 80 });
-  await flush();
-  assert.deepEqual(p.log(), before);
-  p.window.screenX = 70;
-  p.window.screenY = 80;
+test('actual pywebview customize drag moves independently while header ownership brackets save and fit', async () => {
+  const p = await page({ x: -700, y: -80 });
+  await p.mousedown();
+  assert.deepEqual(p.calls('save_fleet_bar_pos')[0].args, [A, -700, -80, 'begin']);
+  await p.mousemove(-620, -40);
+  assert.deepEqual(p.nativeMoves, [[-620, -40]], 'real customize.js still owns native movement');
+  await p.push(snapshot(2, 'While dragging'));
+  await p.advance(1200);
+  assert.equal(p.calls('fit_fleet_bar_height').length, 0);
+  assert.equal(p.calls('activate_fleet_bar').length, 0);
+  assert.equal(p.calls('deactivate_fleet_bar').length, 0);
   await p.mouseup();
-  assert.deepEqual(p.calls('save_fleet_bar_pos')[0].args, [A, 70, 80]);
-  await fail(p.calls('save_fleet_bar_pos')[0]);
-  assert.deepEqual(p.errors.map(error => error[0]),
-                   ['bridge: fleet_bar_ready failed', 'bridge: save_fleet_bar_pos failed']);
+  await p.mousemove(-500, 0);
+  assert.deepEqual(p.nativeMoves, [[-620, -40]], 'customize.js removed its move listener on release');
+  assert.equal(p.calls('save_fleet_bar_pos').length, 1, 'end waits for begin admission');
+  await settle(p.calls('save_fleet_bar_pos')[0], { status: 'dragging', drag_id: 17 });
+  assert.deepEqual(p.calls('save_fleet_bar_pos')[1].args, [A, -620, -40, 'end', 17]);
+  await settle(p.calls('save_fleet_bar_pos')[1], { applied: true, persisted: false, error: 'Width stayed session-only' });
+  await p.advance(150);
+  await settle(p.calls('settle_fleet_bar_resize')[0], { status: 'ignored' });
+  assert.equal(p.el('fleet-title-error').textContent, 'Width stayed session-only');
+  assert.equal(p.calls('fit_fleet_bar_height').length, 1);
 });
+
+for (const settledBeforeDrag of [false, true]) {
+  test('actual customize resize-to-header drag ' + (settledBeforeDrag ? 'after' : 'before') + ' 150ms settlement preserves the latest owner', async () => {
+    const p = await page();
+    await p.resize(620);
+    if (settledBeforeDrag) {
+      await p.advance(150);
+      await settle(p.calls('settle_fleet_bar_resize')[0], { applied: true, persisted: true, error: null });
+    }
+    const fits = p.calls('fit_fleet_bar_height').length;
+    await p.mousedown();
+    await settle(p.calls('save_fleet_bar_pos')[0], { status: 'dragging', drag_id: 8 });
+    await p.mousemove(100, 120);
+    await p.advance(1500);
+    assert.equal(p.calls('fit_fleet_bar_height').length, fits);
+    assert.equal(p.calls('settle_fleet_bar_resize').length, settledBeforeDrag ? 1 : 0);
+    await p.mouseup();
+    assert.deepEqual(p.nativeMoves, [[100, 120]]);
+    assert.deepEqual(p.calls('save_fleet_bar_pos')[1].args, [A, 100, 120, 'end', 8]);
+    await settle(p.calls('save_fleet_bar_pos')[1], settledBeforeDrag ? null : { applied: true, persisted: true, error: null });
+    await p.advance(150);
+    await settle(p.calls('settle_fleet_bar_resize').at(-1), { status: 'ignored' });
+    assert.equal(p.calls('fit_fleet_bar_height').length, fits + 1);
+    assert.equal(p.el('fleet-title-error').hidden, true);
+  });
+}
+
+test('two actual customize drags serialize bridge ownership despite delayed first end', async () => {
+  const p = await page();
+  await p.mousedown();
+  await p.mousemove(100, 120);
+  await p.mouseup();
+  await p.mousedown();
+  await p.mousemove(200, 240);
+  await p.mouseup();
+  assert.deepEqual(p.nativeMoves, [[100, 120], [200, 240]]);
+  assert.equal(p.calls('save_fleet_bar_pos').length, 1);
+  await settle(p.calls('save_fleet_bar_pos')[0], { status: 'dragging', drag_id: 1 });
+  assert.deepEqual(p.calls('save_fleet_bar_pos')[1].args, [A, 100, 120, 'end', 1]);
+  await settle(p.calls('save_fleet_bar_pos')[1], { applied: true, persisted: false, error: 'Old warning' });
+  assert.equal(p.el('fleet-title-error').textContent, 'Old warning', 'a later position-only drag did not persist the failed width');
+  assert.deepEqual(p.calls('save_fleet_bar_pos')[2].args, [A, 100, 120, 'begin']);
+  await settle(p.calls('save_fleet_bar_pos')[2], { status: 'dragging', drag_id: 2 });
+  assert.deepEqual(p.calls('save_fleet_bar_pos')[3].args, [A, 200, 240, 'end', 2]);
+  await settle(p.calls('save_fleet_bar_pos')[3]);
+  assert.equal(p.el('fleet-title-error').textContent, 'Old warning');
+});
+
+test('non-header mouse input and header clicks do not claim width persistence or clear its warning', async () => {
+  const p = await page();
+  await p.resize(620);
+  await p.advance(150);
+  await settle(p.calls('settle_fleet_bar_resize')[0], { applied: true, persisted: false, error: 'Unsaved width' });
+  for (const id of ['fleet-table', 'fleet-reset-width', 'fleet-hide']) {
+    await p.mousedown(id);
+    await p.mousemove(100, 200);
+    await p.mouseup();
+  }
+  assert.deepEqual(p.nativeMoves, []);
+  assert.equal(p.calls('save_fleet_bar_pos').length, 0);
+  await p.mousedown();
+  await settle(p.calls('save_fleet_bar_pos')[0], { status: 'dragging', drag_id: 5 });
+  await p.mouseup();
+  await settle(p.calls('save_fleet_bar_pos')[1]);
+  assert.equal(p.el('fleet-title-error').textContent, 'Unsaved width');
+  assert.equal(p.calls('activate_fleet_bar').length, 0);
+});
+
+for (const [id, method] of [['fleet-reset-width', 'reset_fleet_bar_page_width'], ['fleet-hide', 'hide_fleet_bar']]) {
+  test(id + ' follows queued header admission and supersedes stale end feedback', async () => {
+    const p = await page();
+    await p.mousedown();
+    await p.mousemove(100, 120);
+    await p.mouseup();
+    await p.pointerdown(id);
+    await p.click(id);
+    await settle(p.calls('activate_fleet_bar')[0], true);
+    assert.equal(p.calls(method).length, 0, 'geometry action waits for the admitted header chain');
+    await settle(p.calls('save_fleet_bar_pos')[0], { status: 'dragging', drag_id: 7 });
+    await settle(p.calls('save_fleet_bar_pos')[1], { applied: true, persisted: false, error: 'Obsolete drag error' });
+    assert.equal(p.el('fleet-title-error').textContent, '', 'stale drag feedback is superseded immediately');
+    assert.equal(p.calls(method).length, 1);
+    await settle(p.calls(method)[0], { applied: true, persisted: false, error: 'Current action warning' });
+    await p.advance(600);
+    assert.equal(p.el('fleet-title-error').textContent, 'Current action warning');
+    assert.equal(p.calls('settle_fleet_bar_resize').length, 0, 'old drag completion did not rearm resize polling');
+  });
+}
 
 for (const oldReply of ['older snapshot', 'null', 'reject']) {
   test(`newer push survives a delayed ${oldReply} hydration reply`, async () => {

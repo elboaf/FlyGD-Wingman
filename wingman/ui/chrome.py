@@ -40,6 +40,7 @@ fix it from this file.
 import ctypes
 import logging
 import sys
+import threading
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,10 @@ HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT = 15, 16, 17
 
 WM_NCHITTEST = 0x0084
 WM_GETMINMAXINFO = 0x0024
+WM_ENTERSIZEMOVE = 0x0231
+WM_SIZING = 0x0214
+WM_EXITSIZEMOVE = 0x0232
+WMSZ_LEFT, WMSZ_RIGHT = 1, 2
 GWLP_WNDPROC = -4
 MONITOR_DEFAULTTONEAREST = 2
 
@@ -81,6 +86,69 @@ class ResizeInsets:
     @property
     def horizontal(self) -> int:
         return self.left + self.right
+
+
+@dataclass(frozen=True)
+class ResizeGestureSnapshot:
+    revision: int
+    active: bool
+    rect: tuple[int, int, int, int] | None
+
+
+class ResizeGesture:
+    """One native gesture, not a window-event callback into the application.
+
+    WndProc only records facts here. No caller holds this lock across native
+    calls, lifecycle locks, persistence or JS: synchronous SetWindowPos can
+    reenter WndProc while the bridge thread owns the Fleet lifecycle lock.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._revision = 0
+        self._active = False
+        self._sized = False
+        self._rect = None
+
+    def begin(self):
+        with self._lock:
+            self._revision += 1
+            self._active = True
+            self._sized = False
+            self._rect = None
+
+    def sizing(self):
+        with self._lock:
+            if self._active:
+                self._revision += 1
+                self._sized = True
+
+    def finish(self, rect):
+        with self._lock:
+            self._revision += 1
+            self._rect = rect if self._active and self._sized else None
+            self._active = False
+            self._sized = False
+
+    def invalidate(self):
+        with self._lock:
+            self._revision += 1
+            self._rect = None
+            self._sized = False
+            # Keep the modal-loop fact: subsequent real sizing can establish
+            # new intent, but exit alone cannot revive the invalidated report.
+
+    def snapshot(self) -> ResizeGestureSnapshot:
+        with self._lock:
+            return ResizeGestureSnapshot(self._revision, self._active, self._rect)
+
+    def consume(self, revision: int) -> bool:
+        with self._lock:
+            if self._active or self._rect is None or revision != self._revision:
+                return False
+            self._rect = None
+            self._revision += 1
+            return True
 
 
 def hit_code(rect, x, y, scale=1.0, *, edges=ALL_EDGES):
@@ -380,6 +448,7 @@ def _attach_resize(
     edges=ALL_EDGES,
     min_content_width=None,
     max_content_width=None,
+    gesture: ResizeGesture | None = None,
 ) -> ResizeInsets | None:
     """Attach resize chrome and return the logical inset it produced.
 
@@ -491,6 +560,26 @@ def _attach_resize(
 
         original = chained[0]
         try:
+            # Microsoft documents ENTER/EXIT for both moving and sizing;
+            # only WM_SIZING proves user resizing (WM_SIZE also follows
+            # programmatic geometry). Read the final rectangle at EXIT, not
+            # WM_SIZING's still-proposed drag rectangle. Observe, then chain.
+            if gesture is not None:
+                if msg == WM_ENTERSIZEMOVE:
+                    gesture.begin()
+                elif msg == WM_SIZING and wparam in (WMSZ_LEFT, WMSZ_RIGHT):
+                    gesture.sizing()
+                elif msg == WM_EXITSIZEMOVE:
+                    rect = wintypes.RECT()
+                    final = None
+                    if user32.GetWindowRect(handle, ctypes.byref(rect)):
+                        final = (
+                            round(rect.left / scale),
+                            round(rect.top / scale),
+                            round((rect.right - rect.left) / scale),
+                            round((rect.bottom - rect.top) / scale),
+                        )
+                    gesture.finish(final)
             if msg == WM_NCHITTEST:
                 code = _hit(lparam)
                 if code is not None:
@@ -562,7 +651,12 @@ def enable_resize(window, pad: int = INSET) -> bool:
 
 
 def enable_horizontal_resize(
-    window, *, pad: int = INSET, min_content_width: int, max_content_width: int
+    window,
+    *,
+    pad: int = INSET,
+    min_content_width: int,
+    max_content_width: int,
+    gesture: ResizeGesture | None = None,
 ) -> ResizeInsets | None:
     """Attach left/right-only resize chrome and return its logical inset."""
     return _attach_resize(
@@ -571,6 +665,7 @@ def enable_horizontal_resize(
         edges=HORIZONTAL_EDGES,
         min_content_width=min_content_width,
         max_content_width=max_content_width,
+        gesture=gesture,
     )
 
 

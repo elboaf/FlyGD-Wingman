@@ -392,6 +392,9 @@ class Api:
         self._fleetbar_ready = False
         self._fleetbar_resize_insets = None
         self._fleetbar_resize_enabled = False
+        self._fleetbar_resize_gesture = None
+        self._fleetbar_geometry_revision = 0
+        self._fleetbar_drag = None
         self._fleetbar_applied_x = None
         self._fleetbar_applied_y = None
         self._fleetbar_applied_outer_width = None
@@ -2494,6 +2497,7 @@ class Api:
         *,
         resize_insets=None,
         resize_enabled: bool = False,
+        resize_gesture=None,
         applied_x=None,
         applied_y=None,
         applied_outer_width=None,
@@ -2510,6 +2514,8 @@ class Api:
                 fleetbar.ZERO_INSETS if resize_insets is None else resize_insets
             )
             self._fleetbar_resize_enabled = bool(resize_enabled)
+            self._fleetbar_resize_gesture = resize_gesture
+            self._fleetbar_geometry_revision += 1
             self._fleetbar_applied_x = (
                 getattr(bar, "x", None) if applied_x is None else applied_x
             )
@@ -2530,12 +2536,14 @@ class Api:
     def _retire_fleet_page_locked(self, *, keep_window: bool = False):
         """Revoke admission; shutdown retains its concrete target for destroy retry."""
         bar = self._fleetbar_window
+        self._invalidate_fleetbar_geometry_locked()
         self._end_fleetbar_activation_locked(bar)
         with self._fleet_presentation_lock:
             self._fleetbar_page_id = None
             self._fleetbar_ready = False
             self._fleetbar_resize_insets = None
             self._fleetbar_resize_enabled = False
+            self._fleetbar_resize_gesture = None
             self._fleetbar_applied_x = None
             self._fleetbar_applied_y = None
             self._fleetbar_applied_outer_width = None
@@ -2575,6 +2583,7 @@ class Api:
 
         previous = bool(self._state.settings.get("fleet_bar", {}).get("enabled"))
         bar = self._fleetbar_window
+        self._invalidate_fleetbar_geometry_locked()
         self._end_fleetbar_activation_locked(bar)
         accepted = None
         if previous:
@@ -3113,6 +3122,12 @@ class Api:
         self._push_fleet_bar_state()
         return self._field_ok()
 
+    def _invalidate_fleetbar_geometry_locked(self) -> None:
+        self._fleetbar_geometry_revision += 1
+        self._fleetbar_drag = None
+        if self._fleetbar_resize_gesture is not None:
+            self._fleetbar_resize_gesture.invalidate()
+
     def _fleetbar_current_rect_locked(self, bar):
         x = (
             self._fleetbar_applied_x
@@ -3231,6 +3246,15 @@ class Api:
                     content_width = int(content_width)
                 except (TypeError, ValueError):
                     return
+            gesture = self._fleetbar_resize_gesture
+            native = gesture.snapshot() if gesture is not None else None
+            if self._fleetbar_drag is not None or (
+                native is not None and (native.active or native.rect is not None)
+            ):
+                return
+            self._fleetbar_geometry_revision += 1
+            revision = self._fleetbar_geometry_revision
+            expected_position = self._fleetbar_current_rect_locked(bar)[:2]
             target_x, target_y, target_width, target_height = (
                 self._fleetbar_target_rect_locked(
                     bar,
@@ -3249,18 +3273,33 @@ class Api:
                 return
         for _ in range(12):
             with self._fleetbar_lifecycle_lock:
-                if self._fleet_page_window_locked(
-                    page_id
-                ) is not bar or not self.fleet_bar_settings().get("enabled"):
+                if (
+                    self._fleet_page_window_locked(page_id) is not bar
+                    or not self.fleet_bar_settings().get("enabled")
+                    or not fleetbar.is_visible(bar)
+                    or revision != self._fleetbar_geometry_revision
+                    or (gesture is not None and gesture.snapshot() != native)
+                ):
                     return
                 try:
-                    fleetbar.apply_geometry(
+                    applied_position = fleetbar._apply_geometry_if_current(
                         bar,
                         target_x,
                         target_y,
                         target_width,
                         target_height,
+                        admit=lambda: (
+                            (gesture is None or gesture.snapshot() == native)
+                            and self._fleetbar_rect_matches(
+                                (bar.x, bar.y), expected_position
+                            )
+                        ),
                     )
+                    if applied_position is None:
+                        return
+                    # Only our pump-observed result advances the retry owner.
+                    # Sampling bar.x/y here could adopt an unadmitted header move.
+                    expected_position = applied_position
                     self._remember_fleetbar_rect_locked(
                         target_x,
                         target_y,
@@ -3291,6 +3330,7 @@ class Api:
         from wingman.ui import fleetbar
 
         default_width = settings_mod.FLEET_BAR_DEFAULT_PREFERRED_CONTENT_WIDTH
+        self._invalidate_fleetbar_geometry_locked()
         if bar is None:
             try:
                 settings_mod.update_section(
@@ -3398,47 +3438,118 @@ class Api:
                 self._hide_fleet_bar_locked()
             return resize_enabled
 
-    def save_fleet_bar_pos(self, page_id: str | None = None, x=None, y=None) -> None:
+    def save_fleet_bar_pos(
+        self, page_id: str | None = None, x=None, y=None, phase=None, drag_id=None
+    ) -> dict | None:
         from wingman.ui import fleetbar
 
         with self._fleetbar_lifecycle_lock:
             bar = self._fleet_page_window_locked(page_id)
             if bar is None:
-                return
+                return None
             try:
                 x, y = int(x), int(y)
             except (TypeError, ValueError):
-                return
-            target_x, target_y, target_width, target_height = (
-                self._fleetbar_target_rect_locked(
-                    bar,
-                    x=x,
-                    y=y,
-                )
-            )
-            if target_x != x or target_y != y:
-                try:
-                    fleetbar.apply_geometry(
+                return None
+            gesture = self._fleetbar_resize_gesture
+            native = gesture.snapshot() if gesture is not None else None
+            if phase == "begin":
+                if (
+                    self._fleetbar_drag is not None
+                    or not self.fleet_bar_settings().get("enabled")
+                    or not fleetbar.is_visible(bar)
+                    or (native is not None and native.active)
+                ):
+                    return {"status": "ignored"}
+                # pywebview's header drag uses MoveWindow, not the native
+                # sizing loop. Retire height work without touching geometry,
+                # activation, persistence, or an unconsumed resize intent.
+                self._fleetbar_geometry_revision += 1
+                drag_id = self._fleetbar_geometry_revision
+                self._fleetbar_drag = (drag_id, native)
+                return {"status": "dragging", "drag_id": drag_id}
+            if phase == "end":
+                drag = self._fleetbar_drag
+                if type(drag_id) is not int or drag is None or drag[0] != drag_id:
+                    return {"status": "ignored"}
+                self._fleetbar_drag = None
+                self._fleetbar_geometry_revision += 1
+                if (
+                    native != drag[1]
+                    or not self.fleet_bar_settings().get("enabled")
+                    or not fleetbar.is_visible(bar)
+                ):
+                    return {"status": "ignored"}
+
+                def admit_end():
+                    # customize.js can move again while this end waits for the
+                    # bridge/UI pump. A captured release cannot move it back or
+                    # consume the width the next header owner still must save.
+                    if gesture is not None and gesture.snapshot() != native:
+                        return False
+                    if not self._fleetbar_rect_matches((bar.x, bar.y), (x, y)):
+                        return False
+                    return (
+                        native is None
+                        or native.rect is None
+                        or gesture.consume(native.revision)
+                    )
+
+                if native is not None and native.rect is not None:
+                    # Only this admitted later header drag may relocate the
+                    # completed resize. Save its width and new position in one
+                    # write, returning a width result only for that real save.
+                    width = fleetbar.content_width_for_outer(
+                        native.rect[2], self._fleetbar_resize_insets
+                    )
+                    return self._settle_fleetbar_width_locked(
+                        bar, width, x, y=y, admit=admit_end
+                    )
+                if (x, y) == self._fleetbar_current_rect_locked(bar)[:2]:
+                    return None  # A header click is not successful width persistence.
+                return self._save_fleetbar_position_locked(bar, x, y, admit=admit_end)
+            if phase is not None or self._fleetbar_drag is not None:
+                return {"status": "ignored"}
+            # Legacy position-only calls cannot claim native resize intent.
+            if native is not None and (native.active or native.rect is not None):
+                return None
+            self._save_fleetbar_position_locked(bar, x, y)
+            return None
+
+    def _save_fleetbar_position_locked(self, bar, x, y, *, admit=None) -> dict | None:
+        from wingman.ui import fleetbar
+
+        if admit is None:
+            self._invalidate_fleetbar_geometry_locked()
+        target_x, target_y, target_width, target_height = (
+            self._fleetbar_target_rect_locked(bar, x=x, y=y)
+        )
+        if admit is not None or target_x != x or target_y != y:
+            try:
+                if admit is not None:
+                    if not fleetbar._apply_geometry_if_current(
                         bar,
                         target_x,
                         target_y,
                         target_width,
                         target_height,
+                        admit=admit,
+                    ):
+                        return {"status": "ignored"}
+                else:
+                    fleetbar.apply_geometry(
+                        bar, target_x, target_y, target_width, target_height
                     )
-                except Exception:
-                    logger.debug(
-                        "Fleet Bar drag-position correction failed", exc_info=True
-                    )
-                    return
-            self._remember_fleetbar_rect_locked(
-                target_x,
-                target_y,
-                target_width,
-                target_height,
-            )
-            settings_mod.update_section(
-                self._state.settings, "fleet_bar", {"x": target_x, "y": target_y}
-            )
+            except Exception:
+                logger.debug("Fleet Bar drag-position correction failed", exc_info=True)
+                return None
+        self._remember_fleetbar_rect_locked(
+            target_x, target_y, target_width, target_height
+        )
+        settings_mod.update_section(
+            self._state.settings, "fleet_bar", {"x": target_x, "y": target_y}
+        )
+        return None
 
     def fit_fleet_bar_height(self, page_id: str | None = None, height=None) -> None:
         self._fit_fleet_bar_rect(page_id, height=height)
@@ -3459,51 +3570,88 @@ class Api:
                 return None
             if content_width <= 0:
                 return None
-            preferred_content_width = max(
-                settings_mod.FLEET_BAR_MIN_PREFERRED_CONTENT_WIDTH,
-                min(settings_mod.FLEET_BAR_MAX_PREFERRED_CONTENT_WIDTH, content_width),
-            )
-            current_x, _current_y, _current_width, _current_height = (
-                self._fleetbar_current_rect_locked(bar)
-            )
-            persist_x = abs(x - current_x) > 1
-            target_x, target_y, target_width, target_height = (
-                self._fleetbar_target_rect_locked(
-                    bar,
-                    content_width=preferred_content_width,
-                    x=x if persist_x else current_x,
+            if not fleetbar.is_visible(bar):
+                return {"status": "ignored"}
+            gesture = self._fleetbar_resize_gesture
+            native = gesture.snapshot() if gesture is not None else None
+            if self._fleetbar_drag is not None or (
+                native is not None and native.active
+            ):
+                return {"status": "resizing"}
+            if native is None or native.rect is None:
+                return {"status": "ignored"}
+            native_x, _native_y, native_width, _native_height = native.rect
+            if (
+                abs(
+                    content_width
+                    - fleetbar.content_width_for_outer(
+                        native_width, self._fleetbar_resize_insets
+                    )
                 )
+                > 1
+                or abs(x - native_x) > 1
+            ):
+                return {"status": "ignored"}
+            # Consume on the UI pump before native correction can generate
+            # feedback, not on this worker before a newer gesture can arrive.
+            return self._settle_fleetbar_width_locked(
+                bar,
+                content_width,
+                x,
+                admit=lambda: (
+                    self._fleetbar_rect_matches((bar.x, bar.y), native.rect[:2])
+                    and gesture.consume(native.revision)
+                ),
             )
-            try:
-                fleetbar.apply_geometry(
-                    bar,
-                    target_x,
-                    target_y,
-                    target_width,
-                    target_height,
-                )
-            except Exception:
-                logger.debug("Fleet Bar resize settlement failed", exc_info=True)
-                return self._field_refused("The Fleet Bar could not be resized.")
-            self._remember_fleetbar_rect_locked(
-                target_x,
-                target_y,
-                target_width,
-                target_height,
+
+    def _settle_fleetbar_width_locked(
+        self, bar, content_width, x, *, admit, y=None
+    ) -> dict:
+        from wingman.ui import fleetbar
+
+        self._fleetbar_geometry_revision += 1
+        preferred_content_width = max(
+            settings_mod.FLEET_BAR_MIN_PREFERRED_CONTENT_WIDTH,
+            min(settings_mod.FLEET_BAR_MAX_PREFERRED_CONTENT_WIDTH, content_width),
+        )
+        current_x, _current_y, _current_width, _current_height = (
+            self._fleetbar_current_rect_locked(bar)
+        )
+        persist_x = y is not None or abs(x - current_x) > 1
+        target_x, target_y, target_width, target_height = (
+            self._fleetbar_target_rect_locked(
+                bar,
+                content_width=preferred_content_width,
+                x=x if persist_x else current_x,
+                y=y,
             )
-            values = {"preferred_content_width": preferred_content_width}
-            if persist_x:
-                values["x"] = target_x
-            try:
-                settings_mod.update_section(self._state.settings, "fleet_bar", values)
-            except OSError:
-                logger.exception("Could not persist the Fleet Bar width")
-                return {
-                    "applied": True,
-                    "persisted": False,
-                    "error": self._fleetbar_restart_warning(),
-                }
-            return self._field_ok()
+        )
+        try:
+            if not fleetbar._apply_geometry_if_current(
+                bar, target_x, target_y, target_width, target_height, admit=admit
+            ):
+                return {"status": "ignored"}
+        except Exception:
+            logger.debug("Fleet Bar resize settlement failed", exc_info=True)
+            return self._field_refused("The Fleet Bar could not be resized.")
+        self._remember_fleetbar_rect_locked(
+            target_x, target_y, target_width, target_height
+        )
+        values = {"preferred_content_width": preferred_content_width}
+        if persist_x:
+            values["x"] = target_x
+        if y is not None:
+            values["y"] = target_y
+        try:
+            settings_mod.update_section(self._state.settings, "fleet_bar", values)
+        except OSError:
+            logger.exception("Could not persist the Fleet Bar width")
+            return {
+                "applied": True,
+                "persisted": False,
+                "error": self._fleetbar_restart_warning(),
+            }
+        return self._field_ok()
 
     def reset_fleet_bar_page_width(self, page_id: str | None = None) -> dict | None:
         with self._fleetbar_lifecycle_lock:

@@ -13,12 +13,18 @@
                             { once: true });
   });
   var lastRevision = -1;
-  var settledContentWidth = currentContentWidth();
   var resizeTimer = 0;
   var resizePending = false;
   var resizeSettling = false;
   var resizeSettleVersion = 0;
+  var widthFeedbackVersion = 0;
+  var widthFeedbackAccepted = 0;
   var fitDeferred = false;
+  var headerDrag = null;
+  var dragPending = false;
+  var dragVersion = 0;
+  var dragActionVersion = 0;
+  var dragWork = Promise.resolve(null);
   var activationPromise = null;
   var activationActive = false;
 
@@ -95,6 +101,17 @@
     return result;
   }
 
+  function acceptWidthFeedback(result, version, actionVersion) {
+    if (actionVersion !== dragActionVersion || version < widthFeedbackAccepted) return;
+    // A viewport event may be our own clamp before the save reply. Transient
+    // 'resizing' also covers position-only headers and canceled gestures; only
+    // an actual newer field outcome supersedes that reply (Reset/Hide above).
+    if (isFieldResult(result)) {
+      widthFeedbackAccepted = version;
+      fieldResult(result, 'Could not save Fleet Bar width.');
+    }
+  }
+
   function tableHeightCap() {
     var table = document.querySelector('.fleet-table');
     if (!table) return;
@@ -104,7 +121,7 @@
   }
 
   function fitHeight() {
-    if (resizePending || resizeSettling) {
+    if (resizePending || resizeSettling || dragPending) {
       fitDeferred = true;
       return Promise.resolve(null);
     }
@@ -123,37 +140,103 @@
   function settleResize() {
     resizeTimer = 0;
     resizePending = false;
-    var width = currentContentWidth();
-    var changed = settledContentWidth === null || Math.abs(width - settledContentWidth) > 1;
-    var work = Promise.resolve(null);
-    var version = 0;
-    if (changed) {
-      resizeSettling = true;
-      version = ++resizeSettleVersion;
-      work = send('settle_fleet_bar_resize', width, window.screenX).then(function (result) {
-        if (version !== resizeSettleVersion) return null;
-        resizeSettling = false;
-        result = fieldResult(result, 'The Fleet Bar could not be resized.');
-        if (result && !result.error) settledContentWidth = width;
-        return result;
-      });
-    } else if (resizeSettling) {
-      // Returning to the accepted baseline still supersedes the older in-flight
-      // settle: no save is needed, but the stale reply must not advance the
-      // baseline or be the callback that drains deferred height work.
-      version = ++resizeSettleVersion;
+    if (dragPending) return Promise.resolve(null);
+    resizeSettling = true;
+    var version = ++resizeSettleVersion;
+    var feedbackVersion = ++widthFeedbackVersion;
+    var actionVersion = dragActionVersion;
+    // A width equality cannot prove intent: a genuine second gesture may
+    // return to the session-only width. Native provenance owns that decision.
+    return send('settle_fleet_bar_resize', currentContentWidth(), window.screenX).then(function (result) {
+      acceptWidthFeedback(result, feedbackVersion, actionVersion);
+      if (version !== resizeSettleVersion) return null;
       resizeSettling = false;
-    }
-    return work.then(function () {
-      if (version && version !== resizeSettleVersion) return null;
+      if (result && result.status === 'resizing') {
+        // A paused native drag need not emit another resize on release. Keep
+        // one 150ms timer until EXIT, superseded by any newer resize/action.
+        scheduleResizeSettlement();
+        return null;
+      }
+      if (!isFieldResult(result) && (!result || result.status !== 'ignored')) {
+        fieldResult(result, 'The Fleet Bar could not be resized.');
+      }
+      // Ignored geometry feedback is not successful persistence and must not
+      // retire a session-only warning from the action that caused it.
       return drainDeferredFit();
     });
   }
 
   function scheduleResizeSettlement() {
+    ++resizeSettleVersion;
     resizePending = true;
+    fitDeferred = true;
     if (resizeTimer) clearTimeout(resizeTimer);
     resizeTimer = setTimeout(settleResize, 150);
+  }
+
+  function cancelResizeSettlement(supersede) {
+    if (supersede !== false) ++resizeSettleVersion;
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = 0;
+    resizePending = false;
+    resizeSettling = false;
+  }
+
+  function bindHeaderDrag() {
+    var header = document.getElementById('fleet-drag');
+    if (!header) return;
+    header.addEventListener('mousedown', function (event) {
+      if (event.button !== 0 || headerDrag) return;
+      var current = { version: ++dragVersion, actionVersion: dragActionVersion };
+      var x = window.screenX;
+      var y = window.screenY;
+      headerDrag = current;
+      dragPending = true;
+      fitDeferred = true;
+      // Moving does not supersede the result of an already submitted width
+      // save. Keep its feedback, but postpone further resize work until end.
+      cancelResizeSettlement(false);
+      // Do not intercept or implement movement. pywebview customize.js arms
+      // its own mousemove handler when this event bubbles to document.body.
+      // Serialize admission/end so delayed bridge replies cannot swap owners.
+      current.start = dragWork.then(function () {
+        if (current.version !== dragVersion) return null;
+        return send('save_fleet_bar_pos', x, y, 'begin');
+      });
+      dragWork = current.start;
+    });
+    window.addEventListener('mouseup', function () {
+      var current = headerDrag;
+      if (!current) return;
+      headerDrag = null;
+      var x = window.screenX;
+      var y = window.screenY;
+      dragWork = current.start.then(function (started) {
+        if (!started || started.status !== 'dragging') return null;
+        current.feedbackVersion = ++widthFeedbackVersion;
+        return send('save_fleet_bar_pos', x, y, 'end', started.drag_id);
+      }).then(function (result) {
+        // Another position-only drag cannot retire a failed width save. The
+        // serialized chain keeps width outcomes ordered; Reset/Hide supersedes
+        // them immediately, even while waiting for that chain to finish.
+        acceptWidthFeedback(result, current.feedbackVersion, current.actionVersion);
+        if (current.version !== dragVersion) return null;
+        dragPending = false;
+        scheduleResizeSettlement();
+        return null;
+      });
+    });
+  }
+
+  function cancelHeaderDrag() {
+    ++dragVersion;
+    ++dragActionVersion;
+    headerDrag = null;
+    dragPending = false;
+    cancelResizeSettlement();
+    // Reset/Hide follows any already issued admission/end, then the API
+    // retires its private owner. No late begin can land after the action.
+    return dragWork;
   }
 
   function focusAction(node) {
@@ -478,21 +561,22 @@
     deactivateIfActive();
   });
 
-  document.addEventListener('mouseup', function () {
-    send('save_fleet_bar_pos', window.screenX, window.screenY);
-  });
-
+  bindHeaderDrag();
   bindTableActionTraversal();
 
   bindAction('fleet-reset-width', function () {
-    return send('reset_fleet_bar_page_width').then(function (result) {
+    return cancelHeaderDrag().then(function () {
+      return send('reset_fleet_bar_page_width');
+    }).then(function (result) {
       return fieldResult(result, 'Could not reset Fleet Bar width.');
     });
   });
   bindAction('fleet-hide', function () {
     activationActive = false;
     activationPromise = null;
-    return send('hide_fleet_bar').then(function (result) {
+    return cancelHeaderDrag().then(function () {
+      return send('hide_fleet_bar');
+    }).then(function (result) {
       return fieldResult(result, 'Could not hide the Fleet Bar.');
     });
   });

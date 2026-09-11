@@ -282,8 +282,8 @@ def _fake_horizontal_attach(
 
         def GetWindowRect(self, hwnd, rect_ptr):
             rect = ctypes.cast(rect_ptr, ctypes.POINTER(_Rect)).contents
-            rect.left, rect.top, rect.right, rect.bottom = RECT
-            return 1
+            rect.left, rect.top, rect.right, rect.bottom = state.get("rect", RECT)
+            return state.get("rect_ok", 1)
 
         def MonitorFromWindow(self, hwnd, flags):
             return 1
@@ -391,6 +391,94 @@ def test_enable_horizontal_resize_removes_the_inset_if_wndproc_install_fails(
     assert attached.native.Padding == 0
     assert attached.native.DisplayRectangle.X == 0
     assert attached.native.DisplayRectangle.Y == 0
+
+
+@pytest.mark.parametrize(
+    "scale, expected",
+    [
+        (1.0, (100, 100, 1000, 600)),
+        (1.25, (80, 80, 800, 480)),
+        (2.0, (50, 50, 500, 300)),
+    ],
+)
+def test_native_resize_provenance_requires_sizing_and_finalizes_only_on_exit(
+    monkeypatch, scale, expected
+):
+    attached = _fake_horizontal_attach(monkeypatch, scale=scale)
+    gesture = chrome.ResizeGesture()
+    chrome.enable_horizontal_resize(
+        attached.window, min_content_width=420, max_content_width=720, gesture=gesture
+    )
+    proc = attached.state["callback"]
+    initial = gesture.snapshot()
+    # Programmatic WM_SIZE/WM_MOVE cannot authorize persistence.
+    for msg in (0x0005, 0x0003):
+        assert proc(123, msg, 0, 0) == 777
+    assert gesture.snapshot() == initial
+    assert proc(123, 0x0231, 0, 0) == 777
+    assert gesture.snapshot().active
+    assert gesture.snapshot().revision > initial.revision
+    assert proc(123, 0x0214, 1, 0) == 777
+    assert gesture.snapshot().rect is None
+    assert proc(123, 0x0232, 0, 0) == 777
+    completed = gesture.snapshot()
+    assert not completed.active
+    assert completed.rect == expected
+    assert gesture.consume(completed.revision)
+    assert gesture.snapshot().rect is None
+    assert not gesture.consume(completed.revision)
+    # A title drag has the same modal-loop endpoints, but no WM_SIZING.
+    proc(123, 0x0231, 0, 0)
+    proc(123, 0x0232, 0, 0)
+    assert gesture.snapshot().rect is None
+
+
+@pytest.mark.parametrize("readable", [True, False])
+def test_native_completion_uses_final_signed_rectangle_and_never_leaves_failed_read_active(
+    monkeypatch, readable
+):
+    attached = _fake_horizontal_attach(monkeypatch, scale=1.25)
+    gesture = chrome.ResizeGesture()
+    chrome.enable_horizontal_resize(
+        attached.window, min_content_width=420, max_content_width=720, gesture=gesture
+    )
+    proc = attached.state["callback"]
+    proc(123, 0x0231, 0, 0)
+    proc(123, 0x0214, 2, 0)
+    attached.state["rect"] = (-1000, -50, -210, 100)
+    attached.state["rect_ok"] = readable
+    proc(123, 0x0232, 0, 0)
+    state = gesture.snapshot()
+    assert state.active is False
+    assert state.rect == ((-800, -40, 632, 120) if readable else None)
+
+
+def test_main_resize_chrome_keeps_the_original_message_chain_without_gesture_state(
+    monkeypatch,
+):
+    attached = _fake_horizontal_attach(monkeypatch)
+    assert chrome.enable_resize(attached.window)
+    proc = attached.state["callback"]
+    for msg in (0x0231, 0x0214, 0x0232, 0x0005):
+        assert proc(123, msg, 1, 0) == 777
+    assert attached.state["call_window_proc"] == [0x0231, 0x0214, 0x0232, 0x0005]
+
+
+def test_invalidated_resize_report_cannot_be_consumed_or_revived_on_exit():
+    gesture = chrome.ResizeGesture()
+    gesture.begin()
+    gesture.sizing()
+    old = gesture.snapshot().revision
+    gesture.invalidate()
+    gesture.finish((20, 30, 512, 90))
+    assert gesture.snapshot().rect is None
+    assert not gesture.consume(old)
+    gesture.begin()
+    gesture.sizing()
+    gesture.finish((20, 30, 632, 90))
+    completed = gesture.snapshot()
+    gesture.begin()
+    assert not gesture.consume(completed.revision)
 
 
 class _Explosive:

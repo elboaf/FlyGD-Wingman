@@ -128,7 +128,10 @@
     }
     .fleet-grid {
       display: grid;
-      grid-template-columns: minmax(96px, 1fr) clamp(132px, 30vw, 184px) max-content;
+      /* Shared lengths, not each row's EWAR content: local full EWAR
+         measures 144.02px, remote tackle only 79.2px. Reserve 145 for both
+         and the smaller-font header so every DPS axis stays aligned. */
+      grid-template-columns: minmax(96px, 1fr) clamp(132px, 30vw, 184px) 145px;
       align-items: center;
     }
     .fleet-table {
