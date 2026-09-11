@@ -1,5 +1,65 @@
 # Shared preview runtime — Phase 1
 
+## Final engineering checkpoint
+
+**Implemented and independently reviewed at `8aec290f`.** All reported review
+findings have been addressed and their corrections independently re-reviewed.
+The records below retain intermediate checks; their pending-review statements
+are superseded by this checkpoint. No push, merge, release, or Phase 2 work.
+
+Parent verification after the final corrections:
+
+- Linux: `UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-runtime-venv uv run --no-sync
+  python -m pytest tests/ -q -rs --junitxml=/tmp/companion-runtime-final-linux.xml`
+  — **10,613 passed, 11 Windows-only skips**, 233.84 seconds. Actual release codec
+  installed and Node available; neither capability was skipped.
+- Windows: prepared `wingman-preview-runtime-f30d/venv` Python, isolated app-data
+  environment and portable Node, `python -m pytest` over runtime/review/boundary,
+  host, Win32, wiring, crop API, main/engine, Fleet integration, alerts wiring,
+  telemetry coordinator and all custom-alert tests, `-q -rs` — **1,230 passed,
+  no skips or deselections**, 15.26 seconds. This includes the real message-pump
+  and Win32-binding tests, unlike the implementer's earlier filtered runs.
+- `ruff check .`, `ruff format --check .` — passed, 387 Python files.
+- `cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml` —
+  **1 passed**; `node scripts/js_smoke.js` — all page modules loaded.
+- `git diff f30d4636..HEAD --check` — passed.
+
+The Windows full-suite attempt at `7d497faf` remains **not green**: 10,529 passed,
+56 skipped and six unchanged symlink tests failed with `WinError 1314`. Those
+files were not modified by this phase. No privilege or test-policy changes were
+made, and the latest complete Windows suite has not been claimed to pass.
+
+**Before merge:** the ordinary attended EVE on/off regression while crops/alerts
+are in use remains unrun. No exhaustive capacity qualification is required.
+The source branch remains based on the explicit `f30d4636` checkpoint; later
+upstream changes were not silently rebased into reviewed/tested code.
+
+### Reviewer-facing execution summary
+
+Committed settings become independent runtime demands; an outside-lock admission
+drainer preserves revocations while coalescing other pending work. The retained
+executor alone starts/stops the pump. The host applies family transitions and
+reports native outcomes; the runtime derives state and schedules telemetry
+publication outside its locks. EVE-off revokes live authority immediately while
+accepted storage work and failed native cleanup keep their existing owners.
+Final close revokes publication before WebView destruction, then joins separately.
+
+The important implementation refinement is the private host admission-epoch
+snapshot: inferred epochs could not distinguish coalesced-away activation from
+an admitted activation whose acknowledgment was delayed. It supplies authority
+floors, not active-state evidence; the public HostAck remains unchanged.
+
+Reviewer focus remains admission/epoch boundaries, accepted storage FIFO,
+resource retention versus dispatch authority, and asynchronous delivery fencing.
+
+### Reviewer knowledge check
+
+1. Why are pump liveness and EVE authorization different facts?
+2. What prevents delayed active acknowledgments from reviving revoked authority?
+3. Which accepted writes must finish after EVE-off, and what preserves their order?
+4. Why does failed native cleanup retain ownership without retaining dispatch authority?
+5. How do selection leases and preview publication behave at final admission closure?
+
 ## Approval and scope
 
 The user approved basic feasibility and Phase 1 after the minimal tryout worked.
