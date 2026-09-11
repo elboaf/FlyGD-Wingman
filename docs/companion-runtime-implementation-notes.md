@@ -1,6 +1,45 @@
 # Shared preview runtime — Phase 1
 
-## Final engineering checkpoint
+## Rebased Phase 1 — attended smoke pending
+
+Rebased `feature/companion-preview-runtime` onto current `origin/main`,
+`83b7741b` (version bump), producing `b799b686`. `git range-diff
+f30d4636..7617a760 origin/main..HEAD` matched all five reviewed commits with `=`;
+there were no conflict resolutions or changes to the reviewed patches.
+Independent rebase-integration polish found no fixes needed: upstream Fleet/API
+changes, native destruction ordering, and runtime delivery fences remain intact.
+
+The latest user direction is authoritative for subsequent companion work:
+no Phase 0 blocker, no build-time feature flag or staged-release program,
+no exhaustive capacity matrix; the ordinary persisted setting defaults off,
+and the fixed maximum is eight enabled companions. Whole-window and region
+support may share one PR. That feature work begins only after this Phase 1 PR
+merges with approval.
+
+Fresh verification on the rebased tree:
+
+- Linux focused runtime/host/crop/alert/telemetry/Fleet/main modules:
+  **3,713 passed, 4 Windows-only skips**, 121.64 seconds.
+- Windows equivalent focused modules: **3,714 passed, 3 skips**, 91.00 seconds.
+  Skips: two symlink-capability telemetry tests (`WinError 1314`) and one POSIX
+  permissions test. Native message-pump/Win32 tests ran; Node was available.
+- Linux `python -m pytest tests/ -q -rs
+  --junitxml=/tmp/companion-runtime-rebased-linux.xml`: **10,678 passed,
+  11 Windows-only skips**, 223.22 seconds. Built codec and Node were available.
+- `ruff check .`, `ruff format --check .`: passed, 387 Python files.
+- `cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml`:
+  **1 passed**. `node scripts/js_smoke.js`: all page modules loaded.
+- `git diff origin/main..HEAD --check`: passed.
+
+**Attended Windows result: NOT RUN.** At the readiness check, no Wingman or EVE
+client process was running. The saved local preview configuration contains one
+crop; alerts are currently disabled. One logged-in EVE client is sufficient for
+the requested ordinary on/off regression. Visual/audio observations and Quit
+cleanup must be confirmed by the operator, not inferred from automated tests.
+No PR has been opened yet; the requested sequence records that result first.
+No Step 2 implementation, merge, release, or privilege change has occurred.
+
+## Final engineering checkpoint (before rebase)
 
 **Implemented and independently reviewed at `8aec290f`.** All reported review
 findings have been addressed and their corrections independently re-reviewed.
