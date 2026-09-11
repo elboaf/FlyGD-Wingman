@@ -13,6 +13,14 @@
                             { once: true });
   });
   var lastRevision = -1;
+  var settledContentWidth = currentContentWidth();
+  var resizeTimer = 0;
+  var resizePending = false;
+  var resizeSettling = false;
+  var resizeSettleVersion = 0;
+  var fitDeferred = false;
+  var activationPromise = null;
+  var activationActive = false;
 
   function send(method) {
     if (!pageId) return Promise.resolve(null);
@@ -28,30 +36,192 @@
     });
   }
 
-  function fit() {
+  function currentContentWidth() {
     var shell = document.querySelector('.fleet-shell');
-    if (!shell) return Promise.resolve(null);
+    if (!shell) return 0;
+    var rect = shell.getBoundingClientRect ? shell.getBoundingClientRect() : null;
+    var width = rect && rect.width;
+    if (typeof width !== 'number' || !isFinite(width) || width <= 0) {
+      width = shell.offsetWidth;
+    }
+    return Math.max(0, Math.round(width || 0));
+  }
+
+  function titleNodes() {
+    return {
+      end: document.getElementById('fleet-title-end'),
+      health: document.getElementById('fleet-health'),
+      error: document.getElementById('fleet-title-error')
+    };
+  }
+
+  function showTitleError(text) {
+    var nodes = titleNodes();
+    if (!nodes.error || !nodes.health) return;
+    var message = text || '';
+    setText(nodes.error, message);
+    nodes.error.hidden = !message;
+    nodes.health.hidden = Boolean(message);
+    if (nodes.end && nodes.end.classList) {
+      nodes.end.classList.toggle('error-active', Boolean(message));
+    }
+  }
+
+  function clearTitleError() {
+    showTitleError('');
+  }
+
+  function setText(node, text) {
+    if (!node) return;
+    text = text || '';
+    if (node.textContent !== text) node.textContent = text;
+  }
+
+  function isFieldResult(result) {
+    return !!result && typeof result === 'object'
+      && typeof result.applied === 'boolean'
+      && typeof result.persisted === 'boolean'
+      && Object.prototype.hasOwnProperty.call(result, 'error')
+      && (result.error === null || typeof result.error === 'string');
+  }
+
+  function fieldResult(result, failureMessage) {
+    if (!isFieldResult(result)) {
+      showTitleError(failureMessage);
+      return null;
+    }
+    if (result.error) showTitleError(result.error);
+    else clearTitleError();
+    return result;
+  }
+
+  function tableHeightCap() {
+    var table = document.querySelector('.fleet-table');
+    if (!table) return;
     // Use monitor bounds, not viewport height: the native window starts at
     // 90px and grows to content. A vh cap would trap it at that initial size.
-    var table = document.querySelector('.fleet-table');
-    if (table) table.style.maxHeight = Math.max(30, Math.min(480, screen.availHeight - 100)) + 'px';
-    var width = shell.offsetWidth;
-    var height = shell.offsetHeight;
-    return send('fit_fleet_bar', width, height).then(function () {
-      // Screen coordinates and available bounds are CSS/logical pixels, the
-      // same units pywebview accepts. Keep roster growth on the current
-      // monitor and recover coordinates left on a disconnected display.
-      var left = (typeof screen.availLeft === 'number') ? screen.availLeft : 0;
-      var top = (typeof screen.availTop === 'number') ? screen.availTop : 0;
-      var right = left + screen.availWidth;
-      var bottom = top + screen.availHeight;
-      var x = Math.max(left, Math.min(window.screenX, right - width));
-      var y = Math.max(top, Math.min(window.screenY, bottom - height));
-      if (Math.abs(x - window.screenX) > 1 ||
-          Math.abs(y - window.screenY) > 1) {
-        return send('move_fleet_bar', x, y);
+    table.style.maxHeight = Math.max(30, Math.min(480, screen.availHeight - 100)) + 'px';
+  }
+
+  function fitHeight() {
+    if (resizePending || resizeSettling) {
+      fitDeferred = true;
+      return Promise.resolve(null);
+    }
+    var shell = document.querySelector('.fleet-shell');
+    if (!shell) return Promise.resolve(null);
+    tableHeightCap();
+    return send('fit_fleet_bar_height', shell.offsetHeight);
+  }
+
+  function drainDeferredFit() {
+    if (!fitDeferred) return Promise.resolve(null);
+    fitDeferred = false;
+    return fitHeight();
+  }
+
+  function settleResize() {
+    resizeTimer = 0;
+    resizePending = false;
+    var width = currentContentWidth();
+    var changed = settledContentWidth === null || Math.abs(width - settledContentWidth) > 1;
+    var work = Promise.resolve(null);
+    var version = 0;
+    if (changed) {
+      resizeSettling = true;
+      version = ++resizeSettleVersion;
+      work = send('settle_fleet_bar_resize', width, window.screenX).then(function (result) {
+        if (version !== resizeSettleVersion) return null;
+        resizeSettling = false;
+        result = fieldResult(result, 'The Fleet Bar could not be resized.');
+        if (result && !result.error) settledContentWidth = width;
+        return result;
+      });
+    } else if (resizeSettling) {
+      // Returning to the accepted baseline still supersedes the older in-flight
+      // settle: no save is needed, but the stale reply must not advance the
+      // baseline or be the callback that drains deferred height work.
+      version = ++resizeSettleVersion;
+      resizeSettling = false;
+    }
+    return work.then(function () {
+      if (version && version !== resizeSettleVersion) return null;
+      return drainDeferredFit();
+    });
+  }
+
+  function scheduleResizeSettlement() {
+    resizePending = true;
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(settleResize, 150);
+  }
+
+  function focusAction(node) {
+    if (node && typeof node.focus === 'function') node.focus();
+  }
+
+  function activateForAction(node) {
+    if (activationActive) {
+      clearTitleError();
+      focusAction(node);
+      return Promise.resolve(true);
+    }
+    if (!activationPromise) {
+      activationPromise = send('activate_fleet_bar').then(function (activated) {
+        activationPromise = null;
+        activationActive = activated === true;
+        if (!activationActive) {
+          showTitleError('Use the main window controls.');
+        }
+        return activationActive;
+      });
+    }
+    return activationPromise.then(function (activated) {
+      if (activated) {
+        clearTitleError();
+        focusAction(node);
       }
-      return null;
+      return activated;
+    });
+  }
+
+  function deactivateIfActive() {
+    if (activationPromise) {
+      return activationPromise.then(function (activated) {
+        if (!activated) return false;
+        return deactivateIfActive();
+      });
+    }
+    if (!activationActive) return Promise.resolve(false);
+    activationActive = false;
+    return send('deactivate_fleet_bar');
+  }
+
+  function bindAction(id, run) {
+    var node = document.getElementById(id);
+    if (!node) return;
+    node.addEventListener('pointerdown', function (event) {
+      if (event && typeof event.button === 'number' && event.button !== 0) return;
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      activateForAction(node);
+    });
+    node.addEventListener('click', function (event) {
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      activateForAction(node).then(function (activated) {
+        if (!activated) return null;
+        return run(node);
+      });
+    });
+  }
+
+  function bindTableActionTraversal() {
+    var table = document.getElementById('fleet-table');
+    var reset = document.getElementById('fleet-reset-width');
+    if (!table || !reset) return;
+    table.addEventListener('keydown', function (event) {
+      if (!event || event.key !== 'Tab' || event.shiftKey) return;
+      if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      focusAction(reset);
     });
   }
 
@@ -71,9 +241,22 @@
     return value;
   }
 
+  function isStaleRemote(row) {
+    return row && row.remote === true && row.state === 'stale';
+  }
+
+  function hasIncomingThreat(row) {
+    return !isStaleRemote(row) && readDps(row, 'incoming_dps') > 0;
+  }
+
+  function hasEwarThreat(row) {
+    return !isStaleRemote(row) && Array.isArray(row && row.ewar) && row.ewar.length > 0;
+  }
+
   function maxDps(rows, key) {
     var max = 0;
     rows.forEach(function (row) {
+      if (isStaleRemote(row)) return;
       var value = readDps(row, key);
       if (value !== null && value > max) max = value;
     });
@@ -87,7 +270,7 @@
   }
 
   function displayDps(value) {
-    if (typeof value !== 'number' || !isFinite(value) || value < 0) return '\u2014';
+    if (typeof value !== 'number' || !isFinite(value) || value < 0) return '—';
     if (value > DPS_DISPLAY_BOUND) return '>10m';
     return String(value);
   }
@@ -165,14 +348,31 @@
     node.setAttribute('aria-label',
       dpsAriaPart('Outgoing', out) + ', ' + dpsAriaPart('incoming', incoming));
 
-    var stale = row.remote === true && row.state === 'stale';
-    node.appendChild(damageHalf('out', out, fillRatio(out, maxOutgoing),
+    var stale = isStaleRemote(row);
+    node.appendChild(damageHalf('out', out, stale ? 0 : fillRatio(out, maxOutgoing),
       (!stale && out !== null && out > 0) ? 'live' : null));
     node.appendChild(axisNode());
-    // Positive IN shares --warn with active EWAR; OUT never does.
-    node.appendChild(damageHalf('in', incoming, fillRatio(incoming, maxIncoming),
-      (incoming !== null && incoming > 0) ? 'warn' : null));
+    node.appendChild(damageHalf('in', incoming, stale ? 0 : fillRatio(incoming, maxIncoming),
+      hasIncomingThreat(row) ? 'warn' : null));
     return node;
+  }
+
+  function ewarText(row) {
+    return (Array.isArray(row && row.ewar) && row.ewar.length)
+      ? row.ewar.join(' · ') : '—';
+  }
+
+  function ewarAriaLabel(row) {
+    var ewar = Array.isArray(row && row.ewar) ? row.ewar : [];
+    var labels = [];
+    ewar.forEach(function (effect) {
+      if (row && row.remote === true && effect === 'SCRAM/POINT') {
+        labels.push('Remote tackle: scram or point.');
+      } else {
+        labels.push(effect);
+      }
+    });
+    return labels.length ? labels.join(', ') : null;
   }
 
   function healthLabel(health) {
@@ -183,6 +383,15 @@
     if (state === 'stale') return 'STALE';
     if (state === 'error') return 'ERROR';
     return 'WAITING';
+  }
+
+  function recoveryNote(payload, health) {
+    if (payload && payload.metric_error) return payload.metric_error;
+    var state = (health && health.state) || 'stopped';
+    if (state === 'missing_folder') return 'Set the Gamelog folder in Settings › Alerts.';
+    if (state === 'stale') return 'Gamelogs have stopped updating.';
+    if (state === 'error') return 'Gamelogs could not be read.';
+    return '';
   }
 
   function render(payload) {
@@ -209,12 +418,16 @@
     var maxIncoming = maxDps(rows, 'incoming_dps');
     rows.forEach(function (row) {
       var line = document.createElement('div');
-      var ewar = (Array.isArray(row.ewar) && row.ewar.length)
-        ? row.ewar.join(' \u00b7 ') : '\u2014';
-      var stale = row.remote === true && row.state === 'stale';
-      line.className = 'fleet-grid fleet-row' + (stale ? ' stale' : '');
+      var ewar = ewarText(row);
+      var stale = isStaleRemote(row);
+      var ewarThreat = hasEwarThreat(row);
+      var threat = ewarThreat || hasIncomingThreat(row);
+      line.className = 'fleet-grid fleet-row'
+        + (stale ? ' stale' : '')
+        + (threat ? ' threat' : '')
+        + (ewarThreat ? ' ewar-threat' : '');
       line.setAttribute('role', 'row');
-      var character = cell('fleet-character', row.character || '\u2014');
+      var character = cell('fleet-character', row.character || '—');
       character.title = character.textContent;
       character.removeAttribute('role');
       var identity = cell('fleet-identity', '');
@@ -222,14 +435,15 @@
       if (row.remote === true) {
         var marker = document.createElement('span');
         marker.className = 'fleet-remote';
-        marker.textContent = stale ? 'REMOTE \u00b7 STALE' : 'REMOTE';
+        marker.textContent = stale ? 'REMOTE · STALE' : 'REMOTE';
         identity.appendChild(marker);
       }
       line.appendChild(identity);
       line.appendChild(damageCell(row, maxOutgoing, maxIncoming));
-      var incoming = cell('fleet-ewar' +
-        (!stale && ewar !== '\u2014' ? ' active' : ''), ewar);
+      var incoming = cell('fleet-ewar' + (ewarThreat ? ' active' : ''), ewar);
       incoming.title = incoming.textContent;
+      var ariaLabel = ewarAriaLabel(row);
+      if (ariaLabel) incoming.setAttribute('aria-label', ariaLabel);
       line.appendChild(incoming);
       rowsNode.appendChild(line);
     });
@@ -237,30 +451,50 @@
     empty.hidden = rows.length !== 0;
     var emptyText = runningCount > 0
       ? 'All running characters are hidden.'
-      : 'Waiting for EVE clients\u2026';
-    if (empty.textContent !== emptyText) {
-      empty.textContent = emptyText;
-    }
-    healthNode.textContent = 'LOCAL ' + healthLabel(health);
+      : 'Waiting for EVE clients…';
+    setText(empty, emptyText);
+    setText(healthNode, 'LOCAL ' + healthLabel(health));
     healthNode.classList.toggle('warn', health.state === 'stale' ||
       health.state === 'missing_folder');
     healthNode.classList.toggle('err', health.state === 'error');
 
-    var detail = payload.metric_error ||
-      ((health.state === 'stale' || health.state === 'error') ? health.detail : null);
-    var noteText = detail || '';
+    var noteText = recoveryNote(payload, health);
     note.hidden = !noteText;
-    if (note.textContent !== noteText) {
-      note.textContent = noteText;
-    }
+    setText(note, noteText);
     note.classList.toggle('err', Boolean(payload.metric_error) || health.state === 'error');
-    return fit();
+    return fitHeight();
   }
 
   window.onFleetSnapshot = render;
 
+  window.addEventListener('resize', scheduleResizeSettlement);
+  window.addEventListener('blur', function () {
+    deactivateIfActive();
+  });
+  window.addEventListener('keydown', function (event) {
+    if (!event || event.key !== 'Escape') return;
+    if (event && typeof event.preventDefault === 'function') event.preventDefault();
+    clearTitleError();
+    deactivateIfActive();
+  });
+
   document.addEventListener('mouseup', function () {
     send('save_fleet_bar_pos', window.screenX, window.screenY);
+  });
+
+  bindTableActionTraversal();
+
+  bindAction('fleet-reset-width', function () {
+    return send('reset_fleet_bar_page_width').then(function (result) {
+      return fieldResult(result, 'Could not reset Fleet Bar width.');
+    });
+  });
+  bindAction('fleet-hide', function () {
+    activationActive = false;
+    activationPromise = null;
+    return send('hide_fleet_bar').then(function (result) {
+      return fieldResult(result, 'Could not hide the Fleet Bar.');
+    });
   });
 
   var fontsReady = (document.fonts && document.fonts.ready)
@@ -271,5 +505,7 @@
   }).then(function () {
     return send('fleet_bar_ready');
   });
-  setTimeout(fit, 500);
+  setTimeout(function () {
+    fitHeight();
+  }, 500);
 })();

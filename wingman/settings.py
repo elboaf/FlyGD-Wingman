@@ -309,6 +309,11 @@ def _sig_bar_defaults() -> dict:
     }
 
 
+FLEET_BAR_MIN_PREFERRED_CONTENT_WIDTH = 420
+FLEET_BAR_DEFAULT_PREFERRED_CONTENT_WIDTH = 500
+FLEET_BAR_MAX_PREFERRED_CONTENT_WIDTH = 720
+
+
 def _fleet_bar_defaults() -> dict:
     """Fresh nested structure every call. Never return the module global."""
     # Off by default: this starts shared discovery/log work and creates an
@@ -317,6 +322,10 @@ def _fleet_bar_defaults() -> dict:
         "enabled": False,
         "x": None,
         "y": None,
+        # Content width in logical CSS px. A new key whose default matches
+        # the long-lived fixed width needs no settings-version bump: an
+        # older document with the key absent still opens at that same width.
+        "preferred_content_width": FLEET_BAR_DEFAULT_PREFERRED_CONTENT_WIDTH,
         "seen": [],
         "hidden": [],
     }
@@ -795,6 +804,14 @@ def validated_fleet_bar(raw) -> dict:
         value = raw.get(key)
         if isinstance(value, int) and not isinstance(value, bool):
             section[key] = value
+    width = raw.get("preferred_content_width")
+    # `not isinstance(width, bool)` because bool is an int in Python, and
+    # True would otherwise silently persist as a width of 1 px.
+    if isinstance(width, int) and not isinstance(width, bool):
+        section["preferred_content_width"] = max(
+            FLEET_BAR_MIN_PREFERRED_CONTENT_WIDTH,
+            min(FLEET_BAR_MAX_PREFERRED_CONTENT_WIDTH, width),
+        )
     # Reuse the pure roster validation rule from preview/roster.py so the
     # persisted schema carries only stable character names.
     section["seen"] = preview_roster.deserialize(raw.get("seen"), cap=64)

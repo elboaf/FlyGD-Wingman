@@ -17,38 +17,62 @@
     var fleetRevision = 0;
     function fleetFixture(kind) {
       var local = {character: 'Local pilot', outgoing_dps: 612, incoming_dps: 180, ewar: ['SCRAM', 'POINT', 'NEUT'], log_status: null};
+      var support = {character: 'Support pilot', outgoing_dps: 80, incoming_dps: 25, ewar: [], log_status: null};
       var remote = {character: 'Remote pilot', outgoing_dps: 240, incoming_dps: null, ewar: ['SCRAM/POINT'], log_status: null, remote: true, state: 'live'};
-      var rows = kind === 'local' ? [local] : kind === 'mixed' ? [local, remote] : kind === 'empty' ? [] : [remote];
-      if (kind === 'stale') remote.state = 'stale';
-      if (kind === 'hidden') remote.character = 'Other remote';
-      if (kind === 'long') remote.character = new Array(11).join('Long character name ');
-      if (kind === 'max') remote.outgoing_dps = 10000000;
-      if (kind === 'zero' || kind === 'maxlocal' || kind === 'defensive') {
-        local.outgoing_dps = local.incoming_dps = kind === 'zero' ? 0 : kind === 'maxlocal' ? 10000000 : 10000001;
-        rows = [local];
-      }
-      if (kind === 'nolog') {
-        local.outgoing_dps = local.incoming_dps = null;
-        local.ewar = [];
-        local.log_status = 'NO LOG';
-        rows = [local];
-      }
+      var rows = [local];
+      var runningCount = 1;
+      var streamHealth = {state: 'active', detail: null};
+      var metricError = null;
+      if (kind === 'local') kind = 'threat';
+      if (kind === 'maxlocal') kind = 'exact10m';
+      if (kind === 'hidden') kind = 'remote-hidden';
+      if (kind === 'mixed') { rows = [local, remote]; runningCount = 1; streamHealth = {state: 'active', detail: null}; }
+      if (kind === 'empty') { rows = []; runningCount = 0; streamHealth = {state: 'stopped', detail: null}; }
+      if (kind === 'zero') { local.outgoing_dps = 0; local.incoming_dps = 0; local.ewar = []; }
+      if (kind === 'outgoing') { local.incoming_dps = 0; local.ewar = []; }
+      if (kind === 'incoming') { local.outgoing_dps = 0; local.ewar = []; }
+      if (kind === 'ewar') { local.outgoing_dps = 0; local.incoming_dps = 0; }
+      if (kind === 'threat') { rows = [local]; }
+      if (kind === 'remote') { rows = [remote]; runningCount = 0; streamHealth = {state: 'stopped', detail: null}; }
+      if (kind === 'remote-hidden') { remote.character = 'Other remote'; rows = [remote]; runningCount = 0; streamHealth = {state: 'stopped', detail: null}; }
+      if (kind === 'stale') { remote.state = 'stale'; remote.outgoing_dps = 10000000; rows = [support, remote]; }
+      if (kind === 'long') { local.character = new Array(11).join('Long character name '); rows = [local]; }
+      if (kind === 'max') { remote.outgoing_dps = 10000000; rows = [remote]; runningCount = 0; streamHealth = {state: 'stopped', detail: null}; }
+      if (kind === 'exact10m') { local.outgoing_dps = 10000000; local.incoming_dps = 10000000; rows = [local]; }
+      if (kind === 'defensive') { local.outgoing_dps = 10000001; local.incoming_dps = 10000001; rows = [local]; }
+      if (kind === 'nolog') { local.outgoing_dps = null; local.incoming_dps = null; local.ewar = []; local.log_status = 'NO LOG'; rows = [local]; }
+      if (kind === 'missing') { rows = []; runningCount = 0; streamHealth = {state: 'missing_folder', detail: 'ignored'}; }
+      if (kind === 'waiting') { rows = []; runningCount = 0; streamHealth = {state: 'running', detail: null}; }
+      if (kind === 'error') { rows = []; runningCount = 0; streamHealth = {state: 'error', detail: 'ignored'}; }
+      if (kind === 'allhidden') { rows = []; runningCount = 2; }
       if (kind === 'roster') {
         rows = [];
+        runningCount = 0;
+        streamHealth = {state: 'stopped', detail: null};
         for (var f = 0; f < 128; f += 1) {
           rows.push({character: 'Remote pilot ' + (f + 1), outgoing_dps: f, incoming_dps: null, log_status: null, ewar: [], remote: true, state: 'live'});
         }
       }
       return {revision: ++fleetRevision, rows: rows,
-        running_count: rows.indexOf(local) !== -1 || kind === 'hidden' ? 1 : 0,
-        stream_health: {state: rows.indexOf(local) !== -1 ? 'active' : 'stopped', detail: null}, metric_error: null};
+        running_count: runningCount,
+        stream_health: streamHealth, metric_error: metricError};
     }
     window.pywebview = {api: {
-      fleet_bar_snapshot: function () { return Promise.resolve(fleetFixture('mixed')); },
-      fleet_bar_ready: function () { return Promise.resolve(null); },
-      fit_fleet_bar: function () { return Promise.resolve(null); },
-      move_fleet_bar: function () { return Promise.resolve(null); },
-      save_fleet_bar_pos: function () { return Promise.resolve(null); }
+      fleet_bar_snapshot: function () { return Promise.resolve(fleetFixture('threat')); },
+      fleet_bar_ready: function () { return Promise.resolve(true); },
+      fit_fleet_bar_height: function () { return Promise.resolve(null); },
+      settle_fleet_bar_resize: function () {
+        return Promise.resolve({applied: true, persisted: true, error: null});
+      },
+      reset_fleet_bar_page_width: function () {
+        return Promise.resolve({applied: true, persisted: true, error: null});
+      },
+      save_fleet_bar_pos: function () { return Promise.resolve(null); },
+      activate_fleet_bar: function () { return Promise.resolve(true); },
+      deactivate_fleet_bar: function () { return Promise.resolve(true); },
+      hide_fleet_bar: function () {
+        return Promise.resolve({applied: true, persisted: true, error: null});
+      }
     }};
     window.DEV = {fleetBar: function (kind) { return window.onFleetSnapshot(fleetFixture(kind)); }};
     return;
@@ -2065,6 +2089,11 @@
       fleetBar.revision += 1;
     }
     if (window.onFleetBarState) { window.onFleetBarState(fleetBarState()); }
+    return Promise.resolve({applied: true, persisted: true, error: null});
+  };
+
+  api.reset_fleet_bar_width = function () {
+    console.log('DEV api.reset_fleet_bar_width()');
     return Promise.resolve({applied: true, persisted: true, error: null});
   };
 

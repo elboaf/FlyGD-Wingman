@@ -728,7 +728,7 @@
     <div class="settings" id="section-previews">
       <div class="preview-jumps">
         <button class="btn" type="button" data-preview-jump="preview-window-options">Preview windows</button>
-        <button class="btn" type="button" data-preview-jump="preview-fleet-options">Fleet combat bar</button>
+        <button class="btn" type="button" data-preview-jump="preview-fleet-options">Fleet Bar</button>
         <button class="btn" type="button" data-preview-jump="preview-keybind-options">Global keybinds</button>
       </div>
       <section class="card" id="preview-window-options">
@@ -1036,21 +1036,23 @@
       </section>
 
       <section class="card" id="preview-fleet-options">
-        <h2>Fleet combat bar</h2>
+        <h2>Fleet Bar</h2>
         <p class="hint">A separate always-on-top row for every running,
-          logged-in EVE client. It shows outgoing damage per second over the
-          last 10 seconds and incoming scram, point, or neut activity. It works
-          whether client previews and alerts are on or off; a client without
+          logged-in EVE client. It shows outgoing and incoming DPS over the
+          last 10 seconds plus scram, point, and neut activity. It works
+          whether client previews and alerts are on or off. A client without
           an active gamelog says NO LOG instead of showing a guessed zero.</p>
         <div class="row">
           <label class="check">
             <input type="checkbox" id="fleetbar-enabled"><span class="box"></span>
-            Show the floating Fleet DPS / EWAR bar
+            Show Fleet Bar
           </label>
         </div>
         <div class="row"><span class="lab"></span>
-          <span class="hint" id="fleetbar-enabled-status">Drag the bar anywhere
-            on screen; Wingman remembers where you leave it.</span></div>
+          <span class="hint" id="fleetbar-enabled-status">Drag Fleet Bar by its header. If edge resize is available, use the left or right edge. Wingman remembers width and position.</span></div>
+        <div class="row">
+          <button class="btn" id="fleetbar-reset">Reset Fleet Bar width</button>
+          <span class="hint">Puts Fleet Bar back to its default 500px content width.</span></div>
         <details class="fleet-characters" id="fleetbar-characters">
           <summary>Characters</summary>
           <div class="fleet-character-list" id="fleetbar-character-list"></div>
@@ -2582,8 +2584,8 @@
            title bar's scarce destination space. First in the strip so the
            sig bar toggle can sit directly beside the SIG segment it
            points at. -->
-      <button class="winbtn" id="btn-fleetbar" title="Floating Fleet DPS / EWAR bar"
-              aria-label="Floating Fleet DPS / EWAR bar"
+      <button class="winbtn" id="btn-fleetbar" title="Fleet Bar"
+              aria-label="Fleet Bar"
               aria-pressed="false">DPS</button>
       <!-- Toggles the floating sig bar (ui/sigbar.py + sigbar.html). A
            .winbtn, not a .btn: it is chrome that lives beside chrome, and

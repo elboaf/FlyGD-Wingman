@@ -138,11 +138,26 @@ The Fleet Bar merges eligible remote rows with local clients, marking them
 and disappears at ten; failed reads never refresh it. Verified local clients
 win, even when hidden or missing a log. Remote rows are display-only, never
 saved in the local character list or republished. Fleet Bar Off hides the
-view without changing sharing. Long rosters scroll within the 420px widget;
-drag its header to move Wingman's window, never EVE.
+view without changing sharing.
 
-Shared mode remains disabled in production. Browser fixtures do not establish
-Windows/WebView2, live two-client relay acceptance or older-release compatibility.
+Fleet Bar keeps a preferred **content** width between 420px and 720px,
+defaulting to 500px; the native outer width is that content width plus the
+left and right resize insets. Only the header drag strip moves Wingman's own
+window. The left and right native edges resize width, height keeps fitting the
+roster, and automatic telemetry updates do not own width. A left-edge resize
+also saves `x`; a right-edge resize leaves `x` alone. If monitor bounds clamp
+the applied rectangle, the saved preferred width is kept for the next larger
+opening. Reset width restores the 500px default. Hide first saves Off; if
+that save is refused, the bar stays visible and reports the refusal. Reset can
+still warn session-only if its save fails after the visible width changes. Hide
+uses that restart warning only in the narrower double-failure case: native hide
+fails, rollback keeps the bar visibly on for the session, and persisting that
+rollback fails too.
+
+Shared mode remains disabled in production. Browser fixtures and Chromium
+measurements prove layout and handler behavior only; Windows/WebView2 hit
+targets, focus, activation, no-activate restoration, DPI, mixed-monitor, and
+installed/frozen checks remain separate manual acceptance.
 
 ### Character crops — unreleased, release gates blocked
 

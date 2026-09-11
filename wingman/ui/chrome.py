@@ -15,7 +15,7 @@ subclassed WndProc. Two facts from the spike shape everything here:
     is the whole window -- so the Chromium child covers every border pixel
     and the parent sees NOTHING. Measured: zero hit-tests reached the form
     while a human dragged the edges. The control MUST be inset first; that
-    is `window.py`'s job, and without it this module is decoration.
+    is `_attach_resize`'s job, and without it this module is decoration.
   * MinimumSize survives only if WM_GETMINMAXINFO chains to the original
     proc BEFORE the max fields are overridden. WinForms fills in
     ptMinTrackSize there. Reversed, min_size is silently discarded.
@@ -40,6 +40,7 @@ fix it from this file.
 import ctypes
 import logging
 import sys
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +67,24 @@ CORNER = 14
 # then looks for.
 INSET = 6
 
+ALL_EDGES = frozenset({"left", "right", "top", "bottom"})
+HORIZONTAL_EDGES = frozenset({"left", "right"})
 
-def hit_code(rect, x, y, scale=1.0):
-    """Which resize zone (x, y) falls in, or None for "not the border".
+
+@dataclass(frozen=True)
+class ResizeInsets:
+    left: int
+    top: int
+    right: int
+    bottom: int
+
+    @property
+    def horizontal(self) -> int:
+        return self.left + self.right
+
+
+def hit_code(rect, x, y, scale=1.0, *, edges=ALL_EDGES):
+    """Which resize zone (x, y) falls in under *edges*, or None.
 
     *rect* is (left, top, right, bottom) in screen pixels, as GetWindowRect
     reports it. *x* and *y* are screen pixels. *scale* is the window's
@@ -79,29 +95,49 @@ def hit_code(rect, x, y, scale=1.0):
     page stops receiving the mouse entirely.
 
     Corners are checked first, and against a longer reach than the edges,
-    so the diagonal grab is not a BORDER-sized square nobody can hit.
+    so the diagonal grab is not a BORDER-sized square nobody can hit. If an
+    edge is disabled, any corner that depends on it is disabled too -- on a
+    horizontal-only window the top-left corner is still a LEFT resize, not
+    a diagonal that would imply vertical movement.
     """
     left, top, right, bottom = rect
     border = max(1, int(BORDER * scale))
     corner = max(border, int(CORNER * scale))
 
-    on_left = x < left + border
-    on_right = x >= right - border
-    on_top = y < top + border
-    on_bottom = y >= bottom - border
+    allow_left = "left" in edges
+    allow_right = "right" in edges
+    allow_top = "top" in edges
+    allow_bottom = "bottom" in edges
 
-    near_left = x < left + corner
-    near_right = x >= right - corner
-    near_top = y < top + corner
-    near_bottom = y >= bottom - corner
+    on_left = allow_left and x < left + border
+    on_right = allow_right and x >= right - border
+    on_top = allow_top and y < top + border
+    on_bottom = allow_bottom and y >= bottom - border
 
-    if (on_top and near_left) or (on_left and near_top):
+    near_left = allow_left and x < left + corner
+    near_right = allow_right and x >= right - corner
+    near_top = allow_top and y < top + corner
+    near_bottom = allow_bottom and y >= bottom - corner
+
+    if allow_top and allow_left and ((on_top and near_left) or (on_left and near_top)):
         return HTTOPLEFT
-    if (on_top and near_right) or (on_right and near_top):
+    if (
+        allow_top
+        and allow_right
+        and ((on_top and near_right) or (on_right and near_top))
+    ):
         return HTTOPRIGHT
-    if (on_bottom and near_left) or (on_left and near_bottom):
+    if (
+        allow_bottom
+        and allow_left
+        and ((on_bottom and near_left) or (on_left and near_bottom))
+    ):
         return HTBOTTOMLEFT
-    if (on_bottom and near_right) or (on_right and near_bottom):
+    if (
+        allow_bottom
+        and allow_right
+        and ((on_bottom and near_right) or (on_right and near_bottom))
+    ):
         return HTBOTTOMRIGHT
     if on_left:
         return HTLEFT
@@ -116,8 +152,8 @@ def hit_code(rect, x, y, scale=1.0):
 
 # Every attached callback, kept alive forever. A ctypes callback collected
 # while Windows still holds its address takes the process down at the next
-# message, and the crash lands nowhere near this file. Never pruned: an
-# entry costs a pointer, and the only window that attaches one lives for
+# message, and the crash lands nowhere near this file. Never pruned: the
+# entries cost pointers, and more than one tool window can keep one live for
 # the life of the process.
 _KEEPALIVE = []
 
@@ -206,10 +242,10 @@ def _on_ui_thread(native, fn) -> None:
 
     Two callers need this for different reasons. Assigning Padding triggers
     a layout pass over the WebView2 control, and doing that cross-thread
-    deadlocks the process into a window that cannot be closed. Installing
-    the WndProc needs it so that publishing the callback and storing the
-    original are ATOMIC with respect to message dispatch -- see
-    enable_resize. pywebview guards its own equivalents the same way
+    deadlocks the process into a window that cannot be closed. _attach_resize
+    owns both the inset layout pass and the WndProc install, so publishing
+    the callback and storing the original are ATOMIC with respect to message
+    dispatch. pywebview guards its own equivalents the same way
     (winforms.py:546, :597).
     """
     from System import Action
@@ -220,8 +256,8 @@ def _on_ui_thread(native, fn) -> None:
         fn()
 
 
-def _apply_inset(native, pad: int) -> None:
-    """Inset the WebView2 so the form owns a band around it.
+def _apply_inset(native, pad: int, *, edges=ALL_EDGES) -> None:
+    """Inset the WebView2 so the form owns the enabled resize bands.
 
     *pad* is in PHYSICAL pixels, already scaled by the caller. WinForms
     resolves Padding against the form's own DeviceDpi, which is reported as
@@ -235,15 +271,117 @@ def _apply_inset(native, pad: int) -> None:
 
     DockStyle.Fill measures against the parent's DisplayRectangle, which
     Padding shrinks -- so this insets pywebview's control without touching
-    its Dock assignment (platforms/edgechromium.py:99).
+    its Dock assignment (platforms/edgechromium.py:99). Horizontal-only
+    resize leaves the top and bottom at 0 so the page keeps owning them.
     """
     from System.Windows.Forms import Padding
 
-    _on_ui_thread(native, lambda: setattr(native, "Padding", Padding(pad)))
+    left = pad if "left" in edges else 0
+    top = pad if "top" in edges else 0
+    right = pad if "right" in edges else 0
+    bottom = pad if "bottom" in edges else 0
+    _on_ui_thread(
+        native, lambda: setattr(native, "Padding", Padding(left, top, right, bottom))
+    )
 
 
-def enable_resize(window, pad: int = INSET) -> bool:
-    """Give *window* a native resize border. True if it took.
+def _requested_insets(pad: int, edges=ALL_EDGES) -> ResizeInsets:
+    return ResizeInsets(
+        left=pad if "left" in edges else 0,
+        top=pad if "top" in edges else 0,
+        right=pad if "right" in edges else 0,
+        bottom=pad if "bottom" in edges else 0,
+    )
+
+
+def _logical_insets(native, scale: float, *, fallback: ResizeInsets) -> ResizeInsets:
+    """Read back the inset in logical pixels, tolerating DPI rounding.
+
+    The conversion boundary matters to later Fleet Bar width math: the
+    returned numbers are the logical insets callers add to content width,
+    while the Padding we just applied is in physical pixels. One physical
+    pixel can round different ways either side of the form at fractional
+    DPI, so each side is rounded independently rather than treated as exact.
+    """
+    factor = scale or 1.0
+    try:
+        client = native.ClientRectangle
+        display = native.DisplayRectangle
+        left = display.X
+        top = display.Y
+        right = client.Width - display.Width - display.X
+        bottom = client.Height - display.Height - display.Y
+        return ResizeInsets(
+            left=max(0, round(left / factor)),
+            top=max(0, round(top / factor)),
+            right=max(0, round(right / factor)),
+            bottom=max(0, round(bottom / factor)),
+        )
+    except Exception:
+        logger.debug("Could not read back logical resize insets", exc_info=True)
+        return fallback
+
+
+def _remove_inset(native, *, edges=ALL_EDGES) -> None:
+    try:
+        _apply_inset(native, 0, edges=edges)
+    except Exception:
+        logger.debug(
+            "Could not remove the resize inset after attach failure", exc_info=True
+        )
+
+
+def _physical_insets(native, *, fallback: ResizeInsets) -> ResizeInsets:
+    try:
+        client = native.ClientRectangle
+        display = native.DisplayRectangle
+        left = display.X
+        top = display.Y
+        right = client.Width - display.Width - display.X
+        bottom = client.Height - display.Height - display.Y
+        return ResizeInsets(
+            left=max(0, int(left)),
+            top=max(0, int(top)),
+            right=max(0, int(right)),
+            bottom=max(0, int(bottom)),
+        )
+    except Exception:
+        logger.debug("Could not read back physical resize insets", exc_info=True)
+        return fallback
+
+
+def _bound_horizontal_track_width(
+    lparam,
+    MINMAXINFO,
+    *,
+    scale: float,
+    physical_insets: ResizeInsets,
+    min_content_width,
+    max_content_width,
+) -> None:
+    if min_content_width is None and max_content_width is None:
+        return
+    factor = scale or 1.0
+    mmi = ctypes.cast(lparam, ctypes.POINTER(MINMAXINFO)).contents
+    if min_content_width is not None:
+        mmi.ptMinTrackSize.x = (
+            round(min_content_width * factor) + physical_insets.horizontal
+        )
+    if max_content_width is not None:
+        mmi.ptMaxTrackSize.x = (
+            round(max_content_width * factor) + physical_insets.horizontal
+        )
+
+
+def _attach_resize(
+    window,
+    *,
+    pad: int = INSET,
+    edges=ALL_EDGES,
+    min_content_width=None,
+    max_content_width=None,
+) -> ResizeInsets | None:
+    """Attach resize chrome and return the logical inset it produced.
 
     The inset and the subclass are done together on purpose. WM_NCHITTEST
     goes to the window under the cursor, so without the inset the WebView2
@@ -256,41 +394,45 @@ def enable_resize(window, pad: int = INSET) -> bool:
     take the launch with it.
     """
     if sys.platform != "win32":
-        return False
+        return None
 
     native = getattr(window, "native", None)
     if native is None:
         logger.warning("No native window; resize border not attached.")
-        return False
+        return None
 
     try:
         hwnd = native.Handle.ToInt64()
     except Exception:
         logger.warning("Could not read the window handle.", exc_info=True)
-        return False
+        return None
 
     try:
         user32, set_ptr, WNDPROC, MONITORINFO, MINMAXINFO, wintypes = _win32()
     except Exception:
         logger.warning("Win32 setup failed; window stays fixed-size.", exc_info=True)
-        return False
+        return None
 
     handle = wintypes.HWND(hwnd)
 
     # One scale, used for both the inset and the hit band. They must agree:
     # see _apply_inset.
     scale = _scale_for(user32, handle)
+    requested = _requested_insets(pad, edges)
+    requested_physical = _requested_insets(max(1, int(pad * scale)), edges)
 
     try:
-        _apply_inset(native, max(1, int(pad * scale)))
+        _apply_inset(native, max(1, int(pad * scale)), edges=edges)
     except Exception:
         # Without the band the subclass cannot receive anything, so there
         # is nothing to gain by continuing to attach it.
         logger.warning(
             "Could not inset the web view; window stays fixed-size.", exc_info=True
         )
-        return False
+        return None
 
+    insets = _logical_insets(native, scale, fallback=requested)
+    physical_insets = _physical_insets(native, fallback=requested_physical)
     chained = []
 
     def _clamp(lparam):
@@ -330,7 +472,13 @@ def enable_resize(window, pad: int = INSET) -> bool:
         rect = wintypes.RECT()
         if not user32.GetWindowRect(handle, ctypes.byref(rect)):
             return None
-        return hit_code((rect.left, rect.top, rect.right, rect.bottom), x, y, scale)
+        return hit_code(
+            (rect.left, rect.top, rect.right, rect.bottom),
+            x,
+            y,
+            scale=scale,
+            edges=edges,
+        )
 
     def proc(hwnd_, msg, wparam, lparam):
         if not chained:
@@ -354,6 +502,14 @@ def enable_resize(window, pad: int = INSET) -> bool:
                 # order throws min_size away entirely.
                 result = user32.CallWindowProcW(original, hwnd_, msg, wparam, lparam)
                 _clamp(lparam)
+                _bound_horizontal_track_width(
+                    lparam,
+                    MINMAXINFO,
+                    scale=scale,
+                    physical_insets=physical_insets,
+                    min_content_width=min_content_width,
+                    max_content_width=max_content_width,
+                )
                 return result
         except Exception:
             # This unwinds through the native message pump if it escapes,
@@ -384,18 +540,38 @@ def enable_resize(window, pad: int = INSET) -> bool:
         _on_ui_thread(native, _install)
     except Exception:
         _KEEPALIVE.remove(callback)
+        _remove_inset(native, edges=edges)
         logger.warning(
             "Could not install the window proc; window stays fixed-size.", exc_info=True
         )
-        return False
+        return None
 
     if not installed.get("previous"):
         _KEEPALIVE.remove(callback)
+        _remove_inset(native, edges=edges)
         logger.warning("SetWindowLongPtr failed; window stays fixed-size.")
-        return False
+        return None
 
     _log_geometry(native, pad, scale)
-    return True
+    return insets
+
+
+def enable_resize(window, pad: int = INSET) -> bool:
+    """Give *window* a native resize border. True if it took."""
+    return _attach_resize(window, pad=pad, edges=ALL_EDGES) is not None
+
+
+def enable_horizontal_resize(
+    window, *, pad: int = INSET, min_content_width: int, max_content_width: int
+) -> ResizeInsets | None:
+    """Attach left/right-only resize chrome and return its logical inset."""
+    return _attach_resize(
+        window,
+        pad=pad,
+        edges=HORIZONTAL_EDGES,
+        min_content_width=min_content_width,
+        max_content_width=max_content_width,
+    )
 
 
 def _log_geometry(native, pad: int, scale: float) -> None:
