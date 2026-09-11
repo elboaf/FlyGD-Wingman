@@ -149,13 +149,19 @@ class SourceCatalog:
         handles = []
 
         def visit(hwnd, unused):
-            handles.append(int(hwnd))
+            # Hidden IME/tool/helper windows are not source candidates. Counting
+            # them made ordinary desktop churn exhaust the inspection budget.
+            if self._libs.user32.IsWindowVisible(hwnd):
+                handles.append(int(hwnd))
             return len(handles) <= MAX_SOURCES
 
         callback = win32.enum_windows_proc_type()(visit)
-        if not self._libs.user32.EnumWindows(callback, 0) or len(handles) > MAX_SOURCES:
+        complete = self._libs.user32.EnumWindows(callback, 0)
+        if len(handles) > MAX_SOURCES:
+            raise SourceUnavailable("Too many visible windows to list sources safely")
+        if not complete:
             raise SourceUnavailable(
-                "Source scan incomplete; close some windows and retry"
+                "Windows could not complete the source scan. Try again."
             )
         return tuple(
             binding for hwnd in handles if (binding := self._inspect(hwnd)) is not None

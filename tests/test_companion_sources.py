@@ -153,19 +153,41 @@ def test_known_uncapturable_source_is_refused(catalog, field):
     assert source.enumerate() == ()
 
 
+def test_hidden_helper_windows_do_not_exhaust_source_scan(catalog):
+    from wingman.preview.companions import MAX_SOURCES
+
+    source, native = catalog
+    candidate = native.windows[10]
+    # Hidden IME/tool/helper HWNDs can outnumber the actual desktop windows.
+    native.windows = {
+        i: dict(pid=30, title="Hidden helper", cls="IME", visible=False)
+        for i in range(1000, 1000 + MAX_SOURCES + 1)
+    }
+    native.windows[10] = candidate
+    rows = source.enumerate()
+    assert len(rows) == 1 and rows[0].hwnd == 10
+    assert not native.opened
+    assert [(kind, value) for kind, value in native.calls if kind == "open"] == [
+        ("open", 20),
+        ("open", 20),
+    ]
+
+
 def test_incomplete_scan_never_becomes_unique_result(catalog):
     from wingman.preview.sources import SourceUnavailable
 
     source, native = catalog
     native.fail = "enumerate"
-    with pytest.raises(SourceUnavailable):
+    with pytest.raises(SourceUnavailable, match="Windows could not complete"):
         source.enumerate()
     native.fail = None
     native.windows = {
         i: dict(pid=20, title="Mapper", cls="Browser", visible=True) for i in range(513)
     }
-    with pytest.raises(SourceUnavailable):
+    with pytest.raises(SourceUnavailable, match="Too many visible windows"):
         source.enumerate()
+    # The rejected prefix must never reach process inspection or become unique.
+    assert not native.calls
 
 
 def test_verification_retains_changed_title_but_rejects_reused_identity(catalog):

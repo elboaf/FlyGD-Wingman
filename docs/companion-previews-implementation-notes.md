@@ -191,6 +191,28 @@ Fresh verification after polish and independent review:
 The running application must restart to load these changes. Operator recheck of
 free resizing and the new chooser remains distinct from the automated evidence.
 
+## Intermittent source enumeration follow-up
+
+The operator reported “Source scan incomplete; close some windows and retry,”
+then reported that it started working. Read-only Windows enumeration showed 511
+top-level windows with only 45 visible; a later sample had 506 total and 43
+visible. Most were hidden IME, text-service, browser and tool/helper windows.
+The source catalog incorrectly counted these in its 512-window inspection cap.
+
+The enumeration callback now collects only visible candidates; `_inspect` still
+rechecks visibility and identity. Hidden windows do not incur process inspection.
+More than 512 visible candidates and an actual `EnumWindows` failure both remain
+refusals, with separate accurate messages. Neither produces a truncated list
+that could be mistaken for a unique match. No source windows were manipulated.
+
+A regression with 513 hidden helpers ahead of one visible source failed before
+this change and passes after it. Focused verification: **575 passed, four
+Windows-only skips on Linux; 579 passed with no skips on Windows**. Ruff
+lint/format and diff checks passed. Actual Windows source enumeration returned
+10 eligible sources and closed its query handles. This small fix does not claim
+a fresh full-suite run or change the prior manual-smoke status; the running app
+loads it on its next restart.
+
 ## Reviewer knowledge check
 
 1. What distinguishes a persisted source descriptor from a live source binding?
