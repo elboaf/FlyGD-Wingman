@@ -2,9 +2,15 @@
 
 ## Status and authority
 
-**Implementation and bounded integration coverage exist; final release gates and
-all 15 live/native acceptance scenarios remain pending. This is not a release or
-deployed-connectivity sign-off.**
+**Implementation, focused review, post-implementation polish, full Linux tests,
+and wheel/Windows frozen artifact checks are complete. The full Windows suite
+has six environment-privilege failures in unchanged tests; all Wanderer tests
+pass there. All 15 live/native acceptance scenarios remain NOT RUN. This is not
+a release or deployed-connectivity sign-off.**
+
+Post-polish verified candidate: **`7d6b0e17ab55071c88049eee05f8afcd7c55e912`**.
+The final evidence commit changes documentation only; it does not change the
+Python/JavaScript implementation or tests verified below.
 
 - Wingman implementation examined by Task 6:
   `137d1272b3b9da130f37db0ee81e54611fb5432c`
@@ -207,27 +213,175 @@ it is not a post-feature full-suite result.
 The parent owns reconciliation of these earlier observations with the final
 post-polish SHA. Task 6 did not independently rerun Windows or browser checks.
 
-## Final gates still pending
+## Final post-polish verification
 
-The parent will append exact commands, final SHA, counts/skips and artifacts after
-whole-feature polish. Until those results are recorded, these gates are pending:
+The parent ran `polish-core --fix` against `83b7741b..7d6b0e17`, using one
+consolidated changed-code pass for quality, silent failures, comment accuracy and
+type/interface checks. No actionable findings or safe edits were identified.
+The clean diff was inspected; no polish edits needed reversion or acceptance.
+This also approved Task 6's integration/evidence slice. No further architecture
+review loop or unrelated refactoring followed.
 
-- whole-feature `polish-core --fix`, inspection and fresh verification;
-- full Linux/Windows pytest with skip review, actual release codec and Node;
-- fresh whole-tree Ruff, Node runtime/JS smoke, bridge/page convention gates;
-- independent Cargo settings-codec regression;
-- wheel contents/imports and frozen PyInstaller/build asset inspection;
-- Windows execution of the new real credential-document test;
-- installed/frozen application behavior and native visual/live acceptance.
+### Prerequisites and exact commands
+
+Linux: CPython 3.11.15, locked dev environment `/tmp/wingman-wanderer-venv`, Node
+26.5.0. The locked release codec was built and installed in this worktree before
+the baseline suite. Windows: CPython 3.11.16, locked dev/build environment
+`%TEMP%\wingman-wanderer-venv`, portable Node 26.5.0 downloaded from nodejs.org
+and checked against its published SHA-256. No global Windows settings changed.
+The Windows codec was reused from a local isolated build whose codec sources and
+Cargo lock are identical to the feature base, SHA-256
+`18b85ebda93670814f68793e87a971c5d510cd0b0946f226dc6c2ba85c577eef`.
+This is artifact reuse, not a new Windows Cargo build or a companion dependency.
+
+From the feature worktree:
+
+```sh
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-wanderer-venv uv run --no-sync python -m pytest tests/ -q -rs --basetemp=/tmp/wanderer-final-linux --junitxml=/tmp/wanderer-final-linux.xml
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-wanderer-venv uv run --no-sync python -m pytest tests/test_wanderer*.py tests/test_preview_metadata.py tests/test_bridge_contract.py tests/test_page_conventions.py tests/test_packaging_completeness.py -q -rs --basetemp=/tmp/wanderer-final-focused
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-wanderer-venv uv run --no-sync ruff check .
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-wanderer-venv uv run --no-sync ruff format --check .
+node scripts/test_wanderer_runtime.js
+node scripts/js_smoke.js
+cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml
+uv build --wheel --out-dir /tmp/wanderer-final-wheel
+git diff --check 83b7741b..HEAD
+```
+
+Windows, with the prepared Node directory on the process PATH and
+`UV_PROJECT_ENVIRONMENT` set to the environment above:
+
+```powershell
+uv run --no-sync python -m pytest tests/ -q -rs --basetemp="$env:TEMP\wanderer-final-windows" --junitxml="$env:TEMP\wanderer-final-windows.xml"
+uv run --no-sync python -m PyInstaller packaging/uploader.spec --noconfirm --clean --distpath dist/wanderer-check --workpath build/wanderer-check
+uv run --no-sync python .superpowers/sdd/wanderer-preview-overlay-plan/inspect_frozen.py
+```
+
+| Fresh gate | Observed result |
+|---|---|
+| Full Linux pytest | **11,079 passed, 12 skipped**, 238.55s |
+| Focused Wanderer/metadata/bridge/page/packaging pytest | **794 passed, 1 skipped**, 22.36s |
+| Full Windows pytest | **11,029 passed, 56 skipped, 6 failed**, 237.46s; details below |
+| Windows Wanderer cases, extracted from full-suite JUnit | **426 passed, no skips/failures**, including real DPAPI credential document |
+| Ruff lint / format | Passed; **397 files already formatted** |
+| Focused Node ownership harness | **53 passed, 0 failed** |
+| Executable JS smoke | Passed all three pages, including Wanderer script registration/order |
+| Independent Cargo regression | **1 passed, 0 failed/ignored** |
+| Wheel build and contents/import exercise | Passed; all six Wanderer modules byte-match source and import from the wheel |
+| Windows PyInstaller build and archive/assets inspection | Passed; six Wanderer modules in PYZ, changed web bytes and Inter font match source, bundled font loads, required sidecars present |
+| Browser/CDP rerun | 839/840/1280px: no horizontal overflow, no page/resource errors, controls within card, URL draft survives health push |
+| Whitespace and final scope inspection | Passed; no version change, dependency changes, tracked scratch reports, debug output or excluded companion work |
+
+Linux skips are the original 11 Windows-only junction/DPAPI/WinDLL/pump/binding
+cases plus the new real Wanderer DPAPI credential test. Windows skips are explicit
+POSIX mode/case/special-file checks, unavailable symlink creation, off-Windows
+guards and a test deliberately avoiding a native modal. Neither suite skipped
+Node or codec coverage. The actual Windows message-only pump and native bindings
+ran successfully; these do not render real EVE previews.
+
+### Windows full-suite limitation — not a green gate
+
+All six failures raise **WinError 1314 (required symlink privilege unavailable)**
+while preparing unrelated test fixtures. The following files are byte-unchanged
+from `83b7741b`; the diff was checked. No permission was elevated and no tests
+were weakened or skipped to hide these failures.
+
+- `tests/test_setup_catalog.py::test_assets_must_be_regular_without_symlink_aliases`:
+  the three `symlink` cases for catalog, preset and licence files.
+- `tests/test_setup_catalog.py::test_catalog_directory_is_not_created_or_followed[symlink]`.
+- `tests/test_ui_setup_controller.py::test_context_refuses_fallback_or_untrusted_bases[escaped]`.
+- `tests/test_ui_setup_controller.py::test_pairs_require_unambiguous_confirmed_links_and_real_local_files[export-escape]`.
+
+A full Windows green run still needs an environment with the existing suite's
+symlink prerequisites. This was not a baseline Windows full-suite replay; the
+failure classification rests on the explicit fixture exceptions and unchanged
+source. Logs/JUnit remain `/tmp/wanderer-final-linux.{log,xml}` and Windows
+`%TEMP%\wanderer-final-windows.{log,xml}`.
+
+### Artifact and browser limits
+
+Actual frozen artifact: `dist/wanderer-check/Wingman/Wingman.exe`, SHA-256
+`acdb8cbd070d9d1a79a4370d1e1e448c1b15a42db08984a0d849e1830569b080`.
+The full application was **not launched or installed**. Module/archive checks,
+font-byte/loading checks and source DPAPI tests do not prove installed credential
+retention or native label rendering. The wheel build emitted setuptools' existing
+`wingman.assets` package-discovery warning; the only package-list change is the
+explicit `wingman.wanderer` entry, and all six new modules were verified.
+
+The browser run used an isolated new page, local dev fixtures and blocked
+non-local requests on Linux HeadlessChrome 152.0.0.0, deviceScaleFactor=1.
+The 839px and 840px screenshots were inspected. This is CSS/handler evidence,
+not Windows/WebView2 or mixed-monitor scaling evidence. Reports, screenshots,
+inspection scripts and frozen inspection JSON remain in the ignored task scratch
+folder; no token was entered or captured.
+
+## Live/deployed acceptance remains NOT RUN
 
 The 15 explicit scenarios in
 [the smoke checklist](smoke-checklist.md#wanderer-names--livenative-acceptance)
-are **all NOT RUN**: stationary confirmation; movement; aliases; reset/raw;
-hidden/unmapped; roster/offline/session changes; independent expiry; network
-loss/recovery; 304; authorization errors; credential/field lifecycle; Wanderer
-restart; Wingman/Preview start-stop; native DPI/input; frozen DPAPI/font.
+remain **all NOT RUN**: stationary confirmation; movement; temporary and persistent
+aliases; reset/raw fallback; hidden/unmapped; roster/offline/session changes;
+independent expiry; network loss/recovery; 304; authorization errors;
+credential/field lifecycle; Wanderer restart; Wingman/Preview start-stop;
+native DPI/input; frozen DPAPI/font.
 
-To replace NOT RUN with a result, record the actual observed Wingman SHA/build,
-instance URL/version (without secrets), Windows/display conditions, scenario and
-sanitized expected-versus-observed outcome. A successful synthetic test, an API
-contract commit, or a browser screenshot cannot fill those fields by inference.
+**Observed deployed instance version: unknown, no instance was contacted.**
+The API authority is `2ddff24516c27ecde7b175991fcd74d608a35932`; it is not a claim
+about an observed running build. Required Windows conditions remain minimum
+preview size, 100/125/150/200% scaling, mixed monitors, movement/resizing, clicks,
+selection and alert pulses. Record the actual Wingman SHA/build and instance
+version with sanitized expected-versus-observed outcomes when these checks run.
+A fixture, contract commit, source test or browser screenshot cannot fill those
+fields by inference.
+
+## Reviewer-facing completion notes
+
+The feature is additive/default-off: ordinary settings gain only enabled/base/map,
+and the bound DPAPI document is separate. No destructive migration is required.
+Disable preserves credentials; explicit Remove deletes the local protected token,
+not Wanderer's token. Old versions ignore the additive settings and credential
+file. No locations are persisted. This makes local rollback straightforward
+without claiming cross-document atomicity.
+
+Implementation decisions discovered in the current repository: the live roster
+is not capped at 64, HTTP must not own expiry scheduling, host restart needs a
+fresh metadata generation, and a field response cannot own a newer draft.
+Focused checkpoints caught and fixed retiring-HWND wake ownership, Windows test
+ID/font-metric assumptions, Test cancellation on generation changes and mixed
+configuration/worker state sampling. They did not expand into a provider system,
+companion foundation or authentication redesign.
+
+Review focus: host-before-worker fencing; server-relative monotonic deadlines;
+secret-safe persistence/transport boundaries; field-owned token binding; and the
+explicit distinction between automated evidence and remaining native acceptance.
+
+### Local commit slices
+
+All commits are local on `feature/wanderer-overlay`; nothing was pushed or released.
+
+| Commits | Slice |
+|---|---|
+| `146313b6` | Self-reviewed six-task plan |
+| `e0eb28e3`, `6ee37323` | Strict model/DPAPI storage and coherent pinned fixtures |
+| `51bddd09`, `d40a8722`, `7869ba7d` | HTTPS client, independent expiry worker and early-auth fencing |
+| `2099caac`, `4571ebb6` | Checkpoint report bookkeeping and portable Windows test IDs; scratch report removed from tracking |
+| `178aa29f`, `2b4b1ef0` | Session-fenced native metadata/labels and retired-HWND wake correction |
+| `ef060c56`, `59781b89`, `b8e432c0` | Committed controller, bridge/lifecycle wiring and shutdown/acknowledgement hardening |
+| `e1c72a35`, `137d1272` | Settings card, field-owned responses and generation-ordering corrections |
+| `cd987178`, `7d6b0e17` | End-to-end integration, privacy/manual-acceptance documentation and remaining scratch cleanup |
+
+A subsequent documentation-only commit records these final verification results
+and the plan's completed engineering tasks. The complete final diff is 44 files:
+the six-module Wanderer package, four existing preview modules, settings/bridge/
+startup/copy wiring, the new Settings owner and five existing web files, one Node
+harness, focused tests/fixtures, package registration and five documentation files.
+No source version, dependency lock, telemetry dispatcher, OAuth/ESI module or
+companion runtime changed.
+
+### Knowledge check
+
+1. Why can a 304 update connection health without extending any label deadline?
+2. Why does the metadata mailbox use the full client session rather than a name or the recent-name cap?
+3. Why must the host generation be fenced before worker reconfiguration?
+4. How does a token draft remain bound while URL/map edits and responses overlap?
+5. Which behavior remains unproved by a successful frozen archive inspection?
