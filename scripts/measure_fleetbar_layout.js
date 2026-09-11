@@ -7,6 +7,7 @@ const fsp = require('node:fs/promises');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
+const zlib = require('node:zlib');
 
 const ROOT = path.resolve(__dirname, '..');
 const WEB_ROOT = path.join(ROOT, 'wingman', 'web');
@@ -16,7 +17,7 @@ const READY_TIMEOUT_MS = 15000;
 const EPSILON = 1;
 
 function parseArgs(argv) {
-  const args = { chrome: null };
+  const args = { chrome: null, proof: null };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--chrome') {
       if (!argv[i + 1]) throw new Error('--chrome needs a path');
@@ -24,7 +25,16 @@ function parseArgs(argv) {
       i += 1;
       continue;
     }
+    if (argv[i] === '--prove') {
+      if (!argv[i + 1]) throw new Error('--prove needs overflow or emphasis');
+      args.proof = argv[i + 1];
+      i += 1;
+      continue;
+    }
     throw new Error('Unknown argument: ' + argv[i]);
+  }
+  if (args.proof && args.proof !== 'overflow' && args.proof !== 'emphasis') {
+    throw new Error('--prove must be overflow or emphasis');
   }
   return args;
 }
@@ -362,15 +372,26 @@ async function evaluate(cdp, expression) {
     userGesture: true,
   });
   if (result.exceptionDetails) {
-    const message = result.exceptionDetails.text
-      || (result.exceptionDetails.exception && result.exceptionDetails.exception.description)
-      || 'Runtime.evaluate failed';
+    const detail = result.exceptionDetails;
+    const description = detail.exception && detail.exception.description;
+    const stack = detail.stackTrace && Array.isArray(detail.stackTrace.callFrames)
+      ? detail.stackTrace.callFrames.map(frame => {
+        return (frame.functionName || '<anonymous>') + '@' + frame.url + ':'
+          + frame.lineNumber + ':' + frame.columnNumber;
+      }).join(' | ')
+      : '';
+    const message = [
+      detail.text,
+      description,
+      stack,
+      'line=' + detail.lineNumber + ', column=' + detail.columnNumber,
+    ].filter(Boolean).join(' | ') || 'Runtime.evaluate failed';
     throw new Error(message);
   }
   return result.result ? result.result.value : undefined;
 }
 
-function measurementExpression(width) {
+function measurementExpression(width, proofMode) {
   return `
 (async function () {
   function q(selector, root) { return (root || document).querySelector(selector); }
@@ -396,11 +417,55 @@ function measurementExpression(width) {
     };
   }
   function textMetrics(node) {
+    var style = getComputedStyle(node);
     return Object.assign({
       text: node.textContent,
       title: node.title || '',
-      color: getComputedStyle(node).color
+      color: style.color,
+      fontWeight: style.fontWeight
     }, metrics(node));
+  }
+  function overflowSnapshot() {
+    return {
+      document: {
+        clientWidth: document.documentElement.clientWidth,
+        scrollWidth: document.documentElement.scrollWidth
+      },
+      table: {
+        clientWidth: table.clientWidth,
+        scrollWidth: table.scrollWidth
+      }
+    };
+  }
+  function applyProof(mode) {
+    if (!mode) return;
+    var style = document.createElement('style');
+    style.id = 'wm-measure-proof';
+    if (mode === 'overflow') {
+      style.textContent = [
+        'html, body { overflow-x: auto !important; }',
+        'body { min-width: calc(100vw + 24px) !important; }',
+        '.fleet-shell {',
+        '  min-width: calc(100vw + 24px) !important;',
+        '  width: calc(100vw + 24px) !important;',
+        '  max-width: none !important;',
+        '}',
+        '.fleet-grid { min-width: calc(100% + 24px) !important; }'
+      ].join('\\n');
+    } else if (mode === 'emphasis') {
+      style.textContent = [
+        '.fleet-ewar.active {',
+        '  color: var(--fleet-incoming-threat) !important;',
+        '  font-weight: 400 !important;',
+        '}',
+        '.fleet-damage-in.warn .fleet-damage-value {',
+        '  font-weight: 700 !important;',
+        '}'
+      ].join('\\n');
+    } else {
+      throw new Error('Unknown proof mode: ' + mode);
+    }
+    document.head.appendChild(style);
   }
   async function frame() {
     await new Promise(function (resolve) {
@@ -417,6 +482,10 @@ function measurementExpression(width) {
   if (document.fonts && document.fonts.ready) await document.fonts.ready;
   await frame();
 
+  var proofMode = ${JSON.stringify(proofMode || '')};
+  applyProof(proofMode);
+  await frame();
+
   var shell = q('#fleet-shell');
   var table = q('#fleet-table');
   var title = q('#fleet-title');
@@ -425,9 +494,13 @@ function measurementExpression(width) {
   var actions = q('#fleet-title-actions');
   var reset = q('#fleet-reset-width');
   var head = q('.fleet-head');
+  var fixtures = {};
 
   await show('threat');
+  fixtures.threat = overflowSnapshot();
   var threatRow = q('.fleet-row');
+  var threatIncoming = q('.fleet-damage-in .fleet-damage-value', threatRow);
+  var threatEwar = q('.fleet-ewar.active', threatRow);
   var beforeHeader = {
     titleHeight: round(title.getBoundingClientRect().height),
     titleEndWidth: round(titleEnd.getBoundingClientRect().width),
@@ -446,19 +519,28 @@ function measurementExpression(width) {
     threat: getComputedStyle(threatRow).backgroundColor
   };
   var emphasis = {
-    incomingColor: getComputedStyle(q('.fleet-damage-in .fleet-damage-value', threatRow)).color,
-    ewarColor: getComputedStyle(q('.fleet-ewar.active', threatRow)).color
+    incomingColor: getComputedStyle(threatIncoming).color,
+    incomingFontWeight: getComputedStyle(threatIncoming).fontWeight,
+    ewarColor: getComputedStyle(threatEwar).color,
+    ewarFontWeight: getComputedStyle(threatEwar).fontWeight,
+    backgroundSample: {
+      x: Math.max(0, Math.floor(threatRow.getBoundingClientRect().left + 4)),
+      y: Math.max(0, Math.floor(threatRow.getBoundingClientRect().top + 4))
+    }
   };
   table.focus();
   await frame();
 
   await show('zero');
+  fixtures.zero = overflowSnapshot();
   surfaces.neutral = getComputedStyle(q('.fleet-row')).backgroundColor;
 
   await show('long');
+  fixtures.long = overflowSnapshot();
   var longName = textMetrics(q('.fleet-character'));
 
   await show('exact10m');
+  fixtures.exact10m = overflowSnapshot();
   var exactRow = q('.fleet-row');
   var exact10m = {
     character: metrics(exactRow.children[0]),
@@ -470,11 +552,13 @@ function measurementExpression(width) {
   };
 
   await show('remote');
+  fixtures.remote = overflowSnapshot();
   var remote = {
     ewar: textMetrics(q('.fleet-ewar'))
   };
 
   await show('roster');
+  fixtures.roster = overflowSnapshot();
   var headTopBefore = round(head.getBoundingClientRect().top);
   table.scrollTop = table.scrollHeight;
   await frame();
@@ -482,25 +566,20 @@ function measurementExpression(width) {
 
   return {
     requestedWidth: ${JSON.stringify(width)},
+    proofMode: proofMode || null,
     viewportWidth: window.innerWidth,
     shellWidth: round(shell.getBoundingClientRect().width),
-    documentClientWidth: document.documentElement.clientWidth,
-    documentScrollWidth: document.documentElement.scrollWidth,
-    tableWidth: metrics(table),
     tracks: {
       character: exact10m.character.rect.width,
       damage: exact10m.damage.rect.width,
       ewar: exact10m.ewar.rect.width
     },
+    fixtures: fixtures,
     header: {
       before: beforeHeader,
       after: afterHeader
     },
     surfaces: surfaces,
-    tokens: {
-      warn: getComputedStyle(document.documentElement).getPropertyValue('--warn').trim(),
-      incoming: getComputedStyle(document.documentElement).getPropertyValue('--fleet-incoming-threat').trim()
-    },
     emphasis: emphasis,
     longName: longName,
     exact10m: exact10m,
@@ -528,6 +607,7 @@ function parseColor(colorText) {
       r: Number.parseInt(hex.slice(0, 2), 16),
       g: Number.parseInt(hex.slice(2, 4), 16),
       b: Number.parseInt(hex.slice(4, 6), 16),
+      a: 255,
     };
   }
   match = text.match(/^#([0-9a-f]{3})$/i);
@@ -537,19 +617,164 @@ function parseColor(colorText) {
       r: Number.parseInt(hex[0] + hex[0], 16),
       g: Number.parseInt(hex[1] + hex[1], 16),
       b: Number.parseInt(hex[2] + hex[2], 16),
+      a: 255,
     };
   }
   match = text.match(/rgba?\(([^)]+)\)/i);
   if (!match) return null;
-  const parts = match[1].split(',').map(part => Number(part.trim().replace(/%$/, '')));
-  if (parts.length < 3 || parts.some(part => !Number.isFinite(part))) return null;
-  return { r: parts[0], g: parts[1], b: parts[2] };
+  const parts = match[1].split(',').map(part => part.trim());
+  const number = value => {
+    if (/%$/.test(value)) return Math.round(Number(value.slice(0, -1)) * 2.55);
+    return Number(value);
+  };
+  const rgba = parts.map(number);
+  if (rgba.length < 3 || rgba.slice(0, 3).some(value => !Number.isFinite(value))) {
+    return null;
+  }
+  return {
+    r: rgba[0],
+    g: rgba[1],
+    b: rgba[2],
+    a: rgba.length >= 4 && Number.isFinite(rgba[3]) ? rgba[3] : 255,
+  };
 }
 
-function sameColor(left, right) {
-  const a = parseColor(left);
-  const b = parseColor(right);
-  return Boolean(a && b && a.r === b.r && a.g === b.g && a.b === b.b);
+function relativeLuminance(color) {
+  const transform = component => {
+    const normalized = component / 255;
+    return normalized <= 0.03928
+      ? normalized / 12.92
+      : Math.pow((normalized + 0.055) / 1.055, 2.4);
+  };
+  const r = transform(color.r);
+  const g = transform(color.g);
+  const b = transform(color.b);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrastRatio(foreground, background) {
+  const light = Math.max(relativeLuminance(foreground), relativeLuminance(background));
+  const dark = Math.min(relativeLuminance(foreground), relativeLuminance(background));
+  return (light + 0.05) / (dark + 0.05);
+}
+
+function parseFontWeight(weightText) {
+  const value = Number.parseInt(String(weightText || '').trim(), 10);
+  if (Number.isFinite(value)) return value;
+  if (String(weightText).trim().toLowerCase() == 'bold') return 700;
+  return 400;
+}
+
+function emphasisStrength(colorText, fontWeightText, background) {
+  const color = parseColor(colorText);
+  if (!color) {
+    throw new Error('Could not parse rendered text color: ' + colorText);
+  }
+  return {
+    color: colorText,
+    fontWeight: parseFontWeight(fontWeightText),
+    contrast: Number(contrastRatio(color, background).toFixed(4)),
+  };
+}
+
+function strongerEmphasis(ewar, incoming) {
+  const contrastGap = ewar.contrast - incoming.contrast;
+  if (contrastGap > 0.01) {
+    return { ok: true, reason: 'contrast', delta: Number(contrastGap.toFixed(4)) };
+  }
+  if (Math.abs(contrastGap) <= 0.01 && ewar.fontWeight > incoming.fontWeight) {
+    return { ok: true, reason: 'fontWeight', delta: ewar.fontWeight - incoming.fontWeight };
+  }
+  return { ok: false, reason: 'incoming-equal-or-stronger', delta: Number(contrastGap.toFixed(4)) };
+}
+
+function decodePng(buffer) {
+  const signature = '89504e470d0a1a0a';
+  if (buffer.subarray(0, 8).toString('hex') !== signature) {
+    throw new Error('captureScreenshot did not return a PNG');
+  }
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  const idat = [];
+  while (offset < buffer.length) {
+    const length = buffer.readUInt32BE(offset);
+    offset += 4;
+    const type = buffer.subarray(offset, offset + 4).toString('ascii');
+    offset += 4;
+    const data = buffer.subarray(offset, offset + length);
+    offset += length + 4;
+    if (type === 'IHDR') {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      bitDepth = data[8];
+      colorType = data[9];
+    } else if (type === 'IDAT') {
+      idat.push(data);
+    } else if (type === 'IEND') {
+      break;
+    }
+  }
+  if (bitDepth !== 8 || (colorType !== 6 && colorType !== 2)) {
+    throw new Error('Unsupported screenshot PNG format');
+  }
+  const bytesPerPixel = colorType === 6 ? 4 : 3;
+  const raw = zlib.inflateSync(Buffer.concat(idat));
+  const stride = width * bytesPerPixel;
+  const pixels = Buffer.alloc(stride * height);
+  let input = 0;
+  for (let y = 0; y < height; y += 1) {
+    const filter = raw[input];
+    input += 1;
+    const rowStart = y * stride;
+    for (let x = 0; x < stride; x += 1) {
+      const value = raw[input];
+      input += 1;
+      const left = x >= bytesPerPixel ? pixels[rowStart + x - bytesPerPixel] : 0;
+      const up = y > 0 ? pixels[rowStart - stride + x] : 0;
+      const upLeft = y > 0 && x >= bytesPerPixel
+        ? pixels[rowStart - stride + x - bytesPerPixel]
+        : 0;
+      let out = value;
+      if (filter === 1) out = (value + left) & 0xff;
+      else if (filter === 2) out = (value + up) & 0xff;
+      else if (filter === 3) out = (value + Math.floor((left + up) / 2)) & 0xff;
+      else if (filter === 4) {
+        const p = left + up - upLeft;
+        const pa = Math.abs(p - left);
+        const pb = Math.abs(p - up);
+        const pc = Math.abs(p - upLeft);
+        const predictor = pa <= pb && pa <= pc ? left : pb <= pc ? up : upLeft;
+        out = (value + predictor) & 0xff;
+      } else if (filter !== 0) {
+        throw new Error('Unsupported PNG filter ' + filter);
+      }
+      pixels[rowStart + x] = out;
+    }
+  }
+  return { width, height, bytesPerPixel, pixels };
+}
+
+async function captureBackgroundPixel(cdp, point) {
+  const screenshot = await cdp.send('Page.captureScreenshot', {
+    format: 'png',
+    clip: {
+      x: point.x,
+      y: point.y,
+      width: 1,
+      height: 1,
+      scale: 1,
+    },
+  });
+  const png = decodePng(Buffer.from(screenshot.data, 'base64'));
+  return {
+    r: png.pixels[0],
+    g: png.pixels[1],
+    b: png.pixels[2],
+    a: png.bytesPerPixel === 4 ? png.pixels[3] : 255,
+  };
 }
 
 function clipped(label, metric) {
@@ -564,17 +789,24 @@ function validateMeasurement(measurement) {
   if (Math.abs(measurement.shellWidth - width) > EPSILON) {
     errors.push(width + ': shell width ' + measurement.shellWidth + ' != requested ' + width);
   }
-  if (measurement.documentScrollWidth > measurement.documentClientWidth + EPSILON) {
-    errors.push(
-      width + ': horizontal overflow ' + measurement.documentScrollWidth + ' > '
-        + measurement.documentClientWidth
-    );
-  }
-  if (measurement.tableWidth.scrollWidth > measurement.tableWidth.clientWidth + EPSILON) {
-    errors.push(
-      width + ': table horizontal overflow ' + measurement.tableWidth.scrollWidth + ' > '
-        + measurement.tableWidth.clientWidth
-    );
+  for (const fixtureName of ['long', 'exact10m', 'remote', 'roster']) {
+    const fixture = measurement.fixtures[fixtureName];
+    if (!fixture) {
+      errors.push(width + ': missing fixture widths for ' + fixtureName);
+      continue;
+    }
+    if (fixture.document.scrollWidth > fixture.document.clientWidth + EPSILON) {
+      errors.push(
+        width + ': ' + fixtureName + ' document overflow '
+          + fixture.document.scrollWidth + ' > ' + fixture.document.clientWidth
+      );
+    }
+    if (fixture.table.scrollWidth > fixture.table.clientWidth + EPSILON) {
+      errors.push(
+        width + ': ' + fixtureName + ' Fleet table overflow '
+          + fixture.table.scrollWidth + ' > ' + fixture.table.clientWidth
+      );
+    }
   }
   if (measurement.tracks.character <= 92) {
     errors.push(width + ': Character track is at or below 92px (' + measurement.tracks.character + ')');
@@ -614,14 +846,26 @@ function validateMeasurement(measurement) {
   if (measurement.surfaces.threat === measurement.surfaces.neutral) {
     errors.push(width + ': threat and neutral row surfaces are indistinguishable');
   }
-  if (sameColor(measurement.emphasis.ewarColor, measurement.emphasis.incomingColor)) {
-    errors.push(width + ': EWAR and incoming colors are identical');
+  if (!measurement.emphasis.backgroundColor) {
+    errors.push(width + ': missing sampled threat-row background color');
   }
-  if (!sameColor(measurement.emphasis.ewarColor, measurement.tokens.warn)) {
-    errors.push(width + ': active EWAR does not resolve to --warn (' + measurement.emphasis.ewarColor + ')');
-  }
-  if (!sameColor(measurement.emphasis.incomingColor, measurement.tokens.incoming)) {
-    errors.push(width + ': incoming threat does not resolve to --fleet-incoming-threat (' + measurement.emphasis.incomingColor + ')');
+  if (!measurement.emphasis.ewarStrength || !measurement.emphasis.incomingStrength) {
+    errors.push(width + ': missing rendered emphasis strengths');
+  } else {
+    const relation = strongerEmphasis(
+      measurement.emphasis.ewarStrength,
+      measurement.emphasis.incomingStrength
+    );
+    measurement.emphasis.relation = relation;
+    if (!relation.ok) {
+      errors.push(
+        width + ': rendered EWAR emphasis is not stronger than incoming '
+          + '(contrast ' + measurement.emphasis.ewarStrength.contrast
+          + '@' + measurement.emphasis.ewarStrength.fontWeight
+          + ' vs ' + measurement.emphasis.incomingStrength.contrast
+          + '@' + measurement.emphasis.incomingStrength.fontWeight + ')'
+      );
+    }
   }
   if (Math.abs(measurement.header.before.titleHeight - measurement.header.after.titleHeight) > EPSILON) {
     errors.push(
@@ -663,9 +907,15 @@ function validateMeasurement(measurement) {
   return errors;
 }
 
+function fixtureWidthSummary(fixture) {
+  return 'doc ' + fixture.document.scrollWidth + '/' + fixture.document.clientWidth
+    + ', table ' + fixture.table.scrollWidth + '/' + fixture.table.clientWidth;
+}
+
 function measurementSummary(data) {
   const lines = [];
   lines.push('Chromium layout evidence only; not Windows/WebView2 native acceptance.');
+  if (data.proofMode) lines.push('Proof mode: ' + data.proofMode);
   lines.push('SHA: ' + data.sha);
   lines.push('Browser: ' + data.browserVersion);
   for (const measurement of data.measurements) {
@@ -675,9 +925,18 @@ function measurementSummary(data) {
         + measurement.tracks.damage + ' / '
         + measurement.tracks.ewar
         + '; shell ' + measurement.shellWidth
-        + '; doc ' + measurement.documentScrollWidth + '/' + measurement.documentClientWidth
         + '; header ' + measurement.header.before.titleHeight + '→' + measurement.header.after.titleHeight
         + '; roster ' + measurement.roster.clientHeight + '/' + measurement.roster.scrollHeight
+        + '; EWAR ' + measurement.emphasis.ewarStrength.contrast + '@'
+        + measurement.emphasis.ewarStrength.fontWeight
+        + ' vs IN ' + measurement.emphasis.incomingStrength.contrast + '@'
+        + measurement.emphasis.incomingStrength.fontWeight
+    );
+    lines.push(
+      '  long ' + fixtureWidthSummary(measurement.fixtures.long)
+      + '; exact10m ' + fixtureWidthSummary(measurement.fixtures.exact10m)
+      + '; remote ' + fixtureWidthSummary(measurement.fixtures.remote)
+      + '; roster ' + fixtureWidthSummary(measurement.fixtures.roster)
     );
   }
   if (data.errors.length) {
@@ -757,7 +1016,19 @@ async function run() {
   return true;
 })()
       `);
-      const measurement = await evaluate(cdp, measurementExpression(width));
+      const measurement = await evaluate(cdp, measurementExpression(width, args.proof));
+      const background = await captureBackgroundPixel(cdp, measurement.emphasis.backgroundSample);
+      measurement.emphasis.backgroundColor = 'rgba(' + [background.r, background.g, background.b, Number((background.a / 255).toFixed(3))].join(', ') + ')';
+      measurement.emphasis.ewarStrength = emphasisStrength(
+        measurement.emphasis.ewarColor,
+        measurement.emphasis.ewarFontWeight,
+        background
+      );
+      measurement.emphasis.incomingStrength = emphasisStrength(
+        measurement.emphasis.incomingColor,
+        measurement.emphasis.incomingFontWeight,
+        background
+      );
       measurements.push(measurement);
       errors.push.apply(errors, validateMeasurement(measurement));
     }
@@ -767,6 +1038,7 @@ async function run() {
       browserVersion: version.Browser || 'UNKNOWN',
       measurements,
       errors,
+      proofMode: args.proof,
       sha: gitSha(),
     };
     console.log(measurementSummary(data));

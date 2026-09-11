@@ -267,7 +267,7 @@
      of the sheet: the row tint and restrained incoming emphasis are one
      colour decision, not local literals smuggled into fleetbar.html. */
   --fleet-threat-surface: rgb(210 153 34 / 0.12);
-  --fleet-incoming-threat: #caa45c;
+  --fleet-incoming-threat: #be9550;
 
   /* ---- rows ----
      One vocabulary shared by the recording list, the Skills roster and
