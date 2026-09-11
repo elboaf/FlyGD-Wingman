@@ -190,8 +190,7 @@ def test_remote_events_do_not_change_creation_callback_admission(
     api.fleet_bar_ready(token)
     assert api._fleetbar_ready and first.hidden
     api.save_fleet_bar_pos(token, 25, -40)
-    api.fit_fleet_bar(token, 380, 112)
-    api.move_fleet_bar(token, 30, 45)
+    api.fit_fleet_bar_height(token, 112)
     assert first.resized == first.moved == []
     assert api.toggle_fleet_bar(True)["applied"]
     assert api._fleetbar_window is first and api._fleetbar_page_id == token
@@ -214,10 +213,8 @@ def test_remote_events_do_not_change_creation_callback_admission(
     result = call(current, *args)
     if method == "fleet_bar_snapshot":
         assert result["rows"][0]["state"] == "stale"
-    elif method == "fit_fleet_bar":
-        assert second.resized == [args]
-    elif method == "move_fleet_bar":
-        assert second.moved == [args]
+    elif method == "fit_fleet_bar_height":
+        assert second.resized == [(second.width, args[0])]
     elif method == "save_fleet_bar_pos":
         assert (
             api._state.settings["fleet_bar"]["x"],

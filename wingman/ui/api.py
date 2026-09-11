@@ -3347,52 +3347,6 @@ class Api:
                 self._state.settings, "fleet_bar", {"x": target_x, "y": target_y}
             )
 
-    def move_fleet_bar(self, page_id: str | None = None, x=None, y=None) -> None:
-        """Keep dynamic growth inside this creation's browser-reported work area."""
-        from wingman.ui import fleetbar
-
-        with self._fleetbar_lifecycle_lock:
-            bar = self._fleet_page_window_locked(page_id)
-            if bar is None or not self.fleet_bar_settings().get("enabled"):
-                return
-            try:
-                x, y = int(x), int(y)
-            except (TypeError, ValueError):
-                return
-            target_x, target_y, target_width, target_height = (
-                self._fleetbar_target_rect_locked(
-                    bar,
-                    x=x,
-                    y=y,
-                )
-            )
-            try:
-                fleetbar.apply_geometry(
-                    bar,
-                    target_x,
-                    target_y,
-                    target_width,
-                    target_height,
-                )
-            except Exception:
-                logger.debug("Fleet Bar visibility move failed", exc_info=True)
-                return
-            self._remember_fleetbar_rect_locked(
-                target_x,
-                target_y,
-                target_width,
-                target_height,
-            )
-            settings_mod.update_section(
-                self._state.settings, "fleet_bar", {"x": target_x, "y": target_y}
-            )
-
-    def fit_fleet_bar(
-        self, page_id: str | None = None, width=None, height=None
-    ) -> None:
-        """Best-effort fit of one creation; never retarget after a retry wait."""
-        self._fit_fleet_bar_rect(page_id, content_width=width, height=height)
-
     def fit_fleet_bar_height(self, page_id: str | None = None, height=None) -> None:
         self._fit_fleet_bar_rect(page_id, height=height)
 

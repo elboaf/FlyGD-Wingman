@@ -45,10 +45,20 @@
     }
     window.pywebview = {api: {
       fleet_bar_snapshot: function () { return Promise.resolve(fleetFixture('mixed')); },
-      fleet_bar_ready: function () { return Promise.resolve(null); },
-      fit_fleet_bar: function () { return Promise.resolve(null); },
-      move_fleet_bar: function () { return Promise.resolve(null); },
-      save_fleet_bar_pos: function () { return Promise.resolve(null); }
+      fleet_bar_ready: function () { return Promise.resolve(true); },
+      fit_fleet_bar_height: function () { return Promise.resolve(null); },
+      settle_fleet_bar_resize: function () {
+        return Promise.resolve({applied: true, persisted: true, error: null});
+      },
+      reset_fleet_bar_page_width: function () {
+        return Promise.resolve({applied: true, persisted: true, error: null});
+      },
+      save_fleet_bar_pos: function () { return Promise.resolve(null); },
+      activate_fleet_bar: function () { return Promise.resolve(true); },
+      deactivate_fleet_bar: function () { return Promise.resolve(true); },
+      hide_fleet_bar: function () {
+        return Promise.resolve({applied: true, persisted: true, error: null});
+      }
     }};
     window.DEV = {fleetBar: function (kind) { return window.onFleetSnapshot(fleetFixture(kind)); }};
     return;

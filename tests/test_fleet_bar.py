@@ -629,8 +629,13 @@ def test_fleet_page_source_rejects_stale_revision_and_all_hidden_copy():
 
     assert "running_count" in js
     assert "lastRevision" in js
-    assert "All running characters are hidden." in js
-    assert js.index("All running characters are hidden.") < js.index("return fit();")
+    render = js[
+        js.index("function render(payload)") : js.index("window.onFleetSnapshot")
+    ]
+    assert "All running characters are hidden." in render
+    assert render.index("All running characters are hidden.") < render.index(
+        "return fitHeight();"
+    )
     assert "Waiting for EVE clients" in html
 
 
@@ -1121,27 +1126,27 @@ def test_restore_creates_once_and_page_ready_reveals(api, monkeypatch):
     assert api._fleetbar_window.hidden is False
 
 
-def test_fit_does_not_resurrect_a_disabled_window(api):
+def test_fit_height_does_not_resurrect_a_disabled_window(api):
     api._state.settings.setdefault("fleet_bar", {})["enabled"] = False
 
-    api.fit_fleet_bar(api._fleetbar_page_id, 380, 112)
+    api.fit_fleet_bar_height(api._fleetbar_page_id, 112)
 
     assert api._fleetbar_window.resized == []
 
 
-def test_save_position_and_fit_ignore_invalid_values(api):
+def test_save_position_height_fit_and_resize_settlement_ignore_invalid_values(api):
     api.save_fleet_bar_pos(api._fleetbar_page_id, 25, -40)
     assert api._state.settings["fleet_bar"]["x"] == 25
     assert api._state.settings["fleet_bar"]["y"] == -40
 
     api._state.settings["fleet_bar"]["enabled"] = True
-    api.fit_fleet_bar(api._fleetbar_page_id, 380, 112)
-    api.fit_fleet_bar(api._fleetbar_page_id, 0, "bad")
-    api.move_fleet_bar(api._fleetbar_page_id, 30, 45)
-    assert api._fleetbar_window.resized == [(380, 112)]
-    assert api._fleetbar_window.moved == [(30, 45)]
-    assert api._state.settings["fleet_bar"]["x"] == 30
-    assert api._state.settings["fleet_bar"]["y"] == 45
+    api.fit_fleet_bar_height(api._fleetbar_page_id, 112)
+    api.fit_fleet_bar_height(api._fleetbar_page_id, "bad")
+    assert api.settle_fleet_bar_resize(api._fleetbar_page_id, 0, "bad") is None
+    assert api._fleetbar_window.resized == [(500, 112)]
+    assert api._fleetbar_window.moved == []
+    assert api._state.settings["fleet_bar"]["x"] == 25
+    assert api._state.settings["fleet_bar"]["y"] == -40
 
 
 def test_create_is_frameless_pinned_hidden_and_full_surface_drag(tmp_path, monkeypatch):
@@ -1262,25 +1267,31 @@ def test_main_wires_subscription_restore_and_shutdown_destruction():
     assert "api.shutdown_previews()" in source
 
 
-def test_fleet_page_is_display_only_and_carries_stable_columns():
+def test_fleet_page_keeps_header_actions_outside_drag_and_stable_columns():
     from wingman.ui import window as window_mod
 
     html = (window_mod._web_dir() / "fleetbar.html").read_text(encoding="utf-8")
     js = (window_mod._web_dir() / "fleetbar.js").read_text(encoding="utf-8")
 
-    assert "pywebview-drag-region" in html
+    assert html.count("pywebview-drag-region") == 1
+    assert '<div class="fleet-drag pywebview-drag-region" id="fleet-drag">' in html
     assert "CHARACTER" in html
     assert ">DAMAGE<" in html and ">OUT<" in html and ">IN<" in html
     assert ">EWAR<" in html
     assert ">DPS<" not in html  # split into the Damage column's OUT/IN halves
     assert ">INCOMING<" not in html  # renamed EWAR; incoming DPS moved into Damage
-    assert "<button" not in html and "<input" not in html
+    assert "<button" in html and "<input" not in html
+    assert "Reset Fleet Bar width" in html and "Hide Fleet Bar" in html
+    assert "opacity: 0" in html and "visibility: hidden" in html
     assert "window.onFleetSnapshot" in js
     assert "Waiting for EVE clients" in html
     assert "flex: none" in html  # overrides title-bar drag-region geometry
     assert "shell.offsetHeight" in js  # content can shrink with the roster
     assert "fleet_bar_ready" in js  # best-effort render/fit precedes explicit reveal
-    assert "screen.availLeft" in js and "move_fleet_bar" in js
+    assert "fit_fleet_bar_height" in js
+    assert "settle_fleet_bar_resize" in js
+    assert "activate_fleet_bar" in js and "hide_fleet_bar" in js
+    assert "move_fleet_bar" not in js and "fit_fleet_bar(" not in js
     assert "function damageCell(row, maxOutgoing, maxIncoming)" in js
     assert "function readDps(row, key)" in js
     assert "function maxDps(rows, key)" in js
@@ -1294,8 +1305,7 @@ PAGE_A = "a" * 64
 PAGE_B = "b" * 64
 PAGE_CALLBACKS = [
     ("fleet_bar_snapshot", ()),
-    ("fit_fleet_bar", (380, 112)),
-    ("move_fleet_bar", (30, 45)),
+    ("fit_fleet_bar_height", (112,)),
     ("save_fleet_bar_pos", (25, -40)),
     ("fleet_bar_ready", ()),
 ]
@@ -1425,8 +1435,8 @@ def test_page_identity_fit_never_retargets_after_retry(api, monkeypatch, interru
         sleeps.append(seconds)
 
     monkeypatch.setattr(api_mod.time, "sleep", pause)
-    assert _page_call(api, "fit_fleet_bar", PAGE_A, 380, 112) is None
-    assert bar.resized == [(380, 112)]
+    assert _page_call(api, "fit_fleet_bar_height", PAGE_A, 112) is None
+    assert bar.resized == [(500, 112)]
     assert replacement.resized == []
     assert sleeps == [0.25]
 
@@ -1444,8 +1454,7 @@ def test_page_identity_disabled_ready_and_reenable_reuse(api, monkeypatch):
         api._state.settings["fleet_bar"]["x"],
         api._state.settings["fleet_bar"]["y"],
     ) == (25, -40)
-    _page_call(api, "fit_fleet_bar", PAGE_A, 380, 112)
-    _page_call(api, "move_fleet_bar", PAGE_A, 30, 45)
+    _page_call(api, "fit_fleet_bar_height", PAGE_A, 112)
     assert bar.resized == bar.moved == []
     _page_call(api, "fleet_bar_ready", PAGE_A)
     assert api._fleetbar_ready and bar.hidden
@@ -1524,7 +1533,7 @@ def test_page_identity_creation_publishes_only_after_style(api, monkeypatch, rou
         thread.join(5)
         assert not thread.is_alive()
     assert observations == [(None, None, False), (None, None, False)]
-    assert early == [None] * 5
+    assert early == [None] * len(PAGE_CALLBACKS)
     assert len(callbacks) == 1 and isinstance(callbacks[0], dict)
     assert api._fleetbar_window is candidate
     assert re.fullmatch(r"[0-9a-f]{64}", api._fleetbar_page_id)
@@ -1623,7 +1632,7 @@ def test_page_identity_creation_failure_retires_before_cleanup(
     for method, args in PAGE_CALLBACKS:
         early.append(_page_call(api, method, created[0], *args))
     assert api._fleetbar_window is None and api._fleetbar_page_id is None
-    assert not api._fleetbar_ready and early == [None] * 5
+    assert not api._fleetbar_ready and early == [None] * len(PAGE_CALLBACKS)
     assert cleaned == ([] if failure == "none" else [(None, None, False)])
     assert api._state.settings["fleet_bar"]["enabled"] is rollback_fails
 
@@ -1669,17 +1678,15 @@ def test_page_identity_real_replacement_rejects_predecessor(
     result = _page_call(api, method, second_token, *args)
     if method == "fleet_bar_snapshot":
         assert isinstance(result, dict)
-    elif method == "fit_fleet_bar":
-        assert second.resized == [(380, 112)]
-    elif method == "move_fleet_bar":
-        assert second.moved == [(30, 45)]
+    elif method == "fit_fleet_bar_height":
+        assert second.resized == [(500, 112)]
     elif method == "save_fleet_bar_pos":
         assert api._state.settings["fleet_bar"]["x"] == 25
     else:
         assert not second.hidden and api._fleetbar_ready
 
 
-def test_page_identity_entered_move_and_save_finish_before_retirement(api, monkeypatch):
+def test_page_identity_entered_save_finishes_before_retirement(api, monkeypatch):
     from wingman.ui import api as api_mod
 
     api._state.settings["fleet_bar"]["enabled"] = True
@@ -1687,14 +1694,9 @@ def test_page_identity_entered_move_and_save_finish_before_retirement(api, monke
     order, errors = [], []
     original_update = api_mod.settings_mod.update_section
 
-    def move(x, y):
+    def update(*args, **kwargs):
         entered.set()
         assert release.wait(5)
-        order.append("move")
-
-    api._fleetbar_window.move = move
-
-    def update(*args, **kwargs):
         result = original_update(*args, **kwargs)
         assert api._fleetbar_page_id == PAGE_A
         order.append("save")
@@ -1713,7 +1715,7 @@ def test_page_identity_entered_move_and_save_finish_before_retirement(api, monke
 
     def moving():
         try:
-            _page_call(api, "move_fleet_bar", PAGE_A, 30, 45)
+            _page_call(api, "save_fleet_bar_pos", PAGE_A, 30, 45)
         except Exception as exc:  # noqa: BLE001 -- assert worker failures on the parent thread instead of losing them in a thread warning.
             errors.append(exc)
 
@@ -1734,7 +1736,7 @@ def test_page_identity_entered_move_and_save_finish_before_retirement(api, monke
         mover.join(5)
         stopper.join(5)
     assert not mover.is_alive() and not stopper.is_alive() and not errors
-    assert order == ["move", "save", "detach"]
+    assert order == ["save", "detach"]
     assert api._fleetbar_page_id is None
 
 
@@ -1900,14 +1902,6 @@ def test_new_page_geometry_callbacks_reject_omitted_and_stale_tokens(api, method
     assert api._state.settings["fleet_bar"] == before
     assert api._fleetbar_window.resized == []
     assert api._fleetbar_window.moved == []
-
-
-def test_legacy_fit_endpoint_converts_content_width_through_current_resize_insets(api):
-    _set_resizable_bar(api)
-
-    api.fit_fleet_bar(PAGE_A, 500, 112)
-
-    assert api._fleetbar_window.resized == [(512, 112)]
 
 
 def test_fit_fleet_bar_height_preserves_current_outer_width_on_every_retry(

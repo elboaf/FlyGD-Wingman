@@ -32,7 +32,9 @@ def test_damage_tracks_keep_complete_remote_markers_and_header_only_drag():
     assert "white-space: normal" in marker[1]
     assert "text-overflow" not in marker[1]
     assert html.count("pywebview-drag-region") == 1
-    assert '<header class="fleet-title pywebview-drag-region"' in html
+    assert '<div class="fleet-drag pywebview-drag-region" id="fleet-drag">' in html
+    assert 'id="fleet-reset-width"' in html and 'id="fleet-hide"' in html
+    assert "opacity: 0" in html and "visibility: hidden" in html
     assert 'aria-label="Character damage and incoming EWAR"' in html
 
 

@@ -670,6 +670,27 @@ def test_disabled_fleet_dev_state_marks_characters_unknown():
     )
 
 
+def test_standalone_fleet_bar_dev_doubles_match_the_final_page_bridge():
+    start = DEV_JS.index("window.pywebview = {api: {")
+    end = DEV_JS.index("window.DEV = {fleetBar", start)
+    block = DEV_JS[start:end]
+
+    for name in (
+        "fleet_bar_snapshot",
+        "fleet_bar_ready",
+        "fit_fleet_bar_height",
+        "settle_fleet_bar_resize",
+        "reset_fleet_bar_page_width",
+        "save_fleet_bar_pos",
+        "activate_fleet_bar",
+        "deactivate_fleet_bar",
+        "hide_fleet_bar",
+    ):
+        assert name in block, name
+    assert "fit_fleet_bar:" not in block
+    assert "move_fleet_bar:" not in block
+
+
 def test_dev_update_permissions_match_the_production_state_matrix():
     match = re.search(
         r"var DEV_UPDATE_PERMISSIONS = JSON\.parse\('(.*?)'\);",

@@ -32,8 +32,8 @@
       height: auto;
       flex: none;
       display: flex;
-      align-items: baseline;
-      justify-content: space-between;
+      align-items: stretch;
+      gap: 12px;
       min-height: 29px;
       padding: 7px 10px 6px;
       border-bottom: 1px solid var(--panel-border);
@@ -43,15 +43,84 @@
       letter-spacing: .12em;
       text-transform: uppercase;
     }
-    .fleet-health {
-      color: var(--text-faint);
+    .fleet-drag {
+      min-width: 0;
+      flex: 1 1 auto;
+      display: flex;
+      align-items: baseline;
+    }
+    .fleet-title-end {
+      flex: none;
+      min-width: 230px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      align-items: center;
+      justify-items: end;
+    }
+    .fleet-title-status,
+    .fleet-title-actions {
+      grid-area: 1 / 1;
+      justify-self: end;
+    }
+    .fleet-title-status {
+      min-width: 100%;
+      text-align: right;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .fleet-title-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    .fleet-title:hover .fleet-title-actions,
+    .fleet-title:focus-within .fleet-title-actions {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+    }
+    .fleet-title:hover .fleet-title-status,
+    .fleet-title:focus-within .fleet-title-status {
+      opacity: 0;
+      visibility: hidden;
+    }
+    .fleet-title-end.error-active .fleet-title-status {
+      opacity: 1;
+      visibility: visible;
+    }
+    .fleet-title-end.error-active .fleet-title-actions {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    .fleet-health,
+    .fleet-title-error {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
       font-family: var(--mono);
       font-size: var(--fs-label);
       font-weight: 400;
       letter-spacing: .04em;
     }
+    .fleet-health { color: var(--text-faint); }
     .fleet-health.warn { color: var(--warn); }
     .fleet-health.err { color: var(--err); }
+    .fleet-title-error {
+      color: var(--warn);
+      letter-spacing: .02em;
+      text-transform: none;
+    }
+    .fleet-title-action {
+      min-width: 0;
+      padding: 4px 8px;
+      white-space: nowrap;
+    }
     .fleet-grid {
       display: grid;
       grid-template-columns: minmax(0, 1fr) 160px 148px;
@@ -216,12 +285,25 @@
   </style>
 </head>
 <body>
-  <section class="fleet-shell" aria-label="Fleet combat telemetry">
-    <header class="fleet-title pywebview-drag-region">
-      <span>Fleet telemetry</span>
-      <span class="fleet-health" id="fleet-health">WAITING</span>
+  <section class="fleet-shell" id="fleet-shell" aria-label="Fleet combat telemetry">
+    <header class="fleet-title" id="fleet-title">
+      <div class="fleet-drag pywebview-drag-region" id="fleet-drag">
+        <span>Fleet telemetry</span>
+      </div>
+      <div class="fleet-title-end" id="fleet-title-end">
+        <div class="fleet-title-status">
+          <span class="fleet-health" id="fleet-health">WAITING</span>
+          <span class="fleet-title-error" id="fleet-title-error" role="status" hidden></span>
+        </div>
+        <div class="fleet-title-actions" id="fleet-title-actions">
+          <button class="btn fleet-title-action" id="fleet-reset-width" type="button"
+                  title="Reset Fleet Bar width" aria-label="Reset Fleet Bar width">Reset width</button>
+          <button class="btn fleet-title-action" id="fleet-hide" type="button"
+                  title="Hide Fleet Bar" aria-label="Hide Fleet Bar">Hide</button>
+        </div>
+      </div>
     </header>
-    <div class="fleet-table" role="table" aria-label="Character damage and incoming EWAR" tabindex="0">
+    <div class="fleet-table" id="fleet-table" role="table" aria-label="Character damage and incoming EWAR" tabindex="0">
       <div class="fleet-grid fleet-head" role="row">
         <span role="columnheader">CHARACTER</span>
         <span class="fleet-damage-head" role="columnheader">
