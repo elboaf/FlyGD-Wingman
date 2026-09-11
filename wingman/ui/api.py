@@ -384,6 +384,7 @@ class Api:
         # stay private or pywebview recursively walks its WinForms native.
         self._fleetbar_window = None
         self._fleetbar_page_id = None
+        self._fleetbar_return_hwnd = None
         self._fleetbar_ready = False
         self._fleetbar_resize_insets = None
         self._fleetbar_resize_enabled = False
@@ -2519,8 +2520,9 @@ class Api:
 
     def _retire_fleet_page_locked(self, *, keep_window: bool = False):
         """Revoke admission; shutdown retains its concrete target for destroy retry."""
+        bar = self._fleetbar_window
+        self._end_fleetbar_activation_locked(bar)
         with self._fleet_presentation_lock:
-            bar = self._fleetbar_window
             self._fleetbar_page_id = None
             self._fleetbar_ready = False
             self._fleetbar_resize_insets = None
@@ -2532,6 +2534,89 @@ class Api:
             if not keep_window:
                 self._fleetbar_window = None
         return bar
+
+    @staticmethod
+    def _fleetbar_hide_restart_warning() -> str:
+        return "The Fleet Bar stayed on, but it will not survive restart."
+
+    def _end_fleetbar_activation_locked(self, bar=None) -> bool:
+        from wingman.ui import fleetbar
+
+        return_hwnd = self._fleetbar_return_hwnd
+        if return_hwnd is None:
+            return False
+        self._fleetbar_return_hwnd = None
+        try:
+            fleetbar.deactivate_bar(
+                self._fleetbar_window if bar is None else bar,
+                return_hwnd,
+                main_window=self._window,
+            )
+        except Exception:
+            logger.debug("Fleet Bar deactivation failed", exc_info=True)
+        return True
+
+    def _restore_fleet_bar_enabled_for_session(self) -> None:
+        section = dict(self._state.settings.get("fleet_bar") or {})
+        section["enabled"] = True
+        self._state.settings["fleet_bar"] = settings_mod.validated_fleet_bar(section)
+
+    def _hide_fleet_bar_locked(self) -> dict:
+        from wingman.ui import fleetbar
+
+        previous = bool(self._state.settings.get("fleet_bar", {}).get("enabled"))
+        bar = self._fleetbar_window
+        self._end_fleetbar_activation_locked(bar)
+        accepted = None
+        if previous:
+            accepted = self._close_fleet_presentation()
+        try:
+            settings_mod.update_section(
+                self._state.settings, "fleet_bar", {"enabled": False}
+            )
+        except OSError:
+            logger.exception("Could not persist the Fleet Bar setting")
+            if accepted is not None:
+                self._restore_fleet_presentation(accepted)
+            self._push_fleet_bar_state()
+            return self._field_refused("Could not save the Fleet Bar setting.")
+        if previous:
+            self._reconcile_fleet_generation(transition=True)
+        else:
+            self._reconcile_eve_runtime()
+        hide_error = None
+        if fleetbar.is_alive(bar):
+            try:
+                fleetbar.hide_bar(bar)
+            except Exception as exc:  # noqa: BLE001 -- an honest outcome is decided by the post-call visibility check, not the transport exception alone.
+                hide_error = exc
+            if fleetbar.is_visible(bar):
+                hide_error = hide_error or RuntimeError("Fleet Bar remained visible")
+        if hide_error is None:
+            self._push_fleet_bar_state()
+            return self._field_ok()
+
+        logger.exception("Fleet Bar window hide failed", exc_info=hide_error)
+        if previous:
+            try:
+                settings_mod.update_section(
+                    self._state.settings, "fleet_bar", {"enabled": True}
+                )
+            except OSError:
+                logger.exception(
+                    "Could not roll back the Fleet Bar setting after hide failed"
+                )
+                self._restore_fleet_bar_enabled_for_session()
+                self._reconcile_fleet_generation(transition=False)
+                self._push_fleet_bar_state()
+                return {
+                    "applied": False,
+                    "persisted": False,
+                    "error": self._fleetbar_hide_restart_warning(),
+                }
+            self._reconcile_fleet_generation(transition=False)
+        self._push_fleet_bar_state()
+        return self._field_refused("The Fleet Bar could not be hidden.")
 
     def _fleet_page_window_locked(self, page_id):
         """Admit this creation, not today's activation or a replacement window.
@@ -2948,7 +3033,9 @@ class Api:
                 return self._field_refused("Wingman is shutting down.")
             if on and not self._start_fleet_presentation():
                 return self._field_refused("The Fleet Bar could not be opened.")
-            return self._toggle_fleet_bar(bool(on))
+            if not on:
+                return self._hide_fleet_bar_locked()
+            return self._toggle_fleet_bar(True)
 
     def _toggle_fleet_bar(self, on: bool) -> dict:
         from wingman.ui import fleetbar
@@ -2976,48 +3063,44 @@ class Api:
             self._reconcile_eve_runtime()
         bar = self._fleetbar_window
         try:
-            if on:
-                if not fleetbar.is_alive(bar):
-                    # The page requests reveal through fleet_bar_ready after
-                    # its best-effort initial snapshot/render/fit chain.
-                    bar = fleetbar.create(self, hidden=True)
-                elif self._fleetbar_ready:
-                    self._apply_fleetbar_rect_locked(bar)
-                    fleetbar.reveal_bar(bar)
-                    self._queue_fleet_presentation()
-            elif fleetbar.is_alive(bar):
-                fleetbar.hide_bar(bar)
+            if not fleetbar.is_alive(bar):
+                # The page requests reveal through fleet_bar_ready after
+                # its best-effort initial snapshot/render/fit chain.
+                bar = fleetbar.create(self, hidden=True)
+            elif self._fleetbar_ready:
+                self._apply_fleetbar_rect_locked(bar)
+                fleetbar.reveal_bar(bar)
+                self._queue_fleet_presentation()
         except Exception:
             logger.exception("Fleet Bar window toggle failed")
-            if on:
-                failed = self._retire_fleet_page_locked()
-                if failed is not None:
-                    try:
-                        failed.destroy()
-                    except Exception:
-                        logger.debug("Failed Fleet Bar did not destroy", exc_info=True)
-                # A display feature that did not display is not enabled.
-                # Close before the rollback write for the same reason as an
-                # ordinary toggle: callbacks during persistence must not
-                # repaint this just-failed activation with old rows.
-                self._close_fleet_presentation()
+            failed = self._retire_fleet_page_locked()
+            if failed is not None:
                 try:
-                    settings_mod.update_section(
-                        self._state.settings, "fleet_bar", {"enabled": False}
-                    )
-                except OSError:
-                    # update() restores the live section to enabled=True, so
-                    # below must reopen the existing requested generation.
-                    logger.exception(
-                        "Could not roll back the Fleet Bar setting after window creation failed"
-                    )
-                finally:
-                    # Reconcile whichever setting is now authoritative. This
-                    # is deliberately in finally: a second save failure used
-                    # to strand callbacks behind _close_fleet_presentation().
-                    self._reconcile_fleet_generation(transition=False)
-                    self._push_fleet_bar_state()
-                return self._field_refused("The Fleet Bar could not be opened.")
+                    failed.destroy()
+                except Exception:
+                    logger.debug("Failed Fleet Bar did not destroy", exc_info=True)
+            # A display feature that did not display is not enabled.
+            # Close before the rollback write for the same reason as an
+            # ordinary toggle: callbacks during persistence must not
+            # repaint this just-failed activation with old rows.
+            self._close_fleet_presentation()
+            try:
+                settings_mod.update_section(
+                    self._state.settings, "fleet_bar", {"enabled": False}
+                )
+            except OSError:
+                # update() restores the live section to enabled=True, so
+                # below must reopen the existing requested generation.
+                logger.exception(
+                    "Could not roll back the Fleet Bar setting after window creation failed"
+                )
+            finally:
+                # Reconcile whichever setting is now authoritative. This
+                # is deliberately in finally: a second save failure used
+                # to strand callbacks behind _close_fleet_presentation().
+                self._reconcile_fleet_generation(transition=False)
+                self._push_fleet_bar_state()
+            return self._field_refused("The Fleet Bar could not be opened.")
         self._push_fleet_bar_state()
         return self._field_ok()
 
@@ -3389,6 +3472,40 @@ class Api:
             if not fleetbar.is_alive(bar):
                 bar = None
             return self._reset_fleet_bar_width_locked(bar)
+
+    def activate_fleet_bar(self, page_id: str | None = None) -> bool | None:
+        from wingman.ui import fleetbar
+
+        with self._fleetbar_lifecycle_lock:
+            bar = self._fleet_page_window_locked(page_id)
+            if bar is None:
+                return None
+            if not self.fleet_bar_settings().get("enabled") or not fleetbar.is_visible(
+                bar
+            ):
+                return False
+            if self._fleetbar_return_hwnd is not None:
+                return True
+            try:
+                activated, return_hwnd = fleetbar.activate_bar(bar)
+            except Exception:
+                logger.exception("Fleet Bar could not be activated")
+                return False
+            if activated:
+                self._fleetbar_return_hwnd = return_hwnd
+            return activated
+
+    def deactivate_fleet_bar(self, page_id: str | None = None) -> bool | None:
+        with self._fleetbar_lifecycle_lock:
+            if self._fleet_page_window_locked(page_id) is None:
+                return None
+            return self._end_fleetbar_activation_locked()
+
+    def hide_fleet_bar(self, page_id: str | None = None) -> dict | None:
+        with self._fleetbar_lifecycle_lock:
+            if self._fleet_page_window_locked(page_id) is None:
+                return None
+            return self._hide_fleet_bar_locked()
 
     def set_folder(self, which: str, path: str) -> dict:
         """Persist one folder, and make the watcher match it.

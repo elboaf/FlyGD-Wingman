@@ -54,6 +54,84 @@ class FleetWindow(FakeWindow):
         self.y = y
 
 
+class _Handle:
+    def __init__(self, value):
+        self._value = value
+
+    def ToInt64(self):
+        return self._value
+
+
+class _Native:
+    def __init__(self, value):
+        self.Handle = _Handle(value)
+
+
+def _attach_hwnd(window, hwnd):
+    window.native = _Native(hwnd)
+    return window
+
+
+class _FakeUser32:
+    def __init__(
+        self,
+        *,
+        foreground=0,
+        foreground_after_set=None,
+        styles=None,
+        alive=(),
+        visible=None,
+        titles=None,
+    ):
+        self._foreground = foreground
+        self._foreground_after_set = foreground_after_set
+        self.styles = dict(styles or {})
+        self.alive = set(alive)
+        self.visible = dict(visible or {})
+        self.titles = dict(titles or {})
+        self.calls = []
+
+    def GetForegroundWindow(self):
+        self.calls.append(("GetForegroundWindow",))
+        return self._foreground
+
+    def GetWindowLongW(self, hwnd, index):
+        self.calls.append(("GetWindowLongW", hwnd, index))
+        return self.styles.get(hwnd, 0)
+
+    def SetWindowLongW(self, hwnd, index, style):
+        self.calls.append(("SetWindowLongW", hwnd, index, style))
+        self.styles[hwnd] = style
+        return style
+
+    def SetForegroundWindow(self, hwnd):
+        self.calls.append(("SetForegroundWindow", hwnd))
+        if callable(self._foreground_after_set):
+            self._foreground = self._foreground_after_set(hwnd)
+        elif self._foreground_after_set is not None:
+            self._foreground = self._foreground_after_set
+        else:
+            self._foreground = hwnd
+        return 1
+
+    def IsWindow(self, hwnd):
+        self.calls.append(("IsWindow", hwnd))
+        return hwnd in self.alive
+
+    def IsWindowVisible(self, hwnd):
+        self.calls.append(("IsWindowVisible", hwnd))
+        return bool(self.visible.get(hwnd))
+
+    def GetWindowTextLengthW(self, hwnd):
+        self.calls.append(("GetWindowTextLengthW", hwnd))
+        return len(self.titles.get(hwnd, ""))
+
+    def GetWindowTextW(self, hwnd, buffer, length):
+        self.calls.append(("GetWindowTextW", hwnd, length))
+        buffer.value = self.titles.get(hwnd, "")[: max(0, length - 1)]
+        return len(buffer.value)
+
+
 class FakeTelemetry:
     def __init__(self):
         self.reconciled = 0
@@ -105,6 +183,16 @@ def _headless_fleet_window_helpers(monkeypatch):
 
     monkeypatch.setattr(fleetbar, "reveal_bar", reveal)
     monkeypatch.setattr(fleetbar, "hide_bar", hide)
+    monkeypatch.setattr(
+        fleetbar,
+        "is_visible",
+        lambda bar: bool(
+            bar is not None
+            and getattr(bar, "alive", True)
+            and not getattr(bar, "hidden", False)
+        ),
+        raising=False,
+    )
 
 
 @pytest.fixture
@@ -129,6 +217,15 @@ def api(tmp_path):
 def _fleet_scripts(window):
     scripts = getattr(window, "calls", getattr(window, "evaluated", []))
     return [call for call in scripts if "onFleetSnapshot" in call]
+
+
+def _fleet_state_pushes(api):
+    scripts = getattr(api._window, "calls", getattr(api._window, "evaluated", []))
+    return [call for call in scripts if "onFleetBarState" in call]
+
+
+def _clear_scripts(window):
+    getattr(window, "calls", getattr(window, "evaluated", [])).clear()
 
 
 def test_snapshot_from_retired_activation_is_rejected(api):
@@ -1202,6 +1299,11 @@ PAGE_CALLBACKS = [
     ("save_fleet_bar_pos", (25, -40)),
     ("fleet_bar_ready", ()),
 ]
+PAGE_SESSION_CALLBACKS = [
+    ("activate_fleet_bar", ()),
+    ("deactivate_fleet_bar", ()),
+    ("hide_fleet_bar", ()),
+]
 
 
 def _page_call(api, method, page_id, *args):
@@ -2126,3 +2228,367 @@ def test_fleet_bar_ready_returns_resize_capability(api):
     api._fleetbar_window.hidden = True
     api._fleetbar_resize_enabled = False
     assert api.fleet_bar_ready(PAGE_A) is False
+
+
+def test_activate_bar_records_foreground_and_clears_only_noactivate():
+    from wingman.ui import fleetbar
+
+    bar = _attach_hwnd(FleetWindow(), 0x202)
+    bar.hidden = False
+    style = 0x08000000 | 0x80 | 0x04000000
+    user32 = _FakeUser32(
+        foreground=0x101,
+        styles={0x202: style},
+        alive={0x202},
+    )
+
+    assert fleetbar.activate_bar(bar, user32=user32) == (True, 0x101)
+    assert user32.styles[0x202] == style & ~0x08000000
+    assert user32.calls == [
+        ("GetForegroundWindow",),
+        ("GetWindowLongW", 0x202, -20),
+        ("SetWindowLongW", 0x202, -20, style & ~0x08000000),
+        ("SetForegroundWindow", 0x202),
+        ("GetForegroundWindow",),
+    ]
+
+
+def test_activate_bar_restores_noactivate_immediately_on_foreground_refusal():
+    from wingman.ui import fleetbar
+
+    bar = _attach_hwnd(FleetWindow(), 0x202)
+    bar.hidden = False
+    style = 0x08000000 | 0x80 | 0x04000000
+    user32 = _FakeUser32(
+        foreground=0x101,
+        foreground_after_set=0x404,
+        styles={0x202: style},
+        alive={0x202},
+    )
+
+    assert fleetbar.activate_bar(bar, user32=user32) == (False, 0x101)
+    assert user32.styles[0x202] == style
+    assert user32.calls[-1] == ("SetWindowLongW", 0x202, -20, style)
+
+
+@pytest.mark.parametrize(
+    "return_hwnd,main_hwnd,title,alive,want_focus",
+    [
+        pytest.param(0x303, 0x303, "", {0x202, 0x303}, True, id="main-window"),
+        pytest.param(
+            0x404, 0x303, "EVE - Alice", {0x202, 0x404}, True, id="eve-window"
+        ),
+        pytest.param(0x505, 0x303, "Notepad", {0x202, 0x505}, False, id="unrelated"),
+        pytest.param(0x606, 0x303, "", {0x202}, False, id="destroyed"),
+    ],
+)
+def test_deactivate_bar_restores_noactivate_before_guarded_focus_return(
+    return_hwnd, main_hwnd, title, alive, want_focus
+):
+    from wingman.ui import fleetbar
+
+    bar = _attach_hwnd(FleetWindow(), 0x202)
+    bar.hidden = False
+    main = _attach_hwnd(SimpleNamespace(), main_hwnd)
+    style = 0x80 | 0x04000000
+    user32 = _FakeUser32(
+        styles={0x202: style},
+        alive=alive,
+        titles={return_hwnd: title},
+    )
+
+    assert (
+        fleetbar.deactivate_bar(bar, return_hwnd, main_window=main, user32=user32)
+        is want_focus
+    )
+    restore = user32.calls.index(("SetWindowLongW", 0x202, -20, style | 0x08000000))
+    focus = [call for call in user32.calls if call[0] == "SetForegroundWindow"]
+    assert user32.styles[0x202] == style | 0x08000000
+    if want_focus:
+        assert focus == [("SetForegroundWindow", return_hwnd)]
+        assert restore < user32.calls.index(("SetForegroundWindow", return_hwnd))
+    else:
+        assert focus == []
+
+
+@pytest.mark.parametrize("method,args", PAGE_SESSION_CALLBACKS)
+@pytest.mark.parametrize(
+    "identity",
+    [None, True, 12, [], {}, "", "a" * 63, "A" * 64, PAGE_B],
+)
+def test_page_session_callbacks_reject_invalid_or_stale_ids(
+    api, method, args, identity
+):
+    before = dict(api._state.settings["fleet_bar"])
+    api._fleetbar_return_hwnd = 0x123
+
+    assert _page_call(api, method, identity, *args) is None
+    assert api._state.settings["fleet_bar"] == before
+    assert api._fleetbar_return_hwnd == 0x123
+    assert api._fleetbar_window.hidden is False
+
+
+@pytest.mark.parametrize("method,args", PAGE_SESSION_CALLBACKS)
+def test_page_session_callbacks_reject_omitted_token(api, method, args):
+    before = dict(api._state.settings["fleet_bar"])
+    api._fleetbar_return_hwnd = 0x123
+
+    assert getattr(api, method)(*args) is None
+    assert api._state.settings["fleet_bar"] == before
+    assert api._fleetbar_return_hwnd == 0x123
+
+
+@pytest.mark.parametrize("method,args", PAGE_SESSION_CALLBACKS)
+def test_page_session_callbacks_reject_retired_window(api, method, args):
+    before = dict(api._state.settings["fleet_bar"])
+    api._fleetbar_return_hwnd = 0x123
+    api._fleetbar_window.alive = False
+
+    assert _page_call(api, method, PAGE_A, *args) is None
+    assert api._state.settings["fleet_bar"] == before
+    assert api._fleetbar_return_hwnd == 0x123
+
+
+def test_activation_session_keeps_original_return_hwnd_until_deactivated(
+    api, monkeypatch
+):
+    from wingman.ui import fleetbar
+
+    _set_resizable_bar(api)
+    activations = iter([(True, 0x101), (True, 0x202)])
+    deactivated = []
+    monkeypatch.setattr(
+        fleetbar,
+        "activate_bar",
+        lambda *_args, **_kwargs: next(activations),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        fleetbar,
+        "deactivate_bar",
+        lambda _bar, return_hwnd, **_kwargs: deactivated.append(return_hwnd) or True,
+        raising=False,
+    )
+
+    assert api.activate_fleet_bar(PAGE_A) is True
+    assert api._fleetbar_return_hwnd == 0x101
+    assert api.activate_fleet_bar(PAGE_A) is True
+    assert api._fleetbar_return_hwnd == 0x101
+    assert api.reset_fleet_bar_page_width(PAGE_A)["applied"] is True
+    assert api._fleetbar_return_hwnd == 0x101
+    assert api.deactivate_fleet_bar(PAGE_A) is True
+    assert deactivated == [0x101]
+    assert api._fleetbar_return_hwnd is None
+    assert api.deactivate_fleet_bar(PAGE_A) is False
+    assert deactivated == [0x101]
+
+
+def test_hide_fleet_bar_ends_activation_and_publishes_one_runtime_state(
+    api, monkeypatch
+):
+    from wingman.ui import fleetbar
+
+    _set_resizable_bar(api)
+    api._state.settings["fleet_sharing"] = settings.validated_fleet_sharing({})
+    _clear_scripts(api._window)
+    api._fleetbar_return_hwnd = 0x101
+    deactivated = []
+    sharing_before = dict(api._state.settings.get("fleet_sharing") or {})
+    monkeypatch.setattr(
+        fleetbar,
+        "deactivate_bar",
+        lambda _bar, return_hwnd, **_kwargs: deactivated.append(return_hwnd) or True,
+        raising=False,
+    )
+
+    result = api.hide_fleet_bar(PAGE_A)
+    api._fleet_worker.iterate_once()
+
+    assert result == {"applied": True, "persisted": True, "error": None}
+    assert deactivated == [0x101]
+    assert api._fleetbar_return_hwnd is None
+    assert api._state.settings["fleet_bar"]["enabled"] is False
+    assert api._fleetbar_window.hidden is True
+    assert len(_fleet_state_pushes(api)) == 1
+    assert dict(api._state.settings.get("fleet_sharing") or {}) == sharing_before
+
+
+def test_hide_fleet_bar_refuses_when_persistence_fails(api, monkeypatch):
+    from wingman.ui import api as api_mod
+    from wingman.ui import fleetbar
+
+    _set_resizable_bar(api)
+    api._state.settings["fleet_sharing"] = settings.validated_fleet_sharing({})
+    _clear_scripts(api._window)
+    api._fleetbar_return_hwnd = 0x101
+    deactivated = []
+    sharing_before = dict(api._state.settings.get("fleet_sharing") or {})
+    monkeypatch.setattr(
+        fleetbar,
+        "deactivate_bar",
+        lambda _bar, return_hwnd, **_kwargs: deactivated.append(return_hwnd) or True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        api_mod.settings_mod,
+        "update_section",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    result = api.hide_fleet_bar(PAGE_A)
+    api._fleet_worker.iterate_once()
+
+    assert result == {
+        "applied": False,
+        "persisted": False,
+        "error": "Could not save the Fleet Bar setting.",
+    }
+    assert deactivated == [0x101]
+    assert api._fleetbar_return_hwnd is None
+    assert api._state.settings["fleet_bar"]["enabled"] is True
+    assert api._fleetbar_window.hidden is False
+    assert len(_fleet_state_pushes(api)) == 1
+    assert dict(api._state.settings.get("fleet_sharing") or {}) == sharing_before
+
+
+def test_hide_fleet_bar_rolls_back_enabled_state_when_native_hide_fails(
+    api, monkeypatch
+):
+    from wingman.ui import fleetbar
+
+    _set_resizable_bar(api)
+    api._state.settings["fleet_sharing"] = settings.validated_fleet_sharing({})
+    _clear_scripts(api._window)
+    api._fleetbar_return_hwnd = 0x101
+    deactivated = []
+    sharing_before = dict(api._state.settings.get("fleet_sharing") or {})
+    monkeypatch.setattr(
+        fleetbar,
+        "deactivate_bar",
+        lambda _bar, return_hwnd, **_kwargs: deactivated.append(return_hwnd) or True,
+        raising=False,
+    )
+    monkeypatch.setattr(fleetbar, "hide_bar", lambda bar: None)
+
+    result = api.hide_fleet_bar(PAGE_A)
+    api._fleet_worker.iterate_once()
+
+    assert result == {
+        "applied": False,
+        "persisted": False,
+        "error": "The Fleet Bar could not be hidden.",
+    }
+    assert deactivated == [0x101]
+    assert api._fleetbar_return_hwnd is None
+    assert api._state.settings["fleet_bar"]["enabled"] is True
+    assert api._fleetbar_window.hidden is False
+    assert len(_fleet_state_pushes(api)) == 1
+    assert dict(api._state.settings.get("fleet_sharing") or {}) == sharing_before
+
+
+def test_hide_fleet_bar_keeps_session_enabled_when_hide_rollback_wont_persist(
+    api, monkeypatch
+):
+    from wingman import paths
+    from wingman.ui import api as api_mod
+    from wingman.ui import fleetbar
+
+    _set_resizable_bar(api)
+    api._state.settings["fleet_sharing"] = settings.validated_fleet_sharing({})
+    _clear_scripts(api._window)
+    api._fleetbar_return_hwnd = 0x101
+    deactivated = []
+    sharing_before = dict(api._state.settings.get("fleet_sharing") or {})
+    original_update = api_mod.settings_mod.update_section
+    calls = 0
+
+    def fail_rollback(doc, section, values, path=None):
+        nonlocal calls
+        calls += 1
+        if calls == 2 and values == {"enabled": True}:
+            raise OSError("disk full")
+        return original_update(doc, section, values, path)
+
+    monkeypatch.setattr(
+        fleetbar,
+        "deactivate_bar",
+        lambda _bar, return_hwnd, **_kwargs: deactivated.append(return_hwnd) or True,
+        raising=False,
+    )
+    monkeypatch.setattr(fleetbar, "hide_bar", lambda bar: None)
+    monkeypatch.setattr(api_mod.settings_mod, "update_section", fail_rollback)
+
+    result = api.hide_fleet_bar(PAGE_A)
+    api._fleet_worker.iterate_once()
+
+    assert result["applied"] is False
+    assert result["persisted"] is False
+    assert "survive restart" in result["error"]
+    assert deactivated == [0x101]
+    assert api._fleetbar_return_hwnd is None
+    assert api._state.settings["fleet_bar"]["enabled"] is True
+    assert settings.load(paths.settings_file())["fleet_bar"]["enabled"] is False
+    assert api._fleetbar_window.hidden is False
+    assert len(_fleet_state_pushes(api)) == 1
+    assert dict(api._state.settings.get("fleet_sharing") or {}) == sharing_before
+
+
+def test_toggle_off_rolls_back_when_verified_native_hide_fails(api, monkeypatch):
+    from wingman.ui import fleetbar
+
+    _set_resizable_bar(api)
+    _clear_scripts(api._window)
+    api._fleetbar_return_hwnd = 0x101
+    deactivated = []
+    monkeypatch.setattr(
+        fleetbar,
+        "deactivate_bar",
+        lambda _bar, return_hwnd, **_kwargs: deactivated.append(return_hwnd) or True,
+        raising=False,
+    )
+    monkeypatch.setattr(fleetbar, "hide_bar", lambda bar: None)
+
+    result = api.toggle_fleet_bar(False)
+    api._fleet_worker.iterate_once()
+
+    assert result == {
+        "applied": False,
+        "persisted": False,
+        "error": "The Fleet Bar could not be hidden.",
+    }
+    assert deactivated == [0x101]
+    assert api._state.settings["fleet_bar"]["enabled"] is True
+    assert api._fleetbar_window.hidden is False
+    assert len(_fleet_state_pushes(api)) == 1
+
+
+def test_replacement_retires_activation_session_once(api, monkeypatch):
+    from wingman.ui import fleetbar
+
+    api._state.settings["fleet_bar"]["enabled"] = True
+    api._fleetbar_window.alive = False
+    api._fleetbar_return_hwnd = 0x101
+    deactivated = []
+
+    def create_window(_title, _url, **kwargs):
+        return FleetWindow(
+            width=kwargs["width"],
+            height=kwargs["height"],
+            x=kwargs["x"],
+            y=kwargs["y"],
+        )
+
+    monkeypatch.setitem(
+        sys.modules, "webview", SimpleNamespace(create_window=create_window)
+    )
+    monkeypatch.setattr(
+        fleetbar,
+        "deactivate_bar",
+        lambda _bar, return_hwnd, **_kwargs: deactivated.append(return_hwnd) or True,
+        raising=False,
+    )
+
+    assert api.toggle_fleet_bar(True)["applied"] is True
+    assert deactivated == [0x101]
+    assert api._fleetbar_return_hwnd is None
+    assert api._fleetbar_page_id != PAGE_A

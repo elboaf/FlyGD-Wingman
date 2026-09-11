@@ -540,11 +540,26 @@ def test_shutdown_retries_only_the_sigbar_after_its_destroy_fails(startup, caplo
     assert "sigbar destroy failed" in caplog.text
 
 
-def test_fleet_identity_shutdown_revokes_before_failed_destroy_retry(startup, caplog):
-    from tests.test_fleet_bar import PAGE_A, PAGE_CALLBACKS, FleetWindow, _page_call
+def test_fleet_identity_shutdown_revokes_before_failed_destroy_retry(
+    startup, monkeypatch, caplog
+):
+    from tests.test_fleet_bar import (
+        PAGE_A,
+        PAGE_CALLBACKS,
+        PAGE_SESSION_CALLBACKS,
+        FleetWindow,
+        _page_call,
+    )
+    from wingman.ui import fleetbar
 
-    attempts, admission, replies = [], [], []
+    attempts, admission, replies, deactivated = [], [], [], []
     bar = FleetWindow()
+    monkeypatch.setattr(
+        fleetbar,
+        "deactivate_bar",
+        lambda _bar, return_hwnd, **_kwargs: deactivated.append(return_hwnd) or True,
+        raising=False,
+    )
 
     def destroy():
         api = startup.captured["api"]
@@ -560,9 +575,10 @@ def test_fleet_identity_shutdown_revokes_before_failed_destroy_retry(startup, ca
         api._fleetbar_window = bar
         api._fleetbar_page_id = PAGE_A
         api._fleetbar_ready = True
+        api._fleetbar_return_hwnd = 0x404
         api._request_shutdown()
         assert api._fleetbar_window is bar  # retain only for cleanup retry
-        for method, args in PAGE_CALLBACKS:
+        for method, args in [*PAGE_CALLBACKS, *PAGE_SESSION_CALLBACKS]:
             replies.append(_page_call(api, method, PAGE_A, *args))
         api._request_shutdown()
 
@@ -570,7 +586,8 @@ def test_fleet_identity_shutdown_revokes_before_failed_destroy_retry(startup, ca
     with caplog.at_level(logging.ERROR, logger=main_mod.__name__):
         assert main_mod.main() == 0
     assert admission == [(None, False), (None, False)]
-    assert replies == [None] * 5
+    assert replies == [None] * 8
+    assert deactivated == [0x404]
     assert attempts == ["fleet", "fleet"]
     assert startup.captured["api"]._fleetbar_window is None
     assert startup.captured["window"].destroyed == 1

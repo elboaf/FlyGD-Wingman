@@ -11,6 +11,7 @@ import logging
 import secrets
 import sys
 
+from wingman import bookmarks
 from wingman import settings as settings_mod
 from wingman.ui import chrome
 from wingman.ui import sigbar as sigbar_mod
@@ -23,11 +24,59 @@ HEIGHT = 90
 MIN_SIZE = (1, 1)
 DEFAULT_MARGIN = 60
 ZERO_INSETS = chrome.ResizeInsets(0, 0, 0, 0)
+GWL_EXSTYLE = -20
+WS_EX_TOOLWINDOW = 0x80
+WS_EX_NOACTIVATE = 0x08000000
 
 
 def _default_placement() -> tuple[int, int]:
     """Top-left leaves room for a roster that grows downward after boot."""
     return (DEFAULT_MARGIN, DEFAULT_MARGIN)
+
+
+def _user32(user32=None):
+    if user32 is not None:
+        return user32
+    if sys.platform != "win32":
+        return None
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.GetWindowLongW.restype = ctypes.c_long
+    user32.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
+    user32.SetWindowLongW.restype = ctypes.c_long
+    user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    user32.SetForegroundWindow.restype = wintypes.BOOL
+    user32.GetForegroundWindow.argtypes = []
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.IsWindow.argtypes = [wintypes.HWND]
+    user32.IsWindow.restype = wintypes.BOOL
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
+    return user32
+
+
+def window_hwnd(window) -> int | None:
+    """The window HWND as an int, or None when it cannot be read."""
+    try:
+        native = getattr(window, "native", None)
+        if native is None:
+            return None
+        handle = native.Handle
+        if hasattr(handle, "ToInt64"):
+            return int(handle.ToInt64())
+        return int(handle.ToInt32())
+    except Exception:  # noqa: BLE001 -- WinForms handle access fails for the same reasons the sig-bar helper documents: no native yet or torn down mid-call both mean "no HWND".
+        return None
+
+
+def main_window_hwnd(window) -> int | None:
+    return window_hwnd(window)
 
 
 def outer_width_for_content(content_width, insets) -> int:
@@ -97,6 +146,65 @@ def apply_geometry(bar, x, y, width, height) -> None:
     current_y = getattr(bar, "y", None)
     if current_x != x or current_y != y:
         bar.move(x, y)
+
+
+def set_bar_clickable(bar, clickable: bool, *, user32=None) -> bool:
+    user32 = _user32(user32)
+    handle = window_hwnd(bar)
+    if user32 is None or handle is None:
+        return False
+    style = int(user32.GetWindowLongW(handle, GWL_EXSTYLE))
+    wanted = style & ~WS_EX_NOACTIVATE if clickable else style | WS_EX_NOACTIVATE
+    if wanted == style:
+        return True
+    user32.SetWindowLongW(handle, GWL_EXSTYLE, wanted)
+    return True
+
+
+def _window_text(user32, hwnd) -> str:
+    length = int(user32.GetWindowTextLengthW(hwnd))
+    if length <= 0:
+        return ""
+    buffer = ctypes.create_unicode_buffer(length + 1)
+    user32.GetWindowTextW(hwnd, buffer, length + 1)
+    return buffer.value
+
+
+def eve_title_predicate(title: str) -> bool:
+    return bool(title and bookmarks.is_engine_window_title(title))
+
+
+def activate_bar(bar, *, user32=None) -> tuple[bool, int | None]:
+    user32 = _user32(user32)
+    handle = window_hwnd(bar)
+    if user32 is None or handle is None:
+        return False, None
+    previous = int(user32.GetForegroundWindow() or 0) or None
+    if not set_bar_clickable(bar, True, user32=user32):
+        return False, previous
+    user32.SetForegroundWindow(handle)
+    if int(user32.GetForegroundWindow() or 0) == handle:
+        return True, previous
+    set_bar_clickable(bar, False, user32=user32)
+    return False, previous
+
+
+def deactivate_bar(bar, return_hwnd, *, main_window=None, user32=None) -> bool:
+    user32 = _user32(user32)
+    if user32 is None:
+        return False
+    set_bar_clickable(bar, False, user32=user32)
+    if not isinstance(return_hwnd, int) or return_hwnd <= 0:
+        return False
+    if not user32.IsWindow(return_hwnd):
+        return False
+    if return_hwnd == main_window_hwnd(main_window):
+        user32.SetForegroundWindow(return_hwnd)
+        return True
+    if not eve_title_predicate(_window_text(user32, return_hwnd)):
+        return False
+    user32.SetForegroundWindow(return_hwnd)
+    return True
 
 
 def create(api, hidden: bool = True):
@@ -196,6 +304,18 @@ def is_alive(bar) -> bool:
     if sys.platform == "win32":
         return sigbar_mod.is_alive(bar)
     return bar is not None and getattr(bar, "alive", True)
+
+
+def is_visible(bar, *, user32=None) -> bool:
+    user32 = _user32(user32)
+    if user32 is not None:
+        handle = window_hwnd(bar)
+        return bool(handle and user32.IsWindowVisible(handle))
+    return bool(
+        bar is not None
+        and getattr(bar, "alive", True)
+        and not getattr(bar, "hidden", False)
+    )
 
 
 def reveal_bar(bar) -> None:
