@@ -373,13 +373,10 @@ def test_binding_replacement_fences_in_flight_response_and_serializes_test(
     old = r.server.call()
     worker = r.worker
     owner = worker._request_thread
-    assert r.controller.set_map("Other-Map")["persisted"]
+    result = r.controller.test_connection(BASE, "Other-Map", "new-synthetic-token")
+    assert result["persisted"] and result["test_accepted"]
     r.labels({"First Pilot": None})
-    assert r.credentials.load(BASE, "Other-Map") is None
-    assert r.controller.replace_token("new-synthetic-token", BASE, "Other-Map")[
-        "persisted"
-    ]
-    assert r.controller.test_connection()["applied"]
+    assert r.credentials.load(BASE, "Other-Map") == "new-synthetic-token"
     assert r.controller.state()["test_pending"]
     assert len(r.server.connections) == 2
     old.reply(body=renamed_body("OLD MAP"), etag='W/"renamed-revision"')
@@ -436,7 +433,7 @@ def test_off_test_and_preview_master_gate_keep_settings_and_one_worker(make_runt
     saved = paths.settings_file().read_bytes()
     r = make_runtime(previews=False)
     assert r.worker._request_thread is None and not r.server.connections
-    assert r.controller.test_connection()["applied"]
+    assert r.controller.test_connection(BASE, MAP, "")["test_accepted"]
     r.snapshot()
     r.wait(lambda s: s["test_result"] == "success")
     r.labels({"First Pilot": None})
@@ -458,7 +455,9 @@ def test_off_test_and_preview_master_gate_keep_settings_and_one_worker(make_runt
 def test_committed_configuration_and_bound_credential_reload_then_remove(make_runtime):
     r = make_runtime()
     r.snapshot()
-    assert r.controller.set_url("https://WANDERER.example:443/deployment/")["persisted"]
+    assert r.controller.test_connection(
+        "https://WANDERER.example:443/deployment/", MAP, ""
+    )["persisted"]
     r.close()
     restarted = make_runtime()
     restarted.snapshot()
@@ -469,10 +468,15 @@ def test_committed_configuration_and_bound_credential_reload_then_remove(make_ru
         "map_identifier": MAP,
     }
     assert restarted.controller.state()["credential_present"]
-    saved = paths.settings_file().read_bytes()
-    assert restarted.controller.remove_connection()["persisted"]
+    assert restarted.controller.remove_connection(
+        restarted.controller.state()["revision"]
+    )["persisted"]
     restarted.labels({"First Pilot": None})
-    assert paths.settings_file().read_bytes() == saved
+    assert settings.load()["wanderer"] == {
+        "enabled": True,
+        "base_url": "",
+        "map_identifier": "",
+    }
     assert not (paths.state_dir() / "wanderer_credentials.json").exists()
     restarted.close()
     without_token = make_runtime()
@@ -502,7 +506,7 @@ def test_shutdown_fences_host_before_native_destruction_and_retains_http_owner(
     assert r.worker is worker and worker._request_thread is owner
     assert r.controller.state()["status"] == "stopped"
     assert not r.host._metadata_values and not r.host._windows
-    assert not r.controller.replace_token(TOKEN, BASE, MAP)["applied"]
+    assert not r.controller.test_connection(BASE, MAP, TOKEN)["applied"]
 
 
 @pytest.mark.skipif(

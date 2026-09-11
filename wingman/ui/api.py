@@ -4401,20 +4401,11 @@ class Api:
     def set_wanderer_enabled(self, enabled) -> dict:
         return self._wanderer.set_enabled(enabled)
 
-    def set_wanderer_url(self, base) -> dict:
-        return self._wanderer.set_url(base)
+    def test_wanderer_connection(self, base, map, token) -> dict:
+        return self._wanderer.test_connection(base, map, token)
 
-    def set_wanderer_map(self, map) -> dict:
-        return self._wanderer.set_map(map)
-
-    def replace_wanderer_token(self, token, base, map) -> dict:
-        return self._wanderer.replace_token(token, base, map)
-
-    def test_wanderer_connection(self) -> dict:
-        return self._wanderer.test_connection()
-
-    def remove_wanderer_connection(self) -> dict:
-        return self._wanderer.remove_connection()
+    def remove_wanderer_connection(self, revision) -> dict:
+        return self._wanderer.remove_connection(revision)
 
     # ---- EVE client previews ------------------------------------------
 

@@ -101,15 +101,21 @@ class Host:
 
 
 class Rig:
-    def __init__(self, tmp_path, *, enabled=True, previews=True, delivery=None):
+    def __init__(
+        self, tmp_path, *, enabled=True, previews=True, delivery=None, section=None
+    ):
         from wingman.wanderer.controller import WandererController, WandererPorts
 
         self.cfg = settings.load()
-        self.cfg["wanderer"] = {
-            "enabled": enabled,
-            "base_url": BASE,
-            "map_identifier": "map",
-        }
+        self.cfg["wanderer"] = (
+            section
+            if section is not None
+            else {
+                "enabled": enabled,
+                "base_url": BASE,
+                "map_identifier": "map",
+            }
+        )
         self.host = Host()
         self.store = CredentialStore(
             tmp_path / "credential",
@@ -240,7 +246,7 @@ def test_state_retries_reverse_handoff_and_page_recovers_coverage(rig, monkeypat
         assert entered.wait(2)
         # The read has captured old acknowledgement. Commit/reconfigure and
         # finish a new snapshot before allowing its worker sample to continue.
-        assert rig.controller.replace_token(TOKEN, BASE, "map")["applied"]
+        assert rig.controller.test_connection(BASE, "map", TOKEN)["applied"]
         with rig.worker_cv:
             rig.clock.now = 102
             rig.worker_cv.notify_all()
@@ -321,39 +327,17 @@ def test_failed_save_retains_committed_generation_and_acknowledgement(rig, monke
         raise OSError(TOKEN)
 
     monkeypatch.setattr(settings, "_save_locked", fail)
-    for method, value in (
-        ("set_enabled", False),
-        ("set_url", "https://other.example"),
-        ("set_map", "other"),
-    ):
-        result = getattr(rig.controller, method)(value)
-        assert result["applied"] is result["persisted"] is False
-        assert TOKEN not in json.dumps(result)
-        assert result["acknowledged"]["base_url"] == BASE
-        assert result["acknowledged"]["enabled"] is True
-        assert rig.controller.state()["generation"] == before["generation"]
+    result = rig.controller.set_enabled(False)
+    assert result["applied"] is result["persisted"] is False
+    assert TOKEN not in json.dumps(result)
+    assert result["acknowledged"]["base_url"] == BASE
+    assert result["acknowledged"]["enabled"] is True
+    assert rig.controller.state()["generation"] == before["generation"]
     assert rig.cfg["wanderer"] == {
         "enabled": True,
         "base_url": BASE,
         "map_identifier": "map",
     }
-
-
-def test_binding_edits_never_rebind_token_and_stale_submission_is_refused(rig):
-    rig.start()
-    rig.client.call(1).reply(success())
-    rig.wait(lambda s: not s["in_flight"])
-    result = rig.controller.set_map("other")
-    assert result["applied"] and result["persisted"]
-    assert not result["acknowledged"]["credential_present"]
-    assert rig.store.load(BASE, "map") == TOKEN
-    assert rig.store.load(BASE, "other") is None
-    refused = rig.controller.replace_token("new-token", BASE, "map")
-    assert not refused["applied"]
-    assert refused["acknowledged"]["map_identifier"] == "other"
-    assert rig.store.load(BASE, "map") == TOKEN
-    assert rig.controller.replace_token("new-token", BASE, "other")["persisted"]
-    assert rig.store.load(BASE, "other") == "new-token"
 
 
 def test_failed_credential_replace_and_remove_retain_runtime(rig, monkeypatch):
@@ -367,8 +351,8 @@ def test_failed_credential_replace_and_remove_retain_runtime(rig, monkeypatch):
     monkeypatch.setattr(rig.store, "replace", fail)
     monkeypatch.setattr(rig.store, "remove", fail)
     for result in (
-        rig.controller.replace_token("new-token", BASE, "map"),
-        rig.controller.remove_connection(),
+        rig.controller.test_connection(BASE, "map", "new-token"),
+        rig.controller.remove_connection(rig.controller.state()["revision"]),
     ):
         assert not result["applied"] and not result["persisted"]
         assert result["acknowledged"]["credential_present"]
@@ -376,19 +360,18 @@ def test_failed_credential_replace_and_remove_retain_runtime(rig, monkeypatch):
     assert rig.controller.state()["generation"] == before["generation"]
 
 
-def test_explicit_remove_only_deletes_credential(rig, monkeypatch):
+def test_explicit_remove_clears_connection_and_retains_enable(rig):
     rig.start()
     rig.client.call(1).reply(success())
     rig.wait(lambda s: not s["in_flight"])
-    before = dict(rig.cfg["wanderer"])
-
-    def fail(*args):
-        pytest.fail("Remove must not write the settings document")
-
-    monkeypatch.setattr(settings, "_save_locked", fail)
-    result = rig.controller.remove_connection()
+    result = rig.controller.remove_connection(rig.controller.state()["revision"])
     assert result["applied"] and result["persisted"]
-    assert rig.cfg["wanderer"] == before
+    assert rig.cfg["wanderer"] == {
+        "enabled": True,
+        "base_url": "",
+        "map_identifier": "",
+    }
+    assert settings.load()["wanderer"] == rig.cfg["wanderer"]
     assert rig.store.load(BASE, "map") is None
     assert not rig.controller.state()["credential_present"]
     assert not any(rig.host.values.values())
@@ -456,12 +439,14 @@ def test_off_test_is_async_does_not_enable_and_shutdown_retains_owners(tmp_path)
     rig = Rig(tmp_path, enabled=False, previews=False)
     try:
         rig.start()
-        result = rig.controller.test_connection()
-        assert result["applied"] and result["persisted"]
+        result = rig.controller.test_connection(BASE, "map", "")
+        assert result["applied"] and result["persisted"] and result["test_accepted"]
         assert not result["acknowledged"]["enabled"]
         call = rig.client.call(1)
         assert rig.controller.state()["test_in_flight"]
-        assert not rig.controller.test_connection()["applied"]
+        refused = rig.controller.test_connection(BASE, "map", "")
+        assert refused["applied"] and refused["persisted"]
+        assert not refused["test_accepted"] and refused["test_error"]
         worker = rig.worker
         callback = rig.host.callback
         assert not rig.controller.stop(0)
@@ -513,15 +498,18 @@ def test_unexpected_storage_exception_never_reaches_bridge(rig, monkeypatch, ope
         monkeypatch.setattr(settings, "_save_locked", fail)
 
         def call():
-            return rig.controller.set_map("other")
+            return rig.controller.test_connection(BASE, "other", "new-token")
     elif operation == "replace":
         monkeypatch.setattr(rig.store, "replace", fail)
 
         def call():
-            return rig.controller.replace_token("new-token", BASE, "map")
+            return rig.controller.test_connection(BASE, "map", "new-token")
     else:
         monkeypatch.setattr(rig.store, "remove", fail)
-        call = rig.controller.remove_connection
+
+        def call():
+            return rig.controller.remove_connection(rig.controller.state()["revision"])
+
     result = call()
     assert not result["applied"] and not result["persisted"]
     assert result["acknowledged"]["credential_present"]
@@ -569,22 +557,28 @@ def test_close_during_admitted_save_never_reopens_runtime_or_retains_cached_toke
     "gate", ["off", "previews", "host", "url", "map", "credential"]
 )
 def test_every_automatic_gate_prevents_network_but_test_does_not_enable(tmp_path, gate):
-    rig = Rig(tmp_path, enabled=gate != "off", previews=gate != "previews")
+    section = {
+        "enabled": gate != "off",
+        "base_url": "" if gate == "url" else BASE,
+        "map_identifier": "" if gate == "map" else "map",
+    }
+    rig = Rig(tmp_path, section=section, previews=gate != "previews")
     try:
         if gate == "host":
             rig.host.available = False
-        if gate == "url":
-            assert rig.controller.set_url("")["persisted"]
-        if gate == "map":
-            assert rig.controller.set_map("")["persisted"]
         if gate == "credential":
-            assert rig.controller.remove_connection()["persisted"]
+            assert rig.controller.remove_connection(rig.controller.state()["revision"])[
+                "persisted"
+            ]
         rig.start()
         assert not rig.controller.state()["automatic_ready"]
         assert rig.worker._request_thread is None
         before = rig.controller.state()["enabled"]
-        result = rig.controller.test_connection()
-        assert result["applied"] is (gate in {"off", "previews", "host"})
+        current = rig.controller.state()
+        result = rig.controller.test_connection(
+            current["base_url"], current["map_identifier"], ""
+        )
+        assert result["test_accepted"] is (gate in {"off", "previews", "host"})
         assert rig.controller.state()["enabled"] is before
         if result["applied"]:
             rig.client.call(1).reply(success())
@@ -597,7 +591,7 @@ def test_every_automatic_gate_prevents_network_but_test_does_not_enable(tmp_path
 def test_test_admission_waits_behind_poll_on_one_http_lane(rig):
     rig.start()
     poll = rig.client.call(1)
-    assert rig.controller.test_connection()["applied"]
+    assert rig.controller.test_connection(BASE, "map", "")["test_accepted"]
     assert rig.controller.state()["test_pending"]
     assert not rig.controller.state()["test_in_flight"]
     poll.reply(success())
@@ -625,7 +619,7 @@ def test_callback_never_waits_for_credential_protection(rig, monkeypatch):
 
     monkeypatch.setattr(rig.store, "replace", protect)
     owner = threading.Thread(
-        target=lambda: rig.controller.replace_token("new-token", BASE, "map")
+        target=lambda: rig.controller.test_connection(BASE, "map", "new-token")
     )
     owner.start()
     assert entered.wait(2)
@@ -686,7 +680,9 @@ def test_inert_startup_credential_failure_is_safe_and_explicit_remove_recovers(
         assert state["credential_error"] and not state["credential_present"]
         assert state["status"] == "credential_error"
         assert TOKEN not in json.dumps(state)
-        assert rig.controller.remove_connection()["persisted"]
+        assert rig.controller.remove_connection(rig.controller.state()["revision"])[
+            "persisted"
+        ]
         assert not rig.controller.state()["credential_error"]
     finally:
         rig.close()
@@ -721,7 +717,7 @@ def test_test_outcome_text_does_not_change_when_next_automatic_request_fails(rig
     rig.start()
     rig.client.call(1).reply(success())
     rig.wait(lambda s: not s["in_flight"])
-    assert rig.controller.test_connection()["applied"]
+    assert rig.controller.test_connection(BASE, "map", "")["test_accepted"]
     with rig.worker_cv:
         rig.clock.now = 102
         rig.worker_cv.notify_all()

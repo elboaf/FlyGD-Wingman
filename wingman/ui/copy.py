@@ -39,14 +39,15 @@ def wanderer_status(status: str, error_code: str | None) -> str:
         )
     return {
         "off": "Wanderer names are off.",
-        "setup_incomplete": "Apply an application URL, map and token to finish setup.",
+        "setup_incomplete": "Enter an application URL, map and token, then test the connection.",
         "previews_unavailable": "Waiting for previews to be enabled and available.",
         "connecting": "Connecting to Wanderer…",
         "connected": "Connected to Wanderer.",
         "stale": "Location confirmations have expired. Waiting for fresh data.",
         "stopped": "Wanderer has stopped.",
         "worker_failed": "Wanderer could not run. Restart Wingman to retry.",
-        "credential_error": "The protected token could not be read. Replace or remove it.",
+        "credential_error": "The protected token could not be read. Enter it again or remove the connection.",
+        "persistence_error": "The saved connection could not be restored. Names are stopped; restart Wingman and re-enter the connection.",
     }.get(status, "Wanderer is unavailable.")
 
 

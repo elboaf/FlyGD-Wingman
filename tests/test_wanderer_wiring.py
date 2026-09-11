@@ -26,17 +26,15 @@ def test_api_composes_nonsecret_state_and_transaction_facades(tmp_path):
         state = api.wanderer_state()
         assert state["enabled"] is False
         assert state["credential_present"] is False
-        assert (
-            api.set_wanderer_url("https://EXAMPLE.test:443/prefix/")["acknowledged"][
-                "base_url"
-            ]
-            == "https://example.test/prefix"
+        result = api.test_wanderer_connection(
+            "https://EXAMPLE.test:443/prefix/", "map", ""
         )
-        assert api.set_wanderer_map("map")["persisted"]
+        assert not result["applied"] and not result["test_accepted"]
+        assert result["acknowledged"]["base_url"] == ""
         assert api.set_wanderer_enabled(True)["applied"]
         assert settings.load()["wanderer"]["enabled"]
-        result = api.replace_wanderer_token(
-            "never-return-this", "https://example.test", "map"
+        result = api.test_wanderer_connection(
+            "http://unsafe.example", "map", "never-return-this"
         )
         assert not result["applied"]
         assert "never-return-this" not in json.dumps(result)
@@ -206,12 +204,17 @@ def test_wanderer_joins_are_outside_api_state_locks(tmp_path, monkeypatch):
     api.shutdown_previews()
 
 
-@pytest.mark.parametrize("status", [*get_args(WorkerStatus), "credential_error"])
+@pytest.mark.parametrize(
+    "status", [*get_args(WorkerStatus), "credential_error", "persistence_error"]
+)
 def test_status_copy_explains_every_safe_health_state(status):
     formatter = getattr(copy_mod, "wanderer_status", None)
     assert formatter is not None
     assert formatter(status, None)
     assert "unavailable" not in formatter("off", None).lower()
+    if status == "persistence_error":
+        assert "restart" in formatter(status, None).lower()
+        assert "saved" in formatter(status, None).lower()
 
 
 @pytest.mark.parametrize("code", get_args(ErrorCode))

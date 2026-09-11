@@ -22,6 +22,10 @@ from .worker import MetadataPublisher, WandererWorker, WorkerConfig
 
 MetadataCallback = Callable[[int, frozenset[ClientSessionId], bool], None]
 HEALTH_INTERVAL = 0.25
+PERSISTENCE_ERROR = (
+    "Could not restore the saved Wanderer connection. Names are stopped; "
+    "restart Wingman and re-enter the connection."
+)
 
 
 @dataclass(frozen=True)
@@ -71,6 +75,7 @@ class WandererController:
         self._previews_enabled = previews_enabled
         self._token = None
         self._credential_error = False
+        self._persistence_error = False
         try:
             self._token = self._load(self._section)
         except OSError:
@@ -193,6 +198,7 @@ class WandererController:
             "revision": self._revision,
             "credential_present": self._credential_present,
             "credential_error": self._credential_error,
+            "persistence_error": self._persistence_error,
         }
 
     def state(self) -> dict:
@@ -221,7 +227,9 @@ class WandererController:
             "previews_enabled": previews,
             "host_available": available,
         }
-        if faulted:
+        if acknowledged["persistence_error"]:
+            payload["status"] = "persistence_error"
+        elif faulted:
             payload["status"] = "worker_failed"
         elif payload["status"] != "stopped" and acknowledged["credential_error"]:
             payload["status"] = "credential_error"
@@ -271,7 +279,12 @@ class WandererController:
     def _closed_result(self) -> dict | None:
         with self._condition:
             if self._closed:
-                return self._result(False, "Wingman is shutting down.")
+                return self._result(
+                    False,
+                    PERSISTENCE_ERROR
+                    if self._persistence_error
+                    else "Wingman is shutting down.",
+                )
         return None
 
     def _commit(self, section, token, credential_error=False) -> None:
@@ -284,112 +297,128 @@ class WandererController:
         self._apply_runtime()
         self._health_wake.set()
 
-    def _set_field(self, key, value, normalize) -> dict:
+    def set_enabled(self, enabled) -> dict:
         with self._mutation_lock:
             refusal = self._closed_result()
             if refusal:
                 return refusal
-            try:
-                value = normalize(value)
-            except ValueError:
-                return self._result(False, "Enter a valid Wanderer connection value.")
+            if not isinstance(enabled, bool):
+                return self._result(False, "Choose On or Off.")
             with self._condition:
                 section, token = dict(self._section), self._token
                 credential_error = self._credential_error
-            if section[key] == value:
+            if section["enabled"] == enabled:
                 return self._result(True)
-            section[key] = value
+            section["enabled"] = enabled
             try:
-                if key != "enabled":
-                    token = self._load(section)
-                    credential_error = False
                 with self._ports.update_settings() as cfg:
                     cfg["wanderer"] = section
             except Exception:  # noqa: BLE001 — storage boundary: never expose paths, token material or exception context to the bridge.
-                return self._result(False, "Could not save the Wanderer connection.")
+                return self._result(False, "Could not save the Wanderer preference.")
             self._commit(section, token, credential_error)
             return self._result(True)
 
-    def set_enabled(self, enabled) -> dict:
-        def boolean(value):
-            if not isinstance(value, bool):
-                raise ValueError
-            return value
+    def _save_connection(self, section, token) -> dict:
+        """Mutation-owned two-document write, with bounded ciphertext compensation.
 
-        return self._set_field("enabled", enabled, boolean)
-
-    def set_url(self, base) -> dict:
-        return self._set_field(
-            "base_url",
-            base,
-            lambda value: "" if value == "" else normalize_base_url(value),
-        )
-
-    def set_map(self, map) -> dict:
-        return self._set_field(
-            "map_identifier",
-            map,
-            lambda value: "" if value == "" else normalize_map_identifier(value),
-        )
-
-    def replace_token(self, token, base, map) -> dict:
-        with self._mutation_lock:
-            refusal = self._closed_result()
-            if refusal:
-                return refusal
-            try:
-                base, map = normalize_base_url(base), normalize_map_identifier(map)
-                token = validate_token(token)
-            except (ValueError, OSError):
-                return self._result(False, "Enter a valid connection and token.")
-            with self._condition:
-                section = dict(self._section)
-            if (base, map) != (section["base_url"], section["map_identifier"]):
-                return self._result(
-                    False, "The connection changed. Apply the token again."
-                )
-            try:
-                self._credentials.replace(base, map, token)
-            except Exception:  # noqa: BLE001 — protected-storage failures must return only fixed nonsecret context.
-                return self._result(
-                    False, "Could not protect and save the Wanderer token."
-                )
-            self._commit(section, token)
-            return self._result(True)
-
-    def remove_connection(self) -> dict:
-        with self._mutation_lock:
-            refusal = self._closed_result()
-            if refusal:
-                return refusal
-            try:
+        This is not crash-atomic. Until both documents succeed, runtime keeps
+        the old in-memory connection. No candidate credential reaches a worker.
+        """
+        try:
+            previous = self._credentials.snapshot()
+            if token is None:
                 self._credentials.remove()
-            except Exception:  # noqa: BLE001 — removal failure retains the acknowledged credential, never its exception.
-                return self._result(False, "Could not remove the Wanderer token.")
-            with self._condition:
-                section = dict(self._section)
-            # Two documents are not an atomic transaction: explicit Remove
-            # deletes only the protected credential, retaining ordinary setup.
-            self._commit(section, None)
-            return self._result(True)
+            else:
+                self._credentials.replace(
+                    section["base_url"], section["map_identifier"], token
+                )
+        except Exception:  # noqa: BLE001 — protected-store failures leave its prior bytes intact; expose only fixed context.
+            return self._result(
+                False, "Could not save the protected Wanderer connection."
+            )
+        try:
+            with self._ports.update_settings() as cfg:
+                cfg["wanderer"] = section
+        except Exception:  # noqa: BLE001 — settings.update restores settings; compensate only the protected document.
+            try:
+                self._credentials.restore(previous)
+            except Exception:  # noqa: BLE001 — uncertain persistence must stop admission, not claim successful rollback.
+                with self._condition:
+                    self._persistence_error = True
+                    self._credential_error = True
+                    self._credential_present = False
+                    self._revision += 1
+                self.close_admission()
+                return self._result(False, PERSISTENCE_ERROR)
+            return self._result(False, "Could not save the Wanderer connection.")
+        self._commit(section, token)
+        return self._result(True)
 
-    def test_connection(self) -> dict:
+    def remove_connection(self, revision) -> dict:
         with self._mutation_lock:
             refusal = self._closed_result()
             if refusal:
                 return refusal
-            if not self.start():
-                return self._result(False, "Wanderer is unavailable.")
-            with self._handoff_lock:
-                self._apply_runtime()
-                accepted = self._worker.test_connection()
-            self._health_wake.set()
-            return self._result(
-                accepted,
-                None
-                if accepted
-                else "Complete the connection or wait for the current test.",
-            )
+            with self._condition:
+                if type(revision) is not int or revision != self._revision:
+                    return self._result(
+                        False, "The connection changed. Confirm removal again."
+                    )
+                section = {**self._section, "base_url": "", "map_identifier": ""}
+            return self._save_connection(section, None)
+
+    def test_connection(self, base, map, token) -> dict:
+        """Save the submitted connection, then request Test on the existing lane.
+
+        applied/persisted describe configuration, never asynchronous admission.
+        An empty password reuses only the currently acknowledged binding — not
+        an older file that happens to match another submitted URL or map.
+        """
+        with self._mutation_lock:
+            result = self._closed_result()
+            if result is None:
+                try:
+                    base, map = normalize_base_url(base), normalize_map_identifier(map)
+                    if token != "":
+                        token = validate_token(token)
+                except (ValueError, OSError):
+                    result = self._result(False, "Enter a valid URL, map and token.")
+            if result is None:
+                with self._condition:
+                    section, saved_token = dict(self._section), self._token
+                if token == "":
+                    if (base, map) != (
+                        section["base_url"],
+                        section["map_identifier"],
+                    ) or saved_token is None:
+                        result = self._result(
+                            False, "Enter a token for this URL and map."
+                        )
+                    else:
+                        # Already saved: do not rewrite/reconfigure or cancel an
+                        # admitted Test simply because its binding was re-entered.
+                        result = self._result(True)
+                else:
+                    section.update(base_url=base, map_identifier=map)
+                    result = self._save_connection(section, token)
+            accepted, generation, test_error = False, None, None
+            if result["persisted"]:
+                if not self.start():
+                    test_error = "Connection saved, but Wanderer cannot test now. Restart Wingman to retry."
+                else:
+                    with self._handoff_lock:
+                        self._apply_runtime()
+                        accepted = self._worker.test_connection()
+                        generation = self._generation
+                    if not accepted:
+                        test_error = "Connection saved, but Test could not start. Wait for the current request or restart Wingman."
+                self._health_wake.set()
+            return {
+                **result,
+                "test_accepted": accepted,
+                "test_error": test_error,
+                "test_generation": generation,
+            }
 
     def close_admission(self) -> None:
         # Gate callbacks before detach, without taking mutation/handoff locks
