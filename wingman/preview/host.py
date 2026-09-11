@@ -17,14 +17,14 @@ import itertools
 import logging
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import Future, TimeoutError
 from ctypes import wintypes
 from dataclasses import dataclass, replace
 from queue import Empty, SimpleQueue
 
 from ..alerts.patterns import SEVERITY
-from ..telemetry.model import RosterClient, RosterSnapshot
+from ..telemetry.model import ClientSessionId, RosterClient, RosterSnapshot
 from . import (
     cycle,
     discovery,
@@ -81,6 +81,10 @@ COPY_PERSIST_FAILED = "persist_failed"
 # make the first real shared snapshot look stale and be rejected. Retired
 # with the timer itself when the coordinator becomes the only producer.
 LEGACY_SWEEP_GENERATION = 0
+
+# Callback must only cache/wake an off-pump consumer. Revision fences deliveries
+# reordered between discovery, the pump and shutdown; no I/O belongs here.
+MetadataCallback = Callable[[int, frozenset[ClientSessionId], bool], None]
 
 
 def crop_wire_status(status: str, *, stopping: bool = False) -> str:
@@ -505,6 +509,20 @@ class PreviewHost:
         # _teardown so a restarted host does not reject a restarted
         # discovery's first snapshot as stale.
         self._last_roster_generation = 0
+        # Admission is newer than pump state while reconciliation is pending or
+        # in flight. Never authorize a worker publication from the pump roster.
+        self._latest_roster = None
+        self._primary_sessions: dict[str, ClientSessionId] = {}
+        self._metadata_previewed: frozenset[ClientSessionId] = frozenset()
+        self._metadata_sessions: frozenset[ClientSessionId] = frozenset()
+        self._metadata_values: dict[ClientSessionId, str] = {}
+        self._metadata_generation = 0
+        self._metadata_generation_active = False
+        self._metadata_wake_pending = False
+        self._metadata_closed = False
+        self._metadata_callback: MetadataCallback | None = None
+        self._metadata_delivery = None
+        self._metadata_revision = 0
         # Last sampled client-area size per character, refreshed every
         # sweep by _record_client_sizes. Read from the UI thread through
         # client_sizes(), like hotkey_status() below.
@@ -657,6 +675,7 @@ class PreviewHost:
                 win32.bind().user32.PostMessageW(
                     self._hwnd, win32.WM_APP_SHUTDOWN, 0, 0
                 )
+        self._notify_metadata()
         if self._crop_store is not None:
             self._crop_store.fence_epoch(epoch)
             if close_store:
@@ -955,6 +974,155 @@ class PreviewHost:
         if self._request_discovery is not None:
             self._request_discovery()
 
+    def metadata_sessions(self) -> frozenset[ClientSessionId]:
+        """Named, successfully created primary sessions still admitted by discovery."""
+        with self._lock:
+            return self._metadata_sessions
+
+    def metadata_available(self) -> bool:
+        with self._lock:
+            return self._metadata_available_locked()
+
+    def _metadata_available_locked(self) -> bool:
+        return bool(self._hwnd) and not (
+            self._stopping or self._closing or self._metadata_closed
+        )
+
+    def set_metadata_callback(self, callback: MetadataCallback | None) -> None:
+        """Publish (revision, immutable sessions, available), outside the host lock.
+
+        Runs on the calling/discovery/pump thread: the consumer must only cache
+        and wake, never do DPAPI, network, persistence or UI delivery. A callback
+        already detached for delivery can finish after removal; consumers fence
+        their own close and discard lower revisions.
+        """
+        with self._lock:
+            self._metadata_callback = callback
+            notification = self._refresh_metadata_locked(force=True)
+        self._deliver_metadata(notification)
+
+    def close_metadata_admission(self) -> None:
+        """Terminal metadata fence, before worker joins or native destruction."""
+        with self._lock:
+            self._metadata_closed = True
+        self._notify_metadata()
+
+    def set_metadata_generation(self, generation: int) -> None:
+        """Fence/clear before worker.configure; equal or older values are inert."""
+        with self._lock:
+            if self._metadata_closed or generation <= self._metadata_generation:
+                return
+            self._metadata_generation = generation
+            self._metadata_generation_active = True
+            self._metadata_values.clear()
+            self._wake_metadata_locked()
+
+    def submit_metadata(
+        self, generation: int, updates: Mapping[ClientSessionId, str | None]
+    ) -> None:
+        """Coalesce values and one wake; memory is bounded by live admitted sessions."""
+        with self._lock:
+            if (
+                not self._metadata_available_locked()
+                or not self._metadata_generation_active
+                or generation != self._metadata_generation
+            ):
+                return
+            changed = False
+            for session, text in updates.items():
+                if session not in self._metadata_sessions:
+                    continue
+                text = text or None
+                if self._metadata_values.get(session) == text:
+                    continue
+                if text is None:
+                    self._metadata_values.pop(session, None)
+                else:
+                    self._metadata_values[session] = text
+                changed = True
+            if changed:
+                self._wake_metadata_locked()
+
+    def _wake_metadata_locked(self) -> None:
+        # Signal under the lifecycle lock so an old sender cannot target a
+        # replacement HWND. No bitmap work or outward callback under this lock.
+        if self._hwnd and not self._metadata_wake_pending:
+            self._metadata_wake_pending = bool(
+                win32.bind().user32.PostMessageW(
+                    self._hwnd, win32.WM_APP_METADATA, 0, 0
+                )
+            )
+
+    def _refresh_metadata_locked(self, *, force: bool = False):
+        available = self._metadata_available_locked()
+        if (
+            not available
+            and self._metadata_delivery is not None
+            and self._metadata_delivery[1]
+        ):
+            # A new pump must wait for the controller's new configuration fence,
+            # even if discovery still reports the same living EVE session.
+            self._metadata_generation_active = False
+        admitted = (
+            frozenset(c.session for c in self._latest_roster.clients if c.session)
+            if self._latest_roster is not None
+            else frozenset()
+        )
+        sessions = self._metadata_previewed & admitted if available else frozenset()
+        if sessions != self._metadata_sessions:
+            self._metadata_sessions = sessions
+            self._metadata_values = {
+                session: text
+                for session, text in self._metadata_values.items()
+                if session in sessions
+            }
+            self._wake_metadata_locked()
+        state = (sessions, available)
+        if state == self._metadata_delivery and not force:
+            return None
+        self._metadata_delivery = state
+        self._metadata_revision += 1
+        return self._metadata_callback, (self._metadata_revision, *state)
+
+    @staticmethod
+    def _deliver_metadata(notification) -> None:
+        if notification is not None and notification[0] is not None:
+            callback, state = notification
+            try:
+                callback(*state)
+            except Exception:
+                # A failed optional consumer must not kill discovery/the pump.
+                logger.exception("Metadata roster callback raised")
+
+    def _notify_metadata(self) -> None:
+        with self._lock:
+            notification = self._refresh_metadata_locked()
+        self._deliver_metadata(notification)
+
+    def _apply_metadata(self, *, consume_wake: bool = True) -> None:
+        """Pump-only. Recheck each value against admission, not a detached batch."""
+        if consume_wake:
+            with self._lock:
+                self._metadata_wake_pending = False
+        for key, session in self._primary_sessions.items():
+            win = self._windows.get(key)
+            if win is None:
+                continue
+            with self._lock:
+                generation = self._metadata_generation
+                text = self._metadata_values.get(session)
+            win.set_system_name(text)
+            # Native rendering can release the GIL. A generation or departure
+            # observed during that work must not leave old text on return.
+            with self._lock:
+                revoked = (
+                    generation != self._metadata_generation
+                    or session not in self._metadata_sessions
+                    or text != self._metadata_values.get(session)
+                )
+            if revoked:
+                win.set_system_name(None)
+
     def apply_roster(self, snapshot: RosterSnapshot) -> None:
         """Hand the newest shared roster to the pump. Safe from any thread.
 
@@ -971,16 +1139,24 @@ class PreviewHost:
         and reopen them a moment later at a default rect.
         """
         with self._lock:
+            if self._closing or (
+                self._latest_roster is not None
+                and snapshot.generation < self._latest_roster.generation
+            ):
+                return
             pending = self._pending_roster
             if pending is not None and snapshot.generation <= pending.generation:
                 return
             self._pending_roster = snapshot
+            self._latest_roster = snapshot
+            notification = self._refresh_metadata_locked()
             if (
                 self._crop_roster is None
                 or snapshot.generation > self._crop_roster.generation
             ):
                 self._crop_roster = snapshot
             epoch = self._crop_epoch
+        self._deliver_metadata(notification)
         if self._crop_store is not None:
             # Ingress revokes admission immediately, even while this pump is
             # busy. Store callbacks only enqueue results, never touch natives.
@@ -1269,6 +1445,7 @@ class PreviewHost:
         logger.debug("Preview thread DPI override accepted: %s", bool(prev))
 
         self._hwnd = self._create_host_window(libs)
+        self._notify_metadata()
         if not self._hwnd:
             logger.error(
                 "Preview host window could not be created; "
@@ -1418,6 +1595,9 @@ class PreviewHost:
             return 0
         if msg == win32.WM_TIMER and wparam == ALERT_TIMER_ID:
             self._tick_alerts(libs)
+            return 0
+        if msg == win32.WM_APP_METADATA:
+            self._apply_metadata()
             return 0
         if msg == win32.WM_APP_ROSTER:
             self._apply_pending_roster(libs)
@@ -1698,7 +1878,10 @@ class PreviewHost:
         the caller's ordering problem (_apply_pending_roster owns it), so
         _sweep can reach here without one.
         """
+        self._apply_metadata(consume_wake=False)
         clients = {c.stable_key: c for c in map(_preview_client, snapshot.clients)}
+        previous_clients = self._clients
+        sessions = {_roster_stable_key(c): c.session for c in snapshot.clients}
         # A title change from a named character to character selection changes
         # the stable key even though the physical client continues. Capture the
         # live rect before reconciliation closes the named window. This is
@@ -1759,7 +1942,24 @@ class PreviewHost:
                 client.character or last_character.get((client.hwnd, client.pid)) or key
             )
         }
-        added, removed, _kept = reconcile(set(self._windows), desired)
+        added, removed, kept = reconcile(set(self._windows), desired)
+        for key in kept:
+            old, current = previous_clients.get(key), clients[key]
+            if old is not None and (old.hwnd, old.pid) != (current.hwnd, current.pid):
+                # The character key survived, not its DWM source. Recreate only
+                # our preview, carrying the unsaved live rect conservatively.
+                continuity_rects[key] = self._windows[key].rect
+                removed.append(key)
+                added.append(key)
+            elif (
+                key in self._primary_sessions
+                and self._primary_sessions[key] != sessions[key]
+            ):
+                # HWND/PID can be recycled too. Keep preview placement/window
+                # ownership but renew its thumbnail for the new full session.
+                self._windows[key].rebind_client(current)
+            else:
+                self._windows[key].client = current
 
         for key in removed:
             self._windows.pop(key).close()
@@ -1812,6 +2012,19 @@ class PreviewHost:
             )
             if win is not None:
                 self._windows[key] = win
+
+        self._primary_sessions = {
+            _roster_stable_key(c): c.session
+            for c in snapshot.clients
+            if c.character
+            and c.session is not None
+            and _roster_stable_key(c) in self._windows
+        }
+        with self._lock:
+            self._metadata_previewed = frozenset(self._primary_sessions.values())
+            notification = self._refresh_metadata_locked()
+        self._deliver_metadata(notification)
+        self._apply_metadata(consume_wake=False)
 
         if added or removed:
             logger.info(
@@ -3267,6 +3480,12 @@ class PreviewHost:
 
     def _teardown(self, libs, *, flush=True) -> None:
         """Ordered native teardown; production storage was drained off-pump."""
+        with self._lock:
+            self._metadata_previewed = frozenset()
+            self._stopping = True
+            notification = self._refresh_metadata_locked()
+        self._deliver_metadata(notification)
+        self._primary_sessions = {}
         # Primary-only callers retain their legacy flush hook. Production
         # reaches here only after the retained crop worker flushed both stores;
         # repeating that synchronous wait would defeat two-phase shutdown.
@@ -3321,6 +3540,9 @@ class PreviewHost:
             # Do not re-authorize the old runtime's HWND/session after an hour
             # offline. New ingress (including the post-open seed) repopulates it.
             self._crop_roster = None
+            self._latest_roster = None
+            self._metadata_values.clear()
+            self._metadata_wake_pending = False
             self._last_roster_generation = 0
             self._pending_resize = {}
             self._pending_resize_all = None

@@ -1271,7 +1271,7 @@ def test_the_overlay_re_renders_only_when_the_width_forces_it(monkeypatch):
     threshold, keeping the per-mousemove cost to one small push."""
     renders = []
 
-    def fake_label(label, max_w):
+    def fake_label(label, max_w, font_size, secondary):
         renders.append(max_w)
         return _pill_image()
 
@@ -1316,3 +1316,114 @@ def test_close_destroys_the_overlay(monkeypatch):
 
     assert 0x9001 in libs.destroyed
     assert w._label_hwnd is None
+
+
+def test_system_text_invalidates_equal_size_label_without_chrome_or_thumbnail_work(
+    monkeypatch,
+):
+    rendered = []
+    render = window.chrome.render_label
+
+    def record(*args, **kwargs):
+        image = render(*args, **kwargs)
+        rendered.append(image)
+        return image
+
+    monkeypatch.setattr(window.chrome, "render_label", record)
+    monkeypatch.setattr(window.layered, "push", lambda *args: None)
+    w, _ = _overlay_window()
+    w._thumb = _FakeThumb()
+    w.redraw = lambda *a, **k: pytest.fail("metadata must not repaint chrome")
+    w._ensure_label_overlay()
+    w.set_system_name("ii")
+    first = w._label_img
+    w.set_system_name("ll")
+    second = w._label_img
+    assert first.size == second.size
+    assert first.tobytes() != second.tobytes()
+    assert len(rendered) == 3
+    w.set_system_name("ll")
+    assert len(rendered) == 3
+    assert w._thumb.calls == []
+    w.set_system_name(None)
+    assert w._label_img.height == 31
+
+
+def test_equal_size_primary_text_and_palette_changes_invalidate_label(monkeypatch):
+    monkeypatch.setattr(window.layered, "push", lambda *args: None)
+    w, _ = _overlay_window()
+    w.client.character = "ii"
+    w._ensure_label_overlay()
+    first = w._label_img
+    w.client.character = "ll"
+    w._sync_label()
+    assert w._label_img.size == first.size
+    assert w._label_img.tobytes() != first.tobytes()
+    previous = w._label_img.tobytes()
+    monkeypatch.setattr(window.chrome, "LABEL_FG", (220, 230, 240, 255))
+    w._sync_label()
+    assert w._label_img.tobytes() != previous
+
+
+def test_hidden_label_updates_and_enabling_labels_do_not_reveal_overlay(monkeypatch):
+    shown = []
+    monkeypatch.setattr(window.layered, "push", lambda *args: None)
+    w, libs = _overlay_window(show_labels=False)
+    libs.user32.ShowWindow = lambda hwnd, command: shown.append((hwnd, command))
+    w.set_hidden(True)
+    shown.clear()
+    w.set_system_name("HOME")
+    assert not libs.created
+    w.set_labels(True)
+    w.set_system_name("NEW")
+    assert not any(cmd == window.win32.SW_SHOWNOACTIVATE for _, cmd in shown)
+    w.set_hidden(False)
+    assert (w._label_hwnd, window.win32.SW_SHOWNOACTIVATE) in shown
+    assert w._label_img.height > 31
+
+
+def test_secondary_label_moves_resizes_and_follows_alert_inset_without_rebuilding_frames(
+    monkeypatch,
+):
+    pushes = []
+    monkeypatch.setattr(
+        window.layered,
+        "push",
+        lambda libs, hwnd, image, x, y: pushes.append((image.size, x, y)),
+    )
+    w, _ = _overlay_window()
+    w._ensure_label_overlay()
+    w.set_system_name("W" * 60)
+    w.selected = True
+    w.opacity = 128
+    w._thumb = _FakeThumb()
+    w._set_inset(6)
+    w._thumb.calls.clear()
+    frames = object()
+    w._frames = frames
+    w.set_system_name("HOME")
+    assert w._frames is frames
+    assert w._thumb.calls == []
+    w.move(Rect(400, 500, 120, 90))
+    size, x, y = pushes[-1]
+    assert size[0] <= 108 and size[1] > 31
+    assert (x, y) == (406, 506)
+    assert w._thumb.calls == [(Rect(6, 6, 108, 78), 128)]
+    assert w.selected and w.opacity == 128
+
+
+def test_two_line_cache_repaints_when_ellipsis_changes_but_dimensions_do_not(
+    monkeypatch,
+):
+    monkeypatch.setattr(window.layered, "push", lambda *args: None)
+    w, _ = _overlay_window()
+    w.client.character = "W" * 30
+    w.rect = Rect(100, 100, 66, 90)  # 62px available after the border.
+    w.set_system_name("i" * 50)
+    w._ensure_label_overlay()
+    before = w._label_img
+    w.move(Rect(100, 100, 67, 90))
+    expected = window.chrome.render_label("W" * 30, 63, secondary="i" * 50)
+    assert before.size == expected.size
+    assert before.tobytes() != expected.tobytes()
+    assert w._label_img.tobytes() == expected.tobytes()
