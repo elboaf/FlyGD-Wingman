@@ -33,7 +33,7 @@ def test_deployed_fixture_display_identity_and_immutable_snapshot():
     assert [r.character_id for r in snapshot.records] == list(range(90000001, 90000006))
     assert [r.display_at(100.0) for r in snapshot.records] == [
         "HOME",
-        "Jita",
+        "Amarr",
         None,
         None,
         None,
@@ -43,6 +43,7 @@ def test_deployed_fixture_display_identity_and_immutable_snapshot():
     assert snapshot.record_for("First") is None
     assert snapshot.record_for("First  Pilot") is None
     assert first.solar_system_id == 30000142
+    assert snapshot.records[1].solar_system_id == 30002187
     assert first.deadline_monotonic == 114.0
     assert first.display_at(113.999999) == "HOME"
     assert first.display_at(114.0) is None
