@@ -142,8 +142,14 @@ reached through injected seams or lazy `windll` binding):
   liveness. EVE-off fences its epoch immediately and drains admitted storage
   and retained picker/font cleanup before reactivation, without destroying a
   pump another family/lease needs. Final admission/publication closes before
-  WebView destruction; joins never hold runtime locks. Companion demand is
-  production-off in this foundation — no companion windows or settings yet.
+  WebView destruction; joins never hold runtime locks. Companion previews use
+  the same runtime: `companions.py` owns immutable definitions/validation,
+  `companioncontroller.py` serializes transactions and debounced geometry,
+  `sources.py` verifies foreign source identity, and `companionfamily.py` owns
+  live/candidate/picker resources on the pump. `regionpicker.py` contains the
+  generic picker with `croppicker.py` as its character adapter. Persisted
+  `companion_previews` defaults off; eight definitions may be enabled. No native
+  identity is persisted. Source windows are read-only except explicit activation.
   A future Wanderer metadata channel must use this same EVE epoch and be
   fenced/drained on EVE-off, not consume companion demand or alert capacity.
   **Wingman must never move or resize a real EVE client window** — EVE reads a
@@ -215,7 +221,7 @@ sees it), `scheduler.py`, and two auxiliary always-on-top windows,
 
 **Web layer** (`wingman/web/`): `app.js` is the shell and bridge client with a
 strict `WM.HANDLERS` allowlist; one route/screen per JS file, loaded by
-`index.html` in this order: `characters`, `bookmarks`, `fleet`, `previews`, `fleetsharing`, `alerts`,
+`index.html` in this order: `characters`, `bookmarks`, `fleet`, `previews`, `companions`, `fleetsharing`, `alerts`,
 `evesettings` (the Profiles route), `formations`, `uisetup`, `list`, `panel` (upload
 panel, status strip, dialog layer), `settings`, `skills`, `fittings`,
 `firstrun`, `dev`. `fleet.js` owns Fleet telemetry's local display settings and

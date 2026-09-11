@@ -13,6 +13,7 @@ from . import geometry, win32
 from .companions import (
     MAX_ENABLED,
     CompanionEvent,
+    CompanionSelection,
     CompanionSpec,
     CompanionToken,
     GeometryDelta,
@@ -436,7 +437,12 @@ class CompanionFamily:
                 self._finish(candidate)
                 return
             revision = self._next_revision(token.id)
-            spec = CompanionSpec(definition, token.generation, revision)
+            spec = CompanionSpec(
+                definition,
+                token.generation,
+                revision,
+                CompanionSelection(token.generation, fresh),
+            )
             live = _Live(spec, fresh, revision, candidate.window)
             activate, moved = self._wire_window(live)
             live.window._on_activate, live.window._on_geometry = activate, moved
@@ -453,6 +459,9 @@ class CompanionFamily:
             )
             if live.window.failed or live.window.hidden:
                 self._close_live(token.id)
+            else:
+                self._errors.pop(token.id, None)
+                self._failed_sources.pop(token.id, None)
             self._status()
             self._finish(candidate)
         except (SourceUnavailable, OSError):
@@ -497,7 +506,16 @@ class CompanionFamily:
                 or not self._authorized(self._token(spec), promotion=True)
                 or fresh is None
                 or live.window.failed
+                or (
+                    spec.selection is not None
+                    and (
+                        live.spec.selection is None
+                        or spec.selection.generation != live.spec.selection.generation
+                    )
+                )
             ):
+                # Only metadata edits inherit a verified binding. Once an
+                # explicit replacement commits, the old source is no rollback.
                 self._close_live(identity)
                 continue
             # Label/title edits keep a verified binding, even if its caption no
@@ -526,8 +544,19 @@ class CompanionFamily:
                 continue
             if self._candidate is not None and self._candidate.token.id == identity:
                 continue  # Do not replace the committed owner during selection.
-            matches = matching_sources(spec.definition.source, candidates)
-            if scan_error:
+            selected = None
+            if spec.selection is not None:
+                try:
+                    selected = self._verify(spec.selection.binding)
+                except (SourceUnavailable, OSError):
+                    # The bounded scan still decides ordinary rebinding.
+                    selected = None
+            matches = (
+                (selected,)
+                if selected is not None
+                else matching_sources(spec.definition.source, candidates)
+            )
+            if scan_error and selected is None:
                 self._errors[identity] = ("source-unavailable", scan_error)
             elif len(matches) != 1:
                 self._errors[identity] = (

@@ -202,7 +202,11 @@ class RegionPicker:
         on_cancel,
         strict_size=True,
     ):
-        """Return a live picker or None, cancelling once on any creation failure.
+        """Return a live picker, a retained cleanup-only picker, or None.
+
+        Failure cancels once, but its callback certifies complete release. A
+        completed picker with pending resources must stay owned and receive
+        pump messages/cancel retries until that callback; None owns nothing.
 
         ``monitor`` is one actual display rectangle, not the virtual bounding
         box. A hidden seed HWND lets Windows supply that display's DPI and work
@@ -302,7 +306,13 @@ class RegionPicker:
                 Thumbnail.register(libs, self.hwnd, client.hwnd), "DwmRegisterThumbnail"
             )
             self._set_font()
+            if self._completed:
+                return self._creation_cancelled()
             self._layout()
+            if self._completed:
+                # Strict source-size validation can cancel before the picker
+                # is ready. Never allocate a thread timer against a null HWND.
+                return self._creation_cancelled()
             self._timer = _require(
                 libs.user32.SetTimer(self.hwnd, _TIMER, 250, None), "SetTimer"
             )
@@ -311,26 +321,33 @@ class RegionPicker:
             # Showing/positioning our HWND synchronously dispatches native
             # messages; a failed layout may already have closed the bundle.
             if self._completed:
-                return None
+                return self._creation_cancelled()
             libs.user32.ShowWindow(self._overlay_hwnd, win32.SW_SHOWNOACTIVATE)
             if self._completed:
-                return None
+                return self._creation_cancelled()
             _require(libs.user32.SetForegroundWindow(self.hwnd), "SetForegroundWindow")
             if self._completed:
-                return None
+                return self._creation_cancelled()
             libs.user32.SetFocus(self.hwnd)
             if self._completed:
-                return None
+                return self._creation_cancelled()
             _require(libs.user32.GetFocus() == self.hwnd, "SetFocus")
         except OSError as exc:
             self._fail(exc)
-            return self if self._resources_pending() else None
+            return self._creation_cancelled()
         finally:
             # Native destruction during creation can leave no object for the
             # pump to retain. Its enclosing call has returned now, so deliver
             # the deferred cancellation before returning None to the caller.
             self._notify_pending_cancel()
         return self
+
+    def _creation_cancelled(self):
+        # The synchronous native caller has unwound: a font selected during
+        # paint may now release. Decide ownership after that final drain, not
+        # before finally runs; otherwise a fully closed picker escapes as live.
+        self._notify_pending_cancel()
+        return self if self._resources_pending() else None
 
     def _px(self, logical):
         return max(1, round(logical * self._dpi / 96))

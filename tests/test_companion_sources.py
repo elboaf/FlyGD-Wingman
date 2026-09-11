@@ -115,6 +115,8 @@ def test_unverifiable_source_is_omitted_and_query_handle_closed(catalog, failure
     "path",
     [
         r"C:\EVE\exefile.exe",
+        r"C:\EVE\eve.exe",
+        r"C:\EVE\eve-online.exe",
         r"C:\Wingman\wingman.exe",
         r"C:\Old\OBSYouTubeUploader.exe",
         r"C:\Windows\ApplicationFrameHost.exe",

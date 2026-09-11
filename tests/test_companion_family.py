@@ -279,6 +279,28 @@ def test_incomplete_scan_does_not_auto_bind(family):
     assert not windows and events[-1].payload[0]["status"] == "source-unavailable"
 
 
+@pytest.mark.parametrize("show_ok", [True, False])
+def test_promotion_retires_scan_fault_only_after_successful_show(family, show_ok):
+    native, events, windows, catalog, _, _ = family
+    catalog.failure = True
+    native.reconcile((spec(),), 2)
+    assert events[-1].payload[0]["status"] == "source-unavailable"
+    catalog.failure = False
+    native.command(CompanionCommand("prepare", TOKEN, (DEFINITION, BINDING)))
+    if not show_ok:
+        windows[-1].set_hidden = lambda *args, **kwargs: None
+    native.command(CompanionCommand("promote", TOKEN, None))
+    status = next(
+        event.payload[0] for event in reversed(events) if event.kind == "status"
+    )
+    if show_ok:
+        assert status["status"] == "live" and status["error"] is None
+        assert status["binding"] == BINDING
+    else:
+        assert status["status"] == "source-unavailable"
+        assert status["error"] and status["binding"] is None
+
+
 def test_prepared_source_loss_cancels_before_worker_save_admission(family):
     native, events, windows, catalog, _, _ = family
     native.command(CompanionCommand("prepare", TOKEN, (DEFINITION, BINDING)))

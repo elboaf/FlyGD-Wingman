@@ -60,6 +60,17 @@ class FakePreviewHost(HostLifecycle):
         self.started = self.stopped = 0
         self.hotkeys = None
         self.is_stopping = False
+        self._companion_controller = None
+
+    def set_companion_controller(self, controller):
+        if self.started or self._companion_controller is not None:
+            raise RuntimeError("companion controller must bind once before start")
+        self._companion_controller = controller
+
+    def submit_companion(self, command):
+        # This policy/lifecycle double owns no native pump queue or family.
+        # Refuse work rather than pretending it can issue a cleanup receipt.
+        return False
 
     def focused_character(self):
         return self._focused

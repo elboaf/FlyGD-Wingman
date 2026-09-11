@@ -93,6 +93,8 @@ class SourceCatalog:
             path, created = self._process(pid)
             if ntpath.basename(path) in (
                 "exefile.exe",
+                "eve.exe",
+                "eve-online.exe",
                 "wingman.exe",
                 "obsyoutubeuploader.exe",
                 "applicationframehost.exe",

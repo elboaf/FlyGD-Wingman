@@ -80,6 +80,13 @@ REQUIRED = {
         "SetThreadDpiAwarenessContext",
         "EnumDisplayMonitors",
         "GetMonitorInfoW",
+        "EnumWindows",
+        "IsWindow",
+        "IsWindowVisible",
+        "IsHungAppWindow",
+        "GetWindowTextW",
+        "GetClassNameW",
+        "GetWindowDisplayAffinity",
     ],
     "gdi32": [
         "CreateDIBSection",
@@ -101,8 +108,17 @@ REQUIRED = {
         "DwmUnregisterThumbnail",
         "DwmUpdateThumbnailProperties",
         "DwmIsCompositionEnabled",
+        "DwmGetWindowAttribute",
     ],
-    "kernel32": ["GetModuleHandleW", "GetCurrentThreadId", "GetCurrentProcessId"],
+    "kernel32": [
+        "GetModuleHandleW",
+        "GetCurrentThreadId",
+        "GetCurrentProcessId",
+        "OpenProcess",
+        "QueryFullProcessImageNameW",
+        "GetProcessTimes",
+        "CloseHandle",
+    ],
 }
 
 
@@ -136,7 +152,7 @@ POINTER_SIZED_RETURNS = {
         "CreateFontW",
         "GetStockObject",
     ],
-    "kernel32": ["GetModuleHandleW"],
+    "kernel32": ["GetModuleHandleW", "OpenProcess"],
 }
 
 # Anything at least as wide as a pointer is acceptable; the failure being
@@ -188,9 +204,9 @@ def test_bind_is_cached_so_declarations_are_applied_once():
     assert win32.bind() is win32.bind()
 
 
-def test_crop_menu_and_capture_declarations_with_injected_libraries(monkeypatch):
+@pytest.fixture
+def injected_libraries(monkeypatch):
     """Exercise bind on Linux without loading any DLL or touching its cache."""
-    from ctypes import wintypes
     from types import SimpleNamespace
 
     class Library:
@@ -200,9 +216,20 @@ def test_crop_menu_and_capture_declarations_with_injected_libraries(monkeypatch)
             return fn
 
     monkeypatch.setattr(ctypes, "WinDLL", lambda *a, **kw: Library(), raising=False)
-    for name in ("wndproc_type", "winevent_proc_type", "monitor_enum_proc_type"):
+    for name in (
+        "wndproc_type",
+        "winevent_proc_type",
+        "monitor_enum_proc_type",
+        "enum_windows_proc_type",
+    ):
         monkeypatch.setattr(win32, name, lambda: ctypes.c_void_p)
-    user32 = win32.bind.__wrapped__().user32
+    return win32.bind.__wrapped__()
+
+
+def test_crop_menu_and_capture_declarations_with_injected_libraries(injected_libraries):
+    from ctypes import wintypes
+
+    user32 = injected_libraries.user32
     signatures = {
         "GetCapture": (wintypes.HWND, []),
         "CreatePopupMenu": (wintypes.HMENU, []),
@@ -230,20 +257,10 @@ def test_crop_menu_and_capture_declarations_with_injected_libraries(monkeypatch)
     assert user32.TrackPopupMenuEx.restype(257).value == 257
 
 
-def test_picker_declarations_with_injected_libraries(monkeypatch):
+def test_picker_declarations_with_injected_libraries(injected_libraries):
     from ctypes import wintypes
-    from types import SimpleNamespace
 
-    class Library:
-        def __getattr__(self, name):
-            fn = SimpleNamespace(argtypes=None, restype=None)
-            setattr(self, name, fn)
-            return fn
-
-    monkeypatch.setattr(ctypes, "WinDLL", lambda *a, **kw: Library(), raising=False)
-    for name in ("wndproc_type", "winevent_proc_type", "monitor_enum_proc_type"):
-        monkeypatch.setattr(win32, name, lambda: ctypes.c_void_p)
-    libs = win32.bind.__wrapped__()
+    libs = injected_libraries
     H, B, U, D = wintypes.HWND, wintypes.BOOL, wintypes.UINT, wintypes.DWORD
     signatures = {
         "ClientToScreen": (B, [H, ctypes.POINTER(win32.POINT)]),
@@ -299,6 +316,71 @@ def test_picker_declarations_with_injected_libraries(monkeypatch):
     assert ctypes.sizeof(libs.user32.SendDlgItemMessageW.restype) == ctypes.sizeof(
         ctypes.c_void_p
     )
+
+
+def test_source_query_declarations_with_injected_libraries(injected_libraries):
+    from ctypes import wintypes
+
+    libs = injected_libraries
+    H, B, D = wintypes.HWND, wintypes.BOOL, wintypes.DWORD
+    signatures = {
+        "user32": {
+            "EnumWindows": (B, [ctypes.c_void_p, win32.LPARAM]),
+            "IsWindow": (B, [H]),
+            "IsWindowVisible": (B, [H]),
+            "IsHungAppWindow": (B, [H]),
+            "GetWindowThreadProcessId": (D, [H, ctypes.POINTER(D)]),
+            "GetWindowTextW": (ctypes.c_int, [H, wintypes.LPWSTR, ctypes.c_int]),
+            "GetClassNameW": (ctypes.c_int, [H, wintypes.LPWSTR, ctypes.c_int]),
+            "GetWindowDisplayAffinity": (B, [H, ctypes.POINTER(D)]),
+        },
+        "dwmapi": {
+            "DwmGetWindowAttribute": (ctypes.c_long, [H, D, ctypes.c_void_p, D]),
+        },
+        "kernel32": {
+            "OpenProcess": (wintypes.HANDLE, [D, B, D]),
+            "QueryFullProcessImageNameW": (
+                B,
+                [wintypes.HANDLE, D, wintypes.LPWSTR, ctypes.POINTER(D)],
+            ),
+            "GetProcessTimes": (
+                B,
+                [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4,
+            ),
+            "CloseHandle": (B, [wintypes.HANDLE]),
+        },
+    }
+    for library, functions in signatures.items():
+        for name, (result, args) in functions.items():
+            fn = getattr(getattr(libs, library), name)
+            assert fn.restype is result, name
+            assert fn.argtypes == args, name
+    assert ctypes.sizeof(libs.kernel32.OpenProcess.restype) == ctypes.sizeof(
+        ctypes.c_void_p
+    )
+    assert ctypes.sizeof(libs.user32.EnumWindows.argtypes[1]) == ctypes.sizeof(
+        ctypes.c_void_p
+    )
+
+
+def test_source_enumeration_callback_preserves_pointer_sized_hwnd_and_context(
+    monkeypatch,
+):
+    from ctypes import wintypes
+
+    # Substitute only the platform calling-convention constructor; exercise the
+    # production callback declaration without changing its process-wide cache.
+    monkeypatch.setattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE, raising=False)
+    callback_type = win32.enum_windows_proc_type.__wrapped__()
+    assert callback_type._restype_ is wintypes.BOOL
+    assert callback_type._argtypes_ == (wintypes.HWND, win32.LPARAM)
+    value = 1 << (ctypes.sizeof(ctypes.c_void_p) * 8 - 2)
+    received = []
+    callback = callback_type(
+        lambda hwnd, context: received.append((hwnd, context)) or 1
+    )
+    assert callback(value, value) == 1
+    assert received == [(value, value)]
 
 
 def test_picker_drawitem_struct_retains_pointer_sized_handles_and_item_data():

@@ -108,10 +108,19 @@ class GeometryDelta:
 
 
 @dataclass(frozen=True)
+class CompanionSelection:
+    """Committed session-only source choice; never candidate epoch authority."""
+
+    generation: int
+    binding: SourceBinding
+
+
+@dataclass(frozen=True)
 class CompanionSpec:
     definition: CompanionDefinition
     generation: int
     binding_revision: int
+    selection: CompanionSelection | None = None
 
 
 @dataclass(frozen=True)
@@ -152,11 +161,16 @@ def validate_descriptor(raw: object) -> SourceDescriptor:
         )
         if not ntpath.isabs(path) or not ntpath.splitdrive(path)[0]:
             raise ValueError("Application path must be absolute")
-        path = normalize_path(path)
+        path = bounded_text(
+            normalize_path(path), EXECUTABLE_PATH_MAX_CHARS, "Application path"
+        )
+        canonical_name = bounded_text(
+            ntpath.basename(path), WINDOW_CLASS_MAX_CHARS, "Application name"
+        )
         name = bounded_text(
             raw["executable_name"], WINDOW_CLASS_MAX_CHARS, "Application name"
         )
-        if name.casefold() != ntpath.basename(path).casefold():
+        if name.casefold() != canonical_name.casefold():
             raise ValueError("Application name does not match its path")
         window_class = bounded_text(
             raw["window_class"], WINDOW_CLASS_MAX_CHARS, "Window class"
@@ -168,7 +182,7 @@ def validate_descriptor(raw: object) -> SourceDescriptor:
             raise ValueError("Choose exact or contains title matching")
     except KeyError as exc:
         raise ValueError("Incomplete source descriptor") from exc
-    return SourceDescriptor(path, ntpath.basename(path), window_class, hint, mode, last)
+    return SourceDescriptor(path, canonical_name, window_class, hint, mode, last)
 
 
 def valid_rect(rect: Rect) -> bool:
@@ -198,7 +212,8 @@ def _region(raw: object) -> CompanionRegion:
         size = raw["original_client_w"], raw["original_client_h"]
     except KeyError as exc:
         raise ValueError("Incomplete region") from exc
-    if any(type(v) is not int or v <= 0 for v in size):
+    # Source client dimensions must fit the signed Win32 RECT/DWM coordinate ABI.
+    if any(type(v) is not int or not 0 < v < 2**31 for v in size):
         raise ValueError("Invalid original source dimensions")
     region = CompanionRegion(*fractions, *size)
     if region_to_pixels(region, size) is None:
@@ -248,7 +263,7 @@ def validate_definitions(raw: object) -> tuple[CompanionDefinition, ...]:
                     region,
                 )
             )
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, ArithmeticError):
             continue
         if len(result) >= MAX_DEFINITIONS:
             break

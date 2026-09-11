@@ -1,5 +1,6 @@
 """Persisted authority and source identity boundaries for companion previews."""
 
+import json
 from dataclasses import FrozenInstanceError, replace
 from uuid import uuid4
 
@@ -93,6 +94,51 @@ def test_regions_reuse_normalized_edge_coverage_and_reject_unusable_sizes():
     raw = c.serialize_definitions((item,))
     raw[0]["region"]["x"] = float("nan")
     assert c.validate_definitions(raw) == ()
+
+
+@pytest.mark.parametrize("dimension", ["original_client_w", "original_client_h"])
+@pytest.mark.parametrize("value", [2**31, 10**400])
+def test_unsupported_region_dimensions_drop_only_bad_entry_on_settings_load(
+    tmp_path, dimension, value
+):
+    from wingman import settings
+
+    bad = definition(
+        mode="region", region=c.region_from_pixels(Rect(0, 0, 100, 100), (100, 100))
+    )
+    good = definition()
+    raw = c.serialize_definitions((bad, good))
+    raw[0]["region"][dimension] = value
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps({"companion_previews": {"enabled": False, "definitions": raw}}),
+        encoding="utf-8",
+    )
+    loaded = settings.load(path)["companion_previews"]
+    assert not loaded["enabled"]
+    assert loaded["definitions"] == c.serialize_definitions((good,))
+    assert c.validate_definitions(raw) == (good,)
+
+
+@pytest.mark.parametrize("count", [126, 128])
+def test_canonical_application_name_must_fit_and_roundtrip(count):
+    raw = c.serialize_definitions((definition(),))[0]["source"]
+    name = "İ" * count + ".exe"
+    raw.update(executable_path="C:\\apps\\" + name, executable_name=name)
+    if count == 128:
+        with pytest.raises(ValueError):
+            c.validate_descriptor(raw)
+    else:
+        source = c.validate_descriptor(raw)
+        item = definition(source=source)
+        assert c.validate_definitions(c.serialize_definitions((item,))) == (item,)
+
+
+def test_canonical_application_path_must_fit_after_case_expansion():
+    raw = c.serialize_definitions((definition(),))[0]["source"]
+    raw["executable_path"] = "C:\\" + ("İ" * 200 + "\\") * 100 + "mapper.exe"
+    with pytest.raises(ValueError):
+        c.validate_descriptor(raw)
 
 
 def test_settings_defaults_and_unrelated_updates_preserve_companions(tmp_path):

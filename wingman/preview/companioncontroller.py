@@ -30,6 +30,7 @@ from .companions import (
     CompanionCommand,
     CompanionDefinition,
     CompanionEvent,
+    CompanionSelection,
     CompanionSpec,
     CompanionToken,
     GeometryDelta,
@@ -67,6 +68,7 @@ class _Operation:
     expected: int | None
     proposal: CompanionDefinition | bool | None = None
     binding: SourceBinding | None = None
+    prepared_window: Rect | None = None
     token: CompanionToken | None = None
     phase: str = "queued"
     admitted: bool = False
@@ -91,6 +93,7 @@ class CompanionController:
         self._generations = dict.fromkeys(self._definitions, 1)
         self._next_generations = dict(self._generations)
         self._rows = {identity: self._new_row() for identity in self._definitions}
+        self._selections = {}
         self._revision = 0
         self._operation_id = 0
         self._operations = OrderedDict()
@@ -769,6 +772,7 @@ class CompanionController:
                 self._enabled = enabled
                 if op.action == "remove":
                     self._rows.pop(identity, None)
+                    self._selections.pop(identity, None)
                     self._generations.pop(identity, None)
                     self._geometry.pop(identity, None)
                     self._physical.pop(identity, None)
@@ -813,6 +817,12 @@ class CompanionController:
                                     delta.binding_revision,
                                 )
                     if op.phase == "prepared":
+                        # A committed choice survives first-family activation,
+                        # not by retagging its now-stale hidden candidate, but as
+                        # a fresh verified reconcile hint. Metadata keeps it.
+                        self._selections[identity] = CompanionSelection(
+                            generation, op.binding
+                        )
                         row["status"] = "waiting"
                         row["geometry_error"] = None
                 self._started = True
@@ -938,13 +948,14 @@ class CompanionController:
                     reset = (
                         op.receipt["persisted"]
                         and moved is not None
-                        and moved != op.proposal.window
+                        and moved != op.prepared_window
                         and self._generations.get(op.token.id) == op.token.generation
                     )
                 if reset:
-                    # Cleanup may have delayed promotion. Its acknowledgment,
-                    # not queue timing, proves the new live generation exists.
-                    # This move needs family authority, not the retiring lease.
+                    # Closed also acknowledges discarded candidates. This reset
+                    # is conditional on current family/generation admission and
+                    # a matching live owner; it cannot authorize a stale swap.
+                    # Compare native prepared geometry, not the rebased proposal.
                     self._ports.submit_native(
                         CompanionCommand(
                             "reset", replace(op.token, selection_lease=None), moved
@@ -1016,6 +1027,8 @@ class CompanionController:
             if op.proposal.mode == "region" and op.proposal.region is None:
                 self._discard(op, "Select a valid region before saving")
                 return
+            op.binding = facts.binding
+            op.prepared_window = facts.window
             if op.expected is None:
                 op.proposal = replace(op.proposal, window=facts.window)
             else:
@@ -1172,7 +1185,10 @@ class CompanionController:
             if reconcile:
                 specs = tuple(
                     CompanionSpec(
-                        d, self._generations[d.id], self._rows[d.id]["binding_revision"]
+                        d,
+                        self._generations[d.id],
+                        self._rows[d.id]["binding_revision"],
+                        self._selections.get(d.id),
                     )
                     for d in self._definitions.values()
                 )
