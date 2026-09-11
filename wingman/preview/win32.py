@@ -124,7 +124,8 @@ WM_APP_CROP_COMMAND = WM_APP + 10
 WM_APP_CROP_COMPLETE = WM_APP + 11
 WM_APP_CROP_STOP_READY = WM_APP + 12
 WM_APP_FAMILIES = WM_APP + 13
-# Reserved for the later companion slice; no empty command processor yet.
+# Both wake the host's bounded companion mailbox; completion admission remains
+# available while ordinary commands close so retained native owners can retire.
 WM_APP_COMPANION_COMMAND = WM_APP + 14
 WM_APP_COMPANION_COMPLETE = WM_APP + 15
 

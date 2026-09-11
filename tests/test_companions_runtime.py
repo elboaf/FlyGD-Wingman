@@ -41,8 +41,10 @@ def test_browser_fixtures_are_valid_companion_definitions(scenario):
 const fs = require('node:fs'), vm = require('node:vm');
 const source = fs.readFileSync(process.argv[1], 'utf8');
 const api = {}, window = {location: {search: '?companions=' + process.argv[2]}, onCompanionPreviews() {}};
-vm.runInNewContext(source.slice(source.indexOf('  var _devCompanionId ='),
-  source.indexOf('  // One saved crop per owner.')), {api, window, Promise, setTimeout});
+const begin = source.indexOf('  var _devCompanionId =');
+const end = source.indexOf('  // One saved crop per owner.');
+if (begin < 0 || end <= begin) throw new Error('Companion fixture markers moved: ' + begin + '/' + end);
+vm.runInNewContext(source.slice(begin, end), {api, window, Promise, setTimeout});
 api.companion_previews_state().then(state => console.log(JSON.stringify(state)));
 """
     result = subprocess.run(

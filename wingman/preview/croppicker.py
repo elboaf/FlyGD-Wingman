@@ -20,7 +20,7 @@ _CLASS_REGISTERED = False
 def _ensure_class(libs):
     global _CLASS_REGISTERED
     if not _CLASS_REGISTERED:
-        regionpicker._register_class(libs, "WingmanPreviewCropPicker")
+        regionpicker._register_class(libs, CropPicker.class_name)
         _CLASS_REGISTERED = True
 
 

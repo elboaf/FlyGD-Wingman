@@ -1131,6 +1131,9 @@ def test_companion_modules_belong_to_the_packaged_preview_namespace(name):
     assert pathlib.Path(module.__file__).resolve() == (
         ROOT / "wingman" / "preview" / (name + ".py")
     )
+
+
+def test_companion_page_is_in_the_frozen_web_tree():
     spec = (ROOT / "packaging" / "uploader.spec").read_text(encoding="utf-8")
     assert '(str(WEB), "web")' in spec
     assert (ROOT / "wingman" / "web" / "companions.js").is_file()

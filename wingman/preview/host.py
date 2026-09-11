@@ -880,6 +880,12 @@ class PreviewHost:
             return self._eve_delivery_owned()
 
     @property
+    def layout_commands_pending(self) -> bool:
+        """Accepted primary commands still own storage, even after native Off."""
+        with self._lock:
+            return bool(self._primary_pending)
+
+    @property
     def is_stopping(self) -> bool:
         with self._lock:
             return self._eve_stopping or self._stop_incomplete()
@@ -1485,9 +1491,11 @@ class PreviewHost:
             self._pending_alerts.append(incoming)
         self._post(win32.WM_APP_ALERT)
 
-    def _post(self, msg) -> None:
-        if self._hwnd:
-            win32.bind().user32.PostMessageW(self._hwnd, msg, self._eve_epoch, 0)
+    def _post(self, msg) -> bool:
+        return bool(
+            self._hwnd
+            and win32.bind().user32.PostMessageW(self._hwnd, msg, self._eve_epoch, 0)
+        )
 
     def _drain_alerts(self) -> list[_PendingAlert]:
         with self._lock:
@@ -1578,10 +1586,9 @@ class PreviewHost:
         with self._lock:
             if not self._eve_valid():
                 return False
-            self._post_primary_intent(
+            return self._post_primary_intent(
                 win32.WM_APP_RESIZE_ONE, {stable_key: (int(size[0]), int(size[1]))}
             )
-        return True
 
     def resize_all(self, size) -> bool:
         """Set EVERY open preview's size. Safe from any thread.
@@ -1594,10 +1601,9 @@ class PreviewHost:
         with self._lock:
             if not self._eve_valid():
                 return False
-            self._post_primary_intent(
+            return self._post_primary_intent(
                 win32.WM_APP_RESIZE_ALL, (int(size[0]), int(size[1]))
             )
-        return True
 
     def _mirror_resize(self, driver_key: str, rect) -> None:
         """Copy a resize-all chord's size onto every OTHER open preview.
@@ -1681,7 +1687,7 @@ class PreviewHost:
             self._post(win32.WM_APP_APPLY_LAYOUTS)
         return COPY_OK
 
-    def _post_primary_intent(self, message, payload=None) -> None:
+    def _post_primary_intent(self, message, payload=None) -> bool:
         # Payload and wake share the same FIFO, including the HWND gap. Only
         # adjacent requests coalesce: RESET/bulk resize delimit per-key batches.
         # These are the existing admitted intents, not a second work journal.
@@ -1690,21 +1696,28 @@ class PreviewHost:
                 self._primary_intents[-1][1].update(payload)
             else:
                 self._primary_intents[-1] = (message, payload)
-            return
+            return True
+        # Caller holds _lock, so the pump cannot consume this wake before its
+        # payload is installed. A failed post has admitted nothing; retaining
+        # it would strand the FIFO and the Quit barrier behind a missing wake.
+        if self._hwnd:
+            if not self._post(message):
+                logger.warning("Could not post preview layout command %s", message)
+                return False
+        else:
+            # HWND creation is outside _lock. Choose the pre-window lane once;
+            # rechecking after payload insertion could lose both wake paths.
+            self._pending_primary_signals.append(message)
         self._primary_intents.append((message, payload))
         self._primary_pending += 1
-        if self._hwnd:
-            self._post(message)
-        else:
-            self._pending_primary_signals.append(message)
+        return True
 
     def reset_layouts(self) -> bool:
         """Forget every saved position and re-place. Safe from any thread."""
         with self._lock:
             if not self._eve_valid():
                 return False
-            self._post_primary_intent(win32.WM_APP_RESET_LAYOUTS)
-        return True
+            return self._post_primary_intent(win32.WM_APP_RESET_LAYOUTS)
 
     def client_sizes(self) -> dict:
         """Last sampled client-area size per character. Safe from any thread."""
@@ -2039,9 +2052,6 @@ class PreviewHost:
                 win32.WM_APP_REBIND,
                 win32.WM_APP_ALERT,
                 win32.WM_APP_RESTYLE,
-                win32.WM_APP_RESIZE_ONE,
-                win32.WM_APP_RESIZE_ALL,
-                win32.WM_APP_RESET_LAYOUTS,
                 win32.WM_APP_APPLY_LAYOUTS,
             )
             and wparam != self._eve_epoch

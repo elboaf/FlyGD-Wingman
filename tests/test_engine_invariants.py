@@ -63,12 +63,17 @@ def test_production_crop_modules_cannot_control_client_placement_or_inject_input
         if name == "companionfamily" and node.func.attr == "ShowWindowAsync":
             # Only explicit companion activation may restore a source.
             activation = next(
-                method
-                for method in ast.walk(tree)
-                if isinstance(method, ast.FunctionDef)
-                and method.name == "tick_activation"
+                (
+                    method
+                    for method in ast.walk(tree)
+                    if isinstance(method, ast.FunctionDef)
+                    and method.name == "tick_activation"
+                ),
+                None,
             )
+            assert activation is not None, "Expected synchronous tick_activation"
             assert node in ast.walk(activation)
+            assert len(node.args) > 1, ast.unparse(node)
             assert ast.unparse(node.args[1]) == "win32.SW_RESTORE"
         else:
             assert node.func.attr not in forbidden

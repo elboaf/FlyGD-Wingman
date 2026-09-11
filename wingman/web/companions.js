@@ -352,7 +352,7 @@
     if (!master.busy && !master.queue.length) WM.el('companion-enabled').checked = master.base;
     WM.el('companion-master-status').textContent = master.error;
     WM.el('companion-master-status').className = 'hint' + (master.error ? ' err' : '');
-    WM.el('companion-off-note').hidden = !!state.enabled;
+    WM.el('companion-off-note').hidden = !hydrated || !!state.enabled;
     var count = state.rows.filter(function (row) { return row.enabled; }).length;
     var full = state.rows.length >= state.limits.definitions || count >= state.limits.enabled;
     var serverBusy = state.operations.some(function (receipt) { return receipt.pending; });

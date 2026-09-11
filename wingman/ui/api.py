@@ -4527,19 +4527,25 @@ class Api:
         else:
             self._reconcile_eve_runtime()
 
-    def set_preview_enabled(self, enabled: bool) -> bool:
-        # A reservation, not a lock held across settings I/O, stop.join or page
-        # callbacks. Concurrent bridge calls must not read a tentative master
-        # setting or reorder runtime delivery after their transactions.
+    @contextlib.contextmanager
+    def _preview_setting_change(self):
+        # Share the master reservation with explicit layout edits: an offline
+        # write must finish before another bridge call can re-enable EVE or
+        # read its tentative layout. Never hold the lock across I/O/callbacks.
         with self._preview_mode_lock:
-            if self._preview_mode_changing:
-                return False
-            self._preview_mode_changing = True
+            available = not self._preview_mode_changing
+            if available:
+                self._preview_mode_changing = True
         try:
-            return self._set_preview_enabled(bool(enabled))
+            yield available
         finally:
-            with self._preview_mode_lock:
-                self._preview_mode_changing = False
+            if available:
+                with self._preview_mode_lock:
+                    self._preview_mode_changing = False
+
+    def set_preview_enabled(self, enabled: bool) -> bool:
+        with self._preview_setting_change() as available:
+            return self._set_preview_enabled(bool(enabled)) if available else False
 
     def _set_preview_enabled(self, enabled: bool) -> bool:
         """Toggle previews and persist the choice.
@@ -5466,12 +5472,20 @@ class Api:
             return self._field_refused("Start previews first.")
         section = self._state.settings.get("preview", {})
         if host.resize_all((section.get("width"), section.get("height"))) is False:
-            return self._field_refused("Previews are stopping.")
+            return self._field_refused(
+                "Previews could not accept this change. Try again."
+            )
         # The cards show each character's size; every one just changed.
         self.push_preview_hotkeys()
         return self._field_ok()
 
     def set_preview_size(self, name, w, h) -> dict:
+        with self._preview_setting_change() as available:
+            if not available:
+                return self._field_refused("Another preview change is still pending.")
+            return self._set_preview_size(name, w, h)
+
+    def _set_preview_size(self, name, w, h) -> dict:
         """Persist one preview's size, and apply it live if that client is running.
 
         Three cases, and the third is the awkward one:
@@ -5494,10 +5508,20 @@ class Api:
         if width < floor_w or height < floor_h:
             return self._field_refused(f"The smallest preview is {floor_w}x{floor_h}.")
         host = self._preview_host
+        # EVE-off revokes movement immediately, but accepted storage and the
+        # final drag freeze still belong to the retained cleanup owner.
+        if host is not None and host.is_stopping:
+            return self._field_refused("Previews are stopping.")
         if host is not None and host.runtime_enabled and name in host.characters():
             if host.resize_preview(name, (width, height)) is False:
-                return self._field_refused("Previews are stopping.")
+                return self._field_refused(
+                    "Previews could not accept this change. Try again."
+                )
             return self._field_ok()
+        # A known offline character can still sit behind a live RESET in the
+        # pump FIFO. Do not acknowledge a direct write that RESET would erase.
+        if host is not None and host.layout_commands_pending:
+            return self._field_refused("Preview layout changes are still pending.")
         layouts = self._state.settings.get("preview", {}).get("layouts") or {}
         if name not in layouts:
             return self._field_refused(
@@ -5571,6 +5595,12 @@ class Api:
         return self._write_preview_setting(("layouts", target), raw)
 
     def reset_preview_layouts(self) -> dict:
+        with self._preview_setting_change() as available:
+            if not available:
+                return self._field_refused("Another preview change is still pending.")
+            return self._reset_preview_layouts()
+
+    def _reset_preview_layouts(self) -> dict:
         """Forget every saved preview position and size.
 
         Goes through the host when one is running so the open windows move
@@ -5595,9 +5625,13 @@ class Api:
         giving the host a way to answer, which is a larger change than the
         failure justifies.
         """
+        if self._preview_host is not None and self._preview_host.is_stopping:
+            return self._field_refused("Previews are stopping.")
         if self._preview_host is not None and self._preview_host.runtime_enabled:
             if self._preview_host.reset_layouts() is False:
-                return self._field_refused("Previews are stopping.")
+                return self._field_refused(
+                    "Previews could not accept this change. Try again."
+                )
             return self._field_ok()
         try:
             with settings_mod.update(self._state.settings) as doc:

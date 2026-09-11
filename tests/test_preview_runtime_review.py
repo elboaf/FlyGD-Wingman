@@ -49,8 +49,8 @@ def runtime_pump(crop_pump):
         return r
 
     yield make
-    for r in opened:
-        r.runtime.shutdown(5)
+    results = [r.runtime.shutdown(5) for r in opened]
+    assert all(results), "Preview runtime cleanup did not finish"
 
 
 @contextmanager

@@ -38,8 +38,9 @@ def crop_api(tmp_path):
         yield api, host, store, transaction
     finally:
         transaction.release.set()
-        host.stop(final=True)
-        store.close().result(5)
+        stopped = api._preview_runtime.shutdown(5)
+        closed = store.close().result(5)
+        assert stopped and closed, "Preview runtime/storage cleanup did not finish"
 
 
 def refused(result):

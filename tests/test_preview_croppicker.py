@@ -350,6 +350,22 @@ def drag(picker, start=None, end=None):
     picker._on_message(win32.WM_LBUTTONUP, 0, packed(*end))
 
 
+def test_registered_picker_class_matches_the_creation_class(monkeypatch):
+    from wingman.preview import croppicker
+
+    registered = []
+    monkeypatch.setattr(croppicker, "_CLASS_REGISTERED", False)
+    monkeypatch.setattr(croppicker.CropPicker, "class_name", "RenamedCropPicker")
+    monkeypatch.setattr(
+        croppicker.regionpicker,
+        "_register_class",
+        lambda libs, name: registered.append(name),
+    )
+    croppicker._ensure_class(None)
+    croppicker._ensure_class(None)
+    assert registered == [croppicker.CropPicker.class_name]
+
+
 def test_toolbar_offset_is_removed_before_mapping():
     assert map_selection(
         Rect(20, 60, 320, 180), Rect(20, 60, 640, 360), (1280, 720)

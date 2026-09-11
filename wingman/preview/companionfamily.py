@@ -35,6 +35,7 @@ class _Live:
     binding: object
     revision: int
     window: object = None
+    retiring: bool = False
 
 
 @dataclass
@@ -110,13 +111,18 @@ class CompanionFamily:
         for identity, spec in self._specs.items():
             live = self.live.get(identity)
             status, error = self._errors.get(identity, ("waiting", None))
-            if status == "stopping":
-                pass  # A failed native release remains visible even after Off.
+            if live is not None and live.retiring:
+                status, error = "stopping", "Companion cleanup is still pending"
             elif not spec.definition.enabled:
                 status, error = "disabled", None
             elif not self._authorized(self._token(spec), promotion=True):
                 status = "off"
-            elif live is not None and not live.window.failed and error is None:
+            elif (
+                live is not None
+                and not live.window.failed
+                and not live.window.hidden
+                and error is None
+            ):
                 status, error = "live", None
             rows.append(
                 dict(
@@ -144,14 +150,19 @@ class CompanionFamily:
         live = self.live.get(identity)
         if live is None:
             return True
+        # Retirement is irreversible even if source verification recovers before
+        # Windows releases the owner. Revoke input before hiding/releasing it.
+        live.retiring = True
+        if self._activation and self._activation[0] is live:
+            self._activation = None
         live.window.set_hidden(True)
         if not live.window.close():
             self._errors[identity] = ("stopping", "Companion cleanup is still pending")
             return False
         self.live.pop(identity, None)
         self._next_revision(identity, live.revision)
-        if self._activation and self._activation[0] is live:
-            self._activation = None
+        if self._errors.get(identity, (None,))[0] == "stopping":
+            self._errors.pop(identity)
         return True
 
     def _clean_retired(self):
@@ -480,6 +491,11 @@ class CompanionFamily:
 
     def scan(self):
         self._clean_retired()
+        # Failed releases keep their live slot, but never regain live authority.
+        # Service them even with the family Off, before considering replacements.
+        for identity, live in tuple(self.live.items()):
+            if live.retiring:
+                self._close_live(identity)
         self._retry_candidate(check_source=True)
         if self._closed:
             return
@@ -495,6 +511,8 @@ class CompanionFamily:
         except (SourceUnavailable, OSError) as exc:
             candidates, scan_error = (), str(exc)
         for identity, live in tuple(self.live.items()):
+            if live.retiring:
+                continue
             spec = self._specs.get(identity)
             try:
                 fresh = self._verify(live.binding)
@@ -528,11 +546,11 @@ class CompanionFamily:
                 else None
             )
             if spec.definition.region and source is None:
-                self._close_live(identity)
-                self._errors[identity] = (
-                    "source-unavailable",
-                    "The source region is unavailable",
-                )
+                if self._close_live(identity):
+                    self._errors[identity] = (
+                        "source-unavailable",
+                        "The source region is unavailable",
+                    )
             else:
                 live.window.set_source_rect(source)
         for identity, spec in self._specs.items():
@@ -559,6 +577,8 @@ class CompanionFamily:
             if scan_error and selected is None:
                 self._errors[identity] = ("source-unavailable", scan_error)
             elif len(matches) != 1:
+                if not matches:
+                    self._failed_sources.pop(identity, None)
                 self._errors[identity] = (
                     "needs-selection" if matches else "waiting",
                     None,
@@ -574,7 +594,16 @@ class CompanionFamily:
 
     def _bind(self, spec, binding):
         identity = spec.definition.id
-        episode = (binding.hwnd, binding.pid, binding.process_created, spec.generation)
+        # Retry changed geometry or a genuine family restart, not an unchanged
+        # unsupported capture on every scan (nor on ordinary title churn).
+        episode = (
+            binding.hwnd,
+            binding.pid,
+            binding.process_created,
+            binding.client_size,
+            spec.generation,
+            self._epoch,
+        )
         if self._failed_sources.get(identity) == episode:
             return
         window = None
@@ -697,8 +726,12 @@ class CompanionFamily:
 
     def _activate(self, live):
         identity = live.spec.definition.id
-        if self.live.get(identity) is not live or not self._authorized(
-            self._token(live.spec), promotion=True
+        if (
+            self.live.get(identity) is not live
+            or live.retiring
+            or live.window.hidden
+            or live.window.failed
+            or not self._authorized(self._token(live.spec), promotion=True)
         ):
             return
         self._activation = (live, 0)

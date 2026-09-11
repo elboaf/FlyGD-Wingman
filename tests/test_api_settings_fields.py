@@ -648,6 +648,8 @@ class _FakeSizeHost:
         self._characters = list(characters)
         self.is_running = is_running
         self.runtime_enabled = is_running
+        self.is_stopping = False
+        self.layout_commands_pending = False
         self.captures = []
         self.layouts = dict(layouts or {})
         self.copies = []

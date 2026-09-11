@@ -186,6 +186,8 @@ def family_pump(crop_pump):
         assert r.host._ready.wait(5)
 
         def wait(outcome):
+            # Earlier acknowledgments are consumed, not replayable: callers
+            # must wait in emission order.
             while True:
                 ack = acknowledgments.get(timeout=5)
                 if ack.outcome == outcome:
@@ -596,6 +598,14 @@ def test_shared_family_message_ids_do_not_alias_existing_commands():
         value for name, value in vars(host.win32).items() if name.startswith("WM_APP_")
     ]
     assert len(values) == len(set(values))
+    other_messages = {
+        value
+        for name, value in vars(host.win32).items()
+        if name.startswith("WM_")
+        and not name.startswith("WM_APP_")
+        and isinstance(value, int)
+    }
+    assert not set(values).intersection(other_messages)
 
 
 @pytest.mark.parametrize("available_at_acceptance", [False, True])

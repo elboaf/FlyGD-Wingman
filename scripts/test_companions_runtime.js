@@ -197,10 +197,23 @@ async function page(payload = state(), integrated = false) {
 test('nothing commits before hydration, configuration remains live with master off', async () => {
   const p = await page(null);
   assert.equal(p.el('companion-enabled').disabled, true);
+  assert.equal(p.el('companion-off-note').hidden, true);
   await p.click('companion-add'); assert.equal(p.calls.length, 0);
-  await p.enter(); await p.reply('companion_previews_state', state());
+  await p.enter();
+  assert.equal(p.el('companion-off-note').hidden, true);
+  await p.reply('companion_previews_state', state());
   assert.equal(p.el('companion-add').disabled, false);
+  assert.equal(p.el('companion-off-note').hidden, false);
   assert.match(p.el('companion-off-note').textContent, /off/i);
+});
+
+test('reentry hides the previous off note until fresh state arrives', async () => {
+  const p = await page(state());
+  assert.equal(p.el('companion-off-note').hidden, false);
+  await p.leave(); await p.enter();
+  assert.equal(p.el('companion-off-note').hidden, true);
+  await p.reply('companion_previews_state', state(2, [], {}, {enabled: true}));
+  assert.equal(p.el('companion-off-note').hidden, true);
 });
 
 test('Companions rail stays available with EVE hidden and Settings remembers it', async () => {

@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import FrozenInstanceError, replace
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -123,8 +124,10 @@ def test_unsupported_region_dimensions_drop_only_bad_entry_on_settings_load(
 @pytest.mark.parametrize("count", [126, 128])
 def test_canonical_application_name_must_fit_and_roundtrip(count, monkeypatch):
     # Windows' native case mapper need not expand Unicode like Python's fallback.
-    # Exercise an expanding normalization boundary on both test platforms.
-    monkeypatch.setattr(c.ntpath, "normcase", lambda path: path.lower())
+    # Exercise expansion without changing shared stdlib/pytest path handling.
+    monkeypatch.setattr(
+        c, "ntpath", SimpleNamespace(**{**vars(c.ntpath), "normcase": str.lower})
+    )
     raw = c.serialize_definitions((definition(),))[0]["source"]
     name = "İ" * count + ".exe"
     raw.update(executable_path="C:\\apps\\" + name, executable_name=name)
@@ -138,7 +141,9 @@ def test_canonical_application_name_must_fit_and_roundtrip(count, monkeypatch):
 
 
 def test_canonical_application_path_must_fit_after_case_expansion(monkeypatch):
-    monkeypatch.setattr(c.ntpath, "normcase", lambda path: path.lower())
+    monkeypatch.setattr(
+        c, "ntpath", SimpleNamespace(**{**vars(c.ntpath), "normcase": str.lower})
+    )
     raw = c.serialize_definitions((definition(),))[0]["source"]
     raw["executable_path"] = "C:\\" + ("İ" * 200 + "\\") * 100 + "mapper.exe"
     with pytest.raises(ValueError):
