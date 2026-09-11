@@ -125,6 +125,7 @@ def test_defaults_are_the_documented_values():
             "enabled": False,
             "x": None,
             "y": None,
+            "preferred_content_width": 500,
             "seen": [],
             "hidden": [],
         },
@@ -253,6 +254,7 @@ def test_save_then_load_roundtrips(tmp_path):
         "enabled": True,
         "x": -320,
         "y": 48,
+        "preferred_content_width": 500,
         "seen": [],
         "hidden": [],
     }
