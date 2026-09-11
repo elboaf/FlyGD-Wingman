@@ -217,6 +217,15 @@ def test_status_copy_explains_every_safe_health_state(status):
         assert "saved" in formatter(status, None).lower()
 
 
+def test_invalid_configuration_copy_guides_input_correction():
+    message = copy_mod.wanderer_status("error", "invalid_configuration")
+    assert message == (
+        "Check the Wanderer application URL, map and token, then test again."
+    )
+    assert message != copy_mod.wanderer_status("error", "transport_error")
+    assert message != copy_mod.wanderer_status("error", "service_unavailable")
+
+
 @pytest.mark.parametrize("code", get_args(ErrorCode))
 def test_failure_copy_never_echoes_external_errors(code):
     formatter = getattr(copy_mod, "wanderer_status", None)

@@ -21,6 +21,7 @@ def wanderer_status(status: str, error_code: str | None) -> str:
     """Explain safe semantic health only, never a server body or exception."""
     if status == "error":
         return {
+            "invalid_configuration": "Check the Wanderer application URL, map and token, then test again.",
             "invalid_token": "Wanderer rejected the token. Replace it, then test again.",
             "forbidden": "Wanderer denied access. Check the token and map permissions.",
             "scope_forbidden": "The token needs tracked-character location read access.",

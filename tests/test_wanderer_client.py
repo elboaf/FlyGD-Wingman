@@ -83,14 +83,35 @@ def test_success_preserves_prefix_and_sends_only_explicit_auth_and_contract_head
     assert not {"Cookie", "X-API-Key"} & headers.keys()
 
 
-def test_304_has_no_snapshot_and_requires_matching_conditional():
+@pytest.mark.parametrize("content_type", [None, "application/json"])
+def test_304_has_no_snapshot_and_requires_matching_conditional(content_type):
     from wingman.wanderer.client import Unchanged
 
-    result, _, _ = roundtrip(304, b"", etag=ETAG)
+    headers = HEADERS | {"Content-Type": content_type}
+    headers = {k: v for k, v in headers.items() if v is not None}
+    result, _, _ = roundtrip(304, b"", headers, etag=ETAG)
     assert result == Unchanged(ETAG)
     for conditional in (None, 'W/"other"'):
-        result, _, _ = roundtrip(304, b"", etag=conditional)
+        result, _, _ = roundtrip(304, b"", headers, etag=conditional)
         assert result.code == "invalid_response"
+
+
+@pytest.mark.parametrize(
+    "changes,code",
+    [
+        ({"X-Wanderer-Locations-Version": None}, "unsupported_version"),
+        ({"X-Wanderer-Locations-Version": "2"}, "unsupported_version"),
+        ({"ETag": None}, "invalid_response"),
+        ({"ETag": '"fixture-revision"'}, "invalid_response"),
+        ({"ETag": 'W/"other"'}, "invalid_response"),
+    ],
+)
+def test_304_without_content_type_still_requires_version_and_etag(changes, code):
+    headers = HEADERS | {"Content-Type": None} | changes
+    result, _, _ = roundtrip(
+        304, b"", {k: v for k, v in headers.items() if v is not None}, etag=ETAG
+    )
+    assert result.code == code
 
 
 @pytest.mark.parametrize("status", [301, 302, 303, 307, 308])

@@ -320,12 +320,15 @@ class WandererClient:
             if _one(response, "X-Wanderer-Locations-Version") != "1":
                 return Failure("unsupported_version", response.status)
             received_etag = _one(response, "ETag")
-            if not _valid_etag(received_etag) or not _json_media(response):
+            if not _valid_etag(received_etag):
                 return Failure("invalid_response", response.status)
             if response.status == 304:
                 if etag is None or etag != received_etag:
                     return Failure("invalid_response", 304)
                 return Unchanged(received_etag)
+            # A 304 has no body; only a 200 needs the JSON representation header.
+            if not _json_media(response):
+                return Failure("invalid_response", 200)
             body = _bounded_body(response, MAX_RESPONSE_BYTES)
             snapshot = parse_snapshot(body, self._clock())
             if received_etag != f'W/"{snapshot.revision}"':

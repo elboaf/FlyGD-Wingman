@@ -34,9 +34,13 @@ const source = fs.readFileSync(process.argv[1], 'utf8');
 const api = {}, pushes = [];
 const context = {api, Promise, devSearch: new URLSearchParams(),
   window: {onWandererState: p => pushes.push(p)}, setTimeout: fn => fn()};
+const start = source.indexOf('  // Wanderer dev connection');
+const end = source.indexOf('  var sharingOrder =');
+if (start < 0 || end <= start) {
+  throw new Error('Wanderer dev fixture markers missing or out of order');
+}
 vm.createContext(context);
-vm.runInContext(source.slice(source.indexOf('  // Wanderer dev connection'),
-  source.indexOf('  var sharingOrder =')), context);
+vm.runInContext(source.slice(start, end), context);
 (async () => {
   const scenarios = {};
   for (const kind of ['off', 'setup', 'connecting', 'connected', 'no-tracked',

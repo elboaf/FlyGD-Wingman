@@ -510,7 +510,7 @@ def test_shutdown_fences_host_before_native_destruction_and_retains_http_owner(
 
 
 @pytest.mark.skipif(
-    sys.platform == "linux", reason="real Windows user-bound DPAPI required"
+    sys.platform != "win32", reason="real Windows user-bound DPAPI required"
 )
 def test_real_windows_credential_document_roundtrip_replace_binding_and_remove(
     tmp_path,
