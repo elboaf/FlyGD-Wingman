@@ -5,14 +5,15 @@ import threading
 import time
 from dataclasses import replace
 from datetime import timedelta
-from uuid import UUID as UUIDValue
 
 import pytest
 
 from tests.fleetsharing_capacity_helpers import (
     compact_bytes,
+    fixture_bytes,
     legacy_bytes,
     maximal_state,
+    start_boundary,
 )
 from tests.test_fleetsharing_worker import (
     DATE,
@@ -50,8 +51,8 @@ class DiskStore:
 
 
 def test_byte_overflow_start_does_not_strand_off_and_another_durable_stop(tmp_path):
-    # Count-valid Starts are larger than Stops. Fill using the actual writer,
-    # retaining the last successful complete journal, not an in-memory fake.
+    # Count-valid Starts are larger than Stops. Choose the boundary independently,
+    # then prove last-fit and next-refusal using the real complete-journal writer.
     state = replace(
         PAIRED_STATE,
         identity=maximal_state().identity,
@@ -63,20 +64,16 @@ def test_byte_overflow_start_does_not_strand_off_and_another_durable_stop(tmp_pa
         acknowledged_capabilities=DEVICE.acknowledged_capabilities,
         observed_participation=DEVICE.participation,
     )
+    state, candidate = start_boundary(state)
+    command = candidate.pending_source_commands[-1]
     store = DiskStore(tmp_path / "fleet.json", state)
-    for i in range(p.MAX_SOURCE_INTENTS):
-        command = p.StartSource(str(UUIDValue(int=i + 1, version=4)), 1, UUID, DATE)
-        candidate = replace(
-            state, pending_source_commands=(*state.pending_source_commands, command)
-        )
-        try:
-            store.save(candidate)
-        except ValueError:
-            break
-        state = candidate
-    else:
-        raise AssertionError("fixture must reach the real byte bound before count")
+    before = fixture_bytes(state)
+    assert store.path.read_bytes() == before
+    assert store.load() == state
     assert len(candidate.pending_source_commands) <= p.MAX_SOURCE_INTENTS
+    with pytest.raises(s.CapacityError, match="size limit"):
+        store.save(candidate)
+    assert store.path.read_bytes() == before
     assert store.load() == state
     mono = [1000.0]
     client = FakeRelayClient(device=DEVICE)
@@ -110,22 +107,11 @@ def test_byte_overflow_start_does_not_strand_off_and_another_durable_stop(tmp_pa
 
 
 def test_full_saved_journal_can_reconcile_off_without_discarding_prior_starts(tmp_path):
-    state = replace(PAIRED_STATE, last_revision=9)
+    state, _ = start_boundary(replace(PAIRED_STATE, last_revision=9), indented=True)
     path = tmp_path / "full.json"
-    path.write_bytes(legacy_bytes(state))
-    for i in range(p.MAX_SOURCE_INTENTS):
-        command = p.StartSource(str(UUIDValue(int=i + 1, version=4)), 1, UUID, DATE)
-        candidate = replace(
-            state, pending_source_commands=(*state.pending_source_commands, command)
-        )
-        data = legacy_bytes(candidate)
-        if len(data) > s.MAX_STATE_FILE_BYTES:
-            break
-        path.write_bytes(data)
-        state = candidate
     # A valid protected blob plus a valid ASCII origin can fill the last few
     # bytes exactly. No source is invalid, expired or over the command count.
-    remaining = s.MAX_STATE_FILE_BYTES - path.stat().st_size
+    remaining = s.MAX_STATE_FILE_BYTES - len(fixture_bytes(state, indented=True))
     blob_length = len(state.identity.protected_private_key_b64) + remaining // 4 * 4
     state = replace(
         state,
@@ -137,14 +123,24 @@ def test_full_saved_journal_can_reconcile_off_without_discarding_prior_starts(tm
         ),
         relay_origin="https://relay" + "a" * (remaining % 4) + ".test",
     )
-    path.write_bytes(legacy_bytes(state))
+    before = fixture_bytes(state, indented=True)
+    path.write_bytes(before)
     assert path.stat().st_size == 65536
     assert s.load(path) == state
+    assert path.read_bytes() == before
     assert len(state.pending_source_commands) < p.MAX_SOURCE_INTENTS
-    assert len(legacy_bytes(replace(state, last_revision=10))) > 65536
+    assert len(fixture_bytes(replace(state, last_revision=10), indented=True)) == 65537
     # Loading never rewrites; the first real owner write must compact the file.
     store = DiskStore.__new__(DiskStore)
     store.path, store.saved, store.rejected = path, [], []
+
+    first_write = []
+
+    def save_and_capture_first_write(candidate):
+        store.save(candidate)
+        if len(store.saved) == 1:
+            first_write.append(path.read_bytes())
+
     mono = [1000.0]
     client = FakeRelayClient(device=DEVICE)
     worker = _worker(
@@ -153,10 +149,17 @@ def test_full_saved_journal_can_reconcile_off_without_discarding_prior_starts(tm
         clock=lambda: mono[0],
         utc_clock=lambda: NOW + timedelta(seconds=mono[0] - 1000),
         sharing_enabled=lambda: False,
+        save_state=save_and_capture_first_write,
     )
     off = worker.request_participation(False)
     assert worker.status().local_inhibited
     drive(worker, mono, 20)
+    # Assert outside the save callback: the owner treats callback exceptions as
+    # retryable I/O failure, which could otherwise hide a failed assertion.
+    assert len(first_write) == 1
+    assert len(fixture_bytes(store.saved[0], indented=True)) > 65536
+    assert first_write[0] == fixture_bytes(store.saved[0])
+    assert len(first_write[0]) < 65536
     assert client.device.participation.enabled is False
     assert off is not None
     assert all(c in state.pending_source_commands for c in client.controls)

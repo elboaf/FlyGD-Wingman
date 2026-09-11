@@ -5,7 +5,12 @@ from dataclasses import fields, replace
 
 import pytest
 
-from tests.fleetsharing_capacity_helpers import maximal_state, source_id
+from tests.fleetsharing_capacity_helpers import (
+    fixture_bytes,
+    maximal_state,
+    source_id,
+    start_boundary,
+)
 from tests.test_fleetsharing_capacity import DiskStore
 from tests.test_fleetsharing_utf8 import approval_url, legacy_save, legacy_upgrade
 from tests.test_fleetsharing_worker import (
@@ -165,8 +170,8 @@ def test_legacy_batch_reserves_generation_growth_and_recreates_after_deferred_sa
 
 
 def dense_store(tmp_path, *, participation=None, recovery=False):
-    # Build a previously valid compact journal close to the actual writer cap.
-    # No new policy helper determines the expected acceptance/progress outcome.
+    # Independent byte preparation; the actual writer still proves both sides
+    # of the boundary before each distinct owner lifecycle starts.
     original = replace(
         PAIRED_STATE,
         identity=maximal_state().identity,
@@ -186,22 +191,19 @@ def dense_store(tmp_path, *, participation=None, recovery=False):
                 TOKEN, DATE, p.RecoveryChallenge(UUID, TOKEN, TOKEN, EXPIRY)
             ),
         )
+    original, candidate = start_boundary(original)
     store = DiskStore(tmp_path / "dense.json", original)
-    for i in range(p.MAX_SOURCE_INTENTS):
-        candidate = replace(
-            original,
-            pending_source_commands=(
-                *original.pending_source_commands,
-                p.StartSource(source_id(i), 1, UUID, DATE),
-            ),
-        )
-        try:
-            store.save(candidate)
-        except s.CapacityError:
-            break
-        original = candidate
-    else:
-        pytest.fail("fixture must reach the byte cap")
+    before = fixture_bytes(original)
+    assert store.path.read_bytes() == before
+    assert store.load() == original
+    assert len(candidate.pending_source_commands) <= p.MAX_SOURCE_INTENTS
+    with pytest.raises(s.CapacityError, match="size limit"):
+        store.save(candidate)
+    assert store.path.read_bytes() == before
+    assert store.load() == original
+    # Only the preparation refusal is expected. Keep every later owner failure
+    # visible to the lifecycle assertions below.
+    assert store.rejected == [candidate]
     store.rejected.clear()
     return store, original
 
