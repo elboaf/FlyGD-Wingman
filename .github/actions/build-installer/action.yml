@@ -451,7 +451,7 @@ runs:
         # anything and nobody updates it when a file is added. The array
         # below is the list; the comment says what the list is for.
         foreach ($asset in @("index.html", "style.css", "app.js", "characters.js", "list.js", "panel.js", "settings.js", "skills.js", "firstrun.js",
-                             "fittings.js",
+                             "fittings.js", "companions.js",
                              "fonts/InterVariable.woff2", "fonts/JetBrainsMono-Regular.woff2")) {
           $path = Join-Path $web $asset
           if (-not (Test-Path $path -PathType Leaf)) { throw "$asset missing from the bundled web/ data at $path" }

@@ -37,6 +37,8 @@ from . import (
     win32,
 )
 from . import window as window_mod
+from .companionfamily import CompanionFamily
+from .companions import CompanionCommand, CompanionEvent
 from .cropcontroller import CropController
 from .croppicker import CropPicker
 from .crops import MAX_LIVE_CROPS
@@ -46,6 +48,11 @@ from .window import PreviewWindow
 
 logger = logging.getLogger(__name__)
 
+COMPANION_SCAN_TIMER_ID = 4
+COMPANION_ACTIVATE_TIMER_ID = 5
+COMPANION_COMMAND_LIMIT = 64
+# Two reserved completion slots share the FIFO, never overtake reconcile/reset.
+COMPANION_COMPLETION_RESERVE = 2
 ACTIVATE_RETRY_TIMER_ID = 3
 # A 20ms timer keeps each pump turn short. Twenty-five retries provide about
 # 500ms for ShowWindowAsync restoration without blocking hotkeys or retaining
@@ -320,6 +327,13 @@ class PreviewHost:
         self._companion_active = False
         self._companion_admitted = False
         self._companion_stopping = False
+        self._companion_controller = None
+        self._companion_family = None
+        self._companion_commands = deque()
+        self._companion_drain = None
+        self._companion_scan_timer = False
+        self._companion_activate_timer = False
+        self._companion_timer_failure = False
         self._primary_pending = 0
         self._primary_intents = deque()
         self._offline_stop_ack = None
@@ -573,6 +587,182 @@ class PreviewHost:
             self._crop_roster = None
             self._pending_alerts = []
 
+    def set_companion_controller(self, controller) -> None:
+        """Construction-only binding; a running pump never changes its owner."""
+        with self._lock:
+            if (
+                self._thread is not None
+                or self._pump_epoch
+                or self._companion_controller is not None
+            ):
+                raise RuntimeError("companion controller must bind once before start")
+            self._companion_controller = controller
+
+    def submit_companion(self, command: CompanionCommand) -> bool:
+        if not isinstance(command, CompanionCommand) or command.kind not in (
+            "enumerate",
+            "pick-region",
+            "prepare",
+            "promote",
+            "discard",
+            "reconcile",
+            "reset",
+            "activate",
+        ):
+            return False
+        completion = command.kind in ("promote", "discard")
+        with self._lock:
+            if (
+                self._companion_controller is None
+                or self._hwnd is None
+                or ((self._closing or self._stopping) and not completion)
+            ):
+                return False
+            limit = COMPANION_COMMAND_LIMIT + (
+                COMPANION_COMPLETION_RESERVE if completion else 0
+            )
+            if len(self._companion_commands) >= limit:
+                return False
+            self._companion_commands.append(command)
+            if not win32.bind().user32.PostMessageW(
+                self._hwnd, win32.WM_APP_COMPANION_COMMAND, 0, 0
+            ):
+                self._companion_commands.pop()
+                return False
+            return True
+
+    def _companion_authorized(self, token, *, promotion=False):
+        # Never hold the host lock while entering controller metadata. No native
+        # callback reads settings or joins the runtime/controller worker.
+        with self._lock:
+            if (
+                self._closing
+                or self._stopping
+                or self._companion_timer_failure
+                or (token is not None and token.pump_epoch != self._pump_epoch)
+            ):
+                return False
+            live = (
+                self._companion_admitted
+                and not self._companion_stopping
+                and (token is None or token.family_epoch == self._companion_epoch)
+            )
+            controller = self._companion_controller
+        if token is not None and token.selection_lease is not None:
+            selection = controller is not None and controller.selection_valid(token)
+            return selection and (live if promotion else True)
+        return live
+
+    def _init_companion_family(self, libs):
+        if self._companion_controller is not None and self._companion_family is None:
+            self._companion_family = CompanionFamily(
+                libs,
+                self._companion_controller,
+                pump_epoch=self._pump_epoch,
+                authorized=self._companion_authorized,
+                monitors=self._monitors,
+                temporary=lambda: (
+                    self._crop_controller is None
+                    or self._crop_controller._temporary is None
+                ),
+            )
+
+    def _apply_companion_commands(self, libs):
+        self._init_companion_family(libs)
+        with self._lock:
+            commands = tuple(self._companion_commands)
+            self._companion_commands.clear()
+        for command in commands:
+            if (
+                command.token is not None
+                and command.token.pump_epoch != self._pump_epoch
+            ):
+                self._companion_controller.native_event(
+                    CompanionEvent("failed", command.token, "Preview runtime changed")
+                )
+            elif self._companion_family is not None:
+                self._companion_family.command(command)
+        self._sync_companion_timers(libs)
+
+    def _sync_companion_timers(self, libs):
+        family = self._companion_family
+        if self._hwnd is None:
+            return
+        if family is not None and self._companion_timer_failure:
+            family.close_native()  # Keep failed releases owned until they unwind.
+            return
+        scan = bool(
+            family is not None
+            and (
+                self._companion_active
+                or family.temporary_busy
+                or self._companion_stopping
+                or self._stopping
+            )
+        )
+        activate = family is not None and family.activation_pending
+        for desired, field, ident, interval in (
+            (scan, "_companion_scan_timer", COMPANION_SCAN_TIMER_ID, 1000),
+            (
+                activate,
+                "_companion_activate_timer",
+                COMPANION_ACTIVATE_TIMER_ID,
+                ACTIVATE_RETRY_MS,
+            ),
+        ):
+            current = getattr(self, field)
+            if desired and not current:
+                if libs.user32.SetTimer(self._hwnd, ident, interval, None):
+                    setattr(self, field, True)
+                else:
+                    self._companion_timer_failure = True
+                    logger.error("Companion timer could not start: %s", ident)
+                    family.fail(
+                        "Companion monitoring could not start; turn companions off and retry"
+                    )
+                    self._ack("companions-failed")
+                    return
+            elif current and not desired and libs.user32.KillTimer(self._hwnd, ident):
+                setattr(self, field, False)
+
+    def _stop_companion_family(self, libs, *, final=False):
+        family = self._companion_family
+        if family is None:
+            return True
+        if self._companion_drain is None:
+            self._companion_drain = self._companion_controller.drain()
+            self._companion_drain.add_done_callback(
+                lambda done: self._post(win32.WM_APP_COMPANION_COMPLETE)
+            )
+        if not self._companion_drain.done():
+            self._sync_companion_timers(libs)
+            return False
+        if not self._companion_drain.result():
+            logger.warning("Companion persistence drain completed with a save failure")
+        return (
+            family.close_native()
+            if final or self._companion_timer_failure
+            else family.stop_live(self._companion_epoch)
+        )
+
+    def _create_eve_picker(self, *args, **kwargs):
+        if self._companion_family is not None and self._companion_family.temporary_busy:
+            kwargs["on_cancel"]("Another preview selection is still pending")
+            return None
+        return CropPicker.create(*args, **kwargs)
+
+    def _create_eve_crop(self, *args, **kwargs):
+        controller = self._crop_controller
+        if (
+            controller is not None
+            and controller._temporary is not None
+            and self._companion_family is not None
+            and self._companion_family.temporary_busy
+        ):
+            kwargs["on_failure"]("Another preview selection is still pending")
+            return None
+        return CropWindow.create(*args, **kwargs)
+
     def _admission_epochs(self) -> tuple[int, int, int]:
         """Private authority snapshot; lifecycle outcomes still travel via HostAck."""
         with self._lock:
@@ -705,6 +895,8 @@ class PreviewHost:
             or self._crop_dispatching
             or self._hwnd is not None
             or self._crop_controller is not None
+            or self._companion_family is not None
+            or (self._companion_drain is not None and not self._companion_drain.done())
         )
 
     def _open_crop_epoch(self) -> None:
@@ -744,6 +936,8 @@ class PreviewHost:
             self._stop_final = False
             self._stop_cleanup_epoch = None
             self._offline_stop_ack = None
+            self._companion_drain = None
+            self._companion_timer_failure = False
             self._crop_runtime_state = {}
             if self._crop_store is not None:
                 self._pending_roster = self._crop_roster
@@ -821,6 +1015,8 @@ class PreviewHost:
             or self._crop_controller is not None
             or self._hook
             or self._registered_text
+            or self._companion_family is not None
+            or (self._companion_drain is not None and not self._companion_drain.done())
         ):
             logger.warning("Preview native cleanup remains owned by an exited pump")
             return False
@@ -1583,6 +1779,7 @@ class PreviewHost:
             self._drain_offline_crop_commands()
             return "pump-failed"
 
+        self._init_companion_family(libs)
         self._ack("pump-started")
         with self._lock:
             primary_signals, self._pending_primary_signals = (
@@ -1602,6 +1799,10 @@ class PreviewHost:
                 self._crop_controller is not None
                 and self._crop_controller.process_dialog_message(msg)
             )
+            if self._companion_family is not None:
+                consumed = (
+                    self._companion_family.process_dialog_message(msg) or consumed
+                )
             if not consumed:
                 libs.user32.TranslateMessage(ctypes.byref(msg))
                 libs.user32.DispatchMessageW(ctypes.byref(msg))
@@ -1609,16 +1810,28 @@ class PreviewHost:
                 # A ready drain may still own a picker's fonts. Retry only at
                 # existing message boundaries, after native callbacks unwind.
                 self._finish_crop_stop(libs)
+            if self._companion_stopping and not self._stopping:
+                self._apply_families(libs)
+            if self._stopping and self._eve_phase == "stopped" and self._hwnd:
+                self._destroy_pump(libs)
+            self._sync_companion_timers(libs)
         return "pump-stopped" if self._stopping else "pump-failed"
 
     def _apply_families(self, libs) -> None:
         if self._stopping:
             self._begin_stop(libs)
             return
+        self._init_companion_family(libs)
         with self._lock:
-            stopped = self._companion_stopping
+            stopping_companions = self._companion_stopping
+        stopped = stopping_companions and self._stop_companion_family(libs)
+        with self._lock:
             if stopped:
                 self._companion_active = False
+                self._companion_drain = None
+                if self._companion_timer_failure:
+                    self._companion_family = None
+                    self._companion_timer_failure = False
                 self._companion_stopping = False
                 stopped_epochs = (
                     self._pump_epoch,
@@ -1628,11 +1841,17 @@ class PreviewHost:
         if stopped:
             self._ack("companions-stopped", epochs=stopped_epochs)
         with self._lock:
-            companions = self._families.companions and not self._closing
+            companions = (
+                self._families.companions
+                and not self._closing
+                and not self._companion_stopping
+            )
             if companions and not self._companion_admitted:
                 self._companion_admitted = True
                 self._companion_epoch += 1
-            changed = companions != self._companion_active
+            changed = (
+                companions != self._companion_active and not self._companion_stopping
+            )
             if changed:
                 self._companion_active = companions
                 companion_epochs = (
@@ -1641,12 +1860,12 @@ class PreviewHost:
                     self._companion_epoch,
                 )
         if changed:
-            # No companion native resources in Phase 1; authorization still
-            # has ordered off/active epochs even when desired state coalesces.
+            # Cleanup acknowledged the old epoch before a new family may start.
             self._ack(
                 "companions-active" if companions else "companions-stopped",
                 epochs=companion_epochs,
             )
+        self._sync_companion_timers(libs)
         if self._eve_stopping:
             self._begin_stop(libs)
             return
@@ -1767,6 +1986,26 @@ class PreviewHost:
 
     def _host_proc(self, hwnd, msg, wparam, lparam):
         libs = win32.bind()
+        if msg == win32.WM_APP_COMPANION_COMMAND:
+            self._apply_companion_commands(libs)
+            return 0
+        if msg == win32.WM_APP_COMPANION_COMPLETE:
+            if self._stopping and self._eve_phase == "stopped":
+                self._destroy_pump(libs)
+            elif self._companion_stopping:
+                self._apply_families(libs)
+            return 0
+        if msg == win32.WM_TIMER and wparam in (
+            COMPANION_SCAN_TIMER_ID,
+            COMPANION_ACTIVATE_TIMER_ID,
+        ):
+            if self._companion_family is not None:
+                if wparam == COMPANION_SCAN_TIMER_ID and not self._stopping:
+                    self._companion_family.scan()
+                elif wparam == COMPANION_ACTIVATE_TIMER_ID:
+                    self._companion_family.tick_activation()
+                self._sync_companion_timers(libs)
+            return 0
         if msg == win32.WM_APP_CROP_STOP_READY:
             self._finish_crop_stop(libs)
             return 0
@@ -1897,8 +2136,8 @@ class PreviewHost:
             libs,
             self._crop_store,
             epoch=epoch,
-            create_crop=CropWindow.create,
-            create_picker=CropPicker.create,
+            create_crop=self._create_eve_crop,
+            create_picker=self._create_eve_picker,
             read_client_size=client_size,
             monitors=self._monitors,
             activate=lambda client: self._activate_crop(libs, client.character),
@@ -3710,7 +3949,9 @@ class PreviewHost:
             window._mode = None
             window.locked = True
             window.set_hidden(True)
-        libs.user32.ReleaseCapture()
+        # EVE-off must not steal a leased companion picker's capture.
+        if self._companion_family is None or not self._companion_family.temporary_busy:
+            libs.user32.ReleaseCapture()
         if dispatching:
             # An accepted offline batch predates pump launch and still owns
             # submission order. Its finally reposts shutdown; never close the
@@ -3890,6 +4131,19 @@ class PreviewHost:
         return True
 
     def _destroy_pump(self, libs) -> None:
+        # Controller drain is metadata-only submission. Its future is inspected
+        # only once ready; never wait on the pump or retire failed native owners.
+        if not self._stop_companion_family(libs, final=True):
+            return
+        self._companion_family = None
+        self._companion_drain = None
+        for field, ident in (
+            ("_companion_scan_timer", COMPANION_SCAN_TIMER_ID),
+            ("_companion_activate_timer", COMPANION_ACTIVATE_TIMER_ID),
+        ):
+            if getattr(self, field):
+                libs.user32.KillTimer(self._hwnd, ident)
+                setattr(self, field, False)
         if (
             self._companion_active
             or self._companion_admitted

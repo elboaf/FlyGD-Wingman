@@ -1111,6 +1111,31 @@ def test_the_build_verifies_every_eve_capability_controller_is_importable():
     assert "from wingman.eveskills.controller import SkillsController" in action
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "runtime",
+        "companions",
+        "companioncontroller",
+        "sources",
+        "companionwindow",
+        "companionfamily",
+        "regionpicker",
+    ],
+)
+def test_companion_modules_belong_to_the_packaged_preview_namespace(name):
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        packages = tomllib.load(handle)["tool"]["setuptools"]["packages"]
+    assert "wingman.preview" in packages
+    module = importlib.import_module("wingman.preview." + name)
+    assert pathlib.Path(module.__file__).resolve() == (
+        ROOT / "wingman" / "preview" / (name + ".py")
+    )
+    spec = (ROOT / "packaging" / "uploader.spec").read_text(encoding="utf-8")
+    assert '(str(WEB), "web")' in spec
+    assert (ROOT / "wingman" / "web" / "companions.js").is_file()
+
+
 def test_the_build_verifies_fittings_and_characters_js_are_bundled():
     """Same silent-`datas`-failure shape as the other named web assets:
     the action already lists every script the page loads by name so a
@@ -1133,7 +1158,7 @@ def test_the_build_verifies_fittings_and_characters_js_are_bundled():
         "a missing datas entry for it would ship a build with an inert "
         "Characters Settings section and no CI signal at all"
     )
-    for name in ("index.html", "style.css", "app.js", "skills.js"):
+    for name in ("index.html", "style.css", "app.js", "skills.js", "companions.js"):
         assert name in web_check, name
     assert "Test-Path $path -PathType Leaf" in web_check, (
         "the bundled-web-assets check must prove each expected path is a file, "

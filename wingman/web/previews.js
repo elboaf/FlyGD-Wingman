@@ -1383,6 +1383,10 @@
     });
   }
 
+  // Companion dialogs share this Settings section; capture consumes their
+  // keyboard input unless explicitly disarmed before opening an overlay.
+  WM.endPreviewCapture = endCapture;
+
   function endCapture() {
     if (!capturing) { return; }
     capturing.button.classList.remove('capturing');

@@ -63,6 +63,7 @@ from ..preview import gestures as preview_gestures
 from ..preview import host as preview_host_mod
 from ..preview import layout as preview_layout
 from ..preview import window as preview_window
+from ..preview.companioncontroller import CompanionController, CompanionPorts
 from ..preview.runtime import PreviewRuntime
 from ..telemetry.model import CustomMatcherHealth
 from ..upload.controller import (
@@ -367,6 +368,7 @@ class Api:
         timer=threading.Timer,
         preview_host=None,
         preview_runtime=None,
+        companion_controller=None,
         skills=None,
         telemetry=None,
         fleet_sharing=None,
@@ -468,6 +470,20 @@ class Api:
         )
         self._preview_revision = 0
         self._preview_runtime_authorized = False
+        self._companions = (
+            companion_controller
+            if companion_controller is not None
+            else CompanionController(
+                CompanionPorts(
+                    update_settings=lambda: settings_mod.update(state.settings),
+                    runtime=self._preview_runtime,
+                    submit_native=lambda command: False,
+                    publish_state=self._push_companion_previews,
+                ),
+                state.settings.get("companion_previews", {}),
+                available=False,
+            )
+        )
 
         # None off the happy path -- when the subsystem failed to build, and
         # in most tests. Every call site below tolerates its absence and
@@ -4453,11 +4469,14 @@ class Api:
             telemetry = self._telemetry
         # This only fences ingress; no consumer callback or join. Keep the
         # retained owner even when its later bounded stop cannot finish.
+        self._companions.close_publication()
+        self._companions.close_admission()
         self._preview_runtime.close_admission()
         if telemetry is not None:
             telemetry.close_custom_admission()
 
     def _preview_runtime_changed(self, state) -> None:
+        self._companions.runtime_changed(state)
         # Activation is asynchronous. The off-pump owner callback reconciles
         # telemetry after the family can actually consume discovery results.
         if self._eve_runtime_closed:
@@ -4493,8 +4512,7 @@ class Api:
         section = self._state.settings.get("preview", {})
         if self._preview_host is not None:
             self._preview_host.set_hotkeys(section.get("hotkeys") or {})
-        # Phase 1 exposes no companion configuration or native feature.
-        self._preview_runtime.set_companions(False, revision=0)
+        self._companions.start()
         self._preview_runtime.set_eve(
             bool(section.get("enabled")), self._preview_revision
         )
@@ -4560,6 +4578,73 @@ class Api:
         # returned None (settings.js:181 documents the same trap).
         return True
 
+    def companion_previews_state(self) -> dict:
+        return self._companions.state()
+
+    def companion_previews_sources(self) -> dict:
+        return self._companions.sources()
+
+    def set_companion_previews_enabled(self, enabled: bool) -> dict:
+        return self._companions.set_master(enabled)
+
+    def companion_preview_select(
+        self,
+        id: str | None,
+        candidate_token: str,
+        mode: str,
+        label: str,
+        title_mode: str,
+        title_hint: str,
+        expected_generation: int | None,
+    ) -> dict:
+        return self._companions.select(
+            id,
+            candidate_token,
+            mode,
+            label,
+            title_mode,
+            title_hint,
+            expected_generation,
+        )
+
+    def companion_preview_reselect_region(
+        self, id: str, expected_generation: int
+    ) -> dict:
+        return self._companions.reselect_region(id, expected_generation)
+
+    def companion_preview_set_enabled(
+        self, id: str, enabled: bool, expected_generation: int
+    ) -> dict:
+        return self._companions.set_enabled(id, enabled, expected_generation)
+
+    def companion_preview_edit(
+        self,
+        id: str,
+        label: str,
+        title_mode: str,
+        title_hint: str,
+        expected_generation: int,
+    ) -> dict:
+        return self._companions.edit(
+            id, label, title_mode, title_hint, expected_generation
+        )
+
+    def companion_preview_remove(self, id: str, expected_generation: int) -> dict:
+        return self._companions.remove(id, expected_generation)
+
+    def companion_preview_reset_geometry(
+        self, id: str, expected_generation: int
+    ) -> dict:
+        return self._companions.reset_geometry(id, expected_generation)
+
+    def _push_companion_previews(self, state: dict) -> None:
+        if self._preview_publication_open():
+            self._push(
+                "onCompanionPreviews",
+                state,
+                delivery_allowed=self._preview_publication_open,
+            )
+
     def _preview_publication_open(self) -> bool:
         return not self._eve_runtime_closed
 
@@ -4584,7 +4669,13 @@ class Api:
         self._stop_fleet_presentation()
         self.shutdown_fleet_sharing()
         try:
-            if not self._preview_runtime.shutdown():
+            if not self._companions.shutdown():
+                # Keep the native owner alive to deliver admitted storage's
+                # promote/discard completion. A later shutdown may retry the join.
+                logger.warning(
+                    "Companion settings are still saving; retaining preview owner"
+                )
+            elif not self._preview_runtime.shutdown():
                 logger.warning("Preview runtime is still stopping")
         except Exception:
             logger.exception("Preview runtime did not stop cleanly")

@@ -578,9 +578,9 @@
     });
   };
 
-  WM.choose = function (title, body, groups, confirmLabel) {
+  WM.choose = function (title, body, groups, confirmLabel, fieldLabel) {
     return new Promise(function (resolve) {
-      enqueue({kind: 'choice', title: title, body: body, label: 'Copy from',
+      enqueue({kind: 'choice', title: title, body: body, label: fieldLabel || 'Copy from',
                groups: groups || [], confirm_label: confirmLabel || 'Choose',
                resolve: resolve});
     });
