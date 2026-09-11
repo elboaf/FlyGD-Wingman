@@ -2024,6 +2024,58 @@ def test_reset_fleet_bar_width_defers_hidden_live_bar_geometry_until_reenable(
     )
 
 
+def test_reset_fleet_bar_width_applies_pending_default_when_ready_arrives_after_reenable(
+    api, monkeypatch
+):
+    from wingman.ui import fleetbar
+
+    _set_resizable_bar(api, outer_width=462)
+    api._state.settings["fleet_bar"]["preferred_content_width"] = 450
+    api._fleetbar_ready = False
+    bar = api._fleetbar_window
+    events = []
+
+    assert api.toggle_fleet_bar(False)["applied"] is True
+    monkeypatch.setattr(
+        fleetbar, "create", lambda *args, **kwargs: pytest.fail("must reuse hidden bar")
+    )
+
+    def resize(width, height):
+        events.append(("resize", width, height))
+        bar.width = width
+        bar.height = height
+        bar.hidden = False
+
+    def show():
+        events.append(("show",))
+        bar.hidden = False
+
+    bar.resize = resize
+    bar.show = show
+
+    result = api.reset_fleet_bar_width()
+
+    assert result == {"applied": True, "persisted": True, "error": None}
+    assert bar.hidden is True
+    assert events == []
+    assert bar.width == 462
+    assert api._fleetbar_applied_outer_width == 512
+
+    assert api.toggle_fleet_bar(True)["applied"] is True
+    assert api._fleetbar_window is bar
+    assert bar.hidden is True
+    assert events == []
+
+    assert api.fleet_bar_ready(PAGE_A) is True
+    assert api._fleetbar_window is bar
+    assert events == [("resize", 512, 90), ("show",)]
+    assert bar.hidden is False
+    assert bar.width == 512
+    assert (
+        fleetbar.content_width_for_outer(bar.width, api._fleetbar_resize_insets) == 500
+    )
+
+
 def test_reset_fleet_bar_page_width_refuses_native_resize_failure(api):
     _set_resizable_bar(api, outer_width=420)
     api._state.settings["fleet_bar"]["preferred_content_width"] = 720

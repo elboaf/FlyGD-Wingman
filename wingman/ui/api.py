@@ -3228,6 +3228,7 @@ class Api:
             if not enabled:
                 return resize_enabled
             try:
+                self._apply_fleetbar_rect_locked(bar)
                 fleetbar.reveal_bar(bar)
                 self._queue_fleet_presentation()
             except Exception:
