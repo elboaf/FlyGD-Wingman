@@ -21,6 +21,7 @@ from .preview import crops as preview_crops
 from .preview import gestures as preview_gestures
 from .preview import layout as preview_layout
 from .preview import roster as preview_roster
+from .wanderer.model import normalize_base_url, normalize_map_identifier
 
 # Sounds that ship. An id present in the UI dropdown but missing here
 # normalises to silence, which is indistinguishable from a broken alert --
@@ -341,6 +342,21 @@ def _fleet_sharing_defaults() -> dict:
     return {"enabled": False}
 
 
+def validated_wanderer(raw) -> dict:
+    """Additive, default-off configuration; credentials never belong in settings."""
+    section = {"enabled": False, "base_url": "", "map_identifier": ""}
+    if not isinstance(raw, dict):
+        return section
+    section["enabled"] = raw.get("enabled") is True
+    for key, normalize in (
+        ("base_url", normalize_base_url),
+        ("map_identifier", normalize_map_identifier),
+    ):
+        with contextlib.suppress(ValueError):
+            section[key] = normalize(raw.get(key))
+    return section
+
+
 DEFAULTS = {
     # unlisted, not private: a private upload nobody can watch defeats the
     # purpose of sharing a fight. This reverses an earlier decision that
@@ -414,6 +430,7 @@ DEFAULTS = {
     "fleet_bar": _fleet_bar_defaults(),
     # Optional sharing is off by default and never implied by pairing.
     "fleet_sharing": _fleet_sharing_defaults(),
+    "wanderer": validated_wanderer(None),
 }
 
 VALID_PRIVACY = {"private", "unlisted", "public"}
@@ -429,6 +446,7 @@ def _fresh_defaults() -> dict:
     data["sig_bar"] = _sig_bar_defaults()
     data["fleet_bar"] = _fleet_bar_defaults()
     data["fleet_sharing"] = _fleet_sharing_defaults()
+    data["wanderer"] = validated_wanderer(None)
     return data
 
 
@@ -930,6 +948,7 @@ def _normalize(data: dict) -> dict:
     data["sig_bar"] = validated_sig_bar(data.get("sig_bar"))
     data["fleet_bar"] = validated_fleet_bar(data.get("fleet_bar"))
     data["fleet_sharing"] = validated_fleet_sharing(data.get("fleet_sharing"))
+    data["wanderer"] = validated_wanderer(data.get("wanderer"))
     return data
 
 
@@ -1044,6 +1063,9 @@ def _save_locked(data: dict, path: Path | None = None) -> None:
     # own _normalize() by calling save() directly.
     payload["fleet_bar"] = validated_fleet_bar(payload.get("fleet_bar"))
     payload["fleet_sharing"] = validated_fleet_sharing(payload.get("fleet_sharing"))
+    # This network opt-in also needs fail-closed direct-save normalization, and
+    # a hand-edited token must never be copied into the ordinary document.
+    payload["wanderer"] = validated_wanderer(payload.get("wanderer"))
     atomicio.write_atomic(path, json.dumps(payload, indent=2), encoding="utf-8")
 
 

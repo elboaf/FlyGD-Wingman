@@ -136,6 +136,7 @@ def test_defaults_are_the_documented_values():
         "fleet_sharing": {
             "enabled": False,
         },
+        "wanderer": {"enabled": False, "base_url": "", "map_identifier": ""},
     }
 
 
