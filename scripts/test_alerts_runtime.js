@@ -408,6 +408,75 @@ test('a health poll overtaking entry hydration cannot strand Add or repaint newe
   assert.doesNotMatch(p.el('custom-alert-health').textContent, /Preferences remain editable/);
 });
 
+function builtinState(extra = {}, alerts = {}) {
+  return Object.assign({previews_enabled: true, running: true, last_error: null,
+    characters: ['Alice'], gamelogs_folder: 'logs',
+    alerts: Object.assign({enabled: true, pve_filter: false, persist_until_selected: false,
+      defaults_version: 1, volume: 37, custom_rules: [], events: {
+        combat: {enabled: true, color: '#ff4d4d', sound: 'obey', pulses: 5, flash_rate: 'fast', cooldown_s: 1},
+        warp_scramble: {enabled: false, color: '#ffd24d', sound: 'none', pulses: 3, flash_rate: 'normal', cooldown_s: 8},
+        decloak: {enabled: false, color: '#4dd2ff', sound: 'none', pulses: 3, flash_rate: 'normal', cooldown_s: 8}
+      }}, alerts)}, extra);
+}
+
+for (const health of ['stopped', 'unreachable']) {
+  test('built-in entry hydrates despite an overtaking ' + health + ' health poll', async () => {
+    // No wm:settings payload: entry must recover a missing startup hydration.
+    const p = page(); p.enter(); p.tick();
+    await p.reply('get_alert_state', health === 'unreachable' ? null : builtinState({
+      running: false, last_error: 'Reader stopped', previews_enabled: false, gamelogs_folder: null
+    }, {enabled: false}), 1);
+    const latestHealth = p.el('alerts-health').textContent;
+    await p.reply('get_alert_state', builtinState());
+    assert.equal(p.el('alert-volume').value, '37');
+    assert.equal(p.el('alert-volume-value').textContent, '37%');
+    assert.equal(p.el('alert-event-combat-sound').value, 'obey');
+    assert.equal(p.el('alert-event-combat-flashes').value, '5');
+    assert.ok(p.el('alert-event-combat-flashes').options.some(o => o.value === '5'));
+    assert.equal(p.el('alert-event-combat-colors').querySelector('input:checked').value, '#ff4d4d');
+    assert.equal(p.el('alerts-health').textContent, latestHealth);
+    if (health === 'stopped') {
+      assert.equal(p.el('alerts-previews-off').hidden, false);
+      assert.equal(p.el('alerts-no-folder').hidden, false);
+      assert.equal(p.el('alerts-depends').hidden, false);
+    }
+    assert.ok(p.calls.every(call => call.method.startsWith('get_')), 'hydration must not write');
+  });
+}
+
+test('built-in health polls leave an in-progress volume and sound edit untouched', async () => {
+  const p = page(); p.enter(); await p.reply('get_alert_state', builtinState());
+  p.edit('alert-volume', '74'); p.choose('alert-event-combat-sound', 'sly');
+  p.tick(); await p.reply('get_alert_state', builtinState({characters: ['Bob']}));
+  assert.equal(p.el('alert-volume').value, '74');
+  assert.equal(p.el('alert-event-combat-sound').value, 'sly');
+  assert.match(p.el('alerts-health').textContent, /Bob/);
+});
+
+for (const outcome of ['success', 'null']) {
+  test('newer built-in controls ' + outcome + ' fences an older entry hydration', async () => {
+    const p = page(); p.enter();
+    p.document.dispatchEvent({type: 'wm:preview-enabled-changed'});
+    await p.reply('get_alert_state', outcome === 'null' ? null : builtinState({}, {volume: 62}), 1);
+    await p.reply('get_alert_state', builtinState());
+    if (outcome === 'success') { assert.equal(p.el('alert-volume').value, '62'); }
+    else {
+      assert.equal(p.el('alert-event-combat-flashes').options.length, 0);
+      assert.match(p.el('alerts-health').textContent, /unknown/);
+    }
+  });
+}
+
+for (const kind of ['section', 'route']) {
+  test('built-in hydration cannot cross a ' + kind + ' view boundary', async () => {
+    const p = page(); p.enter(); p.leave(kind); p.enter();
+    await p.reply('get_alert_state', builtinState());
+    assert.equal(p.el('alert-event-combat-flashes').options.length, 0);
+    await p.reply('get_alert_state', builtinState({}, {volume: 62}));
+    assert.equal(p.el('alert-volume').value, '62');
+  });
+}
+
 test('late removal across reentry schedules an owned read, not a stranded deleted row', async () => {
   const p = await loaded(); p.fire('custom-alert-r1-remove', 'click'); await p.confirm(true);
   p.leave(); p.enter();

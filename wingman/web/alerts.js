@@ -607,6 +607,7 @@
   var disclosure = null;
   var builtinReadSerial = 0;
   var builtinRenderedSerial = 0;
+  var builtinHydratedSerial = 0;
 
   function ownsView(epoch) { return visible && epoch === viewEpoch; }
   function customId(id, suffix) { return 'custom-alert-' + id + '-' + suffix; }
@@ -1137,12 +1138,12 @@
   //      happening in game.
   //   3. Otherwise, the health line above (running + the characters).
   //
-  // `controls` is false on the status poll below: re-applying the stored
+  // read(controls) uses false on the status poll below: re-applying the stored
   // spec to the checkboxes, swatches and selects every two seconds would
   // fight a click whose write is still in flight, snapping the control
   // back to the old value for one frame. The poll is about what the app
   // is DOING; the controls belong to whoever last touched them.
-  function render(state, controls) {
+  function render(state) {
     if (offBanner) {
       offBanner.hidden = !!state.previews_enabled;
     }
@@ -1154,22 +1155,27 @@
     // is what the user just clicked, and a refused or bridge-failed write
     // reverts it. This must describe what the app is actually doing.
     showDepends(!!(state.alerts && state.alerts.enabled));
-    if (controls) {
-      applyAlerts(state.alerts);
-      // Under `controls` with the rest: the two-second status poll must
-      // not drag the thumb back under a hand that is still moving it.
-      applyVolume(state.alerts);
-    }
   }
 
   function read(controls) {
     if (!visible) { return; }
     var epoch = viewEpoch, serial = ++builtinReadSerial;
     WM.send('get_alert_state').then(function (state) {
-      if (!ownsView(epoch) || serial < builtinRenderedSerial) { return; }
-      builtinRenderedSerial = serial;
-      if (!state) { setText(healthLine, 'Could not reach the app. Alert health is unknown.'); return; }
-      render(state, controls);
+      if (!ownsView(epoch)) { return; }
+      // A faster health poll cannot cancel entry hydration, and that delayed
+      // hydration cannot replace newer health or a newer controls response.
+      if (serial >= builtinRenderedSerial) {
+        builtinRenderedSerial = serial;
+        if (state) { render(state); }
+        else { setText(healthLine, 'Could not reach the app. Alert health is unknown.'); }
+      }
+      if (!controls || serial < builtinHydratedSerial) { return; }
+      builtinHydratedSerial = serial;
+      if (state) {
+        applyAlerts(state.alerts);
+        // Health-only polls must not drag the thumb under a moving hand.
+        applyVolume(state.alerts);
+      }
     });
   }
 
