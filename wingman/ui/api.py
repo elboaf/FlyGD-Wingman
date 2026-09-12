@@ -4532,8 +4532,10 @@ class Api:
         # Share the master reservation with explicit layout edits: an offline
         # write must finish before another bridge call can re-enable EVE or
         # read its tentative layout. Never hold the lock across I/O/callbacks.
-        with self._preview_mode_lock:
-            available = not self._preview_mode_changing
+        # Final closure refuses new edits, not transactions already admitted.
+        # Admission shares the close fence; neither lock covers their writes.
+        with self._eve_runtime_lock, self._preview_mode_lock:
+            available = not self._eve_runtime_closed and not self._preview_mode_changing
             if available:
                 self._preview_mode_changing = True
         try:
@@ -5522,25 +5524,30 @@ class Api:
         # pump FIFO. Do not acknowledge a direct write that RESET would erase.
         if host is not None and host.layout_commands_pending:
             return self._field_refused("Preview layout changes are still pending.")
-        layouts = self._state.settings.get("preview", {}).get("layouts") or {}
-        if name not in layouts:
+        entries = (
+            host.layout_entries()
+            if host is not None
+            else preview_layout.deserialize(
+                self._state.settings.get("preview", {}).get("layouts")
+            )
+        )
+        previous = entries.get(name)
+        if previous is None:
             return self._field_refused(
                 "Start this client once, or drag its preview, before setting a size."
             )
-        entry = dict(layouts[name])
-        entry["w"], entry["h"] = width, height
-        result = self._write_preview_setting(("layouts", name), entry)
-        if result["applied"] and host is not None:
-            host.sync_layout(
-                name,
-                preview_layout.Entry(
-                    preview_geometry.Rect(
-                        int(entry["x"]), int(entry["y"]), width, height
-                    ),
-                    bool(entry.get("locked", False)),
-                ),
-            )
-        return result
+        entry = preview_layout.Entry(
+            previous.rect._replace(w=width, h=height), previous.locked
+        )
+        if host is not None:
+            # An empty command FIFO does not retire the debounce writer. The
+            # store supersedes its pending delta and serializes an in-flight
+            # write before this explicit commit, just as it does for Copy.
+            if not host.replace_layout(name, entry):
+                return self._field_refused("Could not save this to settings.")
+            return self._field_ok()
+        raw = preview_layout.serialize({name: entry})[name]
+        return self._write_preview_setting(("layouts", name), raw)
 
     @staticmethod
     def _usable_preview_character(name) -> bool:

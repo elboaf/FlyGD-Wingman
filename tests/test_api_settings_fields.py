@@ -676,8 +676,11 @@ class _FakeSizeHost:
         self.copies.append((target, source))
         return self.copy_result or ("ok" if source in self.layouts else "missing")
 
-    def sync_layout(self, name, entry):
+    def replace_layout(self, name, entry):
+        if not self.store.replace(name, entry):
+            return False
         self.layouts[name] = entry
+        return True
 
     def clear_layout_entries(self):
         self.layouts = {}
@@ -745,11 +748,20 @@ def test_offline_size_write_synchronizes_the_dormant_host(monkeypatch, tmp_path)
         "w": 320,
         "h": 210,
     }
-    host = _FakeSizeHost(is_running=False)
+    from wingman.preview.store import LayoutStore
+
+    host = _FakeSizeHost(
+        is_running=False,
+        layouts=api_mod.preview_layout.deserialize(
+            api._state.settings["preview"]["layouts"]
+        ),
+    )
+    host.store = LayoutStore(lambda: api_mod.settings_mod.update(api._state.settings))
     api._preview_host = host
 
     assert api.set_preview_size("Alice", 640, 392)["applied"] is True
     assert host.layouts["Alice"].rect == api_mod.preview_geometry.Rect(5, 6, 640, 392)
+    assert api._state.settings["preview"]["layouts"]["Alice"]["w"] == 640
 
 
 def test_offline_reset_clears_the_dormant_host_cache(monkeypatch, tmp_path):

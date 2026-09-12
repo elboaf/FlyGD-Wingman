@@ -375,7 +375,7 @@ class PreviewHost:
         # flush_layouts above being called by _teardown: the store owns
         # persistence, the host only tells it when to act.
         self._clear_layouts = clear_layouts
-        # Synchronous per-key persistence for an explicit Copy operation.
+        # Synchronous per-key persistence for explicit Copy and offline Size.
         # LayoutStore owns pending-delta ordering; the host changes its cache
         # and windows only after this reports that the write landed.
         self._replace_layout = replace_layout
@@ -1640,6 +1640,23 @@ class PreviewHost:
             saved = dict(self._saved)
             saved[stable_key] = entry
             self._saved = saved
+
+    def replace_layout(self, stable_key: str, entry) -> bool:
+        """Commit an offline edit through the store without moving a window."""
+        if self._replace_layout is None:
+            return False
+        with self._lock:
+            previous = self._saved.get(stable_key)
+        if not self._replace_layout(stable_key, entry):
+            return False
+        with self._lock:
+            # Like Copy, a later drag owns its own delta and cache entry.
+            # Never hold the host lock while the store waits for disk.
+            if self._saved.get(stable_key) == previous:
+                saved = dict(self._saved)
+                saved[stable_key] = entry
+                self._saved = saved
+        return True
 
     def clear_layout_entries(self) -> None:
         """Mirror a layout clear already persisted by an offline API path."""
