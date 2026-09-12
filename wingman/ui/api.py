@@ -64,6 +64,7 @@ from ..preview import host as preview_host_mod
 from ..preview import layout as preview_layout
 from ..preview import window as preview_window
 from ..preview.companioncontroller import CompanionController, CompanionPorts
+from ..preview.labelsize import LABEL_SIZE_PRESETS
 from ..preview.runtime import PreviewRuntime
 from ..telemetry.model import CustomMatcherHealth
 from ..upload.controller import (
@@ -5353,6 +5354,14 @@ class Api:
             logger.exception("Could not persist preview setting %s", ".".join(path))
             return self._field_refused("Could not save this to settings.")
         return self._field_ok()
+
+    def set_preview_label_size(self, value) -> dict:
+        if not isinstance(value, str) or value not in LABEL_SIZE_PRESETS:
+            return self._field_refused("Choose a listed label size.")
+        result = self._write_preview_setting(("label_size",), value)
+        if result["applied"] and result["persisted"] and self._preview_host is not None:
+            self._preview_host.restyle()
+        return result
 
     def set_preview_show_labels(self, enabled) -> dict:
         """Persist whether preview thumbnails show their character-name

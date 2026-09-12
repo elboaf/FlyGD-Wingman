@@ -10,6 +10,8 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../wingman/web/settings.js'), 'utf8');
+const {createDOM} = require('../tests/fixtures/screenshot_dom.cjs');
+const {document: markup} = createDOM(JSON.parse(fs.readFileSync(0, 'utf8')));
 const tests = [];
 function test(name, run) { tests.push({name, run}); }
 function turn() { return new Promise(resolve => setImmediate(resolve)); }
@@ -50,11 +52,16 @@ function page(hydrate = true, fightrecorder = false) {
     'msg-general', 'msg-about', 'msg-uploads', 'msg-notify', 'msg-recdir',
     'msg-gamelogs', 'msg-discord', 'btn-auth', 'tos-link', 'btn-update-check',
     'btn-update-download', 'btn-update-install', 'restore-preview-positions',
-    'restore-preview-positions-status'
+    'restore-preview-positions-status', 'preview-label-size', 'preview-label-size-status'
   ];
   if (fightrecorder) ids.push('fr-status', 'btn-fr-check', 'btn-fr-update', 'msg-fightrecorder',
     'preview-minimize-inactive', 'preview-minimize-inactive-status', 'sigbar-enabled', 'sigbar-enabled-status');
   const elements = Object.fromEntries(ids.map(id => [id, new Element(id)]));
+  const labelSize = markup.getElementById('preview-label-size');
+  // Only this select needs options in the focused seam. Use the actual markup
+  // supplied by pytest, not a second hand-kept copy of the preset table.
+  elements['preview-label-size'].options = labelSize ? labelSize.options : [];
+  if (labelSize) elements['preview-label-size'].value = labelSize.value;
   const notify = ['toast', 'popup'].map(value => {
     const input = new Element('notify-' + value);
     input.name = 'notify';
@@ -156,6 +163,97 @@ function page(hydrate = true, fightrecorder = false) {
   if (hydrate) api.hydrate();
   return api;
 }
+
+test('label size has production markup and a registered change owner', async () => {
+  assert.ok(markup.getElementById('preview-label-size'), 'label-size select exists');
+  assert.ok(markup.getElementById('preview-label-size-status'), 'label-size status exists');
+  const p = page();
+  assert.equal((p.el('preview-label-size').listeners.change || []).length, 1);
+});
+
+for (const stored of ['large', undefined]) {
+  test('first label-size hydration overrides uncommitted focused interaction: ' + stored, async () => {
+    const p = page(false);
+    p.focus('preview-label-size');
+    await p.submit('preview-label-size', 'extra_large');
+    assert.deepEqual(p.calls, [], 'nothing writes before hydration');
+    p.hydrate({preview: {label_size: stored}});
+    assert.equal(p.el('preview-label-size').value, stored || 'standard');
+    await p.submit('preview-label-size', 'large');
+    await p.reply('set_preview_label_size', accepted, ['large']);
+  });
+}
+
+test('label size serializes and rolls back to the acknowledged key', async () => {
+  const p = page();
+  await p.submit('preview-label-size', 'large');
+  await p.submit('preview-label-size', 'extra_large');
+  assert.equal(p.calls.filter(c => c.method === 'set_preview_label_size').length, 1);
+  await p.reply('set_preview_label_size', accepted, ['large']);
+  assert.equal(p.el('preview-label-size').value, 'extra_large');
+  await p.reply('set_preview_label_size', refused, ['extra_large']);
+  assert.equal(p.el('preview-label-size').value, 'large');
+  assert.ok(p.el('preview-label-size-status').textContent);
+});
+
+for (const outcome of [refused, null]) {
+  test('focused label-size refusal restores acknowledgement despite stale hydration: ' + JSON.stringify(outcome), async () => {
+    const p = page();
+    p.focus('preview-label-size');
+    await p.submit('preview-label-size', 'large');
+    await p.reply('set_preview_label_size', accepted);
+    await p.submit('preview-label-size', 'extra_large');
+    p.hydrate({preview: {label_size: 'standard'}});
+    assert.equal(p.el('preview-label-size').value, 'extra_large');
+    await p.reply('set_preview_label_size', outcome);
+    assert.equal(p.el('preview-label-size').value, 'large');
+    assert.ok(p.el('preview-label-size-status').textContent);
+  });
+}
+
+for (const outcome of [accepted, refused, null]) {
+  test('older label-size reply preserves a newer unsubmitted draft: ' + JSON.stringify(outcome), async () => {
+    const p = page();
+    await p.submit('preview-label-size', 'large');
+    p.edit('preview-label-size', 'extra_large');
+    await p.reply('set_preview_label_size', outcome);
+    assert.equal(p.el('preview-label-size').value, 'extra_large');
+  });
+}
+
+test('label-size retry clears only its own error and retains a newer draft', async () => {
+  const p = page();
+  await p.submit('preview-label-size', 'large');
+  await p.reply('set_preview_label_size', refused);
+  await p.submit('f-category', 'invalid');
+  await p.reply('set_category', refused);
+  await p.submit('preview-label-size', 'large');
+  p.edit('preview-label-size', 'extra_large');
+  await p.reply('set_preview_label_size', accepted);
+  assert.equal(p.el('preview-label-size').value, 'extra_large');
+  assert.equal(p.el('preview-label-size-status').textContent, '');
+  assert.equal(p.el('preview-label-size-status').hidden, true);
+  assert.ok(p.el('msg-uploads').textContent);
+});
+
+test('an unrelated success does not clear the label-size error', async () => {
+  const p = page();
+  await p.submit('preview-label-size', 'large');
+  await p.reply('set_preview_label_size', refused);
+  await p.submit('f-category', '22');
+  await p.reply('set_category', accepted);
+  assert.ok(p.el('preview-label-size-status').textContent);
+});
+
+test('label size stays editable with previews and labels off', async () => {
+  const p = page();
+  p.hydrate({preview: {enabled: false, show_labels: false, label_size: 'extra_large'}});
+  assert.equal(p.el('preview-label-size').value, 'extra_large');
+  assert.equal(p.el('preview-label-size').disabled, false);
+  await p.submit('preview-label-size', 'large');
+  await p.reply('set_preview_label_size', accepted, ['large']);
+  assert.equal(p.el('preview-label-size').value, 'large');
+});
 
 for (const latest_tag of ['', 'v1.2.3']) {
   test('FightRecorder unknown currency does not claim a verified update: ' + latest_tag, async () => {

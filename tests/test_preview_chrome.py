@@ -6,7 +6,10 @@ CI on Linux, where no Windows drawing API exists.
 
 from pathlib import Path
 
+import pytest
+
 from wingman.preview import chrome, geometry
+from wingman.preview.labelsize import DEFAULT_LABEL_SIZE, LABEL_SIZE_PRESETS
 
 CYAN = (0, 200, 220, 255)
 
@@ -278,7 +281,92 @@ def test_secondary_text_contrast_over_bright_video_is_at_least_aa():
         assert (luminance(foreground[:3]) + 0.05) / (luminance(worst_bg) + 0.05) >= 4.5
 
 
-def test_too_narrow_pill_is_omitted_instead_of_overflowing():
+@pytest.mark.parametrize("font_size", [p[1] for p in LABEL_SIZE_PRESETS.values()])
+def test_too_narrow_pill_is_omitted_instead_of_overflowing(font_size):
     for width in (0, 8, 16, 20):
-        image = chrome.render_label("Pilot", width, secondary="HOME")
+        image = chrome.render_label("Pilot", width, font_size, "HOME", max_h=78)
         assert image is None or image.width <= width
+
+
+def test_presets_keep_default_size_and_use_bundled_inter():
+    assert LABEL_SIZE_PRESETS[DEFAULT_LABEL_SIZE][1] == chrome.LABEL_FONT == 17
+    assert chrome.FONT_PATH.is_file()
+    for _, size in LABEL_SIZE_PRESETS.values():
+        for requested in (size, size - 3):
+            font = chrome._font(requested)
+            assert font.getname() == ("Inter", "Regular")
+            assert font.size == requested
+
+
+@pytest.mark.parametrize("font_size", [p[1] for p in LABEL_SIZE_PRESETS.values()])
+@pytest.mark.parametrize("inset", [2, 6])
+def test_label_presets_fit_the_supported_minimum(font_size, inset):
+    from wingman.preview.window import MIN_SIZE
+
+    max_w, max_h = (dimension - 2 * inset for dimension in MIN_SIZE)
+    image = chrome.render_label("W" * 60, max_w, font_size, "HOME", max_h=max_h)
+    assert image is not None
+    assert image.width <= max_w and image.height <= max_h
+    assert image.height == 2 * font_size + 13
+    assert (
+        chrome.label_size("W" * 60, max_w, font_size, "HOME", max_h=max_h) == image.size
+    )
+
+
+@pytest.mark.parametrize("font_size", [p[1] for p in LABEL_SIZE_PRESETS.values()])
+@pytest.mark.parametrize("inset", [2, 6])
+def test_presets_draw_independent_lines_at_requested_sizes(
+    font_size, inset, monkeypatch
+):
+    from PIL import ImageDraw
+
+    drawn = []
+    original = ImageDraw.ImageDraw.text
+
+    def record(self, xy, text, **kwargs):
+        drawn.append((text, kwargs["font"].size))
+        return original(self, xy, text, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record)
+    width = 120 - 2 * inset
+    for primary, secondary in (("W" * 60, "HOME"), ("Pilot", "W" * 60)):
+        drawn.clear()
+        image = chrome.render_label(primary, width, font_size, secondary, max_h=78)
+        assert image.width <= width
+        assert [size for text, size in drawn] == [font_size, font_size - 3]
+        assert (
+            drawn[0][0].endswith("…") if len(primary) == 60 else drawn[0][0] == primary
+        )
+        assert (
+            drawn[1][0].endswith("…")
+            if len(secondary) == 60
+            else drawn[1][0] == secondary
+        )
+    one = chrome.render_label("Pilot", width, font_size, max_h=78)
+    blank = chrome.render_label("Pilot", width, font_size, "", max_h=78)
+    assert blank.size == one.size and blank.tobytes() == one.tobytes()
+    for primary in ("", None):
+        assert chrome.render_label(primary, width, font_size, "HOME", max_h=78) is None
+
+
+@pytest.mark.parametrize("font_size", [p[1] for p in LABEL_SIZE_PRESETS.values()])
+def test_height_budget_keeps_primary_before_secondary(font_size):
+    full = 2 * font_size + 13
+    primary = font_size + 14
+    assert chrome.label_layout("Pilot", 116, font_size, "HOME", max_h=full)[2] == "HOME"
+    one = chrome.label_layout("Pilot", 116, font_size, "HOME", max_h=full - 1)
+    assert one == chrome.label_layout("Pilot", 116, font_size, max_h=full - 1)
+    assert one[0][1] == primary
+    assert chrome.label_size("Pilot", 116, font_size, "HOME", max_h=primary - 1) is None
+    assert (
+        chrome.render_label("Pilot", 116, font_size, "HOME", max_h=primary - 1) is None
+    )
+    assert chrome.render_label("Pilot", 116, font_size, max_h=0) is None
+
+
+@pytest.mark.parametrize("secondary", [None, "HOME", "W" * 60])
+def test_default_height_budget_does_not_change_fitting_pixels(secondary):
+    legacy = chrome.render_label("Pilot", 108, secondary=secondary)
+    bounded = chrome.render_label("Pilot", 108, secondary=secondary, max_h=78)
+    assert bounded.size == legacy.size
+    assert bounded.tobytes() == legacy.tobytes()
