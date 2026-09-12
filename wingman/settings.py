@@ -17,6 +17,7 @@ from . import atomicio, bookmarks, paths
 from .alerts import custom as alert_custom
 from .alerts import patterns as alert_patterns
 from .alerts import state as alert_state
+from .preview import companions as preview_companions
 from .preview import crops as preview_crops
 from .preview import gestures as preview_gestures
 from .preview import layout as preview_layout
@@ -401,6 +402,7 @@ DEFAULTS = {
     # Same reasoning as eve_bookmarks above: built by _preview_defaults()
     # so callers never share one nested dict.
     "preview": _preview_defaults(),
+    "companion_previews": {"enabled": False, "definitions": []},
     # Same reasoning as eve_bookmarks and preview above: built by
     # _eve_settings_defaults() so callers never share one nested dict.
     "eve_settings": _eve_settings_defaults(),
@@ -425,11 +427,23 @@ def _fresh_defaults() -> dict:
     data = dict(DEFAULTS)
     data["eve_bookmarks"] = _eve_defaults()
     data["preview"] = _preview_defaults()
+    data["companion_previews"] = validated_companion_previews(None)
     data["eve_settings"] = _eve_settings_defaults()
     data["sig_bar"] = _sig_bar_defaults()
     data["fleet_bar"] = _fleet_bar_defaults()
     data["fleet_sharing"] = _fleet_sharing_defaults()
     return data
+
+
+def validated_companion_previews(raw) -> dict:
+    """Independent, default-off companion authority; no character migration."""
+    raw = raw if isinstance(raw, dict) else {}
+    return {
+        "enabled": raw.get("enabled") is True,
+        "definitions": preview_companions.serialize_definitions(
+            preview_companions.validate_definitions(raw.get("definitions"))
+        ),
+    }
 
 
 def validated_preview(raw) -> dict:
@@ -926,6 +940,9 @@ def _normalize(data: dict) -> dict:
             data[key] = ""
     data["eve_bookmarks"] = validated_eve(data.get("eve_bookmarks"))
     data["preview"] = validated_preview(data.get("preview"))
+    data["companion_previews"] = validated_companion_previews(
+        data.get("companion_previews")
+    )
     data["eve_settings"] = validated_eve_settings(data.get("eve_settings"))
     data["sig_bar"] = validated_sig_bar(data.get("sig_bar"))
     data["fleet_bar"] = validated_fleet_bar(data.get("fleet_bar"))

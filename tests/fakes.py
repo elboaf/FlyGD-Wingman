@@ -201,9 +201,9 @@ def record_pushes(api):
     sent = []
     real = api._push
 
-    def spy(handler, payload):
+    def spy(handler, payload, **kwargs):
         sent.append((handler, payload))
-        real(handler, payload)
+        real(handler, payload, **kwargs)
 
     api._push = spy
     return sent

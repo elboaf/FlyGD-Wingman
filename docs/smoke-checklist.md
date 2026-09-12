@@ -15,6 +15,33 @@ is the only verification any of the rest gets.**
 
 Run on Windows against a real install before each release.
 
+## Companion previews
+
+Use the developer's normal Windows scaling and monitor arrangement. This is one
+practical feature check, not a hardware/DPI/resource qualification matrix. Record
+results and any applications DWM cannot capture in
+`docs/companion-previews-implementation-notes.md`.
+
+- [ ] In Settings → Companions, add an ordinary whole-window companion.
+- [ ] Add a selected-region companion and confirm the intended region is shown.
+- [ ] Move both with left-drag and resize both with right-drag. Width and height
+      change independently; neither whole nor region mode forces an aspect ratio.
+- [ ] Choose a source with a long title. The compact chooser must remain narrow;
+      the selected window's full title remains readable below its dropdown.
+- [ ] Hide EVE tools in General. Companions stays accessible in the Settings rail;
+      its controls do not require visiting or enabling EVE previews.
+- [ ] Click each preview and confirm its own source activates.
+- [ ] Restart a source application. Confirm automatic rebinding or an honest
+      Waiting for window / Needs selection state, never an unrelated source.
+- [ ] Restart Wingman and confirm saved enabled companions return.
+- [ ] Toggle EVE previews and companion previews independently; only the selected
+      family closes. Saved definitions remain while companions are off.
+- [ ] Confirm EVE previews, character crops, and built-in/custom alerts still work.
+- [ ] Confirm source-window positions and sizes have not changed through preview
+      creation, dragging, resizing, region selection, or removal.
+- [ ] Remove the test companions and Quit through the tray. Confirm no orphan
+      preview/picker windows, stuck hotkeys, or lingering Wingman process.
+
 ## Operational legibility and review clarity
 
 Check at 840×625 CSS pixels and at a wider window. Browser checks supplement,

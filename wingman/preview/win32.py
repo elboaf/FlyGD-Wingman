@@ -123,6 +123,11 @@ WM_APP_ROSTER = WM_APP + 9
 WM_APP_CROP_COMMAND = WM_APP + 10
 WM_APP_CROP_COMPLETE = WM_APP + 11
 WM_APP_CROP_STOP_READY = WM_APP + 12
+WM_APP_FAMILIES = WM_APP + 13
+# Commands wake the bounded companion mailbox; completion resumes family cleanup
+# after the controller's admitted persistence has drained.
+WM_APP_COMPANION_COMMAND = WM_APP + 14
+WM_APP_COMPANION_COMPLETE = WM_APP + 15
 
 # --- Crop context menu --------------------------------------------------
 MF_STRING = 0x0000
@@ -281,6 +286,11 @@ def winevent_proc_type():
 
 
 @lru_cache(maxsize=1)
+def enum_windows_proc_type():
+    return ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, LPARAM)
+
+
+@lru_cache(maxsize=1)
 def monitor_enum_proc_type():
     return ctypes.WINFUNCTYPE(
         wintypes.BOOL,
@@ -319,6 +329,7 @@ def bind() -> Libs:
     wndproc_type()
     WINEVENTPROC = winevent_proc_type()
     MONITORENUMPROC = monitor_enum_proc_type()
+    ENUMWINDOWSPROC = enum_windows_proc_type()
     HDC, HWND, HANDLE = wintypes.HDC, wintypes.HWND, wintypes.HANDLE
     UINT, DWORD, BOOL = wintypes.UINT, wintypes.DWORD, wintypes.BOOL
 
@@ -536,6 +547,34 @@ def bind() -> Libs:
             [HANDLE, ctypes.POINTER(DWM_THUMBNAIL_PROPERTIES)],
         ),
         (dwmapi, "DwmIsCompositionEnabled", ctypes.c_long, [ctypes.POINTER(BOOL)]),
+        # --- read-only foreign source inspection; never SendMessage/WM_GETTEXT
+        (user32, "EnumWindows", BOOL, [ENUMWINDOWSPROC, LPARAM]),
+        (user32, "IsWindow", BOOL, [HWND]),
+        (user32, "IsWindowVisible", BOOL, [HWND]),
+        (user32, "IsHungAppWindow", BOOL, [HWND]),
+        (user32, "GetWindowTextW", ctypes.c_int, [HWND, wintypes.LPWSTR, ctypes.c_int]),
+        (user32, "GetClassNameW", ctypes.c_int, [HWND, wintypes.LPWSTR, ctypes.c_int]),
+        (user32, "GetWindowDisplayAffinity", BOOL, [HWND, ctypes.POINTER(DWORD)]),
+        (
+            dwmapi,
+            "DwmGetWindowAttribute",
+            ctypes.c_long,
+            [HWND, DWORD, ctypes.c_void_p, DWORD],
+        ),
+        (kernel32, "OpenProcess", HANDLE, [DWORD, BOOL, DWORD]),
+        (
+            kernel32,
+            "QueryFullProcessImageNameW",
+            BOOL,
+            [HANDLE, DWORD, wintypes.LPWSTR, ctypes.POINTER(DWORD)],
+        ),
+        (
+            kernel32,
+            "GetProcessTimes",
+            BOOL,
+            [HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4,
+        ),
+        (kernel32, "CloseHandle", BOOL, [HANDLE]),
         # --- kernel32
         (kernel32, "GetModuleHandleW", wintypes.HMODULE, [wintypes.LPCWSTR]),
         (kernel32, "GetCurrentThreadId", DWORD, []),

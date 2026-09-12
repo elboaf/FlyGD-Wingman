@@ -119,6 +119,21 @@ follows the same rule: consolidating, organizing and copying doctrine fits is a
 focused task with persistent output, not setup for something that happens on
 another screen.
 
+### Companion previews keep auxiliary windows in view
+
+Settings › Companions configures explicitly selected non-EVE windows, either
+whole or as a selected region. Companion previews are independent of EVE previews:
+either family can stay on while the other is off. Their saved setting defaults
+off; at most eight companions can be enabled. Wingman never mirrors every window
+from an application automatically and never guesses between several matches.
+
+Companions remains accessible with EVE tools hidden. Moving or freely resizing a
+companion changes only Wingman's preview; it does not force a source aspect ratio.
+Clicking it may
+restore and activate its verified source, but never changes source geometry,
+styles, or input. Companions have no alerts or cycle keybinds. This is another
+configuration surface, not a destination or a generalized automation system.
+
 ### Alerts are part of previews, not a fourth primary
 
 Gamelog alerts pulse a client's preview when combat starts, your warp is

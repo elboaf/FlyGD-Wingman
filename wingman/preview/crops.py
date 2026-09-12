@@ -63,7 +63,7 @@ def _integer_rect(rect: Rect) -> bool:
     return all(type(v) is int for v in rect)
 
 
-def _fractions(x, y, w, h) -> tuple[float, float, float, float]:
+def normalized_fractions(x, y, w, h) -> tuple[float, float, float, float]:
     if any(
         type(v) not in (int, float) or (type(v) is float and not math.isfinite(v))
         for v in (x, y, w, h)
@@ -95,7 +95,7 @@ def source_from_pixels(rect: Rect, size: tuple[int, int]) -> CropSource:
         )
     # Division can put an exact far edge one ULP beyond 1 - origin. Use
     # the persistence normalization now so a successful save cannot drift it.
-    fractions = _fractions(rect.x / w, rect.y / h, rect.w / w, rect.h / h)
+    fractions = normalized_fractions(rect.x / w, rect.y / h, rect.w / w, rect.h / h)
     return CropSource(*fractions, w, h, rect)
 
 
@@ -104,7 +104,7 @@ def source_to_pixels(source: CropSource, size: tuple[int, int]) -> Rect | None:
     if not _valid_size(size):
         return None
     try:
-        x, y, sw, sh = _fractions(source.x, source.y, source.w, source.h)
+        x, y, sw, sh = normalized_fractions(source.x, source.y, source.w, source.h)
     except ValueError:
         return None
     w, h = size
@@ -180,7 +180,9 @@ def deserialize(raw: object) -> dict[str, CropDefinition]:
         if not isinstance(source, dict) or not isinstance(window, dict):
             continue
         try:
-            fractions = _fractions(source["x"], source["y"], source["w"], source["h"])
+            fractions = normalized_fractions(
+                source["x"], source["y"], source["w"], source["h"]
+            )
             original_size = (source["original_client_w"], source["original_client_h"])
             pixels = source["original_px"]
             if not isinstance(pixels, list) or len(pixels) != 4:

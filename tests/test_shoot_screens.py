@@ -42,7 +42,7 @@ def test_gate_on_shoots_every_screen():
     assert skipped == []
 
 
-def test_gate_off_shoots_only_the_four_reachable_screens():
+def test_gate_off_shoots_only_the_reachable_screens():
     """With EVE undetected the app hides every EVE-gated screen.
 
     Photographing them anyway would produce a set showing screens the user
@@ -53,6 +53,7 @@ def test_gate_off_shoots_only_the_four_reachable_screens():
     assert [s.key for s in to_shoot] == [
         "uploader",
         "settings-uploading",
+        "settings-companions",
         "settings-general",
         "dialog",
     ]

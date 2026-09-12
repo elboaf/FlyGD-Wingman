@@ -391,6 +391,24 @@
   var dlgInput = WM.el('dlg-input');
   var dlgSelect = WM.el('dlg-select');
   var dlgSelectLabel = WM.el('dlg-select-label');
+  var dlgSelectDetail = WM.el('dlg-select-detail');
+
+  function compactCaption(label) {
+    // Native popups size to option text, ignoring the select's CSS width.
+    // This is a presentation budget, not a source-title validation limit.
+    var points = label.match(/[\uD800-\uDBFF][\uDC00-\uDFFF]|[\s\S]/g) || [];
+    return points.length > 44 ? points.slice(0, 43).join('') + '…' : label;
+  }
+
+  function showChoiceDetail() {
+    var compact = active && active.kind === 'choice' && active.compact;
+    var selected = compact && dlgSelect.options[dlgSelect.selectedIndex];
+    dlgSelectDetail.hidden = !selected;
+    dlgSelectDetail.textContent = selected ? selected.title : '';
+    if (selected) dlgSelect.setAttribute('aria-describedby', 'dlg-select-detail');
+    else dlgSelect.removeAttribute('aria-describedby');
+  }
+  dlgSelect.addEventListener('change', showChoiceDetail);
 
   // A worker may disable its trigger before its confirmation reaches the
   // page. Remember focus while the page still owns it, then fall back to an
@@ -409,6 +427,7 @@
     var isConfirm = item.kind === 'confirm';
     var isPrompt = item.kind === 'prompt';
     var isChoice = item.kind === 'choice';
+    if (isChoice && item.compact) dlg.classList.add('compact-choice');
     dlgInput.hidden = !isPrompt;
     if (isPrompt) { dlgInput.value = item.value || ''; }
     dlgSelect.hidden = !isChoice;
@@ -422,12 +441,15 @@
         (group.options || []).forEach(function (option) {
           var node = document.createElement('option');
           node.value = option.value;
-          node.textContent = option.label || option.value;
+          var label = option.label || option.value;
+          node.textContent = item.compact ? compactCaption(label) : label;
+          if (item.compact) node.title = label;
           optgroup.appendChild(node);
         });
         if (optgroup.children.length) { dlgSelect.appendChild(optgroup); }
       });
     }
+    showChoiceDetail();
     // Answerable dialogs need the same explicit way out.
     btnCancel.hidden = !(isConfirm || isPrompt || isChoice);
     btnOk.textContent = isConfirm
@@ -578,11 +600,11 @@
     });
   };
 
-  WM.choose = function (title, body, groups, confirmLabel) {
+  WM.choose = function (title, body, groups, confirmLabel, fieldLabel, opts) {
     return new Promise(function (resolve) {
-      enqueue({kind: 'choice', title: title, body: body, label: 'Copy from',
+      enqueue({kind: 'choice', title: title, body: body, label: fieldLabel || 'Copy from',
                groups: groups || [], confirm_label: confirmLabel || 'Choose',
-               resolve: resolve});
+               compact: !!(opts && opts.compact), resolve: resolve});
     });
   };
 

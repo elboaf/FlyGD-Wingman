@@ -2458,6 +2458,143 @@
     return Promise.resolve(full);
   };
 
+  // Companions are browser-only fixtures. Region completion below simulates
+  // the native picker result, not a claim that a browser captured a window.
+  var _devCompanionId = 0, _devCompanionOperation = 0;
+  var _devCompanionScenario = (window.location.search.match(/[?&]companions=([^&]+)/) || [,'empty'])[1];
+  var _devCompanionState = {revision: 1, available: true, enabled: false,
+    runtime: {revision: 1, pump_epoch: 0, eve_epoch: 0, companion_epoch: 0,
+      pump: 'stopped', eve: 'stopped', companions: 'stopped', selection_pending: false, error: null},
+    limits: {definitions: 32, enabled: 8, live_available: 8, reason: null,
+      label_max_chars: 80, title_hint_max_chars: 512, last_title_max_chars: 512,
+      window_class_max_chars: 256, executable_path_max_chars: 32768},
+    rows: [], operations: []};
+  var _devCompanionDefaultSources = [
+    {candidate_token: 'dev-mapper', application: 'mapper.exe', title: 'Chain map — Home'},
+    {candidate_token: 'dev-notes', application: 'notepad.exe', title: 'Fleet notes'},
+    {candidate_token: 'dev-browser', application: 'browser.exe', title: 'Tripwire — Fleet map'}
+  ];
+  var _devCompanionSources = _devCompanionDefaultSources;
+  function _devCompanionCopy() { return JSON.parse(JSON.stringify(_devCompanionState)); }
+  function _devCompanionPublish() {
+    _devCompanionState.revision += 1;
+    _devCompanionState.rows.forEach(function (row) {
+      row.status = !row.enabled ? 'disabled' : !_devCompanionState.enabled ? 'off' :
+        (_devCompanionScenario === 'waiting' ? 'waiting' : 'live');
+    });
+    window.onCompanionPreviews(_devCompanionCopy());
+  }
+  function _devCompanionDefinition(source, mode, label) {
+    _devCompanionId += 1;
+    var id = '00000000000040008000' + ('000000000000' + _devCompanionId.toString(16)).slice(-12);
+    var row = {version: 1, id: id, label: label, enabled: true, mode: mode,
+      source: {executable_path: 'c:\\demo\\' + source.application, executable_name: source.application,
+        window_class: 'DemoSource', title_hint: source.title, title_mode: 'exact', last_title: source.title},
+      window: {x: 40, y: 40, w: 320, h: 200}, generation: 1, binding_revision: 1,
+      status: 'off', error: null, pending_operation_id: null};
+    if (mode === 'region') row.region = {x: 0.1, y: 0.1, w: 0.5, h: 0.4,
+      original_client_w: 1280, original_client_h: 720};
+    return row;
+  }
+  function _devCompanionRequest(id, generation, apply) {
+    var row = _devCompanionState.rows.filter(function (item) { return item.id === id; })[0];
+    if (id && (!row || row.generation !== generation)) return Promise.resolve({pending: false,
+      operation_id: null, id: id, applied: false, persisted: false,
+      error: 'Companion changed. Try again.', revision: _devCompanionState.revision});
+    var receipt = {operation_id: ++_devCompanionOperation, id: id, pending: true,
+      applied: false, persisted: false, error: null, revision: _devCompanionState.revision};
+    _devCompanionState.operations.push(receipt);
+    if (row) row.pending_operation_id = receipt.operation_id;
+    _devCompanionPublish();
+    var pending = JSON.parse(JSON.stringify(receipt));
+    setTimeout(function () {
+      if (_devCompanionScenario === 'failed-save') receipt.error = 'Could not save companion settings.';
+      else {
+        apply(row, receipt);
+        receipt.applied = !receipt.error; receipt.persisted = receipt.applied && !receipt.sources;
+        if (row && receipt.applied) row.generation += 1;
+      }
+      if (row) row.pending_operation_id = null;
+      receipt.pending = false; receipt.revision = _devCompanionState.revision + 1;
+      _devCompanionState.operations = _devCompanionState.operations.slice(-32);
+      _devCompanionPublish();
+    }, 250);
+    return Promise.resolve(pending);
+  }
+  api.companion_previews_state = function () { return Promise.resolve(_devCompanionCopy()); };
+  api.companion_previews_sources = function () {
+    return _devCompanionRequest(null, null, function (row, receipt) {
+      if (_devCompanionScenario === 'source-error') { receipt.error = 'Source inspection failed. Try again.'; return; }
+      receipt.sources = _devCompanionScenario === 'no-sources' ? [] :
+        _devCompanionScenario === 'one-source' ? _devCompanionSources.slice(0, 1) : _devCompanionSources;
+    });
+  };
+  api.set_companion_previews_enabled = function (enabled) {
+    return _devCompanionRequest(null, null, function () { _devCompanionState.enabled = enabled; });
+  };
+  api.companion_preview_select = function (id, token, mode, label, titleMode, titleHint, generation) {
+    return _devCompanionRequest(id, generation, function (old, receipt) {
+      var source = _devCompanionSources.filter(function (item) { return item.candidate_token === token; })[0];
+      if (!source) { receipt.error = 'Source expired. Choose source again.'; return; }
+      var row = _devCompanionDefinition(source, mode, label);
+      row.source.title_mode = titleMode; row.source.title_hint = titleHint;
+      if (old) {
+        row.id = old.id; row.enabled = old.enabled; row.generation = old.generation + 1;
+        row.window = old.window;
+        _devCompanionState.rows[_devCompanionState.rows.indexOf(old)] = row;
+      } else _devCompanionState.rows.push(row);
+      receipt.id = row.id;
+    });
+  };
+  api.companion_preview_reselect_region = function (id, generation) {
+    return _devCompanionRequest(id, generation, function (row) {
+      row.region = {x: 0.2, y: 0.2, w: 0.4, h: 0.4, original_client_w: 1280, original_client_h: 720};
+    });
+  };
+  api.companion_preview_set_enabled = function (id, enabled, generation) {
+    return _devCompanionRequest(id, generation, function (row) { row.enabled = enabled; });
+  };
+  api.companion_preview_edit = function (id, label, titleMode, titleHint, generation) {
+    return _devCompanionRequest(id, generation, function (row) {
+      row.label = label; row.source.title_mode = titleMode; row.source.title_hint = titleHint;
+    });
+  };
+  api.companion_preview_remove = function (id, generation) {
+    return _devCompanionRequest(id, generation, function (row) {
+      _devCompanionState.rows.splice(_devCompanionState.rows.indexOf(row), 1);
+    });
+  };
+  api.companion_preview_reset_geometry = function (id, generation) {
+    return _devCompanionRequest(id, generation, function (row) { row.window = {x: 40, y: 40, w: 320, h: 200}; });
+  };
+  window._devCompanions = function (scenario) {
+    _devCompanionScenario = scenario;
+    _devCompanionSources = _devCompanionDefaultSources.map(function (source) {
+      if (scenario !== 'long-sources') return source;
+      return {candidate_token: source.candidate_token, application: source.application,
+        title: (source.title + ' — ' + Array(40).join('Fleet planning <not markup> / '))
+          .slice(0, _devCompanionState.limits.last_title_max_chars)};
+    });
+    _devCompanionState.rows = []; _devCompanionState.operations = [];
+    _devCompanionState.available = scenario !== 'unavailable';
+    _devCompanionState.enabled = scenario === 'waiting' || scenario === 'long' || scenario === 'full';
+    var count = scenario === 'empty' || scenario === 'no-sources' || scenario === 'source-error' ? 0 :
+      scenario === 'full' ? _devCompanionState.limits.definitions : scenario === 'one' ? 1 : 3;
+    for (var i = 0; i < count; i += 1) {
+      var row = _devCompanionDefinition(_devCompanionSources[i % _devCompanionSources.length],
+        i % 2 ? 'region' : 'whole', 'Companion ' + (i + 1));
+      row.enabled = i < _devCompanionState.limits.enabled;
+      if (scenario === 'long') {
+        row.label = 'Mapper — <not markup> — a long fleet preparation label';
+        row.source.last_title = Array(8).join('Literal <img src=x> title — ');
+      }
+      _devCompanionState.rows.push(row);
+    }
+    _devCompanionPublish();
+    return _devCompanionCopy();
+  };
+  if (_devCompanionScenario !== 'empty') window._devCompanions(_devCompanionScenario);
+
   // One saved crop per owner. Only dev.js fabricates definitions and native
   // outcomes; these drivers exercise the real page without a native runtime.
   var DEV_PREVIEW_CROP_CAP = 8;

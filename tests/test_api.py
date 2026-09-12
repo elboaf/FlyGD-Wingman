@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.preview_runtime_helpers import HostLifecycle
 from tests.test_scheduler import FakeClock
 from wingman import durations, library, links, uploader
 from wingman.ui.api import Api, AppState
@@ -927,7 +928,7 @@ def test_the_cache_is_written_on_every_tick_that_applied_something(
     )
 
 
-class _FakeHost:
+class _FakeHost(HostLifecycle):
     """Records what the bridge asked for, in place of a real PreviewHost."""
 
     def __init__(self):
@@ -968,10 +969,12 @@ class _FakeHost:
     def start(self):
         self.started = True
         self.is_running = True
+        self.ack_started()
 
-    def stop(self):
+    def stop(self, timeout=5, *, final=False):
         self.started = False
         self.is_running = False
+        return self.ack_stopped()
 
 
 def test_capture_preview_bind_returns_a_canonical_gesture(tmp_path):
