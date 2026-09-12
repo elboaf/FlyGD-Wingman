@@ -17,6 +17,15 @@ const accepted = {applied: true, persisted: true, error: null};
 const refused = {applied: false, persisted: false, error: 'Not accepted'};
 const tabs = {previews: ['windows', 'characters', 'wanderer'], uploading: ['youtube', 'recording', 'combatlogs']};
 
+function previewPayload(overrides = {}) {
+  return {hotkeys: {characters: {}, cycle_next: '', cycle_prev: '',
+    groups: [{id: 'group-a', name: 'Group A'}], group_by_character: {}},
+    characters: ['Alice'], roster: ['Alice'], registration: {},
+    bookmark_chords: {active: [], latent: []}, enabled: true, locked: [], lock_default: false,
+    never_minimize: [], excluded: [], sizes: {}, client_sizes: {}, sizable: [], layout_sources: [],
+    ...overrides};
+}
+
 async function page({previews = false, settings = false} = {}) {
   const {document, Element, scrolls} = createDOM(markup);
   document.activeElement = document.body;
@@ -80,12 +89,15 @@ async function page({previews = false, settings = false} = {}) {
   }
   load('app');
   const WM = window.WM; context.WM = WM;
-  WM.send = (method, ...args) => {
+  function defer(method, args) {
     let resolve;
     const promise = new Promise(done => { resolve = done; });
     calls.push({method, args: JSON.parse(JSON.stringify(args)), resolve});
     return promise;
-  };
+  }
+  WM.send = (method, ...args) => defer(method, args);
+  WM.choose = (...args) => defer('choose', args);
+  WM.prompt = (...args) => defer('prompt', args);
   WM.confirm = () => Promise.resolve(true);
   document.addEventListener('wm:settings-tab', event => events.push(JSON.parse(JSON.stringify(event.detail))));
   document.addEventListener('wm:section', event => sections.push(event.detail));
@@ -121,11 +133,7 @@ async function page({previews = false, settings = false} = {}) {
       call.resolve(result); await turn(); assert.deepEqual(errors, []);
     },
     async previewState() {
-      window.onPreviewHotkeys({hotkeys: {characters: {}, cycle_next: '', cycle_prev: '',
-        groups: [{id: 'group-a', name: 'Group A'}], group_by_character: {}},
-        characters: ['Alice'], roster: ['Alice'], registration: {},
-        bookmark_chords: {active: [], latent: []}, enabled: true, locked: [], lock_default: false,
-        never_minimize: [], excluded: [], sizes: {}, client_sizes: {}, sizable: [], layout_sources: []});
+      window.onPreviewHotkeys(previewPayload());
       await turn(); assert.deepEqual(errors, []);
     }
   };
@@ -297,6 +305,130 @@ test('late Preview group reply cannot restore focus after a subpage navigation',
   await p.reply('set_preview_character_group', {applied: true, persisted: true});
   assert.ok(p.document.activeElement === p.document.body, 'late reply must not focus a hidden detail');
 });
+
+async function copyingPreview() {
+  const p = await page({previews: true}); p.WM.openSettingsSection('previews', 'characters');
+  const initial = previewPayload({layout_sources: [{name: 'Bob', online: null}]});
+  // Drain real boot/section hydration so only Copy can request the next read.
+  while (p.calls.some(call => call.method === 'get_preview_hotkey_state')) {
+    await p.reply('get_preview_hotkey_state', initial);
+  }
+  await p.fire(p.el('preview-binds').querySelector('.preview-configure'), 'click');
+  const copy = p.document.querySelector('[data-preview-detail-control="copy"]');
+  copy.focus(); await p.fire(copy, 'click'); await p.reply('choose', 'Bob');
+  assert.deepEqual(p.calls.map(call => [call.method, call.args]), [
+    ['copy_preview_layout', ['Alice', 'Bob']]
+  ]);
+  return p;
+}
+
+function copyOutcome(p, text, error) {
+  const status = p.el('preview-copy-status');
+  assert.equal(status.textContent, text);
+  assert.equal(status.hidden, false, 'Copy outcome stays available on return');
+  assert.equal(status.classList.contains('err'), error);
+}
+
+for (const [label, outcome, text, error] of [
+  ['accepted', accepted, 'Copied Bob’s geometry to Alice.', false],
+  ['refused', refused, 'Not accepted', true],
+  ['unconfirmed', null, 'That preview placement could not be copied.', true]
+]) for (const transition of ['before result', 'before result and back', 'during refresh']) {
+  test('Copy ' + label + ' survives subpage navigation ' + transition, async () => {
+    const p = await copyingPreview(), sections = p.sections.slice();
+    if (transition !== 'during refresh') {
+      await p.click('previews', 'windows');
+      if (transition === 'before result and back') await p.click('previews', 'characters');
+      assert.deepEqual(p.calls.map(call => call.method), ['copy_preview_layout'],
+        'subpage navigation must not rehydrate');
+    }
+    const focused = p.document.activeElement;
+    await p.reply('copy_preview_layout', outcome, ['Alice', 'Bob']);
+    copyOutcome(p, text, error);
+    assert.equal(p.document.activeElement, focused, 'receipt alone must not move focus');
+    assert.deepEqual(p.calls.map(call => call.method), ['get_preview_hotkey_state'],
+      'completion requests its authoritative refresh even while hidden');
+    if (transition === 'during refresh') await p.click('previews', 'windows');
+    const nextFocus = p.document.activeElement;
+    const refreshed = previewPayload({sizes: {Alice: [480, 300]}, sizable: ['Alice'],
+      layout_sources: [{name: 'Carol', online: null}]});
+    await p.reply('get_preview_hotkey_state', refreshed);
+    assert.equal(p.document.activeElement, nextFocus, 'late refresh cannot restore stale Copy focus');
+    await p.click('previews', 'characters'); selected(p, 'previews', 'characters');
+    copyOutcome(p, text, error);
+    assert.deepEqual(p.sections, sections, 'tabs must not fake section events');
+    assert.deepEqual(p.calls, [], 'return does not refetch');
+    const size = p.document.querySelector('[data-preview-detail-control="size"]');
+    assert.ok(size, 'authoritative eligibility makes Size available');
+    await p.fire(size, 'click');
+    assert.equal(p.calls[0].method, 'prompt');
+    assert.equal(p.calls[0].args[2], '480x300', 'Size uses refreshed dimensions');
+    await p.reply('prompt', null);
+    await p.fire(p.document.querySelector('[data-preview-detail-control="copy"]'), 'click');
+    assert.deepEqual(p.calls[0].args[2], [
+      {label: 'Saved placements', options: [{value: 'Carol', label: 'Carol'}]}
+    ], 'the next chooser uses refreshed source eligibility, not Bob');
+    await p.reply('choose', null);
+  });
+}
+
+test('Copy refresh can remove its source control without focusing a hidden panel', async () => {
+  const p = await copyingPreview();
+  await p.click('previews', 'windows');
+  await p.reply('copy_preview_layout', accepted);
+  p.document.activeElement = p.document.body;
+  await p.reply('get_preview_hotkey_state', previewPayload());
+  assert.equal(p.document.activeElement, p.document.body, 'no hidden Configure fallback focus');
+  await p.click('previews', 'characters');
+  assert.equal(p.document.querySelector('[data-preview-detail-control="copy"]'), null);
+  assert.equal(p.el('preview-copy-empty').hidden, false);
+  copyOutcome(p, 'Copied Bob’s geometry to Alice.', false);
+});
+
+test('Copy still restores its recreated control when there was no navigation', async () => {
+  const p = await copyingPreview();
+  const oldCopy = p.document.activeElement;
+  await p.reply('copy_preview_layout', accepted);
+  await p.reply('get_preview_hotkey_state', previewPayload({layout_sources: [{name: 'Bob', online: null}]}));
+  const newCopy = p.document.querySelector('[data-preview-detail-control="copy"]');
+  assert.notEqual(newCopy, oldCopy);
+  assert.equal(p.document.activeElement, newCopy);
+  copyOutcome(p, 'Copied Bob’s geometry to Alice.', false);
+});
+
+for (const stale of [accepted, refused, null]) {
+  test('superseded Copy ' + JSON.stringify(stale) + ' cannot overwrite a newer result after tabs', async () => {
+    const p = await copyingPreview();
+    const old = p.calls.shift();
+    await p.click('previews', 'windows'); await p.click('previews', 'characters');
+    await p.fire(p.document.querySelector('[data-preview-detail-control="copy"]'), 'click');
+    await p.reply('choose', 'Bob');
+    await p.reply('copy_preview_layout', {applied: false, persisted: false, error: 'Newer refusal'});
+    await p.reply('get_preview_hotkey_state', previewPayload({layout_sources: [{name: 'Bob', online: null}]}));
+    copyOutcome(p, 'Newer refusal', true);
+    const focused = p.document.activeElement;
+    old.resolve(stale); await turn();
+    copyOutcome(p, 'Newer refusal', true);
+    assert.equal(p.document.activeElement, focused);
+    assert.deepEqual(p.calls, [], 'superseded completion must not trigger a refresh');
+    assert.deepEqual(p.errors, []);
+  });
+}
+
+for (const leave of ['configure', 'section', 'route']) {
+  test('Copy completion remains invalidated by ' + leave, async () => {
+    const p = await copyingPreview();
+    if (leave === 'configure') await p.fire(p.el('preview-binds').querySelector('.preview-configure'), 'click');
+    if (leave === 'section') p.WM.section('uploading');
+    if (leave === 'route') p.WM.route('main');
+    const focused = p.document.activeElement;
+    await p.reply('copy_preview_layout', accepted);
+    assert.equal(p.el('preview-copy-status').hidden, true);
+    assert.equal(p.el('preview-copy-status').textContent, '');
+    assert.equal(p.document.activeElement, focused);
+    assert.deepEqual(p.calls, [], 'invalidated completion must not refresh');
+  });
+}
 
 test('webhook is remasked on combatlogs leave, preserving section/route leave and same-tab reveal', async () => {
   const p = await page({settings: true}); p.WM.openSettingsSection('uploading', 'combatlogs');

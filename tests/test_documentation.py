@@ -1,5 +1,6 @@
 """Guard current Settings directions, not historical records or card labels."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,17 @@ def normalized_doc(path):
     text = text.replace("**", "").replace("`", "")
     text = text.replace("→", ">").replace("\u203a", ">")
     return " ".join(text.split())
+
+
+def test_smoke_checklist_rail_order_matches_the_shipped_navigation():
+    html = (ROOT / "wingman/web/index.html").read_text(encoding="utf-8")
+    labels = re.findall(
+        r'<button class="rail-item[^"]*" data-section="[^"]+">([^<]+)</button>',
+        html,
+    )
+    assert labels
+    checklist = normalized_doc("docs/smoke-checklist.md")
+    assert ", ".join(labels) + " — and clicking each" in checklist
 
 
 @pytest.mark.parametrize("path", ACTIVE_DOCS)

@@ -941,8 +941,9 @@ lifecycle checks are separate evidence, not native acceptance.
 - [ ] In Previews › Characters & cycling, arm a keybind, then click Windows or
       Wanderer names. Type in a field: capture must be cancelled, with no bind
       saved. Repeat while a Configure/Copy response is delayed; it must not
-      steal focus back to the hidden character panel. Section and route leaving
-      must still cancel capture.
+      steal focus back to the hidden character panel. A completed Copy must still
+      refresh saved geometry and show its outcome when you return. Section and
+      route leaving must still cancel capture.
 - [ ] Edit the recording path without Enter, leave Recording and return: the
       draft remains, with no watcher rebind. Repeat with a submitted value and
       newer typing before its acknowledgement; late replies must not erase it.
@@ -1813,31 +1814,31 @@ response leaves a worker waiting forever, which presents as a hung upload.
 ## The Settings rail
 
 Bookmarks and Previews stopped being top-level destinations and became
-sections here. Nothing in pytest executes the page, so the wiring below is
-only ever checked by hand.
+sections here. Node harnesses execute production scripts; the rendered and
+native behavior below still requires Windows/WebView2 checks.
 
 - [ ] **Settings opens on Uploading, not General.** Press the gear from any
       destination. Expected: the Uploading pane is showing and Uploading is
       the highlighted rail entry, on the FIRST open of a session.
-      General's whole content is one checkbox for turning the EVE half off;
-      it is a legitimate control and a poor first impression of the app's
-      configuration surface. This is also the fact `WM.current_section`
+      General contains application setup and maintenance, including the
+      EVE-tools visibility switch; it is not the first upload-setup task. This is also the fact `WM.current_section`
       declares in app.js — the two disagreed, silently, and
       tests/test_page_conventions.py now holds them in step. If the pane
       and the highlight ever disagree with each other, that test has been
       bypassed rather than the markup being wrong.
-- [ ] **Six rail entries, General last** — Uploading, Character access,
-      Bookmarks, Previews, Alerts, General — and clicking each shows its
-      content with exactly one entry highlighted. The old Account, Uploads,
+- [ ] **Settings rail entries, General last** — Uploading, Companion previews,
+      Character access, Bookmarks, Previews, Fleet telemetry, Alerts, General
+      — and clicking each shows its content with exactly one entry highlighted. The old Account, Uploads,
       Folders and Discord entries were consolidated under Uploading; the
       Gamelog folder card now lives in Alerts. The Google account, Recording
       folder and Combat log webhook cards must be in Uploading, and
       `When a recording finishes` still sits in that section. Check it is
       there and that picking an option still sticks across a restart.
-      General is last because its only content is the switch that hides the
-      EVE-gated tail of the rail: untick it and Character access, Bookmarks,
-      Previews and Alerts disappear together, without opening a hole in the
-      middle. If that count is wrong, trust the rail and fix this line.
+      General also holds the EVE-tools visibility switch: untick it and
+      Character access, Bookmarks, Previews, Fleet telemetry and Alerts
+      disappear together. Uploading, Companion previews and General remain.
+      The entry order above is checked against the markup by
+      `tests/test_documentation.py`, rather than maintaining a separate count.
 - [ ] **Rail selection and keyboard focus are different states.** Click
       Previews, then press Tab until another rail entry receives focus.
       Expected: Previews keeps the filled current-location treatment while

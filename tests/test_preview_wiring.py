@@ -3182,8 +3182,9 @@ def test_detail_focus_restoration_is_scoped_to_the_current_interaction():
     copy = js.split("function restoreCopyFocusAfterRefresh", 1)[1].split(
         "\n  function ", 1
     )[0]
-    assert "interaction !== detailInteraction" in copy
-    assert "openDetailName !== name" in copy
+    focus = copy.split("refresh(function ()", 1)[1]
+    assert "interaction !== detailInteraction" in focus
+    assert "openDetailName !== name" in focus
 
 
 def test_closing_or_leaving_previews_invalidates_pending_detail_focus():
@@ -3231,17 +3232,17 @@ def test_copy_status_and_focus_belong_to_the_current_copy_attempt():
     status = js.split("function copyStatusForCurrent", 1)[1].split("\n  function ", 1)[
         0
     ]
-    for guard in (
-        "interaction !== detailInteraction",
-        "openDetailName !== name",
-        "attempt !== copyAttempt",
-    ):
+    for guard in ("openDetailName !== name", "attempt !== copyAttempt"):
         assert guard in status
+    assert "detailInteraction" not in status
 
     refresh = js.split("function restoreCopyFocusAfterRefresh", 1)[1].split(
         "\n  function ", 1
     )[0]
-    assert "attempt !== copyAttempt" in refresh
+    admission, focus = refresh.split("refresh(function ()", 1)
+    assert "attempt !== copyAttempt" in admission
+    assert "detailInteraction" not in admission
+    assert "interaction !== detailInteraction" in focus
 
 
 def test_detail_changes_invalidate_pending_copy_attempts():
