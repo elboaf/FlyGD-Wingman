@@ -512,7 +512,7 @@
                         || filters.collection_id !== 'all');
       empty.textContent = filtered
         ? 'No fittings match the current filters.'
-        : 'Authenticate a character in Settings › Characters, then return and press Refresh characters.';
+        : 'Authenticate a character in Settings › Character access, then return and press Refresh characters.';
       return;
     }
     empty.hidden = true;
@@ -1099,7 +1099,7 @@
       if (!copyEligible(character)) {
         row.appendChild(WM.make('span', 'fit-copy-target-state',
           character.status !== 'enabled'
-            ? 'Use Authenticate character\u2026 in Settings \u203a Characters.'
+            ? 'Use Authenticate character\u2026 in Settings \u203a Character access.'
             : character.stale ? 'Refresh failed. Use Refresh characters.'
               : 'Use Refresh characters first.'));
       }
@@ -1108,7 +1108,7 @@
     if (!targets.children.length) {
       targets.appendChild(WM.make(
         'p', 'hint',
-        'Authenticate a character in Settings › Characters, then return and press Refresh characters.'
+        'Authenticate a character in Settings › Character access, then return and press Refresh characters.'
       ));
     }
     host.appendChild(targets);
@@ -1343,7 +1343,7 @@
       unknown: 'Check the target\u2019s Personal Fittings in EVE, then refresh characters before any retry. The fitting may already exist.',
       unattempted_throttle: 'Not attempted. Wait for the ESI limit to clear, refresh characters, then review a new copy.',
       cancelled: 'Not attempted. Review a new copy if this fitting is still needed.',
-      unavailable: 'Check the reason. For sign-in, use Authenticate character\u2026 in Settings \u203a Characters. Then refresh the target and review a new copy.',
+      unavailable: 'Check the reason. For sign-in, use Authenticate character\u2026 in Settings \u203a Character access. Then refresh the target and review a new copy.',
       invalid_ticket: 'Preflight expired. Close these results and review a new copy.',
       needs_resolution: 'Close these results and resolve every name conflict in a new copy review.',
       busy: 'Another fitting copy is running. Wait for it to finish before reviewing a new copy.',

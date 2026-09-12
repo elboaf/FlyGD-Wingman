@@ -607,7 +607,7 @@
    * of them -- the trailing OTHER bucket exists so that a readiness string
    * this page does not recognise still produces a row.
    *
-   * That is not tidiness. Settings > Characters is the repair surface, but
+   * That is not tidiness. Settings > Character access is the repair surface, but
    * Skills still has to render every character that needs repair. A missing
    * row hides the status that sends the user there and makes a broken token
    * look like an empty roster instead of an actionable character problem.

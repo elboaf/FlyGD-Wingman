@@ -159,7 +159,8 @@ def test_preview_capture_variants_cover_the_scroller_and_picker():
         "settings-previews-narrow",
     }
     assert "scrollTop = 0" in variants["settings-previews"]
-    assert "scrollHeight - pane.clientHeight" in variants["settings-previews-middle"]
+    assert "preview-group-size" in variants["settings-previews-middle"]
+    assert "preview-group-switching" in variants["settings-previews-middle"]
     assert "pane.scrollHeight" in variants["settings-previews-table"]
     detail = variants["settings-previews-detail"]
     copy = variants["settings-previews-copy"]

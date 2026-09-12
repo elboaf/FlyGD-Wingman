@@ -1239,13 +1239,20 @@ def test_shared_focus_and_selected_rail_states_stay_distinct():
     assert "var(--focus-ring)" in manager.group(1)
     assert "var(--focus)" not in manager.group(1)
 
-    active = re.search(r"[^{}]*\.rail-item\.active[^{}]*\{([^}]*)\}", CSS)
+    active = re.search(
+        r"(?m)^\.rail-plan\.active, \.rail-item\.active[^{}]*\{([^}]*)\}", CSS
+    )
     assert active and "background: var(--row-active)" in active.group(1), (
         "the selected rail item must keep the declared current-location fill"
     )
     assert "border-left-color: var(--brand)" in active.group(1), (
-        "the selected rail item must keep its existing brand edge"
+        "the shared selected rail treatment keeps its brand edge outside Settings"
     )
+    settings_active = re.search(
+        r"\.settings-rail \.rail-item\.active\s*\{([^}]*)\}", CSS
+    )
+    assert settings_active and "border-left: 0" in settings_active.group(1)
+    assert "background: var(--row-active)" in settings_active.group(1)
 
     focus = re.search(r"([^{}]*\.rail-item:focus-visible[^{}]*)\{([^}]*)\}", CSS)
     assert focus and "outline:" in focus.group(2), (
@@ -2422,13 +2429,13 @@ def test_the_sticky_offline_heading_clears_the_sticky_preview_header():
         r"#preview-binds \.bind-group:not\(:empty\) \{(.*?)\}", CSS, re.DOTALL
     )
     assert offline and re.search(
-        r"top:\s*calc\(var\(--preview-jump-height\)\s*\+\s*var\(--preview-bind-head-height\)\)",
+        r"top:\s*var\(--preview-bind-head-height\)",
         offline.group(1),
-    ), "the Offline heading must clear both quick navigation and the column header"
+    ), "the Offline heading must clear the column header inside the subpage"
     assert re.search(
-        r"#preview-binds \.bind-head > span\s*\{[^}]*?top:\s*var\(--preview-jump-height\)",
+        r"#preview-binds \.bind-head > span\s*\{[^}]*?top:\s*0",
         CSS,
-    ), "the column header must clear the quick-navigation row"
+    ), "the column header sticks to the subpage, not to the outside navigation"
 
 
 def test_the_previews_headings_are_in_the_order_makeRow_builds():

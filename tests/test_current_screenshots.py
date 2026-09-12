@@ -22,6 +22,7 @@ SYNTHETIC = {
     "settings-fleet-sharing-history-narrow": "fleet",
 }
 LIVE = {
+    "settings-uploading": "uploading",
     "settings-uploading-recording": "uploading",
     "settings-uploading-integrations": "uploading",
     "settings-uploading-webhook": "uploading",
@@ -29,6 +30,32 @@ LIVE = {
     "settings-bookmarks-sigbar": "bookmarks",
     "settings-alerts-custom-narrow": "alerts",
 }
+
+
+SUBPAGES = {
+    "settings-uploading": "youtube",
+    "settings-uploading-recording": "recording",
+    "settings-uploading-integrations": "recording",
+    "settings-uploading-webhook": "combatlogs",
+    "settings-previews": "windows",
+    "settings-previews-middle": "windows",
+    "settings-previews-table": "characters",
+    "settings-previews-sticky-conflict": "characters",
+    "settings-previews-detail": "characters",
+    "settings-previews-copy": "characters",
+    "settings-previews-groups": "characters",
+    "settings-previews-narrow": "characters",
+    "settings-previews-crop-narrow": "characters",
+    "settings-wanderer": "wanderer",
+    "settings-wanderer-narrow": "wanderer",
+}
+
+
+@pytest.mark.parametrize(
+    "key", [key for key in SUBPAGES if key.startswith("settings-previews")]
+)
+def test_preview_stages_select_visible_subpages_and_their_scroll_owner(tmp_path, key):
+    run_current_page(tmp_path, key, "preview-subpage")
 
 
 def test_current_inventory_and_floor_coverage():
@@ -112,6 +139,7 @@ def run_current_page(tmp_path, key, scenario):
         "verify": shoot.new_screen_verify_script(screen),
         "cleanup": shoot.new_screen_cleanup_script(screen),
         "fixture": shoot.load_dev_tool_screenshot_fixture(),
+        "tab": SUBPAGES.get(key),
     }
     path = tmp_path / "capture.json"
     path.write_text(json.dumps(data), encoding="utf-8")

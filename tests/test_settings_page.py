@@ -19,10 +19,96 @@ Every rule below is here because it was broken and shipped:
 
 import pathlib
 import re
+from html.parser import HTMLParser
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WEB = ROOT / "wingman" / "web"
 HTML = (WEB / "index.html").read_text(encoding="utf-8")
+
+
+class SettingsMarkup(HTMLParser):
+    """Track ownership without treating a nested section's close as its parent's."""
+
+    def __init__(self):
+        super().__init__()
+        self.stack = []
+        self.nodes = {}
+        self.feed(HTML)
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        ident = attrs.get("id")
+        if ident:
+            assert ident not in self.nodes, f"duplicate id: {ident}"
+            self.nodes[ident] = (attrs, tuple(i for _, i in self.stack if i))
+        if tag not in {"meta", "link", "img", "input", "br", "hr", "source"}:
+            self.stack.append((tag, ident))
+
+    def handle_endtag(self, tag):
+        for i in range(len(self.stack) - 1, -1, -1):
+            if self.stack[i][0] == tag:
+                del self.stack[i:]
+                break
+
+
+def test_settings_subpages_own_the_existing_controls_and_accessible_tabs():
+    nodes = SettingsMarkup().nodes
+    expected = {
+        "previews": {
+            "windows": (
+                "preview-show-labels",
+                "preview-reset",
+                "preview-nm-exceptions",
+            ),
+            "characters": ("preview-binds", "preview-binds-off"),
+            "wanderer": ("wanderer-settings",),
+        },
+        "uploading": {
+            "youtube": ("f-privacy", "f-category", "btn-auth"),
+            "recording": ("f-recdir", "detect-note", "msg-notify"),
+            "combatlogs": ("f-webhook", "btn-webhook-show", "btn-webhook-remove"),
+        },
+    }
+    for section, pages in expected.items():
+        for index, (page, controls) in enumerate(pages.items()):
+            panel = f"settings-{section}-{page}"
+            button = f"settings-tab-{section}-{page}"
+            attrs, ancestors = nodes[panel]
+            assert f"section-{section}" in ancestors
+            assert attrs["role"] == "tabpanel"
+            assert attrs["aria-labelledby"] == button
+            assert ("hidden" in attrs) == (index != 0)
+            tab, _ = nodes[button]
+            assert tab["role"] == "tab"
+            assert tab["aria-controls"] == panel
+            assert tab["aria-selected"] == str(index == 0).lower()
+            assert tab["tabindex"] == ("0" if index == 0 else "-1")
+            for control in controls:
+                assert panel in nodes[control][1], f"{control} must belong to {panel}"
+    master_ancestors = nodes["preview-enabled"][1]
+    assert "section-previews" in master_ancestors
+    assert not any(i.startswith("settings-previews-") for i in master_ancestors)
+
+
+def test_window_disclosures_keep_exceptions_with_their_preferences():
+    nodes = SettingsMarkup().nodes
+    for group, controls, opened in (
+        ("appearance", ("preview-show-labels", "preview-opacity"), True),
+        ("placement", ("preview-lock-default", "preview-lock-exceptions"), True),
+        ("size", ("preview-default-size", "btn-preview-apply-size"), False),
+        ("switching", ("preview-minimize-inactive", "preview-nm-exceptions"), False),
+    ):
+        ident = f"preview-group-{group}"
+        attrs, _ = nodes[ident]
+        assert ("open" in attrs) == opened
+        for control in controls:
+            assert ident in nodes[control][1]
+
+
+def test_settings_rail_names_distinguish_auth_from_preview_characters():
+    rail = dict(_rail())
+    assert rail["characters"] == "Character access"
+    assert rail["companions"] == "Companion previews"
 
 
 def test_design_records_the_global_badge_fetch_exception():

@@ -147,13 +147,13 @@ practical feature check, not a hardware/DPI/resource qualification matrix. Recor
 results and any applications DWM cannot capture in
 `docs/companion-previews-implementation-notes.md`.
 
-- [ ] In Settings → Companions, add an ordinary whole-window companion.
+- [ ] In Settings → Companion previews, add an ordinary whole-window companion.
 - [ ] Add a selected-region companion and confirm the intended region is shown.
 - [ ] Move both with left-drag and resize both with right-drag. Width and height
       change independently; neither whole nor region mode forces an aspect ratio.
 - [ ] Choose a source with a long title. The compact chooser must remain narrow;
       the selected window's full title remains readable below its dropdown.
-- [ ] Hide EVE tools in General. Companions stays accessible in the Settings rail;
+- [ ] Hide EVE tools in General. Companion previews stays accessible in the Settings rail;
       its controls do not require visiting or enabling EVE previews.
 - [ ] Click each preview and confirm its own source activates.
 - [ ] Restart a source application. Confirm automatic rebinding or an honest
@@ -944,6 +944,43 @@ somewhere stale and nothing on that screen is worth reviewing.
       seen-entry tracking: the recreated file may not be re-announced until
       the app restarts. That is expected behavior, not a bug to report.
 
+## Settings subpages — Windows/WebView2 acceptance
+
+The approved subpage layout is implemented, but the following installed-app
+checks remain **NOT RUN** until performed on Windows. Chromium layout and Node
+lifecycle checks are separate evidence, not native acceptance.
+
+- [ ] At 100%, 125%, 150% and 200% scaling, visit all three tabs in Settings ›
+      Uploading and Previews at the minimum window size. No horizontal overflow;
+      the heading, tabs and preview master switch stay reachable while the body
+      scrolls. The character header and Offline heading must not obscure rows
+      or an opened Configure detail.
+- [ ] Use Tab to enter each tab list, then Left/Right and Home/End. Exactly one
+      tab is selected and tabbable; focus remains visible and never stays in a
+      hidden panel. Re-enter the section and confirm its selected tab, scroll
+      position and disclosures are retained.
+- [ ] In Previews › Characters & cycling, arm a keybind, then click Windows or
+      Wanderer names. Type in a field: capture must be cancelled, with no bind
+      saved. Repeat while a Configure/Copy response is delayed; it must not
+      steal focus back to the hidden character panel. A completed Copy must still
+      refresh saved geometry and show its outcome when you return. Section and
+      route leaving must still cancel capture.
+- [ ] Edit the recording path without Enter, leave Recording and return: the
+      draft remains, with no watcher rebind. Repeat with a submitted value and
+      newer typing before its acknowledgement; late replies must not erase it.
+- [ ] In Uploading › Combat logs, reveal the webhook, switch tabs and return:
+      it is masked again and its draft remains. Section and route leaving also
+      re-mask it. Enter/Remove and inline persistence errors behave as before.
+- [ ] In Previews › Wanderer names, retain URL/map/token drafts across tabs and
+      health updates. Test still saves the bound connection without enabling
+      names; Remove still confirms. No subpage switch starts another read/Test.
+- [ ] Switch previews Off: the same master state appears on every subpage and
+      preferences remain editable. With EVE tools hidden, Uploading and Companion
+      previews stay available; remembered/explicit Preview links obey the gate.
+- [ ] Expand Size and shape and When you switch away. Check default size, Apply
+      to open previews, and never-minimize exceptions. Lock exceptions remain
+      under Placement; collapsing a group must not submit or reset anything.
+
 ## Settings
 - [ ] Settings button opens the dialog
 - [ ] **The dialog appears immediately, before the account state resolves.**
@@ -1323,18 +1360,20 @@ behavior that only shows up at size.
       delete the archive.
 - [ ] **Settings at 100% and 150% Windows display scaling.** Open Settings
       at each scale factor and walk every rail entry — Uploading,
-      Characters, Bookmarks, Previews, Alerts, General. Confirm each
+      Companion previews, Character access, Bookmarks, Previews, Fleet telemetry,
+      Alerts, General. Confirm each
       section's content is fully visible with nothing clipped, and that the
       rail itself is never pushed off the top by a long section. A previous
       release shipped with a section clipped off the bottom at high DPI,
       back when this screen was one long column; the rail is what replaced
-      that column, and the pane is the only thing that scrolls. See the
+      that column. Sections scroll in the pane or their selected task subpage;
+      the rail stays fixed. See the
       "Look and feel > Display scaling" items above for the general scaling
       checks — this item covers the rail specifically, not a duplicate of
       those.
 - [ ] **The Settings rail is as tall as its entries, and the ship fills the
       rest.** Round 5's G3-rail and G2. Open Settings on Uploading,
-      Characters, or General: the rail ends just below **General** rather
+      Character access, or General: the rail ends just below **General** rather
       than running to the status strip, and the space below and right of it
       is page wash with the ship watermark in the lower right — not a
       bordered box beside a void. Then click **Bookmarks** and
@@ -1796,31 +1835,31 @@ response leaves a worker waiting forever, which presents as a hung upload.
 ## The Settings rail
 
 Bookmarks and Previews stopped being top-level destinations and became
-sections here. Nothing in pytest executes the page, so the wiring below is
-only ever checked by hand.
+sections here. Node harnesses execute production scripts; the rendered and
+native behavior below still requires Windows/WebView2 checks.
 
 - [ ] **Settings opens on Uploading, not General.** Press the gear from any
       destination. Expected: the Uploading pane is showing and Uploading is
       the highlighted rail entry, on the FIRST open of a session.
-      General's whole content is one checkbox for turning the EVE half off;
-      it is a legitimate control and a poor first impression of the app's
-      configuration surface. This is also the fact `WM.current_section`
+      General contains application setup and maintenance, including the
+      EVE-tools visibility switch; it is not the first upload-setup task. This is also the fact `WM.current_section`
       declares in app.js — the two disagreed, silently, and
       tests/test_page_conventions.py now holds them in step. If the pane
       and the highlight ever disagree with each other, that test has been
       bypassed rather than the markup being wrong.
-- [ ] **Six rail entries, General last** — Uploading, Characters,
-      Bookmarks, Previews, Alerts, General — and clicking each shows its
-      content with exactly one entry highlighted. The old Account, Uploads,
+- [ ] **Settings rail entries, General last** — Uploading, Companion previews,
+      Character access, Bookmarks, Previews, Fleet telemetry, Alerts, General
+      — and clicking each shows its content with exactly one entry highlighted. The old Account, Uploads,
       Folders and Discord entries were consolidated under Uploading; the
       Gamelog folder card now lives in Alerts. The Google account, Recording
       folder and Combat log webhook cards must be in Uploading, and
       `When a recording finishes` still sits in that section. Check it is
       there and that picking an option still sticks across a restart.
-      General is last because its only content is the switch that hides the
-      EVE-gated tail of the rail: untick it and Characters, Bookmarks,
-      Previews and Alerts disappear together, without opening a hole in the
-      middle. If that count is wrong, trust the rail and fix this line.
+      General also holds the EVE-tools visibility switch: untick it and
+      Character access, Bookmarks, Previews, Fleet telemetry and Alerts
+      disappear together. Uploading, Companion previews and General remain.
+      The entry order above is checked against the markup by
+      `tests/test_documentation.py`, rather than maintaining a separate count.
 - [ ] **Rail selection and keyboard focus are different states.** Click
       Previews, then press Tab until another rail entry receives focus.
       Expected: Previews keeps the filled current-location treatment while
@@ -4900,51 +4939,51 @@ for these items.
       authority document nor a migration-complete marker. Restore one valid
       source and relaunch; migration then completes. Never infer absence from an
       access error.
-- [ ] **Settings > Characters is the only EVE authorization surface.** Open
+- [ ] **Settings > Character access is the only EVE authorization surface.** Open
       Skills and Fittings and follow any authorize/reconnect/forget handoff.
-      Expected: the write happens in Settings > Characters, and the
+      Expected: the write happens in Settings > Character access, and the
       authorization card says EVE sign-in adds a character or updates access
       for Skills and Fittings. Neither destination nor the roster exposes a
       per-row or per-feature authorization button.
 - [ ] **An older two-scope Skills grant stays scoped until reconnected.** Start
       from a migrated or existing grant that has only `esi-skills.read_skills.v1`
       and `esi-skills.read_skillqueue.v1`. Refresh it in Skills successfully,
-      then open Settings > Characters and Fittings. Expected: Skills reads as
+      then open Settings > Character access and Fittings. Expected: Skills reads as
       Authorized, Fittings reads as Access needed, no fitting GET occurs before
       reconnect, and no fitting scopes were silently added to the existing
       grant.
-- [ ] **Settings > Characters requests exactly the full four-scope set.** Start
-      authorization or reconnect from Settings > Characters. The EVE consent
+- [ ] **Settings > Character access requests exactly the full four-scope set.** Start
+      authorization or reconnect from Settings > Character access. The EVE consent
       page requests `esi-fittings.read_fittings.v1`,
       `esi-fittings.write_fittings.v1`, `esi-skills.read_skills.v1`, and
       `esi-skills.read_skillqueue.v1`, with no additional Wingman scopes.
       Completing the flow with any EVE character is evaluated by the returned
       identity and cleanup/owner checks below.
 - [ ] **A returned unknown character is accepted only after cleanup is verified.**
-      Start sign-in from Settings > Characters and choose a character not
+      Start sign-in from Settings > Character access and choose a character not
       currently in Wingman's authority roster. Expected: Wingman adds it when
       both Skills and Fittings cleanup verification report no orphan state for
       that character ID. If either required cleanup slot is unavailable or
       reports that ID blocked, the sign-in is refused and authority state is
       unchanged.
 - [ ] **A known unequal owner is refused without mutation.** Start sign-in from
-      Settings > Characters for a character Wingman already knows, using a
+      Settings > Character access for a character Wingman already knows, using a
       controlled setup that can return a different known owner hash for the same
       character ID. Expected: the sign-in is refused with a forget-first
       instruction, the previous grant and feature snapshots remain, and no
       cleanup runs. If either owner hash is absent, the validated character-ID
       match remains compatible and preserves or records the non-empty owner.
 - [ ] **Cancel and callback races resolve deterministically.** Start sign-in
-      from Settings > Characters and exercise both orders once. Expected: if
+      from Settings > Character access and exercise both orders once. Expected: if
       you cancel before EVE replies, the cancellation wins. If EVE replies
       first, that reply wins and the later cancel is ignored.
 - [ ] **Partial cleanup blocks re-add until reconciliation.** Produce a
       cleanup-save failure after forgetting a character from Settings >
-      Characters. Expected: the row is gone, the warning explains that some
+      Character access. Expected: the row is gone, the warning explains that some
       cleanup was not saved, and Wingman refuses to add that character back
       until reconciliation proves what survived.
 - [ ] **50-row keyboard/menu checks.** With deterministic staging or an
-      equivalent large live roster, open Settings > Characters at the
+      equivalent large live roster, open Settings > Character access at the
       840x625 floor. Expected: authorization remains in its compact card, the
       Character access card uses the remaining pane width and height, the
       roster scrolls internally, the last visible row's More menu opens by
@@ -5052,15 +5091,15 @@ for these items.
 
 ### Forget, restart and release integration
 
-- [ ] **Forget from Settings > Characters is global and preserves curated
-      library content.** Use Settings > Characters to forget one character
+- [ ] **Forget from Settings > Character access is global and preserves curated
+      library content.** Use Settings > Character access to forget one character
       after both Skills and Fittings have data for it. Expected: complete
       cleanup removes the shared credential, Skills snapshot, fitting
       snapshot and that character's presence, while independent library
       entries, aliases, collections and other characters remain. Re-adding
       requires EVE sign-in. Restart after the durable removal and verify no
       orphan credential or presence resurrects.
-- [ ] **Forget from Settings > Characters distinguishes complete, partial,
+- [ ] **Forget from Settings > Character access distinguishes complete, partial,
       and refused cleanup.** Exercise all three outcomes on a character that
       both Skills and Fittings know about. Expected: complete cleanup
       removes the shared credential and both feature snapshots; partial
@@ -5068,9 +5107,9 @@ for these items.
       reconciliation proves what survived; refused cleanup leaves the row,
       keeps the shared credential, and leaves both feature snapshots intact
       with a refusal explaining why cleanup cannot proceed yet.
-- [ ] **Forget from Settings > Characters waits for active work and blocks on
+- [ ] **Forget from Settings > Character access waits for active work and blocks on
       ambiguity.** Start a fitting refresh or POST, switch to Settings >
-      Characters, and press Forget on that same character. Expected:
+      Character access, and press Forget on that same character. Expected:
       Forget does not race the request. A definite completed outcome
       permits ordered credential-first cleanup; an Unknown outcome refuses
       cleanup. In a multi-pair batch, forgetting between pairs prevents
@@ -5119,7 +5158,7 @@ bundle.
 EVE Developers, sets the redirect URI to
 `http://127.0.0.1:51779/callback/`, accepts the four scopes declared in
 `wingman/eveauth/application.py`, and puts the client id there, none of the
-SSO items below can run at all — Settings > Characters keeps authentication
+SSO items below can run at all — Settings > Character access keeps authentication
 disabled and says this build has no EVE application id configured. Every module
 below the auth stack is testable with stubs before that happens, which is why
 the rest of the feature can be built and merged against a placeholder id; only
@@ -5128,7 +5167,7 @@ these items are blocked on the registration.
 ### The SSO round trip
 
 - [ ] **LOAD-BEARING: a real authorisation completes against CCP.** In
-      Settings > Characters, press **Authenticate character…**. Expected: the
+      Settings > Character access, press **Authenticate character…**. Expected: the
       default browser opens EVE's own login page, the consent screen names
       exactly `esi-fittings.read_fittings.v1`,
       `esi-fittings.write_fittings.v1`, `esi-skills.read_skills.v1`, and
@@ -5137,7 +5176,7 @@ these items are blocked on the registration.
       success mark and no unstyled white-page flash, connection error, or raw
       JSON blob. The page says Wingman will finish connecting the character and
       that the tab can be closed. The returned character appears in Settings >
-      Characters; Skills then shows it as `Unscored` until plans are evaluated.
+      Character access; Skills then shows it as `Unscored` until plans are evaluated.
       Nothing in the suite can reach login.eveonline.com, so this is the only
       proof the PKCE challenge, the state comparison, the loopback listener and
       the code exchange all agree with the live server.
@@ -5171,7 +5210,7 @@ these items are blocked on the registration.
       Open `%LOCALAPPDATA%\FlyGD Wingman\eve_authority.json`, corrupt one
       character's `refresh_token_blob` (change a few base64 characters), and
       relaunch. Expected: that character shows Sign in / needs attention in
-      Settings > Characters and the Skills row points back to Settings; **every
+      Settings > Character access and the Skills row points back to Settings; **every
       other character is untouched and still refreshes.** This is what keeping
       the roster metadata in plaintext beside the wrapped token buys.
 
@@ -5195,19 +5234,19 @@ these items are blocked on the registration.
       precedence is unit-tested; that the *inputs* are the right ESI fields
       is not.
 
-### Settings > Characters cleanup and re-add
+### Settings > Character access cleanup and re-add
 
-- [ ] **Forget is one write and it sticks.** In Settings > Characters, open
+- [ ] **Forget is one write and it sticks.** In Settings > Character access, open
       the character's More menu, use `Forget character`, and confirm. The
       row disappears. Quit and relaunch: it is still gone, and no orphaned
       token remains — grep the state file for its character id and find
       nothing.
 - [ ] **A forgotten character can be added back.** Re-authorise the same
-      character from Settings > Characters. It returns as a single row, not
+      character from Settings > Character access. It returns as a single row, not
       a duplicate.
 - [ ] **Forget during a refresh stays forgotten.** Start a refresh over
       several characters in Skills or Fittings, then forget one from
-      Settings > Characters while it is in flight. It must not reappear
+      Settings > Character access while it is in flight. It must not reappear
       when the refresh commits.
 
 ### Corruption recovery
@@ -5368,10 +5407,10 @@ these items are blocked on the registration.
       `13h 25m` or `timing unknown`. The catch-all bucket is the deliberate
       exception — its rows show the raw readiness string, because the
       heading says `Unrecognised` for all of them.
-- [ ] **Skills hands character management off to Settings > Characters.**
+- [ ] **Skills hands character management off to Settings > Character access.**
       Expand a row and inspect the rail action and any empty/reauth copy.
       Expected: Skills explains that authorization and forgetting live in
-      Settings > Characters, and it does not render inline auth or forget
+      Settings > Character access, and it does not render inline auth or forget
       controls of its own.
 - [ ] **LOAD-BEARING: a character's fetch line survives a second render**
       (round 3, D3/S6). Expand a character that HAS been refreshed and
@@ -5406,7 +5445,7 @@ these items are blocked on the registration.
       With no plan selected the button is disabled rather than absent.
 - [ ] **The Settings handoff is immediate, not an armed destructive
       control.** From Skills, activate `Manage characters…`. Expected:
-      Settings opens on Characters immediately; there is no inline two-step
+      Settings opens on Character access immediately; there is no inline two-step
       forget state left behind on the Skills row.
 - [ ] **`?dev=1` with the catch-all bucket renders, including the
       unrecognised readiness value.** Launch with `?dev=1` appended to the
@@ -5416,7 +5455,7 @@ these items are blocked on the registration.
       the rest of the list — that is the lockout guard: an unrecognised
       readiness value from a future API change must degrade to an unstyled
       bucket, not vanish the row a user still needs to inspect and manage
-      from Settings > Characters.
+      from Settings > Character access.
 - [ ] **`DEV.skillsAuth(true)` and `DEV.skillsProgress(3, 9)` behave in a
       live browser**, not just in reasoning: with `?dev=1` loaded, run each
       from devtools and confirm the roster and progress indicator update
@@ -5752,7 +5791,7 @@ behaviour a lexical guard cannot reach.
       excluded.** Start the installed build with an HTTPS capture running and
       wait for the automatic GitHub startup check to finish. Clear the capture
       after the automatic GitHub startup check finishes, then perform a Settings
-      > Characters authorization or Skills refresh interaction and inspect a
+      > Character access authorization or Skills refresh interaction and inspect a
       plan. Expected: only that EVE interaction contacts the network, and its
       hosts are `login.eveonline.com` and `esi.evetech.net`; there is no FlyGD,
       Google, Discord, or unrelated GitHub request in the cleared capture.

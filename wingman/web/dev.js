@@ -1530,7 +1530,7 @@
         || !character.fetched_utc) {
       base.status = 'unavailable';
       base.error = !entry.deployable ? 'This fitting cannot be copied safely. Choose a different fitting.'
-                                     : 'Use Authenticate character\u2026 in Settings \u203a Characters if needed, then Refresh characters.';
+                                     : 'Use Authenticate character\u2026 in Settings \u203a Character access if needed, then Refresh characters.';
       return base;
     }
     if (entry.presences.some(function (p) {

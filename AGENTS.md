@@ -249,7 +249,11 @@ never overwrite field drafts. Test saves submitted URL/map/token as one connecti
 blank tokens reuse only the current normalized binding, and Remove clears all three
 while retaining the independent enable preference.
 `WM.route` switches destinations, `WM.section` switches
-Settings groups; both have enter/leave contracts, and leaving is load-bearing
+Settings groups; both have enter/leave contracts. Uploading and Previews also have
+static task subpages: `WM.settingsTab(section, tab)` dispatches `wm:settings-tab`
+without section re-entry or reads; `WM.openSettingsSection(section, tab)` supports
+explicit subpage links. Hidden panels retain drafts and scroll, but tab changes
+cancel Preview capture/pending focus and mask a revealed webhook. Leaving is load-bearing
 (keybind capture listeners must disarm). `dev.js` renders the page with fake
 data in a plain browser via `?dev=1` — the only file that fabricates data,
 inert in the app. `fleetbar.html`/`sigbar.html` are separate documents that

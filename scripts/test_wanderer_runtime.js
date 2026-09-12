@@ -458,9 +458,13 @@ test('entering the connection card disarms real preview keybind capture before t
     source.indexOf('  // Every push- or fetch-driven redraw'));
   for (const event of ['focusin', 'pointerdown']) {
     const card = new Element('wanderer-settings');
+    const tabs = new Element('settings-tabs-previews');
     const calls = [];
     const context = {capturing: null, pendingRender: false, screenshotLive: null,
-      WM: {el: id => { assert.equal(id, 'wanderer-settings'); return card; },
+      WM: {el: id => {
+        if (id === 'settings-tabs-previews') return tabs;
+        assert.equal(id, 'wanderer-settings'); return card;
+      },
         send: (...args) => {calls.push(args); return Promise.resolve();}},
       render: () => {throw Error('no roster update pending');}};
     vm.createContext(context); vm.runInContext(capture, context);

@@ -93,8 +93,8 @@
   // A contained control is replaced by a render after its mutation. Keep its
   // identity long enough to focus the recreated detail, never a detached node.
   var detailFocusIntent = null;
-  // Every Configure interaction supersedes pending detail work. A late bridge
-  // response must not pull focus back after the user opens or closes a detail.
+  // Configure and subpage navigation supersede pending detail focus. A late
+  // bridge response must not pull focus back after the user moves on.
   var detailInteraction = 0;
   // A Copy result belongs to one chooser attempt. Another Copy, a Configure
   // change, or leaving Previews invalidates the older result and its focus.
@@ -958,18 +958,15 @@
     });
   }
 
-  // Install the intent only in refresh's authoritative-payload path, and
-  // only while the detail and Copy attempt that began it are still current.
-  // A cancellation, section leave, newer Copy, or Configure click cannot then
-  // let a late refresh steal focus from the user's newer destination.
+  // A subpage change retires focus, not the Copy result or its authoritative
+  // refresh. Install focus only when the payload arrives and the original
+  // interaction still owns it; navigating away and back must not revive it.
   function restoreCopyFocusAfterRefresh(name, interaction, attempt) {
-    if (interaction !== detailInteraction || openDetailName !== name
-        || attempt !== copyAttempt) { return; }
+    if (openDetailName !== name || attempt !== copyAttempt) { return; }
     refresh(function () {
-      if (interaction === detailInteraction && openDetailName === name
-          && attempt === copyAttempt) {
-        rememberDetailFocus(name, 'copy');
-      }
+      if (interaction !== detailInteraction || openDetailName !== name
+          || attempt !== copyAttempt) { return; }
+      rememberDetailFocus(name, 'copy');
     });
   }
 
@@ -981,9 +978,8 @@
     status.hidden = !status.textContent;
   }
 
-  function copyStatusForCurrent(name, interaction, attempt, text, error) {
-    if (interaction !== detailInteraction || openDetailName !== name
-        || attempt !== copyAttempt) { return; }
+  function copyStatusForCurrent(name, attempt, text, error) {
+    if (openDetailName !== name || attempt !== copyAttempt) { return; }
     copyStatus(text, error);
   }
 
@@ -1023,7 +1019,7 @@
         WM.send('copy_preview_layout', name, source).then(function (result) {
           if (!result || !result.applied) {
             copyStatusForCurrent(
-              name, interaction, attempt,
+              name, attempt,
               result && result.error
                 ? result.error
                 : 'That preview placement could not be copied.', true);
@@ -1031,7 +1027,7 @@
             return;
           }
           copyStatusForCurrent(
-            name, interaction, attempt,
+            name, attempt,
             'Copied ' + source + '’s geometry to ' + name + '.', false);
           restoreCopyFocusAfterRefresh(name, interaction, attempt);
         });
@@ -1408,6 +1404,11 @@
   // and page capture before a credential keystroke can become a keybind.
   WM.el('wanderer-settings').addEventListener('focusin', endCapture);
   WM.el('wanderer-settings').addEventListener('pointerdown', endCapture);
+
+  // Same-tab activation emits no change; release capture before navigation keys.
+  var previewTabs = WM.el('settings-tabs-previews');
+  previewTabs.addEventListener('focusin', endCapture);
+  previewTabs.addEventListener('pointerdown', endCapture);
 
   // Every push- or fetch-driven redraw goes through this instead of
   // calling render() directly. render() rebuilds every row from scratch,
@@ -2417,25 +2418,21 @@
   // convenience: every Lock box on this screen is painted by resolving
   // `state.lock_default` against the roster (isLocked), so a stale copy
   // does not merely lag -- it shows the exact INVERSE of every row. The
-  // control that writes it is in this same Settings section, a few
-  // hundred pixels above the table, so the wrong state would be on screen
-  // beside the thing that caused it.
+  // control that writes it is in Windows > Placement, so switching back
+  // to Characters & cycling must show the updated lock state.
   document.addEventListener('wm:preview-lock-default', function (event) {
     state.lock_default = !!(event.detail && event.detail.enabled);
     requestRender();
   });
 
-  Array.prototype.forEach.call(
-    document.querySelectorAll('[data-preview-jump]'), function (button) {
-      button.addEventListener('click', function () {
-        endCapture();
-        WM.el(button.dataset.previewJump).scrollIntoView({block: 'start'});
-      });
-    });
-
-  WM.el('preview-fleet-settings').addEventListener('click', function () {
+  document.addEventListener('wm:settings-tab', function (event) {
+    if (event.detail.section !== 'previews') return;
+    // A subpage is not a fresh section entry. Release capture and stale focus
+    // without new hydration or an independent redraw. Ending capture may flush
+    // a pending redraw; an in-flight Copy still owns its result and refresh.
+    detailInteraction += 1;
+    detailFocusIntent = null;
     endCapture();
-    WM.openSettingsSection('fleet');
   });
 
   // Refreshed on route entry rather than polled, same reasoning as

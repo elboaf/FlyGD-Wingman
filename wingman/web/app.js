@@ -249,14 +249,75 @@
     WM.notify_section(WM.current_section);
   };
 
-  WM.openSettingsSection = function (name) {
+  WM.openSettingsSection = function (name, tab) {
     if (WM.current_route === 'settings') {
       WM.section(name);
-      return;
+    } else {
+      selectSection(name);
+      WM.route('settings');
     }
-    selectSection(name);
-    WM.route('settings');
+    // Resolve the section gate first; a hidden EVE deep link must not change
+    // its remembered subpage while the user is redirected to General.
+    if (tab && WM.current_section === name) { WM.settingsTab(name, tab); }
   };
+
+  // Subpages are presentation state held by the static DOM, not another
+  // section lifecycle. Re-entering keeps drafts, disclosures and selection;
+  // changing a tab must never ask the section's owners to fetch again.
+  WM.settingsTab = function (section, tab) {
+    if (WM.eve_shown === false && WM.EVE_SECTIONS.indexOf(section) !== -1) return;
+    var lists = document.querySelectorAll('.settings-tabs');
+    var list = null;
+    for (var i = 0; i < lists.length; i++) {
+      if (lists[i].dataset.settingsSection === section) { list = lists[i]; break; }
+    }
+    if (!list) return;
+    var buttons = list.querySelectorAll('.settings-tab');
+    var target = null, previous = null;
+    Array.prototype.forEach.call(buttons, function (button) {
+      if (button.dataset.settingsTab === tab) target = button;
+      if (button.getAttribute('aria-selected') === 'true') previous = button;
+    });
+    if (!target || target === previous || !WM.el(target.getAttribute('aria-controls'))) return;
+    var oldPanel = previous && WM.el(previous.getAttribute('aria-controls'));
+    var moveFocus = WM.current_route === 'settings' && WM.current_section === section
+      && (list.contains(document.activeElement)
+          || (oldPanel && oldPanel.contains(document.activeElement)));
+    Array.prototype.forEach.call(buttons, function (button) {
+      var active = button === target;
+      button.setAttribute('aria-selected', String(active));
+      button.setAttribute('tabindex', active ? '0' : '-1');
+      WM.el(button.getAttribute('aria-controls')).hidden = !active;
+    });
+    document.dispatchEvent(new CustomEvent('wm:settings-tab', {detail: {
+      section: section, tab: tab, previous: previous ? previous.dataset.settingsTab : null
+    }}));
+    // Do not strand keyboard focus inside the panel just hidden, but do not
+    // steal it from the rail, chrome or another section on a programmatic call.
+    if (moveFocus) target.focus();
+  };
+
+  Array.prototype.forEach.call(document.querySelectorAll('.settings-tabs'), function (list) {
+    var section = list.dataset.settingsSection;
+    var buttons = Array.prototype.slice.call(list.querySelectorAll('.settings-tab'));
+    buttons.forEach(function (button, index) {
+      button.addEventListener('click', function () {
+        WM.settingsTab(section, button.dataset.settingsTab);
+      });
+      button.addEventListener('keydown', function (event) {
+        var next;
+        if (event.key === 'ArrowLeft') next = (index + buttons.length - 1) % buttons.length;
+        else if (event.key === 'ArrowRight') next = (index + 1) % buttons.length;
+        else if (event.key === 'Home') next = 0;
+        else if (event.key === 'End') next = buttons.length - 1;
+        else return;
+        event.preventDefault();
+        WM.settingsTab(section, buttons[next].dataset.settingsTab);
+        if (WM.current_route === 'settings' && WM.current_section === section
+            && buttons[next].getAttribute('aria-selected') === 'true') buttons[next].focus();
+      });
+    });
+  });
 
   Array.prototype.forEach.call(
     document.querySelectorAll('.rail-item'), function (btn) {
