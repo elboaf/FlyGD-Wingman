@@ -95,6 +95,7 @@ def test_custom_test_facade_uses_style_without_persistence(monkeypatch, tmp_path
         service, "play_sound", lambda sid, volume: played.append((sid, volume))
     )
     host = FakePreviewHost(characters=("Alice",))
+    host.started = 1
     api = make_api(tmp_path, preview_host=host)
     rule_id, draft = enable_custom(api)
     snapshot = api._alerts_controller.runtime_snapshot()

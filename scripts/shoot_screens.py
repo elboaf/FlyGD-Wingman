@@ -49,6 +49,7 @@ EXCLUDED_ROUTES = frozenset({"firstrun"})
 SCREENS = (
     Screen("uploader", "Uploader", "main"),
     Screen("settings-uploading", "Settings - Uploading", "settings", "uploading"),
+    Screen("settings-companions", "Settings - Companions", "settings", "companions"),
     Screen(
         "settings-characters", "Settings - Characters", "settings", "characters", True
     ),

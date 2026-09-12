@@ -35,6 +35,7 @@ def test_defaults_are_the_documented_values():
             "keybinds": bookmarks.DEFAULT_BINDS,
             "windows": {},
         },
+        "companion_previews": {"enabled": False, "definitions": []},
         "preview": {
             # Off by default for the same reason eve_bookmarks is:
             # enabling it starts a thread, a 700ms discovery sweep and a

@@ -1383,6 +1383,10 @@
     });
   }
 
+  // Companion dialogs share the page's keyboard listeners; keep the explicit
+  // disarm adapter as well as section-leave cleanup before opening an overlay.
+  WM.endPreviewCapture = endCapture;
+
   function endCapture() {
     if (!capturing) { return; }
     capturing.button.classList.remove('capturing');

@@ -13,6 +13,7 @@ from wingman.preview import win32
 from wingman.preview.cropstore import CropStore
 from wingman.preview.geometry import Rect
 from wingman.preview.host import PreviewHost
+from wingman.preview.runtime import PreviewRuntime
 from wingman.telemetry.model import RosterSnapshot
 
 
@@ -31,12 +32,15 @@ def crop_api(tmp_path):
         on_crops_changed=api.push_preview_crops,
     )
     api._preview_host = host
+    api._preview_runtime = PreviewRuntime(host)
+    api._preview_runtime.set_state_callback(api._preview_runtime_changed)
     try:
         yield api, host, store, transaction
     finally:
         transaction.release.set()
-        host.stop(final=True)
-        store.close().result(5)
+        stopped = api._preview_runtime.shutdown(5)
+        closed = store.close().result(5)
+        assert stopped and closed, "Preview runtime/storage cleanup did not finish"
 
 
 def refused(result):
@@ -254,7 +258,9 @@ def test_select_uses_named_session_without_primary_preview_or_page_native_identi
     h = r.host
     api = make_api(tmp_path, preview_host=h)
     h._on_crops_changed = api.push_preview_crops
-    h.start()
+    assert api.set_preview_enabled(True)
+    assert h._ready.wait(5)
+    h.apply_roster(RosterSnapshot(1, (client(),)))
     assert h.characters() == []  # primary exclusion must not gate crop selection
     refused(api.select_preview_crop("Offline"))
     receipt = api.select_preview_crop("Alice")
@@ -289,8 +295,10 @@ def test_select_uses_named_session_without_primary_preview_or_page_native_identi
 
 def test_api_enable_native_failure_is_safe_terminal_outcome(tmp_path, crop_pump):
     r = crop_pump(initial={"Alice": replace(DEFINITION, enabled=False)})
-    r.host.start()
     api = make_api(tmp_path, preview_host=r.host)
+    assert api.set_preview_enabled(True)
+    assert r.host._ready.wait(5)
+    r.host.apply_roster(RosterSnapshot(1, (client(),)))
     r.native.fail = "register"
     receipt = api.set_preview_crop_enabled("Alice", True)
     r.call(lambda: None)
@@ -317,10 +325,11 @@ def test_api_offline_enable_refuses_full_cap_even_if_arrivals_beat_delivery(
     clients = tuple(client(name, hwnd=20 + i) for i, name in enumerate(names))
     for entry in clients:
         r.native.sources[entry.hwnd] = (1280, 720)
-    r.host.apply_roster(RosterSnapshot(2, clients[:-1] if late else clients))
-    r.host.start()
-    r.call(lambda: None)
     api = make_api(tmp_path, preview_host=r.host)
+    assert api.set_preview_enabled(True)
+    assert r.host._ready.wait(5)
+    r.host.apply_roster(RosterSnapshot(2, clients[:-1] if late else clients))
+    r.call(lambda: None)
     original = r.host._post
     monkeypatch.setattr(
         r.host,
@@ -364,6 +373,8 @@ def test_tentative_failed_master_off_does_not_drop_telemetry_session_revocation(
     )
     h = r.host
     api._preview_host = h
+    api._preview_runtime = PreviewRuntime(h)
+    api._preview_runtime.set_state_callback(api._preview_runtime_changed)
     discovery = FakeDiscovery()
 
     def stream_factory(*, custom_snapshot):
@@ -381,6 +392,7 @@ def test_tentative_failed_master_off_does_not_drop_telemetry_session_revocation(
     presentation_thread = None
     try:
         api.start_previews_if_enabled()
+        assert h._ready.wait(5)
         presentation_thread = api._fleet_worker._thread
         assert presentation_thread is not None and presentation_thread.is_alive()
         discovery.publish(RosterSnapshot(1, (client(),)))

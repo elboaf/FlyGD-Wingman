@@ -62,6 +62,7 @@ class Host:
     def __init__(self):
         self.callback = None
         self.revision = 0
+        self.epoch = 0
         self.sessions = frozenset({FIRST, HIDDEN})
         self.available = True
         self.generation = 0
@@ -72,20 +73,25 @@ class Host:
     def subscribe(self, callback):
         self.callback = callback
         if callback:
-            callback(self.revision, self.sessions, self.available)
+            callback(self.revision, self.sessions, self.available, self.epoch)
 
     def notify(self, revision, sessions, available):
+        if available != self.available:
+            self.epoch += 1
         self.revision, self.sessions, self.available = revision, sessions, available
         if self.callback:
-            self.callback(revision, sessions, available)
+            self.callback(revision, sessions, available, self.epoch)
 
-    def fence(self, generation):
+    def fence(self, generation, eve_epoch):
         with self.cv:
+            if self.closed or eve_epoch != self.epoch:
+                return False
             if not self.closed:
                 assert generation > self.generation
                 self.generation = generation
                 self.values.clear()
             self.cv.notify_all()
+            return True
 
     def publish(self, generation, values):
         with self.cv:
@@ -395,8 +401,9 @@ def test_callback_never_waits_for_save_and_ignores_old_revisions(rig, monkeypatc
     assert entered.wait(2)
 
     def notify():
-        callback(3, frozenset({FIRST}), False)
-        callback(2, frozenset({HIDDEN}), True)
+        rig.host.epoch = 3
+        callback(3, frozenset({FIRST}), False, 3)
+        callback(2, frozenset({HIDDEN}), True, 2)
         returned.set()
 
     owner = threading.Thread(target=notify)
@@ -429,8 +436,9 @@ def test_out_of_order_host_restart_cannot_reuse_equal_ready_generation(rig):
     rig.client.call(1).reply(success())
     before = rig.wait(lambda s: s["status"] == "connected")["generation"]
     with rig.controller._handoff_lock:
-        rig.host.callback(2, frozenset({FIRST, HIDDEN}), True)
-        rig.host.callback(1, frozenset(), False)
+        rig.host.epoch = 2
+        rig.host.callback(2, frozenset({FIRST, HIDDEN}), True, 2)
+        rig.host.callback(1, frozenset(), False, 1)
     state = rig.wait(lambda s: s["generation"] > before)
     assert state["host_available"] and state["previewed"] == 2
 
@@ -452,7 +460,7 @@ def test_off_test_is_async_does_not_enable_and_shutdown_retains_owners(tmp_path)
         assert not rig.controller.stop(0)
         assert rig.host.callback is None and rig.host.closed
         assert not rig.controller.start()
-        callback(100, frozenset({FIRST}), True)
+        callback(100, frozenset({FIRST}), True, 100)
         assert rig.worker is worker
         assert rig.controller.state()["status"] == "stopped"
         assert not rig.controller.set_enabled(True)["applied"]

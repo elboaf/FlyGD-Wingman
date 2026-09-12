@@ -51,7 +51,7 @@ def test_metadata_availability_not_running_or_runtime_enabled(tmp_path, monkeypa
     try:
         with monkeypatch.context() as patch:
             patch.setattr(PreviewHost, "is_running", property(lambda self: True))
-            assert host.is_running and host.runtime_enabled
+            assert host.is_running and not host.runtime_enabled
             assert not host.metadata_available()
             assert api._wanderer.start()
             assert not api.wanderer_state()["host_available"]
@@ -75,10 +75,21 @@ def test_controller_receives_only_created_named_primary_sessions(
     )
     runtime.host._excluded = lambda: ["Excluded"]
     good = tuple(client(f"Pilot {i}", i + 100) for i in range(91))
+    # Bind both owners before modelling completed native activation. Api's
+    # lifecycle callback intentionally revokes standalone pre-binding authority.
+    runtime.host._hwnd = None
+    monkeypatch.setattr(
+        runtime.host,
+        "set_metadata_generation",
+        PreviewHost.set_metadata_generation.__get__(runtime.host),
+    )
+    api = make_api(tmp_path, preview_host=runtime.host)
+    runtime.host._hwnd = 999
+    runtime.host._eve_admitted = True
+    runtime.host._metadata_ready_epoch = runtime.host._eve_epoch
     runtime.roster(
         1, *good, client("Failed", 4), client("Excluded", 5), client(None, 6)
     )
-    api = make_api(tmp_path, preview_host=runtime.host)
     try:
         assert api._wanderer.start()
         assert api.wanderer_state()["previewed"] == 91
@@ -87,6 +98,8 @@ def test_controller_receives_only_created_named_primary_sessions(
             s.character not in {"Failed", "Excluded"} for s in api._wanderer._sessions
         )
     finally:
+        api._close_eve_runtime()
+        runtime.host._teardown(runtime.native)
         api.shutdown_previews()
 
 
@@ -130,7 +143,7 @@ def test_early_and_final_shutdown_detach_before_host_native_stop(
     monkeypatch.setattr(host, "stop", native_stop)
     try:
         getattr(api, entrypoint)()
-        callback(999, frozenset(), True)
+        callback(999, frozenset(), True, 999)
         assert not api._wanderer.start()
         assert not api.wanderer_state()["host_available"]
         api._publish_wanderer_state({"status": "connected"})

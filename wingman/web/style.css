@@ -2151,6 +2151,10 @@ button.btn:disabled,
 #dlg-select-label { display: block; margin-top: 14px; color: var(--text-dim); }
 #dlg-select-label[hidden], #dlg-select[hidden] { display: none; }
 #dlg-select { width: 100%; margin-top: 4px; }
+.dialog.compact-choice { width: min(360px, 100%); }
+.dialog.compact-choice #dlg-select { min-width: 0; max-width: 100%; }
+#dlg-select-detail { margin-top: 8px; overflow-wrap: anywhere; }
+#dlg-select-detail[hidden] { display: none; }
 
 /* ====================== settings route ==============================
    A route in this window, not a second OS window.
@@ -2591,6 +2595,40 @@ button.btn:disabled,
   max-width: 620px;
   scroll-margin-top: var(--preview-jump-height);
 }
+/* Companion rows are keyed in place, so live source updates do not rebuild
+   a focused editor. The identity track yields before actions at the floor. */
+.companion-toolbar, .companion-actions {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+}
+.companion-toolbar { margin-top: 12px; }
+.companion-toolbar[hidden], .companion-actions[hidden] { display: none; }
+.companion-add-form {
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 14px 0; margin-top: 12px;
+  border-top: 1px solid var(--field-border);
+  border-bottom: 1px solid var(--field-border);
+}
+.companion-add-form[hidden] { display: none; }
+.companion-list { display: flex; flex-direction: column; }
+.companion-list[hidden] { display: none; }
+.companion-row { padding: 14px 0; border-top: 1px solid var(--field-border); min-width: 0; }
+.companion-summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 14px; align-items: center; }
+.companion-summary[hidden] { display: none; }
+.companion-summary > .hint { grid-column: 1 / -1; }
+.companion-identity { min-width: 0; }
+.companion-name, .companion-source { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.companion-name[hidden], .companion-source[hidden] { display: none; }
+.companion-name { font-weight: 600; }
+.companion-detail { margin-top: 8px; }
+.companion-detail > summary { color: var(--text-btn); cursor: pointer; width: fit-content; }
+.companion-detail[open] > summary { margin-bottom: 12px; }
+.companion-detail > .row { margin: 10px 0; }
+.companion-detail .field, .companion-add-form .field { min-width: 0; flex: 1 1 200px; }
+.companion-detail .row > .hint { flex-basis: 100%; }
+#companion-previews > .hint, .companion-row > .hint { margin-top: 6px; }
+#companion-previews .hint:empty:not([role="status"]) { display: none; }
+#companion-status, #companion-master-status { min-height: 1em; }
+#companion-off-note[hidden] { display: none; }
 #preview-binds .bind-head > span { top: var(--preview-jump-height); }
 #section-previews > .card:has(> #preview-binds) {
   width: max-content; max-width: 100%; align-self: start;

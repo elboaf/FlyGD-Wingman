@@ -327,12 +327,13 @@ which has no self-describing text.
 The third is round 5's E1, and it renames most of the first column: the
 rail merged `Account`, `Uploads`, `Folders` and `Discord` into one entry,
 `Uploading`; `Characters` and `Alerts` became entries of their own. Fleet telemetry
-now has a separate entry too. The rail order is Uploading, Characters, Bookmarks,
-Previews, Fleet telemetry, Alerts, General, asserted in `test_settings_page.py`.
+now has a separate entry too. The rail order is Uploading, Companions, Characters,
+Bookmarks, Previews, Fleet telemetry, Alerts, General, asserted in
+`test_settings_page.py`. Companions is independent of the EVE-tools gate.
 The rows above still describe the same cards, which is why the measurement
 stands — the first control's left edge is a property of the card, not of
 the rail entry it is reached through. With the EVE gate off the rail is
-two entries, `Uploading` and `General`.
+three entries, `Uploading`, `Companions` and `General`.
 
 **If you out-specify the label column, restore its collapse yourself.**
 `#eve-binds` and `#preview-binds` both take the column away from their

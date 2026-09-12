@@ -560,6 +560,32 @@ def build_preview_host(state, api_box):
         return None
 
 
+def build_companion_controller(state, host, runtime, api_box):
+    """Bind independent companion authority before either family demands a pump."""
+    from .preview.companioncontroller import CompanionController, CompanionPorts
+
+    def publish(snapshot):
+        api = api_box.get("api")
+        if api is not None:
+            api._push_companion_previews(snapshot)
+
+    controller = CompanionController(
+        CompanionPorts(
+            update_settings=lambda: settings_mod.update(state.settings),
+            runtime=runtime,
+            submit_native=host.submit_companion
+            if host is not None
+            else lambda command: False,
+            publish_state=publish,
+        ),
+        state.settings.get("companion_previews", {}),
+        available=host is not None,
+    )
+    if host is not None:
+        host.set_companion_controller(controller)
+    return controller
+
+
 def build_alerts_controller(state, host, api_box) -> AlertsController:
     """Thread-free authority; late health ports resolve Api's retained runtime."""
     from .alerts.service import play_sound
@@ -571,9 +597,11 @@ def build_alerts_controller(state, host, api_box) -> AlertsController:
             reader_state=lambda: api_box["api"]._custom_reader_state(),
             matcher_health=lambda: api_box["api"]._custom_matcher_health(),
             preview_characters=lambda: (
-                tuple(host.characters()) if host is not None else ()
+                tuple(host.characters())
+                if host is not None and host.runtime_enabled
+                else ()
             ),
-            preview_available=lambda: host is not None,
+            preview_available=lambda: host is not None and host.runtime_enabled,
             raise_alert=lambda character, event, spec: host.raise_alert(
                 character, event, spec
             ),
@@ -918,7 +946,13 @@ def main() -> int:
     # registry intentionally does not keep settings documents alive itself.
     _preview_config = settings_mod.committed_preview(state.settings)
     api_box = {}
+    from .preview.runtime import PreviewRuntime
+
     preview_host = build_preview_host(state, api_box)
+    preview_runtime = PreviewRuntime(preview_host)
+    companion_controller = build_companion_controller(
+        state, preview_host, preview_runtime, api_box
+    )
     alerts_controller = build_alerts_controller(state, preview_host, api_box)
     api_box["alerts"] = alerts_controller
     alert_policy = build_alert_policy(state, preview_host, alerts_controller)
@@ -927,6 +961,8 @@ def main() -> int:
     api = api_mod.Api(
         state,
         preview_host=preview_host,
+        preview_runtime=preview_runtime,
+        companion_controller=companion_controller,
         telemetry=telemetry,
         fleet_sharing=sharing_worker,
         alerts_controller=alerts_controller,
@@ -980,6 +1016,11 @@ def main() -> int:
             # Close acceptance and detach BEFORE joining or destroying any
             # target. A timed-out WebView owner stays tracked but cannot start
             # a later delivery stage; no native/presentation lock covers join.
+            # These are nonblocking fences; the later shutdown_previews joins
+            # storage first, then native runtime, outside shutdown_lock.
+            companion_controller.close_publication()
+            companion_controller.close_admission()
+            preview_runtime.close_admission()
             api._close_eve_runtime()
             api._stop_fleet_presentation()
             api.shutdown_fleet_sharing()

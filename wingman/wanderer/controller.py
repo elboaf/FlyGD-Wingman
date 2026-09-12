@@ -20,7 +20,7 @@ from .credentials import CredentialStore, validate_token
 from .model import normalize_base_url, normalize_map_identifier
 from .worker import MetadataPublisher, WandererWorker, WorkerConfig
 
-MetadataCallback = Callable[[int, frozenset[ClientSessionId], bool], None]
+MetadataCallback = Callable[[int, frozenset[ClientSessionId], bool, int], None]
 HEALTH_INTERVAL = 0.25
 PERSISTENCE_ERROR = (
     "Could not restore the saved Wanderer connection. Names are stopped; "
@@ -39,7 +39,7 @@ class WandererPorts:
 
     update_settings: Callable[[], AbstractContextManager[dict]]
     set_metadata_callback: Callable[[MetadataCallback | None], None]
-    set_metadata_generation: Callable[[int], None]
+    set_metadata_generation: Callable[[int, int], bool]
     submit_metadata: MetadataPublisher
     close_metadata_admission: Callable[[], None]
     publish_state: Callable[[dict], None]
@@ -128,17 +128,19 @@ class WandererController:
         return not failed
 
     def metadata_changed(
-        self, revision: int, sessions: frozenset[ClientSessionId], available: bool
+        self,
+        revision: int,
+        sessions: frozenset[ClientSessionId],
+        available: bool,
+        eve_epoch: int,
     ) -> None:
         """Host-thread ingress: cache newest detached snapshot and wake only."""
         with self._condition:
             if self._closed or revision <= self._host_revision:
                 return
-            # A gap can conceal unavailable -> available, including an older
-            # detached callback arriving after the newer ready snapshot. Fence
-            # conservatively even if the final configuration compares equal.
-            if available != self._available or revision > self._host_revision + 1:
-                self._host_epoch += 1
+            # Actual EVE lifetime provenance survives coalesced/reordered
+            # callbacks. Pump and companion changes are not metadata changes.
+            self._host_epoch = eve_epoch
             self._host_revision = revision
             self._sessions, self._available = sessions, available
             self._pending = True
@@ -152,33 +154,41 @@ class WandererController:
             self._previews_enabled = enabled
         self._apply_runtime()
 
-    def _apply_runtime(self) -> None:
+    def _apply_runtime(self) -> bool:
         with self._handoff_lock:
             with self._condition:
                 if self._closed or not self._started:
-                    return
+                    return False
                 config = WorkerConfig(
                     **self._section,
                     token=self._token,
                     previews_enabled=self._previews_enabled,
                     host_available=self._available,
                 )
-                key = (config, self._host_epoch, self._revision)
+                eve_epoch = self._host_epoch
+                key = (config, eve_epoch, self._revision)
                 sessions = self._sessions
                 self._pending = False
                 changed = key != self._applied_key
                 if changed:
                     self._generation += 1
-                    self._applied_key = key
                 generation = self._generation
             # No callback condition is held across host or worker effects.
             # Host fences first: even an immediately completing request cannot
             # publish into the previous runtime's metadata admission.
             if changed:
-                self._ports.set_metadata_generation(generation)
-                self._worker.configure(config, generation=generation)
+                if not self._ports.set_metadata_generation(generation, eve_epoch):
+                    # A newer host callback owns the next handoff. Do not start
+                    # HTTP from the rejected old epoch or spin on this snapshot.
+                    return False
+                if not self._worker.configure(config, generation=generation):
+                    return False
+                with self._condition:
+                    if not self._closed:
+                        self._applied_key = key
             self._worker.set_sessions(sessions)
         self._health_wake.set()
+        return True
 
     def _run_runtime(self) -> None:
         try:
@@ -407,8 +417,10 @@ class WandererController:
                     test_error = "Connection saved, but Wanderer cannot test now. Restart Wingman to retry."
                 else:
                     with self._handoff_lock:
-                        self._apply_runtime()
-                        accepted = self._worker.test_connection()
+                        # A refused epoch handoff has not configured the saved
+                        # binding. Never test the previous worker connection.
+                        if self._apply_runtime():
+                            accepted = self._worker.test_connection()
                         generation = self._generation
                     if not accepted:
                         test_error = "Connection saved, but Test could not start. Wait for the current request or restart Wingman."

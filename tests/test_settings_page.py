@@ -75,6 +75,7 @@ def test_the_rail_and_the_panes_are_in_the_same_order():
     the wrong card gets edited."""
     expected = [
         "uploading",
+        "companions",
         "characters",
         "bookmarks",
         "previews",
@@ -84,6 +85,17 @@ def test_the_rail_and_the_panes_are_in_the_same_order():
     ]
     assert [name for name, _ in _rail()] == expected
     assert [name for name, _ in _panes()] == expected
+
+
+def test_companions_have_their_own_section_without_eve_preview_controls():
+    panes = dict(_panes())
+    companions = panes.get("companions", "")
+    for control in ("companion-enabled", "companion-add", "companion-list"):
+        assert f'id="{control}"' in companions
+        assert f'id="{control}"' not in panes["previews"]
+    for control in ("preview-enabled", "preview-binds", "preview-reset"):
+        assert f'id="{control}"' in panes["previews"]
+        assert f'id="{control}"' not in companions
 
 
 def test_fleet_controls_have_their_own_section_without_preview_controls():

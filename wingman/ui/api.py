@@ -63,6 +63,8 @@ from ..preview import gestures as preview_gestures
 from ..preview import host as preview_host_mod
 from ..preview import layout as preview_layout
 from ..preview import window as preview_window
+from ..preview.companioncontroller import CompanionController, CompanionPorts
+from ..preview.runtime import PreviewRuntime
 from ..telemetry.model import CustomMatcherHealth
 from ..upload.controller import (
     PROBE_DRAIN_S,
@@ -366,6 +368,8 @@ class Api:
         probe=library.probe,
         timer=threading.Timer,
         preview_host=None,
+        preview_runtime=None,
+        companion_controller=None,
         skills=None,
         telemetry=None,
         fleet_sharing=None,
@@ -460,6 +464,27 @@ class Api:
         # None off Windows and in most tests: the preview subsystem is
         # optional and every call site below tolerates its absence.
         self._preview_host = preview_host
+        self._preview_runtime = (
+            preview_runtime
+            if preview_runtime is not None
+            else PreviewRuntime(preview_host)
+        )
+        self._preview_revision = 0
+        self._preview_runtime_authorized = False
+        self._companions = (
+            companion_controller
+            if companion_controller is not None
+            else CompanionController(
+                CompanionPorts(
+                    update_settings=lambda: settings_mod.update(state.settings),
+                    runtime=self._preview_runtime,
+                    submit_native=lambda command: False,
+                    publish_state=self._push_companion_previews,
+                ),
+                state.settings.get("companion_previews", {}),
+                available=False,
+            )
+        )
 
         # None off the happy path -- when the subsystem failed to build, and
         # in most tests. Every call site below tolerates its absence and
@@ -582,6 +607,7 @@ class Api:
         # Bind only after the worker and runtime collaborators exist. The
         # adapters resolve the window and replaceable effects when invoked;
         # construction itself must not touch the page or start Profiles work.
+        self._preview_runtime.set_state_callback(self._preview_runtime_changed)
         self._profiles = self._build_profiles_controller()
         self._wanderer = self._build_wanderer_controller()
         if self._fleet_sharing is not None:
@@ -635,7 +661,7 @@ class Api:
 
     # ----- Python -> page -------------------------------------------------
 
-    def _push(self, handler: str, payload) -> None:
+    def _push(self, handler: str, payload, *, delivery_allowed=None) -> None:
         """Fire-and-forget one message at the page.
 
         The `handler &&` guard is not defensive padding: pushes can land
@@ -649,6 +675,8 @@ class Api:
         mid-upload must cost a status line, not the upload.
         """
         script = f"window.{handler} && window.{handler}({_page_payload(payload)})"
+        if delivery_allowed is not None and not delivery_allowed():
+            return
         try:
             self._window.evaluate_js(script)
         except Exception:
@@ -657,6 +685,8 @@ class Api:
         # one timer, one reader of the engine's status file, two renderers.
         # Its failures cost the same nothing the main window's do.
         if self._sigbar_window is not None:
+            if delivery_allowed is not None and not delivery_allowed():
+                return
             try:
                 self._sigbar_window.evaluate_js(script)
             except Exception:
@@ -4379,9 +4409,11 @@ class Api:
         if self._preview_host is not None:
             self._preview_host.set_metadata_callback(callback)
 
-    def _wanderer_metadata_generation(self, generation) -> None:
+    def _wanderer_metadata_generation(self, generation, eve_epoch) -> bool:
         if self._preview_host is not None:
-            self._preview_host.set_metadata_generation(generation)
+            return self._preview_host.set_metadata_generation(generation, eve_epoch)
+        # Explicit Test is independent of native preview availability.
+        return True
 
     def _wanderer_submit_metadata(self, generation, updates) -> None:
         if self._preview_host is not None:
@@ -4491,8 +4523,24 @@ class Api:
         self._wanderer.close_admission()
         # This only fences ingress; no consumer callback or join. Keep the
         # retained owner even when its later bounded stop cannot finish.
+        self._companions.close_publication()
+        self._companions.close_admission()
+        self._preview_runtime.close_admission()
         if telemetry is not None:
             telemetry.close_custom_admission()
+
+    def _preview_runtime_changed(self, state) -> None:
+        self._companions.runtime_changed(state)
+        # Activation is asynchronous. The off-pump owner callback reconciles
+        # telemetry after the family can actually consume discovery results.
+        if self._eve_runtime_closed:
+            return
+        authorized = (
+            self._preview_host is not None and self._preview_host.runtime_enabled
+        )
+        if authorized != self._preview_runtime_authorized or state.eve == "failed":
+            self._preview_runtime_authorized = authorized
+            self._reconcile_eve_runtime()
 
     def _stop_eve_telemetry(self) -> None:
         if self._telemetry is not None:
@@ -4515,18 +4563,13 @@ class Api:
         Fleet can independently start discovery and gamelog workers while
         Preview stays off. The preview pump and foreground hook remain lazy.
         """
-        if self._preview_host is None:
-            self._start_fleet_telemetry_if_enabled()
-            return
         section = self._state.settings.get("preview", {})
-        # Pushed before start(): the first registration pass runs inside
-        # start(), and a table applied only after it would leave every
-        # binding unregistered until the next explicit save.
-        self._preview_host.set_hotkeys(section.get("hotkeys") or {})
-        if section.get("enabled"):
-            self._preview_host.start()
-        # After host start(), so Preview roster delivery has a live pump.
-        # Telemetry follows this committed runtime, not tentative settings I/O.
+        if self._preview_host is not None:
+            self._preview_host.set_hotkeys(section.get("hotkeys") or {})
+        self._companions.start()
+        self._preview_runtime.set_eve(
+            bool(section.get("enabled")), self._preview_revision
+        )
         self._start_fleet_telemetry_if_enabled()
 
     def _start_fleet_telemetry_if_enabled(self) -> None:
@@ -4538,19 +4581,27 @@ class Api:
         else:
             self._reconcile_eve_runtime()
 
-    def set_preview_enabled(self, enabled: bool) -> bool:
-        # A reservation, not a lock held across settings I/O, stop.join or page
-        # callbacks. Concurrent bridge calls must not read a tentative master
-        # setting or reorder runtime delivery after their transactions.
-        with self._preview_mode_lock:
-            if self._preview_mode_changing:
-                return False
-            self._preview_mode_changing = True
+    @contextlib.contextmanager
+    def _preview_setting_change(self):
+        # Share the master reservation with explicit layout edits: an offline
+        # write must finish before another bridge call can re-enable EVE or
+        # read its tentative layout. Never hold the lock across I/O/callbacks.
+        # Final closure refuses new edits, not transactions already admitted.
+        # Admission shares the close fence; neither lock covers their writes.
+        with self._eve_runtime_lock, self._preview_mode_lock:
+            available = not self._eve_runtime_closed and not self._preview_mode_changing
+            if available:
+                self._preview_mode_changing = True
         try:
-            return self._set_preview_enabled(bool(enabled))
+            yield available
         finally:
-            with self._preview_mode_lock:
-                self._preview_mode_changing = False
+            if available:
+                with self._preview_mode_lock:
+                    self._preview_mode_changing = False
+
+    def set_preview_enabled(self, enabled: bool) -> bool:
+        with self._preview_setting_change() as available:
+            return self._set_preview_enabled(bool(enabled)) if available else False
 
     def _set_preview_enabled(self, enabled: bool) -> bool:
         """Toggle previews and persist the choice.
@@ -4573,28 +4624,99 @@ class Api:
                     raise _SettingUnchanged
                 section["enabled"] = enabled
         except _SettingUnchanged:
-            # True, not None: a serialized no-op is success, but must not
-            # rewrite the document or restart an already-running host.
+            # Retry a failed start without another settings save or owner.
+            self._preview_runtime.set_eve(enabled, self._preview_revision)
             return True
         except OSError:
             # Only a committed master setting authorizes runtime changes.
             logger.exception("Could not persist the preview setting")
             return False
+        else:
+            self._preview_revision += 1
+        self._preview_runtime.set_eve(enabled, self._preview_revision)
         self._wanderer.set_previews_enabled(enabled)
-        if self._preview_host is not None:
-            if enabled:
-                self._preview_host.start()
-            else:
-                self._preview_host.stop()
         self._reconcile_eve_runtime()
         # Truthy on success: WM.send resolves to null on a bridge failure
         # and cannot otherwise distinguish that from a method that simply
         # returned None (settings.js:181 documents the same trap).
         return True
 
+    def companion_previews_state(self) -> dict:
+        return self._companions.state()
+
+    def companion_previews_sources(self) -> dict:
+        return self._companions.sources()
+
+    def set_companion_previews_enabled(self, enabled: bool) -> dict:
+        return self._companions.set_master(enabled)
+
+    def companion_preview_select(
+        self,
+        id: str | None,
+        candidate_token: str,
+        mode: str,
+        label: str,
+        title_mode: str,
+        title_hint: str,
+        expected_generation: int | None,
+    ) -> dict:
+        return self._companions.select(
+            id,
+            candidate_token,
+            mode,
+            label,
+            title_mode,
+            title_hint,
+            expected_generation,
+        )
+
+    def companion_preview_reselect_region(
+        self, id: str, expected_generation: int
+    ) -> dict:
+        return self._companions.reselect_region(id, expected_generation)
+
+    def companion_preview_set_enabled(
+        self, id: str, enabled: bool, expected_generation: int
+    ) -> dict:
+        return self._companions.set_enabled(id, enabled, expected_generation)
+
+    def companion_preview_edit(
+        self,
+        id: str,
+        label: str,
+        title_mode: str,
+        title_hint: str,
+        expected_generation: int,
+    ) -> dict:
+        return self._companions.edit(
+            id, label, title_mode, title_hint, expected_generation
+        )
+
+    def companion_preview_remove(self, id: str, expected_generation: int) -> dict:
+        return self._companions.remove(id, expected_generation)
+
+    def companion_preview_reset_geometry(
+        self, id: str, expected_generation: int
+    ) -> dict:
+        return self._companions.reset_geometry(id, expected_generation)
+
+    def _push_companion_previews(self, state: dict) -> None:
+        if self._preview_publication_open():
+            self._push(
+                "onCompanionPreviews",
+                state,
+                delivery_allowed=self._preview_publication_open,
+            )
+
+    def _preview_publication_open(self) -> bool:
+        return not self._eve_runtime_closed
+
     def push_preview_crops(self, state: dict) -> None:
         """Semantic committed state; safe before a crop page handler is registered."""
-        self._push("onPreviewCrops", state)
+        if not self._eve_runtime_closed:
+            self._push(
+                "onPreviewCrops", state, delivery_allowed=self._preview_publication_open
+            )
 
     def shutdown_previews(self) -> None:
         """Tear the preview thread down on the way out.
@@ -4611,11 +4733,17 @@ class Api:
         self.shutdown_fleet_sharing()
         if not self._wanderer.stop():
             logger.warning("Wanderer runtime is still stopping")
-        if self._preview_host is not None:
-            try:
-                self._preview_host.stop(final=True)
-            except Exception:
-                logger.exception("Preview host did not stop cleanly")
+        try:
+            if not self._companions.shutdown():
+                # Keep the native owner alive to deliver admitted storage's
+                # promote/discard completion. A later shutdown may retry the join.
+                logger.warning(
+                    "Companion settings are still saving; retaining preview owner"
+                )
+            elif not self._preview_runtime.shutdown():
+                logger.warning("Preview runtime is still stopping")
+        except Exception:
+            logger.exception("Preview runtime did not stop cleanly")
         # A returning in-flight reconcile owes eventual stop only after both
         # subscriptions have detached, not merely because admission closed.
         with self._eve_runtime_lock:
@@ -4943,14 +5071,21 @@ class Api:
         unregistered chord still comes through the page's own keydown
         listener, which is the path that always worked.
         """
-        if self._preview_host is None:
+        if self._preview_host is None or (
+            armed and not self._preview_host.runtime_enabled
+        ):
             return False
         self._preview_host.set_capture(bool(armed))
         return True
 
     def push_bind_captured(self, gesture) -> None:
         """A registered chord, redirected to the armed bind row."""
-        self._push("onPreviewBindCaptured", {"gesture": gesture})
+        if not self._eve_runtime_closed:
+            self._push(
+                "onPreviewBindCaptured",
+                {"gesture": gesture},
+                delivery_allowed=self._preview_publication_open,
+            )
 
     def _preview_layout_entries(self) -> dict:
         """Latest valid layouts, including the host's undebounced state."""
@@ -5055,14 +5190,9 @@ class Api:
         """
         section = self._state.settings.get("preview", {})
         host = self._preview_host
-        # is_running, not merely "host is not None": there is a window
-        # between stop() clearing the thread handle and _teardown running
-        # on the preview thread itself where the host object still exists
-        # but owns no chords and no windows. Gating on is_running closes
-        # it -- a stopped host reports the same empty state as no host at
-        # all, rather than serving whatever characters()/hotkey_status()
-        # last held.
-        live = host is not None and host.is_running
+        # A companion/selection pump does not authorize EVE delivery. The
+        # family fence also hides retained native reports during cleanup.
+        live = host is not None and host.runtime_enabled
         online = set(host.characters() if live else [])
         layout_sources = [
             {"name": name, "online": name in online if live else None}
@@ -5173,9 +5303,13 @@ class Api:
         """Announce a change to a page that is already up. Never the only
         path -- see get_preview_hotkey_state."""
         payload = self.get_preview_hotkey_state()
-        if status is not None:
-            payload["registration"] = status
-        self._push("onPreviewHotkeys", payload)
+        if self._eve_runtime_closed:
+            return
+        # Read current authority rather than restoring a detached registration
+        # snapshot delivered after EVE off/on. The host caches before notifying.
+        self._push(
+            "onPreviewHotkeys", payload, delivery_allowed=self._preview_publication_open
+        )
 
     # ---- Preview settings, generic writer --------------------------------
 
@@ -5393,16 +5527,24 @@ class Api:
         would refuse would let the page and the windows disagree.
         """
         host = self._preview_host
-        if host is None or not host.is_running:
+        if host is None or not host.runtime_enabled:
             return self._field_refused("Start previews first.")
         section = self._state.settings.get("preview", {})
         if host.resize_all((section.get("width"), section.get("height"))) is False:
-            return self._field_refused("Previews are stopping.")
+            return self._field_refused(
+                "Previews could not accept this change. Try again."
+            )
         # The cards show each character's size; every one just changed.
         self.push_preview_hotkeys()
         return self._field_ok()
 
     def set_preview_size(self, name, w, h) -> dict:
+        with self._preview_setting_change() as available:
+            if not available:
+                return self._field_refused("Another preview change is still pending.")
+            return self._set_preview_size(name, w, h)
+
+    def _set_preview_size(self, name, w, h) -> dict:
         """Persist one preview's size, and apply it live if that client is running.
 
         Three cases, and the third is the awkward one:
@@ -5425,29 +5567,44 @@ class Api:
         if width < floor_w or height < floor_h:
             return self._field_refused(f"The smallest preview is {floor_w}x{floor_h}.")
         host = self._preview_host
-        if host is not None and host.is_running and name in host.characters():
+        # EVE-off revokes movement immediately, but accepted storage and the
+        # final drag freeze still belong to the retained cleanup owner.
+        if host is not None and host.is_stopping:
+            return self._field_refused("Previews are stopping.")
+        if host is not None and host.runtime_enabled and name in host.characters():
             if host.resize_preview(name, (width, height)) is False:
-                return self._field_refused("Previews are stopping.")
+                return self._field_refused(
+                    "Previews could not accept this change. Try again."
+                )
             return self._field_ok()
-        layouts = self._state.settings.get("preview", {}).get("layouts") or {}
-        if name not in layouts:
+        # A known offline character can still sit behind a live RESET in the
+        # pump FIFO. Do not acknowledge a direct write that RESET would erase.
+        if host is not None and host.layout_commands_pending:
+            return self._field_refused("Preview layout changes are still pending.")
+        entries = (
+            host.layout_entries()
+            if host is not None
+            else preview_layout.deserialize(
+                self._state.settings.get("preview", {}).get("layouts")
+            )
+        )
+        previous = entries.get(name)
+        if previous is None:
             return self._field_refused(
                 "Start this client once, or drag its preview, before setting a size."
             )
-        entry = dict(layouts[name])
-        entry["w"], entry["h"] = width, height
-        result = self._write_preview_setting(("layouts", name), entry)
-        if result["applied"] and host is not None:
-            host.sync_layout(
-                name,
-                preview_layout.Entry(
-                    preview_geometry.Rect(
-                        int(entry["x"]), int(entry["y"]), width, height
-                    ),
-                    bool(entry.get("locked", False)),
-                ),
-            )
-        return result
+        entry = preview_layout.Entry(
+            previous.rect._replace(w=width, h=height), previous.locked
+        )
+        if host is not None:
+            # An empty command FIFO does not retire the debounce writer. The
+            # store supersedes its pending delta and serializes an in-flight
+            # write before this explicit commit, just as it does for Copy.
+            if not host.replace_layout(name, entry):
+                return self._field_refused("Could not save this to settings.")
+            return self._field_ok()
+        raw = preview_layout.serialize({name: entry})[name]
+        return self._write_preview_setting(("layouts", name), raw)
 
     @staticmethod
     def _usable_preview_character(name) -> bool:
@@ -5460,7 +5617,7 @@ class Api:
             (section.get("hotkeys") or {}).get("characters") or {}
         )
         host = self._preview_host
-        if host is not None and host.is_running:
+        if host is not None and host.runtime_enabled:
             names |= set(host.characters())
         return {name for name in names if self._usable_preview_character(name)}
 
@@ -5502,6 +5659,12 @@ class Api:
         return self._write_preview_setting(("layouts", target), raw)
 
     def reset_preview_layouts(self) -> dict:
+        with self._preview_setting_change() as available:
+            if not available:
+                return self._field_refused("Another preview change is still pending.")
+            return self._reset_preview_layouts()
+
+    def _reset_preview_layouts(self) -> dict:
         """Forget every saved preview position and size.
 
         Goes through the host when one is running so the open windows move
@@ -5526,9 +5689,13 @@ class Api:
         giving the host a way to answer, which is a larger change than the
         failure justifies.
         """
-        if self._preview_host is not None and self._preview_host.is_running:
+        if self._preview_host is not None and self._preview_host.is_stopping:
+            return self._field_refused("Previews are stopping.")
+        if self._preview_host is not None and self._preview_host.runtime_enabled:
             if self._preview_host.reset_layouts() is False:
-                return self._field_refused("Previews are stopping.")
+                return self._field_refused(
+                    "Previews could not accept this change. Try again."
+                )
             return self._field_ok()
         try:
             with settings_mod.update(self._state.settings) as doc:
@@ -5572,7 +5739,7 @@ class Api:
                 continue
         host = self._preview_host
         names = set(section.get("seen") or [])
-        if host is not None and host.is_running:
+        if host is not None and host.runtime_enabled:
             names |= set(host.characters())
         for name in names:
             out.setdefault(name, list(default))
@@ -5732,9 +5899,13 @@ class Api:
                 preview_characters=lambda: (
                     tuple(self._preview_host.characters())
                     if self._preview_host is not None
+                    and self._preview_host.runtime_enabled
                     else ()
                 ),
-                preview_available=lambda: self._preview_host is not None,
+                preview_available=lambda: (
+                    self._preview_host is not None
+                    and self._preview_host.runtime_enabled
+                ),
                 raise_alert=lambda character, event, spec: (
                     self._preview_host.raise_alert(character, event, spec)
                 ),
@@ -5911,7 +6082,7 @@ class Api:
                 .get("alerts", {})
                 .get("volume", 100),
             )
-        if self._preview_host is None:
+        if self._preview_host is None or not self._preview_host.runtime_enabled:
             return {
                 "applied": True,
                 "persisted": False,
@@ -6187,9 +6358,8 @@ class Api:
             if chord
         }
         host = self._preview_host
-        # is_running, not `host is not None` -- the same window between
-        # stop() and _teardown that get_preview_hotkey_state() gates on.
-        live = host is not None and host.is_running
+        # Pump liveness includes companions and retained EVE cleanup.
+        live = host is not None and host.runtime_enabled
         if not live:
             return {"active": [], "latent": sorted(chords)}
         status = host.hotkey_status()

@@ -30,13 +30,25 @@ from wingman import paths
 
 
 @pytest.mark.parametrize(
-    "name", ["crops", "cropstore", "cropwindow", "croppicker", "cropcontroller"]
+    "name",
+    [
+        "crops",
+        "cropstore",
+        "cropwindow",
+        "croppicker",
+        "cropcontroller",
+        "regionpicker",
+        "companionwindow",
+        "companionfamily",
+        "sources",
+    ],
 )
 def test_production_crop_modules_cannot_control_client_placement_or_inject_input(name):
     module = importlib.import_module("wingman.preview." + name)
+    tree = ast.parse(inspect.getsource(module))
     calls = [
         node
-        for node in ast.walk(ast.parse(inspect.getsource(module)))
+        for node in ast.walk(tree)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
     ]
     forbidden = {
@@ -47,13 +59,30 @@ def test_production_crop_modules_cannot_control_client_placement_or_inject_input
         "keybd_event",
         "mouse_event",
     }
-    assert not forbidden.intersection(node.func.attr for node in calls)
-    # Crop destinations, overlays and children legitimately move/show. Reject
+    for node in calls:
+        if name == "companionfamily" and node.func.attr == "ShowWindowAsync":
+            # Only explicit companion activation may restore a source.
+            activation = next(
+                (
+                    method
+                    for method in ast.walk(tree)
+                    if isinstance(method, ast.FunctionDef)
+                    and method.name == "tick_activation"
+                ),
+                None,
+            )
+            assert activation is not None, "Expected synchronous tick_activation"
+            assert node in ast.walk(activation)
+            assert len(node.args) > 1, ast.unparse(node)
+            assert ast.unparse(node.args[1]) == "win32.SW_RESTORE"
+        else:
+            assert node.func.attr not in forbidden
+    # Preview destinations, overlays and children legitimately move/show. Reject
     # source/client-targeted calls rather than banning Wingman's own geometry.
     geometry = [
         node for node in calls if node.func.attr in {"SetWindowPos", "ShowWindow"}
     ]
-    if name in {"cropwindow", "croppicker"}:
+    if name in {"cropwindow", "regionpicker", "companionwindow"}:
         assert geometry
     for node in geometry:
         assert ast.unparse(node.args[0]) in {"self.hwnd", "self._overlay_hwnd", "hwnd"}

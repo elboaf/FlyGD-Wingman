@@ -151,20 +151,11 @@ def test_startup_still_reads_only_the_feature_flags():
 
 
 def test_the_page_gates_both_destinations_and_every_eve_section():
-    """Nothing executes web/*.js, so this asserts on its source the way the
-    bridge-contract test does. A destination left out of the list stays
-    visible with the tools hidden; a section left out shows a rail entry
-    for a feature the user asked not to see.
+    """The lexical guard complements the executable shell tests.
 
-    Round 5's E1 is what this now pins. The rail is six entries, and the
-    claim the merge rests on is that the split runs along PRODUCT.md's own
-    independence axis -- "It must not require the EVE tools to upload a
-    video, or a Google account to use the EVE tools." The observable form
-    of that claim is what the rail becomes with the gate off: **exactly
-    Uploading and General**, the two halves that owe EVE nothing. So the
-    survivors are derived by subtracting EVE_SECTIONS from the real rail
-    rather than retyped -- add a sixth entry and forget to gate it and this
-    fails, which is the mistake worth catching.
+    The EVE gate must hide every EVE-only section without hiding independent
+    features: Uploading, Companions and General need no EVE install. Derive
+    the survivors from the real rail so an accidentally ungated entry fails.
     """
     import pathlib
     import re
@@ -227,11 +218,9 @@ def test_the_page_gates_both_destinations_and_every_eve_section():
     assert not missing, f"EVE_SECTIONS names sections the rail does not have: {missing}"
 
     survivors = [name for name in rail if name not in gated]
-    assert survivors == ["uploading", "general"], (
-        "with the EVE gate off the rail should be exactly Uploading and "
-        f"General -- the two halves that need no EVE install -- but it is "
-        f"{survivors}. Either a new entry was added without gating it, or "
-        "the merge axis E1 chose has been broken."
+    assert survivors == ["uploading", "companions", "general"], (
+        "with the EVE gate off the rail should be exactly Uploading, "
+        f"Companions and General -- the independent sections -- but it is {survivors}"
     )
 
     # Hiding the screen you are ON would leave a dead pane with no way back.

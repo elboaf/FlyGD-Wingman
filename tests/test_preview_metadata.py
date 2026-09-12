@@ -1,5 +1,6 @@
 """Drive the real host/window ownership boundaries without a native pump."""
 
+from functools import partial
 from types import SimpleNamespace
 
 import pytest
@@ -29,6 +30,7 @@ def runtime(monkeypatch):
             PostMessageW=lambda hwnd, message, wp, lp: posted.append(message) or 1,
             GetForegroundWindow=lambda: 0,
             GetClientRect=lambda *args: 0,
+            PeekMessageW=lambda *args: 0,
             DestroyWindow=lambda hwnd: closed.append(hwnd),
             PostQuitMessage=lambda code: None,
         ),
@@ -39,6 +41,12 @@ def runtime(monkeypatch):
         on_layout_changed=lambda *args: None, show_labels=lambda: False
     )
     h._hwnd = 999
+    # This pump-free fixture models a completed standalone EVE activation.
+    # Capture epoch zero, never sample the host epoch at delayed setter entry.
+    h._metadata_ready_epoch = 0
+    monkeypatch.setattr(
+        h, "set_metadata_generation", partial(h.set_metadata_generation, eve_epoch=0)
+    )
     monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
     monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
 
@@ -227,7 +235,7 @@ def test_stale_roster_cannot_reauthorize_departed_session_during_reconcile(
 def test_callback_is_detached_outside_lock_and_reports_availability(runtime):
     h, seen = runtime.host, []
 
-    def changed(revision, sessions, available):
+    def changed(revision, sessions, available, eve_epoch):
         assert h._lock.acquire(blocking=False)
         h._lock.release()
         assert isinstance(sessions, frozenset)
@@ -263,7 +271,9 @@ def test_teardown_fences_metadata_before_any_native_destruction(runtime):
     h._apply_metadata()
     seen = []
     h.set_metadata_callback(
-        lambda revision, sessions, available: seen.append((sessions, available))
+        lambda revision, sessions, available, eve_epoch: seen.append(
+            (sessions, available)
+        )
     )
     destroy = runtime.native.user32.DestroyWindow
 
@@ -405,6 +415,7 @@ def test_restarted_host_waits_for_a_new_worker_generation(runtime):
     # Model a subsequent pump start, with discovery retaining the same session.
     h._stopping = False
     h._hwnd = 999
+    h._metadata_ready_epoch = 0
     h._notify_metadata()
     runtime.roster(2, c)
     h.submit_metadata(1, {c.session: "LATE FROM OLD RUNTIME"})
@@ -447,6 +458,7 @@ def test_generation_fence_during_retirement_cannot_steal_next_pump_wake(
     # and expiry, rather than relying on incidental roster reconciliation.
     h._stopping = False
     h._hwnd = 1999
+    h._metadata_ready_epoch = 0
     h._notify_metadata()
     runtime.roster(2, c)
     h.set_metadata_generation(3)

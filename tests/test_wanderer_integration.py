@@ -145,7 +145,9 @@ class Runtime:
             dwmapi=FakeDwm(),
             kernel32=SimpleNamespace(GetModuleHandleW=lambda _: 1),
             user32=SimpleNamespace(
-                PostMessageW=lambda hwnd, msg, wp, lp: self.messages.put(msg) or 1,
+                PostMessageW=lambda hwnd, msg, wp, lp: (
+                    self.messages.put((msg, wp)) or 1
+                ),
                 GetForegroundWindow=lambda: 0,
                 GetClientRect=lambda *args: 0,
                 CreateWindowExW=lambda *args: 5000 + len(self.painted),
@@ -162,6 +164,8 @@ class Runtime:
         )
         self.host = host.PreviewHost(on_layout_changed=lambda *args: None)
         self.host._hwnd = 999
+        # Completed standalone EVE activation in this pump-free HTTP harness.
+        self.host._metadata_ready_epoch = 0
         monkeypatch.setattr(
             self.host, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080)
         )
@@ -232,11 +236,11 @@ class Runtime:
 
         while actual() != expected:
             try:
-                message = self.messages.get(timeout=3)
+                message, epoch = self.messages.get(timeout=3)
             except queue.Empty:
                 pytest.fail(f"Expected labels {expected!r}, got {actual()!r}")
             if message == host.win32.WM_APP_METADATA:
-                self.host._host_proc(self.host._hwnd, message, 0, 0)
+                self.host._host_proc(self.host._hwnd, message, epoch, 0)
         for name, text in expected.items():
             preview = self.host._windows[name]
             assert preview._label_key[:2] == (name, text)
