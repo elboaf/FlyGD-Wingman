@@ -37,7 +37,9 @@ dependencies = [
     "google-api-python-client",
     "google-auth-oauthlib",
     "google-auth-httplib2",
-    "pystray",
+    # Pinned because ui/tray.py deliberately adapts the private 0.19.5 Windows
+    # right-click path to avoid DPI-virtualized popup coordinates.
+    "pystray==0.19.5",
     # Kept, despite looking like Tk-era baggage: build_tray() opens the
     # bundled .ico with it and draws the generated fallback icon.
     "Pillow",

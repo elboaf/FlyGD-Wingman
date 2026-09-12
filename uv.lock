@@ -1113,7 +1113,7 @@ requires-dist = [
     { name = "google-auth-httplib2" },
     { name = "google-auth-oauthlib" },
     { name = "pillow" },
-    { name = "pystray" },
+    { name = "pystray", specifier = "==0.19.5" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pywebview", specifier = "==6.2.1" },
     { name = "pyyaml", specifier = ">=6.0.3" },

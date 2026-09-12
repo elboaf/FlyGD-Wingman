@@ -6,14 +6,35 @@ upload quota the design is constrained by.
 
 The UI itself is likewise untested by `pytest`. `tests/test_api*.py` drive
 the bridge headlessly against a fake window and cover what the API *says*
-and accepts; nothing under `tests/` renders the page, sends it input, opens
-a native dialog, or touches the tray. There is deliberately no Playwright
+and accepts; nothing under `tests/` renders the page, sends it input, or opens
+a native dialog or tray menu. Unit tests cover tray-call wiring, not Explorer's
+rendered placement. There is deliberately no Playwright
 and no browser toolchain. `scripts/js_smoke.js` loads every page's modules
 under node and fails on anything an IIFE throws at top level — it proves a
 screen is not an inert copy of itself, and nothing more. **This checklist
 is the only verification any of the rest gets.**
 
 Run on Windows against a real install before each release.
+
+## Notification-area menu placement
+
+- [ ] With Wingman's notification icon on a 200%-scaled display, move the Fleet
+      Bar to another monitor, use one of its interactive controls, and then
+      right-click the notification icon. **Open Wingman / Quit** opens adjacent
+      to the icon, not near the middle of the screen.
+- [ ] Repeat with the main window hidden and visible, and with the Fleet Bar on
+      the notification area's monitor. Its location never affects the menu.
+- [ ] Repeat as a single-monitor control, then with the notification area on
+      the primary and secondary monitor.
+- [ ] Repeat on equal-scale and mixed-scale displays, including a monitor with a
+      negative or staggered desktop coordinate where available.
+- [ ] Repeat with bottom, top, left, and right taskbar placement where supported,
+      and with taskbar auto-hide both off and on.
+- [ ] Repeat with the notification icon visible and in the overflow flyout.
+- [ ] Dismiss the menu by clicking elsewhere, then verify **Open Wingman**,
+      **Quit**, and left-click/default activation still behave normally.
+- [ ] Restart Explorer and repeat the right-click check after Wingman's icon
+      returns.
 
 ## Wanderer names — live/native acceptance
 
