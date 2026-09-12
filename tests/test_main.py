@@ -1,5 +1,6 @@
 import inspect
 import logging
+import sys
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -11,6 +12,31 @@ from wingman.__main__ import (
     set_dpi_awareness,
 )
 from wingman.ui.api import Api, AppState
+
+
+def test_build_tray_uses_physical_cursor_icon_on_windows(monkeypatch):
+    class BaseIcon:
+        def __init__(self, *args):
+            self.args = args
+
+        def _on_notify(self, _wparam, _lparam):
+            return None
+
+    fake_win32 = SimpleNamespace(WM_RBUTTONUP=0x0205)
+    fake_pystray = SimpleNamespace(
+        Icon=BaseIcon,
+        Menu=lambda *items: items,
+        MenuItem=lambda *args, **kwargs: (args, kwargs),
+        _win32=SimpleNamespace(Icon=BaseIcon, win32=fake_win32),
+    )
+    monkeypatch.setitem(sys.modules, "pystray", fake_pystray)
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+    monkeypatch.setattr(main_mod.paths, "icon_file", lambda: None)
+
+    icon = main_mod.build_tray(lambda: None, lambda: None)
+
+    assert isinstance(icon, BaseIcon)
+    assert type(icon) is not BaseIcon
 
 
 def test_build_fleet_sharing_worker_is_platform_neutral_and_starts_stopped(

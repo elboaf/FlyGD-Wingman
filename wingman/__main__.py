@@ -15,6 +15,7 @@ from .alerts.controller import AlertsController, AlertsPorts
 from .eveauth import application
 from .ui import api as api_mod
 from .ui import preflight
+from .ui import tray as tray_mod
 from .ui import window as window_mod
 from .ui.scheduler import Scheduler
 
@@ -236,7 +237,17 @@ def build_tray(on_open, on_quit):
         pystray.MenuItem("Open Wingman", lambda *_: on_open(), default=True),
         pystray.MenuItem("Quit", lambda *_: on_quit()),
     )
-    return pystray.Icon("wingman", image, "FlyGD Wingman", menu)
+    icon_type = pystray.Icon
+    if sys.platform == "win32":
+        # pystray's GetCursorPos result is DPI-virtualized while
+        # TrackPopupMenuEx consumes physical screen coordinates. On a 200%
+        # tray display that halves both coordinates and opens this menu near
+        # the middle of the screen. Keep pystray's lifecycle and replace only
+        # its Windows right-click path with the physical-coordinate variant.
+        from pystray import _win32 as pystray_win32
+
+        icon_type = tray_mod.windows_icon_class(pystray_win32.Icon, pystray_win32.win32)
+    return icon_type("wingman", image, "FlyGD Wingman", menu)
 
 
 def notify(icon, message: str) -> None:
