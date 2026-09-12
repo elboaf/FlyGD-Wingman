@@ -49,8 +49,9 @@ style take precedence over generic design advice.
 - [x] Companion card and focused JavaScript response-ordering tests.
 - [x] Integrated tests, polish/fixes and fresh normal repository gates (Windows
       environmental failures are recorded below, not suppressed).
-- [ ] Rendered page check and practical Windows companion smoke, recorded honestly.
-- [ ] Final diff explanation and reviewable PR; no automatic merge or release.
+- [x] Rendered page checks and practical Windows operator feedback, with the
+      limits of those observations recorded below.
+- [x] Final diff explanation and reviewable PR #209; no automatic merge or release.
 
 ## Verification environment
 
@@ -212,6 +213,78 @@ lint/format and diff checks passed. Actual Windows source enumeration returned
 10 eligible sources and closed its query handles. This small fix does not claim
 a fresh full-suite run or change the prior manual-smoke status; the running app
 loads it on its next restart.
+
+## Full-PR review corrections — `c8878fc0`, `84b8dbea`
+
+After the updated production tryout, the operator reported “looks good” and
+requested full-PR polish and CodeRabbit review. That feedback does not imply
+individual confirmation of every smoke-checklist scenario. The actual CodeRabbit
+CLI reviewed all 63 changed files and returned 19 findings; its severity labels
+were checked against the current code, not accepted blindly. Malformed settings
+and zero-size sources already have validated boundaries. The suggested missing-Node
+skip and unproven native-handle discard were not adopted.
+
+The four reproduced runtime/persistence findings and three smaller corrections
+were implemented with test-first regressions:
+
+- A failed primary `PostMessageW` refuses before admitting its payload or pending
+  barrier. Accepted pre-HWND commands retain their existing delivery lane. This
+  prevents a missing wake from permanently blocking Quit without dropping
+  accepted work or starting a retry worker.
+- Master changes and explicit layout edits share the existing short reservation.
+  Retained cleanup or queued layout work produces an honest refusal rather than
+  letting older writes undo an acknowledged Reset/Size. Final admission shares
+  the shutdown fence, but closure never waits for already-admitted transactions.
+- Re-review found that an empty command FIFO does not mean the debounce writer
+  has finished. Offline Size now uses the already-injected `LayoutStore.replace`
+  authority, superseding a pending delta and ordering behind an in-flight write.
+  It preserves the latest position/lock and unrelated character deltas, retains
+  failed-save recovery, and does not overwrite a later drag or move a window.
+- Capture-failure suppression distinguishes changed source dimensions, observed
+  unavailability/recovery and family epochs. An unchanged unsupported capture
+  remains bounded; a source that becomes usable can recover without recreating
+  the shared runtime.
+- Native retirement is irreversible. Activation is revoked before cleanup;
+  incomplete releases keep their slot and retry even if the source recovers.
+  Replacement waits for release, and hidden/retiring windows cannot report Live.
+- Help now advertises only supported left-drag movement/right-drag resizing.
+  The Off note stays hidden until hydration, including re-entry. Runtime fixture
+  teardown checks completion after attempting all owners.
+
+There are 43 new Event/OS-double lifecycle and recovery cases across
+`test_preview_polish_fixes.py` and `test_companion_recovery.py`. Additional coverage
+pins the shared picker class name and browser hydration. Safe cleanup also
+isolates the Unicode test patch from shared `ntpath`, removes unreachable message
+IDs, clarifies test failures, and avoids repeated independent packaging checks.
+No settings schema, public bridge payload, dependency, source-window policy or
+release gate changed.
+
+Fresh final verification:
+
+- Linux full: `/tmp/wingman-companions-venv/bin/python -m pytest tests/ -q -rs
+  -o faulthandler_timeout=60`: **10,884 passed, 11 Windows-only skips**, 237.24s.
+- Windows focused: all `test_preview*.py`, `test_companion*.py`, `test_api*.py`,
+  plus engine invariants, packaging, settings, EVE gate, Settings page and
+  screenshot-tool tests: **2,812 passed, four existing permission/platform skips**,
+  28.08s. Three require unavailable symlink privilege; one requires a directory
+  unreadable to the current user. Node and native Windows preview tests ran.
+  Report: `%TEMP%\wingman-companions-dev\polish-fixes-windows-final.xml`.
+- Parent rerun of the new regression modules and API settings tests: **107 passed**.
+  Ruff lint/format: passed, 407 files. All-page JS smoke: passed. Companion Node
+  harness: **32/32**. Cargo's codec regression and diff checks passed.
+- Independent scoped re-review approved the final storage correction after
+  checking pending/in-flight writes, final admission, failure recovery, later
+  drag state and retained owner boundaries. No further actionable finding
+  remained in the correction scope.
+- Chromium at 840×625 with the state reply deliberately held: Off note has
+  `display: none` while Loading, becomes visible only after an acknowledged Off
+  payload, and the corrected help renders without horizontal overflow or page
+  errors. Screenshot inspected; this is browser evidence, not DWM acceptance.
+
+The prior complete Windows run and its six unchanged symlink-privilege failures
+remain recorded above; a new complete Windows run is not claimed. The running
+application was not restarted or manipulated during these corrections. PR #209
+is open and not draft; nothing has been merged or released.
 
 ## Reviewer knowledge check
 
