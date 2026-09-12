@@ -1,5 +1,51 @@
 # Wanderer preview overlay — verification record
 
+## Pre-PR review and latest verification
+
+Latest verified code: **`eda2118b2c292545b73329570b2615784c15df26`**, against
+`origin/main` **`83b7741bd997b7e0ea951c894183e10e4c68ae3b`**. Later evidence
+commits are documentation only. Earlier checkpoint results below remain historical.
+The user accepted the simplified connection flow and stored-token reuse locally
+before these final review fixes; that does not complete the broader native matrix.
+
+- Full-branch polish (`83b7741b..978435ec`): zero actionable findings after a
+  consolidated quality, failure, comment and interface review of the 46-file diff.
+- Actual CodeRabbit CLI review:
+  `coderabbit review --agent --committed --base origin/main --config AGENTS.md PRODUCT.md DESIGN.md`.
+  Completed with 10 comments, representing eight unique findings.
+- Five addressed: accept valid 304 without Content-Type (200 still requires JSON);
+  distinguish invalid configuration in safe health copy; skip real DPAPI on all
+  non-Windows platforms; guard dev-fixture extraction markers; reconcile the active
+  plan with grouped Test/Enter/Remove. Behavioral tests observed two failures before
+  implementation, then passed. The parent inspected the fix diff; no further polish
+  edits were needed.
+- Two false positives rejected with code and passing exercises: `wingman.atomicio`
+  exists and imports correctly; `tests.test_startup.startup` already captures the
+  window/quit callback and invokes the during-run callback.
+- Trailing-host-dot canonicalization suggestion declined: keep the requested HTTP
+  authority and protected credential binding distinct rather than silently changing
+  existing saved identities. No normalization migration was introduced.
+
+Fresh post-fix gates:
+
+| Gate | Result |
+|---|---|
+| Complete Linux pytest | **11,102 passed, 12 Windows-only skips**, 225.71s |
+| Windows Wanderer/bridge/page/packaging selection | **790 passed, 1 unrelated symlink-privilege skip**, 8.46s; real DPAPI test passed |
+| Node ownership / executable JS smoke | **60 passed** / all three pages passed |
+| Ruff lint / format | Passed / **398 files already formatted** |
+| `cargo test --manifest-path packaging/settings-codec/Cargo.toml --locked` | **1 passed** |
+| Windows PyInstaller / archive and asset inspection | Passed; six Wanderer modules, exact current web assets and loadable bundled font |
+
+The same parent commands documented below were repeated with basetemp/report names
+`wanderer-pr-final-linux` and `wanderer-pr-final-windows`; build/inspection used
+`dist/wanderer-pr-check` and `build/wanderer-pr-check`. New executable SHA-256:
+`890ce8283625f58b965a0f450dde42b1b0f1daafb65d5ca9ad35648281e3ca45`.
+This post-review binary was **not launched**; the user's running instance/profile
+was untouched. The earlier full-Windows six privilege failures and uncompleted
+live/native acceptance matrix remain limits, not waived gates. No release,
+deployment, version bump, secret access or unrelated privilege changes were made.
+
 ## Connection-form follow-up — separate scoped evidence
 
 After baseline `d81ed329`, the approved connection-form simplification is implemented
