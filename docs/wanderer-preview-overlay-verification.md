@@ -1,6 +1,89 @@
 # Wanderer preview overlay — verification record
 
-## Pre-PR review and latest verification
+## Shared-runtime integration — latest verified production code
+
+PR #210 now includes main's companion-preview merge **`d4187486`** through merge
+commit **`222ec10a48e458c5c48f8771139afaa301de4f32`** (first parent `51cdc930`,
+second parent `d4187486`). No rebase or history rewrite. Subsequent changes add a
+copy-synchronization assertion and this evidence only; production code is unchanged.
+Earlier sections below record separate candidates, not combined-runtime acceptance.
+
+### Integration decisions and regressions
+
+- `PreviewRuntime`, `companioncontroller.py` and `companionfamily.py` remain
+  byte-identical to main. Main's runtime is still the sole production pump owner.
+- Metadata readiness, generation admission, publication and wake ownership now
+  carry the actual **EVE epoch**, not inferred callback gaps or shared HWND liveness.
+  The callback carries `(revision, sessions, available, eve_epoch)`; the generation
+  setter receives the captured epoch and returns admission. A stale handoff cannot
+  configure the worker or admit Test against the previous saved connection.
+- EVE-off retires metadata atomically under the EVE fence. Companion-only and
+  selection-only pumps remain available to their owners without authorizing names.
+  Metadata-only close does not stop companions, EVE/alert resources or a lease.
+- Metadata uses the free `WM_APP + 16`, avoiding main's family-message collision.
+  Stale wakes cannot spend a later epoch's pending wake. Real primary reconciliation,
+  session replacement, rebind and post-render fences remain intact.
+- All seven textual conflicts and affected nonconflicting composition/test seams
+  were reconciled. Both cards, handlers, capture handoffs and script order survive.
+  Runtime demand revocation precedes Wanderer's potentially delayed handoff.
+
+The new **18-case** `tests/test_wanderer_companion_integration.py` restores real
+roster reconciliation and composes the actual owners. It covers companion/selection
+independence, EVE off/on with the same client, held HTTP/configuration/native wakes,
+reordered callbacks, off during rendering/rebinding, storage/picker drains, activation
+failure, failed master persistence, and final close with blocked HTTP and companion
+save. The RED runs demonstrated incorrect companion-only readiness and stale-binding
+Test admission before their fixes; existing independence properties are retained
+regressions, not all claimed as separately observed RED.
+
+### Review and verification
+
+Scoped post-merge polish: **zero actionable findings**, with an independent
+**150-test** integration/metadata/controller/wiring/polish exercise passing.
+A fresh actual CodeRabbit full-PR review completed against `origin/main`: six comments,
+five unique. Added an assertion keeping static/dynamic credential guidance equal and
+clarified historical Remove notes. Rejected skipping required Node coverage, adding
+a silent optional-card fallback for guaranteed index markup, and the repeated
+startup-fixture false positive (the shared fixture and passing test prove its wiring).
+No production changes resulted from this review.
+
+| Fresh gate | Result |
+|---|---|
+| Complete Linux pytest on merged production code | **11,396 passed, 12 Windows-only skips**, 379.86s |
+| Expanded Windows preview/companion/Wanderer/API/startup selection | **2,986 passed, 1 unrelated symlink-privilege skip**, 61.18s |
+| Final copy guard + integration/wiring/bridge/page/settings rerun | **339 passed**, 32.56s |
+| Node Wanderer / Companions harnesses | **60 passed / 32 passed** |
+| Executable JS smoke | Every module of all three pages passed |
+| Ruff lint / format | Passed / **424 files already formatted** |
+| Cargo settings-codec regression | **1 passed** |
+| Combined browser at 839/840/1280px | Both cards render; no horizontal/control overflow or page errors; draft survives health push |
+| Windows PyInstaller + archive/assets/font inspection | Passed; all six Wanderer and seven shared-runtime/companion modules present, exact current web assets and loadable Inter |
+
+The parent ran the same Linux full-suite command documented below with basetemp
+`/tmp/wanderer-merged-final-linux` and its matching JUnit report. Windows used:
+
+```powershell
+$tests = Get-ChildItem tests/test_wanderer*.py,tests/test_preview*.py,tests/test_companion*.py | Select-Object -ExpandProperty FullName
+uv run --no-sync python -m pytest @tests tests/test_api.py tests/test_api_settings_fields.py tests/test_settings_transactions.py tests/test_settings_eve_gate.py tests/test_alerts_wiring.py tests/test_custom_alert_integration.py tests/test_custom_alert_wiring.py tests/test_bridge_contract.py tests/test_page_conventions.py tests/test_packaging_completeness.py tests/test_startup.py tests/test_settings_page.py tests/test_dev_harness.py -q -rs --tb=short --basetemp="$env:TEMP\wanderer-merged-final-windows"
+uv run --no-sync python -m PyInstaller packaging/uploader.spec --noconfirm --clean --distpath dist/wanderer-merged-check --workpath build/wanderer-merged-check
+uv run --no-sync python .superpowers/sdd/wanderer-preview-overlay-plan/inspect_frozen.py dist/wanderer-merged-check/Wingman --combined
+```
+
+Browser command: `node .superpowers/sdd/wanderer-preview-overlay-plan/browser-check.cjs --companions`.
+Both tracked Node harnesses, `scripts/js_smoke.js`, Ruff and the locked Cargo command
+were rerun. Environments retain Node and the built release codec; no Node/native
+prerequisite was skipped. The sole Windows skip is the existing packaging symlink
+case raising `WinError 1314`, not a feature/native-capability skip.
+
+Merged executable SHA-256:
+`3135da4a4547df56344e91d39d7130a75147ded2684712820d75f0921072f782`.
+It was built separately and **not launched**. The user's earlier running binary,
+isolated profile and credential were untouched. Previous local user acceptance of
+the connection form does not establish merged Windows/WebView2 or live-EVE behavior.
+The full Windows suite was not repeated here; its earlier six privilege failures
+and the uncompleted deployed/native matrix remain explicit acceptance limits.
+
+## Pre-PR review — before shared-runtime integration
 
 Latest verified code: **`eda2118b2c292545b73329570b2615784c15df26`**, against
 `origin/main` **`83b7741bd997b7e0ea951c894183e10e4c68ae3b`**. Later evidence
@@ -231,7 +314,11 @@ sharing. The configured map selector, bearer integration token and protocol head
 travel only to the selected HTTPS endpoint; local preview names are not uploaded.
 The README network table now describes both automatic polling and explicit Test.
 
-### Configuration and ownership
+### Historical configuration and ownership — original candidate
+
+This subsection records the pre-grouped-form checkpoint, not current behavior.
+Current Remove clears the URL, map and protected token while retaining enabled;
+the grouped-form and integration sections above supersede these original notes.
 
 `credentials.py` stores `wanderer_credentials.json` separately from settings.
 DPAPI protects the complete normalized URL/map/token binding and document identity.

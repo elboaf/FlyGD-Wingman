@@ -148,6 +148,11 @@ def test_wanderer_card_is_in_previews_with_accessible_safe_controls():
     assert re.search(r'id="wanderer-health"[^>]*role="status"', previews)
     assert 'id="wanderer-connection-error"' in previews
     assert "saves the URL, map and token" in previews
+    source = (WEB / "wanderer.js").read_text(encoding="utf-8")
+    initial_hint = re.search(r'id="wanderer-token-draft"[^>]*>([^<]+)</p>', previews)
+    painted_hint = re.search(r"el\('token-draft'\)\.textContent = '([^']*)';", source)
+    assert initial_hint and painted_hint
+    assert initial_hint[1] == painted_hint[1]
     scripts = re.findall(r'<script src="([^"]+)"', html)
     assert scripts[scripts.index("previews.js") + 1] == "wanderer.js"
 
