@@ -17,21 +17,43 @@ function createDOM(page) {
     constructor(tag, attrs = {}) {
       this.tagName = tag.toUpperCase(); this.attrs = {...attrs};
       this.id = attrs.id || ''; this.className = attrs.class || '';
-      this.children = []; this.listeners = {}; this.style = {};
-      this.value = attrs.value || ''; this.hidden = 'hidden' in attrs;
+      this.children = []; this.listeners = {};
+      this.style = {setProperty(name, value) { this[name] = value; }};
+      this._value = attrs.value || ''; this._valueSet = 'value' in attrs;
+      this.type = attrs.type || ''; this.hidden = 'hidden' in attrs;
       this.disabled = 'disabled' in attrs; this.checked = 'checked' in attrs;
       this.dataset = Object.fromEntries(Object.entries(attrs).filter(([k]) => k.startsWith('data-'))
         .map(([k, v]) => [k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase()), v]));
     }
-    appendChild(el) { this.children.push(el); el.parentNode = this; return el; }
-    prepend(el) { this.children.unshift(el); el.parentNode = this; }
-    insertBefore(el, before) { this.children.splice(this.children.indexOf(before), 0, el); el.parentNode = this; }
+    appendChild(el) { el.remove(); this.children.push(el); el.parentNode = this; return el; }
+    prepend(el) { el.remove(); this.children.unshift(el); el.parentNode = this; }
+    insertBefore(el, before) {
+      if (el === before) return el;
+      el.remove();
+      const index = before ? this.children.indexOf(before) : this.children.length;
+      assert.ok(index >= 0); this.children.splice(index, 0, el); el.parentNode = this; return el;
+    }
+    remove() { if (this.parentNode) this.parentNode.removeChild(this); }
+    get options() { return this.querySelectorAll('option'); }
+    get selectedIndex() {
+      const options = this.options;
+      return this._valueSet ? options.findIndex(el => el.value === this._value) : options.length ? 0 : -1;
+    }
+    get value() {
+      return this.tagName === 'SELECT' ? this.options[this.selectedIndex]?.value || '' : this._value;
+    }
+    set value(value) { this._value = String(value); this._valueSet = true; }
     removeChild(el) { this.children.splice(this.children.indexOf(el), 1); el.parentNode = null; return el; }
     get firstChild() { return this.children[0] || null; }
+    get lastChild() { return this.children.at(-1) || null; }
     get firstElementChild() { return this.firstChild; }
     get nextSibling() { return this.parentNode?.children[this.parentNode.children.indexOf(this) + 1] || null; }
     get previousElementSibling() { return this.parentNode?.children[this.parentNode.children.indexOf(this) - 1] || null; }
-    set textContent(text) { this.children = []; this.text = String(text); }
+    set textContent(text) {
+      this.children.forEach(el => { el.parentNode = null; });
+      this.children = []; this.text = String(text);
+      if (this.tagName === 'SELECT') this._valueSet = false;
+    }
     get textContent() { return (this.text || '') + this.children.map(el => el.textContent).join(''); }
     set innerHTML(text) { assert.equal(text, ''); this.textContent = ''; }
     setAttribute(k, v) { this.attrs[k] = String(v); if (k === 'id') this.id = String(v); }
@@ -88,6 +110,7 @@ function createDOM(page) {
     focus() { document.activeElement = this; }
     scrollIntoView(options) { scrolls.push({element: this, options}); }
     getBoundingClientRect() { return {width: 400, height: 240, top: 0, bottom: 240, left: 0, right: 400}; }
+    getClientRects() { return this.hidden ? [] : [this.getBoundingClientRect()]; }
   }
   function build(node) { const el = new Element(node.tag, node.attrs); node.children.forEach(child => el.appendChild(build(child))); return el; }
   const document = build(page);

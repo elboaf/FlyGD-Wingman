@@ -53,7 +53,14 @@ def test_gate_off_shoots_only_the_reachable_screens():
     assert [s.key for s in to_shoot] == [
         "uploader",
         "settings-uploading",
+        "settings-uploading-recording",
+        "settings-uploading-integrations",
+        "settings-uploading-webhook",
         "settings-companions",
+        "settings-companions-populated",
+        "settings-companions-detail-narrow",
+        "settings-companions-add",
+        "settings-companions-source-narrow",
         "settings-general",
         "dialog",
     ]
@@ -125,6 +132,12 @@ def test_floor_sized_screens_use_the_explicit_inventory_flag():
         "settings-previews-crop-narrow",
         "settings-characters-narrow",
         "fittings-narrow",
+        "settings-companions-detail-narrow",
+        "settings-companions-source-narrow",
+        "settings-wanderer-narrow",
+        "settings-fleet-characters-narrow",
+        "settings-fleet-sharing-history-narrow",
+        "settings-alerts-custom-narrow",
     }
 
 

@@ -24,6 +24,29 @@ function fixture() {
 }
 const ids = nodes => nodes.map(node => node.id);
 
+test('native select options and moving rows preserve the current tree', () => {
+  const {document, Element, root, branch, deep} = fixture();
+  root.appendChild(deep);
+  assert.equal(branch.contains(deep), false);
+  root.insertBefore(deep, null);
+  assert.equal(root.lastChild, deep);
+  assert.equal(root.querySelectorAll('#deep').length, 1);
+  deep.remove();
+  assert.equal(document.getElementById('deep'), null);
+  const select = root.appendChild(new Element('select'));
+  const group = select.appendChild(new Element('optgroup'));
+  group.appendChild(new Element('option', {value: 'one'}));
+  group.appendChild(new Element('option', {value: 'two'}));
+  assert.equal(select.options.length, 2);
+  assert.equal(select.selectedIndex, 0);
+  assert.equal(select.value, 'one');
+  select.value = 'two';
+  assert.equal(select.selectedIndex, 1);
+  select.textContent = '';
+  assert.equal(select.value, '');
+  assert.equal(select.selectedIndex, -1);
+});
+
 // Literal order catches breadth-first walks, branch pruning, root inclusion,
 // selector-list duplication, and changed ancestor/combinator matching.
 for (const [selector, expected] of [

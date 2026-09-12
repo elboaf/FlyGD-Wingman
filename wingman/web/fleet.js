@@ -15,7 +15,38 @@
   var hydrationInFlight = false;
   var hydrationFailure = false;
   var pending = Object.create(null);
+  var writesInFlight = 0;
   var defaultStatus = status ? status.textContent : '';
+  var screenshotFixture = null, screenshotLive = null;
+  WM.fleetScreenshot = function (payload) {
+    if (payload && (payload.kind !== 'fleet-screenshot-v1' || JSON.stringify(payload).length > 8192
+        || !payload.state || !Array.isArray(payload.state.characters) || payload.state.characters.length !== 3)) {
+      throw new Error('Invalid Fleet screenshot fixture');
+    }
+    // Refuse the boundary rather than hide a real write's eventual error.
+    if (payload && !screenshotFixture && writesInFlight) {
+      throw new Error('Fleet display change in progress — retry capture when settled');
+    }
+    if (!payload && !screenshotFixture) return;
+    var live = screenshotFixture ? screenshotLive : lastState;
+    screenshotFixture = payload ? JSON.parse(JSON.stringify(payload)) : null;
+    screenshotLive = payload ? live : null;
+    lastRevision = -1; lastState = null; hydrated = false;
+    WM.el('fleetbar-characters').open = false;
+    characterHost.textContent = ''; characterStatus.textContent = ''; characterStatus.hidden = true;
+    if (payload || live) render(payload ? screenshotFixture.state : live, true);
+    else {
+      lastGood = false; WM.fleet_bar_on = false;
+      if (button) { button.disabled = true; button.classList.remove('active'); button.setAttribute('aria-pressed', 'false'); }
+      if (check) { check.disabled = true; check.checked = false; }
+      if (reset) reset.disabled = true;
+      empty.hidden = false;
+    }
+    // Ordinary live renders preserve a focused draft; teardown must not leave
+    // a focused checkbox carrying the synthetic value into its next change.
+    if (!payload && check) check.checked = lastGood;
+    setStatusMessage(defaultStatus);
+  };
 
   if (button) { button.disabled = true; }
   if (check) { check.disabled = true; }
@@ -101,14 +132,17 @@
 
   function changeCharacter(input, name) {
     var token, restoreFocus;
-    if (!hydrated) return;
+    if (screenshotFixture || !hydrated) return;
     token = (pending[name] || 0) + 1;
     pending[name] = token;
     restoreFocus = document.activeElement === input;
     input.disabled = true;
+    writesInFlight += 1;
     WM.send('set_fleet_bar_character_visible', name, input.checked).then(function (res) {
+      writesInFlight -= 1;
       finishCharacterMutation(name, token, res, restoreFocus);
     }, function () {
+      writesInFlight -= 1;
       finishCharacterMutation(name, token, {
         applied: false,
         error: 'Could not change Fleet character visibility.'
@@ -193,7 +227,11 @@
     );
   }
 
-  function render(section) {
+  function render(section, synthetic) {
+    if (screenshotFixture && !synthetic) {
+      if (section && (!screenshotLive || section.revision >= screenshotLive.revision)) screenshotLive = section;
+      return;
+    }
     if (!accept(section)) return;
     if (hydrationFailure) {
       hydrationFailure = false;
@@ -201,8 +239,10 @@
     }
     lastState = section;
     lastGood = !!section.enabled;
-    WM.fleet_bar_on = lastGood;
-    if (button) {
+    // A Settings fixture cannot become authority for the global EVE gate or
+    // status-strip toggle. Their live snapshot continues underneath it.
+    if (!screenshotFixture) WM.fleet_bar_on = lastGood;
+    if (button && !screenshotFixture) {
       button.disabled = false;
       button.classList.toggle('active', lastGood);
       button.setAttribute('aria-pressed', lastGood ? 'true' : 'false');
@@ -210,7 +250,7 @@
     }
     if (check) {
       check.disabled = false;
-      if (check !== document.activeElement) check.checked = lastGood;
+      if (screenshotFixture || check !== document.activeElement) check.checked = lastGood;
     }
     if (reset) { reset.disabled = false; }
     renderCharacters(section.characters);
@@ -225,44 +265,54 @@
 
   if (button) {
     button.addEventListener('click', function () {
-      if (!hydrated) return;
+      if (screenshotFixture || !hydrated) return;
+      writesInFlight += 1;
       WM.send('toggle_fleet_bar', !lastGood).then(function (res) {
+        writesInFlight -= 1;
         if (!fieldResult(res)) {
           if (!res || !res.error) { failed(true, 'Could not change the Fleet Bar.'); }
           else if (check) { check.checked = lastGood; }
         }
       }, function () {
+        writesInFlight -= 1;
         failed(true, 'Could not change the Fleet Bar.');
       });
     });
   }
   if (check) {
     check.addEventListener('change', function () {
-      if (!hydrated) return;
+      if (screenshotFixture || !hydrated) return;
+      writesInFlight += 1;
       WM.send('toggle_fleet_bar', check.checked).then(function (res) {
+        writesInFlight -= 1;
         if (!fieldResult(res)) {
           if (!res || !res.error) { failed(true, 'Could not change the Fleet Bar.'); }
           else { check.checked = lastGood; }
         }
       }, function () {
+        writesInFlight -= 1;
         failed(true, 'Could not change the Fleet Bar.');
       });
     });
   }
   if (reset) {
     reset.addEventListener('click', function () {
-      if (!hydrated) return;
+      if (screenshotFixture || !hydrated) return;
+      writesInFlight += 1;
       WM.send('reset_fleet_bar_width').then(function (res) {
+        writesInFlight -= 1;
         if (!fieldResult(res) && (!res || !res.error)) {
           failed(false, 'Could not reset Fleet Bar width.');
         }
       }, function () {
+        writesInFlight -= 1;
         failed(false, 'Could not reset Fleet Bar width.');
       });
     });
   }
 
   function hydrate() {
+    if (screenshotFixture) { render(screenshotFixture.state, true); return; }
     if (hydrated || hydrationInFlight) return;
     hydrationInFlight = true;
     WM.send('fleet_bar_settings').then(function (section) {

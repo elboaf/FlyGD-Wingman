@@ -10,6 +10,7 @@
   var watchChain = Promise.resolve();
   var preferenceAttempt = 0;
   var actionAttempt = 0;
+  var actionsInFlight = 0;
   var bindingGeneration = 0;
   var sourceRequests = [];
   var actionMessage = '';
@@ -32,6 +33,41 @@
   var historySummary = WM.el('sharing-history-summary');
   var pairingMode = 'initial';
   var changeOrigin = false;
+  var screenshotFixture = null, screenshotLive = null, screenshotEpoch = 0;
+  WM.fleetSharingScreenshot = function (payload) {
+    if (payload && (payload.kind !== 'fleet-sharing-screenshot-v1' || JSON.stringify(payload).length > 16384
+        || !payload.state || !payload.state.metadata || !payload.state.sources
+        || payload.state.sources.characters.length !== 2 || payload.state.sources.sources.length !== 2)) {
+      throw new Error('Invalid Fleet sharing screenshot fixture');
+    }
+    if (payload && !screenshotFixture && (preferencePending || sourceRequests.length || actionsInFlight)) {
+      throw new Error('Fleet sharing action in progress — retry capture when settled');
+    }
+    if (!payload && !screenshotFixture) return;
+    var live = screenshotFixture ? screenshotLive : {state: state, boss: desiredBoss,
+      sources: knownSources, characters: knownCharacters, message: actionMessage, readFailed: readFailed};
+    screenshotEpoch += 1; watchGeneration += 1; actionAttempt += 1; bindingGeneration += 1;
+    screenshotFixture = payload ? JSON.parse(JSON.stringify(payload)) : null;
+    screenshotLive = payload ? live : null;
+    // Restoring cached state is not new read authority. Keep its version in
+    // place so render cannot clear a failed Refresh merely because we reset.
+    state = payload ? null : live.state; hydrated = false;
+    knownSources = payload ? [] : live.sources; knownCharacters = payload ? [] : live.characters;
+    desiredBoss = payload ? '' : live.boss; actionMessage = payload ? '' : live.message;
+    readFailed = payload ? false : live.readFailed;
+    sources.textContent = ''; historySources.textContent = ''; boss.removeAttribute('data-roster');
+    history.open = false; WM.el('sharing-eligible').open = false;
+    if (payload || live.state) render(payload ? screenshotFixture.state : live.state, false, true);
+    else {
+      history.hidden = true; historySummary.textContent = 'Previous attempts (0)';
+      boss.textContent = ''; enabled.checked = false;
+      connect.hidden = false; connect.textContent = 'Connect…';
+      WM.el('sharing-eligible-list').textContent = '';
+      ['sharing-consent', 'sharing-eligibility', 'sharing-preference', 'sharing-browser-error',
+        'sharing-action', 'sharing-source-status'].forEach(function (id) { text(id, ''); });
+      unavailable();
+    }
+  };
   var unavailableMessage = 'Fleet sharing is unavailable in this session.';
   var details = {
     needs_upgrade: 'This device needs sharing approval. Upgrade the connection in your browser.',
@@ -243,7 +279,19 @@
       control.disabled = true;
     });
   }
-  function render(payload, successfulRead) {
+  function render(payload, successfulRead, synthetic) {
+    if (screenshotFixture && !synthetic) {
+      if (payload && (!screenshotLive.state || payload.presentation_order >= screenshotLive.state.presentation_order)) {
+        if (successfulRead || !screenshotLive.state || payload.presentation_order > screenshotLive.state.presentation_order) {
+          screenshotLive.readFailed = false;
+        }
+        if (screenshotLive.state && payload.metadata.binding !== screenshotLive.state.metadata.binding) {
+          screenshotLive.boss = ''; screenshotLive.sources = []; screenshotLive.characters = [];
+        }
+        screenshotLive.state = payload;
+      }
+      return false;
+    }
     if (!payload) return false;
     if (state && payload.presentation_order < state.presentation_order) return false;
     var newer = !state || payload.presentation_order > state.presentation_order;
@@ -323,7 +371,7 @@
   }
   function action(method) {
     var args = Array.prototype.slice.call(arguments);
-    if (!hydrated) return;
+    if (screenshotFixture || !hydrated) return;
     var attempt = ++actionAttempt;
     var requestedBinding = binding();
     var generation = bindingGeneration;
@@ -339,7 +387,11 @@
     }
     paintSources();
     paintAction();
+    actionsInFlight += 1;
     WM.send.apply(WM, args).then(function (result) {
+      // WM.send resolves bridge failures as null. Retire every actual call,
+      // including a superseded pairing/grant reply, before testing ownership.
+      actionsInFlight -= 1;
       if (generation !== bindingGeneration || requestedBinding !== binding()) return;
       // Every actual bridge completion retires only its own request, even when
       // a newer action owns the message. Worker pending stages remain separate.
@@ -361,7 +413,7 @@
     });
   }
   function preference(value) {
-    if (!hydrated) return;
+    if (screenshotFixture || !hydrated) return;
     var attempt = ++preferenceAttempt;
     preferencePending = true;
     preferenceWanted = value;
@@ -396,24 +448,28 @@
     if (character && !grant.disabled) action('fleet_sharing_grant_fleet_read', character.character_id, binding());
   });
   connect.addEventListener('click', function () {
-    if (!hydrated) return;
+    if (screenshotFixture || !hydrated) return;
     if (pairingMode !== 'fresh') { action('fleet_sharing_pair', pairingMode); return; }
     var originText = changeOrigin ? 'Switches to ' + state.configured_origin + '. ' : '';
+    var owner = screenshotEpoch;
     WM.confirm('Fresh fleet setup', originText + 'Creates a new device key. Old identity-bound pending actions will not carry over. Continue?').then(function (ok) {
-      if (ok) action('fleet_sharing_pair', 'fresh', changeOrigin);
+      if (ok && owner === screenshotEpoch) action('fleet_sharing_pair', 'fresh', changeOrigin);
     });
   });
   function watch() {
+    if (screenshotFixture) { paint(); return; }
+    var owner = screenshotEpoch;
     var current = ++watchGeneration;
     var open = visible();
     var requestedState;
     paint();
     // Serialize enter/leave so a slow bridge enter cannot overtake its leave.
     watchChain = watchChain.then(function () {
+      if (owner !== screenshotEpoch) return null;
       requestedState = state;
       return WM.send('fleet_sharing_watch', open);
     }).then(function (result) {
-      if (current !== watchGeneration || !open || !visible()) return;
+      if (owner !== screenshotEpoch || current !== watchGeneration || !open || !visible()) return;
       if (result && result.state) render(result.state, true);
       // An unversioned failure cannot supersede newer evidence received during
       // this read. Equal-version copies are still the same last-known state.

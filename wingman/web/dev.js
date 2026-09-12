@@ -3045,6 +3045,66 @@
   // browser drivers. Strict JSON: Python extracts this declaration without
   // evaluating dev.js or installing its bridge doubles in the live app.
   var DEV_TOOL_SCREENSHOT_FIXTURE = {
+    "companions": {
+      "kind": "companions-screenshot-v1", "add_label": "Fleet reference",
+      "state": {"revision": 0, "available": true, "enabled": true,
+        "limits": {"definitions": 32, "enabled": 8, "label_max_chars": 80, "title_hint_max_chars": 512},
+        "operations": [], "rows": [
+          {"id": "screenshot-map", "generation": 1, "label": "Mapper", "enabled": true,
+            "mode": "whole", "status": "live", "error": "", "pending_operation_id": null,
+            "source": {"executable_name": "browser.exe", "title_mode": "contains", "title_hint": "Example map",
+              "last_title": "Example map — home chain"}},
+          {"id": "screenshot-notes", "generation": 1, "label": "Fleet notes", "enabled": true,
+            "mode": "region", "status": "waiting", "error": "", "pending_operation_id": null,
+            "source": {"executable_name": "notepad.exe", "title_mode": "exact", "title_hint": "Example fleet notes",
+              "last_title": "Example fleet notes"}}
+        ]},
+      "sources": [
+        {"candidate_token": "screenshot-map-only", "application": "browser.exe", "title": "Example map — home chain and fleet route planning"},
+        {"candidate_token": "screenshot-notes-only", "application": "notepad.exe", "title": "Example fleet notes"}
+      ]
+    },
+    "wanderer": {
+      "kind": "wanderer-screenshot-v1",
+      "state": {"revision": 0, "generation": 0, "enabled": true,
+        "base_url": "https://wanderer.example", "map_identifier": "home-chain",
+        "credential_present": true, "credential_error": false, "persistence_error": false,
+        "automatic_ready": true, "status": "connected", "status_text": "", "error_code": null,
+        "paused": false, "in_flight": false, "test_pending": false, "test_in_flight": false,
+        "test_result": null, "test_result_text": "", "last_success_monotonic": 100,
+        "next_request_monotonic": 102, "previewed": 3, "matched": 2, "available": 2, "stale": 0,
+        "previews_enabled": true, "host_available": true}
+    },
+    "fleet": {
+      "display": {"kind": "fleet-screenshot-v1", "state": {"revision": 0, "enabled": false,
+        "characters": [
+          {"name": "Aiga Otsolen", "visible": true, "running": true},
+          {"name": "Ariadne", "visible": false, "running": true},
+          {"name": "Tanuki Solette", "visible": true, "running": false}
+        ]}},
+      "sharing": {"kind": "fleet-sharing-screenshot-v1", "state": {
+        "state": "active", "detail": null, "participation": null, "participation_intent_id": null,
+        "participation_order": 0, "source_control": null, "pairing": null, "local_inhibited": false,
+        "pending_sources": [], "source_results": [], "pairing_action_id": null,
+        "order": 0, "presentation_order": 0, "preference_order": 0, "preference_error": null,
+        "available": true, "enabled": true, "telemetry_available": true, "runtime_error": null,
+        "browser_error": null, "browser_retry": null, "configured_origin": "https://authgd.example",
+        "metadata": {"loaded": true, "binding": "screenshot-only-binding", "paired_origin": "https://authgd.example",
+          "device_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "has_session": true,
+          "session_expires_at": "2026-09-07T12:30:00.000Z", "feature_enabled": true,
+          "approved_capabilities": ["shared-source-v1"], "session_approved_capabilities": ["shared-source-v1"],
+          "acknowledged_capabilities": ["shared-source-v1"]},
+        "sources": {"characters": [
+          {"character_id": 1, "character_name": "Aiga Otsolen", "character_link_epoch": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "has_fleet_read": true, "token_usable": true},
+          {"character_id": 2, "character_name": "Ariadne", "character_link_epoch": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "has_fleet_read": false, "token_usable": true}
+        ], "sources": [
+          {"source_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "character_id": 1, "state": "active", "reason": null},
+          {"source_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "character_id": 2, "state": "ended", "reason": "boss_changed"}
+        ]},
+        "eligibility": {"state": "ready", "participation_generation": 1, "characters": [{"character_id": 1}, {"character_id": 2}]},
+        "observed_participation": {"enabled": true, "generation": 1}
+      }}
+    },
     "formations": {
       "kind": "formations-screenshot-v1",
       "accounts": [{"path": "screenshot/account", "name": "Fleet account"}],

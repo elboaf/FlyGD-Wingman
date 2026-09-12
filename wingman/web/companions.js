@@ -1,7 +1,47 @@
 // Companion configuration owns drafts, never native identity or operation lifetime.
 (function () {
   'use strict';
-  WM.handle('onCompanionPreviews', function (payload) { accept(payload); });
+  WM.handle('onCompanionPreviews', function (payload) {
+    if (screenshotFixture) {
+      if (payload && payload.revision >= screenshotLive.revision) screenshotLive = payload;
+      return;
+    }
+    accept(payload);
+  });
+
+  var screenshotFixture = null, screenshotLive = null, screenshotChooser = false;
+  // Tool-only presentation, installed before section entry. Pending writes are
+  // not a safe capture boundary; fail instead of abandoning their receipts.
+  WM.companionsScreenshot = function (payload) {
+    if (payload && (payload.kind !== 'companions-screenshot-v1' || JSON.stringify(payload).length > 16384
+        || !payload.state || !Array.isArray(payload.state.rows) || payload.state.rows.length !== 2
+        || !Array.isArray(payload.sources) || payload.sources.length !== 2)) {
+      throw new Error('Invalid companions screenshot fixture');
+    }
+    if (payload && !screenshotFixture && !WM.el('overlay').hidden) {
+      throw new Error('A live dialog is open — finish it before capturing companions');
+    }
+    if (payload && !screenshotFixture && (requests.length || sourceBusy || selectionBusy || master.busy)) {
+      throw new Error('Companion operation in progress — retry capture when settled');
+    }
+    if (!payload && !screenshotFixture) return;
+    var live = screenshotFixture ? screenshotLive : state;
+    epoch += 1; flow += 1; requests = [];
+    if (screenshotChooser) { WM.el('dlg-cancel').click(); screenshotChooser = false; }
+    sourceBusy = selectionBusy = false; message = recoveryMessage = '';
+    recovering = false; recoveryOperation = null;
+    master.queue = []; master.busy = false; master.error = '';
+    views = Object.create(null); WM.el('companion-list').textContent = '';
+    WM.el('companion-add-form').hidden = true; WM.el('companion-add-label').value = '';
+    addMode = 'whole'; WM.el('companion-add-whole').checked = true; WM.el('companion-add-region').checked = false;
+    screenshotFixture = payload ? JSON.parse(JSON.stringify(payload)) : null;
+    screenshotLive = payload ? live : null;
+    state = {revision: -1, rows: [], operations: [], limits: {}};
+    hydrated = false;
+    if (payload || live.revision >= 0) accept(payload ? screenshotFixture.state : live);
+    else master.base = false;
+    paint();
+  };
 
   var state = {revision: -1, rows: [], operations: [], limits: {}};
   var hydrated = false, active = false, epoch = 0, flow = 0;
@@ -34,6 +74,7 @@
     return result.error || (result.applied ? '' : 'The change was not applied. Try again.');
   }
   function refresh() {
+    if (screenshotFixture) { accept(screenshotFixture.state); return; }
     var owner = epoch;
     WM.send('companion_previews_state').then(function (payload) {
       if (owner !== epoch || !active) return;
@@ -44,11 +85,13 @@
 
   // Terminal receipts are retained in state. Do not mistake a pending bridge
   // reply for the latest outcome: its completion event can arrive first.
-  function request(send, done) {
+  function request(send, done, screenshotRead) {
+    if (screenshotFixture && !screenshotRead) return;
     recoveryOperation = null; recoveryMessage = '';
     var item = {operation: null, result: null, done: done, refreshing: false};
     requests.push(item);
     send().then(function (result) {
+      if (requests.indexOf(item) === -1) return;
       item.result = result || {pending: false, applied: false, persisted: false,
         error: 'Could not confirm the request. Reopen this section before retrying.'};
       item.operation = result && result.operation_id;
@@ -138,6 +181,7 @@
     field.status.className = 'hint' + (field.error ? ' err' : '');
   }
   function commit(view, name) {
+    if (screenshotFixture) return;
     if (!ready() || !owns(view)) return;
     var field = view.fields[name];
     var error = name === 'label' || name === 'title_hint' ? textError(name, field.value) : '';
@@ -176,6 +220,7 @@
     paint();
   }
   function mutate(view, send) {
+    if (screenshotFixture) return;
     if (!ready() || !owns(view) || view.busy || pending(view.row)) return;
     view.busy = true;
     view.error = '';
@@ -265,6 +310,7 @@
     var actions = WM.make('div', 'companion-actions');
     view.reselect = button(view, 'source', 'Reselect source…', function () { chooseSource(view); }, actions);
     view.region = button(view, 'region', 'Reselect region…', function () {
+      if (screenshotFixture) return;
       WM.endPreviewCapture();
       mutate(view, function () { return WM.send('companion_preview_reselect_region', row.id, view.row.generation); });
     }, actions);
@@ -272,6 +318,7 @@
       mutate(view, function () { return WM.send('companion_preview_reset_geometry', row.id, view.row.generation); });
     }, actions);
     view.remove = button(view, 'remove', 'Remove…', function () {
+      if (screenshotFixture) return;
       if (!ready() || view.busy || pending(view.row)) return;
       WM.endPreviewCapture();
       var owner = epoch, generation = view.row.generation;
@@ -294,8 +341,11 @@
     var mode = view ? view.mode : addMode;
     function current() { return ready() && epoch === owner && flow === attempt && (!view || (owns(view) && view.row.generation === generation)); }
     sourceBusy = true; message = 'Finding source windows…';
-    WM.endPreviewCapture();
-    request(function () { return WM.send('companion_previews_sources'); }, function (result) {
+    if (!screenshotFixture) WM.endPreviewCapture();
+    request(function () {
+      return screenshotFixture ? Promise.resolve({applied: true, persisted: true, pending: false, sources: screenshotFixture.sources})
+        : WM.send('companion_previews_sources');
+    }, function (result) {
       if (owner !== epoch || attempt !== flow) return;
       sourceBusy = false;
       if (!current()) return;
@@ -305,13 +355,18 @@
       }
       message = '';
       sourceBusy = true;
-      WM.endPreviewCapture();
+      if (!screenshotFixture) WM.endPreviewCapture();
+      screenshotChooser = !!screenshotFixture;
       WM.choose('Choose companion source', 'Select a non-EVE window to preview.',
         [{label: 'Open windows', options: result.sources.map(function (source) {
           return {value: source.candidate_token, label: source.application + ' — ' + source.title};
         })}], 'Choose', 'Source', {compact: true}).then(function (token) {
         if (owner !== epoch || attempt !== flow) return;
         sourceBusy = false;
+        screenshotChooser = false;
+        // Choosing a fixture option must never be a native selection, even if
+        // someone presses Choose while the capture tool has the dialog open.
+        if (screenshotFixture) { paint(); return; }
         if (!current() || token === null) { paint(); return; }
         var source = result.sources.filter(function (item) { return item.candidate_token === token; })[0];
         if (!source) { message = 'Source selection expired. Choose source again.'; paint(); return; }
@@ -332,10 +387,11 @@
         });
         paint();
       });
-    });
+    }, true);
     paint();
   }
   function drainMaster() {
+    if (screenshotFixture) return;
     if (!ready() || master.busy || !master.queue.length) return;
     var edit = master.queue.shift();
     master.busy = true;
@@ -392,14 +448,14 @@
     });
   }
   WM.el('companion-enabled').addEventListener('change', function () {
-    if (!ready()) return;
+    if (screenshotFixture || !ready()) return;
     master.seq += 1; master.error = '';
     master.queue.push({value: WM.el('companion-enabled').checked, seq: master.seq, epoch: epoch});
     drainMaster();
   });
   WM.el('companion-add').addEventListener('click', function () {
     if (!ready() || WM.el('companion-add').disabled) return;
-    WM.endPreviewCapture();
+    if (!screenshotFixture) WM.endPreviewCapture();
     WM.el('companion-add-form').hidden = false; WM.el('companion-add-label').focus();
   });
   ['whole', 'region'].forEach(function (mode) {
@@ -425,7 +481,7 @@
         var field = view.fields[name]; field.seq += 1; field.dirty = false; field.error = ''; setValue(field, field.base);
       });
     });
-    if (active) refresh(); else WM.endPreviewCapture();
+    if (active) refresh(); else if (!screenshotFixture) WM.endPreviewCapture();
     paint();
   });
   paint();

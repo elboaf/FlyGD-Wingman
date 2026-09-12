@@ -1,10 +1,12 @@
 ---
-description: Capture every Wingman screen for UX review
+description: Capture Wingman's main-window screens and dialogs for UX review
 argument-hint: "[checkout path or worktree name; defaults to this repo root]"
 ---
 
-Capture a full screenshot set of FlyGD Wingman for UX review, using
-`scripts/shoot_screens.py`.
+Capture FlyGD Wingman's main-window screens, settings cards and staged dialogs
+for UX review, using `scripts/shoot_screens.py`. First-run, floating Fleet/Sig
+bars, native previews and native pickers are outside this command's scope. Do
+not reset user settings or open native windows to force those captures.
 
 Target checkout: ${ARGUMENTS:-this repository's root}.
 
@@ -77,11 +79,24 @@ fixture-backed captures:
 - **Profiles — Import setup review**: reviewed setup, stopping before Create.
 - **Settings — Previews (saved crop 840x625)**: saved-crop Configure controls.
 
-The new stages use local fixture reads, not private EVE files, and perform no
-Save/Create/clipboard actions. Their manifest entries identify the fixture
-source. They show synthetic presentation states, not evidence that a real
-import, export or native crop operation succeeded. First-run remains excluded.
-If Wingman is not running when they start, it says so and skips the restore.
+The inventory also covers the newer and below-fold main-window surfaces:
+Companions' populated rows, Edit & source, add form and source chooser;
+Wanderer's connection/status card; Fleet telemetry's character visibility and
+sharing details/history; Custom alerts; and the lower Uploading and Bookmarks
+cards. Use `SCREENS` in the selected checkout for the exact stages and floor
+variants, not this summary as a second inventory.
+
+The Profiles tools, saved-crop, Companion, Wanderer and Fleet fixture stages use
+local synthetic data, not private EVE files or real source-window titles; their
+manifest entries identify the fixture source. Their staging performs no
+Save/Create/clipboard actions, connection tests, sharing commands or native
+source selection. These are synthetic presentation states, not evidence that
+an import, export, connection or native operation succeeded. Characters,
+ordinary Preview variants and Fittings also stage synthetic data but do not yet
+carry per-shot fixture annotations; do not describe those captures as live data.
+The overall run still launches the real app against its existing configuration;
+it is not an offline or persistence-isolated test. If Wingman is not running
+when they start, it says so and skips the restore.
 
 Mention `--port` if the default is busy, `--settle-ms` if a screen looks
 half-drawn, and `--out` only when relevant.
@@ -92,9 +107,11 @@ Read `<out_dir>/manifest.json` and validate and report all of these fields:
 
 - `shot_count` against `screens_total`, plus every entry in `failed` and
   `skipped`.
-- `eve_shown`. When false, the set is correctly reduced to the four non-EVE
-  screens and the manifest's `skipped` list must name every EVE-gated screen;
-  say so explicitly, or a set of four reads as truncated.
+- `eve_shown`. When false, only non-EVE stages are reachable, including
+  Companions. Derive the reachable count and skipped keys from `SCREENS` in the
+  selected checkout; reconcile them with the manifest's shots and `skipped`
+  list. Report the gate reduction explicitly rather than calling a correctly
+  reduced set truncated. Never keep a separate hard-coded non-EVE count.
 - Each shot's optional `fixture` field. Label these captures as synthetic
   presentation evidence, not live account/profile data or completed operations.
 - `engine_present`. When false, Settings — Bookmarks shows the shooter's

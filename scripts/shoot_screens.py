@@ -49,7 +49,48 @@ EXCLUDED_ROUTES = frozenset({"firstrun"})
 SCREENS = (
     Screen("uploader", "Uploader", "main"),
     Screen("settings-uploading", "Settings - Uploading", "settings", "uploading"),
+    Screen(
+        "settings-uploading-recording",
+        "Settings - Recording behavior and folder",
+        "settings",
+        "uploading",
+    ),
+    Screen(
+        "settings-uploading-integrations",
+        "Settings - FightRecorder",
+        "settings",
+        "uploading",
+    ),
+    Screen(
+        "settings-uploading-webhook",
+        "Settings - Combat log webhook",
+        "settings",
+        "uploading",
+    ),
     Screen("settings-companions", "Settings - Companions", "settings", "companions"),
+    Screen(
+        "settings-companions-populated",
+        "Settings - Companions (whole and region)",
+        "settings",
+        "companions",
+    ),
+    Screen(
+        "settings-companions-detail-narrow",
+        "Settings - Companion Edit & source (840x625)",
+        "settings",
+        "companions",
+        at_floor=True,
+    ),
+    Screen(
+        "settings-companions-add", "Settings - Add companion", "settings", "companions"
+    ),
+    Screen(
+        "settings-companions-source-narrow",
+        "Settings - Companion source chooser (840x625)",
+        "settings",
+        "companions",
+        at_floor=True,
+    ),
     Screen(
         "settings-characters", "Settings - Characters", "settings", "characters", True
     ),
@@ -76,6 +117,20 @@ SCREENS = (
         True,
     ),
     Screen("settings-bookmarks", "Settings - Bookmarks", "settings", "bookmarks", True),
+    Screen(
+        "settings-bookmarks-windows",
+        "Settings - EVE windows",
+        "settings",
+        "bookmarks",
+        True,
+    ),
+    Screen(
+        "settings-bookmarks-sigbar",
+        "Settings - Floating sig bar controls",
+        "settings",
+        "bookmarks",
+        True,
+    ),
     Screen("settings-previews", "Settings - Previews", "settings", "previews", True),
     Screen(
         "settings-previews-middle",
@@ -135,13 +190,66 @@ SCREENS = (
         True,
         True,
     ),
+    Screen(
+        "settings-wanderer",
+        "Settings - Wanderer connection",
+        "settings",
+        "previews",
+        True,
+    ),
+    Screen(
+        "settings-wanderer-narrow",
+        "Settings - Wanderer status (840x625)",
+        "settings",
+        "previews",
+        True,
+        True,
+    ),
     Screen("settings-fleet", "Settings - Fleet telemetry", "settings", "fleet", True),
+    Screen(
+        "settings-fleet-characters-narrow",
+        "Settings - Fleet character visibility (840x625)",
+        "settings",
+        "fleet",
+        True,
+        True,
+    ),
+    Screen(
+        "settings-fleet-sharing",
+        "Settings - Fleet sharing setup",
+        "settings",
+        "fleet",
+        True,
+    ),
+    Screen(
+        "settings-fleet-sharing-details",
+        "Settings - Fleet sharing details",
+        "settings",
+        "fleet",
+        True,
+    ),
+    Screen(
+        "settings-fleet-sharing-history-narrow",
+        "Settings - Fleet previous attempts (840x625)",
+        "settings",
+        "fleet",
+        True,
+        True,
+    ),
     Screen("settings-alerts", "Settings - Alerts", "settings", "alerts", True),
     Screen(
         "settings-alerts-advanced",
         "Settings - Alerts (advanced pulse behavior)",
         "settings",
         "alerts",
+        True,
+    ),
+    Screen(
+        "settings-alerts-custom-narrow",
+        "Settings - Custom alerts (840x625)",
+        "settings",
+        "alerts",
+        True,
         True,
     ),
     Screen("settings-general", "Settings - General", "settings", "general"),
@@ -758,7 +866,44 @@ def _fittings_reset_script() -> str:
     return "(function () {\n" + _FIT_RESET_JS + "\n}())"
 
 
+# These owners fetch on section entry. Install their local fixtures before
+# entering, unlike the older opener-driven stages below.
+_CURRENT_SCREEN_FIXTURES = {
+    "settings-companions-populated": ("companions", "companionsScreenshot"),
+    "settings-companions-detail-narrow": ("companions", "companionsScreenshot"),
+    "settings-companions-add": ("companions", "companionsScreenshot"),
+    "settings-companions-source-narrow": ("companions", "companionsScreenshot"),
+    "settings-wanderer": ("wanderer", "wandererScreenshot"),
+    "settings-wanderer-narrow": ("wanderer", "wandererScreenshot"),
+    "settings-fleet-characters-narrow": ("fleet", "fleetScreenshot"),
+    "settings-fleet-sharing": ("fleet", "fleetScreenshot"),
+    "settings-fleet-sharing-details": ("fleet", "fleetScreenshot"),
+    "settings-fleet-sharing-history-narrow": ("fleet", "fleetScreenshot"),
+}
+
+# Semantic anchors, not scroll fractions. Static cards stay live: no synthetic
+# state or actions are needed to expose their current controls.
+_CURRENT_SCREEN_TARGETS = {
+    "settings-companions-populated": "#companion-list",
+    "settings-companions-detail-narrow": ".companion-detail",
+    "settings-companions-add": "#companion-add-form",
+    "settings-companions-source-narrow": "#dialog",
+    "settings-wanderer": "#wanderer-settings",
+    "settings-wanderer-narrow": "#wanderer-credential",
+    "settings-fleet-characters-narrow": "#fleetbar-characters",
+    "settings-fleet-sharing": "#fleet-sharing",
+    "settings-fleet-sharing-details": "#sharing-eligible",
+    "settings-fleet-sharing-history-narrow": "#sharing-history",
+    "settings-uploading-recording": '#section-uploading input[name="notify"]',
+    "settings-uploading-integrations": "#fr-status",
+    "settings-uploading-webhook": "#f-webhook",
+    "settings-bookmarks-windows": "#eve-windows",
+    "settings-bookmarks-sigbar": "#sigbar-enabled",
+    "settings-alerts-custom-narrow": "#custom-alerts",
+}
+
 _TOOL_SCREEN_FIXTURES = {
+    **_CURRENT_SCREEN_FIXTURES,
     "profiles-formations": ("formations", "formationsScreenshot"),
     "profiles-formations-import": ("formations", "formationsScreenshot"),
     "profiles-setup-share": ("setup", "uiSetupScreenshot"),
@@ -794,6 +939,11 @@ def new_screen_prepare_script(screen: Screen) -> str | None:
         return None
     family, method = entry
     payload = load_dev_tool_screenshot_fixture()[family]
+    if family == "fleet":
+        return (
+            f"WM.fleetScreenshot({json.dumps(payload['display'])});\n"
+            f"WM.fleetSharingScreenshot({json.dumps(payload['sharing'])});"
+        )
     if family == "setup":
         payload["mode"] = "import" if screen.key.endswith("import") else "export"
     if family == "crop":
@@ -811,12 +961,16 @@ def new_screen_cleanup_script(screen: Screen) -> str | None:
     if not entry:
         return None
     family, method = entry
-    leave = "WM.route('main'); " if family != "crop" else ""
+    if family == "fleet":
+        return "try { WM.fleetSharingScreenshot(null); } finally { WM.fleetScreenshot(null); }"
+    leave = "WM.route('main'); " if family in {"formations", "setup"} else ""
     return leave + f"WM.{method}(null);"
 
 
 def new_screen_verify_script(screen: Screen) -> str | None:
     """Check and frame settled content, never infer success from a click."""
+    if screen.key in _CURRENT_SCREEN_TARGETS:
+        return _current_screen_verify_script(screen)
     if screen.key == "fittings-detail":
         # The fixture read resolves on a microtask and replaces the row DOM.
         # Re-query after walk's existing settle wait; a click (or Loading…) is
@@ -887,6 +1041,132 @@ def new_screen_verify_script(screen: Screen) -> str | None:
     return f"(function () {{ if ({condition}) throw new Error('Screenshot content did not settle: {screen.key}'); }}())"
 
 
+def _current_screen_setup_script(screen: Screen) -> str:
+    body = ""
+    if screen.section == "companions":
+        body = (
+            "Array.prototype.forEach.call(document.querySelectorAll('.companion-detail'), function (el) { el.open = false; });\n"
+            "WM.el('companion-add-form').hidden = true;\n"
+        )
+        if "detail" in screen.key:
+            body += "document.querySelector('.companion-detail').open = true;\n"
+        elif screen.key.endswith("-add") or "source-narrow" in screen.key:
+            label = load_dev_tool_screenshot_fixture()["companions"]["add_label"]
+            body += f"WM.el('companion-add').click(); WM.el('companion-add-label').value = {json.dumps(label)};\n"
+            if "source-narrow" in screen.key:
+                body += "WM.el('companion-add-source').click();\n"
+    elif screen.section == "fleet":
+        for key, element in (
+            ("settings-fleet-characters-narrow", "fleetbar-characters"),
+            ("settings-fleet-sharing-details", "sharing-eligible"),
+            ("settings-fleet-sharing-history-narrow", "sharing-history"),
+        ):
+            body += f"WM.el({element!r}).open = {str(screen.key == key).lower()};\n"
+    # Framing follows settled asynchronous chooser/owner rendering in verify.
+    return "(function () {\n" + body + "\n}())"
+
+
+def _current_screen_verify_script(screen: Screen) -> str:
+    key = screen.key
+    conditions = []
+    if screen.section == "companions":
+        fixture = load_dev_tool_screenshot_fixture()["companions"]
+        conditions += [
+            f"document.querySelectorAll('.companion-row').length !== {len(fixture['state']['rows'])}",
+            "WM.el('companion-count').textContent !== '2 / 8 enabled'",
+            "WM.el('companion-list').textContent.indexOf('Whole window') === -1",
+            "WM.el('companion-list').textContent.indexOf('Selected region') === -1",
+        ]
+        for row in fixture["state"]["rows"]:
+            conditions.append(
+                f"WM.el('companion-list').textContent.indexOf({json.dumps(row['label'])}) === -1"
+            )
+        if "detail" in key:
+            conditions += [
+                "!document.querySelector('.companion-detail').open",
+                "!WM.el('companion-screenshot-map-title_hint').value",
+            ]
+        if key.endswith("-add") or "source-narrow" in key:
+            conditions += [
+                "WM.el('companion-add-form').hidden",
+                "!WM.el('companion-add-label').value",
+            ]
+        if "source-narrow" in key:
+            conditions += [
+                "WM.el('overlay').hidden",
+                "!WM.el('dialog').classList.contains('compact-choice')",
+                f"WM.el('dlg-select').options.length !== {len(fixture['sources'])}",
+                "!WM.el('dlg-select-detail').textContent",
+            ]
+    elif screen.section == "previews":
+        state = load_dev_tool_screenshot_fixture()["wanderer"]["state"]
+        conditions += [
+            f"WM.el('wanderer-url').value !== {json.dumps(state['base_url'])}",
+            f"WM.el('wanderer-map').value !== {json.dumps(state['map_identifier'])}",
+            "WM.el('wanderer-token').value !== ''",
+            "WM.el('wanderer-test').disabled",
+            "WM.el('wanderer-health').textContent !== 'Connected to Wanderer.'",
+            "WM.el('wanderer-coverage').textContent.indexOf('2 of 3') !== 0",
+        ]
+    elif screen.section == "fleet":
+        conditions += [
+            "document.querySelectorAll('[data-fleet-character]').length !== 3",
+            "WM.el('sharing-connection').textContent.indexOf('Paired with https://authgd.example.') !== 0",
+        ]
+        if "characters" in key:
+            conditions.append("!WM.el('fleetbar-characters').open")
+        elif "details" in key:
+            conditions += [
+                "!WM.el('sharing-eligible').open",
+                "WM.el('sharing-eligible-list').children.length !== 2",
+            ]
+        elif "history" in key:
+            conditions += [
+                "!WM.el('sharing-history').open",
+                "WM.el('sharing-history').hidden",
+                "WM.el('sharing-history-sources').children.length !== 1",
+            ]
+        else:
+            conditions += [
+                "WM.el('sharing-boss').options.length !== 3",
+                "WM.el('sharing-sources').children.length !== 1",
+            ]
+    elif screen.section == "uploading":
+        conditions += [
+            "!WM.el('f-category').value",
+            "WM.el('f-webhook').type !== 'password'",
+            "!WM.el('fr-status').textContent",
+            "/checking/i.test(WM.el('fr-status').textContent)",
+        ]
+    elif screen.section == "bookmarks":
+        conditions += [
+            "!WM.el('eve-windows').textContent",
+            "!WM.el('eve-binds').children.length",
+        ]
+    else:
+        conditions += [
+            "(WM.el('custom-alert-add').disabled && !document.querySelector('.custom-alert-row'))",
+            "!WM.el('custom-alert-recovery').hidden",
+            "!WM.el('custom-alert-health').textContent",
+            "/Loading/.test(WM.el('custom-alert-health').textContent)",
+        ]
+    selector = json.dumps(_CURRENT_SCREEN_TARGETS[key])
+    # The lower static cards have no id of their own. Anchor through a real
+    # control, then frame the enclosing card rather than its incidental offset.
+    closest = ".closest('.card')" if key not in _CURRENT_SCREEN_FIXTURES else ""
+    return (
+        "(function () {\n"
+        f"var anchor = document.querySelector({selector});\n"
+        f"if (WM.current_route !== 'settings' || WM.current_section !== {screen.section!r} || !anchor || "
+        + " || ".join(conditions)
+        + f") throw new Error('Screenshot content did not settle: {key}');\n"
+        f"var target = anchor{closest};\n"
+        f"if (!target || target.hidden || !target.getClientRects().length) throw new Error('Screenshot content did not settle: {key}');\n"
+        "target.scrollIntoView({block: 'start', behavior: 'instant'});\n"
+        "}())"
+    )
+
+
 def _new_screen_setup_script(screen: Screen) -> str:
     fixture = load_dev_tool_screenshot_fixture()
     if screen.key == "profiles-formations":
@@ -946,6 +1226,8 @@ def _new_screen_setup_script(screen: Screen) -> str:
 
 def screen_setup_script(screen: Screen) -> str | None:
     """Post-navigation staging for screenshots within a long screen."""
+    if screen.key in _CURRENT_SCREEN_TARGETS:
+        return _current_screen_setup_script(screen)
     if screen.key in _TOOL_SCREEN_FIXTURES:
         return _new_screen_setup_script(screen)
     if screen.key == "settings-characters":
@@ -1387,9 +1669,8 @@ def build_manifest(
 ) -> dict:
     """Describe the run precisely enough that the set cannot mislead.
 
-    A run that shot four screens because the EVE gate was off is correct; a
-    run that shot four and looks truncated is not. The difference is only
-    visible if the gate state and the skip list are recorded.
+    An EVE-gated reduction is correct, but must not look like a truncated
+    run. Record the gate state and skip list alongside the derived counts.
 
     `engine_present` is the same kind of claim about a screen rather than
     the set: false means Settings > Bookmarks shot its engine-missing
@@ -1661,29 +1942,37 @@ def walk(
     for index, screen in enumerate(to_shoot, start=1):
         name = f"{index:02d}-{screen.key}.png"
         try:
-            if screen.key == "dialog":
-                cdp.evaluate("WM.route('main')")
-                # Drive the same handler and payload shape used by Python.
-                # WM.confirm is a separate page-owned path and silently lost
-                # production-only fields such as the specific action label.
-                cdp.evaluate("window.onDialog(" + json.dumps(dialog_payload()) + ")")
-            else:
-                cdp.evaluate(f"WM.route({screen.route!r})")
-                if screen.section:
-                    cdp.evaluate(f"WM.section({screen.section!r})")
-            time.sleep(settle_ms / 1000)
-            # Any floor-sized capture must pin 840x625 BEFORE its setup runs.
-            # That setup picks scroll positions and visible controls; doing it
-            # first would stage the screen against the wrong viewport and then
-            # photograph a different layout. The clear is in a finally so one
-            # failed floor shot cannot distort every screenshot after it.
-            if screen.at_floor:
-                cdp.set_device_metrics_override(width=840, height=625)
+            # New section-owned fixtures must precede entry reads. Keep the old
+            # navigation/staging order for the existing opener-driven captures.
+            # Pin 840x625 before preparation and framing, not after choosing a
+            # scroll target for a different layout. Finally restores the viewport
+            # even if preparation or section entry fails.
+            early = screen.key in _CURRENT_SCREEN_FIXTURES
             try:
-                prepare = new_screen_prepare_script(screen)
-                if prepare:
-                    cdp.evaluate(prepare)
-                    time.sleep(0.25)
+                if early:
+                    if screen.at_floor:
+                        cdp.set_device_metrics_override(width=840, height=625)
+                    cdp.evaluate(new_screen_prepare_script(screen))
+                    cdp.evaluate(f"WM.openSettingsSection({screen.section!r})")
+                elif screen.key == "dialog":
+                    cdp.evaluate("WM.route('main')")
+                    # Drive Python's handler/payload shape: WM.confirm is a
+                    # separate page-owned path that lost the action label.
+                    cdp.evaluate(
+                        "window.onDialog(" + json.dumps(dialog_payload()) + ")"
+                    )
+                else:
+                    cdp.evaluate(f"WM.route({screen.route!r})")
+                    if screen.section:
+                        cdp.evaluate(f"WM.section({screen.section!r})")
+                time.sleep(settle_ms / 1000)
+                if not early:
+                    if screen.at_floor:
+                        cdp.set_device_metrics_override(width=840, height=625)
+                    prepare = new_screen_prepare_script(screen)
+                    if prepare:
+                        cdp.evaluate(prepare)
+                        time.sleep(0.25)
                 if screen.route == "fittings":
                     # Replace live read state through the bounded page-side
                     # screenshot handler before ANY stage action. This follows
@@ -1721,7 +2010,7 @@ def walk(
                 # consumer in this tool.
                 cdp.evaluate("WM.el('dlg-cancel').click()")
         except Exception as exc:  # noqa: BLE001 -- one dead screen must not
-            # abandon the other eight; the failure is recorded instead.
+            # abandon the remaining screens; record the failure instead.
             shots.append({"key": screen.key, "file": None, "error": str(exc)})
         else:
             shots.append({"key": screen.key, "file": name, "error": None})

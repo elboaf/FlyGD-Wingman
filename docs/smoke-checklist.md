@@ -509,6 +509,21 @@ somewhere stale and nothing on that screen is worth reviewing.
       annotations and verify no Save/Create/clipboard action runs. These are
       synthetic presentation checks, not acceptance of real EVE file operations
       or native crop behavior; the dedicated interaction checks remain required.
+      Check the newer surfaces too: Companions' populated whole-window and region
+      rows, Edit & source, add form and compact source chooser; the Wanderer
+      connection/status card; Fleet telemetry's character visibility and sharing
+      details/history; Custom alerts; and lower Uploading and Bookmarks cards.
+      Each dedicated capture must frame its named content, not just revisit the
+      top of the section. Inspect the new floor variants at 840x625. Fixture
+      stages must use synthetic source titles and connection data with no token
+      draft, and must not test connections, send sharing commands, save settings,
+      select native sources or invoke the clipboard. After a failed stage, verify
+      its fixture and any staged dialog are cleared before the next capture.
+      Derive expected capture and EVE-gate skip counts from `SCREENS`; Companions
+      remains reachable with EVE tools hidden. This command covers the main
+      window only: first-run, floating bars and native previews/pickers remain
+      separate manual checks. The overall run is still a real app launch against
+      existing configuration, not an offline or persistence-isolated test.
       A blank screen in the set is a real defect, not a capture artifact -- one
       bad handler name silently disables every registration below it.
 
