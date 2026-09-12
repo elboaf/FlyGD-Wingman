@@ -20,6 +20,45 @@
   var testInterrupted = false;
   var testPriorResult = null;
   var fields = {};
+  var screenshotFixture = null, screenshotLive = null;
+  // Health pushes do not hydrate drafts in normal operation. Tooling must
+  // explicitly replace all drafts, including a secret typed before capture,
+  // and restore only acknowledged live values when it leaves.
+  WM.wandererScreenshot = function (payload) {
+    if (payload && (payload.kind !== 'wanderer-screenshot-v1' || JSON.stringify(payload).length > 8192
+        || !payload.state || payload.state.base_url !== 'https://wanderer.example'
+        || typeof payload.state.map_identifier !== 'string' || 'token' in payload.state)) {
+      throw new Error('Invalid Wanderer screenshot fixture');
+    }
+    if (payload && !screenshotFixture && (confirming || Object.keys(fields).some(function (name) { return fields[name].pending; }))) {
+      throw new Error('Wanderer change in progress — retry capture when settled');
+    }
+    if (!payload && !screenshotFixture) return;
+    var live = screenshotFixture ? screenshotLive : {acknowledged: acknowledged, health: health, generation: healthGeneration};
+    readRequest += 1; delivery += 1; interaction += 1;
+    testWaiting = testObserved = testInterrupted = false; testPriorResult = null;
+    Object.keys(fields).forEach(function (name) {
+      fields[name].edit = 0; fields[name].request += 1; fields[name].error = '';
+    });
+    screenshotFixture = payload ? JSON.parse(JSON.stringify(payload)) : null;
+    screenshotLive = payload ? live : null;
+    acknowledged = payload ? null : live.acknowledged;
+    health = payload ? null : live.health;
+    healthGeneration = payload ? -1 : live.generation;
+    if (payload) receive(screenshotFixture.state, false, true);
+    hydrated = !!acknowledged;
+    Object.keys(keys).forEach(function (name) {
+      if (acknowledged) restore(name);
+      else if (name === 'enabled') el(name).checked = false;
+      else el(name).value = '';
+    });
+    el('token').value = '';
+    if (!acknowledged) {
+      el('health').textContent = 'Loading Wanderer settings…';
+      el('coverage').textContent = ''; el('credential').textContent = '';
+    }
+    paint();
+  };
   var keys = {enabled: 'enabled', url: 'base_url', map: 'map_identifier'};
   ['enabled', 'url', 'map', 'token', 'connection', 'test', 'remove'].forEach(function (name) {
     fields[name] = {edit: 0, request: 0, pending: 0, error: '', tail: Promise.resolve()};
@@ -110,12 +149,26 @@
         + (currentHealth.stale ? ', ' + currentHealth.stale + ' stale' : '') + '.';
   }
 
-  function receive(p, afterTestAdmission) {
+  function previousBindingHealth(p, previous) {
+    return previous && p.revision > previous.revision && p.generation <= previous.generation;
+  }
+
+  function receive(p, afterTestAdmission, synthetic) {
+    if (screenshotFixture && !synthetic) {
+      if (p && typeof p.revision === 'number' && p.generation >= screenshotLive.generation
+          && (!screenshotLive.acknowledged || p.revision >= screenshotLive.acknowledged.revision)) {
+        screenshotLive.acknowledged = p;
+        if (!previousBindingHealth(p, screenshotLive.health)) {
+          screenshotLive.health = p; screenshotLive.generation = p.generation;
+        }
+      }
+      return;
+    }
     if (!p || p.generation < healthGeneration || !acceptAcknowledged(p)) return;
     delivery += 1;
     // Controller settings can advance just before its worker reconfiguration.
     // Keep the safe acknowledgement, not coverage from the previous binding.
-    if (health && p.revision > health.revision && p.generation <= health.generation) {
+    if (previousBindingHealth(p, health)) {
       paint();
       return;
     }
@@ -153,7 +206,7 @@
   // The connection writes as a group, but a reply owns each field separately.
   // Enable has its own lane; neither response may erase newer connection drafts.
   function commit(name, send) {
-    if (!hydrated) return;
+    if (screenshotFixture || !hydrated) return;
     var field = fields[name];
     var request = ++field.request;
     var edit = ++field.edit;
@@ -226,7 +279,7 @@
   }
 
   function testConnection() {
-    if (el('test').disabled) return;
+    if (screenshotFixture || el('test').disabled) return;
     var base = el('url').value;
     var map = el('map').value;
     var token = el('token').value;
@@ -263,7 +316,7 @@
   });
   el('test').addEventListener('click', testConnection);
   el('remove').addEventListener('click', function () {
-    if (el('remove').disabled) return;
+    if (screenshotFixture || el('remove').disabled) return;
     var owner = interaction;
     var revision = acknowledged.revision;
     confirming = true;
@@ -282,6 +335,7 @@
   document.addEventListener('wm:section', function (event) {
     interaction += 1;
     if (event.detail !== 'previews') return;
+    if (screenshotFixture) { paint(); return; }
     var request = ++readRequest;
     var atRead = delivery;
     WM.send('wanderer_state').then(function (p) {
