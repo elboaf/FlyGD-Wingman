@@ -553,13 +553,13 @@
              it is not another generic integrations screen. -->
         <h2>Combat log webhook</h2>
         <div class="row">
-          <span class="lab">Webhook URL</span>
+          <label class="lab" for="f-webhook">Webhook URL</label>
           <!-- Masked by default. A webhook URL is a credential: anyone
                holding it can post to the channel, and this screen is open
                on a second monitor while streaming and screenshotted when
                users help each other configure it. -->
           <input class="field" id="f-webhook" type="password" spellcheck="false"
-                 autocomplete="off">
+                 autocomplete="off" aria-describedby="webhook-save-note msg-discord">
           <button class="btn toggle" id="btn-webhook-show"
                   aria-pressed="false">Show</button>
           <!-- Round 3, B12 and L5's destructive rule: this destroys a
@@ -570,6 +570,7 @@
                settings.js. -->
           <button class="btn danger" id="btn-webhook-remove">Remove</button>
         </div>
+        <p class="hint" id="webhook-save-note">Press Enter to save changes. Remove clears the saved webhook.</p>
         <p class="sub-hint" id="webhook-status">not configured</p>
         <p class="field-msg" id="msg-discord" hidden></p>
       </section>
@@ -739,7 +740,7 @@
         <p class="hint" id="eve-bind-warning" hidden></p>
         <div id="eve-binds"></div>
         <div class="row"><span class="lab"></span>
-          <button class="btn" id="eve-reset-binds">Reset to defaults</button></div>
+          <button class="btn" id="eve-reset-binds">Reset all bookmark keybinds&hellip;</button></div>
       </section>
 
       <section class="card">
@@ -967,18 +968,17 @@
                allows a discrete control to commit on change and forbids it
                here, and half a typed "1280x720" is a real size this would
                otherwise save. -->
-          <span class="hint" id="preview-default-size-status">Where a
-            preview opens before you have moved it. Press Enter to
-            save.</span></div>
+          <span class="hint" id="preview-default-size-status">Size used when a
+            preview has no saved placement. Press Enter to save.</span></div>
         <div class="row"><span class="lab"></span>
-          <!-- An action, not the field's commit: Enter changes where the
-               NEXT preview opens, this changes what is on screen now.
+          <!-- An action, not the field's commit: Enter saves a default for
+               previews without saved placement; this resizes open previews.
                Splitting them is the point -- the field used to be the
                only interface to the size, which is why it looked broken
                to anything already open. Overrides every custom size,
                including per-character ones set through Size... . -->
-          <button class="btn" id="btn-preview-apply-size">Apply to open
-            previews</button>
+          <button class="btn" id="btn-preview-apply-size">Apply saved size to all open previews</button>
+          <span class="hint">Replaces custom sizes on open Wingman previews, not EVE windows.</span>
           <span class="hint" id="preview-apply-size-status"></span></div>
         <div class="row">
           <!-- The ring a selected preview wears. #rrggbb in and out; the
@@ -1100,6 +1100,8 @@
           Show Wanderer system names below character labels
         </label></div>
         <p class="field-msg" id="wanderer-enabled-error" hidden></p>
+        <p class="operational-status" id="wanderer-health" role="status" aria-live="polite">Loading Wanderer settings…</p>
+        <p class="hint" id="wanderer-coverage"></p>
         <p class="hint">Uses map-local names for your current named previews. Character labels must be shown.</p>
         <div class="row">
           <label class="lab" for="wanderer-url">Application URL (HTTPS)</label>
@@ -1126,8 +1128,6 @@
         <p class="field-msg" id="wanderer-test-error" hidden></p>
         <p class="field-msg" id="wanderer-remove-error" hidden></p>
         <p class="hint" id="wanderer-test-status" role="status" aria-live="polite"></p>
-        <p class="hint" id="wanderer-health" role="status" aria-live="polite">Loading Wanderer settings…</p>
-        <p class="hint" id="wanderer-coverage"></p>
       </section>
 
       </section>
@@ -1136,30 +1136,18 @@
         <h2>Character previews &amp; cycle groups</h2>
         <details class="settings-key-help">
           <summary>How global keybinds work</summary>
-        <!-- THE precedence statement, and after round 5's C5 the only
-             one. Round 3's R4 finding 4 put the same rule in the same
-             words under Bookmarks as well, deliberately: each screen used
-             to state half of it and leave the reader to work out what
-             `takes` meant. That fixed the wording and left two cards
-             ~400px apart in one settings route each spending a paragraph
-             explaining the other.
-
-             It stays HERE rather than there because this is the set that
-             wins: these chords are global RegisterHotKey registrations,
-             the bookmark ones are AHK hotkeys scoped with #HotIf
-             WinActive, so where they collide the preview wins while EVE is
-             focused and the bookmark simply does not fire -- and Windows
-             reports nothing, because a scoped hotkey is not a registration
-             to collide with (Api._bookmark_chords). Bookmarks now carries
-             a pointer to this sentence plus the thing only that screen can
-             say: which of ITS binds lost (C6). -->
+        <!-- Keep shared-key guidance in one place; Bookmarks links here.
+             The bookmark engine's scoped hook can consume a key before a
+             Preview RegisterHotKey receives it. Configured collisions do
+             not prove engine liveness or which EVE window is foreground,
+             so never promise an unconditional winner from settings alone. -->
         <div class="row"><span class="lab"></span>
           <span class="hint">These work from any application, including a
             browser, and are released while previews are switched off.
-            Bookmarks have a second set that fires only in EVE &mdash;
-            Settings &rsaquo; Bookmarks. Where both use the same keys this
-            set wins and the bookmark does not fire; those are marked
-            below, and on the Bookmarks list too.</span></div>
+            Bookmark keybinds run only in selected EVE windows and can
+            take the same keys there. Assign different keys to avoid
+            overlap. Conflicts below and in Settings &rsaquo; Bookmarks
+            describe configured keys, not which action is running.</span></div>
         </details>
         <!-- Deliberately EMPTY. The sentence is ui/copy.py's
              INERT_NOTES["previews_off"], delivered on the settings payload
@@ -1204,23 +1192,23 @@
     <div class="settings" id="section-fleet">
       <section class="card" id="preview-fleet-options">
         <h2>Fleet Bar</h2>
-        <p class="hint">A separate always-on-top row for every running,
-          logged-in EVE client. It shows outgoing and incoming DPS over the
-          last 10 seconds plus scram, point, and neut activity. It works
-          whether client previews and alerts are on or off. A client without
-          an active gamelog says NO LOG instead of showing a guessed zero.</p>
         <div class="row">
           <label class="check">
             <input type="checkbox" id="fleetbar-enabled"><span class="box"></span>
             Show Fleet Bar
           </label>
         </div>
+        <p class="hint">An always-on-top view of your clients' combat activity, independent of previews and alerts.</p>
         <p class="hint">Local display only. Hiding the bar does not turn sharing Off or Stop verification.</p>
-        <div class="row"><span class="lab"></span>
-          <span class="hint" id="fleetbar-enabled-status">Drag Fleet Bar by its header. If edge resize is available, use the left or right edge. Wingman remembers width and position.</span></div>
+        <p class="field-msg" id="fleetbar-enabled-status" role="status"></p>
         <div class="row">
           <button class="btn" id="fleetbar-reset">Reset Fleet Bar width</button>
           <span class="hint">Puts Fleet Bar back to its default 500px content width.</span></div>
+        <details class="fleet-characters">
+          <summary>How Fleet Bar works</summary>
+          <p class="hint">One row per running, logged-in EVE client shows outgoing and incoming DPS over the last 10 seconds, plus scram, point and neut activity. A client without an active gamelog says NO LOG, not a guessed zero.</p>
+          <p class="hint">Drag Fleet Bar by its header. Resize from the left or right edge when available. Wingman remembers width and position.</p>
+        </details>
         <details class="fleet-characters" id="fleetbar-characters">
           <summary>Show local characters in Fleet Bar</summary>
           <p class="hint" id="fleetbar-character-scope">Local display only. These choices do not change collection or sharing.</p>
@@ -1252,7 +1240,7 @@
         <p class="hint" id="sharing-consent" role="status"></p>
         <p class="field-msg" id="sharing-action" role="status"></p>
         <h3>Current and pending verification</h3>
-        <p class="hint" id="sharing-source-status">Source state is not known yet.</p>
+        <p class="hint" id="sharing-source-status">Verification state is not known yet.</p>
         <div class="sharing-sources" id="sharing-sources"></div>
         <details id="sharing-history" class="fleet-characters" hidden>
           <summary id="sharing-history-summary">Previous attempts (0)</summary>
@@ -1273,8 +1261,8 @@
           <summary>Sharing details and eligible characters</summary>
           <p class="hint">Pairing, Fleet Read and Start do not turn telemetry sharing on.</p>
           <p class="hint">Other participants and alts need no Fleet Read. Start can remain pending or paused
-            until authGD verifies the boss. Source controls work with sharing and local displays off;
-            closing this view never Stops a source.</p>
+            until authGD verifies the boss. Verification controls work with sharing and local displays off;
+            closing this view never stops verification.</p>
           <p class="hint" id="sharing-eligibility"></p>
           <ul class="sharing-list" id="sharing-eligible-list"></ul>
         </details>
@@ -1599,10 +1587,10 @@
 
       <section class="card" id="custom-alerts">
         <h2>Custom alerts</h2>
+        <p class="operational-status" id="custom-alert-health" role="status">Loading custom alert status…</p>
         <p class="hint">Match visible gamelog text for every monitored character.
           Searches are literal and case-insensitive, not regular expressions.
           Built-in alerts take priority; the volume above applies here too.</p>
-        <div class="row"><span class="hint" id="custom-alert-health" role="status">Loading custom alert status…</span></div>
         <div class="row" id="custom-alert-recovery" hidden>
           <span class="hint">Saved settings are unavailable. Retry loading them.</span>
           <button type="button" class="btn" id="custom-alert-retry" aria-label="Retry loading custom alert settings" disabled>Retry</button>
@@ -1695,6 +1683,7 @@
              version this app has shipped. If a licence change ever makes
              that untrue, this line is the one that has to move with it. -->
         <p class="hint">Free software under the GPL-3.0-only licence.</p>
+        <h3 class="settings-subheading">Startup</h3>
         <label class="check">
           <input type="checkbox" id="start-on-login"><span class="box"></span>
           Start Wingman when I sign in to Windows
@@ -1960,6 +1949,7 @@
               <span id="es-copy-count" class="es-count">Nothing selected</span>
               <span id="es-copy-source" class="es-copy-source"></span>
               <span id="es-copy-profile" class="es-copy-source"></span>
+              <span id="es-copy-scope-commit" class="es-copy-source" hidden></span>
             </span>
             <span id="es-eve-state-commit" class="pill">EVE closed</span>
           </div>
@@ -2127,7 +2117,7 @@
             <select class="field" id="us-account" disabled></select>
           </div>
         </div>
-        <p class="hint">Choose both local files from a confirmed account/character association. Missing a match? Return to Profiles, Accounts, Identify accounts.</p>
+        <p class="hint">Choose a source profile, character and confirmed account. Missing a match? Return to Profiles, Accounts, Identify accounts.</p>
         <section id="us-summary" aria-labelledby="us-summary-heading" hidden>
           <h2 id="us-summary-heading">Ready to share</h2>
           <dl class="us-review">
@@ -2595,6 +2585,7 @@
         <div class="body" id="fittings-copy-body" role="region" tabindex="-1"
              aria-labelledby="fittings-copy-title"></div>
         <p class="field-msg" id="fittings-copy-status" role="status"></p>
+        <p class="hint" id="fittings-copy-cancel-note" hidden>Cancel stops after the current request. Completed copies are kept.</p>
         <div class="buttons">
           <button class="btn" id="fittings-copy-close">Close</button>
           <button class="btn" id="fittings-copy-review">Review copy</button>

@@ -317,6 +317,42 @@ test('waiting source explains open or reselect without hiding recovery or real e
   assert.equal(p.field('status').textContent, 'Source identity could not be verified.');
 });
 
+test('availability preserves its one existing live-region owner through status transitions', async () => {
+  const p = await page(state(1, [row({status: 'live'})], {}, {enabled: true}));
+  const status = p.field('status');
+  assert.equal(status.textContent, 'Live');
+  assert.equal(status.classList.contains('companion-availability'), true);
+  assert.equal(status.classList.contains('hint'), false);
+  assert.equal(status.getAttribute('role'), 'status');
+  assert.equal(status.getAttribute('aria-live'), null);
+  assert.equal(status.parentNode.querySelectorAll('[role="status"]').length, 1);
+  assert.equal(status.parentNode.querySelectorAll('[role="status"]')[0], status);
+  p.field('label').focus();
+  await p.edit('label', 'Local draft');
+  const transitions = [
+    [{status: 'waiting'}, /Waiting for source.*open.*reselect/i, false],
+    [{status: 'live', pending_operation_id: 19}, /Change in progress/, false],
+    [{status: 'waiting', error: 'Source identity could not be verified.'}, /Source identity/, true],
+    [{status: 'live'}, /^Live$/, false],
+    [{status: 'future-status'}, /^future-status$/, false]
+  ];
+  for (const [index, [changes, text, error]] of transitions.entries()) {
+    const operations = changes.pending_operation_id ? {19: receipt(19, {id, pending: true, revision: index + 2})} : {};
+    await p.push(state(index + 2, [row(changes)], operations, {enabled: true}));
+    assert.equal(p.field('status'), status, 'status stays in the same row');
+    assert.match(status.textContent, text);
+    assert.equal(status.classList.contains('companion-availability'), true);
+    assert.equal(status.classList.contains('field-msg'), error);
+    assert.equal(status.classList.contains('err'), error);
+    assert.equal(status.classList.contains('hint'), false);
+    assert.equal(status.getAttribute('role'), 'status');
+    assert.equal(status.parentNode.querySelectorAll('[role="status"]').length, 1);
+    assert.equal(p.field('label').value, 'Local draft');
+    assert.equal(p.document.activeElement, p.field('label'));
+    assert.equal(p.calls.length, 0, 'status updates do not mutate source state');
+  }
+});
+
 test('typing and focus survive new snapshots, with no blur commit', async () => {
   const p = await page(state(1, [row()]));
   p.field('label').focus(); await p.edit('label', 'Draft');
@@ -361,8 +397,13 @@ test('remove names the definition, preserves source, and reset/region use curren
   await p.fire(p.field('region'), 'click');
   await p.reply('companion_preview_reselect_region', receipt(1, {applied: false, error: 'Source closed', revision: 1}), [id, 7]);
   assert.match(p.field('status').textContent, /Source closed/); assert.equal(p.field('label').value, 'Mapper');
+  assert.equal(p.field('status').classList.contains('companion-availability'), true);
+  assert.equal(p.field('status').classList.contains('field-msg'), true);
+  assert.equal(p.field('status').classList.contains('err'), true);
   await p.fire(p.field('reset'), 'click');
   await p.reply('companion_preview_reset_geometry', receipt(2, {revision: 1}), [id, 7]);
+  assert.equal(p.field('status').classList.contains('companion-availability'), true);
+  assert.equal(p.field('status').classList.contains('err'), false);
   await p.fire(p.field('remove'), 'click');
   assert.match(p.dialogs[0].args[0], /Mapper/); assert.match(p.dialogs[0].args[1], /source application/);
   await p.choose(true);

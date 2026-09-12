@@ -36,6 +36,49 @@ Run on Windows against a real install before each release.
 - [ ] Restart Explorer and repeat the right-click check after Wingman's icon
       returns.
 
+## Captured UX follow-up — Windows acceptance UNVERIFIED
+
+These refinements preserve runtime behavior and explicit commit contracts.
+Use the linked implementation checkout for fresh captures; the earlier main
+checkout's PNGs are baseline evidence, not acceptance of the changed UI. Keep
+synthetic presentation checks separate from authorized live operations.
+
+- [ ] At 840×625 and a wider window, Companion availability is distinct from
+      Enabled, Wanderer health/coverage precedes credentials, and custom-alert
+      readiness precedes explanatory copy. Off, Waiting, Watching and failure
+      remain distinct. Existing live regions announce updates once; no new
+      operation or settings write occurs when expanding help.
+- [ ] Empty enabled checkboxes/radios remain visible on panel, field and row
+      surfaces. Checked controls, keyboard focus and genuinely disabled/inert
+      controls remain distinguishable. Inspect the shared swatch-border use too.
+- [ ] With controlled codec-unavailable state, Profiles explains whole-file
+      replacement and bundled-component recovery. The commit context repeats
+      Whole settings file without hiding source, targets or backup reassurance.
+      Returning to selective availability clears the fallback warning.
+- [ ] Fittings detail initially shows modules/presences, with Edit metadata…
+      closed. Opening, typing, collapsing, refreshing and reopening do not save
+      or lose drafts. A refresh preserves an owned editor's caret/focus, but
+      never takes focus from another row, route or dialog. Check Save refusal,
+      newer typing during Save, and Discard using disposable data only.
+- [ ] Cannot copy · Details… opens the correct fitting and explains the copy
+      restriction. Name conflicts expose a persistent alternate-name label and
+      name-or-Skip instruction. A rejected re-review stays visible while edits
+      are made; a subsequent check clears obsolete error styling. Limit
+      rejection still counts additions, not the number of selected fits.
+- [ ] During staged copy progress, Cancel states that the current request may
+      finish and completed copies remain. The note survives later progress
+      updates and disappears outside the active phase. Stage only; do not start
+      real copies merely for screenshots.
+- [ ] Preview size help names dimensions, and applying the saved size discloses
+      custom-size replacement on Wingman's previews only. Conflict copy names
+      the affected action and recovery; configured overlap never claims to
+      prove actual bookmark-engine liveness or physical key delivery.
+- [ ] Webhook Enter-to-save guidance is visible before editing; blur never
+      commits. Unknown FightRecorder update status leaves Install latest
+      available but neutral. General groups Startup distinctly, Fleet help
+      preserves local/sharing scope and visible error feedback, and bookmark
+      reset names its full scope. Check long text without shrinking the type.
+
 ## Approved UX pass — Windows acceptance UNVERIFIED
 
 Tasks 1–8 have synthetic Node/headless-Chrome evidence, not installed WebView2
@@ -1984,16 +2027,16 @@ native behavior below still requires Windows/WebView2 checks.
       "Finisher:" or "Tag". If the whole list renders flat and unheaded,
       the payload lost its `groups` key — which is the designed fallback,
       not a crash, so nothing will be in the console.
-- [ ] **A bookmark overridden by a Previews keybind says so.** Bind a
-      Previews chord (Settings > Previews) and the same chord to a bookmark
-      action. Expected on Bookmarks: that bind button is marked — red while
-      previews are ON, dim while they are off — with a tooltip naming which
-      set wins. Round 5's C6: this warning existed only on Previews, the
-      screen that WINS the collision, so on the screen whose bind silently
-      stops firing an overridden bind looked identical to a working one.
-      Check the wording is stated ONCE too (C5): the full precedence rule
-      belongs under Previews > Global keybinds, and Bookmarks carries only
-      a pointer to it.
+- [ ] **Configured bookmark/Preview overlap is visible on both screens.**
+      With disposable bindings, give both actions the same keys. Bookmarks
+      marks confirmed Preview registration as active and retains configured
+      overlap as latent while previews are off. Tooltips recommend distinct
+      keys and explain that a bookmark may consume them inside its selected
+      EVE windows; neither mark proves that the bookmark engine is running.
+      Physical delivery requires a separate authorized Windows check inside
+      and outside that EVE scope. Shared guidance belongs under Previews >
+      How global keybinds work; Bookmarks carries a pointer, not a contradictory
+      unconditional claim that Preview always wins.
 - [ ] **The EVE window list marks only what is not running.** Settings >
       Bookmarks > EVE WINDOWS with at least one client open. Expected:
       running clients carry no annotation at all and the card's own hint

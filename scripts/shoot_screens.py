@@ -854,7 +854,7 @@ _CURRENT_SCREEN_TARGETS = {
     "settings-companions-add": "#companion-add-form",
     "settings-companions-source-narrow": "#dialog",
     "settings-wanderer": "#wanderer-settings",
-    "settings-wanderer-narrow": "#wanderer-credential",
+    "settings-wanderer-narrow": "#wanderer-health",
     "settings-fleet-characters-narrow": "#fleetbar-characters",
     "settings-fleet-sharing": "#fleet-sharing",
     "settings-fleet-sharing-details": "#sharing-eligible",

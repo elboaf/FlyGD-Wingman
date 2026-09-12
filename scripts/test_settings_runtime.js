@@ -40,6 +40,13 @@ class Element {
   }
   setAttribute(name, value) { this[name] = value; }
   removeAttribute(name) { delete this[name]; }
+  get classList() {
+    return {toggle: (name, on) => {
+      const classes = this.className.split(/\s+/).filter(value => value && value !== name);
+      if (on) classes.push(name);
+      this.className = classes.join(' ');
+    }};
+  }
 }
 
 function page(hydrate = true, fightrecorder = false) {
@@ -55,6 +62,7 @@ function page(hydrate = true, fightrecorder = false) {
   if (fightrecorder) ids.push('fr-status', 'btn-fr-check', 'btn-fr-update', 'msg-fightrecorder',
     'preview-minimize-inactive', 'preview-minimize-inactive-status', 'sigbar-enabled', 'sigbar-enabled-status');
   const elements = Object.fromEntries(ids.map(id => [id, new Element(id)]));
+  if (fightrecorder) elements['btn-fr-update'].className = 'btn acc';
   const notify = ['toast', 'popup'].map(value => {
     const input = new Element('notify-' + value);
     input.name = 'notify';
@@ -184,6 +192,42 @@ for (const latest_tag of ['', 'v1.2.3']) {
     assert.equal(p.calls.length, 0);
   });
 }
+
+test('FightRecorder install emphasis follows known need without disabling unknown-state recovery', async () => {
+  const p = page(true, true);
+  const button = p.el('btn-fr-update');
+  const local = {installed: true, detected: true, path: 'synthetic.dll',
+    up_to_date: null, latest_tag: '', error: ''};
+  await p.reply('fightrecorder_status', local, [false]);
+  assert.doesNotMatch(button.className, /\bacc\b/);
+  assert.match(button.className, /\bbtn\b/);
+  assert.equal(button.disabled, false);
+  assert.equal(button.hidden, false);
+  p.fire('btn-fr-update', 'click');
+  assert.equal(button.disabled, true);
+  await p.reply('update_fightrecorder', {ok: true, tag: 'v1.2.4'}, []);
+  await p.reply('fightrecorder_status', local, [false]);
+  assert.doesNotMatch(button.className, /\bacc\b/);
+  assert.equal(button.disabled, false);
+  for (const [change, accented, hidden] of [
+    [{up_to_date: false, latest_tag: 'v1.2.5'}, true, false],
+    [{up_to_date: null}, false, false],
+    [{installed: false}, true, false],
+    [{up_to_date: true}, false, true],
+    [{up_to_date: false}, true, false],
+    [{error: 'Could not check releases.'}, false, true],
+    [{installed: false}, true, false],
+    [{detected: false}, false, true]
+  ]) {
+    p.fire('btn-fr-check', 'click');
+    await p.reply('fightrecorder_status', Object.assign({}, local, change), [true]);
+    assert.equal(/\bacc\b/.test(button.className), accented, JSON.stringify(change));
+    assert.match(button.className, /\bbtn\b/);
+    assert.equal(button.hidden, hidden);
+    assert.equal(button.disabled, false, 'emphasis never changes existing admission');
+  }
+  assert.equal(p.calls.length, 0);
+});
 
 for (const focused of [false, true]) {
   test('category refusal restores acknowledged 22, focused=' + focused, async () => {

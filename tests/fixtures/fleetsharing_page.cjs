@@ -178,11 +178,36 @@ async function historyScenario(first) {
     chooseBoss();
     assert.equal(ids['sharing-start'].disabled, false);
     assert.equal(currentRows()[0].lastChild.disabled, false, 'source Stop remains independent');
+    const stop = currentRows()[0].lastChild;
+    assert.match(stop.textContent, /^Stop verification$/);
+    assert.match(stop.getAttribute('aria-label'), /Stop verification.*Alice/);
+    assert.match(currentRows()[0].firstChild.title, /Verification.*aaaaaaaa/);
     assert.equal(mutationCount(), 0, 'boss selection cannot alter current verification');
     push(payload([source(B)])); counts(0, 1);
     assert.match(status(), /No current verification.*pending expired/);
     assert.match(status(), /Start verification below/);
     assert.doesNotMatch(status(), /Choose.*boss/i);
+    push(payload([source(B, 'future_state', 'future_reason')])); counts(1, 0);
+    assert.match(currentRows()[0].firstChild.textContent, /future_state.*future reason/,
+      'new server states stay visible instead of looking like empty setup');
+    push(payload([], {pending_sources: [pending(C, 'stop')]})); counts(1, 0);
+    const unknown = currentRows()[0];
+    assert.match(unknown.firstChild.textContent, /^Verification cccccccc/);
+    assert.match(unknown.firstChild.textContent, /Not yet observed.*Stop queued locally/);
+    assert.match(unknown.firstChild.title, /Verification.*cccccccc-cccc-4ccc-8ccc-cccccccccccc/);
+    unknown.lastChild.dispatchEvent({type: 'click'}); await turn();
+    const request = calls.find(call => call.method === 'fleet_sharing_stop_source');
+    assert.deepEqual(request.args, [C, input.live.metadata.binding], 'visible terminology cannot rename the wire method or ID');
+    request.resolve({queued: true, state: payload([source(C, 'ended', 'stopped')])}); await turn();
+    counts(0, 1);
+    assert.equal(historyRows()[0], unknown);
+    assert.equal(unknown.lastChild.disabled, true);
+    assert.match(unknown.lastChild.textContent, /^Stop verification$/);
+    push(payload([], {sources: null}));
+    assert.match(status(), /Current verification state unknown/);
+    assert.doesNotMatch(status(), /No verification attempts/);
+    push(payload()); counts(0, 0);
+    assert.match(status(), /No verification attempts reported/);
   } else if (scenario === 'mixed-history') {
     push(payload([source(A, 'active', null), source(B), source(C)]));
     counts(1, 2); assert.equal(history.open, false);
@@ -198,7 +223,7 @@ async function historyScenario(first) {
     assert.match(status(), /Start verification below/);
     assert.doesNotMatch(status(), /latest|recent|failed|failure/i);
     push(payload()); counts(0, 0);
-    assert.match(status(), /No sources reported/);
+    assert.match(status(), /No verification attempts reported/);
     assert.doesNotMatch(status(), /No current verification|unknown/i);
   } else if (scenario === 'ended-prerequisites') {
     const ended = [source(A)];
@@ -248,7 +273,7 @@ async function historyScenario(first) {
     assert.equal(ids['sharing-boss'].disabled, true);
     push(payload([], {sources: null, eligibility: null})); counts(0, 1);
     assert.equal(historyRows()[0], row); assert.equal(history.open, true);
-    assert.match(status(), /Current source state unknown/);
+    assert.match(status(), /Current verification state unknown/);
     assert.doesNotMatch(status(), /No current verification/);
     push(payload([], {pending_sources: [pending(B, 'start')]})); counts(1, 0);
     assert.equal(currentRows()[0].getAttribute('data-source'), B);
@@ -262,7 +287,7 @@ async function historyScenario(first) {
     ids['sharing-refresh'].dispatchEvent({type: 'click'}); await turn();
     watches().at(-1).resolve(null); await turn();
     counts(1, 1); assert.equal(historyRows()[0], row); assert.equal(history.open, true);
-    assert.match(status(), /Current source state unknown/);
+    assert.match(status(), /Current verification state unknown/);
     assert.match(row.textContent, /last.known/i);
     assert.match(ids['sharing-connection'].textContent, /refresh.*failed|could not refresh/i);
     assert.equal(ids['sharing-start'].disabled, true);
@@ -377,7 +402,7 @@ async function historyScenario(first) {
     counts(1, 0);
     assert.ok(currentRows()[0] === row, 'a local result reuses the retained observation row');
     assert.match(row.textContent, /Start expired.*Start again explicitly/);
-    assert.match(status(), /Current source state unknown/);
+    assert.match(status(), /Current verification state unknown/);
     push(payload([source(A)])); counts(0, 1);
   } else if (scenario === 'concurrent-stop-replies') {
     push(payload([source(A, 'active', null), source(B, 'active', null)]));
@@ -416,10 +441,10 @@ async function historyScenario(first) {
     ids['sharing-refresh'].dispatchEvent({type: 'click'}); await turn();
     if (scenario === 'equal-preference-after-failed-refresh') push(clone(pushed));
     watches().at(-1).resolve(null); await turn();
-    assert.match(status(), /Current source state unknown/);
+    assert.match(status(), /Current verification state unknown/);
     assert.equal(row.lastChild.disabled, true);
     preference.resolve({applied: true, persisted: true, state: oldReply}); await turn();
-    assert.match(status(), /Current source state unknown/, 'a stale preference reply is not a successful source refresh');
+    assert.match(status(), /Current verification state unknown/, 'a stale preference reply is not a successful source refresh');
     assert.match(ids['sharing-connection'].textContent, /could not refresh/i);
     for (const id of ['sharing-boss', 'sharing-start', 'sharing-grant']) assert.equal(ids[id].disabled, true, id);
     assert.equal(row.lastChild.disabled, true);
@@ -432,7 +457,7 @@ async function historyScenario(first) {
     assert.equal(mutationCount(), 1, 'unknown source controls cannot submit after a stale preference reply');
     if (scenario === 'equal-preference-after-failed-refresh') {
       push(clone(pushed));
-      assert.match(status(), /Current source state unknown/, 'an identical delayed push cannot clear failed-read state');
+      assert.match(status(), /Current verification state unknown/, 'an identical delayed push cannot clear failed-read state');
       ids['sharing-refresh'].dispatchEvent({type: 'click'}); await turn();
       watches().at(-1).resolve({state: clone(pushed)}); await turn();
     } else push(payload(rows, {enabled: true}));

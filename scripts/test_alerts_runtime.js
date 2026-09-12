@@ -367,9 +367,9 @@ test('markup is literal; orange, extra colours, labels and bundled sound choices
 const watching = {previews_enabled: true, alerts_enabled: true,
   reader: {running: true, last_error: null, characters: ['Bob', 'Alice'], gamelogs_folder: 'logs'}};
 for (const [extra, pattern] of [
-  [{}, /inactive.*preferences|preferences.*inactive/i],
-  [Object.assign({}, watching, {matcher: {state: 'waiting', detail: null}}), /waiting.*new.*line/i],
-  [Object.assign({}, watching, {matcher: {state: 'active', detail: null}}), /active.*Alice.*Bob/i],
+  [{}, /^Not watching.*preferences/i],
+  [Object.assign({}, watching, {matcher: {state: 'waiting', detail: null}}), /^Waiting.*new.*line/i],
+  [Object.assign({}, watching, {matcher: {state: 'active', detail: null}}), /^Watching.*Alice.*Bob/i],
   [Object.assign({}, watching, {reader: {running: true, characters: []}}), /no characters/i],
   [Object.assign({}, watching, {reader: {running: false, last_error: 'Reader stopped', characters: ['Bob']}}), /not watching.*Reader stopped/i],
   [Object.assign({}, watching, {matcher: {state: 'degraded', detail: 'matcher_failed'}}), /custom.*fail.*built-in.*Fleet/i]
@@ -381,6 +381,41 @@ for (const [extra, pattern] of [
   });
 }
 
+test('custom health distinguishes inactive, waiting, active and degraded without stale names or drafts', async () => {
+  const rules = [rule('r1', {search: 'query', enabled: true})];
+  const p = await loaded(rules);
+  const health = p.el('custom-alert-health');
+  assert.match(health.textContent, /^Not watching\b/);
+  assert.match(health.textContent, /Preferences.*Previews.*Alerts/);
+  p.fire('custom-alert-r1-edit', 'click'); edit(p, 'Unsubmitted');
+  p.el('custom-alert-r1-search').focus();
+  for (const [extra, prefix, facts] of [
+    [{...watching, matcher: {state: 'waiting', detail: null}}, /^Waiting\b/, /new.*gamelog line/i],
+    [{...watching, matcher: {state: 'active', detail: null}}, /^Watching\b/, /Alice.*Bob/],
+    [{...watching, matcher: {state: 'degraded', detail: 'matcher_failed'}}, /^Not watching\b/, /custom matching failed.*Built-in.*Fleet/],
+    [{...watching, reader: {...watching.reader, characters: []}}, /^Not watching\b/, /no characters/i],
+    [{...watching, reader: {...watching.reader, last_error: 'Reader stopped'}}, /^Not watching\b/, /Reader stopped/],
+    [{...watching, reader: {...watching.reader, running: false, gamelogs_folder: null}}, /^Not watching\b/, /valid Gamelogs folder/],
+    [{...watching, rules: rules.map(rule => ({...rule, enabled: false}))}, /^Not watching\b/, /no custom alerts.*enabled/i]
+  ]) {
+    p.tick(); await p.reply('get_custom_alert_state', state(1, rules, extra));
+    assert.match(health.textContent, prefix);
+    assert.match(health.textContent, facts);
+    if (prefix.source !== '^Watching\\b') assert.doesNotMatch(health.textContent, /Alice|Bob/);
+    assert.doesNotMatch(health.textContent, /Loading|No custom alerts yet/i);
+    assert.equal(p.el('custom-alert-r1-search').value, 'Unsubmitted');
+    assert.equal(p.document.activeElement.id, 'custom-alert-r1-search');
+    assert.equal(p.el('custom-alert-r1-editor').hidden, false);
+    assert.equal(p.el('custom-alert-r1-edit').disabled, false);
+  }
+  p.tick(); await p.reply('get_custom_alert_state', null);
+  assert.match(health.textContent, /unknown/i);
+  assert.doesNotMatch(health.textContent, /^Watching\b|^Not watching\b|Alice|Bob/);
+  p.tick(); await p.reply('get_custom_alert_state', state(1, rules, {...watching, matcher: {state: 'active', detail: null}}));
+  assert.match(health.textContent, /^Watching.*Alice.*Bob/);
+  assert.ok(p.calls.every(call => call.method.startsWith('get_')));
+});
+
 test('reverse/null health replies cannot revive stale active state, recovery needs current invocation', async () => {
   const p = await loaded([rule('r1', {search: 'query', enabled: true})], watching);
   p.tick(); p.tick();
@@ -390,7 +425,7 @@ test('reverse/null health replies cannot revive stale active state, recovery nee
   p.tick(); await p.reply('get_custom_alert_state', state(1, [rule()], Object.assign({}, watching, {matcher: {state: 'degraded'}})));
   assert.match(p.el('custom-alert-health').textContent, /failed/);
   p.tick(); await p.reply('get_custom_alert_state', state(1, [rule('r1', {enabled: true})], Object.assign({}, watching, {matcher: {state: 'active'}})));
-  assert.match(p.el('custom-alert-health').textContent, /active/);
+  assert.match(p.el('custom-alert-health').textContent, /^Watching.*Alice.*Bob/);
 });
 
 test('overall health does not claim nothing can alert for custom-only configuration', async () => {

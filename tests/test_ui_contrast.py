@@ -85,6 +85,17 @@ def test_disabled_dim_keybind_retains_its_existing_quiet_role():
     assert declarations(".bindbtn:disabled")["opacity"] == ".45"
 
 
+@pytest.mark.parametrize("selector", [".box", ".ring"])
+@pytest.mark.parametrize(
+    "surface",
+    ["--field", "--bg", "--panel", "--control", "--control-hover", "--row-hover"],
+)
+def test_enabled_unchecked_controls_remain_distinguishable(selector, surface):
+    # An empty outline is the selection affordance, not a decorative card edge.
+    border = declarations(selector)["border"].split("solid ", 1)[1]
+    assert contrast(border, f"var({surface})") >= 3
+
+
 @pytest.mark.parametrize("selector", [".fm-ring", ".fm-tether"])
 def test_informative_formation_guides_clear_nontext_contrast(selector):
     # Reusing --panel-border here made distance/height information nearly vanish.

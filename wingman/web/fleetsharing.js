@@ -85,7 +85,7 @@
     fresh_key_not_authorized: 'Fresh setup is not authorized. Use the existing connection.',
     use_key_recovery: 'Reconnecting with this device key; do not pair a replacement.',
     local_failure: 'Fleet sharing could not continue. Retry or restart Wingman.',
-    source_queue_full: 'Too many pending source controls. Stop or wait for existing work.',
+    source_queue_full: 'Too many pending verification requests. Stop an attempt or wait for existing work.',
     update_required: 'This server requires a supported Wingman build.',
     forbidden: 'authGD refused this operation. Check account eligibility and connection.',
     capability_required: 'This connection needs sharing approval.',
@@ -211,7 +211,7 @@
         row = WM.make('div', 'sharing-source');
         row.setAttribute('data-source', id);
         row.appendChild(WM.make('div', 'sharing-source-text'));
-        var stop = WM.make('button', 'btn', 'Stop');
+        var stop = WM.make('button', 'btn', 'Stop verification');
         stop.addEventListener('click', function () {
           if (!hydrated || stop.disabled) return;
           action('fleet_sharing_stop_source', id, binding());
@@ -223,9 +223,9 @@
       var characterId = (observed && observed.character_id) || (pending && pending.character_id)
         || (result && result.character_id) || (request && request.character_id);
       var label = nameFor(characterId);
-      if (label === 'Unknown character') label = 'Source ' + id.slice(0, 8);
+      if (label === 'Unknown character') label = 'Verification ' + id.slice(0, 8);
       var description = label + ' · ' + (localResult && !pending
-        ? result.stage === 'rejected' ? 'Start not saved. Too many pending source controls. Wait, then Start again explicitly.' : 'Start expired. Start again explicitly.'
+        ? result.stage === 'rejected' ? 'Start not saved. Too many pending verification requests. Wait, then Start again explicitly.' : 'Start expired. Start again explicitly.'
         : observed ? observed.state : 'Not yet observed');
       if (observed && (!localResult || pending)) {
         if (observed.reason) description += ' — ' + observed.reason.replace(/_/g, ' ');
@@ -235,13 +235,13 @@
         + (pending.stage === 'queued' ? ' queued locally' : ' saved, awaiting authGD');
       if (request) description += ' · Stop request in progress…';
       row.firstChild.textContent = description;
-      row.firstChild.title = 'Source ' + id;
+      row.firstChild.title = 'Verification ' + id + ' — ' + description;
       // A page request, like worker-pending work, does not itself disable Stop.
       // Disabling on click would blur the control before settlement can move
       // its focus to history. Only current source/pending evidence authorizes it.
       row.lastChild.disabled = !hydrated || !state.available || readFailed
         || (!pending && (sourceUnknown() || !observed || !!localResult || ended));
-      row.lastChild.setAttribute('aria-label', 'Stop source for ' + label + ' ' + id);
+      row.lastChild.setAttribute('aria-label', 'Stop verification — ' + label + ' (' + id + ')');
       var index = ended ? 1 : 0;
       var container = ended ? historySources : sources;
       var position = positions[index]++;
@@ -262,12 +262,12 @@
     historySummary.textContent = 'Previous attempts (' + positions[1] + ')';
     if (focusTarget) focusTarget.focus();
     var requestingStart = sourceRequests.some(function (request) { return !request.source_id; });
-    text('sharing-source-status', !binding() ? 'Connect to view account sources.'
-      : sourceUnknown() ? 'Current source state unknown. Last-known attempts and current local requests are shown below.'
+    text('sharing-source-status', !binding() ? 'Connect to view account verifications.'
+      : sourceUnknown() ? 'Current verification state unknown. Last-known attempts and current local requests are shown below.'
       : !positions[0] && !requestingStart && positions[1] ? 'No current verification. Previous attempts: '
         + Object.keys(reasons).sort().map(function (reason) { return reason + ' (' + reasons[reason] + ')'; }).join('; ')
         + '. ' + nextStart()
-      : !positions[0] && !requestingStart && !positions[1] ? 'No sources reported for this account.' : '');
+      : !positions[0] && !requestingStart && !positions[1] ? 'No verification attempts reported for this account.' : '');
   }
   function unavailable() {
     // A failed read is not a payload or a saved preference. Keep mutations
@@ -336,9 +336,9 @@
       : !meta.loaded ? 'Reading saved connection…'
       : !meta.binding ? 'Not connected. Connect to ' + state.configured_origin + '.'
       : 'Paired with ' + meta.paired_origin + '.' + (meta.has_session ? '' : ' Reconnecting…');
-    if (readFailed) connection += ' Could not refresh current source state. Refresh to retry.';
+    if (readFailed) connection += ' Could not refresh current verification state. Refresh to retry.';
     if (state.runtime_error) connection += ' ' + state.runtime_error;
-    else if (state.enabled && !state.telemetry_available) connection += ' Local telemetry is unavailable. Source controls still work.';
+    else if (state.enabled && !state.telemetry_available) connection += ' Local telemetry is unavailable. Verification controls still work.';
     if (state.detail) connection += ' ' + (details[state.detail] || state.detail.replace(/_/g, ' ') + '.');
     if (state.pairing === 'queued') connection += ' Setup queued locally.';
     else if (state.pairing === 'persisted') connection += ' Setup saved, contacting authGD.';

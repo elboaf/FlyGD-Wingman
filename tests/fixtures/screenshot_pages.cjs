@@ -203,6 +203,11 @@ async function fittingsDetailRegression() {
       assert.deepEqual(texts('.fit-item-name'), ['150mm Light AutoCannon II', '1MN Afterburner II', 'Gyrostabilizer II']);
       assert.deepEqual(texts('.fit-alias-row'), ['Rifter - Solo PvP', 'Rifter Tackle Fit']);
       assert.deepEqual(texts('.fit-presence-name'), ['Aria Voss', 'Bex Talon']);
+      const metadata = row.querySelector('.fit-metadata-disclosure');
+      assert.ok(metadata && metadata.tagName === 'DETAILS', 'metadata editing uses native disclosure');
+      assert.equal(metadata.open, false, 'staged fitting details are read-first');
+      assert.ok(metadata.querySelector('summary'));
+      assert.ok(metadata.contains(row.querySelector('.fit-metadata')));
       verify();
       assert.ok(scrolls.at(-1)?.element === toggle('Rifter - Solo PvP'),
         'frame the newly rendered detail row, not the stale toggle from before its reply');
@@ -371,6 +376,8 @@ async function fidelityRegression() {
       'select every intended entry exactly once, never an outside entry sharing its name');
     assert.match(el('fittings-copy-status').textContent,
       /Limit each copy to 20 additions across all targets\. Select fewer fittings or targets, then review again\./);
+    assert.equal(el('fittings-copy-status').classList.contains('err'), true,
+      'the staged refusal must use the same error state as a live rejected review');
     assert.match(el('fittings-copy-body').textContent, /^11 selected\./,
       'refusal must be reachable with fewer than 20 selected fits across multiple targets');
     const targets = el('fittings-copy-body').querySelectorAll('input').filter(node => node.checked);
@@ -383,8 +390,11 @@ async function fidelityRegression() {
     assert.throws(() => run(data.verify), /Screenshot content did not settle/);
     // Reducing targets permits the same selection; no selection-count shortcut.
     targets[1].checked = false; targets[1].dispatchEvent({type: 'change'});
-    el('fittings-copy-review').click(); await tick();
+    el('fittings-copy-review').click();
+    assert.equal(el('fittings-copy-status').classList.contains('err'), false, 'checking clears stale error styling');
+    await tick();
     assert.match(el('fittings-copy-body').textContent, /11 additions planned/);
+    assert.equal(el('fittings-copy-status').classList.contains('err'), false);
     assert.equal(el('fittings-copy-start').hidden, false);
     el('fittings-copy-start').click(); await tick();
     assert.equal(calls.length, 0, 'even a synthetic accepted review cannot start a writer');
@@ -409,11 +419,15 @@ async function fidelityRegression() {
     assert.equal(el('fittings-copy-review').hidden, true);
     assert.equal(el('fittings-copy-start').hidden, true);
     assert.equal(el('fittings-copy-cancel').hidden, !isProgress);
+    assert.equal(el('fittings-copy-cancel-note').hidden, !isProgress);
     assert.equal(el('fittings-copy-close').disabled, isProgress);
     if (isProgress) {
       assert.match(el('fittings-copy-body').textContent, /2 of 6 pairs checked/);
       assert.match(el('fittings-copy-status').textContent, /Generated Fit 002 \(Merlin\).*Fio Kest: Needs verification/);
       assert.equal(el('fittings-copy-cancel').disabled, false);
+      assert.ok(visible(el('fittings-copy-cancel-note')), 'cost remains visible while progress is active');
+      assert.equal(el('fittings-copy-body').contains(el('fittings-copy-cancel-note')), false,
+        'progress body replacement cannot discard cancellation guidance');
     } else {
       assert.match(el('fittings-copy-body').textContent, /3 additions attempted/);
       const labels = el('fittings-copy-body').querySelectorAll('.fit-copy-pair-name');

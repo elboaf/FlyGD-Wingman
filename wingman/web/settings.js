@@ -1680,6 +1680,8 @@
       }
       status.textContent = text;
       updateBtn.hidden = !canInstall;
+      // Unknown currency still permits recovery, but does not recommend installation.
+      updateBtn.classList.toggle('acc', canInstall && (!res.installed || res.up_to_date === false));
       updateBtn.textContent = res && res.installed
         ? (res.up_to_date === false ? 'Update' : 'Install latest') : 'Install';
     }
