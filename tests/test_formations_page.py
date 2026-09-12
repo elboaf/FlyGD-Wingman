@@ -135,7 +135,14 @@ ORDER_ISOLATION_SCENARIOS = [
 
 @pytest.fixture(scope="session")
 def formations_page_markup(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    page = PageTree()
+    class PageWithText(PageTree):
+        # The shared tree records structure only; these copy checks also need
+        # the real static text, not a second hand-written fixture message.
+        def handle_data(self, data):
+            node = self.stack[-1]
+            node["text"] = node.get("text", "") + data
+
+    page = PageWithText()
     page.feed((WEB / "index.html").read_text(encoding="utf-8"))
     path = tmp_path_factory.mktemp("formations-page") / "page.json"
     path.write_text(json.dumps(page.root), encoding="utf-8")

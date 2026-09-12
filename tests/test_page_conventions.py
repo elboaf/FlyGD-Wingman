@@ -3608,7 +3608,7 @@ def test_character_roster_rows_keep_configuration_out_of_the_scan_line():
     assert "aria-controls" in body
 
 
-def test_character_detail_and_conflict_siblings_span_the_preview_grid():
+def test_character_detail_and_conflict_span_the_preview_grid():
     """Secondary detail and conditional copy cannot consume a data track."""
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
     assert "function makeCharacterDetail(" in src
@@ -3641,25 +3641,25 @@ def test_character_conflict_copy_excludes_supported_direct_sharers():
     )
 
 
-def test_character_detail_precedes_its_conflict_copy():
-    """A character's detail belongs directly below its row; any warning
-    follows the detail so it cannot split the row from the controls it explains.
-    """
+def test_character_conflict_is_inside_its_row_ahead_of_optional_detail():
+    """Warnings leave the sticky edge before their owner, never after a detail."""
     js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
     append = js.split("function appendBindRow", 1)[1].split("function render()", 1)[0]
     row = append.index("host.appendChild(makeRow")
     detail = append.index("host.appendChild(makeCharacterDetail")
-    conflict = append.index("host.appendChild(conflict)")
-    assert row < detail < conflict
+    assert row < detail
+    assert "host.appendChild(conflict)" not in append
+    assert "row.insertBefore(conflict, row.firstChild)" in _makerow_body()
+    rule = re.search(r"\.preview-bind-conflict\s*\{(.*?)\}", CSS, re.DOTALL)
+    assert rule and "padding-top: 8px" in rule.group(1), (
+        "a warning needs more separation from the preceding row than its own controls"
+    )
 
 
 def test_bind_conflict_names_its_owner_so_it_survives_a_sticky_scroll():
-    """A conflict is a full-span sibling directly after the row it explains
-    (appendBindRow), and that row can scroll out from under the sticky
-    column or Offline heading while the warning below it is still on
-    screen. Every text-producing branch must therefore open with the
-    owning character, cycle command, or named group by name, rather than
-    counting on the reader having just seen the row above.
+    """A full-span warning leads its row. Name the owner explicitly even when
+    the sticky header clips part of that group or the controls are below the
+    viewport. DOM proximity alone must never carry conflict identity.
     """
     js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
     block = js.split("function makeBindConflict", 1)[1].split("\n  function ", 1)[0]

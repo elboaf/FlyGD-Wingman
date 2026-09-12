@@ -130,7 +130,7 @@
     var signature = JSON.stringify(characters);
     if (boss.getAttribute('data-roster') !== signature) {
       boss.textContent = '';
-      boss.appendChild(WM.make('option', '', characters.length ? 'Choose your fleet boss' : 'No owned characters available'));
+      boss.appendChild(WM.make('option', '', characters.length ? 'No boss selected' : 'No owned characters available'));
       boss.options[0].value = '';
       characters.forEach(function (character) {
         var option = WM.make('option', '', character.character_name);
@@ -165,9 +165,9 @@
       return 'Grant Fleet Read using the paired account, then Refresh.';
     }
     if (!characters.some(function (row) { return row.has_fleet_read && row.token_usable; })) {
-      return 'Choose your current fleet boss, grant Fleet Read using the paired account, then Refresh.';
+      return 'Grant Fleet Read before another attempt. Use the boss controls below.';
     }
-    return 'Choose your current fleet boss, then Start verification to try again.';
+    return 'Use Start verification below for another attempt.';
   }
   function paintAction() {
     var messages = actionMessage ? [actionMessage] : [];

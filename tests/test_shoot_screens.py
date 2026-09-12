@@ -1469,7 +1469,8 @@ def test_character_capture_staging_is_read_only_and_scenario_backed():
     partial_cleanup = _character_capture_scripts()[
         "settings-characters-partial-cleanup"
     ]
-    assert "cleanup was not saved" in partial_cleanup
+    assert "Skills Only was removed, but cleanup is incomplete." in partial_cleanup
+    assert "Restart Wingman to retry cleanup" in partial_cleanup
     narrow = _character_capture_scripts()["settings-characters-narrow"]
     assert "characters-menu-trigger" in narrow
     assert "Characters overflow menu did not open" in narrow
@@ -1568,7 +1569,7 @@ def test_walk_injects_fittings_fixture_before_stage_actions(tmp_path, monkeypatc
     injections = [
         index
         for index, expression in enumerate(cdp._ops)
-        if "window.onFittingsScreenshotState(payload);" in expression
+        if expression == shoot.fittings_fixture_setup_script()
     ]
     fitting_screens = [screen for screen in shoot.SCREENS if screen.route == "fittings"]
     assert len(injections) == len(fitting_screens)
@@ -1578,7 +1579,7 @@ def test_walk_injects_fittings_fixture_before_stage_actions(tmp_path, monkeypatc
             (
                 offset
                 for offset, expression in enumerate(following)
-                if "window.onFittingsScreenshotState(payload);" in expression
+                if expression == shoot.fittings_fixture_setup_script()
             ),
             len(following),
         )
@@ -1588,23 +1589,32 @@ def test_walk_injects_fittings_fixture_before_stage_actions(tmp_path, monkeypatc
             assert any("var openToggle" in expression for expression in stage)
 
 
-def test_walk_refuses_fittings_detail_capture_when_postcondition_fails(
-    tmp_path, monkeypatch
-):
-    screen = next(s for s in shoot.SCREENS if s.key == "fittings-detail")
+@pytest.mark.parametrize(
+    "key",
+    [
+        "fittings-detail",
+        "fittings-copy-progress",
+        "fittings-copy-result",
+        "fittings-copy-limit",
+        "settings-previews-groups",
+        "settings-characters-partial-cleanup",
+    ],
+)
+def test_walk_refuses_capture_when_postcondition_fails(tmp_path, monkeypatch, key):
+    screen = next(s for s in shoot.SCREENS if s.key == key)
     monkeypatch.setattr(shoot, "SCREENS", (screen,))
     monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
     verify = shoot.new_screen_verify_script(screen)
     captures = []
+    expressions = []
 
     class CDP:
         def evaluate(self, expression):
+            expressions.append(expression)
             if expression == "WM.eve_shown !== false":
                 return True
             if verify and expression == verify:
-                raise shoot.TargetError(
-                    "Screenshot content did not settle: fittings-detail"
-                )
+                raise shoot.TargetError("Screenshot content did not settle: " + key)
             return None
 
         def screenshot(self):
@@ -1614,8 +1624,10 @@ def test_walk_refuses_fittings_detail_capture_when_postcondition_fails(
     shots, _, _ = shoot.walk(CDP(), tmp_path, settle_ms=0)
     assert captures == []
     assert shots[0]["file"] is None
-    assert "Screenshot content did not settle: fittings-detail" in shots[0]["error"]
+    assert "Screenshot content did not settle: " + key in shots[0]["error"]
     assert not list(tmp_path.glob("*.png"))
+    if screen.route == "fittings":
+        assert expressions[-1] == shoot.new_screen_cleanup_script(screen)
 
 
 def test_fittings_capture_staging_never_starts_a_remote_write():
@@ -1771,8 +1783,8 @@ def test_previews_sticky_conflict_stage_targets_aigas_owner_prefixed_conflict():
     scroll into, so the capture clamped to the same maximum scrollTop
     settings-previews-table reaches and the two captures were
     pixel-identical. Aiga has ample content below her, so this capture can
-    stage her row just behind the (single) sticky column header without
-    running out of room the way Tanuki's did.
+    stage her warning and owning controls at the sticky column header
+    without running out of room the way Tanuki's did.
     """
     screen = next(
         s for s in shoot.SCREENS if s.key == "settings-previews-sticky-conflict"
@@ -1786,7 +1798,9 @@ def test_previews_sticky_conflict_stage_targets_aigas_owner_prefixed_conflict():
     assert "character:Tanuki Solette" not in script
     assert "cycle:next" not in script
     assert "preview-bind-conflict-" in script
-    assert "conflict.previousElementSibling" in script
+    assert "conflict.parentNode" in script
+    assert "row.firstElementChild !== conflict" in script
+    assert "bind.getAttribute('aria-describedby') !== conflict.id" in script
     assert "throw new Error" in script
 
 

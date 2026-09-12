@@ -51,7 +51,8 @@
   var addMode = 'whole';
   var master = {base: false, seq: 0, busy: false, queue: [], error: ''};
   var statuses = {
-    off: 'Off', disabled: 'Disabled', live: 'Live', waiting: 'Waiting for source',
+    off: 'Off', disabled: 'Disabled', live: 'Live',
+    waiting: 'Waiting for source — open its window or reselect the source.',
     'needs-selection': 'Multiple matches — reselect source',
     'source-unavailable': 'Source unavailable — reselect source', stopping: 'Stopping…'
   };

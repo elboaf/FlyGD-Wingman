@@ -840,8 +840,8 @@
       "available": true,
       "auth_configured": true,
       "authorization_activity": "idle",
-      "authorization_notice": "This character was removed, but some cleanup was not saved. Reconcile first before adding it back.",
-      "warnings": [],
+      "authorization_notice": "",
+      "warnings": ["Skills Only was removed, but cleanup is incomplete. Restart Wingman to retry cleanup before adding this character again."],
       "characters": [
         {"character_id": 7, "character_name": "Aiga Otsolen", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
         {"character_id": 11, "character_name": "Rhea Vestibule", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""}
@@ -1488,6 +1488,34 @@
         {"entry_id": "fit-conflict-source", "character_id": 90000014, "fitting_name": "Fleet Doctrine Alpha", "character_name": "Eryn Voss", "chosen_name": "Fleet Doctrine Alpha", "status": "conflict", "error": "", "skipped": false}
       ]
     },
+    "limit_preflight": {
+      "error": "Limit each copy to 20 additions across all targets. Select fewer fittings or targets, then review again.",
+      "pairs": [
+        {"entry_id": "fit-gen-1", "character_id": 90000014, "fitting_name": "Generated Fit 002", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 002", "status": "ready", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-1", "character_id": 90000015, "fitting_name": "Generated Fit 002", "character_name": "Fio Kest", "chosen_name": "Generated Fit 002", "status": "ready", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-2", "character_id": 90000014, "fitting_name": "Generated Fit 003", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 003", "status": "ready", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-2", "character_id": 90000015, "fitting_name": "Generated Fit 003", "character_name": "Fio Kest", "chosen_name": "Generated Fit 003", "status": "ready", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-3", "character_id": 90000014, "fitting_name": "Generated Fit 004", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 004", "status": "ready", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-3", "character_id": 90000015, "fitting_name": "Generated Fit 004", "character_name": "Fio Kest", "chosen_name": "Generated Fit 004", "status": "ready", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-4", "character_id": 90000014, "fitting_name": "Generated Fit 005", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 005", "status": "ready", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-4", "character_id": 90000015, "fitting_name": "Generated Fit 005", "character_name": "Fio Kest", "chosen_name": "Generated Fit 005", "status": "ready", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-5", "character_id": 90000014, "fitting_name": "Generated Fit 006", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 006", "status": "ready", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-5", "character_id": 90000015, "fitting_name": "Generated Fit 006", "character_name": "Fio Kest", "chosen_name": "Generated Fit 006", "status": "ready", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-6", "character_id": 90000014, "fitting_name": "Generated Fit 007", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 007", "status": "ready", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-6", "character_id": 90000015, "fitting_name": "Generated Fit 007", "character_name": "Fio Kest", "chosen_name": "Generated Fit 007", "status": "ready", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-7", "character_id": 90000014, "fitting_name": "Generated Fit 008", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 008", "status": "ready", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-7", "character_id": 90000015, "fitting_name": "Generated Fit 008", "character_name": "Fio Kest", "chosen_name": "Generated Fit 008", "status": "ready", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-8", "character_id": 90000014, "fitting_name": "Generated Fit 009", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 009", "status": "ready", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-8", "character_id": 90000015, "fitting_name": "Generated Fit 009", "character_name": "Fio Kest", "chosen_name": "Generated Fit 009", "status": "ready", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-9", "character_id": 90000014, "fitting_name": "Generated Fit 010", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 010", "status": "ready", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-9", "character_id": 90000015, "fitting_name": "Generated Fit 010", "character_name": "Fio Kest", "chosen_name": "Generated Fit 010", "status": "ready", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-10", "character_id": 90000014, "fitting_name": "Generated Fit 011", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 011", "status": "ready", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-10", "character_id": 90000015, "fitting_name": "Generated Fit 011", "character_name": "Fio Kest", "chosen_name": "Generated Fit 011", "status": "ready", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-11", "character_id": 90000014, "fitting_name": "Generated Fit 012", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 012", "status": "ready", "error": "", "skipped": false},
+        {"entry_id": "fit-gen-11", "character_id": 90000015, "fitting_name": "Generated Fit 012", "character_name": "Fio Kest", "chosen_name": "Generated Fit 012", "status": "ready", "error": "", "skipped": false}
+      ]
+    },
+    "copy_progress_completed": 2,
     "copy_result": {
       "status": "complete", "operation_id": "dev-operation-results", "write_count": 3,
       "results": [

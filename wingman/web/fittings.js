@@ -45,6 +45,8 @@
   var copyPhase = 'targets';
   var copyTargets = {};
   var copyPreflight = null;
+  var copyHulls = Object.create(null); // selected entry ID -> detached hull label
+  var lastCopyHulls = Object.create(null);
   var lastCopyResult = null; // session-only; reopening never reuses a copy ticket
   // Unlike the visible dialog ticket, this survives route-leave cancellation
   // until the latest submitted copy reports its terminal outcome.
@@ -91,6 +93,13 @@
         || payload.mixed_preflight.pairs.length > 200) return false;
     if (!payload.copy_result || !Array.isArray(payload.copy_result.results)
         || payload.copy_result.results.length > 200) return false;
+    if (payload.limit_preflight && (!Array.isArray(payload.limit_preflight.pairs)
+        || payload.limit_preflight.pairs.length > 200)) return false;
+    if (payload.copy_stage && ['progress', 'results'].indexOf(payload.copy_stage) === -1) return false;
+    if (payload.copy_stage === 'progress' && (typeof payload.copy_progress_completed !== 'number'
+        || payload.copy_progress_completed !== Math.floor(payload.copy_progress_completed)
+        || payload.copy_progress_completed < 1
+        || payload.copy_progress_completed > payload.copy_result.results.length)) return false;
     return true;
   }
 
@@ -152,23 +161,32 @@
     return value ? JSON.parse(JSON.stringify(value)) : null;
   }
 
-  function screenshotPreflight(entryIds) {
-    if (entryIds.length > 20) {
-      return {
-        accepted: false,
-        ticket_id: '',
-        created_utc: '',
-        write_count: 0,
-        counts: { ready: entryIds.length, present: 0, conflict: 0, unavailable: 0 },
-        requires_resolution: false,
-        pairs: [],
-        error: 'Split this copy into batches of 20 fittings or fewer.'
-      };
-    }
-    return JSON.parse(JSON.stringify(screenshotFixture.mixed_preflight));
+  function screenshotPreflight(entryIds, targetIds) {
+    var payload = JSON.parse(JSON.stringify(screenshotFixture.mixed_preflight));
+    var limit = screenshotFixture.limit_preflight;
+    // Project only classified fixture pairs. Missing combinations fail closed;
+    // never guess a live target's presence or manufacture a successful review.
+    payload.pairs = payload.pairs.concat(limit ? limit.pairs : []).filter(function (pair) {
+      return entryIds.indexOf(pair.entry_id) !== -1 && targetIds.indexOf(pair.character_id) !== -1;
+    });
+    payload.counts = { ready: 0, present: 0, conflict: 0, unavailable: 0 };
+    payload.pairs.forEach(function (pair) { payload.counts[pair.status] += 1; });
+    var missing = !entryIds.length || !targetIds.length
+      || payload.pairs.length !== entryIds.length * targetIds.length;
+    var overLimit = payload.counts.ready > screenshotFixture.max_copy_writes;
+    payload.accepted = !missing && !overLimit;
+    payload.write_count = payload.accepted ? payload.counts.ready : 0;
+    payload.requires_resolution = payload.accepted && payload.pairs.some(function (pair) {
+      return pair.status === 'conflict' && !pair.skipped;
+    });
+    payload.error = missing ? 'This selection is not covered by the screenshot fixture.'
+      : overLimit ? limit.error : '';
+    if (!payload.accepted) { payload.ticket_id = ''; payload.created_utc = ''; }
+    return payload;
   }
 
   function renderScreenshotState() {
+    copyDialogGeneration += 1;
     filters = { collection_id: 'all', search: '', ship_type_id: null, page: 1 };
     expandedId = '';
     detail = null;
@@ -179,11 +197,22 @@
     activeCopyTicket = '';
     copyTargets = {};
     copyPreflight = null;
+    copyHulls = Object.create(null);
     alternateNames = {};
     refreshInFlight = false;
     WM.el('fittings-search').value = '';
     WM.el('fittings-copy-overlay').hidden = true;
     render(screenshotWorkspace(currentFilters()));
+    if (screenshotFixture.copy_stage) {
+      var result = screenshotFixture.copy_result;
+      result.results.forEach(function (pair) { selected[pair.entry_id] = true; });
+      openCopyOverlay(); // snapshots every selected hull through the ordinary path
+      presentCopyProgress('', result.results.length);
+      if (screenshotFixture.copy_stage === 'progress') {
+        var completed = screenshotFixture.copy_progress_completed;
+        renderCopyProgress(completed, result.results.length, result.results[completed - 1]);
+      } else finishCopy(result);
+    }
   }
 
   function requestState() {
@@ -255,10 +284,18 @@
   // Tooling-only semantic state injection, following Previews'
   // onPreviewHotkeys screenshot precedent. No Python producer exists and no
   // user control calls it. The payload is owned by dev.js, bounded here at
-  // the production-page boundary, and used only to answer read paths locally;
-  // durable and remote writers are never replaced or invoked.
+  // the production-page boundary, and used only for local reads/presentation.
+  // Copy presentation grants no writer admission, including on route leave.
   WM.handle('onFittingsScreenshotState', function (payload) {
-    if (WM.current_route !== 'fittings' || !validScreenshotFixture(payload)) return;
+    if (payload.kind === 'fittings-screenshot-v1' && payload.clear === true) {
+      // Hide the synthetic workspace while its guard still owns route cleanup.
+      // A refused injection must never navigate away from a genuine live copy.
+      if (!screenshotFixture) return;
+      WM.route('main');
+      return;
+    }
+    if (WM.current_route !== 'fittings' || !validScreenshotFixture(payload)
+        || (copyHistoryOperation && copyHistoryOperation.pending)) return;
     screenshotFixture = JSON.parse(JSON.stringify(payload));
     renderScreenshotState();
   });
@@ -268,12 +305,19 @@
       // Cleanup for the one thing this route arms outside its own markup:
       // a debounced search request.
       if (searchDebounce) { clearTimeout(searchDebounce); searchDebounce = null; }
-      screenshotFixture = null;
       // Keyed to the ticket: this fires right after confirm and can reach
       // Python before the worker has consumed the ticket, and a cancel
       // with no key used to be erased by that start.
-      if (copyPhase === 'progress') WM.send('fittings_cancel_copy', activeCopyTicket);
+      if (copyPhase === 'progress' && !screenshotFixture) WM.send('fittings_cancel_copy', activeCopyTicket);
       closeCopyOverlay(true);
+      if (screenshotFixture) {
+        // The hidden fixture must not publish a delayed detail or carry its
+        // expanded ID into the next live workspace read.
+        detailSeq += 1;
+        expandedId = '';
+        detail = null;
+      }
+      screenshotFixture = null;
       clearSelection();
       // Settings owns sign-in and Forget, so a hidden-route authority change
       // must be picked up by the next real Fittings entry.
@@ -438,6 +482,7 @@
         copyInvoker = reopen;
         copyOverlayOpen = true;
         copyPhase = 'results';
+        copyHulls = lastCopyHulls;
         WM.el('fittings-copy-overlay').hidden = false;
         renderCopyResults(lastCopyResult);
         renderNotices();
@@ -565,6 +610,7 @@
     label.appendChild(box);
     label.appendChild(WM.make('span', 'box'));
     box.setAttribute('aria-label', 'Select ' + row.name);
+    box.value = row.id;
     box.checked = !!selected[row.id];
     box.addEventListener('change', function () {
       if (box.checked) { selected[row.id] = true; } else { delete selected[row.id]; }
@@ -580,7 +626,7 @@
     toggle.appendChild(WM.make('span', 'fit-ship',
                                row.ship_name || ('Type ' + row.ship_type_id)));
     var meta = [];
-    meta.push(row.presence_count
+    meta.push('On ' + row.presence_count
              + (row.presence_count === 1 ? ' character' : ' characters'));
     if (row.collection_ids.length) meta.push(collectionNames(row.collection_ids));
     if (row.superseded_by) meta.push('Superseded');
@@ -722,24 +768,24 @@
     var box = WM.make('div', 'fit-metadata');
     var draft = metadataDrafts[current.id];
 
-    var nameRow = WM.make('div', 'skills-detail-row');
+    var nameRow = WM.make('div', 'row');
     var nameInput = document.createElement('input');
     nameInput.type = 'text';
     nameInput.className = 'field';
     nameInput.id = 'fit-name-' + current.id;
     nameInput.value = draft ? draft.name : current.name;
-    var nameLabel = WM.make('label', '', 'Name');
+    var nameLabel = WM.make('label', 'lab', 'Name');
     nameLabel.setAttribute('for', nameInput.id);
     nameRow.appendChild(nameLabel);
     nameRow.appendChild(nameInput);
     box.appendChild(nameRow);
 
-    var descRow = WM.make('div', 'skills-detail-row');
+    var descRow = WM.make('div', 'row');
     var descInput = document.createElement('textarea');
     descInput.className = 'field fit-description-field';
     descInput.id = 'fit-desc-' + current.id;
     descInput.value = draft ? draft.description : current.description;
-    var descLabel = WM.make('label', '', 'Description');
+    var descLabel = WM.make('label', 'lab', 'Description');
     descLabel.setAttribute('for', descInput.id);
     descRow.appendChild(descLabel);
     descRow.appendChild(descInput);
@@ -965,8 +1011,30 @@
     // overlay lives inside a route and its controls change with each phase.
     return Array.prototype.filter.call(root.querySelectorAll(
       'button:not([hidden]):not(:disabled), input:not([hidden]):not(:disabled), '
-      + 'select:not([hidden]):not(:disabled)'), copyControlAvailable);
+      + 'select:not([hidden]):not(:disabled), [tabindex="0"]'), copyControlAvailable);
   }
+
+  function focusCopyTarget(id) {
+    // A generic confirmation owns the topmost layer even if a copy completes
+    // underneath it. Phase changes must not take its focus back.
+    if (WM.el('overlay').hidden) WM.el(id).focus();
+  }
+
+  function reconcileCopyFocus() {
+    if (!copyOverlayOpen || WM.current_route !== 'fittings' || !WM.el('overlay').hidden) return;
+    var dialog = WM.el('fittings-copy-dialog');
+    var focusable = copyFocusable(dialog);
+    if (focusable.indexOf(document.activeElement) === -1) {
+      (focusable[0] || dialog).focus();
+    }
+  }
+
+  // A generic dialog can outlive the copy control that invoked it. When its
+  // normal restoration lands behind this modal, hand focus to the CURRENT
+  // copy view synchronously; never retain an old phase/generation's target.
+  document.addEventListener('focusin', function (event) {
+    if (!WM.el('fittings-copy-dialog').contains(event.target)) reconcileCopyFocus();
+  });
 
   function restoreCopyFocus(target) {
     // Route-leave cleanup must not pull focus back into the hidden route.
@@ -993,19 +1061,28 @@
     copyPhase = 'targets';
     copyTargets = {};
     copyPreflight = null;
+    // Names are not unique, and refresh/filter replies can replace STATE while
+    // review is open. Keep only selected hull labels, never live row references.
+    copyHulls = Object.create(null);
+    (STATE.rows || []).forEach(function (row) {
+      if (selected[row.id]) {
+        copyHulls[row.id] = row.ship_name || (row.ship_type_id ? 'Type ' + row.ship_type_id : '');
+      }
+    });
     alternateNames = {};
     WM.el('fittings-copy-overlay').hidden = false;
     WM.el('fittings-copy-title').textContent = 'Copy fittings';
     WM.el('fittings-copy-status').textContent = '';
     renderCopyTargets();
     renderNotices();
-    WM.el('fittings-copy-close').focus();
+    focusCopyTarget('fittings-copy-close');
   }
 
   function closeCopyOverlay(force) {
     if (copyPhase === 'progress' && !force) return;
     if (force) copyPhase = 'targets';
     activeCopyTicket = '';
+    copyHulls = Object.create(null);
     if (!copyOverlayOpen) {
       renderSelectionCount();
       return;
@@ -1028,11 +1105,12 @@
   });
 
   document.addEventListener('keydown', function (event) {
-    if (!copyOverlayOpen || copyPhase === 'progress') return;
+    if (!copyOverlayOpen) return;
     // WM.confirm sits above this workflow. Its capture listener may already
     // have dismissed that dialog; never handle the same Escape a second time.
     if (event.defaultPrevented || !WM.el('overlay').hidden) return;
     if (event.key === 'Escape') {
+      if (copyPhase === 'progress') return;
       event.preventDefault();
       closeCopyOverlay(false);
     } else if (event.key === 'Tab') {
@@ -1040,6 +1118,7 @@
       var focusable = copyFocusable(dialog);
       if (!focusable.length) {
         event.preventDefault();
+        focusCopyTarget('fittings-copy-dialog');
         return;
       }
       var first = focusable[0];
@@ -1050,14 +1129,20 @@
       } else if (!event.shiftKey && document.activeElement === last) {
         event.preventDefault();
         first.focus();
-      } else if (!dialog.contains(document.activeElement)) {
+      } else if (focusable.indexOf(document.activeElement) === -1) {
+        // The cancellation fallback (or a programmatically focused heading)
+        // can remain inside the dialog after its tab stops are repopulated.
         event.preventDefault();
-        first.focus();
+        (event.shiftKey ? last : first).focus();
       }
     }
   });
 
   function copyButtons(review, start, cancel) {
+    // Keyboard users need the bounded pair list itself, not only its buttons.
+    // Targets have their checkboxes; progress retains Cancel/dialog focus.
+    WM.el('fittings-copy-body').setAttribute('tabindex',
+      copyPhase === 'preflight' || copyPhase === 'results' ? '0' : '-1');
     WM.el('fittings-copy-review').hidden = !review;
     WM.el('fittings-copy-start').hidden = !start;
     WM.el('fittings-copy-cancel').hidden = !cancel;
@@ -1140,7 +1225,7 @@
     var entryIds = visibleSelectedIds();
     var generation = copyDialogGeneration;
     var pending = screenshotFixture
-      ? Promise.resolve(screenshotPreflight(entryIds))
+      ? Promise.resolve(screenshotPreflight(entryIds, selectedTargetIds()))
       : WM.send('fittings_preflight_copy', entryIds, selectedTargetIds(), choices);
     pending.then(function (payload) {
       if (!copyOverlayOpen || generation !== copyDialogGeneration) return;
@@ -1161,10 +1246,30 @@
 
   function preflightSummary(payload) {
     var counts = payload.counts || {};
-    return payload.write_count + (payload.write_count === 1 ? ' remote write' : ' remote writes')
+    return payload.write_count + (payload.write_count === 1 ? ' addition planned' : ' additions planned')
       + ' \u00b7 ' + (counts.present || 0) + ' already present'
-      + ' \u00b7 ' + (counts.conflict || 0) + ' conflicts'
+      + ' \u00b7 ' + (counts.conflict || 0) + (counts.conflict === 1 ? ' conflict' : ' conflicts')
       + ' \u00b7 ' + (counts.unavailable || 0) + ' unavailable';
+  }
+
+  function copyFittingLabel(pair) {
+    var name = pair.fitting_name || (pair.entry_id ? 'Fitting ' + pair.entry_id : 'Unknown fitting');
+    var hull = copyHulls[pair.entry_id];
+    return name + (hull ? ' (' + hull + ')' : '');
+  }
+
+  function copyCharacterLabel(pair) {
+    return pair.character_name || (pair.character_id ? 'Character ' + pair.character_id : 'Unknown character');
+  }
+
+  function copyPairsChecked(completed, total) {
+    return completed + ' of ' + total + (total === 1 ? ' pair checked' : ' pairs checked');
+  }
+
+  function copyProgressLabel(pair) {
+    var status = copyResultLabel(pair.status);
+    if (!pair.entry_id && !pair.fitting_name && !pair.character_id && !pair.character_name) return status;
+    return copyFittingLabel(pair) + ' \u2192 ' + copyCharacterLabel(pair) + ': ' + status;
   }
 
   function pairStatusText(pair) {
@@ -1180,8 +1285,8 @@
     host.appendChild(WM.make('p', 'fit-copy-summary', preflightSummary(copyPreflight)));
     (copyPreflight.pairs || []).forEach(function (pair) {
       var row = WM.make('div', 'fit-copy-pair');
-      row.appendChild(WM.make('span', 'fit-copy-pair-name', pair.fitting_name));
-      row.appendChild(WM.make('span', 'fit-copy-character', pair.character_name));
+      row.appendChild(WM.make('span', 'fit-copy-pair-name', copyFittingLabel(pair)));
+      row.appendChild(WM.make('span', 'fit-copy-character', copyCharacterLabel(pair)));
       row.appendChild(WM.make('span', 'fit-copy-detail', pairStatusText(pair)));
       if (pair.status === 'conflict' && !pair.skipped) {
         row.appendChild(conflictResolutionNode(pair));
@@ -1202,8 +1307,8 @@
     input.className = 'field fit-copy-alternate';
     input.maxLength = 50;
     input.placeholder = 'Alternate name';
-    input.setAttribute('aria-label', 'Alternate name for ' + pair.fitting_name
-                       + ' on ' + pair.character_name);
+    input.setAttribute('aria-label', 'Alternate name for ' + copyFittingLabel(pair)
+                       + ' on ' + copyCharacterLabel(pair));
     input.value = typeof alternateNames[key] === 'string' ? alternateNames[key] : '';
     var skip = document.createElement('input');
     skip.type = 'checkbox';
@@ -1237,8 +1342,21 @@
     WM.el('fittings-copy-review').disabled = !ready;
   }
 
+  function presentCopyProgress(ticketId, total) {
+    copyPhase = 'progress';
+    activeCopyTicket = ticketId;
+    WM.el('fittings-copy-title').textContent = 'Copying fittings';
+    WM.el('fittings-copy-body').textContent = '';
+    WM.el('fittings-copy-body').appendChild(WM.make('p', 'fit-copy-summary', copyPairsChecked(0, total)));
+    WM.el('fittings-copy-status').textContent = 'Starting\u2026';
+    WM.el('fittings-copy-cancel').disabled = false;
+    copyButtons(false, false, true);
+    renderSelectionCount();
+    focusCopyTarget('fittings-copy-cancel');
+  }
+
   WM.el('fittings-copy-start').addEventListener('click', function () {
-    if (!copyPreflight || copyPreflight.requires_resolution) return;
+    if (screenshotFixture || !copyPreflight || copyPreflight.requires_resolution) return;
     var writes = copyPreflight.write_count || 0;
     var generation = copyDialogGeneration;
     var ticketId = copyPreflight.ticket_id;
@@ -1246,21 +1364,13 @@
       'Create exactly ' + writes + (writes === 1 ? ' fitting' : ' fittings')
       + ' in EVE? This only adds fittings; it never deletes or replaces one.')
       .then(function (confirmed) {
-        if (!confirmed || !copyOverlayOpen
+        if (screenshotFixture || !confirmed || !copyOverlayOpen
             || generation !== copyDialogGeneration
             || !copyPreflight || copyPreflight.ticket_id !== ticketId) return;
-        copyPhase = 'progress';
-        activeCopyTicket = ticketId;
+        presentCopyProgress(ticketId, copyPreflight.pairs.length);
         // Record before sending: a worker may complete before its start reply.
-        var historyOperation = { ticket_id: ticketId, pending: true };
-        if (!screenshotFixture) copyHistoryOperation = historyOperation;
-        WM.el('fittings-copy-title').textContent = 'Copying fittings';
-        WM.el('fittings-copy-body').textContent = '';
-        WM.el('fittings-copy-body').appendChild(WM.make('p', 'fit-copy-summary',
-          '0 of ' + copyPreflight.pairs.length + ' pairs checked'));
-        WM.el('fittings-copy-status').textContent = 'Starting\u2026';
-        copyButtons(false, false, true);
-        renderSelectionCount();
+        var historyOperation = { ticket_id: ticketId, pending: true, hulls: copyHulls };
+        copyHistoryOperation = historyOperation;
         WM.send('fittings_start_copy', ticketId).then(function (started) {
           if (started === false && copyHistoryOperation === historyOperation) {
             // A definite refusal releases the history control, but its failure
@@ -1275,16 +1385,34 @@
             copyPhase = 'preflight';
             WM.el('fittings-copy-status').textContent = 'The copy could not start.';
             renderCopyPreflight();
+            reconcileCopyFocus();
           }
         });
       });
   });
 
   WM.el('fittings-copy-cancel').addEventListener('click', function () {
+    if (!copyOverlayOpen || copyPhase !== 'progress') return;
     WM.el('fittings-copy-cancel').disabled = true;
     WM.el('fittings-copy-status').textContent = 'Cancelling after the current request\u2026';
-    WM.send('fittings_cancel_copy', activeCopyTicket);
+    focusCopyTarget('fittings-copy-dialog');
+    if (!screenshotFixture) WM.send('fittings_cancel_copy', activeCopyTicket);
   });
+
+  function renderCopyProgress(completed, total, pair) {
+    WM.el('fittings-copy-body').textContent = '';
+    WM.el('fittings-copy-body').appendChild(WM.make('p', 'fit-copy-summary', copyPairsChecked(completed, total)));
+    WM.el('fittings-copy-status').textContent = copyProgressLabel(pair);
+  }
+
+  function finishCopy(result) {
+    activeCopyTicket = '';
+    copyPhase = 'results';
+    selected = {};
+    renderSelectionCount();
+    renderCopyResults(result);
+    renderNotices();
+  }
 
   function onCopyProgress(payload) {
     // Retain the outcome independently of the display guard: leaving cancels
@@ -1293,31 +1421,19 @@
         && copyHistoryOperation
         && payload.ticket_id === copyHistoryOperation.ticket_id) {
       lastCopyResult = payload.result || { results: [], write_count: 0 };
+      lastCopyHulls = copyHistoryOperation.hulls;
       copyHistoryOperation = null;
       if (WM.current_route === 'fittings') renderNotices();
     }
-    // Only the bounded screenshot-state handler populates screenshotFixture;
-    // without that explicit fixture, display remains phase- and ticket-gated.
-    if (!copyOverlayOpen
-        || (!screenshotFixture && (copyPhase !== 'progress'
-                                   || !activeCopyTicket
-                                   || payload.ticket_id !== activeCopyTicket))) return;
+    // Synthetic presentation is owned by the bounded fixture handler, never
+    // an unrelated live progress push or a fake writer ticket.
+    if (screenshotFixture || !copyOverlayOpen || copyPhase !== 'progress'
+        || !activeCopyTicket || payload.ticket_id !== activeCopyTicket) return;
     if (payload.phase === 'progress') {
-      WM.el('fittings-copy-body').textContent = '';
-      WM.el('fittings-copy-body').appendChild(WM.make('p', 'fit-copy-summary',
-        payload.completed + ' of ' + payload.total + ' pairs checked'));
-      WM.el('fittings-copy-status').textContent = copyResultLabel(payload.result.status);
+      renderCopyProgress(payload.completed, payload.total, payload.result);
       return;
     }
-    if (payload.phase === 'complete') {
-      activeCopyTicket = '';
-      copyPhase = 'results';
-      selected = {};
-      renderSelectionCount();
-      var result = payload.result || { results: [], write_count: 0 };
-      renderCopyResults(result);
-      renderNotices();
-    }
+    if (payload.phase === 'complete') finishCopy(payload.result || { results: [], write_count: 0 });
   }
 
   function copyResultLabel(status) {
@@ -1363,7 +1479,8 @@
       } else counts.other += 1;
     });
     return counts.success + ' copied \u00b7 ' + counts.present + ' already present'
-      + ' \u00b7 ' + counts.unknown + ' needs verification \u00b7 ' + counts.failed + ' failed'
+      + ' \u00b7 ' + counts.unknown + (counts.unknown === 1 ? ' needs verification' : ' need verification')
+      + ' \u00b7 ' + counts.failed + ' failed'
       + ' \u00b7 ' + counts.other + ' not copied';
   }
 
@@ -1373,8 +1490,8 @@
     WM.el('fittings-copy-title').textContent = 'Copy results';
     host.appendChild(WM.make('p', 'fit-copy-summary', copyOutcomeSummary(result)));
     host.appendChild(WM.make('p', 'hint',
-      (result.write_count || 0) + (result.write_count === 1 ? ' remote write attempted'
-                                                         : ' remote writes attempted')
+      (result.write_count || 0) + (result.write_count === 1 ? ' addition attempted'
+                                                         : ' additions attempted')
       + '. Nothing is retried automatically.'));
     if (!(result.results || []).length || result.status !== 'complete') {
       host.appendChild(WM.make('p', 'notice', result.status === 'cancelled'
@@ -1383,8 +1500,8 @@
     }
     (result.results || []).forEach(function (pair) {
       var row = WM.make('div', 'fit-copy-pair');
-      row.appendChild(WM.make('span', 'fit-copy-pair-name', pair.fitting_name));
-      row.appendChild(WM.make('span', 'fit-copy-character', pair.character_name));
+      row.appendChild(WM.make('span', 'fit-copy-pair-name', copyFittingLabel(pair)));
+      row.appendChild(WM.make('span', 'fit-copy-character', copyCharacterLabel(pair)));
       var status = WM.make('span', 'fit-copy-result ' + pair.status,
                            copyResultLabel(pair.status));
       row.appendChild(status);
@@ -1397,6 +1514,7 @@
       ? 'Operation ' + result.operation_id : copyResultLabel(result.status);
     copyButtons(false, false, false);
     WM.el('fittings-copy-close').disabled = false;
+    focusCopyTarget('fittings-copy-close');
   }
 
 }());

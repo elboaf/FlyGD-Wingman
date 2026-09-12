@@ -254,7 +254,7 @@ def test_characters_auth_controls_use_shared_endpoints_without_optimistic_state(
     assert "WM.send('eve_characters_authenticate')" in JS
     assert "WM.send('eve_characters_cancel_auth')" in JS
     assert "Authenticate character\u2026" in JS
-    assert "Waiting for EVE SSO\u2026" in JS
+    assert "Finish EVE sign-in in your browser." in JS
     assert "authorization_activity = 'waiting'" not in JS
     assert "var authRequestPending = false;" in JS
     assert "characters-auth-action" not in JS
@@ -653,6 +653,8 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together(
           document.dispatchEvent(new CustomEvent('wm:eve-authority', {{ detail: {{}} }}));
           await tick();
 
+          const waitingActivity = activity.textContent;
+          const waitingCancel = {{text: cancel.textContent, hidden: cancel.hidden, disabled: cancel.disabled}};
           cancel.dispatchEvent({{ type: 'click' }});
           const cancelDisabledImmediately = cancel.disabled;
 
@@ -671,6 +673,8 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together(
             recoveredRosterName,
             noticeAfterRecovery,
             authDisabledImmediately,
+            waitingActivity,
+            waitingCancel,
             cancelDisabledImmediately
           }}));
         }})();
@@ -731,6 +735,12 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together(
     assert "Replacement Pilot" in result["noticeAfterRecovery"]
     assert result["noticeAfterRecovery"] == result["localNoticeWithWarnings"]
     assert result["authDisabledImmediately"] is True
+    assert "Finish EVE sign-in in your browser." in result["waitingActivity"]
+    assert result["waitingCancel"] == {
+        "text": "Cancel",
+        "hidden": False,
+        "disabled": False,
+    }
     assert result["cancelDisabledImmediately"] is True
 
 

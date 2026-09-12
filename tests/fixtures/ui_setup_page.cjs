@@ -16,7 +16,7 @@ const scenario = request.scenario;
 assert.ok(staticFixtures.scenarios.includes(scenario), 'unknown scenario: ' + scenario);
 assert.ok(request.payload && ['import', 'export'].includes(request.payload.mode), 'unknown setup mode');
 const started = performance.now();
-const coupled = scenario.startsWith('detached-') || scenario.startsWith('profiles-refresh-');
+const coupled = scenario.startsWith('detached-') || scenario.startsWith('profiles-');
 const scrollCalls = [];
 const requestTimers = new Set();
 const unhandledRejections = [];
@@ -44,6 +44,7 @@ class Element {
     this.dataset = Object.fromEntries(Object.entries(attrs).filter(([key]) => key.startsWith('data-')).map(([key, value]) => [key.slice(5), value]));
   }
   appendChild(child) { this.children.push(child); child.parentNode = this; return child; }
+  prepend(child) { this.children.unshift(child); child.parentNode = this; }
   querySelectorAll(selector) {
     const all = this.children.flatMap(child => [child, ...child.querySelectorAll('*')]);
     if (selector === '*') return all;
@@ -1083,6 +1084,8 @@ async function importUxMain() {
 async function importMain() {
   if (scenario.startsWith('ux-')) { await importUxMain(); return; }
   if (scenario.startsWith('catalog-')) { await catalogMain(); return; }
+  if (scenario.startsWith('profiles-workbench-')) { await profilesWorkbenchMain(); return; }
+  if (scenario.startsWith('profiles-folder-')) { await profilesFolderMain(); return; }
   if (scenario.startsWith('profiles-refresh-')) { await profilesRefreshMain(); return; }
   if (coupled) { await detachedMain(); return; }
   await importOpen();
@@ -1489,6 +1492,204 @@ async function detachedMain() {
     profilesReads.at(-1).resolve(profilesState()); await tick();
   }
   assert.equal(mutations.length, 0, 'completion never selects or calls a mutation');
+}
+async function profilesWorkbenchMain() {
+  const data = profilesState();
+  data.selective_copy_available = true;
+  data.copy_groups = {
+    characters: [{id: 'layout', label: 'Window layout', default_on: true},
+      {id: 'overview', label: 'Overview filters', default_on: true},
+      {id: 'shortcuts', label: 'Keyboard shortcuts', default_on: false}],
+    accounts: [{id: 'layout', label: 'Account display', default_on: false},
+      {id: 'audio', label: 'Audio preferences', default_on: true}]
+  };
+  data.characters[0].display_name = 'Full source é <literal> identity';
+  data.characters[0].display_meta = 'Character 11 · Account with a long accepted name';
+  data.accounts[0].display_meta = 'Account 10 · Pilot A, Pilot B, Pilot C';
+  data.characters.push({path: 'char-C', id: '31', name: 'Pilot C', display_name: 'Pilot C', display_meta: 'Character 31'});
+  WM.el('es-copy-scope').open = true;
+  WM.route('evesettings'); profilesReads.at(-1).resolve(data); await tick();
+  const repaint = async next => {
+    handlers.onEveSettingsNames({}); profilesReads.at(-1).resolve(next); await tick();
+  };
+  const boxes = () => WM.el('es-copy-groups').querySelectorAll('input');
+  const summary = () => WM.el('es-copy-scope-summary').textContent;
+  const setKind = async value => {
+    const radios = document.querySelectorAll('input[name="es-kind"]');
+    radios.forEach(radio => { radio.checked = radio.value === value; });
+    radios.find(radio => radio.checked).dispatchEvent({type: 'change'}); await tick();
+  };
+  assert.equal(WM.el('es-commit-context').parentNode, WM.el('es-work').parentNode,
+    'footer is outside the sole work scroller');
+  assert.equal(WM.el('es-work').contains(WM.el('es-targets')), true);
+  assert.equal(WM.el('es-copy-scope').open, false, 'entry resets the disclosure property');
+  if (scenario === 'profiles-workbench-scope') {
+    assert.deepEqual(boxes().map(box => [box.value, box.checked]), [['layout', true], ['overview', true], ['shortcuts', false]]);
+    assert.match(summary(), /Keyboard shortcuts/);
+    assert.match(summary(), /Keep/);
+    assert.equal(WM.el('es-copy-options').hidden, false);
+    assert.match(WM.el('es-copy-scope-note').textContent, /Unchecked groups stay unchanged.*Everything else is copied/);
+    const first = boxes()[0]; first.focus(); first.checked = false; first.dispatchEvent({type: 'change'});
+    assert.equal(boxes()[0], first, 'summary updates never replace checkbox nodes');
+    assert.equal(document.activeElement, first, 'checkbox focus survives its own change');
+    assert.match(summary(), /Window layout.*Keyboard shortcuts/);
+    boxes()[1].checked = false; boxes()[1].dispatchEvent({type: 'change'});
+    assert.match(summary(), /Keep all groups.*Window layout.*Overview filters.*Keyboard shortcuts/);
+    click('es-all'); assert.equal(WM.el('es-copy').disabled, false, 'zero groups still copies other settings');
+    click('es-copy'); assert.deepEqual(plain(ordinaryCopies.at(-1).args), ['char-A', ['char-B', 'char-C'], []]);
+    ordinaryCopies.at(-1).resolve(false); await tick();
+    boxes().forEach(box => { box.checked = true; box.dispatchEvent({type: 'change'}); });
+    assert.match(summary(), /Copy all groups.*Window layout.*Overview filters.*Keyboard shortcuts/);
+    await setKind('accounts');
+    assert.deepEqual(boxes().map(box => [box.value, box.checked]), [['layout', false], ['audio', true]]);
+    assert.match(summary(), /Keep.*Account display/);
+    await setKind('characters'); assert.equal(boxes().every(box => box.checked), true);
+    const updated = structuredClone(data);
+    updated.copy_groups.characters[0].default_on = false;
+    updated.copy_groups.characters.push({id: 'new-group', label: 'New payload group', default_on: false});
+    await repaint(updated);
+    assert.deepEqual(boxes().map(box => box.checked), [true, true, true, false], 'new defaults do not overwrite existing choices');
+    assert.equal(summary(), 'Keep: New payload group', 'new labels come from the payload');
+    await repaint({...data, copy_groups: {characters: [], accounts: []}});
+    assert.equal(summary(), 'Other settings only');
+    click('es-all'); assert.equal(WM.el('es-copy').disabled, false);
+    await repaint({...data, selective_copy_available: false});
+    assert.equal(WM.el('es-copy-options').hidden, false, 'unavailable scope remains explained');
+    assert.equal(WM.el('es-copy-scope').hidden, true);
+    assert.match(WM.el('es-copy-scope-note').textContent, /whole.*file|entire.*file/i);
+    assert.doesNotMatch(WM.el('es-copy-scope-note').textContent, /unchanged|excluded|keep/i);
+    click('es-all'); click('es-copy');
+    assert.deepEqual(plain(ordinaryCopies.at(-1).args), ['char-A', ['char-B', 'char-C']], 'legacy copy omits the groups argument');
+  } else if (scenario === 'profiles-workbench-identity') {
+    assert.equal(WM.el('es-source').getAttribute('aria-describedby'), 'es-source-identity');
+    assert.equal(WM.el('es-source-identity').textContent, 'Full source é <literal> identity · Character 11 · Account with a long accepted name');
+    assert.equal(WM.el('es-source-identity').children.length, 0, 'accepted identity is text, not HTML');
+    assert.equal(WM.el('es-copy-profile').textContent, 'Profile: Base A · Server: Tranquility');
+    WM.el('es-profile').value = 'profile-B'; click('es-all');
+    assert.equal(WM.el('es-copy-profile').textContent, 'Profile: Base A · Server: Tranquility', 'footer uses accepted state, not a pending select draft');
+    await repaint({...data, profile: 'profile-B'});
+    assert.equal(WM.el('es-copy-profile').textContent, 'Profile: Base B · Server: Tranquility');
+    change('es-source', 'char-B'); assert.equal(WM.el('es-source-identity').textContent, 'Pilot B');
+    await setKind('accounts');
+    assert.equal(WM.el('es-source-identity').textContent, 'Account <A> · Account 10 · Pilot A, Pilot B, Pilot C');
+    await repaint({...data, accounts: []});
+    assert.match(WM.el('es-source-identity').textContent, /No source/);
+  } else {
+    WM.el('es-work').scrollTop = 123;
+    click('es-profile-copy-open'); input('es-profile-copy-name', 'Local draft');
+    input('es-filter', 'Pilot B');
+    await repaint(data);
+    assert.equal(WM.el('es-work').scrollTop, 123, 'ordinary reads/local edits preserve work scroll');
+    assert.equal(WM.el('es-profile-copy-name').value, 'Local draft');
+    assert.equal(WM.el('es-filter').value, 'Pilot B');
+    assert.equal(document.activeElement.id, 'es-profile-copy-name');
+    click('es-all'); click('es-copy');
+    assert.deepEqual(plain(ordinaryCopies.at(-1).args), ['char-A', ['char-B'], ['layout', 'overview']]);
+    ordinaryCopies.at(-1).resolve(false); await tick();
+    input('es-filter', 'Pilot C'); assert.equal(WM.el('es-copy').disabled, true, 'checked but hidden targets never count');
+    input('es-filter', ''); change('es-source', 'char-B'); assert.equal(WM.el('es-copy').disabled, true, 'checked source never counts');
+    WM.route('main'); WM.route('evesettings'); profilesReads.at(-1).resolve(data); await tick();
+    assert.equal(WM.el('es-work').scrollTop, 0, 'entry resets the new scroller');
+    assert.equal(WM.el('es-profile-copy-name').value, 'Local draft');
+    click('es-setup-share'); contexts.at(-1).resolve(context()); limits.at(-1).resolve(python('limits')); await tick();
+    click('us-back'); profilesReads.at(-1).resolve(data); await tick();
+    assert.equal(document.activeElement.id, 'es-setup-share');
+    assert.ok(document.activeElement.getClientRects().length);
+    assert.equal(disclosureOf(document.activeElement), null);
+  }
+}
+async function profilesFolderMain() {
+  WM.route('evesettings');
+  assert.equal(WM.el('es-folder-detail').hidden, false, 'unhydrated setup stays reachable');
+  const initial = profilesState();
+  initial.root = 'C:\\Synthetic\\CCP\\EVE';
+  profilesReads.at(-1).resolve(initial); await tick();
+  const opened = () => !WM.el('es-folder-detail').hidden;
+  const selection = () => WM.el('es-targets').querySelectorAll('input').filter(el => el.checked).length;
+  const repaint = async data => {
+    handlers.onEveSettingsNames({}); profilesReads.at(-1).resolve(data); await tick();
+  };
+  assert.equal(opened(), false, 'valid configured Profiles starts compact');
+  assert.equal(WM.el('es-folder-summary').hidden, false);
+  assert.equal(WM.el('es-folder-root').textContent, initial.root);
+  assert.match(WM.el('es-folder-set').textContent, /Tranquility.*server/);
+  assert.equal(WM.el('es-folder-detail').contains(WM.el('es-identify-open')), false,
+    'account identification retains its own mode-dependent visibility');
+  for (const id of ['es-profile', 'es-eve-state',
+    'es-setup-share', 'es-setup-import', 'es-source', 'es-commit', 'es-copy-backup-note']) {
+    assert.ok(WM.el(id).getClientRects().length, id + ' stays outside folder disclosure');
+  }
+  assert.equal(WM.el('es-profile').value, 'profile-A');
+  if (scenario === 'profiles-folder-collapsed') {
+    assert.equal(WM.el('es-folder-edit').getAttribute('aria-expanded'), 'false');
+    assert.equal(WM.el('es-folder-edit').getAttribute('aria-controls'), 'es-folder-detail');
+    assert.equal(mutations.length, 0, 'hydration does not commit setup');
+    return;
+  }
+  const invalid = {
+    'missing-root': {root: '', server: '', profile: ''},
+    'missing-server': {server: '', profile: '', servers: [], profiles: []},
+    'missing-profile': {profile: '', profiles: []},
+    unreadable: {unreadable: true}, 'too-broad': {too_broad: true}
+  }[scenario.slice('profiles-folder-'.length)];
+  if (invalid) {
+    await repaint({...initial, ...invalid});
+    assert.equal(opened(), true, 'incomplete or unreadable discovery must expose correction controls');
+    assert.ok(WM.el('es-folder-close'), 'expanded setup provides a collapse control');
+    assert.equal(WM.el('es-folder-close').disabled, true, 'invalid setup cannot be hidden');
+    click('es-folder-close'); assert.equal(opened(), true);
+    assert.ok(WM.el('es-pick').getClientRects().length);
+    assert.equal(WM.el('es-pick').disabled, false);
+    assert.equal(WM.el('es-detect').disabled, false);
+    if (invalid.unreadable || invalid.too_broad) {
+      assert.equal(WM.el('es-warning').hidden, false);
+      assert.ok(WM.el('es-warning').textContent);
+    }
+    await repaint(initial); assert.equal(opened(), false, 'recovery restores the compact default');
+    return;
+  }
+  click('es-folder-edit');
+  assert.equal(opened(), true);
+  assert.equal(document.activeElement?.id, 'es-pick', 'opening must not strand keyboard focus in hidden summary');
+  assert.equal(WM.el('es-folder-edit').getAttribute('aria-expanded'), 'true');
+  if (scenario === 'profiles-folder-rerender-reset') {
+    await repaint(initial); assert.equal(opened(), true, 'names hydration retains deliberate expansion');
+    WM.route('main'); WM.route('evesettings');
+    profilesReads.at(-1).resolve(initial); await tick();
+    assert.equal(opened(), false, 'route re-entry resets disclosure');
+  } else if (scenario === 'profiles-folder-hydration-race') {
+    handlers.onEveSettingsNames({}); const older = profilesReads.at(-1);
+    await repaint({...initial, unreadable: true});
+    older.resolve(initial); await tick();
+    assert.equal(opened(), true, 'stale valid state cannot hide a newer error');
+    assert.equal(WM.el('es-folder-close').disabled, true);
+    await repaint(initial);
+    click('es-folder-close');
+    assert.equal(opened(), false);
+  } else {
+    click('es-all'); click('es-profile-copy-open'); input('es-profile-copy-name', 'Local draft');
+    const selectedBefore = selection(); assert.ok(selectedBefore > 0);
+    click('es-folder-close');
+    assert.equal(opened(), false, 'setup can be collapsed without leaving Profiles');
+    assert.equal(document.activeElement.id, 'es-folder-edit');
+    assert.equal(WM.el('es-folder-edit').getAttribute('aria-expanded'), 'false');
+    await repaint(initial);
+    assert.equal(WM.el('es-profile-copy-name').value, 'Local draft');
+    assert.equal(WM.el('es-profile-copy-panel').hidden, false);
+    assert.equal(selection(), selectedBefore, 'disclosure changes never invalidate targets');
+    if (scenario.startsWith('profiles-folder-root-')) {
+      click('es-folder-edit'); click('es-pick');
+      assert.equal(selection(), selectedBefore, 'pending root pick is not an accepted context change');
+      rootPicks.at(-1).resolve(''); await tick();
+      const changed = scenario.endsWith('-changed');
+      profilesReads.at(-1).resolve(changed ? {...initial, profile: 'profile-B'} : initial); await tick();
+      assert.equal(selection(), changed ? 0 : selectedBefore);
+      assert.equal(WM.el('es-profile-copy-panel').hidden, changed);
+      if (!changed) assert.equal(WM.el('es-profile-copy-name').value, 'Local draft');
+    }
+  }
+  assert.equal(mutations.length, 0, 'disclosures and drafts never write settings');
+  assert.equal(ordinaryCopies.length, 0);
 }
 async function profilesRefreshMain() {
   WM.route('evesettings'); profilesReads.at(-1).resolve(profilesState()); await tick();

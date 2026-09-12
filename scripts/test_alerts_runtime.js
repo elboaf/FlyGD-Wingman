@@ -408,6 +408,46 @@ test('a health poll overtaking entry hydration cannot strand Add or repaint newe
   assert.doesNotMatch(p.el('custom-alert-health').textContent, /Preferences remain editable/);
 });
 
+test('common Alert modifiers precede Advanced rather than reading as its contents', () => {
+  const p = page();
+  const advanced = p.el('alert-advanced');
+  let modifiers = p.el('alert-pve-filter');
+  while (modifiers && !modifiers.className.split(/\s+/).includes('alert-mods')) modifiers = modifiers.parentNode;
+  assert.ok(modifiers);
+  assert.equal(modifiers.parentNode, advanced.parentNode);
+  const siblings = advanced.parentNode.children;
+  assert.ok(siblings.indexOf(modifiers) < siblings.indexOf(advanced), 'common modifiers must precede the Advanced disclosure');
+  for (const id of ['alert-pve-filter', 'alert-persist', 'alert-volume']) assert.ok(modifiers.contains(p.el(id)));
+});
+
+for (const field of ['flashes', 'speed']) {
+  test('collapsed Advanced retains ' + field + ' failures and common/live statuses', async () => {
+    const p = page(); p.enter();
+    await p.reply('get_alert_state', builtinState());
+    const advanced = p.el('alert-advanced');
+    advanced.open = true;
+    p.choose('alert-event-combat-' + field, field === 'flashes' ? '8' : 'slow');
+    advanced.open = false;
+    await p.reply('set_alert_event', {applied: false, persisted: false, error: 'Pulse setting refused'});
+    p.choose('alert-volume', '42');
+    await p.reply('set_alert_volume', {applied: false, persisted: false, error: 'Volume refused'});
+    p.toggle('alert-pve-filter', true);
+    await p.reply('set_alert_pve_filter', {applied: false, persisted: false, error: 'Filter refused'});
+    const expected = {'alert-event-combat-msg': /Pulse setting refused/, 'alert-volume-status': /Volume refused/,
+      'alerts-status': /Filter refused/, 'alerts-health': /Watching/};
+    for (const [id, message] of Object.entries(expected)) {
+      const status = p.el(id);
+      assert.match(status.textContent, message);
+      assert.equal(status.getAttribute('role'), 'status');
+      for (let node = status; node; node = node.parentNode) {
+        assert.equal(node.hidden, false, id + ' has no hidden ancestor');
+        assert.ok(node.tagName !== 'DETAILS' || node.open, id + ' remains outside collapsed disclosures');
+      }
+    }
+    assert.equal(advanced.open, false);
+  });
+}
+
 function builtinState(extra = {}, alerts = {}) {
   return Object.assign({previews_enabled: true, running: true, last_error: null,
     characters: ['Alice'], gamelogs_folder: 'logs',

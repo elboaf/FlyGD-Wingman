@@ -219,6 +219,41 @@ test('a new config revision cannot reuse old worker-generation coverage', async 
   assert.match(p.el('coverage').textContent, /0 of 3/);
 });
 
+test('empty current binding explains Remove scope while retaining earlier-credential recovery', async () => {
+  const p = page(); await p.hydrate({base_url: '', map_identifier: ''});
+  assert.match(p.el('credential').textContent, /No token stored for this connection/);
+  assert.match(p.el('credential').textContent, /Remove connection.*any token.*earlier URL or map/);
+  assert.equal(p.el('remove').disabled, false);
+  await p.click('remove');
+  assert.equal(p.calls.length, 0, 'removal still needs confirmation');
+  assert.match(p.confirmations[0].args[1], /saved URL, map and protected token/);
+  p.confirmations[0].resolve(false); await turn();
+  assert.equal(p.calls.length, 0);
+});
+
+for (const [matched, available, next] of [
+  [2, 2, /Check.*characters.*tracked.*map/],
+  [3, 1, /Check location sharing.*Wanderer/],
+  [2, 1, /Check.*tracked.*map.*Check location sharing.*Wanderer/]
+]) {
+  test('partial coverage gives only data-supported next checks ' + matched + '/' + available, async () => {
+    const p = page();
+    const connected = {enabled: true, credential_present: true, automatic_ready: true,
+      status: 'connected', previewed: 3, matched, available};
+    await p.hydrate(connected);
+    assert.match(p.el('coverage').textContent, new RegExp(available + ' of 3'));
+    assert.match(p.el('coverage').textContent, next);
+    assert.equal(p.calls.length, 0, 'copy must not request another check');
+    p.push(state({...connected, status: 'error', error_code: 'invalid_token', paused: true}));
+    assert.match(p.el('health').textContent, /Token rejected/);
+    assert.doesNotMatch(p.el('coverage').textContent, /Check/);
+    p.push(state({...connected, enabled: false, automatic_ready: false, status: 'off', available: 0}));
+    assert.doesNotMatch(p.el('coverage').textContent, /Check/);
+    p.push(state({...connected, matched: 3, available: 3}));
+    assert.doesNotMatch(p.el('coverage').textContent, /Check/);
+  });
+}
+
 test('text commits as one form on Test, never blur or change', async () => {
   const p = page(); await p.hydrate();
   for (const field of ['url', 'map', 'token']) {

@@ -80,6 +80,9 @@
      every surface it is used on, including all five nav tabs and all
      three window buttons in their resting state. */
   --text-faint: #7d8492;
+  /* Distance rings and height tethers carry information, unlike a panel edge.
+     Reuse a readable neutral: 4.99:1 against the formation plot's --sunken. */
+  --formation-guide: var(--text-faint);
   /* A fourth text step, between --text-dim and --text-faint, and it is
      not a rounding error: it is the colour of the two uppercase tracked
      section labels (.card > h2 and .rail-head), which sit above
@@ -845,6 +848,8 @@ button.btn:disabled,
    ring behind, which is the reason the ring was removed rather than
    restyled the first time. */
 .btn:focus-visible,
+#fittings-copy-body:focus-visible,
+#fittings-copy-dialog:focus-visible,
 .navbtn:focus-visible,
 .winbtn:focus-visible,
 .bindbtn:focus-visible,
@@ -2678,10 +2683,12 @@ button.btn:disabled,
 .preview-crop-actions .check[hidden], .preview-crop-actions .btn[hidden] { display: none; }
 .preview-crop-status { max-width: 65ch; margin-top: 0; overflow-wrap: anywhere; }
 
-/* A conditional conflict is a sibling after its affected row. Since rows
-   are display:contents, it must span every track rather than add a cell. */
+/* Lead the owning row, before its controls and any optional detail. More
+   space above than below groups the warning with its owner, not the previous
+   character; full-span copy leaves the shared control tracks unchanged. */
 .preview-bind-conflict {
   grid-column: 1 / -1;
+  padding-top: 8px;
   color: var(--danger); font-size: var(--fs-muted);
 }
 
@@ -2692,6 +2699,9 @@ button.btn:disabled,
    the grid independently via grid-column:1/-1 below. */
 .preview-group-manager {
   grid-column: 1 / -1;
+  /* Start-aligned capture/focus must clear both sticky headings, just like
+     a character detail, rather than burying the summary and Add row. */
+  scroll-margin-top: calc(var(--preview-bind-head-height) * 2);
   padding: 4px 0 2px;
 }
 .preview-group-manager > summary {
@@ -2786,6 +2796,9 @@ button.btn:disabled,
    rather than stands out -- a lighter border here would make "dim" read
    as more prominent than a normal, unremarkable binding. */
 .bindbtn.dim { border-color: var(--panel-border); color: var(--text-faint); }
+/* A latent collision is still editable. The faint role passes on panels but
+   not on control/hover fills; preserve capture and disabled treatments. */
+.bindbtn.dim:not(:disabled):not(.capturing) { color: var(--text-dim); }
 
 /* "We cannot say whether Windows holds this chord" -- previews are off,
    or no registration pass has reported yet (previews.js's clashes()).
@@ -2816,65 +2829,34 @@ button.btn:disabled,
 .rowacts { display: flex; gap: 2px; justify-content: flex-end; }
 .geometry-actions { display: flex; align-items: center; gap: 8px; }
 
-/* ====================== EVE Settings route ==========================
-   Same card markup as the settings and bookmarks routes, so it needs the
-   same column direction and scroll safeguard: three cards, two of them
-   holding a list that is one row per character. Without overflow-y the
-   Copy button and the whole Backups card fall below the window with no
-   scrollbar, exactly as the bookmarks binds did. */
-#route-evesettings { flex-direction: column; overflow-y: auto; padding: 12px; }
-
-/* P10 / D1 -- the roster is the one thing on this route that the 620px
-   measure is wrong for.
-
-   THE MECHANISM, which the walkthrough left as a measurement. This route
-   wraps itself in `.settings` (index.html), and `.settings` is
-   `max-width: 620px; margin: 0 auto` -- the same wrapper the eight Settings
-   sections use. So a 32-name roster meant to be SCANNED inherited the
-   measure that is right for a label/field pair, with no separate decision
-   behind it. That is what P10 measured: window 838 -> 969 CSS moved every
-   control right by exactly 133 physical px and widened none of them,
-   because nothing inside is permitted past 620.
-
-   D1 answered it: deliberate for prose and form rows, accidental for the
-   roster. So the cap is lifted for exactly one card -- the one holding the
-   roster -- and re-applied inside it to everything that is not the roster.
-   The folder card above keeps 620 and keeps its centring, which is why the
-   cap is restored on `> .card` rather than left off .settings.
-
-   `:has()` rather than a new id, because this reaches the card by the one
-   thing that makes it the exception. Same evergreen-Chromium argument the
-   .settings hint rules make: if a runtime ever lacks :has(), every rule
-   here drops and the route renders exactly as it does on main.
-
-   No cap on the wide card on purpose. .es-roster is already
-   `columns: 170px`, so the extra width becomes extra roster columns with no
-   layout code. Measured in the ?dev=1 harness with its 34 names, against
-   three columns at every width before: 4 at the 840 floor, 4 at 969 (wider
-   ones -- 229px against 197), 7 at 1400. The number that matters is not the
-   column count though: `Copy to selected` now sits at y=611 in a 625 floor,
-   i.e. ABOVE the fold, where P10 found it below the fold at 969 with
-   widening the window unable to help. That is the gesture the screen was
-   failing to reward.
-
-   .settings itself is untouched: Settings' eight sections share that rule
-   and their 620 is correct. */
-#route-evesettings > .settings { max-width: none; }
-/* margin-inline: 0, not auto. The cards used to centre because .settings
-   centred, and the folder card kept centring after the wrapper was lifted
-   -- which put a 620px card in the middle of the page above a full-width
-   one starting at the route's own padding, two left edges on one screen.
-   Left-aligned, the folder card keeps its 620 measure exactly and simply
-   shares the copy card's edge. */
-#route-evesettings > .settings > .card { max-width: 620px; margin-inline: 0; }
-#route-evesettings > .settings > .card:has(> .es-roster),
-#route-evesettings > .settings > .es-context-card { max-width: none; }
-/* The card grew; its form rows and its prose did not. 586px, not 620:
-   inside the card the 620 wrapper only ever gave them 586, and this is
-   holding that measure rather than restoring a number from one level up. */
-#route-evesettings > .settings > .card:has(> .es-roster) > :not(.es-roster):not(.es-commit-context) {
-  max-width: 586px;
+/* ====================== Profiles workbench ==========================
+   Work scrolls once; the footer owns normal-flow space outside it. Never
+   cap the roster or put a sticky action over targets at the scroll edge. */
+#route-evesettings { flex-direction: column; overflow: hidden; padding: 12px; }
+#route-evesettings > .es-shell { flex: 1; min-height: 0; max-width: none; gap: 0; }
+#es-work {
+  flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable;
+  padding-right: 4px;
 }
+#es-work > .card { max-width: none; margin-bottom: 12px; }
+#es-work > .es-context-card { padding: 10px 12px; }
+#es-work > .es-context-card > h2 { margin-bottom: 8px; }
+.es-workbench {
+  display: grid; grid-template-columns: minmax(260px, 34%) minmax(0, 1fr);
+  align-items: start; gap: 20px;
+}
+.es-workbench[hidden] { display: none; }
+.es-source-pane, .es-target-pane { min-width: 0; }
+.es-source-identity { overflow-wrap: anywhere; user-select: text; }
+#es-source-identity { margin: -2px 0 12px; }
+#es-copy-options { border-top: 1px solid var(--panel-border); padding-top: 10px; }
+#es-copy-scope > summary { cursor: pointer; color: var(--text); }
+#es-copy-scope-summary { display: block; margin: 4px 0 8px; color: var(--text-dim); overflow-wrap: anywhere; }
+#es-copy-scope-summary[hidden] { display: none; }
+#es-copy-scope-note { margin: 8px 0 0; }
+#es-copy-scope[open] > summary { margin-bottom: 10px; }
+#es-copy-scope > summary:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+#es-filter { flex-basis: 100%; }
 
 /* The context is part of the copy decision, so it uses the same route width
    as the roster below it. .es-path retains min-width:0 and ellipsis, keeping
@@ -2911,21 +2893,13 @@ button.btn:disabled,
    shared two-up track is wrong for a single decision-making control. */
 #es-profile-copy-destination { flex: 1; }
 
-/* Quiet tools remain siblings between context and work rather than becoming
-   another card or route. Pulling the group toward the context and aligning it
-   with that card's content ties Backups and Formations to the selected
-   profile through proximity, a shared border and a visible group label --
-   not through a sentence the payload cannot back up. Backups reads across
-   every profile ever backed up on this machine: eve_settings_backup_dir()
-   (paths.py) is one fixed store, never scoped to the selected server or
-   profile, so the old aria-label ("Tools for the selected EVE profile") was
-   the false claim. The group is named the same way for sighted and
-   assistive-tech users -- "Profile tools" -- through a visible label wired
-   with aria-labelledby, and the border-top reads as the context card's own
-   footer shelf rather than an unrelated row floating beneath it. */
+/* Tools follow the workbench rather than spending its first-view height.
+   Keep Share/Import outside optional disclosures: their child route returns
+   focus directly to these buttons. Backups spans one fixed store, not the
+   selected profile, so the visible group name makes no false scope claim. */
 .es-profile-tools {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%;
-  margin-top: -4px; padding: 8px 16px 0;
+  margin: 0 0 12px; padding: 6px 12px 0;
   border-top: 1px solid var(--panel-border);
 }
 .es-profile-tools[hidden] { display: none; }
@@ -3005,6 +2979,8 @@ button.btn:disabled,
 }
 .es-backup-row { padding: 7px 8px; border-top: 1px solid var(--panel-border); }
 .es-backup-row:first-child { border-top: 0; }
+/* Label the right-anchored cluster, not the unused start of its track. */
+.es-backup-head > :last-child { text-align: right; }
 .bk-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .bk-menu { position: relative; }
 .bk-menu > summary {
@@ -3055,18 +3031,16 @@ button.btn:disabled,
    by thirty pixels. The measurements above are the ones to trust; the
    walkthrough's are kept so the finding stays traceable.
 
-   column-width, not column-count: the count then follows the width the card
-   actually has, which is 586px inside .settings' 620px cap today and would
-   be more if that cap ever moves. At 586 this is three columns, which is
-   what the finding asked for, and ~35 names become ~12 rows.
+   column-width, not column-count: the count follows the target pane's
+   available width beside source and scope, not a fixed prose measure.
 
    Columns rather than a grid because the reading order is the point. A
    grid fills row-wise, so an alphabetical roster reads across; multi-column
    fills column-wise, so it reads DOWN each column the way a name list is
    scanned. DOM order is column order, so the tab order agrees with the eye.
 
-   No max-height on purpose. The route already sets overflow-y: auto, so the
-   page is the one scrollbar; a cap here is what produced the nested pair
+   No max-height on purpose. #es-work sets overflow-y: auto, so that pane
+   owns the one scrollbar; a cap here is what produced the nested pair
    and the rows clipped mid-name at both edges. A very large roster makes a
    long page, which is the honest rendering of "here is everyone about to be
    overwritten". */
@@ -3407,51 +3381,30 @@ button.btn:disabled,
 #es-folder-set {
   flex: none; color: var(--text-dim); font-size: var(--fs-muted);
 }
-
-/* Profiles' commitment context precedes the uncapped roster and sticks at
-   the route's top while targets move beneath it. The button keeps the left
-   edge every other control starts at; cost and source follow, and the pill
-   takes the right edge as a condition of the action. flex-wrap prevents the
-   four items from squeezing at the 840px floor. Its own background and
-   border are functional while sticky: roster text must not show through it. */
-.es-commit-context {
-  position: sticky; top: 0; z-index: 1;
-  margin: 0 0 12px; padding: 10px 0;
-  border-bottom: 1px solid var(--panel-border); background: var(--panel);
-  max-width: 586px;
+/* This is a static summary, not a form field: keep its noun inline so
+   configured setup gives a line back to target picking. The path retains
+   its shrink/ellipsis behavior; the expanded form keeps stacked labels. */
+#es-folder-summary > .lab { width: auto; }
+@media (max-width: 720px) {
+  #es-folder-summary > .lab { width: 100%; }
 }
+
+/* The footer is a nonshrinking sibling of #es-work, not its overlay.
+   Full-width at both floors; identity may wrap without covering a target. */
+.es-commit-context {
+  flex: none; padding: 10px 12px;
+  border-top: 1px solid var(--panel-border); background: var(--panel);
+}
+.es-commit-context[hidden] { display: none; }
 .es-commit-context > .hint { margin: 6px 0 0; }
 .es-commit-context > .es-copy-followup { margin: 8px 0 0; }
 #es-commit { flex-wrap: wrap; row-gap: 8px; margin-bottom: 0; }
-/* The count and source are one fact -- what will happen, and to what --
-   grouped so the wide tier below can hand them the row's remaining space
-   instead of leaving it as a bare gap between the button and a pill
-   stranded at the far right edge. */
+/* Accepted context stays separate from the editable Profile control. */
 .es-commit-info {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-width: 0;
+  display: flex; flex: 1; flex-direction: column; gap: 2px;
+  min-width: 0; overflow-wrap: anywhere;
 }
-
-/* Capped at the card's 586px prose measure like every other row in it, the
-   commit bar read as a narrow aside pinned to the card's upper-left corner
-   while the roster it introduces already spans the whole card beneath it --
-   summary, action and hazard crowded into a corner of a much wider region
-   they describe. Past the 840 floor the bar takes the SAME width the
-   roster does, so the two read as one region instead of two mismatched
-   measures stacked on each other; at or below the floor nothing here
-   changes. DESIGN.md: a tier that must fire AT the floor is written as
-   max-width: 840px, so the complementary "above it" tier is
-   min-width: 841px. Excluded from the shared re-cap above rather than
-   fought over with a higher-specificity override -- its own rule, not a
-   specificity contest, decides its width. The bar's own prose keeps the
-   586 measure a sentence wants: widening the BAR must not widen what the
-   reader reads left to right. */
-@media (min-width: 841px) {
-  .es-commit-context { max-width: none; }
-  .es-commit-context > .hint, .es-commit-context > .es-copy-followup {
-    max-width: 586px;
-  }
-  .es-commit-info { flex: 1; }
-}
+.es-commit-info[hidden] { display: none; }
 
 /* The quantity, stated before the irreversible action (PRODUCT.md). Body
    size, not muted: it is the number the user is meant to check, and the
@@ -3505,11 +3458,8 @@ button.btn:disabled,
    Server and Profile still want the fixed track, and the rule is L6's
    block.
 
-   Widened to the row, not past it: D1 keeps the copy card's form rows at
-   the 586 measure while the roster below spans the card, so this is the
-   whole width the source is allowed and it is now the widest control in
-   the card. `.settings .row > .field`'s own flex is what a full-measure
-   field is; this only stops the select opting out of it. */
+   Widened to the source pane, not past it. The adjacent wrapping identity
+   exposes the full accepted name and metadata when the option clips. */
 #es-source { flex: 1; }
 
 #es-account-tools { width: 100%; align-items: flex-start; }
@@ -3593,9 +3543,8 @@ button.btn:disabled,
 }
 .es-target-meta { color: var(--text-faint); font-size: var(--fs-muted); }
 
-/* Payload-defined copy groups use the copy card's existing form measure.
-   At the 840px window floor CDP measured three roughly 185px columns;
-   auto-fit adds columns only when the form measure grows, with no inner scroller. */
+/* Payload-defined groups stay in the source pane's native disclosure.
+   No inner scroller; expansion increases the shared work pane's content. */
 .es-copy-groups {
   display: grid; width: 100%;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -3967,6 +3916,9 @@ button.btn:disabled,
 /* Two actions bound to the same key: AutoHotkey silently lets one win, so
    the warning above the list names them and this marks which rows. */
 .bindbtn.clash { border-color: var(--err); color: var(--err); }
+/* Red labels need the slightly darker hover fill to stay above 4.5:1,
+   including during capture. The purple capture border remains independent. */
+.bindbtn.clash:hover:not(:disabled) { background: var(--hover); }
 
 /* D7. A bind can be armed and marked at once, and until this rule the two
    states fought over one channel: .clash is equal specificity to
@@ -3978,18 +3930,14 @@ button.btn:disabled,
    still clears AA against the armed background:
 
      clash    keeps the LABEL. --err on --hover measures 4.59:1, over the
-              4.5 that 1.4.3 asks. (It is 4.40 with the pointer on the row,
-              because .bindbtn:hover:not(:disabled) is (0,3,0) and lifts the
-              background to --control-hover -- a PRE-EXISTING shortfall of
-              this colour on this surface, unchanged in kind: a hovered
-              .clash that is not armed already measures the same 4.40.)
+              4.5 that 1.4.3 asks. The enabled clash hover override keeps
+              that fill under the pointer too; --control-hover would lower
+              the red label to 4.40:1, armed or not.
      unknown  keeps its DASHED border-style, which arming never sets.
-     dim      keeps nothing, and that is the one deliberate loss. Its label
-              is --text-faint, 4.09:1 on --hover -- under 4.5 on the one
-              control in the app that is asking to be read -- and its
-              border is chosen to RECEDE (see .bindbtn.dim), which is the
-              opposite of what a modal state may do. Its title stays, and
-              the mark returns the moment capture ends.
+     dim      keeps nothing, and that is the one deliberate loss. Even with
+              its readable enabled label, its quiet foreground and receding
+              border must yield to capture's stronger invitation to type.
+              Its title stays, and the mark returns when capture ends.
 
    WHY THE MARK DOES NOT SIMPLY YIELD TO ARMING, which was the other
    candidate and is what already happens to dim: clicking a clashing row
@@ -4192,7 +4140,11 @@ button.btn:disabled,
    never had. .row's own 10px gap applies to both axes, which would leave a
    label exactly as far from its field as from the row above it, belonging
    to neither. */
+/* Fitting metadata is the same stacked field pattern, not Skills' inline
+   label/value row whose variable label widths move the controls apart. */
+.fit-metadata > .row,
 .settings .row { flex-wrap: wrap; row-gap: 4px; }
+.fit-metadata > .row > .lab,
 .settings .row > .lab {
   width: 100%; flex: none; color: var(--text-dim);
   font-size: var(--fs-body); text-align: left;
@@ -4395,7 +4347,8 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 /* Radios laid out INLINE in a .row, rather than stacked down a card: the
    8px stacked margin applies to the first of the pair and not the last
    (.radio:last-child zeroes it), which sits them at different heights. */
-.settings .row > .radio { margin-bottom: 0; }
+.settings .row > .radio,
+.companion-actions > .radio { margin-bottom: 0; }
 
 /* A masked webhook must not be rendered in a proportional font: the mask
    is what is on screen, and monospace keeps its length honest. */
@@ -4692,7 +4645,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .fm-ring-key-title { margin-bottom: 2px; }
 .fm-ring-label { font-variant-numeric: tabular-nums; }
 #fm-preview:active, #fm-import-preview:active { cursor: grabbing; }
-.fm-ring { fill: none; stroke: var(--panel-border); stroke-width: 1; }
+.fm-ring { fill: none; stroke: var(--formation-guide); stroke-width: 1; }
 /* --fs-label and it MEANS it: formations.js sets the viewBox to the
    element's own CSS pixel size on every draw, so one SVG user unit is one
    CSS pixel here. A fixed square viewBox would have scaled this type down
@@ -4701,7 +4654,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   fill: var(--text-faint); font-size: var(--fs-label);
 }
 .fm-tether {
-  stroke: var(--panel-border); stroke-width: 1; stroke-dasharray: 2 3;
+  stroke: var(--formation-guide); stroke-width: 1; stroke-dasharray: 2 3;
 }
 .fm-probe { fill: var(--brand-text); }
 .fm-ship { fill: var(--text); }
@@ -4848,6 +4801,12 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
    at the foot of the rail, where nothing is pushed by it. */
 .rail-plans-block { flex: 1; min-height: 0; }
 .rail-plans { flex: 0 1 auto; overflow-y: auto; min-height: 0; }
+/* As on Uploader, the body and its external header both reserve the gutter.
+   Keep READY on the ratios' right edge for short and overflowing Plans lists. */
+#skills-plans { scrollbar-gutter: stable; }
+#route-skills .rail-plans-block > .rail-head-row {
+  padding-right: calc(8px + var(--scrollbar-w));
+}
 /* The cap is the whole reason this rule exists. `.rail-plans-block` is
    `flex: 1; min-height: 0`, so Plans absorbs every pixel another rail
    block takes -- all the way to zero. Rendered at nine groups with no
@@ -5537,7 +5496,7 @@ button.btn.danger:disabled {
 .fit-copy-result.unattempted_throttle { color: var(--warn); }
 .fit-copy-result.cancelled { color: var(--warn); }
 .fit-copy-result.failed { color: var(--err); }
-#fittings-copy-status { margin-top: 10px; min-height: 18px; }
+#fittings-copy-status { margin-top: 10px; min-height: 18px; overflow-wrap: anywhere; }
 #fittings-copy-dialog .buttons > [hidden] { display: none; }
 
 /* ====================== reduced motion ==============================

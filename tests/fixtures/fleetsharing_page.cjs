@@ -143,7 +143,47 @@ async function leave() {
 async function historyScenario(first) {
   first.resolve({queued: true, state: payload()}); await turn();
   const history = ids['sharing-history'];
-  if (scenario === 'mixed-history') {
+  if (scenario === 'scope-copy') {
+    const local = ids['fleetbar-characters'];
+    assert.match(local.firstChild.textContent, /Show.*characters.*Fleet Bar/i);
+    const localScope = ids['fleetbar-character-scope'];
+    assert.ok(localScope && local.contains(localScope), 'visibility scope stays with the character controls');
+    assert.match(localScope.textContent, /local display only/i);
+    assert.match(localScope.textContent, /not.*collection.*sharing/i);
+    const sharedScope = ids[ids['sharing-enabled'].getAttribute('aria-describedby')];
+    assert.ok(sharedScope, 'sharing switch describes its transmission scope');
+    assert.match(sharedScope.textContent, /current DPS.*scram.*point/i);
+    assert.match(sharedScope.textContent, /eligible.*same.*fleet/i);
+    assert.match(sharedScope.textContent, /never raw logs or history/i);
+    for (let node = sharedScope; node; node = node.parentNode) {
+      assert.notEqual(node.tagName, 'DETAILS', 'transmission scope cannot require opening a disclosure');
+      assert.equal(node.hidden, false);
+    }
+    assert.equal(mutationCount(), 0);
+  } else if (scenario === 'verification-scope') {
+    push(payload([source(A, 'active', null), source(B)], {pending_sources: [pending(C, 'start')]}));
+    counts(2, 1);
+    const card = ids['fleet-sharing'];
+    const order = card.querySelectorAll('*');
+    assert.ok(order.indexOf(ids['sharing-sources']) < order.indexOf(ids['sharing-boss']),
+      'current/pending verification precedes selection for a new attempt');
+    const headings = order.filter(node => node.tagName === 'H3');
+    assert.match(headings[0].textContent, /current.*pending.*verification/i);
+    const label = order.find(node => node.getAttribute('for') === 'sharing-boss');
+    assert.match(label.textContent, /boss.*new attempt/i);
+    assert.match(ids['sharing-grant-status'].textContent, /Choose.*boss/i);
+    assert.doesNotMatch(ids['sharing-boss'].options[0].textContent, /Choose/i,
+      'the selector need not repeat its disabled-action guidance');
+    assert.equal(ids['sharing-start'].disabled, true);
+    chooseBoss();
+    assert.equal(ids['sharing-start'].disabled, false);
+    assert.equal(currentRows()[0].lastChild.disabled, false, 'source Stop remains independent');
+    assert.equal(mutationCount(), 0, 'boss selection cannot alter current verification');
+    push(payload([source(B)])); counts(0, 1);
+    assert.match(status(), /No current verification.*pending expired/);
+    assert.match(status(), /Start verification below/);
+    assert.doesNotMatch(status(), /Choose.*boss/i);
+  } else if (scenario === 'mixed-history') {
     push(payload([source(A, 'active', null), source(B), source(C)]));
     counts(1, 2); assert.equal(history.open, false);
     assert.equal(currentRows()[0].getAttribute('data-source'), A);
@@ -155,7 +195,7 @@ async function historyScenario(first) {
     assert.match(status(), /No current verification/);
     assert.match(status(), /pending expired \(2\)/);
     assert.match(status(), /stopped \(1\)/);
-    assert.match(status(), /Choose your current fleet boss.*Start verification/);
+    assert.match(status(), /Start verification below/);
     assert.doesNotMatch(status(), /latest|recent|failed|failure/i);
     push(payload()); counts(0, 0);
     assert.match(status(), /No sources reported/);
@@ -252,6 +292,13 @@ async function historyScenario(first) {
     await turn(); counts(0, 1);
     assert.doesNotMatch(historyRows()[0].textContent, /request.*progress/i);
     assert.match(feedback(), /could not be queued/i);
+    const message = ids['sharing-action'];
+    const card = ids['fleet-sharing'];
+    const order = card.querySelectorAll('*');
+    assert.equal(message.getAttribute('role'), 'status');
+    assert.equal(message.parentNode, card, 'shared feedback stays outside disclosures and forms');
+    assert.ok(order.filter(node => node.tagName === 'H3').every(heading => order.indexOf(message) < order.indexOf(heading)),
+      'rejected Stop feedback belongs to the account-wide area, before verification subsections');
   } else if (scenario === 'inflight-stop') {
     push(payload([source(A.toUpperCase(), 'active', null)]));
     const row = currentRows()[0]; row.lastChild.focus(); row.lastChild.dispatchEvent({type: 'click'}); await turn();
@@ -476,7 +523,7 @@ async function run() {
     first.resolve(scenario === 'newer-push' ? null : {queued: true, state: input.older}); await turn();
     assert.equal(ids['sharing-connection'].textContent, before);
     assert.equal(ids['sharing-enabled'].disabled, false);
-  } else if (['mixed-history', 'ended-only', 'ended-prerequisites', 'pending-precedence', 'local-results',
+  } else if (['scope-copy', 'verification-scope', 'mixed-history', 'ended-only', 'ended-prerequisites', 'pending-precedence', 'local-results',
     'retained-unknown', 'failed-refresh-history', 'binding-invalidation', 'inflight-stop', 'bridge-source-rejection',
     'inflight-start-leave', 'inflight-binding-reply', 'stable-history-focus', 'visibility-ownership',
     'retained-local-result', 'concurrent-stop-replies', 'inflight-reenter',

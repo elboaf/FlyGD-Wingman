@@ -142,11 +142,11 @@
     paintSetupTool();
   }
 
-  // No root, or a folder Python could not read through: there is nothing
-  // to summarise and the user has to act on it, so the controls open
-  // regardless of what the Change link was last told.
+  // Incomplete discovery is setup too: a readable root with no server or
+  // profile still needs correction, not a summary that looks ready to copy.
   function forcedOpen() {
-    return !state || !state.root || state.unreadable || state.too_broad;
+    return !state || !state.root || !state.server || !state.profile
+      || state.unreadable || state.too_broad;
   }
 
   function nameOf(items, path) {
@@ -193,6 +193,8 @@
     var open = forcedOpen() || expanded;
     WM.el('es-folder-summary').hidden = open;
     WM.el('es-folder-detail').hidden = !open;
+    WM.el('es-folder-edit').setAttribute('aria-expanded', String(open));
+    WM.el('es-folder-close').disabled = !!forcedOpen();
     if (open) return;
     WM.el('es-folder-root').textContent = state.root;
     // Profile no longer names itself here -- it is the primary row's own
@@ -740,8 +742,12 @@
     if (!state) return;
 
     var available = !!state.selective_copy_available;
-    row.hidden = !available;
-    if (!available) return;
+    row.hidden = false;
+    WM.el('es-copy-scope').hidden = !available;
+    if (!available) {
+      paintCopyScope();
+      return;
+    }
 
     var currentKind = kind();
     var choices = copyGroupSelections[currentKind];
@@ -762,9 +768,33 @@
       groupBox.value = group.id;
       groupBox.addEventListener('change', function () {
         choices[group.id] = groupBox.checked;
+        // Paint text only: rebuilding the disclosure would discard focus.
+        paintCopyScope();
       });
       host.appendChild(groupLabel);
     });
+    paintCopyScope();
+  }
+
+  function paintCopyScope() {
+    var summary = WM.el('es-copy-scope-summary');
+    var scopeNote = WM.el('es-copy-scope-note');
+    if (!state.selective_copy_available) {
+      summary.textContent = '';
+      scopeNote.textContent = 'Selective groups unavailable. The whole settings file is copied.';
+      return;
+    }
+    var groups = (state.copy_groups && state.copy_groups[kind()]) || [];
+    var choices = copyGroupSelections[kind()];
+    var excluded = groups.filter(function (group) { return !choices[group.id]; });
+    var names = (excluded.length ? excluded : groups).map(function (group) {
+      return group.label;
+    }).join(', ');
+    summary.textContent = !groups.length ? 'Other settings only'
+      : !excluded.length ? 'Copy all groups: ' + names
+      : excluded.length === groups.length ? 'Keep all groups: ' + names
+      : 'Keep: ' + names;
+    scopeNote.textContent = 'Checked groups are copied as a unit. Unchecked groups stay unchanged. Everything else is copied.';
   }
 
   function selectedGroupIds() {
@@ -1076,10 +1106,18 @@
     var noun = kind() === 'accounts' ? 'account' : 'character';
     var copyButton = WM.el('es-copy');
     var source = WM.el('es-source');
-    var sourceOption = source.options[source.selectedIndex];
-    WM.el('es-copy-source').textContent = source.value && sourceOption
-      ? 'From ' + sourceOption.textContent
+    var sourceRow = rows().filter(function (row) {
+      return row.path === source.value;
+    })[0];
+    var sourceName = sourceRow ? sourceRow.display_name || sourceRow.name : '';
+    WM.el('es-source-identity').textContent = sourceRow
+      ? sourceName + (sourceRow.display_meta ? ' · ' + sourceRow.display_meta : '')
       : 'No source';
+    WM.el('es-copy-source').textContent = sourceRow ? 'From ' + sourceName : 'No source';
+    WM.el('es-copy-profile').textContent = state && state.profile
+      ? 'Profile: ' + nameOf(state.profiles, state.profile)
+        + ' · Server: ' + nameOf(state.servers, state.server)
+      : 'No profile selected';
     copyButton.textContent = busy && pendingMutation === 'eve_settings_copy'
       ? 'Copy operation in progress\u2026'
       : 'Copy to ' + count + ' ' + noun + (count === 1 ? '' : 's');
@@ -1097,21 +1135,8 @@
     // only while the button can do it: with nothing selected it would say
     // "EVE running" about a copy that cannot happen.
     //
-    // It does NOT stop the two pills sharing a viewport, and this comment
-    // used to claim it did ("the one state where both are on screen
-    // together -- no folder chosen"). False: the heading pill lives in the
-    // h2 precisely so it survives the folder card collapsing, so with a
-    // folder chosen and a character selected a tall window shows both,
-    // about 545 CSS px apart (round 3, P8).
-    //
-    // That overlap is accepted. The two answer different questions -- the
-    // heading pill is the screen's standing answer, this one is the
-    // commit's -- and outside the overlap their coverage is complementary:
-    // while choosing, only the heading pill is up; scrolled to the button,
-    // the heading pill has left the viewport and only this one is (which is
-    // why the second was added at all, see paintPill). Neither is
-    // removable, and closing the overlap by weakening this guard would
-    // drop the hazard in the state where it is the only warning.
+    // The heading remains the standing answer while nothing is selected;
+    // the footer keeps the same hazard beside Copy when work scrolls away.
     WM.el('es-eve-state-commit').hidden = count === 0;
   }
 
@@ -1190,6 +1215,13 @@
     WM.el('es-folder-edit').addEventListener('click', function () {
       expanded = true;
       paintFolder();
+      WM.el('es-pick').focus();
+    });
+    WM.el('es-folder-close').addEventListener('click', function () {
+      if (forcedOpen()) return;
+      expanded = false;
+      paintFolder();
+      WM.el('es-folder-edit').focus();
     });
 
     WM.el('es-profile-copy-open').addEventListener('click', openProfileCopy);
@@ -1610,6 +1642,8 @@
         // Every Profiles visit starts collapsed. render() is what repaints
         // it, and it runs off the refresh below.
         expanded = false;
+        WM.el('es-copy-scope').open = false;
+        WM.el('es-work').scrollTop = 0;
         identityExpanded = false;
         clearIdentification();
         identityStep = 'idle';

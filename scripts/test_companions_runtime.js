@@ -307,6 +307,16 @@ test('accepted native selection survives navigation and reentry hydrates its rec
   assert.equal(p.calls.length, 0, 'navigation never cancels server operation');
 });
 
+test('waiting source explains open or reselect without hiding recovery or real errors', async () => {
+  const p = await page(state(1, [row({status: 'waiting'})], {}, {enabled: true}));
+  assert.match(p.field('status').textContent, /Waiting for source.*open.*window.*reselect/i);
+  assert.equal(p.field('source').disabled, false);
+  assert.doesNotMatch(p.field('status').className, /err/);
+  assert.equal(p.calls.length, 0, 'waiting must not start discovery or change a binding');
+  await p.push(state(2, [row({status: 'waiting', error: 'Source identity could not be verified.'})], {}, {enabled: true}));
+  assert.equal(p.field('status').textContent, 'Source identity could not be verified.');
+});
+
 test('typing and focus survive new snapshots, with no blur commit', async () => {
   const p = await page(state(1, [row()]));
   p.field('label').focus(); await p.edit('label', 'Draft');

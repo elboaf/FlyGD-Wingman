@@ -635,11 +635,9 @@ def _fittings_setup_script(key: str) -> str:
     Every stage is read-only against the harness's fabricated fixture and
     drives only controls a user could actually press -- selection
     checkboxes, the rail, Copy selected, target checkboxes, Review -- with
-    one deliberate exception: the progress/result stages inject the canonical
-    dev fixture's production-reachable copy sequence through onFittingsProgress,
-    the same read-side pattern the Preview stages use for onPreviewHotkeys. This
-    avoids waiting through timer-throttled dev execution while keeping one data
-    owner and the same semantic handler the real controller pushes.
+    one deliberate exception: progress/results use the bounded screenshot
+    handler to enter the same presentation as production, without admitting a
+    writer or consuming a real copy ticket. Records remain owned by dev.js.
 
     Does NOT include _FIT_RESET_JS or the Alliance scope switch: walk() runs
     each boundary action as its own evaluate call with a settle sleep afterward.
@@ -701,7 +699,7 @@ def _fittings_setup_script(key: str) -> str:
                 "btn.querySelector('.fit-name') "
                 "&& btn.querySelector('.fit-name').textContent === 'Fleet Doctrine Alpha' "
                 "&& btn.querySelector('.fit-meta') "
-                "&& btn.querySelector('.fit-meta').textContent.indexOf('1 character') === 0",
+                "&& btn.querySelector('.fit-meta').textContent.indexOf('On 1 character') === 0",
                 "Fleet Doctrine Alpha (already on Eryn)",
             )
             + _fit_check_row_js(
@@ -715,7 +713,7 @@ def _fittings_setup_script(key: str) -> str:
                 "btn.querySelector('.fit-name') "
                 "&& btn.querySelector('.fit-name').textContent === 'Fleet Doctrine Alpha' "
                 "&& btn.querySelector('.fit-meta') "
-                "&& btn.querySelector('.fit-meta').textContent.indexOf('0 characters') === 0",
+                "&& btn.querySelector('.fit-meta').textContent.indexOf('On 0 characters') === 0",
                 "Fleet Doctrine Alpha (unfiled source)",
             )
             + "  var copySelected = document.getElementById('fittings-copy-selected');\n"
@@ -740,96 +738,43 @@ def _fittings_setup_script(key: str) -> str:
             "  review.click();\n"
         )
     elif key == "fittings-copy-limit":
+        # The fixture is a Cartesian selection across eligible targets. Derive
+        # the controls from its classified pairs, not a row-count shortcut.
+        pairs = load_dev_fittings_screenshot_fixture()["limit_preflight"]["pairs"]
+        entry_ids = list(dict.fromkeys(pair["entry_id"] for pair in pairs))
+        targets = list(dict.fromkeys(pair["character_name"] for pair in pairs))
         body += (
+            f"  var entryIds = {json.dumps(entry_ids)};\n"
             "  var picked = 0;\n"
-            "  Array.prototype.some.call(\n"
-            "    document.querySelectorAll('#fittings-list .fit-row-toggle'),\n"
-            "    function (btn) {\n"
-            "      var name = btn.querySelector('.fit-name');\n"
-            "      if (!name || name.textContent.indexOf('Generated Fit ') !== 0) {\n"
-            "        return false;\n"
-            "      }\n"
-            "      var meta = btn.querySelector('.fit-meta');\n"
-            "      if (meta && meta.textContent.indexOf('Not deployable') !== -1) {\n"
-            "        return false;\n"
-            # 'Generated Fit 001' is deliberately non-deployable (dev.js).
-            "      }\n"
-            "      var row = btn.closest('.fit-row');\n"
-            "      var box = row.querySelector('.fit-select input[type=checkbox]');\n"
-            "      if (!box) { return false; }\n"
-            "      box.checked = true;\n"
-            "      box.dispatchEvent(new Event('change'));\n"
-            "      picked += 1;\n"
-            "      return picked >= 21;\n"
-            "    }\n"
-            "  );\n"
-            "  if (picked < 21) {\n"
-            "    throw new Error(\n"
-            "      'Only found ' + picked + ' Generated Fit rows; need 21 to trip the '\n"
-            "      + 'write-count limit');\n"
-            "  }\n"
+            "  Array.prototype.forEach.call(\n"
+            "    document.querySelectorAll('#fittings-list .fit-select input[type=checkbox]'), function (box) {\n"
+            "      if (entryIds.indexOf(box.value) === -1) return;\n"
+            "      if (box.disabled) throw new Error('Limit fitting selection is unavailable');\n"
+            "      box.checked = true; box.dispatchEvent(new Event('change')); picked += 1;\n"
+            "    });\n"
+            "  if (picked !== entryIds.length) throw new Error('Limit fitting selection is incomplete');\n"
             "  var copySelected = document.getElementById('fittings-copy-selected');\n"
-            "  if (!copySelected || copySelected.disabled) {\n"
-            "    throw new Error('Copy selected control is unavailable');\n"
-            "  }\n"
+            "  if (!copySelected || copySelected.disabled) throw new Error('Copy selected control is unavailable');\n"
             "  copySelected.click();\n"
             + _FIT_CHECK_TARGET_JS
-            + "  fitCheckTarget('Eryn Voss');\n"
+            + f"  {json.dumps(targets)}.forEach(fitCheckTarget);\n"
             "  var review = document.getElementById('fittings-copy-review');\n"
-            "  if (!review || review.disabled) { throw new Error('Review copy control is unavailable'); }\n"
-            # Not asserted here for the same reason as fittings-copy-preflight:
-            # the refusal text arrives through requestCopyPreflight()'s
-            # Promise chain, which this synchronous script cannot reliably
-            # await; walk()'s post-setup sleep is what the screenshot
-            # actually depends on.
+            "  if (!review || review.disabled) throw new Error('Review copy control is unavailable');\n"
+            # The postcondition runs after walk's settle wait, not in the click's
+            # synchronous turn before requestCopyPreflight's promise resolves.
             "  review.click();\n"
         )
     elif key in {"fittings-copy-progress", "fittings-copy-result"}:
-        # One row selected only to make Copy selected clickable and the
-        # overlay open (onCopyProgress ignores copy events while it is
-        # closed). The result data itself remains owned by dev.js; this
-        # tool only serializes that single authoritative fixture.
-        fixture = load_dev_fittings_screenshot_fixture()["copy_result"]
-        payload = (
-            {
-                "kind": "copy",
-                "phase": "progress",
-                "operation_id": fixture["operation_id"],
-                "completed": 2,
-                "total": len(fixture["results"]),
-                "result": fixture["results"][1],
-            }
-            if key == "fittings-copy-progress"
-            else {
-                "kind": "copy",
-                "phase": "complete",
-                "operation_id": fixture["operation_id"],
-                "completed": len(fixture["results"]),
-                "total": len(fixture["results"]),
-                "result": fixture,
-            }
+        payload = load_dev_fittings_screenshot_fixture()
+        payload["copy_stage"] = (
+            "progress" if key == "fittings-copy-progress" else "results"
         )
         body += (
-            _fit_check_row_js(
-                "seed",
-                "btn.querySelector('.fit-name') "
-                "&& btn.querySelector('.fit-name').textContent === 'Generated Fit 002'",
-                "Generated Fit 002",
-            )
-            + "  var copySelected = document.getElementById('fittings-copy-selected');\n"
-            "  if (!copySelected || copySelected.disabled) {\n"
-            "    throw new Error('Copy selected control is unavailable');\n"
-            "  }\n"
-            "  copySelected.click();\n"
             "  var payload = " + json.dumps(payload) + ";\n"
-            "  if (typeof window.onFittingsProgress !== 'function') {\n"
-            "    throw new Error('onFittingsProgress is missing');\n"
+            "  if (typeof window.onFittingsScreenshotState !== 'function') {\n"
+            "    throw new Error('Fittings screenshot presentation is missing');\n"
             "  }\n"
-            "  window.onFittingsProgress(payload);\n"
-            "  var copyBody = document.getElementById('fittings-copy-body');\n"
-            "  if (!copyBody || !copyBody.textContent) {\n"
-            "    throw new Error('Copy state did not render');\n"
-            "  }\n"
+            "  window.onFittingsScreenshotState(payload);\n"
         )
     else:
         raise ValueError(f"no fittings setup staged for {key!r}")
@@ -978,6 +923,10 @@ def new_screen_prepare_script(screen: Screen) -> str | None:
 
 
 def new_screen_cleanup_script(screen: Screen) -> str | None:
+    if screen.route == "fittings":
+        # Only an installed fixture can be torn down here. A rejected injection
+        # over a genuine copy must not leave its route and accidentally Cancel.
+        return "window.onFittingsScreenshotState({kind: 'fittings-screenshot-v1', clear: true});"
     entry = _TOOL_SCREEN_FIXTURES.get(screen.key)
     if not entry:
         return None
@@ -988,8 +937,122 @@ def new_screen_cleanup_script(screen: Screen) -> str | None:
     return leave + f"WM.{method}(null);"
 
 
+def _fidelity_verify_script(screen: Screen) -> str | None:
+    key = screen.key
+    prefix = ""
+    if key == "settings-previews-groups":
+        prefix = (
+            "var manager = document.querySelector('.preview-group-manager');\n"
+            "var pane = document.querySelector('#settings-previews-characters');\n"
+            "function exposed(node) {\n"
+            "  if (!visible(node) || !visible(pane)) return false;\n"
+            "  var r = node.getBoundingClientRect(), p = pane.getBoundingClientRect();\n"
+            "  if (r.width <= 0 || r.height <= 0\n"
+            "      || r.left < Math.max(0, p.left) || r.right > Math.min(innerWidth, p.right)\n"
+            "      || r.top < Math.max(0, p.top) || r.bottom > Math.min(innerHeight, p.bottom)) return false;\n"
+            # Sample inside rounded borders as well as the centre: a partly
+            # covered Add row can still have a perfectly reachable centre.
+            "  var inset = Math.min(4, r.width / 4, r.height / 4);\n"
+            "  return [[r.left + inset, r.top + inset], [r.right - inset, r.top + inset],\n"
+            "    [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset],\n"
+            "    [(r.left + r.right) / 2, (r.top + r.bottom) / 2]].every(function (point) {\n"
+            "      var hit = document.elementFromPoint(point[0], point[1]);\n"
+            "      return hit && (hit === node || node.contains(hit));\n"
+            "    });\n"
+            "}\n"
+            "function controls(selector, label) {\n"
+            "  var nodes = manager.querySelectorAll(selector);\n"
+            "  return nodes.length && Array.prototype.every.call(nodes, function (node) {\n"
+            "    return exposed(node) && (node.getAttribute('aria-label') || node.textContent) === label;\n"
+            "  });\n"
+            "}\n"
+        )
+        condition = (
+            "WM.current_route !== 'settings' || WM.current_section !== 'previews'"
+            " || !visible(manager) || !manager.open"
+            " || !exposed(manager.querySelector('summary'))"
+            " || !controls('.group-add-name', 'New group name')"
+            " || !controls('.group-add-btn', 'Add')"
+            " || !controls('.group-rename-btn', 'Rename…')"
+            " || !controls('.group-delete-btn', 'Delete')"
+        )
+    elif key == "settings-characters-partial-cleanup":
+        warning = load_dev_characters_scenarios()["partial-cleanup"]["warnings"][0]
+        condition = (
+            "WM.current_route !== 'settings' || WM.current_section !== 'characters'"
+            " || !visible(WM.el('characters-notice'))"
+            " || !WM.el('characters-notice').classList.contains('warn')"
+            f" || WM.el('characters-notice').textContent !== {json.dumps(warning)}"
+            " || WM.el('characters-roster').textContent.indexOf('Skills Only') !== -1"
+        )
+    elif key in {
+        "fittings-copy-limit",
+        "fittings-copy-progress",
+        "fittings-copy-result",
+    }:
+        fixture = load_dev_fittings_screenshot_fixture()
+        condition = (
+            "WM.current_route !== 'fittings' || !visible(WM.el('fittings-copy-overlay'))"
+            # Layout visibility cannot prove a topmost question is not covering it.
+            " || !WM.el('overlay').hidden"
+            " || !WM.el('fittings-copy-start').hidden"
+        )
+        if key == "fittings-copy-limit":
+            pairs = fixture["limit_preflight"]["pairs"]
+            selected = len({pair["entry_id"] for pair in pairs})
+            targets = len({pair["character_id"] for pair in pairs})
+            condition += (
+                " || WM.el('fittings-copy-title').textContent !== 'Copy fittings'"
+                f" || WM.el('fittings-copy-status').textContent !== {json.dumps(fixture['limit_preflight']['error'])}"
+                f" || WM.el('fittings-copy-body').textContent.indexOf('{selected} selected.') !== 0"
+                f" || document.querySelectorAll('.fit-copy-target input:checked').length !== {targets}"
+                " || !visible(WM.el('fittings-copy-review')) || WM.el('fittings-copy-review').disabled"
+                " || !WM.el('fittings-copy-cancel').hidden || WM.el('fittings-copy-close').disabled"
+            )
+        else:
+            progress = key == "fittings-copy-progress"
+            results = fixture["copy_result"]["results"]
+            title = "Copying fittings" if progress else "Copy results"
+            condition += (
+                f" || WM.el('fittings-copy-title').textContent !== {json.dumps(title)}"
+                " || !WM.el('fittings-copy-review').hidden"
+            )
+            if progress:
+                completed = fixture["copy_progress_completed"]
+                pair = results[completed - 1]
+                entry = next(
+                    row for row in fixture["entries"] if row["id"] == pair["entry_id"]
+                )
+                identity = f"{pair['fitting_name']} ({entry['ship_name']}) → {pair['character_name']}:"
+                condition += (
+                    " || !visible(WM.el('fittings-copy-cancel')) || WM.el('fittings-copy-cancel').disabled"
+                    " || !WM.el('fittings-copy-close').disabled"
+                    f" || WM.el('fittings-copy-body').textContent !== '{completed} of {len(results)} pairs checked'"
+                    f" || WM.el('fittings-copy-status').textContent.indexOf({json.dumps(identity)}) !== 0"
+                )
+            else:
+                condition += (
+                    " || !WM.el('fittings-copy-cancel').hidden || WM.el('fittings-copy-close').disabled"
+                    f" || document.querySelectorAll('.fit-copy-pair').length !== {len(results)}"
+                    f" || WM.el('fittings-copy-body').textContent.indexOf('{fixture['copy_result']['write_count']} additions attempted') === -1"
+                )
+    else:
+        return None
+    return (
+        "(function () {\n"
+        "function visible(node) { return node && !node.hidden && node.getClientRects().length"
+        " && window.getComputedStyle(node).visibility !== 'hidden'; }\n"
+        + prefix
+        + f"if ({condition}) throw new Error('Screenshot content did not settle: {key}');\n"
+        "}())"
+    )
+
+
 def new_screen_verify_script(screen: Screen) -> str | None:
     """Check and frame settled content, never infer success from a click."""
+    fidelity = _fidelity_verify_script(screen)
+    if fidelity:
+        return fidelity
     if screen.key in _CURRENT_SCREEN_TARGETS:
         return _current_screen_verify_script(screen)
     if screen.key == "fittings-detail":
@@ -1292,7 +1355,8 @@ def _screen_content_setup_script(screen: Screen) -> str | None:
             "waiting",
             "  var activity = document.getElementById('characters-activity');\n"
             "  var cancel = document.getElementById('characters-cancel');\n"
-            "  if (!activity || activity.textContent.indexOf('Waiting for EVE SSO') !== 0) {\n"
+            "  if (payload.authorization_activity !== 'waiting' || !activity\n"
+            "      || activity.textContent !== 'Finish EVE sign-in in your browser.') {\n"
             "    throw new Error('Characters waiting state did not render');\n"
             "  }\n"
             "  if (!cancel || cancel.hidden || cancel.disabled) {\n"
@@ -1307,7 +1371,9 @@ def _screen_content_setup_script(screen: Screen) -> str | None:
             "  if (!count || count.textContent.indexOf('2 character') !== 0) {\n"
             "    throw new Error('Characters partial-cleanup count did not render');\n"
             "  }\n"
-            "  if (!notice || notice.textContent.indexOf('cleanup was not saved') === -1) {\n"
+            "  if (!notice || !notice.classList.contains('warn')\n"
+            "      || notice.textContent.indexOf('Skills Only was removed, but cleanup is incomplete.') === -1\n"
+            "      || notice.textContent.indexOf('Restart Wingman to retry cleanup') === -1) {\n"
             "    throw new Error('Characters partial-cleanup notice did not render');\n"
             "  }\n"
             "  if (roster.textContent.indexOf('Skills Only') !== -1) {\n"
@@ -1391,11 +1457,10 @@ def _screen_content_setup_script(screen: Screen) -> str | None:
         # appendBindRow's owner-key contract (previews.js) is
         # 'character:' + character for a character row; bindConflictId then
         # keys the conflict div's id off encodeURIComponent(ownerKey). The
-        # conflict div is the row's very next sibling as long as that
-        # character's own Configure detail is not open (appendBindRow only
-        # inserts a detail between them when openDetailName matches), so
-        # closing every inherited detail first (as the groups/narrow stages
-        # already do) keeps that adjacency true here too.
+        # conflict div now leads INSIDE its owning row, before the controls.
+        # It scrolls away before its owner instead of lingering above the next
+        # character. Validate the explicit keybind association as well as DOM
+        # ownership; the inherited detail is closed only to normalize staging.
         #
         # The row itself is `display: contents` (style.css), which leaves
         # it with no rendered box of its own -- calling scrollIntoView on
@@ -1410,9 +1475,9 @@ def _screen_content_setup_script(screen: Screen) -> str | None:
         # The scroll position is measured live off the rendered sticky
         # header rather than a hardcoded pixel guess, so it holds if its
         # height ever changes: scroll the row's cell toward the pane's top,
-        # then nudge only far enough that the conflict text clears the
-        # header, leaving the row itself at or behind the sticky-header
-        # transition -- the scenario this capture exists to show. Never a
+        # then align the warning with the header's lower edge, keeping its
+        # owning controls visible immediately below it. Both must clear the
+        # sticky-header transition now that the warning leads its owner. Never a
         # blanket `pane.scrollTop = pane.scrollHeight`: that is
         # settings-previews-table's own mechanism, and reusing it here
         # would reproduce the exact pixel-identical capture this rewrite
@@ -1461,10 +1526,17 @@ def _screen_content_setup_script(screen: Screen) -> str | None:
             "  if (!conflict) {\n"
             "    throw new Error('Aiga Otsolen conflict warning is missing');\n"
             "  }\n"
-            "  var row = conflict.previousElementSibling;\n"
-            "  if (!row || !row.classList.contains('row')) {\n"
+            "  var row = conflict.parentNode;\n"
+            "  if (!row || !row.classList.contains('row')\n"
+            "      || row.firstElementChild !== conflict) {\n"
             "    throw new Error(\n"
-            "      'Conflict warning is not directly after its owning row');\n"
+            "      'Conflict warning does not lead its owning row');\n"
+            "  }\n"
+            "  var bind = row.querySelector('.bindbtn');\n"
+            "  var name = row.querySelector('.lab-name');\n"
+            "  if (!bind || bind.getAttribute('aria-describedby') !== conflict.id\n"
+            "      || !name || name.textContent !== 'Aiga Otsolen') {\n"
+            "    throw new Error('Conflict warning lost its owning keybind');\n"
             "  }\n"
             "  var cell = row.firstElementChild;\n"
             "  if (!cell) {\n"
@@ -1479,14 +1551,22 @@ def _screen_content_setup_script(screen: Screen) -> str | None:
             "  }\n"
             "  var coverBottom = headCell.getBoundingClientRect().bottom;\n"
             "  var conflictTop = conflict.getBoundingClientRect().top;\n"
-            "  if (conflictTop < coverBottom) {\n"
-            "    pane.scrollTop += (coverBottom - conflictTop);\n"
-            "  }\n"
+            "  pane.scrollTop += conflictTop - coverBottom;\n"
             "  var paneRect = pane.getBoundingClientRect();\n"
             "  var after = conflict.getBoundingClientRect();\n"
-            "  if (after.bottom <= paneRect.top || after.top >= paneRect.bottom) {\n"
+            "  var bindRect = bind.getBoundingClientRect();\n"
+            "  var nameRect = name.getBoundingClientRect();\n"
+            "  if (after.top < paneRect.top || after.bottom > paneRect.bottom\n"
+            "      || bindRect.bottom > paneRect.bottom\n"
+            "      || nameRect.bottom > paneRect.bottom) {\n"
             "    throw new Error(\n"
-            "      'Conflict warning is not within the scrollport');\n"
+            "      'Conflict warning and owning controls are not within the scrollport');\n"
+            "  }\n"
+            "  coverBottom = headCell.getBoundingClientRect().bottom;\n"
+            "  if (Math.abs(after.top - coverBottom) > 1\n"
+            "      || bindRect.top < after.bottom || nameRect.top < after.bottom) {\n"
+            "    throw new Error(\n"
+            "      'Conflict warning and owner did not clear the sticky header together');\n"
             "  }\n"
             "  var maxScroll = pane.scrollHeight - pane.clientHeight;\n"
             "  if (pane.scrollTop >= maxScroll - 1) {\n"
@@ -1565,6 +1645,7 @@ def _screen_content_setup_script(screen: Screen) -> str | None:
             "  }\n"
             "  var mgr = document.querySelector('.preview-group-manager');\n"
             "  if (!mgr) { throw new Error('Preview group manager is missing'); }\n"
+            "  mgr.open = true;\n"
             "  mgr.scrollIntoView({block: 'start', behavior: 'instant'});\n"
             "}())"
         )
@@ -2023,7 +2104,8 @@ def walk(
                     # Replace live read state through the bounded page-side
                     # screenshot handler before ANY stage action. This follows
                     # the Preview fixture precedent and cannot call Python, ESI,
-                    # or a durable writer. Route leave clears the injected state.
+                    # or a durable writer. Finally clears the injected state;
+                    # route leave is independently safe during an interrupted shot.
                     cdp.evaluate(fittings_fixture_setup_script())
                     time.sleep(0.25)
                     if screen.key.startswith("fittings-"):

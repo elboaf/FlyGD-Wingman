@@ -42,7 +42,7 @@ class Element {
   removeAttribute(name) { delete this[name]; }
 }
 
-function page(hydrate = true) {
+function page(hydrate = true, fightrecorder = false) {
   const ids = [
     'f-privacy', 'f-category', 'f-recdir', 'f-gamelogs', 'f-webhook',
     'show-eve-tools', 'start-on-login', 'webhook-status', 'btn-webhook-show',
@@ -52,6 +52,8 @@ function page(hydrate = true) {
     'btn-update-download', 'btn-update-install', 'restore-preview-positions',
     'restore-preview-positions-status'
   ];
+  if (fightrecorder) ids.push('fr-status', 'btn-fr-check', 'btn-fr-update', 'msg-fightrecorder',
+    'preview-minimize-inactive', 'preview-minimize-inactive-status', 'sigbar-enabled', 'sigbar-enabled-status');
   const elements = Object.fromEntries(ids.map(id => [id, new Element(id)]));
   const notify = ['toast', 'popup'].map(value => {
     const input = new Element('notify-' + value);
@@ -153,6 +155,34 @@ function page(hydrate = true) {
   };
   if (hydrate) api.hydrate();
   return api;
+}
+
+for (const latest_tag of ['', 'v1.2.3']) {
+  test('FightRecorder unknown currency does not claim a verified update: ' + latest_tag, async () => {
+    const p = page(true, true);
+    await p.reply('fightrecorder_status', {installed: true, detected: true, path: 'synthetic.dll',
+      up_to_date: null, latest_tag, error: ''}, [false]);
+    assert.match(p.el('fr-status').textContent, /Installed.*update status unknown/i);
+    if (!latest_tag) assert.match(p.el('fr-status').textContent, /Check for updates/);
+    if (latest_tag) assert.ok(p.el('fr-status').textContent.includes(latest_tag));
+    assert.doesNotMatch(p.el('fr-status').textContent, /update is available|up to date/i);
+    assert.equal(p.el('btn-fr-update').textContent, 'Install latest');
+    assert.equal(p.el('btn-fr-update').hidden, false);
+    assert.equal(p.el('btn-fr-update').disabled, false);
+    assert.equal(p.calls.length, 0, 'no automatic check or install');
+    p.fire('btn-fr-check', 'click');
+    await p.reply('fightrecorder_status', {installed: true, detected: true, path: 'synthetic.dll',
+      up_to_date: false, latest_tag: 'v1.2.4', error: ''}, [true]);
+    assert.match(p.el('fr-status').textContent, /update is available.*v1\.2\.4/i);
+    assert.equal(p.el('btn-fr-update').textContent, 'Update');
+    assert.equal(p.el('btn-fr-update').hidden, false);
+    p.fire('btn-fr-check', 'click');
+    await p.reply('fightrecorder_status', {installed: true, detected: true, path: 'synthetic.dll',
+      up_to_date: true, latest_tag: 'v1.2.4', error: ''}, [true]);
+    assert.match(p.el('fr-status').textContent, /Up to date/);
+    assert.equal(p.el('btn-fr-update').hidden, true);
+    assert.equal(p.calls.length, 0);
+  });
 }
 
 for (const focused of [false, true]) {

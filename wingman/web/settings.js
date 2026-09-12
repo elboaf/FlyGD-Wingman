@@ -1674,13 +1674,14 @@
                (res.latest_tag ? ' (' + res.latest_tag + ')' : '') + '.';
         canInstall = true;
       } else {
-        text = 'Installed.' +
-               (res.latest_tag ? ' Latest release: ' + res.latest_tag + '.' : '');
+        text = 'Installed — update status unknown.' +
+               (res.latest_tag ? ' Latest release: ' + res.latest_tag + '.' : ' Check for updates.');
         canInstall = true;
       }
       status.textContent = text;
       updateBtn.hidden = !canInstall;
-      updateBtn.textContent = res && res.installed ? 'Update' : 'Install';
+      updateBtn.textContent = res && res.installed
+        ? (res.up_to_date === false ? 'Update' : 'Install latest') : 'Install';
     }
 
     function sayError(text) {

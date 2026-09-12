@@ -188,7 +188,7 @@
 
   function renderActivity() {
     if (state.authorization_activity === 'waiting') {
-      activity.textContent = 'Waiting for EVE SSO…';
+      activity.textContent = 'Finish EVE sign-in in your browser.';
       return;
     }
     if (!state.characters.length) {

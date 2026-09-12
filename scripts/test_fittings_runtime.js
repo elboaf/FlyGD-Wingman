@@ -385,6 +385,233 @@ function preflight(ticket = 'ticket-1') {
       fitting_name: 'Sabre tackle', character_name: 'Pilot', status: 'ready',
       chosen_name: 'Sabre tackle' }] };
 }
+async function reviewCopy(p, payload) {
+  p.el('fittings-list').querySelectorAll('input').forEach(tick);
+  p.el('fittings-copy-selected').click();
+  tick(p.el('fittings-copy-body').querySelector('input'));
+  p.el('fittings-copy-review').click();
+  await flush();
+  if (payload) await settle(p.last('fittings_preflight_copy'), payload);
+}
+async function startReviewedCopy(p) {
+  p.el('fittings-copy-start').click();
+  await settle(p.confirmations.at(-1), true);
+  await settle(p.last('fittings_start_copy'), true);
+}
+function sameNameWorkspace() {
+  const payload = state(['fit-1', 'fit-2']);
+  payload.rows[0].name = payload.rows[1].name = 'Fleet tackle';
+  payload.rows[1].ship_name = 'Flycatcher';
+  payload.rows[1].ship_type_id = 22464;
+  return payload;
+}
+function sameNamePreflight() {
+  // Reversed relative to the workspace: correlation is by ID, not order or name.
+  return { ...preflight(), counts: { ready: 1, present: 1, conflict: 0, unavailable: 0 },
+    pairs: [
+      { ...preflight().pairs[0], entry_id: 'fit-2', fitting_name: 'Fleet tackle',
+        chosen_name: 'Fleet tackle alternate' },
+      { ...preflight().pairs[0], fitting_name: 'Fleet tackle', status: 'present' }
+    ] };
+}
+
+test('copy identity distinguishes same-name hulls across pending refresh and conflict recheck', async () => {
+  const p = await page();
+  await p.route('fittings');
+  const workspace = sameNameWorkspace();
+  await settle(p.last('fittings_state'), workspace);
+  await reviewCopy(p);
+  const pending = p.last('fittings_preflight_copy');
+  assert.deepEqual(Array.from(pending.args[0]), ['fit-1', 'fit-2']);
+  assert.deepEqual(Array.from(pending.args[1]), [42]);
+  // Mutate and re-render the supplied rows while review is pending. Neither a
+  // retained row object nor a lookup against current STATE is a snapshot.
+  workspace.rows.forEach(row => { row.ship_name = 'Changed hull'; });
+  await p.changed({ reason: 'refresh' });
+  await settle(p.last('fittings_state'), workspace);
+  const review = sameNamePreflight();
+  review.requires_resolution = true;
+  review.counts = { ready: 1, conflict: 1 };
+  review.pairs[1].status = 'conflict';
+  await settle(pending, review);
+  const body = p.el('fittings-copy-body');
+  assert.deepEqual(body.querySelectorAll('.fit-copy-pair-name').map(n => n.textContent),
+    ['Fleet tackle (Flycatcher)', 'Fleet tackle (Sabre)']);
+  assert.deepEqual(body.querySelectorAll('.fit-copy-character').map(n => n.textContent),
+    ['Pilot', 'Pilot']);
+  assert.match(body.textContent, /Ready as.*Fleet tackle alternate/);
+  const alternate = body.querySelector('.fit-copy-alternate');
+  assert.match(alternate.getAttribute('aria-label'), /Fleet tackle.*Sabre.*Pilot/);
+  input(alternate, 'Fleet tackle new');
+  p.el('fittings-copy-review').click();
+  await flush();
+  assert.equal(p.last('fittings_preflight_copy').args[2]['fit-1:42'], 'Fleet tackle new');
+  review.requires_resolution = false;
+  review.pairs[1].status = 'ready';
+  review.pairs[1].chosen_name = 'Fleet tackle new';
+  await settle(p.last('fittings_preflight_copy'), review);
+  assert.deepEqual(body.querySelectorAll('.fit-copy-pair-name').map(n => n.textContent),
+    ['Fleet tackle (Flycatcher)', 'Fleet tackle (Sabre)']);
+  assert.match(body.textContent, /Ready as.*Fleet tackle new/);
+  assert.equal(p.calls('fittings_start_copy').length, 0);
+  assert.deepEqual(p.errors, []);
+});
+
+test('copy identity survives filtering, progress and reopening results without new bridge calls', async () => {
+  const p = await page();
+  await p.route('fittings');
+  await settle(p.last('fittings_state'), sameNameWorkspace());
+  const review = sameNamePreflight();
+  await reviewCopy(p, review);
+  input(p.el('fittings-search'), 'other');
+  await p.timers();
+  await settle(p.last('fittings_state'), state(['other-fit']));
+  await startReviewedCopy(p);
+  const before = p.calls().length;
+  const rows = review.pairs.map(pair => ({ ...pair, attempted: pair.status === 'ready',
+    status: pair.status === 'ready' ? 'success' : 'present', error: '' }));
+  for (const [index, row] of rows.entries()) {
+    await p.progress({ kind: 'copy', phase: 'progress', ticket_id: review.ticket_id,
+      completed: index + 1, total: 2, result: row });
+    const status = p.el('fittings-copy-status').textContent;
+    assert.match(status, index === 0 ? /Fleet tackle.*Flycatcher.*Pilot.*Copied/
+      : /Fleet tackle.*Sabre.*Pilot.*Already present/);
+    assert.equal(p.el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
+      (index + 1) + ' of 2 pairs checked');
+  }
+  await complete(p, { status: 'complete', operation_id: 'op-identity', write_count: 1, results: rows });
+  const body = p.el('fittings-copy-body');
+  const labels = body.querySelectorAll('.fit-copy-pair-name').map(n => n.textContent);
+  assert.deepEqual(labels, ['Fleet tackle (Flycatcher)', 'Fleet tackle (Sabre)']);
+  assert.match(body.querySelector('.fit-copy-summary').textContent, /1 copied.*1 already present/);
+  assert.equal(p.calls().length, before);
+  p.el('fittings-copy-close').click();
+  button(p.el('fittings-notices'), 'Last copy results\u2026').click();
+  assert.deepEqual(body.querySelectorAll('.fit-copy-pair-name').map(n => n.textContent), labels);
+  assert.equal(p.calls().length, before);
+  assert.deepEqual(p.errors, []);
+});
+
+test('copy identity uses known type IDs and never guesses hulls from matching names', async () => {
+  const p = await page();
+  await p.route('fittings');
+  const workspace = state();
+  workspace.rows[0].ship_name = '';
+  await settle(p.last('fittings_state'), workspace);
+  const review = preflight();
+  review.pairs.push({ ...review.pairs[0], entry_id: 'not-selected' });
+  await reviewCopy(p, review);
+  const names = p.el('fittings-copy-body').querySelectorAll('.fit-copy-pair-name');
+  assert.equal(names[0].textContent, 'Sabre tackle (Type 22456)');
+  assert.equal(names[1].textContent, 'Sabre tackle');
+  await startReviewedCopy(p);
+  await p.progress({ kind: 'copy', phase: 'progress', ticket_id: 'ticket-1',
+    completed: 1, total: 2, result: { entry_id: 'not-selected', character_id: 99, status: 'unknown' } });
+  assert.match(p.el('fittings-copy-status').textContent, /Fitting not-selected.*Character 99.*Needs verification/);
+  assert.doesNotMatch(p.el('fittings-copy-status').textContent, /Sabre|22456|undefined|NaN/);
+  await p.progress({ kind: 'copy', phase: 'progress', ticket_id: 'ticket-1',
+    completed: 2, total: 2, result: { status: 'present' } });
+  assert.equal(p.el('fittings-copy-status').textContent, 'Already present',
+    'identity-free events must not borrow identity from the last pair');
+});
+
+test('copy identity labels remain literal text for long markup-like names', async () => {
+  const p = await page();
+  await p.route('fittings');
+  const workspace = state();
+  const name = '<img src=x onerror=alert(1)>' + 'LongName'.repeat(20);
+  workspace.rows[0].name = name;
+  workspace.rows[0].ship_name = '<b>Sabre</b>';
+  await settle(p.last('fittings_state'), workspace);
+  const review = preflight();
+  review.pairs[0].fitting_name = name;
+  review.pairs[0].character_name = '<script>Pilot</script>';
+  await reviewCopy(p, review);
+  const label = p.el('fittings-copy-body').querySelector('.fit-copy-pair-name');
+  assert.equal(label.textContent, name + ' (<b>Sabre</b>)');
+  assert.equal(label.children.length, 0);
+  await startReviewedCopy(p);
+  await p.progress({ kind: 'copy', phase: 'progress', ticket_id: 'ticket-1',
+    completed: 1, total: 1, result: { ...review.pairs[0], status: 'success' } });
+  const status = p.el('fittings-copy-status');
+  assert.ok(status.textContent.includes(name + ' (<b>Sabre</b>)'));
+  assert.ok(status.textContent.includes('<script>Pilot</script>'));
+  assert.equal(status.children.length, 0);
+});
+
+for (const count of [0, 1, 2]) {
+  test(`copy counts ${count} distinguish plans, checked pairs, attempts and copied outcomes`, async () => {
+    const p = await page();
+    await p.route('fittings');
+    await settle(p.last('fittings_state'), state());
+    const review = preflight();
+    review.write_count = count;
+    review.counts = { ready: count, conflict: count, present: 4, unavailable: 3 };
+    review.pairs = [...Array(count).fill('ready'), ...Array(count).fill('conflict'),
+      ...Array(4).fill('present'), ...Array(3).fill('unavailable')].map((status, index) => ({
+        ...preflight().pairs[0], character_id: 100 + index, character_name: 'Pilot ' + index,
+        status, skipped: status === 'conflict'
+      }));
+    await reviewCopy(p, review);
+    const body = p.el('fittings-copy-body');
+    const summary = body.querySelector('.fit-copy-summary').textContent;
+    assert.match(summary, new RegExp('^' + count + (count === 1 ? ' addition planned' : ' additions planned')));
+    assert.match(summary, new RegExp('\\b' + count + (count === 1 ? ' conflict\\b(?!s)' : ' conflicts\\b')));
+    assert.match(summary, /4 already present.*3 unavailable/);
+    assert.doesNotMatch(summary, /remote write|copied|attempted|checked/);
+    await startReviewedCopy(p);
+    const total = count * 2 + 7;
+    assert.equal(body.querySelector('.fit-copy-summary').textContent, '0 of ' + total + ' pairs checked');
+    const results = review.pairs.map(pair => ({ ...pair, attempted: pair.status === 'ready',
+      status: pair.status === 'ready' ? 'unknown' : pair.skipped ? 'conflict_skipped' : pair.status }));
+    await p.progress({ kind: 'copy', phase: 'progress', ticket_id: 'ticket-1',
+      completed: 1, total, result: results[0] });
+    assert.equal(body.querySelector('.fit-copy-summary').textContent, '1 of ' + total + ' pairs checked');
+    await complete(p, { status: 'complete', write_count: count, results });
+    const completed = body.querySelector('.fit-copy-summary').textContent;
+    assert.match(completed, /0 copied.*4 already present/);
+    assert.match(completed, new RegExp(count + (count === 1 ? ' needs verification' : ' need verification')));
+    assert.match(body.querySelector('.hint').textContent,
+      new RegExp('^' + count + (count === 1 ? ' addition attempted' : ' additions attempted')));
+    assert.doesNotMatch(body.textContent, /remote write|addition[s]? planned/);
+    assert.match(body.textContent, /Nothing is retried automatically/);
+  });
+}
+
+test('copy identity ignores stale and out-of-ticket progress after a newer copy starts', async () => {
+  const p = await page();
+  await p.route('fittings');
+  await settle(p.last('fittings_state'), state());
+  await beginCopy(p);
+  await p.route('main');
+  await p.route('fittings');
+  const workspace = state();
+  workspace.rows[0].ship_name = 'Flycatcher';
+  workspace.rows[0].ship_type_id = 22464;
+  await settle(p.last('fittings_state'), workspace);
+  await beginCopy(p, 'ticket-2');
+  const current = { ...preflight('ticket-2').pairs[0], status: 'unknown' };
+  await p.progress({ kind: 'copy', phase: 'progress', ticket_id: 'ticket-2',
+    completed: 1, total: 1, result: current });
+  const status = p.el('fittings-copy-status').textContent;
+  assert.match(status, /Sabre tackle.*Flycatcher.*Pilot.*Needs verification/);
+  const body = p.el('fittings-copy-body').textContent;
+  for (const ticket of ['ticket-1', 'unrelated-ticket', undefined]) {
+    await p.progress({ kind: 'copy', phase: 'progress', ticket_id: ticket,
+      completed: 99, total: 99, result: { ...current, fitting_name: 'Wrong fitting', status: 'success' } });
+    assert.equal(p.el('fittings-copy-status').textContent, status);
+    assert.equal(p.el('fittings-copy-body').textContent, body);
+  }
+  await p.route('main');
+  await complete(p, { status: 'cancelled', write_count: 1, results: [current] }, 'ticket-2');
+  await p.route('fittings');
+  await settle(p.last('fittings_state'), state(['other-fit']));
+  button(p.el('fittings-notices'), 'Last copy results\u2026').click();
+  assert.equal(p.el('fittings-copy-body').querySelector('.fit-copy-pair-name').textContent,
+    'Sabre tackle (Flycatcher)', 'off-route results retain their own submitted hull snapshot');
+  assert.deepEqual(p.errors, []);
+});
+
 async function beginCopy(p, ticket = 'ticket-1', acknowledge = true) {
   const selected = p.el('fittings-list').querySelector('input');
   selected.checked = true;
@@ -624,21 +851,79 @@ for (const outcome of ['null', 'reject']) {
   });
 }
 
+function devScreenshot(stage) {
+  const source = fs.readFileSync(path.join(web, 'dev.js'), 'utf8');
+  const start = source.indexOf('  var DEV_FITTINGS_SCREENSHOT_FIXTURE =');
+  const end = source.indexOf('  fittings.max_copy_writes =', start);
+  const fixture = vm.runInNewContext(source.slice(start, end) + '\nDEV_FITTINGS_SCREENSHOT_FIXTURE;');
+  if (stage) fixture.copy_stage = stage;
+  return fixture;
+}
+
+test('refused screenshot injection and cleanup never cancel a genuine submitted copy', async () => {
+  const p = await editor();
+  await reviewCopy(p, preflight());
+  await startReviewedCopy(p);
+  const before = p.calls().length;
+  await p.screenshot(devScreenshot('progress'));
+  await p.screenshot({kind: 'fittings-screenshot-v1', clear: true});
+  assert.match(p.el('fittings-copy-body').textContent, /0 of 1 pair checked/);
+  assert.equal(p.el('fittings-copy-overlay').hidden, false);
+  assert.equal(p.calls().length, before, 'refused cleanup cannot leave the real route or cancel');
+  await complete(p, result(['success']));
+  assert.match(p.el('fittings-copy-body').textContent, /1 copied/);
+});
+
+test('a confirmation begun before fixture injection cannot start after fixture teardown', async () => {
+  const p = await editor();
+  await reviewCopy(p, preflight());
+  p.el('fittings-copy-start').click();
+  const confirmation = p.confirmations.at(-1);
+  const before = p.calls().length;
+  await p.screenshot(devScreenshot('progress'));
+  await p.screenshot({kind: 'fittings-screenshot-v1', clear: true});
+  await settle(confirmation, true);
+  assert.equal(p.calls().length, before);
+  assert.equal(p.el('fittings-copy-overlay').hidden, true);
+});
+
+test('screenshot review counts classified ready pairs, not present or unavailable selections', async () => {
+  const p = await page();
+  await p.route('fittings');
+  await p.screenshot(devScreenshot());
+  const before = p.calls().length;
+  p.el('fittings-list').querySelectorAll('.fit-row').forEach(row => {
+    const name = row.querySelector('.fit-name').textContent;
+    if (/Generated Fit 00[123]/.test(name)
+        || (name === 'Fleet Doctrine Alpha' && /^On 1 character/.test(row.querySelector('.fit-meta').textContent))) {
+      tick(row.querySelector('input'));
+    }
+  });
+  p.el('fittings-copy-selected').click();
+  const target = p.el('fittings-copy-body').querySelectorAll('.fit-copy-target')
+    .find(row => row.textContent === 'Eryn Voss');
+  tick(target.querySelector('input'));
+  p.el('fittings-copy-review').click(); await flush();
+  assert.match(p.el('fittings-copy-body').textContent, /2 additions planned.*1 already present.*1 unavailable/);
+  assert.equal(p.el('fittings-copy-body').querySelectorAll('.fit-copy-pair').length, 4);
+  assert.equal(p.calls().length, before);
+});
+
 test('tooling-only screenshot results do not become real session history', async () => {
   const p = await editor();
   const fixtureState = state(Array.from({ length: 21 }, (_, index) => 'fixture-' + index));
+  const outcome = result(['unknown']);
+  outcome.results[0].entry_id = 'fixture-0';
   await p.screenshot({ kind: 'fittings-screenshot-v1', characters: fixtureState.characters,
     collections: fixtureState.collections, entries: fixtureState.rows, details: {},
-    mixed_preflight: { pairs: [] }, copy_result: { results: [] } });
-  tick(p.el('fittings-list').querySelector('input'));
-  p.el('fittings-copy-selected').click();
-  await complete(p, result(['unknown']), 'screenshot-ticket');
+    mixed_preflight: { pairs: [] }, copy_result: outcome, copy_stage: 'results' });
   assert.equal(p.el('fittings-copy-body').querySelectorAll('.unknown').length, 1);
   await p.route('main');
   await p.route('fittings');
   await settle(p.last('fittings_state'), state());
   assert.doesNotMatch(p.el('fittings-notices').textContent, /Last copy results/);
   assert.equal(p.calls('fittings_start_copy').length, 0);
+  assert.equal(p.calls('fittings_cancel_copy').length, 0);
 });
 
 test('a screenshot fixture cannot prune genuine unsaved metadata', async () => {

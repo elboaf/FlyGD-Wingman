@@ -479,7 +479,7 @@
     WM.el('fm-commit').hidden = true;
     WM.el('fm-import-work').hidden = false;
     WM.el('fm-import-commit').hidden = false;
-    setImportStatus('Paste shared text, then choose Review. Nothing is saved until Save formations.', false);
+    setImportStatus('Paste shared text, then choose Review.', false);
     renderImportPreview(); paintImportButtons(); paintCommit();
     WM.el('fm-import-text').focus();
   }

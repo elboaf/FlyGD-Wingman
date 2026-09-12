@@ -70,6 +70,7 @@ function createDOM(page) {
     matches(selector) {
       let s = selector;
       if (s === '*') return true;
+      if (s.includes(':last-child')) { if (this.parentNode?.lastChild !== this) return false; s = s.replace(':last-child', ''); }
       if (s.includes(':not(:empty)')) { if (!this.children.length && !this.text) return false; s = s.replace(':not(:empty)', ''); }
       if (s.includes(':checked')) { if (!this.checked) return false; s = s.replace(':checked', ''); }
       const attributes = [...s.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)];
@@ -108,6 +109,7 @@ function createDOM(page) {
     }
     click() { if (!this.disabled) this.dispatchEvent({type: 'click'}); }
     focus() { document.activeElement = this; }
+    blur() { if (document.activeElement === this) document.activeElement = document.body; }
     scrollIntoView(options) { scrolls.push({element: this, options}); }
     getBoundingClientRect() { return {width: 400, height: 240, top: 0, bottom: 240, left: 0, right: 400}; }
     getClientRects() { return this.hidden ? [] : [this.getBoundingClientRect()]; }

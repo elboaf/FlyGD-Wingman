@@ -161,6 +161,35 @@ function mutations() {
         set: value => { assertTab(); assert.equal(panel.hidden, false); top = value; writes.push(panel.id); }
       });
     }
+    // These navigation cases execute the real geometric stage/verifier too.
+    // Supply boundary inputs here; exhaustive failures live in the dedicated
+    // screenshot_pages and preview_warning_grouping harnesses.
+    const pane = WM.el('settings-previews-characters');
+    const rect = (left, top, width, height) => ({left, top, width, height, right: left + width, bottom: top + height});
+    if (data.key === 'settings-previews-sticky-conflict') {
+      const scroll = Element.prototype.scrollIntoView;
+      Element.prototype.scrollIntoView = function (options) {
+        scroll.call(this, options);
+        pane.scrollTop = this.classList.contains('preview-bind-conflict') ? 400 : 444;
+      };
+      Element.prototype.getBoundingClientRect = function () {
+        if (this === pane) return rect(200, 100, 600, 400);
+        if (this.parentNode?.classList.contains('bind-head')) return rect(200, 100, 600, 22);
+        const warning = this.classList.contains('preview-bind-conflict');
+        return rect(220, (warning ? 400 : 444) - pane.scrollTop, 560, warning ? 40 : 28);
+      };
+    }
+    function groupGeometry() {
+      if (data.key !== 'settings-previews-groups') return;
+      window.innerWidth = 840; window.innerHeight = 625;
+      const manager = document.querySelector('.preview-group-manager');
+      const boxes = new Map([[pane, rect(200, 140, 628, 435)], [manager, rect(220, 150, 560, 240)]]);
+      manager.querySelectorAll('summary,.group-add-name,.group-add-btn,.group-rename-btn,.group-delete-btn')
+        .forEach((node, i) => boxes.set(node, rect(220, 154 + i * 24, 560, 20)));
+      for (const [node] of boxes) node.getBoundingClientRect = () => boxes.get(node);
+      document.elementFromPoint = (x, y) => [...boxes].reverse().find(([node, r]) =>
+        node.getClientRects().length && x > r.left && x < r.right && y > r.top && y < r.bottom)?.[0] || null;
+    }
     calls.length = 0; staging = true;
     for (let iteration = 0; iteration < 2; iteration++) {
       writes.length = 0;
@@ -169,7 +198,7 @@ function mutations() {
       for (const name of ['appearance', 'placement', 'size', 'switching']) {
         WM.el('preview-group-' + name).open = iteration === 0;
       }
-      run(data.prepare); run(data.stage); await tick(); assertTab(); run(data.verify);
+      run(data.prepare); run(data.stage); await tick(); assertTab(); groupGeometry(); run(data.verify);
       assert.equal(outer.scrollTop, 57, 'outer Settings pane must never own Preview scrolling');
       assert.ok(writes.length || scrolls.length, 'the selected panel must be framed');
       if (data.tab === 'windows') {
