@@ -409,14 +409,33 @@ def test_the_folder_card_has_two_faces_and_only_one_shows():
     assert "es-folder-detail').hidden = !open" in paint.group(1)
 
 
+def test_configured_folder_summary_does_not_spend_a_separate_label_line():
+    """The static summary keeps the path and server without delaying targets
+    by a stacked form label. Expanded setup keeps the shared form geometry.
+    """
+    compact = _brace_block(CSS, "#es-folder-summary > .lab {")
+    assert "width: auto" in compact
+    # Preserve the shared stacking fallback if the supported floor ever moves.
+    narrow_start = re.search(
+        r"@media\s*\(\s*max-width\s*:\s*720px\s*\)\s*\{\s*"
+        r"#es-folder-summary\s*>\s*\.lab\s*\{",
+        CSS,
+    )
+    assert narrow_start, "the narrow folder-summary fallback is missing"
+    narrow = _brace_block(CSS, narrow_start.group())
+    assert "width: 100%" in narrow
+
+
 def test_the_eve_pill_is_outside_the_half_that_collapses():
     """It is the running-client hazard the copy below is guarded against.
     Inside the folder row it would vanish with the controls on every visit
     after the first -- which is every visit that matters.
     """
-    summary = BODY[BODY.index("es-folder-summary") : BODY.index("es-folder-detail")]
+    summary = BODY[
+        BODY.index("es-folder-summary") : BODY.index('id="es-folder-detail"')
+    ]
     assert "es-eve-state" not in summary
-    detail = BODY[BODY.index("es-folder-detail") : BODY.index("es-warning")]
+    detail = BODY[BODY.index('id="es-folder-detail"') : BODY.index("es-warning")]
     assert "es-eve-state" not in detail
     # Matched on the heading's SHAPE, not its words: what this test is
     # about is that the pill sits in the h2 rather than in either face, and
@@ -460,19 +479,17 @@ def test_the_card_re_collapses_on_every_visit():
 # ---- the commit says what it will do, and to how many ------------------
 
 
-def test_the_commit_context_stays_visible_over_the_target_roster():
-    """The roster stays fully visible, but its source, cost, hazard and action
-    must not scroll away while the user verifies a large target set.
-    """
+def test_the_commit_context_stays_separate_from_the_scrolling_roster():
+    """The footer owns space, never overlays targets or scrolls with them."""
     context_at = BODY.index('id="es-commit-context"')
     roster_at = BODY.index('id="es-targets"')
-    assert context_at < roster_at
-    assert 'id="es-copy-source"' in BODY[context_at:roster_at]
-    assert 'id="es-copy-followup"' in BODY[context_at:roster_at]
+    assert roster_at < context_at
+    for ident in ("es-copy-source", "es-copy-profile", "es-copy-followup"):
+        assert f'id="{ident}"' in BODY[context_at:]
 
     rule = re.search(r"\.es-commit-context \{([^}]*)\}", CSS)
-    assert rule and "position: sticky" in rule.group(1)
-    assert "top: 0" in rule.group(1)
+    assert rule and "flex: none" in rule.group(1)
+    assert "position:" not in rule.group(1)
 
     paint = re.search(r"function paintCommit\(\) \{(.*?)\n  \}", CODE, re.DOTALL)
     assert paint and "es-copy-source" in paint.group(1)
@@ -505,6 +522,7 @@ def test_the_commit_row_groups_state_apart_from_action_and_hazard():
         r'<span class="es-commit-info">\s*'
         r'<span id="es-copy-count" class="es-count">[^<]*</span>\s*'
         r'<span id="es-copy-source" class="es-copy-source"></span>\s*'
+        r'<span id="es-copy-profile" class="es-copy-source"></span>\s*'
         r"</span>",
         inner,
     )
@@ -518,44 +536,19 @@ def test_the_commit_row_groups_state_apart_from_action_and_hazard():
     assert rule, ".es-commit-info has no rule"
 
 
-def test_the_commit_bar_widens_to_meet_the_roster_above_the_floor():
-    """Capped to the card's 586px prose measure like every other row, the
-    commit bar read as a narrow aside pinned to the card's upper-left
-    corner while the roster it introduces already spans the full card
-    beneath it. Past the 840 floor the bar takes the SAME width the roster
-    does, so the two read as one region; at or below the floor nothing
-    changes -- DESIGN.md's complementary tier to a floor-anchored
-    `max-width: 840px` is `min-width: 841px`.
-    """
-    generic = re.search(
-        r"#route-evesettings > \.settings > \.card:has\(> \.es-roster\) > "
-        r":not\(\.es-roster\)([^{]*)\{([^}]*)\}",
-        CSS,
-    )
-    assert generic, "the shared 586px re-cap for the card's non-roster children is gone"
-    assert ":not(.es-commit-context)" in generic.group(1), (
-        "the commit bar must be excluded from the shared 586px re-cap so its "
-        "own rule, not a specificity fight, decides its width"
-    )
-
-    base = re.search(r"\.es-commit-context \{([^}]*)\}", CSS)
-    assert base and "max-width: 586px" in base.group(1), (
-        "below the floor the commit bar must keep the card's narrow prose measure"
-    )
-
-    wide = _brace_block(CSS, "@media (min-width: 841px)")
-    assert re.search(r"\.es-commit-context\s*\{[^}]*max-width:\s*none", wide), (
-        "the commit bar never widens past the card's narrow prose measure"
-    )
-    assert re.search(
-        r"\.es-commit-context > \.hint, \.es-commit-context > \.es-copy-followup\s*"
-        r"\{[^}]*max-width:\s*586px",
-        wide,
-    ), "the bar's own prose must keep the readable measure it widens away from"
-    assert re.search(r"\.es-commit-info\s*\{[^}]*flex:\s*1\b", wide), (
-        "above the floor the state group must absorb the row's slack, not "
-        "leave the pill stranded far from the button and count"
-    )
+def test_the_workbench_owns_one_scroller_and_side_by_side_source_targets():
+    """Work alone scrolls; source and target tracks cannot force overflow."""
+    route = _brace_block(CSS, "#route-evesettings {")
+    assert "overflow: hidden" in route
+    work = _brace_block(CSS, "#es-work {")
+    assert "overflow-y: auto" in work
+    assert "min-height: 0" in work
+    grid = _brace_block(CSS, ".es-workbench {")
+    assert "display: grid" in grid
+    assert "minmax(0, 1fr)" in grid
+    footer = _brace_block(CSS, ".es-commit-context {")
+    assert "586px" not in footer
+    assert "max-width: 586px" not in _brace_block(CSS, ".es-commit-info {")
 
 
 def test_the_second_pill_is_the_same_pill_and_not_a_second_sentence():
@@ -696,7 +689,9 @@ def test_change_is_a_button_not_a_link():
     than the text beside it. P4 took the box off the path; this rule is
     about the other half, and it survives that on its own terms.
     """
-    summary = BODY[BODY.index("es-folder-summary") : BODY.index("es-folder-detail")]
+    summary = BODY[
+        BODY.index("es-folder-summary") : BODY.index('id="es-folder-detail"')
+    ]
     assert 'id="es-folder-edit" class="btn"' in summary, (
         "the row's one control must not be the quietest thing on it"
     )
@@ -708,7 +703,7 @@ def test_change_is_a_button_not_a_link():
 def test_selective_copy_controls_are_inside_the_copy_card_in_action_order():
     """The new choice belongs between its source and target controls."""
     card = re.search(
-        r'<section class="card">\s*<h2>Copy EVE settings</h2>(.*?)</section>',
+        r'<section class="card es-copy-card">\s*<h2>Copy EVE settings</h2>(.*?)</section>',
         BODY,
         re.DOTALL,
     )
@@ -847,6 +842,12 @@ def test_copy_group_rendering_uses_kind_payload_and_remembers_seen_ids():
     )
     assert block.index("row.hidden = true;") < null_guard
     assert block.index("host.innerHTML = '';") < null_guard
+    assert "paintCopyScope();" in block
+    change = re.search(
+        r"groupBox.addEventListener\('change'.*?\n      \}\);", block, re.DOTALL
+    )
+    assert change and "paintCopyScope();" in change.group(0)
+    assert "renderCopyGroups" not in change.group(0)
     assert "var choices = copyGroupSelections[currentKind];" in block
     assert re.search(
         r"var groups = \(state\.copy_groups &&\s*"
@@ -933,7 +934,7 @@ def test_profiles_opens_backups_without_mounting_the_archive_inline():
 
 
 def test_profile_tools_are_one_accessible_sibling_group_for_the_context():
-    """Backups and Formations stay grouped with the selected profile context.
+    """Backups and Formations stay grouped on the workbench's secondary shelf.
 
     The group is now visibly AND programmatically named "Profile tools":
     aria-labelledby points at a visible label rather than restating a
@@ -966,7 +967,10 @@ def test_profile_tools_are_one_accessible_sibling_group_for_the_context():
     context_end = BODY.index("</section>", BODY.index("es-context-card"))
     tools_at = BODY.index('class="es-profile-tools"')
     copy_at = BODY.index("<h2>Copy EVE settings</h2>")
-    assert context_end < tools_at < copy_at
+    assert context_end < copy_at < tools_at
+    assert (
+        BODY.index('id="es-targets"') < tools_at < BODY.index('id="es-commit-context"')
+    )
     assert "card" not in attrs.split()
 
 
@@ -998,8 +1002,8 @@ def test_profile_tools_label_reads_as_subordinate_not_as_a_second_heading():
     group = re.search(r"\.es-profile-tools \{([^}]*)\}", CSS)
     assert group, ".es-profile-tools has no rule"
     assert "border-top" in group.group(1), (
-        "the group should read as attached to the context card above it, "
-        "not just positioned near it"
+        "the secondary tool shelf must be separated from the roster, "
+        "without another card heading"
     )
 
 
@@ -1716,7 +1720,9 @@ def test_formation_sharing_has_secondary_paste_without_clipping_text_or_names():
     for ident in ("fm-name", "fm-import-text"):
         field = re.search(r'<(?:input|textarea)[^>]+id="' + ident + r'"[^>]*>', HTML)
         assert field and "maxlength" not in field.group(0)
-    assert 'aria-describedby="fm-import-status"' in HTML
+    textarea = re.search(r'<textarea[^>]+id="fm-import-text"[^>]*>', HTML)
+    describedby = re.search(r'aria-describedby="([^"]+)"', textarea.group(0))
+    assert describedby and "fm-import-status" in describedby.group(1).split()
 
 
 def test_formation_sharing_has_secondary_copy_and_persistent_live_status():
@@ -1831,10 +1837,12 @@ def test_folder_edit_names_both_things_it_changes():
     """Renamed from `Change…`: the row it sits on now also carries the
     server name (R5), so the action must say what it reopens.
     """
-    summary = BODY[BODY.index("es-folder-summary") : BODY.index("es-folder-detail")]
-    assert (
-        'id="es-folder-edit" class="btn">Change folder or server\u2026</button>'
-        in summary
+    summary = BODY[
+        BODY.index("es-folder-summary") : BODY.index('id="es-folder-detail"')
+    ]
+    assert re.search(
+        r'id="es-folder-edit" class="btn"[^>]*>Change folder or server\u2026</button>',
+        summary,
     )
 
 

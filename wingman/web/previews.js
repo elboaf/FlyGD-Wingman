@@ -259,13 +259,9 @@
     // truth for refused versus unknown registrations.
     var registration = state.registration || {};
     var text = '';
-    // Every branch below opens with `label + ': '` -- the owning character,
-    // cycle command, or named group. This message is a full-span sibling
-    // placed directly after the row it explains (appendBindRow), and that
-    // row can scroll out from under the sticky column or Offline heading
-    // while its own warning is still on screen a moment longer; without
-    // the name the reader would have to remember, or scroll back to check,
-    // whose row they are reading about.
+    // Every branch names its owner even when the sticky header clips part
+    // of the row. makeRow places the warning before its controls, so it
+    // scrolls away first rather than lingering above an unrelated character.
     if (character && clash === 'duplicate') {
       // Direct-character sharing is a supported registration plan. On its
       // rows, name only the cycle owner that makes this chord incompatible.
@@ -437,11 +433,8 @@
         button.title = button.title ? button.title + ' ' + shared : shared;
       }
     }
-    // The programmatic link to this row's own conflict warning, keyed by
-    // the exact node appendBindRow is about to append -- not by DOM
-    // adjacency, which a sticky header can break by covering the row this
-    // button lives on while its warning is still on screen below it, or
-    // by covering the warning while this row is still visible above it.
+    // Keep the explicit association even though the warning now belongs
+    // inside this row: sticky headers can still cover part of the group.
     // Wired only while a conflict exists for THIS render: `button` is
     // freshly created every render, so there is no stale reference to
     // avoid removing -- omitting the attribute here is what avoids it.
@@ -544,6 +537,9 @@
     // specific group and geometry controls live in the full-grid detail;
     // cycle rows use the fillers already selected by the two ternaries above.
     // Keeping the shape branch-free makes the shared-grid invariant explicit.
+    // The full-span warning precedes the controls so it cannot be stranded
+    // after expanded geometry/crops or above the NEXT row at a sticky edge.
+    if (conflict) { row.insertBefore(conflict, row.firstChild); }
     return row;
   }
 
@@ -1652,7 +1648,6 @@
     if (character && openDetailName === character) {
       host.appendChild(makeCharacterDetail(character, isExcluded(character)));
     }
-    if (conflict) { host.appendChild(conflict); }
   }
 
   function render() {

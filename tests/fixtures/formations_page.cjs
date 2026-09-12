@@ -64,6 +64,7 @@ class Element {
 const ids = {};
 function build(node) {
   const element = new Element(node.tag, node.attrs);
+  element.textContent = node.text || '';
   if (element.id) ids[element.id] = element;
   node.children.forEach(child => element.appendChild(build(child)));
   return element;
@@ -405,6 +406,13 @@ function assertReview(opened) {
   assert.equal(WM.el('fm-commit').hidden, opened);
   assert.equal(WM.el('fm-import-cancel').disabled, false);
   assert.equal(WM.el('fm-back').disabled, false);
+  if (opened) {
+    const note = WM.el('fm-import-save-note');
+    assert.ok(note, 'review needs save reassurance separate from validation status');
+    assert.match(note.textContent, /Add formations.*draft.*Nothing is saved until Save formations/);
+    for (let node = note; node; node = node.parentNode) assert.equal(node.hidden, false);
+    assert.ok(WM.el('fm-import-text').getAttribute('aria-describedby').split(/\s+/).includes(note.id));
+  }
 }
 async function review(items = [shared()]) {
   click('fm-paste'); inputText(artifact(items)); click('fm-import-review');

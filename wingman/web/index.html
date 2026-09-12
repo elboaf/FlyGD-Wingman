@@ -762,8 +762,8 @@
              line pushes, so a reader looking for it looks here first. -->
         <p class="hint">A small always-on-top copy of the SIG / ROOT / NEXT
           readout that floats over other windows. Drag it anywhere on
-          screen; it remembers where you left it. Its toggle also lives at
-          the right end of the status strip.</p>
+          screen; it remembers where you left it. Use the
+          Floating sig bar toggle in the status strip to show or hide it.</p>
         <div class="row">
           <label class="check">
             <input type="checkbox" id="sigbar-enabled"><span class="box"></span>
@@ -1222,7 +1222,8 @@
           <button class="btn" id="fleetbar-reset">Reset Fleet Bar width</button>
           <span class="hint">Puts Fleet Bar back to its default 500px content width.</span></div>
         <details class="fleet-characters" id="fleetbar-characters">
-          <summary>Characters</summary>
+          <summary>Show local characters in Fleet Bar</summary>
+          <p class="hint" id="fleetbar-character-scope">Local display only. These choices do not change collection or sharing.</p>
           <div class="fleet-character-list" id="fleetbar-character-list"></div>
           <p class="hint fleet-character-empty" id="fleetbar-characters-empty">
             Characters appear here after Wingman sees them running.
@@ -1241,17 +1242,26 @@
         </div>
         <div class="row">
           <label class="check">
-            <input type="checkbox" id="sharing-enabled" disabled><span class="box"></span>
+            <input type="checkbox" id="sharing-enabled" disabled aria-describedby="sharing-scope"><span class="box"></span>
             Share my fleet telemetry
           </label>
           <button class="btn" id="sharing-confirm-on" hidden>Confirm sharing On</button>
         </div>
+        <p class="hint" id="sharing-scope">Shares current DPS and scram / point state with eligible authGD Members in the same verified fleet, never raw logs or history.</p>
         <p class="field-msg" id="sharing-preference" role="status"></p>
         <p class="hint" id="sharing-consent" role="status"></p>
-        <h3>Roster verification</h3>
-        <p class="hint">Start verifies your boss. One boss authorization covers eligible account-linked alts automatically.</p>
+        <p class="field-msg" id="sharing-action" role="status"></p>
+        <h3>Current and pending verification</h3>
+        <p class="hint" id="sharing-source-status">Source state is not known yet.</p>
+        <div class="sharing-sources" id="sharing-sources"></div>
+        <details id="sharing-history" class="fleet-characters" hidden>
+          <summary id="sharing-history-summary">Previous attempts (0)</summary>
+          <div id="sharing-history-sources" class="sharing-sources"></div>
+        </details>
+        <h3>Start verification</h3>
+        <p class="hint">Start checks that the selected character is your boss. One boss authorization covers eligible account-linked alts automatically.</p>
         <div class="row">
-          <label class="lab" for="sharing-boss">Owned fleet boss</label>
+          <label class="lab" for="sharing-boss">Owned boss for a new attempt</label>
           <select class="field" id="sharing-boss" disabled><option value="">Waiting for owned characters</option></select>
         </div>
         <p class="hint" id="sharing-grant-status"></p>
@@ -1259,18 +1269,9 @@
           <button class="btn" id="sharing-grant" disabled>Grant Fleet Read…</button>
           <button class="btn" id="sharing-start" disabled>Start verification</button>
         </div>
-        <p class="field-msg" id="sharing-action" role="status"></p>
-        <h3>Account sources</h3>
-        <p class="hint" id="sharing-source-status">Source state is not known yet.</p>
-        <div class="sharing-sources" id="sharing-sources"></div>
-        <details id="sharing-history" class="fleet-characters" hidden>
-          <summary id="sharing-history-summary">Previous attempts (0)</summary>
-          <div id="sharing-history-sources" class="sharing-sources"></div>
-        </details>
         <details id="sharing-eligible" class="fleet-characters">
           <summary>Sharing details and eligible characters</summary>
-          <p class="hint">Only current DPS and scram / point state leave this PC, never raw logs or history.
-            Pairing, Fleet Read and Start do not turn telemetry sharing on.</p>
+          <p class="hint">Pairing, Fleet Read and Start do not turn telemetry sharing on.</p>
           <p class="hint">Other participants and alts need no Fleet Read. Start can remain pending or paused
             until authGD verifies the boss. Source controls work with sharing and local displays off;
             closing this view never Stops a source.</p>
@@ -1445,6 +1446,76 @@
              below the table rather than repeated under every participating
              row. Per-row live regions remain reserved for write outcomes. -->
         <p id="alerts-collision" class="field-msg warn" role="status"></p>
+        <!-- Common modifiers stay before Advanced, so collapsing optional
+             pulse controls never makes them read as disclosure contents. -->
+        <!-- Round 5, A4. These two were the third and fourth checkboxes on
+             the card, directly under the master switch and rendered at its
+             indent and weight -- so the card offered five peer switches, of
+             which two were modifiers of the other three. The PvE filter
+             governs two of the three rows above; Keep pulsing changes how
+             every one of them behaves. Neither is a peer of "Watch
+             gamelogs and raise alerts", and neither is a peer of an event.
+             They are below the table now and one checkbox in, so their
+             subject is the thing immediately above them.
+             role="group" + aria-labelledby, because indentation is not
+             available to a screen reader and the lead-in line is the only
+             thing that says what "these" are. -->
+        <div class="alert-mods" role="group" aria-labelledby="alert-mods-lead">
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="alert-mods-lead">These change how the
+            events above behave.</span></div>
+        <div class="row">
+          <!-- Names BOTH events it governs. patterns.py's FILTERED_EVENTS
+               is {combat, warp_scramble}; decloak is excluded there
+               because it carries no attacker source for the heuristic to
+               test. Saying only "combat" taught the model that all three
+               were filtered -- so a user assumed their decloak alerts were
+               NPC-filtered when nothing had ever filtered them.
+
+               That note used to name the CAUSE as this control sitting
+               "above three events, card-level". A4 has since moved it
+               below them, so the position no longer teaches the wrong
+               scope -- but the widened label stays regardless: it is the
+               only thing on the card that states the scope at all, and
+               "below the table" is not the same claim as "two of the three
+               rows in it". -->
+          <label class="check">
+            <input type="checkbox" id="alert-pve-filter"><span class="box"></span>
+            Ignore combat and warp scrambles that look like NPC fire, not
+            a player's
+          </label>
+        </div>
+        <div class="row">
+          <label class="check">
+            <input type="checkbox" id="alert-persist"><span class="box"></span>
+            Keep pulsing until you select the preview
+          </label>
+        </div>
+        <div class="row">
+          <label class="lab" for="alert-volume">Volume</label>
+          <!-- One volume for all three sounds. Which sound an event makes
+               is already its own choice a row above; a per-event level to
+               balance them against each other would be a mixing desk for
+               three cues.
+
+               PERCENT and nothing else, so the readout needs no unit
+               conversion -- round 5's C2 is about a control whose printed
+               number was not its own unit, which is a trap this one
+               avoids by storing what it shows. 0 is genuinely silent:
+               play_sound returns before it resolves anything. -->
+          <input type="range" id="alert-volume" min="0" max="100">
+          <span class="range-value" id="alert-volume-value"></span>
+        </div>
+        <div class="row"><span class="lab"></span>
+          <!-- The one thing the slider cannot show, and the reason the
+               feature was asked for: the client you are flying does not
+               need to be told out loud what you can already see. -->
+          <span class="hint">The client you are looking at flashes without
+            a sound &mdash; alerts only interrupt for a client you are not
+            looking at.</span></div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="alert-volume-status" role="status"></span></div>
+        </div>
         <!-- Task 1. Flashes and Speed used to be a second grid line under
              every event row above -- two label/select pairs beneath four
              tracks already tight at the 840 floor (.alert-events' own
@@ -1524,74 +1595,6 @@
           </div>
           </div>
         </details>
-        <!-- Round 5, A4. These two were the third and fourth checkboxes on
-             the card, directly under the master switch and rendered at its
-             indent and weight -- so the card offered five peer switches, of
-             which two were modifiers of the other three. The PvE filter
-             governs two of the three rows above; Keep pulsing changes how
-             every one of them behaves. Neither is a peer of "Watch
-             gamelogs and raise alerts", and neither is a peer of an event.
-             They are below the table now and one checkbox in, so their
-             subject is the thing immediately above them.
-             role="group" + aria-labelledby, because indentation is not
-             available to a screen reader and the lead-in line is the only
-             thing that says what "these" are. -->
-        <div class="alert-mods" role="group" aria-labelledby="alert-mods-lead">
-        <div class="row"><span class="lab"></span>
-          <span class="hint" id="alert-mods-lead">These change how the
-            events above behave.</span></div>
-        <div class="row">
-          <!-- Names BOTH events it governs. patterns.py's FILTERED_EVENTS
-               is {combat, warp_scramble}; decloak is excluded there
-               because it carries no attacker source for the heuristic to
-               test. Saying only "combat" taught the model that all three
-               were filtered -- so a user assumed their decloak alerts were
-               NPC-filtered when nothing had ever filtered them.
-
-               That note used to name the CAUSE as this control sitting
-               "above three events, card-level". A4 has since moved it
-               below them, so the position no longer teaches the wrong
-               scope -- but the widened label stays regardless: it is the
-               only thing on the card that states the scope at all, and
-               "below the table" is not the same claim as "two of the three
-               rows in it". -->
-          <label class="check">
-            <input type="checkbox" id="alert-pve-filter"><span class="box"></span>
-            Ignore combat and warp scrambles that look like NPC fire, not
-            a player's
-          </label>
-        </div>
-        <div class="row">
-          <label class="check">
-            <input type="checkbox" id="alert-persist"><span class="box"></span>
-            Keep pulsing until you select the preview
-          </label>
-        </div>
-        <div class="row">
-          <label class="lab" for="alert-volume">Volume</label>
-          <!-- One volume for all three sounds. Which sound an event makes
-               is already its own choice a row above; a per-event level to
-               balance them against each other would be a mixing desk for
-               three cues.
-
-               PERCENT and nothing else, so the readout needs no unit
-               conversion -- round 5's C2 is about a control whose printed
-               number was not its own unit, which is a trap this one
-               avoids by storing what it shows. 0 is genuinely silent:
-               play_sound returns before it resolves anything. -->
-          <input type="range" id="alert-volume" min="0" max="100">
-          <span class="range-value" id="alert-volume-value"></span>
-        </div>
-        <div class="row"><span class="lab"></span>
-          <!-- The one thing the slider cannot show, and the reason the
-               feature was asked for: the client you are flying does not
-               need to be told out loud what you can already see. -->
-          <span class="hint">The client you are looking at flashes without
-            a sound &mdash; alerts only interrupt for a client you are not
-            looking at.</span></div>
-        <div class="row"><span class="lab"></span>
-          <span class="hint" id="alert-volume-status" role="status"></span></div>
-        </div>
       </section>
 
       <section class="card" id="custom-alerts">
@@ -1651,7 +1654,7 @@
         </label>
         <p class="hint">
           EVE tools, including bookmark keybinds, client previews and Fittings.
-          Turn this off to use only the OBS&nbsp;&rarr;&nbsp;YouTube uploader.
+          Turn this off to hide EVE tools. Uploader and Companions remain available.
         </p>
         <p class="field-msg" id="msg-general" hidden></p>
       </section>
@@ -1710,7 +1713,8 @@
   </div>
 
   <div class="route" id="route-evesettings">
-    <div class="settings">
+    <div class="settings es-shell">
+      <div id="es-work">
       <section class="card es-context-card">
         <!-- The pill lives in the heading, not in a row: the folder row it
              used to share is the half of this card that collapses away, and
@@ -1816,7 +1820,7 @@
                (The box is gone too now -- see .es-path, round 3's P4 -- so
                the row no longer offers a second thing that looks clickable
                for this button to lose against.) -->
-          <button id="es-folder-edit" class="btn">Change folder or server…</button>
+          <button id="es-folder-edit" class="btn" type="button" aria-controls="es-folder-detail" aria-expanded="false">Change folder or server…</button>
         </div>
         <div id="es-folder-detail">
           <div class="row">
@@ -1856,6 +1860,7 @@
           <div class="row">
             <label class="lab" for="es-server">Server</label>
             <select id="es-server" class="field"></select>
+            <button id="es-folder-close" class="btn" type="button" aria-controls="es-folder-detail" aria-expanded="true" disabled>Collapse folder setup</button>
           </div>
         </div>
         <p id="es-warning" class="hint" hidden></p>
@@ -1866,17 +1871,10 @@
         <button id="es-backup-recovery-open" class="btn" type="button">View recovery backup</button>
       </div>
 
-      <div class="es-profile-tools" role="group" aria-labelledby="es-profile-tools-label">
-        <span id="es-profile-tools-label" class="es-profile-tools-label">Profile tools</span>
-        <button class="btn" id="es-backups-open" type="button">Backups…</button>
-        <button class="btn" id="es-formations-open" type="button" disabled hidden>Edit formations…</button>
-        <button class="btn" id="es-setup-share" type="button" disabled>Share setup…</button>
-        <button class="btn" id="es-setup-import" type="button" disabled>Import setup…</button>
-        <p class="hint" id="es-setup-status" role="status" aria-live="polite"></p>
-      </div>
-
-      <section class="card">
+      <section class="card es-copy-card">
         <h2>Copy EVE settings</h2>
+        <div class="es-workbench">
+        <div class="es-source-pane">
         <!-- The .radio/.ring pattern, NOT bare inputs: .radio input is
              opacity:0 and the styled .ring is the visible control, so a
              bare radio here rendered as a native white Windows dot against
@@ -1917,38 +1915,51 @@
         </div>
         <div class="row">
           <label class="lab" for="es-source">Copy from</label>
-          <select id="es-source" class="field"></select>
+          <select id="es-source" class="field" aria-describedby="es-source-identity"></select>
         </div>
-        <div class="row" id="es-copy-options" hidden>
-          <span class="lab">What to copy</span>
-          <div id="es-copy-groups" class="es-copy-groups"></div>
-          <p class="hint">Checked groups are copied as a unit. Unchecked groups stay unchanged. Everything else is copied.</p>
+        <p id="es-source-identity" class="hint es-source-identity"></p>
+        <div id="es-copy-options" hidden>
+          <details id="es-copy-scope">
+            <summary>What to copy <span id="es-copy-scope-summary"></span></summary>
+            <div id="es-copy-groups" class="es-copy-groups"></div>
+          </details>
+          <p id="es-copy-scope-note" class="hint">Checked groups are copied as a unit. Unchecked groups stay unchanged. Everything else is copied.</p>
         </div>
-        <div class="row">
+        </div>
+        <div class="es-target-pane">
+        <div class="row es-target-filter">
+          <label class="lab" for="es-filter">Targets</label>
           <input id="es-filter" class="field" type="search" placeholder="Filter…"
                 aria-label="Filter characters or accounts">
           <button id="es-all" class="btn">Select shown</button>
           <button id="es-none" class="btn">Clear selection</button>
         </div>
-        <!-- The hazard and cost belong at the commit. The uncapped roster is
-             deliberately a verification surface, but with 30+ targets it
-             pushed the source, count, EVE state, backup policy and action
-             into different viewports. This context precedes the roster and
-             sticks while the route scrolls; the roster itself remains fully
-             visible and never regains the nested scroller Profiles 2 removed.
-
-             The EVE pill is still the SAME pill painted by paintPill over two
-             mount points, not a second hazard sentence free to drift from
-             ui/copy.py. The backup sentence is likewise rendered from the
-             Backups payload in one place. Only the source label is new, and
-             paintCommit derives it from the selected option rather than
-             keeping another selection state. -->
+        <!-- Uncapped, column-wise roster; only #es-work scrolls. The footer
+             owns separate space so even the last target is never covered. -->
+        <div id="es-targets" class="es-roster"></div>
+        </div>
+        </div>
+      </section>
+      <!-- Secondary, never hidden behind a disclosure: setup Back returns focus
+           directly to Share/Import. Keep the live outcome with its owner. -->
+      <div class="es-profile-tools" role="group" aria-labelledby="es-profile-tools-label">
+        <span id="es-profile-tools-label" class="es-profile-tools-label">Profile tools</span>
+        <button class="btn" id="es-backups-open" type="button">Backups…</button>
+        <button class="btn" id="es-formations-open" type="button" disabled hidden>Edit formations…</button>
+        <button class="btn" id="es-setup-share" type="button" disabled>Share setup…</button>
+        <button class="btn" id="es-setup-import" type="button" disabled>Import setup…</button>
+        <p class="hint" id="es-setup-status" role="status" aria-live="polite"></p>
+      </div>
+      </div>
+      <!-- Static sibling, not a sticky overlay. Existing controller owners
+           paint the action, hazard, backup promise and completion in place. -->
         <div id="es-commit-context" class="es-commit-context">
           <div class="row" id="es-commit">
             <button id="es-copy" class="btn acc" disabled>Copy to 0 characters</button>
             <span class="es-commit-info">
               <span id="es-copy-count" class="es-count">Nothing selected</span>
               <span id="es-copy-source" class="es-copy-source"></span>
+              <span id="es-copy-profile" class="es-copy-source"></span>
             </span>
             <span id="es-eve-state-commit" class="pill">EVE closed</span>
           </div>
@@ -1958,19 +1969,6 @@
             <button id="es-copy-view-backups" class="linkbtn" type="button">View backups</button>
           </div>
         </div>
-        <!-- Profiles 2: NOT .list-scroll any more. The roster is a picking
-             surface being used as a verification surface -- "select all" is
-             the normal path, so what is wanted here is to SEE who is about
-             to be overwritten, which needs everyone visible at once. A
-             capped inner scroller gave the opposite: two nested scrollbars
-             (its own and the page's) and a list clipped mid-row at BOTH
-             edges, with a half-legible name sitting directly above a
-             full-strength accent button. Columns reclaim the dead width
-             beside every name; the route's own overflow-y is now the one
-             scrollbar on the screen. See .es-roster in style.css. -->
-        <div id="es-targets" class="es-roster"></div>
-      </section>
-
     </div>
   </div>
 
@@ -2343,9 +2341,10 @@
       </div>
       <section class="fm-work" id="fm-import-work" aria-labelledby="fm-import-heading" hidden>
         <h2 id="fm-import-heading">Paste formations</h2>
+        <p class="hint" id="fm-import-save-note">Add formations changes only your draft. Nothing is saved until Save formations.</p>
         <label class="lab" for="fm-import-text">Shared formation text</label>
-        <textarea class="field" id="fm-import-text" rows="6"
-                  aria-describedby="fm-import-status"></textarea>
+        <textarea class="field" id="fm-import-text" rows="4"
+                  aria-describedby="fm-import-save-note fm-import-status"></textarea>
         <div id="fm-import-list"></div>
         <svg id="fm-import-preview" viewBox="0 0 100 100"
              role="img" aria-label="Imported formation preview"></svg>
@@ -2541,8 +2540,8 @@
     <aside class="skills-rail" id="fittings-rail">
       <div class="rail-block">
         <p class="rail-count" id="fittings-counts"></p>
-        <button class="btn" id="fittings-refresh-all">Refresh characters</button>
         <button class="btn" id="fittings-manage-characters">Manage characters…</button>
+        <button class="btn" id="fittings-refresh-all">Refresh characters</button>
       </div>
       <div class="rail-block rail-plans-block">
         <div class="rail-head-row">
@@ -2590,10 +2589,11 @@
          single confirm/prompt question. The final send still uses WM.confirm
          so the exact write count is stated in the shared app-owned layer. -->
     <div class="overlay" id="fittings-copy-overlay" hidden>
-      <div class="dialog" id="fittings-copy-dialog" role="dialog"
+      <div class="dialog" id="fittings-copy-dialog" role="dialog" tabindex="-1"
            aria-modal="true" aria-labelledby="fittings-copy-title">
         <h2 id="fittings-copy-title">Copy fittings</h2>
-        <div class="body" id="fittings-copy-body"></div>
+        <div class="body" id="fittings-copy-body" role="region" tabindex="-1"
+             aria-labelledby="fittings-copy-title"></div>
         <p class="field-msg" id="fittings-copy-status" role="status"></p>
         <div class="buttons">
           <button class="btn" id="fittings-copy-close">Close</button>

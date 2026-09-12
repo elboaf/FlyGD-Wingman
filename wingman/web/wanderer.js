@@ -139,7 +139,8 @@
         : currentHealth && currentHealth.test_result_text ? 'Test: ' + currentHealth.test_result_text : '';
     if (!acknowledged) return;
     el('credential').textContent = acknowledged.credential_error ? 'Stored token could not be read.'
-      : acknowledged.credential_present ? 'Token stored for this connection.' : 'No token stored for this connection.';
+      : acknowledged.credential_present ? 'Token stored for this connection.'
+        : 'No token stored for this connection. Remove connection also clears any token saved for an earlier URL or map.';
     el('health').textContent = connectionText(currentHealth);
     // These are WorkerState's current-session projection counts, never a map
     // roster or persisted recent-character list. Expired names are not available.
@@ -147,6 +148,17 @@
       : currentHealth.available + ' of ' + currentHealth.previewed + ' previews have a fresh system name — '
         + currentHealth.matched + ' of ' + currentHealth.previewed + ' tracked'
         + (currentHealth.stale ? ', ' + currentHealth.stale + ' stale' : '') + '.';
+    // Counts suggest checks, not a diagnosis or a refresh deadline. Keep error
+    // recovery primary when the connection is paused, off or unavailable.
+    if (acknowledged.enabled && !acknowledged.persistence_error && currentHealth && currentHealth.automatic_ready
+        && (currentHealth.status === 'connected' || currentHealth.status === 'stale')) {
+      if (currentHealth.matched < currentHealth.previewed) {
+        el('coverage').textContent += ' Check that missing characters are tracked on this map.';
+      }
+      if (currentHealth.available < currentHealth.matched) {
+        el('coverage').textContent += ' Check location sharing for tracked characters in Wanderer.';
+      }
+    }
   }
 
   function previousBindingHealth(p, previous) {

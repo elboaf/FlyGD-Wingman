@@ -448,6 +448,12 @@ def test_copy_result_terminal_states_use_existing_semantic_tokens():
         assert rule and "color: var(--warn)" in rule.group(1), status
 
 
+def test_copy_identity_text_can_wrap_in_review_results_and_progress():
+    for selector in (r"\.fit-copy-pair", r"#fittings-copy-status"):
+        rule = re.search(selector + r"\s*\{([^{}]*)\}", CSS)
+        assert rule and "overflow-wrap: anywhere" in rule.group(1), selector
+
+
 def test_fittings_empty_state_starts_hidden_until_the_first_payload():
     empty = re.search(r'<div class="empty" id="fittings-empty"[^>]*>', HTML)
     assert empty and re.search(r"\bhidden\b", empty.group(0))
@@ -534,9 +540,11 @@ _COPY_ACCESSIBILITY_HARNESS = r"""
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const page = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const data = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const page = data.page;
 const scenario = process.argv[3];
 const stateMachineScenario = scenario.startsWith('state-');
+const interleavingScenario = scenario.startsWith('interleaving-');
 const unhandledRejections = [];
 if (scenario === 'state-stale-start-result') {
   process.on('unhandledRejection', error => { unhandledRejections.push(error); });
@@ -581,9 +589,10 @@ class Element {
     this.children = [];
     this.text = value;
   }
-  get textContent() { return this.text || ''; }
+  get textContent() { return (this.text || '') + this.children.map(child => child.textContent).join(''); }
   setAttribute(name, value) { this.attrs[name] = String(value); }
   getAttribute(name) { return this.attrs[name] ?? null; }
+  removeAttribute(name) { delete this.attrs[name]; }
   contains(node) {
     return node === this || this.children.some(child => child.contains(node));
   }
@@ -626,7 +635,10 @@ class Element {
   }
   focus() {
     if (!this.disabled && this.getClientRects().length
-        && getComputedStyle(this).visibility === 'visible') document.activeElement = this;
+        && getComputedStyle(this).visibility === 'visible' && document.activeElement !== this) {
+      document.activeElement = this;
+      document.dispatchEvent({type: 'focusin', target: this});
+    }
   }
   blur() { if (document.activeElement === this) document.activeElement = document.body; }
   addEventListener(type, callback) { (this.listeners[type] ||= []).push(callback); }
@@ -725,6 +737,12 @@ function screenshotPayload() {
 }
 const WM = {
   current_route: 'fittings', el,
+  route(name) {
+    WM.current_route = name;
+    if (name === 'fittings') route.classList.add('active');
+    else route.classList.remove('active');
+    document.dispatchEvent({type: 'wm:route', detail: name});
+  },
   make(tag, cls, text) {
     const node = new Element(tag, {class: cls || ''});
     if (text !== undefined) node.textContent = text;
@@ -757,7 +775,7 @@ const WM = {
           fitting_name: 'Sabre tackle', character_name: 'Pilot', status: 'ready', chosen_name: 'Sabre tackle'}]
       });
     }
-    if (name === 'fittings_start_copy' && scenario === 'state-stale-start-result') {
+    if (name === 'fittings_start_copy' && (scenario === 'state-stale-start-result' || interleavingScenario)) {
       return deferred(name, args);
     }
     if (name === 'fittings_start_copy' || name === 'fittings_cancel_copy') return Promise.resolve(true);
@@ -766,6 +784,11 @@ const WM = {
   confirm() { return Promise.resolve(true); }
 };
 global.window = {WM, getComputedStyle};
+global.WM = WM;
+if (interleavingScenario) {
+  const panelPath = require('node:path').join(require('node:path').dirname(process.argv[4]), 'panel.js');
+  vm.runInThisContext(fs.readFileSync(panelPath, 'utf8'), {filename: 'panel.js'});
+}
 vm.runInThisContext(fs.readFileSync(process.argv[4], 'utf8'), {filename: 'fittings.js'});
 function key(name, shift = false, handled = false) {
   const event = {type: 'keydown', key: name, shiftKey: shift, defaultPrevented: handled,
@@ -945,28 +968,34 @@ async function runStateMachineScenario() {
   }
 
   if (scenario === 'state-screenshot-progress') {
-    handlers.onFittingsScreenshotState(screenshotPayload());
+    const fixture = screenshotPayload();
+    fixture.copy_stage = 'progress';
+    fixture.copy_progress_completed = 1;
+    fixture.copy_result = {operation_id: 'screenshot-copy', status: 'complete', write_count: 1,
+      results: [{entry_id: 'screenshot-1', fitting_name: 'Screenshot fitting 1',
+        character_id: 1, character_name: 'Pilot', status: 'success', attempted: true}]};
+    const before = calls.length;
+    handlers.onFittingsScreenshotState(fixture);
     assert.equal(el('fittings-list').querySelectorAll('.fit-row').length, 21,
       'the bounded screenshot fixture is active');
-    tick(selectedCheckbox());
-    el('fittings-copy-selected').click();
-    assert.equal(el('fittings-copy-review').hidden, false,
-      'screenshot staging begins in targets phase');
-
-    handlers.onFittingsProgress({kind: 'copy', phase: 'progress',
-      operation_id: 'screenshot-copy', completed: 2, total: 3,
-      result: {status: 'success'}});
+    assert.equal(el('fittings-copy-title').textContent, 'Copying fittings');
+    assert.equal(el('fittings-copy-review').hidden, true);
+    assert.equal(el('fittings-copy-start').hidden, true);
+    assert.equal(el('fittings-copy-cancel').hidden, false);
+    assert.equal(el('fittings-copy-close').disabled, true);
     assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
-      '2 of 3 pairs checked', 'bounded screenshot progress renders from targets phase');
-    handlers.onFittingsProgress({kind: 'copy', phase: 'complete', completed: 3,
-      total: 3, result: {
-        operation_id: 'screenshot-copy', status: 'complete', write_count: 1,
-        results: [{fitting_name: 'Screenshot result', character_name: 'Pilot',
-          status: 'success'}]
-      }});
+      '1 of 1 pair checked');
+    handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'unrelated'});
+    assert.equal(el('fittings-copy-title').textContent, 'Copying fittings');
+    el('fittings-copy-cancel').click();
+    fixture.copy_stage = 'results';
+    handlers.onFittingsScreenshotState(fixture);
     assert.equal(el('fittings-copy-title').textContent, 'Copy results');
     assert.equal(el('fittings-copy-body').querySelector('.fit-copy-pair-name').textContent,
-      'Screenshot result', 'bounded screenshot result renders from targets phase');
+      'Screenshot fitting 1 (Sabre)');
+    handlers.onFittingsScreenshotState({kind: 'fittings-screenshot-v1', clear: true});
+    assert.equal(el('fittings-copy-overlay').hidden, true);
+    assert.equal(calls.length, before, 'presentation and cleanup never reach a writer');
     return;
   }
 
@@ -1012,9 +1041,9 @@ async function runStateMachineScenario() {
     assert.equal(el('fittings-copy-start').hidden, false,
       'only the current dialog reply enters preflight');
     assert.match(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
-      /^1 remote write/);
+      /^1 addition planned/);
     assert.equal(el('fittings-copy-body').querySelector('.fit-copy-pair-name').textContent,
-      'Current fitting B');
+      'Current fitting B (Sabre)');
     el('fittings-copy-start').click();
     await flush();
     const starts = calls.filter(call => call[0] === 'fittings_start_copy');
@@ -1057,7 +1086,7 @@ async function runStateMachineScenario() {
       assert.equal(el('fittings-copy-title').textContent, 'Copying fittings',
         eventName + ' cannot replace copy B');
       assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
-        '0 of 1 pairs checked');
+        '0 of 1 pair checked');
       assert.equal(el('fittings-copy-selected').textContent, 'Copy selected (1)',
         eventName + ' cannot clear copy B selection');
       assert.equal(el('fittings-copy-cancel').hidden, false);
@@ -1079,7 +1108,7 @@ async function runStateMachineScenario() {
     handlers.onFittingsProgress({kind: 'copy', phase: 'progress', ticket_id: 'ticket-b',
       operation_id: 'copy-b', completed: 1, total: 1, result: {status: 'success'}});
     assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
-      '1 of 1 pairs checked');
+      '1 of 1 pair checked');
     handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'ticket-b',
       operation_id: 'copy-b', completed: 1, total: 1, result: {
         operation_id: 'copy-b', status: 'complete', write_count: 1, results: [{
@@ -1138,7 +1167,7 @@ async function runStateMachineScenario() {
     handlers.onFittingsProgress({kind: 'copy', phase: 'progress', ticket_id: 'ticket',
       operation_id: 'copy-a', completed: 1, total: 1, result: {status: 'success'}});
     assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
-      '1 of 1 pairs checked');
+      '1 of 1 pair checked');
     const cancellations = calls.filter(call => call[0] === 'fittings_cancel_copy').length;
     WM.current_route = 'skills';
     route.classList.remove('active');
@@ -1248,7 +1277,113 @@ async function runStateMachineScenario() {
 
   throw new Error('Unknown state-machine scenario: ' + scenario);
 }
+async function runInterleavingScenario() {
+  document.dispatchEvent({type: 'wm:route', detail: 'fittings'});
+  await flush();
+  tick(selectedCheckbox());
+  el('fittings-copy-selected').focus();
+  el('fittings-copy-selected').click();
+  tick(el('fittings-copy-body').querySelector('input'));
+  el('fittings-copy-review').click();
+  await flush();
+  el('fittings-copy-start').focus();
+  el('fittings-copy-start').click();
+  assert.equal(el('overlay').hidden, false, 'real panel confirmation opens for Start');
+  if (scenario.startsWith('interleaving-screenshot-')) {
+    const confirmationFocus = document.activeElement.id;
+    const confirmationBody = el('dlg-body').textContent;
+    assert.equal(confirmationFocus, 'dlg-ok');
+    assert.deepEqual(calls.map(call => call[0]), ['fittings_state', 'fittings_preflight_copy']);
+    handlers.onFittingsScreenshotState(data.screenshot.payload);
+    const isProgress = data.screenshot.payload.copy_stage === 'progress';
+    assert.equal(el('fittings-copy-overlay').hidden, false, 'fixture still enters presentation');
+    assert.equal(el('fittings-copy-title').textContent, isProgress ? 'Copying fittings' : 'Copy results');
+    assert.equal(document.activeElement.id, confirmationFocus,
+      'screenshot presentation must not steal the real pending confirmation focus');
+    // Execute the production guard too — visibility alone cannot prove exposure.
+    assert.throws(() => vm.runInThisContext(data.screenshot.verify), /Screenshot content did not settle/);
+    assert.equal(el('overlay').hidden, false, 'capture verification never dismisses the question');
+    assert.equal(el('dlg-title').textContent, 'Copy fittings');
+    assert.equal(el('dlg-body').textContent, confirmationBody);
+    assert.equal(document.activeElement.id, confirmationFocus);
+    handlers.onFittingsScreenshotState({kind: 'fittings-screenshot-v1', clear: true});
+    await flush();
+    assert.equal(WM.current_route, 'main');
+    assert.equal(el('fittings-copy-overlay').hidden, true);
+    assert.equal(el('overlay').hidden, false, 'teardown leaves the unanswered question alone');
+    assert.equal(document.activeElement.id, confirmationFocus);
+    assert.deepEqual(calls.map(call => call[0]), ['fittings_state', 'fittings_preflight_copy'],
+      'presentation, verification and teardown never submit or cancel a real copy');
+    return;
+  }
+  el('dlg-ok').click();
+  await flush();
+  const start = takePending('fittings_start_copy');
+  const copy = el('fittings-copy-dialog');
+  const cancel = el('fittings-copy-cancel');
+  assert.equal(document.activeElement.id, cancel.id);
+  if (scenario.includes('complete')) {
+    start.resolve(true);
+    await flush();
+    const first = WM.confirm('Synthetic notice', 'No action follows this answer.');
+    const queued = scenario.includes('queued') ? WM.confirm('Queued notice', 'Still no action.') : null;
+    assert.equal(el('overlay').hidden, false);
+    handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'ticket',
+      result: {results: [], write_count: 0, status: 'cancelled'}});
+    assert.equal(el('fittings-copy-title').textContent, 'Copy results');
+    assert.equal(cancel.hidden, true, 'completion invalidated generic dialog return focus');
+    assert.equal(document.activeElement.id, 'dlg-ok', 'completion leaves generic dialog in charge');
+    assert.equal(key('Escape').defaultPrevented, true);
+    assert.equal(await first, false);
+    if (queued) {
+      assert.equal(el('overlay').hidden, false, 'first dismissal keeps queued generic dialog in charge');
+      assert.equal(document.activeElement.id, 'dlg-ok');
+      key('Escape');
+      assert.equal(await queued, false);
+    }
+    assert.equal(el('overlay').hidden, true);
+    assert.equal(el('fittings-copy-overlay').hidden, false, 'same Escape must not dismiss copy results');
+    assert.ok(copy.contains(document.activeElement), 'real panel dismissal must immediately return inside copy modal');
+    assert.ok(!document.activeElement.disabled && document.activeElement.getClientRects().length);
+    for (const reverse of [true, false]) {
+      key('Tab', reverse);
+      assert.ok(copy.contains(document.activeElement));
+    }
+    assert.equal(calls.filter(call => call[0] === 'fittings_cancel_copy').length, 0);
+  } else {
+    const didCancel = !scenario.endsWith('uncancelled');
+    if (didCancel) cancel.click();
+    const reply = scenario.includes('null') ? null : false;
+    start.resolve(reply);
+    await flush();
+    assert.equal(el('fittings-copy-status').textContent, 'The copy could not start.');
+    assert.equal(el('fittings-copy-start').hidden, false);
+    assert.equal(el('fittings-copy-body').getAttribute('tabindex'), '0');
+    if (scenario.endsWith('root-tab') || scenario.endsWith('descendant-tab')) {
+      const fallback = scenario.endsWith('root-tab') ? copy : el('fittings-copy-title');
+      fallback.setAttribute('tabindex', '-1');
+      fallback.focus();
+      assert.equal(key('Tab', true).defaultPrevented, true, 'non-tab stop must not leak reverse Tab');
+      assert.equal(document.activeElement.id, 'fittings-copy-start');
+    } else {
+      assert.equal(document.activeElement.id, 'fittings-copy-body', 'rollback must reconcile hidden Cancel or fallback-root focus');
+      assert.equal(key('Tab', true).defaultPrevented, true);
+      assert.equal(document.activeElement.id, 'fittings-copy-start');
+    }
+    key('Tab');
+    assert.equal(document.activeElement.id, 'fittings-copy-body');
+    assert.equal(calls.filter(call => call[0] === 'fittings_cancel_copy').length, didCancel ? 1 : 0);
+    assert.equal(calls.filter(call => call[0] === 'fittings_start_copy').length, 1);
+    key('Escape');
+    assert.equal(el('fittings-copy-overlay').hidden, true);
+    assert.equal(document.activeElement.id, 'fittings-copy-selected');
+  }
+}
 (async () => {
+  if (interleavingScenario) {
+    await runInterleavingScenario();
+    return;
+  }
   if (stateMachineScenario) {
     await runStateMachineScenario();
     return;
@@ -1289,8 +1424,9 @@ async function runStateMachineScenario() {
     assert.equal(key('Tab').defaultPrevented, false, 'ordinary interior Tab stays native');
   } else if (scenario === 'tab-outside') {
     invoker.focus();
-    assert.equal(key('Tab').defaultPrevented, true);
-    assert.equal(document.activeElement, target);
+    assert.equal(document.activeElement, target, 'outside focus is reconciled before another key');
+    assert.equal(key('Tab', true).defaultPrevented, true);
+    assert.equal(document.activeElement, close);
   } else if (scenario === 'hidden-controls') {
     target.parentNode.style.display = 'none';
     close.focus();
@@ -1320,8 +1456,8 @@ async function runStateMachineScenario() {
         result: {results: [], write_count: 0, status: 'cancelled'}});
     }
     // Fallback must skip both a disabled first control and a hidden ancestor.
-    el('fittings-refresh-all').disabled = true;
-    el('fittings-manage-characters').parentNode.style.display = 'none';
+    el('fittings-manage-characters').disabled = true;
+    el('fittings-refresh-all').parentNode.style.display = 'none';
     close.click();
     assert.equal(overlay.hidden, true);
     assert.equal(document.activeElement, el('fittings-collections').querySelector('button'),
@@ -1335,6 +1471,87 @@ async function runStateMachineScenario() {
     el('overlay').hidden = true;
     key('Escape', false, true);
     assert.equal(overlay.hidden, false, 'shared confirmation Escape does not close copy overlay');
+  } else if (['progress-focus', 'progress-tab', 'cancel-focus', 'cancel-tab',
+              'progress-shared-dialog', 'review-scroller', 'results-scroller'].includes(scenario)) {
+    tick(target);
+    review.click();
+    await flush();
+    const body = el('fittings-copy-body');
+    const dialog = el('fittings-copy-dialog');
+    const start = el('fittings-copy-start');
+    const cancel = el('fittings-copy-cancel');
+    function assertScroller() {
+      assert.equal(body.getAttribute('tabindex'), '0', 'copy content must be a keyboard stop');
+      assert.equal(body.getAttribute('role'), 'region');
+      assert.equal(body.getAttribute('aria-labelledby'), 'fittings-copy-title');
+      assert.ok(el(body.getAttribute('aria-labelledby')).textContent, 'region has a current accessible name');
+      const last = scenario === 'review-scroller' ? start : close;
+      last.focus();
+      assert.equal(key('Tab').defaultPrevented, true);
+      assert.equal(document.activeElement, body, 'forward wrap admits scrollable content');
+      assert.equal(key('Tab', true).defaultPrevented, true);
+      assert.equal(document.activeElement, last, 'reverse wrap leaves content for last control');
+    }
+    if (scenario === 'review-scroller') {
+      assertScroller();
+      key('Escape');
+      assert.equal(document.activeElement, invoker);
+      return;
+    }
+    start.focus();
+    start.click();
+    await flush();
+    if (scenario === 'progress-focus') {
+      assert.equal(document.activeElement, cancel, 'progress entry focuses its only enabled control');
+    } else if (scenario === 'progress-tab') {
+      cancel.focus();
+      for (const reverse of [false, true]) {
+        assert.equal(key('Tab', reverse).defaultPrevented, true, 'progress must contain Tab');
+        assert.equal(document.activeElement, cancel);
+      }
+      key('Escape');
+      assert.equal(overlay.hidden, false);
+      assert.equal(calls.filter(call => call[0] === 'fittings_cancel_copy').length, 0);
+    } else if (scenario === 'cancel-focus' || scenario === 'cancel-tab') {
+      cancel.focus();
+      cancel.click();
+      assert.equal(cancel.disabled, true);
+      assert.equal(calls.filter(call => call[0] === 'fittings_cancel_copy').length, 1);
+      if (scenario === 'cancel-focus') {
+        assert.equal(dialog.getAttribute('tabindex'), '-1', 'empty modal needs a programmatic focus target');
+        assert.equal(document.activeElement, dialog, 'Cancel must not leave focus on a disabled control');
+      } else {
+        invoker.focus();
+        for (const reverse of [false, true]) {
+          assert.equal(key('Tab', reverse).defaultPrevented, true, 'cancellation wait contains Tab');
+          assert.equal(document.activeElement, dialog, 'zero-control fallback recovers modal focus');
+        }
+      }
+      key('Escape');
+      assert.equal(overlay.hidden, false, 'cancellation wait cannot close the operation');
+      assert.equal(calls.filter(call => call[0] === 'fittings_cancel_copy').length, 1);
+    } else if (scenario === 'progress-shared-dialog') {
+      el('overlay').hidden = false;
+      el('dlg-ok').focus();
+      assert.equal(key('Tab').defaultPrevented, false, 'generic overlay has priority during progress');
+      assert.equal(document.activeElement, el('dlg-ok'));
+      cancel.click();
+      assert.equal(document.activeElement, el('dlg-ok'), 'Cancel fallback must not steal topmost focus');
+      handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'ticket',
+        result: {results: [], write_count: 0, status: 'cancelled'}});
+      assert.equal(document.activeElement, el('dlg-ok'), 'completion must not steal topmost focus');
+      el('overlay').hidden = true;
+      key('Escape', false, true);
+      assert.equal(overlay.hidden, false, 'already-handled Escape must not dismiss copy results');
+    } else {
+      handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'ticket',
+        result: {results: [], write_count: 0, status: 'cancelled'}});
+      assert.equal(document.activeElement, close, 'completion replaces hidden Cancel focus');
+      assertScroller();
+      key('Escape');
+      assert.equal(overlay.hidden, true);
+      assert.equal(document.activeElement, el('fittings-manage-characters'));
+    }
   } else if (scenario === 'progress' || scenario === 'route-leave') {
     tick(target);
     review.click();
@@ -1342,8 +1559,8 @@ async function runStateMachineScenario() {
     const start = el('fittings-copy-start');
     start.focus();
     key('Tab');
-    assert.equal(document.activeElement, close, 'preflight recalculates first control');
-    close.focus();
+    assert.equal(document.activeElement.id, 'fittings-copy-body', 'preflight includes its content scroller first');
+    el('fittings-copy-body').focus();
     key('Tab', true);
     assert.equal(document.activeElement, start, 'preflight recalculates last control');
     start.click();
@@ -1381,11 +1598,15 @@ async function runStateMachineScenario() {
 """
 
 
-def _run_fittings_node(tmp_path, scenario, script=WEB / "fittings.js"):
+def _run_fittings_node(
+    tmp_path, scenario, script=WEB / "fittings.js", *, screenshot=None
+):
     page = PageTree()
     page.feed(HTML)
     markup = tmp_path / "page.json"
-    markup.write_text(json.dumps(page.root), encoding="utf-8")
+    markup.write_text(
+        json.dumps({"page": page.root, "screenshot": screenshot}), encoding="utf-8"
+    )
     harness = tmp_path / "fittings-harness.cjs"
     harness.write_text(_COPY_ACCESSIBILITY_HARNESS, encoding="utf-8")
     return subprocess.run(
@@ -1412,6 +1633,21 @@ def _run_fittings_node(tmp_path, scenario, script=WEB / "fittings.js"):
         "fallback-invisible",
         "fallback-disabled",
         "shared-dialog",
+        "progress-focus",
+        "progress-tab",
+        "cancel-focus",
+        "cancel-tab",
+        "progress-shared-dialog",
+        "review-scroller",
+        "results-scroller",
+        "interleaving-complete-dismiss",
+        "interleaving-queued-complete-dismiss",
+        "interleaving-rollback-false-cancel",
+        "interleaving-rollback-null-cancel",
+        "interleaving-rollback-false-uncancelled",
+        "interleaving-rollback-null-uncancelled",
+        "interleaving-root-tab",
+        "interleaving-descendant-tab",
         "progress",
         "route-leave",
     ],

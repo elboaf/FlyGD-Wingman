@@ -36,6 +36,47 @@ Run on Windows against a real install before each release.
 - [ ] Restart Explorer and repeat the right-click check after Wingman's icon
       returns.
 
+## Approved UX pass — Windows acceptance UNVERIFIED
+
+Tasks 1–8 have synthetic Node/headless-Chrome evidence, not installed WebView2
+acceptance. Run these affected-surface checks at the 840×625 logical floor and
+100/125/150/200% Windows scaling; record actual build and scaling separately.
+Use disposable authorized data for any write. Screenshot staging alone must
+never Start copy, save a formation, select a native source, or contact a relay.
+
+- [ ] Companion **Edit & source** and Add: Whole window / Selected region share
+      a baseline; Tab and arrow keys retain visible focus without selecting a source.
+- [ ] Fittings Name / Description labels sit above equal-width fields. Typing,
+      blur, collapse/reopen and route return retain drafts without saving. Skills
+      and Fittings both order **Manage characters…** before **Refresh characters**.
+      Fitting **On N characters** means presence, not skill readiness.
+- [ ] Skills **READY** aligns with its ratios; Backups **Actions** aligns with
+      the right-anchored Restore / More cluster. Tab reaches those controls;
+      Escape closes an open menu without restoring or deleting anything.
+- [ ] Profiles Change folder/server and Collapse return focus correctly; missing,
+      invalid or unreadable setup cannot collapse. At 840×625 and 839×621,
+      targets appear beside source/scope on entry. Only the work pane scrolls;
+      the separate footer never covers a target or gains an inner scrollbar.
+- [ ] Formation import retains editable, vertically resizable shared text after
+      Review. The draft/Save note stays visible through conflicts and re-review;
+      review does not save. Four initial text rows leave more room for results.
+- [ ] Copy review, active progress, cancelling and overflowing results keep Tab /
+      Shift+Tab inside the modal. PageDown/End can read the last result. A generic
+      dialog above it owns focus; closing it returns to the current copy phase.
+      Escape cannot dismiss active work; completed Close finds a usable route control.
+- [ ] Inspect enabled dim keybinds normally, hovered and focused; formation rings
+      and height tethers stay readable in editor and import preview. Preview
+      conflict warnings scroll under sticky headers before their owning control.
+      Alerts common modifiers precede Advanced pulse behavior.
+- [ ] Fleet local visibility explicitly affects only the bar. Sharing scope and
+      current/pending verification remain exposed before Start verification;
+      settled history stays in Previous attempts. Neither opening a disclosure
+      nor screenshot staging changes sharing or source intent.
+- [ ] Fixture captures show same-name fitting hull identity, classified additions
+      versus present/unavailable pairs, named progress and per-target results.
+      Each stage and its fixture clear before the next capture; no real Start,
+      clipboard, authentication, credential or native operation is used to stage it.
+
 ## Wanderer names — live/native acceptance
 
 **All 15 checks below are NOT RUN for this implementation.** No deployed instance
@@ -2682,7 +2723,7 @@ Record browser evidence separately from installed Windows/WebView2 acceptance.
       or erase a session-only warning. The global toggle still works while the
       section is closed.
 - [ ] Settings rail → Fleet telemetry shows local Fleet Bar controls (including
-      Reset width and Characters) separately from shared setup. Previews retains
+      Reset width and Show local characters in Fleet Bar) separately from shared setup. Previews retains
       client, cycle, layout, crop and keybind controls. Its Fleet shortcut enters
       the new section, not a hidden card. Leaving/reopening Settings restores it.
 - [ ] Hide EVE tools while runtime features are Off. Fleet telemetry disappears;
@@ -3467,7 +3508,7 @@ until they are actually run on Windows.
       order, including the preview-excluded one; the character-select client has
       no row until its title identifies a character.
 - [ ] **Character grouping is truthful.** In Settings › Fleet telemetry › Fleet Bar,
-      open **Characters** after Wingman has seen several characters. With Fleet
+      open **Show local characters in Fleet Bar** after Wingman has seen several characters. With Fleet
       Bar on, running names are under `Running` and remembered logged-out names
       are under `Offline`; no name appears twice. Turn Fleet Bar off: the same
       choices are editable under `Known characters`, without calling anyone
@@ -4059,9 +4100,9 @@ so these are the checks that matter and only a Windows machine can run them.
 
 - [ ] **Profiles opens with compact context and tools.** With a selected EVE
       profile, the full-width context row identifies the folder, server, and
-      profile. The **Backups…** and **Edit formations…** sibling tool group
-      sits directly beneath that context when the codec is available, without
-      becoming another card or route. In Accounts mode, the Copy card contains
+      profile. The **Backups…**, **Edit formations…**, **Share setup…** and
+      **Import setup…** secondary tool shelf follows the workbench, without
+      becoming another card, route or hidden disclosure. In Accounts mode, the Copy card contains
       **Identify accounts…**; none of these tools is an inline card below Copy.
 - [ ] **Profile tools are named for what they are, not for who they seem
       scoped to.** Inspect the **Backups…** / **Edit formations…** tool
@@ -4080,10 +4121,10 @@ so these are the checks that matter and only a Windows machine can run them.
       says what to launch/change/close. **Identify accounts…** is unavailable
       in both states.
 - [ ] **Copy selection and completion stay local and legible.** Use **Select
-      shown** and **Clear selection** after filtering. The commitment context
-      precedes the roster and stays at the route's top while a long roster
-      scrolls beneath it. It names the source, selected count, EVE state,
-      automatic-backup policy, and Copy action without hiding any target. The
+      shown** and **Clear selection** after filtering. Only checked, shown,
+      non-source rows count. The footer is a nonshrinking sibling outside the
+      work scroller, not a sticky overlay. It names the source, selected count,
+      accepted Profile/Server, EVE state, backup policy and actual Copy action. The
       copy button changes to the neutral `Copy operation in progress…` while
       busy, then global completion clears the
       selection and shows local `Copy complete.` with **View backups**.
@@ -4121,12 +4162,12 @@ so these are the checks that matter and only a Windows machine can run them.
       type into: the two must not look alike. Drag the window to the floor
       with a deep root selected — the path ellipsises at its end and
       `Choose folder…` and `Detect` stay on the row.
-- [ ] **`Copy from` is the widest control in its card.** With a folder
-      chosen, look at the copy card. Expected: the `Copy from` dropdown
-      spans the card's form measure — wider than the `Filter…` box below
-      it, which shares its row with `Select all` and `Clear`. It decides
-      what content overwrites every ticked character, and it used to be the
-      narrowest control on the screen.
+- [ ] **Full source identity is readable.** `Copy from` fills its own pane
+      beside Targets. Long character and account names plus accepted metadata
+      wrap beneath it, not just in a tooltip; keyboard focus describes that
+      helper. The footer's Profile/Server reflects accepted state, not a pending
+      selection draft. No horizontal overflow at 840×625, 839×621, 1015×633 or
+      1280×800.
 - [ ] **Selective copy groups follow the active kind.** Characters shows six
       groups, with only `Search history & suggestions` off by default. Accounts
       shows nine, with `Module slot layout` and `Search history & suggestions`
@@ -4146,33 +4187,26 @@ so these are the checks that matter and only a Windows machine can run them.
       its complete pre-copy state, including groups that were selected.
 - [ ] Turn every group on and copy. The result matches a full structured copy;
       no recognized source setting is left behind.
-- [ ] Remove the codec sidecar and reopen Profiles. `What to copy` is hidden,
-      the existing Copy action remains available, and a copy uses the plain
-      whole-file two-argument fallback.
-- [ ] **Widening the window adds roster columns, not gutter.** With a folder
-      chosen and a few dozen characters, put the window at the floor and note
-      how many columns of names the target list has and where `Copy to
-      selected` sits. Now drag the window much wider. Expected: the names
-      reflow into MORE columns and the button climbs; the folder card above
-      keeps its width and its left edge stays flush with the copy card's.
-      Round 3's P10 measured the opposite — every extra pixel became margin,
-      because Profiles wraps its route in the same `.settings` 620px wrapper
-      the eight Settings sections use, so the roster inherited a measure meant
-      for a label/field pair. D1 lifted the cap for the roster's card only:
-      the prose, the `Copy from` row and the filter row are all still held to
-      the old 586px measure on purpose, so a filter row narrower than the
-      roster beneath it is correct here, not a bug.
-- [ ] **The copy commit bar widens with the roster above the 840px floor,
-      and only there.** With a folder chosen, put the window at its floor
-      and note the commit bar (`Copy to selected`, its count, source, and
-      the EVE pill) — it is capped to the card's ~586px prose measure
-      alongside the rest of the setup controls. Drag the window past
-      841px CSS width. Expected: the bar now spans the roster's full width
-      below it, and the count and source sit grouped together rather than
-      leaving a bare gap before the pill. Return to the floor (or measure
-      at exactly 840px): the bar reverts to the capped layout — the
-      widening is gated behind `min-width: 841px` and must not appear at
-      or below it.
+- [ ] Remove the codec sidecar and reopen Profiles. Group controls are hidden,
+      but a visible whole-file fallback explanation replaces the retention
+      claim. The existing Copy action uses its plain two-argument fallback.
+- [ ] **Meaningful compact scope.** `What to copy` starts collapsed and names
+      excluded groups (or all copied/all retained group names), not just a
+      fraction. The checked-unit/unchecked-retained/other-settings-copied note
+      remains visible collapsed. Toggle by keyboard: the summary changes without
+      replacing the focused checkbox. No checked groups still permits copying
+      other settings; each kind keeps its own payload-defined defaults/choices.
+- [ ] **Scroll and owner continuity.** Reach the first and last target, expand
+      scope, edit a profile-copy name, and let a names refresh land. Ordinary
+      payloads and local edits do not reset the work scroll or draft. Navigation
+      into Profiles resets work scroll; Share/Import Back still focuses its
+      visible tool, scrolling to it if necessary. Failed profile replacement
+      exposes its existing recovery path outside optional hidden areas.
+- [ ] **Widening adds target columns, not dead gutter.** With several dozen
+      names, widen the window. The uncapped roster adds columns inside the
+      target pane; it never gains an inner scrollbar. The full-width footer
+      owns separate space at every supported width, including both floors;
+      there is no 586px cap or 841px-only action layout.
 - [ ] **A folder that is not set, or cannot be read, opens the controls
       anyway.** Clear the folder (or point it at a directory you have no
       access to) and reopen the route. Expected: the full controls, not a

@@ -478,6 +478,42 @@ def test_fittings_copy_fixture_covers_limit_progress_partial_and_unknown():
     assert any(status != "success" for status in statuses)
 
 
+def test_fittings_limit_fixture_classifies_additions_across_eligible_targets():
+    from wingman.evefittings.contracts import MAX_COPY_WRITES
+    from wingman.evefittings.controller import FittingsController, _TicketPair
+
+    fixture = _fittings_screenshot_fixture()
+    limit = fixture["limit_preflight"]
+    entries = {row["id"]: row for row in fixture["entries"]}
+    characters = {row["character_id"]: row for row in fixture["characters"]}
+    pairs = [_TicketPair(**row) for row in limit["pairs"]]
+    selected = {pair.entry_id for pair in pairs}
+    targets = {pair.character_id for pair in pairs}
+    assert len(selected) < MAX_COPY_WRITES < len(pairs)
+    assert {(pair.entry_id, pair.character_id) for pair in pairs} == {
+        (entry_id, character_id) for entry_id in selected for character_id in targets
+    }
+    for pair in pairs:
+        entry = entries[pair.entry_id]
+        character = characters[pair.character_id]
+        assert pair.status == "ready" and entry["deployable"]
+        assert entry["presence_count"] == 0
+        assert pair.fitting_name == pair.chosen_name == entry["name"]
+        assert pair.character_name == character["character_name"]
+        assert character["status"] == "enabled" and character["fetched_utc"]
+        assert not character["stale"]
+    refusal = FittingsController._preflight_error(limit["error"], pairs)
+    assert refusal["counts"]["ready"] == len(pairs)
+    assert not refusal["accepted"] and refusal["write_count"] == 0
+    assert limit["error"] == (
+        f"Limit each copy to {MAX_COPY_WRITES} additions across all targets. "
+        "Select fewer fittings or targets, then review again."
+    )
+    completed = fixture["copy_progress_completed"]
+    assert 0 < completed <= len(fixture["copy_result"]["results"])
+    assert fixture["copy_result"]["results"][completed - 1]["status"] == "unknown"
+
+
 def test_fittings_screenshot_fixture_is_browser_consumed_and_semantically_valid():
     fixture = _fittings_screenshot_fixture()
     assert fixture["kind"] == "fittings-screenshot-v1"

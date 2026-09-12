@@ -203,6 +203,18 @@ def test_fleet_controls_have_their_own_section_without_preview_controls():
         assert f'id="{control}"' not in fleet
 
 
+def test_bookmarks_help_names_the_sig_toggle_without_stale_direction():
+    bookmarks = dict(_panes())["bookmarks"]
+    assert "right end" not in bookmarks
+    assert "Floating sig bar toggle in the status strip" in bookmarks
+
+
+def test_general_help_preserves_independent_companions():
+    general = dict(_panes())["general"]
+    assert "Uploader and Companions remain available" in general
+    assert "use only the OBS" not in general
+
+
 def test_general_is_the_last_rail_item():
     """Its whole content is the switch that hides the EVE-only Settings
     sections (app.js's EVE_SECTIONS), so it sits under the entries it

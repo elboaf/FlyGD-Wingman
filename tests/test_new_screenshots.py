@@ -4,11 +4,13 @@ import importlib.util
 import json
 import subprocess
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
 
 from tests.html_tree import PageTree
+from tests.test_fittings_page import _run_fittings_node
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location(
@@ -49,13 +51,13 @@ def run_screenshot_page(tmp_path, key, regression=None):
         "cleanup": shoot.new_screen_cleanup_script(screen),
         "regression": regression,
     }
-    if key == "fittings-detail":
+    if key.startswith("fittings-"):
         data["fixture"] = shoot.fittings_fixture_setup_script()
         data["reset"] = shoot._fittings_reset_script()
         data["fittings_prepare"] = shoot._fittings_prepare_script(key)
         data["previous_prepare"] = shoot._fittings_prepare_script("fittings-alliance")
         data["previous_stage"] = shoot._fittings_setup_script("fittings-alliance")
-    elif regression:
+    elif regression and key == "settings-previews-crop-narrow":
         data["crop_fixture"] = shoot.load_dev_tool_screenshot_fixture()["crop"]
         data["crop_fixture"]["preview"] = shoot.load_dev_preview_fixture()
     path = tmp_path / "capture.json"
@@ -77,6 +79,96 @@ def run_screenshot_page(tmp_path, key, regression=None):
     assert "PASS screenshot" in result.stdout
 
 
+@pytest.mark.parametrize(
+    ("key", "scenario"),
+    [
+        ("settings-previews-groups", "fidelity"),
+        ("settings-characters-waiting", "fidelity"),
+        ("settings-characters-partial-cleanup", "fidelity"),
+        ("fittings-copy-limit", "fidelity"),
+        ("fittings-copy-result", "fidelity"),
+        *[
+            ("fittings-copy-progress", exit_kind)
+            for exit_kind in (
+                "cancel",
+                "close",
+                "leave",
+                "teardown",
+                "start",
+                "late-live",
+            )
+        ],
+    ],
+)
+def test_capture_fidelity_and_writer_free_exit(tmp_path, key, scenario):
+    run_screenshot_page(tmp_path, key, scenario)
+
+
+@pytest.mark.parametrize(
+    "renamed_id",
+    [
+        pytest.param("fit-gen-2", id="duplicate-selected-name"),
+        pytest.param("fit-gen-0", id="unselected-name-collision"),
+    ],
+)
+def test_limit_capture_uses_entry_identity(tmp_path, monkeypatch, renamed_id):
+    fixture = shoot.load_dev_fittings_screenshot_fixture()
+    entries = {entry["id"]: entry for entry in fixture["entries"]}
+    entries[renamed_id]["name"] = entries["fit-gen-1"]["name"]
+    for pair in fixture["limit_preflight"]["pairs"]:
+        if pair["entry_id"] == renamed_id:
+            pair["fitting_name"] = entries[renamed_id]["name"]
+    monkeypatch.setattr(
+        shoot, "load_dev_fittings_screenshot_fixture", lambda: deepcopy(fixture)
+    )
+    run_screenshot_page(tmp_path, "fittings-copy-limit", "fidelity")
+
+
+@pytest.mark.parametrize("stage", ["progress", "results"])
+def test_fittings_capture_preserves_pending_confirmation(tmp_path, stage):
+    key = "fittings-copy-progress" if stage == "progress" else "fittings-copy-result"
+    screen = next(screen for screen in shoot.SCREENS if screen.key == key)
+    fixture = shoot.load_dev_fittings_screenshot_fixture()
+    fixture["copy_stage"] = stage
+    scenario = "interleaving-screenshot-" + stage
+    result = _run_fittings_node(
+        tmp_path,
+        scenario,
+        screenshot={
+            "payload": fixture,
+            "verify": shoot.new_screen_verify_script(screen),
+        },
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"PASS {scenario}" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "geometry",
+    [
+        "descendant-hit",
+        "missing-summary",
+        "hidden-summary",
+        "hidden-panel",
+        "inside-outer-crossing-inner",
+        "zero-area",
+        "pane-top",
+        "pane-bottom",
+        "pane-left",
+        "pane-right",
+        "viewport-top",
+        "viewport-bottom",
+        "viewport-left",
+        "viewport-right",
+        "occluded-center",
+        "occluded-corner",
+        "null-hit",
+    ],
+)
+def test_groups_capture_rejects_clipped_or_occluded_controls(tmp_path, geometry):
+    run_screenshot_page(tmp_path, "settings-previews-groups", {"geometry": geometry})
+
+
 @pytest.mark.parametrize("key", sorted(KEYS))
 def test_new_capture_staging_executes_without_bridge_or_clipboard(tmp_path, key):
     run_screenshot_page(tmp_path, key)
@@ -96,6 +188,8 @@ def test_new_capture_staging_executes_without_bridge_or_clipboard(tmp_path, key)
         "late-reset",
         "late-reinject",
         "late-state",
+        "cleanup",
+        "late-cleanup",
     ],
 )
 def test_fittings_detail_capture_requires_settled_named_detail(tmp_path, scenario):
