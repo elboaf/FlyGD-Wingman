@@ -163,6 +163,8 @@ function mutations() {
     }
     calls.length = 0; staging = true;
     for (let iteration = 0; iteration < 2; iteration++) {
+      writes.length = 0;
+      scrolls.length = 0;
       previousTab();
       for (const name of ['appearance', 'placement', 'size', 'switching']) {
         WM.el('preview-group-' + name).open = iteration === 0;

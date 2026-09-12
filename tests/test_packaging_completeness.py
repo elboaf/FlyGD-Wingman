@@ -139,10 +139,8 @@ def test_smoke_and_screenshot_prompt_cover_current_characters_and_fittings_check
     assert "50-row keyboard/menu checks" in flat_smoke
     assert "Fittings spacing at 100%, 125%, 150%, and 200% scaling" in flat_smoke
     assert "Open Settings on Uploading, Character access, or General" in flat_smoke
-    assert (
-        "Uploading, Character access, Bookmarks, Previews, Alerts, General"
-        in flat_smoke
-    )
+    # The full rail sequence is derived from markup in test_documentation.py.
+    assert "Settings rail entries, General last" in flat_smoke
     assert "Forget from Settings > Character access" in flat_smoke
     assert (
         "complete cleanup removes the shared credential, Skills snapshot, fitting snapshot and that character's presence"
