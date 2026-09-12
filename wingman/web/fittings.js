@@ -37,7 +37,7 @@
   // Only edited IDs, never a second library: retained across page/filter changes,
   // retired by acknowledgement, deliberate discard, or confirmed deletion.
   var metadataDrafts = {};
-  var metadataEditors = Object.create(null); // opened IDs, independent of drafts; session-only
+  var metadataEditors = Object.create(null); // open/closed per ID, independent of drafts; session-only
   var progress = null;     // last refresh onFittingsProgress payload
   var copyOverlayOpen = false;
   var copyDialogGeneration = 0;
@@ -555,8 +555,7 @@
     // native disclosure/focus state before either rebuild, without saving text.
     if (editor) {
       var editorId = editor.getAttribute('data-entry-id');
-      if (editor.open) metadataEditors[editorId] = true;
-      else delete metadataEditors[editorId];
+      metadataEditors[editorId] = editor.open;
     }
     var active = document.activeElement;
     var focusId = editor && editor.contains(active) ? active.id : '';
@@ -809,7 +808,9 @@
   function metadataDisclosureNode(current) {
     var disclosure = WM.make('details', 'fit-metadata-disclosure');
     disclosure.setAttribute('data-entry-id', current.id);
-    disclosure.open = !!metadataEditors[current.id] || !!metadataDrafts[current.id];
+    // A retained draft is not permission to reopen an editor the user closed.
+    disclosure.open = Object.prototype.hasOwnProperty.call(metadataEditors, current.id)
+      ? metadataEditors[current.id] : !!metadataDrafts[current.id];
     var summary = WM.make('summary', '', 'Edit metadata\u2026');
     summary.id = 'fit-metadata-summary-' + current.id;
     disclosure.appendChild(summary);
@@ -853,6 +854,15 @@
     discard.id = 'fit-metadata-discard-' + current.id;
     function updateStatus() {
       var value = metadataDrafts[current.id];
+      // Disabling a focused Save blurs it to body before a later render can
+      // snapshot ownership. Hand off now, never after another control took it.
+      if (value && value.pending && document.activeElement === save
+          && WM.current_route === 'fittings' && !copyOverlayOpen && WM.el('overlay').hidden) {
+        var summary = WM.el('fit-metadata-summary-' + current.id);
+        if (summary && document.contains(save) && summary.getClientRects().length) {
+          summary.focus({ preventScroll: true });
+        }
+      }
       save.disabled = !!(value && value.pending);
       discard.hidden = !value;
       discard.disabled = !!(value && value.pending);

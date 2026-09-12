@@ -42,6 +42,12 @@ class Element extends EventTarget {
       remove: name => this.classList.toggle(name, false)
     };
   }
+  set disabled(value) {
+    this._disabled = !!value;
+    // Chromium blurs a focused control as soon as it becomes disabled.
+    if (this._disabled && this.ownerDocument?.activeElement === this) this.blur();
+  }
+  get disabled() { return this._disabled; }
   set textContent(value) {
     this.text = String(value);
     this.children.forEach(child => { child.parentNode = null; });
@@ -80,7 +86,7 @@ class Element extends EventTarget {
     if (!this.disabled && this.getClientRects().length) this.ownerDocument.activeElement = this;
   }
   blur() {
-    if (this.ownerDocument.activeElement === this) this.ownerDocument.activeElement = null;
+    if (this.ownerDocument.activeElement === this) this.ownerDocument.activeElement = this.ownerDocument.body;
   }
   setSelectionRange(start, end, direction) {
     this.selectionStart = start; this.selectionEnd = end; this.selectionDirection = direction;
@@ -100,6 +106,8 @@ function tick(node) { node.checked = !node.checked; node.dispatchEvent({ type: '
 async function page() {
   const nodes = new Map();
   const document = new EventTarget();
+  document.body = Object.assign(new Element('body'), { ownerDocument: document });
+  document.activeElement = document.body;
   // Actual static IDs, plus a tree search for controls created by fittings.js.
   const html = fs.readFileSync(path.join(web, 'index.html'), 'utf8');
   for (const match of html.matchAll(/<([\w-]+)\b[^>]*\bid="([^"]+)"[^>]*>/g)) {
@@ -255,6 +263,73 @@ test('pristine metadata disclosure choices follow each fitting independently of 
   assert.equal(p.calls('fittings_update_metadata').length, 0);
 });
 
+test('dirty metadata stays explicitly closed through membership and refresh without saving', async () => {
+  const p = await editor();
+  input(p.el('fit-name-fit-1'), 'Draft name');
+  input(p.el('fit-desc-fit-1'), 'Draft description');
+  setMetadataOpen(p, false);
+  tick(p.el('fittings-list').querySelector('.fit-collections').querySelector('input'));
+  await repaint(p);
+  assert.equal(metadataDisclosure(p).open, false, 'membership must not reopen a deliberately closed draft');
+  assert.equal(p.el('fit-name-fit-1').getClientRects().length, 0);
+  p.el('fittings-refresh-all').click();
+  await repaint(p);
+  assert.equal(metadataDisclosure(p).open, false, 'refresh must preserve the same closed choice');
+  setMetadataOpen(p, true);
+  assertDraft(p, 'Draft name', 'Draft description');
+  assert.equal(p.calls('fittings_update_metadata').length, 0);
+});
+
+test('dirty metadata disclosure choices follow each fitting across collection changes', async () => {
+  const p = await editor();
+  input(p.el('fit-name-fit-1'), 'Closed draft');
+  setMetadataOpen(p, false);
+  button(p.el('fittings-collections'), 'Doctrine1').click(); await flush();
+  const filtered = state(['fit-2']);
+  filtered.filters.collection_id = 'doctrine';
+  await settle(p.last('fittings_state'), filtered);
+  p.el('fittings-list').querySelector('.fit-row-toggle').click(); await flush();
+  await settle(p.last('fittings_detail'), detail('fit-2', 'Other fit'));
+  assert.equal(metadataDisclosure(p).open, false);
+  setMetadataOpen(p, true);
+  input(p.el('fit-name-fit-2'), 'Open draft');
+  button(p.el('fittings-collections'), 'All fittings1').click(); await flush();
+  await settle(p.last('fittings_state'), state(['fit-1', 'fit-2']));
+  p.el('fittings-list').querySelectorAll('.fit-row-toggle')[0].click(); await flush();
+  await settle(p.last('fittings_detail'), detail());
+  assert.equal(metadataDisclosure(p).open, false, 'the first fitting remembers closed, despite its draft');
+  assert.equal(p.el('fit-name-fit-1').value, 'Closed draft');
+  p.el('fittings-list').querySelectorAll('.fit-row-toggle')[1].click(); await flush();
+  await settle(p.last('fittings_detail'), detail('fit-2', 'Other fit'));
+  assert.equal(metadataDisclosure(p).open, true, 'the other fitting keeps its independent open choice');
+  assert.equal(p.el('fit-name-fit-2').value, 'Open draft');
+  assert.equal(p.calls('fittings_update_metadata').length, 0);
+});
+
+for (const applied of [true, false]) {
+  test(`closed metadata stays closed through pending Save and ${applied ? 'acceptance' : 'refusal'}`, async () => {
+    const p = await editor();
+    input(p.el('fit-name-fit-1'), 'Submitted');
+    button(metadata(p), 'Save').click(); await flush();
+    const save = p.last('fittings_update_metadata');
+    input(p.el('fit-name-fit-1'), 'Newer draft');
+    setMetadataOpen(p, false);
+    await repaint(p);
+    assert.equal(metadataDisclosure(p).open, false, 'pending work cannot override explicit closed');
+    assert.equal(button(metadata(p), 'Save').disabled, true);
+    await settle(save, applied);
+    assert.equal(metadataDisclosure(p).open, false, 'neither an acknowledgement nor an error reopens the editor');
+    await settle(p.last('fittings_state'), state());
+    await settle(p.last('fittings_detail'), detail('fit-1', applied ? 'Submitted' : 'Sabre tackle'));
+    assert.equal(metadataDisclosure(p).open, false);
+    setMetadataOpen(p, true);
+    assertDraft(p, 'Newer draft', 'Saved description');
+    assert.equal(button(metadata(p), 'Save').disabled, false);
+    if (!applied) assert.match(metadata(p).textContent, /save not confirmed/);
+    assert.equal(p.calls('fittings_update_metadata').length, 1);
+  });
+}
+
 test('metadata acknowledgement does not take focus from a modal or a departed route', async () => {
   for (const owner of ['modal', 'route']) {
     const p = await editor();
@@ -310,9 +385,16 @@ test('metadata Save and summary focus survive acknowledgement without collapsing
   input(p.el('fit-name-fit-1'), 'Accepted name');
   const save = button(metadata(p), 'Save');
   save.focus(); save.click();
+  assert.equal(save.disabled, true);
+  assert.ok(p.focused() === metadataDisclosure(p).querySelector('summary'),
+    'handoff must precede disabling Save, which would otherwise blur to body');
   await flush();
-  await settle(p.last('fittings_update_metadata'), true);
-  assert.ok(p.focused() === button(metadata(p), 'Save'), 'restore the current Save control');
+  const pending = p.last('fittings_update_metadata');
+  await repaint(p);
+  assert.ok(p.focused() === metadataDisclosure(p).querySelector('summary'), 'summary remains owned while pending');
+  await settle(pending, true);
+  assert.ok(p.focused() === metadataDisclosure(p).querySelector('summary'), 'restore the current summary after acceptance');
+  assert.equal(button(metadata(p), 'Save').disabled, false);
   assert.equal(metadataDisclosure(p).open, true);
   const summary = metadataDisclosure(p).querySelector('summary');
   summary.focus();
@@ -321,6 +403,78 @@ test('metadata Save and summary focus survive acknowledgement without collapsing
   assert.equal(metadataDisclosure(p).open, true);
   assert.equal(p.el('fit-name-fit-1').value, 'Accepted name');
   assert.equal(p.calls('fittings_update_metadata').length, 1);
+});
+
+test('focused metadata Save keeps a live summary after refusal and an explicit retry', async () => {
+  const p = await editor();
+  input(p.el('fit-desc-fit-1'), 'Keep after refusal');
+  const save = button(metadata(p), 'Save');
+  save.focus(); save.click(); await flush();
+  assert.ok(p.focused() === metadataDisclosure(p).querySelector('summary'));
+  await settle(p.last('fittings_update_metadata'), false);
+  await settle(p.last('fittings_state'), state());
+  await settle(p.last('fittings_detail'), detail());
+  assert.ok(p.focused() === metadataDisclosure(p).querySelector('summary'));
+  assertDraft(p, 'Sabre tackle', 'Keep after refusal');
+  assert.match(metadata(p).textContent, /save not confirmed/);
+  const retry = button(metadata(p), 'Save');
+  retry.focus(); retry.click(); await flush();
+  assert.ok(p.focused() === metadataDisclosure(p).querySelector('summary'));
+  await settle(p.last('fittings_update_metadata'), true);
+  assert.ok(p.focused() === metadataDisclosure(p).querySelector('summary'));
+  assert.equal(p.calls('fittings_update_metadata').length, 2);
+});
+
+for (const applied of [true, false]) {
+  test(`metadata Save ${applied ? 'acceptance' : 'refusal'} preserves newer typing and its focus`, async () => {
+    const p = await editor();
+    input(p.el('fit-name-fit-1'), 'Submitted');
+    const save = button(metadata(p), 'Save');
+    save.focus(); save.click(); await flush();
+    assert.ok(p.focused() === metadataDisclosure(p).querySelector('summary'));
+    p.el('fit-name-fit-1').focus();
+    input(p.el('fit-name-fit-1'), 'Newer typing');
+    p.el('fit-name-fit-1').setSelectionRange(2, 5, 'backward');
+    await settle(p.last('fittings_update_metadata'), applied);
+    await settle(p.last('fittings_state'), state());
+    await settle(p.last('fittings_detail'), detail('fit-1', applied ? 'Submitted' : 'Sabre tackle'));
+    assertDraft(p, 'Newer typing', 'Saved description');
+    assert.ok(p.focused() === p.el('fit-name-fit-1'), 'new typing owns focus, not the earlier Save');
+    assert.equal(p.focused().selectionStart, 2);
+    assert.equal(p.focused().selectionEnd, 5);
+    assert.equal(p.focused().selectionDirection, 'backward');
+    assert.equal(p.calls('fittings_update_metadata').length, 1);
+  });
+}
+
+test('metadata Save never takes focus from another control, modal or route', async () => {
+  for (const owner of ['search', 'modal', 'copy', 'route']) {
+    for (const changeBeforeSave of [true, false]) {
+      const p = await editor();
+      input(p.el('fit-name-fit-1'), 'Submitted');
+      const save = button(metadata(p), 'Save');
+      save.focus();
+      if (!changeBeforeSave) { save.click(); await flush(); }
+      if (owner === 'modal') {
+        p.el('overlay').hidden = false;
+        p.el('dlg-ok').focus();
+      } else if (owner === 'copy') {
+        tick(p.el('fittings-list').querySelector('input'));
+        p.el('fittings-copy-selected').click();
+        p.el('fittings-copy-close').focus();
+      } else if (owner === 'route') {
+        await p.route('main');
+        p.el('nav-main').focus();
+      } else p.el('fittings-search').focus();
+      const active = p.focused();
+      // Programmatic activation does not focus Save; it cannot claim focus the
+      // user moved elsewhere, even if the handler runs after that move.
+      if (changeBeforeSave) { save.click(); await flush(); }
+      assert.ok(p.focused() === active, owner + ' owns focus during pending Save');
+      await settle(p.last('fittings_update_metadata'), true);
+      assert.ok(p.focused() === active, owner + ' owns focus after acknowledgement');
+    }
+  }
 });
 
 // A render using server metadata must not erase text that was never submitted.

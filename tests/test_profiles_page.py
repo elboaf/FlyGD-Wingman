@@ -523,10 +523,11 @@ def test_the_commit_row_groups_state_apart_from_action_and_hazard():
         r'<span id="es-copy-count" class="es-count">[^<]*</span>\s*'
         r'<span id="es-copy-source" class="es-copy-source"></span>\s*'
         r'<span id="es-copy-profile" class="es-copy-source"></span>\s*'
+        r'<span id="es-copy-scope-commit" class="es-copy-source" hidden></span>\s*'
         r"</span>",
         inner,
     )
-    assert info, "the count and source no longer share one grouping span"
+    assert info, "count, source, profile and copy scope must share one grouping span"
     assert inner.index('id="es-copy"') < inner.index('class="es-commit-info"')
     assert inner.index('class="es-commit-info"') < inner.index(
         'id="es-eve-state-commit"'

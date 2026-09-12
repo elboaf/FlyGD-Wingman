@@ -38,7 +38,7 @@ Run on Windows against a real install before each release.
 
 ## Captured UX follow-up — Windows acceptance UNVERIFIED
 
-These refinements preserve runtime behavior and explicit commit contracts.
+These refinements preserve worker behavior and explicit commit contracts.
 Use the linked implementation checkout for fresh captures; the earlier main
 checkout's PNGs are baseline evidence, not acceptance of the changed UI. Keep
 synthetic presentation checks separate from authorized live operations.
