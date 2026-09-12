@@ -493,7 +493,9 @@ def test_the_preview_card_lives_in_its_own_section():
         m = re.search(r'id="(?:route|section)-(\w+)"', line)
         if m:
             starts[m.group(1)] = i
-    card = next(i for i, line in enumerate(lines) if "EVE client previews" in line)
+    card = next(
+        i for i, line in enumerate(lines) if 'id="preview-window-options"' in line
+    )
     ordered = sorted(starts.items(), key=lambda kv: kv[1])
     owner = [name for name, at in ordered if at < card][-1]
     assert owner == "previews", f"the preview card is in {owner}"
@@ -1337,7 +1339,7 @@ def test_the_position_checkbox_sits_with_the_preview_settings():
     and nothing it says may still read as being about a game window."""
     html = _web("index.html")
     route = html.split('id="section-previews"')[1].split('id="section-')[0]
-    card = route.split("EVE client previews")[1].split("<section")[0]
+    card = route.split('id="preview-window-options"')[1].split("</section>")[0]
     assert 'id="restore-preview-positions"' in card
     label = card.split('id="restore-preview-positions"')[1].split("</label>")[0]
     assert "client" not in label.lower(), label
@@ -3335,12 +3337,12 @@ def test_opted_out_or_latent_bookmark_binds_do_not_render_local_errors():
     )
 
 
-def test_preview_detail_clears_navigation_and_both_sticky_headers_when_scrolled():
-    """An opened detail clears navigation as well as table and group headers."""
+def test_preview_detail_clears_both_sticky_headers_inside_its_subpage():
+    """Navigation is outside the scroller; details clear table and group headers."""
     css = _web("style.css")
     detail = re.search(r"\.preview-character-detail\s*\{([^}]*)\}", css)
     assert detail, "the preview character detail has no CSS rule"
     assert (
-        "scroll-margin-top: calc(var(--preview-jump-height) + var(--preview-bind-head-height) * 2)"
+        "scroll-margin-top: calc(var(--preview-bind-head-height) * 2)"
         in detail.group(1)
-    ), "the detail needs clearance for navigation and both sticky preview headers"
+    ), "the detail needs clearance for both sticky preview headers"

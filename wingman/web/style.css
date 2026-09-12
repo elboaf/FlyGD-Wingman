@@ -2160,10 +2160,9 @@ button.btn:disabled,
    A route in this window, not a second OS window.
 
    A rail beside one visible section, laid out like #route-skills rather
-   than as one long scrolling column. The rail is narrower than skills'
-   214px because its labels are single words; the pane takes the rest and
-   is the only thing that scrolls, so the rail cannot be pushed off the
-   top by a long section. */
+   than as one long scrolling column. The 168px rail fits short feature
+   labels; the pane takes the rest. Sections scroll either in that pane or
+   their selected task subpage, never pushing the rail off the top. */
 #route-settings {
   display: none;
   grid-template-columns: 168px minmax(0, 1fr);
@@ -2475,7 +2474,7 @@ button.btn:disabled,
    groups stick; rules do not. */
 #preview-binds .bind-group:not(:empty) {
   position: sticky;
-  top: calc(var(--preview-jump-height) + var(--preview-bind-head-height));
+  top: var(--preview-bind-head-height);
   z-index: 1;
   background: var(--panel);
 }
@@ -2544,57 +2543,6 @@ button.btn:disabled,
   #preview-binds { column-gap: 6px; }
 }
 
-/* Round 6. The 620px measure is right for this section's PROSE and wrong
-   for its one table, which is the finding Profiles reached a round earlier
-   and fixed the same way (see `#route-evesettings > .settings` below, and
-   its D1 note: "deliberate for prose and form rows, accidental for the
-   roster"). Previews has a roster with the same shape and never got the
-   same treatment; measured at 1015 CSS wide, 191px of empty gutter sat
-   beside the card while a character name was ellipsized to 106px inside
-   it.
-
-   Scoped to the card that HOLDS the table, and re-capped inside it, for
-   exactly the reason the Profiles rule gives: the precedence paragraph
-   above the rows is prose and belongs at 620 with the rest of the
-   section. Card 1 is untouched -- its hints already run 85-95 characters
-   at 620, which is past the measure prose wants, so widening it would
-   make it worse rather than better.
-
-   `width: max-content`, NOT `max-width: none`. That is the one place this
-   departs from the Profiles rule it is otherwise copying, and the reason
-   is that the two rosters spend width differently. `.es-roster` is
-   `columns: 170px`, so every extra pixel becomes another column of names
-   and a card filling the pane is a card doing something with it. This
-   table has fixed and max-content tracks and a trailing `minmax(0, 1fr)`
-   that absorbs whatever is left, so a full-pane card just moved the dead
-   space from OUTSIDE the card to inside every row -- measured at 1015,
-   160px of it -- and left two cards in one section with 180px of
-   difference between their right edges. Sized to its content the card is
-   as wide as the table needs and no wider: the tracks and gaps come to
-   639px, so it lands near 671 against card 1's 620 rather than at 801.
-
-   `align-self: start` because `.settings` is a flex column, whose items
-   stretch to full width by default -- without it `width: max-content` is
-   overridden by the stretch and nothing changes. `max-width: 100%` keeps
-   it inside the pane at the 840 floor, where the content is wider than
-   the space and the trailing flexible track gives way instead.
-
-   `#section-previews.active` is already in the watermark suppression list
-   at the top of this sheet, so closing this section's gutter cannot
-   strand the ship mark the way .settings' own margin note warns about. */
-#section-previews { max-width: none; --preview-jump-height: 42px; }
-/* Navigation stays above the existing sticky table headings, so a long
-   character roster does not trap a return visit at the bottom of Settings. */
-.preview-jumps {
-  position: sticky; top: 0; z-index: 3;
-  display: flex; align-items: flex-start; gap: 8px;
-  height: var(--preview-jump-height); flex: none;
-  background: var(--bg);
-}
-#section-previews > .card {
-  max-width: 620px;
-  scroll-margin-top: var(--preview-jump-height);
-}
 /* Companion rows are keyed in place, so live source updates do not rebuild
    a focused editor. The identity track yields before actions at the floor. */
 .companion-toolbar, .companion-actions {
@@ -2629,13 +2577,13 @@ button.btn:disabled,
 #companion-previews .hint:empty:not([role="status"]) { display: none; }
 #companion-status, #companion-master-status { min-height: 1em; }
 #companion-off-note[hidden] { display: none; }
-#preview-binds .bind-head > span { top: var(--preview-jump-height); }
-#section-previews > .card:has(> #preview-binds) {
-  width: max-content; max-width: 100%; align-self: start;
-}
-#section-previews > .card:has(> #preview-binds) > :not(#preview-binds) {
-  max-width: 620px;
-}
+/* Subpage navigation stays outside this scroller. Only the table header
+   and Offline heading stick, so neither needs the retired jump-row offset.
+   Keep prose bounded independently of the table: the old 620px card cap
+   truncated character names despite a wide empty gutter (round 6). Task
+   subpages now share an outer width without stretching their text measure. */
+#preview-binds .bind-head > span { top: 0; }
+#preview-keybind-options > :not(#preview-binds) { max-width: 72ch; }
 #preview-binds .row { display: contents; }
 /* display:contents above beats .row[hidden] on specificity, which is the
    [hidden] trap DESIGN.md names -- a hidden row would keep rendering its
@@ -2705,9 +2653,9 @@ button.btn:disabled,
 .preview-character-detail {
   grid-column: 1 / -1;
   display: flex; align-items: flex-start; flex-wrap: wrap; gap: 8px 16px;
-  /* Configure scrolls this disclosure below quick navigation, the table
-     header and its group header. Keep all three sticky layers clear. */
-  scroll-margin-top: calc(var(--preview-jump-height) + var(--preview-bind-head-height) * 2);
+  /* Configure scrolls this disclosure below the table header and its
+     group header. Keep both sticky layers clear. */
+  scroll-margin-top: calc(var(--preview-bind-head-height) * 2);
   padding: 5px 0 7px;
   border-top: 1px solid var(--field-border);
 }
@@ -4130,6 +4078,87 @@ button.btn:disabled,
 .settings {
   display: flex; flex-direction: column; gap: 12px;
   width: 100%; max-width: 620px; margin: 0;
+}
+
+/* Task-level tabs are view state, not feature activation. Only their body
+   scrolls; the section title, preview master switch and tabs stay reachable.
+   Other Settings sections retain their existing scrolling and form measure. */
+.settings-pane:has(> #section-previews.active),
+.settings-pane:has(> #section-uploading.active) { overflow: hidden; }
+#section-previews, #section-uploading {
+  height: 100%; max-width: 940px; min-height: 0; gap: 0;
+}
+.settings-page-header { flex: none; padding-top: 3px; }
+.settings-page-header h1 {
+  font-size: 22px; font-weight: 620; line-height: 1.25;
+  margin: 0 0 14px; letter-spacing: -.25px;
+}
+.settings-page-header .pv-master {
+  margin: 0 0 14px; padding: 0; border: 0; gap: 5px;
+}
+.settings-page-header .pv-master .row { margin: 0; }
+.settings-page-header .pv-master .row:has(.hint-more) { margin-top: 2px; }
+.settings-page-header .pv-master .hint-more { margin-left: 24px; }
+.settings-tabs {
+  display: flex; gap: 4px; margin-bottom: 16px;
+  border-bottom: 1px solid var(--field-border);
+}
+.settings-tab {
+  padding: 10px 16px 11px; color: var(--text-dim); font: inherit;
+  background: transparent; border: 0; border-bottom: 2px solid transparent;
+  cursor: pointer; white-space: nowrap;
+}
+.settings-tab:first-child { padding-left: 0; padding-right: 20px; }
+.settings-tab:hover, .settings-tab:active { color: var(--text); }
+.settings-tab[aria-selected="true"] {
+  color: var(--text); border-bottom-color: var(--brand-text); font-weight: 600;
+}
+.settings-subpage {
+  min-height: 0; overflow: auto; scrollbar-gutter: stable;
+  border: 1px solid var(--panel-border); border-radius: var(--radius);
+  background: var(--panel); padding: 0 22px;
+}
+.settings-subpage[hidden] { display: none; }
+/* Cards retain their control/feedback ownership but not a second visual box. */
+.settings-subpage > .card {
+  border: 0; box-shadow: none; background: transparent; border-radius: 0;
+  max-width: none; width: auto; padding: 0; margin: 0;
+}
+/* Put vertical breathing room on the content, not the scroller. Padding
+   on the scrollport leaves a strip of moving rows above its sticky header. */
+.settings-subpage > .card:first-child { padding-top: 20px; }
+.settings-subpage > .card:last-child { padding-bottom: 20px; }
+.settings-subpage > .card + .card {
+  border-top: 1px solid var(--field-border); padding-top: 22px; margin-top: 22px;
+}
+.settings-subpage > .card > h2 {
+  font-size: 15px; letter-spacing: 0; text-transform: none;
+  color: var(--text); padding-left: 0; margin-bottom: 16px;
+}
+.settings-subpage > .card > h2::before { display: none; }
+.settings-subpage .hint, .settings-subpage .field-msg { max-width: 72ch; }
+.settings-disclosure {
+  border-bottom: 1px solid var(--field-border); padding-bottom: 17px; margin-bottom: 17px;
+}
+.settings-disclosure > summary {
+  cursor: pointer; font-size: 15px; font-weight: 600; color: var(--text);
+}
+.settings-disclosure[open] > summary { margin-bottom: 17px; }
+.settings-disclosure > summary::marker { color: var(--text-dim); font-size: 11px; }
+.settings-disclosure .row:last-child, .settings-disclosure .pv-exc { margin-bottom: 0; }
+.settings-key-help { margin-bottom: 14px; color: var(--text-dim); }
+.settings-key-help > summary { cursor: pointer; }
+.settings-key-help[open] > summary { margin-bottom: 10px; }
+/* Selection stays a surface change in the rail; the underline identifies
+   the second navigation level without another decorative side stripe. */
+.settings-rail .rail-item { border-left: 0; padding-left: 10px; }
+.settings-rail .rail-item.active { border-left: 0; background: var(--row-active); }
+@media (max-width: 960px) {
+  .settings-subpage { padding: 0 16px; }
+  .settings-subpage > .card:first-child { padding-top: 16px; }
+  .settings-subpage > .card:last-child { padding-bottom: 16px; }
+  .settings-page-header h1 { font-size: 20px; margin-bottom: 12px; }
+  .settings-tabs { margin-bottom: 12px; }
 }
 
 /* Labels sit ABOVE their control, full width, on every row and at every

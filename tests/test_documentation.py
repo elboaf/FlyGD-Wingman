@@ -20,6 +20,9 @@ def normalized_doc(path):
 def test_active_docs_do_not_direct_readers_to_retired_settings_entries(path):
     text = normalized_doc(path)
     obsolete = (
+        "Settings > Characters",
+        "Settings > Companions",
+        "Settings opens on Characters",
         "Settings > Connect Google Account",
         "Settings > Google account",
         "Settings > Folders",
@@ -40,14 +43,14 @@ def test_active_docs_do_not_direct_readers_to_retired_settings_entries(path):
             (
                 "Google account, recording folder, and Discord webhook in Settings > Uploading",
                 "Gamelogs folder in Settings > Alerts",
-                "Settings > Characters is the only place to authorize",
+                "Settings > Character access is the only place to authorize",
             ),
         ),
         (
             "DESIGN.md",
             (
                 "webhook from Settings > Uploading",
-                "EVE credential cleanup lives under Settings > Characters",
+                "EVE credential cleanup lives under Settings > Character access",
             ),
         ),
         (
@@ -57,7 +60,7 @@ def test_active_docs_do_not_direct_readers_to_retired_settings_entries(path):
                 "choose a folder in Settings > Uploading",
                 "Clear the webhook in Settings > Uploading",
                 "Gamelogs folder in Settings > Alerts",
-                "Settings > Characters is the only EVE authorization surface",
+                "Settings > Character access is the only EVE authorization surface",
             ),
         ),
     ),

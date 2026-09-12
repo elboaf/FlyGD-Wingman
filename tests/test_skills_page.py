@@ -218,7 +218,7 @@ def test_the_unscored_group_does_not_name_one_cause():
 
 def test_skills_hands_character_management_off_to_settings():
     """Task 9: Skills no longer owns character authorization or forgetting.
-    Its one rail action is a handoff to Settings > Characters, where the
+    Its one rail action is a handoff to Settings > Character access, where the
     approved global Authenticate action lives.
     """
     assert 'id="skills-manage-characters"' in RAIL

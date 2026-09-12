@@ -744,7 +744,7 @@ test('unavailable copy targets point to authentication or refresh without changi
   const targets = p.el('fittings-copy-body').querySelectorAll('.fit-copy-target');
   targets.forEach(target => assert.equal(target.querySelector('input').disabled, true));
   for (const target of targets.slice(0, 2)) {
-    assert.match(target.textContent, /Authenticate character.*Settings.*Characters/i);
+    assert.match(target.textContent, /Authenticate character.*Settings.*Character access/i);
     assert.doesNotMatch(target.textContent, /enable Fittings|Fittings not enabled/i);
   }
   for (const target of targets.slice(2)) assert.match(target.textContent, /Refresh characters/);
@@ -770,7 +770,7 @@ test('copy recovery labels keep semantic outcomes and point to real authenticati
   const rows = body.querySelectorAll('.fit-copy-pair');
   assert.match(rows[1].textContent, /request timed out/);
   assert.match(rows[1].querySelector('.fit-copy-guidance').textContent, /Personal Fittings.*EVE.*refresh.*before.*retry/i);
-  assert.match(rows[3].querySelector('.fit-copy-guidance').textContent, /Authenticate character.*Settings.*Characters/);
+  assert.match(rows[3].querySelector('.fit-copy-guidance').textContent, /Authenticate character.*Settings.*Character access/);
   assert.equal(p.calls().length, before);
   assert.equal(body.querySelector('button'), null);
 });

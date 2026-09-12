@@ -881,6 +881,26 @@ _CURRENT_SCREEN_FIXTURES = {
     "settings-fleet-sharing-history-narrow": ("fleet", "fleetScreenshot"),
 }
 
+# Capture keys are stable even though Settings now remembers local subpages.
+# Select explicitly for every stage, including the two default captures.
+_SETTINGS_SCREEN_TABS = {
+    "settings-uploading": "youtube",
+    "settings-uploading-recording": "recording",
+    "settings-uploading-integrations": "recording",
+    "settings-uploading-webhook": "combatlogs",
+    "settings-previews": "windows",
+    "settings-previews-middle": "windows",
+    "settings-previews-table": "characters",
+    "settings-previews-sticky-conflict": "characters",
+    "settings-previews-detail": "characters",
+    "settings-previews-copy": "characters",
+    "settings-previews-groups": "characters",
+    "settings-previews-narrow": "characters",
+    "settings-previews-crop-narrow": "characters",
+    "settings-wanderer": "wanderer",
+    "settings-wanderer-narrow": "wanderer",
+}
+
 # Semantic anchors, not scroll fractions. Static cards stay live: no synthetic
 # state or actions are needed to expose their current controls.
 _CURRENT_SCREEN_TARGETS = {
@@ -894,6 +914,7 @@ _CURRENT_SCREEN_TARGETS = {
     "settings-fleet-sharing": "#fleet-sharing",
     "settings-fleet-sharing-details": "#sharing-eligible",
     "settings-fleet-sharing-history-narrow": "#sharing-history",
+    "settings-uploading": "#f-category",
     "settings-uploading-recording": '#section-uploading input[name="notify"]',
     "settings-uploading-integrations": "#fr-status",
     "settings-uploading-webhook": "#f-webhook",
@@ -1034,7 +1055,8 @@ def new_screen_verify_script(screen: Screen) -> str | None:
             f'[data-preview-configure="{owner}"][aria-expanded="true"]'
         )
         condition = (
-            f"!document.querySelector({selector})"
+            "WM.el('settings-previews-characters').hidden"
+            f" || !document.querySelector({selector})"
             " || !document.querySelector('[data-preview-detail-control=\"crop-select\"]')"
             " || document.querySelector('[data-preview-detail-control=\"crop-select\"]').textContent !== 'Reselect…'"
         )
@@ -1225,7 +1247,30 @@ def _new_screen_setup_script(screen: Screen) -> str:
 
 
 def screen_setup_script(screen: Screen) -> str | None:
-    """Post-navigation staging for screenshots within a long screen."""
+    """Select the local subpage before staging any control or scroll position.
+
+    This runs after walk's existing preparation/admission, without re-entering
+    the section or triggering its live reads.
+    """
+    body = _screen_content_setup_script(screen)
+    tab = _SETTINGS_SCREEN_TABS.get(screen.key)
+    if not tab:
+        return body
+    panel = f"settings-{screen.section}-{tab}"
+    return (
+        "(function () {\n"
+        f"  WM.settingsTab({screen.section!r}, {tab!r});\n"
+        f"  var panel = WM.el({panel!r});\n"
+        "  if (!panel || panel.hidden || !panel.getClientRects().length) {\n"
+        "    throw new Error('Screenshot subpage is not visible');\n"
+        "  }\n"
+        "  panel.scrollTop = 0;\n"
+        "}());\n" + (body or "")
+    )
+
+
+def _screen_content_setup_script(screen: Screen) -> str | None:
+    """Post-navigation staging within the already-selected screen."""
     if screen.key in _CURRENT_SCREEN_TARGETS:
         return _current_screen_setup_script(screen)
     if screen.key in _TOOL_SCREEN_FIXTURES:
@@ -1288,22 +1333,23 @@ def screen_setup_script(screen: Screen) -> str | None:
             "    throw new Error('Characters overflow menu did not open');\n"
             "  }",
         )
-    if screen.key == "settings-previews":
-        return _fixture_preview_setup(
-            "  var pane = document.querySelector('.settings-pane');\n"
-            "  if (!pane) { throw new Error('Settings pane is missing'); }\n"
-            "  pane.scrollTop = 0;"
-        )
-    if screen.key == "settings-previews-middle":
-        return _fixture_preview_setup(
-            "  var pane = document.querySelector('.settings-pane');\n"
-            "  if (!pane) { throw new Error('Settings pane is missing'); }\n"
-            "  pane.scrollTop = (pane.scrollHeight - pane.clientHeight) / 2;"
-        )
+    if screen.key in {"settings-previews", "settings-previews-middle"}:
+        # The old middle fraction no longer identifies content. Complementary
+        # disclosures keep both shots distinct and reset any inherited state.
+        middle = screen.key == "settings-previews-middle"
+        body = ""
+        for group in ("appearance", "placement", "size", "switching"):
+            opened = middle == (group in {"size", "switching"})
+            body += f"  WM.el('preview-group-{group}').open = {str(opened).lower()};\n"
+        if middle:
+            body += "  WM.el('preview-group-size').scrollIntoView({block: 'start', behavior: 'instant'});"
+        return _fixture_preview_setup(body)
     if screen.key == "settings-previews-table":
         return _fixture_preview_setup(
-            "  var pane = document.querySelector('.settings-pane');\n"
-            "  if (!pane) { throw new Error('Settings pane is missing'); }\n"
+            "  Array.prototype.forEach.call(document.querySelectorAll(\n"
+            "    '[data-preview-configure][aria-expanded=\"true\"]'), function (button) { button.click(); });\n"
+            "  var pane = document.querySelector('#settings-previews-characters');\n"
+            "  if (!pane) { throw new Error('Preview Characters panel is missing'); }\n"
             "  pane.scrollTop = pane.scrollHeight;"
         )
     if screen.key == "settings-previews-sticky-conflict":
@@ -1390,8 +1436,8 @@ def screen_setup_script(screen: Screen) -> str | None:
             "  Array.prototype.forEach.call(expanded, function (button) {\n"
             "    button.click();\n"
             "  });\n"
-            "  var pane = document.querySelector('.settings-pane');\n"
-            "  if (!pane) { throw new Error('Settings pane is missing'); }\n"
+            "  var pane = document.querySelector('#settings-previews-characters');\n"
+            "  if (!pane) { throw new Error('Preview Characters panel is missing'); }\n"
             "  var extra = document.querySelector(\n"
             "    '[data-preview-configure=\"" + long_name + "\"]');\n"
             "  if (!extra) {\n"

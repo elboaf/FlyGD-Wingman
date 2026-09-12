@@ -18,24 +18,29 @@ def test_preview_help_matches_the_native_mouse_gestures():
     assert "Right-drag to move" not in text
 
 
-def test_preview_scroll_shortcuts_target_cards_in_the_same_section():
+def test_preview_tabs_replace_mixed_scroll_and_cross_section_shortcuts():
     html = (WEB / "index.html").read_text(encoding="utf-8")
     section = html.split('id="section-previews"', 1)[1].split('id="section-fleet"', 1)[
         0
     ]
-    targets = re.findall(r'data-preview-jump="([^"]+)"', section)
-    # Fleet now navigates to its own section; its executable capture/entry
-    # contract is covered by test_fleet_navigation.py, not this scroll guard.
-    assert set(targets) == {"preview-window-options", "preview-keybind-options"}
-    assert len(set(targets)) == len(targets)
-    for target in targets:
-        assert f'id="{target}"' in section
-    code = (WEB / "previews.js").read_text(encoding="utf-8")
-    assert "dataset.previewJump" in code
-    assert "scrollIntoView" in code
+    assert 'data-settings-section="previews"' in section
+    assert re.findall(r'data-settings-tab="([^"]+)"', section) == [
+        "windows",
+        "characters",
+        "wanderer",
+    ]
+    assert "data-preview-jump" not in section
+    assert 'id="preview-fleet-settings"' not in section
     css = (WEB / "style.css").read_text(encoding="utf-8")
-    assert ".preview-jumps" in css
-    assert "scroll-margin-top" in css
+    assert ".settings-subpage[hidden]" in css
+
+
+def test_subpage_vertical_padding_does_not_leave_a_gap_above_sticky_headers():
+    css = (WEB / "style.css").read_text(encoding="utf-8")
+    panel = re.search(r"\.settings-subpage\s*\{([^}]*)\}", css)
+    assert panel and re.search(r"padding:\s*0\s+\d+px", panel.group(1))
+    assert ".settings-subpage > .card:first-child" in css
+    assert ".settings-subpage > .card:last-child" in css
 
 
 def test_fleet_character_keeps_full_name_available_on_hover():

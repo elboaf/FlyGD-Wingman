@@ -220,9 +220,16 @@ async function fittingsDetailRegression() {
   // screenshot must not inherit the previous capture's review or disclosure.
   for (let iteration = 0; iteration < 2; iteration++) {
     run(data.prepare); await tick();
+    if (crop) WM.settingsTab('previews', 'wanderer');
     run(data.stage); await tick();
     run(data.verify);
     if (crop) {
+      const panel = WM.el('settings-previews-characters');
+      assert.equal(panel.hidden, false, 'crop staging must select Characters before framing');
+      assert.equal(scrolls.at(-1).element.closest('.settings-subpage'), panel);
+      WM.settingsTab('previews', 'windows');
+      assert.throws(() => run(data.verify), /Screenshot content did not settle/);
+      WM.settingsTab('previews', 'characters');
       // New live host revisions cannot paint over the isolated fixture.
       window.onPreviewCrops({revision: 900 + iteration, definitions: {}, operations: {}, statuses: {}});
       run(data.verify);

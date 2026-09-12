@@ -382,8 +382,8 @@
            product off, which is a legitimate control and a poor first
            impression of the app's configuration surface. -->
       <button class="rail-item active" data-section="uploading">Uploading</button>
-      <button class="rail-item" data-section="companions">Companions</button>
-      <button class="rail-item" data-section="characters">Characters</button>
+      <button class="rail-item" data-section="companions">Companion previews</button>
+      <button class="rail-item" data-section="characters">Character access</button>
       <button class="rail-item" data-section="bookmarks">Bookmarks</button>
       <button class="rail-item" data-section="previews">Previews</button>
       <button class="rail-item" data-section="fleet">Fleet telemetry</button>
@@ -408,6 +408,15 @@
     <div class="settings-pane">
 
     <div class="settings active" id="section-uploading">
+      <header class="settings-page-header">
+        <h1>Uploading</h1>
+        <div class="settings-tabs" id="settings-tabs-uploading" data-settings-section="uploading" role="tablist" aria-label="Uploading settings">
+          <button class="settings-tab" id="settings-tab-uploading-youtube" data-settings-tab="youtube" role="tab" aria-controls="settings-uploading-youtube" aria-selected="true" tabindex="0">YouTube</button>
+          <button class="settings-tab" id="settings-tab-uploading-recording" data-settings-tab="recording" role="tab" aria-controls="settings-uploading-recording" aria-selected="false" tabindex="-1">Recording</button>
+          <button class="settings-tab" id="settings-tab-uploading-combatlogs" data-settings-tab="combatlogs" role="tab" aria-controls="settings-uploading-combatlogs" aria-selected="false" tabindex="-1">Combat logs</button>
+        </div>
+      </header>
+      <section class="settings-subpage" id="settings-uploading-youtube" role="tabpanel" aria-labelledby="settings-tab-uploading-youtube" tabindex="0">
 
       <section class="card">
         <h2>Google account</h2>
@@ -462,25 +471,8 @@
         <p class="field-msg" id="msg-uploads" hidden></p>
       </section>
 
-      <!-- Was its own rail entry and its own pane. One radio pair -- a
-           destination in an eight-item rail for a single binary choice,
-           on ~1300px of empty pane. It is an upload behaviour: it decides
-           what happens when a recording is ready to upload, which is what
-           this section already configures. -->
-      <section class="card">
-        <h2>When a recording finishes</h2>
-        <label class="radio">
-          <input type="radio" name="notify" value="toast"><span class="ring"></span>
-          Show a tray notification
-          <span class="inline-hint">&mdash; recommended</span>
-        </label>
-        <label class="radio">
-          <input type="radio" name="notify" value="popup"><span class="ring"></span>
-          Open the uploader window immediately
-        </label>
-        <p class="field-msg" id="msg-notify" hidden></p>
       </section>
-
+      <section class="settings-subpage" id="settings-uploading-recording" role="tabpanel" aria-labelledby="settings-tab-uploading-recording" tabindex="0" hidden>
       <section class="card">
         <!-- Round 3's B10 argued this heading down from a second-person
              sentence to the noun its rows hold, and that noun was
@@ -510,9 +502,25 @@
         </p>
       </section>
 
+      <!-- Notification behavior belongs with recording setup, not with
+           YouTube defaults: it acts before a video is selected for upload. -->
+      <section class="card">
+        <h2>When a recording finishes</h2>
+        <label class="radio">
+          <input type="radio" name="notify" value="toast"><span class="ring"></span>
+          Show a tray notification
+          <span class="inline-hint">&mdash; recommended</span>
+        </label>
+        <label class="radio">
+          <input type="radio" name="notify" value="popup"><span class="ring"></span>
+          Open the uploader window immediately
+        </label>
+        <p class="field-msg" id="msg-notify" hidden></p>
+      </section>
+
       <section class="card">
         <!-- FightRecorder is the OBS plugin that produces the very
-             recordings the card above watches, so the two sit together.
+             recordings this subpage watches, so the setup stays together.
              The card is user-initiated only: nothing here calls GitHub
              until Check for updates is pressed (api.fightrecorder_status
              is local unless asked). Install/Update may raise ONE UAC
@@ -538,10 +546,11 @@
         <p class="field-msg" id="msg-fightrecorder" hidden></p>
       </section>
 
+      </section>
+      <section class="settings-subpage" id="settings-uploading-combatlogs" role="tabpanel" aria-labelledby="settings-tab-uploading-combatlogs" tabindex="0" hidden>
       <section class="card">
-        <!-- The other half of B10. Names the two things the card is
-             about -- what is posted, and the control that posts it -- and
-             leaves "Discord" to the rail entry that already says it. -->
+        <!-- The heading names the content and its delivery mechanism;
+             it is not another generic integrations screen. -->
         <h2>Combat log webhook</h2>
         <div class="row">
           <span class="lab">Webhook URL</span>
@@ -565,11 +574,12 @@
         <p class="field-msg" id="msg-discord" hidden></p>
       </section>
 
+      </section>
     </div>
 
     <div class="settings" id="section-companions">
       <section class="card" id="companion-previews">
-        <h2>Companion previews</h2>
+        <h2>Window sources</h2>
         <div class="pv-master">
           <label class="check"><input type="checkbox" id="companion-enabled" disabled><span class="box"></span>Show companion previews</label>
           <p class="hint" id="companion-off-note">Companion previews are off. You can still add and configure them.</p>
@@ -769,24 +779,12 @@
          windows that appear elsewhere on the desktop and shows nothing of
          its own. -->
     <div class="settings" id="section-previews">
-      <div class="preview-jumps">
-        <button class="btn" type="button" data-preview-jump="preview-window-options">Preview windows</button>
-        <button class="btn" type="button" id="preview-fleet-settings">Fleet telemetry settings</button>
-        <button class="btn" type="button" data-preview-jump="preview-keybind-options">Global keybinds</button>
-      </div>
-      <section class="card" id="preview-window-options">
-        <h2>EVE client previews</h2>
-        <!-- THE master switch, and it is not a peer of the nine controls
-             below it: seven of them are gated on it, and it is what the
-             one dependence line under it speaks for.
-
-             `.pv-master` is the whole of that precedence -- a rule under
-             the switch, the same hairline .bind-group uses, so the block
-             beneath reads as subordinate to it rather than as nine
-             siblings of which the first happens to matter. It is NOT a
-             type change: the label stays --fs-body like every other
-             checkbox, because the thing being said is "these belong to
-             that", not "that is a heading".
+      <header class="settings-page-header">
+        <h1>Previews</h1>
+        <!-- The master stays in the section header above every subpage,
+             making its scope clear without repeating it inside each panel.
+             Its label stays --fs-body like every other checkbox: position
+             establishes precedence, rather than a larger control.
 
              The controls stay LIVE while it is off. S3's rule, restated
              at alerts.js:27 -- recording a preference for later is an
@@ -823,8 +821,8 @@
 
                  "Positions are remembered per character" left with it and
                  did not come back: #restore-preview-positions-status says
-                 the same thing 200px below, next to the switch that
-                 governs it, which is where a reader asking the question
+                 the same thing under Windows > Placement, next to the
+                 switch that governs it, where a reader asking the question
                  is looking. -->
             <details class="hint-more">
               <summary>How previews behave</summary>
@@ -845,15 +843,24 @@
 
                Deliberately does NOT open "Previews are off". Round 3's R4
                finding 3 left ui/copy.py's INERT_NOTES["previews_off"] as the
-               single statement of the STATE, and that renders one card down
-               in #preview-binds-off. This one carries the consequence for
+               single statement of the STATE, rendered in #preview-binds-off
+               on Characters & cycling. This one carries the consequence for
                the settings above it and nothing else, which is the half R4
                found the per-row copies were not pulling their weight on. -->
           <div class="row"><span class="lab"></span>
             <span class="hint" id="preview-depends" hidden></span></div>
         </div>
 
-        <div class="bind-group"><span class="bind-group-name">Appearance</span></div>
+        <div class="settings-tabs" id="settings-tabs-previews" data-settings-section="previews" role="tablist" aria-label="Preview settings">
+          <button class="settings-tab" id="settings-tab-previews-windows" data-settings-tab="windows" role="tab" aria-controls="settings-previews-windows" aria-selected="true" tabindex="0">Windows</button>
+          <button class="settings-tab" id="settings-tab-previews-characters" data-settings-tab="characters" role="tab" aria-controls="settings-previews-characters" aria-selected="false" tabindex="-1">Characters &amp; cycling</button>
+          <button class="settings-tab" id="settings-tab-previews-wanderer" data-settings-tab="wanderer" role="tab" aria-controls="settings-previews-wanderer" aria-selected="false" tabindex="-1">Wanderer names</button>
+        </div>
+      </header>
+      <section class="settings-subpage" id="settings-previews-windows" role="tabpanel" aria-labelledby="settings-tab-previews-windows" tabindex="0">
+      <section class="card" id="preview-window-options">
+        <details class="settings-disclosure" id="preview-group-appearance" open>
+          <summary>Appearance</summary>
         <div class="row">
           <label class="check">
             <input type="checkbox" id="preview-show-labels"><span class="box"></span>
@@ -890,7 +897,9 @@
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-opacity-status"></span></div>
 
-        <div class="bind-group"><span class="bind-group-name">Placement</span></div>
+        </details>
+        <details class="settings-disclosure" id="preview-group-placement" open>
+          <summary>Placement</summary>
         <div class="row">
           <label class="check">
             <input type="checkbox" id="restore-preview-positions"><span class="box"></span>
@@ -935,7 +944,9 @@
                role="group" aria-labelledby="preview-lock-exceptions-summary"></div>
         </details>
 
-        <div class="bind-group"><span class="bind-group-name">Size and shape</span></div>
+        </details>
+        <details class="settings-disclosure" id="preview-group-size">
+          <summary>Size and shape</summary>
         <div class="row"><label class="check">
             <input type="checkbox" id="preview-lock-aspect"><span class="box"></span>
             Keep previews the same shape as their client
@@ -996,12 +1007,13 @@
           <span class="hint" id="preview-selection-color-status">The ring
             on the preview you last clicked.</span></div>
 
+        </details>
         <!-- The one group that reaches through the mirror to the REAL EVE
              window, which is why it is a group and why it is last. Every
              other control on this card changes something Wingman drew;
              these two change what the game's own window does. -->
-        <div class="bind-group">
-          <span class="bind-group-name">When you switch away</span></div>
+        <details class="settings-disclosure" id="preview-group-switching">
+          <summary>When you switch away</summary>
         <!-- Round 5, C4. This lived under GLOBAL KEYBINDS until round 5,
              where it was the one control in that card that is not a
              keybind: it changes what happens to a client's WINDOW when you
@@ -1072,12 +1084,15 @@
             you are away is still waiting when you come back, if it is set
             to persist.</span></div>
 
+        </details>
         <div class="row">
           <button class="btn danger" id="preview-reset">Reset previews</button>
           <span class="hint" id="preview-reset-status">Puts every preview
             back to its default size and place.</span></div>
       </section>
 
+      </section>
+      <section class="settings-subpage" id="settings-previews-wanderer" role="tabpanel" aria-labelledby="settings-tab-previews-wanderer" tabindex="0" hidden>
       <section class="card" id="wanderer-settings" aria-labelledby="wanderer-heading">
         <h2 id="wanderer-heading">Wanderer names</h2>
         <div class="row"><label class="check">
@@ -1115,8 +1130,12 @@
         <p class="hint" id="wanderer-coverage"></p>
       </section>
 
+      </section>
+      <section class="settings-subpage" id="settings-previews-characters" role="tabpanel" aria-labelledby="settings-tab-previews-characters" tabindex="0" hidden>
       <section class="card" id="preview-keybind-options">
-        <h2>Global keybinds</h2>
+        <h2>Character previews &amp; cycle groups</h2>
+        <details class="settings-key-help">
+          <summary>How global keybinds work</summary>
         <!-- THE precedence statement, and after round 5's C5 the only
              one. Round 3's R4 finding 4 put the same rule in the same
              words under Bookmarks as well, deliberately: each screen used
@@ -1141,6 +1160,7 @@
             Settings &rsaquo; Bookmarks. Where both use the same keys this
             set wins and the bookmark does not fire; those are marked
             below, and on the Bookmarks list too.</span></div>
+        </details>
         <!-- Deliberately EMPTY. The sentence is ui/copy.py's
              INERT_NOTES["previews_off"], delivered on the settings payload
              and written in by previews.js (walkthrough Settings 1). It
@@ -1177,6 +1197,7 @@
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-copy-status"
                 role="status" hidden></span></div>
+      </section>
       </section>
     </div>
 

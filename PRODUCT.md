@@ -110,6 +110,12 @@ file's own independence claim — that neither half of the product requires
 the other — which the rail had been hiding by interleaving the two halves
 across seven entries.
 
+Uploading's setup remains one Settings section, with **YouTube**, **Recording**
+and **Combat logs** subpages. Previews likewise separates **Windows**,
+**Characters & cycling** and **Wanderer names**. These are navigation within
+configuration, not additional destinations or feature switches. The EVE preview
+master switch stays visible across its subpages.
+
 Previews and Bookmarks are as important as uploading and are still
 configuration, because neither produces anything on its own screen — they
 configure keybinds that fire in EVE and windows that appear on the
@@ -121,7 +127,7 @@ another screen.
 
 ### Companion previews keep auxiliary windows in view
 
-Settings › Companions configures explicitly selected non-EVE windows, either
+Settings › Companion previews configures explicitly selected non-EVE windows, either
 whole or as a selected region. Companion previews are independent of EVE previews:
 either family can stay on while the other is off. Their saved setting defaults
 off; at most eight companions can be enabled. Wingman never mirrors every window

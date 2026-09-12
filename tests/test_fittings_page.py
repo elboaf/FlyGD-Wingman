@@ -476,7 +476,7 @@ def test_fittings_hands_character_management_off_to_settings():
 
 def test_fittings_empty_and_copy_target_copy_name_settings_without_auth_controls():
     assert (
-        "Authenticate a character in Settings \u203a Characters, then return and "
+        "Authenticate a character in Settings \u203a Character access, then return and "
         "press Refresh characters."
     ) in FITTINGS_JS
     assert "No EVE characters available." not in FITTINGS_JS

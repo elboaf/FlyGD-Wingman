@@ -327,13 +327,13 @@ which has no self-describing text.
 The third is round 5's E1, and it renames most of the first column: the
 rail merged `Account`, `Uploads`, `Folders` and `Discord` into one entry,
 `Uploading`; `Characters` and `Alerts` became entries of their own. Fleet telemetry
-now has a separate entry too. The rail order is Uploading, Companions, Characters,
-Bookmarks, Previews, Fleet telemetry, Alerts, General, asserted in
-`test_settings_page.py`. Companions is independent of the EVE-tools gate.
+now has a separate entry too. The rail order is Uploading, Companion previews,
+Character access, Bookmarks, Previews, Fleet telemetry, Alerts, General, asserted
+in `test_settings_page.py`. Companion previews is independent of the EVE-tools gate.
 The rows above still describe the same cards, which is why the measurement
 stands — the first control's left edge is a property of the card, not of
 the rail entry it is reached through. With the EVE gate off the rail is
-three entries, `Uploading`, `Companions` and `General`.
+three entries, `Uploading`, `Companion previews` and `General`.
 
 **If you out-specify the label column, restore its collapse yourself.**
 `#eve-binds` and `#preview-binds` both take the column away from their
@@ -455,7 +455,7 @@ thing rather than invent a third answer between them. At that point,
 `Delete selected` on the Uploader and `Remove` were plain `.btn`s that
 destroy something. `Remove` now removes the webhook from Settings › Uploading
 and uses `.btn.danger`. The current EVE credential
-cleanup lives under Settings › Characters rather than on the Skills page,
+cleanup lives under Settings › Character access rather than on the Skills page,
 so this rule must not drift back toward a second inline destructive style.
 
 **Destructive treatment, confirmation, and mechanism are three questions,
@@ -704,6 +704,27 @@ without anyone remembering the rule exists.
 
 
 ## Routes and sections
+
+**Task subpages are presentation, not a new section lifecycle.** Uploading has
+YouTube, Recording and Combat logs tabs; Previews has Windows, Characters & cycling
+and Wanderer names. Their static tab panels retain drafts, disclosure state and
+scroll position while hidden. `WM.settingsTab(section, tab)` changes the selected
+panel and dispatches `wm:settings-tab`, never `wm:section` or a settings read.
+`WM.openSettingsSection(section, tab)` can target a subpage explicitly; ordinary
+section entry retains the previous selection. Both obey the EVE-tools gate.
+
+Tab lists use selected-state underlines, `aria-selected`, linked tab/panel IDs and
+roving tabindex. Left/Right wrap; Home/End select the first/last tab. A tab change
+moves focus out of the hidden panel, cancels Preview keybind capture and pending
+detail-focus restoration, and masks a revealed webhook when leaving Combat logs.
+It must not reset a draft or submit a field. The section header and preview master
+switch stay outside the subpage scroller; only the character table and Offline
+heading stick inside it, without the old scroll-jump navigation offset.
+
+Windows uses native disclosures: Appearance and Placement start open; Size and
+shape and When you switch away start closed. Each exception list stays with its
+controlling preference. The tabs and flat subpage treatment are scoped to these
+two sections; other Settings screens keep their existing layout.
 
 `WM.route` switches destinations; `WM.section` switches groups inside
 Settings. Both dispatch an event, and both provide the same **enter and

@@ -699,6 +699,9 @@
   document.addEventListener('wm:section', function (ev) {
     if (ev.detail !== 'uploading') remask();
   });
+  document.addEventListener('wm:settings-tab', function (ev) {
+    if (ev.detail.section === 'uploading' && ev.detail.previous === 'combatlogs') remask();
+  });
 
   // ---- Google account -------------------------------------------------
   function renderAuth(p) {
@@ -799,8 +802,8 @@
 // precondition is a dead end the reader cannot see the exit from.
 //
 // Does NOT open "Previews are off". That clause belongs to ui/copy.py's
-// INERT_NOTES["previews_off"], which renders one card down in
-// #preview-binds-off and is the single statement of the STATE (R4
+// INERT_NOTES["previews_off"], which renders in #preview-binds-off on
+// Characters & cycling and is the single statement of the STATE (R4
 // finding 3). This one carries only the consequence and the way out --
 // which is the shape ui/copy.py's own note docstring asks for.
 (function () {

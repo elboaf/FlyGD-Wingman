@@ -1409,6 +1409,11 @@
   WM.el('wanderer-settings').addEventListener('focusin', endCapture);
   WM.el('wanderer-settings').addEventListener('pointerdown', endCapture);
 
+  // Same-tab activation emits no change; release capture before navigation keys.
+  var previewTabs = WM.el('settings-tabs-previews');
+  previewTabs.addEventListener('focusin', endCapture);
+  previewTabs.addEventListener('pointerdown', endCapture);
+
   // Every push- or fetch-driven redraw goes through this instead of
   // calling render() directly. render() rebuilds every row from scratch,
   // which detaches whatever button is currently armed by beginCapture();
@@ -2417,25 +2422,21 @@
   // convenience: every Lock box on this screen is painted by resolving
   // `state.lock_default` against the roster (isLocked), so a stale copy
   // does not merely lag -- it shows the exact INVERSE of every row. The
-  // control that writes it is in this same Settings section, a few
-  // hundred pixels above the table, so the wrong state would be on screen
-  // beside the thing that caused it.
+  // control that writes it is in Windows > Placement, so switching back
+  // to Characters & cycling must show the updated lock state.
   document.addEventListener('wm:preview-lock-default', function (event) {
     state.lock_default = !!(event.detail && event.detail.enabled);
     requestRender();
   });
 
-  Array.prototype.forEach.call(
-    document.querySelectorAll('[data-preview-jump]'), function (button) {
-      button.addEventListener('click', function () {
-        endCapture();
-        WM.el(button.dataset.previewJump).scrollIntoView({block: 'start'});
-      });
-    });
-
-  WM.el('preview-fleet-settings').addEventListener('click', function () {
+  document.addEventListener('wm:settings-tab', function (event) {
+    if (event.detail.section !== 'previews') return;
+    // A subpage is not a fresh section entry. Release capture and stale focus
+    // continuations without refetching or rebuilding the retained controls.
+    detailInteraction += 1;
+    detailFocusIntent = null;
+    copyAttempt += 1;
     endCapture();
-    WM.openSettingsSection('fleet');
   });
 
   // Refreshed on route entry rather than polled, same reasoning as

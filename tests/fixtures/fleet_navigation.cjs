@@ -28,7 +28,7 @@ const turn = () => new Promise(resolve => setImmediate(resolve));
 (async () => {
   await turn();
   for (const section of ['bookmarks', 'previews']) {
-    WM.openSettingsSection(section);
+    WM.openSettingsSection(section, section === 'previews' ? 'characters' : undefined);
     await turn();
     const pane = document.getElementById('section-' + section);
     const bind = pane.querySelector('.bindbtn');
@@ -37,8 +37,7 @@ const turn = () => new Promise(resolve => setImmediate(resolve));
     await turn();
     assert.ok(bind.classList.contains('capturing'), section + ' capture armed');
     calls.length = 0;
-    if (section === 'previews') document.getElementById('preview-fleet-settings').click();
-    else document.querySelector('.rail-item[data-section="fleet"]').click();
+    document.querySelector('.rail-item[data-section="fleet"]').click();
     await turn();
     assert.equal(WM.current_section, 'fleet');
     assert.equal(pane.querySelector('.capturing'), null);

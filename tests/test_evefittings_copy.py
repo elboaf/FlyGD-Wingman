@@ -521,7 +521,7 @@ def test_preflight_missing_authority_points_to_the_existing_authentication_actio
     assert result["pairs"][0]["status"] == "unavailable"
     guidance = result["pairs"][0]["error"]
     assert "Authenticate character" in guidance
-    assert "Settings" in guidance and "Characters" in guidance
+    assert "Settings \u203a Character access" in guidance
 
 
 def test_preflight_refuses_more_than_twenty_actual_creates(tmp_path):

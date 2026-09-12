@@ -31,7 +31,8 @@ WM.send = (method, ...args) => {
 };
 WM.endPreviewCapture = () => {};
 load('panel');
-const family = data.section === 'previews' ? 'wanderer' : data.section;
+const family = data.scenario === 'preview-subpage' ? 'previews'
+  : data.section === 'previews' ? 'wanderer' : data.section;
 const methods = family === 'fleet' ? ['fleetScreenshot', 'fleetSharingScreenshot']
   : [family === 'wanderer' ? 'wandererScreenshot' : 'companionsScreenshot'];
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -60,7 +61,45 @@ function liveReply(method) {
   if (method === 'fleet_sharing_watch') return {state: live.sharing.state};
   return null;
 }
+function assertTab() {
+  if (!data.tab) return;
+  const panel = WM.el('settings-' + data.section + '-' + data.tab);
+  assert.ok(panel, 'real markup has the expected subpage');
+  assert.equal(panel.hidden, false, 'capture must select its tab before framing');
+  const siblings = WM.el('section-' + data.section).querySelectorAll('.settings-subpage');
+  assert.equal(siblings.filter(el => !el.hidden).length, 1);
+}
+function previousTab() {
+  if (!data.tab) return;
+  WM.settingsTab(data.section, data.tab === 'windows' || data.tab === 'youtube'
+    ? (data.section === 'previews' ? 'characters' : 'combatlogs')
+    : (data.section === 'previews' ? 'windows' : 'youtube'));
+}
+// Browser mechanics only: the shared DOM double has no layout engine. A hidden
+// ancestor has no rendered boxes, and framing must use the selected panel.
+Element.prototype.getClientRects = function () {
+  for (let el = this; el; el = el.parentNode) if (el.hidden) return [];
+  return [this.getBoundingClientRect()];
+};
+const click = Element.prototype.click;
+Element.prototype.click = function () {
+  if (staging && data.tab && this.closest('.settings-subpage')) {
+    assertTab();
+    assert.ok(this.getClientRects().length, 'cannot click a hidden screenshot control');
+  }
+  click.call(this);
+};
+const recordScroll = Element.prototype.scrollIntoView;
+Element.prototype.scrollIntoView = function (options) {
+  if (staging && data.tab) {
+    assertTab();
+    assert.ok(this.getClientRects().length, 'cannot frame a hidden descendant');
+    assert.equal(this.closest('.settings-subpage')?.id, 'settings-' + data.section + '-' + data.tab);
+  }
+  recordScroll.call(this, options);
+};
 function assertContent() {
+  assertTab();
   run(data.verify);
   assert.equal(WM.current_section, data.section);
   assert.ok(scrolls.length, 'semantic framing must run');
@@ -109,6 +148,47 @@ function mutations() {
   }
 }
 (async () => {
+  if (data.scenario === 'preview-subpage') {
+    load('previews'); WM.openSettingsSection('previews'); await tick();
+    const outer = document.querySelector('.settings-pane');
+    outer.scrollTop = 57;
+    const writes = [];
+    for (const panel of WM.el('section-previews').querySelectorAll('.settings-subpage')) {
+      let top = 73;
+      panel.scrollHeight = 2000; panel.clientHeight = 400;
+      Object.defineProperty(panel, 'scrollTop', {
+        get: () => top,
+        set: value => { assertTab(); assert.equal(panel.hidden, false); top = value; writes.push(panel.id); }
+      });
+    }
+    calls.length = 0; staging = true;
+    for (let iteration = 0; iteration < 2; iteration++) {
+      previousTab();
+      for (const name of ['appearance', 'placement', 'size', 'switching']) {
+        WM.el('preview-group-' + name).open = iteration === 0;
+      }
+      run(data.prepare); run(data.stage); await tick(); assertTab(); run(data.verify);
+      assert.equal(outer.scrollTop, 57, 'outer Settings pane must never own Preview scrolling');
+      assert.ok(writes.length || scrolls.length, 'the selected panel must be framed');
+      if (data.tab === 'windows') {
+        const middle = data.key.endsWith('-middle');
+        for (const name of ['appearance', 'placement']) assert.equal(WM.el('preview-group-' + name).open, !middle);
+        for (const name of ['size', 'switching']) assert.equal(WM.el('preview-group-' + name).open, middle);
+        if (middle) assert.equal(scrolls.at(-1).element.id, 'preview-group-size');
+        else assert.equal(WM.el('settings-previews-windows').scrollTop, 0);
+      }
+      if (data.key === 'settings-previews-table') {
+        assert.equal(WM.el('settings-previews-characters').scrollTop, 2000);
+        assert.equal(document.querySelector('[data-preview-configure][aria-expanded="true"]'), null);
+        // The next pass must close a detail inherited from an earlier capture.
+        document.querySelector('[data-preview-configure]').click();
+      }
+      if (data.key === 'settings-previews-copy') WM.el('dlg-cancel').click();
+      run(data.cleanup); await tick();
+      assert.equal(calls.length, 0, 'tab selection and staging must not reach the bridge');
+    }
+    console.log('PASS current screenshot ' + data.key); return;
+  }
   if (data.scenario === 'live-card') {
     const replies = {
       fightrecorder_status: {detected: false},
@@ -128,8 +208,9 @@ function mutations() {
     const expected = data.section === 'uploading' ? '#fr-status'
       : data.section === 'bookmarks' ? '#eve-windows' : '#custom-alert-health';
     assert.ok(document.querySelector(expected).textContent, 'real owner must hydrate the card');
+    previousTab();
     calls.length = 0; staging = true;
-    run(data.stage); run(data.verify);
+    run(data.stage); assertTab(); run(data.verify);
     assert.equal(scrolls.at(-1).element.classList.contains('card'), true);
     assert.equal(scrolls.at(-1).options.block, 'start');
     assert.equal(calls.length, 0);
@@ -328,6 +409,7 @@ function mutations() {
     for (const method of methods) assert.throws(() => WM[method]({kind: 'wrong'}), /Invalid .* screenshot fixture/);
   }
   for (let iteration = 0; iteration < 2; iteration++) {
+    previousTab();
     run(data.prepare);
     WM.openSettingsSection(data.section);
     await tick(); run(data.stage); await tick();

@@ -228,8 +228,8 @@ Do not treat passing automated tests as authorization to release this branch.
 
 ### EVE authorization, Skills, and Fittings
 
-Settings → Characters is the only place to authorize, reconnect, or forget EVE
-characters. Every new EVE sign-in from Settings → Characters requests the full
+Settings → Character access is the only place to authorize, reconnect, or forget EVE
+characters. Every new EVE sign-in from Settings → Character access requests the full
 Skills-and-Fittings set currently declared in `wingman/eveauth/application.py`:
 
 ```text
@@ -276,7 +276,7 @@ it: the fitting/character pair remains blocked until a fresh authoritative read
 after EVE's five-minute cache horizon proves whether the fitting exists. This
 prevents an automatic retry from creating a duplicate.
 
-**Forget character is global from Settings → Characters.** It removes that
+**Forget character is global from Settings → Character access.** It removes that
 character's shared EVE credential and its Skills and Fittings snapshots.
 Library entries learned from the character remain. If an Unknown fitting write
 is still unresolved, Forget is refused until reconciliation so the evidence and
@@ -479,7 +479,7 @@ launch. This is about code signing, and is unrelated to Google sign-in.
 Settings open from the gear in the title bar and are grouped down the left.
 Configure your Google account, recording folder, and Discord webhook in
 **Settings › Uploading**. Set the Gamelogs folder in **Settings › Alerts**;
-EVE authorization remains in **Settings › Characters**.
+EVE authorization remains in **Settings › Character access**.
 There is no Save button: every field applies as you set it. Folder paths and
 the webhook apply on **Enter** or from their own buttons, so a half-typed path
 is never acted on.
@@ -512,7 +512,7 @@ These features make the following network connections:
 | Destination | When | What is sent |
 |---|---|---|
 | GitHub release APIs and release downloads | Wingman's release API is checked once each time Wingman starts, including when Windows starts it hidden at sign-in. **Check again** repeats that check and **Download update** explicitly downloads its installer; there is no polling or automatic download. Separately, FightRecorder stays local until you choose **Check for updates**, **Install**, or **Update** on its Settings card; those actions check its GitHub release and Install/Update downloads the plugin DLL. | The automatic Wingman check identifies the installed Wingman version in its User-Agent, and each request carries ordinary network connection metadata and identifies the repository or release asset requested. FightRecorder checks do not send the installed plugin version. No Wingman settings, EVE or Google account data, filenames, recordings, or telemetry are sent. |
-| CCP EVE SSO and ESI (`login.eveonline.com`, `esi.evetech.net`) | You authorize or reconnect a character from Settings → Characters; Wingman refreshes that character's skills, queue, and attributes, refreshes its Personal Fittings when you ask Fittings to do so, or resolves uncached skill plans through unauthenticated universe ID/name (`/universe/ids`), type metadata, and group metadata lookups. Profiles looks up local character IDs first through unauthenticated `/characters/{id}/` requests, then uses `/universe/names` for remaining display names. | EVE SSO receives Wingman's registered client ID, redirect URI, the four Skills-and-Fittings scopes declared in `wingman/eveauth/application.py`, and PKCE values, then the authorization code or stored EVE refresh token at its token endpoint. Authenticated ESI skills, queue, and attributes requests carry the character ID and EVE bearer access token. Authenticated ESI fitting reads and writes carry the character ID and EVE bearer access token. Unauthenticated name and metadata lookups carry skill names, type/group IDs, or the Profiles character IDs being resolved, with no EVE token. Wingman does not send CCP its settings, local EVE `.dat` files, Google credentials, Discord webhook or combat logs, filenames, or recordings. |
+| CCP EVE SSO and ESI (`login.eveonline.com`, `esi.evetech.net`) | You authorize or reconnect a character from Settings → Character access; Wingman refreshes that character's skills, queue, and attributes, refreshes its Personal Fittings when you ask Fittings to do so, or resolves uncached skill plans through unauthenticated universe ID/name (`/universe/ids`), type metadata, and group metadata lookups. Profiles looks up local character IDs first through unauthenticated `/characters/{id}/` requests, then uses `/universe/names` for remaining display names. | EVE SSO receives Wingman's registered client ID, redirect URI, the four Skills-and-Fittings scopes declared in `wingman/eveauth/application.py`, and PKCE values, then the authorization code or stored EVE refresh token at its token endpoint. Authenticated ESI skills, queue, and attributes requests carry the character ID and EVE bearer access token. Authenticated ESI fitting reads and writes carry the character ID and EVE bearer access token. Unauthenticated name and metadata lookups carry skill names, type/group IDs, or the Profiles character IDs being resolved, with no EVE token. Wingman does not send CCP its settings, local EVE `.dat` files, Google credentials, Discord webhook or combat logs, filenames, or recordings. |
 | Google / YouTube APIs | You sign in, or upload a video | OAuth sign-in, and the video files you selected plus the title, description, privacy, and category you set |
 | A Discord webhook you configure | You press **Upload** while a webhook is configured, after the video publishes successfully | A zip of the local EVE log files covering the selected recordings, plus a short summary message |
 | The HTTPS Wanderer instance you configure | **Wanderer names** is enabled with a complete connection, Client previews enabled and an available host: one conditional snapshot request at a time, normally two seconds after completion; failures/backoff can only slow it. **Test connection** explicitly requests the same snapshot even with names off. | The configured map selector in the URL, its read-only bearer integration token in Authorization, contract-version/Accept headers, an optional prior ETag, and ordinary network metadata. No local character roster, EVE/Google credentials, logs, recordings or settings document is sent. Returned current locations stay in memory; only current preview sessions receive labels, never a history store or fleet-sharing publication. |
