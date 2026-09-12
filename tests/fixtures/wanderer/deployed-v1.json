@@ -1,0 +1,66 @@
+{
+  "data": [
+    {
+      "character_id": 90000001,
+      "character_name": "First Pilot",
+      "tracked": true,
+      "online": true,
+      "solar_system_id": 30000142,
+      "solar_system_name": "Jita",
+      "display_name": "HOME",
+      "map_system_visible": true,
+      "location_observed_at": "2026-09-10T20:00:00.000000Z",
+      "map_system_updated_at": "2026-09-10T19:30:00.000000Z"
+    },
+    {
+      "character_id": 90000002,
+      "character_name": "Hidden Pilot",
+      "tracked": true,
+      "online": true,
+      "solar_system_id": 30002187,
+      "solar_system_name": "Amarr",
+      "display_name": null,
+      "map_system_visible": false,
+      "location_observed_at": "2026-09-10T20:00:00.000000Z",
+      "map_system_updated_at": null
+    },
+    {
+      "character_id": 90000003,
+      "character_name": "Unmapped Pilot",
+      "tracked": true,
+      "online": true,
+      "solar_system_id": 31999999,
+      "solar_system_name": null,
+      "display_name": null,
+      "map_system_visible": false,
+      "location_observed_at": "2026-09-10T20:00:00.000000Z",
+      "map_system_updated_at": null
+    },
+    {
+      "character_id": 90000004,
+      "character_name": "Offline Pilot",
+      "tracked": true,
+      "online": false,
+      "solar_system_id": null,
+      "solar_system_name": null,
+      "display_name": null,
+      "map_system_visible": false,
+      "location_observed_at": null,
+      "map_system_updated_at": null
+    },
+    {
+      "character_id": 90000005,
+      "character_name": "Unavailable Pilot",
+      "tracked": true,
+      "online": null,
+      "solar_system_id": null,
+      "solar_system_name": null,
+      "display_name": null,
+      "map_system_visible": false,
+      "location_observed_at": null,
+      "map_system_updated_at": null
+    }
+  ],
+  "observed_at": "2026-09-10T20:00:01.000000Z",
+  "revision": "fixture-revision"
+}

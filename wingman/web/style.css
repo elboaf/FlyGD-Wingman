@@ -4390,6 +4390,12 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   font-size: var(--fs-muted); line-height: 1.45; color: var(--text-dim);
 }
 .field-msg[hidden] { display: none; }
+/* This compact connection card uses the shared controls, not a nested form.
+   Empty draft hints cost no line; live regions stay mounted for announcements. */
+#wanderer-settings > .hint, #wanderer-settings > .field-msg {
+  margin: 4px 0 8px; overflow-wrap: anywhere;
+}
+#wanderer-settings > .hint:empty:not([role]) { display: none; }
 /* Same two tokens the status strip and #eve-bind-warning already use, so
    one severity reads the same everywhere in the app. */
 .field-msg.warn { color: var(--warn); }

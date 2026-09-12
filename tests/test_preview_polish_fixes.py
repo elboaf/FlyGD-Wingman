@@ -219,21 +219,24 @@ def test_hwnd_arriving_during_primary_admission_does_not_lose_accepted_reset(
         assert release.wait(5)
 
     r = layout_api(before_window=before_window)
-    initialize = r.host._init_companion_family
+    create = r.host._create_host_window
 
     def note_hwnd(libs):
+        hwnd = create(libs)
         hwnd_created.set()
-        initialize(libs)
+        return hwnd
 
     class HeldAppend(deque):
         def append(self, value):
-            # Payload insertion is inside the admission lock, but HWND creation
-            # is not. Force that transition before admission can finish.
+            # Native creation is outside admission; publishing the HWND and its
+            # metadata wake is now atomic under the same lock as this append.
+            # Wait at creation, not initialization (which needs that lock).
             release.set()
             assert hwnd_created.wait(5)
+            assert r.host._hwnd is None
             super().append(value)
 
-    monkeypatch.setattr(r.host, "_init_companion_family", note_hwnd)
+    monkeypatch.setattr(r.host, "_create_host_window", note_hwnd)
     monkeypatch.setattr(r.host, "_primary_intents", HeldAppend())
     r.runtime.set_companions(True, 1)
     assert entered.wait(5)

@@ -73,6 +73,7 @@ from ..upload.controller import (
     folder_note,
 )
 from ..upload.gate import WorkGate
+from ..wanderer.controller import WandererController, WandererPorts
 from . import copy as copy_mod
 from .fleetpresentation import (
     FleetDelivery,
@@ -608,6 +609,7 @@ class Api:
         # construction itself must not touch the page or start Profiles work.
         self._preview_runtime.set_state_callback(self._preview_runtime_changed)
         self._profiles = self._build_profiles_controller()
+        self._wanderer = self._build_wanderer_controller()
         if self._fleet_sharing is not None:
             self._sharing_status_unsubscribe = self._fleet_sharing.subscribe_status(
                 self._receive_fleet_sharing_status
@@ -4386,6 +4388,57 @@ class Api:
             logger.warning("Fleet sharing is still stopping")
         return stopped
 
+    # ---- Wanderer preview names ---------------------------------------
+
+    def _build_wanderer_controller(self) -> WandererController:
+        return WandererController(
+            self._state.settings.get("wanderer"),
+            previews_enabled=self._preview_config.get("enabled", False),
+            ports=WandererPorts(
+                update_settings=lambda: settings_mod.update(self._state.settings),
+                set_metadata_callback=self._wanderer_metadata_callback,
+                set_metadata_generation=self._wanderer_metadata_generation,
+                submit_metadata=self._wanderer_submit_metadata,
+                close_metadata_admission=self._wanderer_close_metadata,
+                publish_state=self._publish_wanderer_state,
+                describe_status=copy_mod.wanderer_status,
+            ),
+        )
+
+    def _wanderer_metadata_callback(self, callback) -> None:
+        if self._preview_host is not None:
+            self._preview_host.set_metadata_callback(callback)
+
+    def _wanderer_metadata_generation(self, generation, eve_epoch) -> bool:
+        if self._preview_host is not None:
+            return self._preview_host.set_metadata_generation(generation, eve_epoch)
+        # Explicit Test is independent of native preview availability.
+        return True
+
+    def _wanderer_submit_metadata(self, generation, updates) -> None:
+        if self._preview_host is not None:
+            self._preview_host.submit_metadata(generation, updates)
+
+    def _wanderer_close_metadata(self) -> None:
+        if self._preview_host is not None:
+            self._preview_host.close_metadata_admission()
+
+    def _publish_wanderer_state(self, payload) -> None:
+        if not self._eve_runtime_closed:
+            self._push("onWandererState", payload)
+
+    def wanderer_state(self) -> dict:
+        return self._wanderer.state()
+
+    def set_wanderer_enabled(self, enabled) -> dict:
+        return self._wanderer.set_enabled(enabled)
+
+    def test_wanderer_connection(self, base, map, token) -> dict:
+        return self._wanderer.test_connection(base, map, token)
+
+    def remove_wanderer_connection(self, revision) -> dict:
+        return self._wanderer.remove_connection(revision)
+
     # ---- EVE client previews ------------------------------------------
 
     def _reconcile_eve_runtime(self, *, recover_fleet: bool = True) -> int | None:
@@ -4467,6 +4520,7 @@ class Api:
             self._eve_runtime_closed = True
             self._alerts_controller.close_runtime()
             telemetry = self._telemetry
+        self._wanderer.close_admission()
         # This only fences ingress; no consumer callback or join. Keep the
         # retained owner even when its later bounded stop cannot finish.
         self._companions.close_publication()
@@ -4580,6 +4634,7 @@ class Api:
         else:
             self._preview_revision += 1
         self._preview_runtime.set_eve(enabled, self._preview_revision)
+        self._wanderer.set_previews_enabled(enabled)
         self._reconcile_eve_runtime()
         # Truthy on success: WM.send resolves to null on a bridge failure
         # and cannot otherwise distinguish that from a method that simply
@@ -4676,6 +4731,8 @@ class Api:
         # and remote presentation before either owner can block in a join.
         self._stop_fleet_presentation()
         self.shutdown_fleet_sharing()
+        if not self._wanderer.stop():
+            logger.warning("Wanderer runtime is still stopping")
         try:
             if not self._companions.shutdown():
                 # Keep the native owner alive to deliver admitted storage's

@@ -41,6 +41,8 @@ def _font_path() -> Path:
 FONT_PATH = _font_path()
 LABEL_BG = (10, 14, 20, 235)
 LABEL_FG = (235, 240, 245, 255)
+# Still AA over the pill composited on white video, not just on dark EVE space.
+LABEL_SECONDARY_FG = (180, 190, 205, 255)
 # Opaque, and that is load-bearing rather than cosmetic. A layered window
 # hit-tests against its own alpha channel: every pixel at alpha 0 passes
 # mouse input through to whatever is behind it. An earlier version left
@@ -98,6 +100,8 @@ def _ellipsize(draw, text, font, max_w):
     if not text or draw.textlength(text, font=font) <= max_w:
         return text
     ell = "…"
+    if draw.textlength(ell, font=font) > max_w:
+        return ""
     while text and draw.textlength(text + ell, font=font) > max_w:
         text = text[:-1]
     return text + ell
@@ -171,13 +175,11 @@ LABEL_PAD_Y = 5
 LABEL_FONT = 17
 
 
-def label_size(label, max_w, font_size=LABEL_FONT):
-    """The (w, h) render_label would draw, or None for no pill.
+def label_layout(label, max_w, font_size=LABEL_FONT, secondary=None):
+    """Return (size, primary, secondary) after independent ellipsis, or None.
 
-    Text measurement against the cached font, no pixels drawn -- cheap
-    enough to call per mouse-move, which is how the overlay's render
-    cache keys itself: the pill's OWN width, not the preview's, because
-    every width the text already fits inside produces the same image.
+    Measurement only. The cache needs the clipped strings as well as dimensions:
+    one line can change its ellipsis while the other keeps the pill's size fixed.
     """
     if not label:
         return None
@@ -186,13 +188,26 @@ def label_size(label, max_w, font_size=LABEL_FONT):
     text = _ellipsize(probe, label, font, max_w=max_w - LABEL_PAD_X * 2)
     if not text:
         return None
-    return (
-        int(probe.textlength(text, font=font)) + LABEL_PAD_X * 2,
-        font_size + LABEL_PAD_Y * 2 + 4,
-    )
+    width = probe.textlength(text, font=font)
+    height = font_size + LABEL_PAD_Y * 2 + 4
+    second = ""
+    if secondary:
+        small_size = max(1, font_size - 3)
+        small_font = _font(small_size)
+        second = _ellipsize(probe, secondary, small_font, max_w - LABEL_PAD_X * 2)
+        if second:
+            width = max(width, probe.textlength(second, font=small_font))
+            height += small_size + 2
+    return ((int(width) + LABEL_PAD_X * 2, height), text, second)
 
 
-def render_label(label, max_w, font_size=LABEL_FONT):
+def label_size(label, max_w, font_size=LABEL_FONT, secondary=None):
+    """The (w, h) render_label would draw, or None for no pill."""
+    layout = label_layout(label, max_w, font_size, secondary)
+    return layout[0] if layout is not None else None
+
+
+def render_label(label, max_w, font_size=LABEL_FONT, secondary=None):
     """Render the character-name pill for the overlay window.
 
     Sized to the text, not the preview: EVE-O Preview's overlay is a
@@ -204,15 +219,21 @@ def render_label(label, max_w, font_size=LABEL_FONT):
     click-through by style whatever the alpha says, and the label has
     the same readability over bright game content the old band had.
     """
-    size = label_size(label, max_w, font_size)
-    if size is None:
+    layout = label_layout(label, max_w, font_size, secondary)
+    if layout is None:
         return None
-    w, h = size
+    (w, h), text, second = layout
     font = _font(font_size)
-    probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
-    text = _ellipsize(probe, label, font, max_w=max_w - LABEL_PAD_X * 2)
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     d.rounded_rectangle([0, 0, w - 1, h - 1], radius=6, fill=LABEL_BG)
     d.text((LABEL_PAD_X, LABEL_PAD_Y + 2), text, font=font, fill=LABEL_FG)
+    if second:
+        small_font = _font(max(1, font_size - 3))
+        d.text(
+            (LABEL_PAD_X, LABEL_PAD_Y + font_size + 4),
+            second,
+            font=small_font,
+            fill=LABEL_SECONDARY_FG,
+        )
     return img

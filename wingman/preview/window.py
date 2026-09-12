@@ -360,6 +360,8 @@ class PreviewWindow:
         self._label_hwnd = None
         self._label_img = None
         self._label_key = None
+        self._label_visible = False
+        self._system_name = None
         # The thumbnail's inset from the window edge. Normally BORDER, but
         # an armed alert widens it to ALERT_BORDER for the duration: the
         # thumbnail overpaints the ring everywhere it covers, so a 6px ring
@@ -445,6 +447,20 @@ class PreviewWindow:
         # After the preview itself exists: the overlay is owned by it.
         self._ensure_label_overlay()
         return self
+
+    def rebind_client(self, client) -> None:
+        """Renew a recycled source on the pump without moving either window."""
+        self._release_thumb()
+        self.client = client
+        self.set_system_name(None)
+        self.clear_alert()
+        if self.hwnd is not None:
+            self._thumb = Thumbnail.register(self._libs, self.hwnd, client.hwnd)
+            if self._thumb is not None:
+                self._thumb.update(
+                    geometry.thumbnail_rect(self.rect, self._inset), self.opacity
+                )
+        self._sync_label()
 
     # -- rendering -------------------------------------------------------
     def _source_aspect(self):
@@ -534,6 +550,14 @@ class PreviewWindow:
     def _label_text(self) -> str:
         return self.client.character or self.client.title
 
+    def set_system_name(self, text: str | None) -> None:
+        """Pump-only semantic metadata; never changes chrome or thumbnail geometry."""
+        text = text or None
+        if text == self._system_name:
+            return
+        self._system_name = text
+        self._sync_label()
+
     def set_labels(self, shown: bool) -> None:
         """Show or hide the name overlay. Idempotent, like every setter
         the host calls per restyle."""
@@ -570,13 +594,10 @@ class PreviewWindow:
             if not self._label_hwnd:
                 logger.warning("Label overlay window failed for %s", self._label_text())
                 return
-            # WS_POPUP alone creates the window HIDDEN, and the bitmap
-            # push below maps to UpdateLayeredWindow, which does NOT
-            # change visibility -- the chrome window shows itself the same
-            # explicit way. This call is why the pill exists on screen at
-            # all; without it the overlay is a perfectly rendered bitmap
-            # on a window that is never mapped.
-            self._libs.user32.ShowWindow(self._label_hwnd, win32.SW_SHOWNOACTIVATE)
+            # WS_POPUP starts hidden. _sync_label shows it only after a
+            # bitmap exists AND the preview is visible — never during a
+            # hidden restyle or metadata update.
+            self._label_visible = False
         self._sync_label()
 
     def _sync_label(self) -> None:
@@ -584,35 +605,57 @@ class PreviewWindow:
 
         Called on every move: the push is an UpdateLayeredWindow on a
         pill-sized bitmap (a few thousand pixels, against chrome's
-        ~67k), and the render is cache-keyed on the pill's OWN size --
-        measured per move with label_size(), no pixels drawn -- so a
-        drag re-renders only when the width crosses the ellipsize
-        threshold.
+        ~67k), and the render is cache-keyed on the pill's own layout —
+        measured per move with label_layout(), no pixels drawn — so a
+        drag re-renders only when the width changes either clipped line.
         """
         if self._label_hwnd is None:
             return
         label = self._label_text()
         max_w = self.rect.w - self._inset * 2
-        size = chrome.label_size(label, max_w)
-        if size != self._label_key:
-            self._label_img = chrome.render_label(label, max_w)
-            self._label_key = size
-        if self._label_img is None:
-            self._libs.user32.ShowWindow(self._label_hwnd, win32.SW_HIDE)
-            return
-        layered.push(
-            self._libs,
-            self._label_hwnd,
-            self._label_img,
-            self.rect.x + self._inset,
-            self.rect.y + self._inset,
+        layout = chrome.label_layout(label, max_w, chrome.LABEL_FONT, self._system_name)
+        key = (
+            label,
+            self._system_name,
+            layout,
+            chrome.LABEL_FONT,
+            chrome.LABEL_PAD_X,
+            chrome.LABEL_PAD_Y,
+            chrome.LABEL_BG,
+            chrome.LABEL_FG,
+            chrome.LABEL_SECONDARY_FG,
         )
+        if key != self._label_key:
+            self._label_img = chrome.render_label(
+                label, max_w, chrome.LABEL_FONT, self._system_name
+            )
+            self._label_key = key
+        if self._label_img is not None:
+            layered.push(
+                self._libs,
+                self._label_hwnd,
+                self._label_img,
+                self.rect.x + self._inset,
+                self.rect.y + self._inset,
+            )
+        self._sync_label_visibility()
+
+    def _sync_label_visibility(self) -> None:
+        if self._label_hwnd is None:
+            return
+        visible = self.show_labels and not self.hidden and self._label_img is not None
+        if visible != self._label_visible:
+            self._libs.user32.ShowWindow(
+                self._label_hwnd, win32.SW_SHOWNOACTIVATE if visible else win32.SW_HIDE
+            )
+            self._label_visible = visible
 
     def _destroy_label_overlay(self) -> None:
         if self._label_hwnd is None:
             return
         self._libs.user32.DestroyWindow(self._label_hwnd)
         self._label_hwnd = None
+        self._label_visible = False
 
     def set_hidden(self, hidden: bool) -> None:
         """Take this preview off the screen, or put it back.
@@ -655,11 +698,7 @@ class PreviewWindow:
         # The overlay with it: an owned window does not follow the owner
         # into hiding, so a hidden preview would leave its name floating
         # over whatever moved into that space.
-        if self._label_hwnd is not None:
-            self._libs.user32.ShowWindow(
-                self._label_hwnd,
-                win32.SW_HIDE if hidden else win32.SW_SHOWNOACTIVATE,
-            )
+        self._sync_label_visibility()
 
     def set_selected(self, selected: bool) -> None:
         """Draw or drop the ring. Cosmetic only -- see set_focused for the

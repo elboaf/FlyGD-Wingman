@@ -7004,6 +7004,13 @@ class _StartupUser32(_RosterUser32):
 
 
 class _RosterWindow:
+    def rebind_client(self, client):
+        self.client = client
+        self.system_name = None
+
+    def set_system_name(self, text):
+        self.system_name = text
+
     def __init__(self, client, rect):
         self.client = client
         self.rect = rect

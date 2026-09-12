@@ -1404,6 +1404,11 @@
     if (pendingRender) { pendingRender = false; render(); }
   }
 
+  // This card shares the section with capture buttons. Release both native
+  // and page capture before a credential keystroke can become a keybind.
+  WM.el('wanderer-settings').addEventListener('focusin', endCapture);
+  WM.el('wanderer-settings').addEventListener('pointerdown', endCapture);
+
   // Every push- or fetch-driven redraw goes through this instead of
   // calling render() directly. render() rebuilds every row from scratch,
   // which detaches whatever button is currently armed by beginCapture();

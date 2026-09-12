@@ -223,3 +223,62 @@ def test_the_alert_ring_is_drawn_over_the_hole_not_under_it():
     alert draws nothing."""
     img = chrome.render((320, 210), border_color=CYAN, border=6, selected=True)
     assert img.getpixel((160, 3)) == CYAN
+
+
+def test_secondary_line_adds_height_not_a_blank_placeholder():
+    one = chrome.render_label("Pilot", 300)
+    two = chrome.render_label("Pilot", 300, secondary="HOME")
+    assert one.height == 31
+    assert 45 <= two.height <= 52
+    assert chrome.label_size("Pilot", 300, secondary="HOME") == two.size
+    assert chrome.render_label("Pilot", 300, secondary="").tobytes() == one.tobytes()
+    assert chrome.render_label("", 300, secondary="HOME") is None
+
+
+def test_both_lines_ellipsize_independently(monkeypatch):
+    from PIL import ImageDraw
+
+    drawn = []
+    original = ImageDraw.ImageDraw.text
+
+    def record(self, xy, text, **kwargs):
+        drawn.append((text, kwargs["font"].size))
+        return original(self, xy, text, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record)
+    img = chrome.render_label("W" * 60, 120, secondary="HOME")
+    assert img.width <= 120
+    assert drawn[0][0].endswith("…") and drawn[1][0] == "HOME"
+    assert drawn[1][1] < drawn[0][1]
+    drawn.clear()
+    img = chrome.render_label("Pilot", 120, secondary="W" * 60)
+    assert img.width <= 120
+    assert drawn[0][0] == "Pilot" and drawn[1][0].endswith("…")
+
+
+def test_secondary_text_contrast_over_bright_video_is_at_least_aa():
+    def luminance(rgb):
+        linear = [
+            v / 255 / 12.92
+            if v / 255 <= 0.04045
+            else ((v / 255 + 0.055) / 1.055) ** 2.4
+            for v in rgb
+        ]
+        return sum(
+            v * weight
+            for v, weight in zip(linear, (0.2126, 0.7152, 0.0722), strict=True)
+        )
+
+    alpha = chrome.LABEL_BG[3] / 255
+    worst_bg = [v * alpha + 255 * (1 - alpha) for v in chrome.LABEL_BG[:3]]
+    secondary = chrome.LABEL_SECONDARY_FG
+    assert luminance(secondary[:3]) < luminance(chrome.LABEL_FG[:3])
+    assert secondary[3] == 255
+    for foreground in (chrome.LABEL_FG, secondary):
+        assert (luminance(foreground[:3]) + 0.05) / (luminance(worst_bg) + 0.05) >= 4.5
+
+
+def test_too_narrow_pill_is_omitted_instead_of_overflowing():
+    for width in (0, 8, 16, 20):
+        image = chrome.render_label("Pilot", width, secondary="HOME")
+        assert image is None or image.width <= width

@@ -150,8 +150,9 @@ reached through injected seams or lazy `windll` binding):
   generic picker with `croppicker.py` as its character adapter. Persisted
   `companion_previews` defaults off; eight definitions may be enabled. No native
   identity is persisted. Source windows are read-only except explicit activation.
-  A future Wanderer metadata channel must use this same EVE epoch and be
-  fenced/drained on EVE-off, not consume companion demand or alert capacity.
+  Wanderer metadata uses this same EVE epoch and is fenced/drained on EVE-off;
+  readiness callbacks carry that epoch back through generation admission. It
+  consumes neither companion demand nor alert capacity.
   **Wingman must never move or resize a real EVE client window** — EVE reads a
   resize as a resolution change and rewrites its own config.
 - `telemetry/` — the one serialized coordinator (`coordinator.py`) over a
@@ -185,6 +186,21 @@ reached through injected seams or lazy `windll` binding):
   bundled sidecar (`packaging/settings-codec/`, our own crate) that is a pure
   stdin/stdout filter and never opens a file. `formations.py` and
   `formation_sharing.py` are pure and speak meters.
+- `wanderer/` — default-off, read-only map names for current primary preview
+  sessions. `model.py` pins the deployed v1 snapshot contract; `credentials.py`
+  DPAPI-protects the entire URL/map/token binding separately from settings.
+  `client.py` makes one bounded HTTPS attempt; `worker.py` retains one HTTP lane
+  (Test included) and an independent monotonic expiry owner. A 304 never renews
+  location deadlines; 401/403 headers clear cached names before body reads finish.
+  `controller.py` persists before reconfiguration and fences the host generation
+  before worker admission. Host callbacks only cache detached revision/session
+  snapshots; separate controller handoff/health owners do the work. No network,
+  disk, DPAPI or page work belongs on discovery, telemetry, expiry or the native
+  pump. PreviewHost's coalescing metadata mailbox is keyed by full ClientSessionId,
+  bounded by its current admitted roster (not recent-name CAP64); only its pump
+  touches the existing two-line label. Final shutdown detaches/closes metadata
+  admission before native destruction and retains timed-out owners. No location
+  history, ESI/OAuth, map writes, fleet-sharing publication or companion dependency.
 - `fleetsharing/` — default-off publisher of projected fleet telemetry to an
   external relay: `projection.py`, `crypto.py`, `model.py`, `state.py` are pure
   or local-persistence seams; `client.py` is the signed transport; `worker.py`
@@ -221,13 +237,17 @@ sees it), `scheduler.py`, and two auxiliary always-on-top windows,
 
 **Web layer** (`wingman/web/`): `app.js` is the shell and bridge client with a
 strict `WM.HANDLERS` allowlist; one route/screen per JS file, loaded by
-`index.html` in this order: `characters`, `bookmarks`, `fleet`, `previews`, `companions`, `fleetsharing`, `alerts`,
+`index.html` in this order: `characters`, `bookmarks`, `fleet`, `previews`, `wanderer`, `companions`, `fleetsharing`, `alerts`,
 `evesettings` (the Profiles route), `formations`, `uisetup`, `list`, `panel` (upload
 panel, status strip, dialog layer), `settings`, `skills`, `fittings`,
 `firstrun`, `dev`. `fleet.js` owns Fleet telemetry's local display settings and
 its global status-strip toggle; its boot hydration is independent of section
 visibility. Section re-entry retries only failed initial hydration, never adds
 reads after success. `fleetsharing.js` owns the shared setup view, not worker lifetime.
+`wanderer.js` owns the Wanderer names card in Settings > Previews; health pushes
+never overwrite field drafts. Test saves submitted URL/map/token as one connection;
+blank tokens reuse only the current normalized binding, and Remove clears all three
+while retaining the independent enable preference.
 `WM.route` switches destinations, `WM.section` switches
 Settings groups; both have enter/leave contracts, and leaving is load-bearing
 (keybind capture listeners must disarm). `dev.js` renders the page with fake
@@ -276,8 +296,10 @@ Hard rules from `DESIGN.md` worth knowing before you touch a screen:
 - Colours are decided only by `:root` tokens. 4.5:1 text contrast, 3:1 focus.
 - Settings has no Save button: every field commits through a per-field endpoint
   returning `{applied, persisted, error}`. Discrete controls commit on change;
-  free text commits on Enter or an explicit button, never on blur. Nothing
-  commits before the first payload renders.
+  free text commits on Enter or an explicit button, never on blur. Wanderer's
+  bound URL/map/token are the scoped grouped exception: Test saves the connection,
+  while each field still owns its drafts. Nothing commits before the first payload
+  renders.
 - Title-bar space is the scarce resource; `MIN_WIDTH`/`MIN_HEIGHT` in
   `ui/window.py` are **logical** pixels, measured not derived, so the CSS
   viewport floor is 840x625 at every scaling — not 840/scale. Do the

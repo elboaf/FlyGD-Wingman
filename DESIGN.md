@@ -599,6 +599,15 @@ a second copy of it.
 Settings has no Save button. Every field commits on its own through a
 per-field endpoint returning `{applied, persisted, error}`.
 
+**Wanderer's connection is a scoped grouped exception.** Its URL, map and token
+form one bound credential, saved explicitly by **Test connection** or Enter in
+any of those fields; the nearby note states that Test saves. It has no separate
+Apply/Replace actions and no blur commit. The enable toggle remains independent.
+A grouped acknowledgement still owns each field separately, so it cannot erase
+a newer draft in another field. Configuration persistence and asynchronous Test
+admission/result are separate facts. Remove confirms and clears the connection,
+not the enabled preference.
+
 Three outcomes, not two, because the page says something different for
 each: **refused** (revert the control, explain inline), **applied but not
 persisted** (leave the control, warn it will not survive a restart),

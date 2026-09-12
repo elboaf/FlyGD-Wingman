@@ -377,6 +377,50 @@ def test_custom_alert_facades_are_exact_single_line_delegates(facade, delegate, 
     )
 
 
+@pytest.mark.parametrize(
+    "facade,delegate,args",
+    [
+        ("wanderer_state", "state", []),
+        ("set_wanderer_enabled", "set_enabled", ["enabled"]),
+        ("test_wanderer_connection", "test_connection", ["base", "map", "token"]),
+        ("remove_wanderer_connection", "remove_connection", ["revision"]),
+    ],
+)
+def test_wanderer_facades_are_exact_single_line_delegates(facade, delegate, args):
+    from wingman.ui.api import Api
+
+    assert list(inspect.signature(getattr(Api, facade)).parameters) == ["self", *args]
+    tree = ast.parse(API.read_text(encoding="utf-8"))
+    method = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == facade
+    )
+    assert len(method.body) == 1
+    assert (
+        ast.unparse(method.body[0])
+        == f"return self._wanderer.{delegate}({', '.join(args)})"
+    )
+
+
+def test_wanderer_literal_push_and_controller_boundary():
+    assert 'self._push("onWandererState", payload)' in api_method_body(
+        "_publish_wanderer_state"
+    )
+    assert "onWandererState" in allowlist()
+    assert registered_names().get("onWandererState") == ["wanderer.js"]
+    tree = ast.parse(
+        (API.parent.parent / "wanderer/controller.py").read_text(encoding="utf-8")
+    )
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            assert "ui" not in (node.module or "").split(".")
+        elif isinstance(node, ast.Import):
+            assert not any("ui" in alias.name.split(".") for alias in node.names)
+        elif isinstance(node, ast.Attribute):
+            assert node.attr not in {"_push", "evaluate_js", "_window"}
+
+
 def test_custom_alerts_have_no_push_channel_or_ui_import():
     assert not any("alert" in name.lower() for name in allowlist() + pushed_names())
     source = (API.parent.parent / "alerts" / "controller.py").read_text(

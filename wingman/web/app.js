@@ -54,7 +54,7 @@
                  'onAuthState', 'onDialog', 'onFirstRun',
                  'onBookmarks', 'onEveStatus', 'onPreviewHotkeys', 'onPreviewCrops',
                  'onCompanionPreviews',
-                 'onPreviewBindCaptured', 'onEveAuthorityChanged',
+                 'onPreviewBindCaptured', 'onEveAuthorityChanged', 'onWandererState',
                  'onEveSettingsNames',
                  'onEveSettingsRunning', 'onEveSettingsDone',
                  'onSigBarState', 'onFleetBarState', 'onUpdateStatus',

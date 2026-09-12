@@ -72,6 +72,24 @@ class FakePreviewHost(HostLifecycle):
         # Refuse work rather than pretending it can issue a cleanup receipt.
         return False
 
+    def set_metadata_callback(self, callback):
+        self.metadata_callback = callback
+        if callback is not None:
+            # This alert double never creates a native primary preview.
+            callback(0, frozenset(), False, self._eve_epoch)
+
+    def set_metadata_generation(self, generation, eve_epoch):
+        if getattr(self, "metadata_closed", False) or eve_epoch != self._eve_epoch:
+            return False
+        self.metadata_generation = generation
+        return True
+
+    def submit_metadata(self, generation, updates):
+        pass
+
+    def close_metadata_admission(self):
+        self.metadata_closed = True
+
     def focused_character(self):
         return self._focused
 

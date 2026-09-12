@@ -15,6 +15,110 @@ is the only verification any of the rest gets.**
 
 Run on Windows against a real install before each release.
 
+## Wanderer names — live/native acceptance
+
+**All 15 checks below are NOT RUN for this implementation.** No deployed instance
+URL, integration token or observed instance version was supplied. Synthetic HTTP,
+Node, Chromium/CDP, Windows Python/DPAPI and message-pump tests are separate
+evidence, not permission to tick these boxes. Record observations in
+[`wanderer-preview-overlay-verification.md`](wanderer-preview-overlay-verification.md),
+with the actual Wingman SHA/build, Wanderer instance/version, Windows/DPI setup,
+time and sanitized outcome. Never include a token or credential-bearing capture.
+
+Prerequisites: a supported HTTPS Wanderer instance implementing the contract at
+`2ddff24516c27ecde7b175991fcd74d608a35932`, a map-scoped read-only integration
+token, authorized test characters and real EVE primary previews. Use a disposable
+test map/token for revocation, disabled-API, outage and restart exercises; arrange
+operator approval first. Observe network timing/status without logging Authorization
+or response location data. No deployment or server mutation is part of Wingman's
+implementation task.
+
+- [ ] **1 — Stationary confirmation (NOT RUN).** Keep a tracked online pilot in
+      one system beyond 15 seconds. Successful unchanged-location observations
+      must advance server freshness/revision and keep the line visible. A stale
+      last-changed timestamp must not masquerade as a confirmation heartbeat.
+- [ ] **2 — Jump/movement (NOT RUN).** Move that pilot through known systems;
+      record observed jump-to-label latency and confirm only that pilot's preview
+      changes to the current map-local name. Do not claim a latency from the
+      two-second poll constant; upstream tracking latency also matters.
+- [ ] **3 — Effective aliases (NOT RUN).** On the approved test map, observe a
+      persistent rename, then a temporary rename and its removal. Expect Wanderer's
+      effective temporary/custom precedence without Wingman merging maps or
+      requesting individual alias fields.
+- [ ] **4 — Reset/raw fallback (NOT RUN).** Remove the effective alias on the test
+      system. Expect its actual raw EVE name, not a stale mapper alias or a
+      fabricated `System <id>` string. Character identity stays the primary line.
+- [ ] **5 — Hidden/unmapped/missing static data (NOT RUN).** Observe a hidden system
+      and a system absent from the map: fresh locations use the real raw name if
+      supplied, never a hidden alias. If static lookup supplies no valid name,
+      there is no secondary line. Record each variant separately.
+- [ ] **6 — Roster and session identity (NOT RUN).** Compare tracked/untracked,
+      offline and unavailable pilots. Only a fresh matching tracked online pilot
+      gets a line. Log out, enter character select, then relaunch the same named
+      pilot (including replacement process/window). Clear at the first admitted
+      discovery observation; no old-session label survives into a new preview.
+      An unobserved between-scan logout cannot be inferred.
+- [ ] **7 — Independent freshness expiry (NOT RUN).** Stop successful location
+      confirmations while retaining snapshot connectivity. Observe clearing at
+      the remaining server-relative 15-second deadline, not 15 seconds after each
+      poll; no stale badge or retained location. Repeat while a request is blocked.
+      Native pixels clear on the next available pump turn.
+- [ ] **8 — Network loss and recovery (NOT RUN).** Interrupt connectivity beyond
+      the stale threshold, then restore it. Previews/alerts remain responsive;
+      names expire, Settings reports retrying/stale, and valid fresh data restores
+      names. Confirm retries slow rather than overlap or accelerate, and drafts
+      typed during health changes survive.
+- [ ] **9 — Conditional 304 (NOT RUN).** Using an approved controlled endpoint
+      response, retain one valid ETag and return 304 without a new observation.
+      Confirm successful communication does not renew location deadlines. Record
+      observed 200/304 status/timing only; do not capture the token or roster.
+- [ ] **10 — Authorization and configuration errors (NOT RUN).** Exercise invalid
+      or revoked token, wrong-map token, disabled API and unsupported contract
+      version on the test connection. Settings distinguishes safe outcomes; 401/403
+      clears cached names as soon as headers arrive, even with a stalled error
+      body, and pauses automatic polling. No fallback to another map or ESI.
+- [ ] **11 — Credential and field lifecycle (NOT RUN for the simplified form).**
+      Enter URL/map/token in any order while names are Off. Test connection (or
+      Enter in any field) saves the complete connection and requests a real test,
+      without enabling names or labels; blur/change never saves. No Apply or
+      Replace buttons remain. A blank token reuses only the same normalized saved
+      URL/map; changing either requires a token. Edit each field while its grouped
+      reply is pending: only still-owned drafts normalize/revert, and a submitted
+      password clears without erasing a newer password. Health pushes do not edit
+      inputs. Toggle Off/on independently. Remove confirms and clears URL/map/token,
+      not the enable preference; editing, navigating or a newer acknowledgement
+      invalidates an open confirmation. With induced settings failure, prior
+      protected bytes and acknowledged runtime must remain unchanged; failed
+      compensation explicitly stops names rather than claiming healthy rollback.
+      Distinguish saved connection from refused Test admission and exercise
+      generation-cancelled Test recovery. Use only a disposable isolated profile.
+- [ ] **12 — Wanderer restart (NOT RUN).** With operator approval, restart the
+      test service while Wingman is polling. Old names expire during outage;
+      after recovery only a valid fresh snapshot can restore them. Record the
+      actual instance version before/after, not the vendored fixture's authority.
+- [ ] **13 — Wingman/Preview lifecycle (NOT RUN).** Start with incomplete setup,
+      then restart with a saved bound credential. Toggle Client previews and
+      Wanderer names repeatedly, queue Test behind a live request, and quit while
+      headers/body are blocked. No overlapping request owners, late native/page
+      access or startup blockage; Off retains credentials. Check both tray Quit
+      and window/runtime shutdown paths, and restart the app normally afterward.
+- [ ] **14 — Native visual/DPI and input (NOT RUN).** Check minimum preview width,
+      long independent lines, 100/125/150/200% scaling and mixed monitors. Character
+      text stays primary, both lines readable and ellipsized within the existing
+      width. Move/resize, show/hide labels, lose/regain focus, and trigger an alert
+      with selection/opacity set. The pill remains click-through/no-activate,
+      follows the alert inset and never changes real EVE geometry. In WebView2 at
+      the 840×625 logical floor (and a DPI-rounded 839px viewport), verify card
+      reachability, keyboard focus and capture disarming before password entry.
+- [ ] **15 — Installed/frozen DPAPI and font (NOT RUN).** On the built candidate,
+      apply a disposable token, quit and relaunch under the same Windows user:
+      the credential loads and real names render in the bundled Inter face with
+      no missing-font warning. Inspect only for absence of plaintext token/binding
+      in the credential file and token in settings/logs. Remove/restart leaves no
+      usable token. Separately verify a copied blob cannot authorize under another
+      Windows user where a safe test account is available. Source-tree DPAPI and
+      simulated bundle-path tests do not establish any of these installed results.
+
 ## Companion previews
 
 Use the developer's normal Windows scaling and monitor arrangement. This is one

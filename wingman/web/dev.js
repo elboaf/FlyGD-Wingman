@@ -94,6 +94,100 @@
   };
 
   var api = {};
+  // Wanderer dev connection — presence flags only, never fabricated secrets.
+  var wanderer = null;
+  var wandererRevision = 0;
+  var wandererFails = false;
+  function wandererScenario(kind) {
+    wandererFails = kind === 'failed-save';
+    var configured = kind !== 'off' && kind !== 'setup';
+    wanderer = {enabled: kind !== 'off', base_url: configured ? 'https://wanderer.example' : '',
+      map_identifier: configured ? 'home' : '', revision: ++wandererRevision,
+      credential_present: configured, credential_error: false, persistence_error: false, generation: wandererRevision,
+      automatic_ready: configured, status: kind === 'off' ? 'off' : configured ? 'connected' : 'setup_incomplete',
+      error_code: null, paused: false, in_flight: false,
+      test_pending: false, test_in_flight: false, test_result: null, test_result_text: '',
+      last_success_monotonic: configured ? 100 : null, next_request_monotonic: configured ? 102 : null,
+      previewed: configured ? 3 : 0, matched: configured ? 2 : 0, available: configured ? 2 : 0, stale: 0,
+      previews_enabled: true, host_available: true, status_text: ''};
+    if (kind === 'connecting') { wanderer.status = 'connecting'; wanderer.in_flight = true; wanderer.available = 0; wanderer.matched = 0; }
+    if (kind === 'no-tracked') { wanderer.matched = 0; wanderer.available = 0; }
+    if (kind === 'stale') { wanderer.status = 'stale'; wanderer.stale = 2; wanderer.available = 0; }
+    var errors = {auth: 'invalid_token', 'wrong-map': 'wrong_map', 'api-disabled': 'disabled', retrying: 'timeout'};
+    if (errors[kind]) {
+      wanderer.status = 'error'; wanderer.error_code = errors[kind];
+      wanderer.paused = kind !== 'retrying'; wanderer.available = 0;
+      wanderer.status_text = kind === 'retrying' ? 'Wanderer did not respond in time.' : 'Check the map and token.';
+    }
+    return wanderer;
+  }
+  function wandererCopy() { return JSON.parse(JSON.stringify(wanderer)); }
+  function wandererPush() { window.onWandererState(wandererCopy()); }
+  function wandererAck(error) {
+    var ack = {};
+    ['enabled', 'base_url', 'map_identifier', 'revision', 'credential_present', 'credential_error', 'persistence_error'].forEach(function (key) {
+      ack[key] = wanderer[key];
+    });
+    return {applied: !error, persisted: !error, error: error || null, acknowledged: ack};
+  }
+  function wandererChange(values, force) {
+    if (wandererFails) return wandererAck('Could not save the Wanderer connection.');
+    var changed = force || Object.keys(values).some(function (key) { return wanderer[key] !== values[key]; });
+    if (changed) {
+      Object.keys(values).forEach(function (key) { wanderer[key] = values[key]; });
+      wanderer.revision = ++wandererRevision; wanderer.generation = wandererRevision;
+      wanderer.test_pending = false; wanderer.test_in_flight = false;
+      wanderer.test_result = null; wanderer.test_result_text = '';
+      wanderer.automatic_ready = !!(wanderer.enabled && wanderer.base_url && wanderer.map_identifier && wanderer.credential_present);
+      wanderer.status = !wanderer.enabled ? 'off' : wanderer.automatic_ready ? 'connecting' : 'setup_incomplete';
+      wanderer.error_code = null; wanderer.status_text = ''; wanderer.paused = false;
+      wanderer.matched = 0; wanderer.available = 0; wanderer.stale = 0;
+      wandererPush();
+    }
+    return wandererAck();
+  }
+  function wandererTestAck(result, accepted, error) {
+    result.test_accepted = accepted;
+    result.test_error = error || null;
+    result.test_generation = result.persisted ? wanderer.generation : null;
+    return Promise.resolve(result);
+  }
+  api.wanderer_state = function () { return Promise.resolve(wandererCopy()); };
+  api.set_wanderer_enabled = function (enabled) { return Promise.resolve(wandererChange({enabled: enabled})); };
+  api.remove_wanderer_connection = function (revision) {
+    return Promise.resolve(revision !== wanderer.revision
+      ? wandererAck('The connection changed. Confirm removal again.')
+      : wandererChange({base_url: '', map_identifier: '', credential_present: false}));
+  };
+  api.test_wanderer_connection = function (base, map, token) {
+    // Never log, cache or echo the entry. Only presence reaches dev state.
+    base = base.trim().replace(/\/+$/, ''); map = map.trim();
+    if (!/^https:\/\//.test(base) || !map) {
+      return wandererTestAck(wandererAck('Enter a valid URL, map and token.'), false);
+    }
+    if (!token && (!wanderer.credential_present || base !== wanderer.base_url || map !== wanderer.map_identifier)) {
+      return wandererTestAck(wandererAck('Enter a token for this URL and map.'), false);
+    }
+    var busy = wanderer.test_pending || wanderer.test_in_flight;
+    var result = token ? wandererChange({base_url: base, map_identifier: map, credential_present: true}, true) : wandererAck();
+    token = null;
+    if (!result.persisted) return wandererTestAck(result, false);
+    if (busy) return wandererTestAck(result, false, 'Connection saved, but Test could not start. Wait for the current request.');
+    var revision = wanderer.revision;
+    wanderer.test_pending = true; wanderer.test_result = null; wanderer.test_result_text = '';
+    wandererPush();
+    setTimeout(function () {
+      if (wanderer.revision !== revision) return;
+      wanderer.test_pending = false; wanderer.test_in_flight = true; wandererPush();
+      setTimeout(function () {
+        if (wanderer.revision !== revision) return;
+        wanderer.test_in_flight = false; wanderer.test_result = 'success';
+        wanderer.test_result_text = 'Connected to Wanderer.'; wandererPush();
+      }, 400);
+    }, 200);
+    return wandererTestAck(result, true);
+  };
+  wandererScenario(devSearch.get('wanderer') || 'off');
   var sharingOrder = 0;
   var sharingPresentationOrder = 0;
   var sharingSaveFails = false;
@@ -3025,6 +3119,7 @@
   };
 
   window.DEV = {
+    wanderer: function (kind) { wandererScenario(kind); wandererPush(); },
     screenshotFormations: function () {
       WM.formationsScreenshot(JSON.parse(JSON.stringify(DEV_TOOL_SCREENSHOT_FIXTURE.formations)));
     },
