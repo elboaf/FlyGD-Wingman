@@ -26,7 +26,7 @@ The following requirements are quoted from the Spec and apply to the whole task:
 - “Label-size preferences and per-character identification assignments remain global. They are not switched by #213's saved layouts.”
 - “Implement #214 first; review it before starting #215.”
 
-#215's optional static per-character markers, #217, saved-layout implementation,
+Issue #215's optional static per-character markers, #217, saved-layout implementation,
 and every other backlog lane are **excluded**. No preparatory marker fields,
 palettes, persistence or renderer abstractions. Read `AGENTS.md`, `PRODUCT.md`,
 `DESIGN.md` and the relevant `docs/smoke-checklist.md` items. The header's worker

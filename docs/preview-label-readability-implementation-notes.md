@@ -1,12 +1,41 @@
 # Preview label readability — implementation notes
 
+## Coordinator post-review evidence
+
+The following coordinator evidence applies to implementation head `2b805767`
+(base `d0a24655`); historical checkpoints below are preserved.
+
+- Coordinator polish `--fix`: zero findings, zero fixes and no code edits.
+  Independent general/spec/quality, silent-failure and comment-claim passes
+  completed with zero actionable findings.
+- Actual CodeRabbit CLI review of `d0a24655..2b805767` completed successfully,
+  reviewed all 25 changed files and reported two minor documentation findings.
+  This docs-only follow-up addresses both hash-leading paragraph openings;
+  CodeRabbit has not reviewed this follow-up commit.
+- Fresh coordinator post-polish focused tests: **1,316 passed, 1 skipped in
+  35.41s**. The sole skip requires the real Windows pump/window station.
+  JUnit: `/tmp/wingman-label-parent-post-polish.xml`. Ruff lint passed, Ruff
+  format check passed (431 files), and all-page Node smoke passed.
+- Isolated Chromium exercised the actual page with dev-only bridge doubles at
+  **840x625** and **839x621** CSS pixels. Geometry/no horizontal overflow,
+  keyboard/focus-visible, refusal rollback/retry and tab-return behavior passed,
+  with no extra settings reads, no focus theft and zero page errors.
+- Windows automated, native/live-EVE, installed-font and DPI acceptance gates
+  remain **NOT RUN**. Browser evidence does not replace those gates.
+
+Evidence is retained in the ignored
+`.superpowers/sdd/preview-label-readability-plan/` workspace: `progress.md`,
+`polish-report.md`, `coderabbit-report.md`, `coderabbit-2b805767.log` and
+`browser-results.json`. No full suites were rerun for this prose-only follow-up.
+No push, PR creation or issue closure was performed.
+
 ## Task 1 implementation checkpoint
 
 **#214 is implemented locally; coordinator review and acceptance are pending.**
 The sole persisted addition is global `preview.label_size`: `standard` (17px),
 `large` (20px), `extra_large` (23px). Existing `defaults_version` stays 2, and
 layouts, hotkeys, crops, alerts, geometry and all other defaults are unchanged.
-#215, #217, per-character appearance and neighboring endpoint cleanup remain
+Issues #215 and #217, per-character appearance and neighboring endpoint cleanup remain
 excluded. The supplied approved Spec and plan are preserved.
 
 The shared pure `preview/labelsize.py` table drives validation and rendering;
