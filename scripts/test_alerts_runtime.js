@@ -456,19 +456,27 @@ test('common Alert modifiers precede Advanced rather than reading as its content
 });
 
 for (const field of ['flashes', 'speed']) {
-  test('collapsed Advanced retains ' + field + ' failures and common/live statuses', async () => {
+  test('Advanced owns ' + field + ' failures locally without moving common/live statuses', async () => {
     const p = page(); p.enter();
     await p.reply('get_alert_state', builtinState());
     const advanced = p.el('alert-advanced');
     advanced.open = true;
     p.choose('alert-event-combat-' + field, field === 'flashes' ? '8' : 'slow');
     advanced.open = false;
+    await turn();
     await p.reply('set_alert_event', {applied: false, persisted: false, error: 'Pulse setting refused'});
     p.choose('alert-volume', '42');
     await p.reply('set_alert_volume', {applied: false, persisted: false, error: 'Volume refused'});
     p.toggle('alert-pve-filter', true);
     await p.reply('set_alert_pve_filter', {applied: false, persisted: false, error: 'Filter refused'});
-    const expected = {'alert-event-combat-msg': /Pulse setting refused/, 'alert-volume-status': /Volume refused/,
+    const local = p.el('alert-event-combat-' + field + '-msg');
+    assert.match(local.textContent, /Pulse setting refused/);
+    assert.equal(local.getAttribute('role'), 'status');
+    assert.equal(local.hidden, false, 'local feedback remains mounted');
+    assert.ok(advanced.contains(local), 'feedback stays beside its advanced field');
+    assert.ok(p.el('alert-event-combat-' + field).getAttribute('aria-describedby').split(/\s+/).includes(local.id));
+    assert.equal(p.el('alert-event-combat-msg').textContent, '', 'no duplicate primary event outcome');
+    const expected = {'alert-volume-status': /Volume refused/,
       'alerts-status': /Filter refused/, 'alerts-health': /Watching/};
     for (const [id, message] of Object.entries(expected)) {
       const status = p.el(id);
@@ -482,6 +490,122 @@ for (const field of ['flashes', 'speed']) {
     assert.equal(advanced.open, false);
   });
 }
+
+for (const field of ['flashes', 'speed']) {
+  const other = field === 'flashes' ? 'speed' : 'flashes';
+  const values = field === 'flashes' ? ['8', '3'] : ['slow', 'normal'];
+  test(field + ' refusal survives another field success and primary Test feedback', async () => {
+    const p = page(); p.enter(); await p.reply('get_alert_state', builtinState());
+    const msg = 'alert-event-combat-' + field + '-msg';
+    p.choose('alert-event-combat-' + field, values[0]);
+    await turn();
+    await p.reply('set_alert_event', {applied: false, persisted: false, error: 'Field refused'});
+    p.choose('alert-event-combat-' + other, other === 'flashes' ? '8' : 'slow');
+    await turn(); await p.reply('set_alert_event', {applied: true, persisted: true, error: null});
+    p.fire('alert-event-combat-test', 'click');
+    await p.reply('test_alert', {error: 'No preview available'});
+    assert.match(p.el(msg).textContent, /Field refused/);
+    assert.match(p.el('alert-event-combat-msg').textContent, /No preview available/);
+    p.choose('alert-event-combat-' + field, values[1]);
+    await turn(); await p.reply('set_alert_event', {applied: true, persisted: true, error: null});
+    assert.equal(p.el(msg).textContent, '');
+    assert.equal(p.el(msg).hidden, false, 'empty live region stays mounted for the next update');
+    assert.match(p.el('alert-event-combat-msg').textContent, /No preview available/);
+  });
+
+  for (const [applied, latestApplied] of [[true, true], [true, false], [false, true], [false, false]]) {
+    test(field + ' serializes writes; old applied=' + applied + ', latest applied=' + latestApplied, async () => {
+      const p = page(); p.enter(); await p.reply('get_alert_state', builtinState());
+      const control = 'alert-event-combat-' + field, msg = control + '-msg';
+      const baseline = p.el(control).value;
+      p.choose(control, values[0]); p.choose(control, values[1]); await turn();
+      assert.equal(pending(p, 'set_alert_event').length, 1, 'one write in flight per field');
+      assert.deepEqual(pending(p, 'set_alert_event')[0].args, ['combat', field === 'flashes' ? 'pulses' : 'flash_rate',
+        field === 'flashes' ? Number(values[0]) : values[0]]);
+      await p.reply('set_alert_event', {applied, persisted: applied, error: applied ? null : 'Old refusal'});
+      assert.equal(p.el(control).value, values[1]);
+      assert.equal(p.el(msg).textContent, '', 'obsolete refusal cannot claim the newer choice');
+      assert.equal(pending(p, 'set_alert_event').length, 1);
+      await p.reply('set_alert_event', latestApplied ? {applied: true, persisted: true, error: null} : null);
+      assert.equal(p.el(control).value, latestApplied ? values[1] : applied ? values[0] : baseline,
+        'only the latest acknowledgement owns the value and refusal baseline');
+      if (latestApplied) assert.equal(p.el(msg).textContent, '');
+      else assert.match(p.el(msg).textContent, /could not|couldn't|Could not/);
+    });
+  }
+
+  test(field + ' ignores late startup settings after a field acknowledgement', async () => {
+    const p = page(); p.enter(); await p.reply('get_alert_state', builtinState());
+    const control = 'alert-event-combat-' + field;
+    p.choose(control, values[0]); await turn();
+    await p.reply('set_alert_event', {applied: true, persisted: true, error: null});
+    // onSettings can arrive from boot's get_settings after section hydration
+    // and an accepted edit. Its unversioned document is not fresh authority.
+    p.document.dispatchEvent({type: 'wm:settings', detail: {settings: {preview: {alerts: builtinState().alerts}}}});
+    assert.equal(p.el(control).value, values[0]);
+    p.choose(control, values[1]); await turn();
+    await p.reply('set_alert_event', {applied: false, persisted: false, error: 'Latest refused'});
+    assert.equal(p.el(control).value, values[0], 'late startup settings cannot rewind the accepted baseline either');
+    // A read issued after the writes still hydrates normally.
+    p.document.dispatchEvent({type: 'wm:preview-enabled-changed'});
+    await p.reply('get_alert_state', builtinState());
+    assert.equal(p.el(control).value, field === 'flashes' ? '5' : 'fast');
+  });
+
+  test(field + ' session-only warning stays local and stale hydration cannot rewind an accepted choice', async () => {
+    const p = page(); p.enter(); await p.reply('get_alert_state', builtinState());
+    p.document.dispatchEvent({type: 'wm:preview-enabled-changed'});
+    const control = 'alert-event-combat-' + field;
+    p.choose(control, values[0]); await turn();
+    await p.reply('set_alert_event', {applied: true, persisted: false, error: 'Disk unavailable'});
+    await p.reply('get_alert_state', builtinState());
+    assert.equal(p.el(control).value, values[0]);
+    assert.match(p.el(control + '-msg').textContent, /session.*restart/);
+    assert.equal(p.el('alert-event-combat-msg').textContent, '');
+  });
+}
+
+test('every advanced field has one mounted local feedback owner and refuses pre-hydration writes', async () => {
+  const p = page();
+  for (const event of Object.keys(builtinState().alerts.events)) {
+    for (const field of ['flashes', 'speed']) {
+      const control = p.el('alert-event-' + event + '-' + field);
+      const msg = p.el(control.id + '-msg');
+      assert.ok(p.el('alert-advanced').contains(msg));
+      assert.equal(msg.getAttribute('role'), 'status');
+      assert.equal(msg.hidden, false);
+      assert.ok(control.getAttribute('aria-describedby').split(/\s+/).includes(msg.id));
+      p.choose(control.id, field === 'flashes' ? '8' : 'slow');
+    }
+  }
+  await turn(); assert.equal(pending(p, 'set_alert_event').length, 0);
+});
+
+test('startup settings still hydrate untouched pulse choices', () => {
+  const p = page();
+  p.document.dispatchEvent({type: 'wm:settings', detail: {settings: {preview: {alerts: builtinState().alerts}}}});
+  assert.equal(p.el('alert-event-combat-flashes').value, '5');
+  assert.equal(p.el('alert-event-combat-speed').value, 'fast');
+  assert.equal(p.calls.length, 0);
+});
+
+test('advanced outcomes leave primary sound refusals and collision feedback intact', async () => {
+  const p = page(); p.enter(); await p.reply('get_alert_state', builtinState());
+  p.toggle('alert-event-decloak-enabled', true);
+  await p.reply('set_alert_event', {applied: true, persisted: true});
+  const group = p.el('alert-event-combat-colors');
+  const cyan = group.querySelectorAll('input').find(node => node.value === '#4dd2ff');
+  cyan.dispatchEvent({type: 'change'});
+  await p.reply('set_alert_event', {applied: true, persisted: true});
+  const collision = p.el('alerts-collision').textContent;
+  assert.match(collision, /indistinguishable/);
+  p.choose('alert-event-combat-sound', 'sly');
+  await p.reply('set_alert_event', {applied: false, persisted: false, error: 'Sound refused'});
+  p.choose('alert-event-combat-flashes', '8'); await turn();
+  await p.reply('set_alert_event', {applied: true, persisted: true});
+  assert.match(p.el('alert-event-combat-msg').textContent, /Sound refused/);
+  assert.equal(p.el('alerts-collision').textContent, collision);
+});
 
 function builtinState(extra = {}, alerts = {}) {
   return Object.assign({previews_enabled: true, running: true, last_error: null,

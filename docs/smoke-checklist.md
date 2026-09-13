@@ -4,17 +4,66 @@ Manual verification for the GUI and live upload paths, which are not
 automated: doing so would need live credentials and would consume the very
 upload quota the design is constrained by.
 
-The UI itself is likewise untested by `pytest`. `tests/test_api*.py` drive
-the bridge headlessly against a fake window and cover what the API *says*
-and accepts; nothing under `tests/` renders the page, sends it input, or opens
-a native dialog or tray menu. Unit tests cover tray-call wiring, not Explorer's
-rendered placement. There is deliberately no Playwright
-and no browser toolchain. `scripts/js_smoke.js` loads every page's modules
-under node and fails on anything an IIFE throws at top level — it proves a
-screen is not an inert copy of itself, and nothing more. **This checklist
-is the only verification any of the rest gets.**
+Nothing in `pytest` renders the page. `tests/test_api*.py` drive the bridge
+against a fake window; focused Node harnesses execute production page logic
+with DOM and bridge doubles, including deferred replies and input events.
+They do not prove CSS layout, Windows input/focus, native dialogs or tray-menu
+placement. `scripts/js_smoke.js` additionally loads every page module and fails
+on synchronous top-level errors; it does not execute every handler. Browser-only
+dev checks are separate evidence, not installed Windows/WebView2 acceptance.
+**This checklist remains the native/manual release gate.**
 
 Run on Windows against a real install before each release.
+
+## 2026-09-13 UX readiness pass — Windows acceptance DEFERRED
+
+The implementation has automated production-module/state coverage; the Windows
+codec-dependent normal Profiles capture and Windows/NVDA walkthrough were
+explicitly deferred. Earlier main-checkout screenshots are baseline evidence,
+not acceptance of this changed UI. For a later authorized pass, record build and
+DPI, use disposable data for writes, and keep synthetic staging separate from
+successful real operations. Do not start copies, save formations, test
+connections or select native sources merely to populate screenshots.
+
+- [ ] At 840×625 and a wider window, Fleet eligibility is visible beside sharing
+      status even with details collapsed. Unknown, participation Off and eligible
+      remain distinct. Settled history has no visible Stop action; current or
+      locally pending work retains its control, and settling focused Stop moves
+      focus to Previous attempts without losing the row.
+- [ ] Advanced alert Flashes/Speed feedback stays beside the edited field and
+      survives another field's success. Queued choices and delayed reads/replies
+      do not rewind newer edits. The timed/persistent explanation includes Test
+      and the foreground client. Empty live regions remain mounted.
+- [ ] Wanderer's saved-token cue precedes the intentionally empty token input,
+      without narrowing it or describing edited URL/map drafts as saved. Plugin
+      readiness is legible without a redundant label; loading still performs
+      only the existing local plugin check.
+- [ ] Correct a formation import name conflict. Review cannot reparse unchanged
+      source and erase the correction; changed source enables it and failed
+      parsing remains retryable. Add still validates and edits only the draft.
+      The labelled creation preset precedes New formation.
+- [ ] Fitting copy-limit refusal states authoritative requested additions, limit
+      and excess, retaining selection and issuing no copy ticket. Mixed results
+      retain per-fit/hull/target outcomes and actual errors; shared recovery says
+      to verify uncertain copies before any retry. The lower result frame still
+      exposes the last row and Close without requiring repeated paragraphs.
+- [ ] Select page affects only the displayed filtered page, not other pages or
+      the entire library. Clear and individual selection agree with Copy's count.
+      Metadata drafts, controls and scroll stay intact. Clearing from its focused
+      helper moves focus locally; copy progress blocks helper actions.
+- [ ] Preview Configure clearly identifies the character. Copy sources describe
+      current layout size/position rather than older saved-size defaults; legacy
+      sources without geometry remain usable without invented values. Only
+      Wingman's previews may move, never real EVE clients.
+- [ ] Category typing/blur never saves; Enter does. An already-submitted choice
+      does not ask for another Enter while pending. Newer drafts and Privacy's
+      refusal survive unrelated replies. Startup and its feedback have their own
+      General card; Check again is content-sized. Companion spacing is tighter
+      but retains its empty status line.
+- [ ] In the deferred Windows/NVDA pass, distinguish Companion Apply controls and
+      same-name/same-hull fitting checkboxes, confirm Superseded by names its
+      select, and inspect dialog consequence/scope announcements and independent
+      body navigation. Source associations alone are not screen-reader acceptance.
 
 ## Notification-area menu placement
 

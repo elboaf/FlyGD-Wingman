@@ -539,7 +539,11 @@
     // identity, Preview state, and keybind first.
     var configure = null;
     if (character) {
-      configure = WM.make('button', 'btn preview-configure', 'Configure');
+      configure = WM.make('button', 'btn preview-configure');
+      var chevron = WM.make('span', 'chev', openDetailName === character ? '\u25be' : '\u25b8');
+      chevron.setAttribute('aria-hidden', 'true');
+      configure.appendChild(chevron);
+      configure.appendChild(WM.make('span', '', 'Configure'));
       configure.setAttribute('aria-expanded',
                              openDetailName === character ? 'true' : 'false');
       configure.setAttribute('aria-controls', detailId(character));
@@ -581,6 +585,7 @@
     detail.setAttribute('role', 'group');
     detail.setAttribute('aria-label', 'Configure ' + characterName);
     detail.setAttribute('data-preview-character', characterName);
+    detail.appendChild(WM.make('h3', 'preview-detail-heading', 'Configure ' + characterName));
 
     if (groups().length) {
       var assignment = WM.make('div', 'preview-detail-field');
@@ -1196,9 +1201,15 @@
       sources.forEach(function (source) {
         var group = source.online === true ? 0
                   : (source.online === false ? 1 : 2);
-        groups[group].options.push({
-          value: source.name, label: source.name
-        });
+        var geometry = source.geometry;
+        // Older payloads have only identity/online state. Never invent sizes
+        // from the separate Size-dialog defaults, which can lag this layout.
+        var label = source.name;
+        if (geometry) {
+          label += ' \u00b7 ' + geometry.w + ' \u00d7 ' + geometry.h
+            + ' px at (' + geometry.x + ', ' + geometry.y + ')';
+        }
+        groups[group].options.push({value: source.name, label: label});
       });
       groups = groups.filter(function (group) { return group.options.length; });
       WM.choose('Copy preview geometry',
@@ -1231,9 +1242,8 @@
 
   function makeGeometryActions(name, off) {
     var actions = WM.make('span', 'geometry-actions');
-    // The filler goes in whenever Size… does not. Copy… and Size… share a
-    // detail field, so the dash keeps Copy from becoming an unexplained lone
-    // action while preserving the guidance that a size needs a preview first.
+    // Keep the prerequisite visible when Size… is unavailable, without
+    // hiding Copy… when a saved placement can supply the missing geometry.
     if (isSizable(name)) {
       actions.appendChild(makeSizeButton(name, off));
     } else {
@@ -1628,21 +1638,9 @@
   }
 
   function makeSizeFiller() {
-    // Keeps the Saved geometry detail action legible when Size… is unavailable,
-    // and says why on hover rather than leaving an unexplained blank control.
-    // Withdrawing Size… must not withdraw the guidance it formerly returned.
-    //
-    // The dash is not decoration. An EMPTY span measured 46.44 x 0 in the
-    // detail flex action layout and elementFromPoint at its centre returned null, so the title
-    // below had no hover target and the explanation was unreachable. It
-    // also says "nothing here, and that is expected" to someone who never
-    // hovers -- an unexplained gap in one column of one row otherwise
-    // reads as a rendering fault. `—` is this page's established no-value
-    // glyph (bookmarks.js, list.js).
-    var cell = WM.make('span', 'size-none', '—');
-    cell.title = 'A size can only be set once this preview exists. Start '
-               + 'the client, or move or resize its preview once.';
-    return cell;
+    // A hover-only dash hid the prerequisite from anyone scanning the detail.
+    return WM.make('span', 'size-none',
+      'Size editing needs a preview or saved placement. Enable previews, then start this client.');
   }
 
   // The column headers, built ONCE above the character rows -- which is

@@ -245,6 +245,7 @@
     var input = WM.make(name === 'title_mode' ? 'select' : 'input', 'field');
     input.id = 'companion-' + view.row.id + '-' + name;
     var label = WM.make('label', 'lab', labelText); label.htmlFor = input.id;
+    label.id = input.id + '-label';
     group.appendChild(label); group.appendChild(input);
     if (name === 'title_mode') {
       [['exact', 'Exactly matches'], ['contains', 'Contains']].forEach(function (option) {
@@ -263,6 +264,8 @@
         if (event.key === 'Enter') { event.preventDefault(); commit(view, name); }
       });
       field.apply = button(view, name + '-apply', 'Apply', function () { commit(view, name); }, group);
+      // Reuse the visible labels so accepted renames update every action's name.
+      field.apply.setAttribute('aria-labelledby', field.apply.id + ' ' + label.id + ' ' + view.name.id);
     }
     group.appendChild(status); parent.appendChild(group);
   }
@@ -296,6 +299,7 @@
     var enabledStatus = WM.make('span', 'hint');
     view.fields.enabled = {name: 'enabled', input: input, status: enabledStatus, seq: 0, dirty: false, error: ''};
     view.name = WM.make('strong', 'companion-name');
+    view.name.id = 'companion-' + row.id + '-name';
     view.source = WM.make('span', 'companion-source hint');
     view.modeText = WM.make('span', 'hint');
     view.status = WM.make('span', 'companion-availability'); view.status.id = 'companion-' + row.id + '-status';
@@ -358,10 +362,16 @@
       sourceBusy = true;
       if (!screenshotFixture) WM.endPreviewCapture();
       screenshotChooser = !!screenshotFixture;
-      WM.choose('Choose companion source', 'Select a non-EVE window to preview.',
+      var context = view ? 'Replace the source for "' + label + '".'
+                         : 'Add "' + label + '" from a non-EVE window.';
+      context += mode === 'region'
+        ? ' Capture: selected region. Next, drag the area in the picker and confirm it.'
+        : ' Capture: whole window.';
+      var action = mode === 'region' ? 'Select region…' : (view ? 'Use source' : 'Add companion');
+      WM.choose('Choose companion source', context,
         [{label: 'Open windows', options: result.sources.map(function (source) {
           return {value: source.candidate_token, label: source.application + ' — ' + source.title};
-        })}], 'Choose', 'Source', {compact: true}).then(function (token) {
+        })}], action, 'Source', {compact: true}).then(function (token) {
         if (owner !== epoch || attempt !== flow) return;
         sourceBusy = false;
         screenshotChooser = false;

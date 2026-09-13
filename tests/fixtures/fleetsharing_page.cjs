@@ -42,7 +42,7 @@ class Element {
     this.parentNode = null;
   }
   insertBefore(child, before) { if (child.parentNode) child.remove(); const i = this.children.indexOf(before); this.children.splice(i < 0 ? this.children.length : i, 0, child); child.parentNode = this; }
-  set textContent(value) { this.text = String(value); this.children = []; }
+  set textContent(value) { this.textWrites = (this.textWrites || 0) + 1; this.text = String(value); this.children = []; }
   get textContent() { return (this.text || '') + this.children.map(c => c.textContent).join(''); }
   setAttribute(key, value) { this.attrs[key] = String(value); }
   getAttribute(key) { return this.attrs[key] ?? null; }
@@ -143,7 +143,38 @@ async function leave() {
 async function historyScenario(first) {
   first.resolve({queued: true, state: payload()}); await turn();
   const history = ids['sharing-history'];
-  if (scenario === 'scope-copy') {
+  if (scenario === 'eligibility-readiness') {
+    const summary = ids['sharing-eligibility'];
+    assert.equal(ids['fleet-sharing'].querySelectorAll('*').filter(node => node.id === summary.id).length, 1);
+    assert.ok(summary.parentNode === ids['sharing-preference'].parentNode, 'eligibility belongs beside sharing state');
+    for (let node = summary; node; node = node.parentNode) {
+      assert.notEqual(node.tagName, 'DETAILS', 'readiness cannot require opening the roster');
+      assert.equal(node.hidden, false);
+    }
+    assert.equal(summary.getAttribute('role'), 'status');
+    const watchCount = watches().length;
+    for (const [eligibility, expected] of [
+      [null, /not been observed/],
+      [{state: 'participation_off', characters: []}, /participation is Off/],
+      [{state: 'no_verified_roster', characters: []}, /No verified roster/],
+      [{state: 'ready', characters: [{character_id: 1}]}, /eligible/i]
+    ]) {
+      push(payload([source(A, 'active', null)], {eligibility}));
+      assert.match(summary.textContent, expected);
+      assert.equal(ids['sharing-eligible'].open, false);
+    }
+    assert.equal(ids['sharing-eligible-list'].children.length, 1);
+    const writes = summary.textWrites;
+    push(payload([source(A, 'active', null)], {eligibility: {state: 'ready', characters: [{character_id: 1}]}}));
+    assert.equal(summary.textWrites, writes, 'unchanged eligibility must not reannounce on every snapshot');
+    ids['sharing-refresh'].dispatchEvent({type: 'click'}); await turn();
+    watches().at(-1).resolve(null); await turn();
+    assert.match(summary.textContent, /Current eligibility unknown.*Refresh/);
+    assert.equal(ids['sharing-eligible-list'].children.length, 0);
+    assert.match(currentRows()[0].textContent, /Last known/);
+    assert.equal(watches().length, watchCount + 1, 'only explicit Refresh adds a watch read');
+    assert.equal(mutationCount(), 0);
+  } else if (scenario === 'scope-copy') {
     const local = ids['fleetbar-characters'];
     assert.match(local.firstChild.textContent, /Show.*characters.*Fleet Bar/i);
     const localScope = ids['fleetbar-character-scope'];
@@ -217,6 +248,7 @@ async function historyScenario(first) {
   } else if (scenario === 'ended-only') {
     push(payload([source(C), source(A), source(B, 'ended', 'stopped')]));
     counts(0, 3);
+    assert.ok(historyRows().every(row => row.lastChild.hidden), 'settled history has no obsolete Stop control');
     assert.match(status(), /No current verification/);
     assert.match(status(), /pending expired \(2\)/);
     assert.match(status(), /stopped \(1\)/);
@@ -244,6 +276,7 @@ async function historyScenario(first) {
           source_results: [pending(A.toUpperCase(), 'start', 'expired')]}));
         counts(1, 0);
         assert.equal(currentRows()[0].getAttribute('data-source'), A);
+        assert.equal(currentRows()[0].lastChild.hidden, false, 'pending work keeps its Stop control');
         assert.match(currentRows()[0].textContent, operation === 'start' ? /Start/ : /Stop/);
         assert.match(currentRows()[0].textContent, stage === 'queued' ? /queued locally/ : /saved, awaiting authGD/);
       }
@@ -251,6 +284,13 @@ async function historyScenario(first) {
     const row = currentRows()[0];
     push(payload([source(A)])); counts(0, 1);
     assert.equal(historyRows()[0], row, 'settlement reuses the keyed row');
+    assert.equal(row.lastChild.hidden, true);
+    const stop = row.lastChild;
+    push(payload([source(A)], {pending_sources: [pending(A, 'stop', 'queued')]}));
+    counts(1, 0);
+    assert.ok(currentRows()[0] === row && row.lastChild === stop, 'new pending work reuses its retained control');
+    assert.equal(stop.hidden, false);
+    assert.equal(stop.disabled, false);
   } else if (scenario === 'local-results') {
     push(payload([], {source_results: [pending(A, 'start', 'rejected'), pending(B, 'start', 'expired')]}));
     counts(2, 0);
@@ -548,7 +588,7 @@ async function run() {
     first.resolve(scenario === 'newer-push' ? null : {queued: true, state: input.older}); await turn();
     assert.equal(ids['sharing-connection'].textContent, before);
     assert.equal(ids['sharing-enabled'].disabled, false);
-  } else if (['scope-copy', 'verification-scope', 'mixed-history', 'ended-only', 'ended-prerequisites', 'pending-precedence', 'local-results',
+  } else if (['eligibility-readiness', 'scope-copy', 'verification-scope', 'mixed-history', 'ended-only', 'ended-prerequisites', 'pending-precedence', 'local-results',
     'retained-unknown', 'failed-refresh-history', 'binding-invalidation', 'inflight-stop', 'bridge-source-rejection',
     'inflight-start-leave', 'inflight-binding-reply', 'stable-history-focus', 'visibility-ownership',
     'retained-local-result', 'concurrent-stop-replies', 'inflight-reenter',

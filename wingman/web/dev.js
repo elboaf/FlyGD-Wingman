@@ -1489,7 +1489,7 @@
       ]
     },
     "limit_preflight": {
-      "error": "Limit each copy to 20 additions across all targets. Select fewer fittings or targets, then review again.",
+      "error": "22 additions requested across all targets; limit 20 (2 over). Select fewer fittings or targets, then review again.",
       "pairs": [
         {"entry_id": "fit-gen-1", "character_id": 90000014, "fitting_name": "Generated Fit 002", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 002", "status": "ready", "error": "", "skipped": false},
         {"entry_id": "fit-gen-1", "character_id": 90000015, "fitting_name": "Generated Fit 002", "character_name": "Fio Kest", "chosen_name": "Generated Fit 002", "status": "ready", "error": "", "skipped": false},
@@ -1522,9 +1522,9 @@
         {"entry_id": "fit-gen-1", "character_id": 90000014, "fitting_name": "Generated Fit 002", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 002", "status": "success", "remote_fitting_id": 9101, "error": "", "attempted": true},
         {"entry_id": "fit-gen-1", "character_id": 90000015, "fitting_name": "Generated Fit 002", "character_name": "Fio Kest", "chosen_name": "Generated Fit 002", "status": "unknown", "remote_fitting_id": null, "error": "No response was received before the request timed out.", "attempted": true},
         {"entry_id": "fit-gen-1", "character_id": 90000016, "fitting_name": "Generated Fit 002", "character_name": "Gio Renn", "chosen_name": "Generated Fit 002", "status": "failed", "remote_fitting_id": null, "error": "The fitting write rate limit was reached; the remaining batch was stopped.", "attempted": true},
-        {"entry_id": "fit-gen-2", "character_id": 90000014, "fitting_name": "Generated Fit 003", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 003", "status": "unattempted_throttle", "remote_fitting_id": null, "error": "Stopped after a fitting-bucket throttle response on an earlier pair.", "attempted": false},
-        {"entry_id": "fit-gen-2", "character_id": 90000015, "fitting_name": "Generated Fit 003", "character_name": "Fio Kest", "chosen_name": "Generated Fit 003", "status": "unattempted_throttle", "remote_fitting_id": null, "error": "Stopped after a fitting-bucket throttle response on an earlier pair.", "attempted": false},
-        {"entry_id": "fit-gen-2", "character_id": 90000016, "fitting_name": "Generated Fit 003", "character_name": "Gio Renn", "chosen_name": "Generated Fit 003", "status": "unattempted_throttle", "remote_fitting_id": null, "error": "Stopped after a fitting-bucket throttle response on an earlier pair.", "attempted": false}
+        {"entry_id": "fit-gen-2", "character_id": 90000014, "fitting_name": "Generated Fit 003", "character_name": "Eryn Voss", "chosen_name": "Generated Fit 003", "status": "unattempted_throttle", "remote_fitting_id": null, "error": "", "attempted": false},
+        {"entry_id": "fit-gen-2", "character_id": 90000015, "fitting_name": "Generated Fit 003", "character_name": "Fio Kest", "chosen_name": "Generated Fit 003", "status": "unattempted_throttle", "remote_fitting_id": null, "error": "", "attempted": false},
+        {"entry_id": "fit-gen-2", "character_id": 90000016, "fitting_name": "Generated Fit 003", "character_name": "Gio Renn", "chosen_name": "Generated Fit 003", "status": "unattempted_throttle", "remote_fitting_id": null, "error": "", "attempted": false}
       ]
     }
   };
@@ -1659,8 +1659,10 @@
       write_count: accepted ? counts.ready : 0,
       counts: counts, requires_resolution: requires, pairs: pairs,
       error: choiceError || (overLimit
-        ? 'Limit each copy to ' + DEV_FITTINGS_SCREENSHOT_FIXTURE.max_copy_writes
-          + ' additions across all targets. Select fewer fittings or targets, then review again.' : '')
+        ? counts.ready + ' additions requested across all targets; limit '
+          + DEV_FITTINGS_SCREENSHOT_FIXTURE.max_copy_writes + ' ('
+          + (counts.ready - DEV_FITTINGS_SCREENSHOT_FIXTURE.max_copy_writes) + ' over). '
+          + 'Select fewer fittings or targets, then review again.' : '')
     });
   };
 
@@ -2576,8 +2578,8 @@
     "client_sizes": {"Aiga Otsolen": [1920, 1080], "Zuelo Parvi": [1600, 900]},
     "sizable": ["Aiga Otsolen", "Zuelo Parvi", "Corvin Veles", "Tanuki Solette", "Mara Veld"],
     "layout_sources": [
-      {"name": "Aiga Otsolen", "online": true},
-      {"name": "Tanuki Solette", "online": false}
+      {"name": "Aiga Otsolen", "online": true, "geometry": {"x": 24, "y": 48, "w": 1280, "h": 720}},
+      {"name": "Tanuki Solette", "online": false, "geometry": {"x": -400, "y": 48, "w": 320, "h": 210}}
     ],
     "bookmark_chords": {"active": ["Ctrl+Alt+1"], "latent": []}
   };

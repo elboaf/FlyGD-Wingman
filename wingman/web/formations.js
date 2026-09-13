@@ -462,7 +462,7 @@
 
   function paintImportButtons() {
     var review = importReview;
-    WM.setEnabled('fm-import-review', !!review && !review.pending
+    WM.setEnabled('fm-import-review', !!review && !review.pending && !review.reviewed
       && !!review.text.trim() && !importTextProblem(review.text));
     WM.setEnabled('fm-import-add', !!review && !review.pending
       && review.candidates.length > 0 && !review.conflicts.length);
@@ -471,7 +471,7 @@
   function openImportReview() {
     if (importReview || state.busy || !state.path || !sharingLimits) { return; }
     importAttempt += 1;
-    importReview = { text: '', candidates: [], selected: 0, conflicts: [],
+    importReview = { text: '', candidates: [], selected: 0, conflicts: [], reviewed: false,
       path: state.path, generation: loadGeneration, request: null, pending: '' };
     WM.el('fm-import-text').value = '';
     WM.el('fm-import-list').textContent = '';
@@ -574,7 +574,9 @@
 
   function reviewImport() {
     var review = importReview;
-    if (!review || review.pending || !review.text.trim() || importTextProblem(review.text)) { return; }
+    // Review parses the original text, not the corrected candidates. Add
+    // validates those names; reparsing unchanged input would discard edits.
+    if (!review || review.pending || review.reviewed || !review.text.trim() || importTextProblem(review.text)) { return; }
     var request = { attempt: ++importAttempt, revision: revision };
     review.request = request;
     review.pending = 'review'; review.candidates = []; review.conflicts = [];
@@ -587,6 +589,7 @@
       if (!reply || !reply.ok) {
         setImportStatus((reply && reply.error) || 'Could not review formations.', true);
       } else {
+        review.reviewed = true;
         review.candidates = reply.formations; review.conflicts = reply.conflicts; review.selected = 0;
         renderImportList();
         setImportStatus(reply.conflicts.length ? 'Resolve the marked names before adding.'
@@ -1185,8 +1188,11 @@
     WM.el('fm-import-cancel').addEventListener('click', function () { closeImportReview(true); });
     WM.el('fm-import-text').addEventListener('input', function () {
       if (!importReview) { return; }
+      var text = WM.el('fm-import-text').value;
+      if (text === importReview.text) { return; }
       importAttempt += 1;
-      importReview.text = WM.el('fm-import-text').value;
+      importReview.text = text;
+      importReview.reviewed = false;
       importReview.pending = ''; importReview.candidates = []; importReview.conflicts = [];
       renderImportList(); paintImportButtons();
       var why = importTextProblem(importReview.text);

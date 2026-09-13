@@ -28,10 +28,36 @@ const configure = () => document.querySelector('[data-preview-configure="' + own
     'sticky-bottom-clamp': /bottom clamp/,
     'sticky-outside-scrollport': /scrollport/
   };
-  const scenarios = ['collapsed', 'expanded', 'sticky-normal'].concat(Object.keys(stickyErrors));
+  const scenarios = ['collapsed', 'expanded', 'size-reason', 'sticky-normal'].concat(Object.keys(stickyErrors));
   assert.ok(scenarios.includes(data.scenario), 'Unknown preview warning scenario: ' + data.scenario);
   await new Promise(resolve => setImmediate(resolve));
   calls.length = 0; // The module's initial read is not part of staging.
+  if (data.scenario === 'size-reason') {
+    const payload = JSON.parse(JSON.stringify(data.fixture));
+    payload.sizable = [];
+    payload.layout_sources = [{name: 'Other Pilot', online: false}];
+    window.onPreviewHotkeys(payload);
+    configure().click();
+    const detail = () => document.getElementById('preview-character-detail-' + encodeURIComponent(owner));
+    const reason = detail().querySelector('.size-none');
+    assert.ok(reason && !reason.hidden, 'unavailable size has a visible explanation');
+    assert.match(reason.textContent, /preview|placement/i, 'the explanation is text, not only a hover title');
+    assert.match(reason.textContent, /start|create/i);
+    assert.equal(detail().querySelector('[data-preview-detail-control="size"]'), null);
+    assert.equal(detail().querySelector('[data-preview-detail-control="copy"]').disabled, false);
+    payload.layout_sources = [];
+    window.onPreviewHotkeys(payload);
+    assert.equal(detail().querySelector('.size-none').textContent, reason.textContent);
+    assert.equal(detail().querySelector('[data-preview-detail-control="copy"]'), null);
+    // Only the authoritative flag admits size editing, even without client dimensions.
+    payload.sizable = [owner]; payload.client_sizes = {}; payload.sizes = {};
+    window.onPreviewHotkeys(payload);
+    assert.equal(detail().querySelector('.size-none'), null);
+    assert.equal(detail().querySelector('[data-preview-detail-control="size"]').disabled, false);
+    assert.equal(calls.length, 0, 'guidance never changes size or placement');
+    console.log('PASS preview warning grouping ' + data.scenario);
+    return;
+  }
   if (data.scenario.startsWith('sticky-')) {
     // Geometry is a deterministic boundary double, not rendered evidence.
     // Production staging must validate ownership, occlusion and scroll clamps.

@@ -95,7 +95,11 @@
   function visible() {
     return WM.current_route === 'settings' && WM.current_section === 'fleet' && !document.hidden;
   }
-  function text(id, value) { WM.el(id).textContent = value || ''; }
+  function text(id, value) {
+    var node = WM.el(id), next = value || '';
+    // A repeated snapshot is not a new live-region announcement.
+    if (node.textContent !== next) node.textContent = next;
+  }
   function binding() { return state && state.metadata.binding; }
   function selected() {
     return ((state && state.sources && state.sources.characters) || []).filter(function (row) {
@@ -148,7 +152,7 @@
     var eligibility = readFailed ? null : state.eligibility;
     text('sharing-eligibility', readFailed ? 'Current eligibility unknown. Refresh to retry.'
       : !eligibility ? 'Eligibility has not been observed.'
-      : eligibility.state === 'ready' ? 'Currently eligible for sparse telemetry:'
+      : eligibility.state === 'ready' ? 'Currently eligible to share fleet telemetry.'
       : eligibility.state === 'participation_off' ? 'Server participation is Off.'
       : 'No verified roster currently makes these characters eligible.');
     ((eligibility && eligibility.characters) || []).forEach(function (row) {
@@ -241,6 +245,9 @@
       // its focus to history. Only current source/pending evidence authorizes it.
       row.lastChild.disabled = !hydrated || !state.available || readFailed
         || (!pending && (sourceUnknown() || !observed || !!localResult || ended));
+      // Retain the keyed control for pending work that can return this row
+      // to the current list, but do not show an obsolete action in history.
+      row.lastChild.hidden = ended;
       row.lastChild.setAttribute('aria-label', 'Stop verification — ' + label + ' (' + id + ')');
       var index = ended ? 1 : 0;
       var container = ended ? historySources : sources;

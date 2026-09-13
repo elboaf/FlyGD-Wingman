@@ -280,6 +280,8 @@ def test_profiles_scope_capture_uses_actual_capability_without_overrides(
         ("fittings-copy-preflight-bottom-narrow", "wrong-pair"),
         ("fittings-copy-preflight-bottom-narrow", "unresolved"),
         ("fittings-copy-result-bottom-narrow", "wrong-summary"),
+        ("fittings-copy-result-bottom-narrow", "missing-recovery"),
+        ("fittings-copy-result-bottom-narrow", "hidden-recovery"),
     ],
 )
 def test_lower_copy_capture_rejects_unsettled_or_wrong_outcomes(

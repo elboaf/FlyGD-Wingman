@@ -1254,13 +1254,23 @@ var pairs = pane.querySelectorAll('.fit-copy-pair'), row = pairs[pairs.length - 
 check(row && expected.status === 'unattempted_throttle');
 var name = row.querySelector('.fit-copy-pair-name'), character = row.querySelector('.fit-copy-character');
 var status = row.querySelector('.fit-copy-result'), error = row.querySelector('.fit-copy-detail');
-var guidance = row.querySelector('.fit-copy-guidance');
 check(text(name, identity) && text(character, expected.character_name)
   && text(status, 'Not attempted: rate limit') && status.classList.contains(expected.status)
-  && text(error, expected.error)
-  && text(guidance, 'Not attempted. Wait for the ESI limit to clear, refresh characters, then review a new copy.'));
+  && (expected.error ? text(error, expected.error) : !error));
+// Shared recovery is above the result rows. Require it to exist and render,
+// but frame the last row's own outcome here, not a repeated instruction.
+var guidance = Array.prototype.slice.call(pane.querySelectorAll('.fit-copy-guidance'));
+check(guidance.some(function (node) {
+  return node.parentNode === pane && visible(node)
+    && /before any retry/.test(node.textContent);
+}) && guidance.some(function (node) {
+  return node.parentNode === pane && visible(node)
+    && /Rate limit:.*fittings not attempted/.test(node.textContent);
+}));
 row.scrollIntoView({block: 'end', behavior: 'instant'});
-check([name, character, status, error, guidance].every(function (node) { return exposed(node, pane); })
+var requiredNodes = [name, character, status];
+if (expected.error) requiredNodes.push(error);
+check(requiredNodes.every(function (node) { return exposed(node, pane); })
   && exposed(WM.el('fittings-copy-close'), WM.el('fittings-copy-dialog')));
 """
         )

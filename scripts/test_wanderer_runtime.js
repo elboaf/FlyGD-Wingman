@@ -221,7 +221,7 @@ test('a new config revision cannot reuse old worker-generation coverage', async 
 
 test('empty current binding explains Remove scope while retaining earlier-credential recovery', async () => {
   const p = page(); await p.hydrate({base_url: '', map_identifier: ''});
-  assert.match(p.el('credential').textContent, /No token stored for this connection/);
+  assert.match(p.el('credential').textContent, /No token stored/);
   assert.match(p.el('credential').textContent, /Remove connection.*any token.*earlier URL or map/);
   assert.equal(p.el('remove').disabled, false);
   await p.click('remove');

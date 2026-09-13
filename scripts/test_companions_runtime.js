@@ -181,8 +181,8 @@ async function page(payload = state(), integrated = false) {
       call.resolve(value); await turn(); assert.deepEqual(errors, []);
     },
     async choose(value) { const d = dialogs.shift(); assert.ok(d); d.resolve(value); await turn(); },
-    async startAdd(mode = 'whole') {
-      await this.click('companion-add'); this.el('companion-add-label').value = 'Notes';
+    async startAdd(mode = 'whole', label = 'Notes') {
+      await this.click('companion-add'); this.el('companion-add-label').value = label;
       await this.fire(this.el('companion-add-label'), 'input');
       this.el('companion-add-' + mode).checked = true;
       await this.fire(this.el('companion-add-' + mode), 'change');
@@ -272,6 +272,43 @@ for (const mode of ['whole', 'region']) {
   });
 }
 
+for (const mode of ['whole', 'region']) {
+  test(mode + ' chooser carries the add label and next capture step without selecting a native source', async () => {
+    const p = await page(state(), true);
+    const label = '<img src=x onerror=bad()> Notes';
+    await p.startAdd(mode, label);
+    await p.reply('companion_previews_sources', receipt(1, {sources, revision: 1}));
+    const context = p.el('dlg-body').textContent;
+    assert.ok(context.includes(label), 'the chooser retains its add-task identity');
+    assert.match(context, /add/i);
+    assert.match(context, mode === 'region' ? /region/i : /whole window/i);
+    assert.match(p.el('dlg-ok').textContent, mode === 'region' ? /region/i : /add/i);
+    assert.equal(p.el('dlg-body').querySelectorAll('img').length, 0, 'labels stay literal');
+    assert.equal(p.calls.filter(call => call.method === 'companion_preview_select').length, 0);
+    await p.click('dlg-cancel');
+    assert.equal(p.calls.filter(call => call.method === 'companion_preview_select').length, 0);
+    assert.equal(p.el('companion-add-label').value, label);
+    assert.equal(p.el('companion-add-form').hidden, false);
+  });
+}
+
+test('reselection chooser describes the committed companion and chosen mode, not an unsent label', async () => {
+  const p = await page(state(1, [row({mode: 'region'})]), true);
+  await p.edit('label', 'Unsubmitted label');
+  const radio = p.field('source').parentNode.parentNode.querySelectorAll('input').find(x => x.value === 'whole');
+  radio.checked = true; await p.fire(radio, 'change');
+  await p.fire(p.field('source'), 'click');
+  await p.reply('companion_previews_sources', receipt(1, {sources, revision: 1}));
+  const context = p.el('dlg-body').textContent;
+  assert.match(context, /Mapper/);
+  assert.match(context, /whole window/i);
+  assert.doesNotMatch(context, /Unsubmitted label/);
+  assert.doesNotMatch(p.el('dlg-ok').textContent, /add|region/i);
+  await p.click('dlg-cancel');
+  assert.equal(p.field('label').value, 'Unsubmitted label');
+  assert.equal(p.calls.filter(call => call.method === 'companion_preview_select').length, 0);
+});
+
 test('operation event beating initial pending source reply still opens chooser once', async () => {
   const p = await page(); await p.startAdd();
   await p.push(state(2, [], {3: receipt(3, {sources})}));
@@ -351,6 +388,48 @@ test('availability preserves its one existing live-region owner through status t
     assert.equal(p.document.activeElement, p.field('label'));
     assert.equal(p.calls.length, 0, 'status updates do not mutate source state');
   }
+});
+
+test('Apply names follow visible field and acknowledged companion labels without submitting drafts', async () => {
+  const second = row({id: otherId, label: 'Notes & <plans>'});
+  const p = await page(state(1, [row(), second]));
+  function applyName(name, owner = id) {
+    const apply = p.field(name + '-apply', owner);
+    assert.equal(apply.textContent, 'Apply', 'visible action stays compact');
+    const refs = (apply.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean);
+    assert.ok(refs.length, 'Apply must reference its field and companion labels');
+    const labels = refs.map(ref => {
+      const node = p.el(ref); assert.ok(node, 'label reference resolves: ' + ref); return node;
+    });
+    const fieldLabel = p.field(name, owner).parentNode.querySelector('label');
+    const heading = p.field('status', owner).parentNode.querySelector('.companion-name');
+    assert.ok(labels.includes(apply), 'accessible action includes its visible Apply label');
+    assert.ok(labels.includes(fieldLabel), 'name comes from the actual field label');
+    assert.ok(labels.includes(heading), 'identity comes from the actual row heading');
+    return labels.map(node => node.textContent).join(' ');
+  }
+  const labelApply = p.field('label-apply'), titleApply = p.field('title_hint-apply');
+  assert.equal(applyName('label'), 'Apply Label Mapper');
+  assert.equal(applyName('title_hint'), 'Apply Window title Mapper');
+  assert.equal(applyName('label', otherId), 'Apply Label Notes & <plans>');
+  assert.equal(applyName('title_hint', otherId), 'Apply Window title Notes & <plans>');
+  p.field('label').focus();
+  await p.edit('title_hint', 'Unsubmitted title');
+  await p.edit('label', 'Renamed & <map>');
+  await p.fire(p.field('label'), 'blur');
+  assert.equal(applyName('label'), 'Apply Label Mapper', 'draft is not yet the row identity');
+  assert.equal(p.calls.length, 0);
+  await p.fire(labelApply, 'click');
+  await p.push(state(2, [row({label: 'Renamed & <map>', generation: 2}), second]));
+  await p.reply('companion_preview_edit', receipt(4, {id}), [id, 'Renamed & <map>', 'exact', 'Map', 1]);
+  assert.equal(p.field('label-apply'), labelApply);
+  assert.equal(p.field('title_hint-apply'), titleApply);
+  assert.equal(applyName('label'), 'Apply Label Renamed & <map>');
+  assert.equal(applyName('title_hint'), 'Apply Window title Renamed & <map>');
+  assert.equal(applyName('label', otherId), 'Apply Label Notes & <plans>');
+  assert.equal(p.field('title_hint').value, 'Unsubmitted title');
+  assert.equal(p.document.activeElement, p.field('label'));
+  assert.equal(p.calls.length, 0, 'naming does not add writes');
 });
 
 test('typing and focus survive new snapshots, with no blur commit', async () => {

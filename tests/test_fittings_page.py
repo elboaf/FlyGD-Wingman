@@ -641,6 +641,7 @@ class Element {
     }
   }
   blur() { if (document.activeElement === this) document.activeElement = document.body; }
+  select() { this.selectionStart = 0; this.selectionEnd = this.value.length; }
   addEventListener(type, callback) { (this.listeners[type] ||= []).push(callback); }
   dispatchEvent(event) {
     event.target ||= this;
@@ -785,7 +786,7 @@ const WM = {
 };
 global.window = {WM, getComputedStyle};
 global.WM = WM;
-if (interleavingScenario) {
+if (interleavingScenario || scenario === 'dialog-description') {
   const panelPath = require('node:path').join(require('node:path').dirname(process.argv[4]), 'panel.js');
   vm.runInThisContext(fs.readFileSync(panelPath, 'utf8'), {filename: 'panel.js'});
 }
@@ -984,7 +985,7 @@ async function runStateMachineScenario() {
     assert.equal(el('fittings-copy-cancel').hidden, false);
     assert.equal(el('fittings-copy-close').disabled, true);
     assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
-      '1 of 1 pair checked');
+      '1 of 1 fitting/character check complete');
     handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'unrelated'});
     assert.equal(el('fittings-copy-title').textContent, 'Copying fittings');
     el('fittings-copy-cancel').click();
@@ -1086,7 +1087,7 @@ async function runStateMachineScenario() {
       assert.equal(el('fittings-copy-title').textContent, 'Copying fittings',
         eventName + ' cannot replace copy B');
       assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
-        '0 of 1 pair checked');
+        '0 of 1 fitting/character check complete');
       assert.equal(el('fittings-copy-selected').textContent, 'Copy selected (1)',
         eventName + ' cannot clear copy B selection');
       assert.equal(el('fittings-copy-cancel').hidden, false);
@@ -1108,7 +1109,7 @@ async function runStateMachineScenario() {
     handlers.onFittingsProgress({kind: 'copy', phase: 'progress', ticket_id: 'ticket-b',
       operation_id: 'copy-b', completed: 1, total: 1, result: {status: 'success'}});
     assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
-      '1 of 1 pair checked');
+      '1 of 1 fitting/character check complete');
     handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'ticket-b',
       operation_id: 'copy-b', completed: 1, total: 1, result: {
         operation_id: 'copy-b', status: 'complete', write_count: 1, results: [{
@@ -1167,7 +1168,7 @@ async function runStateMachineScenario() {
     handlers.onFittingsProgress({kind: 'copy', phase: 'progress', ticket_id: 'ticket',
       operation_id: 'copy-a', completed: 1, total: 1, result: {status: 'success'}});
     assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
-      '1 of 1 pair checked');
+      '1 of 1 fitting/character check complete');
     const cancellations = calls.filter(call => call[0] === 'fittings_cancel_copy').length;
     WM.current_route = 'skills';
     route.classList.remove('active');
@@ -1380,6 +1381,47 @@ async function runInterleavingScenario() {
   }
 }
 (async () => {
+  if (scenario === 'dialog-description') {
+    const dialog = el('dialog'), body = el('dlg-body');
+    const invoker = el('fittings-refresh-all'); invoker.focus();
+    function description(expected, focus) {
+      const ids = (dialog.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
+      assert.ok(ids.length, 'generic dialog must describe its consequence/scope body');
+      assert.ok(ids.map(el).includes(body), 'description references the existing message node');
+      assert.equal(body.textContent, expected, 'messages are neither parsed nor reformatted');
+      assert.ok(dialog.contains(body) && body.getClientRects().length,
+        'the complete message remains independently present and readable');
+      assert.notEqual(body.getAttribute('aria-hidden'), 'true');
+      assert.equal(body.children.length, 0, 'message markup remains literal text');
+      assert.equal(dialog.getAttribute('aria-labelledby'), 'dlg-title', 'title remains the name');
+      assert.equal(document.activeElement.id, focus, 'existing initial focus is unchanged');
+    }
+    const consequence = 'Delete “Map & <notes>”?\n\nThis cannot be undone.\nThe source stays open.';
+    const confirm = WM.confirm('Remove companion', consequence, {destructive: true});
+    const warning = 'Could not read the file:\n  C:\\clips\\<recording>.mp4\n\nRetry after closing it.';
+    handlers.onDialog({kind: 'warning', title: 'File unavailable', body: warning, request_id: null});
+    description(consequence, 'dlg-cancel');
+    el('dlg-cancel').click(); assert.equal(await confirm, false);
+    description(warning, 'dlg-ok');
+    el('dlg-ok').click();
+    assert.equal(document.activeElement, invoker, 'queue completion restores the invoker');
+    const prompt = WM.prompt('Rename collection', 'A new name for this collection.', 'Draft');
+    description('A new name for this collection.', 'dlg-input');
+    assert.equal(el('dlg-input').value, 'Draft');
+    el('dlg-cancel').click(); assert.equal(await prompt, null);
+    const choose = WM.choose('Copy preview geometry', 'Copy saved size and position to “Pilot”.',
+      [{label: 'Current previews', options: [{value: 'source-1', label: 'Mapper'}]}], 'Copy');
+    description('Copy saved size and position to “Pilot”.', 'dlg-select');
+    el('dlg-cancel').click(); assert.equal(await choose, null);
+    for (const kind of ['info', 'error']) {
+      handlers.onDialog({kind, title: 'Message', body: '', request_id: null});
+      description('', 'dlg-ok'); // a reused dialog must not retain prior consequences
+      el('dlg-ok').click();
+    }
+    assert.equal(document.activeElement, invoker);
+    assert.deepEqual(calls, [], 'local dialogs and worker notices do not send answers to unrelated requests');
+    return;
+  }
   if (interleavingScenario) {
     await runInterleavingScenario();
     return;
@@ -1392,7 +1434,7 @@ async function runInterleavingScenario() {
   await flush();
   const checkbox = el('fittings-list').querySelector('input');
   if (scenario === 'checkbox-name') {
-    assert.equal(checkbox.getAttribute('aria-label'), 'Select Sabre tackle');
+    assert.equal(checkbox.getAttribute('aria-label'), 'Select Sabre tackle — Sabre, row 1 on this page');
     return;
   }
   tick(checkbox);
@@ -1633,6 +1675,7 @@ def _run_fittings_node(
     "scenario",
     [
         "checkbox-name",
+        "dialog-description",
         "tab-wrap",
         "tab-outside",
         "hidden-controls",
