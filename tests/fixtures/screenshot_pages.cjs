@@ -548,8 +548,8 @@ async function fidelityRegression() {
     assert.deepEqual(selectedIds, ['fit-gen-1', 'fit-gen-2', 'fit-gen-3', 'fit-gen-4',
       'fit-gen-5', 'fit-gen-6', 'fit-gen-7', 'fit-gen-8', 'fit-gen-9', 'fit-gen-10', 'fit-gen-11'].sort(),
       'select every intended entry exactly once, never an outside entry sharing its name');
-    assert.match(el('fittings-copy-status').textContent,
-      /Limit each copy to 20 additions across all targets\. Select fewer fittings or targets, then review again\./);
+    assert.equal(el('fittings-copy-status').textContent,
+      '22 additions requested across all targets; limit 20 (2 over). Select fewer fittings or targets, then review again.');
     assert.equal(el('fittings-copy-status').classList.contains('err'), true,
       'the staged refusal must use the same error state as a live rejected review');
     assert.match(el('fittings-copy-body').textContent, /^11 selected\./,
@@ -596,7 +596,7 @@ async function fidelityRegression() {
     assert.equal(el('fittings-copy-cancel-note').hidden, !isProgress);
     assert.equal(el('fittings-copy-close').disabled, isProgress);
     if (isProgress) {
-      assert.match(el('fittings-copy-body').textContent, /2 of 6 pairs checked/);
+      assert.equal(el('fittings-copy-body').textContent, '2 of 6 fitting/character checks complete');
       assert.match(el('fittings-copy-status').textContent, /Generated Fit 002 \(Merlin\).*Fio Kest: Needs verification/);
       assert.equal(el('fittings-copy-cancel').disabled, false);
       assert.ok(visible(el('fittings-copy-cancel-note')), 'cost remains visible while progress is active');

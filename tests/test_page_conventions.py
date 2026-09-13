@@ -107,6 +107,19 @@ def test_label_size_choices_match_the_shared_presets():
     assert default is not None and default.group(1) == DEFAULT_LABEL_SIZE
 
 
+def test_wanderer_token_reserves_its_own_full_row():
+    # The cue's 72ch cap can make its 100% basis fit beside a 37px input.
+    # Reserve the input's row too; DOM ancestry alone missed this regression.
+    token_rules = [
+        body
+        for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", CSS)
+        if "#wanderer-token" in [part.strip() for part in selector.split(",")]
+    ]
+    assert any(re.search(r"flex-basis:\s*100%", body) for body in token_rules), (
+        "The token input needs a full-row basis independently of its bounded hint"
+    )
+
+
 def _strip_html_comments(text: str) -> str:
     return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
 

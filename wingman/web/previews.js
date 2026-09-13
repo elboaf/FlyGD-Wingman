@@ -1212,9 +1212,11 @@
         groups[group].options.push({value: source.name, label: label});
       });
       groups = groups.filter(function (group) { return group.options.length; });
+      // Compact captions keep the native popup bounded; the existing chooser
+      // exposes the full selected label below it, including long coordinates.
       WM.choose('Copy preview geometry',
-                'Copy saved size and position to "' + name + '".',
-                groups, 'Copy').then(function (source) {
+                'Copy size and position to "' + name + '".',
+                groups, 'Copy', 'Copy from', {compact: true}).then(function (source) {
         if (screenshotLive) { return; }
         if (source === null) {
           clearDetailFocus(name, 'copy');

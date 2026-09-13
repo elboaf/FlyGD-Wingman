@@ -1066,6 +1066,7 @@ def _fidelity_verify_script(screen: Screen) -> str | None:
             )
             if progress:
                 completed = fixture["copy_progress_completed"]
+                checks = "check" if len(results) == 1 else "checks"
                 pair = results[completed - 1]
                 entry = next(
                     row for row in fixture["entries"] if row["id"] == pair["entry_id"]
@@ -1074,7 +1075,7 @@ def _fidelity_verify_script(screen: Screen) -> str | None:
                 condition += (
                     " || !visible(WM.el('fittings-copy-cancel')) || WM.el('fittings-copy-cancel').disabled"
                     " || !WM.el('fittings-copy-close').disabled"
-                    f" || WM.el('fittings-copy-body').textContent !== '{completed} of {len(results)} pairs checked'"
+                    f" || WM.el('fittings-copy-body').textContent !== '{completed} of {len(results)} fitting/character {checks} complete'"
                     f" || WM.el('fittings-copy-status').textContent.indexOf({json.dumps(identity)}) !== 0"
                 )
             else:

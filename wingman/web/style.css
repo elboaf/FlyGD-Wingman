@@ -4406,9 +4406,10 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   margin: 4px 0 8px; overflow-wrap: anywhere;
 }
 #wanderer-settings > .hint:empty:not([role]) { display: none; }
-/* The stored-state cue precedes the empty token input without taking any
-   of its width in the shared wrapping field row. */
-#wanderer-credential { flex-basis: 100%; }
+/* The hint's 72ch cap can shrink its full-row basis enough to leave room
+   for a tiny input. Give the token its own full row too, keeping bounded
+   prose above a usable field at every supported width. */
+#wanderer-credential, #wanderer-token { flex-basis: 100%; }
 /* Same two tokens the status strip and #eve-bind-warning already use, so
    one severity reads the same everywhere in the app. */
 .field-msg.warn { color: var(--warn); }

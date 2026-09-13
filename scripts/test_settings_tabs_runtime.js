@@ -350,6 +350,7 @@ for (const geometry of [true, false]) {
     const copy = p.document.querySelector('[data-preview-detail-control="copy"]');
     copy.focus(); await p.fire(copy, 'click');
     assert.deepEqual(p.calls.map(call => call.method), ['choose'], 'labels cause no extra source reads');
+    assert.deepEqual(p.calls[0].args[5], {compact: true}, 'long source labels need the chooser’s full-text detail');
     assert.deepEqual(p.calls[0].args[2], [
       {label: 'Online', options: [{value: 'Bob', label: geometry ? 'Bob · 640 × 360 px at (-1200, 0)' : 'Bob'}]},
       {label: 'Offline', options: [{value: 'Carol', label: geometry ? 'Carol · 320 × 210 px at (10, 20)' : 'Carol'}]},
