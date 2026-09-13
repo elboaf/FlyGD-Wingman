@@ -7,6 +7,37 @@ import pytest
 from wingman import settings
 
 
+def test_marker_defaults_are_independent_and_reset_entries_are_omitted():
+    first, second = settings.load(), settings.load()
+    assert first["preview"]["label_markers"] == {}
+    first["preview"]["label_markers"]["Alice"] = "cyan"
+    assert second["preview"]["label_markers"] == {}
+    assert settings.DEFAULTS["preview"]["label_markers"] == {}
+    normalized = settings.validated_preview(
+        {
+            "label_markers": {"Alice": "cyan", "Reset": "", " Bad ": "blue"},
+            "width": 640,
+            "show_labels": False,
+        }
+    )
+    assert normalized["label_markers"] == {"Alice": "cyan"}
+    assert normalized["width"] == 640 and not normalized["show_labels"]
+
+
+def test_marker_assignments_survive_cap_reload_and_unrelated_write(tmp_path):
+    path = tmp_path / "settings.json"
+    owners = {f"Pilot{i}": "cyan" for i in range(70)}
+    live = settings.load(path)
+    with settings.update(live, path) as doc:
+        doc["preview"].update(label_markers=owners, seen=list(owners))
+    assert len(live["preview"]["seen"]) == 64
+    assert settings.load(path)["preview"]["label_markers"] == owners
+    with settings.update(live, path) as doc:
+        doc["channel_title"] = "Unrelated"
+    assert settings.load(path)["preview"]["label_markers"] == owners
+    assert live["preview"]["label_markers"] == owners
+
+
 @pytest.fixture
 def saved_crop():
     return {

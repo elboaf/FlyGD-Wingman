@@ -6161,3 +6161,46 @@ scripted transports and disposable profile trees for failure cases. Check both
       switch does not relabel the old document. Long Fleet bar names reveal their
       full text on hover. An elapsed Skills estimate says finish time passed,
       not ready in due or Ready; an estimate twenty seconds ahead says <1m.
+
+## Preview identification markers — issue 215 acceptance
+
+Engineering verification is recorded in
+[the implementation notes](preview-character-markers-implementation-notes.md).
+Isolated Chromium checks passed at **840×625 and 839×621** for populated and
+known-offline/excluded Configure, assignment/reset, and delayed receipts across
+owner/subpage navigation. Those are browser-only results. **Windows automation and
+real Windows/WebView2/native/EVE acceptance remain NOT RUN.** Items below stay open
+until an authorized run; do not launch or modify a user's live app/profile/EVE
+windows merely to complete this checklist. Earlier issue 214 evidence is unchanged.
+
+- [ ] **Configure remains a secondary field.** At both browser floors and Windows
+      display scalings, collapsed rows retain five cells; Configure alone reveals
+      the named Identification marker select, None plus six named choices and its
+      own error. Check keyboard navigation, readable wrapping and screen-reader
+      name/error association with long character names.
+- [ ] **Offline preferences remain editable.** Assign/reset a known offline or
+      excluded owner, with Previews off and Show labels off. Restart the app and
+      confirm retained assignments remain editable, including configured owners
+      outside recent-roster history. Reset removes only the marker; an owner whose
+      sole row source was that marker may disappear without erasing other settings.
+- [ ] **Acknowledgements keep their owner.** With a disposable settings profile and
+      controlled delayed/refused replies, a pending field blocks only its own next
+      write. Change Configure, subpage and section while pending; another owner's
+      draft/error/focus must survive. Open Copy while a marker receipt is pending,
+      let it settle, then Escape: the chooser cancels and focus returns to its
+      attached Copy button. Capture must remain disarmed after navigation.
+- [ ] **Markers supplement the real name.** On actual native previews at typical
+      320×210 and minimum 120×90 sizes, inspect each palette choice over dark and
+      bright EVE content with Standard/Large/Extra large (17/20/23) labels and both
+      normal/alert insets. Assess recognition, especially Blue; do not rely on color
+      alone. The actual name, font and primary/secondary text contrast stay intact.
+- [ ] **Containment still applies to every preset.** With disposable undersized
+      restored preview geometry, the secondary line disappears first, then the
+      whole pill if the primary cannot fit; both restore when space permits.
+      A marker never appears alone or with only an ellipsis. None/reset restores
+      the existing unmarked appearance. Do not resize or reposition an EVE source.
+- [ ] **The existing overlay remains the owner.** Check Show labels off/on, owner
+      hidden/shown, metadata update/expiry, alert onset/clear, Wingman-preview moves
+      and resizes, and EVE-preview runtime off/on. No marker outlives its label,
+      steals clicks, changes an alert/selection ring or creates another native
+      window. Confirm click-through and unchanged source geometry on Windows.

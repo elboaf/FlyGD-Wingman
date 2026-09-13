@@ -1967,6 +1967,61 @@ def test_the_bookmark_groups_are_not_a_hand_kept_copy():
     )
 
 
+def test_preview_marker_dev_choices_and_assignments_match_authority():
+    from wingman.preview.labelmarkers import marker_choices, validated_markers
+
+    fixture = _dev_preview_fixture()
+    assert fixture["marker_choices"] == marker_choices()
+    assert fixture["label_markers"] == validated_markers(fixture["label_markers"])
+    assert any(name in fixture["characters"] for name in fixture["label_markers"])
+    assert any(name not in fixture["characters"] for name in fixture["label_markers"])
+    assert "set_preview_character_marker" in _stubbed()
+    # Execute the real stub with its state dependencies; no regex receipt oracle.
+    script = """
+const assert = require('node:assert/strict');
+const data = JSON.parse(process.argv[1]);
+const api = {}, DEV_PREVIEW_HOTKEYS_FIXTURE = data.fixture;
+const _devPreviewHotkeys = data.fixture.hotkeys;
+const _devCrops = {definitions: {}};
+let pushes = 0;
+function _devPushHotkeys() { pushes++; }
+eval(data.method);
+(async () => {
+  for (const owner of ['Aiga Otsolen', 'Sera Vahn', '__proto__']) {
+    data.fixture.roster.push(owner);
+    assert.deepEqual(await api.set_preview_character_marker(owner, 'green'),
+      {applied: true, persisted: true, error: null, marker: 'green'});
+    assert.equal(data.fixture.label_markers[owner], 'green');
+    const bad = await api.set_preview_character_marker(owner, null);
+    assert.equal(bad.applied, false); assert.equal(bad.marker, 'green');
+    assert.deepEqual(await api.set_preview_character_marker(owner, ''),
+      {applied: true, persisted: true, error: null, marker: ''});
+    assert.equal(Object.hasOwn(data.fixture.label_markers, owner), false);
+  }
+  assert.equal(pushes, 6);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    result = subprocess.run(
+        [
+            "node",
+            "-e",
+            script,
+            json.dumps(
+                {
+                    "fixture": fixture,
+                    "method": _fixture_body("api.set_preview_character_marker =")
+                    + "\n  };",
+                }
+            ),
+        ],
+        text=True,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_the_preview_groups_fixture_covers_real_states():
     """The preview fixture must carry cycle groups, not just the old hotkeys.
 

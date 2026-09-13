@@ -133,6 +133,190 @@ class FakeHost(HostLifecycle):
         return self.started > self.stopped
 
 
+@pytest.mark.parametrize("source", ["seen", "bind", "group", "crop", "marker", "live"])
+@pytest.mark.parametrize("with_host", [False, True])
+def test_marker_known_owners_commit_and_reset_without_other_runtime_effects(
+    tmp_path, source, with_host
+):
+    from wingman import settings
+    from wingman.preview.crops import CropDefinition, serialize, source_from_pixels
+    from wingman.preview.geometry import Rect
+    from wingman.preview.labelmarkers import marker_choices
+
+    host = FakeHost() if with_host else None
+    api = make_api(tmp_path, preview_host=host)
+    with settings.update(api._state.settings) as doc:
+        p = doc.setdefault("preview", settings._preview_defaults())
+        p.update(show_labels=False, excluded=["Alice"])
+        if source == "seen":
+            p["seen"] = ["Alice"]
+        elif source == "bind":
+            p["hotkeys"]["characters"] = {"Alice": "Ctrl+F1"}
+        elif source == "group":
+            p["hotkeys"].update(
+                groups=[{"id": "dps", "name": "DPS", "cycle": ""}],
+                group_by_character={"Alice": "dps"},
+            )
+        elif source == "crop":
+            p["crops"] = serialize(
+                {
+                    "Alice": CropDefinition(
+                        source_from_pixels(Rect(0, 0, 160, 90), (1280, 720)),
+                        Rect(0, 0, 320, 180),
+                    )
+                }
+            )
+        elif source == "marker":
+            p["label_markers"] = {"Alice": "blue"}
+        elif host:
+            host.runtime_enabled = True
+            host.characters = lambda: ["Alice"]
+    before = copy.deepcopy(api._state.settings["preview"])
+    observed = []
+    if host:
+        host.restyle = lambda: observed.append(api._preview_config.get("label_markers"))
+    result = api.set_preview_character_marker("Alice", "cyan")
+    if source == "live" and not host:
+        assert not result["applied"]  # exclusion alone is not a new owner source
+        return
+    assert result == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+        "marker": "cyan",
+    }
+    payload = api.get_preview_hotkey_state()
+    assert payload["label_markers"] == {"Alice": "cyan"}
+    assert payload["marker_choices"] == marker_choices()
+    assert settings.load()["preview"]["label_markers"] == {"Alice": "cyan"}
+    assert api.set_preview_character_marker("Alice", "")["marker"] == ""
+    assert api._preview_config.get("label_markers") == {}
+    after = api._state.settings["preview"]
+    assert {k: v for k, v in after.items() if k != "label_markers"} == {
+        k: v for k, v in before.items() if k != "label_markers"
+    }
+    assert not api._window.evaluated
+    if host:
+        assert observed == [{"Alice": "cyan"}, {}]
+        assert host.sweeps == host.rebinds == host.flushed == host.stopped == 0
+        assert host.started == 0
+
+
+@pytest.mark.parametrize(
+    "name,marker",
+    [
+        ("Alice", None),
+        ("Alice", True),
+        ("Alice", []),
+        ("Alice", {}),
+        ("Alice", "Cyan"),
+        ("Alice", "#56B4E9"),
+        (None, "cyan"),
+        ([], "cyan"),
+        (" Alice", "cyan"),
+        ("hwnd:123", "cyan"),
+        ("Unknown", "cyan"),
+        ("GeometryOnly", "cyan"),
+    ],
+)
+def test_marker_invalid_assignment_refuses_without_write_or_restyle(
+    tmp_path, monkeypatch, name, marker
+):
+    from wingman import settings
+
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    with settings.update(api._state.settings) as doc:
+        doc.setdefault("preview", settings._preview_defaults()).update(
+            seen=["Alice"],
+            label_markers={"Alice": "blue"},
+            layouts={"GeometryOnly": {"x": 0, "y": 0, "w": 320, "h": 210}},
+        )
+    before = copy.deepcopy(api._state.settings)
+    monkeypatch.setattr(
+        settings, "_save_locked", lambda *args: pytest.fail("invalid assignment saved")
+    )
+    result = api.set_preview_character_marker(name, marker)
+    assert result["applied"] is result["persisted"] is False
+    assert result["error"] and result["marker"] == ("blue" if name == "Alice" else "")
+    assert api._state.settings == before and host.restyles == 0
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_marker_payload_and_runtime_wait_for_commit(tmp_path, monkeypatch, fails):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from wingman import paths, settings
+
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    with settings.update(api._state.settings) as doc:
+        doc.setdefault("preview", settings._preview_defaults()).update(
+            seen=["Alice"], label_markers={"Alice": "blue"}
+        )
+    before = copy.deepcopy(api._state.settings)
+    original_bytes = paths.settings_file().read_bytes()
+    entered, release = threading.Event(), threading.Event()
+    save = settings._save_locked
+
+    def blocked(doc, path=None):
+        entered.set()
+        assert release.wait(5)
+        if fails:
+            raise OSError("read only")
+        save(doc, path)
+
+    monkeypatch.setattr(settings, "_save_locked", blocked)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        future = pool.submit(api.set_preview_character_marker, "Alice", "cyan")
+        try:
+            assert entered.wait(5)
+            payload = pool.submit(api.get_preview_hotkey_state).result(timeout=1)
+            assert payload["label_markers"] == {"Alice": "blue"}
+            assert host.restyles == 0
+            assert paths.settings_file().read_bytes() == original_bytes
+        finally:
+            release.set()
+        result = future.result(timeout=5)
+    assert result["applied"] is result["persisted"] is (not fails)
+    assert result["marker"] == ("blue" if fails else "cyan")
+    assert host.restyles == (not fails)
+    if fails:
+        assert api._state.settings == before
+        assert paths.settings_file().read_bytes() == original_bytes
+
+
+def test_marker_concurrent_owners_merge_and_noop_does_not_write(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from wingman import settings
+
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    with settings.update(api._state.settings) as doc:
+        doc.setdefault("preview", settings._preview_defaults())["seen"] = [
+            "Alice",
+            "Bob",
+        ]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(
+                lambda name: api.set_preview_character_marker(name, "cyan"),
+                ["Alice", "Bob"],
+            )
+        )
+    assert all(result["persisted"] for result in results)
+    assert settings.load()["preview"]["label_markers"] == {
+        "Alice": "cyan",
+        "Bob": "cyan",
+    }
+    monkeypatch.setattr(
+        settings, "_save_locked", lambda *args: pytest.fail("unchanged marker wrote")
+    )
+    assert api.set_preview_character_marker("Alice", "cyan")["persisted"]
+    assert host.restyles == 3
+
+
 @pytest.mark.parametrize("key", ["standard", "large", "extra_large"])
 @pytest.mark.parametrize("with_host", [False, True])
 def test_label_size_persists_without_starting_previews_or_pushing_settings(

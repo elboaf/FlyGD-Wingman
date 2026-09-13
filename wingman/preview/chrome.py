@@ -14,6 +14,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from ..paths import bundle_dir
 from . import geometry
+from .labelmarkers import MARKER_PALETTE
 from .labelsize import DEFAULT_LABEL_SIZE, LABEL_SIZE_PRESETS
 
 logger = logging.getLogger(__name__)
@@ -174,9 +175,14 @@ def render(size, *, border_color, border=5, selected=False):
 LABEL_PAD_X = 8
 LABEL_PAD_Y = 5
 LABEL_FONT = LABEL_SIZE_PRESETS[DEFAULT_LABEL_SIZE][1]
+LABEL_MARKER_SIZE = 8
+LABEL_MARKER_GAP = 5
+LABEL_MARKER_RADIUS = 2
 
 
-def label_layout(label, max_w, font_size=LABEL_FONT, secondary=None, *, max_h=None):
+def label_layout(
+    label, max_w, font_size=LABEL_FONT, secondary=None, *, max_h=None, marker=None
+):
     """Return (size, primary, secondary) after independent ellipsis, or None.
 
     Measurement only. The cache needs the clipped strings as well as dimensions:
@@ -186,10 +192,13 @@ def label_layout(label, max_w, font_size=LABEL_FONT, secondary=None, *, max_h=No
         return None
     font = _font(font_size)
     probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
-    text = _ellipsize(probe, label, font, max_w=max_w - LABEL_PAD_X * 2)
-    if not text:
+    prefix = LABEL_MARKER_SIZE + LABEL_MARKER_GAP if marker else 0
+    text = _ellipsize(probe, label, font, max_w=max_w - LABEL_PAD_X * 2 - prefix)
+    # Identification supplements a readable name; never show a marker alone.
+    # The unmarked path retains even its legacy ellipsis-only appearance.
+    if not text or (marker and text == "…"):
         return None
-    width = probe.textlength(text, font=font)
+    width = probe.textlength(text, font=font) + prefix
     height = font_size + LABEL_PAD_Y * 2 + 4
     if max_h is not None and height > max_h:
         return None
@@ -206,13 +215,19 @@ def label_layout(label, max_w, font_size=LABEL_FONT, secondary=None, *, max_h=No
     return ((int(width) + LABEL_PAD_X * 2, height), text, second)
 
 
-def label_size(label, max_w, font_size=LABEL_FONT, secondary=None, *, max_h=None):
+def label_size(
+    label, max_w, font_size=LABEL_FONT, secondary=None, *, max_h=None, marker=None
+):
     """The (w, h) render_label would draw, or None for no pill."""
-    layout = label_layout(label, max_w, font_size, secondary, max_h=max_h)
+    layout = label_layout(
+        label, max_w, font_size, secondary, max_h=max_h, marker=marker
+    )
     return layout[0] if layout is not None else None
 
 
-def render_label(label, max_w, font_size=LABEL_FONT, secondary=None, *, max_h=None):
+def render_label(
+    label, max_w, font_size=LABEL_FONT, secondary=None, *, max_h=None, marker=None
+):
     """Render the character-name pill for the overlay window.
 
     Sized to the text, not the preview: EVE-O Preview's overlay is a
@@ -224,7 +239,9 @@ def render_label(label, max_w, font_size=LABEL_FONT, secondary=None, *, max_h=No
     click-through by style whatever the alpha says, and the label has
     the same readability over bright game content the old band had.
     """
-    layout = label_layout(label, max_w, font_size, secondary, max_h=max_h)
+    layout = label_layout(
+        label, max_w, font_size, secondary, max_h=max_h, marker=marker
+    )
     if layout is None:
         return None
     (w, h), text, second = layout
@@ -232,7 +249,21 @@ def render_label(label, max_w, font_size=LABEL_FONT, secondary=None, *, max_h=No
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     d.rounded_rectangle([0, 0, w - 1, h - 1], radius=6, fill=LABEL_BG)
-    d.text((LABEL_PAD_X, LABEL_PAD_Y + 2), text, font=font, fill=LABEL_FG)
+    primary_x = LABEL_PAD_X
+    if marker:
+        marker_y = (font_size + LABEL_PAD_Y * 2 + 4 - LABEL_MARKER_SIZE) // 2
+        d.rounded_rectangle(
+            [
+                LABEL_PAD_X,
+                marker_y,
+                LABEL_PAD_X + LABEL_MARKER_SIZE - 1,
+                marker_y + LABEL_MARKER_SIZE - 1,
+            ],
+            radius=LABEL_MARKER_RADIUS,
+            fill=(*MARKER_PALETTE[marker][1], 255),
+        )
+        primary_x += LABEL_MARKER_SIZE + LABEL_MARKER_GAP
+    d.text((primary_x, LABEL_PAD_Y + 2), text, font=font, fill=LABEL_FG)
     if second:
         small_font = _font(max(1, font_size - 3))
         d.text(

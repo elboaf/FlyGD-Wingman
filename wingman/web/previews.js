@@ -18,6 +18,7 @@
       state = screenshotLive.state;
       cropState = screenshotLive.crops;
       cropHydrated = screenshotLive.hydrated;
+      markerFields = screenshotLive.markerFields;
       screenshotLive = null;
       openDetailName = null;
       // Buffered host outcomes must retire real requests before repainting.
@@ -31,7 +32,14 @@
       throw new Error('Invalid crop screenshot fixture');
     }
     WM.previewCropScreenshot(null);
-    var live = {state: state, crops: cropState, hydrated: cropHydrated};
+    var live = {state: state, crops: cropState, hydrated: cropHydrated,
+                markerFields: markerFields};
+    // Fake assignments must never rebase live acknowledgements. Real receipt
+    // closures retain their own field objects while this separate table renders.
+    markerFields = Object.create(null);
+    detailInteraction += 1;
+    detailFocusIntent = null;
+    endCapture();
     var fixture = JSON.parse(JSON.stringify(payload));
     // Fixture revisions are not host revisions. Preserve the host snapshot,
     // render in a separate revision domain, then restore the latest live push.
@@ -55,6 +63,7 @@
                never_minimize: [], excluded: [],
                sizes: {}, client_sizes: {}, sizable: [], layout_sources: []};
   var capturing = null;
+  var markerFields = Object.create(null);
   // preview.minimize_inactive_clients, off the settings payload rather
   // than the hotkey-state one: it lives in Settings' own Previews card
   // (settings.js), not here, and this file only needs to know its CURRENT
@@ -139,6 +148,9 @@
       if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
     });
     Object.keys(cropState.definitions || {}).forEach(function (n) {
+      if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
+    });
+    Object.keys(state.label_markers || {}).forEach(function (n) {
       if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
     });
     return out;
@@ -573,6 +585,14 @@
       detail.appendChild(assignment);
     }
 
+    var identification = WM.make('div', 'preview-detail-field');
+    identification.appendChild(WM.make('span', 'preview-detail-label', 'Identification marker'));
+    identification.appendChild(makeMarkerSelect(characterName));
+    var markerStatus = WM.make('span', 'preview-marker-status', markerFields[characterName].error);
+    markerStatus.id = 'preview-marker-status-' + encodeURIComponent(characterName);
+    identification.appendChild(markerStatus);
+    detail.appendChild(identification);
+
     var geometry = WM.make('div', 'preview-detail-field');
     geometry.appendChild(WM.make('span', 'preview-detail-label', 'Saved geometry'));
     geometry.appendChild(makeGeometryActions(characterName, off));
@@ -583,6 +603,112 @@
 
   function ownValue(map, name) {
     return map && Object.prototype.hasOwnProperty.call(map, name) ? map[name] : null;
+  }
+
+  function effectiveMarkers(raw, fields) {
+    var markers = Object.create(null);
+    Object.keys(raw || {}).forEach(function (name) {
+      if (raw[name]) markers[name] = raw[name];
+    });
+    Object.keys(fields).forEach(function (name) {
+      if (fields[name].accepted) markers[name] = fields[name].accepted;
+      else delete markers[name]; // reset tombstones order pushes, not roster rows
+    });
+    return markers;
+  }
+
+  function acceptMarkers(payload, fields, versions) {
+    Object.keys(fields).forEach(function (name) {
+      var field = fields[name];
+      // Only a getter begun while idle may recover a lost receipt. A discovery
+      // push (or an older getter overtaken by a submission) cannot order writes.
+      if (!field.busy && ownValue(versions, name) === field.version) {
+        field.accepted = ownValue(payload.label_markers, name) || '';
+      }
+    });
+    payload.label_markers = effectiveMarkers(payload.label_markers, fields);
+    payload.marker_choices = payload.marker_choices || [];
+  }
+
+  function paintMarkerField(name) {
+    var detail = document.getElementById(detailId(name));
+    if (!detail) return;
+    var sel = detail.querySelector('[data-preview-detail-control="marker"]');
+    if (!sel) return;
+    var field = markerFields[name];
+    sel.value = field.accepted;
+    WM.setEnabled(sel, !field.busy && (state.marker_choices || []).length > 0);
+    document.getElementById(sel.getAttribute('aria-describedby')).textContent = field.error;
+  }
+
+  function makeMarkerSelect(characterName) {
+    var field = markerFields[characterName];
+    if (!field) {
+      field = markerFields[characterName] = {busy: false, error: '', version: 0,
+        accepted: ownValue(state.label_markers, characterName) || ''};
+    }
+    var sel = WM.make('select', 'field preview-marker-select');
+    sel.setAttribute('aria-label', 'Identification marker for ' + characterName);
+    sel.setAttribute('data-preview-detail-control', 'marker');
+    sel.setAttribute('aria-describedby', 'preview-marker-status-' + encodeURIComponent(characterName));
+    var choices = state.marker_choices || [];
+    choices.forEach(function (choice) {
+      var option = WM.make('option', '', choice.label);
+      option.value = choice.key;
+      sel.appendChild(option);
+    });
+    sel.value = field.accepted;
+    WM.setEnabled(sel, !field.busy && choices.length > 0);
+    sel.addEventListener('change', function () {
+      if (screenshotLive || field.busy || !choices.length) return;
+      var wanted = sel.value;
+      var fields = markerFields;
+      var interaction = detailInteraction;
+      var hadFocus = document.activeElement === sel;
+      field.busy = true;
+      field.version += 1;
+      field.error = '';
+      paintMarkerField(characterName);
+      function settle(result) {
+        field.busy = false;
+        field.version += 1;
+        var valid = result && typeof result.marker === 'string' && choices.some(function (choice) {
+          return choice.key === result.marker;
+        });
+        if (result && result.applied && result.persisted && valid) {
+          field.accepted = result.marker;
+          field.error = '';
+        } else {
+          field.error = result && result.error || 'Could not save identification marker. Try again.';
+        }
+        if (screenshotLive) {
+          screenshotLive.state.label_markers = effectiveMarkers(screenshotLive.state.label_markers, fields);
+          return;
+        }
+        var previousRows = JSON.stringify(rows());
+        state.label_markers = effectiveMarkers(state.label_markers, fields);
+        var rosterChanged = previousRows !== JSON.stringify(rows());
+        var focused = document.activeElement;
+        var detail = document.getElementById(detailId(openDetailName));
+        if (detail && !detail.closest('[hidden]')) {
+          if (detail.contains(focused) && focused.hasAttribute('data-preview-detail-control')) {
+            rememberDetailFocus(openDetailName, focused.getAttribute('data-preview-detail-control'));
+          } else if (hadFocus && interaction === detailInteraction && openDetailName === characterName
+                     && focused === document.body) {
+            rememberDetailFocus(characterName, 'marker');
+          }
+        }
+        // A scalar receipt must not detach a Copy dialog's invoker or another
+        // field's draft. Only adding/removing a marker-only row needs a rebuild.
+        if (rosterChanged) requestRender();
+        else {
+          paintMarkerField(characterName);
+          restoreDetailFocus();
+        }
+      }
+      WM.send('set_preview_character_marker', characterName, wanted).then(settle, function () { settle(null); });
+    });
+    return sel;
   }
 
   function hasEnabledCrop(name) {
@@ -2278,8 +2404,13 @@
     var recover = Object.keys(cropRequests).map(function (name) {
       return cropRequests[name];
     }).filter(function (request) { return request.received; });
+    var markerVersions = Object.create(null);
+    Object.keys(markerFields).forEach(function (name) {
+      if (!markerFields[name].busy) markerVersions[name] = markerFields[name].version;
+    });
     return WM.send('get_preview_hotkey_state').then(function (payload) {
       if (!payload) { return; }
+      acceptMarkers(payload, screenshotLive ? screenshotLive.markerFields : markerFields, markerVersions);
       if (screenshotLive) {
         screenshotLive.state = payload;
         acceptCrops(payload.crops, true);
@@ -2347,6 +2478,7 @@
   // the two lists together.
   WM.handle('onPreviewHotkeys', function (payload) {
     if (!payload) { return; }
+    acceptMarkers(payload, screenshotLive ? screenshotLive.markerFields : markerFields);
     if (screenshotLive) {
       screenshotLive.state = payload;
       acceptCrops(payload.crops, true);

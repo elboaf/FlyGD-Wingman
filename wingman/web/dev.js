@@ -2521,6 +2521,16 @@
   // attribute fallback at the 840px viewport floor.
   var DEV_PREVIEW_HOTKEYS_FIXTURE = {
     "enabled": true,
+    "label_markers": {"Aiga Otsolen": "cyan", "Sera Vahn": "orange"},
+    "marker_choices": [
+      {"key": "", "label": "None"},
+      {"key": "cyan", "label": "Cyan"},
+      {"key": "orange", "label": "Orange"},
+      {"key": "green", "label": "Green"},
+      {"key": "purple", "label": "Purple"},
+      {"key": "yellow", "label": "Yellow"},
+      {"key": "blue", "label": "Blue"}
+    ],
     "hotkeys": {
       "characters": {
         "Aiga Otsolen": "Ctrl+Alt+1",
@@ -2570,6 +2580,23 @@
       {"name": "Tanuki Solette", "online": false}
     ],
     "bookmark_chords": {"active": ["Ctrl+Alt+1"], "latent": []}
+  };
+
+  api.set_preview_character_marker = function (name, marker) {
+    var fixture = DEV_PREVIEW_HOTKEYS_FIXTURE;
+    var markers = fixture.label_markers;
+    var known = fixture.characters.concat(fixture.roster, Object.keys(_devPreviewHotkeys.characters),
+      Object.keys(_devPreviewHotkeys.group_by_character), Object.keys(_devCrops.definitions), Object.keys(markers));
+    var valid = typeof name === 'string' && name && name.trim() === name && name.indexOf('hwnd:') !== 0
+      && known.indexOf(name) !== -1 && fixture.marker_choices.some(function (choice) { return choice.key === marker; });
+    if (valid) {
+      if (marker) Object.defineProperty(markers, name, {value: marker, writable: true, enumerable: true, configurable: true});
+      else delete markers[name];
+      _devPushHotkeys();
+    }
+    return Promise.resolve({applied: !!valid, persisted: !!valid,
+      error: valid ? null : 'Choose a known character and listed identification marker.',
+      marker: Object.prototype.hasOwnProperty.call(markers, name) ? markers[name] : ''});
   };
 
   api.get_preview_hotkey_state = function () {

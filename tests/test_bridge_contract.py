@@ -46,6 +46,18 @@ WEB = Path(__file__).resolve().parent.parent / "wingman" / "web"
 API = Path(__file__).resolve().parent.parent / "wingman" / "ui" / "api.py"
 
 
+def test_marker_commit_matches_the_bridge_signature():
+    from wingman.ui.api import Api
+
+    source = (WEB / "previews.js").read_text(encoding="utf-8")
+    assert "WM.send('set_preview_character_marker', characterName," in source
+    assert tuple(inspect.signature(Api.set_preview_character_marker).parameters) == (
+        "self",
+        "name",
+        "marker",
+    )
+
+
 def test_label_size_commit_matches_the_bridge_signature():
     from wingman.ui.api import Api
 

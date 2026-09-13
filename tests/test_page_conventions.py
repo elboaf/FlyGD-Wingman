@@ -3642,6 +3642,20 @@ def test_group_select_is_styled_inside_the_detail_without_a_new_track():
     assert _preview_binds_cell_tracks() == 5
 
 
+def test_marker_control_is_named_and_configure_only():
+    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
+    assert "makeMarkerSelect" not in _makerow_body()
+    detail = src.split("function makeCharacterDetail(", 1)[1].split("\n  function ", 1)[
+        0
+    ]
+    assert "makeMarkerSelect(characterName)" in detail
+    assert "Identification marker" in detail
+    control = src.split("function makeMarkerSelect(", 1)[1].split("\n  function ", 1)[0]
+    assert "aria-label" in control and "aria-describedby" in control
+    assert "marker_choices" in control
+    assert "innerHTML" not in control
+
+
 def test_character_roster_rows_keep_configuration_out_of_the_scan_line():
     """Collapsed rows expose only identity, Preview, keybind actions, Configure."""
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
