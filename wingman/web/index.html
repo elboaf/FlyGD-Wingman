@@ -455,8 +455,9 @@
         <div class="row">
           <label class="lab" for="f-category">YouTube category ID</label>
           <input class="field" id="f-category" type="text" inputmode="numeric"
-                 spellcheck="false">
+                 spellcheck="false" aria-describedby="category-draft msg-uploads">
         </div>
+        <p class="field-msg" id="category-draft" hidden></p>
         <!-- Settings 13. The maintainer settled the control half: this
              stays a free string, and set_category still validates
              digits-only, so what was left of the finding was the copy.
@@ -528,12 +529,11 @@
              Files and Wingman deliberately runs without admin rights. -->
         <h2>FightRecorder (OBS plugin)</h2>
         <div class="row">
-          <span class="lab">Plugin</span>
           <!-- Purely local at load: installed/not, never a network
                verdict. settings.js fills it from fightrecorder_status's
                local half; the two action buttons below trigger the
                network. -->
-          <p class="sub-hint" id="fr-status">checking&hellip;</p>
+          <p class="operational-status" id="fr-status" role="status">Checking installed plugin&hellip;</p>
         </div>
         <div class="row">
           <span class="lab"></span>
@@ -592,6 +592,7 @@
           <span class="hint" id="companion-count"></span>
         </div>
         <div class="companion-add-form" id="companion-add-form" hidden>
+          <h3>Add companion</h3>
           <div class="row">
             <label class="lab" for="companion-add-label">Label</label>
             <input class="field" id="companion-add-label" type="text" placeholder="For example, Mapper" autocomplete="off" disabled>
@@ -726,6 +727,8 @@
           any application &mdash; Settings &rsaquo; Previews explains shared
           keys. Detected overlaps are marked below; use distinct keys to
           avoid conflicts.</p>
+        <p class="hint">Click a keybind and press the keys you want.
+          Edit&hellip; lets you type one instead.</p>
         <p class="hint" id="eve-bind-warning" hidden></p>
         <div id="eve-binds"></div>
         <div class="row"><span class="lab"></span>
@@ -738,8 +741,8 @@
              not padding: bookmarks.js marks only the exception now, and this
              is what stops "no mark" being something the reader has to infer.
              See the comment on that branch for what it replaced. -->
-        <p class="hint">Keybinds only fire while one of these windows is
-          active. All of these are running unless marked otherwise.</p>
+        <p class="hint">Keybinds only fire while a selected window is
+          active. All listed windows are running unless marked otherwise.</p>
         <div class="row"><span class="lab"></span>
           <button class="btn" id="eve-refresh-windows">Refresh</button></div>
         <div id="eve-windows"></div>
@@ -752,8 +755,8 @@
              line pushes, so a reader looking for it looks here first. -->
         <p class="hint">A small always-on-top copy of the SIG / ROOT / NEXT
           readout that floats over other windows. Drag it anywhere on
-          screen; it remembers where you left it. Use the
-          Floating sig bar toggle in the status strip to show or hide it.</p>
+          screen; it remembers where you left it. Show or hide it with the
+          checkbox below, or use the Floating sig bar toggle in the status strip.</p>
         <div class="row">
           <label class="check">
             <input type="checkbox" id="sigbar-enabled"><span class="box"></span>
@@ -1113,9 +1116,9 @@
         <p class="hint" id="wanderer-map-draft"></p>
         <div class="row">
           <label class="lab" for="wanderer-token">Map API token</label>
+          <span class="hint" id="wanderer-credential">No token stored for the saved URL and map.</span>
           <input class="field" id="wanderer-token" type="password" disabled spellcheck="false" autocomplete="new-password" aria-describedby="wanderer-token-draft wanderer-connection-error wanderer-credential">
         </div>
-        <p class="hint" id="wanderer-credential">No token stored for this connection.</p>
         <p class="hint" id="wanderer-token-draft">Stored only on this PC, protected by Windows. Leave blank to reuse only the same saved URL and map.</p>
         <p class="hint" id="wanderer-save-note">Test connection saves the URL, map and token, then checks access. It does not turn names on.</p>
         <p class="field-msg" id="wanderer-connection-error" hidden></p>
@@ -1172,6 +1175,9 @@
         <div class="row"><span class="lab"></span>
           <span class="hint">Click a keybind and press the keys you want.
             Edit&hellip; lets you type one instead.</span></div>
+        <p class="hint">Characters can share a keybind. It switches to a running
+          match, preferring one that is not already active. Use cycle groups
+          to visit all running members with Preview enabled.</p>
         <div id="preview-binds"></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-binds-empty" tabindex="-1">Start an EVE client to
@@ -1236,6 +1242,7 @@
         <p class="hint" id="sharing-scope">Shares current DPS and scram / point state with eligible authGD Members in the same verified fleet, never raw logs or history.</p>
         <p class="field-msg" id="sharing-preference" role="status"></p>
         <p class="hint" id="sharing-consent" role="status"></p>
+        <p class="operational-status" id="sharing-eligibility" role="status"></p>
         <p class="field-msg" id="sharing-action" role="status"></p>
         <h3>Current and pending verification</h3>
         <p class="hint" id="sharing-source-status">Verification state is not known yet.</p>
@@ -1261,7 +1268,6 @@
           <p class="hint">Other participants and alts need no Fleet Read. Start can remain pending or paused
             until authGD verifies the boss. Verification controls work with sharing and local displays off;
             closing this view never stops verification.</p>
-          <p class="hint" id="sharing-eligibility"></p>
           <ul class="sharing-list" id="sharing-eligible-list"></ul>
         </details>
       </section>
@@ -1516,13 +1522,14 @@
 
              Every id stays exactly what alerts.js already looks up
              (eventRow() builds `alert-event-<id>-flashes` and `-speed`
-             regardless of where they sit in the DOM), and each row's own
-             status line (`alert-event-<id>-msg`) stays in the table
-             above, not in here -- a refused write, or a session-only one,
-             has to stay visible without the reader having to open this
-             first. -->
+             regardless of where they sit in the DOM). Primary event
+             outcomes stay in that table; Flashes/Speed each own a mounted
+             feedback slot here, beside the field that produced it. -->
         <details id="alert-advanced">
           <summary>Advanced pulse behavior</summary>
+          <p class="hint" id="alert-pulse-help">Flashes sets the count for timed alerts,
+            including Test and the client you are looking at. With Keep pulsing on,
+            other clients pulse until you select their preview. Speed applies to both.</p>
           <!-- Task 6. Three independent flex rows put Flashes/Speed at
                whatever x the row's OWN name pushed them to ("Combat" and
                "Decloak" sat close together, "Warp scramble" -- the longest
@@ -1537,15 +1544,19 @@
             <span class="alert-flash">
               <label class="flash-lab" for="alert-event-combat-flashes">Flashes</label>
               <select class="field" id="alert-event-combat-flashes"
-                aria-label="Flashes: Combat"></select>
+                aria-label="Flashes: Combat" aria-describedby="alert-pulse-help alert-event-combat-flashes-msg"></select>
               <label class="flash-lab" for="alert-event-combat-speed">Speed</label>
               <select class="field" id="alert-event-combat-speed"
-                aria-label="Speed: Combat">
+                aria-label="Speed: Combat" aria-describedby="alert-pulse-help alert-event-combat-speed-msg">
                 <option value="slow">Slow</option>
                 <option value="normal">Normal</option>
                 <option value="fast">Fast</option>
               </select>
             </span>
+            <div class="alert-choice-feedback">
+              <span class="field-msg" id="alert-event-combat-flashes-msg" role="status"></span>
+              <span class="field-msg" id="alert-event-combat-speed-msg" role="status"></span>
+            </div>
           </div>
           <div class="row alert-advanced-row">
             <span class="bind-group-name">Warp scramble</span>
@@ -1553,31 +1564,39 @@
               <label class="flash-lab"
                 for="alert-event-warp_scramble-flashes">Flashes</label>
               <select class="field" id="alert-event-warp_scramble-flashes"
-                aria-label="Flashes: Warp scramble"></select>
+                aria-label="Flashes: Warp scramble" aria-describedby="alert-pulse-help alert-event-warp_scramble-flashes-msg"></select>
               <label class="flash-lab"
                 for="alert-event-warp_scramble-speed">Speed</label>
               <select class="field" id="alert-event-warp_scramble-speed"
-                aria-label="Speed: Warp scramble">
+                aria-label="Speed: Warp scramble" aria-describedby="alert-pulse-help alert-event-warp_scramble-speed-msg">
                 <option value="slow">Slow</option>
                 <option value="normal">Normal</option>
                 <option value="fast">Fast</option>
               </select>
             </span>
+            <div class="alert-choice-feedback">
+              <span class="field-msg" id="alert-event-warp_scramble-flashes-msg" role="status"></span>
+              <span class="field-msg" id="alert-event-warp_scramble-speed-msg" role="status"></span>
+            </div>
           </div>
           <div class="row alert-advanced-row">
             <span class="bind-group-name">Decloak</span>
             <span class="alert-flash">
               <label class="flash-lab" for="alert-event-decloak-flashes">Flashes</label>
               <select class="field" id="alert-event-decloak-flashes"
-                aria-label="Flashes: Decloak"></select>
+                aria-label="Flashes: Decloak" aria-describedby="alert-pulse-help alert-event-decloak-flashes-msg"></select>
               <label class="flash-lab" for="alert-event-decloak-speed">Speed</label>
               <select class="field" id="alert-event-decloak-speed"
-                aria-label="Speed: Decloak">
+                aria-label="Speed: Decloak" aria-describedby="alert-pulse-help alert-event-decloak-speed-msg">
                 <option value="slow">Slow</option>
                 <option value="normal">Normal</option>
                 <option value="fast">Fast</option>
               </select>
             </span>
+            <div class="alert-choice-feedback">
+              <span class="field-msg" id="alert-event-decloak-flashes-msg" role="status"></span>
+              <span class="field-msg" id="alert-event-decloak-speed-msg" role="status"></span>
+            </div>
           </div>
           </div>
         </details>
@@ -1645,13 +1664,10 @@
         <p class="field-msg" id="msg-general" hidden></p>
       </section>
 
-      <!-- M2 and M3. `General` is one checkbox and last in the rail, so it
-           has the room for a second card; a ninth rail item is deferred
-           until THIRD-PARTY-NOTICES.md has a surface of its own to justify
-           one. The version is deliberately in TWO places -- the titlebar
-           (S1) and here -- because the titlebar cannot hold the licence or
-           the login switch, and this is the card a user is sent to when
-           they are asked which build they are running. -->
+      <!-- Build identity, updates and licence belong together; startup is
+           a separate configuration task within General, not another rail
+           destination. The version also stays in the titlebar, but this
+           card is where a user can find the full build information. -->
       <section class="card">
         <h2>About Wingman</h2>
         <!-- Pushed from __version__ through the settings payload, never
@@ -1681,7 +1697,10 @@
              version this app has shipped. If a licence change ever makes
              that untrue, this line is the one that has to move with it. -->
         <p class="hint">Free software under the GPL-3.0-only licence.</p>
-        <h3 class="settings-subheading">Startup</h3>
+      </section>
+
+      <section class="card">
+        <h2>Startup</h2>
         <label class="check">
           <input type="checkbox" id="start-on-login"><span class="box"></span>
           Start Wingman when I sign in to Windows
@@ -2291,8 +2310,9 @@
         <span class="hint" id="fm-share-status" role="status" aria-live="polite"></span>
       </div>
       <div class="row fm-rail-add">
-        <button class="btn" id="fm-add" type="button">New formation</button>
+        <label class="lab" for="fm-preset">Preset</label>
         <select id="fm-preset" class="field" aria-label="Preset for a new formation"></select>
+        <button class="btn" id="fm-add" type="button">New formation</button>
       </div>
     </div>
     <div class="fm-pane">
@@ -2563,6 +2583,11 @@
         <button class="linkbtn" id="fittings-filter-clear" hidden>Clear filters</button>
       </div>
 
+      <div class="skills-filterbar">
+        <button class="btn" id="fittings-select-page" disabled>Select page</button>
+        <button class="btn" id="fittings-clear-selection" disabled>Clear selection</button>
+      </div>
+
       <div class="fit-list" id="fittings-list"></div>
       <div class="empty" id="fittings-empty" hidden></div>
 
@@ -2731,7 +2756,7 @@
   <div id="dialog-slot">
     <div class="overlay" id="overlay" hidden>
       <div class="dialog" id="dialog" role="dialog" aria-modal="true"
-           aria-labelledby="dlg-title">
+           aria-labelledby="dlg-title" aria-describedby="dlg-body">
         <h2 id="dlg-title"></h2>
         <div class="body" id="dlg-body"></div>
         <!-- Shown only for a page-raised prompt. The alternative was

@@ -103,8 +103,20 @@
   // value into the element, so the element itself cannot tell us
   // what it was before.
   var lastGood = {};
+  // Flashes/Speed own independent write lanes and feedback, not the primary
+  // event's colour/sound/Test outcome. Reads may hydrate only an idle lane
+  // whose choice has not changed since that read began.
+  var pulseChoices = {};
+  function pulseReadOwners() {
+    var owners = {};
+    Object.keys(pulseChoices).forEach(function (id) {
+      var choice = pulseChoices[id];
+      owners[id] = choice.pending ? -1 : choice.request;
+    });
+    return owners;
+  }
 
-  // Every write below goes through this. The five text slots in this card
+  // Every write below goes through this. The text slots in this card
   // are role="status" live regions now, and replacing a text node
   // re-announces it even when the string is identical -- render() sets the
   // health line unconditionally on section entry and on every
@@ -322,7 +334,7 @@
 
   // Shared by the wm:settings hydration and refresh() (get_alert_state),
   // so the per-event rows repaint from the same shape either way.
-  function applyAlerts(alerts) {
+  function applyAlerts(alerts, pulseOwners) {
     var events = (alerts && alerts.events) || {};
     EVENTS.forEach(function (id) {
       var row = eventRow(id);
@@ -338,13 +350,20 @@
       var flashes = String(spec.pulses || 3);
       var speed = spec.flash_rate || 'normal';
       paintSwatches(row, id, color);
-      paintFlashCounts(row, flashes);
       row.sound.value = sound;
-      row.flashes.value = flashes;
-      row.speed.value = speed;
-      lastGood[id] = {
-        color: color, sound: sound, flashes: flashes, speed: speed
-      };
+      lastGood[id] = lastGood[id] || {};
+      lastGood[id].color = color;
+      lastGood[id].sound = sound;
+      [['flashes', flashes], ['speed', speed]].forEach(function (entry) {
+        var key = entry[0], control = row[key], choice = pulseChoices[control.id];
+        // Unversioned wm:settings is startup hydration, never authority over
+        // a touched field. Owned reads can still refresh an idle choice.
+        var owner = pulseOwners ? pulseOwners[control.id] : 0;
+        if (choice.pending || owner !== choice.request) { return; }
+        if (key === 'flashes') { paintFlashCounts(row, flashes); }
+        control.value = entry[1];
+        lastGood[id][key] = entry[1];
+      });
     });
     // After the loop, not inside it: a collision is a fact about the
     // whole card, and checking mid-loop would read lastGood entries the
@@ -524,35 +543,44 @@
     // radiogroup) or its own sentence.
     function writeChoice(control, field, key, noun) {
       if (!control) { return; }
+      var msg = WM.el(control.id + '-msg');
+      var choice = pulseChoices[control.id] = {request: 0, pending: 0, tail: Promise.resolve()};
       control.addEventListener('change', function () {
-        var wanted = control.value;
+        if (!lastGood[id] || lastGood[id][key] === undefined) { return; }
+        var wanted = control.value, request = ++choice.request;
+        choice.pending++;
         // Numbers cross the bridge as numbers: settings.py's clamp checks
-        // isinstance(value, int), so a string "5" is silently dropped and
-        // the flash count would appear to revert on the next read with
-        // nothing said.
+        // isinstance(value, int), so a string "5" is silently dropped.
         var value = field === 'pulses' ? parseInt(wanted, 10) : wanted;
-        WM.send('set_alert_event', id, field, value).then(function (res) {
+        // Bridge calls run concurrently. Serializing this field establishes
+        // persisted order as well as preventing an old reply from repainting.
+        choice.tail = choice.tail.then(function () {
+          return WM.send('set_alert_event', id, field, value);
+        }).then(function (res) {
+          choice.pending--;
+          if (res && res.applied) { lastGood[id][key] = wanted; }
+          if (request !== choice.request) { return; }
+          var text = '', severity = '';
           if (!res || !res.applied) {
-            control.value = (lastGood[id] || {})[key] || wanted;
-            sayRow(row, (res && res.error)
-              || 'That could not be changed, so it has been put back.', 'err');
-            return;
+            control.value = lastGood[id][key];
+            text = noun + ': ' + ((res && res.error)
+              || 'That could not be changed, so it has been put back.');
+            severity = 'err';
+          } else if (!res.persisted) {
+            text = noun + ' is set for this session, but could not be written '
+              + 'to settings — it will not survive a restart.';
+            severity = 'warn';
           }
-          lastGood[id] = lastGood[id] || {};
-          lastGood[id][key] = wanted;
-          if (!res.persisted) {
-            sayRow(row, 'The ' + noun + ' is set for this session, but could '
-              + 'not be written to settings — it will not survive a '
-              + 'restart.', 'warn');
-          } else {
-            sayRow(row, '');
-          }
+          setText(msg, text);
+          msg.className = 'field-msg' + (severity ? ' ' + severity : '');
+          // Keep this live region mounted even when empty. Another field's
+          // success must never clear this field's refusal.
         });
       });
     }
 
-    writeChoice(row.flashes, 'pulses', 'flashes', 'flash count');
-    writeChoice(row.speed, 'flash_rate', 'speed', 'flash speed');
+    writeChoice(row.flashes, 'pulses', 'flashes', 'Flash count');
+    writeChoice(row.speed, 'flash_rate', 'speed', 'Flash speed');
     row.test.addEventListener('click', function () {
       // Never persistent (api.py's test_alert docstring): nothing here
       // is looking at a preview to acknowledge it, so nothing is saved.
@@ -1160,6 +1188,7 @@
   function read(controls) {
     if (!visible) { return; }
     var epoch = viewEpoch, serial = ++builtinReadSerial;
+    var pulseOwners = pulseReadOwners();
     WM.send('get_alert_state').then(function (state) {
       if (!ownsView(epoch)) { return; }
       // A faster health poll cannot cancel entry hydration, and that delayed
@@ -1172,7 +1201,7 @@
       if (!controls || serial < builtinHydratedSerial) { return; }
       builtinHydratedSerial = serial;
       if (state) {
-        applyAlerts(state.alerts);
+        applyAlerts(state.alerts, pulseOwners);
         // Health-only polls must not drag the thumb under a moving hand.
         applyVolume(state.alerts);
       }

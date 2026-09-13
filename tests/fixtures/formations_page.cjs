@@ -468,10 +468,17 @@ async function pasteScenario() {
     else if (scenario === 'paste-route-during-parse') WM.route('evesettings');
     if (scenario === 'paste-rejected-parse') old.reject(new Error('offline')); else deliverParse(old);
     await tick(); assert.equal(importNames().length, 0); assert.equal(saves.length, 0);
-    if (scenario === 'paste-rejected-parse') { assert.ok(importStatus()); assertReview(true); }
-    else if (scenario === 'paste-text-during-parse') {
+    if (scenario === 'paste-rejected-parse') {
+      assert.ok(importStatus()); assertReview(true);
+      assert.equal(WM.el('fm-import-review').disabled, false, 'failed parsing remains retryable');
+    } else if (scenario === 'paste-text-during-parse') {
       assert.equal(WM.el('fm-import-text').value, artifact([shared('Edited')]));
       click('fm-import-review'); deliverParse(); await tick(); assert.equal(importNames()[0].value, 'Edited');
+      assert.equal(WM.el('fm-import-review').disabled, true, 'successful parsing cannot be repeated unchanged');
+      inputText(artifact([shared('New source')]));
+      assert.equal(WM.el('fm-import-review').disabled, false, 'changing source enables parsing again');
+      assert.equal(importNames().length, 0, 'changed source retires the old candidates');
+      assert.equal(parses.length, 2, 'typing does not parse or add anything');
     } else assertReview(false);
     return;
   }
@@ -543,6 +550,16 @@ async function pasteScenario() {
     assert.equal(importNames()[0].value, 'Straße', 'no automatic rename');
     importRename(0, ' Resolved ');
     assert.equal(validations.length, 0, 'name typing must stay local');
+    assert.equal(WM.el('fm-import-review').disabled, true, 'corrected names lead to Add, not reparsing');
+    const parsedCount = parses.length;
+    // Bypass native disabled-click suppression to exercise the handler guard.
+    WM.el('fm-import-review').dispatchEvent({type: 'click'});
+    await tick();
+    assert.equal(parses.length, parsedCount, 'unchanged source cannot erase corrections');
+    inputText(WM.el('fm-import-text').value);
+    assert.equal(importNames()[0].value, ' Resolved ', 'an unchanged input event keeps corrections');
+    assert.equal(WM.el('fm-import-add').disabled, false);
+    assert.equal(saves.length, 0, 'review never saves the destination');
   }
   if (scenario === 'paste-invalid-renames') {
     // Exhaustive name validation stays below the page; keep rejection/recovery.
@@ -791,6 +808,14 @@ async function main() {
   else if (scenario.startsWith('delete-')) await deleteScenario();
   else if (scenario.startsWith('paste-')) await pasteScenario();
   else if (scenario.startsWith('copy-')) await copyScenario();
+  else if (scenario === 'creation-preset-order') {
+    const preset = WM.el('fm-preset'), add = WM.el('fm-add');
+    const siblings = preset.parentNode.children;
+    assert.ok(siblings.indexOf(preset) < siblings.indexOf(add), 'choose the preset before creating its formation');
+    const label = siblings.find(node => node.tagName === 'LABEL' && node.getAttribute('for') === preset.id);
+    assert.ok(label && label.textContent.trim(), 'the creation choice has a visible associated label');
+    assert.equal(reads.length, 1); assert.equal(saves.length, 0);
+  }
   else if (scenario === 'account-context') {
     const context = () => WM.el('fm-account-context').textContent;
     assert.equal(context(), 'Account: Account A');

@@ -42,6 +42,7 @@ SCENARIOS = [
     "start-reply-after-completion",
     "failed-switch",
     "account-context",
+    "creation-preset-order",
     "preview-key-separation",
     "preview-origin-scale",
     "preview-fractional-scale",

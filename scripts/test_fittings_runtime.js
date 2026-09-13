@@ -133,7 +133,7 @@ async function page() {
   const confirmations = [];
   const api = {};
   for (const method of ['fittings_state', 'fittings_detail', 'fittings_update_metadata',
-    'fittings_set_membership', 'fittings_refresh', 'fittings_delete_entry',
+    'fittings_set_membership', 'fittings_set_supersession', 'fittings_refresh', 'fittings_delete_entry',
     'fittings_preflight_copy', 'fittings_start_copy', 'fittings_cancel_copy']) {
     api[method] = (...args) => new Promise((resolve, reject) => {
       calls.push({ method, args, resolve, reject });
@@ -223,6 +223,235 @@ function assertDraft(p, name, description) {
   assert.match(metadata(p).textContent, /Unsaved changes/);
   assert.equal(metadataDisclosure(p)?.open, true, 'a draft stays exposed after rerender');
 }
+
+function selectionBoxes(p) {
+  return p.el('fittings-list').querySelectorAll('.fit-select').map(label => label.querySelector('input'));
+}
+function selectedRows(p) { return selectionBoxes(p).filter(box => box.checked).map(box => box.value); }
+
+test('selection names distinguish identical fit and hull names by current page row without changing selection', async () => {
+  const p = await page(); await p.route('fittings');
+  const payload = state(['fit-1', 'fit-2', 'fit-3']);
+  payload.rows[2].ship_name = ''; payload.rows[2].ship_type_id = 999;
+  await settle(p.last('fittings_state'), payload);
+  function names() { return selectionBoxes(p).map(box => box.getAttribute('aria-label')); }
+  assert.deepEqual(names(), [
+    'Select Sabre tackle — Sabre, row 1 on this page',
+    'Select Sabre tackle — Sabre, row 2 on this page',
+    'Select Sabre tackle — Type 999, row 3 on this page'
+  ]);
+  tick(selectionBoxes(p)[1]);
+  assert.deepEqual(selectedRows(p), ['fit-2']);
+  assert.equal(p.calls().length, 1, 'selection remains local');
+  await p.changed({reason: 'metadata', entry_id: 'fit-2'});
+  const refreshed = state(['fit-2', 'fit-1']);
+  refreshed.total = 3; refreshed.page_size = 2;
+  refreshed.rows[0].name = 'Renamed & <fit>';
+  await settle(p.last('fittings_state'), refreshed);
+  assert.deepEqual(names(), [
+    'Select Renamed & <fit> — Sabre, row 1 on this page',
+    'Select Sabre tackle — Sabre, row 2 on this page'
+  ]);
+  assert.deepEqual(selectedRows(p), ['fit-2'], 'position is not the selection key');
+  const rows = p.el('fittings-list').querySelectorAll('.fit-row');
+  selectionBoxes(p).forEach((box, index) => {
+    assert.ok(box.getAttribute('aria-label').includes(rows[index].querySelector('.fit-name').textContent));
+    assert.ok(box.getAttribute('aria-label').includes(rows[index].querySelector('.fit-ship').textContent));
+    assert.ok(!box.getAttribute('aria-label').includes(box.value), 'opaque ID is not the user-facing identity');
+  });
+  p.el('fittings-page-next').click(); await flush();
+  const nextPage = state(['fit-4']); nextPage.page = 2;
+  await settle(p.last('fittings_state'), nextPage);
+  assert.deepEqual(names(), ['Select Sabre tackle — Sabre, row 1 on this page']);
+  assert.deepEqual(selectedRows(p), [], 'page changes still prune selection');
+});
+
+test('Superseded by names the current select and retains the existing change endpoint', async () => {
+  const p = await page(); await p.route('fittings');
+  await settle(p.last('fittings_state'), state(['fit-1', 'fit-2']));
+  async function expand(index, id) {
+    p.el('fittings-list').querySelectorAll('.fit-row-toggle')[index].click(); await flush();
+    await settle(p.last('fittings_detail'), detail(id));
+    const group = p.el('fittings-list').querySelector('.fit-supersession');
+    const select = group.querySelector('select');
+    const reference = select.getAttribute('aria-labelledby');
+    assert.ok(reference, 'select must reference its visible label');
+    const label = p.el(reference);
+    assert.ok(label && group.contains(label), 'association resolves inside the current detail');
+    assert.equal(label.textContent, 'Superseded by');
+    return select;
+  }
+  const first = await expand(0, 'fit-1');
+  first.value = 'fit-2'; first.dispatchEvent({type: 'change'}); await flush();
+  assert.deepEqual(p.last('fittings_set_supersession').args, ['fit-1', 'fit-2']);
+  await settle(p.last('fittings_set_supersession'), true);
+  const second = await expand(1, 'fit-2');
+  assert.notEqual(second.getAttribute('aria-labelledby'), first.getAttribute('aria-labelledby'));
+  second.value = ''; second.dispatchEvent({type: 'change'}); await flush();
+  assert.deepEqual(p.last('fittings_set_supersession').args, ['fit-2', null]);
+  await settle(p.last('fittings_set_supersession'), true);
+  assert.deepEqual(p.errors, []);
+});
+
+test('page selection helpers stay inert before hydration and for empty results', async () => {
+  const p = await page();
+  const select = p.el('fittings-select-page'), clear = p.el('fittings-clear-selection');
+  assert.ok(select && clear, 'the bounded page selection helpers must exist');
+  await p.route('fittings');
+  for (const payload of [null, state([])]) {
+    if (payload) await settle(p.last('fittings_state'), payload);
+    const before = p.calls().length;
+    for (const helper of [select, clear]) {
+      assert.equal(helper.disabled, true);
+      helper.dispatchEvent({type: 'click'}); // guards must survive forced dispatch
+    }
+    assert.equal(p.calls().length, before);
+    assert.equal(p.el('fittings-copy-selected').disabled, true);
+  }
+});
+
+test('Select page uses only rendered filtered rows; deselection and Clear stay local until explicit review', async () => {
+  const p = await page(); await p.route('fittings');
+  const payload = state(['fit-2', 'fit-4']);
+  payload.total = 50; payload.page_size = 2;
+  payload.filters.search = 'tackle';
+  await settle(p.last('fittings_state'), payload);
+  const select = p.el('fittings-select-page'), clear = p.el('fittings-clear-selection');
+  assert.ok(select && clear, 'the bounded page selection helpers must exist');
+  const before = p.calls().length;
+  assert.equal(clear.disabled, true);
+  select.click();
+  assert.deepEqual(selectedRows(p), ['fit-2', 'fit-4']);
+  assert.equal(p.el('fittings-copy-selected').textContent, 'Copy selected (2)');
+  tick(selectionBoxes(p)[0]);
+  assert.deepEqual(selectedRows(p), ['fit-4']);
+  assert.equal(p.el('fittings-copy-selected').textContent, 'Copy selected (1)');
+  clear.click();
+  assert.deepEqual(selectedRows(p), []);
+  assert.equal(clear.disabled, true);
+  assert.equal(p.el('fittings-copy-selected').disabled, true);
+  select.click();
+  assert.equal(p.calls().length, before, 'selection must neither fetch nor preflight');
+  p.el('fittings-copy-selected').click();
+  tick(p.el('fittings-copy-body').querySelector('input'));
+  p.el('fittings-copy-review').click(); await flush();
+  assert.deepEqual(Array.from(p.last('fittings_preflight_copy').args[0]), ['fit-2', 'fit-4']);
+});
+
+test('selection helpers preserve metadata node, draft, focus, text selection and scroll identity', async () => {
+  const p = await editor();
+  const select = p.el('fittings-select-page'), clear = p.el('fittings-clear-selection');
+  assert.ok(select && clear, 'the bounded page selection helpers must exist');
+  const host = p.el('fittings-list'), disclosure = metadataDisclosure(p);
+  const name = p.el('fit-name-fit-1'), description = p.el('fit-desc-fit-1');
+  input(name, 'Unsubmitted name'); input(description, 'Unsubmitted description');
+  name.focus(); name.setSelectionRange(2, 7, 'backward'); host.scrollTop = 93;
+  const row = host.children[0], before = p.calls().length;
+  for (const helper of [select, clear]) {
+    helper.click();
+    assert.equal(host.children[0] === row, true, 'no list rebuild for a checkbox change');
+    assert.equal(metadataDisclosure(p) === disclosure, true);
+    assert.equal(disclosure.open, true);
+    assert.equal(p.el('fit-name-fit-1') === name, true);
+    assert.equal(p.el('fit-desc-fit-1') === description, true);
+    assert.equal(p.focused() === name, true);
+    assert.deepEqual([name.selectionStart, name.selectionEnd, name.selectionDirection], [2, 7, 'backward']);
+    assert.equal(host.scrollTop, 93);
+    assertDraft(p, 'Unsubmitted name', 'Unsubmitted description');
+  }
+  assert.equal(p.calls().length, before);
+});
+
+test('focused Clear selection continues at Select page without replacing drafts or scrolling', async () => {
+  const p = await editor();
+  const select = p.el('fittings-select-page'), clear = p.el('fittings-clear-selection');
+  const host = p.el('fittings-list'), disclosure = metadataDisclosure(p);
+  const name = p.el('fit-name-fit-1');
+  input(name, 'Unsubmitted name');
+  select.click(); clear.focus(); host.scrollTop = 93;
+  const before = p.calls().length;
+  clear.click();
+  assert.equal(clear.disabled, true);
+  assert.equal(p.focused() === select, true, 'clearing must not strand keyboard focus on the document body');
+  assert.deepEqual(selectedRows(p), []);
+  assert.equal(p.el('fit-name-fit-1') === name, true);
+  assert.equal(metadataDisclosure(p) === disclosure, true);
+  assert.equal(disclosure.open, true);
+  assert.equal(name.value, 'Unsubmitted name');
+  assert.equal(host.scrollTop, 93);
+  assert.equal(p.calls().length, before);
+});
+
+test('selection helpers follow existing read pruning, page/filter clears and stale-read fencing', async () => {
+  const p = await page(); await p.route('fittings');
+  const first = state(['fit-1', 'fit-2']); first.total = 4; first.page_size = 2;
+  await settle(p.last('fittings_state'), first);
+  const select = p.el('fittings-select-page');
+  assert.ok(select, 'the bounded page selection helper must exist');
+  await p.changed({reason: 'refresh'});
+  const stale = p.last('fittings_state');
+  select.click();
+  await p.changed({reason: 'refresh'});
+  await settle(p.last('fittings_state'), state(['fit-2', 'fit-3']));
+  assert.deepEqual(selectedRows(p), ['fit-2'], 'retain only the intersection, never select new rows');
+  await settle(stale, first);
+  assert.deepEqual(selectionBoxes(p).map(box => box.value), ['fit-2', 'fit-3']);
+  p.el('fittings-page-next').dispatchEvent({type: 'click'}); await flush();
+  assert.deepEqual(selectedRows(p), [], 'clear current checkbox paint while a page read is pending');
+  select.click(); // still acts on STATE.rows, not the not-yet-delivered next page
+  await settle(p.last('fittings_state'), state(['fit-4']));
+  assert.deepEqual(selectedRows(p), []);
+  select.click();
+  input(p.el('fittings-search'), 'new filter');
+  assert.deepEqual(selectedRows(p), []);
+  await p.timers();
+  await settle(p.last('fittings_state'), state(['fit-5']));
+  assert.deepEqual(selectedRows(p), []);
+  select.click(); await p.route('main'); await p.route('fittings');
+  await settle(p.last('fittings_state'), state(['fit-5']));
+  assert.deepEqual(selectedRows(p), [], 'route cleanup is still unconditional');
+});
+
+test('copy progress disables and handler-guards selection helpers, then completion releases them', async () => {
+  const p = await editor();
+  await repaint(p, state(['fit-1', 'fit-2']));
+  const select = p.el('fittings-select-page'), clear = p.el('fittings-clear-selection');
+  assert.ok(select && clear, 'the bounded page selection helpers must exist');
+  await beginCopy(p);
+  const before = p.calls().length;
+  for (const helper of [select, clear]) {
+    assert.equal(helper.disabled, true);
+    helper.dispatchEvent({type: 'click'});
+    assert.deepEqual(selectedRows(p), ['fit-1']);
+    assert.equal(p.el('fittings-copy-selected').textContent, 'Copy selected (1)');
+  }
+  assert.equal(p.calls().length, before);
+  await complete(p, result(['success']));
+  assert.equal(select.disabled, false);
+  assert.equal(clear.disabled, true);
+  assert.deepEqual(selectedRows(p), []);
+});
+
+test('Delete fitting exposes its presence restriction beside the action and removes it when eligible', async () => {
+  const p = await editor(false);
+  const present = detail();
+  present.presences = [{ character_id: 42, character_name: 'Pilot',
+    source_name: 'Sabre tackle', first_seen_utc: '2026-09-01T12:00:00Z' }];
+  await repaint(p, state(), present);
+  const remove = button(p.el('fittings-list'), 'Delete fitting');
+  assert.equal(remove.disabled, true);
+  const reason = remove.parentNode.querySelector('.hint');
+  assert.ok(reason, 'a tooltip alone hides the reason for a disabled action');
+  assert.equal(reason.textContent, remove.title, 'use the existing restriction authority');
+  assert.ok(reason.getClientRects().length, 'the reason is outside the closed metadata editor');
+  remove.click();
+  assert.equal(p.confirmations.length, 0);
+  assert.equal(p.calls('fittings_delete_entry').length, 0);
+  await repaint(p);
+  const enabled = button(p.el('fittings-list'), 'Delete fitting');
+  assert.equal(enabled.disabled, false);
+  assert.equal(enabled.parentNode.querySelector('.hint'), null, 'no stale restriction after presence clears');
+});
 
 test('metadata is read-first with native disclosure state retained through unrelated renders', async () => {
   const p = await editor(false);
@@ -752,9 +981,26 @@ test('unresolved copy conflicts keep labels, recovery instructions and review re
 test('copy refusal error styling clears on checking, accepted review and reopening', async () => {
   const p = await page();
   await p.route('fittings');
-  await settle(p.last('fittings_state'), state());
-  const error = 'Limit each copy to 7 additions. Select fewer fittings or targets, then review again.';
-  await reviewCopy(p, { accepted: false, error });
+  const workspace = state(['fit-1', 'fit-2', 'fit-3']);
+  workspace.characters.push({ ...workspace.characters[0], character_id: 43, character_name: 'Second pilot' });
+  await settle(p.last('fittings_state'), workspace);
+  const error = '5 additions requested across all targets; limit 2 (3 over). Select fewer fittings or targets, then review again.';
+  const refusal = { accepted: false, ticket_id: '', created_utc: '', write_count: 0,
+    counts: { ready: 5, present: 1, conflict: 0, unavailable: 0 },
+    requires_resolution: false, pairs: workspace.rows.flatMap(row => workspace.characters.map(character => ({
+      ...preflight().pairs[0], entry_id: row.id, character_id: character.character_id,
+      character_name: character.character_name,
+      status: row.id === 'fit-1' && character.character_id === 42 ? 'present' : 'ready'
+    }))), error };
+  p.el('fittings-list').querySelectorAll('input').forEach(tick);
+  p.el('fittings-copy-selected').click();
+  p.el('fittings-copy-body').querySelectorAll('input').forEach(tick);
+  p.el('fittings-copy-review').click(); await flush();
+  await settle(p.last('fittings_preflight_copy'), refusal);
+  assert.equal(p.el('fittings-list').querySelectorAll('input').filter(node => node.checked).length, 3);
+  assert.equal(p.el('fittings-copy-body').querySelector('input').checked, true);
+  assert.equal(p.el('fittings-copy-start').hidden, true);
+  assert.equal(p.el('fittings-copy-review').disabled, false);
   const status = p.el('fittings-copy-status');
   assert.equal(status.classList.contains('err'), true, 'refusal must not look like ordinary guidance');
   assert.ok(status.textContent.includes(error), 'retain cap and recovery details');
@@ -764,9 +1010,9 @@ test('copy refusal error styling clears on checking, accepted review and reopeni
   assert.equal(status.classList.contains('err'), false);
   p.el('fittings-copy-close').click();
   p.el('fittings-copy-selected').click();
-  tick(p.el('fittings-copy-body').querySelector('input'));
+  p.el('fittings-copy-body').querySelectorAll('input').forEach(tick);
   p.el('fittings-copy-review').click(); await flush();
-  await settle(p.last('fittings_preflight_copy'), { accepted: false, error });
+  await settle(p.last('fittings_preflight_copy'), refusal);
   assert.equal(status.classList.contains('err'), true);
   p.el('fittings-copy-close').click();
   p.el('fittings-copy-selected').click();
@@ -857,7 +1103,7 @@ test('copy identity survives filtering, progress and reopening results without n
     assert.match(status, index === 0 ? /Fleet tackle.*Flycatcher.*Pilot.*Copied/
       : /Fleet tackle.*Sabre.*Pilot.*Already present/);
     assert.equal(p.el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
-      (index + 1) + ' of 2 pairs checked');
+      (index + 1) + ' of 2 fitting/character checks complete');
   }
   await complete(p, { status: 'complete', operation_id: 'op-identity', write_count: 1, results: rows });
   const body = p.el('fittings-copy-body');
@@ -920,7 +1166,7 @@ test('copy identity labels remain literal text for long markup-like names', asyn
 });
 
 for (const count of [0, 1, 2]) {
-  test(`copy counts ${count} distinguish plans, checked pairs, attempts and copied outcomes`, async () => {
+  test(`copy counts ${count} distinguish plans, fitting/character checks, attempts and copied outcomes`, async () => {
     const p = await page();
     await p.route('fittings');
     await settle(p.last('fittings_state'), state());
@@ -941,12 +1187,12 @@ for (const count of [0, 1, 2]) {
     assert.doesNotMatch(summary, /remote write|copied|attempted|checked/);
     await startReviewedCopy(p);
     const total = count * 2 + 7;
-    assert.equal(body.querySelector('.fit-copy-summary').textContent, '0 of ' + total + ' pairs checked');
+    assert.equal(body.querySelector('.fit-copy-summary').textContent, '0 of ' + total + ' fitting/character checks complete');
     const results = review.pairs.map(pair => ({ ...pair, attempted: pair.status === 'ready',
       status: pair.status === 'ready' ? 'unknown' : pair.skipped ? 'conflict_skipped' : pair.status }));
     await p.progress({ kind: 'copy', phase: 'progress', ticket_id: 'ticket-1',
       completed: 1, total, result: results[0] });
-    assert.equal(body.querySelector('.fit-copy-summary').textContent, '1 of ' + total + ' pairs checked');
+    assert.equal(body.querySelector('.fit-copy-summary').textContent, '1 of ' + total + ' fitting/character checks complete');
     await complete(p, { status: 'complete', write_count: count, results });
     const completed = body.querySelector('.fit-copy-summary').textContent;
     assert.match(completed, /0 copied.*4 already present/);
@@ -1031,16 +1277,55 @@ test('mixed copy results summarize outcomes and give status-specific safe next s
   const pairs = body.querySelectorAll('.fit-copy-pair');
   const expectations = [
     /Copied/, /Already present/, /alternate name.*review/i,
-    /error.*refresh.*review/i, /check.*target.*EVE.*refresh.*before.*retry/i,
-    /wait.*refresh.*review/i, /not attempted.*review/i, /refresh.*review/i
+    /error.*refresh.*review/i, /Needs verification/i,
+    /not attempted.*rate limit/i, /not attempted.*review/i, /refresh.*review/i
   ];
   pairs.forEach((pair, index) => assert.match(pair.textContent, expectations[index]));
   assert.doesNotMatch(pairs[0].textContent, /No action needed/i);
   assert.doesNotMatch(pairs[1].textContent, /No action needed/i);
-  assert.ok(pairs[4].querySelector('.fit-copy-guidance'));
+  assert.match(body.textContent, /check.*target.*EVE.*refresh.*before.*retry/i);
+  assert.match(body.textContent, /rate limit.*wait.*refresh.*review/i);
   assert.equal(p.calls().length, before, 'displaying advice must not issue any operation');
   assert.equal(body.querySelector('button'), null, 'no automatic retry control');
 });
+
+for (const operationStatus of ['complete', 'throttled']) {
+  test(`repeated ${operationStatus} copy recovery is shared without losing fitting, hull, target or error`, async () => {
+    const p = await page();
+    await p.route('fittings');
+    await settle(p.last('fittings_state'), sameNameWorkspace());
+    const review = sameNamePreflight();
+    await reviewCopy(p, review);
+    await startReviewedCopy(p);
+    const rows = ['unknown', 'unknown', 'failed', 'unattempted_throttle', 'unattempted_throttle'].map((status, index) => ({
+      ...review.pairs[index % 2], character_name: 'Target ' + index, status,
+      error: 'Reason ' + index, attempted: ['unknown', 'failed'].includes(status)
+    }));
+    const before = p.calls().length;
+    await complete(p, { status: operationStatus, operation_id: '', write_count: 3, results: rows });
+    const body = p.el('fittings-copy-body');
+    const guidance = body.children.filter(node => node.classList.contains('fit-copy-guidance'));
+    assert.equal(guidance.length, 2, 'one verification and one rate-limit recovery, not one per row');
+    assert.match(guidance[0].textContent, /verification.*Personal Fittings.*EVE.*refresh.*before.*retry/i);
+    assert.match(guidance[0].textContent, /may already exist/i);
+    assert.match(guidance[1].textContent, /rate limit.*wait.*refresh.*review/i);
+    const rendered = body.querySelectorAll('.fit-copy-pair');
+    assert.equal(rendered.length, 5);
+    rendered.forEach((row, index) => {
+      assert.equal(row.querySelector('.fit-copy-pair-name').textContent,
+        'Fleet tackle (' + (index % 2 ? 'Sabre' : 'Flycatcher') + ')');
+      assert.equal(row.querySelector('.fit-copy-character').textContent, 'Target ' + index);
+      assert.ok(row.textContent.includes('Reason ' + index));
+      assert.match(row.querySelector('.fit-copy-result').textContent,
+        index < 2 ? /Needs verification/ : index === 2 ? /Failed/ : /Not attempted.*rate limit/i);
+      if (index === 2) assert.match(row.querySelector('.fit-copy-guidance').textContent, /error.*refresh/i);
+      else assert.equal(row.querySelector('.fit-copy-guidance'), null);
+    });
+    assert.equal(body.querySelectorAll('.notice').length, 0, 'operation rate limit does not duplicate recovery');
+    assert.equal(p.calls().length, before, 'rendering recovery never retries an uncertain copy');
+    assert.equal(body.querySelector('button'), null);
+  });
+}
 
 test('last results reopen session-only, with no preflight/start and no stale ticket interference', async () => {
   const p = await editor();
@@ -1247,7 +1532,7 @@ test('refused screenshot injection and cleanup never cancel a genuine submitted 
   const before = p.calls().length;
   await p.screenshot(devScreenshot('progress'));
   await p.screenshot({kind: 'fittings-screenshot-v1', clear: true});
-  assert.match(p.el('fittings-copy-body').textContent, /0 of 1 pair checked/);
+  assert.match(p.el('fittings-copy-body').textContent, /0 of 1 fitting\/character check complete/);
   assert.equal(p.el('fittings-copy-overlay').hidden, false);
   assert.equal(p.calls().length, before, 'refused cleanup cannot leave the real route or cancel');
   await complete(p, result(['success']));
@@ -1288,6 +1573,40 @@ test('screenshot review counts classified ready pairs, not present or unavailabl
   assert.equal(p.el('fittings-copy-body').querySelectorAll('.fit-copy-pair').length, 4);
   assert.equal(p.calls().length, before);
 });
+
+for (const [count, limit, requested, excess] of [[11, 20, 22, 2], [10, 7, 20, 13], [11, 7, 22, 15]]) {
+  test(`screenshot cap refusal counts ${count} selected fits against the current ${limit} limit`, async () => {
+    const p = await page();
+    await p.route('fittings');
+    const fixture = devScreenshot();
+    fixture.max_copy_writes = limit;
+    await p.screenshot(fixture);
+    const before = p.calls().length;
+    const selected = p.el('fittings-list').querySelectorAll('.fit-row').filter(row => {
+      const name = row.querySelector('.fit-name').textContent;
+      const number = Number(name.match(/^Generated Fit (\d+)$/)?.[1]);
+      return number >= 2 && number <= count + 1;
+    });
+    assert.equal(selected.length, count);
+    selected.forEach(row => tick(row.querySelector('input')));
+    p.el('fittings-copy-selected').click();
+    const body = p.el('fittings-copy-body');
+    body.querySelectorAll('.fit-copy-target').forEach(row => {
+      if (['Eryn Voss', 'Fio Kest'].includes(row.textContent)) tick(row.querySelector('input'));
+    });
+    p.el('fittings-copy-review').click(); await flush();
+    const error = p.el('fittings-copy-status').textContent;
+    assert.match(error, new RegExp(requested + ' additions requested'));
+    assert.match(error, new RegExp('limit ' + limit + '\\b'));
+    assert.match(error, new RegExp(excess + ' over'));
+    if (count === 11 && limit === 20) assert.equal(error, fixture.limit_preflight.error);
+    assert.equal(selected.every(row => row.querySelector('input').checked), true);
+    assert.equal(body.querySelectorAll('input').filter(node => node.checked).length, 2);
+    assert.equal(p.el('fittings-copy-start').hidden, true);
+    assert.equal(p.el('fittings-copy-review').disabled, false);
+    assert.equal(p.calls().length, before, 'synthetic refusal cannot call the real bridge');
+  });
+}
 
 test('tooling-only screenshot results do not become real session history', async () => {
   const p = await editor();
@@ -1440,7 +1759,7 @@ test('copy recovery labels keep semantic outcomes and point to real authenticati
   assert.match(body.querySelector('.fit-copy-summary').textContent, /1 needs verification/);
   const rows = body.querySelectorAll('.fit-copy-pair');
   assert.match(rows[1].textContent, /request timed out/);
-  assert.match(rows[1].querySelector('.fit-copy-guidance').textContent, /Personal Fittings.*EVE.*refresh.*before.*retry/i);
+  assert.match(body.querySelector('.fit-copy-guidance').textContent, /Personal Fittings.*EVE.*refresh.*before.*retry/i);
   assert.match(rows[3].querySelector('.fit-copy-guidance').textContent, /Authenticate character.*Settings.*Character access/);
   assert.equal(p.calls().length, before);
   assert.equal(body.querySelector('button'), null);

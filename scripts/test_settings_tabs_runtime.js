@@ -306,6 +306,66 @@ test('late Preview group reply cannot restore focus after a subpage navigation',
   assert.ok(p.document.activeElement === p.document.body, 'late reply must not focus a hidden detail');
 });
 
+test('Configure visibly identifies its expanded character while retaining toggle and capture ownership', async () => {
+  const p = await page({previews: true}); p.WM.openSettingsSection('previews', 'characters');
+  await p.previewState();
+  const configure = () => p.document.querySelector('[data-preview-configure="Alice"]');
+  const id = configure().getAttribute('aria-controls');
+  assert.equal(configure().getAttribute('aria-expanded'), 'false');
+  assert.equal(p.el(id), null);
+  const capture = configure().parentNode.querySelector('.bindbtn');
+  await p.fire(capture, 'click'); await p.reply('set_bind_capture', true, [true]);
+  await p.fire(configure(), 'click'); await p.reply('set_bind_capture', true, [false]);
+  const heading = p.el(id).querySelector('h3');
+  assert.ok(heading, 'expanded controls need a visible character-specific heading');
+  assert.match(heading.textContent, /Configure.*Alice/);
+  assert.ok(heading.getClientRects().length);
+  assert.equal(configure().getAttribute('aria-expanded'), 'true');
+  assert.equal(configure().querySelector('.chev').textContent, '\u25be');
+  assert.equal(configure().querySelector('.chev').getAttribute('aria-hidden'), 'true');
+  assert.equal(p.document.activeElement, configure());
+  assert.equal(capture.classList.contains('capturing'), false);
+  await p.fire(configure(), 'click');
+  assert.equal(p.el(id), null);
+  assert.equal(configure().getAttribute('aria-expanded'), 'false');
+  assert.equal(configure().querySelector('.chev').textContent, '\u25b8');
+});
+
+for (const geometry of [true, false]) {
+  test('Copy source labels preserve identity and groups with ' + (geometry ? 'current' : 'legacy') + ' geometry', async () => {
+    const p = await page({previews: true}); p.WM.openSettingsSection('previews', 'characters');
+    const payload = previewPayload({
+      sizes: {Bob: [99, 88], Carol: [77, 66]},
+      layout_sources: [
+        {name: 'Alice', online: true},
+        {name: 'Bob', online: true, ...(geometry ? {geometry: {x: -1200, y: 0, w: 640, h: 360}} : {})},
+        {name: 'Carol', online: false, ...(geometry ? {geometry: {x: 10, y: 20, w: 320, h: 210}} : {})},
+        {name: 'Saved <pilot>', online: null}
+      ]
+    });
+    while (p.calls.some(call => call.method === 'get_preview_hotkey_state')) {
+      await p.reply('get_preview_hotkey_state', payload);
+    }
+    await p.fire(p.document.querySelector('[data-preview-configure="Alice"]'), 'click');
+    const copy = p.document.querySelector('[data-preview-detail-control="copy"]');
+    copy.focus(); await p.fire(copy, 'click');
+    assert.deepEqual(p.calls.map(call => call.method), ['choose'], 'labels cause no extra source reads');
+    assert.deepEqual(p.calls[0].args[5], {compact: true}, 'long source labels need the chooser’s full-text detail');
+    assert.deepEqual(p.calls[0].args[2], [
+      {label: 'Online', options: [{value: 'Bob', label: geometry ? 'Bob · 640 × 360 px at (-1200, 0)' : 'Bob'}]},
+      {label: 'Offline', options: [{value: 'Carol', label: geometry ? 'Carol · 320 × 210 px at (10, 20)' : 'Carol'}]},
+      {label: 'Saved placements', options: [{value: 'Saved <pilot>', label: 'Saved <pilot>'}]}
+    ]);
+    await p.reply('choose', null);
+    assert.equal(p.calls.length, 0, 'Cancel remains a no-op, not a copy or refresh');
+    assert.equal(p.document.activeElement, copy);
+    await p.fire(copy, 'click'); await p.reply('choose', 'Carol');
+    assert.deepEqual(p.calls.map(call => [call.method, call.args]), [
+      ['copy_preview_layout', ['Alice', 'Carol']]
+    ], 'the decorated label never becomes a source ID');
+  });
+}
+
 async function copyingPreview() {
   const p = await page({previews: true}); p.WM.openSettingsSection('previews', 'characters');
   const initial = previewPayload({layout_sources: [{name: 'Bob', online: null}]});
@@ -469,13 +529,19 @@ for (const [id, tab, method, submitted, draft] of [
   test(id + ' delayed ' + JSON.stringify(outcome) + ' reply retains newer drafts across tabs', async () => {
     const p = await page({settings: true}); p.WM.openSettingsSection('uploading', tab);
     const input = p.el(id); input.focus(); await p.edit(id, submitted);
-    await p.fire(input, id === 'f-category' ? 'change' : 'keydown', {key: 'Enter'});
+    await p.fire(input, 'keydown', {key: 'Enter'});
     await p.edit(id, draft);
+    const categoryGuidance = p.el('category-draft').textContent;
+    if (id === 'f-category') assert.match(categoryGuidance, /Enter/);
     const away = tab === 'youtube' ? 'recording' : 'youtube';
     await p.click('uploading', away); selected(p, 'uploading', away);
     await p.reply(method, outcome);
     await p.click('uploading', tab); selected(p, 'uploading', tab);
     assert.equal(p.el(id), input); assert.equal(input.value, draft);
+    if (id === 'f-category') {
+      assert.equal(p.el('category-draft').textContent, categoryGuidance);
+      assert.equal(p.el('category-draft').hidden, false);
+    }
     assert.equal(p.calls.some(call => call.method === 'get_settings'), false);
   });
 }

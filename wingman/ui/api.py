@@ -5196,10 +5196,22 @@ class Api:
         # family fence also hides retained native reports during cleanup.
         live = host is not None and host.runtime_enabled
         online = set(host.characters() if live else [])
+        # Enumerate and describe one snapshot: saved size-dialog defaults can
+        # lag the host's undebounced placement, which Copy actually uses.
+        layouts = self._preview_layout_entries()
         layout_sources = [
-            {"name": name, "online": name in online if live else None}
+            {
+                "name": name,
+                "online": name in online if live else None,
+                "geometry": {
+                    "x": layouts[name].rect.x,
+                    "y": layouts[name].rect.y,
+                    "w": layouts[name].rect.w,
+                    "h": layouts[name].rect.h,
+                },
+            }
             for name in sorted(
-                self._preview_layout_entries(),
+                layouts,
                 key=lambda name: (name not in online, name.casefold(), name),
             )
         ]

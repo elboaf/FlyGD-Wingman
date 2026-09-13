@@ -871,8 +871,10 @@ class FittingsController:
         write_count = counts["ready"]
         if write_count > contracts.MAX_COPY_WRITES:
             return self._preflight_error(
-                f"Limit each copy to {contracts.MAX_COPY_WRITES} additions across all "
-                "targets. Select fewer fittings or targets, then review again.",
+                f"{write_count} additions requested across all targets; "
+                f"limit {contracts.MAX_COPY_WRITES} "
+                f"({write_count - contracts.MAX_COPY_WRITES} over). "
+                "Select fewer fittings or targets, then review again.",
                 pairs,
             )
         requires_resolution = any(

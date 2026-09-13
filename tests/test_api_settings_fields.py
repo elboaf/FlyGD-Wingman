@@ -705,8 +705,16 @@ def test_preview_layout_sources_include_valid_offline_entries_and_mark_online(
     )
 
     assert api.get_preview_hotkey_state()["layout_sources"] == [
-        {"name": "Online", "online": True},
-        {"name": "Offline", "online": False},
+        {
+            "name": "Online",
+            "online": True,
+            "geometry": {"x": 1, "y": 2, "w": 320, "h": 210},
+        },
+        {
+            "name": "Offline",
+            "online": False,
+            "geometry": {"x": 3, "y": 4, "w": 640, "h": 360},
+        },
     ]
 
 
@@ -722,7 +730,71 @@ def test_preview_layout_sources_do_not_claim_offline_when_host_is_stopped(
     )
 
     assert api.get_preview_hotkey_state()["layout_sources"] == [
-        {"name": "Saved", "online": None}
+        {
+            "name": "Saved",
+            "online": None,
+            "geometry": {"x": 3, "y": 4, "w": 640, "h": 360},
+        }
+    ]
+
+
+def test_preview_layout_source_geometry_uses_one_current_host_snapshot(
+    monkeypatch, tmp_path
+):
+    from wingman.preview import geometry, layout
+
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._state.settings["preview"]["layouts"]["Online"] = {
+        "x": 5,
+        "y": 6,
+        "w": 320,
+        "h": 210,
+    }
+    host = _FakeSizeHost(characters=["Online"])
+    api._preview_host = host
+    snapshots = []
+
+    def current_entries():
+        snapshots.append(True)
+        # A second read is a different moment: enumerating sources and labeling
+        # them must not mix snapshots or fall back to debounced settings.
+        return (
+            {"Online": layout.Entry(geometry.Rect(-1200, 0, 640, 360))}
+            if len(snapshots) == 1
+            else {}
+        )
+
+    monkeypatch.setattr(host, "layout_entries", current_entries)
+    payload = api.get_preview_hotkey_state()
+    assert payload["layout_sources"] == [
+        {
+            "name": "Online",
+            "online": True,
+            "geometry": {"x": -1200, "y": 0, "w": 640, "h": 360},
+        }
+    ]
+    assert len(snapshots) == 1
+    assert payload["sizes"]["Online"] == [320, 210], (
+        "size-dialog defaults retain their separate authority"
+    )
+    assert host.copies == []
+
+
+def test_preview_layout_source_geometry_without_host_uses_valid_saved_entries(
+    monkeypatch, tmp_path
+):
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    api._state.settings["preview"]["layouts"] = {
+        "Saved": {"x": -80, "y": 0, "w": 480, "h": 300, "locked": True},
+        "hwnd:0x1234": {"x": 1, "y": 2, "w": 480, "h": 300},
+        "Invalid": {"x": 1, "y": 2, "w": 0, "h": 300},
+    }
+    assert api.get_preview_hotkey_state()["layout_sources"] == [
+        {
+            "name": "Saved",
+            "online": None,
+            "geometry": {"x": -80, "y": 0, "w": 480, "h": 300},
+        }
     ]
 
 

@@ -603,6 +603,20 @@ focus and text selection restored only when that editor still owns focus.
 A newer route, row or dialog must never have focus taken back by a refresh.
 Save remains explicit, and disclosure state is session-only.
 
+Fittings' **Select page** selects only the currently displayed filtered page, not
+hidden pages or the whole library. **Clear selection** and individual checkboxes
+share that page-owned selection; existing filter/page/route pruning remains in
+force. Selection-only changes repaint checkboxes and the Copy count, never the
+metadata editor or a bridge read/write. Clearing from the focused helper returns
+focus locally to Select page without scrolling; programmatic changes never take
+focus from an editor. Copy selected remains the sole accent action.
+
+Formation import separates parsing source text from validating edited candidates.
+After successful Review, unchanged source cannot be parsed again and discard name
+corrections. Changing the pasted text enables Review; a failed parse stays
+retryable. Add formations validates the corrected names and changes the draft,
+not the file. The creation preset is labelled and precedes New formation.
+
 Settings has no Save button. Every field commits on its own through a
 per-field endpoint returning `{applied, persisted, error}`.
 
@@ -716,6 +730,19 @@ static help. Keep current readiness near its owning switch or heading, with
 recovery beside it; enabled settings alone do not establish live operation.
 Move the existing status node rather than creating a second live-region owner.
 Expected Off or Waiting states are not errors merely because work is inactive.
+Fleet eligibility stays beside sharing status, outside its roster disclosure;
+settled history hides obsolete Stop controls but retains their keyed identity if
+pending work makes an attempt current again. Advanced alert Flashes and Speed
+have separate local feedback and ordered per-field writes. Their replies and
+hydration cannot replace newer choices or another field's refusal. Keep their
+live regions mounted, including when empty.
+
+Preview Copy sources describe geometry from the same current layout snapshot
+that enumerates the source names, including undebounced host geometry. Saved
+Size-dialog defaults are a different authority and must not be presented as the
+current Copy geometry. Older payloads without geometry still identify the source
+without invented coordinates. This is read evidence, not a guarantee that a user
+cannot move the source before pressing Copy.
 
 
 ## Routes and sections

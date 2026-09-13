@@ -119,11 +119,15 @@ async function gapRegression() {
       assert.equal(document.querySelectorAll('.fit-copy-pair').length, 3);
     } else {
       pane = el('fittings-copy-body'); anchor = pane.querySelectorAll('.fit-copy-pair').at(-1);
-      target = anchor.querySelector('.fit-copy-guidance');
+      target = anchor.querySelector('.fit-copy-result');
       assert.equal(anchor.querySelector('.fit-copy-pair-name').textContent, 'Generated Fit 003 (Merlin)');
       assert.equal(anchor.querySelector('.fit-copy-character').textContent, 'Gio Renn');
-      assert.equal(anchor.querySelector('.fit-copy-result').textContent, 'Not attempted: rate limit');
-      assert.equal(target.textContent, 'Not attempted. Wait for the ESI limit to clear, refresh characters, then review a new copy.');
+      assert.equal(target.textContent, 'Not attempted: rate limit');
+      assert.equal(anchor.querySelector('.fit-copy-detail'), null, 'unattempted row has no invented error or repeated guidance');
+      assert.ok(pane.querySelectorAll('.fit-copy-guidance').some(node =>
+        node.parentNode === pane && /before any retry/.test(node.textContent)));
+      assert.ok(pane.querySelectorAll('.fit-copy-guidance').some(node =>
+        node.parentNode === pane && /Rate limit:.*fittings not attempted/.test(node.textContent)));
       assert.equal(el('fittings-copy-close').disabled, false);
     }
     // Layout boundary inputs only: this harness does not render CSS. Nodes
@@ -188,6 +192,10 @@ async function gapRegression() {
     else if (scenario === 'inconsistent-capability') el('es-copy-scope-note').classList.add('warn');
     else if (scenario === 'wrong-pair') document.querySelector('.fit-copy-pair-name').textContent = 'Wrong fitting';
     else if (scenario === 'wrong-summary') document.querySelector('.fit-copy-summary').textContent = '6 copied · 0 failed';
+    else if (scenario === 'missing-recovery') pane.querySelectorAll('.fit-copy-guidance')
+      .find(node => /Rate limit:/.test(node.textContent)).remove();
+    else if (scenario === 'hidden-recovery') pane.querySelectorAll('.fit-copy-guidance')
+      .find(node => /before any retry/.test(node.textContent)).hidden = true;
     if (scenario.startsWith('rounding-') || scenario.startsWith('edge-')) verify();
     else if (!['settled', 'codec-missing'].includes(scenario)) assert.throws(verify, /Screenshot content did not settle/, scenario);
     assert.equal(calls.length, 0, 'new staging/verification must not write, copy, Test, or use the clipboard');
@@ -526,7 +534,7 @@ async function fidelityRegression() {
     run(data.stage);
   } else if (moduleName === 'characters') {
     const notice = el('characters-notice');
-    assert.match(notice.textContent, /Skills Only was removed, but cleanup is incomplete/);
+    assert.match(notice.textContent, /"Skills Only" was removed, but cleanup is incomplete/);
     assert.match(notice.textContent, /Restart Wingman to retry cleanup before adding this character again/);
     assert.equal(notice.classList.contains('warn'), true, 'same warning emphasis as production Forget');
     assert.ok(visible(notice));
@@ -540,8 +548,8 @@ async function fidelityRegression() {
     assert.deepEqual(selectedIds, ['fit-gen-1', 'fit-gen-2', 'fit-gen-3', 'fit-gen-4',
       'fit-gen-5', 'fit-gen-6', 'fit-gen-7', 'fit-gen-8', 'fit-gen-9', 'fit-gen-10', 'fit-gen-11'].sort(),
       'select every intended entry exactly once, never an outside entry sharing its name');
-    assert.match(el('fittings-copy-status').textContent,
-      /Limit each copy to 20 additions across all targets\. Select fewer fittings or targets, then review again\./);
+    assert.equal(el('fittings-copy-status').textContent,
+      '22 additions requested across all targets; limit 20 (2 over). Select fewer fittings or targets, then review again.');
     assert.equal(el('fittings-copy-status').classList.contains('err'), true,
       'the staged refusal must use the same error state as a live rejected review');
     assert.match(el('fittings-copy-body').textContent, /^11 selected\./,
@@ -588,7 +596,7 @@ async function fidelityRegression() {
     assert.equal(el('fittings-copy-cancel-note').hidden, !isProgress);
     assert.equal(el('fittings-copy-close').disabled, isProgress);
     if (isProgress) {
-      assert.match(el('fittings-copy-body').textContent, /2 of 6 pairs checked/);
+      assert.equal(el('fittings-copy-body').textContent, '2 of 6 fitting/character checks complete');
       assert.match(el('fittings-copy-status').textContent, /Generated Fit 002 \(Merlin\).*Fio Kest: Needs verification/);
       assert.equal(el('fittings-copy-cancel').disabled, false);
       assert.ok(visible(el('fittings-copy-cancel-note')), 'cost remains visible while progress is active');

@@ -139,8 +139,8 @@
         : currentHealth && currentHealth.test_result_text ? 'Test: ' + currentHealth.test_result_text : '';
     if (!acknowledged) return;
     el('credential').textContent = acknowledged.credential_error ? 'Stored token could not be read.'
-      : acknowledged.credential_present ? 'Token stored for this connection.'
-        : 'No token stored for this connection. Remove connection also clears any token saved for an earlier URL or map.';
+      : acknowledged.credential_present ? 'Token stored for the saved URL and map.'
+        : 'No token stored for the saved URL and map. Remove connection also clears any token saved for an earlier URL or map.';
     el('health').textContent = connectionText(currentHealth);
     // These are WorkerState's current-session projection counts, never a map
     // roster or persisted recent-character list. Expired names are not available.

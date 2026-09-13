@@ -1066,6 +1066,7 @@ def _fidelity_verify_script(screen: Screen) -> str | None:
             )
             if progress:
                 completed = fixture["copy_progress_completed"]
+                checks = "check" if len(results) == 1 else "checks"
                 pair = results[completed - 1]
                 entry = next(
                     row for row in fixture["entries"] if row["id"] == pair["entry_id"]
@@ -1074,7 +1075,7 @@ def _fidelity_verify_script(screen: Screen) -> str | None:
                 condition += (
                     " || !visible(WM.el('fittings-copy-cancel')) || WM.el('fittings-copy-cancel').disabled"
                     " || !WM.el('fittings-copy-close').disabled"
-                    f" || WM.el('fittings-copy-body').textContent !== '{completed} of {len(results)} pairs checked'"
+                    f" || WM.el('fittings-copy-body').textContent !== '{completed} of {len(results)} fitting/character {checks} complete'"
                     f" || WM.el('fittings-copy-status').textContent.indexOf({json.dumps(identity)}) !== 0"
                 )
             else:
@@ -1254,13 +1255,23 @@ var pairs = pane.querySelectorAll('.fit-copy-pair'), row = pairs[pairs.length - 
 check(row && expected.status === 'unattempted_throttle');
 var name = row.querySelector('.fit-copy-pair-name'), character = row.querySelector('.fit-copy-character');
 var status = row.querySelector('.fit-copy-result'), error = row.querySelector('.fit-copy-detail');
-var guidance = row.querySelector('.fit-copy-guidance');
 check(text(name, identity) && text(character, expected.character_name)
   && text(status, 'Not attempted: rate limit') && status.classList.contains(expected.status)
-  && text(error, expected.error)
-  && text(guidance, 'Not attempted. Wait for the ESI limit to clear, refresh characters, then review a new copy.'));
+  && (expected.error ? text(error, expected.error) : !error));
+// Shared recovery is above the result rows. Require it to exist and render,
+// but frame the last row's own outcome here, not a repeated instruction.
+var guidance = Array.prototype.slice.call(pane.querySelectorAll('.fit-copy-guidance'));
+check(guidance.some(function (node) {
+  return node.parentNode === pane && visible(node)
+    && /before any retry/.test(node.textContent);
+}) && guidance.some(function (node) {
+  return node.parentNode === pane && visible(node)
+    && /Rate limit:.*fittings not attempted/.test(node.textContent);
+}));
 row.scrollIntoView({block: 'end', behavior: 'instant'});
-check([name, character, status, error, guidance].every(function (node) { return exposed(node, pane); })
+var requiredNodes = [name, character, status];
+if (expected.error) requiredNodes.push(error);
+check(requiredNodes.every(function (node) { return exposed(node, pane); })
   && exposed(WM.el('fittings-copy-close'), WM.el('fittings-copy-dialog')));
 """
         )
@@ -1596,7 +1607,7 @@ def _screen_content_setup_script(screen: Screen) -> str | None:
             "    throw new Error('Characters partial-cleanup count did not render');\n"
             "  }\n"
             "  if (!notice || !notice.classList.contains('warn')\n"
-            "      || notice.textContent.indexOf('Skills Only was removed, but cleanup is incomplete.') === -1\n"
+            "      || notice.textContent.indexOf('\"Skills Only\" was removed, but cleanup is incomplete.') === -1\n"
             "      || notice.textContent.indexOf('Restart Wingman to retry cleanup') === -1) {\n"
             "    throw new Error('Characters partial-cleanup notice did not render');\n"
             "  }\n"

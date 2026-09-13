@@ -460,7 +460,7 @@
           if (!result.persisted) {
             // A roster read cannot retry participant cleanup. Startup can;
             // retain the removed identity after its row leaves the roster.
-            showNotice(characterName + ' was removed, but cleanup is incomplete. '
+            showNotice('"' + characterName + '" was removed, but cleanup is incomplete. '
               + 'Restart Wingman to retry cleanup before adding this character again.'
               + (result.error ? '\n' + result.error : ''), 'warn');
             announce(characterName + ' was removed.');

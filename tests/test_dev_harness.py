@@ -506,7 +506,8 @@ def test_fittings_limit_fixture_classifies_additions_across_eligible_targets():
     assert refusal["counts"]["ready"] == len(pairs)
     assert not refusal["accepted"] and refusal["write_count"] == 0
     assert limit["error"] == (
-        f"Limit each copy to {MAX_COPY_WRITES} additions across all targets. "
+        f"{len(pairs)} additions requested across all targets; "
+        f"limit {MAX_COPY_WRITES} ({len(pairs) - MAX_COPY_WRITES} over). "
         "Select fewer fittings or targets, then review again."
     )
     completed = fixture["copy_progress_completed"]

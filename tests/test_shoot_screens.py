@@ -280,6 +280,8 @@ def test_profiles_scope_capture_uses_actual_capability_without_overrides(
         ("fittings-copy-preflight-bottom-narrow", "wrong-pair"),
         ("fittings-copy-preflight-bottom-narrow", "unresolved"),
         ("fittings-copy-result-bottom-narrow", "wrong-summary"),
+        ("fittings-copy-result-bottom-narrow", "missing-recovery"),
+        ("fittings-copy-result-bottom-narrow", "hidden-recovery"),
     ],
 )
 def test_lower_copy_capture_rejects_unsettled_or_wrong_outcomes(
@@ -1668,7 +1670,7 @@ def test_character_capture_staging_is_read_only_and_scenario_backed():
     partial_cleanup = _character_capture_scripts()[
         "settings-characters-partial-cleanup"
     ]
-    assert "Skills Only was removed, but cleanup is incomplete." in partial_cleanup
+    assert '"Skills Only" was removed, but cleanup is incomplete.' in partial_cleanup
     assert "Restart Wingman to retry cleanup" in partial_cleanup
     narrow = _character_capture_scripts()["settings-characters-narrow"]
     assert "characters-menu-trigger" in narrow

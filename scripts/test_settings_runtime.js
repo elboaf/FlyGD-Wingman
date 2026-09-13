@@ -18,6 +18,29 @@ function turn() { return new Promise(resolve => setImmediate(resolve)); }
 const accepted = {applied: true, persisted: true, error: null};
 const refused = {applied: false, persisted: false, error: 'Not accepted'};
 
+test('startup settings and their feedback stay separate from build information', () => {
+  const startup = markup.getElementById('start-on-login').closest('section');
+  const about = markup.getElementById('about-version').closest('section');
+  assert.ok(startup !== about, 'startup is configuration, not build information');
+  assert.ok(startup.contains(markup.getElementById('msg-about')), 'startup outcome stays with its control');
+  assert.ok(markup.getElementById('section-general').contains(startup));
+});
+
+test('plugin readiness and stored-token context stay beside their owning controls', () => {
+  const status = markup.getElementById('fr-status');
+  assert.equal(status.getAttribute('role'), 'status');
+  assert.ok(status.classList.contains('operational-status'));
+  assert.ok(status.closest('section').contains(markup.getElementById('btn-fr-check')));
+  assert.equal(status.hidden, false);
+  const token = markup.getElementById('wanderer-token');
+  const cue = markup.getElementById('wanderer-credential');
+  assert.ok(token.parentNode === cue.parentNode, 'stored credential context is beside the token input');
+  assert.ok(token.parentNode.children.indexOf(cue) < token.parentNode.children.indexOf(token),
+    'stored-state cue precedes the intentionally empty token input');
+  assert.ok(token.getAttribute('aria-describedby').split(/\s+/).includes(cue.id));
+  assert.equal(markup.querySelectorAll('#wanderer-credential').length, 1, 'one credential feedback owner');
+});
+
 class Element {
   constructor(id) {
     this.id = id;
@@ -51,19 +74,23 @@ class Element {
   }
 }
 
-function page(hydrate = true, fightrecorder = false) {
+function page(hydrate = true, fightrecorder = false, previewSize = false) {
   const ids = [
     'f-privacy', 'f-category', 'f-recdir', 'f-gamelogs', 'f-webhook',
     'show-eve-tools', 'start-on-login', 'webhook-status', 'btn-webhook-show',
     'btn-webhook-remove', 'detect-note', 'gamelogs-note', 'about-version',
     'msg-general', 'msg-about', 'msg-uploads', 'msg-notify', 'msg-recdir',
-    'msg-gamelogs', 'msg-discord', 'btn-auth', 'tos-link', 'btn-update-check',
+    'msg-gamelogs', 'msg-discord', 'category-draft', 'btn-auth', 'tos-link', 'btn-update-check',
     'btn-update-download', 'btn-update-install', 'restore-preview-positions',
     'restore-preview-positions-status', 'preview-label-size', 'preview-label-size-status'
   ];
   if (fightrecorder) ids.push('fr-status', 'btn-fr-check', 'btn-fr-update', 'msg-fightrecorder',
     'preview-minimize-inactive', 'preview-minimize-inactive-status', 'sigbar-enabled', 'sigbar-enabled-status');
+  if (previewSize) ids.push('preview-default-size', 'preview-default-size-status');
   const elements = Object.fromEntries(ids.map(id => [id, new Element(id)]));
+  const categoryDraft = markup.getElementById('category-draft');
+  if (categoryDraft) elements['category-draft'].hidden = categoryDraft.hidden;
+  if (previewSize) elements['preview-default-size-status'].textContent = markup.getElementById('preview-default-size-status').textContent;
   if (fightrecorder) elements['btn-fr-update'].className = 'btn acc';
   const labelSize = markup.getElementById('preview-label-size');
   // Only this select needs options in the focused seam. Use the actual markup
@@ -137,7 +164,7 @@ function page(hydrate = true, fightrecorder = false) {
       elements[id].value = value;
       this.fire(id, 'input');
     },
-    async submit(id, value, event = 'change') {
+    async submit(id, value, event = id === 'f-category' ? 'keydown' : 'change') {
       this.edit(id, value);
       this.fire(id, event, {key: 'Enter'});
       await turn();
@@ -171,6 +198,49 @@ function page(hydrate = true, fightrecorder = false) {
   if (hydrate) api.hydrate();
   return api;
 }
+
+for (const [name, clientSizes, identity, dimensions, preview] of [
+  ['named', {'Pilot Example': [1600, 900]}, 'Pilot Example', '1600x900', '400x227'],
+  ['named after unnamed', {'hwnd:0x123': [1024, 768], 'Pilot Example': [1600, 900]}, 'Pilot Example', '1600x900', '400x227'],
+  ['unnamed only', {'hwnd:0x123': [1024, 768]}, null, '1024x768', '400x301']
+]) {
+  test('default-size guidance identifies ' + name + ' without exposing native identity', async () => {
+    const p = page(true, false, true);
+    p.hydrate({preview: {width: 400, height: 240}});
+    const original = JSON.stringify(clientSizes);
+    await p.reply('get_preview_hotkey_state', {client_sizes: clientSizes});
+    const hint = p.el('preview-default-size-status').textContent;
+    if (identity) assert.ok(hint.includes(identity), 'prefer the available character name');
+    else assert.match(hint, /unnamed.*client/i);
+    assert.doesNotMatch(hint, /hwnd:|0x123/);
+    assert.ok(hint.includes(dimensions), 'dimensions belong to the chosen client');
+    assert.ok(hint.includes(preview), 'the chosen client supplies the undistorted height');
+    assert.equal(p.el('preview-default-size').value, '400x240', 'guidance never applies a size');
+    assert.equal(JSON.stringify(clientSizes), original, 'identity keys remain unchanged');
+    assert.deepEqual(p.calls, []);
+  });
+}
+
+test('default-size guidance has no invented client when the read is empty or unavailable', async () => {
+  for (const payload of [{client_sizes: {}}, null]) {
+    const p = page(true, false, true);
+    const initial = p.el('preview-default-size-status').textContent;
+    await p.reply('get_preview_hotkey_state', payload);
+    assert.equal(p.el('preview-default-size-status').textContent, initial);
+    assert.deepEqual(p.calls, []);
+  }
+});
+
+test('a delayed client-size hint never replaces the default-size refusal', async () => {
+  const p = page(true, false, true);
+  p.hydrate({preview: {width: 400, height: 240}});
+  await p.submit('preview-default-size', 'bad size', 'keydown');
+  await p.reply('parse_preview_size', {error: 'Size refused.'});
+  await p.reply('get_preview_hotkey_state', {client_sizes: {'hwnd:0x123': [1024, 768], 'Pilot Example': [1600, 900]}});
+  assert.equal(p.el('preview-default-size-status').textContent, 'Size refused.');
+  assert.equal(p.el('preview-default-size').value, 'bad size');
+  assert.deepEqual(p.calls, []);
+});
 
 test('label size has production markup and a registered change owner', async () => {
   assert.ok(markup.getElementById('preview-label-size'), 'label-size select exists');
@@ -327,6 +397,166 @@ test('FightRecorder install emphasis follows known need without disabling unknow
   assert.equal(p.calls.length, 0);
 });
 
+test('category draft guidance is associated with its input, separate from shared outcomes', () => {
+  const field = markup.getElementById('f-category');
+  const hint = markup.getElementById('category-draft');
+  assert.ok(hint, 'category has a draft-only hint');
+  assert.equal(markup.querySelectorAll('#category-draft').length, 1);
+  assert.ok(field.closest('section').contains(hint));
+  assert.ok(field.getAttribute('aria-describedby').split(/\s+/).includes(hint.id));
+  assert.ok(field.getAttribute('aria-describedby').split(/\s+/).includes('msg-uploads'));
+  assert.ok(hint !== markup.getElementById('msg-uploads'), 'drafts never take the refusal slot');
+  assert.equal(hint.hidden, true);
+});
+
+test('category gestures before hydration neither commit nor claim an unsaved setting', async () => {
+  const p = page(false);
+  p.focus('f-category');
+  p.edit('f-category', '22');
+  p.fire('f-category', 'change');
+  p.fire('f-category', 'blur');
+  p.fire('f-category', 'keydown', {key: 'Enter'});
+  await turn();
+  assert.deepEqual(p.calls, []);
+  assert.equal(p.el('category-draft').hidden, true);
+  p.hydrate();
+  assert.equal(p.el('f-category').value, '22', 'focused early draft survives hydration');
+  assert.match(p.el('category-draft').textContent, /Enter/);
+  assert.deepEqual(p.calls, [], 'hydration does not submit the early draft');
+});
+
+test('category change and dirty blur keep the draft without submitting', async () => {
+  const p = page();
+  p.edit('f-category', '22');
+  p.fire('f-category', 'change');
+  p.fire('f-category', 'blur');
+  await turn();
+  assert.deepEqual(p.calls, [], 'only Enter submits free text');
+  assert.equal(p.el('f-category').value, '22');
+  assert.equal(p.el('category-draft').hidden, false);
+  assert.match(p.el('category-draft').textContent, /Enter/);
+  assert.equal(p.el('msg-uploads').textContent, '', 'one owner for draft feedback');
+  p.edit('f-category', ' 20 ');
+  p.fire('f-category', 'blur');
+  assert.equal(p.el('category-draft').hidden, true, 'returning to the accepted value clears guidance');
+  assert.deepEqual(p.calls, []);
+});
+
+test('category Enter submits the numeric string once and settles guidance on acceptance', async () => {
+  const p = page();
+  p.edit('f-category', ' 022 ');
+  p.fire('f-category', 'keydown', {key: 'Tab'});
+  await turn();
+  assert.deepEqual(p.calls, []);
+  let prevented = false;
+  p.fire('f-category', 'keydown', {key: 'Enter', preventDefault() { prevented = true; }});
+  p.fire('f-category', 'change');
+  p.fire('f-category', 'blur');
+  await turn();
+  assert.equal(prevented, true);
+  assert.equal(p.calls.length, 1, 'the Enter/change/blur sequence sends one write');
+  assert.equal(p.el('category-draft').hidden, true, 'already-submitted text needs no Enter reminder');
+  await p.reply('set_category', accepted, [' 022 ']);
+  assert.equal(p.el('category-draft').hidden, true);
+  p.fire('f-category', 'blur');
+  assert.equal(p.el('category-draft').hidden, true);
+  await p.submit('f-category', 'invalid');
+  await p.reply('set_category', refused);
+  assert.equal(p.el('f-category').value, '022', 'the baseline remains a trimmed string, not an integer');
+  assert.equal(p.el('category-draft').hidden, true, 'a restored refusal is not an unsaved draft');
+});
+
+for (const outcome of [accepted, refused, null]) {
+  test('queued category refusal restores the latest accepted baseline: ' + JSON.stringify(outcome), async () => {
+    const p = page();
+    await p.submit('f-category', '22');
+    await p.submit('f-category', 'invalid');
+    p.fire('f-category', 'blur');
+    assert.equal(p.el('category-draft').hidden, true, 'the newest edit is already queued');
+    assert.equal(p.calls.length, 1, 'one category request at a time');
+    await p.reply('set_category', outcome, ['22']);
+    assert.equal(p.el('f-category').value, 'invalid');
+    assert.equal(p.el('category-draft').hidden, true, 'an old reply cannot mark queued text as unsubmitted');
+    await p.reply('set_category', refused, ['invalid']);
+    assert.equal(p.el('f-category').value, outcome && outcome.applied ? '22' : '20');
+    assert.equal(p.el('category-draft').hidden, true);
+    assert.match(p.el('msg-uploads').className, /err/);
+  });
+
+  test('a late privacy reply cannot erase category draft guidance: ' + JSON.stringify(outcome), async () => {
+    const p = page();
+    await p.submit('f-privacy', 'private');
+    p.edit('f-category', '22');
+    p.fire('f-category', 'blur');
+    const guidance = p.el('category-draft').textContent;
+    assert.match(guidance, /Enter/);
+    await p.reply('set_privacy', outcome, ['private']);
+    assert.equal(p.el('f-category').value, '22');
+    assert.equal(p.el('category-draft').textContent, guidance);
+    assert.equal(p.el('category-draft').hidden, false);
+    if (!outcome || !outcome.applied) assert.match(p.el('msg-uploads').className, /err/);
+    assert.deepEqual(p.calls, [], 'a discrete field reply never submits a category draft');
+  });
+}
+
+test('newer unsubmitted text warns while category writes are queued', async () => {
+  const p = page();
+  await p.submit('f-category', '22');
+  await p.submit('f-category', '23');
+  p.edit('f-category', '24');
+  p.fire('f-category', 'blur');
+  const guidance = p.el('category-draft').textContent;
+  assert.match(guidance, /Enter/);
+  await p.reply('set_category', accepted, ['22']);
+  assert.equal(p.el('category-draft').textContent, guidance);
+  await p.reply('set_category', accepted, ['23']);
+  assert.equal(p.el('f-category').value, '24');
+  assert.equal(p.el('category-draft').textContent, guidance);
+  assert.equal(p.el('category-draft').hidden, false);
+});
+
+test('an older accepted category reply clears a now-clean draft hint without erasing privacy refusal', async () => {
+  const p = page();
+  await p.submit('f-privacy', 'private');
+  await p.reply('set_privacy', Object.assign({}, refused, {error: 'Privacy not saved.'}));
+  await p.submit('f-category', '22');
+  p.edit('f-category', '23');
+  p.edit('f-category', ' 22 ');
+  p.fire('f-category', 'blur');
+  assert.match(p.el('category-draft').textContent, /Enter/);
+  await p.reply('set_category', accepted, ['22']);
+  assert.equal(p.el('f-category').value, ' 22 ', 'semantic reconciliation never rewrites the draft');
+  assert.equal(p.el('category-draft').hidden, true, 'the draft now equals the accepted value');
+  assert.equal(p.el('msg-uploads').textContent, 'Privacy not saved.');
+  assert.match(p.el('msg-uploads').className, /err/);
+});
+
+test('an accepted category reply reveals a newer draft made dirty by the new baseline', async () => {
+  const p = page();
+  await p.submit('f-category', '22');
+  p.edit('f-category', '20');
+  assert.equal(p.el('category-draft').hidden, true, 'the draft still equals the old baseline');
+  await p.reply('set_category', accepted, ['22']);
+  assert.equal(p.el('f-category').value, '20');
+  assert.equal(p.el('category-draft').hidden, false);
+  assert.match(p.el('category-draft').textContent, /Enter/);
+});
+
+test('category draft guidance and its successful write preserve an unrelated privacy refusal', async () => {
+  const p = page();
+  await p.submit('f-privacy', 'private');
+  await p.reply('set_privacy', Object.assign({}, refused, {error: 'Privacy not saved.'}));
+  p.edit('f-category', '22');
+  p.fire('f-category', 'blur');
+  assert.match(p.el('category-draft').textContent, /Enter/);
+  assert.equal(p.el('msg-uploads').textContent, 'Privacy not saved.');
+  await p.submit('f-category', '22');
+  await p.reply('set_category', accepted);
+  assert.equal(p.el('category-draft').hidden, true);
+  assert.equal(p.el('msg-uploads').textContent, 'Privacy not saved.');
+  assert.match(p.el('msg-uploads').className, /err/);
+});
+
 for (const focused of [false, true]) {
   test('category refusal restores acknowledged 22, focused=' + focused, async () => {
     const p = page();
@@ -419,8 +649,13 @@ for (const outcome of [accepted, refused, null]) {
     const p = page();
     await p.submit('f-category', '22');
     p.edit('f-category', '23');
+    p.fire('f-category', 'blur');
+    const guidance = p.el('category-draft').textContent;
+    assert.match(guidance, /Enter/);
     await p.reply('set_category', outcome);
     assert.equal(p.el('f-category').value, '23');
+    assert.equal(p.el('category-draft').textContent, guidance);
+    assert.equal(p.el('category-draft').hidden, false);
     await p.submit('f-category', 'invalid');
     await p.reply('set_category', refused);
     assert.equal(p.el('f-category').value, outcome && outcome.applied ? '22' : '20');
@@ -503,8 +738,13 @@ test('accepted retry with a newer draft removes only its own displayed refusal',
   await p.reply('set_privacy', Object.assign({}, refused, {error: 'Privacy not saved.'}));
   await p.submit('f-category', '22');
   p.edit('f-category', '23');
+  p.fire('f-category', 'blur');
+  const guidance = p.el('category-draft').textContent;
+  assert.match(guidance, /Enter/);
   await p.reply('set_category', accepted);
   assert.equal(p.el('f-category').value, '23');
+  assert.equal(p.el('category-draft').textContent, guidance);
+  assert.equal(p.el('category-draft').hidden, false);
   assert.doesNotMatch(p.el('msg-uploads').textContent, /Category rejected/);
   assert.match(p.el('msg-uploads').textContent, /Privacy not saved/);
   assert.match(p.el('msg-uploads').className, /err/);
@@ -604,8 +844,12 @@ test('editing away and back still protects a newer unsubmitted category draft', 
   await p.submit('f-category', '22');
   p.edit('f-category', '23');
   p.edit('f-category', '22');
+  p.fire('f-category', 'blur');
+  const guidance = p.el('category-draft').textContent;
+  assert.match(guidance, /Enter/);
   await p.reply('set_category', refused);
   assert.equal(p.el('f-category').value, '22');
+  assert.equal(p.el('category-draft').textContent, guidance);
 });
 
 test('a trimmed accepted webhook does not warn on blur', async () => {

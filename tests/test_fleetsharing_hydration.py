@@ -63,6 +63,7 @@ def test_missing_worker_watch_returns_unavailable_without_startup(
         "failed-refresh-during-on",
         "rejected-admission",
         "scope-copy",
+        "eligibility-readiness",
         "verification-scope",
         "mixed-history",
         "ended-only",

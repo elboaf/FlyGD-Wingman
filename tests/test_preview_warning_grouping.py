@@ -43,6 +43,7 @@ def run_preview_warning_grouping(tmp_path, scenario):
     [
         "collapsed",
         "expanded",
+        "size-reason",
         "sticky-normal",
         "sticky-missing-row",
         "sticky-wrong-owner",

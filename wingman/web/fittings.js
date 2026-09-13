@@ -181,7 +181,10 @@
       return pair.status === 'conflict' && !pair.skipped;
     });
     payload.error = missing ? 'This selection is not covered by the screenshot fixture.'
-      : overLimit ? limit.error : '';
+      : overLimit ? payload.counts.ready + ' additions requested across all targets; limit '
+        + screenshotFixture.max_copy_writes + ' ('
+        + (payload.counts.ready - screenshotFixture.max_copy_writes) + ' over). '
+        + 'Select fewer fittings or targets, then review again.' : '';
     if (!payload.accepted) { payload.ticket_id = ''; payload.created_utc = ''; }
     return payload;
   }
@@ -575,7 +578,7 @@
       return;
     }
     empty.hidden = true;
-    rows.forEach(function (row) { host.appendChild(rowNode(row)); });
+    rows.forEach(function (row, index) { host.appendChild(rowNode(row, index)); });
     if (focusId && WM.current_route === 'fittings' && !copyOverlayOpen
         && WM.el('overlay').hidden) {
       var replacement = WM.el(focusId);
@@ -621,11 +624,35 @@
     button.textContent = count ? 'Copy selected (' + count + ')' : 'Copy selected';
     button.disabled = count === 0 || copyPhase === 'progress';
     button.title = count ? '' : 'Select one or more fittings on this page.';
+    WM.el('fittings-select-page').disabled = !((STATE && STATE.rows) || []).length
+      || copyPhase === 'progress';
+    WM.el('fittings-clear-selection').disabled = count === 0 || copyPhase === 'progress';
+    // Selection is local paint only. Rebuilding the list would replace open
+    // metadata controls, their drafts, focus and scroll for a checkbox change.
+    var labels = WM.el('fittings-list').querySelectorAll('.fit-select');
+    for (var i = 0; i < labels.length; i++) {
+      var box = labels[i].querySelector('input');
+      box.checked = !!selected[box.value];
+    }
   }
 
+  WM.el('fittings-select-page').addEventListener('click', function () {
+    if (!STATE || !(STATE.rows || []).length || copyPhase === 'progress') return;
+    STATE.rows.forEach(function (row) { selected[row.id] = true; });
+    renderSelectionCount();
+  });
+  WM.el('fittings-clear-selection').addEventListener('click', function () {
+    if (!visibleSelectedIds().length || copyPhase === 'progress') return;
+    var ownedFocus = document.activeElement === WM.el('fittings-clear-selection');
+    clearSelection();
+    // Clear disables itself. Keep its keyboard continuation local without
+    // taking focus from a metadata draft during a programmatic selection.
+    if (ownedFocus) WM.el('fittings-select-page').focus({ preventScroll: true });
+  });
   WM.el('fittings-copy-selected').addEventListener('click', openCopyOverlay);
 
-  function rowNode(row) {
+  function rowNode(row, index) {
+    var shipName = row.ship_name || ('Type ' + row.ship_type_id);
     var node = WM.make('div', 'fit-row');
     if (expandedId === row.id) node.classList.add('open');
 
@@ -639,7 +666,9 @@
     var label = WM.make('label', 'check fit-select');
     label.appendChild(box);
     label.appendChild(WM.make('span', 'box'));
-    box.setAttribute('aria-label', 'Select ' + row.name);
+    // Names and hulls can both repeat; position distinguishes this rendered page.
+    box.setAttribute('aria-label', 'Select ' + row.name + ' \u2014 ' + shipName
+                     + ', row ' + (index + 1) + ' on this page');
     box.value = row.id;
     box.checked = !!selected[row.id];
     box.addEventListener('change', function () {
@@ -654,8 +683,7 @@
     chevron.setAttribute('aria-hidden', 'true');
     toggle.appendChild(chevron);
     toggle.appendChild(WM.make('span', 'fit-name', row.name));
-    toggle.appendChild(WM.make('span', 'fit-ship',
-                               row.ship_name || ('Type ' + row.ship_type_id)));
+    toggle.appendChild(WM.make('span', 'fit-ship', shipName));
     var meta = [];
     meta.push('On ' + row.presence_count
              + (row.presence_count === 1 ? ' character' : ' characters'));
@@ -782,7 +810,7 @@
         bits.push('as \u201c' + presence.source_name + '\u201d');
       }
       if (presence.first_seen_utc) {
-        bits.push('seen ' + presence.first_seen_utc.slice(0, 10));
+        bits.push('first seen ' + presence.first_seen_utc.slice(0, 10));
       }
       row.appendChild(WM.make('span', 'fit-presence-meta', bits.join(' \u00b7 ')));
       box.appendChild(row);
@@ -968,8 +996,11 @@
 
   function supersessionNode(current) {
     var box = WM.make('div', 'fit-supersession');
-    box.appendChild(WM.make('p', 'fit-subhead', 'Superseded by'));
+    var label = WM.make('p', 'fit-subhead', 'Superseded by');
+    label.id = 'fit-supersession-label-' + current.id;
+    box.appendChild(label);
     var select = WM.make('select', 'field');
+    select.setAttribute('aria-labelledby', label.id);
     var none = WM.make('option', '', 'Not superseded');
     none.value = '';
     select.appendChild(none);
@@ -1027,6 +1058,7 @@
         });
     });
     row.appendChild(button);
+    if (hasPresence) row.appendChild(WM.make('span', 'hint', button.title));
     return row;
   }
 
@@ -1339,7 +1371,8 @@
   }
 
   function copyPairsChecked(completed, total) {
-    return completed + ' of ' + total + (total === 1 ? ' pair checked' : ' pairs checked');
+    return completed + ' of ' + total
+      + (total === 1 ? ' fitting/character check complete' : ' fitting/character checks complete');
   }
 
   function copyProgressLabel(pair) {
@@ -1538,6 +1571,7 @@
       success: 'Copied', present: 'Already present',
       conflict_skipped: 'Conflict / skipped', failed: 'Failed',
       unknown: 'Needs verification', unattempted_throttle: 'Not attempted: rate limit',
+      throttled: 'Copy stopped: rate limit',
       cancelled: 'Cancelled', unavailable: 'Unavailable',
       invalid_ticket: 'Preflight expired. Review the copy again.',
       needs_resolution: 'Resolve every name conflict before copying.',
@@ -1553,8 +1587,8 @@
       present: '',
       conflict_skipped: 'Choose an alternate name in a new copy review if you still want this fitting.',
       failed: 'Check the error, refresh the target, then review a new copy if still needed.',
-      unknown: 'Check the target\u2019s Personal Fittings in EVE, then refresh characters before any retry. The fitting may already exist.',
-      unattempted_throttle: 'Not attempted. Wait for the ESI limit to clear, refresh characters, then review a new copy.',
+      unknown: 'Check each target\u2019s Personal Fittings in EVE, then refresh characters before any retry. These fittings may already exist.',
+      unattempted_throttle: 'Wait for the ESI limit to clear, refresh characters, then review a new copy for fittings not attempted.',
       cancelled: 'Not attempted. Review a new copy if this fitting is still needed.',
       unavailable: 'Check the reason. For sign-in, use Authenticate character\u2026 in Settings \u203a Character access. Then refresh the target and review a new copy.',
       invalid_ticket: 'Preflight expired. Close these results and review a new copy.',
@@ -1590,7 +1624,24 @@
       (result.write_count || 0) + (result.write_count === 1 ? ' addition attempted'
                                                          : ' additions attempted')
       + '. Nothing is retried automatically.'));
-    if (!(result.results || []).length || result.status !== 'complete') {
+    // Shared recovery belongs above the results; each row keeps its own outcome
+    // and error. Verify uncertain copies before the rate-limit advice to retry.
+    var sharedRecovery = Object.create(null);
+    sharedRecovery.unknown = (result.results || []).some(function (pair) {
+      return pair.status === 'unknown';
+    });
+    sharedRecovery.unattempted_throttle = result.status === 'throttled'
+      || (result.results || []).some(function (pair) {
+        return pair.status === 'unattempted_throttle';
+      });
+    Object.keys(sharedRecovery).forEach(function (status) {
+      if (!sharedRecovery[status]) return;
+      host.appendChild(WM.make('p', 'hint fit-copy-guidance',
+        (status === 'unknown' ? copyResultLabel(status) : 'Rate limit')
+        + ': ' + copyResultGuidance(status)));
+    });
+    if ((!(result.results || []).length || result.status !== 'complete')
+        && result.status !== 'throttled') {
       host.appendChild(WM.make('p', 'notice', result.status === 'cancelled'
         ? 'Copy cancelled. Completed copies are kept; review a new copy for any remaining fittings.'
         : copyResultGuidance(result.status)));
@@ -1604,7 +1655,9 @@
       row.appendChild(status);
       if (pair.error) row.appendChild(WM.make('span', 'fit-copy-detail', pair.error));
       var guidance = copyResultGuidance(pair.status);
-      if (guidance) row.appendChild(WM.make('span', 'fit-copy-detail fit-copy-guidance', guidance));
+      if (guidance && !sharedRecovery[pair.status]) {
+        row.appendChild(WM.make('span', 'fit-copy-detail fit-copy-guidance', guidance));
+      }
       host.appendChild(row);
     });
     setCopyStatus(result.operation_id

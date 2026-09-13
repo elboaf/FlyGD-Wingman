@@ -443,6 +443,7 @@
     // Last: everything above has painted real values, so a commit fired
     // from here on sends what is stored rather than a blank form.
     hydrated = true;
+    categoryDraft();
   }
 
   // ---- committing each field -------------------------------------------
@@ -492,13 +493,32 @@
            function () { field.value = current.preview_label_size; });
   });
 
-  // `change` on a text input fires on blur AND on Enter. That is safe for
-  // this field -- it drives nothing but its own value, and a refusal is
-  // shown inline. It is NOT safe for the folders and the webhook below.
-  WM.el('f-category').addEventListener('change', function () {
+  // Category is free text too. Its draft hint never owns msg-uploads.
+  // A queued edit needs no Enter reminder; newer typing does. Accepted
+  // replies recheck dirtiness without changing the input or shared refusals.
+  var categorySubmittedEdit = 0;
+  function categoryDraft() {
+    if (!hydrated) { return; }
+    var submitted = pending('category')
+      && fieldWrites('category').edit === categorySubmittedEdit;
+    var dirty = WM.el('f-category').value.trim() !== current.category;
+    say('category-draft', dirty && !submitted
+      ? 'Not saved. Press Enter to save this category.' : '', 'warn');
+  }
+
+  WM.el('f-category').addEventListener('input', categoryDraft);
+  WM.el('f-category').addEventListener('blur', categoryDraft);
+  WM.el('f-category').addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Enter' || !hydrated) { return; }
+    ev.preventDefault();
     var field = WM.el('f-category');
     commit('msg-uploads', ['set_category', field.value], 'category', field.value.trim(),
-           function () { field.value = current.category; });
+           function () {
+             field.value = current.category;
+             categoryDraft();
+           }, categoryDraft);
+    categorySubmittedEdit = fieldWrites('category').edit;
+    categoryDraft();
   });
 
   Array.prototype.forEach.call(
@@ -1348,12 +1368,12 @@
     if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
   });
 
-  // The hint's undistorted half: for the first running client, the height
-  // the current default width would need. Refreshed when the payload (or
-  // a commit) changes the width, because the sentence quotes it.
+  // Prefer a named client for the example; a character-select window has
+  // only an internal identity, which belongs in diagnostics rather than help.
   function rebuildClientHint() {
     if (!clientHintState) { return; }
-    var name = Object.keys(clientHintState)[0];
+    var names = Object.keys(clientHintState);
+    var name = names.filter(function (key) { return key.indexOf('hwnd:') !== 0; })[0] || names[0];
     var client = name && clientHintState[name];
     if (!client) { clientHint = ''; return; }
     // Chrome is BORDER*2 across and down and nothing else -- the name is
@@ -1362,7 +1382,8 @@
     // geometry.py owns what a size is, and this page never parses one.
     var width = appliedW || 320;
     var tall = Math.round((width - 4) * client[1] / client[0]) + 4;
-    clientHint = ' ' + name + "'s client is " + client[0] + 'x' + client[1]
+    var identity = name.indexOf('hwnd:') === 0 ? 'An unnamed client' : name + "'s client";
+    clientHint = ' ' + identity + ' is ' + client[0] + 'x' + client[1]
                + '; at ' + width + ' wide an undistorted preview is '
                + width + 'x' + tall + '.';
   }

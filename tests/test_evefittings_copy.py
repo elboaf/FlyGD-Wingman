@@ -468,18 +468,32 @@ def test_local_terminal_evidence_tied_with_content_snapshot_still_blocks(
 
 
 def test_workspace_copy_limit_tracks_the_enforced_contract(tmp_path, monkeypatch):
-    controller, _, _, _ = make_controller(tmp_path, ready_state(count=2))
-    monkeypatch.setattr(contracts, "MAX_COPY_WRITES", 1)
+    state = ready_state(count=3, character_ids=(42, 43))
+    state = replace(state, presences=(presence(42, 1, state.entries[0]),))
+    controller, _, client, path = make_controller(tmp_path, state)
+    before = path.read_bytes()
+    monkeypatch.setattr(contracts, "MAX_COPY_WRITES", 2)
 
     workspace = controller.workspace()
-    result = controller.preflight_copy(["fit-0", "fit-1"], [42])
+    result = controller.preflight_copy(["fit-0", "fit-1", "fit-2"], [42, 43])
 
-    assert workspace.get("max_copy_writes") == 1
+    assert workspace.get("max_copy_writes") == 2
     assert result["accepted"] is False
+    assert result["ticket_id"] == ""
     assert result["write_count"] == 0
-    assert result["counts"]["ready"] == 2
-    assert "1" in result["error"]
+    assert result["counts"] == {
+        "ready": 5,
+        "present": 1,
+        "conflict": 0,
+        "unavailable": 0,
+    }
+    # Six selected combinations require only five additions, three over this cap.
+    assert "5 additions requested" in result["error"]
+    assert "limit 2" in result["error"]
+    assert "3 over" in result["error"]
     assert "across" in result["error"].lower()
+    assert not client.post_calls
+    assert path.read_bytes() == before
 
 
 def test_preflight_accepts_over_twenty_selected_when_only_twenty_additions_remain(
@@ -533,8 +547,9 @@ def test_preflight_refuses_more_than_twenty_actual_creates(tmp_path):
     result = controller.preflight_copy(["fit-0"], list(character_ids))
 
     assert result["accepted"] is False
-    assert "20" in result["error"]
-    assert "additions" in result["error"].lower()
+    assert "21 additions requested" in result["error"]
+    assert "limit 20" in result["error"]
+    assert "1 over" in result["error"]
     assert "across" in result["error"].lower()
     assert result["ticket_id"] == ""
     assert result["write_count"] == 0
@@ -1129,10 +1144,15 @@ def test_durable_success_blocks_an_immediate_duplicate_copy(tmp_path):
 
 @pytest.mark.parametrize("status", [420, 429])
 def test_throttle_stops_the_remainder(tmp_path, status):
+    progress = []
+    upstream_error = (
+        f"ESI rejected create ({status}): fitting requests are rate limited."
+    )
     controller, _, client, _ = make_controller(
         tmp_path,
         ready_state(count=2),
-        replies=[mutation(status, {})],
+        replies=[mutation(status, {}, error=upstream_error)],
+        progress=progress.append,
     )
     ticket_id = ready_ticket(controller, fit_ids=["fit-0", "fit-1"])
 
@@ -1144,6 +1164,13 @@ def test_throttle_stops_the_remainder(tmp_path, status):
         "failed",
         "unattempted_throttle",
     ]
+    assert [row["error"] for row in result["results"]] == [upstream_error, ""]
+    assert [row["attempted"] for row in result["results"]] == [True, False]
+    assert result["write_count"] == 1
+    assert [
+        event["result"] for event in progress if event["phase"] == "progress"
+    ] == result["results"]
+    assert progress[-1]["result"] == result
 
 
 def test_cancellation_takes_effect_before_the_next_request(tmp_path):

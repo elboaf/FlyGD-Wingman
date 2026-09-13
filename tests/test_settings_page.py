@@ -603,10 +603,11 @@ def test_about_card_has_live_update_status_progress_and_actions():
     # reserved for the single primary action a screen exists to perform,
     # and Settings has no such action.
     assert "btn acc" not in card
-    # Start-on-login and the licence line survive; this is an addition to
-    # the card, not a replacement of it.
-    assert 'id="start-on-login"' in card
-    assert 'id="msg-about"' in card
+    # Build information retains its licence; startup configuration and its
+    # outcome have their own card (the runtime guard checks that ownership).
+    assert "GPL-3.0-only" in card
+    assert 'id="start-on-login"' not in card
+    assert 'id="msg-about"' not in card
 
 
 def test_update_progress_is_hidden_until_a_download_starts():
