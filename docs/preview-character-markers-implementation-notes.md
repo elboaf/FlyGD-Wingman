@@ -1,6 +1,52 @@
 # Preview character markers (issue 215) — implementation notes
 
-## Status and authority
+## Coordinator engineering checkpoint
+
+Reviewed production head: `bf2149d183cf5b99b6c0fec9e51a5e302f7534ce`, against issue
+base `2404917a1eb7771649e9473103f3561bd618cd37`. Engineering review is clear;
+Windows/native/operator acceptance remains open. This section supersedes the
+pending coordinator gates in the historical implementation checkpoints below.
+
+- `/polish --fix` completed. Initial independent general/silent-failure passes
+  found G1 and G2; the duplicate G1 was counted once. Both were corrected in one
+  scoped follow-up. Independent re-review marked both ADDRESSED with no new
+  Critical/Important findings. No automatic safe cleanup was needed.
+- Actual CodeRabbit CLI completed the entire issue range, reviewed all 28 changed
+  files, and returned **zero findings**, exit 0. No review ID was emitted. The
+  reviewed source is the exact head above; this later evidence-only document
+  update is not being claimed as CodeRabbit-reviewed.
+- Fresh coordinator full Linux suite: **12,257 passed, 13 Windows-only skips in
+  310.59s**. Node v26.5.0 and the checkout-local release codec were checked first.
+  Skips were only Windows junction/DPAPI/WinDLL/pump/bindings/tray tests, not Node,
+  codec or RAQM. Ruff check and format check (434 files), all-page Node smoke,
+  independent Cargo regression (1 passed), and range whitespace checks passed.
+- Real isolated Chromium reproduced both corrected reset scenarios at 840x625
+  and 839x621: the vanished owner was removed while the original group draft,
+  selection/direction/focus/open state and surviving Copy invoker/modal focus/
+  Escape return were preserved. No horizontal overflow or page errors. Earlier
+  coordinator checks covered online/offline Configure, assignment/reset and
+  delayed receipts at both floors.
+- Coordinator also inspected 42 production Pillow renders over simulated bright/
+  dark backgrounds, covering all presets and None/the six colors. Images fit
+  their budgets. This is not proof of native marker salience or DPI behavior.
+
+Key commands (from this worktree; the dedicated environment was already synced):
+
+```bash
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-character-markers-venv uv run --no-sync python -m pytest tests/ -q -rs --basetemp=/tmp/wingman-markers-parent-post-polish --junitxml=.superpowers/sdd/preview-character-markers-plan/coordinator-post-polish-full.xml
+coderabbit review --agent --committed --base-commit 2404917a1eb7771649e9473103f3561bd618cd37
+node .superpowers/sdd/preview-character-markers-plan/browser-fix-check.cjs
+```
+
+Local ignored evidence is under `.superpowers/sdd/preview-character-markers-plan/`:
+`polish-report.md`, `review-fix-round-1.md`, `coderabbit-report.md`,
+`coderabbit-bf2149d1.log`, `coordinator-post-polish-full.xml`, and
+`coordinator-post-fix-browser/results.json`/screenshots. No source changed during
+these coordinator gates. Browser/Pillow/DOM-double evidence does not replace
+Windows automated, installed-font, WebView2/native, live-EVE or mixed-DPI
+acceptance, all still **NOT RUN**. No push, PR, merge or issue closure occurred.
+
+## Implementation and fix checkpoint (before coordinator verification)
 
 Task 1 and review fix round 1 are implemented. The original issue base remains
 `2404917a1eb7771649e9473103f3561bd618cd37`; fix round 1 starts from
