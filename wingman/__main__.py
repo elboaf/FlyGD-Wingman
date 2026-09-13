@@ -239,10 +239,10 @@ def build_tray(on_open, on_quit):
     )
     icon_type = pystray.Icon
     if sys.platform == "win32":
-        # pystray's GetCursorPos result is DPI-virtualized while
-        # TrackPopupMenuEx consumes physical screen coordinates. On a 200%
-        # tray display that halves both coordinates and opens this menu near
-        # the middle of the screen. Keep pystray's lifecycle and replace only
+        # WinForms startup can make system-aware native menus rescale even
+        # physical cursor coordinates. The adapter isolates menu display in
+        # a per-monitor DPI context without changing existing HWNDs or the
+        # Open/Quit callbacks. Keep pystray's lifecycle and replace only
         # its Windows right-click path with the physical-coordinate variant.
         from pystray import _win32 as pystray_win32
 

@@ -67,6 +67,11 @@ connections or select native sources merely to populate screenshots.
 
 ## Notification-area menu placement
 
+Run the [WinForms-integrated native placement check](reference/tray-menu-verification.md)
+first. A standalone pystray popup is not a valid reproduction: after WinForms
+startup, physical cursor coordinates alone can still produce a half-scale menu.
+The native check supplements, rather than completes, this installed-release matrix.
+
 - [ ] With Wingman's notification icon on a 200%-scaled display, move the Fleet
       Bar to another monitor, use one of its interactive controls, and then
       right-click the notification icon. **Open Wingman / Quit** opens adjacent
