@@ -19,6 +19,8 @@
       cropState = screenshotLive.crops;
       cropHydrated = screenshotLive.hydrated;
       markerFields = screenshotLive.markerFields;
+      groupManagerRestore = screenshotLive.managerDraft;
+      releaseGroupFocus();
       screenshotLive = null;
       openDetailName = null;
       // Buffered host outcomes must retire real requests before repainting.
@@ -38,8 +40,17 @@
     // Finish deferred LIVE paint before taking the snapshot or isolating fields;
     // otherwise that paint seeds the fixture's marker table with live values.
     endCapture();
+    var managerDraft = snapshotGroupManager();
+    if (managerDraft) {
+      managerDraft.control = null;
+      managerDraft.restoreSelection = true;
+    }
     var live = {state: state, crops: cropState, hydrated: cropHydrated,
-                markerFields: markerFields};
+                markerFields: markerFields, managerDraft: managerDraft || {value: '', control: null}};
+    // Boundary paints must not snapshot the outgoing domain's unsent text.
+    // Only the draft/selection is saved; live payloads and marker receipts keep
+    // their existing independent authority, and no focus lease crosses staging.
+    groupManagerRestore = {value: '', control: null};
     // Fake assignments must never rebase live acknowledgements. Real receipt
     // closures retain their own field objects while this separate table renders.
     markerFields = Object.create(null);
@@ -99,12 +110,28 @@
   // still be open at that point).  Defaults to false (collapsed) so a
   // fresh install does not force the panel open.
   var groupManagerOpen = false;
+  var groupManagerRestore = null;
   // Only the pending manager mutation may recover focus lost to its repaint.
   // Any newer interaction (including one later blurred back to BODY) revokes it.
   var groupFocusPending = false;
-  function releaseGroupFocus() { groupFocusPending = false; }
-  document.addEventListener('focusin', releaseGroupFocus);
-  document.addEventListener('pointerdown', releaseGroupFocus, true);
+  var groupDialogFocus = null;
+  function releaseGroupFocus() { groupFocusPending = false; groupDialogFocus = null; }
+  function groupFocusInteraction(event) {
+    if (groupDialogFocus) {
+      var overlay = WM.el('overlay');
+      if (!overlay.hidden && overlay.contains(event.target)) { return; }
+      // panel.js restores page focus synchronously before resolving our dialog
+      // continuation. Its one fallback is not a new interaction; a second focus
+      // change or any outside pointer/navigation/capture still revokes the lease.
+      if (event.type === 'focusin' && overlay.hidden && !groupDialogFocus.returnFocus) {
+        groupDialogFocus.returnFocus = event.target;
+        return;
+      }
+    }
+    releaseGroupFocus();
+  }
+  document.addEventListener('focusin', groupFocusInteraction);
+  document.addEventListener('pointerdown', groupFocusInteraction, true);
   // One inline configuration disclosure at a time. This is presentation
   // state only; authoritative payloads retain it only for surviving rows.
   var openDetailName = null;
@@ -874,7 +901,8 @@
         // state if a crop delivery overtakes that event.
         if (manager) { groupManagerOpen = manager.open; }
         cropRosterEdit = draft ? {value: draft.value, focused: document.activeElement === draft,
-          start: draft.selectionStart, end: draft.selectionEnd, interaction: detailInteraction} : null;
+          start: draft.selectionStart, end: draft.selectionEnd, direction: draft.selectionDirection,
+          interaction: detailInteraction} : null;
         var focused = document.activeElement;
         if (focused && focused.hasAttribute('data-preview-detail-control')) {
           rememberDetailFocus(openDetailName, focused.getAttribute('data-preview-detail-control'));
@@ -1881,7 +1909,8 @@
   }
 
   function render() {
-    var managerEdit = snapshotGroupManager();
+    var managerEdit = groupManagerRestore || snapshotGroupManager();
+    groupManagerRestore = null;
     var list = rows();
     var openDetailMissing = openDetailName && !list.some(function (entry) {
       return entry.name === openDetailName;
@@ -2015,7 +2044,7 @@
         if (edit.focused && edit.interaction === detailInteraction
             && document.activeElement === document.body) {
           draft.focus();
-          draft.setSelectionRange(edit.start, edit.end);
+          draft.setSelectionRange(edit.start, edit.end, edit.direction);
         }
       }
     }
@@ -2266,12 +2295,18 @@
       group: active && active.getAttribute('data-group-id')};
   }
 
-  function restoreGroupManager(edit) {
+  function restoreGroupManager(edit, returnFocus) {
     if (!edit) { return; }
     var manager = host.querySelector('.preview-group-manager');
     var field = manager.querySelector('.group-add-name');
     field.value = edit.value;
-    if (!edit.control || document.activeElement !== document.body) { return; }
+    if (edit.restoreSelection) {
+      field.selectionStart = edit.start;
+      field.selectionEnd = edit.end;
+      field.selectionDirection = edit.direction;
+    }
+    if (!edit.control || (document.activeElement !== document.body
+        && document.activeElement !== returnFocus)) { return; }
     var controls = manager.querySelectorAll('[data-group-control]');
     for (var i = 0; i < controls.length; i++) {
       var control = controls[i];
@@ -2296,6 +2331,27 @@
       && visibleGroupControl(document.activeElement));
   }
 
+  function beginGroupDialog() {
+    var edit = snapshotGroupManager();
+    groupDialogFocus = edit && edit.control && WM.el('overlay').hidden ? edit : null;
+    return groupDialogFocus;
+  }
+
+  function finishGroupDialog(intent) {
+    if (!intent || groupDialogFocus !== intent) { return false; }
+    groupDialogFocus = null;
+    var manager = host.querySelector('.preview-group-manager');
+    if (screenshotLive || capturing || !WM.el('overlay').hidden
+        || !manager || !manager.open) { return false; }
+    // Keep today's draft, but recover the invoker by stable control/group ID.
+    // A queued newer dialog owns focus until it finishes, never this operation.
+    var edit = snapshotGroupManager();
+    edit.control = intent.control;
+    edit.group = intent.group;
+    restoreGroupManager(edit, intent.returnFocus);
+    return manager.contains(document.activeElement) && visibleGroupControl(document.activeElement);
+  }
+
   // Rename a named group. Called from the management disclosure. Ends the
   // capture first (an armed capture's keydown handler would eat the dialog).
   function renameGroup(group) {
@@ -2304,10 +2360,12 @@
     if (screenshotLive) { return; }
     if (groupBusy) { return; }
     endCapture();
+    var intent = beginGroupDialog();
     WM.prompt('Rename group', 'Enter a new name for "' + group.name + '"',
               group.name).then(function (text) {
+      var owned = finishGroupDialog(intent);
       if (screenshotLive || text === null || text.trim() === '') { return; }
-      rememberGroupFocus();
+      if (owned) { rememberGroupFocus(); }
       groupBusy = true;
       requestRender();
       var before = pushes;
@@ -2373,9 +2431,11 @@
       ? '1 character' : members.length + ' characters';
     var msg = 'Delete group "' + group.name + '"? ' + memberText +
               ' will return to All only cycling.';
+    var intent = beginGroupDialog();
     WM.confirm('Delete group', msg).then(function (confirmed) {
+      var owned = finishGroupDialog(intent);
       if (screenshotLive || !confirmed) { return; }
-      rememberGroupFocus();
+      if (owned) { rememberGroupFocus(); }
       groupBusy = true;
       requestRender();
       var before = pushes;

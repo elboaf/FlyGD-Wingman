@@ -1,5 +1,102 @@
 # Named group Back keybinds — verified implementation
 
+## Review correction round 1 — scoped verification PASS
+
+Follow-up to `64010b9566b7ea1252517a6698feecd4dbc0e79b`. Final local commit is
+recorded in `.superpowers/sdd/preview-group-backward/review-fix-1-report.md`.
+Production scope is **only `wingman/web/previews.js`**; associated changes are
+`tests/test_preview_group_backward.py`, `tests/fixtures/preview_group_backward.cjs`
+and `scripts/test_wanderer_runtime.js`. No backend/schema/cycling/CSS/native changes.
+
+- **GA211-1:** capture stable manager control/group identity before Rename/Delete
+  opens its own panel dialog. A revocable local lease tolerates dialog focus and
+  the panel's single synchronous dismissal fallback, not a newer field/pointer,
+  navigation, capture, disclosure closure or queued dialog. Recover the current
+  matching control before starting the mutation, using today's draft rather than
+  the pre-dialog text. Cancel restores the stable invoker without a write; normal
+  mutation receipt recovery still uses the existing Add field behavior.
+- **SF211-1:** screenshot entry uses an empty local draft; cleanup restores the
+  saved live text/selection through a one-shot boundary snapshot, with focus
+  explicitly excluded. Replacement fixtures start fresh too. Latest live payloads
+  and marker acknowledgements keep their independent authority. A pending first
+  hydration also uses an explicit empty live default, never outgoing fake text.
+- **SF211-2:** the existing crop roster restoration now carries and restores
+  selection direction along with start/end; it does not add another focus owner.
+- Wanderer's partial capture VM includes the real updated state/helpers and
+  asserts that capture revokes both pending manager recovery and its dialog lease.
+
+### Test-first and verification evidence
+
+All new artifacts are under `.superpowers/sdd/preview-group-backward/review-fix-1/`;
+older evidence remains untouched. Commands run from THIS worktree, with
+`PYTHONPYCACHEPREFIX` unset, `PYTHONDONTWRITEBYTECODE=1`, dedicated editable
+`/tmp/wingman-preview-group-backward-venv/bin/python`, Node v26.5.0 and THIS checkout's
+release codec availability verified. All pytest basetemps are case-sensitive `/tmp`.
+
+| Gate | Actual result | Artifact |
+|---|---|---|
+| Three primary regressions on unfixed64010 | 3 failed,53 deselected,4.02s; own-dialog focus, live/fake text and backward direction assertions | `red.xml`, `red.log` |
+| Dialog ownership matrix | 6 passed,50 deselected,7.61s | `dialog-green.xml` |
+| Related screenshot/Wanderer/group/marker | 216 passed,39.19s,0 skips | `related-green.xml` |
+| Unhydrated fixture boundary regression | 1 failed,56 deselected,4.01s; fake text on cleanup | `unhydrated-red.xml` |
+| Fresh final focused gate | **1274 passed,1 skipped,69.08s** | `final-focused.xml`, `final-focused.log` |
+| Ruff / format / JS syntax / all-page Node / whitespace | PASS;435 formatted files | `final-static.log` |
+| Fresh private Chrome840x625 +839x621 | 8/8 cases,72 inner checks;0 page/console errors | `browser-final/results.json`, PNGs |
+| Existing #211 controls/lifecycle/G1/marker first native select opening | 10/10 cases | `browser-existing-final/results.json`, PNGs |
+| Existing six-width geometry | 30/30 cases at839/840/841/873/874/1280 | `layout-final/results.json`, PNGs |
+
+The sole final skip is `tests/test_preview_host.py:1860`, requiring a real Windows
+message pump/window station; no Node/codec skips. New Node scenarios cover both
+operations, receipt/push orderings, applied/refused/cancel outcomes, eleven newer
+owner types, fixture replacement/latest push/first hydration and both crop selection
+directions. Browser fixture cases also settle a real live marker receipt during
+staging and verify it survives cleanup; no fixture group writes occur.
+
+Exact final commands:
+
+```bash
+unset PYTHONPYCACHEPREFIX
+PYTHONDONTWRITEBYTECODE=1 /tmp/wingman-preview-group-backward-venv/bin/python -m pytest tests/test_preview_group_backward.py tests/test_settings_preview.py tests/test_preview_cycle.py tests/test_preview_host.py tests/test_preview_wiring.py tests/test_preview_runtime_boundaries.py tests/test_bridge_contract.py tests/test_page_conventions.py tests/test_dev_harness.py tests/test_preview_labelmarkers_page.py tests/test_preview_warning_grouping.py tests/test_js_smoke.py tests/test_new_screenshots.py tests/test_wanderer_page.py tests/test_wanderer_controller.py -q -rs --tb=short -p no:cacheprovider --basetemp=/tmp/wingman-211-rf1-final --junitxml=.superpowers/sdd/preview-group-backward/review-fix-1/final-focused.xml
+PYTHONDONTWRITEBYTECODE=1 /tmp/wingman-preview-group-backward-venv/bin/ruff check .
+PYTHONDONTWRITEBYTECODE=1 /tmp/wingman-preview-group-backward-venv/bin/ruff format --check .
+node --check wingman/web/previews.js
+node --check tests/fixtures/preview_group_backward.cjs
+node --check scripts/test_wanderer_runtime.js
+node scripts/js_smoke.js
+node .superpowers/sdd/preview-group-backward/review-fix-1/browser-review.cjs browser-final
+node .superpowers/sdd/preview-group-backward/browser.cjs review-fix-1/browser-existing-final
+node .superpowers/sdd/preview-group-backward/layout-regression.cjs review-fix-1/layout-final
+git diff --check
+```
+
+Fresh browser/test source `previews.js` SHA256:
+`710d71e04202b2a075ac8b3cb5e80f3aeec00a11b4c4a03164acb2d38ee061f1`.
+Inspected representative final PNGs for839 own-modal/unbroken-warning layout and
+840 fixture boundary. Interaction/selection assertions are recorded in JSON, not
+inferred from screenshots.
+
+Retained unsuccessful attempts: `crop-green.xml` exposed a new test reusing
+revision10 after11 (correctly rejected); changed only that fixture to monotonic
+revisions. `browser-1/` passed28 modal/owner checks plus first fixture check, then
+its next iteration toggled a retained open Configure closed. Driver now explicitly
+closes each iteration's detail. No arbitrary sleeps, retries of unchanged failures,
+assertion weakening or timeout inflation. One shell invocation was denied before
+execution because of shell-variable syntax; the direct command then ran the RED.
+
+Local post-implementation inspection applied the polish safety rules to this
+bounded diff, with no cleanup/autofix items and no additional known blocker. It
+found the same SF211-1 unhydrated boundary, corrected test-first as above. No
+subagents/external review were used; coordinator re-review remains authoritative.
+**No full suite or independent Cargo regression was run this pass**, per the scoped
+brief. The older12400-pass full applies64010 only. No Windows/WebView2/native/live-EVE
+acceptance is claimed. Coordinator owns actual CodeRabbit, fresh full and all
+publication actions. Reviewer focus: the panel fallback ordering assumption,
+revocation after newer focus, and keeping draft snapshots separate from live data.
+
+---
+
+# Historical initial implementation evidence
+
 ## Status: PASS — worker verification, independent review pending
 
 The candidate is the commit containing this document, based on

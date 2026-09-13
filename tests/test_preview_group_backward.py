@@ -393,6 +393,11 @@ def test_named_back_os_refusal_is_reported_without_dispatch():
         "focus-lifecycle",
         "focus-ownership",
         "focus-stable",
+        "focus-own-dialog",
+        "focus-dialog-owners",
+        "focus-fixture-draft",
+        "focus-fixture-unhydrated",
+        "focus-crop-direction",
     ],
 )
 def test_group_backward_page(tmp_path, scenario):

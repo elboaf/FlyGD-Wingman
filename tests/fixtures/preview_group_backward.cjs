@@ -92,6 +92,17 @@ function settle(p, applied = true) {
   writes.at(-1).resolve({applied, persisted: applied, error: applied ? null : 'Disk refused', hotkeys: clone(p.hotkeys)});
 }
 (async () => {
+  if (data.scenario === 'focus-fixture-unhydrated') {
+    assert.equal(document.querySelector('.group-add-name'), null, 'live getter is still pending');
+    const fixture = {kind: 'preview-crop-screenshot-v1', owner: 'Alice', preview: payload(), crops: {...payload().crops, definitions: {Alice: {}}}};
+    window.WM.previewCropScreenshot(fixture);
+    document.querySelector('.group-add-name').value = 'FAKE before hydration';
+    getters.shift()(payload()); await tick();
+    window.WM.previewCropScreenshot(null);
+    assert.equal(document.querySelector('.group-add-name').value, '', 'no live draft means empty, never outgoing fake text');
+    assert.equal(writes.length, 0);
+    return console.log('PASS group backward ' + data.scenario);
+  }
   getters.shift()(payload()); await tick();
   const scenario = data.scenario;
   if (scenario === 'dev') {
@@ -152,7 +163,96 @@ function settle(p, applied = true) {
       assert.ok(name().disabled, 'groupBusy prevents concurrent lifecycle writes');
       return writes.at(-1);
     }
-    if (scenario === 'focus-lifecycle') {
+    if (scenario === 'focus-own-dialog' || scenario === 'focus-dialog-owners') {
+      for (const operation of ['delete', 'rename']) for (const order of ['receipt-first', 'push-first']) for (const outcome of ['applied', 'refused', 'cancel']) {
+        const owners = scenario === 'focus-own-dialog' ? ['own'] : ['field', 'blurred-field', 'pointer', 'tab', 'section', 'route', 'closed', 'hidden', 'capture', 'queued-dialog', 'post-fallback-focus'];
+        for (const owner of owners) {
+          await open(); const count = writes.length;
+          const selector = operation === 'delete' ? '.group-delete-btn' : '.group-rename-btn';
+          const button = manager().querySelector(selector); const id = button.getAttribute('data-group-id');
+          button.focus(); button.click(); await tick();
+          assert.ok(!document.getElementById('overlay').hidden, 'real panel dialog is open');
+          const during = payload(); during.hotkeys.groups.reverse(); push(during);
+          assert.ok(!document.contains(button), 'ordinary push detaches original dialog trigger');
+          if (operation === 'rename') document.getElementById('dlg-input').value = 'Renamed fleet';
+          if (owner === 'field' || owner === 'blurred-field') {
+            document.getElementById('preview-enabled').focus();
+            if (owner === 'blurred-field') document.getElementById('preview-enabled').blur();
+          }
+          if (owner === 'pointer') document.dispatchEvent({type: 'pointerdown', target: document.getElementById('preview-enabled')});
+          if (owner === 'tab') window.WM.settingsTab('previews', 'windows');
+          if (owner === 'section') window.WM.section('general');
+          if (owner === 'route') window.WM.route('main');
+          if (owner === 'closed') { manager().open = false; manager().dispatchEvent({type: 'toggle'}); }
+          if (owner === 'hidden') document.getElementById('settings-previews-characters').hidden = true;
+          if (owner === 'capture') { bind('Back · Fleet').click(); await tick(); }
+          if (owner === 'queued-dialog') window.WM.prompt('Newer dialog', 'Own this focus', 'newer');
+          const answer = document.getElementById(outcome === 'cancel' ? 'dlg-cancel' : 'dlg-ok');
+          const newerFocus = () => document.getElementById('preview-enabled').focus();
+          if (owner === 'post-fallback-focus') answer.addEventListener('click', newerFocus);
+          answer.click(); answer.removeEventListener('click', newerFocus); await tick();
+          const afterDialog = document.activeElement;
+          if (outcome !== 'cancel') {
+            assert.equal(writes.length, count + 1);
+            const p = payload(); const applied = outcome === 'applied';
+            if (applied && operation === 'delete') p.hotkeys.groups.shift();
+            if (applied && operation === 'rename') p.hotkeys.groups[0].name = 'Renamed fleet';
+            if (order === 'push-first') push(p);
+            writes.at(-1).resolve({applied, persisted: applied, error: applied ? null : 'Disk refused', hotkeys: clone(p.hotkeys)}); await tick();
+            if (order === 'receipt-first') push(p);
+          } else assert.equal(writes.length, count, 'cancel never mutates');
+          if (owner === 'own') {
+            if (outcome === 'cancel') {
+              assert.equal(document.activeElement.getAttribute('data-group-id'), id, 'cancel restores stable group, not row index');
+              assert.ok(document.activeElement.matches(selector));
+            } else assert.ok(document.activeElement === name(), operation + '/' + order + '/' + outcome + ' recovers Add after own dialog push');
+          } else {
+            assert.ok(document.activeElement !== name(), owner + ' revokes own-dialog recovery');
+            if (owner === 'queued-dialog') assert.ok(document.activeElement === afterDialog, 'queued dialog retains actual focus');
+            if (owner === 'post-fallback-focus') assert.equal(document.activeElement.id, 'preview-enabled', 'real focus after panel fallback supersedes dialog recovery');
+          }
+          if (!document.getElementById('overlay').hidden) { document.getElementById('dlg-cancel').click(); await tick(); }
+          if (document.querySelector('.capturing')) { key('Escape'); await tick(); }
+          document.getElementById('settings-previews-characters').hidden = false;
+        }
+      }
+    } else if (scenario === 'focus-fixture-draft') {
+      for (const buffered of [false, true]) for (const replacement of [false, true]) {
+        await open(); name().focus(); name().value = 'REAL unsent fleet'; name().setSelectionRange(2, 11, 'backward');
+        const fixture = {kind: 'preview-crop-screenshot-v1', owner: 'Alice', preview: payload(), crops: {...payload().crops, definitions: {Alice: {}}}};
+        window.WM.previewCropScreenshot(fixture);
+        assert.equal(name().value, '', 'fixture must not expose the live unsent draft');
+        name().focus(); name().value = 'FAKE screenshot fleet'; name().setSelectionRange(1, 5, 'forward');
+        if (buffered) { const p = payload(); p.roster.push('Latest live pilot'); push(p); }
+        if (replacement) {
+          window.WM.previewCropScreenshot(fixture);
+          assert.equal(name().value, '', 'replacement starts a fresh local draft');
+          name().focus(); name().value = 'REPLACEMENT fake';
+        }
+        window.WM.previewCropScreenshot(null);
+        assert.equal(name().value, 'REAL unsent fleet', 'cleanup restores live rather than fixture text');
+        assert.deepEqual([name().selectionStart, name().selectionEnd, name().selectionDirection], [2, 11, 'backward']);
+        assert.ok(document.activeElement !== name(), 'fixture cleanup cannot revive manager focus');
+        assert.equal(!!document.querySelector('[data-preview-configure="Latest live pilot"]'), buffered, 'latest live roster survives staging/replacement');
+        assert.equal(writes.length, 0, 'drafts and fixtures never submit');
+      }
+    } else if (scenario === 'focus-crop-direction') {
+      await open(); let revision = 10;
+      for (const direction of ['backward', 'forward']) for (const added of [true, false]) {
+        name().focus(); name().value = 'Unsubmitted fleet'; name().setSelectionRange(2, 11, direction);
+        const crops = {...payload().crops, revision: revision++, definitions: added ? {'Crop-only pilot': {}} : {}};
+        window.onPreviewCrops(crops);
+        assert.ok(document.activeElement === name(), 'crop roster redraw retains owning Add focus');
+        assert.equal(name().value, 'Unsubmitted fleet');
+        assert.deepEqual([name().selectionStart, name().selectionEnd, name().selectionDirection], [2, 11, direction], 'real crop delivery retains selection direction');
+        assert.equal(!!document.querySelector('[data-preview-configure="Crop-only pilot"]'), added);
+        if (!added) { await open(); }
+      }
+      const other = document.getElementById('preview-enabled'); other.focus();
+      window.onPreviewCrops({...payload().crops, revision: 20, definitions: {'Another crop pilot': {}}});
+      assert.ok(document.activeElement === other, 'crop render must not overwrite newer focus');
+      assert.equal(writes.length, 0);
+    } else if (scenario === 'focus-lifecycle') {
       for (const operation of ['delete', 'rename', 'add']) for (const order of ['receipt-first', 'push-first']) for (const applied of [true, false]) {
         await open(); const request = await mutation(operation); const p = payload();
         if (applied && operation === 'delete') p.hotkeys.groups.shift();
