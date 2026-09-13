@@ -2,21 +2,26 @@
 
 ## Status and authority
 
-Task 1 is implemented and locally verified against base
-`2404917a1eb7771649e9473103f3561bd618cd37`. Final evidence: **12,233 passed / 13
-Windows-only skips** in the full Linux suite; **1,837 passed / 1 Windows-pump
-skip** in the affected selection; Ruff, format, all-page Node smoke, independent
-Cargo and isolated Chromium floor checks passed. The implementation source/tests
-were not changed during the documentation-and-commit continuation. The execution
-record below distinguishes earlier RED/intermediate runs from final verification.
+Task 1 and review fix round 1 are implemented. The original issue base remains
+`2404917a1eb7771649e9473103f3561bd618cd37`; fix round 1 starts from
+`cbad7f2fbb8ba09174bac048a25ba3047c34297b`. Independent review identified G1
+(marker-only reset rebuilding surviving controls) and G2 (RAQM-specific clipping
+expectations in the None oracle). Both have reproduced RED results and focused
+repairs. Fresh fix-round verification: **2,092 passed / 1 Windows-pump skip**, Ruff
+check/format and all-page Node smoke passed. BASIC and RAQM each ran all 18 None
+reference cases without skips. The appended **Review fix round 1** record is the
+current evidence; the original full Linux **12,233 / 13 Windows-only skips** and
+browser/Cargo results below belong to the initial candidate and were not rerun or
+relabelled as fix-round coverage.
 
 Authority is the approved issue 215 section of
 `docs/preview-identification-design.md`, `docs/preview-character-markers-plan.md`
-and the coordinator's Task 1 brief. No product-scope decision changed. Coordinator
-`/polish --fix`, independent review and actual CodeRabbit review remain **NOT RUN**
-for this change. Windows automation and real Windows/WebView2/native/EVE acceptance
-remain **NOT RUN**. A local commit is authorized; no push, PR, merge or issue action
-is authorized or performed.
+and the coordinator's Task 1 brief/review-fix ruling. No product-scope decision
+changed. The coordinator completed independent review of the initial candidate;
+post-fix approval/polish completion and actual CodeRabbit review remain
+coordinator-owned and are not claimed here. Windows automation and real
+Windows/WebView2/native/EVE acceptance remain **NOT RUN**. Scoped local commits are
+authorized; no push, PR, merge or issue action is authorized or performed.
 
 The following discovery/measurement sections retain the earlier planning record;
 the **Task 1 execution record** supplies implementation outcomes, adjustments and
@@ -147,7 +152,7 @@ Require `/polish --fix`, fresh verification and actual CodeRabbit review before
 a #215 PR. Record browser, automated Windows and real Windows/WebView2/live-EVE
 acceptance separately; this planning baseline proves none of those.
 
-## Task 1 execution record
+## Task 1 execution record — initial candidate
 
 ### Implementation and self-review
 
@@ -330,3 +335,90 @@ the lowest-margin palette entry (3.1203:1 over white-backed pill); useful recogn
 at typical/minimum native sizes still needs authorized observation. No claims of
 mutual color distinguishability, native usability or release acceptance follow from
 the automated contrast/containment tests.
+
+## Review fix round 1
+
+### Findings and scoped corrections
+
+Reviewed `.superpowers/sdd/preview-character-markers-plan/review-general.md` and
+`review-silent-failures.md` at `cbad7f2fbb8ba09174bac048a25ba3047c34297b`.
+G1 is one finding reproduced by both seats, not two independent scope items.
+The coordinator explicitly superseded the plan's literal full-rebuild instruction
+for removal of a marker-only row. No shared dialog/page framework was refactored.
+
+**G1:** `previews.js` now removes only the vanished owner's row, Configure detail
+and Lock/Never minimize labels, matched by a text-set `data-preview-character`
+attribute. All surviving DOM nodes remain attached. This retains unsent Manage
+groups values, selection range/direction and focus, and the original surviving
+Copy button retained by the real chooser. The existing scalar `paintMarkerField`
+path stays in place. Removal also updates empty/Copy hints, removes obsolete
+character/offline headings and repaints exception summaries/visibility without
+rebuilding their surviving controls. Capture on a survivor stays armed; capture
+owned by the removed row is disarmed before detachment. No reset tombstone becomes
+a fake row; persisted state, Copy target authorization and native rendering are
+unchanged. Existing non-reset full-render paths are not broadened or rewritten.
+
+Six added page scenarios cover the two exact findings, enabled/offline and master-
+off heading/exception transitions, unrelated capture and removed-owner capture.
+`reset-draft` asserts the original draft node, value `Fleet support`, selection
+2–9 with backward direction, focus, open disclosure and zero group submissions.
+`reset-copy` executes real `app.js`, `previews.js` and `panel.js`, settles another
+owner's reset while the chooser is open, and asserts the **original attached**
+Copy button and Escape focus return, not an equivalent replacement selector.
+Existing scalar Copy, other-owner replies, reset tombstones and screenshot/live
+isolation scenarios also remain in the final run.
+
+**G2:** the expected-image builder is unchanged. Independently measured literal
+widths select clipped-pill budgets 47px at font 17, 48px at font 20, and 47px at font
+23; these leave at least 1px before the next primary/secondary glyph under both
+BASIC and RAQM. In particular, BASIC's `Pil…` and `HO…` each measured 32px at the
+old Standard text budget of 32px, whereas the intended literals are `Pi…`/`H…`.
+The corrected Standard budget is 31px. Parameterized tests simulate Pillow's
+normal optional-engine choice through a scoped `HAVE_RAQM` patch; the font cache
+is cleared before each case and in `finally`, and the patch is restored on fixture
+exit. RAQM cases skip only if Pillow genuinely lacks that optional engine; it was
+available here and **all 36 engine/case combinations passed**. No production font,
+renderer, dependency or engine selection changed, and no production layout/ellipsis
+helper or platform hash computes the expected image.
+
+### Actual RED/GREEN and final verification
+
+Commands ran in this worktree and dedicated environment. Checkpoint stdout is
+retained in the task conversation; final machine-readable evidence is
+`.superpowers/sdd/preview-character-markers-plan/fix-round-1-affected.xml`.
+
+```bash
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-character-markers-venv uv run --no-sync python -m pytest tests/test_preview_labelmarkers_page.py -k reset -q --tb=short
+# RED: 5 failed, 8 deselected in 11.04s — original Copy detached, draft erased,
+# surviving row/exception ownership lost, and removal deferred behind unrelated capture.
+# GREEN after local removal, same command: 5 passed, 8 deselected in 2.10s.
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-character-markers-venv uv run --no-sync python -m pytest tests/test_preview_chrome.py -k independent_pre_marker -q --tb=short
+# RED with engine coverage but old literals/budgets: 2 failed, 34 passed,
+# 397 deselected in 3.01s. Both failures are BASIC / Standard / width 48.
+# GREEN with corrected budgets, same command: 36 passed, 397 deselected in 1.73s.
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-character-markers-venv uv run --no-sync python -m pytest tests/test_preview_labelmarkers_page.py tests/test_preview_warning_grouping.py tests/test_preview_crops_page.py tests/test_settings_runtime.py tests/test_bridge_contract.py tests/test_page_conventions.py -q -rs --tb=short
+# Intermediate GREEN: 290 passed in 19.73s; no skips.
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-character-markers-venv uv run --no-sync python -m pytest tests/test_preview_chrome.py tests/test_preview_window.py tests/test_preview_host.py tests/test_preview_roster.py tests/test_preview_store.py tests/test_settings.py tests/test_settings_preview.py tests/test_settings_committed_preview.py tests/test_preview_wiring.py tests/test_preview_warning_grouping.py tests/test_preview_crops_page.py tests/test_preview_crops.py tests/test_preview_cropwindow.py tests/test_settings_runtime.py tests/test_bridge_contract.py tests/test_page_conventions.py tests/test_js_smoke.py tests/test_dev_harness.py tests/test_api_settings_fields.py tests/test_preview_labelmarkers.py tests/test_preview_labelmarkers_page.py -q -rs --tb=short --junitxml=.superpowers/sdd/preview-character-markers-plan/fix-round-1-affected.xml
+# Final: 2,092 passed, 1 skipped in 53.92s, including all 14 marker-page scenarios.
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-character-markers-venv uv run --no-sync ruff check .
+# All checks passed!
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-character-markers-venv uv run --no-sync ruff format --check .
+# 434 files already formatted.
+node scripts/js_smoke.js
+# PASS every page module loaded (index.html, fleetbar.html, sigbar.html).
+git diff --check
+# Passed.
+```
+
+The additional removed-owner capture scenario was added after the five-case GREEN
+and is included in the final selection. Final JUnit confirms 2,093 cases, zero
+failures/errors, **18 BASIC + 18 RAQM** None-reference cases, and all 14 marker-page
+scenarios. The only skip is
+`tests/test_preview_host.py::test_stop_from_another_thread_really_exits_the_pump`
+(line 1860): **needs a real message pump and window station**. No Node or RAQM
+coverage skipped. No full Linux suite, Cargo, browser, Windows automated or native
+acceptance run was elected for this JS-removal/test-oracle-only round. Previous
+full-suite/browser artifacts remain intact as initial-candidate evidence, not proof
+of the corrected sequences. Post-fix coordinator review/polish approval and actual
+CodeRabbit review remain pending. No subagents, external reviews, remote repository
+actions or user app/settings/EVE actions were performed in this round.

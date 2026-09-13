@@ -13,6 +13,9 @@ Object.defineProperty(document, 'activeElement', {
   set: value => { active = value; }
 });
 Element.prototype.hasAttribute = function (name) { return this.getAttribute(name) !== null; };
+Element.prototype.setSelectionRange = function (start, end, direction = 'none') {
+  this.selectionStart = start; this.selectionEnd = end; this.selectionDirection = direction;
+};
 const window = new Element('window');
 Object.assign(window, {window, document, console, Promise, setTimeout, clearTimeout,
   getComputedStyle: () => ({visibility: 'visible'}),
@@ -29,7 +32,7 @@ window.WM.send = (method, ...args) => {
   throw new Error('Unexpected bridge call ' + method);
 };
 vm.runInContext(fs.readFileSync(web + '/previews.js', 'utf8'), context);
-if (data.scenario === 'copy') vm.runInContext(fs.readFileSync(web + '/panel.js', 'utf8'), context);
+if (['copy', 'reset-copy'].includes(data.scenario)) vm.runInContext(fs.readFileSync(web + '/panel.js', 'utf8'), context);
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const clone = value => JSON.parse(JSON.stringify(value));
 function payload(markers = {}) {
@@ -150,6 +153,91 @@ function tab(name) { document.dispatchEvent({type: 'wm:settings-tab', detail: {s
     assert.equal(document.getElementById('overlay').hidden, true);
     assert.equal(document.activeElement, copy, 'Copy Escape retains its attached invoker');
     assert.equal(writes.length, 1);
+  } else if (scenario === 'reset-copy') {
+    const p = payload({Retired: 'cyan'}); p.layout_sources = [{name: 'Source', online: false}]; push(p);
+    change('Retired', '');
+    open('Alice');
+    const copy = document.querySelector('[data-preview-detail-control="copy"]');
+    assert.ok(copy); copy.focus(); copy.click(); await tick();
+    const modalFocus = document.activeElement;
+    writes[0].resolve(ok('')); await tick();
+    assert.equal(configure('Retired'), undefined, 'reset-only row is removed');
+    assert.ok(document.activeElement === modalFocus, 'unrelated chooser keeps modal focus');
+    assert.ok(document.contains(copy), 'marker-only reset must retain the original unrelated Copy invoker');
+    document.dispatchEvent({type: 'keydown', key: 'Escape'}); await tick();
+    assert.equal(document.getElementById('overlay').hidden, true);
+    assert.ok(document.activeElement === copy, 'Escape returns to the original attached Copy control');
+    assert.equal(writes.length, 1);
+  } else if (scenario === 'reset-draft') {
+    push(payload({Retired: 'cyan'}));
+    change('Retired', '');
+    const manager = document.querySelector('.preview-group-manager');
+    manager.open = true; manager.dispatchEvent({type: 'toggle'});
+    const draft = document.querySelector('.group-add-name');
+    draft.value = 'Fleet support'; draft.focus(); draft.setSelectionRange(2, 9, 'backward');
+    writes[0].resolve(ok('')); await tick();
+    assert.equal(configure('Retired'), undefined, 'reset-only row is removed');
+    const surviving = document.querySelector('.group-add-name');
+    assert.equal(surviving.value, 'Fleet support', 'marker-only reset must not erase an unsent group draft');
+    assert.deepEqual([surviving.selectionStart, surviving.selectionEnd, surviving.selectionDirection], [2, 9, 'backward']);
+    assert.ok(document.activeElement === draft && surviving === draft, 'original draft retains focus and attachment');
+    assert.equal(manager.open, true);
+    assert.equal(calls.filter(c => c[0] === 'create_preview_cycle_group').length, 0);
+  } else if (scenario === 'reset-headings' || scenario === 'reset-headings-off') {
+    const enabled = scenario === 'reset-headings';
+    const p = payload({Retired: 'cyan'}); p.enabled = enabled; p.characters = enabled ? ['Alice'] : []; p.roster = ['Alice'];
+    p.locked = ['Retired']; p.never_minimize = ['Retired']; push(p);
+    document.dispatchEvent({type: 'wm:settings', detail: {settings: {preview: {minimize_inactive_clients: true}}}});
+    const offline = () => document.querySelectorAll('.bind-group-name').filter(el => el.textContent === 'Offline');
+    assert.equal(offline().length, enabled ? 1 : 0);
+    change('Retired', '');
+    const alice = configure('Alice');
+    const lock = document.querySelector('[data-preview-lock="Alice"]'); lock.focus();
+    const nm = document.getElementById('preview-nm-exceptions-list').querySelectorAll('label').find(el => el.textContent === 'Alice');
+    writes[0].resolve(ok('')); await tick();
+    assert.equal(configure('Retired'), undefined);
+    assert.equal(offline().length, 0, 'last offline owner removes its heading');
+    assert.ok(configure('Alice') === alice && document.contains(alice), 'surviving row is not rebuilt');
+    assert.ok(document.activeElement === lock && document.contains(lock), 'surviving exception checkbox keeps focus');
+    assert.ok(document.contains(nm), 'surviving Never minimize control is retained');
+    for (const id of ['preview-lock-exceptions-list', 'preview-nm-exceptions-list']) {
+      assert.equal(document.getElementById(id).textContent.includes('Retired'), false, 'vanished exception row is removed');
+    }
+    assert.equal(document.getElementById('preview-lock-exceptions-summary').textContent, 'Lock individual characters');
+    assert.equal(document.getElementById('preview-nm-exceptions-summary').textContent, 'Exempt individual characters');
+    assert.ok(document.querySelector('.bind-head'));
+    assert.equal(document.getElementById('preview-binds-empty').hidden, true);
+    assert.equal(document.getElementById('preview-copy-empty').hidden, false);
+    const last = payload({Final: 'blue'}); last.enabled = enabled; last.characters = []; last.roster = []; push(last);
+    change('Final', ''); writes[1].resolve(ok('')); await tick();
+    assert.equal(configure('Final'), undefined);
+    assert.equal(document.querySelector('.bind-head'), null, 'no character header with an empty roster');
+    assert.equal(document.getElementById('preview-binds').querySelectorAll('.bind-group').length, 0, 'no orphan divider/offline heading');
+    assert.equal(document.getElementById('preview-binds-empty').hidden, false);
+    assert.equal(document.getElementById('preview-copy-empty').hidden, true);
+    assert.equal(document.activeElement.id, 'preview-binds-empty');
+    for (const id of ['preview-lock-exceptions', 'preview-nm-exceptions']) {
+      assert.equal(document.getElementById(id).hidden, true);
+      assert.equal(document.getElementById(id + '-list').children.length, 0);
+    }
+  } else if (scenario === 'reset-capture' || scenario === 'reset-owner-capture') {
+    push(payload({Retired: 'cyan'})); change('Retired', '');
+    const removedOwner = scenario === 'reset-owner-capture';
+    const bind = configure(removedOwner ? 'Retired' : 'Alice').parentNode.querySelector('.bindbtn');
+    bind.focus(); bind.click(); await tick();
+    assert.ok(bind.classList.contains('capturing'));
+    writes[0].resolve(ok('')); await tick();
+    assert.ok(!configure('Retired'), 'reset does not defer a fake row behind capture');
+    if (removedOwner) {
+      assert.ok(!document.contains(bind) && !bind.classList.contains('capturing'));
+      assert.deepEqual(calls.filter(c => c[0] === 'set_bind_capture').at(-1), ['set_bind_capture', false]);
+      const count = calls.length; document.dispatchEvent({type: 'keydown', key: 'x', code: 'KeyX'});
+      assert.equal(calls.length, count, 'vanished owner cannot keep a detached capture session');
+    } else {
+      assert.ok(document.contains(bind) && document.activeElement === bind && bind.classList.contains('capturing'));
+      document.dispatchEvent({type: 'keydown', key: 'Escape'}); await tick();
+      assert.ok(!bind.classList.contains('capturing') && document.contains(bind));
+    }
   } else if (scenario === 'screenshot') {
     change('Alice', 'cyan'); writes[0].resolve(ok('cyan')); await tick();
     change('Bob', 'orange');

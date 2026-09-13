@@ -23,6 +23,12 @@ ROOT = Path(__file__).resolve().parents[1]
         "navigation",
         "screenshot",
         "copy",
+        "reset-copy",
+        "reset-draft",
+        "reset-headings",
+        "reset-headings-off",
+        "reset-capture",
+        "reset-owner-capture",
     ],
 )
 def test_marker_page_ownership(tmp_path, scenario):

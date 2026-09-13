@@ -40,16 +40,40 @@ def baseline_label_image(font_size, primary, secondary=""):
     return image
 
 
+@pytest.fixture(params=[False, True], ids=["BASIC", "RAQM"])
+def label_engine(request, monkeypatch):
+    from PIL import ImageFont
+
+    if request.param and not ImageFont.core.HAVE_RAQM:
+        pytest.skip("Pillow was built without RAQM; BASIC coverage still runs")
+    # Exercise Pillow's normal engine choice, including its supported fallback.
+    # Neither the production font helper nor the independent builder is replaced.
+    with monkeypatch.context() as patch:
+        patch.setattr(ImageFont.core, "HAVE_RAQM", request.param)
+        chrome._font.cache_clear()
+        try:
+            yield ImageFont.Layout.RAQM if request.param else ImageFont.Layout.BASIC
+        finally:
+            chrome._font.cache_clear()
+
+
+# Independently measured literal widths leave at least 1px to the next glyph
+# under both BASIC and RAQM. A shared 48px case at 17px sat on BASIC's Pil…/HO…
+# boundary and falsely reported changed pixels despite unchanged production code.
 @pytest.mark.parametrize(
-    "font_size,clipped,second", [(17, "Pi…", "H…"), (20, "P…", "H…"), (23, "…", "…")]
+    "font_size,clipped_width,clipped,second",
+    [(17, 47, "Pi…", "H…"), (20, 48, "P…", "H…"), (23, 47, "…", "…")],
 )
-@pytest.mark.parametrize("width", [48, 108, 316])
+@pytest.mark.parametrize("available_width", ["clipped", 108, 316])
 @pytest.mark.parametrize("two_lines", [False, True])
 def test_unmarked_pixels_match_independent_pre_marker_reference(
-    font_size, clipped, second, width, two_lines
+    font_size, clipped_width, clipped, second, available_width, two_lines, label_engine
 ):
-    primary = clipped if width == 48 else "Pilot"
-    secondary = (second if width == 48 else "HOME") if two_lines else ""
+    assert chrome._font(font_size).layout_engine == label_engine
+    clipping = available_width == "clipped"
+    width = clipped_width if clipping else available_width
+    primary = clipped if clipping else "Pilot"
+    secondary = (second if clipping else "HOME") if two_lines else ""
     expected = baseline_label_image(font_size, primary, secondary)
     actual = chrome.render_label(
         "Pilot", width, font_size, "HOME" if two_lines else None, max_h=78

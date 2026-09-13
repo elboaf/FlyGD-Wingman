@@ -329,6 +329,7 @@
 
   function makeRow(label, gesture, online, onSet, character, conflict) {
     var row = WM.make('div', 'row');
+    if (character) row.setAttribute('data-preview-character', character);
     var lab = WM.make('span', 'lab');
     // The name in a span of its own, not as `.lab`'s own text. The cell is
     // a flex row (style.css) so that the name can ellipsize inside its
@@ -577,6 +578,7 @@
     detail.id = detailId(characterName);
     detail.setAttribute('role', 'group');
     detail.setAttribute('aria-label', 'Configure ' + characterName);
+    detail.setAttribute('data-preview-character', characterName);
 
     if (groups().length) {
       var assignment = WM.make('div', 'preview-detail-field');
@@ -641,6 +643,41 @@
     document.getElementById(sel.getAttribute('aria-describedby')).textContent = field.error;
   }
 
+  function removeMarkerOnlyRow(name) {
+    // Reset can remove an owner without invalidating any surviving control.
+    // Rebuilding would erase group drafts and detach another Copy's invoker.
+    var section = WM.el('section-previews');
+    var focused = document.activeElement;
+    var restoreMissingFocus = detailFocusIntent && detailFocusIntent.name === name;
+    Array.prototype.forEach.call(section.querySelectorAll('[data-preview-character]'), function (node) {
+      if (node.getAttribute('data-preview-character') !== name) return;
+      if (capturing && node.contains(capturing.button)) endCapture();
+      if (node.contains(focused)) restoreMissingFocus = true;
+      node.remove();
+    });
+    if (openDetailName === name) openDetailName = null;
+    if (detailFocusIntent && detailFocusIntent.name === name) detailFocusIntent = null;
+    var list = rows();
+    if (!list.length) {
+      var head = host.querySelector('.bind-head');
+      if (head) {
+        head.previousElementSibling.remove(); // the character-only divider
+        head.remove();
+      }
+    }
+    if (!list.some(function (entry) { return !entry.online; })) {
+      var offline = WM.el('preview-offline-heading');
+      if (offline) offline.remove();
+    }
+    paintRosterAvailability(list);
+    paintLockSummary();
+    paintNeverMinimizeSummary();
+    WM.el('preview-lock-exceptions').hidden = !list.length;
+    WM.el('preview-nm-exceptions').hidden = !minimizeInactive || !list.length;
+    if (restoreMissingFocus && document.activeElement === document.body) focusRosterHeading();
+    else restoreDetailFocus();
+  }
+
   function makeMarkerSelect(characterName) {
     var field = markerFields[characterName];
     if (!field) {
@@ -698,9 +735,10 @@
             rememberDetailFocus(characterName, 'marker');
           }
         }
-        // A scalar receipt must not detach a Copy dialog's invoker or another
-        // field's draft. Only adding/removing a marker-only row needs a rebuild.
-        if (rosterChanged) requestRender();
+        // Keep surviving controls even when a reset removes its owner. An
+        // assignment can still need a full render if its row disappeared meanwhile.
+        if (rosterChanged && !field.accepted) removeMarkerOnlyRow(characterName);
+        else if (rosterChanged) requestRender();
         else {
           paintMarkerField(characterName);
           restoreDetailFocus();
@@ -1265,6 +1303,7 @@
     // failure WCAG 2.5.3 names. What the tick MEANS reaches the reader
     // through the group's aria-labelledby, once, not per row.
     var label = WM.make('label', 'check', name);
+    label.setAttribute('data-preview-character', name);
     label.title = 'Locks this character’s primary preview in place. '
                 + 'Clicking still switches to the client.';
     label.prepend(WM.make('span', 'box'));
@@ -1453,6 +1492,7 @@
     // reasoning. `.nm` stays in the class list: it is how the smoke pass
     // and the layout probes tell this checkbox from Lock.
     var label = WM.make('label', 'check nm', name);
+    label.setAttribute('data-preview-character', name);
     label.title = 'Leaves this character\u2019s real EVE window alone when '
                 + 'you switch away from it.';
     label.prepend(WM.make('span', 'box'));
@@ -1787,6 +1827,17 @@
     }
   }
 
+  function paintRosterAvailability(list) {
+    var empty = WM.el('preview-binds-empty');
+    if (empty) { empty.hidden = list.length > 0; }
+    var copyEmpty = WM.el('preview-copy-empty');
+    if (copyEmpty) {
+      copyEmpty.hidden = !list.length || list.some(function (entry) {
+        return copySources(entry.name).length > 0;
+      });
+    }
+  }
+
   function render() {
     var list = rows();
     var openDetailMissing = openDetailName && !list.some(function (entry) {
@@ -1898,19 +1949,13 @@
       // word rather than replacing it, which is what keeps this out of
       // WCAG 1.4.1.
       var off = WM.make('div', 'bind-group');
+      off.id = 'preview-offline-heading';
       off.appendChild(WM.make('span', 'bind-group-name', 'Offline'));
       host.appendChild(off);
       offline.forEach(paint);
     }
 
-    var empty = WM.el('preview-binds-empty');
-    if (empty) { empty.hidden = list.length > 0; }
-    var copyEmpty = WM.el('preview-copy-empty');
-    if (copyEmpty) {
-      copyEmpty.hidden = !list.length || list.some(function (entry) {
-        return copySources(entry.name).length > 0;
-      });
-    }
+    paintRosterAvailability(list);
     renderLockBlock();
     renderNeverMinimizeBlock();
     if (cropRosterEdit) {
