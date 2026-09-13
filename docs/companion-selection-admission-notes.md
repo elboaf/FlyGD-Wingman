@@ -1,6 +1,59 @@
 # Companion selection admission — focused follow-up
 
-## Current checkpoint — R1 addressed, final Linux gate GREEN
+## Current completion checkpoint — reviewed and locally verified
+
+Final test revision: `6e76e12c4833ed5b1e7c2014294858c24b308615`.
+The current follow-up remains test-only. Earlier checkpoints below retain the
+status and evidence from their own stage, not the latest gate status.
+
+Independent general review R1 is addressed: direct terminal refusals are returned
+without waiting for an unretained operation ID. `/polish --fix` additionally found
+P1, a false-positive notification regression: `Condition.wait_for` could recheck a
+true state after a timed-out wait even when cleanup notifications were suppressed.
+The regression-local wrapper now asserts the actual wait was notified before
+returning its result. No deadline, production callback, admission policy or shared
+wait behavior changed. A bounded suppression probe confirmed old-code acceptance
+and new-assertion rejection; normal retirement and all 99 focused tests passed.
+Coordinator inspection and the two retirement cases passed after the correction.
+Polish has no unresolved findings; no speculative automatic cleanup was applied.
+
+Fresh coordinator verification on the final test revision:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 UV_PROJECT_ENVIRONMENT=/tmp/wingman-companion-selection-admission-venv uv run --no-sync python -m pytest tests/ -q -rs -p no:cacheprovider --basetemp=/tmp/wingman-companion-coordinator-final --junitxml=.superpowers/sdd/companion-selection-admission-plan/coordinator-post-polish-full.xml
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-companion-selection-admission-venv uv run --no-sync ruff check --no-cache .
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-companion-selection-admission-venv uv run --no-sync ruff format --check --no-cache .
+node scripts/js_smoke.js
+cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml
+```
+
+All passed: **11,762 pytest passes, 13 Windows-only skips, 347.91s**;
+Ruff check and **431 files already formatted**; all three page smoke checks;
+Cargo **1 passed**. Node v26.5.0 and the built release codec were confirmed before
+pytest. Range whitespace checks passed and the production diff remained empty.
+
+Actual CodeRabbit command:
+
+```bash
+coderabbit review --agent --committed --base-commit e24d0c4aee2c9ab77b2d165320cb6ca367f95b42
+```
+
+The first invocation failed with `Connection failed: WebSocket closed`, exit 1,
+and did not complete a review. The maintainer authorized one retry. That retry
+completed with `review_completed`, exit 0, reviewing all four changed files and
+returning one minor finding: an older plan checkpoint looked current. This
+subsequent documentation-only correction explicitly labels it historical and
+makes the latest completion checkpoint authoritative. No review ID was emitted.
+CodeRabbit reviewed the exact test revision above, not this later documentation
+update. Raw attempts and reports are retained in the ignored workflow directory.
+
+No source/test edit followed the final gate or completed external review. No push,
+PR, merge or issue action has been performed for this follow-up. Windows/native
+acceptance is not established, and issue 215 remains unchanged pending its own
+integration and verification. Controlled reproduction still does not retrospectively
+prove the cause of any earlier unsnapshotted full-suite failure.
+
+## Historical R1 checkpoint — Linux gate GREEN before polish
 
 Independent general review found one Important test-helper gap (R1): synchronous
 controller refusals return directly with `pending=False` and `operation_id=None`,

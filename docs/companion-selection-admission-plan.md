@@ -84,7 +84,25 @@ Record actual RED/GREEN and named cases; diagnostic passes do not substitute for
 
 The coordinator explicitly authorizes a scoped local commit after verification, ordinary hooks only. Report to `.superpowers/sdd/companion-selection-admission-plan/task-1-report.md`; no subagents or duplicate reviewers. Coordinator owns independent review/polish/actual CodeRabbit and publishing decisions.
 
-## Current R1 checkpoint — final Linux gate GREEN
+## Current completion checkpoint — polish and CodeRabbit resolved
+
+The final test revision is `6e76e12c4833ed5b1e7c2014294858c24b308615`.
+Independent review R1 and polish P1 are addressed. P1 requires the real condition
+wait to report a notification, so the retirement regression cannot pass merely
+by rechecking readiness after a timeout. Production behavior remains unchanged.
+
+Fresh coordinator verification: **11,762 passed, 13 Windows-only skips, 347.91s**;
+Ruff check/format, all-page Node smoke, Cargo and range checks passed. Actual
+CodeRabbit completed on this revision after one user-authorized connection retry:
+four files reviewed, one minor historical-checkpoint wording finding, corrected
+in this documentation-only follow-up. The failed connection attempt is not counted
+as a completed review. Exact commands and remaining limits are in the notes.
+
+This is the authoritative latest status; checkpoints below describe their earlier
+states. Local review and verification are complete, but no publication or Windows
+native acceptance is claimed. Issue 215 still requires its own integration gate.
+
+## Historical R1 checkpoint — Linux gate GREEN before polish
 
 R1 is addressed with the approved two-line helper branch and two real-controller
 regression cases. Test-first RED: **2 failed, 12 deselected, 2.74s** at the observer
@@ -108,7 +126,7 @@ No publishing is authorized. Earlier failure history below is retained, not
 relabeled: the earlier **11,758 passed / 2 failed / 13 skipped** gate was not green,
 and its unsnapshotted failures remain unproven retrospectively.
 
-## Latest caller checkpoint — 2026-09-12, final gate pending review
+## Historical caller checkpoint — 2026-09-12, gate then pending review
 
 The authorized backend consumer correction is implemented (+7/-2 lines): explicit
 enumeration success/readiness in first-add and replacement, and receipt-aware new
@@ -121,9 +139,10 @@ unsnapshotted full-run cause.
 
 First-add GREEN: 2 passed. Expanded six-file focused group: **97 passed, no skips**.
 Consumer Ruff check/format and diff checks passed; production diff is empty.
-Host fixture bytes were not edited during independent review. No new full suite
-or commit was run; step 8 remains **blocked pending coordinator review**. Exact
-commands/evidence are retained in the latest caller-pass report section.
+Host fixture bytes were not edited during independent review. At this checkpoint,
+no new full suite or commit had run; step 8 was **then blocked pending coordinator
+review**. That historical blockage is superseded by the completion checkpoint
+above. Exact commands/evidence remain in the historical caller-pass report section.
 
 ## Earlier verification checkpoint — blocked, uncommitted
 
