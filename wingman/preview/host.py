@@ -43,6 +43,7 @@ from .cropcontroller import CropController
 from .croppicker import CropPicker
 from .crops import MAX_LIVE_CROPS
 from .cropwindow import CropWindow
+from .labelsize import DEFAULT_LABEL_SIZE, LABEL_SIZE_PRESETS
 from .runtime import FamilyDemand, HostAck
 from .window import PreviewWindow
 
@@ -316,6 +317,7 @@ class PreviewHost:
         on_crops_changed=None,
         crop_controller_factory=None,
         custom_alert_current: Callable[[str, int, int], bool] | None = None,
+        label_size=None,
     ):
         # Standalone/manual callers retain EVE-only start(). Binding a runtime
         # callback opts into explicit composite demands before any pump exists.
@@ -404,6 +406,7 @@ class PreviewHost:
         # wired this yet", not "off"; _labels_shown/_current_opacity/etc.
         # below fall back to today's shipped behaviour in that case.
         self._show_labels = show_labels
+        self._label_size = label_size
         self._opacity = opacity
         self._minimize_inactive_clients = minimize_inactive_clients
         # preview.hide_on_lost_focus: whether every preview leaves the
@@ -2734,6 +2737,7 @@ class PreviewHost:
                 # save for no gain.
                 locked=self._is_locked(key),
                 show_labels=self._labels_shown(),
+                label_size=self._current_label_size(),
                 opacity=self._current_opacity(),
                 snap=self._snapping(),
                 lock_aspect=self._locking_aspect(),
@@ -3900,6 +3904,19 @@ class PreviewHost:
             logger.exception("Could not read show_labels; defaulting to labels on")
             return True
 
+    def _current_label_size(self) -> str:
+        """Read committed presentation without letting a callback kill the pump."""
+        if self._label_size is None:
+            return DEFAULT_LABEL_SIZE
+        try:
+            value = self._label_size()
+        except Exception:
+            logger.exception("Could not read preview.label_size; using Standard")
+            return DEFAULT_LABEL_SIZE
+        if not isinstance(value, str) or value not in LABEL_SIZE_PRESETS:
+            return DEFAULT_LABEL_SIZE
+        return value
+
     def _current_opacity(self) -> int:
         """DWM thumbnail opacity, read live. Same guard as _labels_shown."""
         if self._opacity is None:
@@ -4087,6 +4104,7 @@ class PreviewHost:
         """
         epoch = self._eve_epoch
         show_labels = self._labels_shown()
+        label_size = self._current_label_size()
         opacity = self._current_opacity()
         for key, win in self._windows.items():
             if not self._eve_valid(epoch):
@@ -4094,6 +4112,7 @@ class PreviewHost:
             # set_labels, not an attribute write: the label is a window
             # now (see PreviewWindow._ensure_label_overlay), so showing
             # or hiding it is the method's whole job.
+            win.label_size = label_size
             win.set_labels(show_labels)
             win.opacity = opacity
             win.locked = self._is_locked(key)

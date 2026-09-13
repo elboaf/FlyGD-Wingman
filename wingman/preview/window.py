@@ -11,6 +11,7 @@ from enum import Enum, auto
 
 from ..alerts import state as alerts_state
 from . import alertframes, chrome, geometry, layered, win32
+from .labelsize import DEFAULT_LABEL_SIZE, LABEL_SIZE_PRESETS
 from .thumbnail import Thumbnail
 
 logger = logging.getLogger(__name__)
@@ -270,6 +271,7 @@ class PreviewWindow:
     # Class-level so a preview created before the first restyle still has
     # it. Pushed live by PreviewHost._restyle, like show_labels and locked.
     snap = True
+    label_size = DEFAULT_LABEL_SIZE
     lock_aspect = True
     # The selection ring's colour, #rrggbb. Class-level for the same
     # reason; the default is the cyan this module hardcoded until the
@@ -294,6 +296,8 @@ class PreviewWindow:
         selection_color="#00c8dc",
         on_resize_all=None,
         on_toggle_crop=None,
+        *,
+        label_size=DEFAULT_LABEL_SIZE,
     ):
         self._libs = libs
         self.client = client
@@ -305,6 +309,7 @@ class PreviewWindow:
         # Set once from the host at creation; the live restyle path lets this
         # change on an already-open window.
         self.show_labels = show_labels
+        self.label_size = label_size
         # A DWM thumbnail property, not a bitmap one -- see the note on
         # _chrome_key() below. Set once at creation; the live restyle path lets
         # this change on an already-open window.
@@ -396,6 +401,8 @@ class PreviewWindow:
         selection_color="#00c8dc",
         on_resize_all=None,
         on_toggle_crop=None,
+        *,
+        label_size=DEFAULT_LABEL_SIZE,
     ):
         self = cls(
             libs,
@@ -413,6 +420,7 @@ class PreviewWindow:
             selection_color,
             on_resize_all,
             on_toggle_crop,
+            label_size=label_size,
         )
         _ensure_class(libs)
         self.hwnd = libs.user32.CreateWindowExW(
@@ -612,13 +620,17 @@ class PreviewWindow:
         if self._label_hwnd is None:
             return
         label = self._label_text()
+        font_size = LABEL_SIZE_PRESETS[self.label_size][1]
         max_w = self.rect.w - self._inset * 2
-        layout = chrome.label_layout(label, max_w, chrome.LABEL_FONT, self._system_name)
+        max_h = max(0, self.rect.h - self._inset * 2)
+        layout = chrome.label_layout(
+            label, max_w, font_size, self._system_name, max_h=max_h
+        )
         key = (
             label,
             self._system_name,
             layout,
-            chrome.LABEL_FONT,
+            font_size,
             chrome.LABEL_PAD_X,
             chrome.LABEL_PAD_Y,
             chrome.LABEL_BG,
@@ -627,7 +639,7 @@ class PreviewWindow:
         )
         if key != self._label_key:
             self._label_img = chrome.render_label(
-                label, max_w, chrome.LABEL_FONT, self._system_name
+                label, max_w, font_size, self._system_name, max_h=max_h
             )
             self._label_key = key
         if self._label_img is not None:

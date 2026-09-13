@@ -231,6 +231,45 @@ def test_restore_preview_positions_survives_a_load_round_trip(tmp_path):
     assert settings.load(path)["preview"]["restore_preview_positions"] is False
 
 
+@pytest.mark.parametrize("key", ["standard", "large", "extra_large"])
+def test_label_size_round_trips_without_resetting_other_fields(
+    key, saved_crop, tmp_path
+):
+    path = tmp_path / "settings.json"
+    live = settings.load(path)
+    with settings.update(live, path) as doc:
+        doc["preview"].update(
+            show_labels=False,
+            width=640,
+            height=360,
+            opacity=180,
+            layouts={"Alice": {"x": -100, "y": 20, "w": 120, "h": 30, "locked": False}},
+            crops={"Alice": saved_crop},
+        )
+        doc["preview"]["hotkeys"]["characters"] = {"Alice": "Ctrl+F1"}
+        doc["preview"]["alerts"]["enabled"] = True
+    before = settings.load(path)["preview"]
+    with settings.update(live, path) as doc:
+        doc["preview"]["label_size"] = key
+    expected = {**before, "label_size": key}
+    assert settings.load(path)["preview"] == expected
+    with settings.update(live, path) as doc:
+        doc["channel_title"] = "Unrelated change"
+    assert settings.load(path)["preview"] == expected
+
+
+@pytest.mark.parametrize("raw", [None, True, 17, 20.0, [], {}, "", "Large", "huge"])
+def test_bad_label_size_falls_back_without_resetting_other_fields(raw):
+    result = settings.validated_preview({"label_size": raw, "show_labels": False})
+    assert result["label_size"] == "standard"
+    assert result["show_labels"] is False
+
+
+def test_missing_label_size_keeps_the_existing_default():
+    assert settings.validated_preview({})["label_size"] == "standard"
+    assert settings._preview_defaults()["defaults_version"] == 2
+
+
 def test_show_labels_defaults_on():
     """On preserves the behaviour that shipped: labels have always drawn."""
     assert settings._preview_defaults()["show_labels"] is True

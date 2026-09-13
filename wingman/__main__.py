@@ -386,6 +386,7 @@ def build_preview_host(state, api_box):
         from .preview import layout as preview_layout
         from .preview.cropstore import CropStore
         from .preview.host import PreviewHost
+        from .preview.labelsize import DEFAULT_LABEL_SIZE
         from .preview.store import LayoutStore
 
         # Register before any consumer is constructed. Callbacks retain the
@@ -458,6 +459,9 @@ def build_preview_host(state, api_box):
             # it is what shipped, and defaulting off would silently
             # restyle every existing install's previews.
             return bool(preview_config.get("show_labels", True))
+
+        def label_size():
+            return preview_config.get("label_size", DEFAULT_LABEL_SIZE)
 
         def opacity():
             return int(preview_config.get("opacity", 255))
@@ -549,6 +553,7 @@ def build_preview_host(state, api_box):
             on_bind_captured=on_bind_captured,
             restore_positions=restore_positions,
             show_labels=show_labels,
+            label_size=label_size,
             opacity=opacity,
             minimize_inactive_clients=minimize_inactive_clients,
             never_minimize=never_minimize,

@@ -46,6 +46,20 @@ WEB = Path(__file__).resolve().parent.parent / "wingman" / "web"
 API = Path(__file__).resolve().parent.parent / "wingman" / "ui" / "api.py"
 
 
+def test_label_size_commit_matches_the_bridge_signature():
+    from wingman.ui.api import Api
+
+    source = (WEB / "settings.js").read_text(encoding="utf-8")
+    assert re.search(
+        r"commit\('preview-label-size-status',\s*\['set_preview_label_size',\s*field\.value\]",
+        source,
+    )
+    assert tuple(inspect.signature(Api.set_preview_label_size).parameters) == (
+        "self",
+        "value",
+    )
+
+
 def allowlist() -> list:
     """The names in web/app.js's WM.HANDLERS array literal."""
     source = (WEB / "app.js").read_text(encoding="utf-8")

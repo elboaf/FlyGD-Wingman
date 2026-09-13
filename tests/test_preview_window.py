@@ -1202,7 +1202,7 @@ class _OverlayLibs:
         self.user32 = User32()
 
 
-def _overlay_window(show_labels=True):
+def _overlay_window(show_labels=True, **kwargs):
     client = type("C", (), {"character": "Pilot", "title": "EVE - Pilot", "hwnd": 1})()
     libs = _OverlayLibs()
     w = window.PreviewWindow(
@@ -1214,6 +1214,7 @@ def _overlay_window(show_labels=True):
         list,
         lambda: Rect(0, 0, 1920, 1080),
         show_labels=show_labels,
+        **kwargs,
     )
     w.hwnd = 1
     w.redraw = lambda force=False: None
@@ -1229,7 +1230,7 @@ def test_set_labels_creates_and_destroys_the_overlay_window(monkeypatch):
     owned by the preview: owned composites above the owner -- above the
     DWM thumbnail, which is the whole point -- and the style pair makes
     it click-through so no mouse gesture is stolen from the preview."""
-    monkeypatch.setattr(window.chrome, "render_label", lambda *a: _pill_image())
+    monkeypatch.setattr(window.chrome, "render_label", lambda *a, **k: _pill_image())
     monkeypatch.setattr(window.layered, "push", lambda *a, **k: None)
     w, libs = _overlay_window(show_labels=False)
     assert w._label_hwnd is None
@@ -1252,7 +1253,7 @@ def test_the_overlay_is_repositioned_by_every_move(monkeypatch):
     preview must carry it, or the name stays behind over whatever slid
     into its old corner."""
     pushed = []
-    monkeypatch.setattr(window.chrome, "render_label", lambda *a: _pill_image())
+    monkeypatch.setattr(window.chrome, "render_label", lambda *a, **k: _pill_image())
     monkeypatch.setattr(
         window.layered, "push", lambda libs, hwnd, img, x, y: pushed.append((x, y))
     )
@@ -1271,7 +1272,8 @@ def test_the_overlay_re_renders_only_when_the_width_forces_it(monkeypatch):
     threshold, keeping the per-mousemove cost to one small push."""
     renders = []
 
-    def fake_label(label, max_w, font_size, secondary):
+    def fake_label(label, max_w, font_size, secondary, *, max_h=None):
+        assert max_h == 206
         renders.append(max_w)
         return _pill_image()
 
@@ -1293,7 +1295,7 @@ def test_set_hidden_takes_the_overlay_with_the_preview(monkeypatch):
     def fake_show(hwnd, cmd):
         shown.append(cmd)
 
-    monkeypatch.setattr(window.chrome, "render_label", lambda *a: _pill_image())
+    monkeypatch.setattr(window.chrome, "render_label", lambda *a, **k: _pill_image())
     monkeypatch.setattr(window.layered, "push", lambda *a, **k: None)
     w, libs = _overlay_window()
     w._ensure_label_overlay()
@@ -1307,7 +1309,7 @@ def test_set_hidden_takes_the_overlay_with_the_preview(monkeypatch):
 
 
 def test_close_destroys_the_overlay(monkeypatch):
-    monkeypatch.setattr(window.chrome, "render_label", lambda *a: _pill_image())
+    monkeypatch.setattr(window.chrome, "render_label", lambda *a, **k: _pill_image())
     monkeypatch.setattr(window.layered, "push", lambda *a, **k: None)
     w, libs = _overlay_window()
     w._ensure_label_overlay()
@@ -1316,6 +1318,158 @@ def test_close_destroys_the_overlay(monkeypatch):
 
     assert 0x9001 in libs.destroyed
     assert w._label_hwnd is None
+
+
+@pytest.mark.parametrize(
+    "key,height", [("standard", 31), ("large", 34), ("extra_large", 37)]
+)
+def test_label_size_creation_uses_the_selected_font(monkeypatch, key, height):
+    monkeypatch.setattr(window, "_ensure_class", lambda libs: None)
+    monkeypatch.setattr(window.PreviewWindow, "redraw", lambda self: None)
+    monkeypatch.setattr(window.Thumbnail, "register", lambda *a: None)
+    monkeypatch.setattr(window.layered, "push", lambda *a: None)
+    template, libs = _overlay_window()
+    w = window.PreviewWindow.create(
+        libs,
+        template.client,
+        template.rect,
+        lambda c: None,
+        lambda *a: None,
+        list,
+        lambda: Rect(0, 0, 1920, 1080),
+        label_size=key,
+    )
+    try:
+        assert w.label_size == key
+        assert w._label_img.height == height
+        assert len(libs.created) == 2  # primary and its existing overlay
+    finally:
+        w.close()
+
+
+def test_label_size_changes_only_the_label_cache(monkeypatch):
+    rendered = []
+    render = window.chrome.render_label
+
+    def record(*args, **kwargs):
+        image = render(*args, **kwargs)
+        rendered.append(image)
+        return image
+
+    monkeypatch.setattr(window.chrome, "render_label", record)
+    monkeypatch.setattr(window.layered, "push", lambda *a: None)
+    w, libs = _overlay_window()
+    w._thumb = _FakeThumb()
+    w._ensure_label_overlay()
+    first = w._label_img
+    frames = object()
+    w._frames = frames
+    chrome_key = w._chrome_cache_key
+    w.label_size = "large"
+    w.set_labels(True)
+    assert w._label_img.height == 34 and w._label_img is not first
+    assert len(rendered) == 2 and len(libs.created) == 1
+    w.set_labels(True)
+    assert len(rendered) == 2
+    assert w._frames is frames and w._chrome_cache_key == chrome_key
+    assert w._thumb.calls == []
+    w.set_system_name("HOME")
+    assert w._label_img.height == 53 and len(rendered) == 3
+    w.set_system_name(None)
+    assert w._label_img.height == 34 and len(rendered) == 4
+
+
+@pytest.mark.parametrize(
+    "key,height", [("standard", 31), ("large", 34), ("extra_large", 37)]
+)
+def test_label_size_off_and_hidden_owner_do_not_show_overlay(monkeypatch, key, height):
+    monkeypatch.setattr(window.layered, "push", lambda *a: None)
+    w, libs = _overlay_window(show_labels=False)
+    shown = []
+    libs.user32.ShowWindow = lambda hwnd, cmd: shown.append((hwnd, cmd))
+    w.label_size = key
+    w.set_labels(False)
+    assert not libs.created
+    w.set_hidden(True)
+    shown.clear()
+    w.set_labels(True)
+    assert w._label_img.height == height
+    assert not any(cmd == window.win32.SW_SHOWNOACTIVATE for _, cmd in shown)
+    w.set_hidden(False)
+    assert (w._label_hwnd, window.win32.SW_SHOWNOACTIVATE) in shown
+
+
+@pytest.mark.parametrize(
+    "key,font_size", [("standard", 17), ("large", 20), ("extra_large", 23)]
+)
+@pytest.mark.parametrize("inset", [2, 6])
+@pytest.mark.parametrize("size", [(120, 90), (320, 210)])
+def test_label_size_layout_equivalent_moves_reuse_bitmap(
+    monkeypatch, key, font_size, inset, size
+):
+    pushed = []
+    monkeypatch.setattr(
+        window.layered,
+        "push",
+        lambda libs, hwnd, image, x, y: pushed.append((image, x, y)),
+    )
+    w, libs = _overlay_window(label_size=key)
+    w.rect = Rect(100, 100, *size)
+    w._inset = inset
+    w._ensure_label_overlay()
+    w.set_system_name("HOME")
+    first = w._label_img
+    assert first.height == 2 * font_size + 13
+    w.move(Rect(200, 300, size[0] + 1, size[1] + 1))
+    assert w._label_img is first
+    assert pushed[-1] == (first, 200 + inset, 300 + inset)
+    assert len(libs.created) == 1
+
+
+@pytest.mark.parametrize(
+    "key,font_size", [("standard", 17), ("large", 20), ("extra_large", 23)]
+)
+@pytest.mark.parametrize("inset", [2, 6])
+@pytest.mark.parametrize("primary,secondary", [("Pilot", "HOME"), ("W" * 60, "W" * 60)])
+def test_label_size_height_transitions_contain_and_restore_without_source_geometry(
+    monkeypatch, key, font_size, inset, primary, secondary
+):
+    w, libs = _overlay_window(label_size=key)
+    w.client.hwnd = 0xA11
+    w.client.character = primary
+    w.rect = Rect(100, 100, 120, 90)
+    w._inset = inset
+    positions, shown, pushed = [], [], []
+    libs.user32.SetWindowPos = lambda hwnd, *a: positions.append(hwnd)
+    libs.user32.ShowWindow = lambda hwnd, cmd: shown.append((hwnd, cmd))
+
+    def push(libs, hwnd, image, x, y):
+        assert image.width <= w.rect.w - 2 * inset
+        assert image.height <= w.rect.h - 2 * inset
+        assert (x, y) == (w.rect.x + inset, w.rect.y + inset)
+        assert hwnd == w._label_hwnd
+        pushed.append(image)
+
+    monkeypatch.setattr(window.layered, "push", push)
+    w.set_system_name(secondary)
+    w._ensure_label_overlay()
+    assert w._label_img.height == 2 * font_size + 13
+    # Exactly one pixel short of the full secondary: keep the intact primary.
+    w.move(Rect(100, 100, 120, 2 * font_size + 12 + 2 * inset))
+    assert w._label_img.height == font_size + 14
+    assert w._label_visible
+    count = len(pushed)
+    w.move(Rect(100, 100, 120, 30))  # accepted legacy geometry, not enlarged
+    assert w.rect == Rect(100, 100, 120, 30)
+    assert w._label_img is None and not w._label_visible
+    assert len(pushed) == count
+    assert shown[-1] == (w._label_hwnd, window.win32.SW_HIDE)
+    w.move(Rect(100, 100, 120, 90))
+    assert w._label_img.height == 2 * font_size + 13
+    assert shown[-1] == (w._label_hwnd, window.win32.SW_SHOWNOACTIVATE)
+    assert len(libs.created) == 1
+    assert positions and set(positions) == {w.hwnd}
+    assert all(hwnd != w.client.hwnd for hwnd, cmd in shown)
 
 
 def test_system_text_invalidates_equal_size_label_without_chrome_or_thumbnail_work(
@@ -1425,12 +1579,13 @@ def test_two_line_cache_repaints_when_ellipsis_changes_but_dimensions_do_not(
     }
     rendered = []
 
-    def layout(label, max_w, font_size, secondary):
+    def layout(label, max_w, font_size, secondary, *, max_h=None):
+        assert max_h == 86
         assert label == "Pilot Alpha" and secondary == "HOME"
         return layouts[max_w]
 
-    def render(label, max_w, font_size, secondary):
-        size, primary, second = layout(label, max_w, font_size, secondary)
+    def render(label, max_w, font_size, secondary, *, max_h=None):
+        size, primary, second = layout(label, max_w, font_size, secondary, max_h=max_h)
         image = Image.new("RGBA", size)
         image.putpixel((0, 0), (len(primary), len(second), 0, 255))
         rendered.append(image)
