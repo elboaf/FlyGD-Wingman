@@ -1127,6 +1127,55 @@
   });
 }());
 
+// ---- Hide the active client's previews --------------------------------
+(function () {
+  var box = WM.el('preview-hide-active-preview');
+  var status = WM.el('preview-hide-active-preview-status');
+  if (!box || !status) { return; }
+  var hydrated = false;
+  var lastGood = false;
+  var generation = 0;
+  var pending = 0;
+  var writes = Promise.resolve();
+
+  box.addEventListener('change', function () {
+    if (!hydrated) { return; }
+    var wanted = box.checked;
+    var request = ++generation;
+    pending += 1;
+    // Each acknowledgement owns only its submission, never a newer choice.
+    writes = writes.then(function () {
+      return WM.send('set_preview_hide_active_preview', wanted);
+    }).then(function (res) {
+      pending -= 1;
+      if (res && res.applied) { lastGood = wanted; }
+      if (request !== generation) { return; }
+      if (!res || !res.applied) {
+        box.checked = lastGood;
+        status.textContent = (res && res.error) || 'Could not save this.';
+      } else if (!res.persisted) {
+        status.textContent = 'Hiding the active client\'s previews is '
+          + (wanted ? 'on' : 'off') + ' for this session, but will not survive a restart.';
+      } else {
+        status.textContent = '';
+      }
+    });
+  });
+
+  document.addEventListener('wm:settings', function (ev) {
+    var payload = ev.detail || {};
+    var preview = (payload.settings || {}).preview || {};
+    if (!pending) {
+      // The ordinary payload carries committed policy separately from the
+      // settings document. Older payloads still hydrate through the section.
+      lastGood = typeof payload.preview_hide_active_preview === 'boolean'
+        ? payload.preview_hide_active_preview : preview.hide_active_preview === true;
+      box.checked = lastGood;
+    }
+    hydrated = true;
+  });
+}());
+
 // ---- Hide previews while you are not in EVE ----------------------------
 // Same shape as preview-snap below: a per-field endpoint reporting
 // {applied, persisted, error}, a box that goes back if the write is

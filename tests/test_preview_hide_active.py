@@ -1,0 +1,196 @@
+"""Actual primary/label show calls and pump policy, with OS boundaries recorded."""
+
+from types import SimpleNamespace
+
+import pytest
+
+from tests.test_preview_cropcontroller import client
+from tests.test_preview_window import _OverlayLibs
+from wingman.preview import host, visibility, win32, window
+from wingman.preview.geometry import Rect
+from wingman.telemetry.model import RosterClient, RosterSnapshot
+
+
+@pytest.mark.parametrize(
+    "global_hidden,enabled,foreground,source,want",
+    [
+        (False, False, 16, 16, False),
+        (False, True, 16, 16, True),
+        (False, True, 16, 32, False),
+        (False, True, 32, 32, True),
+        (False, True, 99, 16, False),
+        (False, True, 0, 0, False),
+        (False, True, None, 16, False),
+        (True, False, 16, 16, True),
+        (True, True, 99, 16, True),
+    ],
+)
+def test_source_mask_composes_without_nominating_unknown_foreground(
+    global_hidden, enabled, foreground, source, want
+):
+    assert (
+        visibility.should_hide_source(
+            global_hidden=global_hidden,
+            hide_active=enabled,
+            foreground=foreground,
+            source_hwnd=source,
+        )
+        is want
+    )
+
+
+@pytest.fixture
+def primary_host(monkeypatch):
+    libs = _OverlayLibs()
+    state = {"active": True, "lost": False, "foreground": 16, "pid": 9}
+    shows, pid_queries = [], []
+    libs.user32.ShowWindow = lambda hwnd, command: shows.append((hwnd, command))
+    libs.user32.GetForegroundWindow = lambda: state["foreground"]
+    libs.user32.GetClientRect = lambda *args: False
+    libs.kernel32.GetCurrentProcessId = lambda: 42
+
+    def pid(hwnd, pointer):
+        pid_queries.append(hwnd)
+        pointer._obj.value = state["pid"]
+        return 1
+
+    libs.user32.GetWindowThreadProcessId = pid
+    monkeypatch.setattr(window, "_ensure_class", lambda libs: None)
+    monkeypatch.setattr(window.layered, "push", lambda *args: None)
+    monkeypatch.setattr(
+        window.Thumbnail,
+        "register",
+        lambda *args: SimpleNamespace(
+            update=lambda *args, **kwargs: None, close=lambda: None
+        ),
+    )
+    h = host.PreviewHost(
+        on_layout_changed=lambda *args: None,
+        hide_on_lost_focus=lambda: state["lost"],
+        hide_active_preview=lambda: state["active"],
+    )
+    monkeypatch.setattr(h, "_monitors", lambda: [Rect(0, 0, 1920, 1080)])
+    monkeypatch.setattr(h, "_screen", lambda: Rect(0, 0, 1920, 1080))
+
+    def roster(generation, *clients):
+        h.apply_roster(RosterSnapshot(generation, clients))
+        h._apply_pending_roster(libs)
+
+    yield SimpleNamespace(
+        host=h,
+        libs=libs,
+        state=state,
+        shows=shows,
+        pid_queries=pid_queries,
+        roster=roster,
+    )
+    for w in h._windows.values():
+        w.close()
+
+
+def test_active_primary_and_label_never_show_at_birth_and_switch_without_global_change(
+    primary_host,
+):
+    r = primary_host
+    r.roster(1, client(), client("Bob", hwnd=32))
+    a, b = r.host._windows["Alice"], r.host._windows["Bob"]
+    assert (a.hwnd, win32.SW_SHOWNOACTIVATE) not in r.shows
+    assert (a._label_hwnd, win32.SW_SHOWNOACTIVATE) not in r.shows
+    assert (b.hwnd, win32.SW_SHOWNOACTIVATE) in r.shows
+    assert (b._label_hwnd, win32.SW_SHOWNOACTIVATE) in r.shows
+    r.shows.clear()
+    r.state["foreground"] = 32
+    r.host._apply_selection(r.libs)
+    assert (a.hwnd, win32.SW_SHOWNOACTIVATE) in r.shows
+    assert (a._label_hwnd, win32.SW_SHOWNOACTIVATE) in r.shows
+    assert (b.hwnd, win32.SW_HIDE) in r.shows
+    assert (b._label_hwnd, win32.SW_HIDE) in r.shows
+    assert r.pid_queries == []  # no ownership probe with lost-focus hiding off
+    assert set(r.host._clients) == {"Alice", "Bob"}
+    assert set(r.host._windows) == {"Alice", "Bob"}
+
+
+def test_off_during_visibility_delivery_fences_later_primary_reveals(
+    primary_host, monkeypatch
+):
+    r = primary_host
+    r.roster(1, client(), client("Bob", hwnd=32))
+    for w in r.host._windows.values():
+        w.set_hidden(True)
+    r.state["active"] = False
+    shown = []
+
+    def show(hwnd, mode):
+        shown.append((hwnd, mode))
+        r.host._eve_admitted = False
+        r.host._eve_epoch += 1
+
+    monkeypatch.setattr(r.libs.user32, "ShowWindow", show)
+    second = r.host._windows["Bob"]
+    r.host._apply_visibility(r.libs, 16)
+    assert (second.hwnd, win32.SW_SHOWNOACTIVATE) not in shown
+    assert len(shown) == 1  # first primary show revoked authority before its label
+
+
+def test_default_off_explicitly_reveals_prepared_primary_and_label(primary_host):
+    r = primary_host
+    r.state["active"] = False
+    r.roster(1, client())
+    w = r.host._windows["Alice"]
+    assert r.shows.count((w.hwnd, win32.SW_SHOWNOACTIVATE)) == 1
+    assert r.shows.count((w._label_hwnd, win32.SW_SHOWNOACTIVATE)) == 1
+
+
+def test_hidden_primary_stays_hidden_through_metadata_labels_and_restyle(primary_host):
+    r = primary_host
+    r.roster(1, client())
+    w = r.host._windows["Alice"]
+    r.shows.clear()
+    w.set_system_name("HOME")
+    w.set_labels(False)
+    w.set_labels(True)
+    w.set_focused(True)
+    w.set_selected(True)
+    w.redraw(force=True)
+    r.host._restyle(r.libs)
+    assert not any(mode == win32.SW_SHOWNOACTIVATE for _, mode in r.shows)
+    r.state["active"] = False
+    r.host._restyle(r.libs)
+    assert (w.hwnd, win32.SW_SHOWNOACTIVATE) in r.shows
+    assert (w._label_hwnd, win32.SW_SHOWNOACTIVATE) in r.shows
+
+
+@pytest.mark.parametrize(
+    "lost,foreground,pid,want",
+    [
+        (False, 99, 9, False),
+        (True, 99, 9, True),
+        (True, 99, 42, False),
+        (False, 0, 9, False),
+        (True, 0, 9, True),
+    ],
+)
+def test_actual_foreground_not_sticky_selection_controls_composition(
+    primary_host, lost, foreground, pid, want
+):
+    r = primary_host
+    r.roster(1, client())
+    r.state.update(lost=lost, foreground=foreground, pid=pid)
+    r.host._apply_selection(r.libs)
+    assert r.host._selected_key == "Alice"
+    assert r.host._focused_key is None
+    assert r.host._windows["Alice"].hidden is want
+
+
+def test_logout_anonymous_and_replacement_use_current_source(primary_host):
+    r = primary_host
+    r.roster(1, client())
+    old = r.host._windows["Alice"]
+    r.roster(2, RosterClient(16, 101, "EVE", None, None))
+    assert old.hwnd is None
+    anonymous = next(iter(r.host._windows.values()))
+    assert anonymous.hidden
+    assert (anonymous.hwnd, win32.SW_SHOWNOACTIVATE) not in r.shows
+    r.roster(3, client(serial=2, hwnd=32))
+    assert anonymous.hwnd is None
+    assert not r.host._windows["Alice"].hidden

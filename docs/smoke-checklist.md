@@ -15,6 +15,36 @@ dev checks are separate evidence, not installed Windows/WebView2 acceptance.
 
 Run on Windows against a real install before each release.
 
+## Hide the active EVE client's previews (#212) — Windows acceptance NOT RUN
+
+Linux native doubles and private Chrome checks are not acceptance of this native
+focus behavior. On an authorized Windows build, record build/DPI and exercise:
+
+- [ ] Settings → Previews → Windows → When you switch away: preference defaults
+      off, remains editable with Previews Off, persists across restart, and rapid
+      toggles/refused saves report locally without changing another field.
+- [ ] With two EVE clients A/B and both primaries/labels/crops enabled, activate
+      A then B by click, keybind and forward/backward cycle. Only the actual
+      foreground client's previews hide; both remain cycleable. A refused or
+      pending activation must not hide the intended target before focus lands.
+- [ ] Alt-Tab to Wingman, its dialogs/tray, another application and back. Test
+      all four combinations of active hiding and lost-focus hiding: Wingman is
+      exempt; unrelated focus hides all only with lost-focus hiding enabled.
+- [ ] Exclude A's primary but keep its independent crop enabled. A's crop still
+      hides while A is active; its primary stays absent. Hidden crops remain live
+      and consume capacity. New/reselected crops saved while focus changes obey
+      current focus without a flash or focus theft.
+- [ ] Log out to character selection, return, restart a client and change sessions.
+      Anonymous primaries match only their own HWND; stale named crops retire.
+      Launch while already foreground: neither primary nor label flashes first.
+- [ ] Change labels/size/markers and Wanderer metadata and raise an alert while
+      hidden. None reveals the preview; returning it shows the current appearance.
+      Alert ownership and minimize-inactive behavior remain unchanged.
+- [ ] Keep companions running through EVE Off/on and Quit; preference changes,
+      pending crop saves and late callbacks never reopen EVE previews after Off.
+      Companions stay independent. Check 100/125/150/200% DPI and 840×625 / observed
+      839×621 floor. Confirm EVE source bounds are unchanged throughout.
+
 ## 2026-09-13 UX readiness pass — Windows acceptance DEFERRED
 
 The implementation has automated production-module/state coverage; the Windows

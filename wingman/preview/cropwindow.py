@@ -249,7 +249,7 @@ class CropWindow:
             self.source_rect = rect
             self._refresh()
 
-    def set_hidden(self, hidden: bool, *, authorized=None) -> None:
+    def set_hidden(self, hidden: bool, *, authorized=None, is_hidden=None) -> None:
         if self.hwnd is None or hidden == self.hidden:
             return
         self.hidden = hidden
@@ -261,7 +261,9 @@ class CropWindow:
         if self._refresh() and not hidden:
             # DWM preparation can re-enter the pump or yield to stop ingress.
             # A candidate's HWND must stay hidden if that revoked its authority.
-            if authorized is not None and not authorized():
+            if (is_hidden is not None and is_hidden()) or (
+                authorized is not None and not authorized()
+            ):
                 self.hidden = True
                 return
             self._libs.user32.ShowWindow(self.hwnd, win32.SW_SHOWNOACTIVATE)

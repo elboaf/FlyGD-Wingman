@@ -559,6 +559,9 @@ def build_preview_host(state, api_box):
             minimize_inactive_clients=minimize_inactive_clients,
             never_minimize=never_minimize,
             hide_on_lost_focus=hide_on_lost_focus,
+            hide_active_preview=lambda: preview_config.get(
+                "hide_active_preview", False
+            ),
             size=default_size,
             locked=locked,
             lock_default=lock_default,

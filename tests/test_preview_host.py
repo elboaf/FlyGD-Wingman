@@ -17,6 +17,13 @@ import pytest
 from wingman.preview import alertframes, geometry, gestures, host, layout
 
 
+class _HiddenState:
+    """Every pump-owned primary now receives visibility, including default-off."""
+
+    def set_hidden(self, hidden):
+        self.hidden = hidden
+
+
 def test_reconcile_reports_additions_and_removals():
     added, removed, kept = host.reconcile({"A", "B"}, {"B", "C"})
     assert set(added) == {"C"}
@@ -1968,7 +1975,7 @@ def test_same_process_at_character_select_keeps_its_current_rect_with_restore_of
     arranged = geometry.Rect(40, 50, 640, 360)
     created = []
 
-    class _Window:
+    class _Window(_HiddenState):
         def __init__(self, client, rect):
             self.client = client
             self.rect = rect
@@ -2043,7 +2050,7 @@ def test_character_select_does_not_inherit_across_process_change_or_close(
     arranged = geometry.Rect(40, 50, 640, 360)
     created = []
 
-    class _Window:
+    class _Window(_HiddenState):
         def __init__(self, client, rect):
             self.client = client
             self.rect = rect
@@ -2092,7 +2099,7 @@ def test_character_b_uses_its_own_layout_after_character_select(monkeypatch):
     b_rect = geometry.Rect(800, 90, 480, 300)
     created = []
 
-    class _Window:
+    class _Window(_HiddenState):
         def __init__(self, client, rect):
             self.client = client
             self.rect = rect
@@ -2141,7 +2148,7 @@ def test_one_client_logging_out_does_not_move_another_preview(monkeypatch):
     b_rect = geometry.Rect(800, 90, 480, 300)
     created = []
 
-    class _Window:
+    class _Window(_HiddenState):
         def __init__(self, client, rect):
             self.client = client
             self.rect = rect
@@ -4232,7 +4239,7 @@ def test_the_sweep_places_a_new_preview_at_its_clamped_rect(monkeypatch):
     the old unclamped expression and every other test here would pass."""
     seen = []
 
-    class _Win:
+    class _Win(_HiddenState):
         rect = geometry.Rect(0, 0, 0, 0)
 
         # _apply_selection pushes both flags onto every live preview each
@@ -4468,7 +4475,7 @@ def test_a_preview_created_on_retry_is_marked_selected(monkeypatch):
     foreground client would show no ring until the user tabbed away and
     back."""
 
-    class _FakeWindow:
+    class _FakeWindow(_HiddenState):
         def __init__(self):
             self.selected = False
             self.focused = False
@@ -5049,7 +5056,7 @@ def test_the_sweep_closes_an_open_window_when_a_character_is_excluded(monkeypatc
     not merely stop the next one being built."""
     closed = []
 
-    class _Win:
+    class _Win(_HiddenState):
         rect = geometry.Rect(0, 0, 0, 0)
 
         def set_selected(self, selected):
@@ -5206,7 +5213,7 @@ class _FakeRestyleThumb:
         self.calls.append((rect, opacity))
 
 
-class _RestyleWindow:
+class _RestyleWindow(_HiddenState):
     """Duck-types just what _restyle touches: public chrome attributes,
     set_labels(), redraw(), and a thumbnail. Not a real PreviewWindow --
     that needs an HWND, which is out of reach here."""
@@ -5674,6 +5681,61 @@ def test_deadline_failure_clears_pending_without_minimizing(monkeypatch, outcome
     assert [entry for entry in order if entry[0] in {"ring", "show_async"}] == []
 
 
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        host.window_mod.ActivationResult.REFUSED,
+        host.window_mod.ActivationResult.PENDING_RESTORE,
+        host.window_mod.ActivationResult.PENDING_FOREGROUND,
+    ],
+)
+def test_hide_active_waits_for_observed_focus_not_activation_intent(
+    monkeypatch, outcome
+):
+    h, libs, _ = _switching_host(monkeypatch, foreground=0x1111, activation=outcome)
+    h._hwnd = 0x99
+    h._hide_active_preview = lambda: True
+    h._apply_selection(libs)
+    assert h._windows["Alice"].hidden
+    assert not h._windows["Bravo"].hidden
+    h._activate_client(libs, h._clients["Bravo"])
+    h._apply_selection(libs)
+    assert h._windows["Alice"].hidden
+    assert not h._windows["Bravo"].hidden
+    h._clear_pending_activation(libs)
+
+
+def test_hide_active_configuration_cannot_reopen_eve_with_companions_alive(family_pump):
+    from tests.test_preview_cropcontroller import client
+    from wingman.preview.runtime import FamilyDemand
+    from wingman.telemetry.model import RosterSnapshot
+
+    r = family_pump()
+    h = r.host
+    preference = {"enabled": True}
+    h._hide_active_preview = lambda: preference["enabled"]
+    h.set_families(FamilyDemand(2, True, True))
+    r.wait("eve-active")
+    h.apply_roster(RosterSnapshot(1, (client(),)))
+    r.call(lambda: h._apply_pending_roster(r.native.lib))
+    h.set_families(FamilyDemand(3, False, True))
+    r.wait("eve-stopped")
+    before = len(r.native.events)
+    preference["enabled"] = False
+    h.restyle()
+    r.call(lambda: h._apply_selection(r.native.lib))
+    assert h.is_running and not h.runtime_enabled
+    assert not any(
+        e[0] == "show" and e[2] == host.win32.SW_SHOWNOACTIVATE
+        for e in r.native.events[before:]
+    )
+    h.set_families(FamilyDemand(4, True, True))
+    r.wait("eve-active")
+    h.apply_roster(RosterSnapshot(2, (client(serial=2),)))
+    r.call(lambda: h._apply_pending_roster(r.native.lib))
+    assert not h._crop_controller.live["Alice"].window.hidden
+
+
 def test_pending_restore_starts_a_bounded_timer_and_minimizes_nothing(monkeypatch):
     """An iconic target may restore after activate() returns. The host must
     return to its message pump instead of blocking or hiding the active client.
@@ -6090,7 +6152,7 @@ def test_a_hotkey_and_a_click_go_through_the_same_switch(monkeypatch):
     assert seen == [0x1234]
 
 
-class _RingWindow:
+class _RingWindow(_HiddenState):
     """A preview that records only what the user can see: the ring going on
     or off. set_focused is invisible by design (window.py:482), so it is
     accepted and not logged."""
@@ -6882,7 +6944,7 @@ def test_a_newly_created_preview_is_born_with_the_current_lock_aspect(monkeypatc
     setting appears to apply to some previews and not others."""
     seen = {}
 
-    class _Win:
+    class _Win(_HiddenState):
         rect = geometry.Rect(0, 0, 320, 210)
         locked = False
 
@@ -7010,7 +7072,9 @@ def test_crop_failure_preserves_roster_retry_and_high_water_mark(monkeypatch):
         if len(attempts) == 1:
             raise RuntimeError("crop failed")
 
-    h._crop_controller = SimpleNamespace(reconcile=reconcile)
+    h._crop_controller = SimpleNamespace(
+        reconcile=reconcile, set_hidden=lambda hidden: None
+    )
     snapshot = _roster(3, ("Alice", 16))
     h.apply_roster(snapshot)
     with pytest.raises(RuntimeError, match="crop failed"):
@@ -7098,7 +7162,9 @@ def test_real_primary_reconcile_does_not_strip_crop_session(monkeypatch):
 
     created, observed = [], []
     h = _pump_host(monkeypatch, created)
-    h._crop_controller = SimpleNamespace(reconcile=observed.append)
+    h._crop_controller = SimpleNamespace(
+        reconcile=observed.append, set_hidden=lambda hidden: None
+    )
     first = RosterClient(
         16, 101, "EVE - Alice", "Alice", ClientSessionId(16, 101, "Alice", 1)
     )
@@ -7156,7 +7222,7 @@ class _StartupUser32(_RosterUser32):
         return record
 
 
-class _RosterWindow:
+class _RosterWindow(_HiddenState):
     def rebind_client(self, client):
         self.client = client
         self.system_name = None

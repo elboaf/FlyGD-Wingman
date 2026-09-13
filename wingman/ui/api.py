@@ -1138,6 +1138,9 @@ class Api:
         detected_logs = combatlog.find_gamelogs_dir()
         return {
             "settings": dict(cfg),
+            "preview_hide_active_preview": self._preview_config.get(
+                "hide_active_preview", False
+            ),
             # Top level, not inside `settings`: it is derived, not stored,
             # and nesting it invites the page to write it back on Save.
             "webhook_status": copy_mod.webhook_status(
@@ -5498,6 +5501,14 @@ class Api:
         """
         result = self._write_preview_setting(("lock_aspect",), bool(enabled))
         if self._preview_host is not None:
+            self._preview_host.restyle()
+        return result
+
+    def set_preview_hide_active_preview(self, enabled) -> dict:
+        if not isinstance(enabled, bool):
+            return self._field_refused("Choose on or off.")
+        result = self._write_preview_setting(("hide_active_preview",), enabled)
+        if result["applied"] and result["persisted"] and self._preview_host is not None:
             self._preview_host.restyle()
         return result
 

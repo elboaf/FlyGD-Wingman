@@ -456,7 +456,7 @@
    // And again. The harness cannot show what this one DOES -- hiding
    // happens in the preview host, which ?dev=1 has none of -- only that
    // the checkbox renders, commits and reports.
-   'set_preview_hide_on_lost_focus',
+   'set_preview_hide_on_lost_focus', 'set_preview_hide_active_preview',
    // The floating sig bar's writer. Same shape: settings.js reverts the
    // checkbox on anything that is not `applied`, like every entry above.
    'toggle_sig_bar',
@@ -2058,6 +2058,7 @@
           // ships preview.alerts for free (a shallow dict(cfg)), so this
           // is what makes the card eyeballable under ?dev=1 at all.
           preview: { enabled: true, restore_preview_positions: true,
+            hide_active_preview: false,
             show_labels: true, label_size: 'standard', opacity: 255, snap: true, lock_aspect: true,
             selection_color: '#ff5a00',
             // The global default size. Present because the real payload

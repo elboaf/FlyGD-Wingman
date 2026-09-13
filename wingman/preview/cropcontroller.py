@@ -65,6 +65,7 @@ class CropController:
         post_complete,
         next_geometry_sequence,
         is_authorized=None,
+        is_hidden=None,
     ) -> None:
         self._libs, self._store = libs, store
         self._epoch = epoch
@@ -75,6 +76,7 @@ class CropController:
         # Retained by PreviewHost, not reset when a new pump is constructed.
         self._next_geometry_sequence = next_geometry_sequence
         self._is_authorized = is_authorized
+        self._is_hidden = is_hidden
         self.live: dict[str, _Live] = {}
         self.sessions: dict[str, RosterClient] = {}
         self.picker = None
@@ -218,9 +220,13 @@ class CropController:
             else:
                 live = _Live(client, generation, definition.source)
                 rect = clamp_to_monitors(definition.window, self._monitors())
-                self._make_window(name, live, source, rect, hidden=self._hidden)
+                self._make_window(name, live, source, rect, hidden=True)
                 if live.window is not None and not live.failed:
-                    self.live[name] = live
+                    self._apply_visibility(live)
+                    if not live.failed and self._live_authorized(live):
+                        self.live[name] = live
+                    else:
+                        live.window.close()
         self._emit()
 
     def _make_window(self, name, live, source, rect, *, hidden, candidate=False):
@@ -677,8 +683,8 @@ class CropController:
                     # ingress. Persistence stays true, but visibility requires
                     # current authority again, including after DWM preparation.
                     if self._authorized(op):
-                        candidate.window.set_hidden(
-                            self._hidden, authorized=lambda: self._authorized(op)
+                        self._apply_visibility(
+                            candidate, authorized=lambda: self._authorized(op)
                         )
                         if not candidate.failed and self._authorized(op):
                             self.live[op.name] = candidate
@@ -740,11 +746,34 @@ class CropController:
         picker = self.picker
         return picker.process_dialog_message(message) if picker is not None else False
 
+    def _live_authorized(self, live):
+        current = self.sessions.get(live.client.character)
+        return (
+            current is not None
+            and current.session == live.client.session
+            and self._runtime_authorized(live.client)
+        )
+
+    def _apply_visibility(self, live, *, authorized=None):
+        def hidden():
+            # The supplier composes BOTH settings freshly. The global handoff
+            # is only the compatibility fallback for standalone controllers.
+            return self._stopping or (
+                self._is_hidden(live.client)
+                if self._is_hidden is not None
+                else self._hidden
+            )
+
+        live.window.set_hidden(
+            hidden(),
+            authorized=authorized or (lambda: self._live_authorized(live)),
+            is_hidden=hidden,
+        )
+
     def set_hidden(self, hidden: bool) -> None:
-        hidden = self._stopping or hidden
-        self._hidden = hidden
+        self._hidden = self._stopping or hidden
         for live in list(self.live.values()):
-            live.window.set_hidden(hidden)
+            self._apply_visibility(live)
         # A candidate is always hidden, independent of host visibility.
 
     def restyle(self) -> None:

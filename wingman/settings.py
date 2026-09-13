@@ -215,6 +215,7 @@ def _preview_defaults() -> dict:
         # carry. On top of that, this one takes previews OFF the screen,
         # which is exactly the class of change that has to be asked for.
         "hide_on_lost_focus": False,
+        "hide_active_preview": False,
         # Character names exempt from minimize_inactive_clients. A plain
         # roster list like `seen`, not a per-preview flag.
         "never_minimize": [],
@@ -617,6 +618,8 @@ def validated_preview(raw) -> dict:
         section["minimize_inactive_clients"] = raw["minimize_inactive_clients"]
     if isinstance(raw.get("hide_on_lost_focus"), bool):
         section["hide_on_lost_focus"] = raw["hide_on_lost_focus"]
+    if isinstance(raw.get("hide_active_preview"), bool):
+        section["hide_active_preview"] = raw["hide_active_preview"]
     # All three lists have exactly the roster's constraints, including the
     # hwnd: rejection: a client at character-select has no stable name to
     # exempt from minimizing, lock in place, or opt out of previews.

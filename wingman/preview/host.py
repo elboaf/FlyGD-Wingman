@@ -323,6 +323,7 @@ class PreviewHost:
         custom_alert_current: Callable[[str, int, int], bool] | None = None,
         label_size=None,
         label_markers=None,
+        hide_active_preview=None,
     ):
         # Standalone/manual callers retain EVE-only start(). Binding a runtime
         # callback opts into explicit composite demands before any pump exists.
@@ -421,10 +422,9 @@ class PreviewHost:
         # rather than per window -- it is a fact about the foreground, not
         # about any one character.
         self._hide_on_lost_focus = hide_on_lost_focus
-        # What _apply_visibility last applied to every preview. Host level,
-        # not per window, because the answer is the same for all of them --
-        # and it is what lets the off path (the default) return without
-        # reading the foreground's process. Touched only on the preview
+        self._hide_active_preview = hide_active_preview
+        # The global lost-focus mask only, never a particular source's mask.
+        # Touched only on the preview
         # thread.
         self._previews_hidden = False
         # All three of these are character-name LISTS (preview.never_minimize,
@@ -2423,6 +2423,7 @@ class PreviewHost:
             post_complete=self._queue_crop_completion,
             next_geometry_sequence=lambda: next(self._crop_geometry_sequence),
             is_authorized=self._crop_authorized,
+            is_hidden=lambda client: self._source_hidden(libs, client.hwnd),
         )
         self._crop_controller.set_hidden(self._previews_hidden)
 
@@ -2742,6 +2743,8 @@ class PreviewHost:
                 # dropping the field would discard that data on the next
                 # save for no gain.
                 locked=self._is_locked(key),
+                hidden=True,
+                is_authorized=lambda e=epoch: self._eve_valid(e),
                 show_labels=self._labels_shown(),
                 label_size=self._current_label_size(),
                 label_marker=self._current_label_markers().get(client.character),
@@ -2850,60 +2853,54 @@ class PreviewHost:
 
         self._apply_visibility(libs, foreground)
 
-    def _apply_visibility(self, libs, foreground) -> None:
-        """Hide or show every preview according to hide-on-lost-focus.
-
-        Runs off _apply_selection's already-resolved foreground rather than
-        on a poll of its own: that call site is reached from both the 700ms
-        sweep and the foreground hook, which is exactly the set of moments
-        this can change. A timer here would be a third clock measuring the
-        same thing.
-
-        The decision itself is visibility.should_hide, kept pure so the
-        truth table is testable on Linux -- the same split switching.py
-        draws for minimize.
-
-        Nothing here is per character: the flag is a fact about the
-        foreground, so the settings read and the ownership probe happen
-        once and every window gets the same answer. set_hidden early-returns
-        on an unchanged flag, so the steady-state cost is one attribute
-        compare per preview.
-
-        `_previews_hidden` is what makes the off path free. It records what
-        was last applied, so a host with the feature off -- the default,
-        and so most installs -- returns before reading the foreground's
-        process at all. It cannot be replaced by "skip when nothing
-        changed": while previews ARE hidden, a client appearing mid-hide
-        creates a window born visible, and only re-applying every sweep
-        catches it.
-        """
-        enabled = self._hiding_on_lost_focus()
-        if not enabled and not self._previews_hidden:
-            return
-        # The same fallback _apply_selection makes, and for the same
-        # reason: `self._foreground` is 0 until the win-event hook first
-        # fires, goes back to 0 whenever the hook reports no foreground,
-        # and stays 0 all session if SetWinEventHook failed -- which is
-        # logged and carried on from, not fatal.
-        #
-        # _apply_selection reaches here having already resolved it, so
-        # this only bites on the _restyle path, which hands over the raw
-        # value. Without it a 0 is simply "not one of the clients" and
-        # every preview hides the moment any unrelated setting changes,
-        # reappearing a sweep later with nothing to explain the flash.
+    def _visibility_context(self, libs, foreground):
+        # Same fallback as selection, including when the foreground hook failed.
         if not foreground and libs is not None:
             foreground = libs.user32.GetForegroundWindow()
-        hide = visibility.should_hide(
+        enabled = self._hiding_on_lost_focus()
+        hidden = visibility.should_hide(
             enabled=enabled,
             foreground=foreground,
             client_hwnds=[c.hwnd for c in self._clients.values()],
-            foreground_is_ours=self._foreground_is_ours(libs, foreground),
+            foreground_is_ours=(enabled and self._foreground_is_ours(libs, foreground)),
         )
-        for win in self._windows.values():
-            win.set_hidden(hide)
-        self._previews_hidden = hide
+        return hidden, self._hiding_active_preview(), foreground
+
+    def _source_hidden(self, libs, source_hwnd) -> bool:
+        """Fresh pump-local presentation, also used AFTER crop DWM preparation.
+
+        Reads only committed settings and observed foreground. Crop authorization
+        remains the controller's separate epoch/session responsibility.
+        """
+        hidden, active, foreground = self._visibility_context(libs, self._foreground)
+        return visibility.should_hide_source(
+            global_hidden=hidden,
+            hide_active=active,
+            foreground=foreground,
+            source_hwnd=source_hwnd,
+        )
+
+    def _apply_visibility(self, libs, foreground) -> None:
+        epoch = self._eve_epoch
+        if not self._eve_valid(epoch):
+            return
+        hidden, active, foreground = self._visibility_context(libs, foreground)
+        # Apply even when both options are off: newly prepared windows are hidden.
+        # A -> B must update both windows even if the global mask never changed.
+        for key, win in self._windows.items():
+            if not self._eve_valid(epoch):
+                return
+            win.set_hidden(
+                visibility.should_hide_source(
+                    global_hidden=hidden,
+                    hide_active=active,
+                    foreground=foreground,
+                    source_hwnd=self._clients[key].hwnd if active else 0,
+                )
+            )
+        self._previews_hidden = hidden
         if self._crop_controller is not None:
-            self._crop_controller.set_hidden(hide)
+            self._crop_controller.set_hidden(hidden)
 
     def characters(self) -> list:
         """Named characters currently discovered, sorted. Safe from any
@@ -3977,6 +3974,17 @@ class PreviewHost:
         except Exception:
             logger.exception(
                 "Could not read hide_on_lost_focus; leaving previews visible"
+            )
+            return False
+
+    def _hiding_active_preview(self) -> bool:
+        if self._hide_active_preview is None:
+            return False
+        try:
+            return self._hide_active_preview() is True
+        except Exception:
+            logger.exception(
+                "Could not read hide_active_preview; leaving previews visible"
             )
             return False
 
