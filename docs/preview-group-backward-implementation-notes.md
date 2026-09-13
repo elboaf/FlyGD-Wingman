@@ -1,6 +1,73 @@
 # Named group Back keybinds — verified implementation
 
-## Review correction round 1 — scoped verification PASS
+## Final engineering verification — PASS
+
+Reviewed code/test commit: `29db34b75641fa413a7209bcbd28a68593ed65fc`.
+Base: `4a6db85a6a90c18515baf0fb122080ba0c81e0cb`, still `origin/main` when
+rechecked before external review. Branch: `feature/preview-group-backward`.
+These final evidence notes are a separately inspected documentation-only update;
+they are not represented as part of the earlier CodeRabbit-reviewed bytes.
+
+- Independent general and silent-failure re-review closed **GA211-1, SF211-1 and
+  SF211-2**. No new change-specific findings. Comment and type checks found none.
+  Full current-file coverage includes all18 changed files, with the five correction
+  files reread through EOF. No speculative cleanup or unrelated refactor applied.
+- Actual CodeRabbit CLI, once in normal committed mode, reviewed all18 files against
+  the exact base: **exit0, `review_completed`, zero findings**. No review ID emitted,
+  retries, light mode, credits override or substitute reviewer.
+- Fresh coordinator full suite after external review: **12405 passed,13 skipped
+  in336.34s**. JUnit independently parsed:12418 total, zero failures/errors. Every
+  skip identity/reason matches the previous full run and requires Windows; no
+  Node, codec, filesystem or font-availability skips.
+- Fresh Ruff check and format check passed (**435 files**), all seven changed
+  JS/CJS syntax checks and all-page Node smoke passed, independent Cargo regression
+  **1 passed**, and whitespace/source-identity checks passed.
+- The reviewed source matches the final private Chrome evidence:8 new cases with
+  72 checks,10 existing interaction cases,30 geometry cases. This is browser
+  verification, not Windows/WebView2/native hotkey/DPI/live-EVE acceptance.
+
+Exact coordinator commands, from this linked checkout:
+
+```bash
+coderabbit review --agent --committed --base-commit 4a6db85a6a90c18515baf0fb122080ba0c81e0cb
+unset PYTHONPYCACHEPREFIX
+PYTHONDONTWRITEBYTECODE=1 /tmp/wingman-preview-group-backward-venv/bin/python -B -m pytest tests/ -q -rs --tb=short -p no:cacheprovider --basetemp=/tmp/wingman-211-final-29db34b7-coordinator --junitxml=.superpowers/sdd/preview-group-backward/post-review-final/full.xml
+/tmp/wingman-preview-group-backward-venv/bin/ruff check --no-cache .
+/tmp/wingman-preview-group-backward-venv/bin/ruff format --check --no-cache .
+node scripts/js_smoke.js
+cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml --target-dir /tmp/wingman-preview-group-backward-cargo
+git diff --check 4a6db85a..HEAD
+```
+
+`node --check` also ran for `previews.js`, `dev.js`, the Wanderer runtime script,
+and the four changed CJS fixtures. Before the full gate, Node26.5.0, Python3.11.15,
+editable wingman5.6.2 resolving THIS checkout, and THIS checkout's installed release
+codec availability/path were verified. Test data remained in case-sensitive Linux
+`/tmp`, bytecode/cache disabled; only evidence lives in the ignored worktree path.
+Raw CodeRabbit output is `coderabbit-29db34b7.log`; final environment/static/Cargo
+logs and full XML/log are under `post-review-final/`, beneath the existing evidence
+root. All failed earlier gates remain preserved as historical evidence below.
+
+### Remaining limits and deliberately unchanged behavior
+
+- **Windows/WebView2/native/EVE acceptance remains NOT RUN.** Publication/CI and
+  operator smoke acceptance are separate gates; a local pass does not imply them.
+- A reviewer reproduced a pre-existing deferred-crop caret/focus limitation: arm
+  capture, focus Add and select text, receive a roster-changing crop push deferred
+  behind capture, then change the selection (or focus another field and blur)
+  before Escape. The older crop edit can still restore its prior caret/focus.
+  The same stale-owner behavior was demonstrated on base4a6db85a, initial64010b95
+  and current29db34b7. The reported ordinary crop direction-loss case is fixed;
+  broader deferred-crop/capture ownership hardening is deliberately separate.
+  This limitation is not hidden behind the passing ordinary-push tests.
+- No downgrade-retention promise for the new optional field: an older binary may
+  discard fields it does not understand. Existing forward settings/APIs, All
+  cycling and runtime authority remain compatible on upgrade.
+- No merge, issue closure or publication is implied by this verification record.
+
+---
+
+## Historical review correction round 1 — scoped verification PASS
 
 Follow-up to `64010b9566b7ea1252517a6698feecd4dbc0e79b`. Final local commit is
 recorded in `.superpowers/sdd/preview-group-backward/review-fix-1-report.md`.
