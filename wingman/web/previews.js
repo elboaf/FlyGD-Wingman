@@ -32,14 +32,16 @@
       throw new Error('Invalid crop screenshot fixture');
     }
     WM.previewCropScreenshot(null);
+    detailInteraction += 1;
+    detailFocusIntent = null;
+    // Finish deferred LIVE paint before taking the snapshot or isolating fields;
+    // otherwise that paint seeds the fixture's marker table with live values.
+    endCapture();
     var live = {state: state, crops: cropState, hydrated: cropHydrated,
                 markerFields: markerFields};
     // Fake assignments must never rebase live acknowledgements. Real receipt
     // closures retain their own field objects while this separate table renders.
     markerFields = Object.create(null);
-    detailInteraction += 1;
-    detailFocusIntent = null;
-    endCapture();
     var fixture = JSON.parse(JSON.stringify(payload));
     // Fixture revisions are not host revisions. Preserve the host snapshot,
     // render in a separate revision domain, then restore the latest live push.
@@ -696,6 +698,26 @@
     });
     sel.value = field.accepted;
     WM.setEnabled(sel, !field.busy && choices.length > 0);
+    function enterMarker() {
+      if (!capturing) return;
+      endCapture();
+      // Keep the native gesture target when a deferred roster paint replaces
+      // it. Focus alone on the replacement loses the first dropdown opening.
+      if (!host.contains(sel)) {
+        var detail = document.getElementById(detailId(characterName));
+        var replacement = detail && detail.querySelector('[data-preview-detail-control="marker"]');
+        if (replacement) {
+          replacement.parentNode.insertBefore(sel, replacement);
+          replacement.remove();
+          paintMarkerField(characterName);
+        }
+        focusCharacterDetailControl(characterName, 'marker');
+      }
+    }
+    // Use mousedown, not pointerdown: detaching even briefly during pointerdown
+    // suppresses Chrome's following mousedown and the native select's opening.
+    sel.addEventListener('mousedown', enterMarker);
+    sel.addEventListener('focusin', enterMarker);
     sel.addEventListener('change', function () {
       if (screenshotLive || field.busy || !choices.length) return;
       var wanted = sel.value;

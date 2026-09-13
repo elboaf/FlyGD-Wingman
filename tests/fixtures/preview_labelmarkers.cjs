@@ -22,12 +22,17 @@ Object.assign(window, {window, document, console, Promise, setTimeout, clearTime
   CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } }});
 const context = vm.createContext(window);
 vm.runInContext(fs.readFileSync(web + '/app.js', 'utf8'), context);
-const calls = [], getters = [], writes = [];
+const calls = [], getters = [], writes = [], arms = [];
 window.WM.send = (method, ...args) => {
   calls.push([method, ...args]);
   if (method === 'get_preview_hotkey_state') return new Promise(resolve => getters.push(resolve));
   if (method === 'set_preview_character_marker') return new Promise((resolve, reject) => writes.push({name: args[0], marker: args[1], resolve, reject}));
-  if (method === 'set_bind_capture') return Promise.resolve(true);
+  if (method === 'set_bind_capture') {
+    if (args[0] && data.scenario === 'capture-entry-before-arm') return new Promise(resolve => arms.push(resolve));
+    return Promise.resolve(true);
+  }
+  if (method === 'capture_preview_bind') return Promise.resolve({gesture: 'Alt+Down', error: null});
+  if (method === 'set_preview_binds') return Promise.resolve(true);
   if (method === 'get_preview_crop_state') return Promise.resolve(null);
   throw new Error('Unexpected bridge call ' + method);
 };
@@ -238,6 +243,67 @@ function tab(name) { document.dispatchEvent({type: 'wm:settings-tab', detail: {s
       document.dispatchEvent({type: 'keydown', key: 'Escape'}); await tick();
       assert.ok(!bind.classList.contains('capturing') && document.contains(bind));
     }
+  } else if (scenario.startsWith('capture-entry-')) {
+    const beforeArm = scenario === 'capture-entry-before-arm';
+    const deferred = beforeArm || scenario.endsWith('-deferred');
+    const bind = configure('Alice').parentNode.querySelector('.bindbtn');
+    bind.focus(); bind.click(); await tick();
+    assert.equal(bind.classList.contains('capturing'), !beforeArm);
+    const target = select();
+    if (deferred) {
+      const p = payload(); p.roster.push('New pilot'); push(p);
+      assert.equal(configure('New pilot'), undefined, 'live roster paint waits behind capture');
+    }
+    const entry = scenario.includes('-pointer') ? 'mousedown' : 'focusin';
+    if (entry === 'focusin') target.focus();
+    target.dispatchEvent({type: entry});
+    assert.deepEqual(calls.filter(c => c[0] === 'set_bind_capture').at(-1), ['set_bind_capture', false], 'marker entry must disarm before any marker key');
+    assert.equal(select(), target, 'the first native select gesture keeps its original attached target');
+    assert.ok(document.contains(target));
+    if (entry === 'focusin') assert.equal(document.activeElement, target);
+    if (deferred) assert.ok(configure('New pilot'), 'deferred live roster paint is flushed');
+    if (beforeArm) { arms.shift()(true); await tick(); }
+    assert.equal(document.querySelector('.capturing'), null, 'late native arm receipt cannot rearm');
+    target.focus();
+    const key = () => {
+      let prevented = false;
+      document.dispatchEvent({type: 'keydown', key: 'ArrowDown', code: 'ArrowDown', altKey: true,
+        preventDefault() { prevented = true; }});
+      assert.equal(prevented, false, 'marker keys retain their native default action');
+    };
+    key();
+    change('Alice', 'cyan'); assert.equal(select().disabled, true);
+    key(); writes[0].resolve(ok('cyan')); await tick(); key();
+    assert.equal(select().value, 'cyan');
+    change('Alice', 'purple');
+    writes[1].resolve({applied: false, persisted: false, error: 'Disk refused', marker: 'cyan'}); await tick(); key();
+    assert.equal(select().value, 'cyan'); assert.match(error(), /Disk refused/);
+    window.onPreviewBindCaptured({gesture: 'Alt+Down'}); await tick();
+    assert.equal(calls.filter(c => ['capture_preview_bind', 'set_preview_binds'].includes(c[0])).length, 0, 'marker keyboard/native delivery must not save an unrelated binding');
+    change('Alice', 'green');
+    const bob = configure('Bob').parentNode.querySelector('.bindbtn');
+    bob.focus(); bob.click(); await tick();
+    if (beforeArm) { arms.shift()(true); await tick(); }
+    const disarms = calls.filter(c => c[0] === 'set_bind_capture' && !c[1]).length;
+    writes[2].resolve(ok('green')); await tick();
+    assert.equal(calls.filter(c => c[0] === 'set_bind_capture' && !c[1]).length, disarms, 'earlier marker receipt does not disarm later Bob capture');
+    assert.ok(document.contains(bob) && bob.classList.contains('capturing') && document.activeElement === bob);
+    document.dispatchEvent({type: 'keydown', key: 'Escape'}); await tick();
+  } else if (scenario === 'screenshot-deferred') {
+    change('Alice', 'cyan'); writes[0].resolve(ok('cyan')); await tick();
+    const bind = configure('Alice').parentNode.querySelector('.bindbtn');
+    bind.focus(); bind.click(); await tick();
+    const p = payload({Alice: 'cyan'}); p.roster.push('New pilot'); push(p);
+    assert.equal(configure('New pilot'), undefined);
+    const fixture = payload({Alice: 'purple'});
+    fixture.crops.definitions = {Alice: {enabled: false}};
+    window.WM.previewCropScreenshot({kind: 'preview-crop-screenshot-v1', owner: 'Alice', preview: fixture, crops: fixture.crops});
+    assert.equal(field('Alice').value, 'purple', 'deferred live paint must finish before screenshot marker isolation');
+    change('Alice', 'green'); assert.equal(writes.length, 1, 'fixture never sends real marker writes');
+    window.WM.previewCropScreenshot(null);
+    assert.equal(field('Alice').value, 'cyan', 'accepted live field survives fixture exit');
+    assert.ok(configure('New pilot'), 'snapshot retains deferred live roster');
+    assert.equal(calls.filter(c => ['capture_preview_bind', 'set_preview_binds'].includes(c[0])).length, 0);
   } else if (scenario === 'screenshot') {
     change('Alice', 'cyan'); writes[0].resolve(ok('cyan')); await tick();
     change('Bob', 'orange');

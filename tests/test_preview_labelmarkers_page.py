@@ -29,6 +29,12 @@ ROOT = Path(__file__).resolve().parents[1]
         "reset-headings-off",
         "reset-capture",
         "reset-owner-capture",
+        "capture-entry-pointer",
+        "capture-entry-focus",
+        "capture-entry-pointer-deferred",
+        "capture-entry-focus-deferred",
+        "capture-entry-before-arm",
+        "screenshot-deferred",
     ],
 )
 def test_marker_page_ownership(tmp_path, scenario):
