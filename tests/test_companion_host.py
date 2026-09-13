@@ -316,7 +316,9 @@ def test_selection_during_retirement_refuses_then_recovers(
 
         def wait_for_cleanup(timeout=None):
             waiting.set()
-            return condition_wait(timeout)
+            notified = condition_wait(timeout)
+            assert notified, "missing cleanup notification during retirement"
+            return notified
 
         # Observe the readiness wait actually blocking, rather than checking a
         # future before its thread has evaluated the held-retirement snapshot.
