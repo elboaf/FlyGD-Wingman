@@ -110,6 +110,84 @@ def test_active_primary_and_label_never_show_at_birth_and_switch_without_global_
     assert set(r.host._windows) == {"Alice", "Bob"}
 
 
+@pytest.mark.parametrize(
+    "active,lost,observed,fallback,pid,alice_hidden,bob_hidden",
+    [
+        (True, False, 32, 16, 9, False, True),
+        (True, False, 0, 32, 9, False, True),
+        (True, False, 0, 0, 9, False, False),
+        (False, False, 32, 16, 9, False, False),
+        (True, True, 32, 16, 9, False, True),
+        (True, True, 99, 99, 9, True, True),
+        (True, True, 99, 99, 42, False, False),
+    ],
+    ids=[
+        "latest-nonzero",
+        "zero-falls-back",
+        "zero-unresolved",
+        "option-off",
+        "lost-focus-client",
+        "lost-focus-stranger",
+        "lost-focus-wingman",
+    ],
+)
+def test_foreground_hook_during_selection_paint_controls_initial_native_shows(
+    primary_host,
+    monkeypatch,
+    active,
+    lost,
+    observed,
+    fallback,
+    pid,
+    alice_hidden,
+    bob_hidden,
+):
+    r = primary_host
+    r.state.update(active=active, lost=lost, foreground=fallback, pid=pid)
+    callbacks, delivered = [], []
+    # Only the Windows ABI/registration is replaced; invoke the actual installed
+    # host callback from the native paint seam inside production set_selected.
+    monkeypatch.setattr(win32, "winevent_proc_type", lambda: lambda cb: cb)
+    monkeypatch.setattr(win32, "_KEEPALIVE", [])
+    monkeypatch.setattr(
+        r.libs.user32,
+        "SetWinEventHook",
+        lambda *args: callbacks.append(args[3]) or 99,
+        raising=False,
+    )
+    r.host._install_hook(r.libs)
+    callback = callbacks[0]
+    callback(99, win32.EVENT_SYSTEM_FOREGROUND, 16, 0, 0, 0, 0)
+
+    def paint(_libs, hwnd, *_args):
+        alice = r.host._windows.get("Alice")
+        if (
+            alice is not None
+            and hwnd == alice.hwnd
+            and alice.selected
+            and not delivered
+        ):
+            delivered.append(observed)
+            callback(99, win32.EVENT_SYSTEM_FOREGROUND, observed, 0, 0, 0, 0)
+
+    monkeypatch.setattr(window.layered, "push", paint)
+    r.roster(1, client(), client("Bob", hwnd=32))
+    assert delivered == [observed]
+    assert r.host._foreground == observed
+    for name, hidden in (("Bob", bob_hidden), ("Alice", alice_hidden)):
+        preview = r.host._windows[name]
+        shows = {hwnd for hwnd, mode in r.shows if mode == win32.SW_SHOWNOACTIVATE}
+        expected = set() if hidden else {preview.hwnd, preview._label_hwnd}
+        assert shows & {preview.hwnd, preview._label_hwnd} == expected
+        assert preview.hidden is hidden
+    # Visibility gets a fresh observation, not a second selection/alert pass.
+    assert r.host._selected_key == r.host._focused_key == "Alice"
+    assert r.host._windows["Alice"].focused
+    assert not r.host._windows["Bob"].focused
+    if not lost:
+        assert r.pid_queries == []
+
+
 def test_off_during_visibility_delivery_fences_later_primary_reveals(
     primary_host, monkeypatch
 ):
@@ -127,7 +205,8 @@ def test_off_during_visibility_delivery_fences_later_primary_reveals(
 
     monkeypatch.setattr(r.libs.user32, "ShowWindow", show)
     second = r.host._windows["Bob"]
-    r.host._apply_visibility(r.libs, 16)
+    r.host._foreground = 16
+    r.host._apply_visibility(r.libs)
     assert (second.hwnd, win32.SW_SHOWNOACTIVATE) not in shown
     assert len(shown) == 1  # first primary show revoked authority before its label
 

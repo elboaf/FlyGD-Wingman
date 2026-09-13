@@ -4,6 +4,50 @@ Baseline: `d6fbd776a36481dc2d02db6204d4f2973a471592`, branch
 `feature/preview-hide-active`. Behavior follows the approved
 [design](preview-hide-active-design.md), whose independent opinion was SHIP/NONE.
 
+## GA212-1 review correction — scoped verification
+
+The follow-up to `629bca93d1660eac580ee08db7d3f6780a174d06` corrects a stale
+foreground sample at primary publication. `_apply_selection` sampled A before
+native focused/selected painting; the real foreground hook could observe B during
+that paint, but the old nonzero argument still hid A and initially showed B's
+primary and label. `PreviewHost._apply_visibility(libs)` now resolves current
+`self._foreground` at publication. Both production callers and the existing test /
+prototype override callers were updated; no unused sample argument remains.
+Selection/alert bookkeeping, zero/no-hook fallback, EVE epoch fences and crop
+policy/authority are unchanged. `host.py` is the only changed production file.
+
+Seven new cases invoke the actual installed foreground callback during production
+selection's native layered-paint seam and assert primary **and label ShowWindow
+destinations**. They cover newer nonzero, zero fallback/unresolved, option-Off,
+lost-focus client/stranger/Wingman, unchanged selection bookkeeping and no PID
+probe with lost-focus hiding disabled. On unchanged production, six failed and
+option-Off passed; Bob's primary+label handles appeared in native show records
+when the expected set was empty. The assertion order was changed only to print
+Bob's unwanted shows first; both RED artifacts were preserved. After correction:
+123 targeted tests passed, then **1,558 related tests passed with one Windows-only
+message-pump/window-station skip** in 41.69s. Ruff lint/format (437 files) and
+all-page Node smoke passed.
+
+```bash
+unset PYTHONPYCACHEPREFIX
+export PYTHONDONTWRITEBYTECODE=1 UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-hide-active-venv
+uv run --no-sync python -m pytest tests/test_preview_hide_active.py -k foreground_hook_during_selection_paint -q --tb=short -rs -p no:cacheprovider --basetemp=/tmp/wingman-preview-hide-active-review-fix1-red-destinations --junitxml=.superpowers/sdd/preview-hide-active/review-fix-1/red-destinations.xml
+uv run --no-sync python -m pytest tests/test_preview_hide_active.py tests/test_preview_crop_harness.py -q --tb=short -rs -p no:cacheprovider --basetemp=/tmp/wingman-preview-hide-active-review-fix1-green --junitxml=.superpowers/sdd/preview-hide-active/review-fix-1/green.xml
+uv run --no-sync python -m pytest tests/test_preview_hide_active.py tests/test_preview_host.py tests/test_preview_window.py tests/test_preview_visibility.py tests/test_preview_cropcontroller.py tests/test_preview_cropwindow.py tests/test_preview_crop_harness.py tests/test_preview_metadata.py tests/test_settings.py tests/test_settings_preview.py tests/test_settings_committed_preview.py tests/test_settings_hide_active.py tests/test_preview_wiring.py tests/test_preview_runtime*.py tests/test_settings_runtime.py tests/test_page_conventions.py tests/test_bridge_contract.py tests/test_js_smoke.py -q --tb=short -rs -p no:cacheprovider --basetemp=/tmp/wingman-preview-hide-active-review-fix1-focused --junitxml=.superpowers/sdd/preview-hide-active/review-fix-1/focused.xml
+uv run --no-sync ruff check .
+uv run --no-sync ruff format --check .
+node scripts/js_smoke.js
+```
+
+All data stayed under fresh Linux `/tmp` basetemp, caches/bytecode disabled;
+XML/logs are retained under ignored `review-fix-1/`, with the complete command and
+failure ledger in `review-fix-1-report.md`. The dedicated environment, checkout
+imports, release codec and Node were reconfirmed. **No full-suite or browser run
+was performed for this native-only correction**, per coordinator scope. The
+12,467-pass full suite recorded below applies to `629bca93`, not this follow-up.
+Fresh full verification follows scoped re-review and CodeRabbit under coordinator
+ownership. Windows/native/WebView2/EVE acceptance remains NOT RUN.
+
 ## Boundaries and decisions
 
 - `preview.hide_active_preview` defaults off and accepts only booleans. No

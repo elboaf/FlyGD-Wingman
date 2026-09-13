@@ -747,10 +747,11 @@ def test_hidden_previews_hide_every_crop():
     host._hide_on_lost_focus = lambda: True
     host._foreground_is_ours = lambda libs, foreground: False
 
-    host._apply_visibility(None, 0x9999)
+    host._foreground = 0x9999
+    host._apply_visibility(None)
     assert crop_factory.created[0].hidden is True
     host._foreground_is_ours = lambda libs, foreground: True
-    host._apply_visibility(None, 0x9999)
+    host._apply_visibility(None)
     assert crop_factory.created[0].hidden is False
 
 

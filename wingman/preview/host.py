@@ -2851,7 +2851,7 @@ class PreviewHost:
             win.set_focused(key == focus)
             win.set_selected(key == self._selected_key)
 
-        self._apply_visibility(libs, foreground)
+        self._apply_visibility(libs)
 
     def _visibility_context(self, libs, foreground):
         # Same fallback as selection, including when the foreground hook failed.
@@ -2880,11 +2880,13 @@ class PreviewHost:
             source_hwnd=source_hwnd,
         )
 
-    def _apply_visibility(self, libs, foreground) -> None:
+    def _apply_visibility(self, libs) -> None:
         epoch = self._eve_epoch
         if not self._eve_valid(epoch):
             return
-        hidden, active, foreground = self._visibility_context(libs, foreground)
+        # Selection/label painting can admit a newer foreground hook observation.
+        # Publish from that current observation, not selection's pre-paint sample.
+        hidden, active, foreground = self._visibility_context(libs, self._foreground)
         # Apply even when both options are off: newly prepared windows are hidden.
         # A -> B must update both windows even if the global mask never changed.
         for key, win in self._windows.items():
@@ -4167,7 +4169,7 @@ class PreviewHost:
             self._crop_controller.restyle()
         # Last, after every window has been restyled: hiding one that is
         # about to be repainted anyway would push a bitmap nobody can see.
-        self._apply_visibility(libs, self._foreground)
+        self._apply_visibility(libs)
 
     def _apply_layouts(self) -> None:
         """Apply copied layouts to targets that are open on this thread.
