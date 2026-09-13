@@ -1,0 +1,221 @@
+# Named group Back keybinds — verified implementation
+
+## Status: PASS — worker verification, independent review pending
+
+The candidate is the commit containing this document, based on
+`4a6db85a6a90c18515baf0fb122080ba0c81e0cb` on
+`feature/preview-group-backward`. Its final SHA is recorded in the ignored
+`.superpowers/sdd/preview-group-backward/implementation-report.md` and
+`progress.md` after the ordinary local commit. No amend, hook bypass, external
+review or remote action. Coordinator owns independent review, polish, CodeRabbit
+and the fresh final publication gate; this is not release/native acceptance.
+
+### Authorized test-seam correction and fresh results
+
+Coordinator `test-seams-ruling.md` authorized the two diagnosed harness fixes and
+one fresh full suite after those causal corrections. Production sources did not
+change in this continuation:
+
+- `tests/fixtures/screenshot_pages.cjs`: group Clear now selects and asserts the
+  intended `Forward · DPS` row and its actual Clear button. Fixture no-write and
+  ordinary live-resumption assertions remain intact.
+- `scripts/test_wanderer_runtime.js`: bounded capture VM also evaluates the real
+  production `groupFocusPending` declaration and `releaseGroupFocus` helper. New
+  capture must revoke pending manager focus; native/page capture and exact
+  true/false disarm delivery assertions are unchanged. No no-op helper/fallback.
+- Repository-wide search of JS/CJS/Python consumers found no other affected label
+  lookup or capture extractor. The existing Preview lexical split and Bookmarks'
+  separate capture implementation are unaffected.
+
+| Fresh gate | Result | Artifact under `.superpowers/sdd/preview-group-backward/` |
+|---|---|---|
+| The three originally failing cases | 3 passed in3.48s | `seams-three-green.xml` |
+| Related screenshot/Wanderer controller+page/group/marker/warnings | 212 passed in35.66s, no skips | `seams-related-green.xml` |
+| Full suite after causal corrections | **12400 passed,13 skipped in329.12s**,0failures | `full-after-seams.xml`, `full-after-seams.log` |
+| Independent Cargo | 1 passed,0 failed/ignored | `cargo-after-seams.log` |
+| Ruff check / format | PASS /435 files already formatted | `seams-static-green.log` |
+| Both changed scripts' Node syntax; all-page Node smoke; whitespace | PASS | `seams-static-green.log` |
+
+All13 skip identities/reasons were compared to the original failed full-run XML:
+unchanged Windows-only boundaries, listed below. No Node/codec skips, no timeout
+inflation or skipped failure. Original `full-final.xml`/`.log` retain
+12397passed/3failed/13skipped; they have not been relabelled or overwritten.
+
+Commands ran from this linked checkout with `PYTHONPYCACHEPREFIX` unset:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-group-backward-venv uv run --no-sync python -m pytest 'tests/test_new_screenshots.py::test_crop_screenshot_blocks_live_controls[group-clear]' tests/test_wanderer_controller.py::test_state_retries_reverse_handoff_and_page_recovers_coverage tests/test_wanderer_page.py::test_wanderer_runtime -q -rs --tb=short -p no:cacheprovider --basetemp=/tmp/wingman-211-seams-three-green --junitxml=.superpowers/sdd/preview-group-backward/seams-three-green.xml
+PYTHONDONTWRITEBYTECODE=1 UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-group-backward-venv uv run --no-sync python -m pytest tests/test_new_screenshots.py tests/test_wanderer_page.py tests/test_wanderer_controller.py tests/test_preview_group_backward.py tests/test_preview_labelmarkers_page.py tests/test_preview_warning_grouping.py -q -rs --tb=short -p no:cacheprovider --basetemp=/tmp/wingman-211-seams-related-green --junitxml=.superpowers/sdd/preview-group-backward/seams-related-green.xml
+PYTHONDONTWRITEBYTECODE=1 UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-group-backward-venv uv run --no-sync python -m pytest tests/ -q -rs --tb=short -p no:cacheprovider --basetemp=/tmp/wingman-211-full-after-seams --junitxml=.superpowers/sdd/preview-group-backward/full-after-seams.xml
+PYTHONDONTWRITEBYTECODE=1 UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-group-backward-venv uv run --no-sync ruff check .
+PYTHONDONTWRITEBYTECODE=1 UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-group-backward-venv uv run --no-sync ruff format --check .
+node --check tests/fixtures/screenshot_pages.cjs
+node --check scripts/test_wanderer_runtime.js
+node scripts/js_smoke.js
+cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml --target-dir /tmp/wingman-preview-group-backward-cargo
+git diff --check
+```
+
+Editable wingman5.6.2 still resolves THIS checkout; Node26.5.0 and the installed
+release codec availability/path/hash were rechecked. Test data stayed under Linux
+`/tmp`; only reports/images/logs in the ignored artifact directory.
+
+### Browser evidence applies to byte-identical production
+
+`sha256sum` verified all six source hashes against the earlier report. Therefore
+browser10/10 and geometry30/30 below apply unchanged; no new browser run was needed
+for this test-only delta. This is reuse of recorded private Chrome evidence, not
+fresh Windows/WebView2/native/EVE acceptance.
+
+| Production path | Verified SHA256 |
+|---|---|
+| wingman/settings.py | 641fefe90881778e2397e499771295af0492e7e9af53e8e5f43c7c189d3098a5 |
+| wingman/preview/host.py | 8bfdbecd90c82f6d3bb7a5bec5590e206e89ac146e86951b073cd8ffeb53aeac |
+| wingman/ui/api.py | 8c5a8f7c787d16398aea327ac8a4fc62c7d23cb76259807a30ccaa3fefbfb257 |
+| wingman/web/previews.js | 31e0e3df180ae8c06c76b24c1047f1d1da712d64a9ec6e23b78464d1f84e4e31 |
+| wingman/web/dev.js | 47a8583a37afac44f2c5dc38c2292cf18fbd49a02efd2dc4b10e6d71d6a2b870 |
+| wingman/web/style.css | 46242914125493c6c8200726dfb9d18d64d2d4763d0d9e0c5208b5698d371e42 |
+
+### Reviewer focus
+
+Prioritize persisted-field compatibility, all-forwards-before-backs priority,
+shared history/revocation and local manager interaction ownership. Explicit Add
+clearing remains intentionally separate from ordinary push draft retention. The
+approved shared-grid correction preserves roster tracks/width/hit areas. No
+Bookmarks reverse-summary expansion, other feature lane, new dependency, runtime
+owner or native plumbing change belongs to this candidate.
+
+Knowledge check:
+1. Why must every named forward registration precede every new named back?
+2. Which existing cursor/history rules govern a reverse action outside its group?
+3. How does the narrow back endpoint preserve concurrent forward updates?
+4. Which newer interactions revoke pending manager focus recovery?
+5. What do the browser and Linux gates leave unverified on Windows?
+
+---
+
+# Historical checkpoint — prior full-suite stop, resolved above
+
+## Status: BLOCKED on the single full-suite gate
+
+Worktree `.worktrees/preview-group-backward`, branch `feature/preview-group-backward`.
+Starting/current HEAD: `4a6db85a6a90c18515baf0fb122080ba0c81e0cb`
+(`Add per-character preview identification markers (#226)`). No new commit:
+source/test changes remain uncommitted because the full gate is not green.
+No remote actions or independent review occurred. Coordinator owns polish,
+independent review, CodeRabbit and the fresh final publication gate.
+
+The original #211 feature and approved grid work were resumed, not reimplemented.
+Production scope remains six files: `wingman/settings.py`, `wingman/ui/api.py`,
+`wingman/preview/host.py`, `wingman/web/previews.js`, `wingman/web/dev.js`,
+`wingman/web/style.css`. The latest focus correction changes only `previews.js`.
+
+## Behavior and decisions
+
+- Optional group `cycle_prev` normalizes independently. Existing `cycle` remains
+  Forward and the exact two-argument forward endpoint remains compatible. A new
+  previous-direction endpoint uses the same private writer and persistence lock.
+- Native `cycle_group_prev` uses the existing negative step and shared group
+  history. Every existing forward registration precedes every new named back;
+  UI warning ownership follows that priority despite paired Forward/Back rows.
+- The measured grid correction changes gaps and cycle-label containment only:
+  3px through873px, 10px from874px; cycle buttons150×30, full text in accessible
+  content/tooltips/Edit. Identity210–320px, roster width and cells stay unchanged.
+  Unbroken warnings wrap rather than widening/clipping the grid.
+- The user-approved manager fix snapshots current control/group identity and Add
+  text/selection/direction immediately before rendering. Restore uses exact stable
+  attributes, not selector-interpolated IDs or row positions. Native visibility
+  includes hidden ancestors and closed details. Removed controls fall back to Add.
+- Mutation focus recovery is separate, revoked by newer focus/pointer interaction,
+  capture, route/section/tab changes, closing the disclosure or screenshot entry.
+  A late receipt cannot pull a new owner back, even if it subsequently blurred to
+  BODY. Detached disclosures cannot change current open state through queued toggles.
+- Explicit Add attempts retain the existing cleared-field behavior (success and
+  refusal); ordinary refreshes retain unsent text. Clearing occurs before the
+  submission repaint, not by writing to an already-detached input in the receipt.
+  No blur commits, extra reads/writes, timers, sleeps or renderer framework.
+
+## Fresh continuation verification
+
+All pytest runs used THIS checkout's editable wingman5.6.2 and dedicated
+`/tmp/wingman-preview-group-backward-venv`, Node26.5.0, unset
+`PYTHONPYCACHEPREFIX`, `PYTHONDONTWRITEBYTECODE=1`, `uv run --no-sync`,
+`-p no:cacheprovider`, Linux `/tmp` basetemp. Reports only are in the ignored
+`.superpowers/sdd/preview-group-backward/` artifact directory. The release codec
+was rechecked available at THIS `packaging/bin/wingman-settings-codec`, SHA256
+`4a4b57f48829002be1aff6eda8193f9e1fb8257a9bef5666dd26b0e225e815b4`.
+
+| Gate | Result | Artifact |
+|---|---|---|
+| Focus tracer RED, current unfixed source | 1failed/48deselected,3.97s; real ordinary-push focus loss | `focus-draft-red-bounded.xml` |
+| Focus tracer GREEN | 1passed/48deselected,3.43s | `focus-draft-green.xml` |
+| Ownership RED | 2failed/1passed/49deselected,4.37s | `focus-ownership-red.xml` |
+| Focus scenarios GREEN | 4passed/48deselected,4.17s | `focus-all-green.xml` |
+| Nearby affected tests | 228passed,14.42s | `focus-nearby.xml` |
+| Fresh focused suite | 1139passed/1Windows-pump skip,35.43s | `focused-after-focus-guard.xml` |
+| Ruff check / format | PASS /435files already formatted | recorded in report |
+| All-page Node smoke | PASS index/fleetbar/sigbar modules | recorded in report |
+| Single complete pytest | 12397passed/3failed/13Windows-only skips,345.41s | `full-final.xml`, `full-final.log` |
+| Independent Cargo | 1passed/0failed/0ignored | `cargo-final.log` |
+
+Focus tests exercise real app/previews/panel handlers over PageTree/deferred bridge
+seams: 12 Add/Rename/Delete × ordering × outcome combinations,9 newer-owner cases,
+Add selection/direction, stable-ID reorder/rename/removal and capture supersession.
+The local test DOM models native removal focus loss, ancestor visibility, focusin
+bubbling and selection. No test-only production fallback was introduced.
+
+Preserved harness corrections: the initial RED timed out30s while Node formatted
+an enormous cyclic DOM equality failure; boolean identity assertions bounded the
+report without changing timeouts or production. Ownership RED also exposed a test
+loop failing to reset its prior draft. The first broad focus gate failed an old
+lexical Add assertion requiring a clear in the receipt; its placement assumption
+was updated, retaining the guard and real completion/refusal coverage. All failed
+XML remains. No full-suite retry was performed.
+
+## Browser evidence, not native acceptance
+
+Private Chrome153.0.8010.36, own temporary profiles/local dev page only; no app,
+user browser, EVE, user clipboard or live settings. All profiles closed/deleted.
+
+- `group-focus-green/{results.json,baseline.png,current.png}`: matched starting-SHA
+  source still drops focus to BODY; current source keeps Add-name after the deferred
+  delete push. Original `group-focus-probe/` is untouched.
+- `browser-final-spy/results.json`:10/10 passed at840×625 and839×621. Each floor
+  covers both direction controls, long labels/warnings/legacy payloads, delayed
+  refusal/stale receipts/navigation/rename/delete, back capture → deferred roster →
+  first native marker menu, and G1 unsent draft/selection plus Copy Escape.
+  Actual create/copy bridge methods are included in the mutation spy. Earlier
+  `browser-after-focus/` remains, but its Copy-Escape spy omitted those methods.
+- `layout-after-focus/results.json`:30/30 passed (five modes at six widths).
+  Grid client/scroll:839→591/591,840→592/592,841→593/593,873→625/625,
+  874→626/626,1280→884/884. Actual fonts awaited. Cycle hit areas unchanged.
+- Inspected `group-focus-green/current.png`,
+  `browser-after-focus/839-marker-first-native-open.png` and
+  `layout-after-focus/839-unbroken-conflicts.png`: focus/menu and wrapped warning
+  text visible. Final driver also saves corresponding PNGs.
+
+## Confirmed full-suite blockers and next bounded work
+
+1. `tests/fixtures/screenshot_pages.cjs:229` selects group Clear by old literal
+   label `DPS`; paired rows now render `Forward · DPS` / `Back · DPS`, so lookup
+   returns undefined before exercising the guard. Failure:
+   `test_crop_screenshot_blocks_live_controls[group-clear]`. Correct the fixture
+   to select the intended Forward owner (and consider the new Back boundary).
+2. `scripts/test_wanderer_runtime.js:490–507` extracts only the capture source
+   slice into an isolated VM. It now invokes real `beginCapture()` without the
+   new local `releaseGroupFocus()` helper, causing ReferenceError. Both
+   `test_wanderer_runtime` and
+   `test_state_retries_reverse_handoff_and_page_recovers_coverage` run that same
+   harness. Include the real local helper/ownership state in that harness (not
+   a no-op production fallback), or use existing complete-module seams.
+
+These two harness corrections have NOT been applied: implementation stopped and
+source was inspected as requested after the unexpected full-gate failures. The
+single full-suite budget is spent. No commit is authorized over this failed gate.
+Coordinator must approve the bounded continuation/fresh full-gate policy.
+
+All13 skips are actual Windows boundaries:3 profile-copy junction cases,
+2 DPAPI/WinDLL cases,1 preview pump,3 preview Win32 bindings,1 pystray backend,
+2 setup-profile junction cases and1 Wanderer user-bound DPAPI case. No Node or
+codec skip. Windows/WebView2/DPI/native hotkey/live-EVE acceptance remains NOT RUN;
+the appended smoke checklist is an acceptance contract, not a success claim.

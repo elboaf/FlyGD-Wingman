@@ -514,8 +514,8 @@ def test_preview_cycle_groups_normalize_independently_and_membership_is_exclusiv
         }
     )["hotkeys"]
     assert hotkeys["groups"] == [
-        {"id": "dps", "name": "DPS", "cycle": "Ctrl+Alt+F2"},
-        {"id": "logi", "name": "Logistics", "cycle": ""},
+        {"id": "dps", "name": "DPS", "cycle": "Ctrl+Alt+F2", "cycle_prev": ""},
+        {"id": "logi", "name": "Logistics", "cycle": "", "cycle_prev": ""},
     ]
     assert hotkeys["group_by_character"] == {"Alice": "dps", "Bob": "logi"}
 

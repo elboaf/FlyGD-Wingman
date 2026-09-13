@@ -2543,9 +2543,9 @@
       "cycle_next": "Ctrl+Alt+Right",
       "cycle_prev": "",
       "groups": [
-        {"id": "g-dps",   "name": "DPS",         "cycle": "Ctrl+Shift+1"},
-        {"id": "g-logi",  "name": "Logistics",    "cycle": "Ctrl+Shift+1"},
-        {"id": "g-empty", "name": "Empty group",  "cycle": ""}
+        {"id": "g-dps",   "name": "DPS",         "cycle": "Ctrl+Shift+1", "cycle_prev": "Ctrl+Shift+2"},
+        {"id": "g-logi",  "name": "Logistics",    "cycle": "Ctrl+Shift+1", "cycle_prev": ""},
+        {"id": "g-empty", "name": "Empty group",  "cycle": "", "cycle_prev": ""}
       ],
       "group_by_character": {
         "Aiga Otsolen": "g-dps",
@@ -2883,7 +2883,7 @@
     _devPushHotkeys();
   }
 
-  // ---- Stateful dev stubs for the five preview cycle-group methods.
+  // ---- Stateful dev stubs for preview cycle-group methods.
   //
   // _devPreviewHotkeys is a deep copy of DEV_PREVIEW_HOTKEYS_FIXTURE.hotkeys.
   // Mutations update it in place; _devPushHotkeys rebuilds the full state from
@@ -2891,7 +2891,7 @@
   // etc.) with the current _devPreviewHotkeys substituted as the hotkeys field,
   // so onPreviewHotkeys always receives the correct full-state shape.
   //
-  // All five stubs return the production result shape {applied, persisted,
+  // Group mutations return the production result shape {applied, persisted,
   // error, hotkeys} where hotkeys is the current _devPreviewHotkeys copy.
   var _devPreviewHotkeys = JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE.hotkeys));
 
@@ -2948,7 +2948,7 @@
       }
     }
     var id = 'g-dev-' + Date.now();
-    groups.push({id: id, name: clean, cycle: ''});
+    groups.push({id: id, name: clean, cycle: '', cycle_prev: ''});
     _devPushHotkeys();
     return Promise.resolve(_devGroupResult(true, null));
   };
@@ -3017,6 +3017,24 @@
       return Promise.resolve(_devGroupResult(false, 'No group with id \'' + groupId + '\''));
     }
     target.cycle = gesture || '';
+    _devPushHotkeys();
+    return Promise.resolve(_devGroupResult(true, null));
+  };
+
+  api.set_preview_cycle_group_prev_bind = function (groupId, gesture) {
+    console.log('DEV api.set_preview_cycle_group_prev_bind(', groupId, gesture, ')');
+    if (!groupId) {
+      return Promise.resolve(_devGroupResult(false, 'Invalid group_id'));
+    }
+    var groups = _devPreviewHotkeys.groups;
+    var target = null;
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].id === groupId) { target = groups[i]; break; }
+    }
+    if (!target) {
+      return Promise.resolve(_devGroupResult(false, 'No group with id \'' + groupId + '\''));
+    }
+    target.cycle_prev = gesture || '';
     _devPushHotkeys();
     return Promise.resolve(_devGroupResult(true, null));
   };

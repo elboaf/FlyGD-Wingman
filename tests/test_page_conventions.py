@@ -324,21 +324,41 @@ def _media_spans(max_width: int) -> list[tuple[int, int]]:
     return spans
 
 
-def test_preview_grid_tightens_only_its_column_gap_at_the_840_floor():
-    """The six Preview tracks overflowed the pane by 18-20px at the floor.
+def test_preview_grid_reclaims_gaps_without_changing_tracks_or_hit_areas():
+    """Browser-measured controls need 575px before the five gaps.
 
-    Five gaps are the only safe place to reclaim that width: the 210px
-    identity floor and the controls remain unchanged, while 10px to 6px
-    returns exactly 20px. The base layout stays at its roomier spacing.
+    At 839px the gutter leaves 591px. The narrow tier must cover widths above
+    840 too: the ordinary 10px gaps need 625px, first available at 873px.
+    Real Chrome regression checks this budget, wrapping and both tier edges.
     """
     base = re.search(r"#preview-binds\s*\{([^}]*)\}", CSS)
     assert base and re.search(r"\bcolumn-gap\s*:\s*10px\s*;", base.group(1))
+    assert "overflow-wrap: anywhere" in base.group(1)
+    assert not re.search(r"\boverflow(?:-x)?\s*:\s*(hidden|clip)", base.group(1))
 
-    floor = "\n".join(CSS[lo:hi] for lo, hi in _media_spans(840))
-    rule = re.search(r"#preview-binds\s*\{([^}]*)\}", floor)
-    assert rule and re.fullmatch(r"\s*column-gap\s*:\s*6px\s*;\s*", rule.group(1)), (
-        "the 840px tier must change only #preview-binds' column gap to 6px"
+    narrow = "\n".join(CSS[lo:hi] for lo, hi in _media_spans(873))
+    rule = re.search(r"#preview-binds\s*\{([^}]*)\}", narrow)
+    assert rule and re.fullmatch(r"\s*column-gap\s*:\s*3px\s*;\s*", rule.group(1)), (
+        "reclaim only gaps through the point where the ordinary tier fits"
     )
+
+
+def test_cycle_bind_containment_preserves_the_existing_minimum_hit_width():
+    base = re.search(r"^\.bindbtn\s*\{([^}]*)\}", CSS, re.MULTILINE)
+    minimum = re.search(r"min-width:\s*(\d+)px", base.group(1)).group(1)
+    cycle = re.search(
+        r"#preview-binds \.row:not\(\[data-preview-character\]\) > \.bindbtn\s*\{([^}]*)\}",
+        CSS,
+    )
+    assert cycle, "cycle labels must not widen the shared roster track"
+    assert f"max-width: {minimum}px" in cycle.group(1)
+    assert "min-width" not in cycle.group(1), "do not shrink existing hit areas"
+    for declaration in (
+        "overflow: hidden",
+        "text-overflow: ellipsis",
+        "white-space: nowrap",
+    ):
+        assert declaration in cycle.group(1)
 
 
 def test_an_id_override_of_the_label_column_still_collapses_at_the_floor():
@@ -2235,7 +2255,7 @@ def test_the_dense_bind_column_can_hold_a_whole_control_line():
     column = re.search(r"columns:\s*(\d+(?:\.\d+)?)px", dense.group(1))
     assert column, ".bind-dense no longer declares a px column width"
 
-    btn = re.search(r"\.bindbtn \{([^}]*)\}", CSS)
+    btn = re.search(r"^\.bindbtn \{([^}]*)\}", CSS, re.MULTILINE)
     assert btn, ".bindbtn has no rule block"
     floor = re.search(r"min-width:\s*(\d+(?:\.\d+)?)px", btn.group(1))
     assert floor, ".bindbtn no longer declares a min-width"

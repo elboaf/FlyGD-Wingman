@@ -2490,6 +2490,9 @@ button.btn:disabled,
      keep its sticky background clear of the first row without adding a
      second scroll container. */
   --preview-bind-head-height: 22px;
+  /* Arbitrary group names can be unbroken words in warnings and the manager.
+     Wrap that text rather than letting it impose a minimum on the whole grid. */
+  overflow-wrap: anywhere;
   display: grid; column-gap: 10px; row-gap: 4px; align-items: center;
   justify-content: start;
   /* A bounded name column, four content-sized control tracks, then one
@@ -2540,10 +2543,18 @@ button.btn:disabled,
   grid-template-columns: minmax(210px, 320px) repeat(4, max-content) minmax(0, 1fr);
 }
 
-/* Five gaps reclaim the 20px that overflowed the measured window floor;
-   the identity and control tracks keep their usable widths. */
-@media (max-width: 840px) {
-  #preview-binds { column-gap: 6px; }
+/* The scrollbar gutter leaves 591px at the 839px floor. Controls and the
+   identity floor need 575px before five gaps, so 3px gaps fit without shrinking
+   hit areas. Keep this tier above 840 too: 10px gaps need 625px, first available
+   at 873px. The extra pixel at 874 keeps the ordinary tier clear of rounding. */
+@media (max-width: 873px) {
+  #preview-binds { column-gap: 3px; }
+}
+/* Cycle commands share the roster's bind track. A long chord must not widen
+   every character row; full text stays in its accessible name, tooltip and Edit.
+   Match the existing .bindbtn minimum without changing its padding/hit area. */
+#preview-binds .row:not([data-preview-character]) > .bindbtn {
+  max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 /* Companion rows are keyed in place, so live source updates do not rebuild

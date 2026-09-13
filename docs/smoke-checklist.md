@@ -6204,3 +6204,54 @@ windows merely to complete this checklist. Earlier issue 214 evidence is unchang
       and resizes, and EVE-preview runtime off/on. No marker outlives its label,
       steals clicks, changes an alert/selection ring or creates another native
       window. Confirm click-through and unchanged source geometry on Windows.
+
+## Named cycle-group Back keybinds (#211)
+
+Linux model/bridge/Node tests and isolated Chromium checks are not Windows/WebView2
+or live-EVE acceptance. Run these checks on an authorized disposable setup; never
+move or resize a real EVE client. Existing named-forward omissions from the
+Bookmarks-side preview summary remain intentional; check named Back bookmark
+warnings on the Previews side.
+
+- [ ] **Older setups remain unchanged.** Load no-group and forward-only settings.
+      All forward/back and existing named forwards retain their binds and priority;
+      every named group gains an unset Back row. Assign Back without Forward, restart,
+      and confirm unrelated settings saves preserve both directions.
+- [ ] **Both rows use existing controls.** Capture, Clear and Edit each direction,
+      including a registered chord. At 840×625 and 839×621, long group names and long
+      keybinds ellipsize without hiding Forward/Back or widening the character roster.
+      Inspect duplicate, refused-OS, missing-registration and bookmark-overlap copy.
+- [ ] **Priority is unchanged for existing actions.** Assign one canonical chord to
+      an earlier group's Back and a later group's Forward. Saving is allowed and
+      warns; characters win first, then All forward, All back, all named forwards,
+      then all named backs in configured order. Status for a chord is not proof
+      every conflicting action runs. Check groups named All back or like a character.
+- [ ] **One shared group cursor.** With three eligible members, verify Back reverse
+      and wrap, forward/back cancellation, rapid mixed directions, direct-focus and
+      All actions. Only the final effective target activates. Outside the group,
+      both directions enter its first sorted member; outside EVE, group history is
+      shared. Empty groups preserve a preceding batch result; offline/excluded
+      members are skipped; single-member groups do not redundantly activate.
+- [ ] **Mutation and navigation retain ownership.** Delay/refuse a bind write; both
+      rows stay disabled until settlement, refusal restores the acknowledged bind,
+      and newer pushes or rename/delete cannot be undone by stale receipts. Rename
+      preserves both binds, delete removes both. Escape, Edit dialog, tab and section
+      changes cancel capture; late replies must not steal navigation focus.
+- [ ] **Manage groups retains only its own interaction.** Type an unsubmitted
+      Add name and select text backwards; ordinary hotkey pushes retain its text,
+      caret/selection direction and focus. Reorder/rename groups while Rename or
+      Delete is focused: focus follows the stable group, never a row position.
+      Test both push/receipt orders for Add/Rename/Delete, success and refusal.
+      A later push after Delete must retain Add-name focus. Newer fields, dialogs,
+      capture, navigation or closing the manager must prevent late focus recovery;
+      hidden ancestors must not receive focus. Explicit Add attempts clear as before,
+      but ordinary pushes never submit or erase an unsubmitted name.
+- [ ] **First marker entry still works.** Open Configure, arm named Back capture,
+      then let a new client roster push defer behind it. The first marker-select
+      mouse press disarms capture while retaining the original select, opens its
+      native menu and flushes the roster. Arrow/Enter selects only the marker, never
+      saves a bind; Copy Escape and an unrelated group-name draft remain intact.
+- [ ] **Revocation keeps cleanup ownership.** While cycling, clear/delete the Back
+      bind or turn EVE previews off, including with companions still running. Queued
+      revoked native actions cannot activate/capture. A failed native release stays
+      tracked until cleanup succeeds; reactivation does not create a second owner.
