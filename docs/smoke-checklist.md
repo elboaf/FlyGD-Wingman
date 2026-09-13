@@ -2080,10 +2080,13 @@ native behavior below still requires Windows/WebView2 checks.
       "Finisher:" or "Tag". If the whole list renders flat and unheaded,
       the payload lost its `groups` key — which is the designed fallback,
       not a crash, so nothing will be in the console.
-- [ ] **Configured bookmark/Preview overlap is visible on both screens.**
-      With disposable bindings, give both actions the same keys. Bookmarks
+- [ ] **Bookmark overlap with character-focus or All-cycle Preview keys is
+      visible on both screens.** With disposable bindings, give a bookmark and
+      a character-focus or All forward/back action the same keys. Bookmarks
       marks confirmed Preview registration as active and retains configured
-      overlap as latent while previews are off. Tooltips recommend distinct
+      overlap as latent while previews are off. Named cycle-group keys are not
+      included in the Bookmarks reverse summary; inspect their warnings in
+      Previews instead. Tooltips recommend distinct
       keys and explain that a bookmark may consume them inside its selected
       EVE windows; neither mark proves that the bookmark engine is running.
       Physical delivery requires a separate authorized Windows check inside

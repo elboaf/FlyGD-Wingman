@@ -6287,9 +6287,9 @@ class Api:
             "groups": list(bookmarks.bind_groups()),
             "windows": evewindows.list_eve_windows(),
             "collisions": bookmarks.collisions(section["keybinds"]),
-            # Mirror _bookmark_chords so overlap is visible on both screens.
-            # Registration alone does not prove which action receives a key
-            # inside an EVE window selected by the bookmark engine.
+            # Mirror character-focus and All forward/back overlap here.
+            # Named cycle-group keys are not included in this reverse summary.
+            # Registration alone does not prove delivery in a selected EVE window.
             "preview_chords": self._preview_chords(),
             # Human labels for the bound keys. Computed here rather than in
             # the page, which is the entire reason to_ahk returns a display
@@ -6319,8 +6319,9 @@ class Api:
         }
 
     def _preview_chords(self) -> dict:
-        """Preview chords, split by whether they are registered right now.
+        """Character-focus and All-cycle Preview chords, split by registration.
 
+        Named cycle-group keys are not included in this reverse summary.
         The counterpart of _bookmark_chords(), but deliberately not a
         straight mirror. Bookmark overlap is inferred from configuration;
         Preview's RegisterHotKey result is reported by the host. Neither

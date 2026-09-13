@@ -2432,9 +2432,21 @@ def test_preview_conflict_consequences_on_executed_page(tmp_path):
 
     from tests.html_tree import PageTree
 
+    html = _web("index.html")
+    # The static pointer must not contradict the conditional runtime tooltips.
+    intro = re.search(
+        r'<p class="hint">([^<]+)</p>\s*<p class="hint" id="eve-bind-warning"',
+        html,
+        re.DOTALL,
+    )
+    assert intro
+    assert not re.search(
+        r"\bloses\b|\bwins\b|\btakes priority\b", intro[1], re.IGNORECASE
+    )
+
     root = Path(__file__).resolve().parents[1]
     tree = PageTree()
-    tree.feed(_web("index.html"))
+    tree.feed(html)
     markup = tmp_path / "preview-conflict-page.json"
     markup.write_text(json.dumps(tree.root), encoding="utf-8")
     result = subprocess.run(
