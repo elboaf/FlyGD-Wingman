@@ -1,6 +1,105 @@
 # Preview character markers (issue 215) — implementation notes
 
-## Coordinator engineering checkpoint
+## Current engineering checkpoint — integrated after #225
+
+Verified production/test revision: `4333963c6ae77b92519e70ceafa3548f50191e0b`,
+against merged main `f9795e15379a900fec5ca48de67a1d17522b886c`. This checkpoint
+supersedes the original-base engineering results below. Windows CI for the marker
+branch and Windows/WebView2/native operator acceptance are not claimed here.
+
+### Integration and reviewed corrections
+
+The unpublished branch was backed up at `80f16d37` before rebasing onto #225's
+merge. All three original patches remained equal in `git range-diff`. The five
+paths also changed by newer main were inspected in context: smoke checklist,
+Preview wiring tests, API, `previews.js`, and CSS. #224's readiness/conflict UX and
+#225's admission/shutdown corrections remain intact.
+
+Renewed polish found two additional interaction bugs, corrected in `4333963c`:
+
+- **GA225-1:** entering Identification marker could leave an earlier keybind
+  capture armed, allowing an arrow key to become an unrelated saved binding.
+  Marker entry now disarms through the existing capture path on `mousedown` or
+  `focusin`. If a deferred roster render replaces the control, its original select
+  is reinserted and repainted, retaining the gesture target and live field object.
+  Real Chrome rejected the first `pointerdown` implementation because it suppressed
+  the following mouse event and first dropdown opening. No timer or `showPicker`
+  dependency was added. A later capture on another owner remains protected from
+  the earlier marker receipt.
+- **SF225-1:** capture's deferred live render could seed a screenshot marker table
+  with live Cyan instead of fixture Purple. Screenshot entry now finishes that
+  live render before taking its snapshot and creating the isolated table. Fixture
+  controls submit no real marker writes; exit restores the accepted live value.
+
+Six new scenarios failed meaningfully against the old script. Final focused
+verification passed **1,297 tests, zero skips**. Independent re-review closed both
+findings with no new findings, including vanished-owner fallback, repeated
+reinsertion, receipt/status binding and fixture replacement probes. All 28 changed
+files received complete current-file context review; no automatic cleanup was
+needed. The earlier G1 draft/Copy ownership and G2 portable None oracle remain.
+
+### Fresh verification and actual external review
+
+Actual CodeRabbit ran once on `4333963c` against `f9795e15`, completed with exit 0
+and `review_completed`, and reviewed all 28 changed files. It emitted two minor
+reports of the **same** plan-status issue at line 30, with no code findings. The
+plan's inaccurate “not made yet” wording and stale unchecked engineering steps are
+corrected in this later documentation-only update. No review ID was emitted.
+CodeRabbit reviewed the production revision above, not this subsequent evidence
+and status delta, which the coordinator inspected separately.
+
+After review, the fresh coordinator full Linux run passed **12,347 tests with
+13 Windows-only skips in 320.52s**. Node v26.5.0, package version 5.6.2 and the
+checkout's built release codec were confirmed first. Skips were only Windows
+junction/DPAPI/WinDLL/pump/bindings/tray requirements — none for Node, codec, RAQM,
+case handling or Unix file permissions. Ruff lint and format (**434 files**),
+all-page Node smoke, independent Cargo regression (**1 passed**) and range checks
+also passed. No source or tests changed after the reviewed revision or these gates.
+
+Commands ran in this linked worktree using the dedicated marker environment:
+
+```bash
+coderabbit review --agent --committed --base-commit f9795e15379a900fec5ca48de67a1d17522b886c
+PYTHONDONTWRITEBYTECODE=1 UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-character-markers-venv uv run --no-sync python -m pytest tests/ -q -rs -x -p no:cacheprovider --basetemp=/tmp/wingman-marker-final-433-uqeEeh --junitxml=.superpowers/sdd/preview-character-markers-plan/post-polish-final/full.xml
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-character-markers-venv uv run --no-sync ruff check --no-cache .
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-character-markers-venv uv run --no-sync ruff format --check --no-cache .
+node scripts/js_smoke.js
+CARGO_TARGET_DIR=/tmp/wingman-markers-after225-cargo cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml
+```
+
+The basetemp above was freshly allocated for that run. Use a new case-sensitive
+Linux `/tmp` directory for another run rather than overwriting retained evidence.
+`PYTHONPYCACHEPREFIX` was unset and pytest's cache provider disabled.
+
+Private Chrome 153.0.8010.36 passed **16 cases** across 840x625 and 839x621 on the
+final fix: first native select opening, focus/Tab entry and delayed arm, pending/
+accepted/refused marker keys with no bind writes, later-owner capture, G1 original
+draft/Copy controls, and Purple-fixture/Cyan-live restoration. No console/page
+errors or horizontal overflow. Earlier integration also covered hydration,
+offline/excluded/labels-off controls and all-preset Pillow geometry/None oracles.
+These are browser/renderer checks, not Windows input, installed-font/DPI,
+click-through or live-EVE acceptance. The native checklist remains open.
+
+### Failed attempts retained, not relabelled
+
+The first post-#225 full attempt used an incorrect artifact-local `/mnt/c` basetemp:
+**662 passed, 1 failed, 1 non-Windows skip**. Case-only filenames aliased on that
+filesystem and Unix mode restrictions were ineffective. This was a coordinator
+verification-configuration mistake; the failing uploader/test files were unchanged.
+Moving test data to case-sensitive `/tmp` made both filesystem checks pass with no
+skips, followed by **12,341 passes / 13 Windows-only skips** before the interaction
+fixes. That earlier full result is not post-fix coverage.
+
+The failed pointerdown browser implementation and subsequent driver corrections
+are also retained and explained. A no-op Cyan selection, an excluded capture owner,
+native type-ahead state and an unawaited dev push were corrected in the driver,
+not by weakening production behavior. Final native-opening, binding-preservation,
+G1 and fixture assertions remain enforced. Raw reports, XML, browser JSON/PNGs and
+CodeRabbit output are retained under the ignored workflow directory, including
+`integration-after-225-report.md`, `fix-after-225-report.md`,
+`polish-after-225-report.md` and `coderabbit-after225-4333963c.log`.
+
+## Historical coordinator checkpoint — original issue base
 
 Reviewed production head: `bf2149d183cf5b99b6c0fec9e51a5e302f7534ce`, against issue
 base `2404917a1eb7771649e9473103f3561bd618cd37`. Engineering review is clear;
