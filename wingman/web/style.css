@@ -2411,6 +2411,9 @@ button.btn:disabled,
      row text cannot flash between the cells while the pane scrolls. */
   box-shadow: 10px 0 var(--panel);
 }
+/* Five labels occupy six tracks. Cover the trailing flexible space too:
+   full-width warnings otherwise show through beyond the last cell's shadow. */
+#preview-binds .bind-head > span:last-child { grid-column: 5 / -1; }
 /* The rule that opens the table is drawn by an EMPTY `.bind-group` before
    the header row (previews.js), not by the header cells themselves.
 
@@ -5480,6 +5483,9 @@ button.btn.danger:disabled {
 .fit-metadata-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .fit-metadata-actions > .hint { margin: 0; }
 .fit-metadata-actions > .hint:empty { display: none; }
+.fit-immediate-note {
+  margin: 0; padding-top: 10px; border-top: 1px solid var(--field-border);
+}
 .fit-alias-row, .fit-presence-row {
   font-size: var(--fs-muted); color: var(--text-dim);
 }
@@ -5537,7 +5543,8 @@ button.btn.danger:disabled {
 .fit-copy-pair-name, .fit-copy-result { color: var(--text); }
 .fit-copy-character { color: var(--text); font-size: var(--fs-body); }
 .fit-copy-detail { color: var(--text-dim); font-size: var(--fs-body); }
-.fit-copy-needs-resolution > .fit-copy-detail { color: var(--warn); }
+.fit-copy-needs-resolution > .fit-copy-detail,
+.fit-copy-unavailable > .fit-copy-detail { color: var(--warn); }
 .fit-copy-resolution {
   grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px;
 }

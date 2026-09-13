@@ -2498,6 +2498,22 @@ def test_the_previews_header_stays_above_rows_while_settings_scrolls():
         )
 
 
+def test_preview_sticky_header_paints_the_trailing_track():
+    """Five labels share six tracks; full-width warnings must not show through.
+
+    Browser proof also checks pixels while warnings cross the sticky edge;
+    this guard preserves the final cell's paint coverage and column start.
+    """
+    final = re.search(
+        r"#preview-binds \.bind-head > span:last-child\s*\{([^}]*)\}", CSS
+    )
+    assert final, "the trailing Preview track has no sticky paint owner"
+    start = _preview_binds_cell_tracks()
+    assert re.search(rf"grid-column:\s*{start}\s*/\s*-1\s*;", final.group(1)), (
+        "the final header must start over its control and paint to the grid end"
+    )
+
+
 def test_the_sticky_offline_heading_clears_the_sticky_preview_header():
     host = re.search(r"#preview-binds \{(.*?)\}", CSS, re.DOTALL)
     assert host and "--preview-bind-head-height:" in host.group(1), (

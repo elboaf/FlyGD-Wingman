@@ -754,6 +754,10 @@
     if ((detail.aliases || []).length > 1) box.appendChild(aliasesNode(detail.aliases));
     box.appendChild(presencesNode(detail.presences || []));
     box.appendChild(metadataDisclosureNode(detail));
+    var immediateNote = WM.make('p', 'hint fit-immediate-note',
+      'Collections and Superseded by apply immediately.');
+    immediateNote.id = 'fit-immediate-note-' + detail.id;
+    box.appendChild(immediateNote);
     box.appendChild(collectionsNode(detail));
     box.appendChild(supersessionNode(detail));
     box.appendChild(deleteNode(detail));
@@ -873,10 +877,14 @@
     descRow.appendChild(descInput);
     box.appendChild(descRow);
 
+    var scope = WM.make('p', 'hint', 'Save applies only to the name and description.');
+    scope.id = 'fit-metadata-scope-' + current.id;
+    box.appendChild(scope);
     // Free text commits on an explicit button, never on blur -- the same
     // rule Settings states for its own fields (DESIGN.md).
     var save = WM.make('button', 'btn', 'Save');
     save.id = 'fit-metadata-save-' + current.id;
+    save.setAttribute('aria-describedby', scope.id);
     var status = WM.make('p', 'hint');
     var discard = WM.make('button', 'btn danger', 'Discard changes');
     discard.id = 'fit-metadata-discard-' + current.id;
@@ -985,6 +993,7 @@
       label.appendChild(WM.make('span', 'box'));
       label.appendChild(WM.make('span', '', collection.name));
       check.checked = current.collection_ids.indexOf(collection.id) !== -1;
+      check.setAttribute('aria-describedby', 'fit-immediate-note-' + current.id);
       check.addEventListener('change', function () {
         WM.send('fittings_set_membership', current.id, collection.id,
                 check.checked).then(requeryIfRejected);
@@ -1001,6 +1010,7 @@
     box.appendChild(label);
     var select = WM.make('select', 'field');
     select.setAttribute('aria-labelledby', label.id);
+    select.setAttribute('aria-describedby', 'fit-immediate-note-' + current.id);
     var none = WM.make('option', '', 'Not superseded');
     none.value = '';
     select.appendChild(none);
@@ -1384,7 +1394,7 @@
   function pairStatusText(pair) {
     if (pair.status === 'ready') return 'Ready as \u201c' + pair.chosen_name + '\u201d';
     if (pair.status === 'present') return 'Already present';
-    if (pair.status === 'unavailable') return pair.error || 'Unavailable';
+    if (pair.status === 'unavailable') return 'Unavailable' + (pair.error ? ' \u2014 ' + pair.error : '');
     return pair.skipped ? 'Conflict / skipped'
       : 'Name conflict. Enter an alternate name or Skip this pair.';
   }
@@ -1393,12 +1403,17 @@
     var host = WM.el('fittings-copy-body');
     host.textContent = '';
     host.appendChild(WM.make('p', 'fit-copy-summary', preflightSummary(copyPreflight)));
+    var hasUnavailable = false;
     (copyPreflight.pairs || []).forEach(function (pair) {
       var row = WM.make('div', 'fit-copy-pair');
       row.appendChild(WM.make('span', 'fit-copy-pair-name', copyFittingLabel(pair)));
       row.appendChild(WM.make('span', 'fit-copy-character', copyCharacterLabel(pair)));
       var status = WM.make('span', 'fit-copy-detail', pairStatusText(pair));
       row.appendChild(status);
+      if (pair.status === 'unavailable') {
+        row.classList.add('fit-copy-unavailable');
+        hasUnavailable = true;
+      }
       if (pair.status === 'conflict' && !pair.skipped) {
         row.classList.add('fit-copy-needs-resolution');
         status.id = 'fit-copy-instruction-' + pair.entry_id + ':' + pair.character_id;
@@ -1406,6 +1421,12 @@
       }
       host.appendChild(row);
     });
+    if (hasUnavailable) {
+      var recovery = WM.make('p', 'hint',
+        'Close this review to change the selected fittings or target characters, then review again.');
+      recovery.id = 'fittings-copy-unavailable-note';
+      host.appendChild(recovery);
+    }
     var resolving = !!copyPreflight.requires_resolution;
     copyButtons(resolving, !resolving, false);
     WM.el('fittings-copy-review').textContent = 'Review changes';

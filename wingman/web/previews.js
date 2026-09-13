@@ -314,6 +314,7 @@
     // truth for refused versus unknown registrations.
     var registration = state.registration || {};
     var text = '';
+    var bookmarkRepair = null;
     // Every branch names its owner even when the sticky header clips part
     // of the row. makeRow places the warning before its controls, so it
     // scrolls away first rather than lingering above an unrelated character.
@@ -357,10 +358,18 @@
     } else if (bookmark === 'active') {
       text = label + ': ' + gesture + ' conflicts with a configured EVE bookmark keybind. '
            + 'A bookmark may take this keybind in its selected EVE windows. '
-           + 'Edit or clear one of these keybinds to use different keys.';
+           + 'Edit or clear one of these keybinds to use different keys. ';
+      // The payload names chords, not bookmark actions. Offer the owning
+      // settings section without inventing an action or fetching another map.
+      bookmarkRepair = WM.make('button', 'linkbtn', 'Open Bookmarks');
+      bookmarkRepair.addEventListener('click', function () {
+        WM.openSettingsSection('bookmarks');
+      });
     }
     if (!text) { return null; }
-    return WM.make('div', 'preview-bind-conflict', text);
+    var conflict = WM.make('div', 'preview-bind-conflict', text);
+    if (bookmarkRepair) { conflict.appendChild(bookmarkRepair); }
+    return conflict;
   }
 
   // Ordered array of named preview cycle groups from the current hotkeys
@@ -1690,7 +1699,8 @@
   function makeSizeFiller() {
     // A hover-only dash hid the prerequisite from anyone scanning the detail.
     return WM.make('span', 'size-none',
-      'Size editing needs a preview or saved placement. Enable previews, then start this client.');
+      'Size editing needs a preview or saved placement. '
+      + (state.enabled ? 'Start this client.' : 'Enable previews, then start this client.'));
   }
 
   // The column headers, built ONCE above the character rows -- which is

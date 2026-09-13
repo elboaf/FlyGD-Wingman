@@ -1214,12 +1214,16 @@ check(WM.current_route === 'fittings' && visible(WM.el('fittings-copy-overlay'))
   && text(review, 'Review changes') && !review.hidden && review.disabled
   && review.getAttribute('aria-describedby') === note.id && WM.el('fittings-copy-start').hidden);
 check(expected.pairs.every(function (pair, index) {
-  var status = pair.status === 'present' ? 'Already present' : pair.status === 'unavailable' ? pair.error
+  var status = pair.status === 'present' ? 'Already present' : pair.status === 'unavailable'
+    ? 'Unavailable' + (pair.error ? ' — ' + pair.error : '')
     : 'Name conflict. Enter an alternate name or Skip this pair.';
   return text(pairs[index].querySelector('.fit-copy-pair-name'), pair.fitting_name + ' (' + hulls[pair.entry_id] + ')')
     && text(pairs[index].querySelector('.fit-copy-character'), pair.character_name)
-    && text(pairs[index].querySelector('.fit-copy-detail'), status);
+    && text(pairs[index].querySelector('.fit-copy-detail'), status)
+    && pairs[index].classList.contains('fit-copy-unavailable') === (pair.status === 'unavailable');
 }));
+check(text(WM.el('fittings-copy-unavailable-note'),
+  'Close this review to change the selected fittings or target characters, then review again.'));
 note.scrollIntoView({block: 'end', behavior: 'instant'});
 check(exposed(note, pane) && exposed(review, WM.el('fittings-copy-dialog')));
 """
@@ -1607,7 +1611,8 @@ def _screen_content_setup_script(screen: Screen) -> str | None:
             "    throw new Error('Characters partial-cleanup count did not render');\n"
             "  }\n"
             "  if (!notice || !notice.classList.contains('warn')\n"
-            "      || notice.textContent.indexOf('\"Skills Only\" was removed, but cleanup is incomplete.') === -1\n"
+            "      || notice.textContent.indexOf('Saved authorization for \"Skills Only\" was removed from Wingman') === -1\n"
+            "      || notice.textContent.indexOf('cleanup of local Skills/Fittings data is incomplete') === -1\n"
             "      || notice.textContent.indexOf('Restart Wingman to retry cleanup') === -1) {\n"
             "    throw new Error('Characters partial-cleanup notice did not render');\n"
             "  }\n"

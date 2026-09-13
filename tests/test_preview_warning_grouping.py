@@ -43,6 +43,7 @@ def run_preview_warning_grouping(tmp_path, scenario):
     [
         "collapsed",
         "expanded",
+        "bookmark-repair",
         "size-reason",
         "sticky-normal",
         "sticky-missing-row",
