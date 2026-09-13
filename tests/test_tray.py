@@ -1,11 +1,35 @@
 """Windows tray-menu placement at the native pystray boundary."""
 
+import ctypes
 import sys
 from types import SimpleNamespace
 
 import pytest
 
 from wingman.ui import tray
+
+
+@pytest.fixture(autouse=True)
+def dpi_api(monkeypatch):
+    # Model only the native thread-context boundary. Keep the production
+    # context manager real so these tests catch missing/late restoration.
+    state = SimpleNamespace(current=0x123456789, calls=[], reject=False)
+
+    def set_context(context):
+        value = context.value if isinstance(context, ctypes.c_void_p) else context
+        value = ctypes.c_ssize_t(value).value
+        state.calls.append(value)
+        if state.reject:
+            return None
+        previous, state.current = state.current, value
+        return previous
+
+    state.SetThreadDpiAwarenessContext = set_context
+    # Patch only Wingman's binding; pystray imports its own real WinDLL.
+    bindings = SimpleNamespace(**vars(ctypes))
+    bindings.WinDLL = lambda *a, **kw: state
+    monkeypatch.setattr(tray, "ctypes", bindings)
+    return state
 
 
 class FakeWin32:
@@ -52,9 +76,95 @@ def test_right_click_uses_physical_cursor_coordinates_for_native_popup():
     assert not any(call[0] == "logical-cursor" for call in win32.calls)
 
 
-def test_physical_cursor_failure_falls_back_to_pystray_cursor_lookup():
-    """A missing native API must leave the tray menu usable."""
-    win32 = FakeWin32(logical_cursor=(-120, 940))
+@pytest.mark.parametrize("command", [0, 1])
+def test_menu_uses_physical_dpi_scope_but_dispatches_in_original_context(
+    dpi_api, command
+):
+    contexts = []
+
+    class Backend(FakeWin32):
+        def SetForegroundWindow(self, hwnd):
+            contexts.append(("foreground", dpi_api.current))
+            return super().SetForegroundWindow(hwnd)
+
+        def TrackPopupMenuEx(self, *args):
+            contexts.append(("popup", dpi_api.current))
+            return super().TrackPopupMenuEx(*args)
+
+    def cursor():
+        contexts.append(("cursor", dpi_api.current))
+        return 3466, 2112
+
+    tray.show_windows_menu(
+        _icon(lambda _: contexts.append(("callback", dpi_api.current))),
+        win32=Backend(command=command),
+        physical_cursor=cursor,
+    )
+
+    expected = [("foreground", 0x123456789), ("cursor", -4), ("popup", -4)]
+    if command:
+        expected.append(("callback", 0x123456789))
+    assert contexts == expected
+    assert dpi_api.current == 0x123456789
+    assert dpi_api.calls == [-4, 0x123456789]
+
+
+def test_popup_exception_restores_thread_context(dpi_api):
+    class Backend(FakeWin32):
+        def TrackPopupMenuEx(self, *args):
+            assert dpi_api.current == -4
+            raise OSError("popup failed")
+
+    with pytest.raises(OSError, match="popup failed"):
+        tray.show_windows_menu(
+            _icon(), win32=Backend(), physical_cursor=lambda: (10, 20)
+        )
+
+    assert dpi_api.current == 0x123456789
+    assert dpi_api.calls == [-4, 0x123456789]
+
+
+@pytest.mark.parametrize("failure", ["missing", "rejected"])
+def test_dpi_override_failure_keeps_menu_usable_and_warns(dpi_api, caplog, failure):
+    if failure == "missing":
+        del dpi_api.SetThreadDpiAwarenessContext
+    else:
+        dpi_api.reject = True
+    selected = []
+
+    tray.show_windows_menu(
+        _icon(lambda _: selected.append(dpi_api.current)),
+        win32=FakeWin32(command=1),
+        physical_cursor=lambda: (10, 20),
+    )
+
+    assert selected == [0x123456789]
+    assert "DPI" in caplog.text
+    assert "scaled" in caplog.text
+    assert dpi_api.calls == ([] if failure == "missing" else [-4])
+
+
+def test_context_restoration_failure_is_logged(dpi_api, caplog):
+    class Backend(FakeWin32):
+        def TrackPopupMenuEx(self, *args):
+            dpi_api.reject = True
+            return super().TrackPopupMenuEx(*args)
+
+    tray.show_windows_menu(_icon(), win32=Backend(), physical_cursor=lambda: (10, 20))
+
+    assert dpi_api.calls == [-4, 0x123456789]
+    assert "restoration failed" in caplog.text
+
+
+def test_physical_cursor_failure_falls_back_to_pystray_cursor_lookup(dpi_api):
+    """The fallback must use the same DPI scope as native menu placement."""
+
+    class Backend(FakeWin32):
+        def GetCursorPos(self, point):
+            assert dpi_api.current == -4
+            return super().GetCursorPos(point)
+
+    win32 = Backend(logical_cursor=(-120, 940))
 
     tray.show_windows_menu(
         _icon(),
@@ -64,6 +174,22 @@ def test_physical_cursor_failure_falls_back_to_pystray_cursor_lookup():
 
     popup = next(call for call in win32.calls if call[0] == "popup")
     assert popup[3:5] == (-120, 940)
+    assert dpi_api.current == 0x123456789
+
+
+def test_callback_exception_does_not_leak_menu_dpi_context(dpi_api):
+    def callback(_):
+        assert dpi_api.current == 0x123456789
+        raise RuntimeError("callback failed")
+
+    with pytest.raises(RuntimeError, match="callback failed"):
+        tray.show_windows_menu(
+            _icon(callback),
+            win32=FakeWin32(command=1),
+            physical_cursor=lambda: (10, 20),
+        )
+    assert dpi_api.current == 0x123456789
+    assert dpi_api.calls == [-4, 0x123456789]
 
 
 def test_selected_menu_command_dispatches_through_pystray_descriptor():
