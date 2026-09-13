@@ -618,6 +618,24 @@ somewhere stale and nothing on that screen is worth reviewing.
       rows, Edit & source, add form and compact source chooser; the Wanderer
       connection/status card; Fleet telemetry's character visibility and sharing
       details/history; Custom alerts; and lower Uploading and Bookmarks cards.
+      The additional `settings-wanderer-controls-narrow` frame must show the full
+      Test-save note and Test/Remove controls without pressing either.
+      `fittings-metadata-narrow` opens only the native Edit metadata… disclosure
+      after the real detail renderer settles; its existing Name, Description and
+      Save must fit, with no typing, draft or save. The lower
+      `fittings-copy-preflight-bottom-narrow` and
+      `fittings-copy-result-bottom-narrow` frames show complete readiness/additive
+      safety and the last rate-limited target's recovery respectively. All four
+      are synthetic 840x625 presentations using the existing owner fixtures;
+      Fittings manifest entries identify `DEV_FITTINGS_SCREENSHOT_FIXTURE`.
+      `profiles-copy-scope` instead frames the actual capability's full guidance
+      in the Profiles work scroller. Only a genuinely unavailable codec shows
+      whole-file replacement and installer repair; the capture must never change
+      capability flags, remove the codec or rewrite warning text to force it.
+      If the codec is available, codec-specific fallback remains a separate
+      controlled manual check. Metadata draft/focus retention, connection results,
+      later progress/cancellation and recovery transitions remain manual checks,
+      not proof supplied by these static frames.
       Each dedicated capture must frame its named content, not just revisit the
       top of the section. Inspect the new floor variants at 840x625. Fixture
       stages must use synthetic source titles and connection data with no token

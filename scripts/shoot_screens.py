@@ -205,6 +205,14 @@ SCREENS = (
         True,
         True,
     ),
+    Screen(
+        "settings-wanderer-controls-narrow",
+        "Settings - Wanderer Test and Remove controls (840x625)",
+        "settings",
+        "previews",
+        True,
+        True,
+    ),
     Screen("settings-fleet", "Settings - Fleet telemetry", "settings", "fleet", True),
     Screen(
         "settings-fleet-characters-narrow",
@@ -255,6 +263,12 @@ SCREENS = (
     Screen("settings-general", "Settings - General", "settings", "general"),
     Screen("profiles", "Profiles", "evesettings", gated=True),
     Screen(
+        "profiles-copy-scope",
+        "Profiles - Current copy-scope guidance",
+        "evesettings",
+        gated=True,
+    ),
+    Screen(
         "profiles-account-identity",
         "Profiles - Identify accounts",
         "accountidentity",
@@ -284,6 +298,13 @@ SCREENS = (
     ),
     Screen("fittings-detail", "Fittings - Detail", "fittings", gated=True),
     Screen(
+        "fittings-metadata-narrow",
+        "Fittings - Expanded metadata (840x625)",
+        "fittings",
+        gated=True,
+        at_floor=True,
+    ),
+    Screen(
         "fittings-narrow",
         "Fittings - Narrow (840x625)",
         "fittings",
@@ -292,6 +313,13 @@ SCREENS = (
     ),
     Screen(
         "fittings-copy-preflight", "Fittings - Copy preflight", "fittings", gated=True
+    ),
+    Screen(
+        "fittings-copy-preflight-bottom-narrow",
+        "Fittings - Preflight readiness and additive safety (840x625)",
+        "fittings",
+        gated=True,
+        at_floor=True,
     ),
     Screen(
         "fittings-copy-limit",
@@ -303,6 +331,13 @@ SCREENS = (
         "fittings-copy-progress", "Fittings - Copy progress", "fittings", gated=True
     ),
     Screen("fittings-copy-result", "Fittings - Copy results", "fittings", gated=True),
+    Screen(
+        "fittings-copy-result-bottom-narrow",
+        "Fittings - Lower mixed-result recovery (840x625)",
+        "fittings",
+        gated=True,
+        at_floor=True,
+    ),
     Screen("dialog", "Dialog", "main"),
 )
 
@@ -629,6 +664,14 @@ def fittings_fixture_setup_script() -> str:
     )
 
 
+# Reuse the original owner/staging; only the settled framing differs.
+_LATE_FITTINGS_STAGES = {
+    "fittings-metadata-narrow": "fittings-detail",
+    "fittings-copy-preflight-bottom-narrow": "fittings-copy-preflight",
+    "fittings-copy-result-bottom-narrow": "fittings-copy-result",
+}
+
+
 def _fittings_setup_script(key: str) -> str:
     """Deterministic staging for every fittings-* screenshot stage.
 
@@ -644,6 +687,7 @@ def _fittings_setup_script(key: str) -> str:
     The injected screenshot state answers collection reads synchronously, but
     retaining the boundary keeps staging equivalent to the ordinary async route.
     """
+    key = _LATE_FITTINGS_STAGES.get(key, key)
     body = ""
     if key in {"fittings-unfiled", "fittings-superseded"}:
         label = "Unfiled" if key == "fittings-unfiled" else "Superseded"
@@ -820,6 +864,7 @@ _CURRENT_SCREEN_FIXTURES = {
     "settings-companions-source-narrow": ("companions", "companionsScreenshot"),
     "settings-wanderer": ("wanderer", "wandererScreenshot"),
     "settings-wanderer-narrow": ("wanderer", "wandererScreenshot"),
+    "settings-wanderer-controls-narrow": ("wanderer", "wandererScreenshot"),
     "settings-fleet-characters-narrow": ("fleet", "fleetScreenshot"),
     "settings-fleet-sharing": ("fleet", "fleetScreenshot"),
     "settings-fleet-sharing-details": ("fleet", "fleetScreenshot"),
@@ -844,6 +889,7 @@ _SETTINGS_SCREEN_TABS = {
     "settings-previews-crop-narrow": "characters",
     "settings-wanderer": "wanderer",
     "settings-wanderer-narrow": "wanderer",
+    "settings-wanderer-controls-narrow": "wanderer",
 }
 
 # Semantic anchors, not scroll fractions. Static cards stay live: no synthetic
@@ -855,6 +901,7 @@ _CURRENT_SCREEN_TARGETS = {
     "settings-companions-source-narrow": "#dialog",
     "settings-wanderer": "#wanderer-settings",
     "settings-wanderer-narrow": "#wanderer-health",
+    "settings-wanderer-controls-narrow": "#wanderer-save-note",
     "settings-fleet-characters-narrow": "#fleetbar-characters",
     "settings-fleet-sharing": "#fleet-sharing",
     "settings-fleet-sharing-details": "#sharing-eligible",
@@ -1048,8 +1095,185 @@ def _fidelity_verify_script(screen: Screen) -> str | None:
     )
 
 
+def _framed_content_script(key: str, body: str) -> str:
+    """Fail closed on clipped/covered content after the semantic scroll."""
+    return (
+        "(function () {\n"
+        f"function check(ok) {{ if (!ok) throw new Error('Screenshot content did not settle: {key}'); }}\n"
+        """
+function visible(node) {
+  if (!node || !node.getClientRects().length) return false;
+  for (var parent = node; parent; parent = parent.parentElement) {
+    if (parent.hidden || window.getComputedStyle(parent).visibility === 'hidden') return false;
+  }
+  return true;
+}
+function text(node, expected) { return node && node.textContent === expected; }
+function exposed(node, pane) {
+  if (!visible(node) || !visible(pane)) return false;
+  var p = pane.getBoundingClientRect(), r = node.getBoundingClientRect();
+  // Scroll offsets can round while DOMRects retain fractions (measured 0.109375px).
+  // Allow at most one CSS pixel at an edge, never a covered hit-test point.
+  var tolerance = 1;
+  if (r.width <= 0 || r.height <= 0
+      || r.left < Math.max(0, p.left) - tolerance || r.right > Math.min(innerWidth, p.right) + tolerance
+      || r.top < Math.max(0, p.top) - tolerance || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;
+  var inset = Math.min(4, r.width / 4, r.height / 4);
+  return [[r.left + inset, r.top + inset], [r.right - inset, r.top + inset],
+    [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset],
+    [(r.left + r.right) / 2, (r.top + r.bottom) / 2]].every(function (point) {
+      var hit = document.elementFromPoint(point[0], point[1]);
+      return hit && (hit === node || node.contains(hit));
+    });
+}
+""" + body + "\n}())"
+    )
+
+
+def _gap_verify_script(screen: Screen) -> str | None:
+    """Lower views retain real content/ownership; no capability substitution."""
+    key = screen.key
+    prefix = ""
+    if key == "settings-wanderer-controls-narrow":
+        prefix = _current_screen_verify_script(screen) + ";\n"
+        body = """
+var pane = WM.el('settings-previews-wanderer');
+var note = WM.el('wanderer-save-note'), test = WM.el('wanderer-test'), remove = WM.el('wanderer-remove');
+check(text(note, 'Test connection saves the URL, map and token, then checks access. It does not turn names on.')
+  && text(test, 'Test connection') && !test.disabled
+  && text(remove, 'Remove connection') && !remove.disabled
+  && WM.el('wanderer-token').type === 'password' && WM.el('wanderer-token').value === ''
+  && WM.el('overlay').hidden);
+note.scrollIntoView({block: 'start', behavior: 'instant'});
+check([note, test, remove].every(function (node) { return exposed(node, pane); }));
+"""
+    elif key == "profiles-copy-scope":
+        # Ordinary Profiles has no bounded screenshot owner. Preserve the live
+        # capability: a healthy codec must never acquire a fabricated warning.
+        body = """
+var pane = WM.el('es-work'), note = WM.el('es-copy-scope-note');
+var scope = WM.el('es-copy-scope'), commit = WM.el('es-copy-scope-commit');
+check(WM.current_route === 'evesettings' && WM.el('overlay').hidden
+  && visible(WM.el('es-copy-options')) && visible(note) && scope && commit);
+if (scope.hidden) {
+  check(text(note, 'Selective groups unavailable — the bundled settings codec is missing. Copy will replace the whole settings file for each selected target. Reinstall Wingman from its installer to restore the codec.')
+    && note.classList.contains('warn') && visible(commit) && text(commit, 'Whole settings file'));
+} else {
+  check(text(note, 'Checked groups are copied as a unit. Unchecked groups stay unchanged. Everything else is copied.')
+    && !note.classList.contains('warn') && commit.hidden && WM.el('es-copy-scope-summary').textContent);
+}
+note.scrollIntoView({block: 'center', behavior: 'instant'});
+check(exposed(note, pane));
+"""
+    elif key == "fittings-metadata-narrow":
+        # The first guard proves the async reply rendered the named racks,
+        # aliases and presences. Only then open the replacement DOM's disclosure.
+        prefix = (
+            new_screen_verify_script(Screen("fittings-detail", "", "fittings")) + ";\n"
+        )
+        detail = load_dev_fittings_screenshot_fixture()["details"]["fit-rifter-solo"]
+        body = (
+            f"var expected = {json.dumps(detail)};\n"
+            + """
+var pane = WM.el('fittings-list');
+var editor = document.querySelector('.fit-metadata-disclosure[data-entry-id="fit-rifter-solo"]');
+var name = WM.el('fit-name-fit-rifter-solo'), description = WM.el('fit-desc-fit-rifter-solo');
+var save = WM.el('fit-metadata-save-fit-rifter-solo'), discard = WM.el('fit-metadata-discard-fit-rifter-solo');
+check(editor && editor.tagName === 'DETAILS' && name && description
+  && name.value === expected.name && description.value === expected.description
+  && text(save, 'Save') && !save.disabled && discard && discard.hidden
+  && WM.el('overlay').hidden && WM.el('fittings-copy-overlay').hidden);
+var summary = editor.querySelector('summary');
+var nameLabel = editor.querySelector('label[for="fit-name-fit-rifter-solo"]');
+var descriptionLabel = editor.querySelector('label[for="fit-desc-fit-rifter-solo"]');
+check(text(summary, 'Edit metadata…') && text(nameLabel, 'Name') && text(descriptionLabel, 'Description'));
+editor.open = true;
+editor.scrollIntoView({block: 'start', behavior: 'instant'});
+check(editor.open && [summary, nameLabel, name, descriptionLabel, description, save].every(function (node) {
+  return exposed(node, pane);
+}));
+"""
+        )
+    elif key == "fittings-copy-preflight-bottom-narrow":
+        fixture = load_dev_fittings_screenshot_fixture()
+        hulls = {row["id"]: row["ship_name"] for row in fixture["entries"]}
+        body = (
+            (
+                f"var expected = {json.dumps(fixture['mixed_preflight'])};\n"
+                f"var hulls = {json.dumps(hulls)};\n"
+            )
+            + """
+var pane = WM.el('fittings-copy-body'), note = WM.el('fittings-copy-resolution-note');
+var review = WM.el('fittings-copy-review');
+var pairs = pane.querySelectorAll('.fit-copy-pair');
+check(WM.current_route === 'fittings' && visible(WM.el('fittings-copy-overlay')) && WM.el('overlay').hidden
+  && text(WM.el('fittings-copy-title'), 'Copy fittings')
+  && pairs.length === expected.pairs.length && pairs.length > 0
+  && text(note, 'Enter an alternate name or select Skip for each conflict before reviewing changes. Copies only add fittings; existing fittings are kept.')
+  && text(review, 'Review changes') && !review.hidden && review.disabled
+  && review.getAttribute('aria-describedby') === note.id && WM.el('fittings-copy-start').hidden);
+check(expected.pairs.every(function (pair, index) {
+  var status = pair.status === 'present' ? 'Already present' : pair.status === 'unavailable' ? pair.error
+    : 'Name conflict. Enter an alternate name or Skip this pair.';
+  return text(pairs[index].querySelector('.fit-copy-pair-name'), pair.fitting_name + ' (' + hulls[pair.entry_id] + ')')
+    && text(pairs[index].querySelector('.fit-copy-character'), pair.character_name)
+    && text(pairs[index].querySelector('.fit-copy-detail'), status);
+}));
+note.scrollIntoView({block: 'end', behavior: 'instant'});
+check(exposed(note, pane) && exposed(review, WM.el('fittings-copy-dialog')));
+"""
+        )
+    elif key == "fittings-copy-result-bottom-narrow":
+        prefix = (
+            _fidelity_verify_script(Screen("fittings-copy-result", "", "fittings"))
+            + ";\n"
+        )
+        fixture = load_dev_fittings_screenshot_fixture()
+        pair = fixture["copy_result"]["results"][-1]
+        entry = next(row for row in fixture["entries"] if row["id"] == pair["entry_id"])
+        results = fixture["copy_result"]["results"]
+        counts = {
+            status: sum(row["status"] == status for row in results)
+            for status in ("success", "present", "unknown", "failed")
+        }
+        summary = (
+            f"{counts['success']} copied · {counts['present']} already present"
+            f" · {counts['unknown']} {'needs' if counts['unknown'] == 1 else 'need'} verification"
+            f" · {counts['failed']} failed · {len(results) - sum(counts.values())} not copied"
+        )
+        body = (
+            (
+                f"var expected = {json.dumps(pair)};\n"
+                f"var identity = {json.dumps(pair['fitting_name'] + ' (' + entry['ship_name'] + ')')};\n"
+                f"var summary = {json.dumps(summary)};\n"
+            )
+            + """
+var pane = WM.el('fittings-copy-body');
+check(text(pane.querySelector('.fit-copy-summary'), summary));
+var pairs = pane.querySelectorAll('.fit-copy-pair'), row = pairs[pairs.length - 1];
+check(row && expected.status === 'unattempted_throttle');
+var name = row.querySelector('.fit-copy-pair-name'), character = row.querySelector('.fit-copy-character');
+var status = row.querySelector('.fit-copy-result'), error = row.querySelector('.fit-copy-detail');
+var guidance = row.querySelector('.fit-copy-guidance');
+check(text(name, identity) && text(character, expected.character_name)
+  && text(status, 'Not attempted: rate limit') && status.classList.contains(expected.status)
+  && text(error, expected.error)
+  && text(guidance, 'Not attempted. Wait for the ESI limit to clear, refresh characters, then review a new copy.'));
+row.scrollIntoView({block: 'end', behavior: 'instant'});
+check([name, character, status, error, guidance].every(function (node) { return exposed(node, pane); })
+  && exposed(WM.el('fittings-copy-close'), WM.el('fittings-copy-dialog')));
+"""
+        )
+    else:
+        return None
+    return prefix + _framed_content_script(key, body)
+
+
 def new_screen_verify_script(screen: Screen) -> str | None:
     """Check and frame settled content, never infer success from a click."""
+    gap = _gap_verify_script(screen)
+    if gap:
+        return gap
     fidelity = _fidelity_verify_script(screen)
     if fidelity:
         return fidelity
@@ -2144,6 +2368,8 @@ def walk(
             shots.append({"key": screen.key, "file": name, "error": None})
         if screen.key in _TOOL_SCREEN_FIXTURES:
             shots[-1]["fixture"] = "wingman/web/dev.js:DEV_TOOL_SCREENSHOT_FIXTURE"
+        elif screen.route == "fittings":
+            shots[-1]["fixture"] = "wingman/web/dev.js:DEV_FITTINGS_SCREENSHOT_FIXTURE"
     return shots, skipped, eve_shown
 
 

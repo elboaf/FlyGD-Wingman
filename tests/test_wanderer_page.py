@@ -129,7 +129,12 @@ def test_wanderer_card_is_in_previews_with_accessible_safe_controls():
         0
     ]
     assert 'id="wanderer-settings"' in previews
-    assert re.search(r"<h2[^>]*>Wanderer names</h2>", previews)
+    heading = re.search(r'<h2 id="wanderer-heading">([^<]+)</h2>', previews)
+    tab = re.search(
+        r'id="settings-tab-previews-wanderer"[^>]*>([^<]+)</button>', previews
+    )
+    assert heading and tab
+    assert heading[1] != tab[1], "Connection heading must not repeat its selected tab"
     assert re.search(r'id="wanderer-remove"[^>]*>Remove connection</button>', previews)
     for field in ("url", "map", "token"):
         assert f'for="wanderer-{field}"' in previews
@@ -146,6 +151,13 @@ def test_wanderer_card_is_in_previews_with_accessible_safe_controls():
         previews,
     )
     assert re.search(r'id="wanderer-health"[^>]*role="status"', previews)
+    for state in ("health", "coverage"):
+        assert re.search(
+            rf'<p class="operational-status" id="wanderer-{state}"', previews
+        ), "Both connection and coverage are operational information, not static help"
+        assert previews.index(f'id="wanderer-{state}"') < previews.index(
+            'id="wanderer-url"'
+        )
     assert 'id="wanderer-connection-error"' in previews
     assert "saves the URL, map and token" in previews
     source = (WEB / "wanderer.js").read_text(encoding="utf-8")
