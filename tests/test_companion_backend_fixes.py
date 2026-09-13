@@ -16,6 +16,8 @@ from wingman.preview.layout import Rect
 def replacement(r, identity, binding):
     r.catalog.rows = (BINDING, binding)
     listing = r.receipt(r.controller.sources())
+    assert listing["applied"], listing
+    r.wait_selection_ready()
     row = r.controller.state()["rows"][0]
     return r.controller.select(
         identity,
@@ -50,6 +52,9 @@ def test_first_add_preserves_explicit_choice_among_identical_sources(integrated,
     r.controller._ports = replace(r.controller._ports, submit_native=record)
     r.receipt(r.controller.set_master(True))
     listing = r.receipt(r.controller.sources())
+    assert listing["applied"], listing
+    r.wait_selection_ready()
+    before = len(r.picks)
     pending = r.controller.select(
         None,
         listing["sources"][1]["candidate_token"],
@@ -60,9 +65,9 @@ def test_first_add_preserves_explicit_choice_among_identical_sources(integrated,
         None,
     )
     if mode == "region":
-        until(lambda: r.picks)
+        picker = r.wait_picker(pending, before)
         r.call(
-            lambda: r.picks[-1]["on_confirm"](
+            lambda: picker["on_confirm"](
                 selected, Rect(100, 100, 400, 300), selected.client_size
             )
         )

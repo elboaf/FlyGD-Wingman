@@ -240,6 +240,68 @@ def test_native_callbacks_never_wait_for_settings_and_admitted_save_stays_real(h
     assert receipt["persisted"] and receipt["applied"]
 
 
+def test_shutdown_notification_before_idle_wait_still_runs_final_flush(h, monkeypatch):
+    controller = h.controller
+    entered = threading.Event()
+    release = threading.Event()
+    notified = threading.Event()
+    flushes = []
+    original_flush = controller._flush_geometry
+    original_wake = controller._wake_locked
+
+    def held_flush(force=False):
+        result = original_flush(force=force)
+        flushes.append((force, result))
+        if not force and not entered.is_set():
+            # The real loop sampled final=False and finished its ordinary flush.
+            # Wait outside its condition so shutdown can deliver its notification.
+            entered.set()
+            assert release.wait(3), "shutdown did not release the pre-wait gate"
+        return result
+
+    def observed_wake():
+        result = original_wake()
+        if controller._shutdown:
+            notified.set()
+            release.set()
+        return result
+
+    monkeypatch.setattr(controller, "_flush_geometry", held_flush)
+    monkeypatch.setattr(controller, "_wake_locked", observed_wake)
+    try:
+        controller.start()
+        assert entered.wait(2)
+        with controller._condition:
+            # Outstanding work/deadlines would wake another iteration and hide
+            # the missing shutdown predicate. Let startup settle; never clear it.
+            assert not controller._shutdown
+            assert not controller._runtime_dirty
+            assert not controller._jobs
+            assert not controller._events
+            assert not controller._operations
+            assert not controller._geometry
+            assert controller._status_event is None
+            assert controller._native_operation is None
+            assert controller._barrier is None
+        completed = controller.shutdown(timeout=1)
+        assert notified.is_set()
+        assert not controller._worker_failed
+        assert completed, "shutdown notification was lost before the idle wait"
+        assert flushes == [(False, True), (True, True)]
+        controller._worker.join(2)
+        assert not controller._worker.is_alive()
+    finally:
+        release.set()
+        monkeypatch.setattr(controller, "_flush_geometry", original_flush)
+        monkeypatch.setattr(controller, "_wake_locked", original_wake)
+        # RED cleanup only: never wake/retry before asserting the original result.
+        with controller._condition:
+            controller._condition.notify_all()
+        assert controller.shutdown()
+        controller._worker.join(2)
+        assert not controller._worker.is_alive()
+
+
 def test_disable_and_remove_save_before_native_and_failure_keeps_authority(h):
     pending, command, facts = h.prepare()
     h.event("prepared", command, facts)
