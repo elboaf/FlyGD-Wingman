@@ -2670,9 +2670,14 @@ button.btn:disabled,
 .preview-detail-label {
   font-size: var(--fs-muted); color: var(--text-dim);
 }
-.preview-character-detail .preview-group-select {
+.preview-character-detail .preview-group-select,
+.preview-character-detail .preview-marker-select {
   min-width: 160px; max-width: 240px;
 }
+.preview-marker-status {
+  max-width: 32ch; font-size: var(--fs-muted); color: var(--err);
+}
+.preview-marker-status:empty { display: none; }
 .preview-character-detail .geometry-actions { min-height: 28px; }
 .preview-configure { justify-self: start; }
 

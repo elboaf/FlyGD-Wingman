@@ -95,8 +95,9 @@ class LayoutStore:
         never renders, leaving the character silently locked into (or out
         of) a named group with no UI to clear it.
 
-        Crop owners need the same protection, even when disabled: their
-        saved selection must retain a row where it can be enabled or removed.
+        Crop and marker owners need the same protection, even when disabled:
+        their saved configuration needs a row where it can be changed or removed.
+        Explicit maps also retain owners independently of normalized seen's cap.
         """
         hotkeys = section.get("hotkeys") or {}
         return (
@@ -104,6 +105,7 @@ class LayoutStore:
             | set(section.get("excluded") or [])
             | set(hotkeys.get("group_by_character") or {})
             | set(section.get("crops") or {})
+            | set(section.get("label_markers") or {})
         )
 
     def replace(self, stable_key: str, entry) -> bool:

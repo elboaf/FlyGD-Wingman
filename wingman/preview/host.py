@@ -43,6 +43,7 @@ from .cropcontroller import CropController
 from .croppicker import CropPicker
 from .crops import MAX_LIVE_CROPS
 from .cropwindow import CropWindow
+from .labelmarkers import validated_markers
 from .labelsize import DEFAULT_LABEL_SIZE, LABEL_SIZE_PRESETS
 from .runtime import FamilyDemand, HostAck
 from .window import PreviewWindow
@@ -318,6 +319,7 @@ class PreviewHost:
         crop_controller_factory=None,
         custom_alert_current: Callable[[str, int, int], bool] | None = None,
         label_size=None,
+        label_markers=None,
     ):
         # Standalone/manual callers retain EVE-only start(). Binding a runtime
         # callback opts into explicit composite demands before any pump exists.
@@ -407,6 +409,7 @@ class PreviewHost:
         # below fall back to today's shipped behaviour in that case.
         self._show_labels = show_labels
         self._label_size = label_size
+        self._label_markers = label_markers
         self._opacity = opacity
         self._minimize_inactive_clients = minimize_inactive_clients
         # preview.hide_on_lost_focus: whether every preview leaves the
@@ -2738,6 +2741,7 @@ class PreviewHost:
                 locked=self._is_locked(key),
                 show_labels=self._labels_shown(),
                 label_size=self._current_label_size(),
+                label_marker=self._current_label_markers().get(client.character),
                 opacity=self._current_opacity(),
                 snap=self._snapping(),
                 lock_aspect=self._locking_aspect(),
@@ -3917,6 +3921,15 @@ class PreviewHost:
             return DEFAULT_LABEL_SIZE
         return value
 
+    def _current_label_markers(self) -> dict[str, str]:
+        if self._label_markers is None:
+            return {}
+        try:
+            return validated_markers(self._label_markers())
+        except Exception:
+            logger.exception("Could not read preview.label_markers; using no markers")
+            return {}
+
     def _current_opacity(self) -> int:
         """DWM thumbnail opacity, read live. Same guard as _labels_shown."""
         if self._opacity is None:
@@ -4105,6 +4118,7 @@ class PreviewHost:
         epoch = self._eve_epoch
         show_labels = self._labels_shown()
         label_size = self._current_label_size()
+        label_markers = self._current_label_markers()
         opacity = self._current_opacity()
         for key, win in self._windows.items():
             if not self._eve_valid(epoch):
@@ -4113,6 +4127,7 @@ class PreviewHost:
             # now (see PreviewWindow._ensure_label_overlay), so showing
             # or hiding it is the method's whole job.
             win.label_size = label_size
+            win.label_marker = label_markers.get(key)
             win.set_labels(show_labels)
             win.opacity = opacity
             win.locked = self._is_locked(key)

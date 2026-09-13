@@ -20,6 +20,7 @@ from .alerts import state as alert_state
 from .preview import companions as preview_companions
 from .preview import crops as preview_crops
 from .preview import gestures as preview_gestures
+from .preview import labelmarkers as preview_labelmarkers
 from .preview import layout as preview_layout
 from .preview import roster as preview_roster
 from .preview.labelsize import DEFAULT_LABEL_SIZE, LABEL_SIZE_PRESETS
@@ -198,6 +199,7 @@ def _preview_defaults() -> dict:
         # silently restyle every existing install's previews.
         "show_labels": True,
         "label_size": DEFAULT_LABEL_SIZE,
+        "label_markers": {},
         # Off by default: it changes what happens to a real game window
         # (minimizing it), which must be asked for rather than assumed.
         "minimize_inactive_clients": False,
@@ -472,6 +474,9 @@ def validated_preview(raw) -> dict:
     section = _preview_defaults()
     if not isinstance(raw, dict):
         return section
+    section["label_markers"] = preview_labelmarkers.validated_markers(
+        raw.get("label_markers")
+    )
     label_size = raw.get("label_size")
     if isinstance(label_size, str) and label_size in LABEL_SIZE_PRESETS:
         section["label_size"] = label_size

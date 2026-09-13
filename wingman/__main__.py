@@ -554,6 +554,7 @@ def build_preview_host(state, api_box):
             restore_positions=restore_positions,
             show_labels=show_labels,
             label_size=label_size,
+            label_markers=lambda: preview_config.get("label_markers", {}),
             opacity=opacity,
             minimize_inactive_clients=minimize_inactive_clients,
             never_minimize=never_minimize,

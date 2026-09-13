@@ -272,6 +272,7 @@ class PreviewWindow:
     # it. Pushed live by PreviewHost._restyle, like show_labels and locked.
     snap = True
     label_size = DEFAULT_LABEL_SIZE
+    label_marker = None
     lock_aspect = True
     # The selection ring's colour, #rrggbb. Class-level for the same
     # reason; the default is the cyan this module hardcoded until the
@@ -298,6 +299,7 @@ class PreviewWindow:
         on_toggle_crop=None,
         *,
         label_size=DEFAULT_LABEL_SIZE,
+        label_marker: str | None = None,
     ):
         self._libs = libs
         self.client = client
@@ -310,6 +312,7 @@ class PreviewWindow:
         # change on an already-open window.
         self.show_labels = show_labels
         self.label_size = label_size
+        self.label_marker = label_marker
         # A DWM thumbnail property, not a bitmap one -- see the note on
         # _chrome_key() below. Set once at creation; the live restyle path lets
         # this change on an already-open window.
@@ -403,6 +406,7 @@ class PreviewWindow:
         on_toggle_crop=None,
         *,
         label_size=DEFAULT_LABEL_SIZE,
+        label_marker: str | None = None,
     ):
         self = cls(
             libs,
@@ -421,6 +425,7 @@ class PreviewWindow:
             on_resize_all,
             on_toggle_crop,
             label_size=label_size,
+            label_marker=label_marker,
         )
         _ensure_class(libs)
         self.hwnd = libs.user32.CreateWindowExW(
@@ -624,7 +629,12 @@ class PreviewWindow:
         max_w = self.rect.w - self._inset * 2
         max_h = max(0, self.rect.h - self._inset * 2)
         layout = chrome.label_layout(
-            label, max_w, font_size, self._system_name, max_h=max_h
+            label,
+            max_w,
+            font_size,
+            self._system_name,
+            max_h=max_h,
+            marker=self.label_marker,
         )
         key = (
             label,
@@ -636,10 +646,20 @@ class PreviewWindow:
             chrome.LABEL_BG,
             chrome.LABEL_FG,
             chrome.LABEL_SECONDARY_FG,
+            self.label_marker,
+            chrome.MARKER_PALETTE.get(self.label_marker),
+            chrome.LABEL_MARKER_SIZE,
+            chrome.LABEL_MARKER_GAP,
+            chrome.LABEL_MARKER_RADIUS,
         )
         if key != self._label_key:
             self._label_img = chrome.render_label(
-                label, max_w, font_size, self._system_name, max_h=max_h
+                label,
+                max_w,
+                font_size,
+                self._system_name,
+                max_h=max_h,
+                marker=self.label_marker,
             )
             self._label_key = key
         if self._label_img is not None:

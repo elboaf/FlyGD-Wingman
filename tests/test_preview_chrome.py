@@ -9,9 +9,184 @@ from pathlib import Path
 import pytest
 
 from wingman.preview import chrome, geometry
+from wingman.preview.labelmarkers import MARKER_PALETTE
 from wingman.preview.labelsize import DEFAULT_LABEL_SIZE, LABEL_SIZE_PRESETS
 
 CYAN = (0, 200, 220, 255)
+
+
+def baseline_label_image(font_size, primary, secondary=""):
+    """Small independent drawing oracle captured before #215.
+
+    Callers supply already-clipped literal strings; this is not a duplicate
+    layout/ellipsis renderer. Use this platform's bundled face/FreeType, not
+    Linux byte hashes, to retain the baseline geometry and RGBA operations.
+    """
+    from PIL import Image, ImageDraw, ImageFont
+
+    face = Path(__file__).parents[1] / "wingman/assets/fonts/Inter-Regular.ttf"
+    font = ImageFont.truetype(str(face), font_size)
+    small = ImageFont.truetype(str(face), font_size - 3)
+    width = int(max(font.getlength(primary), small.getlength(secondary))) + 16
+    height = font_size + 14 + (font_size - 1 if secondary else 0)
+    image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle(
+        (0, 0, width - 1, height - 1), radius=6, fill=(10, 14, 20, 235)
+    )
+    draw.text((8, 7), primary, font=font, fill=(235, 240, 245, 255))
+    if secondary:
+        draw.text((8, font_size + 9), secondary, font=small, fill=(180, 190, 205, 255))
+    return image
+
+
+@pytest.fixture(params=[False, True], ids=["BASIC", "RAQM"])
+def label_engine(request, monkeypatch):
+    from PIL import ImageFont
+
+    if request.param and not ImageFont.core.HAVE_RAQM:
+        pytest.skip("Pillow was built without RAQM; BASIC coverage still runs")
+    # Exercise Pillow's normal engine choice, including its supported fallback.
+    # Neither the production font helper nor the independent builder is replaced.
+    with monkeypatch.context() as patch:
+        patch.setattr(ImageFont.core, "HAVE_RAQM", request.param)
+        chrome._font.cache_clear()
+        try:
+            yield ImageFont.Layout.RAQM if request.param else ImageFont.Layout.BASIC
+        finally:
+            chrome._font.cache_clear()
+
+
+# Independently measured literal widths leave at least 1px to the next glyph
+# under both BASIC and RAQM. A shared 48px case at 17px sat on BASIC's Pil…/HO…
+# boundary and falsely reported changed pixels despite unchanged production code.
+@pytest.mark.parametrize(
+    "font_size,clipped_width,clipped,second",
+    [(17, 47, "Pi…", "H…"), (20, 48, "P…", "H…"), (23, 47, "…", "…")],
+)
+@pytest.mark.parametrize("available_width", ["clipped", 108, 316])
+@pytest.mark.parametrize("two_lines", [False, True])
+def test_unmarked_pixels_match_independent_pre_marker_reference(
+    font_size, clipped_width, clipped, second, available_width, two_lines, label_engine
+):
+    assert chrome._font(font_size).layout_engine == label_engine
+    clipping = available_width == "clipped"
+    width = clipped_width if clipping else available_width
+    primary = clipped if clipping else "Pilot"
+    secondary = (second if clipping else "HOME") if two_lines else ""
+    expected = baseline_label_image(font_size, primary, secondary)
+    actual = chrome.render_label(
+        "Pilot", width, font_size, "HOME" if two_lines else None, max_h=78
+    )
+    assert actual.size == expected.size
+    assert actual.tobytes() == expected.tobytes()
+    explicit = chrome.render_label(
+        "Pilot", width, font_size, "HOME" if two_lines else None, max_h=78, marker=None
+    )
+    assert explicit.size == expected.size and explicit.tobytes() == expected.tobytes()
+
+
+@pytest.mark.parametrize("marker", list(MARKER_PALETTE))
+@pytest.mark.parametrize("font_size", [17, 20, 23])
+@pytest.mark.parametrize("inset", [2, 6])
+@pytest.mark.parametrize("size", [(120, 90), (320, 210)])
+@pytest.mark.parametrize("secondary", [None, "HOME", "W" * 60])
+def test_marker_geometry_pixels_and_independent_text_budget(
+    marker, font_size, inset, size, secondary, monkeypatch
+):
+    from PIL import ImageDraw
+
+    drawn = []
+    original = ImageDraw.ImageDraw.text
+
+    def record(self, xy, text, **kw):
+        drawn.append((xy, text, kw["font"].size, kw["fill"]))
+        return original(self, xy, text, **kw)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record)
+    width, height = [n - 2 * inset for n in size]
+    image = chrome.render_label(
+        "W" * 60, width, font_size, secondary, max_h=height, marker=marker
+    )
+    assert image.size == chrome.label_size(
+        "W" * 60, width, font_size, secondary, max_h=height, marker=marker
+    )
+    assert image.width <= width and image.height == (
+        2 * font_size + 13 if secondary else font_size + 14
+    )
+    assert drawn[0][0] == (21, 7) and drawn[0][1].endswith("…") and drawn[0][1] != "…"
+    assert drawn[0][2:] == (font_size, (235, 240, 245, 255))
+    if secondary:
+        assert drawn[1][0] == (8, font_size + 9)
+        assert drawn[1][2:] == (font_size - 3, (180, 190, 205, 255))
+        if secondary == "HOME":
+            assert drawn[1][1] == "HOME"
+        else:
+            assert drawn[1][1].endswith("…")
+            # The primary prefix must not steal the secondary's independent budget.
+            assert (
+                drawn[1][1]
+                == chrome.label_layout("Pilot", width, font_size, secondary)[2]
+            )
+    y = (font_size + 14 - 8) // 2
+    rgba = (*MARKER_PALETTE[marker][1], 255)
+    points = [
+        (x, y0)
+        for y0 in range(image.height)
+        for x in range(image.width)
+        if image.getpixel((x, y0)) == rgba
+    ]
+    assert points and min(x for x, _ in points) == 8 and max(x for x, _ in points) == 15
+    assert min(y0 for _, y0 in points) == y and max(y0 for _, y0 in points) == y + 7
+    assert image.getpixel((8, y)) == chrome.LABEL_BG  # rounded, not a square corner
+
+
+@pytest.mark.parametrize("marker", list(MARKER_PALETTE))
+@pytest.mark.parametrize("font_size", [17, 20, 23])
+@pytest.mark.parametrize("width", [0, 8, 16, 20, 32, 48, 108])
+def test_marker_never_outlives_primary_or_height_budget(marker, font_size, width):
+    one, two = font_size + 14, 2 * font_size + 13
+    for height in (0, one - 1, one, two - 1, two):
+        image = chrome.render_label(
+            "W" * 60, width, font_size, "HOME", max_h=height, marker=marker
+        )
+        measured = chrome.label_layout(
+            "W" * 60, width, font_size, "HOME", max_h=height, marker=marker
+        )
+        assert chrome.label_size(
+            "W" * 60, width, font_size, "HOME", max_h=height, marker=marker
+        ) == (image.size if image else None)
+        if image:
+            assert image.width <= width and image.height <= height
+            assert measured[1] not in ("", "…")
+            assert image.height == (two if height >= two else one)
+        if height < one or width <= 48:
+            assert image is None
+    assert chrome.render_label("", width, font_size, "HOME", marker=marker) is None
+    blank = chrome.render_label("Pilot", 316, font_size, "", marker=marker)
+    assert (
+        blank.tobytes()
+        == chrome.render_label("Pilot", 316, font_size, marker=marker).tobytes()
+    )
+
+
+@pytest.mark.parametrize("marker", list(MARKER_PALETTE))
+@pytest.mark.parametrize("backdrop", [0, 255])
+def test_marker_contrast_on_actual_composited_pill(marker, backdrop):
+    def luminance(rgb):
+        linear = [
+            v / 255 / 12.92
+            if v / 255 <= 0.04045
+            else ((v / 255 + 0.055) / 1.055) ** 2.4
+            for v in rgb
+        ]
+        return sum(v * w for v, w in zip(linear, (0.2126, 0.7152, 0.0722), strict=True))
+
+    alpha = chrome.LABEL_BG[3] / 255
+    background = [v * alpha + backdrop * (1 - alpha) for v in chrome.LABEL_BG[:3]]
+    assert (luminance(MARKER_PALETTE[marker][1]) + 0.05) / (
+        luminance(background) + 0.05
+    ) >= 3
 
 
 def test_border_is_drawn_in_the_requested_colour():

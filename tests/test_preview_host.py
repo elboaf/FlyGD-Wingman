@@ -273,30 +273,33 @@ def test_label_size_changed_while_eve_off_reaches_next_creation(
     current = "standard"
     seen = []
     h._label_size = lambda: current
+    marker = None
+    h._label_markers = lambda: {"Alice": marker} if marker else {}
     monkeypatch.setattr(
         h, "_reconcile_roster", host.PreviewHost._reconcile_roster.__get__(h)
     )
 
     def create(cls, libs, client, rect, **kwargs):
-        seen.append(kwargs.get("label_size"))
+        seen.append((kwargs.get("label_size"), kwargs.get("label_marker")))
 
     monkeypatch.setattr(host.PreviewWindow, "create", classmethod(create))
     h.set_families(FamilyDemand(2, True, True))
     r.wait("eve-active")
     h.apply_roster(RosterSnapshot(2, (client(),)))
     r.call(lambda: None)
-    assert seen == ["standard"]
+    assert seen == [("standard", None)]
     h.set_families(FamilyDemand(3, False, True))
     r.wait("eve-stopped")
     current = key
+    marker = "cyan"
     h.restyle()
     r.call(lambda: None)
-    assert seen == ["standard"]
+    assert seen == [("standard", None)]
     h.set_families(FamilyDemand(4, True, True))
     r.wait("eve-active")
     h.apply_roster(RosterSnapshot(3, (client(serial=2),)))
     r.call(lambda: None)
-    assert seen == ["standard", key]
+    assert seen == [("standard", None), (key, "cyan")]
 
 
 def test_family_off_on_retains_font_owner_but_not_unrelated_pump_dispatch(family_pump):
@@ -4507,6 +4510,50 @@ def test_a_preview_created_on_retry_is_marked_selected(monkeypatch):
 # never_minimize, locked -----------------------------------------------------
 
 
+def test_marker_callback_defaults_and_failure_are_safe(caplog):
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    assert h._current_label_markers() == {}
+    h._label_markers = lambda: {"Alice": "cyan", "hwnd:1": "blue", "Bad": "wrong"}
+    assert h._current_label_markers() == {"Alice": "cyan"}
+
+    def fail():
+        raise RuntimeError("settings unavailable")
+
+    h._label_markers = fail
+    assert h._current_label_markers() == {}
+    assert "label_markers" in caplog.text and "settings unavailable" in caplog.text
+
+
+def test_markers_restyle_reads_once_and_assigns_before_label_sync():
+    current, reads, observed = {"Alice": "cyan", "hwnd:1": "blue"}, [], []
+
+    def read():
+        reads.append(True)
+        return current
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, label_markers=read)
+    h._windows = {
+        name: _RestyleWindow(geometry.Rect(0, 0, 320, 210))
+        for name in ("Alice", "Bob", "hwnd:1")
+    }
+    for name, win in h._windows.items():
+        win.set_labels = lambda shown, n=name, w=win: observed.append(
+            (n, w.label_marker, shown)
+        )
+    h._restyle()
+    current = {"Bob": "orange"}
+    h._restyle()
+    assert len(reads) == 2
+    assert observed == [
+        ("Alice", "cyan", True),
+        ("Bob", None, True),
+        ("hwnd:1", None, True),
+        ("Alice", None, True),
+        ("Bob", "orange", True),
+        ("hwnd:1", None, True),
+    ]
+
+
 def test_label_size_defaults_without_a_callable():
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
     assert h._current_label_size() == "standard"
@@ -4911,6 +4958,23 @@ def _config_sweep_host(monkeypatch, *, client_key="Alice", saved=None, **kw):
     monkeypatch.setattr(h, "_screen", lambda: geometry.Rect(0, 0, 1920, 1080))
     monkeypatch.setattr(h, "_monitors", lambda: [geometry.Rect(0, 0, 1920, 1080)])
     return h
+
+
+def test_marker_never_attaches_to_character_select_fallback_title(monkeypatch):
+    h = _config_sweep_host(
+        monkeypatch, label_markers=lambda: {"EVE": "cyan", "hwnd:0x1000": "orange"}
+    )
+    client = _FakeClient("hwnd:0x1000")
+    client.character, client.title = None, "EVE"
+    monkeypatch.setattr(host.discovery, "list_clients", lambda: [client])
+    seen = []
+
+    def create(cls, libs, current, rect, **kwargs):
+        seen.append(kwargs["label_marker"])
+
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(create))
+    h._sweep(libs=None)
+    assert seen == [None]
 
 
 def test_the_sweep_resolves_lock_from_the_locked_callable_not_the_saved_entry(

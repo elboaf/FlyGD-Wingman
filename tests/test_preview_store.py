@@ -31,6 +31,7 @@ def test_crop_owners_and_existing_protections_survive_roster_eviction(finish, tm
     live["preview"].update(
         seen=[f"C{i}" for i in range(64)],
         crops=crops,
+        label_markers={"C58": "blue"},
         excluded=["C60"],
     )
     live["preview"]["hotkeys"].update(
@@ -44,7 +45,8 @@ def test_crop_owners_and_existing_protections_survive_roster_eviction(finish, tm
     getattr(store, finish)()
 
     saved = settings.load(path)["preview"]
-    assert {"C59", "C60", "C61", "C62", "C63"} <= set(saved["seen"])
+    assert {"C58", "C59", "C60", "C61", "C62", "C63"} <= set(saved["seen"])
+    assert saved["label_markers"] == {"C58": "blue"}
     assert len(saved["seen"]) == 64
     assert saved["crops"] == crops
     assert saved["crops"]["C63"]["enabled"] is False

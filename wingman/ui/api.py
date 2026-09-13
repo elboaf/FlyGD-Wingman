@@ -61,6 +61,7 @@ from ..preview import crops as preview_crops
 from ..preview import geometry as preview_geometry
 from ..preview import gestures as preview_gestures
 from ..preview import host as preview_host_mod
+from ..preview import labelmarkers as preview_labelmarkers
 from ..preview import layout as preview_layout
 from ..preview import window as preview_window
 from ..preview.companioncontroller import CompanionController, CompanionPorts
@@ -5206,6 +5207,8 @@ class Api:
             "enabled": bool(section.get("enabled")),
             "hotkeys": dict(section.get("hotkeys") or {}),
             "roster": list(section.get("seen") or []),
+            "label_markers": self._preview_config.get("label_markers", {}),
+            "marker_choices": preview_labelmarkers.marker_choices(),
             "characters": host.characters() if live else [],
             "registration": host.hotkey_status() if live else {},
             "bookmark_chords": self._bookmark_chords(),
@@ -5361,6 +5364,63 @@ class Api:
         if result["applied"] and result["persisted"] and self._preview_host is not None:
             self._preview_host.restyle()
         return result
+
+    def set_preview_character_marker(self, name, marker) -> dict:
+        """Commit just this owner's identification, including while offline."""
+
+        def receipt(result):
+            committed = self._preview_config.get("label_markers", {})
+            return dict(
+                result, marker=committed.get(name, "") if isinstance(name, str) else ""
+            )
+
+        if not preview_labelmarkers.valid_owner(name):
+            return receipt(self._field_refused("Choose a known character."))
+        if not isinstance(marker, str) or (
+            marker and marker not in preview_labelmarkers.MARKER_PALETTE
+        ):
+            return receipt(
+                self._field_refused("Choose a listed identification marker.")
+            )
+        host = self._preview_host
+        online = (
+            set(host.characters())
+            if host is not None and host.runtime_enabled
+            else set()
+        )
+        try:
+            with settings_mod.update(self._state.settings) as doc:
+                # Recheck after acquiring the writer lock, not against a roster
+                # sampled before another owner reset or settings normalization.
+                section = self._preview_config.snapshot()
+                hotkeys = section.get("hotkeys") or {}
+                known = (
+                    online
+                    | set(section.get("seen") or [])
+                    | set(hotkeys.get("characters") or {})
+                    | set(hotkeys.get("group_by_character") or {})
+                    | set(section.get("crops") or {})
+                    | set(section.get("label_markers") or {})
+                )
+                if name not in known:
+                    raise ValueError("That character is no longer available.")
+                markers = doc.setdefault("preview", {}).setdefault("label_markers", {})
+                if markers.get(name, "") == marker:
+                    raise _SettingUnchanged
+                if marker:
+                    markers[name] = marker
+                else:
+                    markers.pop(name, None)
+        except _SettingUnchanged:
+            pass
+        except ValueError as exc:
+            return receipt(self._field_refused(str(exc)))
+        except OSError:
+            logger.exception("Could not persist preview marker for %s", name)
+            return receipt(self._field_refused("Could not save this to settings."))
+        if host is not None:
+            host.restyle()
+        return receipt(self._field_ok())
 
     def set_preview_show_labels(self, enabled) -> dict:
         """Persist whether preview thumbnails show their character-name
