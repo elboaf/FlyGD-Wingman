@@ -1,6 +1,116 @@
 # Companion selection admission — focused follow-up
 
-## Current completion checkpoint — reviewed and locally verified
+## Current extension — production shutdown fix implemented, Linux gates GREEN
+
+PR #225's Ubuntu CI failed in `test_shutdown_stops_the_host_even_when_enabled`;
+Windows and checks passed. A deterministic investigation found a pre-existing
+`CompanionController` lost wakeup: shutdown can notify between sampling `final`
+and entering the worker's wait, whose predicate does not recheck `_shutdown`.
+The worker can then sleep with no pending save, events or native operation. The
+API correctly retains the preview owner after its five-second shutdown budget.
+
+The maintainer explicitly approved extending this formerly test-only PR with the
+narrow protected flag recheck and a deterministic controller regression. Final
+flushing, admitted-work draining and genuine timed-out-owner retention must remain
+unchanged. No admission relaxation, timeout increase or shutdown retry is approved.
+The exact CI failure was reproduced on both the CI merge and published PR head;
+relevant controller code predates both #224 and #225. Historical CI stacks were
+not captured, so its precise scheduling cannot be proven retrospectively.
+
+Current main `7e9962a6` was merged locally into the existing branch without rewriting
+published history; merge `ba2863a7` has an identical tree to failing CI merge
+`cc0fcaf8`. Task 2 now adds `_shutdown` to the existing condition-protected pre-wait
+predicate. The worker continues through its normal loop, recomputes `final`, and
+performs the existing forced geometry flush. No direct return, duplicated
+finalizer, admission change, sleep/retry or production timeout change was added.
+The only production diff against current main `7e9962a6` is this predicate.
+
+### Task 2 regression and verification
+
+`test_shutdown_notification_before_idle_wait_still_runs_final_flush` uses the real
+controller/worker and the existing controller fixture. After real `start()` and
+runtime synchronization, a wrapper calls the original ordinary geometry flush,
+then gates outside the condition after `final=False` was sampled. The test asserts
+empty jobs/events/operations/geometry, no status/native operation/barrier, and no
+runtime dirtiness; it never clears work or fabricates a callback. A wrapper forwards
+the original wake, observes the shutdown flag after notification, and releases the
+gate. The original bounded shutdown result must succeed, with the normal forced
+final flush completed and the worker joined. Hooks are restored and teardown-only
+notification/retry occurs only after the original result assertion, including RED.
+The empty-work test observes the real final flush; existing geometry persistence
+and blocked admitted-save tests supply the complementary non-empty-work coverage.
+
+All commands below ran from this linked worktree. Python used the dedicated
+`/tmp/wingman-companion-selection-admission-venv` (Python **3.11.15**):
+
+```bash
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-companion-selection-admission-venv uv sync --locked --extra dev
+PYTHONDONTWRITEBYTECODE=1 UV_PROJECT_ENVIRONMENT=/tmp/wingman-companion-selection-admission-venv uv run --no-sync python -m pytest tests/test_companion_controller.py::test_shutdown_notification_before_idle_wait_still_runs_final_flush -q -rs -p no:cacheprovider
+PYTHONDONTWRITEBYTECODE=1 UV_PROJECT_ENVIRONMENT=/tmp/wingman-companion-selection-admission-venv uv run --no-sync python -m pytest tests/test_companion_controller.py -q -rs -p no:cacheprovider
+PYTHONDONTWRITEBYTECODE=1 UV_PROJECT_ENVIRONMENT=/tmp/wingman-companion-selection-admission-venv uv run --no-sync python -m pytest tests/test_preview_wiring.py::test_shutdown_stops_the_host_even_when_enabled -q -rs -p no:cacheprovider
+PYTHONDONTWRITEBYTECODE=1 UV_PROJECT_ENVIRONMENT=/tmp/wingman-companion-selection-admission-venv uv run --no-sync python -m pytest tests/test_preview_wiring.py tests/test_preview_runtime.py tests/test_preview_runtime_boundaries.py tests/test_preview_runtime_review.py tests/test_companion_controller.py tests/test_companion_api.py tests/test_companion_host.py tests/test_companion_backend_fixes.py tests/test_companion_family.py tests/test_companion_recovery.py tests/test_wanderer_companion_integration.py tests/test_wanderer_integration.py tests/test_wanderer_wiring.py tests/test_wanderer_controller.py tests/test_wanderer_worker.py -q -rs -p no:cacheprovider
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=. CI225_MODE=lost /tmp/wingman-companion-selection-admission-venv/bin/python /mnt/c/dev/flygd-wingman/.worktrees/companion-ci-shutdown/.superpowers/sdd/ci-shutdown/probe.py
+```
+
+- Sync: **56 packages resolved, 39 checked**.
+- Test-first RED on unchanged production: **1 failed, 2.62s**, specifically
+  `shutdown notification was lost before the idle wait`; no worker/helper failure
+  or teardown error. After the guard, identical command: **1 passed, 1.29s**.
+- Controller file: **24 passed, 2.54s**; original unchanged bridge shutdown case:
+  **1 passed, 2.47s**.
+- Expanded 15-file group: **454 passed, 1 skipped, 26.23s**. Only skip:
+  `test_wanderer_integration.py:516`, real Windows user-bound DPAPI. This includes
+  the unchanged admitted-save and timed-out-owner tests, preview wiring file,
+  runtime/boundaries/review, and all six Task 1 files.
+- Read-only CI probe against this new local source/environment: **1 passed, 1.41s**.
+  Original shutdown returned in **0.030653s**, controller done/worker stopped,
+  runtime unowned/stopped, host counts **(1, 1)**. These observations precede its
+  teardown-only notification; cleanup is not counted as success. The probe and its
+  worktree were not modified or imported by any shipped test.
+- Focused Ruff check/format on the two code files passed (**2 already formatted**).
+
+Node **v26.5.0**, actual `paths.codec_exe()` lookup and `codec.codec_available()`
+were confirmed before the single full run. Existing built release and installed
+codec hashes both remained
+`4a4b57f48829002be1aff6eda8193f9e1fb8257a9bef5666dd26b0e225e815b4`;
+no rebuild or replacement was needed.
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 UV_PROJECT_ENVIRONMENT=/tmp/wingman-companion-selection-admission-venv uv run --no-sync python -m pytest tests/ -q -rs -p no:cacheprovider --basetemp=/tmp/wingman-companion-task2-full --junitxml=/tmp/wingman-companion-task2-full.xml
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-companion-selection-admission-venv uv run --no-sync ruff check --no-cache .
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-companion-selection-admission-venv uv run --no-sync ruff format --check --no-cache .
+node scripts/js_smoke.js
+cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml
+git diff --check
+git diff 7e9962a6 --check
+git diff --exit-code ba2863a7 -- tests/test_companion_host.py tests/test_companion_backend_fixes.py tests/test_preview_wiring.py
+git diff 7e9962a6 -- wingman
+```
+
+The single full run passed: **11,841 passed, 13 skipped, 292.37s**. JUnit confirms
+**11,854 cases, zero failures/errors**. Every skip was Windows-only: five junction
+cases, DPAPI, WinDLL, real message pump/window station, three Win32 bindings, tray
+backend and Wanderer DPAPI. No Node/native-codec skips. Ruff all passed; format
+**431 files already formatted**; all three pages passed Node smoke; Cargo
+**1 passed, zero failed/ignored**; diff checks passed. Task 1 code and the original
+bridge test remain byte-for-byte unchanged from the implementation base.
+
+Implementation and local gates are complete; renewed independent review,
+coordinator-owned `/polish --fix`, actual CodeRabbit on the whole PR against
+`7e9962a6`, final verification and publishing remain pending. A scoped four-path
+ordinary local follow-up commit is authorized; its identity is recorded only in
+`.superpowers/sdd/companion-selection-admission-plan/task-2-report.md`. No source or
+test changed after these gates; subsequent edits record evidence in these notes
+and the existing plan. The earlier test-only completion/review and failed gates
+below remain historical, not evidence of review of this production change.
+
+New Windows/native execution is **NOT RUN locally**. Prior Windows CI passed the
+old revision only; it does not validate this fix. Historical CI scheduling remains
+unproven despite the controlled reproduction. No new push, PR edit, CI rerun,
+merge, issue action, subagent or external review was performed. Issue 215 and all
+sibling worktrees remain unchanged.
+
+## Historical test-only completion checkpoint — reviewed and locally verified
 
 Final test revision: `6e76e12c4833ed5b1e7c2014294858c24b308615`.
 The current follow-up remains test-only. Earlier checkpoints below retain the

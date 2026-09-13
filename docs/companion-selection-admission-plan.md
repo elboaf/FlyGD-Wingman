@@ -2,18 +2,18 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans. Execute the single task below test-first.
 
-**Goal:** Make companion integration success tests establish selection readiness and expose terminal refusals instead of misleading picker timeouts.
+**Goal:** Make companion integration success tests establish selection readiness and expose terminal refusals, and fix the subsequently diagnosed production shutdown lost wakeup (approved Task 2 below).
 
-**Architecture:** Test-fixture-owned notifications over the real runtime/controller/pump. Preserve intentional production refusal during retirement. Use current runtime snapshots, not event history or sleeping, to establish the test's success precondition.
+**Architecture:** Test-fixture-owned readiness notifications plus a shutdown-flag recheck under the production worker's existing condition. Preserve intentional retirement refusal, final flushing and retained-owner semantics. No new admission policy or synchronization owner.
 
-**Tech Stack:** Existing Python/pytest/threading test fixtures and native doubles. No production, dependency, persistence or UI changes.
+**Tech Stack:** Existing Python/pytest/threading worker, fixtures and native doubles. The only approved production extension is the Task 2 shutdown predicate correction; no dependency, persistence or UI changes.
 
 **Spec:** `docs/companion-selection-admission-notes.md`; deterministic assessment `.superpowers/sdd/companion-selection-admission-plan/diagnosis.md`. The coordinator approves the test-only correction below based on the main-only reproduction and the existing runtime contract.
 
 ## Global Constraints
 
-- Work only in the linked `companion-selection-admission` worktree on `fix/companion-selection-admission`, base `e24d0c4aee2c9ab77b2d165320cb6ca367f95b42`.
-- No production source changes, runtime admission relaxation, new retry/queue policy, timeout inflation, sleeps used as readiness, or test skips to hide failures.
+- Work only in the linked `companion-selection-admission` worktree on `fix/companion-selection-admission`. Original Task 1 base: `e24d0c4aee2c9ab77b2d165320cb6ca367f95b42`; after the ordinary main merge, Task 2 implementation base: `ba2863a7c424bdec1df5254ce84134382fdb2362`, whole-PR review base: `7e9962a60265e66aee3efc433ca2e9a207c5f243`.
+- Production edits are limited to Task 2's condition-protected shutdown predicate. No runtime admission relaxation, new retry/queue policy, timeout inflation, sleeps used as readiness, or test skips to hide failures.
 - Preserve lease exclusivity, retirement/final-close fences, source validation, retained ownership, and already-admitted master-off behavior.
 - Test observers must forward production callbacks unchanged and notify only after production calls/locks are released. No observer waits while holding a production acquisition lock.
 - Release every deliberate barrier in finally; assert cleanup of the existing controller/runtime/host owners. Do not ship the large diagnostic tracer or expected three-second timeout demonstration.
@@ -84,7 +84,32 @@ Record actual RED/GREEN and named cases; diagnostic passes do not substitute for
 
 The coordinator explicitly authorizes a scoped local commit after verification, ordinary hooks only. Report to `.superpowers/sdd/companion-selection-admission-plan/task-1-report.md`; no subagents or duplicate reviewers. Coordinator owns independent review/polish/actual CodeRabbit and publishing decisions.
 
-## Current completion checkpoint — polish and CodeRabbit resolved
+## Current extension — shutdown correction implemented, Linux gates GREEN
+
+After publication, Ubuntu CI failed in preview shutdown; Windows and checks passed.
+A controlled probe reproduced a pre-existing lost shutdown notification with no
+pending save or native work. The maintainer explicitly approved extending #225 with
+a narrow production synchronization fix and deterministic regression. Task 2 now
+adds `_shutdown` to the existing protected pre-wait predicate, continuing through
+the normal final-flush loop. RED: **1 failed, 2.62s** at the lost-notification
+assertion; GREEN: **1 passed, 1.29s**, controller file **24 passed, 2.54s**.
+Expanded focused checks: **454 passed, 1 Windows-only skip, 26.23s**. The unchanged
+CI lost-window probe now passes before teardown, with host counts `(1, 1)`.
+
+The single fresh full Linux gate passed: **11,841 passed, 13 Windows-only skips,
+292.37s**. Ruff check/format (**431 files**), all-page Node smoke, Cargo (**1 passed**)
+and whitespace checks passed. Task 1 tests and the original bridge assertion are
+unchanged; the whole-PR production diff against `7e9962a6` is only this guard.
+Exact commands and limits are in the current notes and Task 2 report.
+
+Current main was merged locally without rewriting published history. The resulting
+`ba2863a7` tree exactly matches failing CI merge `cc0fcaf8`, before the correction.
+A scoped ordinary local follow-up commit is authorized. Independent review,
+coordinator-owned `/polish --fix`, actual CodeRabbit, final verification and updated
+Windows CI remain pending; earlier test-only acceptance below is historical.
+No CI rerun or new push has been performed; issue 215 remains unchanged.
+
+## Historical pre-extension completion — test-only review resolved
 
 The final test revision is `6e76e12c4833ed5b1e7c2014294858c24b308615`.
 Independent review R1 and polish P1 are addressed. P1 requires the real condition
@@ -156,6 +181,24 @@ checks passed. The full gate is not green; no commit was made. See the notes and
 `.superpowers/sdd/companion-selection-admission-plan/task-1-report.md` for exact
 evidence and remaining coordinator decisions.
 
-## Preflight summary
+## Task 1 preflight summary (historical)
 
-One end-to-end test-only task; no inter-task interfaces. Notification forwarding and waiter lock direction match the existing callback contract. Both no-demand retirement and durable active-family readiness are covered. Terminal receipt checks preserve refusal semantics. No production behavior or external interface changes are needed or approved.
+Task 1 was test-only. Notification forwarding and waiter lock direction match the existing callback contract. Both no-demand retirement and durable active-family readiness are covered. Terminal receipt checks preserve refusal semantics. The later approved production extension is exclusively Task 2 below.
+
+### Task 2: Prevent loss of a shutdown notification before the worker waits
+
+**Authorization:** Maintainer explicitly approved extending #225 after the deterministic CI diagnosis. Preserve the existing lifetime contract, rather than weakening the API's correct refusal to destroy a still-owned preview runtime.
+
+**Files:** `wingman/preview/companioncontroller.py`, `tests/test_companion_controller.py`, and the existing plan/notes. No edits to the original bridge assertion or unrelated code. Keep #215 untouched.
+
+**Evidence:** `/mnt/c/dev/flygd-wingman/.worktrees/companion-ci-shutdown/.superpowers/sdd/ci-shutdown/diagnosis.md` and `probe.py`, read-only reference. The controller file is identical across common base, main, PR head and CI merge. The missing notification reproduces controller-only and in the exact CI test on merge and PR head. A notification delivered after the worker actually waits succeeds.
+
+**Confirmed constraints:** `_run` samples `final` under its condition, then releases it for `_flush_geometry` and `_publish`. `shutdown()` can set `_shutdown` and notify during that gap. The protected pre-wait predicate omits `_shutdown`, allowing a stale `final=False` to enter an indefinite wait. Continue through the normal iteration; never return directly from the new guard, bypass final flush, shorten admitted persistence, replace an owner, or mask timeout failures by retrying shutdown.
+
+**Blind spots to pin:** unrelated runtime dirtiness can hide the lost wakeup; start with genuinely settled empty work. A gate must sit outside acquisition locks, between sampling final and waiting. Failure cleanup may notify only after the original result has been asserted, not as part of the fix. Confirm final flushing and genuine blocked-save owner retention still work. No new architecture, public interface, data or deployment decision is needed for this approved correction.
+
+- [x] **1. Reproduce RED first.** Add a deterministic regression using the real controller/worker and existing fixture seams. Hold it after `final=False` was sampled and before the wait, initiate actual shutdown, observe the flag/notification, and release. Assert bounded completion and the normal final flush. The old source must fail from the lost wakeup, not a missing fixture or arbitrary sleep. Restore hooks and release/join owners in finally. Do not import ignored probes from shipped tests.
+- [x] **2. Apply the narrow correction.** Include `_shutdown` in the condition-protected pre-wait decision. Re-enter the existing worker loop so it recomputes final and drains/flushes as before. No deadline or admission change; no direct early return or duplicate finalization path.
+- [x] **3. Focused GREEN and retention.** Run the new test, all companion-controller tests, the unchanged failing `test_shutdown_stops_the_host_even_when_enabled`, preview wiring, existing admitted-save/timeout-owner/runtime boundaries and the six-file Task 1 group. Exercise the retained CI probe as an additional check without modifying it or treating cleanup wakeups as success. Check Ruff and exact production delta.
+- [x] **4. One fresh full integration gate.** On the branch containing current main plus the correction, confirm locked environment/Node/release codec; run the full suite once after focused GREEN, inspect every skip/failure, then Ruff all/format, all-page Node smoke and independent Cargo. Stop on additional failures rather than widening scope or rerunning to green.
+- [ ] **5. Commit and review.** A scoped local follow-up commit is authorized after verification, ordinary hooks only. Preserve earlier failed history; update the current notes to explain the production synchronization fix, not claim the PR is still test-only. Coordinator owns independent review, `/polish --fix`, actual CodeRabbit on the whole PR delta against current main, final verification, PR title/body correction and push. No worker publication or history rewrite.

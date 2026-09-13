@@ -1269,7 +1269,8 @@ class CompanionController:
                     return
                 with self._condition:
                     if (
-                        self._jobs
+                        self._shutdown
+                        or self._jobs
                         or self._events
                         or self._status_event is not None
                         or self._barrier is not None
