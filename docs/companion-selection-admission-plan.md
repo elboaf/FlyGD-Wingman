@@ -84,7 +84,7 @@ Record actual RED/GREEN and named cases; diagnostic passes do not substitute for
 
 The coordinator explicitly authorizes a scoped local commit after verification, ordinary hooks only. Report to `.superpowers/sdd/companion-selection-admission-plan/task-1-report.md`; no subagents or duplicate reviewers. Coordinator owns independent review/polish/actual CodeRabbit and publishing decisions.
 
-## Current extension — shutdown correction implemented, Linux gates GREEN
+## Current extension — shutdown correction reviewed; updated CI pending
 
 After publication, Ubuntu CI failed in preview shutdown; Windows and checks passed.
 A controlled probe reproduced a pre-existing lost shutdown notification with no
@@ -104,10 +104,13 @@ Exact commands and limits are in the current notes and Task 2 report.
 
 Current main was merged locally without rewriting published history. The resulting
 `ba2863a7` tree exactly matches failing CI merge `cc0fcaf8`, before the correction.
-A scoped ordinary local follow-up commit is authorized. Independent review,
-coordinator-owned `/polish --fix`, actual CodeRabbit, final verification and updated
-Windows CI remain pending; earlier test-only acceptance below is historical.
-No CI rerun or new push has been performed; issue 215 remains unchanged.
+The production fix is committed as `f730e20c`. Independent review and `/polish --fix`
+completed without findings. Actual CodeRabbit reviewed all six PR files against
+`7e9962a6`, completed successfully and returned two minor historical-wording findings,
+corrected in this documentation-only update. No source/test changes followed the
+full gate or external review. Coordinator final checks precede the approved push;
+updated CI, including Windows, must validate the new revision. Earlier test-only
+acceptance below is historical; issue 215 remains unchanged.
 
 ## Historical pre-extension completion — test-only review resolved
 
@@ -123,9 +126,10 @@ four files reviewed, one minor historical-checkpoint wording finding, corrected
 in this documentation-only follow-up. The failed connection attempt is not counted
 as a completed review. Exact commands and remaining limits are in the notes.
 
-This is the authoritative latest status; checkpoints below describe their earlier
-states. Local review and verification are complete, but no publication or Windows
-native acceptance is claimed. Issue 215 still requires its own integration gate.
+This was the completion status before Task 2, not the current authoritative status.
+The production-extension checkpoint above supersedes it. At this earlier stage,
+local test-only review and verification were complete, without a claim of Windows
+native acceptance. Issue 215 still requires its own integration gate.
 
 ## Historical R1 checkpoint — Linux gate GREEN before polish
 
@@ -201,4 +205,4 @@ Task 1 was test-only. Notification forwarding and waiter lock direction match th
 - [x] **2. Apply the narrow correction.** Include `_shutdown` in the condition-protected pre-wait decision. Re-enter the existing worker loop so it recomputes final and drains/flushes as before. No deadline or admission change; no direct early return or duplicate finalization path.
 - [x] **3. Focused GREEN and retention.** Run the new test, all companion-controller tests, the unchanged failing `test_shutdown_stops_the_host_even_when_enabled`, preview wiring, existing admitted-save/timeout-owner/runtime boundaries and the six-file Task 1 group. Exercise the retained CI probe as an additional check without modifying it or treating cleanup wakeups as success. Check Ruff and exact production delta.
 - [x] **4. One fresh full integration gate.** On the branch containing current main plus the correction, confirm locked environment/Node/release codec; run the full suite once after focused GREEN, inspect every skip/failure, then Ruff all/format, all-page Node smoke and independent Cargo. Stop on additional failures rather than widening scope or rerunning to green.
-- [ ] **5. Commit and review.** A scoped local follow-up commit is authorized after verification, ordinary hooks only. Preserve earlier failed history; update the current notes to explain the production synchronization fix, not claim the PR is still test-only. Coordinator owns independent review, `/polish --fix`, actual CodeRabbit on the whole PR delta against current main, final verification, PR title/body correction and push. No worker publication or history rewrite.
+- [x] **5. Commit and review.** A scoped local follow-up commit is authorized after verification, ordinary hooks only. Preserve earlier failed history; update the current notes to explain the production synchronization fix, not claim the PR is still test-only. Coordinator owns independent review, `/polish --fix`, actual CodeRabbit on the whole PR delta against current main, final verification, PR title/body correction and push. No worker publication or history rewrite.

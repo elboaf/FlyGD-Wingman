@@ -1,6 +1,6 @@
 # Companion selection admission — focused follow-up
 
-## Current extension — production shutdown fix implemented, Linux gates GREEN
+## Current extension — shutdown fix reviewed; updated CI pending
 
 PR #225's Ubuntu CI failed in `test_shutdown_stops_the_host_even_when_enabled`;
 Windows and checks passed. A deterministic investigation found a pre-existing
@@ -95,25 +95,34 @@ backend and Wanderer DPAPI. No Node/native-codec skips. Ruff all passed; format
 **1 passed, zero failed/ignored**; diff checks passed. Task 1 code and the original
 bridge test remain byte-for-byte unchanged from the implementation base.
 
-Implementation and local gates are complete; renewed independent review,
-coordinator-owned `/polish --fix`, actual CodeRabbit on the whole PR against
-`7e9962a6`, final verification and publishing remain pending. A scoped four-path
-ordinary local follow-up commit is authorized; its identity is recorded only in
-`.superpowers/sdd/companion-selection-admission-plan/task-2-report.md`. No source or
-test changed after these gates; subsequent edits record evidence in these notes
-and the existing plan. The earlier test-only completion/review and failed gates
-below remain historical, not evidence of review of this production change.
+The tested production revision is `f730e20ca5186b045562af31d10f7783b7d2c5b5`.
+Renewed independent review and `/polish --fix` completed with no findings. Reviewers
+ran 26 and five focused tests successfully; substituting the old worker loop in
+memory made the new regression fail at its intended assertion, with clean teardown.
+The coordinator independently verified the full JUnit and exact production delta.
+
+Actual CodeRabbit completed with exit 0 and `review_completed` using
+`coderabbit review --agent --committed --base-commit 7e9962a60265e66aee3efc433ca2e9a207c5f243`.
+It reviewed all six PR files and returned only two minor historical-wording findings
+in these notes and the plan. Both are corrected in this documentation-only follow-up.
+No review ID was emitted. CodeRabbit reviewed the production revision above, not
+this later documentation delta, which is separately inspected. Raw output is
+retained in `coderabbit-task2-f730e20c.log` in the ignored workflow directory.
+
+No source or test changed after the full gate or external review. Updated remote CI
+remains required after publication; the earlier test-only completion/review and
+failed gates below are historical, not evidence of review of this production change.
 
 New Windows/native execution is **NOT RUN locally**. Prior Windows CI passed the
 old revision only; it does not validate this fix. Historical CI scheduling remains
-unproven despite the controlled reproduction. No new push, PR edit, CI rerun,
-merge, issue action, subagent or external review was performed. Issue 215 and all
-sibling worktrees remain unchanged.
+unproven despite the controlled reproduction. The approved fix is prepared for an
+ordinary update to #225, without a force-push or a retry of the old failed CI job.
+Issue 215 and all sibling worktrees remain unchanged.
 
 ## Historical test-only completion checkpoint — reviewed and locally verified
 
 Final test revision: `6e76e12c4833ed5b1e7c2014294858c24b308615`.
-The current follow-up remains test-only. Earlier checkpoints below retain the
+That historical revision was test-only. Earlier checkpoints below retain the
 status and evidence from their own stage, not the latest gate status.
 
 Independent general review R1 is addressed: direct terminal refusals are returned
