@@ -27,6 +27,7 @@ class Element extends EventTarget {
     this.value = '';
     this.hidden = false;
     this.disabled = false;
+    this.open = false;
     this.text = '';
     this.classList = {
       contains: name => this.className.split(/\s+/).includes(name),
@@ -41,6 +42,12 @@ class Element extends EventTarget {
       remove: name => this.classList.toggle(name, false)
     };
   }
+  set disabled(value) {
+    this._disabled = !!value;
+    // Chromium blurs a focused control as soon as it becomes disabled.
+    if (this._disabled && this.ownerDocument?.activeElement === this) this.blur();
+  }
+  get disabled() { return this._disabled; }
   set textContent(value) {
     this.text = String(value);
     this.children.forEach(child => { child.parentNode = null; });
@@ -68,9 +75,22 @@ class Element extends EventTarget {
     return found;
   }
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
-  getClientRects() { return this.hidden ? [] : [{}]; }
-  focus() {}
-  blur() {}
+  getClientRects() {
+    for (let node = this; node; node = node.parentNode) {
+      if (node.hidden || (node.parentNode?.tagName === 'DETAILS'
+          && !node.parentNode.open && node.tagName !== 'SUMMARY')) return [];
+    }
+    return [{}];
+  }
+  focus() {
+    if (!this.disabled && this.getClientRects().length) this.ownerDocument.activeElement = this;
+  }
+  blur() {
+    if (this.ownerDocument.activeElement === this) this.ownerDocument.activeElement = this.ownerDocument.body;
+  }
+  setSelectionRange(start, end, direction) {
+    this.selectionStart = start; this.selectionEnd = end; this.selectionDirection = direction;
+  }
   click() { if (!this.disabled) this.dispatchEvent({ type: 'click' }); }
 }
 
@@ -86,11 +106,16 @@ function tick(node) { node.checked = !node.checked; node.dispatchEvent({ type: '
 async function page() {
   const nodes = new Map();
   const document = new EventTarget();
+  document.body = Object.assign(new Element('body'), { ownerDocument: document });
+  document.activeElement = document.body;
   // Actual static IDs, plus a tree search for controls created by fittings.js.
   const html = fs.readFileSync(path.join(web, 'index.html'), 'utf8');
   for (const match of html.matchAll(/<([\w-]+)\b[^>]*\bid="([^"]+)"[^>]*>/g)) {
     const node = new Element(match[1]);
+    node.ownerDocument = document;
     node.id = match[2];
+    node.className = match[0].match(/\bclass="([^"]*)"/)?.[1] || '';
+    node.textContent = html.slice(match.index + match[0].length).match(/^[^<]*/)[0].trim();
     node.hidden = /\bhidden\b/.test(match[0]);
     node.disabled = /\bdisabled\b/.test(match[0]);
     nodes.set(node.id, node);
@@ -99,7 +124,7 @@ async function page() {
     : node.children.map(child => findId(child, id)).find(Boolean);
   document.getElementById = id => nodes.get(id)
     || [...nodes.values()].map(node => findId(node, id)).find(Boolean) || null;
-  document.createElement = tag => new Element(tag);
+  document.createElement = tag => Object.assign(new Element(tag), { ownerDocument: document });
   document.querySelectorAll = () => [];
   document.querySelector = () => null;
   document.contains = node => [...nodes.values()].some(root => root.contains(node));
@@ -136,6 +161,7 @@ async function page() {
   await flush();
   return {
     el: id => document.getElementById(id),
+    focused: () => document.activeElement,
     calls: method => calls.filter(call => !method || call.method === method),
     last: method => calls.filter(call => call.method === method).at(-1),
     route: async name => { window.WM.route(name); await flush(); },
@@ -171,13 +197,19 @@ function button(root, label) {
   return node;
 }
 function metadata(p) { return p.el('fittings-list').querySelector('.fit-metadata'); }
-async function editor() {
+function metadataDisclosure(p) { return p.el('fittings-list').querySelector('.fit-metadata-disclosure'); }
+function setMetadataOpen(p, open) {
+  const disclosure = metadataDisclosure(p);
+  if (disclosure) { disclosure.open = open; disclosure.dispatchEvent({ type: 'toggle' }); }
+}
+async function editor(openMetadata = true) {
   const p = await page();
   await p.route('fittings');
   await settle(p.last('fittings_state'), state());
   p.el('fittings-list').querySelector('.fit-row-toggle').click();
   await flush();
   await settle(p.last('fittings_detail'), detail());
+  if (openMetadata) setMetadataOpen(p, true);
   return p;
 }
 async function repaint(p, payload = state(), value = detail()) {
@@ -189,7 +221,261 @@ function assertDraft(p, name, description) {
   assert.equal(p.el('fit-name-fit-1').value, name);
   assert.equal(p.el('fit-desc-fit-1').value, description);
   assert.match(metadata(p).textContent, /Unsaved changes/);
+  assert.equal(metadataDisclosure(p)?.open, true, 'a draft stays exposed after rerender');
 }
+
+test('metadata is read-first with native disclosure state retained through unrelated renders', async () => {
+  const p = await editor(false);
+  const disclosure = metadataDisclosure(p);
+  assert.ok(disclosure, 'metadata needs a separate disclosure, not an always-open form');
+  assert.equal(disclosure.tagName, 'DETAILS');
+  assert.equal(disclosure.open, false);
+  assert.match(disclosure.querySelector('summary').textContent, /Edit metadata/);
+  assert.ok(disclosure.contains(metadata(p)));
+  assert.equal(p.el('fit-name-fit-1').getClientRects().length, 0);
+  setMetadataOpen(p, true);
+  await repaint(p);
+  assert.equal(metadataDisclosure(p).open, true, 'reading a refresh does not close an opened editor');
+  setMetadataOpen(p, false);
+  await repaint(p);
+  assert.equal(metadataDisclosure(p).open, false, 'a pristine closed editor stays closed');
+  assert.equal(p.calls('fittings_update_metadata').length, 0);
+});
+
+test('pristine metadata disclosure choices follow each fitting independently of drafts', async () => {
+  const p = await editor();
+  await repaint(p, state(['fit-1', 'fit-2']));
+  p.el('fittings-list').querySelectorAll('.fit-row-toggle')[1].click(); await flush();
+  await settle(p.last('fittings_detail'), detail('fit-2'));
+  assert.equal(metadataDisclosure(p).open, false, 'an opened first editor does not open another fitting');
+  setMetadataOpen(p, true);
+  await repaint(p, state(['fit-1', 'fit-2']), detail('fit-2'));
+  p.el('fittings-list').querySelectorAll('.fit-row-toggle')[0].click(); await flush();
+  await settle(p.last('fittings_detail'), detail());
+  assert.equal(metadataDisclosure(p).open, true, 'the first fitting retains its edit intent without a draft');
+  setMetadataOpen(p, false);
+  p.el('fittings-list').querySelectorAll('.fit-row-toggle')[1].click(); await flush();
+  await settle(p.last('fittings_detail'), detail('fit-2'));
+  assert.equal(metadataDisclosure(p).open, true);
+  p.el('fittings-list').querySelectorAll('.fit-row-toggle')[0].click(); await flush();
+  await settle(p.last('fittings_detail'), detail());
+  assert.equal(metadataDisclosure(p).open, false, 'deliberately closing one editor does not affect another');
+  assert.equal(p.calls('fittings_update_metadata').length, 0);
+});
+
+test('dirty metadata stays explicitly closed through membership and refresh without saving', async () => {
+  const p = await editor();
+  input(p.el('fit-name-fit-1'), 'Draft name');
+  input(p.el('fit-desc-fit-1'), 'Draft description');
+  setMetadataOpen(p, false);
+  tick(p.el('fittings-list').querySelector('.fit-collections').querySelector('input'));
+  await repaint(p);
+  assert.equal(metadataDisclosure(p).open, false, 'membership must not reopen a deliberately closed draft');
+  assert.equal(p.el('fit-name-fit-1').getClientRects().length, 0);
+  p.el('fittings-refresh-all').click();
+  await repaint(p);
+  assert.equal(metadataDisclosure(p).open, false, 'refresh must preserve the same closed choice');
+  setMetadataOpen(p, true);
+  assertDraft(p, 'Draft name', 'Draft description');
+  assert.equal(p.calls('fittings_update_metadata').length, 0);
+});
+
+test('dirty metadata disclosure choices follow each fitting across collection changes', async () => {
+  const p = await editor();
+  input(p.el('fit-name-fit-1'), 'Closed draft');
+  setMetadataOpen(p, false);
+  button(p.el('fittings-collections'), 'Doctrine1').click(); await flush();
+  const filtered = state(['fit-2']);
+  filtered.filters.collection_id = 'doctrine';
+  await settle(p.last('fittings_state'), filtered);
+  p.el('fittings-list').querySelector('.fit-row-toggle').click(); await flush();
+  await settle(p.last('fittings_detail'), detail('fit-2', 'Other fit'));
+  assert.equal(metadataDisclosure(p).open, false);
+  setMetadataOpen(p, true);
+  input(p.el('fit-name-fit-2'), 'Open draft');
+  button(p.el('fittings-collections'), 'All fittings1').click(); await flush();
+  await settle(p.last('fittings_state'), state(['fit-1', 'fit-2']));
+  p.el('fittings-list').querySelectorAll('.fit-row-toggle')[0].click(); await flush();
+  await settle(p.last('fittings_detail'), detail());
+  assert.equal(metadataDisclosure(p).open, false, 'the first fitting remembers closed, despite its draft');
+  assert.equal(p.el('fit-name-fit-1').value, 'Closed draft');
+  p.el('fittings-list').querySelectorAll('.fit-row-toggle')[1].click(); await flush();
+  await settle(p.last('fittings_detail'), detail('fit-2', 'Other fit'));
+  assert.equal(metadataDisclosure(p).open, true, 'the other fitting keeps its independent open choice');
+  assert.equal(p.el('fit-name-fit-2').value, 'Open draft');
+  assert.equal(p.calls('fittings_update_metadata').length, 0);
+});
+
+for (const applied of [true, false]) {
+  test(`closed metadata stays closed through pending Save and ${applied ? 'acceptance' : 'refusal'}`, async () => {
+    const p = await editor();
+    input(p.el('fit-name-fit-1'), 'Submitted');
+    button(metadata(p), 'Save').click(); await flush();
+    const save = p.last('fittings_update_metadata');
+    input(p.el('fit-name-fit-1'), 'Newer draft');
+    setMetadataOpen(p, false);
+    await repaint(p);
+    assert.equal(metadataDisclosure(p).open, false, 'pending work cannot override explicit closed');
+    assert.equal(button(metadata(p), 'Save').disabled, true);
+    await settle(save, applied);
+    assert.equal(metadataDisclosure(p).open, false, 'neither an acknowledgement nor an error reopens the editor');
+    await settle(p.last('fittings_state'), state());
+    await settle(p.last('fittings_detail'), detail('fit-1', applied ? 'Submitted' : 'Sabre tackle'));
+    assert.equal(metadataDisclosure(p).open, false);
+    setMetadataOpen(p, true);
+    assertDraft(p, 'Newer draft', 'Saved description');
+    assert.equal(button(metadata(p), 'Save').disabled, false);
+    if (!applied) assert.match(metadata(p).textContent, /save not confirmed/);
+    assert.equal(p.calls('fittings_update_metadata').length, 1);
+  });
+}
+
+test('metadata acknowledgement does not take focus from a modal or a departed route', async () => {
+  for (const owner of ['modal', 'route']) {
+    const p = await editor();
+    input(p.el('fit-name-fit-1'), 'Submitted');
+    button(metadata(p), 'Save').click(); await flush();
+    p.el('fit-name-fit-1').focus();
+    if (owner === 'modal') {
+      p.el('overlay').hidden = false;
+      p.el('dlg-ok').focus();
+    } else {
+      await p.route('main');
+      p.el('nav-main').focus();
+    }
+    const active = p.focused();
+    await settle(p.last('fittings_update_metadata'), true);
+    assert.ok(p.focused() === active, owner + ' retains focus after background acknowledgement');
+  }
+});
+
+test('discarding a focused draft returns to a live metadata control', async () => {
+  const p = await editor();
+  input(p.el('fit-name-fit-1'), 'Discard me');
+  const discard = button(metadata(p), 'Discard changes');
+  discard.focus(); discard.click();
+  await settle(p.confirmations.at(-1), true);
+  assert.ok(p.focused() === metadataDisclosure(p).querySelector('summary'),
+    'the retired Discard action hands focus to its visible summary');
+  assert.equal(p.el('fit-name-fit-1').value, 'Sabre tackle');
+  assert.equal(p.calls('fittings_update_metadata').length, 0);
+});
+
+test('metadata input focus and caret survive both state and detail rerenders', async () => {
+  const p = await editor();
+  input(p.el('fit-desc-fit-1'), 'Draft description');
+  p.el('fit-desc-fit-1').focus();
+  p.el('fit-desc-fit-1').setSelectionRange(2, 7, 'backward');
+  await p.changed({ reason: 'collection_membership', entry_id: 'fit-1' });
+  await settle(p.last('fittings_state'), state());
+  assert.ok(p.focused() === p.el('fit-desc-fit-1'), 'state repaint must restore the live editor control');
+  await settle(p.last('fittings_detail'), detail());
+  assert.ok(p.focused() === p.el('fit-desc-fit-1'), 'detail repaint must restore the live editor control');
+  assert.equal(p.focused().selectionStart, 2);
+  assert.equal(p.focused().selectionEnd, 7);
+  assert.equal(p.focused().selectionDirection, 'backward');
+  assertDraft(p, 'Sabre tackle', 'Draft description');
+  p.el('fittings-search').focus();
+  await repaint(p);
+  assert.ok(p.focused() === p.el('fittings-search'), 'a background draft cannot steal focus');
+});
+
+test('metadata Save and summary focus survive acknowledgement without collapsing the editor', async () => {
+  const p = await editor();
+  input(p.el('fit-name-fit-1'), 'Accepted name');
+  const save = button(metadata(p), 'Save');
+  save.focus(); save.click();
+  assert.equal(save.disabled, true);
+  assert.ok(p.focused() === metadataDisclosure(p).querySelector('summary'),
+    'handoff must precede disabling Save, which would otherwise blur to body');
+  await flush();
+  const pending = p.last('fittings_update_metadata');
+  await repaint(p);
+  assert.ok(p.focused() === metadataDisclosure(p).querySelector('summary'), 'summary remains owned while pending');
+  await settle(pending, true);
+  assert.ok(p.focused() === metadataDisclosure(p).querySelector('summary'), 'restore the current summary after acceptance');
+  assert.equal(button(metadata(p), 'Save').disabled, false);
+  assert.equal(metadataDisclosure(p).open, true);
+  const summary = metadataDisclosure(p).querySelector('summary');
+  summary.focus();
+  await repaint(p, state(), detail('fit-1', 'Accepted name'));
+  assert.ok(p.focused() === metadataDisclosure(p).querySelector('summary'), 'restore the current summary');
+  assert.equal(metadataDisclosure(p).open, true);
+  assert.equal(p.el('fit-name-fit-1').value, 'Accepted name');
+  assert.equal(p.calls('fittings_update_metadata').length, 1);
+});
+
+test('focused metadata Save keeps a live summary after refusal and an explicit retry', async () => {
+  const p = await editor();
+  input(p.el('fit-desc-fit-1'), 'Keep after refusal');
+  const save = button(metadata(p), 'Save');
+  save.focus(); save.click(); await flush();
+  assert.ok(p.focused() === metadataDisclosure(p).querySelector('summary'));
+  await settle(p.last('fittings_update_metadata'), false);
+  await settle(p.last('fittings_state'), state());
+  await settle(p.last('fittings_detail'), detail());
+  assert.ok(p.focused() === metadataDisclosure(p).querySelector('summary'));
+  assertDraft(p, 'Sabre tackle', 'Keep after refusal');
+  assert.match(metadata(p).textContent, /save not confirmed/);
+  const retry = button(metadata(p), 'Save');
+  retry.focus(); retry.click(); await flush();
+  assert.ok(p.focused() === metadataDisclosure(p).querySelector('summary'));
+  await settle(p.last('fittings_update_metadata'), true);
+  assert.ok(p.focused() === metadataDisclosure(p).querySelector('summary'));
+  assert.equal(p.calls('fittings_update_metadata').length, 2);
+});
+
+for (const applied of [true, false]) {
+  test(`metadata Save ${applied ? 'acceptance' : 'refusal'} preserves newer typing and its focus`, async () => {
+    const p = await editor();
+    input(p.el('fit-name-fit-1'), 'Submitted');
+    const save = button(metadata(p), 'Save');
+    save.focus(); save.click(); await flush();
+    assert.ok(p.focused() === metadataDisclosure(p).querySelector('summary'));
+    p.el('fit-name-fit-1').focus();
+    input(p.el('fit-name-fit-1'), 'Newer typing');
+    p.el('fit-name-fit-1').setSelectionRange(2, 5, 'backward');
+    await settle(p.last('fittings_update_metadata'), applied);
+    await settle(p.last('fittings_state'), state());
+    await settle(p.last('fittings_detail'), detail('fit-1', applied ? 'Submitted' : 'Sabre tackle'));
+    assertDraft(p, 'Newer typing', 'Saved description');
+    assert.ok(p.focused() === p.el('fit-name-fit-1'), 'new typing owns focus, not the earlier Save');
+    assert.equal(p.focused().selectionStart, 2);
+    assert.equal(p.focused().selectionEnd, 5);
+    assert.equal(p.focused().selectionDirection, 'backward');
+    assert.equal(p.calls('fittings_update_metadata').length, 1);
+  });
+}
+
+test('metadata Save never takes focus from another control, modal or route', async () => {
+  for (const owner of ['search', 'modal', 'copy', 'route']) {
+    for (const changeBeforeSave of [true, false]) {
+      const p = await editor();
+      input(p.el('fit-name-fit-1'), 'Submitted');
+      const save = button(metadata(p), 'Save');
+      save.focus();
+      if (!changeBeforeSave) { save.click(); await flush(); }
+      if (owner === 'modal') {
+        p.el('overlay').hidden = false;
+        p.el('dlg-ok').focus();
+      } else if (owner === 'copy') {
+        tick(p.el('fittings-list').querySelector('input'));
+        p.el('fittings-copy-selected').click();
+        p.el('fittings-copy-close').focus();
+      } else if (owner === 'route') {
+        await p.route('main');
+        p.el('nav-main').focus();
+      } else p.el('fittings-search').focus();
+      const active = p.focused();
+      // Programmatic activation does not focus Save; it cannot claim focus the
+      // user moved elsewhere, even if the handler runs after that move.
+      if (changeBeforeSave) { save.click(); await flush(); }
+      assert.ok(p.focused() === active, owner + ' owns focus during pending Save');
+      await settle(p.last('fittings_update_metadata'), true);
+      assert.ok(p.focused() === active, owner + ' owns focus after acknowledgement');
+    }
+  }
+});
 
 // A render using server metadata must not erase text that was never submitted.
 test('membership push and refresh preserve both metadata drafts without saving on blur', async () => {
@@ -223,6 +509,7 @@ test('draft follows its fitting through collapse, another editor, filters and ro
   await flush();
   await settle(p.last('fittings_detail'), detail('fit-2', 'Other fit'));
   assert.equal(p.el('fit-name-fit-2').value, 'Other fit');
+  setMetadataOpen(p, true);
   input(p.el('fit-name-fit-2'), 'Second draft');
   await p.route('main');
   await p.route('fittings');
@@ -414,6 +701,99 @@ function sameNamePreflight() {
       { ...preflight().pairs[0], fitting_name: 'Fleet tackle', status: 'present' }
     ] };
 }
+
+test('unresolved copy conflicts keep labels, recovery instructions and review reason until checked', async () => {
+  const p = await page();
+  await p.route('fittings');
+  await settle(p.last('fittings_state'), state());
+  const conflict = preflight();
+  conflict.requires_resolution = true;
+  conflict.write_count = 0;
+  conflict.counts = { conflict: 1 };
+  conflict.pairs[0].status = 'conflict';
+  await reviewCopy(p, conflict);
+  const body = p.el('fittings-copy-body');
+  const row = body.querySelector('.fit-copy-pair');
+  assert.equal(row.classList.contains('fit-copy-needs-resolution'), true);
+  const alternate = row.querySelector('.fit-copy-alternate');
+  const label = row.querySelectorAll('label').find(node => node.getAttribute('for') === alternate.id);
+  assert.ok(label && label.textContent, 'alternate name has a persistent associated label');
+  assert.match(row.textContent, /name.*skip/i);
+  const review = p.el('fittings-copy-review');
+  assert.equal(review.disabled, true);
+  const reason = p.el(review.getAttribute('aria-describedby'));
+  assert.ok(reason && !reason.hidden, 'disabled review exposes a visible reason');
+  assert.match(reason.textContent, /name.*skip/i);
+  input(alternate, '  ');
+  assert.equal(review.disabled, true);
+  input(alternate, 'Alternate tackle');
+  assert.equal(review.disabled, false);
+  assert.equal(label.textContent.length > 0, true, 'typing does not erase the field label');
+  assert.match(body.textContent, /add.*fitting|existing fittings.*kept/i);
+  review.click(); await flush();
+  await settle(p.last('fittings_preflight_copy'), { accepted: false, error: 'Name already exists on Pilot.' });
+  assert.equal(body.querySelector('.fit-copy-alternate').value, 'Alternate tackle');
+  assert.match(p.el('fittings-copy-status').textContent, /Name already exists on Pilot/);
+  assert.equal(p.el('fittings-copy-status').classList.contains('err'), true);
+  const skip = body.querySelectorAll('input').find(node => node.type === 'checkbox');
+  tick(skip);
+  assert.equal(body.querySelector('.fit-copy-alternate').disabled, true);
+  assert.equal(review.disabled, false);
+  assert.match(p.el('fittings-copy-status').textContent, /Name already exists on Pilot/,
+    'local choice editing must not discard rejected-review context');
+  review.click(); await flush();
+  assert.equal(p.last('fittings_preflight_copy').args[2]['fit-1:42'], null);
+  await settle(p.last('fittings_preflight_copy'), preflight('resolved'));
+  assert.equal(body.querySelector('.fit-copy-needs-resolution'), null);
+  assert.equal(p.el('fittings-copy-status').classList.contains('err'), false);
+  assert.equal(p.calls('fittings_start_copy').length, 0);
+});
+
+test('copy refusal error styling clears on checking, accepted review and reopening', async () => {
+  const p = await page();
+  await p.route('fittings');
+  await settle(p.last('fittings_state'), state());
+  const error = 'Limit each copy to 7 additions. Select fewer fittings or targets, then review again.';
+  await reviewCopy(p, { accepted: false, error });
+  const status = p.el('fittings-copy-status');
+  assert.equal(status.classList.contains('err'), true, 'refusal must not look like ordinary guidance');
+  assert.ok(status.textContent.includes(error), 'retain cap and recovery details');
+  p.el('fittings-copy-review').click(); await flush();
+  assert.equal(status.classList.contains('err'), false, 'checking is not a stale error');
+  await settle(p.last('fittings_preflight_copy'), preflight());
+  assert.equal(status.classList.contains('err'), false);
+  p.el('fittings-copy-close').click();
+  p.el('fittings-copy-selected').click();
+  tick(p.el('fittings-copy-body').querySelector('input'));
+  p.el('fittings-copy-review').click(); await flush();
+  await settle(p.last('fittings_preflight_copy'), { accepted: false, error });
+  assert.equal(status.classList.contains('err'), true);
+  p.el('fittings-copy-close').click();
+  p.el('fittings-copy-selected').click();
+  assert.equal(status.classList.contains('err'), false);
+  assert.equal(status.textContent, '');
+  assert.equal(p.calls('fittings_start_copy').length, 0);
+});
+
+test('active copy exposes cancellation boundary and retained copies before Cancel and through progress', async () => {
+  const p = await editor();
+  await beginCopy(p);
+  const note = p.el('fittings-copy-cancel-note');
+  assert.ok(note, 'the progress footer needs a dedicated cancellation note');
+  assert.equal(note.hidden, false);
+  assert.match(note.textContent, /current request/i);
+  assert.match(note.textContent, /completed copies.*kept/i);
+  assert.equal(p.calls('fittings_cancel_copy').length, 0, 'consequence is visible before cancelling');
+  await p.progress({ kind: 'copy', phase: 'progress', ticket_id: 'ticket-1',
+    completed: 1, total: 2, result: { ...preflight().pairs[0], status: 'success' } });
+  assert.equal(note.hidden, false, 'pair progress cannot replace the cancellation note');
+  p.el('fittings-copy-cancel').click(); await flush();
+  assert.equal(note.hidden, false);
+  assert.equal(p.calls('fittings_cancel_copy').length, 1);
+  await complete(p, result(['success']));
+  assert.equal(note.hidden, true, 'terminal results do not keep active-copy guidance');
+  assert.deepEqual(p.errors, []);
+});
 
 test('copy identity distinguishes same-name hulls across pending refresh and conflict recheck', async () => {
   const p = await page();
@@ -968,12 +1348,18 @@ test('non-deployable status is separate from truncating row metadata', async () 
   const rows = p.el('fittings-list').querySelectorAll('.fit-row');
   const status = rows[0].querySelector('.fit-deployability');
   assert.ok(status, 'deployment status needs its own visible element');
-  assert.match(status.textContent, /Not deployable/i);
+  assert.match(status.textContent, /Cannot copy.*Details/i);
+  assert.equal(status.tagName, 'BUTTON', 'the restriction has a keyboard-usable route to details');
   assert.equal(status.hidden, false);
   assert.equal(rows[0].querySelector('.fit-meta').contains(status), false);
   assert.doesNotMatch(rows[0].querySelector('.fit-meta').textContent, /Not deployable/i);
   assert.match(rows[0].querySelector('.fit-ship').textContent, /Type 22456/);
   assert.equal(rows[1].querySelector('.fit-deployability'), null);
+  status.click(); await flush();
+  await settle(p.last('fittings_detail'), detail());
+  assert.equal(p.el('fittings-list').querySelector('.fit-row-toggle').getAttribute('aria-expanded'), 'true');
+  assert.match(p.el('fittings-list').querySelector('.fit-detail').textContent, /cannot be copied safely/i);
+  assert.equal(p.calls('fittings_preflight_copy').length, 0);
   assert.deepEqual(p.errors, []);
 });
 

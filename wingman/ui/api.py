@@ -5267,19 +5267,18 @@ class Api:
         }
 
     def _bookmark_chords(self) -> dict:
-        """Bookmark chords, split by whether they are registered right now.
+        """Bookmark chords, split by configured enablement and window selection.
 
-        A preview chord is global; a bookmark chord is an AHK hotkey scoped
-        with #HotIf WinActive. Where they collide the preview wins WHILE EVE
-        IS FOCUSED, silently taking a key from the feature that bind was
-        written for -- and Windows reports nothing, because AHK's scoped
-        hotkey is not a RegisterHotKey registration to collide with. Only
-        Wingman can catch this, by reading both of its own sections.
+        "active" means the preference is on and at least one EVE window is
+        selected; it does not prove that the bookmark engine is running.
+        The bundled AHK 1.1 engine's IfWinActive hotkeys use a keyboard hook,
+        which may consume a matching key before Preview's RegisterHotKey
+        in those selected windows. A successful Preview registration alone
+        therefore cannot establish which action receives a physical key.
 
-        Split rather than filtered, because the collision does not stop
-        existing when bookmarks are off -- it goes latent, and enabling them
-        later resurrects it with nothing on screen to explain why that bind
-        stopped working. "active" warns; "latent" only marks.
+        Split rather than filtered, because overlap remains configured when
+        bookmarks are off or no window is selected. "active" warns about the
+        possible conflict; "latent" only marks it for later configuration.
 
         Compared in display form. The two features store different notation
         on purpose (see preview/gestures.py), but bookmarks.parse_ahk
@@ -6288,9 +6287,9 @@ class Api:
             "groups": list(bookmarks.bind_groups()),
             "windows": evewindows.list_eve_windows(),
             "collisions": bookmarks.collisions(section["keybinds"]),
-            # Round 5, C6: the mirror of _bookmark_chords. Previews warned
-            # about this collision on the screen that WINS it; the screen
-            # whose bind is the one silently overridden showed nothing.
+            # Mirror character-focus and All forward/back overlap here.
+            # Named cycle-group keys are not included in this reverse summary.
+            # Registration alone does not prove delivery in a selected EVE window.
             "preview_chords": self._preview_chords(),
             # Human labels for the bound keys. Computed here rather than in
             # the page, which is the entire reason to_ahk returns a display
@@ -6320,35 +6319,24 @@ class Api:
         }
 
     def _preview_chords(self) -> dict:
-        """Preview chords, split by whether they are registered right now.
+        """Character-focus and All-cycle Preview chords, split by registration.
 
-        The counterpart of _bookmark_chords() -- read that docstring for why
-        the collision exists at all and why the split is not a filter. This
-        is the same fact told from the other end: there, a bookmark chord
-        that a preview will take; here, the preview chords that take one.
+        Named cycle-group keys are not included in this reverse summary.
+        The counterpart of _bookmark_chords(), but deliberately not a
+        straight mirror. Bookmark overlap is inferred from configuration;
+        Preview's RegisterHotKey result is reported by the host. Neither
+        proves physical delivery in a window where the bookmark hook may
+        consume the key first.
 
-        NOT a straight mirror, and the asymmetry is the point rather than an
-        oversight. _bookmark_chords() has to infer from configuration --
-        AHK's `#HotIf WinActive` hotkey is not a RegisterHotKey
-        registration, so Windows can report nothing about it and "enabled,
-        with a window ticked" is the closest it can get. A preview chord IS
-        a RegisterHotKey, so the host can say whether Windows actually
-        granted it, and inferring from `preview.enabled` here would claim a
-        bookmark had lost its key to a chord Windows refused.
+        Three outcomes, not two, matching previews.js's registration state:
 
-        Three outcomes, not two, which is the same three previews.js's
-        clashes() already distinguishes and for the same reason:
-
-        - registered right now -> "active". The bookmark cannot fire while
-          EVE is focused.
-        - the host is not holding chords at all (previews off, or stopped)
-          -> "latent". Nothing is taken yet and turning previews on would
-          take it, which is exactly what the page says.
-        - the host IS running and this chord is refused, or has not been
-          reported on yet -> NEITHER. We cannot say a preview takes the key,
-          and we cannot say turning previews on would, because they are on.
-          An unmarked bind is the honest answer; previews.js surfaces the
-          refusal on its own screen, where the user can act on it.
+        - registered right now -> "active": warn about configured overlap,
+          without claiming that the bookmark engine is running or loses.
+        - the host is not holding chords (previews off, or stopped)
+          -> "latent": retain configured overlap for later activation.
+        - the host is running and the chord is refused or not reported
+          -> NEITHER. Do not infer a registration from the enabled setting;
+          previews.js surfaces refusal on its own screen instead.
 
         Compared in display form, the common ground the two notations meet
         on: preview gestures are STORED in display form -- settings.py runs

@@ -7,6 +7,7 @@ const data = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const web = process.argv[3];
 const {createDOM} = require('./screenshot_dom.cjs');
 const {document, Element, scrolls} = createDOM(data.page);
+for (const [id, text] of Object.entries(data.texts || {})) document.getElementById(id).textContent = text;
 const window = new Element('window');
 Object.assign(window, {document, console: {...console, error: (...args) => { throw Error(args.join(' ')); }},
   navigator: {clipboard: {readText: () => assert.fail('clipboard read'), writeText: () => assert.fail('clipboard write')}},
@@ -31,11 +32,176 @@ WM.send = (method, ...args) => {
 WM.confirm = () => { if (staging) assert.fail('Unexpected confirmation'); return Promise.resolve(false); };
 const crop = data.key.startsWith('settings-');
 const moduleName = data.key.startsWith('fittings-') ? 'fittings'
+  : data.key.startsWith('settings-wanderer') ? 'wanderer'
+  : data.key === 'profiles-copy-scope' ? 'evesettings'
   : data.key.startsWith('settings-characters') ? 'characters'
   : crop ? 'previews' : data.key.includes('formations') ? 'formations' : 'uisetup';
 run(fs.readFileSync(web + '/' + moduleName + '.js', 'utf8'));
 const tick = () => new Promise(resolve => setTimeout(resolve, 10));
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return {promise, resolve}; };
+async function gapRegression() {
+  const scenario = data.gap;
+  const el = id => document.getElementById(id);
+  const step = async text => { if (text) run(text); await tick(); };
+  const profiles = moduleName === 'evesettings';
+  const metadata = data.key === 'fittings-metadata-narrow';
+  const preflight = data.key === 'fittings-copy-preflight-bottom-narrow';
+  const wanderer = moduleName === 'wanderer';
+  const state = {
+    root: 'test/root', server: 'tq', profile: 'test/profile',
+    servers: [{path: 'tq', name: 'Tranquility'}],
+    profiles: [{path: 'test/profile', name: 'Test profile'}],
+    characters: [], accounts: [], backups: [], identity_characters: [],
+    unreadable: false, too_broad: false, eve_running: false,
+    identification_active: false, account_identity_available: false,
+    formations_available: false, backups_unreadable: false,
+    selective_copy_available: !scenario.startsWith('codec-missing'),
+    copy_groups: {characters: [{id: 'windows', label: 'Window layout', default_on: true}], accounts: []}
+  };
+  bridgeReply = method => {
+    if (profiles) {
+      assert.ok(['eve_settings_state', 'eve_settings_resolve_names'].includes(method));
+      if (method === 'eve_settings_state') return scenario === 'unresolved'
+        ? new Promise(() => {}) : state;
+    }
+    return null;
+  };
+  for (let iteration = 0; iteration < 2; iteration++) {
+    staging = false;
+    if (wanderer) {
+      await step(data.prepare);
+      staging = true; WM.openSettingsSection('previews');
+    } else WM.route(profiles ? 'evesettings' : 'fittings');
+    await tick(); calls.length = 0; staging = true;
+    if (moduleName === 'fittings') { await step(data.fixture); await step(data.reset); }
+    const nativePromise = window.Promise;
+    if ((metadata || preflight) && scenario === 'unresolved') window.Promise = {resolve: () => new Promise(() => {})};
+    if (data.stage) run(data.stage);
+    window.Promise = nativePromise;
+    await tick();
+    assert.ok(data.verify, 'every added frame needs a settled-content postcondition');
+    const verify = () => run(data.verify);
+    if (scenario === 'unresolved') {
+      assert.throws(verify, /Screenshot content did not settle/);
+      assert.equal(calls.length, 0);
+      if (data.cleanup) run(data.cleanup);
+      return console.log('PASS screenshot gap ' + data.key + ' unresolved');
+    }
+    let anchor, pane, target;
+    if (wanderer) {
+      anchor = el('wanderer-save-note'); pane = el('settings-previews-wanderer'); target = el('wanderer-remove');
+      assert.equal(el('wanderer-token').value, '');
+      assert.equal(el('wanderer-token').type, 'password');
+      assert.equal(el('wanderer-test').disabled, false);
+      assert.equal(el('wanderer-remove').disabled, false);
+      assert.equal(el('wanderer-save-note').textContent,
+        'Test connection saves the URL, map and token, then checks access. It does not turn names on.');
+    } else if (profiles) {
+      anchor = target = el('es-copy-scope-note'); pane = el('es-work');
+      assert.equal(el('es-copy-scope').hidden, !state.selective_copy_available);
+      assert.equal(target.classList.contains('warn'), !state.selective_copy_available);
+      assert.equal(target.textContent, state.selective_copy_available
+        ? 'Checked groups are copied as a unit. Unchecked groups stay unchanged. Everything else is copied.'
+        : 'Selective groups unavailable — the bundled settings codec is missing. Copy will replace the whole settings file for each selected target. Reinstall Wingman from its installer to restore the codec.');
+    } else if (metadata) {
+      anchor = document.querySelector('.fit-metadata-disclosure'); pane = el('fittings-list');
+      target = el('fit-metadata-save-fit-rifter-solo');
+      assert.ok(anchor, 'the real detail must settle before late disclosure framing');
+      if (!iteration) assert.ok(!anchor.open, 'the initial detail is read-first');
+      assert.equal(el('fit-name-fit-rifter-solo').value, 'Rifter - Solo PvP');
+      assert.equal(el('fit-desc-fit-rifter-solo').value, 'Fast tackle, disengages on a scram.');
+      assert.equal(el('fit-metadata-discard-fit-rifter-solo').hidden, true, 'capture must not create a draft');
+    } else if (preflight) {
+      anchor = target = el('fittings-copy-resolution-note'); pane = el('fittings-copy-body');
+      assert.ok(anchor, 'real preflight reply must settle before lower framing');
+      assert.equal(anchor.textContent, 'Enter an alternate name or select Skip for each conflict before reviewing changes. Copies only add fittings; existing fittings are kept.');
+      assert.equal(el('fittings-copy-review').disabled, true);
+      assert.equal(document.querySelectorAll('.fit-copy-pair').length, 3);
+    } else {
+      pane = el('fittings-copy-body'); anchor = pane.querySelectorAll('.fit-copy-pair').at(-1);
+      target = anchor.querySelector('.fit-copy-guidance');
+      assert.equal(anchor.querySelector('.fit-copy-pair-name').textContent, 'Generated Fit 003 (Merlin)');
+      assert.equal(anchor.querySelector('.fit-copy-character').textContent, 'Gio Renn');
+      assert.equal(anchor.querySelector('.fit-copy-result').textContent, 'Not attempted: rate limit');
+      assert.equal(target.textContent, 'Not attempted. Wait for the ESI limit to clear, refresh characters, then review a new copy.');
+      assert.equal(el('fittings-copy-close').disabled, false);
+    }
+    // Layout boundary inputs only: this harness does not render CSS. Nodes
+    // enter the pane only when the generated script frames the settled anchor.
+    window.innerWidth = 840; window.innerHeight = 625;
+    let framed = false, overrun = 0, edge = 'bottom', covered = false, zero = false;
+    const rect = (left, top, right, bottom) => ({left, top, right, bottom, width: right-left, height: bottom-top});
+    const recordScroll = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (options) {
+      recordScroll.call(this, options);
+      if (this === anchor) framed = true;
+    };
+    const nativeRect = Element.prototype.getBoundingClientRect;
+    Element.prototype.getBoundingClientRect = function () {
+      if (this === pane) return rect(100, 100, 800, 540);
+      if (!framed) return rect(120, 700, 760, 730);
+      const r = rect(120, 130, zero && this === target ? 120 : 760, 330);
+      if (this === target && overrun) {
+        r[edge] = {left: 100, top: 100, right: 800, bottom: 540}[edge]
+          + (['top', 'left'].includes(edge) ? -overrun : overrun);
+        r.width = r.right - r.left; r.height = r.bottom - r.top;
+      }
+      return r;
+    };
+    const nativeRects = Element.prototype.getClientRects;
+    Element.prototype.getClientRects = function () {
+      for (let node = this; node; node = node.parentNode) {
+        if (node.hidden) return [];
+        if (node.parentNode?.tagName === 'DETAILS' && !node.parentNode.open && node.tagName !== 'SUMMARY') return [];
+      }
+      return [this.getBoundingClientRect()];
+    };
+    // Each hit-test point belongs to the last measured node unless another
+    // surface covers it. This isolates the generated guard, not CSS hit testing.
+    let measured;
+    const box = Element.prototype.getBoundingClientRect;
+    Element.prototype.getBoundingClientRect = function () { measured = this; return box.call(this); };
+    document.elementFromPoint = () => covered ? document.body : measured;
+    verify();
+    assert.ok(framed, 'must frame the semantic anchor, not just click a control');
+    assert.equal(scrolls.at(-1).element, anchor);
+    assert.equal(scrolls.at(-1).options.behavior, 'instant');
+    if (metadata) {
+      assert.equal(anchor.open, true);
+      assert.equal(el('fit-metadata-discard-fit-rifter-solo').hidden, true);
+      assert.equal(el('fit-name-fit-rifter-solo').value, 'Rifter - Solo PvP');
+    }
+    const targetParent = target.parentNode, targetNext = target.nextSibling;
+    if (scenario === 'missing') target.remove();
+    else if (scenario === 'hidden') target.hidden = true;
+    else if (scenario === 'wrong-text') target.textContent = 'stale or incomplete content';
+    else if (scenario.endsWith('clipped')) overrun = 2;
+    else if (/^(rounding|edge|overflow)-/.test(scenario)) {
+      edge = scenario.split('-')[1];
+      overrun = scenario.startsWith('rounding') ? 0.109375 : scenario.startsWith('edge') ? 1 : 1.01;
+    } else if (scenario === 'covered-rounding') { overrun = 0.109375; covered = true; }
+    else if (scenario === 'covered') covered = true;
+    else if (scenario === 'zero-area') zero = true;
+    else if (scenario === 'wrong-name') el('fit-name-fit-rifter-solo').value = 'Wrong fitting';
+    else if (scenario === 'wrong-description') el('fit-desc-fit-rifter-solo').value = 'Wrong description';
+    else if (scenario === 'missing-rack') document.querySelector('.fit-rack').remove();
+    else if (scenario === 'inconsistent-capability') el('es-copy-scope-note').classList.add('warn');
+    else if (scenario === 'wrong-pair') document.querySelector('.fit-copy-pair-name').textContent = 'Wrong fitting';
+    else if (scenario === 'wrong-summary') document.querySelector('.fit-copy-summary').textContent = '6 copied · 0 failed';
+    if (scenario.startsWith('rounding-') || scenario.startsWith('edge-')) verify();
+    else if (!['settled', 'codec-missing'].includes(scenario)) assert.throws(verify, /Screenshot content did not settle/, scenario);
+    assert.equal(calls.length, 0, 'new staging/verification must not write, copy, Test, or use the clipboard');
+    // Restore deliberate test damage before the real owner's cleanup paints.
+    if (scenario === 'missing') targetParent.insertBefore(target, targetNext);
+    Element.prototype.scrollIntoView = recordScroll;
+    Element.prototype.getBoundingClientRect = nativeRect;
+    Element.prototype.getClientRects = nativeRects;
+    if (data.cleanup) await step(data.cleanup);
+    assert.equal(calls.length, 0, 'fixture cleanup stays local');
+    if (!['settled', 'codec-missing'].includes(scenario)) break;
+  }
+  console.log('PASS screenshot gap ' + data.key + ' ' + scenario);
+}
 async function cropRegression() {
   const scenario = data.regression;
   const fixture = data.crop_fixture;
@@ -203,6 +369,11 @@ async function fittingsDetailRegression() {
       assert.deepEqual(texts('.fit-item-name'), ['150mm Light AutoCannon II', '1MN Afterburner II', 'Gyrostabilizer II']);
       assert.deepEqual(texts('.fit-alias-row'), ['Rifter - Solo PvP', 'Rifter Tackle Fit']);
       assert.deepEqual(texts('.fit-presence-name'), ['Aria Voss', 'Bex Talon']);
+      const metadata = row.querySelector('.fit-metadata-disclosure');
+      assert.ok(metadata && metadata.tagName === 'DETAILS', 'metadata editing uses native disclosure');
+      assert.equal(metadata.open, false, 'staged fitting details are read-first');
+      assert.ok(metadata.querySelector('summary'));
+      assert.ok(metadata.contains(row.querySelector('.fit-metadata')));
       verify();
       assert.ok(scrolls.at(-1)?.element === toggle('Rifter - Solo PvP'),
         'frame the newly rendered detail row, not the stale toggle from before its reply');
@@ -371,6 +542,8 @@ async function fidelityRegression() {
       'select every intended entry exactly once, never an outside entry sharing its name');
     assert.match(el('fittings-copy-status').textContent,
       /Limit each copy to 20 additions across all targets\. Select fewer fittings or targets, then review again\./);
+    assert.equal(el('fittings-copy-status').classList.contains('err'), true,
+      'the staged refusal must use the same error state as a live rejected review');
     assert.match(el('fittings-copy-body').textContent, /^11 selected\./,
       'refusal must be reachable with fewer than 20 selected fits across multiple targets');
     const targets = el('fittings-copy-body').querySelectorAll('input').filter(node => node.checked);
@@ -383,8 +556,11 @@ async function fidelityRegression() {
     assert.throws(() => run(data.verify), /Screenshot content did not settle/);
     // Reducing targets permits the same selection; no selection-count shortcut.
     targets[1].checked = false; targets[1].dispatchEvent({type: 'change'});
-    el('fittings-copy-review').click(); await tick();
+    el('fittings-copy-review').click();
+    assert.equal(el('fittings-copy-status').classList.contains('err'), false, 'checking clears stale error styling');
+    await tick();
     assert.match(el('fittings-copy-body').textContent, /11 additions planned/);
+    assert.equal(el('fittings-copy-status').classList.contains('err'), false);
     assert.equal(el('fittings-copy-start').hidden, false);
     el('fittings-copy-start').click(); await tick();
     assert.equal(calls.length, 0, 'even a synthetic accepted review cannot start a writer');
@@ -409,11 +585,15 @@ async function fidelityRegression() {
     assert.equal(el('fittings-copy-review').hidden, true);
     assert.equal(el('fittings-copy-start').hidden, true);
     assert.equal(el('fittings-copy-cancel').hidden, !isProgress);
+    assert.equal(el('fittings-copy-cancel-note').hidden, !isProgress);
     assert.equal(el('fittings-copy-close').disabled, isProgress);
     if (isProgress) {
       assert.match(el('fittings-copy-body').textContent, /2 of 6 pairs checked/);
       assert.match(el('fittings-copy-status').textContent, /Generated Fit 002 \(Merlin\).*Fio Kest: Needs verification/);
       assert.equal(el('fittings-copy-cancel').disabled, false);
+      assert.ok(visible(el('fittings-copy-cancel-note')), 'cost remains visible while progress is active');
+      assert.equal(el('fittings-copy-body').contains(el('fittings-copy-cancel-note')), false,
+        'progress body replacement cannot discard cancellation guidance');
     } else {
       assert.match(el('fittings-copy-body').textContent, /3 additions attempted/);
       const labels = el('fittings-copy-body').querySelectorAll('.fit-copy-pair-name');
@@ -466,6 +646,7 @@ async function fidelityRegression() {
   console.log('PASS screenshot fidelity ' + data.key + ' ' + data.regression);
 }
 (async () => {
+  if (data.gap) { await gapRegression(); return; }
   if (['settings-previews-groups', 'settings-characters-waiting', 'settings-characters-partial-cleanup', 'fittings-copy-limit',
        'fittings-copy-progress', 'fittings-copy-result'].includes(data.key)) {
     await fidelityRegression(); return;

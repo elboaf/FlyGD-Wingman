@@ -2424,6 +2424,47 @@ def test_detail_mutations_restore_focus_only_after_recreating_the_detail():
     assert "focusGroupSelect(characterName)" in select
 
 
+def test_preview_conflict_consequences_on_executed_page(tmp_path):
+    """Conflict impact follows host precedence without changing allowed sharing."""
+    import json
+    import subprocess
+    from pathlib import Path
+
+    from tests.html_tree import PageTree
+
+    html = _web("index.html")
+    # The static pointer must not contradict the conditional runtime tooltips.
+    intro = re.search(
+        r'<p class="hint">([^<]+)</p>\s*<p class="hint" id="eve-bind-warning"',
+        html,
+        re.DOTALL,
+    )
+    assert intro
+    assert not re.search(
+        r"\bloses\b|\bwins\b|\btakes priority\b", intro[1], re.IGNORECASE
+    )
+
+    root = Path(__file__).resolve().parents[1]
+    tree = PageTree()
+    tree.feed(html)
+    markup = tmp_path / "preview-conflict-page.json"
+    markup.write_text(json.dumps(tree.root), encoding="utf-8")
+    result = subprocess.run(
+        [
+            "node",
+            str(root / "tests/fixtures/preview_conflict_copy.cjs"),
+            str(markup),
+            str(root / "wingman/web"),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PASS preview conflict consequences" in result.stdout.splitlines()
+
+
 def test_local_bind_conflict_copy_uses_authoritative_collision_state():
     """Warnings describe actual collision owners, not a second registration model."""
     js = _web("previews.js")
@@ -3411,9 +3452,9 @@ def test_opted_out_or_latent_bookmark_binds_do_not_render_local_errors():
     conflict = js.split("function makeBindConflict", 1)[1].split("\n  function ", 1)[0]
     assert "if (off) { return null; }" in conflict
     assert "bookmark === 'latent'" not in conflict
-    # Refused registration and active bookmark ownership remain actionable.
+    # Refused registration and configured bookmark overlap remain actionable.
     assert "already owned by another application" in conflict
-    assert "conflicts with an active EVE bookmark keybind" in conflict
+    assert "conflicts with a configured EVE bookmark keybind" in conflict
 
     append = js.split("function appendBindRow", 1)[1].split("function render()", 1)[0]
     assert (

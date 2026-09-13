@@ -206,19 +206,11 @@
     });
   }
 
-  // Round 5, C6. previews.js's bookmarkClash() told this story from the
-  // winning end only: a preview chord is a global RegisterHotKey and a
-  // bookmark chord is an AHK hotkey scoped with #HotIf WinActive, so where
-  // they collide the preview wins while EVE is focused and the bookmark
-  // simply does not fire. Previews marked it; here -- on the binds that are
-  // the ones actually overridden -- an overridden bind looked exactly like
-  // a working one.
-  //
-  // Same vocabulary as previews.js on purpose, because it is the same fact:
-  // `active` warns in the clash colour because the key is being taken right
-  // now, `latent` only dims because previews are off and nothing is taken
-  // yet. The two files build the same row and must not disagree about what
-  // a mark means.
+  // Show the overlap on both configuration screens. A registered Preview
+  // keybind does not prove it wins a physical key: the bookmark engine's
+  // scoped hook may consume it first in selected EVE windows. `active`
+  // reports Preview registration; `latent` retains a configured overlap.
+  // Neither establishes the bookmark engine's current runtime state.
   function previewShadow(display) {
     var chords = (state && state.preview_chords) || {};
     if (!display) { return null; }
@@ -237,12 +229,12 @@
     if (clashing[id] || shadow === 'active') { button.classList.add('clash'); }
     else if (shadow === 'latent') { button.classList.add('dim'); }
     if (shadow === 'active') {
-      button.title = 'A Previews keybind uses this. It takes the key while '
-                   + 'an EVE client is focused, so this bookmark does not '
-                   + 'fire.';
+      button.title = 'A Previews keybind also uses this. This bookmark may take the key '
+                   + 'in its selected EVE windows. Edit or clear one of these keybinds to use different keys.';
     } else if (shadow === 'latent') {
-      button.title = 'A Previews keybind is configured with this. Turning '
-                   + 'previews on would take the key from this bookmark.';
+      button.title = 'A Previews keybind is configured with this. If both are active, '
+                   + 'this bookmark may take the key in its selected EVE windows. '
+                   + 'Edit or clear one of these keybinds to use different keys.';
     }
     button.addEventListener('click', function () { beginCapture(id, button); });
     row.appendChild(button);

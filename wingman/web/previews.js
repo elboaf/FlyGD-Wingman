@@ -105,10 +105,10 @@
   var inertNotes = {};
 
   function bookmarkClash(gesture) {
-    // Active: the bookmark bind is registered right now, so this chord
-    // takes it away while EVE is focused. Latent: bookmarks are off or no
-    // window is enabled, so nothing is stolen yet -- but turning them on
-    // would, with nothing on screen to explain it.
+    // Active means bookmarks are enabled with a selected EVE window, not
+    // that the engine is running. Its scoped hook may consume a matching
+    // key before Preview's global registration. Latent retains overlap
+    // configured while bookmarks are off or no window is selected.
     var chords = state.bookmark_chords || {};
     if ((chords.active || []).indexOf(gesture) !== -1) { return 'active'; }
     if ((chords.latent || []).indexOf(gesture) !== -1) { return 'latent'; }
@@ -273,7 +273,9 @@
         return owner.key !== ownerKey;
       }).map(function (owner) { return owner.text; });
       text = label + ': ' + gesture + ' conflicts with '
-           + (owners.join(', ') || 'another cycle keybind') + '.';
+           + (owners.join(', ') || 'another cycle keybind') + '. '
+           + 'Character focus takes priority; this keybind will not cycle. '
+           + 'Edit or clear one of these keybinds.';
     } else if (clash === 'duplicate') {
       // A cycle row has no supported shared-owner role: direct characters
       // using its chord are the incompatible registrations to identify.
@@ -287,12 +289,20 @@
       })).filter(function (owner) {
         return owner.key !== ownerKey;
       }).map(function (owner) { return owner.text; });
+      // host.plan_registrations gives focus priority, then takes the first
+      // cycle in cycleOwners order. Priority does not claim Windows accepted it.
       text = label + ': ' + gesture + ' conflicts with '
-           + (owners.join(', ') || 'another cycle keybind') + '.';
+           + (owners.join(', ') || 'another cycle keybind') + '. '
+           + (sharers(gesture).length
+              ? 'Character focus takes priority; this keybind will not cycle. '
+              : cycleOwners(gesture)[0].text + ' takes priority; the other cycle actions will not run. ')
+           + 'Edit or clear one of these keybinds.';
     } else if (clash === 'refused' && registration[gesture] === false) {
       text = label + ': ' + gesture + ' is already owned by another application.';
     } else if (bookmark === 'active') {
-      text = label + ': ' + gesture + ' conflicts with an active EVE bookmark keybind.';
+      text = label + ': ' + gesture + ' conflicts with a configured EVE bookmark keybind. '
+           + 'A bookmark may take this keybind in its selected EVE windows. '
+           + 'Edit or clear one of these keybinds to use different keys.';
     }
     if (!text) { return null; }
     return WM.make('div', 'preview-bind-conflict', text);
@@ -377,8 +387,8 @@
     if (!gesture) { button.classList.add('unset'); }
     var clash = clashes(gesture);
     var shadow = bookmarkClash(gesture);
-    // An active bookmark collision warns like any other clash; a latent one
-    // only marks, because nothing is being taken away yet. `unknown` is
+    // Configured bookmark overlap warns like any other clash; a latent one
+    // only marks, because bookmarks are off or no window is selected. `unknown` is
     // neither: nothing is wrong, we simply cannot say whether Windows is
     // holding the chord, so it must not borrow the warning colour -- nor
     // .dim, which already means a latent bookmark collision.
@@ -389,13 +399,14 @@
     if (clash === 'refused') {
       button.title = 'Another application already owns this keybind.';
     } else if (clash === 'duplicate') {
-      button.title = 'A cycle keybind uses this too. Only one of them can '
-                     + 'have it, and the cycle keybind is the one that loses.';
+      button.title = conflict ? conflict.textContent
+                     : 'Only one action can use this keybind.';
     } else if (clash === 'unknown') {
       button.title = 'Not registered right now — previews are off, or ' +
                      'Windows has not reported on this keybind yet.';
-    } else if (shadow === 'active') {      button.title = 'An EVE bookmark uses this keybind. This binding takes ' +
-                     'it while an EVE client is focused.';
+    } else if (shadow === 'active') {
+      button.title = 'An EVE bookmark may take this keybind in its selected EVE windows. '
+                   + 'Edit or clear one of these keybinds to use different keys.';
     } else if (shadow === 'latent') {
       button.title = 'An EVE bookmark is configured with this keybind. ' +
                      'Enabling bookmarks would make them collide.';

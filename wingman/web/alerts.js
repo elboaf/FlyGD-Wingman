@@ -948,20 +948,20 @@
   }
   function customHealthText(state) {
     if (!state.previews_enabled || !state.alerts_enabled) {
-      return 'Custom matching is inactive. Preferences remain editable; turn on Previews and Alerts to watch.';
+      return 'Not watching. Preferences remain editable; turn on Previews and Alerts to watch.';
     }
     var reader = state.reader;
     if (!reader.running || reader.last_error) {
-      return 'Custom alerts are not watching — ' + (reader.last_error
+      return 'Not watching — ' + (reader.last_error
         || (!reader.gamelogs_folder ? 'set a valid Gamelogs folder below.' : 'the reader is unavailable.'));
     }
-    if (!reader.characters.length) { return 'Custom alerts are not watching — no characters monitored yet.'; }
+    if (!reader.characters.length) { return 'Not watching — no characters monitored yet.'; }
     if (state.matcher.state === 'degraded') {
-      return 'Custom matching failed. Built-in alerts and Fleet remain independent.';
+      return 'Not watching — custom matching failed. Built-in alerts and Fleet remain independent.';
     }
-    if (!state.rules.some(function (rule) { return rule.enabled; })) { return 'Custom matching is inactive — no custom alerts are enabled.'; }
-    if (state.matcher.state !== 'active') { return 'Custom alerts are waiting for a new gamelog line.'; }
-    return 'Custom matching is active — ' + reader.characters.slice().sort().join(', ') + '.';
+    if (!state.rules.some(function (rule) { return rule.enabled; })) { return 'Not watching — no custom alerts are enabled.'; }
+    if (state.matcher.state !== 'active') { return 'Waiting — matching needs a new gamelog line.'; }
+    return 'Watching — ' + reader.characters.slice().sort().join(', ') + '.';
   }
   function readCustom(controls) {
     if (!visible) { return; }

@@ -1503,6 +1503,16 @@ async function runInterleavingScenario() {
     await flush();
     if (scenario === 'progress-focus') {
       assert.equal(document.activeElement, cancel, 'progress entry focuses its only enabled control');
+      const note = el('fittings-copy-cancel-note');
+      assert.equal(note.hidden, false, 'cancellation consequences appear before clicking Cancel');
+      assert.equal(cancel.getAttribute('aria-describedby'), note.id);
+      assert.equal(el('fittings-copy-body').contains(note), false, 'progress replacement does not own the note');
+      handlers.onFittingsProgress({kind: 'copy', phase: 'progress', ticket_id: 'ticket',
+        completed: 1, total: 2, result: {status: 'success'}});
+      assert.ok(note.getClientRects().length, 'consequences stay visible after progress updates');
+      handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'ticket',
+        result: {results: [], write_count: 1, status: 'complete'}});
+      assert.equal(note.hidden, true, 'completed results replace active-copy guidance');
     } else if (scenario === 'progress-tab') {
       cancel.focus();
       for (const reverse of [false, true]) {

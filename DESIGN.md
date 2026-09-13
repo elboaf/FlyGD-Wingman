@@ -596,6 +596,13 @@ a second copy of it.
 
 ## Saving
 
+Fittings separates reading a fit from editing its metadata. The native
+**Edit metadata…** disclosure starts closed; opening or closing it never saves
+or discards a draft. Edited/pending/refused values survive list refreshes, with
+focus and text selection restored only when that editor still owns focus.
+A newer route, row or dialog must never have focus taken back by a refresh.
+Save remains explicit, and disclosure state is session-only.
+
 Settings has no Save button. Every field commits on its own through a
 per-field endpoint returning `{applied, persisted, error}`.
 
@@ -701,6 +708,14 @@ are `role="status"` and keep their line, because a live region that is
 `display: none` when its text lands may never be announced. The exclusion
 is keyed on the role, not on the two ids, so a third live region is covered
 without anyone remembering the rule exists.
+
+
+**Readiness is not a preference.** Companion availability, Wanderer connection
+and coverage, and custom-alert watching state use a stronger text role than
+static help. Keep current readiness near its owning switch or heading, with
+recovery beside it; enabled settings alone do not establish live operation.
+Move the existing status node rather than creating a second live-region owner.
+Expected Off or Waiting states are not errors merely because work is inactive.
 
 
 ## Routes and sections
@@ -818,6 +833,10 @@ every surface it appeared on, and one edit fixed twenty-two rules.
 
 Contrast floors: **4.5:1** for text (everything here is under 18px, so
 nothing qualifies as large), **3:1** for a focus ring or a state border.
+Enabled empty checkbox/radio outlines are selection affordances, not decorative
+panel borders: their `--control-edge` must also clear 3:1 against adjacent
+surfaces. `test_ui_contrast.py` checks field, panel, row and control fills.
+Disabled/inert controls retain their separate dimmed treatment.
 
 `color-scheme: dark` is declared, or WebView2 resolves UA-drawn chrome for
 a light scheme against a near-black page.
