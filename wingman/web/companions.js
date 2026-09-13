@@ -298,7 +298,7 @@
     view.name = WM.make('strong', 'companion-name');
     view.source = WM.make('span', 'companion-source hint');
     view.modeText = WM.make('span', 'hint');
-    view.status = WM.make('span', 'hint'); view.status.id = 'companion-' + row.id + '-status';
+    view.status = WM.make('span', 'companion-availability'); view.status.id = 'companion-' + row.id + '-status';
     view.status.setAttribute('role', 'status');
     var identity = WM.make('div', 'companion-identity'); identity.appendChild(view.name); identity.appendChild(view.source);
     summary.appendChild(identity); summary.appendChild(check); summary.appendChild(view.modeText);
@@ -431,7 +431,7 @@
       view.source.title = view.source.textContent;
       view.modeText.textContent = row.mode === 'region' ? 'Selected region' : 'Whole window';
       view.status.textContent = view.error || row.error || (view.busy || pending(row) ? 'Change in progress…' : statuses[row.status] || row.status);
-      view.status.className = 'hint' + (view.error || row.error ? ' err' : '');
+      view.status.className = 'companion-availability' + (view.error || row.error ? ' field-msg err' : '');
       Object.keys(view.fields).forEach(function (name) {
         var field = view.fields[name]; WM.setEnabled(field.input, enabled);
         if (field.apply) WM.setEnabled(field.apply, enabled);

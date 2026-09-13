@@ -779,9 +779,12 @@
   function paintCopyScope() {
     var summary = WM.el('es-copy-scope-summary');
     var scopeNote = WM.el('es-copy-scope-note');
+    scopeNote.classList.toggle('warn', !state.selective_copy_available);
     if (!state.selective_copy_available) {
       summary.textContent = '';
-      scopeNote.textContent = 'Selective groups unavailable. The whole settings file is copied.';
+      scopeNote.textContent = 'Selective groups unavailable — the bundled settings codec is missing. '
+        + 'Copy will replace the whole settings file for each selected target. '
+        + 'Reinstall Wingman from its installer to restore the codec.';
       return;
     }
     var groups = (state.copy_groups && state.copy_groups[kind()]) || [];
@@ -1118,6 +1121,11 @@
       ? 'Profile: ' + nameOf(state.profiles, state.profile)
         + ' · Server: ' + nameOf(state.servers, state.server)
       : 'No profile selected';
+    var wholeFile = !!(state && !state.selective_copy_available);
+    var scopeCommit = WM.el('es-copy-scope-commit');
+    scopeCommit.textContent = wholeFile ? 'Whole settings file' : '';
+    scopeCommit.hidden = !wholeFile;
+    scopeCommit.classList.toggle('warn', wholeFile);
     copyButton.textContent = busy && pendingMutation === 'eve_settings_copy'
       ? 'Copy operation in progress\u2026'
       : 'Copy to ' + count + ' ' + noun + (count === 1 ? '' : 's');

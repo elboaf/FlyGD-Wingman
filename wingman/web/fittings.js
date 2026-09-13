@@ -37,6 +37,7 @@
   // Only edited IDs, never a second library: retained across page/filter changes,
   // retired by acknowledgement, deliberate discard, or confirmed deletion.
   var metadataDrafts = {};
+  var metadataEditors = Object.create(null); // open/closed per ID, independent of drafts; session-only
   var progress = null;     // last refresh onFittingsProgress payload
   var copyOverlayOpen = false;
   var copyDialogGeneration = 0;
@@ -549,6 +550,19 @@
   function renderList() {
     var host = WM.el('fittings-list');
     var empty = WM.el('fittings-empty');
+    var editor = host.querySelector('.fit-metadata-disclosure');
+    // A semantic push replaces the list twice (state, then detail). Snapshot
+    // native disclosure/focus state before either rebuild, without saving text.
+    if (editor) {
+      var editorId = editor.getAttribute('data-entry-id');
+      metadataEditors[editorId] = editor.open;
+    }
+    var active = document.activeElement;
+    var focusId = editor && editor.contains(active) ? active.id : '';
+    var start = focusId ? active.selectionStart : null;
+    var end = focusId ? active.selectionEnd : null;
+    var direction = focusId ? active.selectionDirection : null;
+    var scrollTop = host.scrollTop;
     host.textContent = '';
     var rows = STATE.rows || [];
     if (!rows.length) {
@@ -562,6 +576,22 @@
     }
     empty.hidden = true;
     rows.forEach(function (row) { host.appendChild(rowNode(row)); });
+    if (focusId && WM.current_route === 'fittings' && !copyOverlayOpen
+        && WM.el('overlay').hidden) {
+      var replacement = WM.el(focusId);
+      // Discard disappears after acceptance; a pending Save may be disabled.
+      // Keep focus in that fitting's editor rather than on a retired control.
+      if (!replacement || replacement.disabled || !replacement.getClientRects().length) {
+        replacement = WM.el('fit-metadata-summary-' + editor.getAttribute('data-entry-id'));
+      }
+      if (replacement && replacement.getClientRects().length) {
+        replacement.focus({ preventScroll: true });
+        if (replacement.id === focusId && typeof start === 'number' && typeof end === 'number') {
+          replacement.setSelectionRange(start, end, direction);
+        }
+        host.scrollTop = scrollTop;
+      }
+    }
   }
 
   function pruneSelection(rows) {
@@ -620,8 +650,9 @@
 
     var toggle = WM.make('button', 'fit-row-toggle');
     toggle.setAttribute('aria-expanded', expandedId === row.id ? 'true' : 'false');
-    toggle.appendChild(WM.make('span', 'chev',
-                               expandedId === row.id ? '\u25be' : '\u25b8'));
+    var chevron = WM.make('span', 'chev', expandedId === row.id ? '\u25be' : '\u25b8');
+    chevron.setAttribute('aria-hidden', 'true');
+    toggle.appendChild(chevron);
     toggle.appendChild(WM.make('span', 'fit-name', row.name));
     toggle.appendChild(WM.make('span', 'fit-ship',
                                row.ship_name || ('Type ' + row.ship_type_id)));
@@ -635,7 +666,13 @@
     toggle.addEventListener('click', function () { toggleRow(row.id); });
     top.appendChild(toggle);
     if (!row.deployable) {
-      top.appendChild(WM.make('span', 'fit-deployability', 'Not deployable'));
+      var why = WM.make('button', 'linkbtn fit-deployability', 'Cannot copy \u00b7 Details\u2026');
+      why.setAttribute('aria-label', row.name + ': cannot copy. Show details.');
+      why.setAttribute('aria-expanded', expandedId === row.id ? 'true' : 'false');
+      why.addEventListener('click', function () {
+        if (expandedId !== row.id) toggleRow(row.id);
+      });
+      top.appendChild(why);
     }
 
     node.appendChild(top);
@@ -678,13 +715,17 @@
       box.appendChild(WM.make('p', 'hint', 'Loading\u2026'));
       return box;
     }
+    if (!row.deployable) {
+      box.appendChild(WM.make('p', 'notice',
+        'Not deployable: this fitting cannot be copied safely. Choose a different fitting to copy.'));
+    }
     if (detail.description) {
       box.appendChild(WM.make('p', 'fit-description', detail.description));
     }
     box.appendChild(modulesNode(detail.items || []));
     if ((detail.aliases || []).length > 1) box.appendChild(aliasesNode(detail.aliases));
     box.appendChild(presencesNode(detail.presences || []));
-    box.appendChild(metadataFieldsNode(detail));
+    box.appendChild(metadataDisclosureNode(detail));
     box.appendChild(collectionsNode(detail));
     box.appendChild(supersessionNode(detail));
     box.appendChild(deleteNode(detail));
@@ -764,6 +805,19 @@
     });
   }
 
+  function metadataDisclosureNode(current) {
+    var disclosure = WM.make('details', 'fit-metadata-disclosure');
+    disclosure.setAttribute('data-entry-id', current.id);
+    // A retained draft is not permission to reopen an editor the user closed.
+    disclosure.open = Object.prototype.hasOwnProperty.call(metadataEditors, current.id)
+      ? metadataEditors[current.id] : !!metadataDrafts[current.id];
+    var summary = WM.make('summary', '', 'Edit metadata\u2026');
+    summary.id = 'fit-metadata-summary-' + current.id;
+    disclosure.appendChild(summary);
+    disclosure.appendChild(metadataFieldsNode(current));
+    return disclosure;
+  }
+
   function metadataFieldsNode(current) {
     var box = WM.make('div', 'fit-metadata');
     var draft = metadataDrafts[current.id];
@@ -794,10 +848,21 @@
     // Free text commits on an explicit button, never on blur -- the same
     // rule Settings states for its own fields (DESIGN.md).
     var save = WM.make('button', 'btn', 'Save');
+    save.id = 'fit-metadata-save-' + current.id;
     var status = WM.make('p', 'hint');
     var discard = WM.make('button', 'btn danger', 'Discard changes');
+    discard.id = 'fit-metadata-discard-' + current.id;
     function updateStatus() {
       var value = metadataDrafts[current.id];
+      // Disabling a focused Save blurs it to body before a later render can
+      // snapshot ownership. Hand off now, never after another control took it.
+      if (value && value.pending && document.activeElement === save
+          && WM.current_route === 'fittings' && !copyOverlayOpen && WM.el('overlay').hidden) {
+        var summary = WM.el('fit-metadata-summary-' + current.id);
+        if (summary && document.contains(save) && summary.getClientRects().length) {
+          summary.focus({ preventScroll: true });
+        }
+      }
       save.disabled = !!(value && value.pending);
       discard.hidden = !value;
       discard.disabled = !!(value && value.pending);
@@ -1052,6 +1117,13 @@
     }
   }
 
+  function setCopyStatus(text, isError) {
+    var status = WM.el('fittings-copy-status');
+    status.textContent = text;
+    if (isError) status.classList.add('err');
+    else status.classList.remove('err');
+  }
+
   function openCopyOverlay() {
     if (!visibleSelectedIds().length) return;
     copyDialogGeneration += 1;
@@ -1072,7 +1144,7 @@
     alternateNames = {};
     WM.el('fittings-copy-overlay').hidden = false;
     WM.el('fittings-copy-title').textContent = 'Copy fittings';
-    WM.el('fittings-copy-status').textContent = '';
+    setCopyStatus('');
     renderCopyTargets();
     renderNotices();
     focusCopyTarget('fittings-copy-close');
@@ -1146,6 +1218,8 @@
     WM.el('fittings-copy-review').hidden = !review;
     WM.el('fittings-copy-start').hidden = !start;
     WM.el('fittings-copy-cancel').hidden = !cancel;
+    WM.el('fittings-copy-cancel').setAttribute('aria-describedby', 'fittings-copy-cancel-note');
+    WM.el('fittings-copy-cancel-note').hidden = !cancel;
     WM.el('fittings-copy-close').disabled = cancel;
   }
 
@@ -1199,6 +1273,8 @@
     host.appendChild(targets);
     copyButtons(true, false, false);
     WM.el('fittings-copy-review').textContent = 'Review copy';
+    WM.el('fittings-copy-review').setAttribute('aria-describedby', 'fittings-copy-body');
+    WM.el('fittings-copy-review').title = '';
     WM.el('fittings-copy-review').disabled = !selectedTargetIds().length;
   }
 
@@ -1221,7 +1297,7 @@
       });
     }
     WM.el('fittings-copy-review').disabled = true;
-    WM.el('fittings-copy-status').textContent = 'Checking current fittings\u2026';
+    setCopyStatus('Checking current fittings\u2026');
     var entryIds = visibleSelectedIds();
     var generation = copyDialogGeneration;
     var pending = screenshotFixture
@@ -1234,11 +1310,11 @@
           || 'The copy preflight could not be checked.';
         if (copyPhase === 'targets') renderCopyTargets();
         else if (copyPhase === 'preflight' && copyPreflight) renderCopyPreflight();
-        WM.el('fittings-copy-status').textContent = rejection;
+        setCopyStatus(rejection, true);
         return;
       }
       copyPreflight = payload;
-      WM.el('fittings-copy-status').textContent = '';
+      setCopyStatus('');
       copyPhase = 'preflight';
       renderCopyPreflight();
     });
@@ -1276,7 +1352,8 @@
     if (pair.status === 'ready') return 'Ready as \u201c' + pair.chosen_name + '\u201d';
     if (pair.status === 'present') return 'Already present';
     if (pair.status === 'unavailable') return pair.error || 'Unavailable';
-    return pair.skipped ? 'Conflict / skipped' : 'Name conflict';
+    return pair.skipped ? 'Conflict / skipped'
+      : 'Name conflict. Enter an alternate name or Skip this pair.';
   }
 
   function renderCopyPreflight() {
@@ -1287,8 +1364,11 @@
       var row = WM.make('div', 'fit-copy-pair');
       row.appendChild(WM.make('span', 'fit-copy-pair-name', copyFittingLabel(pair)));
       row.appendChild(WM.make('span', 'fit-copy-character', copyCharacterLabel(pair)));
-      row.appendChild(WM.make('span', 'fit-copy-detail', pairStatusText(pair)));
+      var status = WM.make('span', 'fit-copy-detail', pairStatusText(pair));
+      row.appendChild(status);
       if (pair.status === 'conflict' && !pair.skipped) {
+        row.classList.add('fit-copy-needs-resolution');
+        status.id = 'fit-copy-instruction-' + pair.entry_id + ':' + pair.character_id;
         row.appendChild(conflictResolutionNode(pair));
       }
       host.appendChild(row);
@@ -1296,6 +1376,12 @@
     var resolving = !!copyPreflight.requires_resolution;
     copyButtons(resolving, !resolving, false);
     WM.el('fittings-copy-review').textContent = 'Review changes';
+    if (resolving) {
+      var note = WM.make('p', 'hint');
+      note.id = 'fittings-copy-resolution-note';
+      host.appendChild(note);
+      WM.el('fittings-copy-review').setAttribute('aria-describedby', note.id);
+    }
     updateConflictReady();
   }
 
@@ -1306,7 +1392,8 @@
     input.type = 'text';
     input.className = 'field fit-copy-alternate';
     input.maxLength = 50;
-    input.placeholder = 'Alternate name';
+    input.id = 'fit-copy-alternate-' + key;
+    input.setAttribute('aria-describedby', 'fit-copy-instruction-' + key);
     input.setAttribute('aria-label', 'Alternate name for ' + copyFittingLabel(pair)
                        + ' on ' + copyCharacterLabel(pair));
     input.value = typeof alternateNames[key] === 'string' ? alternateNames[key] : '';
@@ -1327,7 +1414,12 @@
       alternateNames[key] = skip.checked ? null : input.value;
       updateConflictReady();
     });
-    resolution.appendChild(input);
+    var field = WM.make('div', 'fit-copy-alternate-field');
+    var label = WM.make('label', 'lab', 'Alternate name');
+    label.setAttribute('for', input.id);
+    field.appendChild(label);
+    field.appendChild(input);
+    resolution.appendChild(field);
     resolution.appendChild(skipLabel);
     return resolution;
   }
@@ -1339,7 +1431,12 @@
       var value = alternateNames[pair.entry_id + ':' + pair.character_id];
       return value === null || (typeof value === 'string' && !!value.trim());
     });
+    var reason = ready ? 'Review changes to check alternate names and skips.'
+      : 'Enter an alternate name or select Skip for each conflict before reviewing changes.';
     WM.el('fittings-copy-review').disabled = !ready;
+    WM.el('fittings-copy-review').title = ready ? '' : reason;
+    WM.el('fittings-copy-resolution-note').textContent = reason
+      + ' Copies only add fittings; existing fittings are kept.';
   }
 
   function presentCopyProgress(ticketId, total) {
@@ -1348,7 +1445,7 @@
     WM.el('fittings-copy-title').textContent = 'Copying fittings';
     WM.el('fittings-copy-body').textContent = '';
     WM.el('fittings-copy-body').appendChild(WM.make('p', 'fit-copy-summary', copyPairsChecked(0, total)));
-    WM.el('fittings-copy-status').textContent = 'Starting\u2026';
+    setCopyStatus('Starting\u2026');
     WM.el('fittings-copy-cancel').disabled = false;
     copyButtons(false, false, true);
     renderSelectionCount();
@@ -1383,7 +1480,7 @@
               && activeCopyTicket === ticketId) {
             activeCopyTicket = '';
             copyPhase = 'preflight';
-            WM.el('fittings-copy-status').textContent = 'The copy could not start.';
+            setCopyStatus('The copy could not start.', true);
             renderCopyPreflight();
             reconcileCopyFocus();
           }
@@ -1394,7 +1491,7 @@
   WM.el('fittings-copy-cancel').addEventListener('click', function () {
     if (!copyOverlayOpen || copyPhase !== 'progress') return;
     WM.el('fittings-copy-cancel').disabled = true;
-    WM.el('fittings-copy-status').textContent = 'Cancelling after the current request\u2026';
+    setCopyStatus('Cancelling after the current request\u2026');
     focusCopyTarget('fittings-copy-dialog');
     if (!screenshotFixture) WM.send('fittings_cancel_copy', activeCopyTicket);
   });
@@ -1402,7 +1499,7 @@
   function renderCopyProgress(completed, total, pair) {
     WM.el('fittings-copy-body').textContent = '';
     WM.el('fittings-copy-body').appendChild(WM.make('p', 'fit-copy-summary', copyPairsChecked(completed, total)));
-    WM.el('fittings-copy-status').textContent = copyProgressLabel(pair);
+    setCopyStatus(copyProgressLabel(pair));
   }
 
   function finishCopy(result) {
@@ -1510,8 +1607,8 @@
       if (guidance) row.appendChild(WM.make('span', 'fit-copy-detail fit-copy-guidance', guidance));
       host.appendChild(row);
     });
-    WM.el('fittings-copy-status').textContent = result.operation_id
-      ? 'Operation ' + result.operation_id : copyResultLabel(result.status);
+    setCopyStatus(result.operation_id
+      ? 'Operation ' + result.operation_id : copyResultLabel(result.status));
     copyButtons(false, false, false);
     WM.el('fittings-copy-close').disabled = false;
     focusCopyTarget('fittings-copy-close');

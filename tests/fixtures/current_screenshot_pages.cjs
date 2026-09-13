@@ -122,6 +122,10 @@ function assertContent() {
     assert.equal(WM.el('wanderer-url-draft').textContent, '');
     assert.match(WM.el('wanderer-health').textContent, /Connected to Wanderer/);
     assert.match(WM.el('wanderer-coverage').textContent, /2 of 3/);
+    if (data.key === 'settings-wanderer-narrow') {
+      assert.equal(scrolls.at(-1).element.id, 'wanderer-health',
+        'the floor status shot must frame readiness, not scroll past it to credentials');
+    }
   } else {
     assert.equal(WM.fleet_bar_on, true, 'a local fixture cannot change the global live EVE gate');
     assert.match(WM.el('fleetbar-character-list').textContent, /Running.*Aiga Otsolen.*Offline.*Tanuki Solette/);
@@ -303,7 +307,7 @@ function mutations() {
     assert.equal(WM.el('sharing-start').disabled, false);
     WM.el('sharing-refresh').click(); await tick();
     const failedAuthority = () => {
-      assert.match(WM.el('sharing-connection').textContent, /Could not refresh current source state/);
+      assert.match(WM.el('sharing-connection').textContent, /Could not refresh current verification state/);
       assert.match(WM.el('sharing-eligibility').textContent, /Current eligibility unknown/);
       assert.equal(WM.el('sharing-eligible-list').children.length, 0);
       assert.equal(WM.el('sharing-start').disabled, true);

@@ -10,8 +10,11 @@ import importlib.util
 import json
 import pathlib
 import re
+import subprocess
 
 import pytest
+
+from tests.html_tree import PageTree
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WEB = ROOT / "wingman" / "web"
@@ -138,7 +141,203 @@ def test_floor_sized_screens_use_the_explicit_inventory_flag():
         "settings-fleet-characters-narrow",
         "settings-fleet-sharing-history-narrow",
         "settings-alerts-custom-narrow",
+        "settings-wanderer-controls-narrow",
+        "fittings-metadata-narrow",
+        "fittings-copy-preflight-bottom-narrow",
+        "fittings-copy-result-bottom-narrow",
     }
+
+
+GAP_CAPTURES = {
+    "settings-wanderer-controls-narrow": ("settings", "previews", True),
+    "profiles-copy-scope": ("evesettings", None, False),
+    "fittings-metadata-narrow": ("fittings", None, True),
+    "fittings-copy-preflight-bottom-narrow": ("fittings", None, True),
+    "fittings-copy-result-bottom-narrow": ("fittings", None, True),
+}
+
+
+def test_gap_capture_inventory_keeps_existing_stages():
+    screens = {screen.key: screen for screen in shoot.SCREENS}
+    assert screens.keys() >= GAP_CAPTURES.keys()
+    for key, (route, section, floor) in GAP_CAPTURES.items():
+        assert (screens[key].route, screens[key].section) == (route, section)
+        assert screens[key].at_floor is floor
+        assert screens[key].gated
+        assert shoot.new_screen_verify_script(screens[key])
+    # The new frames complement rather than replace their original top views.
+    assert screens.keys() >= {
+        "settings-wanderer",
+        "settings-wanderer-narrow",
+        "profiles",
+        "fittings-detail",
+        "fittings-narrow",
+        "fittings-copy-preflight",
+        "fittings-copy-result",
+    }
+
+
+class _CaptureTextTree(PageTree):
+    """Preserve leaf markup text for exact static-control postconditions."""
+
+    def handle_data(self, data):
+        node = self.stack[-1]
+        node["text"] = node.get("text", "") + data
+
+
+def _run_gap_capture(tmp_path, key, scenario):
+    screen = next((screen for screen in shoot.SCREENS if screen.key == key), None)
+    assert screen, f"missing gap capture: {key}"
+    tree = _CaptureTextTree()
+    tree.feed((WEB / "index.html").read_text(encoding="utf-8"))
+
+    def leaf_texts(node):
+        texts = {}
+        if not node["children"] and node["attrs"].get("id"):
+            texts[node["attrs"]["id"]] = node.get("text", "").strip()
+        for child in node["children"]:
+            texts.update(leaf_texts(child))
+        return texts
+
+    payload = {
+        "page": tree.root,
+        "texts": leaf_texts(tree.root),
+        "key": key,
+        "gap": scenario,
+        "prepare": shoot.new_screen_prepare_script(screen),
+        "stage": shoot.screen_setup_script(screen),
+        "verify": shoot.new_screen_verify_script(screen),
+        "cleanup": shoot.new_screen_cleanup_script(screen),
+        "fixture": shoot.fittings_fixture_setup_script(),
+        "reset": shoot._fittings_reset_script(),
+    }
+    path = tmp_path / "gap-capture.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    result = subprocess.run(
+        [
+            "node",
+            str(ROOT / "tests/fixtures/screenshot_pages.cjs"),
+            str(path),
+            str(WEB),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PASS screenshot gap" in result.stdout
+
+
+@pytest.mark.parametrize("key", GAP_CAPTURES)
+@pytest.mark.parametrize(
+    "scenario",
+    ["settled", "missing", "hidden", "wrong-text", "clipped", "covered", "zero-area"],
+)
+def test_gap_capture_requires_semantic_content_after_framing(tmp_path, key, scenario):
+    _run_gap_capture(tmp_path, key, scenario)
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        *[
+            f"{kind}-{edge}"
+            for kind in ("rounding", "edge", "overflow")
+            for edge in ("top", "bottom", "left", "right")
+        ],
+        "covered-rounding",
+    ],
+)
+def test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests(
+    tmp_path, scenario
+):
+    _run_gap_capture(tmp_path, "fittings-copy-preflight-bottom-narrow", scenario)
+
+
+@pytest.mark.parametrize(
+    "scenario", ["unresolved", "wrong-name", "wrong-description", "missing-rack"]
+)
+def test_metadata_capture_waits_for_real_detail_without_creating_drafts(
+    tmp_path, scenario
+):
+    _run_gap_capture(tmp_path, "fittings-metadata-narrow", scenario)
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    ["codec-missing", "codec-missing-clipped", "inconsistent-capability", "unresolved"],
+)
+def test_profiles_scope_capture_uses_actual_capability_without_overrides(
+    tmp_path, scenario
+):
+    _run_gap_capture(tmp_path, "profiles-copy-scope", scenario)
+
+
+@pytest.mark.parametrize(
+    ("key", "scenario"),
+    [
+        ("fittings-copy-preflight-bottom-narrow", "wrong-pair"),
+        ("fittings-copy-preflight-bottom-narrow", "unresolved"),
+        ("fittings-copy-result-bottom-narrow", "wrong-summary"),
+    ],
+)
+def test_lower_copy_capture_rejects_unsettled_or_wrong_outcomes(
+    tmp_path, key, scenario
+):
+    _run_gap_capture(tmp_path, key, scenario)
+
+
+@pytest.mark.parametrize("key", GAP_CAPTURES)
+def test_gap_capture_walk_settles_then_verifies_and_reports_fixture(
+    tmp_path, monkeypatch, key
+):
+    screen = next((screen for screen in shoot.SCREENS if screen.key == key), None)
+    assert screen, f"missing gap capture: {key}"
+    monkeypatch.setattr(shoot, "SCREENS", (screen,))
+    operations = []
+    monkeypatch.setattr(shoot.time, "sleep", lambda _: operations.append("settle"))
+    verify = shoot.new_screen_verify_script(screen)
+    cleanup = shoot.new_screen_cleanup_script(screen)
+
+    class CDP:
+        def evaluate(self, expression):
+            operations.append(expression)
+            return True if expression == "WM.eve_shown !== false" else None
+
+        def set_device_metrics_override(self, *, width, height):
+            assert (width, height) == (840, 625)
+            operations.append("floor")
+
+        def clear_device_metrics_override(self):
+            operations.append("clear")
+
+        def screenshot(self):
+            operations.append("capture")
+            return b"png"
+
+    shots, skipped, _ = shoot.walk(CDP(), tmp_path, settle_ms=0)
+    assert not skipped
+    assert shots[0]["error"] is None
+    index = operations.index(verify)
+    assert operations[index - 1] == "settle"
+    assert operations[index + 1] == "capture"
+    if key == "profiles-copy-scope":
+        assert "fixture" not in shots[0], (
+            "ordinary scope is live capability, not synthetic"
+        )
+        assert shoot.new_screen_prepare_script(screen) is None
+    else:
+        marker = (
+            "DEV_FITTINGS_SCREENSHOT_FIXTURE"
+            if screen.route == "fittings"
+            else "DEV_TOOL_SCREENSHOT_FIXTURE"
+        )
+        assert shots[0]["fixture"] == "wingman/web/dev.js:" + marker
+        assert operations.index(cleanup) > operations.index("capture")
+    if screen.at_floor:
+        assert operations.index("floor") < operations.index(verify)
+        assert operations[-1] == "clear"
 
 
 def test_preview_capture_variants_cover_the_scroller_and_picker():
@@ -1502,6 +1701,9 @@ def test_fittings_capture_inventory_covers_every_required_visual_state():
         "fittings-copy-limit",
         "fittings-copy-progress",
         "fittings-copy-result",
+        "fittings-metadata-narrow",
+        "fittings-copy-preflight-bottom-narrow",
+        "fittings-copy-result-bottom-narrow",
     }
     assert all(
         screen.gated for screen in shoot.SCREENS if screen.key.startswith("fittings")
