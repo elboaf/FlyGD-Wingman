@@ -70,7 +70,7 @@ function message(owner) {
   render({cycle_prev: gesture, groups: [{id: 'g1', name: 'Fleet', cycle: gesture}]});
   assert.match(message('group:g1'), /All back takes priority/);
   render({groups: [{id: 'g2', name: 'Second', cycle: gesture}, {id: 'g1', name: 'First', cycle: gesture}]});
-  assert.match(message('group:g1'), /cycle group Second takes priority/);
+  assert.match(message('group:g1'), /cycle group Second forward takes priority/);
   // Same displayed label is not the same owner.
   render({cycle_next: gesture, groups: [{id: 'g1', name: 'All forward', cycle: gesture}]});
   assert.match(message('cycle:next'), /conflicts with cycle group All forward/);

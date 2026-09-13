@@ -2933,7 +2933,7 @@ def test_preview_dev_push_callback_has_exact_order_and_single_delivery():
 def test_preview_create_appends_exact_group_from_its_locals_before_push():
     body = _normalise_js(_extract_fn_body("api.create_preview_cycle_group"))
     make_id = "varid='g-dev-'+Date.now();"
-    append = "groups.push({id:id,name:clean,cycle:''});"
+    append = "groups.push({id:id,name:clean,cycle:'',cycle_prev:''});"
     push = "_devPushHotkeys();"
     assert body.count(make_id) == 1
     assert body.count("groups.push(") == 1

@@ -34,6 +34,8 @@ function createDOM(page) {
       assert.ok(index >= 0); this.children.splice(index, 0, el); el.parentNode = this; return el;
     }
     remove() { if (this.parentNode) this.parentNode.removeChild(this); }
+    get title() { return this.getAttribute('title') || ''; }
+    set title(value) { this.setAttribute('title', value); }
     get options() { return this.querySelectorAll('option'); }
     get selectedIndex() {
       const options = this.options;

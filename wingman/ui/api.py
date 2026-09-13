@@ -4868,7 +4868,14 @@ class Api:
                             )
                     if any(g.get("id") == new_id for g in groups):
                         raise ValueError(f"ID collision for {new_id!r}")
-                    groups.append({"id": new_id, "name": clean_name, "cycle": ""})
+                    groups.append(
+                        {
+                            "id": new_id,
+                            "name": clean_name,
+                            "cycle": "",
+                            "cycle_prev": "",
+                        }
+                    )
             except ValueError as exc:
                 current = self._preview_hotkeys()
                 return self._preview_group_result(False, str(exc), current)
@@ -4959,7 +4966,15 @@ class Api:
         return self._preview_group_result(True, None, result_table)
 
     def set_preview_cycle_group_bind(self, group_id, gesture) -> dict:
-        """Set the cycle keybind for a named group.
+        """Set the forward keybind for a named group."""
+        return self._set_preview_cycle_group_bind(group_id, gesture, "cycle")
+
+    def set_preview_cycle_group_prev_bind(self, group_id, gesture) -> dict:
+        """Set the back keybind for a named group."""
+        return self._set_preview_cycle_group_bind(group_id, gesture, "cycle_prev")
+
+    def _set_preview_cycle_group_bind(self, group_id, gesture, key) -> dict:
+        """Set one direction without replacing the group's other keybind.
 
         Returns {applied, persisted, error, hotkeys}. Empty gesture clears
         the bind. A non-empty string that does not parse is refused.
@@ -4992,7 +5007,7 @@ class Api:
                     target = next((g for g in groups if g.get("id") == group_id), None)
                     if target is None:
                         raise ValueError(f"No group with id {group_id!r}")
-                    target["cycle"] = canonical
+                    target[key] = canonical
             except ValueError as exc:
                 current = self._preview_hotkeys()
                 return self._preview_group_result(False, str(exc), current)

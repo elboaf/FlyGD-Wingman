@@ -581,11 +581,15 @@ def validated_preview(raw) -> dict:
                 if group_id in valid_ids or folded in seen_names:
                     continue
                 parsed = preview_gestures.parse(raw_group.get("cycle"))
+                previous = preview_gestures.parse(raw_group.get("cycle_prev"))
                 section["hotkeys"]["groups"].append(
                     {
                         "id": group_id,
                         "name": clean_name,
                         "cycle": preview_gestures.display(parsed) if parsed else "",
+                        "cycle_prev": (
+                            preview_gestures.display(previous) if previous else ""
+                        ),
                     }
                 )
                 valid_ids.add(group_id)

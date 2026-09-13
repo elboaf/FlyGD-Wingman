@@ -254,13 +254,16 @@ def plan_registrations(table) -> list:
     entries.append((table.get("cycle_prev"), ("cycle", -1)))
     groups = table.get("groups")
     if isinstance(groups, list):
-        for group in groups:
-            if not isinstance(group, dict):
-                continue
-            gid = group.get("id")
-            if not isinstance(gid, str) or not gid:
-                continue
-            entries.append((group.get("cycle"), ("cycle_group", gid)))
+        # Append every back action after the established forwards, not beside
+        # its group: a new back bind must never displace a later group's forward.
+        for key, kind in (("cycle", "cycle_group"), ("cycle_prev", "cycle_group_prev")):
+            for group in groups:
+                if not isinstance(group, dict):
+                    continue
+                gid = group.get("id")
+                if not isinstance(gid, str) or not gid:
+                    continue
+                entries.append((group.get(key), (kind, gid)))
 
     plan, claimed = [], set()
     for text, action in entries:
@@ -3149,7 +3152,7 @@ class PreviewHost:
                 if target is not None:
                     resolved_cursor = target
                     last_cycle_target = target
-            else:  # cycle_group
+            else:  # cycle_group / cycle_group_prev share membership and history
                 group_id = value
                 keys = self._group_cycle_keys(group_id)
                 if not keys:
@@ -3163,7 +3166,8 @@ class PreviewHost:
                     # "An empty group is a logged no-op").
                     continue
                 history = self._last_group_cycled.get(group_id)
-                target = cycle.step(keys, target or resolved_cursor or history, 1)
+                delta = -1 if kind == "cycle_group_prev" else 1
+                target = cycle.step(keys, target or resolved_cursor or history, delta)
                 if target is not None:
                     resolved_cursor = target
                     last_group_targets[group_id] = target

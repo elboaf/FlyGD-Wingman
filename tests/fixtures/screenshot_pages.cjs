@@ -234,7 +234,13 @@ async function cropRegression() {
   };
   const actions = {
     clear: () => button('.rowacts button', 'Clear').click(),
-    'group-clear': () => document.querySelectorAll('.row').find(row => row.querySelector('.lab-name')?.textContent === 'DPS').querySelector('.rowacts button').click(),
+    'group-clear': () => {
+      const row = document.querySelectorAll('.row').find(row => row.querySelector('.lab-name')?.textContent === 'Forward · DPS');
+      assert.ok(row, 'rendered DPS forward group row');
+      const clear = row.querySelectorAll('.rowacts button').find(el => el.textContent === 'Clear');
+      assert.ok(clear, 'rendered DPS forward Clear control');
+      clear.click();
+    },
     capture: () => document.querySelector('.bindbtn').click(),
     bind: () => button('.rowacts button', 'Edit…').click(),
     size: () => detail('size').click(), copy: () => detail('copy').click(),

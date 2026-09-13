@@ -488,6 +488,9 @@ test('coverage uses only current-session counters, including partial stale cover
 
 test('entering the connection card disarms real preview keybind capture before typing', async () => {
   const source = fs.readFileSync(path.join(web, 'previews.js'), 'utf8');
+  // Include capture's real manager-focus dependency and state, not a no-op seam.
+  const focus = source.slice(source.indexOf('  var groupFocusPending ='),
+    source.indexOf("  document.addEventListener('focusin', groupFocusInteraction)"));
   // Exercise the existing capture owner plus the new card ingress, not its roster renderer.
   const capture = source.slice(source.indexOf('  function beginCapture('),
     source.indexOf('  // Every push- or fetch-driven redraw'));
@@ -502,9 +505,13 @@ test('entering the connection card disarms real preview keybind capture before t
       },
         send: (...args) => {calls.push(args); return Promise.resolve();}},
       render: () => {throw Error('no roster update pending');}};
-    vm.createContext(context); vm.runInContext(capture, context);
+    vm.createContext(context); vm.runInContext(focus + capture, context);
+    context.groupFocusPending = true;
+    context.groupDialogFocus = {control: 'delete', group: 'g'};
     const button = {textContent: 'Old keybind', classList: {add() {}, remove() {}}};
     context.beginCapture(button, () => {throw Error('credential input cannot become a keybind');});
+    assert.equal(context.groupFocusPending, false, 'new capture revokes pending manager focus');
+    assert.equal(context.groupDialogFocus, null, 'new capture revokes an own-dialog lease too');
     await turn(); assert.equal(button.textContent, 'Press a key…');
     card.dispatchEvent({type: event});
     assert.equal(context.capturing, null, 'card entry releases native and page capture');

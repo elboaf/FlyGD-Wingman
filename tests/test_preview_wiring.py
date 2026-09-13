@@ -1990,7 +1990,7 @@ def test_create_rename_assign_and_delete_cycle_group(tmp_path, monkeypatch):
     created = api.create_preview_cycle_group(" DPS ")
     assert created["applied"] is True
     assert created["hotkeys"]["groups"] == [
-        {"id": "group-id", "name": "DPS", "cycle": ""}
+        {"id": "group-id", "name": "DPS", "cycle": "", "cycle_prev": ""}
     ]
     assert api.set_preview_character_group("Alice", "group-id")["applied"]
     assert api.rename_preview_cycle_group("group-id", "Damage")["applied"]
@@ -2114,7 +2114,9 @@ def test_cycle_group_methods_deliver_to_host_when_present(tmp_path, monkeypatch)
     api = make_api(tmp_path, id_factory=lambda: "g1", preview_host=host)
     api.create_preview_cycle_group("DPS")
     assert host.hotkeys is not None
-    assert host.hotkeys["groups"] == [{"id": "g1", "name": "DPS", "cycle": ""}]
+    assert host.hotkeys["groups"] == [
+        {"id": "g1", "name": "DPS", "cycle": "", "cycle_prev": ""}
+    ]
 
 
 def test_failed_persist_does_not_invoke_host_set_hotkeys(tmp_path, monkeypatch):
@@ -3280,22 +3282,18 @@ def test_do_add_clears_name_field_after_successful_create():
     if "addBtn.addEventListener" in do_add_body:
         do_add_body = do_add_body.split("addBtn.addEventListener", 1)[0]
 
-    then_body = (
-        do_add_body.split(".then(function (res)", 1)[1]
-        if ".then(function (res)" in do_add_body
-        else do_add_body
-    )
-    # Success path is after the refusal block; look for nameField.value clear
-    has_clear = "nameField.value" in then_body and (
-        "nameField.value = ''" in then_body
-        or 'nameField.value = ""' in then_body
-        or "nameField.value=''" in then_body
+    # Clearing may happen at submission, before the first repaint detaches the
+    # field. Clearing that detached field in the receipt no longer owns the
+    # retained draft. The production-JS focus-lifecycle cases cover both delivery
+    # orders, refusal and new typing after completion.
+    has_clear = (
+        "nameField.value = ''" in do_add_body
+        or 'nameField.value = ""' in do_add_body
+        or "nameField.value=''" in do_add_body
     )
     assert has_clear, (
-        "doAdd success path does not clear nameField.value after a successful "
-        "create. The user would see the just-added group name still in the "
-        "Add field, making a duplicate-create attempt likely. "
-        "Add `nameField.value = '';` in the success path before requestRender()."
+        "doAdd must clear the submitted name so a completed create does not "
+        "invite a duplicate submission. Ordinary refreshes must retain drafts."
     )
 
 
