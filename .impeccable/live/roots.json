@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "appRoot": "/mnt/c/dev/flygd-wingman",
+  "repoRoot": "/mnt/c/dev/flygd-wingman",
+  "contextRoot": "/mnt/c/dev/flygd-wingman",
+  "sessionRoot": "/mnt/c/dev/flygd-wingman/.impeccable/live",
+  "productPath": "/mnt/c/dev/flygd-wingman/PRODUCT.md",
+  "designPath": "/mnt/c/dev/flygd-wingman/DESIGN.md",
+  "resolvedFrom": "fallback"
+}
