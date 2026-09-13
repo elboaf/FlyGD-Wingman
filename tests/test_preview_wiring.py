@@ -11,6 +11,8 @@ import re
 import threading
 import types
 
+import pytest
+
 from tests.preview_runtime_helpers import HostLifecycle
 from tests.test_api import make_api
 
@@ -129,6 +131,88 @@ class FakeHost(HostLifecycle):
     @property
     def is_running(self):
         return self.started > self.stopped
+
+
+@pytest.mark.parametrize("key", ["standard", "large", "extra_large"])
+@pytest.mark.parametrize("with_host", [False, True])
+def test_label_size_persists_without_starting_previews_or_pushing_settings(
+    tmp_path, key, with_host
+):
+    from wingman import settings
+
+    host = FakeHost() if with_host else None
+    api = make_api(tmp_path, preview_host=host)
+    result = api.set_preview_label_size(key)
+    assert result == {"applied": True, "persisted": True, "error": None}
+    assert settings.load()["preview"]["label_size"] == key
+    assert api.get_settings()["settings"]["preview"]["label_size"] == key
+    assert not api._window.evaluated
+    assert not api._state.settings["preview"]["enabled"]
+    if host:
+        assert host.restyles == 1
+        assert host.started == host.stopped == host.sweeps == 0
+
+
+@pytest.mark.parametrize("value", [None, True, 17, 20.0, [], {}, "", "Large", "huge"])
+def test_invalid_label_size_never_saves_or_restyles(tmp_path, monkeypatch, value):
+    def forbidden(*args, **kwargs):
+        pytest.fail("invalid size reached persistence")
+
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    before = copy.deepcopy(api._state.settings)
+    monkeypatch.setattr("wingman.settings.update", forbidden)
+    assert api.set_preview_label_size(value) == {
+        "applied": False,
+        "persisted": False,
+        "error": "Choose a listed label size.",
+    }
+    assert api._state.settings == before and host.restyles == 0
+
+
+def test_label_size_refusal_preserves_ram_disk_and_committed_value(
+    tmp_path, monkeypatch
+):
+    from wingman import paths, settings
+
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    # make_api starts with a minimal legacy document; publish normalized
+    # defaults before testing rollback of an already-committed preference.
+    with settings.update(api._state.settings):
+        pass
+    before = copy.deepcopy(api._state.settings)
+    original_file = paths.settings_file().read_bytes()
+    reader = settings.committed_preview(api._state.settings)
+
+    def fail(*args, **kwargs):
+        raise OSError("read-only settings")
+
+    monkeypatch.setattr(settings, "_save_locked", fail)
+    result = api.set_preview_label_size("large")
+    assert result["applied"] is False and result["persisted"] is False
+    assert result["error"]
+    assert api._state.settings == before
+    assert paths.settings_file().read_bytes() == original_file
+    assert reader.get("label_size") == "standard"
+    assert host.restyles == 0
+
+
+def test_label_size_valid_noop_restyles_without_disk_write(tmp_path, monkeypatch):
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    assert api.set_preview_label_size("large")["persisted"]
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("unchanged key wrote settings")
+
+    monkeypatch.setattr("wingman.settings._save_locked", forbidden)
+    assert api.set_preview_label_size("large") == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+    assert host.restyles == 2 and host.started == 0
 
 
 def test_disabled_at_startup_never_starts_the_thread(tmp_path):

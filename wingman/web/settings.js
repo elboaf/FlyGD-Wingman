@@ -233,7 +233,8 @@
   // must survive a reply too, even if it happens to equal an older value.
   var FIELD_KEYS = {
     'f-privacy': 'privacy', 'f-category': 'category', 'f-recdir': 'recording_dir',
-    'f-gamelogs': 'gamelogs_dir', 'f-webhook': 'discord_webhook'
+    'f-gamelogs': 'gamelogs_dir', 'f-webhook': 'discord_webhook',
+    'preview-label-size': 'preview_label_size'
   };
   Object.keys(FIELD_KEYS).forEach(function (id) {
     WM.el(id).addEventListener('input', function () {
@@ -334,7 +335,9 @@
       privacy: s.privacy || 'unlisted', category: s.category || '20',
       notify_mode: s.notify_mode || 'toast', show_eve_tools: s.show_eve_tools !== false,
       recording_dir: s.recording_dir || '', gamelogs_dir: s.gamelogs_dir || '',
-      discord_webhook: s.discord_webhook || '', start_on_login: !!payload.start_on_login
+      discord_webhook: s.discord_webhook || '', start_on_login: !!payload.start_on_login,
+      preview_label_size: (s.preview || {}).label_size
+                          || WM.el('preview-label-size').options[0].value
     };
     // A document received during a write may predate it. Keep that
     // field's baseline and draft; its own acknowledgement settles both.
@@ -344,6 +347,13 @@
     detected = d;
     setField('f-privacy', current.privacy);
     setField('f-category', current.category);
+    // Before hydration no edit could commit: restore the stored choice even
+    // if the user reached this select before the first payload arrived.
+    if (!hydrated) {
+      WM.el('preview-label-size').value = current.preview_label_size;
+    } else {
+      setField('preview-label-size', current.preview_label_size);
+    }
     if (!pending('notify_mode') && document.activeElement
         && document.activeElement.name !== 'notify') {
       setNotify(current.notify_mode);
@@ -473,6 +483,13 @@
     var field = WM.el('f-privacy');
     commit('msg-uploads', ['set_privacy', field.value], 'privacy', field.value,
            function () { field.value = current.privacy; });
+  });
+
+  WM.el('preview-label-size').addEventListener('change', function () {
+    var field = WM.el('preview-label-size');
+    commit('preview-label-size-status', ['set_preview_label_size', field.value],
+           'preview_label_size', field.value,
+           function () { field.value = current.preview_label_size; });
   });
 
   // `change` on a text input fires on blur AND on Enter. That is safe for

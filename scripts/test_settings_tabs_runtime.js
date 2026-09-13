@@ -430,6 +430,22 @@ for (const leave of ['configure', 'section', 'route']) {
   });
 }
 
+test('label size acknowledgement survives tabs without extra reads or focus theft', async () => {
+  const p = await page({settings: true}); p.WM.openSettingsSection('previews', 'windows');
+  const field = p.el('preview-label-size');
+  assert.ok(field, 'label-size select exists in production markup');
+  field.focus(); await p.edit(field.id, 'large'); await p.fire(field, 'change');
+  assert.equal(p.calls.filter(call => call.method === 'set_preview_label_size').length, 1);
+  const reads = p.calls.filter(call => call.method === 'get_settings').length;
+  await p.click('previews', 'characters');
+  const focused = p.document.activeElement;
+  await p.reply('set_preview_label_size', accepted, ['large']);
+  assert.equal(p.document.activeElement, focused, 'acknowledgement cannot focus the hidden select');
+  await p.click('previews', 'windows');
+  assert.equal(p.el(field.id), field); assert.equal(field.value, 'large');
+  assert.equal(p.calls.filter(call => call.method === 'get_settings').length, reads);
+});
+
 test('webhook is remasked on combatlogs leave, preserving section/route leave and same-tab reveal', async () => {
   const p = await page({settings: true}); p.WM.openSettingsSection('uploading', 'combatlogs');
   await p.fire(p.el('btn-webhook-show'), 'click'); assert.equal(p.el('f-webhook').type, 'text');

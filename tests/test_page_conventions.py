@@ -62,6 +62,51 @@ _WRAPPERS = {"box": "check", "ring": "radio", "dot": "swatch"}
 _WRAPPERS_FOR = {"checkbox": ("box",), "radio": ("ring", "dot")}
 
 
+def test_label_size_choices_match_the_shared_presets():
+    from wingman.preview.labelsize import DEFAULT_LABEL_SIZE, LABEL_SIZE_PRESETS
+
+    appearance = re.search(
+        r'<details\b[^>]*id="preview-group-appearance"[^>]*>(.*?)</details>',
+        HTML,
+        re.DOTALL,
+    )
+    assert appearance is not None
+    select = re.search(
+        r'<select\b[^>]*id="preview-label-size"[^>]*>(.*?)</select>',
+        appearance.group(1),
+        re.DOTALL,
+    )
+    assert select is not None
+    options = re.findall(
+        r'<option value="([^"]+)"([^>]*)>([^<]+)</option>', select.group(1)
+    )
+    assert [(key, text) for key, attrs, text in options] == [
+        (key, value[0]) for key, value in LABEL_SIZE_PRESETS.items()
+    ]
+    assert [key for key, attrs, text in options if "selected" in attrs] == [
+        DEFAULT_LABEL_SIZE
+    ]
+    assert options[0][0] == DEFAULT_LABEL_SIZE
+    assert 'aria-describedby="preview-label-size-status"' in select.group(0)
+    assert (
+        '<label class="lab" for="preview-label-size">Label size</label>'
+        in appearance.group(1)
+    )
+    assert (
+        '<p class="field-msg" id="preview-label-size-status" hidden></p>'
+        in appearance.group(1)
+    )
+    dev = (WEB / "dev.js").read_text(encoding="utf-8")
+    fixture = re.search(
+        r"preview: \{ enabled: true, restore_preview_positions: true,(.*?)selection_color:",
+        dev,
+        re.DOTALL,
+    )
+    assert fixture is not None
+    default = re.search(r"label_size: '([^']+)'", fixture.group(1))
+    assert default is not None and default.group(1) == DEFAULT_LABEL_SIZE
+
+
 def _strip_html_comments(text: str) -> str:
     return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
 

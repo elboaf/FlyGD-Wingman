@@ -14,6 +14,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from ..paths import bundle_dir
 from . import geometry
+from .labelsize import DEFAULT_LABEL_SIZE, LABEL_SIZE_PRESETS
 
 logger = logging.getLogger(__name__)
 
@@ -172,10 +173,10 @@ def render(size, *, border_color, border=5, selected=False):
 # text (see render_label) rather than the preview's.
 LABEL_PAD_X = 8
 LABEL_PAD_Y = 5
-LABEL_FONT = 17
+LABEL_FONT = LABEL_SIZE_PRESETS[DEFAULT_LABEL_SIZE][1]
 
 
-def label_layout(label, max_w, font_size=LABEL_FONT, secondary=None):
+def label_layout(label, max_w, font_size=LABEL_FONT, secondary=None, *, max_h=None):
     """Return (size, primary, secondary) after independent ellipsis, or None.
 
     Measurement only. The cache needs the clipped strings as well as dimensions:
@@ -190,9 +191,13 @@ def label_layout(label, max_w, font_size=LABEL_FONT, secondary=None):
         return None
     width = probe.textlength(text, font=font)
     height = font_size + LABEL_PAD_Y * 2 + 4
+    if max_h is not None and height > max_h:
+        return None
     second = ""
-    if secondary:
-        small_size = max(1, font_size - 3)
+    small_size = max(1, font_size - 3)
+    # Keep primary identity intact on undersized restored previews; never crop
+    # glyphs or shrink the user's chosen font to squeeze in metadata.
+    if secondary and (max_h is None or height + small_size + 2 <= max_h):
         small_font = _font(small_size)
         second = _ellipsize(probe, secondary, small_font, max_w - LABEL_PAD_X * 2)
         if second:
@@ -201,13 +206,13 @@ def label_layout(label, max_w, font_size=LABEL_FONT, secondary=None):
     return ((int(width) + LABEL_PAD_X * 2, height), text, second)
 
 
-def label_size(label, max_w, font_size=LABEL_FONT, secondary=None):
+def label_size(label, max_w, font_size=LABEL_FONT, secondary=None, *, max_h=None):
     """The (w, h) render_label would draw, or None for no pill."""
-    layout = label_layout(label, max_w, font_size, secondary)
+    layout = label_layout(label, max_w, font_size, secondary, max_h=max_h)
     return layout[0] if layout is not None else None
 
 
-def render_label(label, max_w, font_size=LABEL_FONT, secondary=None):
+def render_label(label, max_w, font_size=LABEL_FONT, secondary=None, *, max_h=None):
     """Render the character-name pill for the overlay window.
 
     Sized to the text, not the preview: EVE-O Preview's overlay is a
@@ -219,7 +224,7 @@ def render_label(label, max_w, font_size=LABEL_FONT, secondary=None):
     click-through by style whatever the alpha says, and the label has
     the same readability over bright game content the old band had.
     """
-    layout = label_layout(label, max_w, font_size, secondary)
+    layout = label_layout(label, max_w, font_size, secondary, max_h=max_h)
     if layout is None:
         return None
     (w, h), text, second = layout

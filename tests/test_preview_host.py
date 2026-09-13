@@ -260,6 +260,45 @@ def test_eve_family_roundtrip_keeps_same_pump_and_requires_fresh_roster(family_p
     assert h._crop_controller.live and h._thread is thread
 
 
+@pytest.mark.parametrize("key", ["standard", "large", "extra_large"])
+def test_label_size_changed_while_eve_off_reaches_next_creation(
+    family_pump, monkeypatch, key
+):
+    from tests.test_preview_cropcontroller import client
+    from wingman.preview.runtime import FamilyDemand
+    from wingman.telemetry.model import RosterSnapshot
+
+    r = family_pump()
+    h = r.host
+    current = "standard"
+    seen = []
+    h._label_size = lambda: current
+    monkeypatch.setattr(
+        h, "_reconcile_roster", host.PreviewHost._reconcile_roster.__get__(h)
+    )
+
+    def create(cls, libs, client, rect, **kwargs):
+        seen.append(kwargs.get("label_size"))
+
+    monkeypatch.setattr(host.PreviewWindow, "create", classmethod(create))
+    h.set_families(FamilyDemand(2, True, True))
+    r.wait("eve-active")
+    h.apply_roster(RosterSnapshot(2, (client(),)))
+    r.call(lambda: None)
+    assert seen == ["standard"]
+    h.set_families(FamilyDemand(3, False, True))
+    r.wait("eve-stopped")
+    current = key
+    h.restyle()
+    r.call(lambda: None)
+    assert seen == ["standard"]
+    h.set_families(FamilyDemand(4, True, True))
+    r.wait("eve-active")
+    h.apply_roster(RosterSnapshot(3, (client(serial=2),)))
+    r.call(lambda: None)
+    assert seen == ["standard", key]
+
+
 def test_family_off_on_retains_font_owner_but_not_unrelated_pump_dispatch(family_pump):
     from tests.test_preview_cropcontroller import client
     from wingman.preview.runtime import FamilyDemand
@@ -4468,6 +4507,26 @@ def test_a_preview_created_on_retry_is_marked_selected(monkeypatch):
 # never_minimize, locked -----------------------------------------------------
 
 
+def test_label_size_defaults_without_a_callable():
+    h = host.PreviewHost(on_layout_changed=lambda *a: None)
+    assert h._current_label_size() == "standard"
+
+
+@pytest.mark.parametrize("value", [None, True, 17, 20.0, [], {}, "", "Large", "huge"])
+def test_bad_label_size_callback_falls_back(value):
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, label_size=lambda: value)
+    assert h._current_label_size() == "standard"
+
+
+def test_raising_label_size_callback_falls_back_and_logs(caplog):
+    def fail():
+        raise RuntimeError("settings unavailable")
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, label_size=fail)
+    assert h._current_label_size() == "standard"
+    assert "label_size" in caplog.text and "settings unavailable" in caplog.text
+
+
 def test_show_labels_defaults_on_without_a_callable():
     h = host.PreviewHost(on_layout_changed=lambda *a: None)
     assert h._labels_shown() is True
@@ -5008,7 +5067,10 @@ def test_a_cycle_with_every_character_opted_out_says_why(monkeypatch, caplog):
     assert "opted out" in caplog.text
 
 
-def test_the_sweep_passes_show_labels_and_opacity_at_creation(monkeypatch):
+@pytest.mark.parametrize("key", ["standard", "large", "extra_large"])
+def test_the_sweep_passes_label_size_show_labels_and_opacity_at_creation(
+    monkeypatch, key
+):
     """A preview appearing mid-session must be born with the current
     settings, not the shipped defaults -- otherwise a client that starts
     after a Settings change opens looking like the OLD configuration
@@ -5016,15 +5078,20 @@ def test_the_sweep_passes_show_labels_and_opacity_at_creation(monkeypatch):
     seen = []
 
     def fake_create(cls, libs, client, rect, **kw):
-        seen.append((kw["show_labels"], kw["opacity"]))
+        seen.append((kw["show_labels"], kw["opacity"], kw["label_size"]))
         return
 
-    h = _config_sweep_host(monkeypatch, show_labels=lambda: False, opacity=lambda: 180)
+    h = _config_sweep_host(
+        monkeypatch,
+        show_labels=lambda: False,
+        opacity=lambda: 180,
+        label_size=lambda: key,
+    )
     monkeypatch.setattr(host.PreviewWindow, "create", classmethod(fake_create))
 
     h._sweep(libs=None)
 
-    assert seen == [(False, 180)]
+    assert seen == [(False, 180, key)]
 
 
 # --- restyle(): the live-update entry point ---------------------------------
@@ -5087,6 +5154,8 @@ class _RestyleWindow:
         self.locked = locked
         self.redraws = 0
         self.label_calls = []
+        self.label_size = "standard"
+        self.label_sizes_seen = []
         # The real PreviewWindow widens this to ALERT_BORDER for the
         # duration of an alert, so _restyle cannot assume BORDER.
         self._inset = host.window_mod.BORDER if inset is None else inset
@@ -5094,10 +5163,30 @@ class _RestyleWindow:
 
     def set_labels(self, shown):
         self.label_calls.append(shown)
+        self.label_sizes_seen.append(self.label_size)
         self.show_labels = shown
 
     def redraw(self, force=False):
         self.redraws += 1
+
+
+@pytest.mark.parametrize("key", ["standard", "large", "extra_large"])
+def test_label_size_restyle_reads_once_and_assigns_before_synchronizing(key):
+    current = "standard"
+    reads = []
+
+    def read():
+        reads.append(current)
+        return current
+
+    h = host.PreviewHost(on_layout_changed=lambda *a: None, label_size=read)
+    windows = [_RestyleWindow(geometry.Rect(0, 0, 320, 210)) for _ in range(2)]
+    h._windows = dict(zip(("Alice", "Bravo"), windows, strict=True))
+    h._restyle()
+    current = key
+    h._restyle()
+    assert reads == ["standard", key]
+    assert all(win.label_sizes_seen == ["standard", key] for win in windows)
 
 
 def test_restyle_updates_every_open_window(monkeypatch):

@@ -77,6 +77,41 @@ never Start copy, save a formation, select a native source, or contact a relay.
       Each stage and its fixture clear before the next capture; no real Start,
       clipboard, authentication, credential or native operation is used to stage it.
 
+## Preview label readability (#214) — acceptance NOT RUN
+
+These checks are new and **NOT RUN**. Linux/Pillow, fake-native pump and Node
+results do not establish browser layout or Windows/WebView2 acceptance. Use only
+an operator-authorized isolated installation/settings profile and test clients;
+never move or resize an EVE source to arrange the test. Record source SHA, build,
+monitor/scaling setup and evidence separately in
+`docs/preview-label-readability-implementation-notes.md`.
+
+- [ ] **Browser-render (NOT RUN):** open actual Settings > Previews > Windows at
+      840×625 and 839×621 CSS pixels. Label size and its inline refusal remain
+      reachable with no horizontal overflow. Check keyboard focus, pre-hydration
+      interaction, focused refusal, and delayed acknowledgement across a switch
+      to Characters & cycling and back. Preview/Show labels Off keeps the size
+      preference editable. Browser evidence is not native acceptance.
+- [ ] **Windows automated (NOT RUN):** run the focused gates on Windows with
+      Node and the release codec prerequisites; record results independently
+      from Linux, including any skips.
+- [ ] **Installed/native rendering (NOT RUN):** for Standard, Large and Extra
+      large, check one-/two-line pills at 120×90 and 320×210, normal and alert
+      insets, long independently ellipsized names, empty metadata and bright/dark
+      video. Character name remains primary; Wanderer name stays smaller.
+      Confirm installed bundled Inter, top-left placement and readable contrast.
+- [ ] **Legacy containment (NOT RUN):** with authorized synthetic restored
+      undersized Wingman rectangles (including 120×30), every preset omits the
+      secondary when it cannot fit and hides the pill when primary cannot fit;
+      expanding the preview restores content. Never crop glyphs, shrink the
+      selected font or resize the source window.
+- [ ] **DPI/input/lifecycle (NOT RUN):** repeat at 100/125/150/200% and across
+      mixed-monitor scaling. Clicking through the pill activates the same EVE
+      client. Preset changes, Show labels, owner hiding, movement, metadata expiry,
+      alert pulses, Preview Off/on and Quit cause no focus theft, detached labels,
+      extra overlay windows or changed source bounds. Verify source bounds by
+      observation only; do not move, resize, maximize or change source styles/input.
+
 ## Wanderer names — live/native acceptance
 
 **All 15 checks below are NOT RUN for this implementation.** No deployed instance

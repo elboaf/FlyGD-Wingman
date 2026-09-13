@@ -35,6 +35,7 @@ def _host_config(monkeypatch, document):
     [
         ("restore_positions", {"restore_preview_positions": False}, True, False),
         ("show_labels", {"show_labels": False}, True, False),
+        ("label_size", {"label_size": "large"}, "standard", "large"),
         ("opacity", {"opacity": 100}, 255, 100),
         ("minimize_inactive_clients", {"minimize_inactive_clients": True}, False, True),
         ("hide_on_lost_focus", {"hide_on_lost_focus": True}, False, True),
