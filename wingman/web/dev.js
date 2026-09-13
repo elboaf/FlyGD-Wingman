@@ -841,7 +841,7 @@
       "auth_configured": true,
       "authorization_activity": "idle",
       "authorization_notice": "",
-      "warnings": ["Skills Only was removed, but cleanup is incomplete. Restart Wingman to retry cleanup before adding this character again."],
+      "warnings": ["\"Skills Only\" was removed, but cleanup is incomplete. Restart Wingman to retry cleanup before adding this character again."],
       "characters": [
         {"character_id": 7, "character_name": "Aiga Otsolen", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""},
         {"character_id": 11, "character_name": "Rhea Vestibule", "authenticated_utc": "2026-09-04T12:00:00+00:00", "skills": "authorized", "fittings": "authorized", "needs_reauth": false, "persistence_error": ""}

@@ -1607,7 +1607,7 @@ def _screen_content_setup_script(screen: Screen) -> str | None:
             "    throw new Error('Characters partial-cleanup count did not render');\n"
             "  }\n"
             "  if (!notice || !notice.classList.contains('warn')\n"
-            "      || notice.textContent.indexOf('Skills Only was removed, but cleanup is incomplete.') === -1\n"
+            "      || notice.textContent.indexOf('\"Skills Only\" was removed, but cleanup is incomplete.') === -1\n"
             "      || notice.textContent.indexOf('Restart Wingman to retry cleanup') === -1) {\n"
             "    throw new Error('Characters partial-cleanup notice did not render');\n"
             "  }\n"

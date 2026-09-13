@@ -534,7 +534,7 @@ async function fidelityRegression() {
     run(data.stage);
   } else if (moduleName === 'characters') {
     const notice = el('characters-notice');
-    assert.match(notice.textContent, /Skills Only was removed, but cleanup is incomplete/);
+    assert.match(notice.textContent, /"Skills Only" was removed, but cleanup is incomplete/);
     assert.match(notice.textContent, /Restart Wingman to retry cleanup before adding this character again/);
     assert.equal(notice.classList.contains('warn'), true, 'same warning emphasis as production Forget');
     assert.ok(visible(notice));
