@@ -881,6 +881,18 @@ merge/amend or hook bypass was used.
 
 ### Final gate status
 
-Implementation and focused/browser checks are complete. Local polish and the
-completed-source full suite are being finalized; final results will be recorded
-below before Task 5 is reported complete.
+Implementation commit: `ccecd376` — `feat(previews): publish settled geometry and
+add saved layout controls`. Local polish used the explicit Task 5 base, no
+subagents. It removed the orphaned Size helper, kept the new host callback at the
+end of the positional signature, clarified shared/exclusive admission wording,
+and applied Ruff's safe import/context/format corrections.
+
+The first full run finished with **12,877 passed, 13 Windows-only skips and
+6 failures in 392.02s** (`/tmp/wingman-task5-final-full.{log,xml}`). All six were
+older harness assumptions: omitted `_devLayouts` in the group dev slice, omitted
+`detailInteraction` in the Wanderer capture slice (two tests), fixture geometry/
+exclusion edits without newer revisions (two tests), and expected group-dialog
+writes after navigation/new capture. The recovery changed only those test seams;
+no production correction was required. The focused recovery gate passed
+**74 tests in 15.42s** (`/tmp/task5-harness-recovery`). The completed-source full
+rerun is pending; no green full-suite claim is made at this checkpoint.

@@ -20,6 +20,15 @@ window.WM.send = (method, ...args) => {
 vm.runInContext(fs.readFileSync(web + '/previews.js', 'utf8'), context);
 const owner = 'Aiga Otsolen';
 const configure = () => document.querySelector('[data-preview-configure="' + owner + '"]');
+let observation = 1;
+function deliver(payload) {
+  // Each fixture edit represents a fresh backend observation. Bare top-level
+  // changes cannot bypass the production geometry/exclusion high-water guards.
+  payload.geometry_revision = ++observation;
+  payload.layout_state.revision = observation;
+  payload.layout_state.excluded = payload.excluded.slice();
+  window.onPreviewHotkeys(JSON.parse(JSON.stringify(payload)));
+}
 (async () => {
   const stickyErrors = {
     'sticky-missing-row': /owning row/,
@@ -44,7 +53,7 @@ const configure = () => document.querySelector('[data-preview-configure="' + own
     payload.excluded = [];
     const warning = () => document.getElementById('preview-bind-conflict-' + encodeURIComponent('character:' + owner));
     const repair = () => warning()?.querySelector('button');
-    window.onPreviewHotkeys(payload);
+    deliver(payload);
     assert.ok(repair(), 'active bookmark overlap needs a repair route without action-name data');
     assert.equal(repair().textContent, 'Open Bookmarks');
     assert.ok(repair().classList.contains('linkbtn'), 'recovery is subordinate to the owning bind');
@@ -79,7 +88,7 @@ const configure = () => document.querySelector('[data-preview-configure="' + own
       if (kind === 'excluded') next.excluded = [owner];
       if (kind === 'resolved') next.bookmark_chords.active = [];
       if (kind === 'unknown') { next.enabled = false; next.registration = {}; }
-      window.onPreviewHotkeys(next);
+      deliver(next);
       if (kind === 'unknown') assert.ok(repair(), 'configured overlap remains repairable without a registration report');
       else assert.ok(!repair(), kind + ' must not offer an unrelated repair');
       if (kind === 'duplicate') assert.match(warning().textContent, /conflicts with All forward/);
@@ -97,7 +106,7 @@ const configure = () => document.querySelector('[data-preview-configure="' + own
     payload.sizable = [];
     payload.enabled = true;
     payload.layout_sources = [{name: 'Other Pilot', online: false}];
-    window.onPreviewHotkeys(payload);
+    deliver(payload);
     configure().click();
     const detail = () => document.getElementById('preview-character-detail-' + encodeURIComponent(owner));
     const reason = detail().querySelector('.size-none');
@@ -106,20 +115,20 @@ const configure = () => document.querySelector('[data-preview-configure="' + own
     assert.match(reason.textContent, /start|create/i);
     assert.doesNotMatch(reason.textContent, /enable previews/i, 'acknowledged On must not request enabling again');
     payload.enabled = false;
-    window.onPreviewHotkeys(payload);
+    deliver(payload);
     assert.match(detail().querySelector('.size-none').textContent, /enable previews.*start/i);
     payload.enabled = true;
-    window.onPreviewHotkeys(payload);
+    deliver(payload);
     assert.equal(detail().querySelector('.size-none').textContent, reason.textContent);
     assert.equal(detail().querySelector('[data-preview-detail-control="size"]'), null);
     assert.equal(detail().querySelector('[data-preview-detail-control="copy"]').disabled, false);
     payload.layout_sources = [];
-    window.onPreviewHotkeys(payload);
+    deliver(payload);
     assert.equal(detail().querySelector('.size-none').textContent, reason.textContent);
     assert.equal(detail().querySelector('[data-preview-detail-control="copy"]'), null);
     // Only the authoritative flag admits size editing, even without client dimensions.
     payload.sizable = [owner]; payload.client_sizes = {}; payload.sizes = {};
-    window.onPreviewHotkeys(payload);
+    deliver(payload);
     assert.equal(detail().querySelector('.size-none'), null);
     assert.equal(detail().querySelector('[data-preview-detail-control="size"]').disabled, false);
     assert.equal(calls.length, 0, 'guidance never changes size or placement');

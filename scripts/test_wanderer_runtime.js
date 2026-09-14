@@ -498,7 +498,7 @@ test('entering the connection card disarms real preview keybind capture before t
     const card = new Element('wanderer-settings');
     const tabs = new Element('settings-tabs-previews');
     const calls = [];
-    const context = {capturing: null, captureSequence: 0, pendingRender: false, screenshotLive: null,
+    const context = {capturing: null, captureSequence: 0, detailInteraction: 0, pendingRender: false, screenshotLive: null,
       WM: {el: id => {
         if (id === 'settings-tabs-previews') return tabs;
         assert.equal(id, 'wanderer-settings'); return card;
