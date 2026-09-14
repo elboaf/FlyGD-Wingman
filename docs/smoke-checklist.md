@@ -112,21 +112,30 @@ synthetic presentation checks separate from authorized live operations.
 - [ ] Fittings detail initially shows modules/presences, with Edit metadata…
       closed. Opening, typing, collapsing, refreshing and reopening do not save
       or lose drafts. A refresh preserves an owned editor's caret/focus, but
-      never takes focus from another row, route or dialog. Check Save refusal,
-      newer typing during Save, and Discard using disposable data only.
+      never takes focus from another row, route or dialog. Save's description
+      names only Name/Description; the separated Collections and Superseded by
+      controls say they apply immediately, including with metadata closed.
+      Check Save refusal, newer typing during Save, and Discard using disposable
+      data only; immediate changes must not submit the metadata draft.
 - [ ] Cannot copy · Details… opens the correct fitting and explains the copy
       restriction. Name conflicts expose a persistent alternate-name label and
       name-or-Skip instruction. A rejected re-review stays visible while edits
-      are made; a subsequent check clears obsolete error styling. Limit
-      rejection still counts additions, not the number of selected fits.
+      are made; a subsequent check clears obsolete error styling. Unavailable
+      pairs retain their supplied reason and a distinct Unavailable status,
+      with Close/reselect/review guidance rather than an invented diagnosis.
+      Already present stays visually separate. Limit rejection still counts
+      additions, not the number of selected fits.
 - [ ] During staged copy progress, Cancel states that the current request may
       finish and completed copies remain. The note survives later progress
       updates and disappears outside the active phase. Stage only; do not start
       real copies merely for screenshots.
 - [ ] Preview size help names dimensions, and applying the saved size discloses
-      custom-size replacement on Wingman's previews only. Conflict copy names
+      custom-size replacement on Wingman's previews only. An unavailable Size
+      asks to enable previews only while the master preference is Off; saved
+      placement and Copy eligibility remain unchanged. Conflict copy names
       the affected action and recovery; configured overlap never claims to
-      prove actual bookmark-engine liveness or physical key delivery.
+      prove actual bookmark-engine liveness or physical key delivery. Open
+      Bookmarks follows the normal section route and disarms Preview capture.
 - [ ] Webhook Enter-to-save guidance is visible before editing; blur never
       commits. Unknown FightRecorder update status leaves Install latest
       available but neutral. General groups Startup distinctly, Fleet help
@@ -164,6 +173,9 @@ never Start copy, save a formation, select a native source, or contact a relay.
 - [ ] Inspect enabled dim keybinds normally, hovered and focused; formation rings
       and height tethers stay readable in editor and import preview. Preview
       conflict warnings scroll under sticky headers before their owning control.
+      No red fragment may show through the header's trailing space while
+      scrolling expanded detail at 840px, the ordinary 1015px view, or wider
+      widths; the five headings and control columns must remain aligned.
       Alerts common modifiers precede Advanced pulse behavior.
 - [ ] Fleet local visibility explicitly affects only the bar. Sharing scope and
       current/pending verification remain exposed before Start verification;
@@ -364,8 +376,11 @@ but do not replace, these Windows/WebView2 checks.
 - [ ] **Removal outcomes identify the character.** With controlled failed,
       incomplete-cleanup and lost-reply responses, confirm the notice names the
       selected pilot even after a roster refresh. Only a confirmed removal says
-      the pilot was removed. Incomplete cleanup directs the user to restart
-      Wingman; it does not claim that refreshing the roster repairs saved state.
+      the pilot was removed. Incomplete cleanup distinguishes Wingman's removed
+      saved authorization from unfinished local Skills/Fittings cleanup, retains
+      the supplied error, and asks for a restart before authenticating again.
+      It promises neither EVE-side revocation nor a successful retry; refreshing
+      the roster does not repair saved state.
 - [ ] **The copy limit describes additions, not selected fittings.** Guidance is
       visible before review. More than 20 selected fits can still be reviewed
       when enough already exist on the targets; more than 20 actual additions

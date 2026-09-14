@@ -28,13 +28,74 @@ const configure = () => document.querySelector('[data-preview-configure="' + own
     'sticky-bottom-clamp': /bottom clamp/,
     'sticky-outside-scrollport': /scrollport/
   };
-  const scenarios = ['collapsed', 'expanded', 'size-reason', 'sticky-normal'].concat(Object.keys(stickyErrors));
+  const scenarios = ['collapsed', 'expanded', 'bookmark-repair', 'size-reason', 'sticky-normal'].concat(Object.keys(stickyErrors));
   assert.ok(scenarios.includes(data.scenario), 'Unknown preview warning scenario: ' + data.scenario);
   await new Promise(resolve => setImmediate(resolve));
   calls.length = 0; // The module's initial read is not part of staging.
+  if (data.scenario === 'bookmark-repair') {
+    window.WM.openSettingsSection('previews', 'characters');
+    await new Promise(resolve => setImmediate(resolve));
+    calls.length = 0;
+    const gesture = 'Ctrl+Alt+1';
+    const payload = JSON.parse(JSON.stringify(data.fixture));
+    payload.hotkeys = {characters: {[owner]: gesture}, cycle_next: '', cycle_prev: '', groups: [], group_by_character: {}};
+    payload.registration = {[gesture]: true};
+    payload.bookmark_chords = {active: [gesture], latent: []};
+    payload.excluded = [];
+    const warning = () => document.getElementById('preview-bind-conflict-' + encodeURIComponent('character:' + owner));
+    const repair = () => warning()?.querySelector('button');
+    window.onPreviewHotkeys(payload);
+    assert.ok(repair(), 'active bookmark overlap needs a repair route without action-name data');
+    assert.equal(repair().textContent, 'Open Bookmarks');
+    assert.ok(repair().classList.contains('linkbtn'), 'recovery is subordinate to the owning bind');
+    assert.equal(repair().disabled, false);
+    const row = configure().parentNode;
+    assert.equal(row.firstElementChild, warning());
+    const bind = row.querySelector('.bindbtn');
+    assert.equal(bind.getAttribute('aria-describedby'), warning().id);
+    assert.match(warning().textContent, /^Aiga Otsolen: Ctrl\+Alt\+1 /);
+    assert.equal(calls.length, 0, 'rendering does not look up bookmark actions');
+    bind.click();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.ok(bind.classList.contains('capturing'));
+    repair().click();
+    assert.equal(window.WM.current_section, 'bookmarks');
+    assert.ok(document.getElementById('section-bookmarks').classList.contains('active'));
+    assert.ok(!document.getElementById('section-previews').classList.contains('active'));
+    assert.ok(!bind.classList.contains('capturing'), 'the real navigation leave contract cancels capture');
+    assert.deepEqual(calls, [['set_bind_capture', true], ['set_bind_capture', false]], 'navigation never edits either binding');
+    let prevented = false;
+    document.dispatchEvent({type: 'keydown', key: 'x', code: 'KeyX', ctrlKey: true, altKey: true,
+      preventDefault() { prevented = true; }, stopPropagation() {}});
+    assert.equal(prevented, false, 'capture must not swallow a key typed in Bookmarks');
+    assert.equal(calls.length, 2);
+    // The repair route belongs only to the bookmark warning, never a higher-
+    // priority local conflict/refusal or an inactive/opted-out registration.
+    for (const kind of ['duplicate', 'refused', 'latent', 'excluded', 'resolved', 'unknown']) {
+      const next = JSON.parse(JSON.stringify(payload));
+      if (kind === 'duplicate') next.hotkeys.cycle_next = gesture;
+      if (kind === 'refused') next.registration[gesture] = false;
+      if (kind === 'latent') next.bookmark_chords = {active: [], latent: [gesture]};
+      if (kind === 'excluded') next.excluded = [owner];
+      if (kind === 'resolved') next.bookmark_chords.active = [];
+      if (kind === 'unknown') { next.enabled = false; next.registration = {}; }
+      window.onPreviewHotkeys(next);
+      if (kind === 'unknown') assert.ok(repair(), 'configured overlap remains repairable without a registration report');
+      else assert.ok(!repair(), kind + ' must not offer an unrelated repair');
+      if (kind === 'duplicate') assert.match(warning().textContent, /conflicts with All forward/);
+      if (kind === 'refused') assert.match(warning().textContent, /owned by another application/);
+      if (['latent', 'excluded', 'resolved'].includes(kind)) {
+        assert.equal(warning(), null);
+        assert.equal(configure().parentNode.querySelector('.bindbtn').getAttribute('aria-describedby'), null);
+      }
+    }
+    console.log('PASS preview warning grouping ' + data.scenario);
+    return;
+  }
   if (data.scenario === 'size-reason') {
     const payload = JSON.parse(JSON.stringify(data.fixture));
     payload.sizable = [];
+    payload.enabled = true;
     payload.layout_sources = [{name: 'Other Pilot', online: false}];
     window.onPreviewHotkeys(payload);
     configure().click();
@@ -43,6 +104,13 @@ const configure = () => document.querySelector('[data-preview-configure="' + own
     assert.ok(reason && !reason.hidden, 'unavailable size has a visible explanation');
     assert.match(reason.textContent, /preview|placement/i, 'the explanation is text, not only a hover title');
     assert.match(reason.textContent, /start|create/i);
+    assert.doesNotMatch(reason.textContent, /enable previews/i, 'acknowledged On must not request enabling again');
+    payload.enabled = false;
+    window.onPreviewHotkeys(payload);
+    assert.match(detail().querySelector('.size-none').textContent, /enable previews.*start/i);
+    payload.enabled = true;
+    window.onPreviewHotkeys(payload);
+    assert.equal(detail().querySelector('.size-none').textContent, reason.textContent);
     assert.equal(detail().querySelector('[data-preview-detail-control="size"]'), null);
     assert.equal(detail().querySelector('[data-preview-detail-control="copy"]').disabled, false);
     payload.layout_sources = [];

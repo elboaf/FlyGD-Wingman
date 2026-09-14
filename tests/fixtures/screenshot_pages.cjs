@@ -540,8 +540,9 @@ async function fidelityRegression() {
     run(data.stage);
   } else if (moduleName === 'characters') {
     const notice = el('characters-notice');
-    assert.match(notice.textContent, /"Skills Only" was removed, but cleanup is incomplete/);
-    assert.match(notice.textContent, /Restart Wingman to retry cleanup before adding this character again/);
+    assert.match(notice.textContent, /Saved authorization for "Skills Only" was removed from Wingman/);
+    assert.match(notice.textContent, /cleanup of local Skills\/Fittings data is incomplete/);
+    assert.match(notice.textContent, /Restart Wingman to retry cleanup before authenticating this character again/);
     assert.equal(notice.classList.contains('warn'), true, 'same warning emphasis as production Forget');
     assert.ok(visible(notice));
     assert.doesNotMatch(el('characters-roster').textContent, /Skills Only/);

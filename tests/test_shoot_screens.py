@@ -1670,7 +1670,11 @@ def test_character_capture_staging_is_read_only_and_scenario_backed():
     partial_cleanup = _character_capture_scripts()[
         "settings-characters-partial-cleanup"
     ]
-    assert '"Skills Only" was removed, but cleanup is incomplete.' in partial_cleanup
+    assert (
+        'Saved authorization for "Skills Only" was removed from Wingman'
+        in partial_cleanup
+    )
+    assert "cleanup of local Skills/Fittings data is incomplete" in partial_cleanup
     assert "Restart Wingman to retry cleanup" in partial_cleanup
     narrow = _character_capture_scripts()["settings-characters-narrow"]
     assert "characters-menu-trigger" in narrow

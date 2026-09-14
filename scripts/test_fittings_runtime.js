@@ -453,6 +453,37 @@ test('Delete fitting exposes its presence restriction beside the action and remo
   assert.equal(enabled.parentNode.querySelector('.hint'), null, 'no stale restriction after presence clears');
 });
 
+test('metadata and immediate controls expose distinct commit scopes without changing their writes', async () => {
+  const p = await editor();
+  await repaint(p, state(['fit-1', 'fit-2']));
+  const box = p.el('fittings-list').querySelector('.fit-detail');
+  const save = button(metadata(p), 'Save');
+  const saveScopeId = save.getAttribute('aria-describedby');
+  assert.ok(saveScopeId, 'Save explains which fields it commits');
+  assert.match(p.el(saveScopeId).textContent, /only.*name.*description/i);
+  const membership = box.querySelector('.fit-collections').querySelector('input');
+  const supersession = box.querySelector('.fit-supersession').querySelector('select');
+  const immediateScopeId = membership.getAttribute('aria-describedby');
+  assert.ok(immediateScopeId, 'immediate changes have their own visible scope');
+  assert.equal(supersession.getAttribute('aria-describedby'), immediateScopeId);
+  assert.notEqual(immediateScopeId, saveScopeId);
+  const immediateScope = p.el(immediateScopeId);
+  assert.match(immediateScope.textContent, /Collections.*Superseded by.*immediately/i);
+  assert.equal(metadataDisclosure(p).contains(immediateScope), false);
+  input(p.el('fit-name-fit-1'), 'Keep this draft');
+  tick(membership);
+  supersession.value = 'fit-2';
+  supersession.dispatchEvent({ type: 'change' });
+  await flush();
+  assert.deepEqual(Array.from(p.last('fittings_set_membership').args), ['fit-1', 'doctrine', true]);
+  assert.deepEqual(Array.from(p.last('fittings_set_supersession').args), ['fit-1', 'fit-2']);
+  assert.equal(p.calls('fittings_update_metadata').length, 0);
+  save.click(); await flush();
+  assert.deepEqual(Array.from(p.last('fittings_update_metadata').args), ['fit-1', 'Keep this draft', 'Saved description']);
+  setMetadataOpen(p, false);
+  assert.ok(immediateScope.getClientRects().length, 'closing metadata never hides immediate-change guidance');
+});
+
 test('metadata is read-first with native disclosure state retained through unrelated renders', async () => {
   const p = await editor(false);
   const disclosure = metadataDisclosure(p);
@@ -1717,6 +1748,40 @@ for (const limit of [7, undefined]) {
     assert.deepEqual(p.errors, []);
   });
 }
+
+test('unavailable preflight pairs retain diagnosis, distinct status and a selection recovery route', async () => {
+  const p = await editor();
+  const review = preflight();
+  review.counts = { ready: 1, present: 1, conflict: 0, unavailable: 2 };
+  const pair = review.pairs[0];
+  review.pairs = [pair,
+    { ...pair, character_id: 43, status: 'present' },
+    { ...pair, character_id: 44, status: 'unavailable', error: 'Refresh fittings to reconcile an earlier copy.' },
+    { ...pair, character_id: 45, status: 'unavailable', error: '' }];
+  await reviewCopy(p, review);
+  const body = p.el('fittings-copy-body');
+  const rows = body.querySelectorAll('.fit-copy-pair');
+  assert.equal(rows[1].querySelector('.fit-copy-detail').textContent, 'Already present');
+  for (const row of rows.slice(2)) {
+    assert.match(row.querySelector('.fit-copy-detail').textContent, /^Unavailable\b/);
+    assert.equal(row.classList.contains('fit-copy-unavailable'), true);
+  }
+  assert.match(rows[2].textContent, /Refresh fittings to reconcile an earlier copy\./);
+  assert.doesNotMatch(rows[3].textContent, /authenticate|capacity|timeout/i, 'missing diagnostics must not invent a cause');
+  assert.equal(rows[1].classList.contains('fit-copy-unavailable'), false);
+  assert.match(p.el('fittings-copy-unavailable-note').textContent, /Close.*fittings.*target characters/i);
+  assert.match(body.querySelector('.fit-copy-summary').textContent, /1 addition planned.*1 already present.*2 unavailable/);
+  assert.equal(p.el('fittings-copy-start').hidden, false);
+  assert.equal(p.calls('fittings_start_copy').length, 0, 'rendering guidance never starts a copy');
+  assert.equal(p.calls('fittings_preflight_copy').length, 1, 'guidance does not reclassify or recheck pairs');
+});
+
+test('ready preflight does not show unavailable-pair recovery guidance', async () => {
+  const p = await editor();
+  await reviewCopy(p, preflight());
+  assert.equal(p.el('fittings-copy-body').querySelector('.fit-copy-unavailable'), null);
+  assert.equal(p.el('fittings-copy-body').textContent.includes('Close this review to change'), false);
+});
 
 test('unavailable copy targets point to authentication or refresh without changing eligibility', async () => {
   const p = await page();

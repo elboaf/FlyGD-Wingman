@@ -709,8 +709,12 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together(
     operation_notice = result["localNoticeWithWarnings"]
     assert "Replacement Pilot" in operation_notice
     if forget_result and forget_result["applied"]:
-        assert "was removed" in operation_notice
-        assert "Restart Wingman" in operation_notice
+        outcome = operation_notice.split("\n")[0]
+        assert "authorization" in outcome.lower()
+        assert "was removed" in outcome
+        assert "local Skills/Fittings data" in outcome
+        assert "Restart Wingman" in outcome
+        assert "authenticating this character again" in outcome
     elif forget_result:
         assert "Could not forget" in operation_notice
         assert "was removed" not in operation_notice
