@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.html_tree import PageTree
+from tests.html_tree import TextPageTree
 from tests.node_scenario_worker import NodeScenarioFailure, NodeScenarioWorker
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -211,17 +211,9 @@ IMPORT_SCENARIOS = [
 ]
 
 
-class SetupPageTree(PageTree):
-    """Retain static copy too: a hidden native caveat cannot be a DOM-double fiction."""
-
-    def handle_data(self, data):
-        node = self.stack[-1]
-        node["text"] = node.get("text", "") + data
-
-
 @pytest.fixture(scope="session")
 def setup_page_markup(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    page = SetupPageTree()
+    page = TextPageTree()
     page.feed((WEB / "index.html").read_text(encoding="utf-8"))
     path = tmp_path_factory.mktemp("setup-page") / "page.json"
     path.write_text(json.dumps(page.root, ensure_ascii=False), encoding="utf-8")
