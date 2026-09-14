@@ -37,3 +37,11 @@ class PageTree(HTMLParser):
             if self.stack[index]["tag"] == tag:
                 del self.stack[index:]
                 return
+
+
+class TextPageTree(PageTree):
+    """Opt into real static copy so text checks cannot rely on invented fixtures."""
+
+    def handle_data(self, data):
+        node = self.stack[-1]
+        node["text"] = node.get("text", "") + data
