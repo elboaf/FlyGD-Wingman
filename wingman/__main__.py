@@ -449,12 +449,12 @@ def build_preview_host(state, api_box, *, layout_store=None, layout_admission=No
             if api is not None:
                 api.push_preview_hotkeys(status)
 
-        def on_bind_captured(gesture):
+        def on_bind_captured(gesture, session=None):
             # Same shape and same reason as on_hotkey_status above: fires
             # on the preview thread, and api_box may not be populated yet.
             api = api_box.get("api")
             if api is not None:
-                api.push_bind_captured(gesture)
+                api.push_bind_captured(gesture, session)
 
         def restore_positions():
             # Read the latest committed placement policy, not a startup
@@ -1013,8 +1013,12 @@ def main() -> int:
         ),
     )
     api_box["api"] = api
-    if telemetry is not None and not api._start_fleet_presentation():
-        logger.error("Fleet presentation could not start")
+    # Preview publication must work with Fleet Off, missing telemetry and no
+    # recording directory. Start the existing page owner before native ingress.
+    if not api._start_presentation():
+        logger.error("Presentation could not start")
+    if telemetry is not None:
+        api._start_fleet_presentation()
     if preview_host is not None:
         preview_host.set_discovery_request(api._request_eve_discovery)
     api._start_fleet_sharing()

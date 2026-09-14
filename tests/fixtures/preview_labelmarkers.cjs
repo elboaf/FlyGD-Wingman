@@ -259,7 +259,7 @@ function tab(name) { document.dispatchEvent({type: 'wm:settings-tab', detail: {s
     assert.ok(!configure('Retired'), 'reset does not defer a fake row behind capture');
     if (removedOwner) {
       assert.ok(!document.contains(bind) && !bind.classList.contains('capturing'));
-      assert.deepEqual(calls.filter(c => c[0] === 'set_bind_capture').at(-1), ['set_bind_capture', false]);
+      assert.deepEqual(calls.filter(c => c[0] === 'set_bind_capture').at(-1), ['set_bind_capture', false, 1]);
       const count = calls.length; document.dispatchEvent({type: 'keydown', key: 'x', code: 'KeyX'});
       assert.equal(calls.length, count, 'vanished owner cannot keep a detached capture session');
     } else {
@@ -281,7 +281,7 @@ function tab(name) { document.dispatchEvent({type: 'wm:settings-tab', detail: {s
     const entry = scenario.includes('-pointer') ? 'mousedown' : 'focusin';
     if (entry === 'focusin') target.focus();
     target.dispatchEvent({type: entry});
-    assert.deepEqual(calls.filter(c => c[0] === 'set_bind_capture').at(-1), ['set_bind_capture', false], 'marker entry must disarm before any marker key');
+    assert.deepEqual(calls.filter(c => c[0] === 'set_bind_capture').at(-1), ['set_bind_capture', false, 1], 'marker entry must disarm its exact session before any marker key');
     assert.equal(select(), target, 'the first native select gesture keeps its original attached target');
     assert.ok(document.contains(target));
     if (entry === 'focusin') assert.equal(document.activeElement, target);

@@ -401,14 +401,14 @@ def test_review_10_preview_publication_rechecks_actual_delivery(
         "hotkeys": api.push_preview_hotkeys,
         "bind": lambda: api.push_bind_captured("Ctrl+F1"),
     }[adapter]
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        pending = pool.submit(push)
+    assert api._start_presentation()
+    try:
+        push()
         assert entered.wait(5)
-        try:
-            api._close_eve_runtime()
-        finally:
-            release.set()
-        pending.result(5)
+        api._close_eve_runtime()
+    finally:
+        release.set()
+        assert api._stop_fleet_presentation(5)
     assert len(api._window.evaluated) == (boundary == "mirror")
     assert not api._sigbar_window.evaluated
 

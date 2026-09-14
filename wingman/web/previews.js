@@ -88,6 +88,8 @@
                never_minimize: [], excluded: [],
                sizes: {}, client_sizes: {}, sizable: [], layout_sources: []};
   var capturing = null;
+  // One main-page lifetime; never persisted with settings or screenshot state.
+  var captureSequence = 0;
   var markerFields = Object.create(null);
   // preview.minimize_inactive_clients, off the settings payload rather
   // than the hotkey-state one: it lives in Settings' own Previews card
@@ -1685,7 +1687,7 @@
       capturing.button.classList.remove('capturing');
       capturing.button.textContent = capturing.previous || 'Not set';
     }
-    capturing = {button: button, onSet: onSet,
+    capturing = {button: button, onSet: onSet, id: ++captureSequence,
                  previous: button.textContent, armed: false};
     // Armed BEFORE the row says "Press a key…", and only after Python
     // confirms. A chord that is already registered never reaches this
@@ -1700,7 +1702,7 @@
     // one bridge call, and a row inviting a keystroke it cannot yet
     // receive is worse than one that invites it a moment late.
     var session = capturing;
-    WM.send('set_bind_capture', true).then(function () {
+    WM.send('set_bind_capture', true, session.id).then(function () {
       // Escape, another row, or a Clear may have landed in the meantime.
       if (capturing !== session) { return; }
       session.armed = true;
@@ -1717,12 +1719,13 @@
     if (!capturing) { return; }
     capturing.button.classList.remove('capturing');
     capturing.button.textContent = capturing.previous || 'Not set';
+    var session = capturing.id;
     capturing = null;
     // Unconditional, including on the paths that never armed the host
     // (a capture ended inside the round trip above). Disarming something
     // already disarmed costs one bridge call; leaving it armed makes the
     // next preview hotkey a no-op until the host's own deadline expires.
-    WM.send('set_bind_capture', false);
+    WM.send('set_bind_capture', false, session);
     // Flush whatever render() call was deferred while this capture was
     // armed -- see requestRender(). Runs AFTER capturing is cleared, so
     // render() below sees a clean state and does not try to redraw
@@ -2788,7 +2791,8 @@
   // page has ever decided what a chord looks like, and this does not
   // start.
   WM.handle('onPreviewBindCaptured', function (payload) {
-    if (!capturing || !payload || !payload.gesture) { return; }
+    if (screenshotLive || !capturing || !payload || !payload.gesture
+        || payload.session !== capturing.id) { return; }
     // Same ordering as the keydown path below: hold the session, disarm,
     // then apply -- onSet re-renders, which detaches the armed button.
     var apply = capturing.onSet;

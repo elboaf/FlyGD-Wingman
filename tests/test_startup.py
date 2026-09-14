@@ -196,6 +196,36 @@ def startup(monkeypatch, tmp_path):
         api.shutdown_previews()
 
 
+def test_preview_presentation_starts_before_preview_without_fleet_telemetry_or_recordings(
+    startup, monkeypatch
+):
+    original = main_mod.api_mod.Api.start_previews_if_enabled
+    owners = []
+    delivered = threading.Event()
+
+    def previews(api):
+        owner = api._fleet_worker
+        assert owner._thread is not None and owner._thread.is_alive()
+        assert api._telemetry is None and api._fleet_unsubscribe is None
+        assert not api.fleet_bar_settings()["enabled"]
+        owners.append(owner)
+        return original(api)
+
+    def during_run():
+        api = startup.captured["api"]
+        api._window.evaluate_js = lambda script: (
+            delivered.set() if "onPreviewHotkeys" in script else None
+        )
+        api.push_preview_hotkeys()
+        assert delivered.wait(5)
+        assert api._fleet_worker is owners[0]
+
+    monkeypatch.setattr(main_mod.api_mod.Api, "start_previews_if_enabled", previews)
+    startup.captured["during_run"] = during_run
+    assert main_mod.main() == 0
+    assert owners[0]._thread is None
+
+
 def test_main_shares_layout_resources_even_when_host_is_unavailable(startup):
     assert main_mod.main() == 0
     store, admission = startup.captured["layout_resources"]

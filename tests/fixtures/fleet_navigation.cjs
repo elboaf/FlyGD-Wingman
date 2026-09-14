@@ -50,7 +50,7 @@ const turn = () => new Promise(resolve => setImmediate(resolve));
     assert.equal(consumed, false, section + ' capture cannot escape into Fleet');
     assert.ok(calls.every(([method, value]) => method === 'set_bind_capture' && value === false),
       'navigation may release capture, never save a bind or opt into a feature: ' + JSON.stringify(calls));
-    if (section === 'previews') assert.deepEqual(calls, [['set_bind_capture', false]]);
+    if (section === 'previews') assert.deepEqual(calls, [['set_bind_capture', false, 1]]);
   }
   console.log('PASS Fleet navigation releases both capture owners without mutations');
 })().catch(error => { console.error(error); process.exitCode = 1; });

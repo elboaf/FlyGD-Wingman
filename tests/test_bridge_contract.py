@@ -458,8 +458,10 @@ def test_preview_layout_facades_are_exact_single_line_delegates(facade, delegate
 
 
 def test_preview_layout_semantic_handler_and_private_controller_boundary():
-    body = api_method_body("_publish_preview_layouts")
+    body = api_method_body("_present_preview_snapshot")
     assert '"onPreviewLayouts"' in body and "delivery_allowed=" in body
+    ingress = api_method_body("_publish_preview_layouts")
+    assert "self._push(" not in ingress and "self._fleet_worker.notify()" in ingress
     assert "onPreviewLayouts" in allowlist()
     assert registered_names().get("onPreviewLayouts") == ["previews.js"]
     tree = ast.parse(

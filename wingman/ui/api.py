@@ -441,7 +441,17 @@ class Api:
         self._catalogue_unsubscribe = None
         # Construction is inert. Main starts the owner before subscribing;
         # the dispatcher only folds state and sets its wakeup bit.
-        self._fleet_worker = FleetPresentationWorker(self._present_fleet_snapshot)
+        self._fleet_worker = FleetPresentationWorker(self._present_snapshots)
+        # Bounded data handoff from Preview's pump/discovery/storage callbacks.
+        # Detach under this lock; sample authority and touch pages only afterward.
+        self._preview_presentation_lock = threading.Lock()
+        self._preview_presentation_closed = False
+        self._preview_primary_dirty = False
+        self._preview_layouts_dirty = False
+        self._preview_crops_pending = None
+        self._preview_crops_revision = -1
+        self._preview_capture_pending = None
+        self._preview_capture_revision = 0
         # pywebview serves bridge calls concurrently. Window construction,
         # show/hide, page-ready reveal, and shutdown must have one lifecycle
         # owner or a late enable can orphan an untracked topmost WebView.
@@ -2928,10 +2938,19 @@ class Api:
                 self._fleet_settings_dirty = True
             self._fleet_worker.notify()
 
-    def _start_fleet_presentation(self) -> bool:
-        """Start before subscribing; retries never allocate a second owner."""
+    def _start_presentation(self) -> bool:
+        """Start the one page owner independently of telemetry or Fleet mode."""
         with self._fleetbar_lifecycle_lock:
-            if self._fleetbar_quitting or not self._fleet_worker.start():
+            return (
+                not self._fleetbar_quitting
+                and not self._preview_presentation_closed
+                and self._fleet_worker.start()
+            )
+
+    def _start_fleet_presentation(self) -> bool:
+        """Subscribe separately; retries reuse the independently started owner."""
+        with self._fleetbar_lifecycle_lock:
+            if not self._start_presentation():
                 return False
             if self._telemetry is not None and self._fleet_unsubscribe is None:
                 self._fleet_unsubscribe = self._telemetry.subscribe_fleet(
@@ -2941,6 +2960,7 @@ class Api:
 
     def _stop_fleet_presentation(self, timeout: float = 1.0) -> bool:
         """Close, detach, then join without holding native/presentation locks."""
+        self._close_preview_presentation()
         with self._fleetbar_lifecycle_lock:
             self._fleetbar_quitting = True
             self._retire_fleet_page_locked(keep_window=True)
@@ -4559,6 +4579,7 @@ class Api:
             self._eve_runtime_closed = True
             self._alerts_controller.close_runtime()
             telemetry = self._telemetry
+        self._close_preview_presentation()
         self._preview_layouts.close_admission()
         self._wanderer.close_admission()
         # This only fences ingress; no consumer callback or join. Keep the
@@ -4603,6 +4624,8 @@ class Api:
         Fleet can independently start discovery and gamelog workers while
         Preview stays off. The preview pump and foreground hook remain lazy.
         """
+        if not self._start_presentation():
+            logger.error("Preview presentation could not start")
         section = self._state.settings.get("preview", {})
         if self._preview_host is not None:
             self._preview_host.set_hotkeys(section.get("hotkeys") or {})
@@ -4775,11 +4798,83 @@ class Api:
     def _preview_publication_open(self) -> bool:
         return not self._eve_runtime_closed
 
+    def _close_preview_presentation(self) -> None:
+        with self._preview_presentation_lock:
+            self._preview_presentation_closed = True
+            self._preview_primary_dirty = self._preview_layouts_dirty = False
+            self._preview_crops_pending = self._preview_capture_pending = None
+
+    def _preview_delivery_open(self) -> bool:
+        return (
+            self._preview_publication_open() and not self._preview_presentation_closed
+        )
+
     def push_preview_crops(self, state: dict) -> None:
-        """Semantic committed state; safe before a crop page handler is registered."""
-        if not self._eve_runtime_closed:
+        """Admit only the newest host-revisioned detached snapshot; no page I/O."""
+        with self._preview_presentation_lock:
+            if (
+                self._preview_presentation_closed
+                or state["revision"] <= self._preview_crops_revision
+            ):
+                return
+            self._preview_crops_revision = state["revision"]
+            self._preview_crops_pending = state
+        self._fleet_worker.notify()
+
+    def _present_snapshots(self) -> float | None:
+        # Preview must not sit behind Fleet's disabled/clean early returns.
+        try:
+            self._present_preview_snapshot()
+        except Exception:
+            logger.exception("Preview presentation failed")
+        return self._present_fleet_snapshot()
+
+    def _present_preview_snapshot(self) -> None:
+        with self._preview_presentation_lock:
+            if self._preview_presentation_closed:
+                return
+            primary, layouts = self._preview_primary_dirty, self._preview_layouts_dirty
+            crops, capture = self._preview_crops_pending, self._preview_capture_pending
+            self._preview_primary_dirty = self._preview_layouts_dirty = False
+            self._preview_crops_pending = self._preview_capture_pending = None
+        # Each domain gets a turn even if another payload builder fails. The
+        # worker clears its wake before detaching; new ingress keeps that wake.
+        if primary and self._preview_delivery_open():
+            try:
+                self._push(
+                    "onPreviewHotkeys",
+                    self.get_preview_hotkey_state(),
+                    delivery_allowed=self._preview_delivery_open,
+                )
+            except Exception:
+                logger.exception("Could not present Preview hotkeys")
+        if layouts and self._preview_delivery_open():
+            try:
+                self._push(
+                    "onPreviewLayouts",
+                    self._preview_layouts.state(),
+                    delivery_allowed=self._preview_delivery_open,
+                )
+            except Exception:
+                logger.exception("Could not present Preview layouts")
+        if crops is not None and self._preview_delivery_open():
+            try:
+                self._push(
+                    "onPreviewCrops",
+                    crops,
+                    delivery_allowed=self._preview_delivery_open,
+                )
+            except Exception:
+                logger.exception("Could not present Preview crops")
+        if capture is not None and self._preview_delivery_open():
+            gesture, session = capture
+            payload = {"gesture": gesture}
+            if session is not None:
+                payload["session"] = session
             self._push(
-                "onPreviewCrops", state, delivery_allowed=self._preview_publication_open
+                "onPreviewBindCaptured",
+                payload,
+                delivery_allowed=self._preview_delivery_open,
             )
 
     def shutdown_previews(self) -> None:
@@ -5140,7 +5235,7 @@ class Api:
                 self._preview_host.set_hotkeys(result_table)
         return self._preview_group_result(True, None, result_table)
 
-    def set_bind_capture(self, armed) -> bool:
+    def set_bind_capture(self, armed, session=None) -> bool:
         """Tell the preview host a bind row is waiting for a keystroke.
 
         Returns rather than pushes, and the page WAITS for it before it
@@ -5154,21 +5249,27 @@ class Api:
         unregistered chord still comes through the page's own keydown
         listener, which is the path that always worked.
         """
-        if self._preview_host is None or (
-            armed and not self._preview_host.runtime_enabled
-        ):
+        if self._eve_runtime_closed or self._preview_host is None:
             return False
-        self._preview_host.set_capture(bool(armed))
-        return True
+        if session is not None:
+            return self._preview_host.set_capture(bool(armed), session)
+        if armed and not self._preview_host.runtime_enabled:
+            return False
+        return self._preview_host.set_capture(bool(armed)) is not False
 
-    def push_bind_captured(self, gesture) -> None:
-        """A registered chord, redirected to the armed bind row."""
-        if not self._eve_runtime_closed:
-            self._push(
-                "onPreviewBindCaptured",
-                {"gesture": gesture},
-                delivery_allowed=self._preview_publication_open,
-            )
+    def push_bind_captured(self, gesture, session=None) -> None:
+        """One newest identified chord, never a queue of callbacks on the pump."""
+        with self._preview_presentation_lock:
+            if self._preview_presentation_closed:
+                return
+            if session is not None:
+                if session <= self._preview_capture_revision:
+                    return
+                self._preview_capture_revision = session
+            elif self._preview_capture_revision:
+                return
+            self._preview_capture_pending = (gesture, session)
+        self._fleet_worker.notify()
 
     def _preview_layout_entries(self) -> dict:
         """Latest valid layouts, including the host's undebounced state."""
@@ -5400,14 +5501,12 @@ class Api:
     def push_preview_hotkeys(self, status=None) -> None:
         """Announce a change to a page that is already up. Never the only
         path -- see get_preview_hotkey_state."""
-        payload = self.get_preview_hotkey_state()
-        if self._eve_runtime_closed:
-            return
-        # Read current authority rather than restoring a detached registration
-        # snapshot delivered after EVE off/on. The host caches before notifying.
-        self._push(
-            "onPreviewHotkeys", payload, delivery_allowed=self._preview_publication_open
-        )
+        with self._preview_presentation_lock:
+            if self._preview_presentation_closed:
+                return
+            self._preview_primary_dirty = True
+        # Ignore detached status arguments; sample current authority on delivery.
+        self._fleet_worker.notify()
 
     # ---- Preview settings, generic writer --------------------------------
 
@@ -6112,12 +6211,11 @@ class Api:
             self._preview_host.release_primary_layout(lease)
 
     def _publish_preview_layouts(self, payload):
-        if self._preview_publication_open():
-            self._push(
-                "onPreviewLayouts",
-                payload,
-                delivery_allowed=self._preview_publication_open,
-            )
+        with self._preview_presentation_lock:
+            if self._preview_presentation_closed:
+                return
+            self._preview_layouts_dirty = True
+        self._fleet_worker.notify()
 
     # ---- Gamelog alerts --------------------------------------------------
 

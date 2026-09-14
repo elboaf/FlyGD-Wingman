@@ -4,7 +4,7 @@
 
 **Goal:** Save, apply, update, rename and remove explicit primary-preview snapshots without losing offline choices or weakening native/persistence ordering.
 
-**Architecture:** One small controller orchestrates named operations on the existing bridge-call thread. One shared admission object orders them against ordinary primary geometry/visibility work; the existing `LayoutStore` serializes persistence and the existing host pump captures/applies native geometry. Named operations do not add an executor or runtime owner.
+**Architecture:** One small controller orchestrates named operations on the existing bridge-call thread. One shared admission object orders them against ordinary primary geometry/visibility work; the existing `LayoutStore` serializes persistence and the existing host pump captures/applies native geometry. Named operations do not add an executor or runtime owner. The maintainer-approved [publication amendment](preview-layouts-publication-amendment.md) reuses the existing Fleet presentation instance for Preview publication, with independent startup and capture-session identity.
 
 **Tech Stack:** Python 3.11+, existing settings transactions and injected Win32 seams, plain HTML/CSS/ES5, pytest and Node page harnesses.
 
@@ -439,6 +439,13 @@ def test_failed_batch_keeps_the_prior_drag(tmp_path, monkeypatch):
 
 ## Task 4: Controller, bridge and lifetime wiring
 
+**Approved continuation:** complete the shared-presentation/capture-identity work
+in [publication amendment](preview-layouts-publication-amendment.md) before closing
+this task's review gate. The cache-recovery correction is already committed; its
+scoped review remains part of this gate. Include the existing presentation worker,
+native callback adapters, capture bridge/page transport and focused worker/wiring
+tests in this continuation's file scope.
+
 **Files:** create `wingman/preview/layoutcontroller.py`,
 `tests/test_preview_layoutcontroller.py`, `tests/test_preview_savedlayouts_page.py`
 and `tests/fixtures/preview_savedlayouts.cjs`; modify `wingman/ui/api.py`,
@@ -584,6 +591,16 @@ settle final state/receipt
   tests GREEN; verify lexical one-line facades and private Api attributes. Commit.
 
 ## Task 5: Explicit Saved layouts controls and page ownership
+
+**Foundation:** implement the frozen working-geometry contract in the
+[publication amendment](preview-layouts-publication-amendment.md) as a coherent
+producer/consumer slice before controls. Its sampler, dirty notifications,
+`refresh_geometry` port, receipt field and `onPreviewGeometry` guard belong
+here together. Extend `ui/api.py`, `preview/layoutcontroller.py`, `store.py`,
+`host.py`, `__main__.py`, `web/app.js` and their focused tests as necessary.
+Preserve the shared presentation owner established in Task 4. Include visible,
+accessibly linked per-row exclusion refusal/deferred/incomplete feedback without
+letting another row's attempt replace it (Task 4's deferred review finding).
 
 **Files:** modify `wingman/web/index.html`, `previews.js`, `style.css`, `dev.js`;
 extend `tests/test_preview_savedlayouts_page.py` and

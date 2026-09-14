@@ -498,7 +498,7 @@ test('entering the connection card disarms real preview keybind capture before t
     const card = new Element('wanderer-settings');
     const tabs = new Element('settings-tabs-previews');
     const calls = [];
-    const context = {capturing: null, pendingRender: false, screenshotLive: null,
+    const context = {capturing: null, captureSequence: 0, pendingRender: false, screenshotLive: null,
       WM: {el: id => {
         if (id === 'settings-tabs-previews') return tabs;
         assert.equal(id, 'wanderer-settings'); return card;
@@ -516,7 +516,7 @@ test('entering the connection card disarms real preview keybind capture before t
     card.dispatchEvent({type: event});
     assert.equal(context.capturing, null, 'card entry releases native and page capture');
     assert.equal(button.textContent, 'Old keybind');
-    assert.deepEqual(calls, [['set_bind_capture', true], ['set_bind_capture', false]]);
+    assert.deepEqual(calls, [['set_bind_capture', true, 1], ['set_bind_capture', false, 1]]);
   }
 });
 

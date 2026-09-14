@@ -127,6 +127,7 @@ def test_saved_layouts_without_host_share_writer_and_hydrate_authoritative_choic
     assert applied["persisted"] and applied["live"] == "deferred"
     state = api.get_preview_hotkey_state()
     assert state["excluded"] == state["layout_state"]["excluded"] == ["Pilot"]
+    api._fleet_worker.iterate_once()
     assert any(name == "onPreviewLayouts" for name, payload in pushes(api._window))
     api._close_eve_runtime()
     api._window.evaluated.clear()

@@ -658,3 +658,108 @@ executor/timer. Task 5 per-row feedback/geometry hydration and controls remain
 deferred. No subagents/reviewers, network/GitHub, real app/EVE/profile/clipboard,
 push/PR/merge/amend or hook bypass. Browser and real Windows/WebView2/live-EVE
 acceptance remain unverified.
+
+## Task 4 — approved shared-presentation continuation
+
+Base: `b2b12d70713f8493878c34e76f5b4b4c7df97545`. Implemented the approved
+option 1, not operation-local deferral. Api's **same** FleetPresentationWorker
+now calls a small dispatcher that drains bounded Preview state before running
+the existing Fleet iteration and returning its deadline. Main starts it before
+Preview even with Fleet Off, telemetry unavailable and no recording directory.
+Starting the retained owner is separate from attaching the Fleet subscription.
+No new worker/executor, persistence owner, scheduler, timer or runtime owner.
+
+Main's real native adapters now reach data-only Api ingress: primary dirty bit,
+saved-layout dirty bit, newest host-revisioned crop snapshot and one identified
+capture event. Every discovered name still reaches LayoutStore.record_character
+immediately. Payload sampling/serialization and both WebView deliveries occur
+outside mailbox/controller/host/writer/lifecycle locks. Existing worker wakeup
+semantics preserve notifications admitted during a blocked delivery. Exceptions
+in hotkey/layout/crop presentation do not discard another domain's detached work;
+Preview failure cannot bypass Fleet's turn. Wanderer's detached metadata handoff
+is unchanged. Final closure clears/rejects queued Preview work before native
+teardown and rechecks delivery before each WebView; an already-entered call keeps
+the same timed-out worker reference and cannot authorize a replacement.
+
+Capture retains its boolean first argument and adds an optional positive
+JavaScript-safe integer session: `set_bind_capture(armed, session=None)` →
+`Host.set_capture(armed, session=None)` → native consume →
+`push_bind_captured(gesture, session=None)` → `{gesture, session}`. The page uses
+one monotonically increasing counter across row switches, section/tab navigation
+and screenshot staging. Host admission rejects stale arm/disarm, disarm-before-arm
+retires the session, and consume disarms immediately. Untagged legacy calls and
+one-argument native callbacks remain supported until identified capture is used;
+untagged requests cannot subsequently disarm an identified session. Page results
+must match the current session; delayed arm replies and local parse replies retain
+their existing attempt ownership. Native-unavailable local keydown still works.
+No identity is persisted. This counter is scoped to the one main-page lifetime;
+a forced developer reload against a surviving host is not a new page-epoch
+protocol or verified acceptance case.
+
+**Coordinator placement ruling applied:** a provisional
+`request_working_state_presentation` port was added and tested under the original
+amendment, then reported and removed when the coordinator froze geometry as a
+coherent Task 5 foundation. Its two controller and two Off/companion-only refresh
+cases were also removed. The final controller/ports remain unchanged from the
+base. Task 5 must add `refresh_geometry`, its sampler, receipt.geometry,
+onPreviewGeometry and getter/Size/keybind guards together, using a geometry-only
+dirty bit on this shared owner. This continuation does **not** claim whole-hotkey
+refresh establishes geometry ordering or fixes the remaining Off-Apply UI gap.
+The coordinator's updated design, plan and amendment text is preserved in the
+commit. No Saved layouts controls were added.
+
+### Continuation verification
+
+New Event-held native regressions install the actual main.build_preview_host
+callbacks into the existing native pump fixture with the exact shared store/gate.
+They exercise discovery, rebind, normal geometry, crop notification, named layout
+capture/Apply, visibility and identified key capture while page delivery is held;
+native futures, a later pump command and writer flush all complete. Intermediate
+seen names survive coalescing, crop delivery retains only revision 50 after 50
+notifications and an older arrival, and current state is eventually delivered.
+Tests also cover domain failures, deadline preservation, startup independence,
+A→B while A's delivery is entered, rejected stale/invalid capture identities,
+section/screenshot/local-keydown ownership, both-WebView fences and timed-out
+owner retention. Existing synchronous-push tests now drain the real presentation
+owner; existing JS callers assert the new optional capture argument explicitly.
+
+All Python/Ruff invocations used
+`UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync`.
+The detailed RED/GREEN commands and failures are in the ignored presentation report.
+Initial native RED reproduced synchronous evaluate_js on the pump. Capture RED
+rejected the absent session interface/page argument. A later serialization RED
+proved a failed crop payload could discard a detached capture; the domain guard
+fixed it. Focused and broad checks were run during implementation.
+
+- Broad shared/native/API/page gate: **5,024 passed, 4 Windows-only skips** in
+  209.66s (before the coordinator moved the four provisional geometry cases).
+- An initial full run found **4 failed, 12,836 passed, 13 Windows-only skips**:
+  older Companions/settings-tab harnesses still expected one capture argument,
+  and Wanderer's sliced capture harness omitted captureSequence. Only those
+  harness contracts needed updating; no Wanderer production changes.
+- After the placement ruling and harness corrections, focused native/controller/
+  page/startup plus Companions/settings/Wanderer regression: **146 passed**.
+- Completed-source full suite:
+
+```sh
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync python -m pytest tests/ -q -rs --basetemp=/tmp/wingman-task4-presentation-final-full --junitxml=/tmp/wingman-task4-presentation-final-full.xml
+```
+
+**12,836 passed, 13 Windows-only skips in 351.34s**. No missing Node/codec skips.
+Node v26.5.0 and release codec availability were checked. `node scripts/js_smoke.js`
+passed every page; independent offline Cargo regression passed **1 test** using
+`/tmp/wingman-preview-layouts-codec`. Ruff lint passed, format reported **449 files
+already formatted**, and git diff --check passed. Local polish inspected final
+ownership/exception/capture paths and test seams, removed an orphaned test import
+and applied Ruff formatting; no external reviewer/subagent was used. A final
+test-only cleanup uses main's explicit store/gate injection rather than patching
+its constructor. Post-polish focused verification reran **146 passed in 31.62s**
+(`/tmp/wingman-task4-postpolish.xml`), followed by fresh green Ruff lint/format,
+all-page Node smoke and diff whitespace checks. No production change followed
+the completed full suite.
+
+Task 4 shared-presentation continuation is implemented and verified, pending the
+coordinator's review. Geometry ordering/Off refresh/per-row feedback/controls stay
+Task 5. Portable regressions do not establish browser rendering or real Windows/
+WebView2/live-EVE acceptance. No network/GitHub, app/EVE/profile/clipboard access,
+other worktrees, push/PR/merge, amend or hook bypass occurred.

@@ -81,8 +81,12 @@ icon on its own thread → the window, whose `run()` blocks the main thread.
 `Api` owns the sharing subscription and one startup pending-command probe,
 including with sharing Off or telemetry unavailable. A failed telemetry build
 can be retried lazily; the Preview discovery callback is bound before host start.
-The separate `ui/fleetpresentation.py` worker owns local Fleet presentation and
-its subscription; the dispatcher only hands off state to both workers.
+The existing `ui/fleetpresentation.py` worker owns local Fleet and Preview page
+presentation. Api starts this one owner before Preview, independently of Fleet
+mode, telemetry and recording setup; Fleet subscription is a separate step.
+Native Preview callbacks admit immediate seen names and bounded dirty/crop/capture
+notifications, never page I/O. Capture carries a page-lifetime session through
+arm/disarm and native delivery. The telemetry dispatcher only hands off state.
 Shutdown closes runtime admission and detaches both subscribers **before**
 native window destruction or coordinator stop. Joins run outside their state
 locks; timed-out owners remain tracked, never replaced by a second owner.

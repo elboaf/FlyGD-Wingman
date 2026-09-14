@@ -169,6 +169,7 @@ def test_companion_pump_cannot_restore_eve_hotkey_publication(tmp_path):
     api._state.settings["preview"] = {"enabled": False}
     assert api.get_preview_hotkey_state()["registration"] == {}
     api.push_preview_hotkeys({"Ctrl+F1": True})
+    api._fleet_worker.iterate_once()
     from tests.test_api import pushes
 
     assert pushes(api._window)[-1][1]["registration"] == {}
@@ -693,6 +694,7 @@ def test_final_crop_publication_never_calls_a_closed_webview(tmp_path, monkeypat
     try:
         host.request_crop("enabled", "Alice", False)
         assert transaction.entered.wait(5)
+        api._fleet_worker.iterate_once()
         assert pushes  # normal mode still delivers pending/terminal events
         closed.set()
         assert host.stop(timeout=0, final=True) is False
@@ -775,6 +777,7 @@ def test_build_preview_host_retains_lazy_crop_store_and_publishes_commits(
         assert state["definitions"]["Alice"]["enabled"] is False
         assert state["statuses"]["Alice"] == "disabled"
         assert state["operations"][receipt["operation_id"]]["persisted"]
+        api._fleet_worker.iterate_once()
         pushed = pushes(api._window)
         assert pushed[-1][0] == "onPreviewCrops"
         assert pushed[-1][1]["definitions"]["Alice"]["enabled"] is False
@@ -1995,7 +1998,8 @@ def test_apply_preview_default_size_resizes_every_open_preview(tmp_path):
     }
     assert host.bulk_sizes == [(640, 392)]
     # The cards show each character's size; every one just changed, so the
-    # push that repaints them fires from here rather than waiting a sweep.
+    # push that repaints them is queued here rather than waiting a sweep.
+    api._fleet_worker.iterate_once()
     pushes = [c for c in api._window.evaluated if "onPreviewHotkeys" in c]
     assert len(pushes) == 1
 
@@ -2360,6 +2364,7 @@ def test_push_preview_hotkeys_includes_groups_and_membership(tmp_path):
         }
     }
     api.push_preview_hotkeys()
+    api._fleet_worker.iterate_once()
     pushes = [c for c in api._window.evaluated if "onPreviewHotkeys" in c]
     assert len(pushes) == 1
     from tests.test_api import decode_payload

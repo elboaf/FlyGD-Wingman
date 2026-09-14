@@ -865,6 +865,7 @@ def test_offline_reset_clears_the_dormant_host_cache(monkeypatch, tmp_path):
 
     assert api.reset_preview_layouts()["applied"] is True
     assert host.layouts == {}
+    api._fleet_worker.iterate_once()
     assert [name for name, _payload in pushed] == ["onPreviewHotkeys"]
 
 

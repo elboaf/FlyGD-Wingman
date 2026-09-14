@@ -63,7 +63,7 @@ const configure = () => document.querySelector('[data-preview-configure="' + own
     assert.ok(document.getElementById('section-bookmarks').classList.contains('active'));
     assert.ok(!document.getElementById('section-previews').classList.contains('active'));
     assert.ok(!bind.classList.contains('capturing'), 'the real navigation leave contract cancels capture');
-    assert.deepEqual(calls, [['set_bind_capture', true], ['set_bind_capture', false]], 'navigation never edits either binding');
+    assert.deepEqual(calls, [['set_bind_capture', true, 1], ['set_bind_capture', false, 1]], 'navigation never edits either binding');
     let prevented = false;
     document.dispatchEvent({type: 'keydown', key: 'x', code: 'KeyX', ctrlKey: true, altKey: true,
       preventDefault() { prevented = true; }, stopPropagation() {}});

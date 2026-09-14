@@ -546,6 +546,8 @@ class PreviewHost:
         # armed knows none of them, and a flag left set would turn every
         # preview hotkey into a silent no-op for the session.
         self._capture_until = 0.0
+        self._capture_session = None
+        self._capture_revision = 0
         # ident -> the canonical chord text registered for it. _registered
         # holds the ACTION, which is what dispatch needs; a capture needs
         # to answer with the chord, and re-deriving it from the desired
@@ -2474,7 +2476,7 @@ class PreviewHost:
         """
         self._post(win32.WM_APP_REBIND)
 
-    def set_capture(self, armed: bool) -> None:
+    def set_capture(self, armed: bool, session: int | None = None) -> bool:
         """Arm or disarm bind capture. Safe from any thread.
 
         No PostMessageW: unlike set_hotkeys there is nothing for the
@@ -2484,11 +2486,28 @@ class PreviewHost:
         it invites the keystroke.
         """
         with self._lock:
+            if self._closing:
+                return False
+            if session is None:
+                # Compatibility for old callers, never an escape from the
+                # identified protocol once this page has started using it.
+                if self._capture_revision:
+                    return False
+            else:
+                if type(session) is not int or not 0 < session <= 9007199254740991:
+                    return False
+                if session < self._capture_revision or (
+                    armed and session == self._capture_revision
+                ):
+                    return False
+                # Disarm arriving before its arm still retires that session.
+                self._capture_revision = session
+            self._capture_session = session
+            accepted = not armed or self._eve_valid()
             self._capture_until = (
-                time.monotonic() + CAPTURE_TIMEOUT_S
-                if armed and self._eve_valid()
-                else 0.0
+                time.monotonic() + CAPTURE_TIMEOUT_S if armed and accepted else 0.0
             )
+            return accepted
 
     def restyle(self) -> None:
         """Ask every open preview to re-read show_labels, opacity, locked
@@ -4030,11 +4049,15 @@ class PreviewHost:
             if not text:
                 return True
             self._capture_until = 0.0
+            session = self._capture_session
             epoch = self._eve_epoch
         logger.debug("Preview hotkey %s taken by an armed bind capture", text)
         if self._eve_valid(epoch) and self._on_bind_captured is not None:
             try:
-                self._on_bind_captured(text)
+                if session is None:
+                    self._on_bind_captured(text)
+                else:
+                    self._on_bind_captured(text, session)
             except Exception:
                 # Same guard as _on_hotkey_status: this is outside code
                 # called from the wndproc, where sys.unraisablehook would
