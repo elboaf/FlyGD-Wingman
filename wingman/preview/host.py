@@ -4710,8 +4710,11 @@ class PreviewHost:
         self._freeze_primary_gestures()
         for window in list(self._windows.values()):
             window.set_hidden(True)
-        # Primary freeze and crop teardown release only their OWN capture.
-        # A blanket ReleaseCapture here would also cancel a companion drag.
+        # Crop input must stop even while primary admission delays storage
+        # shutdown. Each window releases only its OWN capture; no drain or
+        # temporary-picker cancellation may overtake that accepted storage.
+        if self._crop_controller is not None:
+            self._crop_controller.freeze_windows()
         with self._lock:
             if self._primary_pending or not self._layout_admission.wait_idle(0):
                 return

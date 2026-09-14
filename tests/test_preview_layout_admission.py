@@ -386,6 +386,100 @@ def test_stop_freezes_gesture_before_waiting_for_queued_reset(layout_api, monkey
     assert r.api._state.settings["preview"]["layouts"] == {}
 
 
+@pytest.mark.parametrize("capture_owner", ["crop", "foreign"])
+def test_off_freezes_crop_input_before_waiting_for_admitted_reset(
+    layout_api, monkeypatch, capture_owner
+):
+    from tests.test_preview_cropcontroller import client
+    from wingman.preview.cropcontroller import CropController
+    from wingman.preview.cropwindow import CropWindow
+    from wingman.preview.geometry import Rect
+    from wingman.preview.host import _preview_client
+    from wingman.telemetry.model import RosterSnapshot
+
+    r = layout_api()
+    open_eve(r)
+    r.call(lambda: r.host._clients.update(Alice=_preview_client(client())))
+    r.host.apply_roster(RosterSnapshot(2, (client(),)))
+    controller = r.host._crop_controller
+    crop = r.call(lambda: controller.live["Alice"].window)
+    assert isinstance(controller, CropController) and isinstance(crop, CropWindow)
+    crop_hwnd = crop.hwnd
+    cursor = [0, 0]
+    entered, release = Event(), Event()
+    barriers, released = [], []
+    clear = r.host._clear_layouts
+    native_release = r.native.ReleaseCapture
+
+    def get_cursor(ptr):
+        ptr._obj.x, ptr._obj.y = cursor
+        return True
+
+    def release_capture():
+        assert r.host._lock.acquire(blocking=False)
+        r.host._lock.release()
+        owner = r.native.GetCapture()
+        result = native_release()
+        if owner == crop_hwnd:
+            # Windows sends this synchronously, before ReleaseCapture returns.
+            crop._on_message(win32.WM_CAPTURECHANGED, 0, 0)
+            released.append(owner)
+        return result
+
+    def held_clear():
+        entered.set()
+        assert release.wait(5)
+        return clear()
+
+    def observed_barrier(name, action):
+        def submit():
+            barriers.append(name)
+            return action()
+
+        return submit
+
+    monkeypatch.setattr(r.native, "GetCursorPos", get_cursor, raising=False)
+    monkeypatch.setattr(r.native, "ReleaseCapture", release_capture)
+    monkeypatch.setattr(r.host, "_clear_layouts", held_clear)
+    monkeypatch.setattr(r.store, "drain", observed_barrier("drain", r.store.drain))
+    monkeypatch.setattr(r.store, "close", observed_barrier("close", r.store.close))
+    r.call(lambda: crop._on_message(win32.WM_LBUTTONDOWN, 0, 0))
+    assert r.native.capture == crop_hwnd and crop._mode == "pending_left"
+    if capture_owner == "foreign":
+        # A companion/picker acquired capture before our loss message arrived.
+        r.call(lambda: r.native.SetCapture(99))
+    try:
+        assert r.host.reset_layouts()
+        assert entered.wait(5)
+        assert r.api.set_preview_enabled(False)
+        r.call(lambda: None)  # Stop preparation has run, Reset still owns I/O.
+        before = r.call(lambda: (r.native.GetCapture(), crop._mode, crop.hidden))
+        cursor[:] = [60, 60]
+
+        def stale_input():
+            crop._on_message(win32.WM_MOUSEMOVE, 0, 0)
+            crop._on_message(win32.WM_LBUTTONUP, 0, 0)
+            crop._on_message(win32.WM_LBUTTONDOWN, 0, 0)
+            return crop.rect
+
+        after = r.call(stale_input)
+        assert (before, after) == (
+            (None if capture_owner == "crop" else 99, None, True),
+            Rect(20, 30, 320, 160),
+        )
+        assert released == ([crop_hwnd] if capture_owner == "crop" else [])
+        assert not r.host._eve_valid() and not r.host._layout_admission.wait_idle(0)
+        assert r.host._primary_pending == 1 and crop.hwnd == crop_hwnd
+        assert controller._stop_future is None and r.host._stop_future is None
+        assert r.store._close_future is None and not barriers
+    finally:
+        release.set()
+    r.wait_state(lambda state: state.eve == "stopped")
+    assert r.host._layout_admission.wait_idle(5)
+    assert crop.hwnd is None and "drain" in barriers
+    assert r.api._state.settings["preview"]["layouts"] == {}
+
+
 def test_eve_stop_does_not_release_foreign_mouse_capture(layout_api):
     r = layout_api()
     r.runtime.set_companions(True, 1)

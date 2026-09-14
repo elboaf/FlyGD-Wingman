@@ -783,6 +783,16 @@ class CropController:
         if op is not None and op.candidate is not None:
             op.candidate.window.set_locked(self._stopping)
 
+    def freeze_windows(self) -> None:
+        """Quiesce crop input while earlier primary storage still owns its turn.
+
+        Lock/hide cancel only each crop window's owned capture. Temporary picker
+        cancellation and storage submission stay in the ordered begin_stop phase.
+        """
+        self._stopping = True
+        self.restyle()
+        self.set_hidden(True)
+
     def begin_stop(self, epoch: int) -> Future[bool]:
         if self._stop_future is not None:
             return self._stop_future
@@ -804,8 +814,7 @@ class CropController:
                 self._cancel_token(op.token)
             else:
                 self._submit(op)
-        self.restyle()
-        self.set_hidden(True)
+        self.freeze_windows()
         self._stop_future = self._store.drain()
         self._emit()
         return self._stop_future

@@ -330,3 +330,35 @@ UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync python
 Exact per-case commands, outputs, interfaces and self-review evidence are appended
 in `.superpowers/sdd/preview-layouts-plan/task-2-report.md`. Coordinator re-review
 and Windows/WebView2/live-EVE operator acceptance remain outstanding.
+
+## Task 2 — fix round 2, crop input quiescence before primary drain
+
+Base: `8c5a4e7fb57cd88bca98a4142bb38f4514df246b`. The re-review accepted all
+three round-1 fixes but reproduced a crop gesture remaining captured/visible
+across EVE Off while an admitted Reset held storage. This round leaves those
+three fixes intact and addresses only that early-stop boundary.
+
+`CropController.freeze_windows() -> None` marks stopping and reuses existing
+crop lock/hide cancellation without submitting storage or canceling temporary
+picker resources. The host calls it outside its lock, before the primary drain
+wait can return. `begin_stop` reuses it in the original ordered phase; epoch
+fencing, pending configuration, picker cancellation and drain/close ordering are
+unchanged. Each crop releases only its own capture. No blanket release, new
+worker/timer, off-pump native work or crop gesture-policy change.
+
+New tests use real controller/window/picker paths: crop capture → Event-held
+admitted Reset → Off quiescence (including transferred foreign capture and synchronous
+release reentry); no crop stop barrier before Reset completion; retained candidate
+and queued-disable work; and captured-picker/font cleanup ownership. Caller RED:
+**2 expected failures**; combined host/controller RED: **4 failures** → **4 passes**.
+Required focused files: **371 passed in 7.92s**. Local self-polish preserved
+standalone `begin_stop`'s store-fence order before native hiding.
+
+Final verification, with `UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv
+uv run --no-sync`: `python -m pytest tests/test_preview*.py tests/test_companion*.py
+-q -rs --basetemp=/tmp/wingman-preview-layouts-task2-fix2-broad` — **2,631 passed,
+4 Windows-only skips in 82.28s**. Ruff lint/format (**444 files**) and all-page
+Node smoke passed; `git diff --check` passed. No full-suite/Cargo rerun for this
+small scoped fix; no external effects or independent review. Exact commands,
+outputs and interfaces are appended to the Task 2 report. Coordinator re-review
+and Windows/WebView2/live-EVE operator acceptance remain outstanding.
