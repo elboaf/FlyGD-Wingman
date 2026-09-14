@@ -586,7 +586,7 @@ def test_remote_events_do_not_change_resize_reset_page_identity(tmp_path):
     remote(api)
 
     assert api.fit_fleet_bar_height("b" * 64, 112) is None
-    assert api.settle_fleet_bar_resize("b" * 64, 480, 40) is None
+    assert api.settle_fleet_bar_resize("b" * 64, 480, 40 + 6) is None
     assert api.reset_fleet_bar_page_width("b" * 64) is None
     assert api._state.settings["fleet_bar"] == before
     assert api._fleetbar_window.resized == []
@@ -594,7 +594,7 @@ def test_remote_events_do_not_change_resize_reset_page_identity(tmp_path):
 
     api.fit_fleet_bar_height(PAGE_A, 112)
     _complete_resize(api, 480, 40)
-    settled = api.settle_fleet_bar_resize(PAGE_A, 480, 40)
+    settled = api.settle_fleet_bar_resize(PAGE_A, 480, 40 + 6)
     reset = api.reset_fleet_bar_page_width(PAGE_A)
 
     assert api._fleetbar_window.resized == [(512, 112), (492, 112), (512, 112)]

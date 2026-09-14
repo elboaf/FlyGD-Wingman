@@ -1821,6 +1821,7 @@ def _set_resizable_bar(
     work_area=(0, 0, 1000, 900),
     insets=chrome.ResizeInsets(6, 0, 6, 0),
 ):
+    """Native fixtures stay in outer coordinates; page calls add the content inset."""
     api._state.settings["fleet_bar"]["enabled"] = True
     api._state.settings["fleet_bar"]["x"] = x
     api._state.settings["fleet_bar"]["y"] = y
@@ -1836,6 +1837,56 @@ def _set_resizable_bar(
     api._fleetbar_window.width = outer_width
     api._fleetbar_window.height = height
     api._fleetbar_window.work_area = work_area
+
+
+@pytest.mark.parametrize("left_inset", [0, 6])
+@pytest.mark.parametrize("outer_x", [120, -120])
+def test_height_shrinks_after_header_drag_with_webview_screen_coordinates(
+    api, left_inset, outer_x
+):
+    # WebView2 reports the inset child origin, not the top-level window origin.
+    # Without conversion the release is rejected and every later fit is fenced
+    # by the pre-drag cached position, leaving blank space below the roster.
+    _set_resizable_bar(
+        api,
+        work_area=(-1000, 0, 1000, 900),
+        insets=chrome.ResizeInsets(left_inset, 0, left_inset, 0),
+    )
+    bar = api._fleetbar_window
+    api.fit_fleet_bar_height(PAGE_A, 108)
+    api.fit_fleet_bar_height(PAGE_A, 316)
+    started = api.save_fleet_bar_pos(PAGE_A, 40 + left_inset, 60, "begin")
+    bar.x, bar.y = outer_x, 160  # pywebview's native header movement.
+    api.save_fleet_bar_pos(PAGE_A, outer_x + left_inset, 160, "end", started["drag_id"])
+
+    for height in (136, 113):
+        api.fit_fleet_bar_height(PAGE_A, height)
+        assert (bar.x, bar.y, bar.width, bar.height) == (outer_x, 160, 512, height)
+    assert api._state.settings["fleet_bar"]["x"] == outer_x
+    assert api._state.settings["fleet_bar"]["y"] == 160
+
+
+@pytest.mark.parametrize("outer_x", [40, -80])
+def test_height_shrinks_after_width_resize_with_webview_screen_coordinates(
+    api, outer_x
+):
+    _set_resizable_bar(api, work_area=(-1000, 0, 1000, 900))
+    bar = api._fleetbar_window
+    api.fit_fleet_bar_height(PAGE_A, 108)
+    api.fit_fleet_bar_height(PAGE_A, 316)
+    gesture = api._fleetbar_resize_gesture
+    gesture.begin()
+    gesture.sizing()
+    bar.x, bar.width = outer_x, 632
+    gesture.finish((outer_x, 60, 632, 316))
+    result = api.settle_fleet_bar_resize(PAGE_A, 620, outer_x + 6)
+
+    for height in (136, 113):
+        api.fit_fleet_bar_height(PAGE_A, height)
+        assert (bar.x, bar.y, bar.width, bar.height) == (outer_x, 60, 632, height)
+    assert result == {"applied": True, "persisted": True, "error": None}
+    assert api._state.settings["fleet_bar"]["preferred_content_width"] == 620
+    assert api._state.settings["fleet_bar"]["x"] == outer_x
 
 
 def _complete_resize(api, content_width, x):
@@ -1871,10 +1922,10 @@ def test_height_retry_cannot_restore_geometry_after_newer_same_page_work(
         assert not accepted, "superseded height work kept retrying"
         if newer == "resize":
             _complete_resize(api, 620, 100)
-            assert api.settle_fleet_bar_resize(PAGE_A, 620, 100)["persisted"]
+            assert api.settle_fleet_bar_resize(PAGE_A, 620, 100 + 6)["persisted"]
         elif newer == "position":
             bar.x, bar.y = 100, 150  # Native header drag precedes the page save.
-            api.save_fleet_bar_pos(PAGE_A, 100, 150)
+            api.save_fleet_bar_pos(PAGE_A, 100 + 6, 150)
         elif newer == "reset":
             assert api.reset_fleet_bar_page_width(PAGE_A)["persisted"]
         elif newer == "height":
@@ -1952,8 +2003,13 @@ def test_height_fit_cannot_snap_back_header_before_begin_admission(
     assert bar.moved == bar.resized == []
     assert api._state.settings["fleet_bar"] == before
     # The delayed begin/end can now save the actual customize.js release.
-    started = api.save_fleet_bar_pos(PAGE_A, 40, 60, "begin")
-    assert api.save_fleet_bar_pos(PAGE_A, *position, "end", started["drag_id"]) is None
+    started = api.save_fleet_bar_pos(PAGE_A, 40 + 6, 60, "begin")
+    assert (
+        api.save_fleet_bar_pos(
+            PAGE_A, position[0] + 6, position[1], "end", started["drag_id"]
+        )
+        is None
+    )
     assert (
         api._state.settings["fleet_bar"]["x"],
         api._state.settings["fleet_bar"]["y"],
@@ -2047,7 +2103,7 @@ def test_native_gesture_at_ui_queue_boundary_retires_old_height_effect(
     if phase == "active":
         assert gesture.snapshot().active
         gesture.finish((100, 60, 632, 90))
-    assert api.settle_fleet_bar_resize(PAGE_A, 620, 100)["persisted"]
+    assert api.settle_fleet_bar_resize(PAGE_A, 620, 100 + 6)["persisted"]
     api.fit_fleet_bar_height(PAGE_A, 160)
     assert (bar.x, bar.width, bar.height) == (100, 632, 160)
 
@@ -2062,7 +2118,7 @@ def test_header_end_checks_native_owner_on_pump_not_before_dispatch(
     if pending_width:
         bar.width = 632
         _complete_resize(api, 620, 40)
-    first = api.save_fleet_bar_pos(PAGE_A, 40, 60, "begin")
+    first = api.save_fleet_bar_pos(PAGE_A, 40 + 6, 60, "begin")
     bar.x, bar.y = 900, 850  # Clamp would need both resize/position correction.
     before = dict(api._state.settings["fleet_bar"])
 
@@ -2073,13 +2129,13 @@ def test_header_end_checks_native_owner_on_pump_not_before_dispatch(
             _complete_resize(api, 650, 200)
 
     _queued_geometry_pump(monkeypatch, bar, next_native)
-    result = api.save_fleet_bar_pos(PAGE_A, 900, 850, "end", first["drag_id"])
+    result = api.save_fleet_bar_pos(PAGE_A, 900 + 6, 850, "end", first["drag_id"])
     assert result == {"status": "ignored"}
     assert (bar.x, bar.y) == (200, 240)
     assert bar.resized == bar.moved == []
     assert api._state.settings["fleet_bar"] == before
-    second = api.save_fleet_bar_pos(PAGE_A, 200, 240, "begin")
-    result = api.save_fleet_bar_pos(PAGE_A, 200, 240, "end", second["drag_id"])
+    second = api.save_fleet_bar_pos(PAGE_A, 200 + 6, 240, "begin")
+    result = api.save_fleet_bar_pos(PAGE_A, 200 + 6, 240, "end", second["drag_id"])
     width = 650 if newer == "gesture" else 620 if pending_width else 500
     assert api._state.settings["fleet_bar"]["preferred_content_width"] == width
     assert (bar.x, bar.y, bar.width) == (200, 240, width + 12)
@@ -2103,12 +2159,12 @@ def test_resize_settlement_cannot_snap_back_header_before_begin_admission(
         _queued_geometry_pump(monkeypatch, bar, native_header_move)
     else:
         native_header_move()
-    assert api.settle_fleet_bar_resize(PAGE_A, 620, 40) == {"status": "ignored"}
+    assert api.settle_fleet_bar_resize(PAGE_A, 620, 40 + 6) == {"status": "ignored"}
     assert (bar.x, bar.y, bar.width) == (200, 240, 632)
     assert bar.resized == bar.moved == []
     assert api._state.settings["fleet_bar"] == before
-    started = api.save_fleet_bar_pos(PAGE_A, 40, 60, "begin")
-    assert api.save_fleet_bar_pos(PAGE_A, 200, 240, "end", started["drag_id"])[
+    started = api.save_fleet_bar_pos(PAGE_A, 40 + 6, 60, "begin")
+    assert api.save_fleet_bar_pos(PAGE_A, 200 + 6, 240, "end", started["drag_id"])[
         "persisted"
     ]
     section = api._state.settings["fleet_bar"]
@@ -2133,11 +2189,11 @@ def test_resize_settlement_cannot_consume_new_gesture_at_ui_queue_boundary(
         _complete_resize(api, 450, 100)
 
     _queued_geometry_pump(monkeypatch, bar, newer_native)
-    assert api.settle_fleet_bar_resize(PAGE_A, 720, 40) == {"status": "ignored"}
+    assert api.settle_fleet_bar_resize(PAGE_A, 720, 40 + 6) == {"status": "ignored"}
     assert (bar.x, bar.width) == (100, 462)
     assert bar.resized == bar.moved == []
     assert api._state.settings["fleet_bar"] == before
-    assert api.settle_fleet_bar_resize(PAGE_A, 450, 100)["persisted"]
+    assert api.settle_fleet_bar_resize(PAGE_A, 450, 100 + 6)["persisted"]
     assert api._state.settings["fleet_bar"]["preferred_content_width"] == 450
 
 
@@ -2156,7 +2212,7 @@ def test_programmatic_clamp_feedback_never_persists_the_applied_width(api, monke
         return update(*args)
 
     monkeypatch.setattr(api_mod.settings_mod, "update_section", save)
-    result = api.settle_fleet_bar_resize(PAGE_A, 588, 0)
+    result = api.settle_fleet_bar_resize(PAGE_A, 588, 0 + 6)
     assert api._state.settings["fleet_bar"]["preferred_content_width"] == 720
     assert writes == []
     assert result == {"status": "ignored"}
@@ -2165,23 +2221,23 @@ def test_programmatic_clamp_feedback_never_persists_the_applied_width(api, monke
 def test_resize_requires_matching_completed_native_gesture_and_consumes_it_once(api):
     _set_resizable_bar(api)
     before = dict(api._state.settings["fleet_bar"])
-    assert api.settle_fleet_bar_resize(PAGE_A, 620, 100) == {"status": "ignored"}
+    assert api.settle_fleet_bar_resize(PAGE_A, 620, 100 + 6) == {"status": "ignored"}
     gesture = api._fleetbar_resize_gesture
     gesture.begin()
     gesture.sizing()
-    assert api.settle_fleet_bar_resize(PAGE_A, 620, 100) == {"status": "resizing"}
+    assert api.settle_fleet_bar_resize(PAGE_A, 620, 100 + 6) == {"status": "resizing"}
     api._fleetbar_window.x = 100
     gesture.finish((100, 60, 632, 90))
     for token, width, x in [(PAGE_B, 620, 100), (PAGE_A, 500, 100), (PAGE_A, 620, 40)]:
-        assert api.settle_fleet_bar_resize(token, width, x) in (
+        assert api.settle_fleet_bar_resize(token, width, x + 6) in (
             None,
             {"status": "ignored"},
         )
         assert api._state.settings["fleet_bar"] == before
-    assert api.settle_fleet_bar_resize(PAGE_A, 620, 100)["persisted"]
+    assert api.settle_fleet_bar_resize(PAGE_A, 620, 100 + 6)["persisted"]
     assert api._state.settings["fleet_bar"]["preferred_content_width"] == 620
     assert api._state.settings["fleet_bar"]["x"] == 100
-    assert api.settle_fleet_bar_resize(PAGE_A, 620, 100) == {"status": "ignored"}
+    assert api.settle_fleet_bar_resize(PAGE_A, 620, 100 + 6) == {"status": "ignored"}
 
 
 @pytest.mark.parametrize("change", ["reset", "hide", "position"])
@@ -2198,11 +2254,11 @@ def test_programmatic_geometry_and_delayed_feedback_do_not_claim_a_user_resize(
         assert api.hide_fleet_bar(PAGE_A)["persisted"]
         assert api.toggle_fleet_bar(True)["persisted"]
     else:
-        api.save_fleet_bar_pos(PAGE_A, 80, 90)
+        api.save_fleet_bar_pos(PAGE_A, 80 + 6, 90)
     before = dict(api._state.settings["fleet_bar"])
     # Neither the old native report nor a delayed, different applied width is intent.
-    assert api.settle_fleet_bar_resize(PAGE_A, 620, 100) == {"status": "ignored"}
-    assert api.settle_fleet_bar_resize(PAGE_A, 500, 40) == {"status": "ignored"}
+    assert api.settle_fleet_bar_resize(PAGE_A, 620, 100 + 6) == {"status": "ignored"}
+    assert api.settle_fleet_bar_resize(PAGE_A, 500, 40 + 6) == {"status": "ignored"}
     assert api._state.settings["fleet_bar"] == before
 
 
@@ -2220,7 +2276,7 @@ def test_real_second_gesture_can_persist_the_same_session_only_applied_width(
             lambda *args: (_ for _ in ()).throw(OSError("disk full")),
         )
         _complete_resize(api, 620, 40)
-        first = api.settle_fleet_bar_resize(PAGE_A, 620, 40)
+        first = api.settle_fleet_bar_resize(PAGE_A, 620, 40 + 6)
     assert first["applied"] and not first["persisted"]
     assert "survive restart" in first["error"]
     assert api._state.settings["fleet_bar"]["preferred_content_width"] == 500
@@ -2232,10 +2288,10 @@ def test_real_second_gesture_can_persist_the_same_session_only_applied_width(
         return update(*args)
 
     monkeypatch.setattr(api_mod.settings_mod, "update_section", save)
-    assert api.settle_fleet_bar_resize(PAGE_A, 620, 40) == {"status": "ignored"}
+    assert api.settle_fleet_bar_resize(PAGE_A, 620, 40 + 6) == {"status": "ignored"}
     assert writes == []
     _complete_resize(api, 620, 40)
-    assert api.settle_fleet_bar_resize(PAGE_A, 620, 40)["persisted"]
+    assert api.settle_fleet_bar_resize(PAGE_A, 620, 40 + 6)["persisted"]
     assert len(writes) == 1
     assert api._state.settings["fleet_bar"]["preferred_content_width"] == 620
 
@@ -2252,13 +2308,13 @@ def test_mouseup_position_and_height_fit_cannot_override_unsettled_left_resize(
     if phase == "completed":
         gesture.finish((150, 60, 462, 90))
     before = dict(api._state.settings["fleet_bar"])
-    api.save_fleet_bar_pos(PAGE_A, 150, 60)
+    api.save_fleet_bar_pos(PAGE_A, 150 + 6, 60)
     api.fit_fleet_bar_height(PAGE_A, 112)
     assert api._state.settings["fleet_bar"] == before
     assert api._fleetbar_window.resized == api._fleetbar_window.moved == []
     if phase == "active":
         gesture.finish((150, 60, 462, 90))
-    assert api.settle_fleet_bar_resize(PAGE_A, 450, 150)["persisted"]
+    assert api.settle_fleet_bar_resize(PAGE_A, 450, 150 + 6)["persisted"]
     api.fit_fleet_bar_height(PAGE_A, 112)
     assert (
         api._fleetbar_window.x,
@@ -2288,7 +2344,7 @@ def test_native_record_reentry_during_geometry_never_waits_for_lifecycle(api):
         original(width, height)
 
     api._fleetbar_window.resize = resize
-    assert api.settle_fleet_bar_resize(PAGE_A, 620, 40)["persisted"]
+    assert api.settle_fleet_bar_resize(PAGE_A, 620, 40 + 6)["persisted"]
 
 
 @pytest.mark.parametrize("settled", [False, True])
@@ -2301,14 +2357,14 @@ def test_completed_resize_then_proven_header_drag_keeps_width_and_position(
     bar.width = width + 12
     _complete_resize(api, width, 40)
     if settled:
-        assert api.settle_fleet_bar_resize(PAGE_A, width, 40)["persisted"]
-    started = api.save_fleet_bar_pos(PAGE_A, 40, 60, "begin")
+        assert api.settle_fleet_bar_resize(PAGE_A, width, 40 + 6)["persisted"]
+    started = api.save_fleet_bar_pos(PAGE_A, 40 + 6, 60, "begin")
     assert started["status"] == "dragging"
     bar.x, bar.y = x, y  # customize.js pywebviewMoveWindow, not WM_ENTERSIZEMOVE.
-    assert api.settle_fleet_bar_resize(PAGE_A, width, x) == {"status": "resizing"}
+    assert api.settle_fleet_bar_resize(PAGE_A, width, x + 6) == {"status": "resizing"}
     api.fit_fleet_bar_height(PAGE_A, 160)
     assert bar.resized == []
-    result = api.save_fleet_bar_pos(PAGE_A, x, y, "end", started["drag_id"])
+    result = api.save_fleet_bar_pos(PAGE_A, x + 6, y, "end", started["drag_id"])
     if settled:
         assert result is None
     else:
@@ -2320,7 +2376,7 @@ def test_completed_resize_then_proven_header_drag_keeps_width_and_position(
         y,
     )
     assert (bar.width, bar.x, bar.y) == (width + 12, x, y)
-    assert api.settle_fleet_bar_resize(PAGE_A, width, x) == {"status": "ignored"}
+    assert api.settle_fleet_bar_resize(PAGE_A, width, x + 6) == {"status": "ignored"}
     api.fit_fleet_bar_height(PAGE_A, 160)
     assert bar.height == 160
 
@@ -2335,18 +2391,20 @@ def test_delayed_header_end_cannot_snap_back_a_newer_native_move(
     if pending_width:
         bar.width = 632
         _complete_resize(api, 620, 40)
-    first = api.save_fleet_bar_pos(PAGE_A, 40, 60, "begin")
+    first = api.save_fleet_bar_pos(PAGE_A, 40 + 6, 60, "begin")
     bar.x, bar.y = 100, 120  # First customize.js release, end not yet serviced.
     bar.x, bar.y = second_position  # Next native move bypasses the bridge chain.
     before = dict(api._state.settings["fleet_bar"])
-    result = api.save_fleet_bar_pos(PAGE_A, 100, 120, "end", first["drag_id"])
+    result = api.save_fleet_bar_pos(PAGE_A, 100 + 6, 120, "end", first["drag_id"])
     assert (bar.x, bar.y) == second_position
     assert bar.moved == bar.resized == []
     assert api._state.settings["fleet_bar"] == before
     assert result == {"status": "ignored"}
 
-    second = api.save_fleet_bar_pos(PAGE_A, 100, 120, "begin")
-    result = api.save_fleet_bar_pos(PAGE_A, *second_position, "end", second["drag_id"])
+    second = api.save_fleet_bar_pos(PAGE_A, 100 + 6, 120, "begin")
+    result = api.save_fleet_bar_pos(
+        PAGE_A, second_position[0] + 6, second_position[1], "end", second["drag_id"]
+    )
     width = 620 if pending_width else 500
     expected_x = min(second_position[0], 1000 - width - 12)
     expected_y = min(second_position[1], 810)
@@ -2360,7 +2418,7 @@ def test_delayed_header_end_cannot_snap_back_a_newer_native_move(
     assert result == (
         {"applied": True, "persisted": True, "error": None} if pending_width else None
     )
-    assert api.settle_fleet_bar_resize(PAGE_A, width, expected_x) == {
+    assert api.settle_fleet_bar_resize(PAGE_A, width, expected_x + 6) == {
         "status": "ignored"
     }
     api.fit_fleet_bar_height(PAGE_A, 160)
@@ -2380,7 +2438,7 @@ def test_header_start_retires_height_retry_without_moving_saving_or_activating(
     starts = []
 
     def pause(_seconds):
-        started = api.save_fleet_bar_pos(PAGE_A, 40, 60, "begin")
+        started = api.save_fleet_bar_pos(PAGE_A, 40 + 6, 60, "begin")
         starts.append(started)
         bar.x, bar.y = 100, 120
 
@@ -2396,7 +2454,7 @@ def test_header_start_retires_height_retry_without_moving_saving_or_activating(
 def test_header_end_cannot_relocate_resize_after_owner_is_superseded(api, supersede):
     _set_resizable_bar(api)
     _complete_resize(api, 620, 40)
-    started = api.save_fleet_bar_pos(PAGE_A, 40, 60, "begin")
+    started = api.save_fleet_bar_pos(PAGE_A, 40 + 6, 60, "begin")
     api._fleetbar_window.x, api._fleetbar_window.y = 100, 120
     if supersede == "reset":
         assert api.reset_fleet_bar_page_width(PAGE_A)["persisted"]
@@ -2411,28 +2469,30 @@ def test_header_end_cannot_relocate_resize_after_owner_is_superseded(api, supers
     before = dict(api._state.settings["fleet_bar"])
     bar = api._fleetbar_window
     observed = (bar.x, bar.y, bar.width)
-    result = api.save_fleet_bar_pos(PAGE_A, 100, 120, "end", started["drag_id"])
+    result = api.save_fleet_bar_pos(PAGE_A, 100 + 6, 120, "end", started["drag_id"])
     assert result in (None, {"status": "ignored"})
     assert api._state.settings["fleet_bar"] == before
     assert (bar.x, bar.y, bar.width) == observed
     if supersede == "native":
-        assert api.settle_fleet_bar_resize(PAGE_A, 650, 100)["persisted"]
+        assert api.settle_fleet_bar_resize(PAGE_A, 650, 100 + 6)["persisted"]
 
 
 def test_unowned_mouseup_and_late_header_end_cannot_steal_the_current_header_drag(api):
     _set_resizable_bar(api)
-    first = api.save_fleet_bar_pos(PAGE_A, 40, 60, "begin")
-    assert api.save_fleet_bar_pos(PAGE_A, 40, 60, "end", first["drag_id"]) is None
-    second = api.save_fleet_bar_pos(PAGE_A, 40, 60, "begin")
+    first = api.save_fleet_bar_pos(PAGE_A, 40 + 6, 60, "begin")
+    assert api.save_fleet_bar_pos(PAGE_A, 40 + 6, 60, "end", first["drag_id"]) is None
+    second = api.save_fleet_bar_pos(PAGE_A, 40 + 6, 60, "begin")
     before = dict(api._state.settings["fleet_bar"])
     for token in [None, first["drag_id"], True, "2"]:
-        assert api.save_fleet_bar_pos(PAGE_A, 300, 200, "end", token) == {
+        assert api.save_fleet_bar_pos(PAGE_A, 300 + 6, 200, "end", token) == {
             "status": "ignored"
         }
-    api.save_fleet_bar_pos(PAGE_A, 300, 200)
+    api.save_fleet_bar_pos(PAGE_A, 300 + 6, 200)
     assert api._state.settings["fleet_bar"] == before
     api._fleetbar_window.x, api._fleetbar_window.y = 100, 120
-    assert api.save_fleet_bar_pos(PAGE_A, 100, 120, "end", second["drag_id"]) is None
+    assert (
+        api.save_fleet_bar_pos(PAGE_A, 100 + 6, 120, "end", second["drag_id"]) is None
+    )
     assert api._state.settings["fleet_bar"]["x"] == 100
 
 
@@ -2446,13 +2506,13 @@ def test_header_click_without_movement_does_not_save_or_consume_active_native_re
     monkeypatch.setattr(
         api_mod.settings_mod, "update_section", lambda *args: writes.append(args)
     )
-    started = api.save_fleet_bar_pos(PAGE_A, 40, 60, "begin")
-    assert api.save_fleet_bar_pos(PAGE_A, 40, 60, "end", started["drag_id"]) is None
+    started = api.save_fleet_bar_pos(PAGE_A, 40 + 6, 60, "begin")
+    assert api.save_fleet_bar_pos(PAGE_A, 40 + 6, 60, "end", started["drag_id"]) is None
     assert writes == []
     api._fleetbar_resize_gesture.begin()
     api._fleetbar_resize_gesture.sizing()
-    assert api.save_fleet_bar_pos(PAGE_A, 40, 60, "begin") == {"status": "ignored"}
-    assert api.settle_fleet_bar_resize(PAGE_A, 620, 40) == {"status": "resizing"}
+    assert api.save_fleet_bar_pos(PAGE_A, 40 + 6, 60, "begin") == {"status": "ignored"}
+    assert api.settle_fleet_bar_resize(PAGE_A, 620, 40 + 6) == {"status": "resizing"}
     assert writes == []
 
 
@@ -2471,15 +2531,15 @@ def test_header_resizing_status_after_failed_width_save_is_not_a_width_outcome(
             "update_section",
             lambda *args: (_ for _ in ()).throw(OSError("disk full")),
         )
-        delayed_result = api.settle_fleet_bar_resize(PAGE_A, 720, 0)
+        delayed_result = api.settle_fleet_bar_resize(PAGE_A, 720, 0 + 6)
     assert delayed_result["applied"] and not delayed_result["persisted"]
     assert "survive restart" in delayed_result["error"]
     assert bar.width == 600
-    start = api.save_fleet_bar_pos(PAGE_A, 0, 60, "begin")
+    start = api.save_fleet_bar_pos(PAGE_A, 0 + 6, 60, "begin")
     bar.x, bar.y = 200, 240
-    assert api.settle_fleet_bar_resize(PAGE_A, 588, 0) == {"status": "resizing"}
-    assert api.save_fleet_bar_pos(PAGE_A, 200, 240, "end", start["drag_id"]) is None
-    assert api.settle_fleet_bar_resize(PAGE_A, 588, 0) == {"status": "ignored"}
+    assert api.settle_fleet_bar_resize(PAGE_A, 588, 0 + 6) == {"status": "resizing"}
+    assert api.save_fleet_bar_pos(PAGE_A, 200 + 6, 240, "end", start["drag_id"]) is None
+    assert api.settle_fleet_bar_resize(PAGE_A, 588, 0 + 6) == {"status": "ignored"}
     assert api._state.settings["fleet_bar"]["preferred_content_width"] == 500
     assert (bar.x, bar.y, bar.width) == (0, 240, 600)
 
@@ -2491,7 +2551,7 @@ def test_pending_width_save_failure_on_drag_keeps_session_geometry_and_real_retr
 
     _set_resizable_bar(api)
     _complete_resize(api, 620, 40)
-    started = api.save_fleet_bar_pos(PAGE_A, 40, 60, "begin")
+    started = api.save_fleet_bar_pos(PAGE_A, 40 + 6, 60, "begin")
     api._fleetbar_window.x, api._fleetbar_window.y = 100, 120
     with monkeypatch.context() as patcher:
         patcher.setattr(
@@ -2499,7 +2559,7 @@ def test_pending_width_save_failure_on_drag_keeps_session_geometry_and_real_retr
             "update_section",
             lambda *args: (_ for _ in ()).throw(OSError("disk full")),
         )
-        result = api.save_fleet_bar_pos(PAGE_A, 100, 120, "end", started["drag_id"])
+        result = api.save_fleet_bar_pos(PAGE_A, 100 + 6, 120, "end", started["drag_id"])
     assert result["applied"] and not result["persisted"]
     assert "survive restart" in result["error"]
     assert (
@@ -2508,12 +2568,14 @@ def test_pending_width_save_failure_on_drag_keeps_session_geometry_and_real_retr
         api._fleetbar_window.y,
     ) == (632, 100, 120)
     assert api._state.settings["fleet_bar"]["preferred_content_width"] == 500
-    assert api.settle_fleet_bar_resize(PAGE_A, 620, 100) == {"status": "ignored"}
-    clicked = api.save_fleet_bar_pos(PAGE_A, 100, 120, "begin")
-    assert api.save_fleet_bar_pos(PAGE_A, 100, 120, "end", clicked["drag_id"]) is None
+    assert api.settle_fleet_bar_resize(PAGE_A, 620, 100 + 6) == {"status": "ignored"}
+    clicked = api.save_fleet_bar_pos(PAGE_A, 100 + 6, 120, "begin")
+    assert (
+        api.save_fleet_bar_pos(PAGE_A, 100 + 6, 120, "end", clicked["drag_id"]) is None
+    )
     assert api._state.settings["fleet_bar"]["preferred_content_width"] == 500
     _complete_resize(api, 620, 100)
-    assert api.settle_fleet_bar_resize(PAGE_A, 620, 100)["persisted"]
+    assert api.settle_fleet_bar_resize(PAGE_A, 620, 100 + 6)["persisted"]
     assert api._state.settings["fleet_bar"]["preferred_content_width"] == 620
 
 
@@ -2522,13 +2584,15 @@ def test_pending_width_save_failure_on_drag_keeps_session_geometry_and_real_retr
 def test_header_operation_cannot_claim_another_pages_pending_resize(api, token, phase):
     _set_resizable_bar(api)
     _complete_resize(api, 620, 40)
-    started = api.save_fleet_bar_pos(PAGE_A, 40, 60, "begin")
+    started = api.save_fleet_bar_pos(PAGE_A, 40 + 6, 60, "begin")
     before = dict(api._state.settings["fleet_bar"])
-    assert api.save_fleet_bar_pos(token, 100, 120, phase, started["drag_id"]) is None
+    assert (
+        api.save_fleet_bar_pos(token, 100 + 6, 120, phase, started["drag_id"]) is None
+    )
     assert api._state.settings["fleet_bar"] == before
     assert api._fleetbar_window.resized == api._fleetbar_window.moved == []
     api._fleetbar_window.x, api._fleetbar_window.y = 100, 120
-    assert api.save_fleet_bar_pos(PAGE_A, 100, 120, "end", started["drag_id"])[
+    assert api.save_fleet_bar_pos(PAGE_A, 100 + 6, 120, "end", started["drag_id"])[
         "persisted"
     ]
     assert api._state.settings["fleet_bar"]["preferred_content_width"] == 620
@@ -2680,7 +2744,7 @@ def test_create_without_resize_chrome_falls_back_to_fixed_width_without_stale_in
     "method,args",
     [
         ("fit_fleet_bar_height", (112,)),
-        ("settle_fleet_bar_resize", (500, 40)),
+        ("settle_fleet_bar_resize", (500, 40 + 6)),
         ("reset_fleet_bar_page_width", ()),
     ],
 )
@@ -2712,7 +2776,7 @@ def test_save_fleet_bar_pos_uses_geometry_helper_for_read_only_window(api):
     api._fleetbar_applied_outer_width = 512
     api._fleetbar_applied_outer_height = 90
 
-    api.save_fleet_bar_pos(PAGE_A, 150, 60)
+    api.save_fleet_bar_pos(PAGE_A, 150 + 6, 60)
 
     assert bar.resized == []
     assert bar.moved == [(88, 60)]
@@ -2831,7 +2895,7 @@ def test_settle_fleet_bar_resize_persists_right_edge_width_only_with_tolerance(a
     _set_resizable_bar(api)
 
     _complete_resize(api, 720, 40)
-    result = api.settle_fleet_bar_resize(PAGE_A, 721, 41)
+    result = api.settle_fleet_bar_resize(PAGE_A, 721, 41 + 6)
 
     assert result == {"applied": True, "persisted": True, "error": None}
     assert api._fleetbar_window.resized == [(732, 90)]
@@ -2846,7 +2910,7 @@ def test_settle_fleet_bar_resize_persists_left_edge_width_and_x(api):
     _set_resizable_bar(api, x=200)
     _complete_resize(api, 450, 150)
 
-    result = api.settle_fleet_bar_resize(PAGE_A, 450, 150)
+    result = api.settle_fleet_bar_resize(PAGE_A, 450, 150 + 6)
 
     assert result == {"applied": True, "persisted": True, "error": None}
     assert api._fleetbar_window.resized == [(462, 90)]
@@ -2863,7 +2927,7 @@ def test_settle_fleet_bar_resize_clamps_to_the_work_area_without_overwriting_pre
     _set_resizable_bar(api, x=140, work_area=(100, 0, 520, 900))
 
     _complete_resize(api, 720, 140)
-    result = api.settle_fleet_bar_resize(PAGE_A, 720, 140)
+    result = api.settle_fleet_bar_resize(PAGE_A, 720, 140 + 6)
 
     assert result == {"applied": True, "persisted": True, "error": None}
     assert api._fleetbar_window.resized == [(420, 90)]
@@ -2889,7 +2953,7 @@ def test_settle_fleet_bar_resize_keeps_session_width_when_persistence_fails(
         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
     )
 
-    result = api.settle_fleet_bar_resize(PAGE_A, 450, 150)
+    result = api.settle_fleet_bar_resize(PAGE_A, 450, 150 + 6)
 
     assert result["applied"] is True
     assert result["persisted"] is False
