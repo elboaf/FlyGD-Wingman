@@ -4,7 +4,71 @@ Baseline: `d6fbd776a36481dc2d02db6204d4f2973a471592`, branch
 `feature/preview-hide-active`. Behavior follows the approved
 [design](preview-hide-active-design.md), whose independent opinion was SHIP/NONE.
 
-## GA212-1 review correction — scoped verification
+## Final engineering verification — PASS
+
+Reviewed and full-tested source/test commit:
+`9b09030a0769482ad4514a972187306eb487c7cb`.
+The final documentation-only corrections are separately inspected and are not
+represented as CodeRabbit-reviewed bytes.
+
+- Independent review and `/polish --fix` covered the complete24-file delta,
+  including current-file EOF reads and the five correction files. GA212-1 was
+  corrected and independently re-reviewed as CLOSED, with old/current native-show
+  differential proof. No unresolved change-specific review findings remain.
+- Actual CodeRabbit CLI ran once on that commit against the feature base and
+  completed all24 files with two findings. Its major request for another checkbox
+  rejection handler was **not applicable**: production `WM.send` already logs and
+  converts rejected promises, synchronous exceptions and missing methods to null.
+  The checkbox then drains pending, rolls back its owned value and keeps its queue
+  alive. Independent review and a fresh coordinator probe using the actual bridge
+  plus field IIFE confirmed this, including a rejected write followed by success.
+  No redundant production catch was added.
+- CodeRabbit's minor stale-design-status finding was valid. The approved strategy
+  heading and obsolete phase wording now point to revision-specific results here.
+  Design semantics are unchanged. There were no external-review retries, light
+  mode or credits overrides; no review ID was emitted.
+- Fresh coordinator full suite after external review: **12474 passed,13 skipped
+  in330.58s**. Parsed JUnit:12487 total, zero failures/errors. Every skip identity
+  and reason matches the earlier full gate and requires Windows; none is a Node
+  or codec prerequisite skip.
+- Fresh Ruff lint/format **437 files**, all three changed JS syntax checks,
+  all-page Node smoke, whitespace checks and independent locked Cargo regression
+  (**1 passed**) succeeded.
+- The existing private Chrome14-check result applies to the unchanged UI; the
+  follow-up production change was native host publication only. It is not a
+  browser test of native timing. Real Windows/WebView2/DWM/DPI/EVE acceptance
+  remains NOT RUN.
+
+Exact coordinator commands from this linked checkout:
+
+```bash
+coderabbit review --agent --committed --base-commit d6fbd776a36481dc2d02db6204d4f2973a471592
+unset PYTHONPYCACHEPREFIX
+PYTHONDONTWRITEBYTECODE=1 /tmp/wingman-preview-hide-active-venv/bin/python -B -m pytest tests/ -q -rs --tb=short -p no:cacheprovider --basetemp=/tmp/wingman-preview-hide-active-final-9b09030a-coordinator --junitxml=.superpowers/sdd/preview-hide-active/post-review-final/full.xml
+/tmp/wingman-preview-hide-active-venv/bin/ruff check --no-cache .
+/tmp/wingman-preview-hide-active-venv/bin/ruff format --check --no-cache .
+node --check wingman/web/settings.js
+node --check wingman/web/dev.js
+node --check scripts/test_settings_runtime.js
+node scripts/js_smoke.js
+cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml --target-dir /tmp/wingman-preview-hide-active-cargo
+git diff --check d6fbd776..HEAD
+```
+
+Node26.5.0, Python3.11.15, editable Wingman5.6.3 resolving this checkout, and this
+checkout's installed release codec availability/path were freshly verified.
+All pytest data stayed under case-sensitive Linux `/tmp`, with bytecode/cache
+creation disabled. Evidence lives in the ignored `post-review-final/` directory,
+plus `coderabbit-9b09030a.log`, `coderabbit-report.md` and the actual bridge probe
+output `coderabbit-bridge-check.log`. Earlier failures remain retained below.
+
+Main advanced through tray-DPI PR229 to
+`529cb9ed8a29af1a44c5469053cda15d04ba1ad8` during review. This branch was not silently
+rebased or merged: its verified base remainsd6fbd776. Combined-tree CI/browser
+acceptance must be distinguished from these branch results at publication.
+No PR, merge, issue closure or native acceptance is implied by this record.
+
+## Historical GA212-1 review correction — scoped verification
 
 The follow-up to `629bca93d1660eac580ee08db7d3f6780a174d06` corrects a stale
 foreground sample at primary publication. `_apply_selection` sampled A before

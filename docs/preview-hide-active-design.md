@@ -1,11 +1,11 @@
 # Hide the active EVE client's previews — design for #212
 
 **Status:** design approved in chat; independent second opinion SHIP with no
-findings. Implementation and worker Linux/native-double/browser gates are complete,
-including the authorized fresh full suite after correcting its defaults consumer.
-Coordinator review/polish/final verification remain separate. Windows /
-WebView2 / live-EVE acceptance has not been performed. See
-[implementation notes](preview-hide-active-implementation-notes.md).
+findings. The feature is implemented. Revision-specific implementation, independent
+review and verification results are recorded in the
+[implementation notes](preview-hide-active-implementation-notes.md), rather than
+in this requirements document. Windows / WebView2 / live-EVE acceptance has not
+been performed.
 
 **Repository baseline:** `d6fbd776a36481dc2d02db6204d4f2973a471592` (`main`), after
 shared preview-runtime work and merged backward cycling (#228).
@@ -169,7 +169,7 @@ Off, but cannot commit before initial hydration. Serialize rapid writes, preserv
 newer queued choices, and restore the last acknowledged value after refusal.
 Do not retrofit unrelated Settings fields as part of this feature.
 
-## 5. Verification strategy — planned, not yet performed
+## 5. Approved verification strategy
 
 1. **Pure policy:** both toggles, A/B, Wingman/other/zero/unknown foreground,
    anonymous/excluded sources and option-Off restoration.
@@ -214,15 +214,16 @@ thumbnails), and primary-dependent crop masking (breaks independent crops).
 A new polling timer, runtime owner, or cached request-time visibility mask is not
 needed and would add stale-state/lifecycle risks.
 
-This is not an implementation plan or a claim that the injected supplier already
-exists. If the existing reveal boundaries cannot evaluate current policy without
-blocking or weakening authority, revisit this mechanism before implementation.
-Likewise, stop if avoiding initial shows requires moving/resizing an EVE source.
+These constraints remain applicable to future changes: if reveal boundaries
+cannot evaluate current policy without blocking or weakening authority, revisit
+the mechanism before changing it. Likewise, stop if avoiding initial shows would
+require moving/resizing an EVE source.
 
 Out of scope: companion hiding, per-character preferences, layout profiles,
 external controls, changing alert/cycle semantics, broad Settings cleanup, the
 pre-existing deferred-crop caret/focus limitation recorded during #211, and unrelated
 Previews grid work. Preserve current behavior with the preference Off.
 
-Implementation, polish and actual CodeRabbit remain later gates. This document's
-second opinion comes first; findings are presented to the user before incorporation.
+The independent second opinion preceded implementation. Implementation, review,
+CodeRabbit findings and verification evidence are tracked in the implementation
+notes; this approved strategy does not itself claim Windows operator acceptance.
