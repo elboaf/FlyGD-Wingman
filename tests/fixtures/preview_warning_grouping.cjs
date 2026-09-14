@@ -28,10 +28,112 @@ const configure = () => document.querySelector('[data-preview-configure="' + own
     'sticky-bottom-clamp': /bottom clamp/,
     'sticky-outside-scrollport': /scrollport/
   };
-  const scenarios = ['collapsed', 'expanded', 'bookmark-repair', 'size-reason', 'sticky-normal'].concat(Object.keys(stickyErrors));
+  const revealCases = ['focus', 'click', 'pointer-click', 'edit-focus', 'edit-click', 'group-height',
+    'bottom-clamp', 'tall-warning', 'tall-visible-control', 'visible', 'top-cycle', 'hidden', 'inactive',
+    'unrelated', 'resolved', 'passive'];
+  const scenarios = ['collapsed', 'expanded', 'bookmark-repair', 'size-reason', 'sticky-normal']
+    .concat(Object.keys(stickyErrors), revealCases.map(name => 'reveal-' + name));
   assert.ok(scenarios.includes(data.scenario), 'Unknown preview warning scenario: ' + data.scenario);
   await new Promise(resolve => setImmediate(resolve));
   calls.length = 0; // The module's initial read is not part of staging.
+  if (data.scenario.startsWith('reveal-')) {
+    // Only layout is doubled. Exercise the production focus/click listeners,
+    // independently of shooter staging (which must never supply this behavior).
+    const kind = data.scenario.slice(7);
+    assert.equal(data.stage, null);
+    window.WM.openSettingsSection('previews', 'characters');
+    await new Promise(resolve => setImmediate(resolve));
+    calls.length = 0;
+    const payload = JSON.parse(JSON.stringify(data.fixture));
+    if (kind === 'group-height') payload.characters = [];
+    if (kind === 'top-cycle') payload.hotkeys.cycle_next = 'Ctrl+Alt+1';
+    if (kind === 'resolved') payload.bookmark_chords.active = [];
+    window.onPreviewHotkeys(payload);
+    const host = document.getElementById('preview-binds');
+    const row = kind === 'top-cycle' ? host.querySelector('.row') : configure().parentNode;
+    const bind = row.querySelector('.bindbtn');
+    const edit = row.querySelectorAll('.linkbtn').find(node => node.textContent === 'Edit…');
+    const warning = row.querySelector('.preview-bind-conflict');
+    const pane = document.getElementById('settings-previews-characters');
+    const outer = document.querySelector('.settings-pane');
+    outer.scrollTop = 57;
+    pane.clientHeight = 400; pane.scrollHeight = 1600;
+    let position = 430;
+    const writes = [];
+    Object.defineProperty(pane, 'scrollTop', {
+      get: () => position,
+      set: value => { position = Math.max(0, Math.min(value, pane.scrollHeight - pane.clientHeight)); writes.push(position); }
+    });
+    const rect = (top, height) => ({top, bottom: top + height, height, left: 0, right: 600, width: 600});
+    let content = 400;
+    const tall = kind === 'tall-warning' || kind === 'tall-visible-control';
+    const warningHeight = tall ? 600 : 40;
+    if (kind === 'tall-visible-control') position = 950;
+    if (kind === 'visible') position = 300;
+    if (kind === 'top-cycle') { position = 0; content = 20; }
+    if (kind === 'bottom-clamp') { position = 0; content = 550; pane.scrollHeight = 622; }
+    const start = position;
+    const section = document.getElementById('section-previews');
+    if (kind === 'hidden') pane.hidden = true;
+    if (kind === 'inactive') section.classList.remove('active');
+    Element.prototype.getBoundingClientRect = function () {
+      if (pane.hidden || !section.classList.contains('active')) return rect(0, 0);
+      if (this === pane) return rect(100, 400);
+      if (this === row) throw new Error('display:contents rows have no geometry');
+      if (this.parentNode?.classList.contains('bind-head')) return rect(kind === 'top-cycle' ? 450 : 100, 37);
+      if (this.classList.contains('bind-group')) return this.textContent ? rect(137, 63) : rect(0, 0);
+      if (this === warning) return rect(100 + content - position, warningHeight);
+      if (this === bind || this === edit) return rect(100 + content + warningHeight + 4 - position, 28);
+      return rect(0, 0);
+    };
+    Element.prototype.scrollIntoView = function () { throw new Error('reveal must not scroll any ancestor implicitly'); };
+    const target = kind.startsWith('edit-') ? edit : kind === 'unrelated' ? row.querySelector('input') : bind;
+    let prompts = 0;
+    window.WM.prompt = () => { prompts += 1; return Promise.resolve(null); };
+    // :active is browser state from press through release, unlike :focus.
+    const matches = Element.prototype.matches;
+    let pressed = false;
+    Element.prototype.matches = function (selector) {
+      return selector === ':active' ? this === target && pressed : matches.call(this, selector);
+    };
+    if (kind === 'pointer-click') pressed = true;
+    target.focus();
+    if (kind === 'pointer-click') {
+      target.dispatchEvent({type: 'focus'});
+      assert.equal(position, start, 'mouse-down focus must not move the click target before mouse-up');
+      pressed = false;
+      target.click();
+    } else if (kind === 'passive') window.onPreviewHotkeys(payload);
+    else if (kind === 'click' || kind === 'edit-click') target.click();
+    else target.dispatchEvent({type: 'focus'});
+    await new Promise(resolve => setImmediate(resolve));
+    const noScroll = ['hidden', 'inactive', 'unrelated', 'resolved', 'passive', 'visible', 'top-cycle'].includes(kind);
+    if (noScroll) assert.equal(position, start, kind + ' must not move the scroller');
+    else {
+      assert.notEqual(position, start, 'direct conflict interaction reveals the warning and its controls');
+      const top = kind === 'group-height' ? 200 : 137;
+      assert.ok(bind.getBoundingClientRect().top >= top, 'focused control clears actual sticky heights');
+      assert.ok(bind.getBoundingClientRect().bottom <= 500, 'control remains reachable, including bottom clamp');
+      if (!tall) assert.ok(warning.getBoundingClientRect().top >= top, 'warning clears actual sticky headers');
+      else assert.ok(warning.getBoundingClientRect().bottom - top >= 250, 'use available space for oversized guidance without hiding the control');
+      if (kind === 'bottom-clamp') assert.equal(position, 222);
+      assert.ok(writes.length <= 2, 'bounded local adjustment, not a scroll feedback loop');
+    }
+    assert.equal(outer.scrollTop, 57);
+    // This double does not model browser blur when a passive repaint removes
+    // the old row. Only visible direct interactions establish focus retention.
+    if (!['passive', 'hidden', 'inactive'].includes(kind)) {
+      assert.ok(document.contains(target), 'the focus owner is still attached');
+      assert.equal(document.activeElement, target, 'reveal preserves the interaction owner');
+    }
+    if (kind !== 'passive') assert.equal(row.parentNode, host, 'reveal does not rebuild rows');
+    assert.equal(prompts, kind === 'edit-click' ? 1 : 0);
+    const captured = kind === 'click' || kind === 'pointer-click';
+    assert.deepEqual(calls, captured ? [['set_bind_capture', true]] : [], 'only the pre-existing explicit capture may cross the bridge');
+    assert.equal(bind.classList.contains('capturing'), captured);
+    console.log('PASS preview warning grouping ' + data.scenario);
+    return;
+  }
   if (data.scenario === 'bookmark-repair') {
     window.WM.openSettingsSection('previews', 'characters');
     await new Promise(resolve => setImmediate(resolve));
@@ -104,20 +206,34 @@ const configure = () => document.querySelector('[data-preview-configure="' + own
     assert.ok(reason && !reason.hidden, 'unavailable size has a visible explanation');
     assert.match(reason.textContent, /preview|placement/i, 'the explanation is text, not only a hover title');
     assert.match(reason.textContent, /start|create/i);
+    assert.match(reason.textContent, /copy.*size.*position/i, 'an enabled Copy offers an alternate to starting the client');
     assert.doesNotMatch(reason.textContent, /enable previews/i, 'acknowledged On must not request enabling again');
     payload.enabled = false;
     window.onPreviewHotkeys(payload);
     assert.match(detail().querySelector('.size-none').textContent, /enable previews.*start/i);
+    assert.match(detail().querySelector('.size-none').textContent, /copy.*size.*position/i,
+      'Copy remains usable with the global preview preference Off');
+    assert.equal(detail().querySelector('[data-preview-detail-control="copy"]').disabled, false);
     payload.enabled = true;
     window.onPreviewHotkeys(payload);
     assert.equal(detail().querySelector('.size-none').textContent, reason.textContent);
     assert.equal(detail().querySelector('[data-preview-detail-control="size"]'), null);
     assert.equal(detail().querySelector('[data-preview-detail-control="copy"]').disabled, false);
-    payload.layout_sources = [];
+    for (const sources of [[], [{name: owner, online: false}]]) {
+      payload.layout_sources = sources;
+      window.onPreviewHotkeys(payload);
+      assert.doesNotMatch(detail().querySelector('.size-none').textContent, /copy/i,
+        'no alternate is promised without another source');
+      assert.equal(detail().querySelector('[data-preview-detail-control="copy"]'), null);
+    }
+    payload.layout_sources = [{name: 'Other Pilot', online: false}];
+    payload.excluded = [owner];
     window.onPreviewHotkeys(payload);
-    assert.equal(detail().querySelector('.size-none').textContent, reason.textContent);
-    assert.equal(detail().querySelector('[data-preview-detail-control="copy"]'), null);
+    assert.equal(detail().querySelector('[data-preview-detail-control="copy"]').disabled, true);
+    assert.doesNotMatch(detail().querySelector('.size-none').textContent, /copy/i,
+      'a disabled Copy is not an available alternate');
     // Only the authoritative flag admits size editing, even without client dimensions.
+    payload.excluded = [];
     payload.sizable = [owner]; payload.client_sizes = {}; payload.sizes = {};
     window.onPreviewHotkeys(payload);
     assert.equal(detail().querySelector('.size-none'), null);

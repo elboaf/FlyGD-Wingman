@@ -256,7 +256,14 @@ def test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests(
 
 
 @pytest.mark.parametrize(
-    "scenario", ["unresolved", "wrong-name", "wrong-description", "missing-rack"]
+    "scenario",
+    [
+        "unresolved",
+        "wrong-name",
+        "wrong-description",
+        "missing-rack",
+        "redundant-alias",
+    ],
 )
 def test_metadata_capture_waits_for_real_detail_without_creating_drafts(
     tmp_path, scenario
@@ -279,9 +286,12 @@ def test_profiles_scope_capture_uses_actual_capability_without_overrides(
     [
         ("fittings-copy-preflight-bottom-narrow", "wrong-pair"),
         ("fittings-copy-preflight-bottom-narrow", "unresolved"),
+        ("fittings-copy-preflight-bottom-narrow", "missing-reassurance"),
         ("fittings-copy-result-bottom-narrow", "wrong-summary"),
         ("fittings-copy-result-bottom-narrow", "missing-recovery"),
         ("fittings-copy-result-bottom-narrow", "hidden-recovery"),
+        ("fittings-copy-result-bottom-narrow", "clipped-recovery"),
+        ("fittings-copy-result-bottom-narrow", "reversed-recovery"),
     ],
 )
 def test_lower_copy_capture_rejects_unsettled_or_wrong_outcomes(
@@ -1926,6 +1936,104 @@ def test_groups_stage_closes_inherited_detail_before_framing_management():
 # ---------------------------------------------------------------------------
 # Task 5: Alerts Advanced disclosure and Previews sticky-conflict captures
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "settled-disabled",
+        "settled-enabled",
+        "wrong-route",
+        "wrong-section",
+        "inactive-route",
+        "inactive-section",
+        "missing-section",
+        "missing-pane",
+        "hidden-section",
+        "hidden-pane",
+        "hidden-card",
+        "wrong-owner",
+        "empty-health",
+        "zero-health",
+        "outside-viewport",
+        *[
+            f"{kind}-{anchor}"
+            for kind in ("missing", "hidden", "invisible", "display-none")
+            for anchor in ("master", "health")
+        ],
+        *[
+            f"clipped-{anchor}-{edge}"
+            for anchor in ("master", "health")
+            for edge in ("top", "bottom", "left", "right")
+        ],
+    ],
+)
+def test_alerts_base_capture_requires_top_anchors_without_actions(tmp_path, scenario):
+    """Omitting the scroll reset or accepting absent/clipped anchors loses evidence."""
+    screen = next(s for s in shoot.SCREENS if s.key == "settings-alerts")
+    tree = PageTree()
+    tree.feed((WEB / "index.html").read_text(encoding="utf-8"))
+    path = tmp_path / "alerts-capture.json"
+    path.write_text(
+        json.dumps(
+            {
+                "page": tree.root,
+                "stage": shoot.screen_setup_script(screen),
+                "scenario": scenario,
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        ["node", str(ROOT / "tests/fixtures/screenshot_alerts.cjs"), str(path)],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PASS Alerts capture framing" in result.stdout
+
+
+@pytest.mark.parametrize("fail_setup", [False, True])
+def test_alerts_base_capture_walk_waits_then_frames_or_records_failure(
+    tmp_path, monkeypatch, fail_setup
+):
+    screen = next(s for s in shoot.SCREENS if s.key == "settings-alerts")
+    monkeypatch.setattr(shoot, "SCREENS", (screen,))
+    operations = []
+    monkeypatch.setattr(shoot.time, "sleep", lambda n: operations.append(("wait", n)))
+    setup = shoot.screen_setup_script(screen)
+    assert setup, "base Alerts needs local framing after navigation settles"
+
+    class CDP:
+        def evaluate(self, expression):
+            operations.append(expression)
+            if expression == setup and fail_setup:
+                raise shoot.TargetError("Screenshot framing failed: settings-alerts")
+            return True if expression == "WM.eve_shown !== false" else None
+
+        def screenshot(self):
+            operations.append("capture")
+            return b"capture-double"
+
+    shots, skipped, _ = shoot.walk(CDP(), tmp_path, settle_ms=2500)
+    assert not skipped
+    assert operations[:5] == [
+        "WM.eve_shown !== false",
+        "WM.route('settings')",
+        "WM.section('alerts')",
+        ("wait", 2.5),
+        setup,
+    ]
+    if fail_setup:
+        assert "settings-alerts" in shots[0]["error"]
+        assert shots[0]["file"] is None
+        assert "capture" not in operations
+    else:
+        assert shots[0]["error"] is None
+        assert operations[5:] == [("wait", 0.25), "capture"]
+    assert "fixture" not in shots[0], "framing does not replace live Alert state"
 
 
 def test_alerts_advanced_stage_is_present_and_gated():

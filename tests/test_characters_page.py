@@ -108,9 +108,7 @@ def test_characters_overflow_menu_uses_only_the_fixed_menu_pattern():
     assert "bk-menu" not in menu_tag
     assert "<summary" not in menu_body
 
-    assert re.search(
-        r"WM\.make\('button', 'linkbtn characters-menu-trigger', '⋯'\)", JS
-    )
+    assert re.search(r"WM\.make\('button', 'btn characters-menu-trigger', '⋯'\)", JS)
     assert "more.setAttribute('aria-label', 'More actions for '" in JS
 
 
