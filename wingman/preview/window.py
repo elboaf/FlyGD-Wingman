@@ -998,6 +998,16 @@ class PreviewWindow:
                 self._on_gesture_end(lease)
 
     def _on_message(self, msg, wparam, lparam):
+        if self._is_authorized is not None and not self._is_authorized():
+            if msg in (win32.WM_LBUTTONDOWN, win32.WM_RBUTTONDOWN, win32.WM_MOUSEMOVE):
+                return 0
+            if msg in (win32.WM_LBUTTONUP, win32.WM_RBUTTONUP):
+                if self._mode is not None:
+                    # Revocation forbids further movement, not the admitted
+                    # gesture's last detached geometry or capture cleanup.
+                    self.finish_gesture()
+                    self._libs.user32.ReleaseCapture()
+                return 0
         if msg in (win32.WM_CAPTURECHANGED, win32.WM_CANCELMODE):
             self.finish_gesture()
             return 0

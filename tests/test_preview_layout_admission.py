@@ -3,6 +3,16 @@
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 
+import pytest
+
+from tests.test_preview_host import crop_pump as crop_pump
+from tests.test_preview_polish_fixes import layout_api as layout_api
+from tests.test_preview_polish_fixes import open_eve
+from tests.test_preview_runtime_review import parked
+from tests.test_preview_runtime_review import runtime_pump as runtime_pump
+from wingman.preview import win32
+from wingman.preview.runtime import FamilyDemand
+
 
 def test_exclusive_waits_for_ordinary_completion():
     from wingman.preview.layoutadmission import PrimaryLayoutAdmission
@@ -79,3 +89,510 @@ def test_foreign_lease_cannot_retire_an_owner_with_the_same_id():
     assert gate.owns(owned)
     gate.finish(owned)
     other.finish(foreign)
+
+
+@pytest.mark.parametrize(
+    "operation", ["default", "size", "copy", "reset", "visibility", "on"]
+)
+def test_bridge_and_host_share_exclusive_refusal(layout_api, operation):
+    r = layout_api()
+    open_eve(r)
+    gate = r.host._layout_admission
+    lease = gate.try_begin(exclusive=True)
+    commands = {
+        "default": lambda: r.api.set_preview_default_size(500, 300),
+        "size": lambda: r.api.set_preview_size("Alice", 500, 300),
+        "copy": lambda: r.api.copy_preview_layout("Alice", "Bob"),
+        "reset": r.api.reset_preview_layouts,
+        "visibility": lambda: r.api.set_preview_excluded("Alice", True),
+        "on": lambda: r.api.set_preview_enabled(True),
+    }
+    try:
+        result = commands[operation]()
+        assert result is False if operation == "on" else not result["applied"]
+        assert r.api.set_preview_enabled(
+            False
+        )  # Revocation never waits for layout idle.
+        assert not r.host.runtime_enabled
+    finally:
+        r.host.release_primary_layout(lease)
+
+
+def test_visibility_promise_waits_for_reconcile_and_rebind(layout_api, monkeypatch):
+    r = layout_api()
+    open_eve(r)
+    from tests.test_preview_cropcontroller import client
+    from wingman.preview.host import _preview_client
+    from wingman.telemetry.model import RosterSnapshot
+
+    r.call(lambda: r.host._clients.update(Alice=_preview_client(client())))
+    r.host.apply_roster(RosterSnapshot(2, (client(),)))
+    r.call(lambda: None)
+    observed = []
+    monkeypatch.setattr(
+        r.host, "_reconcile_roster", lambda *args: observed.append("roster")
+    )
+    monkeypatch.setattr(
+        r.host, "_apply_hotkeys", lambda *args: observed.append("rebind")
+    )
+    entered = Event()
+    pending = []
+    refresh = r.host.refresh_primary_visibility
+
+    def admitted(lease):
+        future = refresh(lease)
+        pending.append(future)
+        entered.set()
+        return future
+
+    monkeypatch.setattr(r.host, "refresh_primary_visibility", admitted)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with parked(r):
+            future = pool.submit(r.api.set_preview_excluded, "Alice", True)
+            assert entered.wait(5)
+            assert not future.done() and not pending[0].done()
+            assert not r.host._layout_admission.wait_idle(0)
+        assert future.result(5)["persisted"]
+        assert pending[0].result(5).live == "applied"
+    assert "roster" in observed and observed[-1] == "rebind"
+    assert r.host._layout_admission.wait_idle(5)
+
+
+def test_copy_coalescing_keeps_every_lease_until_native_retirement(layout_api):
+    from wingman.preview.geometry import Rect
+    from wingman.preview.layout import Entry
+
+    r = layout_api()
+    open_eve(r)
+    r.host.sync_layout("Bob", Entry(Rect(60, 70, 450, 250)))
+    r.host.sync_layout("Carol", Entry(Rect(90, 100, 550, 350)))
+    with parked(r):
+        assert r.host.copy_layout("Alice", "Bob") == "ok"
+        assert r.host.copy_layout("Alice", "Carol") == "ok"
+        assert r.host._layout_admission.snapshot().shared_count == 2
+        assert not r.moved
+    assert r.host._layout_admission.wait_idle(5)
+    assert r.moved == [Rect(90, 100, 550, 350)]
+    assert r.api._state.settings["preview"]["layouts"]["Alice"]["w"] == 550
+
+
+def test_stop_freezes_gesture_before_waiting_for_queued_reset(layout_api, monkeypatch):
+    from tests.test_preview_cropcontroller import client
+    from wingman.preview.geometry import Rect
+    from wingman.preview.host import _preview_client
+    from wingman.preview.window import PreviewWindow
+
+    r = layout_api()
+    open_eve(r)
+
+    def install():
+        win = PreviewWindow(
+            r.native.lib,
+            _preview_client(client()),
+            Rect(60, 70, 450, 250),
+            lambda client: None,
+            r.host._layout_changed,
+            list,
+            r.host._screen,
+            on_gesture_begin=lambda: r.host._begin_primary_gesture(
+                r.host._eve_epoch, "Alice"
+            ),
+            on_gesture_end=r.host.release_primary_layout,
+        )
+        win._mode = "move"
+        assert win._begin_gesture()
+        r.host._windows["Alice"] = win
+
+    r.call(install)
+    entered, release = Event(), Event()
+    clear = r.host._clear_layouts
+
+    def held_clear():
+        entered.set()
+        assert release.wait(5)
+        return clear()
+
+    monkeypatch.setattr(r.host, "_clear_layouts", held_clear)
+    try:
+        assert r.host.reset_layouts()
+        assert entered.wait(5)
+        r.call(lambda: None)
+        # Reset supersedes the earlier drag before its asynchronous clear;
+        # freezing it later during Off would resurrect the erased geometry.
+        assert r.host._layout_admission.snapshot().shared_count == 1
+        assert r.api.set_preview_enabled(False)
+    finally:
+        release.set()
+    assert r.host._layout_admission.wait_idle(5)
+    r.wait_state(lambda state: state.eve == "stopped")
+    assert r.api._state.settings["preview"]["layouts"] == {}
+
+
+def test_offline_copy_io_blocks_on_and_final_storage_close(layout_api, monkeypatch):
+    from wingman.preview.geometry import Rect
+    from wingman.preview.layout import Entry
+
+    r = layout_api()
+    r.host.sync_layout("Bob", Entry(Rect(60, 70, 450, 250)))
+    entered, release = Event(), Event()
+    replace = r.host._replace_layout
+
+    def held(*args):
+        entered.set()
+        assert release.wait(5)
+        return replace(*args)
+
+    monkeypatch.setattr(r.host, "_replace_layout", held)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        copy = pool.submit(r.host.copy_layout, "Alice", "Bob")
+        assert entered.wait(5)
+        try:
+            assert not r.api.set_preview_enabled(True)
+            assert not r.runtime.shutdown(0)
+            assert r.store._close_future is None
+        finally:
+            release.set()
+        assert copy.result(5) == "ok"
+    assert r.runtime.shutdown(5)
+    assert r.host.layout_entries()["Alice"].rect.w == 450
+
+
+def test_replacement_family_admission_waits_for_detached_owner(layout_api):
+    r = layout_api()
+    lease = r.host._layout_admission.try_begin(exclusive=False)
+    try:
+        assert r.host.set_families(FamilyDemand(1, True, False))
+        assert not r.host._eve_valid()
+    finally:
+        r.host.release_primary_layout(lease)
+    assert r.host._eve_valid()
+
+
+def test_native_preparation_failure_retires_lease_without_killing_pump(
+    layout_api, monkeypatch
+):
+    r = layout_api()
+    open_eve(r)
+
+    def fail(_pending):
+        raise OSError("native size preparation failed")
+
+    monkeypatch.setattr(r.host, "_apply_resizes", fail)
+    assert r.host.resize_preview("Alice", (500, 300))
+    assert r.host._layout_admission.wait_idle(5)
+    r.call(lambda: None)
+    assert r.host.runtime_enabled and not r.host.layout_commands_pending
+
+
+def test_copy_mailbox_prevents_offline_size_overtaking_it(layout_api):
+    from wingman.preview.geometry import Rect
+    from wingman.preview.layout import Entry
+
+    r = layout_api()
+    open_eve(r)
+    r.host.sync_layout("Bob", Entry(Rect(60, 70, 450, 250)))
+    r.call(lambda: r.host._clients.clear())
+    with parked(r):
+        assert r.host.copy_layout("Alice", "Bob") == "ok"
+        assert r.host.layout_commands_pending
+        assert not r.api.set_preview_size("Alice", 500, 300)["applied"]
+    assert r.host._layout_admission.wait_idle(5)
+
+
+def test_shared_resources_survive_platform_host_unavailability(tmp_path, monkeypatch):
+    from tests.test_api import make_state
+    from tests.test_preview_store import FakeTimer
+    from wingman import __main__ as main_mod
+    from wingman import settings
+    from wingman.preview.geometry import Rect
+    from wingman.preview.layout import Entry
+    from wingman.preview.layoutadmission import PrimaryLayoutAdmission
+    from wingman.preview.store import LayoutStore
+    from wingman.ui.api import Api
+
+    state = make_state(tmp_path)
+    store = LayoutStore(lambda: settings.update(state.settings), timer=FakeTimer)
+    gate = PrimaryLayoutAdmission()
+    monkeypatch.setattr(main_mod.sys, "platform", "linux")
+    host = main_mod.build_preview_host(
+        state, {}, layout_store=store, layout_admission=gate
+    )
+    assert host is None
+    api = Api(state, preview_host=host, layout_store=store, layout_admission=gate)
+    assert store.replace("Alice", Entry(Rect(20, 30, 320, 210)))
+    store.record("Alice", Entry(Rect(20, 30, 450, 250)))
+    lease = gate.try_begin(exclusive=True)
+    try:
+        assert not api.set_preview_size("Alice", 500, 300)["applied"]
+    finally:
+        gate.finish(lease)
+    assert api.set_preview_size("Alice", 500, 300)["persisted"]
+    store.flush()
+    assert settings.load()["preview"]["layouts"]["Alice"]["w"] == 500
+    api._close_eve_runtime()
+    assert gate.snapshot().closed
+    assert not api.reset_preview_layouts()["applied"]
+
+
+@pytest.mark.parametrize("failure", ["reset", "size"])
+def test_host_worker_start_failure_retires_admitted_primary(
+    layout_api, monkeypatch, failure
+):
+    r = layout_api()
+    open_eve(r)
+
+    def fail():
+        raise RuntimeError("primary worker cannot start")
+
+    monkeypatch.setattr(r.store, "_executor_factory", fail)
+    assert (
+        r.host.reset_layouts()
+        if failure == "reset"
+        else r.host.resize_preview("Alice", (500, 300))
+    )
+    assert r.host._layout_admission.wait_idle(5)
+    assert not r.host.layout_commands_pending
+    r.call(lambda: None)
+    assert r.host.runtime_enabled
+
+
+def test_visibility_failure_retains_persisted_choice_and_warns(layout_api, monkeypatch):
+    r = layout_api()
+    open_eve(r)
+
+    def fail(*args):
+        raise OSError("hotkey rebind failed")
+
+    monkeypatch.setattr(r.host, "_apply_hotkeys", fail)
+    result = r.api.set_preview_excluded("Alice", True)
+    assert result["persisted"] and "hotkey rebind failed" in result["warning"]
+    assert "Alice" in r.api._state.settings["preview"]["excluded"]
+    assert r.host._layout_admission.wait_idle(5)
+
+
+def test_off_does_not_complete_an_executing_visibility_phase_early(
+    layout_api, monkeypatch
+):
+    r = layout_api()
+    open_eve(r)
+    entered, release = Event(), Event()
+
+    def held(*args):
+        entered.set()
+        assert release.wait(5)
+
+    monkeypatch.setattr(r.host, "_apply_hotkeys", held)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(r.api.set_preview_excluded, "Alice", True)
+        assert entered.wait(5)
+        try:
+            assert r.api.set_preview_enabled(False)
+            assert not r.host.runtime_enabled
+            assert not future.done() and not r.host._layout_admission.wait_idle(0)
+        finally:
+            release.set()
+        assert future.result(5)["persisted"]
+    assert r.host._layout_admission.wait_idle(5)
+
+
+def test_offline_crop_submission_cannot_close_ahead_of_admitted_reset(
+    layout_api, monkeypatch
+):
+    r = layout_api()
+    crop_entered, crop_release = Event(), Event()
+    reset_entered, reset_release = Event(), Event()
+    submit, clear = r.store.set_enabled, r.host.clear_layouts_offline
+
+    def held_crop(*args):
+        crop_entered.set()
+        assert crop_release.wait(5)
+        return submit(*args)
+
+    def held_reset():
+        reset_entered.set()
+        assert reset_release.wait(5)
+        return clear()
+
+    monkeypatch.setattr(r.store, "set_enabled", held_crop)
+    monkeypatch.setattr(r.host, "clear_layouts_offline", held_reset)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        crop = pool.submit(r.host.request_crop, "enabled", "Alice", False)
+        assert crop_entered.wait(5)
+        reset = pool.submit(r.api.reset_preview_layouts)
+        assert reset_entered.wait(5)
+        try:
+            r.runtime.close_admission()
+            assert not r.host.stop(timeout=0, final=True)
+            crop_release.set()
+            crop.result(5)
+            assert r.store._close_future is None
+        finally:
+            crop_release.set()
+            reset_release.set()
+        assert reset.result(5)["persisted"]
+    assert r.runtime.shutdown(5)
+    assert r.api._state.settings["preview"]["layouts"] == {}
+
+
+def test_off_accepts_only_the_admitted_gestures_final_geometry(layout_api):
+    from wingman.preview.geometry import Rect
+
+    r = layout_api()
+    open_eve(r)
+    epoch = r.host._eve_epoch
+    with parked(r):
+        lease = r.host._begin_primary_gesture(epoch, "Alice")
+        assert lease is not None
+        try:
+            assert r.api.set_preview_enabled(False)
+            r.host._primary_rect_changed(
+                epoch, "Alice", "Alice", Rect(60, 70, 450, 250), False
+            )
+        finally:
+            r.host.release_primary_layout(lease)
+        r.host._primary_rect_changed(
+            epoch, "Alice", "Alice", Rect(90, 100, 550, 350), False
+        )
+    r.wait_state(lambda state: state.eve == "stopped")
+    assert r.host.layout_entries()["Alice"].rect == Rect(60, 70, 450, 250)
+    assert r.api._state.settings["preview"]["layouts"]["Alice"]["w"] == 450
+
+
+def test_stop_retains_crop_mailbox_while_primary_completion_is_pending(
+    layout_api, monkeypatch
+):
+    r = layout_api()
+    open_eve(r)
+    entered, release = Event(), Event()
+    clear = r.host._clear_layouts
+
+    def held_clear():
+        entered.set()
+        assert release.wait(5)
+        return clear()
+
+    monkeypatch.setattr(r.host, "_clear_layouts", held_clear)
+    try:
+        with parked(r):
+            assert r.host.reset_layouts()
+            crop = r.host.request_crop("enabled", "Alice", False)
+            assert crop["pending"]
+            assert r.api.set_preview_enabled(False)
+        assert entered.wait(5)
+        r.call(lambda: None)
+        assert r.host._crop_commands  # Not detached into a returned stop frame.
+    finally:
+        release.set()
+    assert r.host._layout_admission.wait_idle(5)
+    r.wait_state(lambda state: state.eve == "stopped")
+    assert r.host.crop_state()["operations"][crop["operation_id"]]["persisted"]
+    assert not r.api._state.settings["preview"]["crops"]["Alice"]["enabled"]
+
+
+def test_consumed_resize_wake_waits_for_reset_storage_and_retains_leases(
+    layout_api, monkeypatch
+):
+    r = layout_api()
+    open_eve(r)
+    entered, release = Event(), Event()
+    clear = r.host._clear_layouts
+
+    def held_clear():
+        entered.set()
+        assert release.wait(5)
+        clear()
+
+    monkeypatch.setattr(r.host, "_clear_layouts", held_clear)
+    try:
+        assert r.api.reset_preview_layouts()["applied"]
+        assert entered.wait(5)
+        assert r.api.set_preview_size("Alice", 500, 300)["applied"]
+        r.call(lambda: None)  # Consume Size's OS wake while Reset still owns I/O.
+        assert r.host._layout_admission.try_begin(exclusive=True) is None
+        assert r.host.layout_commands_pending
+        assert not r.moved
+    finally:
+        release.set()
+    assert r.host._layout_admission.wait_idle(5)
+    r.call(lambda: None)
+    assert not r.host.layout_commands_pending
+    assert r.api._state.settings["preview"]["layouts"]["Alice"]["w"] == 500
+    assert r.moved[-1].w == 500
+
+
+def test_live_failed_completion_post_retains_native_phase_until_existing_turn(
+    layout_api, monkeypatch
+):
+    r = layout_api()
+    open_eve(r)
+    entered, release, failed = Event(), Event(), Event()
+    clear, post = r.host._clear_layouts, r.native.PostMessageW
+
+    def held_clear():
+        entered.set()
+        assert release.wait(5)
+        clear()
+
+    def fail_completion(hwnd, msg, wp, lp):
+        if msg == win32.WM_APP_PRIMARY_COMPLETE:
+            failed.set()
+            return 0
+        return post(hwnd, msg, wp, lp)
+
+    # Evaluate before installing the seam so a missing production constant
+    # fails without breaking unrelated teardown posts in the RED run.
+    assert win32.WM_APP_PRIMARY_COMPLETE
+    monkeypatch.setattr(r.host, "_clear_layouts", held_clear)
+    monkeypatch.setattr(r.native, "PostMessageW", fail_completion)
+    try:
+        assert r.host.reset_layouts()
+        assert entered.wait(5)
+        release.set()
+        assert failed.wait(5)
+        assert r.host.layout_commands_pending and not r.moved
+        assert not r.host._layout_admission.wait_idle(0)
+        r.call(lambda: None)  # No new owner/timer/retry thread, just the next turn.
+        assert r.host._layout_admission.wait_idle(5)
+        assert r.moved and not r.host.layout_commands_pending
+    finally:
+        release.set()
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_final_barrier_waits_for_reset_and_admitted_resize_completion(
+    layout_api, monkeypatch, native
+):
+    entered, release = Event(), Event()
+    r = layout_api()
+    if native:
+        open_eve(r)
+    else:
+        r.host.set_families(FamilyDemand(1, True, False))
+    clear = r.host._clear_layouts
+
+    def held_clear():
+        entered.set()
+        assert release.wait(5)
+        clear()
+
+    monkeypatch.setattr(r.host, "_clear_layouts", held_clear)
+    try:
+        assert r.host.reset_layouts()
+        assert r.host.resize_preview("Alice", (500, 300))
+        if not native:
+            r.host.close_admission()
+            assert not r.host.stop(timeout=0, final=True)
+        else:
+            assert entered.wait(5)
+            r.call(lambda: None)
+            r.runtime.close_admission()
+            assert not r.runtime.shutdown(0)
+        assert entered.wait(5)
+        assert r.store._close_future is None
+        assert r.host.layout_commands_pending
+    finally:
+        release.set()
+    assert r.host._layout_admission.wait_idle(5)
+    assert r.runtime.shutdown(5)
+    assert not r.host.layout_commands_pending
+    assert r.api._state.settings["preview"]["layouts"]["Alice"]["w"] == 500

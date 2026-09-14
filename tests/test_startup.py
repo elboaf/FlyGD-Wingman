@@ -86,10 +86,14 @@ def startup(monkeypatch, tmp_path):
     # thread, nothing to tear down. The first-run push is deferred onto a
     # daemon timer that outlives the test harmlessly.
     monkeypatch.setattr(main_mod, "resolve_recording_dir", lambda cfg: None)
+
     # Ordering tests inject their own services when needed. Leaving these real
     # constructs Windows-only objects that the recording-only shutdown spies
     # below cannot clean up; Linux's None builders used to hide that leak.
-    monkeypatch.setattr(main_mod, "build_preview_host", lambda *_args: None)
+    def unavailable_preview(state, box, *, layout_store, layout_admission):
+        captured["layout_resources"] = (layout_store, layout_admission)
+
+    monkeypatch.setattr(main_mod, "build_preview_host", unavailable_preview)
     monkeypatch.setattr(main_mod, "build_alert_policy", lambda *_args: None)
     monkeypatch.setattr(main_mod, "build_telemetry", lambda *_args: None)
 
@@ -190,6 +194,15 @@ def startup(monkeypatch, tmp_path):
     api = captured.get("api")
     if api is not None:
         api.shutdown_previews()
+
+
+def test_main_shares_layout_resources_even_when_host_is_unavailable(startup):
+    assert main_mod.main() == 0
+    store, admission = startup.captured["layout_resources"]
+    api = startup.captured["api"]
+    assert api._preview_layout_store is store
+    assert api._preview_layout_admission is admission
+    assert admission.snapshot().closed
 
 
 def test_fleet_closes_detaches_and_stops_before_native_destruction(

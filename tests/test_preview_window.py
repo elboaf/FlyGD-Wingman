@@ -724,6 +724,32 @@ def test_gesture_lease_retires_once_after_final_geometry(end, monkeypatch):
     assert w._mode is None
 
 
+def test_revocation_freezes_active_drag_but_still_retires_final_geometry():
+    from wingman.preview.layoutadmission import PrimaryLayoutAdmission
+
+    gate = PrimaryLayoutAdmission()
+    authorized = True
+    recorded = []
+    w, libs = _window_for_gestures(
+        False,
+        is_authorized=lambda: authorized,
+        on_gesture_begin=lambda: gate.try_begin(exclusive=False),
+        on_gesture_end=gate.finish,
+    )
+    w.lock_aspect = False
+    w._on_rect_changed = lambda key, rect, locked: recorded.append(rect)
+    w._on_message(window.win32.WM_RBUTTONDOWN, 0, 0)
+    libs.cursor = (80, 50)
+    w._on_message(window.win32.WM_MOUSEMOVE, 0, 0)
+    authorized = False
+    libs.cursor = (100, 70)
+    w._on_message(window.win32.WM_MOUSEMOVE, 0, 0)
+    assert w.rect == Rect(100, 100, 400, 260)
+    w._on_message(window.win32.WM_RBUTTONUP, 0, 0)
+    assert recorded == [Rect(100, 100, 400, 260)]
+    assert gate.wait_idle(0)
+
+
 def test_exclusive_refuses_drag_without_changing_click_or_crop_meaning():
     from wingman.preview.layoutadmission import PrimaryLayoutAdmission
 

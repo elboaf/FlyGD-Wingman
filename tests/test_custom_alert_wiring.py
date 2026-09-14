@@ -469,10 +469,12 @@ def test_main_composes_one_controller_before_any_start_and_lazy_reuses_it(
     attempts = []
     original_controller = main_mod.build_alerts_controller
 
-    def make_host(state, box):
+    def make_host(state, box, *, layout_store, layout_admission):
         reader = settings.committed_preview(state.settings)
         # Exercise the actual constructor callback wiring without starting HWNDs.
-        host = BUILD_HOST(state, box)
+        host = BUILD_HOST(
+            state, box, layout_store=layout_store, layout_admission=layout_admission
+        )
         assert host is not None
         host._test_reader = reader
         box_seen.append(box)
@@ -480,6 +482,8 @@ def test_main_composes_one_controller_before_any_start_and_lazy_reuses_it(
 
     def capture_host(**kwargs):
         host = FakePreviewHost()
+        host._layout_store = kwargs["layout_store"]
+        host._layout_admission = kwargs["layout_admission"]
         host.runtime_enabled = True
         host._custom_alert_current = kwargs["custom_alert_current"]
         host.set_discovery_request = lambda callback: None

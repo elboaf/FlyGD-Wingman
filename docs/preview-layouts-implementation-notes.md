@@ -183,3 +183,104 @@ Node/codec skips. This is a foundation regression result, **not** proof of the
 missing completion-bound ordinary operation/lifecycle integration. Use focused
 and broader tests during the remaining integration; reserve the next full run
 for the final complete Task 2 tree, per the coordinator checkpoint instruction.
+
+## Task 2 — completed ordinary-operation integration
+
+Status: **implemented and verified; awaiting the coordinator's fresh review**.
+The earlier NEEDS_CONTEXT checkpoint is historical. The coordinator explicitly
+approved a single-claimed detached-cache/storage continuation after revocation
+or where no native phase can be executing. A live authorized HWND with a failed
+completion post retains readiness for the next existing pump turn. Neither case
+adds a worker, executor submission, timer, polling loop or runtime owner.
+
+Main now constructs one `LayoutStore`/`PrimaryLayoutAdmission` pair before the
+platform builder and passes the same objects to host and Api, including the
+host-unavailable path. Api rejects inconsistent injected resources and reuses a
+real host's existing pair rather than constructing another writer. Default-size
+writes and exclusions use shared admission and retain settings' concurrent-write
+serialization; Size/Copy/Reset preserve the existing offline bridge reservation.
+Master On needs exclusive admission. Off uses a separate short master reservation,
+so ordinary layout ownership cannot prevent committed revocation, while a second
+tentative master write is still refused. Final closure closes the shared gate.
+
+Primary intents retain a list of every coalesced lease and readiness independently
+of OS wakes. One claimed continuation spans preparation, existing-worker submission
+and native completion. A Resize wake consumed while Reset awaits disk is retained;
+a live failed completion post retries at an existing pump turn, not off-pump.
+After revocation/no-HWND, detached geometry prepared on the pump (or retained
+working entries where no window existed) permits storage/cache completion without
+reading or changing a PreviewWindow. Preparation/submission failures terminalize
+the head without losing successor readiness. Leases retire before lifecycle wakes.
+
+Reset clear now runs on the existing CropStore queue. Typed Size also keeps its
+lease through the existing writer's flush, not merely recording a debounce.
+`LayoutStore.clear()` now returns a boolean for the ordinary completion path,
+without adding Task 3 transactions or changing its legacy delta policy. Offline
+Size/Copy use the same ordered writer; host-backed offline Reset waits on the
+existing queue from the bridge thread. Copy retains separate mailbox leases
+through native retirement; superseded payloads and Off do not drop their owners.
+Its pending native lane also prevents a later offline Size from overtaking it.
+
+Gesture callbacks are wired to the gate, without changing locks, click activation
+or right-click crop meaning. Pending primary work freezes earlier gestures before
+its asynchronous persistence, so a later Off freeze cannot resurrect Reset data.
+Off immediately rejects further mouse movement. A small epoch/owner lease map
+still authorizes only the admitted gesture's final geometry; retired callbacks
+remain fenced. `_begin_stop` freezes before checking admission, and only detaches
+crop commands once it can submit them — an early return never loses that mailbox.
+Every initial/late/final-upgrade storage-barrier decision rechecks outstanding
+primary admission, including an offline crop submission overlapping an admitted
+Reset. Retained joins remain outside state locks.
+
+**Coordinator task-placement ruling implemented:** `savedlayouts.py` now defines
+frozen `PrimaryLayoutLiveResult(live: str, warning: str | None)` and the host has
+`refresh_primary_visibility(lease) -> Future[PrimaryLayoutLiveResult]` plus
+`release_primary_layout(lease)`. Ordinary exclusion promises wait on their bridge
+thread for actual current-roster reconciliation/rebind. Offline/final delivery is
+deferred; reconciliation failure preserves the committed choice and warns.
+An executing native visibility phase cannot be completed early by Off. Discovery
+and crop reconciliation continue; no named capture/apply/controller/UI was added.
+Legacy live Size/Reset and Copy receipt timing stays unchanged; it is their
+admission ownership, not those existing queue acknowledgements, that now persists
+through completion.
+
+### Integration verification and self-review
+
+Event-controlled RED/GREEN cases cover consumed Size wakes behind Reset, live
+failed completion posts, no-HWND/revoked completion, final barriers, Copy coalescing
+and offline ordering, On refusal, worker/preparation failures, gesture freezing,
+revocation during movement, late final-gesture persistence, visibility completion
+and failure, and preserving crop commands during a primary drain. RED failures
+and every intermediate result are recorded in the task report; no failure is
+represented as a passing gate.
+
+- Final broad lifecycle/window/cropstore/store/API/committed-reader/wiring run:
+  **2,404 passed, 1 Windows-only skip in 54.92s**.
+- The first complete-tree full run found **22 failures, 12,643 passed, 13 skips**:
+  21 missed startup/custom-alert builder-double keyword signatures, plus default
+  size's legacy concurrent retry being over-serialized by the bridge mode flag.
+  The doubles now consume the shared pair; default-size writes use shared,
+  non-mode-serialized admission. Resource ownership is checked structurally rather
+  than against a monkeypatchable constructor symbol. Added a real-main composition
+  assertion that the unavailable host and Api share the constructed pair.
+- Focused composition/transaction/API follow-up: **944 passed in 41.40s**.
+- Self-polish inspected the final diff and lifetime/lock-order paths locally.
+  It caught and regression-tested the late closing-barrier race, crop mailbox
+  detachment before a primary wait, and active drag movement after Off. Safe
+  cleanup removed unused imports/default scaffolding, updated relevant doubles,
+  corrected stale comments, and ran Ruff formatting. No independent reviewer or
+  subagent was used.
+- Fresh `ruff check .`: **passed**; `ruff format --check .`: **444 formatted**;
+  Node all-page smoke: **PASS**. Independent offline Cargo regression: **1 passed**.
+
+Final full verification, after all source/test fixes and formatting:
+
+```sh
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync python -m pytest tests/ -q -rs --basetemp=/tmp/wingman-preview-layouts-task2-complete-full-verified --junitxml=/tmp/wingman-preview-layouts-task2-complete-full-verified.xml
+```
+
+Result: **12,666 passed, 13 Windows-only skips in 301.64s**. Node and release codec
+coverage did not skip. The earlier failed complete-tree XML is retained separately
+at `/tmp/wingman-preview-layouts-task2-complete-full.xml`. No network, GitHub,
+real app/EVE/profile/clipboard operations, push or PR occurred. Windows/WebView2
+operator acceptance remains outstanding; portable tests do not establish it.

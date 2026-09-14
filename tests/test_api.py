@@ -73,7 +73,12 @@ def make_state(tmp_path, **overrides):
 
 
 def make_api(tmp_path, window=None, **kwargs):
+    from tests.preview_runtime_helpers import HostLifecycle
+
     api = Api(make_state(tmp_path), **kwargs)
+    host = kwargs.get("preview_host")
+    if isinstance(host, HostLifecycle):
+        host._layout_store = api._preview_layout_store
     api._window = window if window is not None else FakeWindow()
     return api
 

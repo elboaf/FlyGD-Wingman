@@ -14,10 +14,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.preview_runtime_helpers import PrimaryWindow
 from wingman.preview import alertframes, geometry, gestures, host, layout
 
 
-class _HiddenState:
+class _HiddenState(PrimaryWindow):
     """Every pump-owned primary now receives visibility, including default-off."""
 
     def set_hidden(self, hidden):
@@ -61,12 +62,18 @@ def crop_pump(monkeypatch):
     )
     from wingman.preview import croppicker, cropwindow
     from wingman.preview.cropstore import CropStore
+    from wingman.preview.layoutadmission import PrimaryLayoutAdmission
     from wingman.telemetry.model import RosterSnapshot
 
     opened = []
 
     def make(
-        *, primary_flush=None, before_window=None, initial=None, update_settings=None
+        *,
+        primary_flush=None,
+        before_window=None,
+        initial=None,
+        update_settings=None,
+        layout_store=None,
     ):
         native = Resources()
         initial = {"Alice": DEFINITION} if initial is None else initial
@@ -83,7 +90,10 @@ def crop_pump(monkeypatch):
         calls = []
         primary = []
         h = host.PreviewHost(
-            on_layout_changed=lambda *args: primary.append(args), crop_store=store
+            on_layout_changed=lambda *args: primary.append(args),
+            crop_store=store,
+            layout_store=layout_store,
+            layout_admission=PrimaryLayoutAdmission(),
         )
         native_attempt = native.attempt
 
@@ -398,7 +408,7 @@ def test_detached_alert_batch_cannot_arm_new_family_windows(family_pump, monkeyp
     h.set_families(FamilyDemand(4, True, True))
     r.wait("eve-active")
     armed = []
-    window = SimpleNamespace(
+    window = PrimaryWindow(
         arm_alert=lambda *args: armed.append(args),
         alert_is_armed=lambda: False,
         _mode=None,
@@ -619,7 +629,7 @@ def test_custom_priority_mailbox_preserved_across_shared_family_roundtrip(
         h.set_families(FamilyDemand(revision, True, True))
         r.wait("eve-active")
         armed = []
-        window = SimpleNamespace(
+        window = PrimaryWindow(
             arm_alert=lambda event, spec, now: armed.append(spec["sequence"]),
             alert_is_armed=lambda: False,
             _mode=None,
@@ -1089,7 +1099,7 @@ def test_primary_settings_accepted_before_stop_keep_fifo_order(
     h._clear_layouts = layouts.clear
     r.store._flush_primary = layouts.flush
 
-    class Primary:
+    class Primary(PrimaryWindow):
         rect = geometry.Rect(20, 30, 320, 210)
         locked = False
         _mode = None
@@ -1466,7 +1476,7 @@ def test_final_freeze_records_primary_drag_without_notifying_closed_page(crop_pu
     h.start()
     assert h._ready.wait(5)
     rect = geometry.Rect(60, 70, 400, 250)
-    primary = SimpleNamespace(
+    primary = PrimaryWindow(
         rect=rect,
         locked=False,
         _mode="move",
@@ -6621,10 +6631,10 @@ def test_resize_preview_stashes_the_payload_and_posts_only_a_signal(monkeypatch)
     under the lock -- set_hotkeys' shape."""
     h = _placement_host(monkeypatch)
     h.resize_preview("Alice", (640, 392))
-    assert h._primary_intents[0] == (
-        host.win32.WM_APP_RESIZE_ONE,
-        {"Alice": (640, 392)},
-    )
+    intent = h._primary_intents[0]
+    assert intent.message == host.win32.WM_APP_RESIZE_ONE
+    assert intent.payload == {"Alice": (640, 392)}
+    assert h._layout_admission.owns(intent.leases[0])
 
 
 def test_reset_layouts_clears_saved_and_calls_the_injected_clear(monkeypatch):
@@ -6637,7 +6647,7 @@ def test_reset_layouts_clears_saved_and_calls_the_injected_clear(monkeypatch):
     assert h._saved == {}
 
 
-class _MovableWindow:
+class _MovableWindow(PrimaryWindow):
     """Minimal double for the one call both `_apply_resizes` and
     `_reset_layouts` make on every open preview: `.move(rect)` relocates it,
     same as the real PreviewWindow's effect on `.rect`."""
@@ -6707,7 +6717,10 @@ def test_resize_all_stashes_one_size_and_posts_only_a_signal(monkeypatch):
     same way a per-key one does -- a field under the lock, a signal out."""
     h = _placement_host(monkeypatch)
     h.resize_all((640, 392))
-    assert h._primary_intents[0] == (host.win32.WM_APP_RESIZE_ALL, (640, 392))
+    intent = h._primary_intents[0]
+    assert intent.message == host.win32.WM_APP_RESIZE_ALL
+    assert intent.payload == (640, 392)
+    assert h._layout_admission.owns(intent.leases[0])
 
 
 def test_apply_resize_all_moves_every_window_and_records_like_a_drag(monkeypatch):

@@ -685,6 +685,15 @@ class _FakeSizeHost:
     def clear_layout_entries(self):
         self.layouts = {}
 
+    def release_primary_layout(self, lease):
+        pass
+
+    def clear_layouts_offline(self):
+        if not self.store.clear():
+            return False
+        self.clear_layout_entries()
+        return True
+
     def set_capture(self, armed):
         self.captures.append(armed)
 
@@ -850,6 +859,7 @@ def test_offline_reset_clears_the_dormant_host_cache(monkeypatch, tmp_path):
         is_running=False,
         layouts={"Alice": layout.Entry(geometry.Rect(5, 6, 320, 210))},
     )
+    host.store = api._preview_layout_store
     api._preview_host = host
     pushed = fakes.record_pushes(api)
 

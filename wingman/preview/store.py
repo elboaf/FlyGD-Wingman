@@ -146,7 +146,7 @@ class LayoutStore:
             timer.start()
         return True
 
-    def clear(self) -> None:
+    def clear(self) -> bool:
         """Discard every saved layout. The one wholesale write this class allows.
 
         Pending LAYOUT deltas are dropped: they describe positions being
@@ -178,6 +178,8 @@ class LayoutStore:
                         )
             except OSError:
                 logger.exception("Could not clear preview layouts")
+                return False
+        return True
 
     def _write(self) -> None:
         with self._write_lock:

@@ -125,6 +125,7 @@ WM_APP_CROP_COMPLETE = WM_APP + 11
 WM_APP_CROP_STOP_READY = WM_APP + 12
 # Independent, coalesced session metadata — never an alert queue entry.
 WM_APP_METADATA = WM_APP + 16
+WM_APP_PRIMARY_COMPLETE = WM_APP + 17
 WM_APP_FAMILIES = WM_APP + 13
 # Commands wake the bounded companion mailbox; completion resumes family cleanup
 # after the controller's admitted persistence has drained.

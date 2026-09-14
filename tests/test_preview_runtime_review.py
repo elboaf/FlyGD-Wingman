@@ -4,10 +4,10 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
 from threading import Condition, Event
-from types import SimpleNamespace
 
 import pytest
 
+from tests.preview_runtime_helpers import PrimaryWindow
 from tests.test_api import FakeWindow, make_api
 from tests.test_preview_cropcontroller import DEFINITION, client
 from tests.test_preview_host import crop_pump as crop_pump
@@ -203,13 +203,15 @@ def test_review_04_05_accepted_primary_fifo_precedes_cleanup(runtime_pump, bound
     eve_on(r)
     h = r.host
     store = LayoutStore(r.transaction.update, timer=FakeTimer)
+    h._layout_store = store
+    h._flush_layouts = store.flush
     h._clear_layouts = store.clear
     h._on_layout_changed = lambda name, rect, locked: store.record(
         name, layout.Entry(rect, locked)
     )
     r.store._flush_primary = store.flush
     moved = []
-    primary = SimpleNamespace(
+    primary = PrimaryWindow(
         rect=geometry.Rect(20, 30, 320, 210),
         locked=False,
         _mode=None,

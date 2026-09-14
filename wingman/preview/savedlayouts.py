@@ -17,6 +17,12 @@ _INT_MAX = 2**31 - 1
 
 
 @dataclass(frozen=True)
+class PrimaryLayoutLiveResult:
+    live: str
+    warning: str | None
+
+
+@dataclass(frozen=True)
 class SavedCharacter:
     name: str
     visible: bool
