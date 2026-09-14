@@ -8,6 +8,9 @@ and must not steal focus on the way past. There is no click-versus-drag
 classification any more -- the thing that used to make a one-pixel
 wobble still count as a click."""
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+
 import pytest
 
 from wingman.preview import window
@@ -615,13 +618,21 @@ class _FakeLibs:
 
     def __init__(self, cursor=(0, 0)):
         self.cursor = cursor
+        self.capture = None
+        self.capture_changed = lambda: None
         outer = self
 
         class User32:
             def SetCapture(self, h):
-                return h
+                previous, outer.capture = outer.capture, h
+                return previous
+
+            def GetCapture(self):
+                return outer.capture
 
             def ReleaseCapture(self):
+                outer.capture = None
+                outer.capture_changed()
                 return True
 
             def SetWindowPos(self, *a):
@@ -680,6 +691,7 @@ def _window_for_gestures(
     )
     w.hwnd = 1
     w.redraw = lambda force=False: None
+    libs.capture_changed = lambda: w._on_message(window.win32.WM_CAPTURECHANGED, 0, 0)
     return w, libs
 
 
@@ -692,6 +704,7 @@ def test_gesture_lease_retires_once_after_final_geometry(end, monkeypatch):
 
     def finish(lease):
         assert recorded == [Rect(100, 100, 400, 260)]
+        assert libs.capture is None
         completed.append(lease)
         gate.finish(lease)
 
@@ -704,6 +717,7 @@ def test_gesture_lease_retires_once_after_final_geometry(end, monkeypatch):
     w._on_rect_changed = lambda key, rect, locked: recorded.append(rect)
     monkeypatch.setattr(libs.user32, "DestroyWindow", lambda hwnd: True, raising=False)
     w._on_message(window.win32.WM_RBUTTONDOWN, 0, 0)
+    assert libs.capture == w.hwnd
     assert gate.try_begin(exclusive=True) is None
     libs.cursor = (80, 50)
     w._on_message(window.win32.WM_MOUSEMOVE, 0, 0)
@@ -717,11 +731,70 @@ def test_gesture_lease_retires_once_after_final_geometry(end, monkeypatch):
             "capture": window.win32.WM_CAPTURECHANGED,
             "cancel": window.win32.WM_CANCELMODE,
         }[end]
+        if end == "capture":
+            libs.capture = None  # Windows has already transferred/lost capture.
         w._on_message(message, 0, 0)
     w._on_message(window.win32.WM_CAPTURECHANGED, 0, 0)
     assert len(completed) == 1
     assert gate.wait_idle(0)
     assert w._mode is None
+
+
+def test_gesture_capture_release_reentry_keeps_lease_until_cleanup_finishes():
+    from wingman.preview.layoutadmission import PrimaryLayoutAdmission
+
+    gate = PrimaryLayoutAdmission()
+    ended, reentered = [], []
+
+    def finish(lease):
+        ended.append(lease)
+        gate.finish(lease)
+
+    w, libs = _window_for_gestures(
+        False,
+        on_gesture_begin=lambda: gate.try_begin(exclusive=False),
+        on_gesture_end=finish,
+    )
+    w._on_message(window.win32.WM_RBUTTONDOWN, 0, 0)
+
+    def capture_changed():
+        assert libs.capture is None and w._mode is None
+        w._on_message(window.win32.WM_CAPTURECHANGED, 0, 0)
+        assert not gate.wait_idle(0) and not ended
+        reentered.append(True)
+
+    libs.capture_changed = capture_changed
+    w.finish_gesture(record=False)
+    assert reentered == [True] and len(ended) == 1
+    assert gate.wait_idle(0)
+
+
+@pytest.mark.parametrize("end", ["freeze", "up", "cancel", "capture"])
+def test_gesture_cleanup_does_not_release_another_windows_capture(end):
+    from wingman.preview.layoutadmission import PrimaryLayoutAdmission
+
+    gate = PrimaryLayoutAdmission()
+    w, libs = _window_for_gestures(
+        False,
+        on_gesture_begin=lambda: gate.try_begin(exclusive=False),
+        on_gesture_end=gate.finish,
+    )
+    w._on_message(window.win32.WM_RBUTTONDOWN, 0, 0)
+    libs.capture = 99  # Companion/picker acquired it before our loss was handled.
+    if end == "freeze":
+        w.finish_gesture(record=False)
+    else:
+        w._on_message(
+            {
+                "up": window.win32.WM_RBUTTONUP,
+                "cancel": window.win32.WM_CANCELMODE,
+                "capture": window.win32.WM_CAPTURECHANGED,
+            }[end],
+            0,
+            0,
+        )
+    w._on_message(window.win32.WM_RBUTTONUP, 0, 0)
+    assert libs.capture == 99 and gate.wait_idle(0)
 
 
 def test_revocation_freezes_active_drag_but_still_retires_final_geometry():
@@ -747,6 +820,77 @@ def test_revocation_freezes_active_drag_but_still_retires_final_geometry():
     assert w.rect == Rect(100, 100, 400, 260)
     w._on_message(window.win32.WM_RBUTTONUP, 0, 0)
     assert recorded == [Rect(100, 100, 400, 260)]
+    assert gate.wait_idle(0)
+
+
+@pytest.mark.parametrize(
+    ("gesture", "boundary"),
+    [("move", "cursor"), ("move", "snap"), ("resize", "cursor"), ("all", "cursor")],
+)
+def test_mid_handler_revocation_fences_native_movement(gesture, boundary, monkeypatch):
+    from wingman.preview.layoutadmission import PrimaryLayoutAdmission
+
+    gate = PrimaryLayoutAdmission()
+    entered, release, revoked = Event(), Event(), Event()
+    recorded, moved = [], []
+    w, libs = _window_for_gestures(
+        False,
+        is_authorized=lambda: not revoked.is_set(),
+        on_gesture_begin=lambda: gate.try_begin(exclusive=False),
+        on_gesture_end=gate.finish,
+    )
+    w.lock_aspect = False
+    w._on_rect_changed = lambda key, rect, locked: recorded.append(rect)
+    monkeypatch.setattr(
+        libs.user32, "SetWindowPos", lambda *args: moved.append(args) or True
+    )
+
+    def held(action):
+        def call(*args):
+            entered.set()
+            assert release.wait(5)
+            return action(*args)
+
+        return call
+
+    def drag():
+        button = (
+            window.win32.WM_LBUTTONDOWN
+            if gesture == "move"
+            else window.win32.WM_RBUTTONDOWN
+        )
+        w._on_message(button, 0, 0)
+        if gesture == "all":
+            w._on_message(window.win32.WM_LBUTTONDOWN, 0, 0)
+        # Establish an admitted, actually delivered gesture before pausing the
+        # NEXT message after its entry fence, not between messages.
+        libs.cursor = (80, 50)
+        w._on_message(window.win32.WM_MOUSEMOVE, 0, 0)
+        last = w.rect
+        moved.clear()
+        if boundary == "cursor":
+            monkeypatch.setattr(
+                libs.user32, "GetCursorPos", held(libs.user32.GetCursorPos)
+            )
+        else:
+            monkeypatch.setattr(window.geometry, "snap", held(window.geometry.snap))
+        libs.cursor = (100, 70)
+        w._on_message(window.win32.WM_MOUSEMOVE, 0, 0)
+        assert not moved
+        assert w.rect == last
+        assert not gate.wait_idle(0)  # Revocation is not gesture completion.
+        w._on_message(window.win32.WM_RBUTTONUP, 0, 0)
+        assert recorded == [last]
+
+    with ThreadPoolExecutor(max_workers=1) as pump:
+        future = pump.submit(drag)
+        assert entered.wait(5)
+        try:
+            revoked.set()
+            assert not gate.wait_idle(0)
+        finally:
+            release.set()
+        future.result(5)
     assert gate.wait_idle(0)
 
 

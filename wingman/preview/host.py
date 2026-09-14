@@ -1522,9 +1522,9 @@ class PreviewHost:
                         with self._lock:
                             table = dict(self._desired_hotkeys)
                         if self._eve_valid(epoch):
-                            self._apply_hotkeys(win32.bind(), table)
-                        if self._eve_valid(epoch):
-                            result = PrimaryLayoutLiveResult("applied", None)
+                            result = self._apply_hotkeys(win32.bind(), table)
+                        if not self._eve_valid(epoch):
+                            result = PrimaryLayoutLiveResult("deferred", None)
                     except Exception as exc:
                         # The committed choice survives a failed native reconcile.
                         logger.exception(
@@ -3350,8 +3350,8 @@ class PreviewHost:
                 logger.warning("Preview foreground hook remains registered")
         return hotkeys_released and not self._hook
 
-    def _apply_hotkeys(self, libs, table) -> None:
-        """Unregister everything, then register the new table."""
+    def _apply_hotkeys(self, libs, table) -> PrimaryLayoutLiveResult:
+        """Rebind without confusing retained OS ownership with live success."""
         with self._lock:
             revision = self._hotkey_revision
             if revision:
@@ -3362,13 +3362,18 @@ class PreviewHost:
         if not self._release_hotkeys(libs):
             self._authorize_hotkeys(table, plan)
             self._refresh_hotkey_authority()
-            return
+            return PrimaryLayoutLiveResult(
+                "incomplete",
+                "Could not release Preview keybinds: "
+                + ", ".join(self._registered_text.values())
+                + ". Their registrations are retained for cleanup.",
+            )
 
         epoch = self._eve_epoch
         status = {}
         for ident, text, action in plan:
             if not self._eve_valid(epoch):
-                return
+                return PrimaryLayoutLiveResult("deferred", None)
             parsed = gestures.parse(text)
             ok = bool(
                 libs.user32.RegisterHotKey(self._hwnd, ident, parsed.mods, parsed.vk)
@@ -3379,7 +3384,7 @@ class PreviewHost:
                 self._registered_text[ident] = text
             if not self._eve_valid(epoch):
                 self._release_hotkeys(libs)
-                return
+                return PrimaryLayoutLiveResult("deferred", None)
             status[text] = ok
             if ok:
                 self._registered[ident] = action
@@ -3426,6 +3431,17 @@ class PreviewHost:
                 self._on_hotkey_status(dict(status))
             except Exception:
                 logger.exception("on_hotkey_status callback raised")
+        if not self._eve_valid(epoch):
+            return PrimaryLayoutLiveResult("deferred", None)
+        refused = [text for text, ok in status.items() if not ok]
+        if refused:
+            return PrimaryLayoutLiveResult(
+                "incomplete",
+                "Could not register Preview keybinds: "
+                + ", ".join(refused)
+                + ". Another application may already own them.",
+            )
+        return PrimaryLayoutLiveResult("applied", None)
 
     def _on_hotkey(self, libs, ident) -> None:
         """Keep the one-message entry point for direct callers and tests."""
@@ -4590,7 +4606,10 @@ class PreviewHost:
             rect = win.rect._replace(w=w, h=h)
             if self._eve_valid():
                 win.move(rect)
-                rect = win.rect
+                # The window rechecks authority at delivery. If Off won that
+                # gap, retain the admitted typed size, not its unmoved cache.
+                if self._eve_valid():
+                    rect = win.rect
             else:
                 win._mode = None
             # Recorded like a drag: a typed size is the user's choice and
@@ -4611,7 +4630,10 @@ class PreviewHost:
             rect = win.rect._replace(w=w, h=h)
             if self._eve_valid():
                 win.move(rect)
-                rect = win.rect
+                # As with single Size, revoked native delivery does not revoke
+                # the already-admitted storage choice.
+                if self._eve_valid():
+                    rect = win.rect
             else:
                 win._mode = None
             self._layout_changed(key, rect, win.locked)
@@ -4688,9 +4710,8 @@ class PreviewHost:
         self._freeze_primary_gestures()
         for window in list(self._windows.values()):
             window.set_hidden(True)
-        # EVE-off must not steal a leased companion picker's capture.
-        if self._companion_family is None or not self._companion_family.temporary_busy:
-            libs.user32.ReleaseCapture()
+        # Primary freeze and crop teardown release only their OWN capture.
+        # A blanket ReleaseCapture here would also cancel a companion drag.
         with self._lock:
             if self._primary_pending or not self._layout_admission.wait_idle(0):
                 return

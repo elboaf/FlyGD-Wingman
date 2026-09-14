@@ -132,9 +132,13 @@ def test_visibility_promise_waits_for_reconcile_and_rebind(layout_api, monkeypat
     monkeypatch.setattr(
         r.host, "_reconcile_roster", lambda *args: observed.append("roster")
     )
-    monkeypatch.setattr(
-        r.host, "_apply_hotkeys", lambda *args: observed.append("rebind")
-    )
+    rebind = r.host._apply_hotkeys
+
+    def observed_rebind(*args):
+        observed.append("rebind")
+        return rebind(*args)
+
+    monkeypatch.setattr(r.host, "_apply_hotkeys", observed_rebind)
     entered = Event()
     pending = []
     refresh = r.host.refresh_primary_visibility
@@ -176,6 +180,151 @@ def test_copy_coalescing_keeps_every_lease_until_native_retirement(layout_api):
     assert r.api._state.settings["preview"]["layouts"]["Alice"]["w"] == 550
 
 
+def test_mid_resize_all_revocation_fences_each_native_target(layout_api, monkeypatch):
+    from tests.test_preview_cropcontroller import client
+    from wingman.preview.geometry import Rect
+    from wingman.preview.host import _preview_client
+    from wingman.preview.window import PreviewWindow
+
+    r = layout_api()
+    open_eve(r)
+    epoch = r.host._eve_epoch
+    entered, release = Event(), Event()
+    moved, windows = [], {}
+    cursor = [0, 0]
+
+    def get_cursor(ptr):
+        ptr._obj.x, ptr._obj.y = cursor
+        return True
+
+    def position(hwnd, after, x, y, w, h, flags):
+        assert r.host._lock.acquire(blocking=False)
+        r.host._lock.release()
+        moved.append((hwnd, r.host._eve_valid(epoch)))
+        if hwnd == 52:  # Bob crossed native admission; Carol has not.
+            entered.set()
+            assert release.wait(5)
+        return True
+
+    monkeypatch.setattr(r.native, "GetCursorPos", get_cursor, raising=False)
+    monkeypatch.setattr(r.native, "SetWindowPos", position)
+
+    def install():
+        for hwnd, name in enumerate(("Alice", "Bob", "Carol"), 51):
+            win = PreviewWindow(
+                r.native.lib,
+                _preview_client(client(name, hwnd=hwnd + 100)),
+                Rect(20, 30, 320, 210),
+                lambda client: None,
+                lambda *args, owner=name: r.host._primary_rect_changed(
+                    epoch, owner, *args
+                ),
+                list,
+                r.host._screen,
+                show_labels=False,
+                lock_aspect=False,
+                is_authorized=lambda: r.host._eve_valid(epoch),
+                on_gesture_begin=lambda owner=name: r.host._begin_primary_gesture(
+                    epoch, owner
+                ),
+                on_gesture_end=r.host.release_primary_layout,
+                on_resize_all=lambda rect, owner=name: (
+                    r.host._mirror_resize(owner, rect)
+                    if r.host._eve_valid(epoch)
+                    else None
+                ),
+            )
+            win.hwnd = hwnd
+            win.redraw = lambda force=False: None
+            r.native.windows[hwnd] = "primary"
+            windows[name] = win
+        r.host._windows = windows.copy()
+        driver = windows["Alice"]
+        driver._on_message(win32.WM_RBUTTONDOWN, 0, 0)
+        driver._on_message(win32.WM_LBUTTONDOWN, 0, 0)
+
+    r.call(install)
+    cursor[:] = [80, 50]
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(
+            r.call, lambda: windows["Alice"]._on_message(win32.WM_MOUSEMOVE, 0, 0)
+        )
+        if not entered.wait(5):
+            future.result(5)
+            pytest.fail("resize-all did not reach Bob's native movement")
+        try:
+            assert r.api.set_preview_enabled(False)
+            assert not r.host._layout_admission.wait_idle(0)
+        finally:
+            release.set()
+        future.result(5)
+    r.wait_state(lambda state: state.eve == "stopped")
+    assert moved == [(51, True), (52, True)]
+    assert windows["Carol"].rect == Rect(20, 30, 320, 210)
+    assert r.host.layout_entries()["Alice"].rect == Rect(20, 30, 400, 260)
+    assert r.host.layout_entries()["Bob"].rect == Rect(20, 30, 400, 260)
+    assert r.host._layout_admission.wait_idle(5)
+
+
+@pytest.mark.parametrize("operation", ["size", "size-all"])
+def test_revoked_native_size_keeps_the_admitted_storage_choice(
+    layout_api, monkeypatch, operation
+):
+    from tests.test_preview_cropcontroller import client
+    from wingman.preview.geometry import Rect
+    from wingman.preview.host import _preview_client
+    from wingman.preview.window import PreviewWindow
+
+    r = layout_api()
+    open_eve(r)
+    epoch = r.host._eve_epoch
+    entered, release = Event(), Event()
+    moved = []
+
+    def authorized():
+        entered.set()
+        assert release.wait(5)
+        return r.host._eve_valid(epoch)
+
+    def install():
+        win = PreviewWindow(
+            r.native.lib,
+            _preview_client(client()),
+            Rect(20, 30, 320, 210),
+            lambda client: None,
+            r.host._layout_changed,
+            list,
+            r.host._screen,
+            show_labels=False,
+            is_authorized=authorized,
+        )
+        win.hwnd = 51
+        r.native.windows[51] = "primary"
+        r.host._windows["Alice"] = win
+
+    monkeypatch.setattr(
+        r.native, "SetWindowPos", lambda *args: moved.append(args) or True
+    )
+    r.call(install)
+    assert (
+        r.host.resize_preview("Alice", (500, 300))
+        if operation == "size"
+        else r.host.resize_all((500, 300))
+    )
+    assert entered.wait(5)
+    try:
+        assert r.api.set_preview_enabled(False)
+        assert not r.host._layout_admission.wait_idle(0)
+    finally:
+        release.set()
+    assert r.host._layout_admission.wait_idle(5)
+    r.wait_state(lambda state: state.eve == "stopped")
+    assert not moved
+    assert r.host.layout_entries()["Alice"].rect == Rect(20, 30, 500, 300)
+    saved = r.api._state.settings["preview"]["layouts"]["Alice"]
+    assert (saved["w"], saved["h"]) == (500, 300)
+
+
 def test_stop_freezes_gesture_before_waiting_for_queued_reset(layout_api, monkeypatch):
     from tests.test_preview_cropcontroller import client
     from wingman.preview.geometry import Rect
@@ -184,6 +333,8 @@ def test_stop_freezes_gesture_before_waiting_for_queued_reset(layout_api, monkey
 
     r = layout_api()
     open_eve(r)
+
+    monkeypatch.setattr(r.native, "GetCursorPos", lambda ptr: True, raising=False)
 
     def install():
         win = PreviewWindow(
@@ -194,16 +345,20 @@ def test_stop_freezes_gesture_before_waiting_for_queued_reset(layout_api, monkey
             r.host._layout_changed,
             list,
             r.host._screen,
+            show_labels=False,
+            lock_aspect=False,
             on_gesture_begin=lambda: r.host._begin_primary_gesture(
                 r.host._eve_epoch, "Alice"
             ),
             on_gesture_end=r.host.release_primary_layout,
         )
-        win._mode = "move"
-        assert win._begin_gesture()
+        win.hwnd = 51
+        r.native.windows[51] = "primary"
         r.host._windows["Alice"] = win
+        win._on_message(win32.WM_RBUTTONDOWN, 0, 0)
 
     r.call(install)
+    assert r.native.capture == 51
     entered, release = Event(), Event()
     clear = r.host._clear_layouts
 
@@ -220,12 +375,29 @@ def test_stop_freezes_gesture_before_waiting_for_queued_reset(layout_api, monkey
         # Reset supersedes the earlier drag before its asynchronous clear;
         # freezing it later during Off would resurrect the erased geometry.
         assert r.host._layout_admission.snapshot().shared_count == 1
+        assert r.native.capture is None
+        r.call(lambda: r.host._windows["Alice"]._on_message(win32.WM_RBUTTONUP, 0, 0))
+        assert r.native.capture is None
         assert r.api.set_preview_enabled(False)
     finally:
         release.set()
     assert r.host._layout_admission.wait_idle(5)
     r.wait_state(lambda state: state.eve == "stopped")
     assert r.api._state.settings["preview"]["layouts"] == {}
+
+
+def test_eve_stop_does_not_release_foreign_mouse_capture(layout_api):
+    r = layout_api()
+    r.runtime.set_companions(True, 1)
+    r.wait_state(lambda state: state.companions == "active")
+    open_eve(r)
+    r.call(lambda: r.native.SetCapture(99))
+    assert r.api.set_preview_enabled(False)
+    r.wait_state(lambda state: state.eve == "stopped" and state.companions == "active")
+    try:
+        assert r.call(r.native.GetCapture) == 99
+    finally:
+        r.call(r.native.ReleaseCapture)
 
 
 def test_offline_copy_io_blocks_on_and_final_storage_close(layout_api, monkeypatch):
@@ -370,16 +542,96 @@ def test_visibility_failure_retains_persisted_choice_and_warns(layout_api, monke
     assert r.host._layout_admission.wait_idle(5)
 
 
+@pytest.mark.parametrize("failure", ["unregister", "register"])
+def test_visibility_false_native_rebind_preserves_choices_and_reports_incomplete(
+    layout_api, monkeypatch, failure
+):
+    from tests.test_preview_host import _FakeUser32
+    from wingman import settings
+
+    r = layout_api()
+    native = _FakeUser32()
+    monkeypatch.setattr(
+        r.native, "RegisterHotKey", native.RegisterHotKey, raising=False
+    )
+    monkeypatch.setattr(
+        r.native, "UnregisterHotKey", native.UnregisterHotKey, raising=False
+    )
+    monkeypatch.setattr(
+        r.host, "_excluded", lambda: r.api._state.settings["preview"]["excluded"]
+    )
+    open_eve(r)
+    table = {"characters": {"Alice": "Ctrl+F1", "Bob": "Ctrl+F2", "Carol": "Ctrl+F3"}}
+    r.host.set_hotkeys(table)
+    registered = r.call(lambda: dict(r.host._registered_text))
+    alice_id = next(ident for ident, text in registered.items() if text == "Ctrl+F1")
+    bob_id = next(ident for ident, text in registered.items() if text == "Ctrl+F2")
+    pending = []
+    refresh = r.host.refresh_primary_visibility
+
+    def remember(lease):
+        future = refresh(lease)
+        pending.append(future)
+        return future
+
+    monkeypatch.setattr(r.host, "refresh_primary_visibility", remember)
+    if failure == "unregister":
+        monkeypatch.setattr(
+            r.native,
+            "UnregisterHotKey",
+            lambda hwnd, ident: (
+                False if ident == alice_id else native.UnregisterHotKey(hwnd, ident)
+            ),
+        )
+    else:
+        native._refuse.add(native.registered[bob_id])
+    try:
+        result = r.api.set_preview_excluded("Alice", True)
+        assert result["applied"] and result["persisted"] and not result["error"]
+        assert settings.load()["preview"]["excluded"] == ["Alice"]
+        assert r.host._desired_hotkeys == table
+        assert r.host._layout_admission.wait_idle(5)
+        assert pending[-1].result(5).live == "incomplete"
+        warning = result["warning"]
+        if failure == "unregister":
+            assert "release" in warning.lower() and "Ctrl+F1" in warning
+            assert r.call(lambda: dict(r.host._registered_text)) == {
+                alice_id: "Ctrl+F1"
+            }
+            assert alice_id in native.registered
+            assert (
+                r.call(lambda: dict(r.host._registered)) == {}
+            )  # Held, not authorized.
+        else:
+            assert "register" in warning.lower() and "Ctrl+F2" in warning
+            assert list(r.call(lambda: dict(r.host._registered_text)).values()) == [
+                "Ctrl+F3"
+            ]
+            assert len(native.registered) == 1
+    finally:
+        native._refuse.clear()
+        monkeypatch.setattr(r.native, "UnregisterHotKey", native.UnregisterHotKey)
+    retry = r.api.set_preview_excluded("Alice", True)
+    assert retry["persisted"] and not retry.get("warning")
+    assert pending[-1].result(5).live == "applied"
+    assert set(r.call(lambda: dict(r.host._registered_text)).values()) == {
+        "Ctrl+F2",
+        "Ctrl+F3",
+    }
+
+
 def test_off_does_not_complete_an_executing_visibility_phase_early(
     layout_api, monkeypatch
 ):
     r = layout_api()
     open_eve(r)
     entered, release = Event(), Event()
+    rebind = r.host._apply_hotkeys
 
     def held(*args):
         entered.set()
         assert release.wait(5)
+        return rebind(*args)
 
     monkeypatch.setattr(r.host, "_apply_hotkeys", held)
     with ThreadPoolExecutor(max_workers=1) as pool:

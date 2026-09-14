@@ -942,6 +942,11 @@ class PreviewWindow:
         a move, and the thumbnail's destination is in CLIENT coordinates,
         so neither has to be touched when only x/y change.
         """
+        # Cursor sampling/snapping (and an earlier resize-all target) can
+        # outlive EVE authority. Fence each native delivery, not just message
+        # entry; an undelivered rectangle must not become final drag geometry.
+        if self._is_authorized is not None and not self._is_authorized():
+            return
         resized = (rect.w, rect.h) != (self.rect.w, self.rect.h)
         self.rect = rect
         # SWP_NOACTIVATE | SWP_NOZORDER: moving a preview must not steal
@@ -991,6 +996,15 @@ class PreviewWindow:
         mode, self._mode = self._mode, None
         lease, self._gesture = self._gesture, None
         try:
+            # ReleaseCapture synchronously re-enters WM_CAPTURECHANGED. Clear
+            # local input first, but keep the lease until native cleanup and
+            # recording finish. Never release a companion/picker's capture.
+            if (
+                mode is not None
+                and self.hwnd
+                and self._libs.user32.GetCapture() == self.hwnd
+            ):
+                self._libs.user32.ReleaseCapture()
             if record and mode in ("move", "resize", "resize_all"):
                 self._on_rect_changed(self.client.stable_key, self.rect, self.locked)
         finally:
@@ -1006,7 +1020,6 @@ class PreviewWindow:
                     # Revocation forbids further movement, not the admitted
                     # gesture's last detached geometry or capture cleanup.
                     self.finish_gesture()
-                    self._libs.user32.ReleaseCapture()
                 return 0
         if msg in (win32.WM_CAPTURECHANGED, win32.WM_CANCELMODE):
             self.finish_gesture()
@@ -1157,7 +1170,6 @@ class PreviewWindow:
         if msg in (win32.WM_LBUTTONUP, win32.WM_RBUTTONUP) and self._mode:
             mode = self._mode
             self.finish_gesture()
-            self._libs.user32.ReleaseCapture()
             if PERF and getattr(self, "_perf", None):
                 p = self._perf
                 wall = time.perf_counter() - p["start"]

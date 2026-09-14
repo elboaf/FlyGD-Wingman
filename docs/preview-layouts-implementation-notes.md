@@ -284,3 +284,49 @@ coverage did not skip. The earlier failed complete-tree XML is retained separate
 at `/tmp/wingman-preview-layouts-task2-complete-full.xml`. No network, GitHub,
 real app/EVE/profile/clipboard operations, push or PR occurred. Windows/WebView2
 operator acceptance remains outstanding; portable tests do not establish it.
+
+## Task 2 — fix round 1, native boundary corrections
+
+Base: `1cc9b93acbb1dd7b71b7ea9129434deeba9517ca`. All three Important findings
+were reproduced at their actual caller seams before their production fixes:
+
+- `PreviewWindow.move()` now rechecks EVE authority after cursor/snap work and
+  before native/cache movement, including each resize-all target. A native call
+  admitted earlier may finish; later targets are fenced. Single/bulk typed Size
+  still persists its admitted requested rectangle if the window refuses delivery.
+- `finish_gesture` releases only its own HWND's capture, using the existing
+  `GetCapture` binding. Local state is detached before synchronous capture-loss
+  reentry, while the outer lease remains owned through cleanup/recording.
+  Duplicate button-up and blanket host-stop releases were removed so another
+  family's capture is not stolen. The queued-Reset test now starts a real gesture
+  and asserts native ownership, not only `_mode` or lease counts.
+- `_apply_hotkeys(libs, table)` now returns the existing `PrimaryLayoutLiveResult`.
+  Real unregister/register false returns produce `incomplete` with affected-chord
+  warnings, propagated through visibility completion and the existing Api warning.
+  Committed exclusions survive reload; unreleased registrations stay owned but
+  excluded bindings cannot dispatch; successful retry removes the warning.
+
+No new worker/timer, off-pump window access, state-lock native work, schema,
+controller or later-task UI was introduced. The detached-continuation/readiness/
+closing-barrier ruling remains unchanged. Local diagnosis/TDD and self-polish only;
+no independent review, network, app/EVE/profile/clipboard or GitHub effects.
+
+Verification uses `UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync`:
+movement RED **5 failures** → **176 passes**; capture RED **7 failures** plus foreign
+capture RED **1 failure** → **182 passes**; real rebind RED **2 failures** → **6
+visibility passes**; typed-size preservation RED **2 failures** → **186 focused
+passes**. Broad `tests/test_preview*.py tests/test_companion*.py tests/test_api*.py
+ tests/test_settings_committed_preview.py tests/test_settings_transactions.py`:
+**3,479 passed, 4 Windows-only skips in 104.20s**.
+
+After local polish, Ruff lint/format passed (**444 formatted**), all-page Node
+smoke passed, and offline Cargo regression passed (**1 test**). One final full run:
+
+```sh
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync python -m pytest tests/ -q -rs --basetemp=/tmp/wingman-preview-layouts-task2-fix1-full --junitxml=/tmp/wingman-preview-layouts-task2-fix1-full.xml
+```
+
+**12,681 passed, 13 Windows-only skips in 306.56s**; no Node/codec skips.
+Exact per-case commands, outputs, interfaces and self-review evidence are appended
+in `.superpowers/sdd/preview-layouts-plan/task-2-report.md`. Coordinator re-review
+and Windows/WebView2/live-EVE operator acceptance remain outstanding.
