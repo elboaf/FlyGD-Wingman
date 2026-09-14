@@ -381,6 +381,7 @@
   var queue = [];
   var active = null;
   var returnFocus = null;
+  var returnFocusOwned = false;
   var lastPageFocus = null;
 
   var overlay = WM.el('overlay');
@@ -414,8 +415,14 @@
   // page. Remember focus while the page still owns it, then fall back to an
   // enabled control on the same route if that trigger remains unavailable.
   document.addEventListener('focusin', function (ev) {
-    if (overlay.hidden && !overlay.contains(ev.target)) {
+    if (overlay.contains(ev.target)) return;
+    if (overlay.hidden) {
       lastPageFocus = ev.target;
+    } else {
+      // A newer page interaction owns focus, even if it later blurs or returns
+      // to the dialog. Keep this revoked through the queue: promise continuations
+      // run too late to stop next() restoring an obsolete invoker synchronously.
+      returnFocusOwned = false;
     }
   });
 
@@ -502,6 +509,7 @@
       queue.push(item);
       return;
     }
+    returnFocusOwned = true;
     returnFocus = document.activeElement;
     if (!returnFocus || returnFocus === document.body) {
       returnFocus = lastPageFocus;
@@ -541,8 +549,10 @@
     }
     overlay.hidden = true;
     var target = returnFocus;
+    var owned = returnFocusOwned;
     returnFocus = null;
-    restorePageFocus(target);
+    returnFocusOwned = false;
+    if (owned) restorePageFocus(target);
   }
 
   function answer(ok) {

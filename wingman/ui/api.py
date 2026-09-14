@@ -33,6 +33,7 @@ import threading
 import time
 import uuid
 import webbrowser
+from concurrent.futures import Future
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
@@ -63,10 +64,19 @@ from ..preview import gestures as preview_gestures
 from ..preview import host as preview_host_mod
 from ..preview import labelmarkers as preview_labelmarkers
 from ..preview import layout as preview_layout
+from ..preview import savedlayouts as preview_savedlayouts
 from ..preview import window as preview_window
 from ..preview.companioncontroller import CompanionController, CompanionPorts
 from ..preview.labelsize import LABEL_SIZE_PRESETS
+from ..preview.layoutadmission import PrimaryLayoutAdmission
+from ..preview.layoutcontroller import (
+    PreviewGeometryUnavailable,
+    PreviewLayoutsController,
+    PreviewLayoutsPorts,
+)
 from ..preview.runtime import PreviewRuntime
+from ..preview.savedlayouts import PrimaryLayoutCapture, PrimaryLayoutLiveResult
+from ..preview.store import LayoutStore
 from ..telemetry.model import CustomMatcherHealth
 from ..upload.controller import (
     PROBE_DRAIN_S,
@@ -371,6 +381,8 @@ class Api:
         timer=threading.Timer,
         preview_host=None,
         preview_runtime=None,
+        layout_store=None,
+        layout_admission=None,
         companion_controller=None,
         skills=None,
         telemetry=None,
@@ -434,7 +446,21 @@ class Api:
         self._catalogue_unsubscribe = None
         # Construction is inert. Main starts the owner before subscribing;
         # the dispatcher only folds state and sets its wakeup bit.
-        self._fleet_worker = FleetPresentationWorker(self._present_fleet_snapshot)
+        self._fleet_worker = FleetPresentationWorker(self._present_snapshots)
+        # Bounded data handoff from Preview's pump/discovery/storage callbacks.
+        # Detach under this lock; sample authority and touch pages only afterward.
+        self._preview_presentation_lock = threading.Lock()
+        self._preview_presentation_closed = False
+        self._preview_primary_dirty = False
+        self._preview_layouts_dirty = False
+        self._preview_geometry_dirty = False
+        self._preview_geometry_lock = threading.Lock()
+        self._preview_geometry_revision = 0
+        self._preview_geometry_cache = None
+        self._preview_crops_pending = None
+        self._preview_crops_revision = -1
+        self._preview_capture_pending = None
+        self._preview_capture_revision = 0
         # pywebview serves bridge calls concurrently. Window construction,
         # show/hide, page-ready reveal, and shutdown must have one lifecycle
         # owner or a late enable can orphan an untracked topmost WebView.
@@ -466,11 +492,40 @@ class Api:
         # None off Windows and in most tests: the preview subsystem is
         # optional and every call site below tolerates its absence.
         self._preview_host = preview_host
+        host_admission = getattr(preview_host, "_layout_admission", None)
+        host_store = getattr(preview_host, "_layout_store", None)
+        if host_admission is not None:
+            if host_store is None:
+                raise ValueError(
+                    "Preview host layout admission requires a layout store"
+                )
+            if layout_store is not None and layout_store is not host_store:
+                raise ValueError("Preview host and Api must share their layout store")
+            if layout_admission is not None and layout_admission is not host_admission:
+                raise ValueError(
+                    "Preview host and Api must share their layout admission"
+                )
+            layout_store = host_store
+            layout_admission = host_admission
+        self._preview_layout_store = (
+            layout_store
+            if layout_store is not None
+            else LayoutStore(lambda: settings_mod.update(state.settings))
+        )
+        self._preview_layout_admission = (
+            layout_admission
+            if layout_admission is not None
+            else PrimaryLayoutAdmission()
+        )
         self._preview_runtime = (
             preview_runtime
             if preview_runtime is not None
             else PreviewRuntime(preview_host)
         )
+        self._preview_layout_store.set_commit_callback(
+            self._request_preview_geometry_refresh
+        )
+        self._preview_layouts = self._build_preview_layouts_controller()
         self._preview_revision = 0
         self._preview_runtime_authorized = False
         self._companions = (
@@ -594,6 +649,7 @@ class Api:
         self._preview_hotkey_lock = threading.Lock()
         self._preview_mode_lock = threading.Lock()
         self._preview_mode_changing = False
+        self._preview_master_changing = False
         # The uploader owns the rows, the durations cache, the link store
         # and every upload/log worker handle; the bridge keeps facades. Built
         # after the work gate, the dialog registry and the effect
@@ -2894,10 +2950,19 @@ class Api:
                 self._fleet_settings_dirty = True
             self._fleet_worker.notify()
 
-    def _start_fleet_presentation(self) -> bool:
-        """Start before subscribing; retries never allocate a second owner."""
+    def _start_presentation(self) -> bool:
+        """Start the one page owner independently of telemetry or Fleet mode."""
         with self._fleetbar_lifecycle_lock:
-            if self._fleetbar_quitting or not self._fleet_worker.start():
+            return (
+                not self._fleetbar_quitting
+                and not self._preview_presentation_closed
+                and self._fleet_worker.start()
+            )
+
+    def _start_fleet_presentation(self) -> bool:
+        """Subscribe separately; retries reuse the independently started owner."""
+        with self._fleetbar_lifecycle_lock:
+            if not self._start_presentation():
                 return False
             if self._telemetry is not None and self._fleet_unsubscribe is None:
                 self._fleet_unsubscribe = self._telemetry.subscribe_fleet(
@@ -2907,6 +2972,7 @@ class Api:
 
     def _stop_fleet_presentation(self, timeout: float = 1.0) -> bool:
         """Close, detach, then join without holding native/presentation locks."""
+        self._close_preview_presentation()
         with self._fleetbar_lifecycle_lock:
             self._fleetbar_quitting = True
             self._retire_fleet_page_locked(keep_window=True)
@@ -4534,6 +4600,8 @@ class Api:
             self._eve_runtime_closed = True
             self._alerts_controller.close_runtime()
             telemetry = self._telemetry
+        self._close_preview_presentation()
+        self._preview_layouts.close_admission()
         self._wanderer.close_admission()
         # This only fences ingress; no consumer callback or join. Keep the
         # retained owner even when its later bounded stop cannot finish.
@@ -4577,6 +4645,8 @@ class Api:
         Fleet can independently start discovery and gamelog workers while
         Preview stays off. The preview pump and foreground hook remain lazy.
         """
+        if not self._start_presentation():
+            logger.error("Preview presentation could not start")
         section = self._state.settings.get("preview", {})
         if self._preview_host is not None:
             self._preview_host.set_hotkeys(section.get("hotkeys") or {})
@@ -4596,26 +4666,50 @@ class Api:
             self._reconcile_eve_runtime()
 
     @contextlib.contextmanager
-    def _preview_setting_change(self):
-        # Share the master reservation with explicit layout edits: an offline
-        # write must finish before another bridge call can re-enable EVE or
-        # read its tentative layout. Never hold the lock across I/O/callbacks.
-        # Final closure refuses new edits, not transactions already admitted.
-        # Admission shares the close fence; neither lock covers their writes.
+    def _preview_setting_change(self, *, exclusive=False, serialize=True):
+        # Bridge work owns a lease through its last effect. Posted host work
+        # takes an additional lease on this SAME gate, surviving bridge return.
+        # The mode flag preserves ordinary offline write ordering; visibility
+        # writes can share admission. No lock spans disk, futures or callbacks.
         with self._eve_runtime_lock, self._preview_mode_lock:
-            available = not self._eve_runtime_closed and not self._preview_mode_changing
-            if available:
+            available = not self._eve_runtime_closed and (
+                not serialize or not self._preview_mode_changing
+            )
+            lease = (
+                self._preview_layout_admission.try_begin(exclusive=exclusive)
+                if available
+                else None
+            )
+            if lease is not None and serialize:
                 self._preview_mode_changing = True
         try:
-            yield available
+            yield lease
         finally:
-            if available:
-                with self._preview_mode_lock:
-                    self._preview_mode_changing = False
+            if lease is not None:
+                if serialize:
+                    with self._preview_mode_lock:
+                        self._preview_mode_changing = False
+                try:
+                    if self._preview_host is not None:
+                        self._preview_host.release_primary_layout(lease)
+                finally:
+                    self._preview_layout_admission.finish(lease)
 
     def set_preview_enabled(self, enabled: bool) -> bool:
-        with self._preview_setting_change() as available:
-            return self._set_preview_enabled(bool(enabled)) if available else False
+        with self._eve_runtime_lock, self._preview_mode_lock:
+            if self._eve_runtime_closed or self._preview_master_changing:
+                return False
+            self._preview_master_changing = True
+        try:
+            if not enabled:
+                # Layout reservations never prevent committed Off revocation,
+                # but another tentative master transaction still refuses entry.
+                return self._set_preview_enabled(False)
+            with self._preview_setting_change(exclusive=True) as available:
+                return self._set_preview_enabled(True) if available else False
+        finally:
+            with self._preview_mode_lock:
+                self._preview_master_changing = False
 
     def _set_preview_enabled(self, enabled: bool) -> bool:
         """Toggle previews and persist the choice.
@@ -4725,11 +4819,90 @@ class Api:
     def _preview_publication_open(self) -> bool:
         return not self._eve_runtime_closed
 
+    def _close_preview_presentation(self) -> None:
+        with self._preview_presentation_lock:
+            self._preview_presentation_closed = True
+            self._preview_geometry_dirty = False
+            self._preview_primary_dirty = self._preview_layouts_dirty = False
+            self._preview_crops_pending = self._preview_capture_pending = None
+
+    def _preview_delivery_open(self) -> bool:
+        return (
+            self._preview_publication_open() and not self._preview_presentation_closed
+        )
+
     def push_preview_crops(self, state: dict) -> None:
-        """Semantic committed state; safe before a crop page handler is registered."""
-        if not self._eve_runtime_closed:
+        """Admit only the newest host-revisioned detached snapshot; no page I/O."""
+        with self._preview_presentation_lock:
+            if (
+                self._preview_presentation_closed
+                or state["revision"] <= self._preview_crops_revision
+            ):
+                return
+            self._preview_crops_revision = state["revision"]
+            self._preview_crops_pending = state
+        self._fleet_worker.notify()
+
+    def _present_snapshots(self) -> float | None:
+        # Preview must not sit behind Fleet's disabled/clean early returns.
+        try:
+            self._present_preview_snapshot()
+        except Exception:
+            logger.exception("Preview presentation failed")
+        return self._present_fleet_snapshot()
+
+    def _present_preview_snapshot(self) -> None:
+        with self._preview_presentation_lock:
+            if self._preview_presentation_closed:
+                return
+            primary, layouts = self._preview_primary_dirty, self._preview_layouts_dirty
+            geometry, self._preview_geometry_dirty = self._preview_geometry_dirty, False
+            crops, capture = self._preview_crops_pending, self._preview_capture_pending
+            self._preview_primary_dirty = self._preview_layouts_dirty = False
+            self._preview_crops_pending = self._preview_capture_pending = None
+        # Each domain gets a turn even if another payload builder fails. The
+        # worker clears its wake before detaching; new ingress keeps that wake.
+        if primary and self._preview_delivery_open():
+            try:
+                self._push(
+                    "onPreviewHotkeys",
+                    self.get_preview_hotkey_state(),
+                    delivery_allowed=self._preview_delivery_open,
+                )
+            except Exception:
+                logger.exception("Could not present Preview hotkeys")
+        if geometry and self._preview_delivery_open():
+            try:
+                self._publish_preview_geometry(self._sample_preview_geometry())
+            except Exception:
+                logger.exception("Could not present Preview geometry")
+        if layouts and self._preview_delivery_open():
+            try:
+                self._push(
+                    "onPreviewLayouts",
+                    self._preview_layouts.state(),
+                    delivery_allowed=self._preview_delivery_open,
+                )
+            except Exception:
+                logger.exception("Could not present Preview layouts")
+        if crops is not None and self._preview_delivery_open():
+            try:
+                self._push(
+                    "onPreviewCrops",
+                    crops,
+                    delivery_allowed=self._preview_delivery_open,
+                )
+            except Exception:
+                logger.exception("Could not present Preview crops")
+        if capture is not None and self._preview_delivery_open():
+            gesture, session = capture
+            payload = {"gesture": gesture}
+            if session is not None:
+                payload["session"] = session
             self._push(
-                "onPreviewCrops", state, delivery_allowed=self._preview_publication_open
+                "onPreviewBindCaptured",
+                payload,
+                delivery_allowed=self._preview_delivery_open,
             )
 
     def shutdown_previews(self) -> None:
@@ -4748,7 +4921,11 @@ class Api:
         if not self._wanderer.stop():
             logger.warning("Wanderer runtime is still stopping")
         try:
-            if not self._companions.shutdown():
+            if not self._preview_layouts.shutdown():
+                logger.warning(
+                    "Preview layouts are still settling; retaining preview owner"
+                )
+            elif not self._companions.shutdown():
                 # Keep the native owner alive to deliver admitted storage's
                 # promote/discard completion. A later shutdown may retry the join.
                 logger.warning(
@@ -5086,7 +5263,7 @@ class Api:
                 self._preview_host.set_hotkeys(result_table)
         return self._preview_group_result(True, None, result_table)
 
-    def set_bind_capture(self, armed) -> bool:
+    def set_bind_capture(self, armed, session=None) -> bool:
         """Tell the preview host a bind row is waiting for a keystroke.
 
         Returns rather than pushes, and the page WAITS for it before it
@@ -5100,21 +5277,27 @@ class Api:
         unregistered chord still comes through the page's own keydown
         listener, which is the path that always worked.
         """
-        if self._preview_host is None or (
-            armed and not self._preview_host.runtime_enabled
-        ):
+        if self._eve_runtime_closed or self._preview_host is None:
             return False
-        self._preview_host.set_capture(bool(armed))
-        return True
+        if session is not None:
+            return self._preview_host.set_capture(bool(armed), session)
+        if armed and not self._preview_host.runtime_enabled:
+            return False
+        return self._preview_host.set_capture(bool(armed)) is not False
 
-    def push_bind_captured(self, gesture) -> None:
-        """A registered chord, redirected to the armed bind row."""
-        if not self._eve_runtime_closed:
-            self._push(
-                "onPreviewBindCaptured",
-                {"gesture": gesture},
-                delivery_allowed=self._preview_publication_open,
-            )
+    def push_bind_captured(self, gesture, session=None) -> None:
+        """One newest identified chord, never a queue of callbacks on the pump."""
+        with self._preview_presentation_lock:
+            if self._preview_presentation_closed:
+                return
+            if session is not None:
+                if session <= self._preview_capture_revision:
+                    return
+                self._preview_capture_revision = session
+            elif self._preview_capture_revision:
+                return
+            self._preview_capture_pending = (gesture, session)
+        self._fleet_worker.notify()
 
     def _preview_layout_entries(self) -> dict:
         """Latest valid layouts, including the host's undebounced state."""
@@ -5218,37 +5401,28 @@ class Api:
         _push swallows it. The page asks for this on load.
         """
         section = self._state.settings.get("preview", {})
+        geometry = self._sample_preview_geometry()
         host = self._preview_host
         # A companion/selection pump does not authorize EVE delivery. The
         # family fence also hides retained native reports during cleanup.
         live = host is not None and host.runtime_enabled
-        online = set(host.characters() if live else [])
-        # Enumerate and describe one snapshot: saved size-dialog defaults can
-        # lag the host's undebounced placement, which Copy actually uses.
-        layouts = self._preview_layout_entries()
-        layout_sources = [
-            {
-                "name": name,
-                "online": name in online if live else None,
-                "geometry": {
-                    "x": layouts[name].rect.x,
-                    "y": layouts[name].rect.y,
-                    "w": layouts[name].rect.w,
-                    "h": layouts[name].rect.h,
-                },
-            }
-            for name in sorted(
-                layouts,
-                key=lambda name: (name not in online, name.casefold(), name),
+        characters = host.characters() if live else []
+        # Reuse this getter's fresh geometry evidence rather than sampling the
+        # retained host twice at different moments just to build owner rows.
+        layout_state = self._preview_layouts.state(
+            memory_owners=(
+                *characters,
+                *(s["name"] for s in geometry["layout_sources"]),
             )
-        ]
+        )
         return {
+            **geometry,
             "enabled": bool(section.get("enabled")),
             "hotkeys": dict(section.get("hotkeys") or {}),
             "roster": list(section.get("seen") or []),
             "label_markers": self._preview_config.get("label_markers", {}),
             "marker_choices": preview_labelmarkers.marker_choices(),
-            "characters": host.characters() if live else [],
+            "characters": characters,
             "registration": host.hotkey_status() if live else {},
             "bookmark_chords": self._bookmark_chords(),
             # Character-name lists, not per-character booleans -- see
@@ -5269,43 +5443,11 @@ class Api:
             # entirely. Rides this payload rather than a second round trip
             # for the same reason the other two do -- row state belongs in
             # the one place previews.js already reads it from.
-            "excluded": list(section.get("excluded") or []),
-            # Sizes for the Size... dialog: what the preview is now, and
-            # what its client's shape is, so the page can name the size
-            # that would not distort it. client_sizes is sampled on the
-            # preview thread (host._record_client_sizes) precisely so the
-            # bridge thread never touches an HWND.
-            "sizes": self._preview_sizes(),
-            "client_sizes": host.client_sizes() if live else {},
-            # Saved geometry sources are separate from row targets: old
-            # settings may retain a valid offline layout after its roster entry
-            # aged out, and that geometry is still useful to copy.
-            "layout_sources": layout_sources,
+            "excluded": list(layout_state["excluded"]),
+            "layout_state": layout_state,
             # One section hydration, with the same revised recovery snapshot as
             # the dedicated getter and onPreviewCrops. No second page round trip.
             "crops": self.get_preview_crop_state(),
-            # Which characters set_preview_size can actually succeed for.
-            #
-            # It refuses outright for a character that is neither running
-            # nor already in `layouts` -- there is no x/y to write, and
-            # layout.deserialize drops an entry without a full rect, so a
-            # w/h saved alone would vanish at the next load after the page
-            # had already reported it accepted. That refusal is correct and
-            # stays; what was wrong was offering the control anyway.
-            #
-            # A layouts entry is written when a preview is DRAGGED or
-            # RESIZED (window.py's WM_LBUTTONUP -> host._layout_changed),
-            # not merely when a client runs. So on a fresh install every
-            # offline character fails this, which on a typical roster is
-            # most of the list -- eleven of thirteen in the report this
-            # came from. previews.js renders Size... only for names in
-            # here, which is D6's rule (do not draw a control in the state
-            # where it can do nothing) applied to the column that needed
-            # it most.
-            "sizable": sorted(
-                set(host.characters() if live else [])
-                | set((section.get("layouts") or {}).keys())
-            ),
         }
 
     def _bookmark_chords(self) -> dict:
@@ -5344,14 +5486,12 @@ class Api:
     def push_preview_hotkeys(self, status=None) -> None:
         """Announce a change to a page that is already up. Never the only
         path -- see get_preview_hotkey_state."""
-        payload = self.get_preview_hotkey_state()
-        if self._eve_runtime_closed:
-            return
-        # Read current authority rather than restoring a detached registration
-        # snapshot delivered after EVE off/on. The host caches before notifying.
-        self._push(
-            "onPreviewHotkeys", payload, delivery_allowed=self._preview_publication_open
-        )
+        with self._preview_presentation_lock:
+            if self._preview_presentation_closed:
+                return
+            self._preview_primary_dirty = True
+        # Ignore detached status arguments; sample current authority on delivery.
+        self._fleet_worker.notify()
 
     # ---- Preview settings, generic writer --------------------------------
 
@@ -5422,25 +5562,13 @@ class Api:
                 self._field_refused("Choose a listed identification marker.")
             )
         host = self._preview_host
-        online = (
-            set(host.characters())
-            if host is not None and host.runtime_enabled
-            else set()
-        )
+        memory_owners = self._preview_memory_owners()
         try:
             with settings_mod.update(self._state.settings) as doc:
                 # Recheck after acquiring the writer lock, not against a roster
                 # sampled before another owner reset or settings normalization.
-                section = self._preview_config.snapshot()
-                hotkeys = section.get("hotkeys") or {}
-                known = (
-                    online
-                    | set(section.get("seen") or [])
-                    | set(hotkeys.get("characters") or {})
-                    | set(hotkeys.get("group_by_character") or {})
-                    | set(section.get("crops") or {})
-                    | set(section.get("label_markers") or {})
-                )
+                section = doc.get("preview") or {}
+                known = preview_savedlayouts.known_owners(section, memory_owners)
                 if name not in known:
                     raise ValueError("That character is no longer available.")
                 markers = doc.setdefault("preview", {}).setdefault("label_markers", {})
@@ -5582,6 +5710,12 @@ class Api:
         return result
 
     def set_preview_default_size(self, w, h) -> dict:
+        with self._preview_setting_change(serialize=False) as available:
+            if not available:
+                return self._field_refused("Another preview change is still pending.")
+            return self._set_preview_default_size(w, h)
+
+    def _set_preview_default_size(self, w, h) -> dict:
         """Persist the size an unsaved preview opens at.
 
         `preview.width`/`height` are not new -- they have fed
@@ -5626,9 +5760,16 @@ class Api:
         except OSError:
             logger.exception("Could not persist the default preview size")
             return self._field_refused("Could not save this to settings.")
+        self._request_preview_geometry_refresh()
         return self._field_ok()
 
     def apply_preview_default_size(self) -> dict:
+        with self._preview_setting_change() as available:
+            if not available:
+                return self._field_refused("Another preview change is still pending.")
+            return self._apply_preview_default_size()
+
+    def _apply_preview_default_size(self) -> dict:
         """Resize every OPEN preview to the persisted default size.
 
         The companion to set_preview_default_size, which by design changes
@@ -5649,8 +5790,9 @@ class Api:
             return self._field_refused(
                 "Previews could not accept this change. Try again."
             )
-        # The cards show each character's size; every one just changed.
-        self.push_preview_hotkeys()
+        # Queue success is not the final size. Host/store settlement notifies
+        # geometry without replacing an unrelated in-flight keybind table.
+        self._request_preview_geometry_refresh()
         return self._field_ok()
 
     def set_preview_size(self, name, w, h) -> dict:
@@ -5718,25 +5860,43 @@ class Api:
             if not host.replace_layout(name, entry):
                 return self._field_refused("Could not save this to settings.")
             return self._field_ok()
-        raw = preview_layout.serialize({name: entry})[name]
-        return self._write_preview_setting(("layouts", name), raw)
+        if not self._preview_layout_store.replace(name, entry):
+            return self._field_refused("Could not save this to settings.")
+        return self._field_ok()
 
     @staticmethod
     def _usable_preview_character(name) -> bool:
         return isinstance(name, str) and bool(name) and not name.startswith("hwnd:")
 
-    def _preview_known_characters(self) -> set:
-        """Names that can produce a target row on the Previews page."""
-        section = self._state.settings.get("preview", {})
-        names = set(section.get("seen") or []) | set(
-            (section.get("hotkeys") or {}).get("characters") or {}
-        )
+    def _preview_memory_owners(self) -> tuple[str, ...]:
+        """Detached live/retained identity evidence — never called inside a writer."""
         host = self._preview_host
-        if host is not None and host.runtime_enabled:
-            names |= set(host.characters())
+        if host is None:
+            return ()
+        return (
+            *(host.characters() if host.runtime_enabled else ()),
+            *host.layout_entries(),
+        )
+
+    def _preview_known_characters(self) -> set:
+        """Displayed owners, preserving Copy's existing legacy name acceptance."""
+        section = self._preview_config.snapshot()
+        memory_owners = self._preview_memory_owners()
+        names = (
+            set(section.get("seen") or [])
+            | set((section.get("hotkeys") or {}).get("characters") or {})
+            | set(memory_owners)
+            | set(preview_savedlayouts.known_owners(section, memory_owners))
+        )
         return {name for name in names if self._usable_preview_character(name)}
 
     def copy_preview_layout(self, target, source) -> dict:
+        with self._preview_setting_change() as available:
+            if not available:
+                return self._field_refused("Another preview change is still pending.")
+            return self._copy_preview_layout(target, source)
+
+    def _copy_preview_layout(self, target, source) -> dict:
         """Copy only a saved preview rectangle from source to target."""
         if (
             target == source
@@ -5770,8 +5930,9 @@ class Api:
             source_entry.rect,
             target_entry.locked if target_entry is not None else False,
         )
-        raw = preview_layout.serialize({target: copied})[target]
-        return self._write_preview_setting(("layouts", target), raw)
+        if not self._preview_layout_store.replace(target, copied):
+            return self._field_refused("Could not save this to settings.")
+        return self._field_ok()
 
     def reset_preview_layouts(self) -> dict:
         with self._preview_setting_change() as available:
@@ -5782,27 +5943,11 @@ class Api:
     def _reset_preview_layouts(self) -> dict:
         """Forget every saved preview position and size.
 
-        Goes through the host when one is running so the open windows move
-        too; falls back to clearing settings directly so a reset with
-        previews switched off still takes effect at the next launch.
-
-        The two branches do NOT make equally strong promises, and the
-        difference is structural rather than an oversight. The offline
-        branch writes here, so it catches OSError and refuses. The running
-        branch only POSTS: LayoutStore.clear() does the write later on the
-        preview thread and swallows OSError with a log line, and
-        settings.update() restores the live dict on any exception. So a
-        settings file that cannot be written leaves the windows moved to
-        their defaults on screen while the saved layouts survive in memory
-        and on disk, after this has already reported persisted: True.
-
-        Reported that way anyway, because the bridge has no round trip to
-        learn the outcome and a drag makes no stronger claim -- the same
-        optimism _apply_resizes documents for a resize whose window has
-        gone. It fails in the safe direction: the positions are kept, not
-        lost, and reappear at the next launch. Closing it properly means
-        giving the host a way to answer, which is a larger change than the
-        failure justifies.
+        Live Reset retains its existing queue acknowledgement, but the host's
+        separate shared lease now lasts through worker persistence and native
+        completion. A failed clear leaves its retained/native layout unchanged.
+        Offline Reset waits on the same writer (the existing CropStore queue
+        when a host exists), without starting a pump or bypassing a debounce.
         """
         if self._preview_host is not None and self._preview_host.is_stopping:
             return self._field_refused("Previews are stopping.")
@@ -5813,52 +5958,95 @@ class Api:
                 )
             return self._field_ok()
         try:
-            with settings_mod.update(self._state.settings) as doc:
-                doc.setdefault("preview", {})["layouts"] = {}
-        except OSError:
+            if self._preview_host is not None:
+                cleared = self._preview_host.clear_layouts_offline()
+            else:
+                cleared = self._preview_layout_store.clear()
+        except (OSError, RuntimeError):
             logger.exception("Could not clear preview layouts")
             return self._field_refused("Could not save this to settings.")
-        if self._preview_host is not None:
-            self._preview_host.clear_layout_entries()
-        self.push_preview_hotkeys()
+        if not cleared:
+            return self._field_refused("Could not save this to settings.")
+        self._request_preview_geometry_refresh()
         return self._field_ok()
 
-    def _preview_sizes(self) -> dict:
-        """Saved window size per character, for the Size... dialog's default.
+    def _sample_preview_geometry(self) -> dict:
+        """Serialize fresh memory observations, not settings/native transactions.
 
-        Read from settings rather than from the host so an offline character
-        still reports the size it will open at.
-
-        A character only gets a layout entry once _layout_changed has fired
-        -- on drag, or on a prior Size... commit -- so a preview that has
-        never been moved has no entry at all, and Reset previews empties
-        every entry at once. Such a character falls back to
-        (preview.width, preview.height): the same pair __main__.py hands
-        PreviewHost's size= and the one every unsaved preview is actually
-        placed at. Without this the dialog opened on an empty field and the
-        hint quoted a hardcoded 640 that matched nothing on screen.
-
-        The fallback is offered for every name the row list can show --
-        running (host.characters()) and known offline (section["seen"]) --
-        not only names already in layouts, since those are exactly the rows
-        with no entry to read from in the first place.
+        Never call native, disk, controller state or page code in this lock.
+        Even equal values need a new revision: an unobserved Size can intervene
+        before Apply restores the last sampled dimensions.
         """
-        section = self._state.settings.get("preview", {})
-        default = [section.get("width", 320), section.get("height", 210)]
-        layouts = section.get("layouts") or {}
-        out = {}
-        for name, entry in layouts.items():
-            try:
-                out[name] = [int(entry["w"]), int(entry["h"])]
-            except (KeyError, TypeError, ValueError):
-                continue
-        host = self._preview_host
-        names = set(section.get("seen") or [])
-        if host is not None and host.runtime_enabled:
-            names |= set(host.characters())
-        for name in names:
-            out.setdefault(name, list(default))
-        return out
+        with self._preview_geometry_lock:
+            section = self._preview_config.snapshot()
+            host = self._preview_host
+            live = host is not None and host.runtime_enabled
+            online = set(host.characters() if live else [])
+            committed = preview_layout.deserialize(section.get("layouts"))
+            retained = host.layout_entries() if host is not None else committed
+            sources = {
+                name: entry
+                for name, entry in retained.items()
+                if self._usable_preview_character(name)
+            }
+            # Size defaults describe committed geometry, unlike Copy's retained
+            # source positions. Untouched live/seen owners use configured defaults
+            # so their dialog never opens blank or quotes an invented size.
+            sizes = {
+                name: [entry.rect.w, entry.rect.h] for name, entry in committed.items()
+            }
+            for name in set(section.get("seen") or []) | online:
+                sizes.setdefault(
+                    name, [section.get("width", 320), section.get("height", 210)]
+                )
+            payload = {
+                "geometry_revision": self._preview_geometry_revision + 1,
+                "sizes": sizes,
+                "layout_sources": [
+                    {
+                        "name": name,
+                        "online": name in online if live else None,
+                        "geometry": {
+                            "x": sources[name].rect.x,
+                            "y": sources[name].rect.y,
+                            "w": sources[name].rect.w,
+                            "h": sources[name].rect.h,
+                        },
+                    }
+                    for name in sorted(
+                        sources, key=lambda n: (n not in online, n.casefold(), n)
+                    )
+                ],
+                # No complete rect means offline Size has no position to write.
+                "sizable": sorted(online | set(committed)),
+                "client_sizes": host.client_sizes() if live else {},
+            }
+            detached = copy.deepcopy(payload)
+            self._preview_geometry_cache = payload
+            self._preview_geometry_revision = payload["geometry_revision"]
+            return detached
+
+    def _request_preview_geometry_refresh(self) -> None:
+        with self._preview_presentation_lock:
+            if self._preview_presentation_closed:
+                return
+            self._preview_geometry_dirty = True
+        self._fleet_worker.notify()
+
+    def _refresh_preview_geometry(self) -> dict:
+        try:
+            payload = self._sample_preview_geometry()
+        except Exception as exc:
+            with self._preview_geometry_lock:
+                cached = copy.deepcopy(self._preview_geometry_cache)
+            raise PreviewGeometryUnavailable(str(exc), cached) from exc
+        self._request_preview_geometry_refresh()
+        return payload
+
+    def _publish_preview_geometry(self, payload) -> None:
+        self._push(
+            "onPreviewGeometry", payload, delivery_allowed=self._preview_delivery_open
+        )
 
     def set_preview_opacity(self, value) -> dict:
         """Persist the DWM thumbnail opacity, then push it live.
@@ -5918,12 +6106,9 @@ class Api:
         both are read by PreviewHost as membership tests
         (_is_locked/_is_never_minimize), never by key lookup.
 
-        Shared by set_preview_locked, set_never_minimize and
-        set_preview_excluded below rather than duplicated: the
-        add/remove-by-name logic is identical, only the settings key
-        differs -- and what each caller does AFTERWARDS does not, which is
-        why the live-update call stays with the caller rather than moving
-        in here (two restyle, one sweeps and rebinds).
+        Lock and Never minimize share this policy. Exclusions instead use
+        the layout controller's acknowledged writer/revision domain, since
+        a bulk snapshot can change those choices atomically.
         """
         try:
             with settings_mod.update(self._state.settings) as doc:
@@ -5974,33 +6159,87 @@ class Api:
         return result
 
     def set_preview_excluded(self, name, excluded) -> dict:
-        """Persist whether *name* is opted out of previews entirely.
+        return self._preview_layouts.set_excluded(name, excluded)
 
-        Not restyle(), unlike the two above: restyle only re-reads style on
-        windows that already exist, and this setting decides whether the
-        window exists at all. request_sweep() is what creates or destroys
-        it -- _sweep filters its desired set on the same list.
+    def create_preview_layout(self, name) -> dict:
+        return self._preview_layouts.save_current(name)
 
-        set_hotkeys re-pushes the CURRENT table unchanged. That looks like
-        a no-op and is not: the focus keybind is filtered out at
-        registration time (PreviewHost._registerable), and ticking this box
-        edits no chord, so without a rebind the opted-out character would
-        keep its registration until the next unrelated bind edit.
+    def apply_preview_layout(self, layout_id, revision) -> dict:
+        return self._preview_layouts.apply(layout_id, revision)
 
-        request_rebind() rather than set_hotkeys() for that, though, and
-        the difference is not cosmetic: set_hotkeys would mean reading the
-        table back out of settings here and pushing it, and pywebview
-        serves each JS call on its own thread. A set_preview_binds landing
-        between that read and that push would be silently reverted inside
-        the host -- page and settings file holding the new table while the
-        host stayed registered against the old one, with nothing logged.
-        A payload-free rebind has nothing to revert.
-        """
-        result = self._toggle_preview_roster("excluded", name, bool(excluded))
+    def update_preview_layout(self, layout_id, revision) -> dict:
+        return self._preview_layouts.update_saved(layout_id, revision)
+
+    def rename_preview_layout(self, layout_id, revision, name) -> dict:
+        return self._preview_layouts.rename(layout_id, revision, name)
+
+    def remove_preview_layout(self, layout_id, revision) -> dict:
+        return self._preview_layouts.remove(layout_id, revision)
+
+    def _build_preview_layouts_controller(self):
+        return PreviewLayoutsController(
+            self._preview_config.snapshot(),
+            store=self._preview_layout_store,
+            admission=self._preview_layout_admission,
+            id_factory=lambda: uuid.uuid4().hex,
+            ports=PreviewLayoutsPorts(
+                read_preview=self._preview_config.snapshot,
+                live_names=self._preview_memory_owners,
+                capture=self._capture_preview_layout,
+                apply=self._apply_preview_layout,
+                refresh_visibility=self._refresh_preview_layout_visibility,
+                refresh_geometry=self._refresh_preview_geometry,
+                release=self._release_preview_layout,
+                publish_state=self._publish_preview_layouts,
+            ),
+        )
+
+    @staticmethod
+    def _settled_preview_layout(value):
+        future = Future()
+        future.set_result(value)
+        return future
+
+    def _capture_preview_layout(self, lease):
         if self._preview_host is not None:
-            self._preview_host.request_sweep()
-            self._preview_host.request_rebind()
-        return result
+            return self._preview_host.capture_primary_layout(lease)
+        preview = self._preview_config.snapshot()
+        return self._settled_preview_layout(
+            PrimaryLayoutCapture(
+                0,
+                0,
+                0,
+                (),
+                tuple(preview_layout.deserialize(preview.get("layouts")).items()),
+                (),
+                preview,
+            )
+        )
+
+    def _apply_preview_layout(self, lease, capture, commit, rectangles):
+        if self._preview_host is not None:
+            return self._preview_host.apply_primary_layout(
+                lease, capture, commit, rectangles
+            )
+        return self._settled_preview_layout(PrimaryLayoutLiveResult("deferred", None))
+
+    def _refresh_preview_layout_visibility(self, lease):
+        # No hotkey table is sampled or replayed here. The pump reconciles its
+        # latest desired table, including unrelated in-flight keybind edits.
+        if self._preview_host is not None:
+            return self._preview_host.refresh_primary_visibility(lease)
+        return self._settled_preview_layout(PrimaryLayoutLiveResult("deferred", None))
+
+    def _release_preview_layout(self, lease):
+        if self._preview_host is not None:
+            self._preview_host.release_primary_layout(lease)
+
+    def _publish_preview_layouts(self, payload):
+        with self._preview_presentation_lock:
+            if self._preview_presentation_closed:
+                return
+            self._preview_layouts_dirty = True
+        self._fleet_worker.notify()
 
     # ---- Gamelog alerts --------------------------------------------------
 

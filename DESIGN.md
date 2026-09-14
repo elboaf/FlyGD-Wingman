@@ -578,7 +578,13 @@ requests. The scrim is also Cancel, but only when both press and release land
 on it: a text-selection drag that starts inside the dialog must not discard a
 prompt value when it overshoots the edge. A keybind-capture screen disarms
 capture before opening any of the three: its document listener consumes Tab as
-well as printable keys.
+well as printable keys. A delayed dialog answer must recheck the page interaction
+that admitted it before sending a mutation; leaving, staging or newer capture can
+revoke that interaction without cancelling an already-sent operation's receipt.
+The shared dialog queue restores its original invoker (or visible fallback) only
+while it still owns return focus. Focus outside the visible overlay revokes that
+ownership until the queue drains; blur or re-entry into the dialog cannot revive
+it. An old Saved/Size/Copy answer must not steal a newer capture's actual focus.
 
 The third row's bound is not caution. `_push` swallows every `evaluate_js`
 failure, so a confirmation whose push never reached the page would park its
@@ -617,8 +623,18 @@ corrections. Changing the pasted text enables Review; a failed parse stays
 retryable. Add formations validates the corrected names and changes the draft,
 not the file. The creation preset is labelled and precedes New formation.
 
-Settings has no Save button. Every field commits on its own through a
+Settings has no page-wide Save button. Every field commits on its own through a
 per-field endpoint returning `{applied, persisted, error}`.
+
+**Saved layouts are explicit snapshot commands, not a Settings Save.** In
+Previews → Windows → Placement, Save current as… and Update saved… capture primary
+positions, sizes and Preview choices only. Ordinary edits save the working
+arrangement, never the selected name. Selection is page-local, not an active
+layout, and does not fetch or write. Apply confirms its recorded membership;
+absent characters stay unchanged, and a null rectangle preserves geometry, not
+the old Preview choice. Apply does not change global preferences, including the
+reopen rule for later openings. Management remains usable with Previews Off;
+Apply then saves for later without enabling previews.
 
 **Wanderer's connection is a scoped grouped exception.** Its URL, map and token
 form one bound credential, saved explicitly by **Test connection** or Enter in
@@ -738,11 +754,20 @@ hydration cannot replace newer choices or another field's refusal. Keep their
 live regions mounted, including when empty.
 
 Preview Copy sources describe geometry from the same current layout snapshot
-that enumerates the source names, including undebounced host geometry. Saved
-Size-dialog defaults are a different authority and must not be presented as the
-current Copy geometry. Older payloads without geometry still identify the source
-without invented coordinates. This is read evidence, not a guarantee that a user
-cannot move the source before pressing Copy.
+that enumerates the source names, including undebounced retained host geometry
+even while Off. Size-dialog defaults use committed layouts/configured defaults
+and must not be presented as current Copy geometry. One `geometry_revision`
+high-water mark accepts `onPreviewGeometry`, full getters and final layout
+receipts; full hydration overlays the newest accepted geometry. Each fresh sample
+advances the revision even when values match. It is ordered observation, not an
+atomic settings/native snapshot. Named-operation receipts sample after native or
+retained settlement and before releasing admission. Ordinary Size queue ACKs
+never install requested dimensions: a delayed ACK cannot undo a later Apply, and
+later settled Size/Copy/Reset can supersede Apply. Geometry-only delivery does not
+replace keybind state or increment its push counter. Preserve drafts, scroll,
+capture, owned focus and detached screenshot/live state. Older payloads without
+geometry still identify the source without invented coordinates. This is read
+evidence, not a guarantee that a user cannot move the source before pressing Copy.
 
 
 ## Routes and sections

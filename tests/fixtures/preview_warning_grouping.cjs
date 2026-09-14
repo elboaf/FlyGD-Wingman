@@ -20,6 +20,15 @@ window.WM.send = (method, ...args) => {
 vm.runInContext(fs.readFileSync(web + '/previews.js', 'utf8'), context);
 const owner = 'Aiga Otsolen';
 const configure = () => document.querySelector('[data-preview-configure="' + owner + '"]');
+let observation = 1;
+function deliver(payload) {
+  // Each fixture edit represents a fresh backend observation. Bare top-level
+  // changes cannot bypass the production geometry/exclusion high-water guards.
+  payload.geometry_revision = ++observation;
+  payload.layout_state.revision = observation;
+  payload.layout_state.excluded = payload.excluded.slice();
+  window.onPreviewHotkeys(JSON.parse(JSON.stringify(payload)));
+}
 (async () => {
   const stickyErrors = {
     'sticky-missing-row': /owning row/,
@@ -129,7 +138,7 @@ const configure = () => document.querySelector('[data-preview-configure="' + own
     if (kind !== 'passive') assert.equal(row.parentNode, host, 'reveal does not rebuild rows');
     assert.equal(prompts, kind === 'edit-click' ? 1 : 0);
     const captured = kind === 'click' || kind === 'pointer-click';
-    assert.deepEqual(calls, captured ? [['set_bind_capture', true]] : [], 'only the pre-existing explicit capture may cross the bridge');
+    assert.deepEqual(calls, captured ? [['set_bind_capture', true, 1]] : [], 'only the session-identified explicit capture may cross the bridge');
     assert.equal(bind.classList.contains('capturing'), captured);
     console.log('PASS preview warning grouping ' + data.scenario);
     return;
@@ -146,7 +155,7 @@ const configure = () => document.querySelector('[data-preview-configure="' + own
     payload.excluded = [];
     const warning = () => document.getElementById('preview-bind-conflict-' + encodeURIComponent('character:' + owner));
     const repair = () => warning()?.querySelector('button');
-    window.onPreviewHotkeys(payload);
+    deliver(payload);
     assert.ok(repair(), 'active bookmark overlap needs a repair route without action-name data');
     assert.equal(repair().textContent, 'Open Bookmarks');
     assert.ok(repair().classList.contains('linkbtn'), 'recovery is subordinate to the owning bind');
@@ -165,7 +174,7 @@ const configure = () => document.querySelector('[data-preview-configure="' + own
     assert.ok(document.getElementById('section-bookmarks').classList.contains('active'));
     assert.ok(!document.getElementById('section-previews').classList.contains('active'));
     assert.ok(!bind.classList.contains('capturing'), 'the real navigation leave contract cancels capture');
-    assert.deepEqual(calls, [['set_bind_capture', true], ['set_bind_capture', false]], 'navigation never edits either binding');
+    assert.deepEqual(calls, [['set_bind_capture', true, 1], ['set_bind_capture', false, 1]], 'navigation never edits either binding');
     let prevented = false;
     document.dispatchEvent({type: 'keydown', key: 'x', code: 'KeyX', ctrlKey: true, altKey: true,
       preventDefault() { prevented = true; }, stopPropagation() {}});
@@ -181,7 +190,7 @@ const configure = () => document.querySelector('[data-preview-configure="' + own
       if (kind === 'excluded') next.excluded = [owner];
       if (kind === 'resolved') next.bookmark_chords.active = [];
       if (kind === 'unknown') { next.enabled = false; next.registration = {}; }
-      window.onPreviewHotkeys(next);
+      deliver(next);
       if (kind === 'unknown') assert.ok(repair(), 'configured overlap remains repairable without a registration report');
       else assert.ok(!repair(), kind + ' must not offer an unrelated repair');
       if (kind === 'duplicate') assert.match(warning().textContent, /conflicts with All forward/);
@@ -199,7 +208,7 @@ const configure = () => document.querySelector('[data-preview-configure="' + own
     payload.sizable = [];
     payload.enabled = true;
     payload.layout_sources = [{name: 'Other Pilot', online: false}];
-    window.onPreviewHotkeys(payload);
+    deliver(payload);
     configure().click();
     const detail = () => document.getElementById('preview-character-detail-' + encodeURIComponent(owner));
     const reason = detail().querySelector('.size-none');
@@ -209,35 +218,57 @@ const configure = () => document.querySelector('[data-preview-configure="' + own
     assert.match(reason.textContent, /copy.*size.*position/i, 'an enabled Copy offers an alternate to starting the client');
     assert.doesNotMatch(reason.textContent, /enable previews/i, 'acknowledged On must not request enabling again');
     payload.enabled = false;
-    window.onPreviewHotkeys(payload);
+    deliver(payload);
     assert.match(detail().querySelector('.size-none').textContent, /enable previews.*start/i);
     assert.match(detail().querySelector('.size-none').textContent, /copy.*size.*position/i,
       'Copy remains usable with the global preview preference Off');
     assert.equal(detail().querySelector('[data-preview-detail-control="copy"]').disabled, false);
     payload.enabled = true;
-    window.onPreviewHotkeys(payload);
+    deliver(payload);
     assert.equal(detail().querySelector('.size-none').textContent, reason.textContent);
     assert.equal(detail().querySelector('[data-preview-detail-control="size"]'), null);
     assert.equal(detail().querySelector('[data-preview-detail-control="copy"]').disabled, false);
     for (const sources of [[], [{name: owner, online: false}]]) {
       payload.layout_sources = sources;
-      window.onPreviewHotkeys(payload);
+      deliver(payload);
       assert.doesNotMatch(detail().querySelector('.size-none').textContent, /copy/i,
         'no alternate is promised without another source');
       assert.equal(detail().querySelector('[data-preview-detail-control="copy"]'), null);
     }
     payload.layout_sources = [{name: 'Other Pilot', online: false}];
     payload.excluded = [owner];
-    window.onPreviewHotkeys(payload);
+    deliver(payload);
     assert.equal(detail().querySelector('[data-preview-detail-control="copy"]').disabled, true);
     assert.doesNotMatch(detail().querySelector('.size-none').textContent, /copy/i,
       'a disabled Copy is not an available alternate');
     // Only the authoritative flag admits size editing, even without client dimensions.
     payload.excluded = [];
     payload.sizable = [owner]; payload.client_sizes = {}; payload.sizes = {};
-    window.onPreviewHotkeys(payload);
+    deliver(payload);
     assert.equal(detail().querySelector('.size-none'), null);
     assert.equal(detail().querySelector('[data-preview-detail-control="size"]').disabled, false);
+    // Geometry-only delivery must keep guidance current without detaching the
+    // Identification editor or bypassing either observation high-water mark.
+    function geometry(sources) {
+      window.onPreviewGeometry({geometry_revision: ++observation, sizes: {},
+        sizable: [], client_sizes: {}, layout_sources: sources});
+    }
+    for (const excluded of [false, true]) {
+      payload.excluded = excluded ? [owner] : [];
+      deliver(payload);
+      const marker = detail().querySelector('[data-preview-detail-control="marker"]');
+      marker.focus();
+      for (const sources of [[{name: owner, online: false}],
+          [{name: 'Other Pilot', online: false}], []]) {
+        geometry(sources);
+        const copy = detail().querySelector('[data-preview-detail-control="copy"]');
+        const available = !!copy && !copy.disabled;
+        assert.equal(/copy/i.test(detail().querySelector('.size-none').textContent), available,
+          'geometry-only guidance offers Copy exactly when it is available');
+        assert.equal(detail().querySelector('[data-preview-detail-control="marker"]'), marker);
+        assert.equal(document.activeElement, marker, 'geometry guidance keeps the current editor focused');
+      }
+    }
     assert.equal(calls.length, 0, 'guidance never changes size or placement');
     console.log('PASS preview warning grouping ' + data.scenario);
     return;

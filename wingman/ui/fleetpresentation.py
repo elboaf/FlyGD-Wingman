@@ -1,9 +1,10 @@
 """One coalescing presentation owner, independent of telemetry's dispatcher.
 
-The wakeup is a bit, not a task queue. Api owns the latest display and folds
-roster transitions separately, so a stalled WebView costs neither telemetry's
-cadence nor the names from intermediate rosters. No native lifecycle operation
-belongs on this thread.
+The wakeup is a bit, not a task queue. Api drains bounded Preview notifications
+before its existing Fleet iteration/deadline. It folds roster admissions separately,
+so a stalled WebView costs neither native/telemetry progress nor intermediate seen
+names. Startup is independent of telemetry and Fleet mode; no native lifecycle
+operation belongs on this thread.
 """
 
 from __future__ import annotations

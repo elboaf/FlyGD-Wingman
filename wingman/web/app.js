@@ -53,6 +53,7 @@
                  'onLink', 'onSettings', 'onChannel',
                  'onAuthState', 'onDialog', 'onFirstRun',
                  'onBookmarks', 'onEveStatus', 'onPreviewHotkeys', 'onPreviewCrops',
+                 'onPreviewLayouts', 'onPreviewGeometry',
                  'onCompanionPreviews',
                  'onPreviewBindCaptured', 'onEveAuthorityChanged', 'onWandererState',
                  'onEveSettingsNames',

@@ -8,6 +8,23 @@
   WM.handle('onPreviewCrops', function (payload) {
     acceptCrops(payload);
   });
+  WM.handle('onPreviewLayouts', function (payload) {
+    acceptLayouts(payload);
+  });
+  WM.handle('onPreviewGeometry', function (payload) {
+    acceptGeometry(payload);
+  });
+  var geometryState = null;
+  var layoutState = null;
+  var excludedHydrated = false;
+  var excludedRequests = Object.create(null);
+  var excludedErrors = Object.create(null);
+  var excludedWarnings = Object.create(null);
+  var layoutSelection = '';
+  var layoutPending = null;
+  var layoutFeedback = null;
+  var layoutOptions = '';
+  var reopenPositions = null;
   // This fixture replaces the entire preview table, not just the crop field.
   // Keep write/read entry points and delayed dialog continuations local-only
   // while installed; the ordinary bridge remains untouched for other pages.
@@ -18,6 +35,10 @@
       state = screenshotLive.state;
       cropState = screenshotLive.crops;
       cropHydrated = screenshotLive.hydrated;
+      layoutState = screenshotLive.layouts;
+      geometryState = screenshotLive.geometry;
+      layoutSelection = screenshotLive.selection;
+      excludedHydrated = screenshotLive.excludedHydrated;
       markerFields = screenshotLive.markerFields;
       groupManagerRestore = screenshotLive.managerDraft;
       releaseGroupFocus();
@@ -46,6 +67,8 @@
       managerDraft.restoreSelection = true;
     }
     var live = {state: state, crops: cropState, hydrated: cropHydrated,
+                layouts: layoutState, geometry: geometryState, selection: layoutSelection,
+                excludedHydrated: excludedHydrated,
                 markerFields: markerFields, managerDraft: managerDraft || {value: '', control: null}};
     // Boundary paints must not snapshot the outgoing domain's unsent text.
     // Only the draft/selection is saved; live payloads and marker receipts keep
@@ -58,7 +81,13 @@
     // Fixture revisions are not host revisions. Preserve the host snapshot,
     // render in a separate revision domain, then restore the latest live push.
     cropState = {revision: -1, definitions: {}, operations: {}, statuses: {}};
+    layoutState = null;
+    geometryState = null;
+    layoutSelection = '';
     fixture.preview.crops = fixture.crops;
+    // Hydration overlays layouts/geometry onto state before replacing it. Detach
+    // that target now, while screenshotLive is still reserved for real replies.
+    state = fixture.preview;
     window.onPreviewHotkeys(fixture.preview);
     screenshotLive = live;
   };
@@ -77,6 +106,8 @@
                never_minimize: [], excluded: [],
                sizes: {}, client_sizes: {}, sizable: [], layout_sources: []};
   var capturing = null;
+  // One main-page lifetime; never persisted with settings or screenshot state.
+  var captureSequence = 0;
   var markerFields = Object.create(null);
   // preview.minimize_inactive_clients, off the settings payload rather
   // than the hotkey-state one: it lives in Settings' own Previews card
@@ -160,6 +191,254 @@
     return null;
   }
 
+  function overlayGeometry(target, geometry) {
+    if (!geometry) return;
+    ['geometry_revision', 'sizes', 'layout_sources', 'sizable', 'client_sizes'].forEach(function (key) {
+      target[key] = geometry[key];
+    });
+  }
+
+  function acceptGeometry(payload, quiet) {
+    var current = screenshotLive ? screenshotLive.geometry : geometryState;
+    if (!payload || typeof payload.geometry_revision !== 'number'
+        || (current && payload.geometry_revision <= current.geometry_revision)) return false;
+    // Retain only geometry, not a borrowed full hotkey/settings table.
+    var next = {};
+    overlayGeometry(next, payload);
+    if (screenshotLive) {
+      screenshotLive.geometry = next;
+      overlayGeometry(screenshotLive.state, next);
+    } else {
+      geometryState = next;
+      overlayGeometry(state, next);
+      if (!quiet) paintGeometry();
+    }
+    return true;
+  }
+
+  function paintGeometry() {
+    // Geometry changes only action availability. Keep ordinary editors, native
+    // selects and dialog invokers attached — no focus lease crosses this paint.
+    if (capturing) { pendingRender = true; return; }
+    paintRosterAvailability(rows());
+    var detail = document.getElementById(detailId(openDetailName));
+    var actions = detail && detail.querySelector('.geometry-actions');
+    if (!actions) return;
+    var size = actions.querySelector('[data-preview-detail-control="size"]');
+    var copy = actions.querySelector('[data-preview-detail-control="copy"]');
+    var focused = document.activeElement;
+    var off = isExcluded(openDetailName);
+    var sizable = isSizable(openDetailName);
+    // Unavailable-size guidance also depends on the current Copy sources.
+    if (!sizable || !size) {
+      var previous = actions.firstChild;
+      actions.insertBefore(sizable ? makeSizeButton(openDetailName, off) : makeSizeFiller(openDetailName, off), previous);
+      previous.remove();
+    }
+    if (copySources(openDetailName).length) {
+      if (!copy) actions.appendChild(makeCopyButton(openDetailName, off));
+    } else if (copy) copy.remove();
+    // Only a control actually removed by this paint needs a local fallback.
+    if ((focused === size || focused === copy) && focused && !actions.contains(focused)) {
+      focusConfigure(openDetailName);
+    }
+  }
+
+  function hydrateGeometry(payload) {
+    acceptGeometry(payload, true);
+    overlayGeometry(payload, screenshotLive ? screenshotLive.geometry : geometryState);
+  }
+
+  function acceptLayouts(payload, quiet) {
+    var current = screenshotLive ? screenshotLive.layouts : layoutState;
+    if (!payload || typeof payload.revision !== 'number'
+        || (current && payload.revision < current.revision)) { return false; }
+    if (screenshotLive) {
+      screenshotLive.layouts = payload;
+      screenshotLive.excludedHydrated = true;
+      screenshotLive.state.excluded = payload.excluded.slice();
+      screenshotLive.state.layout_state = payload;
+      return true;
+    }
+    layoutState = payload;
+    excludedHydrated = true;
+    state.excluded = payload.excluded.slice();
+    state.layout_state = payload;
+    // No `pushes` increment: layout delivery carries no replacement keybind table.
+    if (!quiet) { requestRender(); }
+    return true;
+  }
+
+  function hydrateLayouts(payload) {
+    acceptLayouts(payload.layout_state, true);
+    var current = screenshotLive ? screenshotLive.layouts : layoutState;
+    if (current) {
+      payload.excluded = current.excluded.slice();
+      payload.layout_state = current;
+    }
+    if (screenshotLive) { screenshotLive.excludedHydrated = true; }
+    else { excludedHydrated = true; }
+  }
+
+  function selectedLayout() {
+    return layoutState && layoutState.layouts.filter(function (record) {
+      return record.id === layoutSelection;
+    })[0];
+  }
+
+  function layoutUnavailable(action) {
+    if (screenshotLive || !layoutState || layoutPending) return true;
+    if (layoutState.operation && layoutState.operation.pending) return true;
+    if (action === 'save' && !layoutState.owners.length) return true;
+    if (action !== 'save' && !selectedLayout()) return true;
+    var capability = action === 'rename' || action === 'remove' ? 'edit' : 'capture';
+    // External busy is advisory: an ended native gesture has no page push.
+    return !layoutState.busy && !layoutState.availability[capability];
+  }
+
+  function renderLayouts() {
+    var select = WM.el('preview-layout-select');
+    if (!select) return;
+    var records = layoutState ? layoutState.layouts : [];
+    if (!records.some(function (record) { return record.id === layoutSelection; })) layoutSelection = '';
+    var signature = JSON.stringify(records);
+    if (signature !== layoutOptions) {
+      layoutOptions = signature;
+      select.textContent = '';
+      var empty = WM.make('option', '', 'Choose a saved layout');
+      empty.value = ''; select.appendChild(empty);
+      records.forEach(function (record) {
+        var option = WM.make('option', '', record.name + ' — ' + record.character_count
+          + (record.character_count === 1 ? ' character' : ' characters'));
+        option.value = record.id;
+        option.title = record.name;
+        select.appendChild(option);
+      });
+    }
+    select.value = layoutSelection;
+    select.disabled = !layoutState || !records.length || !!screenshotLive;
+    ['apply', 'save', 'update', 'rename', 'remove'].forEach(function (action) {
+      // Keep the dialog's invoker focusable for panel.js's synchronous return.
+      // layoutAction still rejects repeated clicks while that dialog is pending.
+      var returning = layoutPending && layoutPending.dialog && layoutPending.action === action;
+      WM.setEnabled(WM.el('preview-layout-' + action), !layoutUnavailable(action) || (returning && !screenshotLive));
+    });
+    var consequence = WM.el('preview-layout-reopen');
+    consequence.hidden = reopenPositions !== false;
+    consequence.textContent = reopenPositions === false
+      ? 'Later openings use the default stack because “Reopen previews where you last put them” is Off. Apply does not change that preference.' : '';
+    var status = WM.el('preview-layout-status');
+    var operation = layoutState && layoutState.operation;
+    var feedback = !screenshotLive && layoutFeedback;
+    status.className = 'hint';
+    if (layoutPending || (operation && operation.pending)) {
+      status.textContent = layoutPending && layoutPending.dialog ? 'Waiting for your choice…' : 'Saving Preview layout change…';
+    } else if (feedback) {
+      status.textContent = feedback.text;
+      if (feedback.tone) status.classList.add(feedback.tone);
+    } else if (!layoutState) {
+      status.textContent = 'Loading saved layouts…';
+    } else if (!layoutState.owners.length) {
+      status.textContent = 'Open a named EVE client first, then use Save current as…';
+    } else if (!records.length) {
+      status.textContent = 'Use Save current as… to keep this arrangement.';
+    } else if (layoutState.busy) {
+      status.textContent = 'Finish the pending Preview change, then try the action again.';
+    } else {
+      status.textContent = 'Choose a saved layout, then Apply… to use it. Ordinary edits do not update the saved copy.';
+    }
+  }
+
+  function layoutResult(action, receipt) {
+    if (!receipt || !receipt.applied) return {tone: 'err', text: receipt && receipt.error
+      ? receipt.error : 'That saved layout change was not applied. Try again.'};
+    var text = {save: 'Saved current arrangement.', update: 'Updated saved layout.',
+      rename: 'Renamed saved layout.', remove: 'Removed saved layout — the working arrangement is unchanged.',
+      apply: 'Applied saved layout.'}[action];
+    if (!receipt.persisted) return {tone: 'warn', text: text + ' Not saved — this will not survive a restart.'};
+    if (receipt.live === 'deferred') text = 'Saved — live Preview application is deferred.';
+    if (receipt.live === 'incomplete') text = 'Saved — live Preview application is incomplete.';
+    if (receipt.warning) text += ' ' + receipt.warning;
+    return {text: text, tone: receipt.warning || receipt.live === 'incomplete' ? 'warn' : ''};
+  }
+
+  function layoutAction(action) {
+    if (layoutUnavailable(action)) return;
+    endCapture();
+    var record = selectedLayout();
+    var attempt = {action: action, dialog: true, interaction: detailInteraction, capture: captureSequence};
+    layoutPending = attempt;
+    var promise;
+    if (action === 'save' || action === 'rename') {
+      promise = WM.prompt(action === 'save' ? 'Save current layout as' : 'Rename saved layout',
+        'Enter a unique name for this saved layout.', action === 'rename' ? record.name : '');
+    } else {
+      var title = {apply: 'Apply saved layout?', update: 'Update saved layout?', remove: 'Remove saved layout?'}[action];
+      var body = action === 'apply'
+        ? 'Replace the working positions, sizes and Preview choices for ' + record.character_count
+          + (record.character_count === 1 ? ' character' : ' characters') + ' with “' + record.name
+          + '”. Other characters stay unchanged. Save the current arrangement first if you want to keep it.'
+        : action === 'update'
+          ? 'Replace “' + record.name + '” with a fresh copy of the current arrangement? Its previous saved copy will be lost. No previews move.'
+          : 'Remove “' + record.name + '”? This saved copy cannot be recovered. The working arrangement stays unchanged.';
+      if (action === 'apply' && reopenPositions === false) body += ' Later openings still use the default stack while reopen positions is Off.';
+      promise = WM.confirm(title, body, {confirm_label: {apply: 'Apply', update: 'Update saved', remove: 'Remove'}[action], destructive: action === 'remove'});
+    }
+    renderLayouts();
+    promise.then(function (answer) {
+      if (layoutPending !== attempt) return;
+      if (screenshotLive || attempt.interaction !== detailInteraction || attempt.capture !== captureSequence
+          || answer === null || answer === false) {
+        layoutPending = null; renderLayouts(); return;
+      }
+      attempt.dialog = false;
+      if (document.activeElement === WM.el('preview-layout-' + action)) {
+        var target = WM.el('preview-layout-select');
+        if (target.disabled) target = WM.el('preview-layout-status');
+        target.focus();
+      }
+      renderLayouts();
+      var args = action === 'save' ? [answer] : [record.id, record.revision];
+      if (action === 'rename') args.push(answer);
+      var method = {save: 'create_preview_layout', apply: 'apply_preview_layout', update: 'update_preview_layout',
+        rename: 'rename_preview_layout', remove: 'remove_preview_layout'}[action];
+      WM.send.apply(WM, [method].concat(args)).then(function (receipt) {
+        acceptLayouts(receipt && receipt.state, true);
+        acceptGeometry(receipt && receipt.geometry, true);
+        layoutFeedback = layoutResult(action, receipt);
+        layoutPending = null;
+        // No dialog or focus continuation: selection/capture/navigation now own
+        // the page. Data still updates its live domain across screenshot staging.
+        if (!screenshotLive) requestRender();
+      }, function (error) {
+        layoutPending = null;
+        layoutFeedback = {tone: 'err', text: String(error.message || error)};
+        if (!screenshotLive) renderLayouts();
+      });
+    });
+  }
+
+  var layoutSelect = WM.el('preview-layout-select');
+  if (layoutSelect) {
+    layoutSelect.addEventListener('change', function () {
+      if (screenshotLive || !layoutState) return;
+      layoutSelection = layoutSelect.value;
+      renderLayouts();
+    });
+    ['apply', 'save', 'update', 'rename', 'remove'].forEach(function (action) {
+      WM.el('preview-layout-' + action).addEventListener('click', function () { layoutAction(action); });
+    });
+  }
+
+  function exclusionUnavailable(name) {
+    if (!excludedHydrated || excludedRequests[name]) { return true; }
+    if (!layoutState) { return false; } // older dev/fixture payloads
+    if (layoutState.operation && layoutState.operation.pending) { return true; }
+    // A native gesture has no completion push. A stale advisory busy refusal
+    // must leave explicit retry possible; the backend still rechecks its lease.
+    return !layoutState.busy && !layoutState.availability.visibility;
+  }
+
   function rows() {
     // Running first, then known-but-offline, then any binding whose
     // character is in neither -- a chord with no row would be invisible.
@@ -172,6 +451,11 @@
       if (!seen[n]) { seen[n] = 1; out.push({name: n, online: true}); }
     });
     state.roster.forEach(function (n) {
+      if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
+    });
+    // Explicit exclusions outlive recent history. Without their own row,
+    // an offline owner beyond that cap has no route back to Preview enabled.
+    (state.excluded || []).concat((state.layout_state || {}).owners || []).forEach(function (n) {
       if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
     });
     Object.keys(state.hotkeys.characters || {}).forEach(function (n) {
@@ -633,14 +917,15 @@
       revealBindConflict(conflict, button, typed);
       if (screenshotLive) { return; }
       endCapture();
+      var interaction = detailInteraction;
       // The app's own dialog -- see the matching comment in bookmarks.js.
       WM.prompt('Keybind for "' + label + '"',
                 'Ctrl, Alt, Shift and Win, plus a key. Example: Ctrl+Alt+F1',
                 gesture || '').then(function (text) {
-        if (screenshotLive || text === null) { return; }
+        if (screenshotLive || interaction !== detailInteraction || text === null) { return; }
         if (text === '') { onSet(''); return; }
         WM.send('parse_preview_bind', text).then(function (result) {
-          if (screenshotLive || !result) { return; }
+          if (screenshotLive || interaction !== detailInteraction || !result) { return; }
           if (result.error) {
             WM.send('alert_bookmarks',
                     'That is not a keybind Windows can register. It needs at '
@@ -691,6 +976,13 @@
     // The full-span warning precedes the controls so it cannot be stranded
     // after expanded geometry/crops or above the NEXT row at a sticky edge.
     if (conflict) { row.insertBefore(conflict, row.firstChild); }
+    if (character && !screenshotLive && (excludedErrors[character] || excludedWarnings[character])) {
+      var feedback = WM.make('p', 'hint preview-exclusion-status ' + (excludedErrors[character] ? 'err' : 'warn'),
+        excludedErrors[character] || excludedWarnings[character]);
+      feedback.id = 'preview-exclusion-status-' + encodeURIComponent(character);
+      feedback.setAttribute('role', 'status');
+      row.appendChild(feedback);
+    }
     return row;
   }
 
@@ -1242,27 +1534,27 @@
       // keydown handler preventDefault()s every key, so a prompt opened
       // while one is live cannot be typed into.
       endCapture();
+      var interaction = detailInteraction;
       var size = (state.sizes || {})[name];
       WM.prompt('Size for "' + name + '"', sizeHint(name),
                 size ? size[0] + 'x' + size[1] : '')
         .then(function (text) {
-          if (screenshotLive || text === null || text === '') { return; }
+          if (screenshotLive || interaction !== detailInteraction || text === null || text === '') { return; }
           WM.send('parse_preview_size', text).then(function (parsed) {
-            if (screenshotLive || !parsed) { return; }
+            if (screenshotLive || interaction !== detailInteraction || !parsed) { return; }
             if (parsed.error) {
               WM.send('alert_bookmarks', parsed.error);
               return;
             }
-            var before = pushes;
             WM.send('set_preview_size', name, parsed.w, parsed.h)
               .then(function (res) {
+                if (screenshotLive || interaction !== detailInteraction) return;
                 if (!res || !res.applied) {
                   if (res && res.error) { WM.send('alert_bookmarks', res.error); }
                   return;
                 }
-                if (pushes !== before) { return; }
-                state.sizes = state.sizes || {};
-                state.sizes[name] = [parsed.w, parsed.h];
+                // Queue success is not geometry authority. The revisioned
+                // observation arrives after retained/native/storage settlement.
               });
           });
         });
@@ -1339,7 +1631,8 @@
       WM.choose('Copy preview geometry',
                 'Copy size and position to "' + name + '".',
                 groups, 'Copy', 'Copy from', {compact: true}).then(function (source) {
-        if (screenshotLive) { return; }
+        // Revoke chooser admission, not settlement of a Copy already sent.
+        if (screenshotLive || interaction !== detailInteraction || attempt !== copyAttempt) { return; }
         if (source === null) {
           clearDetailFocus(name, 'copy');
           return;
@@ -1386,7 +1679,7 @@
            + 'not running, so the size applies next time it is.';
     }
     var size = (state.sizes || {})[name];
-    // _preview_sizes (api.py) now guarantees an entry for every name that
+    // The geometry sampler guarantees an entry for every name that
     // can reach this branch -- client is truthy here only for a character
     // in host.client_sizes(), which is a subset of host.characters(), and
     // the bridge defaults exactly that set to (preview.width, height) when
@@ -1542,6 +1835,9 @@
   function makeExcludedCheck(name) {
     var box = document.createElement('input');
     box.type = 'checkbox';
+    var label = WM.make('label', 'check optout', '');
+    label.prepend(WM.make('span', 'box'));
+    label.prepend(box);
     // Ticked means THIS CHARACTER GETS A PREVIEW, the inverse of what is
     // stored. `preview.excluded` stays an opt-out roster -- absent means
     // shown, which is what every existing install expects, so nothing
@@ -1554,7 +1850,9 @@
     // It also reads correctly at rest for the first time. Unticked-means-
     // shown made the ordinary state of this screen thirteen empty boxes
     // beside thirteen working previews -- the opposite of the truth.
-    box.checked = !isExcluded(name);
+    var pending = !screenshotLive && excludedRequests[name];
+    box.checked = pending ? pending.wanted : !isExcluded(name);
+    box.disabled = !screenshotLive && exclusionUnavailable(name);
     // No word beside the box: the column header carries it once. That
     // RETIRES the width problem this control was named for, rather than
     // working around it. Measured at the 840px floor when the label was
@@ -1580,35 +1878,52 @@
     // text wants the box's 15px, so the phrase moved into a heading
     // rendered once instead of being cut to fit a track.
     box.setAttribute('aria-label', 'Show a preview for ' + name);
-    var label = WM.make('label', 'check optout', '');
     label.title = 'Untick to hide this character’s primary preview, not its crop. Its own '
                 + 'keybind and the cycle keybinds skip it too. Its keybind, '
                 + 'size and position are kept for when you tick it again.';
-    label.prepend(WM.make('span', 'box'));
-    label.prepend(box);
+    if (!screenshotLive && excludedErrors[name]) {
+      label.title += ' ' + excludedErrors[name];
+      box.setAttribute('aria-invalid', 'true');
+    }
+    if (!screenshotLive && (excludedErrors[name] || excludedWarnings[name])) {
+      box.setAttribute('aria-describedby', 'preview-exclusion-status-' + encodeURIComponent(name));
+    }
     box.addEventListener('change', function () {
-      if (screenshotLive) { return; }
+      if (screenshotLive || exclusionUnavailable(name)) { return; }
       // `wanted` is what the BOX now says (this character is previewed);
       // `excluded` is what the roster stores, and they are opposites. The
       // endpoint keeps the roster's sense, so the inversion happens here,
       // once, at the boundary -- not in api.py, which would change a
       // persisted key's meaning for the sake of a label.
       var wanted = box.checked;
-      // Same generation guard the Lock and Size handlers carry, and for
-      // the same reason: onPreviewHotkeys replaces `state` wholesale when
-      // an EVE client opens or closes, so a save resolving after that
-      // would write a pre-write roster over the newer payload. Filter
-      // first and concatenate onto the filtered list, so a name the newer
-      // payload already carries cannot be added twice.
-      var before = pushes;
+      var attempt = {wanted: wanted, pushes: pushes};
+      excludedRequests[name] = attempt;
+      box.disabled = true;
       WM.send('set_preview_excluded', name, !wanted).then(function (res) {
-        if (!res || !res.applied) { box.checked = !wanted; return; }
-        if (pushes !== before) { return; }
-        var without = (state.excluded || []).filter(function (n) {
-          return n !== name;
-        });
-        state.excluded = wanted ? without : without.concat(name);
-        requestRender();
+        acceptLayouts(res && res.state, true);
+        acceptGeometry(res && res.geometry, true);
+        if (excludedRequests[name] !== attempt) { return; }
+        delete excludedRequests[name];
+        if (!res || !res.applied) {
+          excludedErrors[name] = res && res.error ? res.error : 'That Preview choice was not saved. Try again.';
+        } else {
+          delete excludedErrors[name];
+          excludedWarnings[name] = res.warning || (res.live === 'deferred'
+            ? 'Saved — live Preview application is deferred.' : res.live === 'incomplete'
+              ? 'Saved — live Preview application is incomplete.' : '');
+          // Compatibility only until the first revisioned state. Production
+          // receipts always carry authoritative choices, including refusals.
+          if (!layoutState && !screenshotLive && pushes === attempt.pushes) {
+            var without = (state.excluded || []).filter(function (n) { return n !== name; });
+            state.excluded = wanted ? without : without.concat(name);
+          }
+        }
+        if (!screenshotLive) { requestRender(); }
+      }, function (error) {
+        if (excludedRequests[name] !== attempt) return;
+        delete excludedRequests[name];
+        excludedErrors[name] = String(error.message || error);
+        if (!screenshotLive) requestRender();
       });
     });
     return label;
@@ -1677,6 +1992,8 @@
 
   function beginCapture(button, onSet) {
     if (screenshotLive) { return; }
+    // Any earlier dialog/parse continuation has lost its keyboard owner.
+    detailInteraction += 1;
     releaseGroupFocus();
     if (capturing) {
       // Revert the previous button WITHOUT a full re-render: that would
@@ -1685,7 +2002,7 @@
       capturing.button.classList.remove('capturing');
       capturing.button.textContent = capturing.previous || 'Not set';
     }
-    capturing = {button: button, onSet: onSet,
+    capturing = {button: button, onSet: onSet, id: ++captureSequence,
                  previous: button.textContent, armed: false};
     // Armed BEFORE the row says "Press a key…", and only after Python
     // confirms. A chord that is already registered never reaches this
@@ -1700,7 +2017,7 @@
     // one bridge call, and a row inviting a keystroke it cannot yet
     // receive is worse than one that invites it a moment late.
     var session = capturing;
-    WM.send('set_bind_capture', true).then(function () {
+    WM.send('set_bind_capture', true, session.id).then(function () {
       // Escape, another row, or a Clear may have landed in the meantime.
       if (capturing !== session) { return; }
       session.armed = true;
@@ -1717,12 +2034,13 @@
     if (!capturing) { return; }
     capturing.button.classList.remove('capturing');
     capturing.button.textContent = capturing.previous || 'Not set';
+    var session = capturing.id;
     capturing = null;
     // Unconditional, including on the paths that never armed the host
     // (a capture ended inside the round trip above). Disarming something
     // already disarmed costs one bridge call; leaving it armed makes the
     // next preview hotkey a no-op until the host's own deadline expires.
-    WM.send('set_bind_capture', false);
+    WM.send('set_bind_capture', false, session);
     // Flush whatever render() call was deferred while this capture was
     // armed -- see requestRender(). Runs AFTER capturing is cleared, so
     // render() below sees a clean state and does not try to redraw
@@ -1758,6 +2076,7 @@
   // capture ends, which is preferable to silently cancelling whatever
   // they were in the middle of doing every time a client toggles.
   function requestRender() {
+    renderLayouts();
     if (capturing) { pendingRender = true; return; }
     render();
   }
@@ -2439,10 +2758,11 @@
     if (groupBusy) { return; }
     endCapture();
     var intent = beginGroupDialog();
+    var interaction = detailInteraction;
     WM.prompt('Rename group', 'Enter a new name for "' + group.name + '"',
               group.name).then(function (text) {
       var owned = finishGroupDialog(intent);
-      if (screenshotLive || text === null || text.trim() === '') { return; }
+      if (screenshotLive || interaction !== detailInteraction || text === null || text.trim() === '') { return; }
       if (owned) { rememberGroupFocus(); }
       groupBusy = true;
       requestRender();
@@ -2510,9 +2830,10 @@
     var msg = 'Delete group "' + group.name + '"? ' + memberText +
               ' will return to All only cycling.';
     var intent = beginGroupDialog();
+    var interaction = detailInteraction;
     WM.confirm('Delete group', msg).then(function (confirmed) {
       var owned = finishGroupDialog(intent);
-      if (screenshotLive || !confirmed) { return; }
+      if (screenshotLive || interaction !== detailInteraction || !confirmed) { return; }
       if (owned) { rememberGroupFocus(); }
       groupBusy = true;
       requestRender();
@@ -2693,6 +3014,8 @@
     });
     return WM.send('get_preview_hotkey_state').then(function (payload) {
       if (!payload) { return; }
+      hydrateLayouts(payload);
+      hydrateGeometry(payload);
       acceptMarkers(payload, screenshotLive ? screenshotLive.markerFields : markerFields, markerVersions);
       if (screenshotLive) {
         screenshotLive.state = payload;
@@ -2761,6 +3084,8 @@
   // the two lists together.
   WM.handle('onPreviewHotkeys', function (payload) {
     if (!payload) { return; }
+    hydrateLayouts(payload);
+    hydrateGeometry(payload);
     acceptMarkers(payload, screenshotLive ? screenshotLive.markerFields : markerFields);
     if (screenshotLive) {
       screenshotLive.state = payload;
@@ -2791,7 +3116,8 @@
   // page has ever decided what a chord looks like, and this does not
   // start.
   WM.handle('onPreviewBindCaptured', function (payload) {
-    if (!capturing || !payload || !payload.gesture) { return; }
+    if (screenshotLive || !capturing || !payload || !payload.gesture
+        || payload.session !== capturing.id) { return; }
     // Same ordering as the keydown path below: hold the session, disarm,
     // then apply -- onSet re-renders, which detaches the armed button.
     var apply = capturing.onSet;
@@ -2809,6 +3135,7 @@
     var detail = event.detail || {};
     inertNotes = detail.inert_notes || {};
     var s = detail.settings || {};
+    reopenPositions = !(s.preview && s.preview.restore_preview_positions === false);
     // Absent means off, matching build_preview_host's own default: turning
     // on Never-minimize before this exists must not look possible.
     minimizeInactive = !!(s.preview && s.preview.minimize_inactive_clients);
@@ -2844,6 +3171,11 @@
   document.addEventListener('wm:preview-lock-default', function (event) {
     state.lock_default = !!(event.detail && event.detail.enabled);
     requestRender();
+  });
+
+  document.addEventListener('wm:preview-restore-positions', function (event) {
+    reopenPositions = event.detail.enabled;
+    renderLayouts();
   });
 
   document.addEventListener('wm:settings-tab', function (event) {

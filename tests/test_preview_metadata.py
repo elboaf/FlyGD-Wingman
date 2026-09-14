@@ -31,7 +31,7 @@ def runtime(monkeypatch):
             GetForegroundWindow=lambda: 0,
             GetClientRect=lambda *args: 0,
             PeekMessageW=lambda *args: 0,
-            DestroyWindow=lambda hwnd: closed.append(hwnd),
+            DestroyWindow=lambda hwnd: closed.append(hwnd) or True,
             ShowWindow=lambda hwnd, mode: shown.append((hwnd, mode)),
             PostQuitMessage=lambda code: None,
         ),
@@ -468,7 +468,7 @@ def test_generation_fence_during_retirement_cannot_steal_next_pump_wake(
             # HWND retirement. The host callback tests retirement itself.
             observed.append((h._hwnd, h._metadata_wake_pending))
             h.set_metadata_generation(2)
-        destroyed(hwnd)
+        return destroyed(hwnd)
 
     runtime.native.user32.DestroyWindow = fence_while_destroying
     h._teardown(runtime.native)

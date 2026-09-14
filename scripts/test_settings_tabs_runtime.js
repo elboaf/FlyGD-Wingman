@@ -228,7 +228,7 @@ for (const destination of ['tab', 'keyboard', 'section', 'route']) {
     const p = await page({previews: true}); p.WM.openSettingsSection('previews', 'characters');
     await p.previewState();
     const capture = p.el('preview-binds').querySelector('.bindbtn');
-    await p.fire(capture, 'click'); await p.reply('set_bind_capture', true, [true]);
+    await p.fire(capture, 'click'); await p.reply('set_bind_capture', true, [true, 1]);
     assert.equal(capture.classList.contains('capturing'), true);
     const reads = p.calls.filter(call => call.method === 'get_preview_hotkey_state').length;
     assert.ok(reads > 0, 'Preview entry hydrated through the real owner');
@@ -239,7 +239,7 @@ for (const destination of ['tab', 'keyboard', 'section', 'route']) {
     }
     if (destination === 'section') p.WM.section('uploading');
     if (destination === 'route') p.WM.route('main');
-    await p.reply('set_bind_capture', true, [false]);
+    await p.reply('set_bind_capture', true, [false, 1]);
     assert.equal(capture.classList.contains('capturing'), false);
     const key = await p.fire(p.document, 'keydown', {key: 'x', code: 'KeyX'});
     assert.equal(key.defaultPrevented, false);
@@ -252,7 +252,7 @@ test('armed Preview capture stops keydown before target and bubble handlers', as
   const p = await page({previews: true}); p.WM.openSettingsSection('previews', 'characters');
   await p.previewState();
   const capture = p.el('preview-binds').querySelector('.bindbtn');
-  capture.focus(); await p.fire(capture, 'click'); await p.reply('set_bind_capture', true, [true]);
+  capture.focus(); await p.fire(capture, 'click'); await p.reply('set_bind_capture', true, [true, 1]);
   const reached = [];
   capture.addEventListener('keydown', () => reached.push('target'));
   p.document.addEventListener('keydown', () => reached.push('bubble'));
@@ -268,7 +268,7 @@ for (const entry of ['focus', 'click', 'pointerdown']) {
     const p = await page({previews: true}); p.WM.openSettingsSection('previews', 'characters');
     await p.previewState();
     const capture = p.el('preview-binds').querySelector('.bindbtn');
-    capture.focus(); await p.fire(capture, 'click'); await p.reply('set_bind_capture', true, [true]);
+    capture.focus(); await p.fire(capture, 'click'); await p.reply('set_bind_capture', true, [true, 1]);
     assert.equal(capture.classList.contains('capturing'), true);
     const button = p.button('previews', 'characters');
     const events = p.events.slice(), sections = p.sections.slice();
@@ -287,7 +287,7 @@ for (const entry of ['focus', 'click', 'pointerdown']) {
       'tab navigation must not be captured as a Preview bind');
     assert.equal(key.defaultPrevented, true); selected(p, 'previews', 'wanderer');
     assert.equal(p.document.activeElement, p.button('previews', 'wanderer'));
-    await p.reply('set_bind_capture', true, [false]);
+    await p.reply('set_bind_capture', true, [false, 1]);
     assert.equal(capture.classList.contains('capturing'), false);
     assert.equal(p.events.length, events.length + 1);
     assert.deepEqual(p.sections, sections);
@@ -314,8 +314,8 @@ test('Configure visibly identifies its expanded character while retaining toggle
   assert.equal(configure().getAttribute('aria-expanded'), 'false');
   assert.equal(p.el(id), null);
   const capture = configure().parentNode.querySelector('.bindbtn');
-  await p.fire(capture, 'click'); await p.reply('set_bind_capture', true, [true]);
-  await p.fire(configure(), 'click'); await p.reply('set_bind_capture', true, [false]);
+  await p.fire(capture, 'click'); await p.reply('set_bind_capture', true, [true, 1]);
+  await p.fire(configure(), 'click'); await p.reply('set_bind_capture', true, [false, 1]);
   const heading = p.el(id).querySelector('h3');
   assert.ok(heading, 'expanded controls need a visible character-specific heading');
   assert.match(heading.textContent, /Configure.*Alice/);

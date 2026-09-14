@@ -73,7 +73,12 @@ def make_state(tmp_path, **overrides):
 
 
 def make_api(tmp_path, window=None, **kwargs):
+    from tests.preview_runtime_helpers import HostLifecycle
+
     api = Api(make_state(tmp_path), **kwargs)
+    host = kwargs.get("preview_host")
+    if isinstance(host, HostLifecycle):
+        host._layout_store = api._preview_layout_store
     api._window = window if window is not None else FakeWindow()
     return api
 
@@ -95,6 +100,130 @@ def pushes(window: FakeWindow) -> list[tuple[str, object]]:
         )
         out.append((handler, payload))
     return out
+
+
+def test_saved_layouts_without_host_share_writer_and_hydrate_authoritative_choices(
+    tmp_path,
+):
+    from wingman import settings
+    from wingman.preview.layoutadmission import PrimaryLayoutAdmission
+    from wingman.preview.store import LayoutStore
+
+    state = make_state(tmp_path)
+    with settings.update(state.settings) as doc:
+        doc.setdefault("preview", {})["excluded"] = ["Pilot"]
+    gate = PrimaryLayoutAdmission()
+    store = LayoutStore(lambda: settings.update(state.settings))
+    api = Api(state, layout_admission=gate, layout_store=store)
+    api._window = FakeWindow()
+    assert api._preview_layouts._store is store
+    assert api._preview_layouts._admission is gate
+    created = api.create_preview_layout("Offline")
+    assert created["applied"] and created["persisted"] and created["live"] is None
+    saved = created["state"]["layouts"][0]
+    assert saved["character_count"] == 1
+    assert api.set_preview_excluded("Pilot", False)["live"] == "deferred"
+    applied = api.apply_preview_layout(saved["id"], saved["revision"])
+    assert applied["persisted"] and applied["live"] == "deferred"
+    state = api.get_preview_hotkey_state()
+    assert state["excluded"] == state["layout_state"]["excluded"] == ["Pilot"]
+    api._fleet_worker.iterate_once()
+    assert any(name == "onPreviewLayouts" for name, payload in pushes(api._window))
+    api._close_eve_runtime()
+    api._window.evaluated.clear()
+    api._publish_preview_layouts(applied["state"])
+    assert not api.create_preview_layout("Late")["applied"]
+    assert not api._window.evaluated
+    assert api._preview_layouts.shutdown(0)
+
+
+@pytest.mark.parametrize("supply_store", [False, True])
+def test_api_rejects_host_admission_without_its_layout_store(tmp_path, supply_store):
+    from wingman import settings
+    from wingman.preview.host import PreviewHost
+    from wingman.preview.store import LayoutStore
+
+    state = make_state(tmp_path)
+    host = PreviewHost(on_layout_changed=lambda *args: None)
+    store = (
+        LayoutStore(lambda: settings.update(state.settings)) if supply_store else None
+    )
+    with pytest.raises(
+        ValueError, match="Preview host layout admission requires a layout store"
+    ):
+        Api(state, preview_host=host, layout_store=store)
+
+
+@pytest.mark.parametrize("mismatch", ["store", "admission"])
+def test_api_rejects_mismatched_host_layout_pair(tmp_path, mismatch):
+    from wingman import settings
+    from wingman.preview.host import PreviewHost
+    from wingman.preview.layoutadmission import PrimaryLayoutAdmission
+    from wingman.preview.store import LayoutStore
+
+    state = make_state(tmp_path)
+    store = LayoutStore(lambda: settings.update(state.settings))
+    gate = PrimaryLayoutAdmission()
+    host = PreviewHost(
+        on_layout_changed=lambda *args: None, layout_store=store, layout_admission=gate
+    )
+    with pytest.raises(ValueError, match=f"must share their layout {mismatch}"):
+        Api(
+            state,
+            preview_host=host,
+            layout_store=LayoutStore(lambda: settings.update(state.settings))
+            if mismatch == "store"
+            else store,
+            layout_admission=PrimaryLayoutAdmission()
+            if mismatch == "admission"
+            else gate,
+        )
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+def test_api_adopts_shared_host_layout_pair_and_persists(tmp_path, explicit):
+    from wingman import settings
+    from wingman.preview.host import PreviewHost
+    from wingman.preview.layoutadmission import PrimaryLayoutAdmission
+    from wingman.preview.store import LayoutStore
+
+    state = make_state(tmp_path, preview={"excluded": ["Pilot"]})
+    store = LayoutStore(lambda: settings.update(state.settings))
+    gate = PrimaryLayoutAdmission()
+    host = PreviewHost(
+        on_layout_changed=lambda *args: None,
+        preview_snapshot=settings.committed_preview(state.settings).snapshot,
+        layout_store=store,
+        layout_admission=gate,
+    )
+    kwargs = {"layout_store": store, "layout_admission": gate} if explicit else {}
+    api = Api(state, preview_host=host, **kwargs)
+    try:
+        assert api._preview_layouts._store is store
+        assert api._preview_layouts._admission is gate
+        saved = api.create_preview_layout("Shared")
+        assert saved["persisted"]
+        assert (
+            settings.load()["preview"]["saved_layouts"]["items"][0]["name"] == "Shared"
+        )
+    finally:
+        api.shutdown_previews()
+
+
+@pytest.mark.parametrize("with_host", [False, True])
+def test_api_default_layout_store_without_host_admission_persists(tmp_path, with_host):
+    from wingman import settings
+
+    host = _FakeHost() if with_host else None
+    api = Api(make_state(tmp_path), preview_host=host)
+    try:
+        store = api._preview_layout_store
+        assert store is api._preview_layouts._store
+        assert api._preview_layouts._admission is api._preview_layout_admission
+        store.transact(lambda preview: preview.update(excluded=["Pilot"]))
+        assert settings.load()["preview"]["excluded"] == ["Pilot"]
+    finally:
+        api.shutdown_previews()
 
 
 def test_push_calls_the_named_handler_with_a_json_payload(tmp_path):

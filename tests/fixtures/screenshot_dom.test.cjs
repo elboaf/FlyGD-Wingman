@@ -3,6 +3,18 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const {createDOM} = require('./screenshot_dom.cjs');
 
+test('opt-in static text survives child construction; structural fixtures stay empty', () => {
+  const page = {tag: 'document', attrs: {}, children: [{tag: 'button', attrs: {id: 'control'},
+    text: 'Save current as…', children: [{tag: 'span', attrs: {id: 'child'}, text: ' detail', children: []}]}]};
+  const {document} = createDOM(page);
+  assert.equal(document.getElementById('control').textContent, 'Save current as… detail');
+  assert.equal(document.getElementById('control').children[0].id, 'child');
+  delete page.children[0].text; delete page.children[0].children[0].text;
+  const structural = createDOM(page).document;
+  assert.equal(structural.getElementById('control').textContent, '');
+  assert.equal(structural.getElementById('control').children[0].id, 'child');
+});
+
 function fixture() {
   const dom = createDOM({tag: 'document', attrs: {}, children: []});
   const {document, Element} = dom;

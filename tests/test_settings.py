@@ -49,6 +49,7 @@ def test_defaults_are_the_documented_values():
             # is keyed off this marker.
             "defaults_version": 2,
             "layouts": {},
+            "saved_layouts": {"version": 1, "items": []},
             "crops": {},
             "hotkeys": {
                 "characters": {},
@@ -439,6 +440,28 @@ def test_validated_preview_falls_back_on_a_malformed_hotkey_section():
         "groups": [],
         "group_by_character": {},
     }
+
+
+def test_only_explicit_preview_exclusions_lose_the_history_cap():
+    names = [f"Pilot{i}" for i in range(70)]
+    preview = settings.validated_preview(
+        {
+            "excluded": [*names, "hwnd:1", None, "", *names],
+            "seen": names,
+            "never_minimize": names,
+            "locked": names,
+            "hotkeys": {
+                "groups": [{"id": "g", "name": "Group"}],
+                "group_by_character": dict.fromkeys(names, "g"),
+            },
+        }
+    )
+    assert preview["excluded"] == names
+    for key in ("seen", "never_minimize", "locked"):
+        assert preview[key] == names[:64]
+    assert list(preview["hotkeys"]["group_by_character"]) == names[:64]
+    fleet = settings.validated_fleet_bar({"hidden": names, "seen": names})
+    assert fleet["hidden"] == names[:64] and fleet["seen"] == names[:64]
 
 
 def test_validated_preview_cleans_the_roster():

@@ -4,10 +4,10 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
 from threading import Condition, Event
-from types import SimpleNamespace
 
 import pytest
 
+from tests.preview_runtime_helpers import PrimaryWindow
 from tests.test_api import FakeWindow, make_api
 from tests.test_preview_cropcontroller import DEFINITION, client
 from tests.test_preview_host import crop_pump as crop_pump
@@ -203,13 +203,15 @@ def test_review_04_05_accepted_primary_fifo_precedes_cleanup(runtime_pump, bound
     eve_on(r)
     h = r.host
     store = LayoutStore(r.transaction.update, timer=FakeTimer)
+    h._layout_store = store
+    h._flush_layouts = store.flush
     h._clear_layouts = store.clear
     h._on_layout_changed = lambda name, rect, locked: store.record(
         name, layout.Entry(rect, locked)
     )
     r.store._flush_primary = store.flush
     moved = []
-    primary = SimpleNamespace(
+    primary = PrimaryWindow(
         rect=geometry.Rect(20, 30, 320, 210),
         locked=False,
         _mode=None,
@@ -399,14 +401,14 @@ def test_review_10_preview_publication_rechecks_actual_delivery(
         "hotkeys": api.push_preview_hotkeys,
         "bind": lambda: api.push_bind_captured("Ctrl+F1"),
     }[adapter]
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        pending = pool.submit(push)
+    assert api._start_presentation()
+    try:
+        push()
         assert entered.wait(5)
-        try:
-            api._close_eve_runtime()
-        finally:
-            release.set()
-        pending.result(5)
+        api._close_eve_runtime()
+    finally:
+        release.set()
+        assert api._stop_fleet_presentation(5)
     assert len(api._window.evaluated) == (boundary == "mirror")
     assert not api._sigbar_window.evaluated
 

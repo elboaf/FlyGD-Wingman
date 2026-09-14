@@ -632,6 +632,8 @@ def test_copy_preview_layout_changes_only_geometry_without_a_host(
         for key in ("hotkeys", "locked", "never_minimize", "excluded")
     }
 
+    with api_mod.settings_mod.update(api._state.settings):
+        pass  # Publish the fixture through the same committed reader as production.
     result = api.copy_preview_layout("Target", "Source")
 
     assert result == {"applied": True, "persisted": True, "error": None}
@@ -684,6 +686,15 @@ class _FakeSizeHost:
 
     def clear_layout_entries(self):
         self.layouts = {}
+
+    def release_primary_layout(self, lease):
+        pass
+
+    def clear_layouts_offline(self):
+        if not self.store.clear():
+            return False
+        self.clear_layout_entries()
+        return True
 
     def set_capture(self, armed):
         self.captures.append(armed)
@@ -784,11 +795,12 @@ def test_preview_layout_source_geometry_without_host_uses_valid_saved_entries(
     monkeypatch, tmp_path
 ):
     api, _window, _saved = settings_api(tmp_path, monkeypatch)
-    api._state.settings["preview"]["layouts"] = {
-        "Saved": {"x": -80, "y": 0, "w": 480, "h": 300, "locked": True},
-        "hwnd:0x1234": {"x": 1, "y": 2, "w": 480, "h": 300},
-        "Invalid": {"x": 1, "y": 2, "w": 0, "h": 300},
-    }
+    with api_mod.settings_mod.update(api._state.settings) as doc:
+        doc["preview"]["layouts"] = {
+            "Saved": {"x": -80, "y": 0, "w": 480, "h": 300, "locked": True},
+            "hwnd:0x1234": {"x": 1, "y": 2, "w": 480, "h": 300},
+            "Invalid": {"x": 1, "y": 2, "w": 0, "h": 300},
+        }
     assert api.get_preview_hotkey_state()["layout_sources"] == [
         {
             "name": "Saved",
@@ -802,7 +814,8 @@ def test_copy_preview_layout_delegates_to_the_host_snapshot(monkeypatch, tmp_pat
     from wingman.preview import geometry, layout
 
     api, _window, _saved = settings_api(tmp_path, monkeypatch)
-    api._state.settings["preview"]["seen"] = ["Target"]
+    with api_mod.settings_mod.update(api._state.settings) as doc:
+        doc["preview"]["seen"] = ["Target"]
     host = _FakeSizeHost(
         layouts={"Source": layout.Entry(geometry.Rect(1, 2, 320, 210))}
     )
@@ -850,17 +863,20 @@ def test_offline_reset_clears_the_dormant_host_cache(monkeypatch, tmp_path):
         is_running=False,
         layouts={"Alice": layout.Entry(geometry.Rect(5, 6, 320, 210))},
     )
+    host.store = api._preview_layout_store
     api._preview_host = host
     pushed = fakes.record_pushes(api)
 
     assert api.reset_preview_layouts()["applied"] is True
     assert host.layouts == {}
-    assert [name for name, _payload in pushed] == ["onPreviewHotkeys"]
+    api._fleet_worker.iterate_once()
+    assert [name for name, _payload in pushed] == ["onPreviewGeometry"]
 
 
 def test_copy_preview_layout_reports_a_persistence_failure(monkeypatch, tmp_path):
     api, _window, _saved = settings_api(tmp_path, monkeypatch)
-    api._state.settings["preview"]["seen"] = ["Target"]
+    with api_mod.settings_mod.update(api._state.settings) as doc:
+        doc["preview"]["seen"] = ["Target"]
     api._preview_host = _FakeSizeHost(copy_result="persist_failed")
 
     result = api.copy_preview_layout("Target", "Source")
@@ -876,38 +892,36 @@ def test_preview_sizes_falls_back_to_the_configured_default(monkeypatch, tmp_pat
     preview.width/height, the pair every unsaved preview actually opens
     at (__main__.py's PreviewHost(size=...))."""
     api, _window, _saved = settings_api(tmp_path, monkeypatch)
-    api._state.settings["preview"]["width"] = 800
-    api._state.settings["preview"]["height"] = 500
-    api._state.settings["preview"]["seen"] = ["Alice"]
+    with api_mod.settings_mod.update(api._state.settings) as doc:
+        doc["preview"].update(width=800, height=500, seen=["Alice"])
 
-    assert api._preview_sizes() == {"Alice": [800, 500]}
+    assert api._sample_preview_geometry()["sizes"] == {"Alice": [800, 500]}
 
 
 def test_preview_sizes_prefers_a_real_layout_entry_over_the_default(
     monkeypatch, tmp_path
 ):
     api, _window, _saved = settings_api(tmp_path, monkeypatch)
-    api._state.settings["preview"]["layouts"]["Alice"] = {
-        "x": 0,
-        "y": 0,
-        "w": 640,
-        "h": 392,
-    }
+    with api_mod.settings_mod.update(api._state.settings) as doc:
+        doc["preview"]["layouts"]["Alice"] = {
+            "x": 0,
+            "y": 0,
+            "w": 640,
+            "h": 392,
+        }
 
-    assert api._preview_sizes() == {"Alice": [640, 392]}
+    assert api._sample_preview_geometry()["sizes"] == {"Alice": [640, 392]}
 
 
 def test_preview_sizes_skips_a_malformed_layout_entry_rather_than_raising(
     monkeypatch, tmp_path
 ):
-    """layout.deserialize already drops an entry missing a full rect before
-    it ever reaches settings, but _preview_sizes reads the settings dict
-    straight rather than through that path -- so it needs its own guard
-    against an entry that lost its "w" some other way."""
+    """Malformed layouts cannot become Size defaults through committed memory."""
     api, _window, _saved = settings_api(tmp_path, monkeypatch)
-    api._state.settings["preview"]["layouts"]["Alice"] = {"x": 0, "y": 0, "h": 210}
+    with api_mod.settings_mod.update(api._state.settings) as doc:
+        doc["preview"]["layouts"]["Alice"] = {"x": 0, "y": 0, "h": 210}
 
-    assert api._preview_sizes() == {}
+    assert api._sample_preview_geometry()["sizes"] == {}
 
 
 def test_preview_sizes_defaults_a_running_character_the_host_has_not_dragged(
@@ -918,7 +932,7 @@ def test_preview_sizes_defaults_a_running_character_the_host_has_not_dragged(
     api, _window, _saved = settings_api(tmp_path, monkeypatch)
     api._preview_host = _FakeSizeHost(characters=["Bob"], is_running=True)
 
-    assert api._preview_sizes() == {"Bob": [320, 210]}
+    assert api._sample_preview_geometry()["sizes"] == {"Bob": [320, 210]}
 
 
 def test_preview_sizes_ignores_a_stopped_hosts_characters(monkeypatch, tmp_path):
@@ -928,7 +942,7 @@ def test_preview_sizes_ignores_a_stopped_hosts_characters(monkeypatch, tmp_path)
     api, _window, _saved = settings_api(tmp_path, monkeypatch)
     api._preview_host = _FakeSizeHost(characters=["Bob"], is_running=False)
 
-    assert api._preview_sizes() == {}
+    assert api._sample_preview_geometry()["sizes"] == {}
 
 
 def test_set_bind_capture_reaches_the_host(monkeypatch, tmp_path):

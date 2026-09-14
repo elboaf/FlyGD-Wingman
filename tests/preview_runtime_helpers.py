@@ -5,8 +5,16 @@ call the acknowledgments below; families have no native resources in this seam.
 """
 
 from threading import Event
+from types import SimpleNamespace
 
 from wingman.preview.runtime import FamilyDemand, HostAck
+
+
+class PrimaryWindow(SimpleNamespace):
+    _mode = None
+
+    def finish_gesture(self, *, record=True):
+        self._mode = None
 
 
 class HostLifecycle:
@@ -77,6 +85,27 @@ class HostLifecycle:
         self._emit("pump-stopped")
         self.stopped_event.set()
         return True
+
+    def release_primary_layout(self, lease):
+        # Api's fallback finishes the test gate; this double owns no native tail.
+        pass
+
+    def clear_layouts_offline(self):
+        if not self._layout_store.clear():
+            return False
+        self.clear_layout_entries()
+        return True
+
+    def refresh_primary_visibility(self, lease):
+        from concurrent.futures import Future
+
+        from wingman.preview.savedlayouts import PrimaryLayoutLiveResult
+
+        self.request_sweep()
+        self.request_rebind()
+        future = Future()
+        future.set_result(PrimaryLayoutLiveResult("applied", None))
+        return future
 
     def close_admission(self):
         self._admission_closed = True

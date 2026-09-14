@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.preview_runtime_helpers import PrimaryWindow
 from tests.test_api import make_api
 from tests.test_preview_cropcontroller import client
 from tests.test_preview_host import crop_pump as crop_pump
@@ -154,13 +155,15 @@ def test_boundary_d_resize_payloads_do_not_coalesce_across_reset(runtime_pump):
     eve_on(r)
     h = r.host
     store = LayoutStore(r.transaction.update, timer=FakeTimer)
+    h._layout_store = store
+    h._flush_layouts = store.flush
     h._clear_layouts = store.clear
     h._on_layout_changed = lambda name, rect, locked: store.record(
         name, layout.Entry(rect, locked)
     )
     r.store._flush_primary = store.flush
     moved = []
-    primary = SimpleNamespace(
+    primary = PrimaryWindow(
         rect=geometry.Rect(20, 30, 320, 210),
         locked=False,
         _mode=None,
@@ -470,6 +473,8 @@ def test_reset_rechecks_epoch_after_native_monitor_enumeration(
     entered, release = Event(), Event()
     moves = []
     store = LayoutStore(r.transaction.update, timer=FakeTimer)
+    h._layout_store = store
+    h._flush_layouts = store.flush
     h._clear_layouts = store.clear
     h._on_layout_changed = lambda name, rect, locked: store.record(
         name, layout.Entry(rect, locked)
@@ -522,6 +527,7 @@ def test_reset_rechecks_epoch_after_native_monitor_enumeration(
         assert entered.wait(5)
         r.runtime.set_eve(False, 2)
         assert not h.runtime_enabled
+        assert not h._layout_admission.wait_idle(0)
     finally:
         release.set()
     r.wait_state(lambda state: state.eve == "stopped" and not h.is_stopping)

@@ -586,10 +586,10 @@ test('real preview capture disarms on leaving for Companions before its source c
     client_sizes: {}, sizable: [], layout_sources: []});
   assert.deepEqual(p.errors, []);
   const capture = p.el('preview-binds').querySelector('.bindbtn'); assert.ok(capture);
-  await p.fire(capture, 'click'); await p.reply('set_bind_capture', true, [true]);
+  await p.fire(capture, 'click'); await p.reply('set_bind_capture', true, [true, 1]);
   assert.equal(capture.classList.contains('capturing'), true);
   await p.enter();
-  await p.reply('set_bind_capture', true, [false]);
+  await p.reply('set_bind_capture', true, [false, 1]);
   assert.equal(capture.classList.contains('capturing'), false);
   await p.reply('companion_previews_state', state());
   await p.startAdd();

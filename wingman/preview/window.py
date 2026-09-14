@@ -302,7 +302,12 @@ class PreviewWindow:
         label_marker: str | None = None,
         hidden: bool = False,
         is_authorized=None,
+        on_gesture_begin=None,
+        on_gesture_end=None,
     ):
+        self._on_gesture_begin = on_gesture_begin
+        self._on_gesture_end = on_gesture_end
+        self._gesture = None
         self._libs = libs
         self._is_authorized = is_authorized
         self.client = client
@@ -363,6 +368,7 @@ class PreviewWindow:
         self._screen = screen
         self.hwnd = None
         self._thumb = None
+        self._teardown_started = False
         # The character-name overlay window's HWND, or None. See
         # _ensure_label_overlay for why the name is a window at all.
         self._label_hwnd = None
@@ -409,6 +415,8 @@ class PreviewWindow:
         label_marker: str | None = None,
         hidden: bool = False,
         is_authorized=None,
+        on_gesture_begin=None,
+        on_gesture_end=None,
     ):
         self = cls(
             libs,
@@ -430,8 +438,16 @@ class PreviewWindow:
             label_marker=label_marker,
             hidden=hidden,
             is_authorized=is_authorized,
+            on_gesture_begin=on_gesture_begin,
+            on_gesture_end=on_gesture_end,
         )
         _ensure_class(libs)
+
+        def authorized():
+            return self._is_authorized is None or self._is_authorized()
+
+        if not authorized():
+            return None
         self.hwnd = libs.user32.CreateWindowExW(
             win32.WS_EX_LAYERED
             | win32.WS_EX_TOOLWINDOW
@@ -453,17 +469,28 @@ class PreviewWindow:
             logger.warning("CreateWindowExW failed for %s", client.stable_key)
             return None
         _WINDOWS[int(self.hwnd)] = self
+        # A revoked creation still returns its owned HWND for caller cleanup,
+        # never an invisible leak and never permission to bind a retired source.
+        if not authorized():
+            return self
         self.redraw()
+        if not authorized():
+            return self
         if not self.hidden:
             libs.user32.ShowWindow(self.hwnd, win32.SW_SHOWNOACTIVATE)
+        if not authorized():
+            return self
         self._thumb = Thumbnail.register(libs, self.hwnd, client.hwnd)
+        if not authorized():
+            return self
         if self._thumb is not None:
             self._thumb.update(
                 geometry.thumbnail_rect(self.rect, self._inset),
                 self.opacity,
             )
         # After the preview itself exists: the overlay is owned by it.
-        self._ensure_label_overlay()
+        if authorized():
+            self._ensure_label_overlay()
         return self
 
     def rebind_client(self, client) -> None:
@@ -582,8 +609,8 @@ class PreviewWindow:
         self.show_labels = bool(shown)
         if shown:
             self._ensure_label_overlay()
-        else:
-            self._destroy_label_overlay()
+        elif not self._destroy_label_overlay():
+            self._sync_label_visibility()
 
     def _ensure_label_overlay(self) -> None:
         if not self.show_labels or self.hwnd is None:
@@ -692,12 +719,16 @@ class PreviewWindow:
             )
             self._label_visible = visible
 
-    def _destroy_label_overlay(self) -> None:
+    def _destroy_label_overlay(self) -> bool:
         if self._label_hwnd is None:
-            return
-        self._libs.user32.DestroyWindow(self._label_hwnd)
+            return True
+        # Restyling and close share ownership: a failed destroy must not allow
+        # re-enabling labels to allocate a second overlay over the retained one.
+        if not self._libs.user32.DestroyWindow(self._label_hwnd):
+            return False
         self._label_hwnd = None
         self._label_visible = False
+        return True
 
     def set_hidden(self, hidden: bool) -> None:
         """Take this preview off the screen, or put it back.
@@ -926,6 +957,42 @@ class PreviewWindow:
             return True
         return False
 
+    def native_rect(self) -> geometry.Rect | None:
+        """Sample our actual destination, never the EVE source or cached guess."""
+        import ctypes
+
+        if not self.hwnd:
+            return None
+        rect = win32.RECT()
+        if not self._libs.user32.GetWindowRect(self.hwnd, ctypes.byref(rect)):
+            return None
+        width, height = rect.right - rect.left, rect.bottom - rect.top
+        if width <= 0 or height <= 0:
+            return None
+        return geometry.Rect(rect.left, rect.top, width, height)
+
+    def move_checked(self, rect: geometry.Rect) -> bool:
+        """Apply explicit geometry only after native acknowledgment.
+
+        move() intentionally retains the gesture path's unchecked contract.
+        Both paths share rendering/cache maintenance after adopting geometry.
+        """
+        if not self.hwnd or (
+            self._is_authorized is not None and not self._is_authorized()
+        ):
+            return False
+        resized = (rect.w, rect.h) != (self.rect.w, self.rect.h)
+        if not self._libs.user32.SetWindowPos(
+            self.hwnd, None, rect.x, rect.y, rect.w, rect.h, 0x0010 | 0x0004
+        ):
+            return False
+        self.rect = rect
+        if resized and self._alert is not None:
+            # Even a later label/render failure must not replay old-sized frames.
+            self._invalidate_frames()
+        self._moved(rect, resized, checked=True)
+        return True
+
     def move(self, rect) -> None:
         """Reposition and, only if the size changed, re-render.
 
@@ -933,6 +1000,11 @@ class PreviewWindow:
         a move, and the thumbnail's destination is in CLIENT coordinates,
         so neither has to be touched when only x/y change.
         """
+        # Cursor sampling/snapping (and an earlier resize-all target) can
+        # outlive EVE authority. Fence each native delivery, not just message
+        # entry; an undelivered rectangle must not become final drag geometry.
+        if self._is_authorized is not None and not self._is_authorized():
+            return
         resized = (rect.w, rect.h) != (self.rect.w, self.rect.h)
         self.rect = rect
         # SWP_NOACTIVATE | SWP_NOZORDER: moving a preview must not steal
@@ -940,14 +1012,22 @@ class PreviewWindow:
         self._libs.user32.SetWindowPos(
             self.hwnd, None, rect.x, rect.y, rect.w, rect.h, 0x0010 | 0x0004
         )
+        self._moved(rect, resized)
+
+    def _moved(self, rect, resized, *, checked=False) -> None:
+        def authorized():
+            return not checked or self._is_authorized is None or self._is_authorized()
+
+        if not authorized():
+            return
         # The overlay is a separate HWND in SCREEN coordinates, so unlike
         # the thumbnail it must be re-placed on a pure move too.
         self._sync_label()
-        if resized:
+        if resized and authorized():
             # The bitmap is sized to the window, so a resize must re-push
             # it or the surface stays at the old dimensions.
             self.redraw()
-            if self._thumb is not None:
+            if self._thumb is not None and authorized():
                 self._thumb.update(
                     geometry.thumbnail_rect(rect, self._inset),
                     self.opacity,
@@ -966,7 +1046,50 @@ class PreviewWindow:
                 self._invalidate_frames()
 
     # -- input -----------------------------------------------------------
+    def _begin_gesture(self) -> bool:
+        if self._gesture is None:
+            self._gesture = (
+                self._on_gesture_begin() if self._on_gesture_begin is not None else True
+            )
+        return self._gesture is not None
+
+    def finish_gesture(self, *, record=True) -> None:
+        """Freeze before retiring ownership; capture loss may re-enter wndproc.
+
+        An Off freeze can record through retained layout authority, bypassing
+        the revoked live callback, then retire this gesture with record=False.
+        """
+        mode, self._mode = self._mode, None
+        lease, self._gesture = self._gesture, None
+        try:
+            # ReleaseCapture synchronously re-enters WM_CAPTURECHANGED. Clear
+            # local input first, but keep the lease until native cleanup and
+            # recording finish. Never release a companion/picker's capture.
+            if (
+                mode is not None
+                and self.hwnd
+                and self._libs.user32.GetCapture() == self.hwnd
+            ):
+                self._libs.user32.ReleaseCapture()
+            if record and mode in ("move", "resize", "resize_all"):
+                self._on_rect_changed(self.client.stable_key, self.rect, self.locked)
+        finally:
+            if lease is not None and self._on_gesture_end is not None:
+                self._on_gesture_end(lease)
+
     def _on_message(self, msg, wparam, lparam):
+        if self._is_authorized is not None and not self._is_authorized():
+            if msg in (win32.WM_LBUTTONDOWN, win32.WM_RBUTTONDOWN, win32.WM_MOUSEMOVE):
+                return 0
+            if msg in (win32.WM_LBUTTONUP, win32.WM_RBUTTONUP):
+                if self._mode is not None:
+                    # Revocation forbids further movement, not the admitted
+                    # gesture's last detached geometry or capture cleanup.
+                    self.finish_gesture()
+                return 0
+        if msg in (win32.WM_CAPTURECHANGED, win32.WM_CANCELMODE):
+            self.finish_gesture()
+            return 0
         # The button grammar, when previews are NOT locked in place:
         #
         #   left click            -> switch to the client (selected ring)
@@ -1001,6 +1124,9 @@ class PreviewWindow:
                 return 0
             pt = _lparam_point(lparam)
             if self._mode is not None:
+                if self._mode == "denied_left" or not self._begin_gesture():
+                    self._mode = "denied_left"
+                    return 0
                 # The SECOND button of the chord. Whichever gesture the
                 # first button armed, both-buttons now means resize-all.
                 # Re-anchoring to the CURRENT rect and cursor is what
@@ -1015,6 +1141,8 @@ class PreviewWindow:
             resizing = msg == win32.WM_LBUTTONDOWN and geometry.hit_resize_handle(
                 geometry.Rect(0, 0, self.rect.w, self.rect.h), *pt
             )
+            if (resizing or msg == win32.WM_RBUTTONDOWN) and not self._begin_gesture():
+                return 0
             if msg == win32.WM_LBUTTONDOWN:
                 self._mode = "resize" if resizing else "pending_left"
             else:
@@ -1052,6 +1180,8 @@ class PreviewWindow:
             return 0
 
         if msg == win32.WM_MOUSEMOVE and self._mode:
+            if self._mode == "denied_left":
+                return 0
             if PERF:
                 t0 = time.perf_counter()
                 p = self._perf
@@ -1071,6 +1201,11 @@ class PreviewWindow:
                 # preview around is not a request to bring its client
                 # forward. (A locked preview never reaches this branch at
                 # all: its press switched on the way down.)
+                if not self._begin_gesture():
+                    # A refused drag is not a click. A genuine click still
+                    # activates on release, independently of layout admission.
+                    self._mode = "denied_left"
+                    return 0
                 self._mode = "move"
             if self._mode in ("resize", "resize_all"):
                 self.move(
@@ -1099,7 +1234,8 @@ class PreviewWindow:
             return 0
 
         if msg in (win32.WM_LBUTTONUP, win32.WM_RBUTTONUP) and self._mode:
-            self._libs.user32.ReleaseCapture()
+            mode = self._mode
+            self.finish_gesture()
             if PERF and getattr(self, "_perf", None):
                 p = self._perf
                 wall = time.perf_counter() - p["start"]
@@ -1116,7 +1252,7 @@ class PreviewWindow:
                     p["gap"] * 1000,
                 )
                 self._perf = None
-            if self._mode == "pending_left":
+            if mode == "pending_left":
                 # The click that never dragged. Acknowledged BEFORE the
                 # handoff, and regardless of whether the switch that
                 # follows succeeds: Windows refuses a foreground change
@@ -1130,13 +1266,10 @@ class PreviewWindow:
                 # the roster and the settings -- and it has to know them
                 # BEFORE the foreground moves.
                 self._on_activate(self.client)
-                self._mode = None
-                return 0
-            self._mode = None
-            self._on_rect_changed(self.client.stable_key, self.rect, self.locked)
             return 0
 
         if msg == win32.WM_DESTROY:
+            self.finish_gesture()
             self._release_thumb()
             return 0
         return None
@@ -1147,19 +1280,30 @@ class PreviewWindow:
             self._thumb.close()
             self._thumb = None
 
-    def close(self) -> None:
+    def close_checked(self) -> bool:
+        """Explicit batch seam; ordinary cleanup must retain the same failures."""
+        return self.close()
+
+    def close(self) -> bool:
         """Thumbnail first: its destination is this window, and
         unregistering after DestroyWindow leaves DWM holding a dead HWND.
-        The overlay last: it is owned by this window and Windows destroys
-        owned windows with their owner, but doing it explicitly keeps the
-        HWND bookkeeping honest and the destruction order legible."""
+        The overlay precedes its owner: Windows destroys owned windows with
+        their owner, so checking both calls afterward would count the already
+        destroyed overlay as a failure. Failed handles remain owned for retry."""
+        self.finish_gesture()
         # Before anything is destroyed: a client that quits mid-alert
         # otherwise leaks one DC and up to six DIBs for the life of the
         # process, and a fleet-wide aggression arms every preview at once.
+        # A retained HWND is cleanup ownership, not proof of a healthy primary:
+        # later Apply must not bless resources already dismantled by this close.
+        self._teardown_started = True
         self._free_frames()
         self._release_thumb()
+        if not self._destroy_label_overlay():
+            return False
         if self.hwnd:
+            if not self._libs.user32.DestroyWindow(self.hwnd):
+                return False
             _WINDOWS.pop(int(self.hwnd), None)
-            self._libs.user32.DestroyWindow(self.hwnd)
             self.hwnd = None
-        self._destroy_label_overlay()
+        return True

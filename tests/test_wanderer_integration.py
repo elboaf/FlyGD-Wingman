@@ -151,7 +151,7 @@ class Runtime:
                 GetForegroundWindow=lambda: 0,
                 GetClientRect=lambda *args: 0,
                 CreateWindowExW=lambda *args: 5000 + len(self.painted),
-                DestroyWindow=lambda hwnd: self.destroyed.append(hwnd),
+                DestroyWindow=lambda hwnd: self.destroyed.append(hwnd) or True,
                 ShowWindow=lambda *args: 1,
                 PostQuitMessage=lambda _: None,
             ),

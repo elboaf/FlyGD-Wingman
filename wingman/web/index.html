@@ -902,6 +902,26 @@
         </details>
         <details class="settings-disclosure" id="preview-group-placement" open>
           <summary>Placement</summary>
+        <div id="preview-layouts" role="group" aria-labelledby="preview-layout-select-label">
+          <div class="row">
+            <label class="lab" id="preview-layout-select-label" for="preview-layout-select">Saved layouts</label>
+            <select class="field" id="preview-layout-select" aria-describedby="preview-layout-scope" disabled>
+              <option value="">Choose a saved layout</option>
+            </select>
+          </div>
+          <p class="hint" id="preview-layout-scope">Saved copies of primary-preview positions, sizes and Preview choices. Choosing a name does not apply it.</p>
+          <div class="preview-layout-actions">
+            <button class="btn" id="preview-layout-apply" disabled>Apply…</button>
+            <button class="btn" id="preview-layout-save" disabled>Save current as…</button>
+            <button class="btn" id="preview-layout-update" disabled>Update saved…</button>
+          </div>
+          <div class="preview-layout-actions">
+            <button class="btn" id="preview-layout-rename" disabled>Rename…</button>
+            <button class="btn danger" id="preview-layout-remove" disabled>Remove…</button>
+          </div>
+          <p class="hint" id="preview-layout-reopen" hidden></p>
+          <p class="hint" id="preview-layout-status" role="status" aria-live="polite" tabindex="-1">Loading saved layouts…</p>
+        </div>
         <div class="row">
           <label class="check">
             <input type="checkbox" id="restore-preview-positions"><span class="box"></span>

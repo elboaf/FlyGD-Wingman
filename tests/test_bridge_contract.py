@@ -429,6 +429,51 @@ def test_wanderer_facades_are_exact_single_line_delegates(facade, delegate, args
     )
 
 
+@pytest.mark.parametrize(
+    "facade,delegate,args",
+    [
+        ("create_preview_layout", "save_current", ["name"]),
+        ("apply_preview_layout", "apply", ["layout_id", "revision"]),
+        ("update_preview_layout", "update_saved", ["layout_id", "revision"]),
+        ("rename_preview_layout", "rename", ["layout_id", "revision", "name"]),
+        ("remove_preview_layout", "remove", ["layout_id", "revision"]),
+        ("set_preview_excluded", "set_excluded", ["name", "excluded"]),
+    ],
+)
+def test_preview_layout_facades_are_exact_single_line_delegates(facade, delegate, args):
+    from wingman.ui.api import Api
+
+    assert list(inspect.signature(getattr(Api, facade)).parameters) == ["self", *args]
+    tree = ast.parse(API.read_text(encoding="utf-8"))
+    method = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == facade
+    )
+    assert len(method.body) == 1
+    assert (
+        ast.unparse(method.body[0])
+        == f"return self._preview_layouts.{delegate}({', '.join(args)})"
+    )
+
+
+def test_preview_layout_semantic_handler_and_private_controller_boundary():
+    body = api_method_body("_present_preview_snapshot")
+    assert '"onPreviewLayouts"' in body and "delivery_allowed=" in body
+    ingress = api_method_body("_publish_preview_layouts")
+    assert "self._push(" not in ingress and "self._fleet_worker.notify()" in ingress
+    assert "onPreviewLayouts" in allowlist()
+    assert registered_names().get("onPreviewLayouts") == ["previews.js"]
+    tree = ast.parse(
+        (API.parent.parent / "preview/layoutcontroller.py").read_text(encoding="utf-8")
+    )
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            assert "ui" not in (node.module or "").split(".")
+        elif isinstance(node, ast.Attribute):
+            assert node.attr not in {"_push", "evaluate_js", "_window"}
+
+
 def test_wanderer_literal_push_and_controller_boundary():
     assert 'self._push("onWandererState", payload)' in api_method_body(
         "_publish_wanderer_state"

@@ -7,10 +7,12 @@ can fence waiting work without waiting for an unrelated settings transaction.
 
 import logging
 from collections import OrderedDict, deque
+from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass, field, replace
 from threading import Condition
 from time import monotonic
+from typing import Generic, TypeVar
 
 from wingman.telemetry.model import ClientSessionId, RosterSnapshot
 
@@ -19,6 +21,7 @@ from .geometry import Rect
 
 RECENT_RESULT_LIMIT = 32
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 
 class _Refused(Exception):
@@ -34,6 +37,12 @@ class _Operation:
     admitted: bool = False
     result: CropWriteResult | None = None
     geometry_sequence: int = -1
+
+
+@dataclass
+class _Primary(Generic[T]):
+    action: Callable[[], T]
+    future: Future[T]
 
 
 @dataclass
@@ -148,7 +157,10 @@ class CropStore:
     @staticmethod
     def _deliver(completions):
         for future, result in completions:
-            future.set_result(result)
+            if isinstance(result, Exception):
+                future.set_exception(result)
+            else:
+                future.set_result(result)
 
     def begin(
         self, name: str, *, epoch: int, session: ClientSessionId | None
@@ -257,6 +269,23 @@ class CropStore:
                 },
             }
 
+    def submit_primary(self, action: Callable[[], T]) -> Future[T]:
+        """Run admitted primary persistence before later drain/close barriers.
+
+        The retained executor is occupied by _run for its whole lifetime. A
+        second executor.submit would queue forever behind that dispatcher.
+        """
+        future: Future[T] = Future()
+        future.set_running_or_notify_cancel()
+        with self._condition:
+            if self._close_future is not None:
+                raise RuntimeError("Crop store is closed")
+            self._enqueue_due_locked()
+            self._queue.append(_Primary(action, future))
+            failure = self._start_locked()
+        self._complete_start(failure)
+        return future
+
     def drain(self) -> Future[bool]:
         """Flush earlier work; False reports geometry/primary failures since the
         previous barrier. Definition outcomes have their own result futures.
@@ -338,6 +367,8 @@ class CropStore:
                         completions.append(
                             (item.future, self._finish_locked(item, error))
                         )
+                    elif isinstance(item, _Primary):
+                        completions.append((item.future, exc))
                     elif isinstance(item, _Barrier):
                         completions.append((item.future, False))
                         self._flush_ok = True
@@ -426,6 +457,13 @@ class CropStore:
                     return
             elif isinstance(item, _GeometryFlush):
                 self._flush_geometry(item.names)
+            elif isinstance(item, _Primary):
+                try:
+                    result = item.action()
+                except Exception as exc:  # noqa: BLE001 -- preserve the action failure on its future without killing the shared worker.
+                    item.future.set_exception(exc)
+                else:
+                    item.future.set_result(result)
             else:
                 self._write(item)
 

@@ -366,12 +366,15 @@ def _harness(tmp_path, **kw):
 def test_preview_master_transaction_keeps_independent_fleet_discovery(
     tmp_path, monkeypatch, fail_save
 ):
-    from tests.test_api import make_api
+    from tests.test_api import Api, make_state
     from wingman import settings
     from wingman.preview.host import PreviewHost
+    from wingman.preview.store import LayoutStore
 
-    host = PreviewHost(on_layout_changed=lambda *args: None)
-    api = make_api(tmp_path, preview_host=host)
+    state = make_state(tmp_path)
+    store = LayoutStore(lambda: settings.update(state.settings))
+    host = PreviewHost(on_layout_changed=lambda *args: None, layout_store=store)
+    api = Api(state, preview_host=host, layout_store=store)
     api._state.settings["preview"] = {"enabled": True}
     discovery, stream = FakeDiscovery(), FakeStream()
     coordinator = TelemetryCoordinator(

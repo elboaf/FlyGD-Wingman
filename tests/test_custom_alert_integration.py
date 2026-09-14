@@ -30,6 +30,7 @@ from wingman.alerts import custom, service
 from wingman.fleetsharing.model import CatalogueCharacter, FleetCatalogue
 from wingman.fleetsharing.projection import project_snapshot
 from wingman.preview.host import PENDING_ALERTS_MAX, PreviewHost
+from wingman.preview.store import LayoutStore
 from wingman.telemetry import coordinator as coordinator_mod
 from wingman.telemetry import gamelogs
 from wingman.telemetry.coordinator import TelemetryCoordinator
@@ -96,7 +97,9 @@ def live_alerts(tmp_path, monkeypatch, request):
     assert settings.load()["preview"]["alerts"]["custom_rules"] == []
     assert not settings.load()["fleet_sharing"]["enabled"]
     box, sounds, visuals, fleet, streams, coordinators = {}, [], [], [], [], []
+    layout_store = LayoutStore(lambda: settings.update(state.settings))
     host = NativeHost(
+        layout_store=layout_store,
         on_layout_changed=lambda *_args: None,
         custom_alert_current=lambda *tokens: box["alerts"].is_current(*tokens),
     )
@@ -146,7 +149,11 @@ def live_alerts(tmp_path, monkeypatch, request):
         coordinator = main_mod.build_telemetry(state, host, policy, controller)
     assert coordinator is not None
     api = Api(
-        state, preview_host=host, alerts_controller=controller, telemetry=coordinator
+        state,
+        preview_host=host,
+        layout_store=layout_store,
+        alerts_controller=controller,
+        telemetry=coordinator,
     )
     box["api"] = api
     api._fleet_worker._thread_factory = coordinator_mod._noop_thread_factory

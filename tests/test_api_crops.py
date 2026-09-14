@@ -2,7 +2,6 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from threading import get_ident
 
 import pytest
 
@@ -14,6 +13,7 @@ from wingman.preview.cropstore import CropStore
 from wingman.preview.geometry import Rect
 from wingman.preview.host import PreviewHost
 from wingman.preview.runtime import PreviewRuntime
+from wingman.preview.store import LayoutStore
 from wingman.telemetry.model import RosterSnapshot
 
 
@@ -29,6 +29,8 @@ def crop_api(tmp_path):
     host = PreviewHost(
         on_layout_changed=lambda *args: None,
         crop_store=store,
+        layout_store=api._preview_layout_store,
+        layout_admission=api._preview_layout_admission,
         on_crops_changed=api.push_preview_crops,
     )
     api._preview_host = host
@@ -85,8 +87,12 @@ def test_loaded_malformed_owner_drops_alone_and_canonical_owner_remains_manageab
         initial,
         executor_factory=lambda: ThreadPoolExecutor(max_workers=1),
     )
-    host = PreviewHost(on_layout_changed=lambda *args: None, crop_store=store)
-    api = make_api(tmp_path, preview_host=host)
+    host = PreviewHost(
+        on_layout_changed=lambda *args: None,
+        crop_store=store,
+        layout_store=LayoutStore(transaction.update),
+    )
+    api = make_api(tmp_path, preview_host=host, layout_store=host._layout_store)
     try:
         assert set(api.get_preview_crop_state()["definitions"]) == {"Alice"}
         refused(api.remove_preview_crop(owner))
@@ -174,6 +180,7 @@ def test_crop_completion_before_receipt_is_recoverable(crop_api, monkeypatch):
     monkeypatch.setattr(host, "_drain_offline_crop_commands", complete_before_return)
     receipt = api.remove_preview_crop("Alice")
     assert receipt["persisted"] and not receipt["pending"]
+    api._fleet_worker.iterate_once()
     delivered = [
         state for name, state in pushes(api._window) if name == "onPreviewCrops"
     ]
@@ -207,21 +214,21 @@ def test_crop_noop_never_overtakes_pending_same_owner_disable(crop_api):
 
 
 def test_pending_receipt_can_arrive_after_terminal_push(crop_api, monkeypatch):
-    api, _host, store, transaction = crop_api
+    api, host, store, transaction = crop_api
     transaction.release.clear()
-    caller = get_ident()
-    evaluate = api._window.evaluate_js
-    delivered = []
+    request = host.request_crop
 
-    def page(script):
-        evaluate(script)
-        if get_ident() == caller and not delivered:
-            delivered.append(True)
-            assert transaction.entered.wait(5)
-            transaction.release.set()
-            store.drain().result(5)
+    def delayed_receipt(*args):
+        receipt = request(*args)
+        assert transaction.entered.wait(5)
+        transaction.release.set()
+        store.drain().result(5)
+        # Delay the already-built pending receipt while the independent owner
+        # delivers the terminal state, just as concurrent bridge calls permit.
+        api._fleet_worker.iterate_once()
+        return receipt
 
-    monkeypatch.setattr(api._window, "evaluate_js", page)
+    monkeypatch.setattr(host, "request_crop", delayed_receipt)
     receipt = api.set_preview_crop_enabled("Alice", False)
     assert receipt["pending"] and not receipt["persisted"]
     states = [

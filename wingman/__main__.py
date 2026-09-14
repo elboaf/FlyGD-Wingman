@@ -365,7 +365,7 @@ def start_engine_if_enabled(engine, section) -> None:
     engine.start()
 
 
-def build_preview_host(state, api_box):
+def build_preview_host(state, api_box, *, layout_store=None, layout_admission=None):
     """The EVE preview host, or None where it cannot run.
 
     Windows-only, and constructed even when the feature is disabled: it
@@ -377,6 +377,19 @@ def build_preview_host(state, api_box):
     The host is constructed first; main assigns both targets before any
     thread starts or these callbacks can run.
     """
+    from .preview.layoutadmission import PrimaryLayoutAdmission
+    from .preview.store import LayoutStore
+
+    # Main supplies one pair also retained by Api when the platform builder
+    # returns None. Standalone builder callers retain their isolated test seam.
+    store = (
+        layout_store
+        if layout_store is not None
+        else LayoutStore(update_settings=lambda: settings_mod.update(state.settings))
+    )
+    admission = (
+        layout_admission if layout_admission is not None else PrimaryLayoutAdmission()
+    )
     if sys.platform != "win32":
         return None
     try:
@@ -387,7 +400,6 @@ def build_preview_host(state, api_box):
         from .preview.cropstore import CropStore
         from .preview.host import PreviewHost
         from .preview.labelsize import DEFAULT_LABEL_SIZE
-        from .preview.store import LayoutStore
 
         # Register before any consumer is constructed. Callbacks retain the
         # document-scoped reader and never wait on persistence or see a
@@ -396,7 +408,6 @@ def build_preview_host(state, api_box):
         # atomic effective-policy read across the host's existing interface.
         preview_config = settings_mod.committed_preview(state.settings)
         section = preview_config.snapshot()
-        store = LayoutStore(update_settings=lambda: settings_mod.update(state.settings))
         crop_store = CropStore(
             update_settings=lambda: settings_mod.update(state.settings),
             initial=preview_crops.deserialize(section.get("crops")),
@@ -427,23 +438,29 @@ def build_preview_host(state, api_box):
             api = api_box.get("api")
             if api is not None:
                 api.push_preview_hotkeys()
+                api._request_preview_geometry_refresh()
 
         def on_layouts_changed():
             api = api_box.get("api")
             if api is not None:
-                api.push_preview_hotkeys()
+                api._request_preview_geometry_refresh()
+
+        def on_geometry_changed():
+            api = api_box.get("api")
+            if api is not None:
+                api._request_preview_geometry_refresh()
 
         def on_hotkey_status(status):
             api = api_box.get("api")
             if api is not None:
                 api.push_preview_hotkeys(status)
 
-        def on_bind_captured(gesture):
+        def on_bind_captured(gesture, session=None):
             # Same shape and same reason as on_hotkey_status above: fires
             # on the preview thread, and api_box may not be populated yet.
             api = api_box.get("api")
             if api is not None:
-                api.push_bind_captured(gesture)
+                api.push_bind_captured(gesture, session)
 
         def restore_positions():
             # Read the latest committed placement policy, not a startup
@@ -534,6 +551,9 @@ def build_preview_host(state, api_box):
             return (section_now.get("width", 320), section_now.get("height", 210))
 
         return PreviewHost(
+            preview_snapshot=preview_config.snapshot,
+            layout_store=store,
+            layout_admission=admission,
             on_layout_changed=on_layout_changed,
             saved_layouts=preview_layout.deserialize(section.get("layouts")),
             # A bound method, never a lambda wrapping one: a name resolved
@@ -549,6 +569,7 @@ def build_preview_host(state, api_box):
             replace_layout=store.replace,
             on_clients_changed=on_clients_changed,
             on_layouts_changed=on_layouts_changed,
+            on_geometry_changed=on_geometry_changed,
             on_hotkey_status=on_hotkey_status,
             on_bind_captured=on_bind_captured,
             restore_positions=restore_positions,
@@ -966,9 +987,15 @@ def main() -> int:
     # registry intentionally does not keep settings documents alive itself.
     _preview_config = settings_mod.committed_preview(state.settings)
     api_box = {}
+    from .preview.layoutadmission import PrimaryLayoutAdmission
     from .preview.runtime import PreviewRuntime
+    from .preview.store import LayoutStore
 
-    preview_host = build_preview_host(state, api_box)
+    layout_store = LayoutStore(lambda: settings_mod.update(state.settings))
+    layout_admission = PrimaryLayoutAdmission()
+    preview_host = build_preview_host(
+        state, api_box, layout_store=layout_store, layout_admission=layout_admission
+    )
     preview_runtime = PreviewRuntime(preview_host)
     companion_controller = build_companion_controller(
         state, preview_host, preview_runtime, api_box
@@ -982,6 +1009,8 @@ def main() -> int:
         state,
         preview_host=preview_host,
         preview_runtime=preview_runtime,
+        layout_store=layout_store,
+        layout_admission=layout_admission,
         companion_controller=companion_controller,
         telemetry=telemetry,
         fleet_sharing=sharing_worker,
@@ -991,8 +1020,12 @@ def main() -> int:
         ),
     )
     api_box["api"] = api
-    if telemetry is not None and not api._start_fleet_presentation():
-        logger.error("Fleet presentation could not start")
+    # Preview publication must work with Fleet Off, missing telemetry and no
+    # recording directory. Start the existing page owner before native ingress.
+    if not api._start_presentation():
+        logger.error("Presentation could not start")
+    if telemetry is not None:
+        api._start_fleet_presentation()
     if preview_host is not None:
         preview_host.set_discovery_request(api._request_eve_discovery)
     api._start_fleet_sharing()
@@ -1038,10 +1071,12 @@ def main() -> int:
             # a later delivery stage; no native/presentation lock covers join.
             # These are nonblocking fences; the later shutdown_previews joins
             # storage first, then native runtime, outside shutdown_lock.
+            # Includes saved-layout publication/admission. Its bridge callers
+            # drain later, outside shutdown_lock, before runtime shutdown.
+            api._close_eve_runtime()
             companion_controller.close_publication()
             companion_controller.close_admission()
             preview_runtime.close_admission()
-            api._close_eve_runtime()
             api._stop_fleet_presentation()
             api.shutdown_fleet_sharing()
             with api._fleetbar_lifecycle_lock:

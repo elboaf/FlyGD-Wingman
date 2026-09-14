@@ -1429,6 +1429,69 @@ def test_arrivals_cannot_overfill_cap_while_disable_awaits_completion(rig):
     assert r.native.peak == 8
 
 
+def test_freeze_windows_retains_candidates_and_defers_storage_stop(rig, monkeypatch):
+    r = rig({"Alice": DEFINITION})
+    roster(r, 1, client())
+    live = r.controller.live["Alice"].window
+    request(r)
+    r.transaction.release.clear()
+    confirm(r)
+    assert r.transaction.entered.wait(5)
+    candidate = r.controller._temporary.candidate.window
+    disable, _ = request(r, "enabled", value=False)
+    barriers = []
+    fence, drain = r.store.fence_epoch, r.store.drain
+    monkeypatch.setattr(
+        r.store, "fence_epoch", lambda epoch: barriers.append("fence") or fence(epoch)
+    )
+    monkeypatch.setattr(r.store, "drain", lambda: barriers.append("drain") or drain())
+    try:
+        r.controller.freeze_windows()
+        r.controller.freeze_windows()
+        r.controller.set_hidden(False)  # A later visibility update cannot undo Off.
+        assert live.locked and live.hidden and live.hwnd is not None
+        assert candidate.locked and candidate.hidden and candidate.hwnd is not None
+        assert not barriers and r.controller._stop_future is None
+        assert r.store.snapshot()["operations"][disable.operation_id]["pending"]
+        stopped = r.controller.begin_stop(1)
+        assert barriers == ["fence", "drain"] and not stopped.done()
+    finally:
+        r.transaction.release.set()
+    assert stopped.result(5)
+    finish(r)
+    assert r.store.snapshot()["operations"][disable.operation_id]["persisted"]
+    assert not deserialize(r.store.snapshot()["definitions"])["Alice"].enabled
+
+
+def test_freeze_windows_preserves_picker_capture_and_retained_cleanup(rig):
+    from ctypes import wintypes
+
+    from tests.test_preview_croppicker import packed
+
+    r = rig({"Alice": DEFINITION})
+    roster(r, 1, client())
+    request(r)
+    picker = r.controller.picker
+    picker._on_message(
+        win32.WM_LBUTTONDOWN, 0, packed(picker.destination.x, picker.destination.y)
+    )
+    assert r.native.capture == picker.hwnd
+    r.controller.freeze_windows()
+    assert r.native.capture == picker.hwnd and r.controller.picker is picker
+    assert r.controller._stop_future is None and not r.transaction.writes
+    r.native.held_fonts.update(r.native.fonts)
+    stopped = r.controller.begin_stop(1)
+    assert stopped.result(5)
+    assert r.native.capture is None
+    assert r.controller.picker is picker and picker._fonts
+    assert not r.controller.close_native()
+    r.native.held_fonts.clear()
+    r.controller.process_dialog_message(wintypes.MSG())
+    assert r.controller.close_native()
+    assert not r.transaction.writes
+    r.native.assert_closed()
+
+
 def test_stop_keeps_committed_resources_until_explicit_native_close(rig):
     r = rig({"Alice": DEFINITION})
     roster(r, 1, client())

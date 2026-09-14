@@ -116,7 +116,12 @@ function createDOM(page) {
     getBoundingClientRect() { return {width: 400, height: 240, top: 0, bottom: 240, left: 0, right: 400}; }
     getClientRects() { return this.hidden ? [] : [this.getBoundingClientRect()]; }
   }
-  function build(node) { const el = new Element(node.tag, node.attrs); node.children.forEach(child => el.appendChild(build(child))); return el; }
+  function build(node) {
+    const el = new Element(node.tag, node.attrs);
+    if (Object.prototype.hasOwnProperty.call(node, 'text')) el.textContent = node.text;
+    node.children.forEach(child => el.appendChild(build(child)));
+    return el;
+  }
   const document = build(page);
   document.readyState = 'complete'; document.body = document.querySelector('body');
   document.getElementById = id => {

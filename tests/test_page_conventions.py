@@ -2393,7 +2393,11 @@ def test_the_previews_grid_has_one_track_per_cell_makeRow_appends():
     # The label is COUNTED now: it sits in track 1 rather than spanning the
     # row, so it is a cell like any other. Every row.appendChild() here is
     # one of the collapsed grid cells.
-    cells = body.count("row.appendChild(")
+    # Exclusion feedback is an explicitly full-span row, not a sixth track.
+    feedback = re.search(r"\.preview-exclusion-status\s*\{([^}]*)\}", CSS)
+    assert feedback and "grid-column: 1 / -1" in feedback.group(1)
+    assert body.count("row.appendChild(feedback)") == 1
+    cells = body.count("row.appendChild(") - body.count("row.appendChild(feedback)")
 
     tracks = _preview_binds_cell_tracks()
 

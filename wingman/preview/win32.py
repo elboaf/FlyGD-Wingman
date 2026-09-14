@@ -125,6 +125,7 @@ WM_APP_CROP_COMPLETE = WM_APP + 11
 WM_APP_CROP_STOP_READY = WM_APP + 12
 # Independent, coalesced session metadata — never an alert queue entry.
 WM_APP_METADATA = WM_APP + 16
+WM_APP_PRIMARY_COMPLETE = WM_APP + 17
 WM_APP_FAMILIES = WM_APP + 13
 # Commands wake the bounded companion mailbox; completion resumes family cleanup
 # after the controller's admitted persistence has drained.
@@ -369,6 +370,7 @@ def bind() -> Libs:
         ),
         (user32, "LoadCursorW", HANDLE, [wintypes.HINSTANCE, ctypes.c_wchar_p]),
         (user32, "GetClientRect", BOOL, [HWND, ctypes.POINTER(wintypes.RECT)]),
+        (user32, "GetWindowRect", BOOL, [HWND, ctypes.POINTER(RECT)]),
         (user32, "ClientToScreen", BOOL, [HWND, ctypes.POINTER(POINT)]),
         (user32, "ScreenToClient", BOOL, [HWND, ctypes.POINTER(POINT)]),
         (

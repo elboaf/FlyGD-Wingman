@@ -66,3 +66,17 @@ def test_deserialize_dedupes_preserving_order():
 
 def test_deserialize_applies_the_cap():
     assert len(roster.deserialize([f"C{i}" for i in range(200)])) == roster.CAP
+
+
+def test_uncapped_deserialize_preserves_validation_deduplication_and_order():
+    names = [f"Pilot{i}" for i in range(70)]
+    raw = [*names, "", "hwnd:1", None, 3, *names, "constructor", "__proto__"]
+    assert roster.deserialize(raw, cap=None) == [*names, "constructor", "__proto__"]
+    assert roster.deserialize(raw) == names[:64]
+    assert roster.deserialize(raw, cap=2) == names[:2]
+    assert roster.deserialize(None, cap=None) == []
+    # Losslessness removes truncation only, not legacy identity acceptance.
+    assert roster.deserialize([" Space ", "Line\nBreak"], cap=None) == [
+        " Space ",
+        "Line\nBreak",
+    ]

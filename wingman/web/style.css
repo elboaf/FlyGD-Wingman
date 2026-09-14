@@ -883,6 +883,18 @@ button.btn:disabled,
    Same token and same shape as .field-msg.err and .row-error rather than a
    fourth treatment -- the sheet already has one colour for this. */
 .hint.err { color: var(--err); }
+
+#preview-layouts { min-width: 0; margin-bottom: 16px; }
+/* A saved name is the whole decision, not one of the shared 150px selects. */
+#preview-layout-select { flex: 1 1 100%; width: 100%; min-width: 0; }
+.preview-layout-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.preview-layout-actions[hidden] { display: none; }
+#preview-layout-status { min-height: 1.5em; color: var(--text-dim); overflow-wrap: anywhere; }
+#preview-layout-status.err, .preview-exclusion-status.err { color: var(--err); }
+#preview-layout-status.warn, .preview-exclusion-status.warn { color: var(--warn); }
+.preview-exclusion-status { grid-column: 1 / -1; margin: 0; overflow-wrap: anywhere; }
+/* This explains its own table row, not the preceding Settings checkbox. */
+#preview-binds .preview-exclusion-status { margin-left: 0; }
 .linkish { color: var(--link); cursor: pointer; user-select: text; }
 .linkish:hover { text-decoration: underline; }
 

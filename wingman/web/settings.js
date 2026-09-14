@@ -952,7 +952,12 @@
       return WM.send('set_restore_preview_positions', wanted);
     }).then(function (res) {
       pending -= 1;
-      if (res && res.applied) { lastGood = wanted; }
+      if (res && res.applied) {
+        lastGood = wanted;
+        document.dispatchEvent(new CustomEvent('wm:preview-restore-positions', {
+          detail: {enabled: lastGood}
+        }));
+      }
       if (request !== generation) { return; }
       if (!res || !res.applied) {
         box.checked = lastGood;

@@ -96,7 +96,21 @@ def test_concurrent_roster_changes_keep_both_accepted_choices(
         with real_update(data, path) as doc:
             yield doc
 
-    monkeypatch.setattr(settings, "update", synchronized_update)
+    if method == "set_preview_excluded":
+        # Exclusions now enter the shared layout writer BEFORE settings.update.
+        # Rendezvous outside that serialization, not while the first caller
+        # owns its write lock waiting for an impossible second transaction.
+        real_transact = api._preview_layout_store.transact
+
+        def synchronized_transact(mutate):
+            rendezvous.wait(timeout=10)
+            return real_transact(mutate)
+
+        monkeypatch.setattr(
+            api._preview_layout_store, "transact", synchronized_transact
+        )
+    else:
+        monkeypatch.setattr(settings, "update", synchronized_update)
     with ThreadPoolExecutor(max_workers=2) as pool:
         first = pool.submit(getattr(api, method), "Alice", member)
         second = pool.submit(getattr(api, method), "Bob", member)

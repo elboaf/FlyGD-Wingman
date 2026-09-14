@@ -114,6 +114,8 @@ function settle(p, applied = true) {
       window: {onPreviewHotkeys: p => published.push(p)}, _devCropCopy: () => ({})};
     vm.createContext(dev);
     vm.runInContext(source.slice(start, end), dev);
+    vm.runInContext(source.slice(source.indexOf('  // Saved layout browser fixtures'),
+      source.indexOf('  // Companions are browser-only fixtures')), dev);
     vm.runInContext(source.slice(source.indexOf('  var _devPreviewHotkeys ='), source.indexOf('  api.list_rows =')), dev);
     assert.equal(typeof api.set_preview_cycle_group_prev_bind, 'function', 'dev back bridge exists');
     const created = await api.create_preview_cycle_group('Backward test');
@@ -196,7 +198,8 @@ function settle(p, applied = true) {
           if (owner === 'post-fallback-focus') answer.addEventListener('click', newerFocus);
           answer.click(); answer.removeEventListener('click', newerFocus); await tick();
           const afterDialog = document.activeElement;
-          if (outcome !== 'cancel') {
+          const departed = ['tab', 'section', 'route', 'capture'].includes(owner);
+          if (outcome !== 'cancel' && !departed) {
             assert.equal(writes.length, count + 1);
             const p = payload(); const applied = outcome === 'applied';
             if (applied && operation === 'delete') p.hotkeys.groups.shift();
@@ -204,7 +207,7 @@ function settle(p, applied = true) {
             if (order === 'push-first') push(p);
             writes.at(-1).resolve({applied, persisted: applied, error: applied ? null : 'Disk refused', hotkeys: clone(p.hotkeys)}); await tick();
             if (order === 'receipt-first') push(p);
-          } else assert.equal(writes.length, count, 'cancel never mutates');
+          } else assert.equal(writes.length, count, 'cancel or superseded dialog never mutates');
           if (owner === 'own') {
             if (outcome === 'cancel') {
               assert.equal(document.activeElement.getAttribute('data-group-id'), id, 'cancel restores stable group, not row index');

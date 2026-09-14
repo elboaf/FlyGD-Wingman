@@ -4,10 +4,10 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from threading import Event
-from types import SimpleNamespace
 
 import pytest
 
+from tests.preview_runtime_helpers import PrimaryWindow
 from tests.test_api import make_api
 from tests.test_preview_host import crop_pump as crop_pump
 from tests.test_preview_runtime_review import parked
@@ -21,18 +21,25 @@ from wingman.preview.store import LayoutStore
 @pytest.fixture
 def layout_api(runtime_pump, tmp_path):
     def make(**kwargs):
+        store = LayoutStore(
+            lambda: settings.update(api._state.settings), timer=FakeTimer
+        )
         r = runtime_pump(
             start=False,
+            layout_store=store,
             update_settings=lambda: settings.update(api._state.settings),
             **kwargs,
         )
         publish = r.runtime._callback
-        api = make_api(tmp_path, preview_host=r.host, preview_runtime=r.runtime)
+        api = make_api(
+            tmp_path,
+            preview_host=r.host,
+            preview_runtime=r.runtime,
+            layout_store=store,
+            layout_admission=r.host._layout_admission,
+        )
         r.runtime.set_state_callback(
             lambda state: (api._preview_runtime_changed(state), publish(state))
-        )
-        store = LayoutStore(
-            lambda: settings.update(api._state.settings), timer=FakeTimer
         )
         r.store._flush_primary = store.flush
         r.host._flush_layouts = store.flush
@@ -53,7 +60,7 @@ def layout_api(runtime_pump, tmp_path):
 def open_eve(r):
     assert r.api.set_preview_enabled(True)
     r.wait_state(lambda state: state.eve == "active")
-    primary = SimpleNamespace(
+    primary = PrimaryWindow(
         rect=geometry.Rect(20, 30, 320, 210),
         locked=False,
         _mode=None,
@@ -200,6 +207,9 @@ def test_hwnd_gap_primary_fifo_survives_revocation_and_later_failed_post(
         r.wait_state(
             lambda state: state.companions == "active" and state.eve == "stopped"
         )
+        # This EVE family never activated, so its presentation fact was already
+        # stopped. Reset now has a real off-pump completion owner of its own.
+        assert r.host._layout_admission.wait_idle(5)
         assert r.api._state.settings["preview"]["layouts"] == {}
         assert r.runtime.shutdown(5)
     finally:
@@ -347,7 +357,11 @@ def test_final_admission_refuses_edits_before_shutdown(layout_api, stage, comman
 def test_offline_size_supersedes_dispatched_debounce(layout_api, monkeypatch, stage):
     r = layout_api()
     open_eve(r)
-    assert r.api.set_preview_size("Alice", 500, 300)["applied"]
+    # Typed Size now owns persistence completion, not just its debounce.
+    # A released ordinary drag remains the source of undebounced geometry.
+    r.call(
+        lambda: r.host._layout_changed("Alice", geometry.Rect(20, 30, 500, 300), False)
+    )
     r.call(lambda: (r.host._clients.clear(), r.host._windows.clear()))
     assert not r.host.layout_commands_pending and r.host.runtime_enabled
     # A different character's delta must survive Alice's explicit replacement.

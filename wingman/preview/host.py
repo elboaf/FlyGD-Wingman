@@ -41,11 +41,13 @@ from .companionfamily import CompanionFamily
 from .companions import CompanionCommand, CompanionEvent
 from .cropcontroller import CropController
 from .croppicker import CropPicker
-from .crops import MAX_LIVE_CROPS
+from .crops import MAX_LIVE_CROPS, valid_owner
 from .cropwindow import CropWindow
 from .labelmarkers import validated_markers
 from .labelsize import DEFAULT_LABEL_SIZE, LABEL_SIZE_PRESETS
+from .layoutadmission import PrimaryLayoutAdmission, PrimaryLayoutLease
 from .runtime import FamilyDemand, HostAck
+from .savedlayouts import LayoutCommit, PrimaryLayoutCapture, PrimaryLayoutLiveResult
 from .window import PreviewWindow
 
 logger = logging.getLogger(__name__)
@@ -288,6 +290,28 @@ def plan_registrations(table) -> list:
     return plan
 
 
+@dataclass
+class _PrimaryIntent:
+    message: int
+    payload: object
+    leases: list[PrimaryLayoutLease]
+    ready: bool = False
+    prepared: bool = False
+    future: Future | None = None
+    epoch: int = 0
+
+
+@dataclass
+class _LayoutRequest:
+    lease: PrimaryLayoutLease
+    future: Future
+    capture: PrimaryLayoutCapture | None = None
+    commit: LayoutCommit | None = None
+    rectangles: Mapping[str, geometry.Rect | None] | None = None
+    running: bool = False
+    release: bool = False
+
+
 class PreviewHost:
     """Owns the preview thread. Public methods are callable from anywhere;
     anything touching an HWND is marshalled onto the thread."""
@@ -324,6 +348,10 @@ class PreviewHost:
         label_size=None,
         label_markers=None,
         hide_active_preview=None,
+        layout_store=None,
+        layout_admission=None,
+        preview_snapshot: Callable[[], dict] | None = None,
+        on_geometry_changed: Callable[[], None] | None = None,
     ):
         # Standalone/manual callers retain EVE-only start(). Binding a runtime
         # callback opts into explicit composite demands before any pump exists.
@@ -346,8 +374,28 @@ class PreviewHost:
         self._companion_scan_timer = False
         self._companion_activate_timer = False
         self._companion_timer_failure = False
+        self._layout_store = layout_store
+        self._layout_admission = (
+            layout_admission
+            if layout_admission is not None
+            else PrimaryLayoutAdmission()
+        )
         self._primary_pending = 0
         self._primary_intents = deque()
+        self._primary_dispatching = False
+        self._primary_geometry = {}
+        self._gesture_leases = {}
+        self._visibility_pending = deque()
+        self._visibility_dispatching = False
+        self._preview_snapshot = preview_snapshot
+        self._layout_request: _LayoutRequest | None = None
+        self._layout_capture: tuple[PrimaryLayoutLease, PrimaryLayoutCapture] | None = (
+            None
+        )
+        self._layout_applied: dict[str, bool] = {}
+        self._layout_commit_revision = 0
+        self._pending_layout_leases = []
+        self._copy_dispatching = False
         self._offline_stop_ack = None
         self._custom_alert_current = custom_alert_current
         self._crop_controller_factory = crop_controller_factory
@@ -383,9 +431,8 @@ class PreviewHost:
         # writes are debounced, so without this a drag in the last second
         # before quitting is simply lost.
         self._flush_layouts = flush_layouts
-        # Called by _reset_layouts to empty the on-disk table, same as
-        # flush_layouts above being called by _teardown: the store owns
-        # persistence, the host only tells it when to act.
+        # Submitted to the existing CropStore dispatcher by a Reset intent;
+        # only its completed native phase may clear/re-place live authority.
         self._clear_layouts = clear_layouts
         # Synchronous per-key persistence for explicit Copy and offline Size.
         # LayoutStore owns pending-delta ordering; the host changes its cache
@@ -399,6 +446,7 @@ class PreviewHost:
         # Announces only when source eligibility changes (a character gains
         # its first complete layout), not on every drag coordinate.
         self._on_layouts_changed = on_layouts_changed
+        self._on_geometry_changed = on_geometry_changed
         self._saved = dict(saved_layouts or {})
         # Read per placement, never captured: a preview is created whenever
         # its client appears, which is usually mid-session, so the value
@@ -500,6 +548,8 @@ class PreviewHost:
         # armed knows none of them, and a flag left set would turn every
         # preview hotkey into a silent no-op for the session.
         self._capture_until = 0.0
+        self._capture_session = None
+        self._capture_revision = 0
         # ident -> the canonical chord text registered for it. _registered
         # holds the ACTION, which is what dispatch needs; a capture needs
         # to answer with the chord, and re-deriving it from the desired
@@ -807,6 +857,7 @@ class PreviewHost:
                 self._eve_epoch,
                 self._companion_epoch,
             )
+        self._announce_geometry_changed()
         if callback is not None:
             callback(HostAck(*epochs, outcome))
 
@@ -846,6 +897,7 @@ class PreviewHost:
                     or self._crop_dispatching
                     or self._crop_commands
                     or self._primary_pending
+                    or not self._layout_admission.wait_idle(0)
                     or self._crop_epoch_prepared
                     or self._registered_text
                     or self._hook
@@ -857,9 +909,13 @@ class PreviewHost:
                 self._pending_roster = None
                 self._crop_roster = None
                 self._pending_alerts = []
-                self._pending_layouts = {}
                 fence = self._crop_epoch
-            elif demand.eve and not self._eve_admitted and not self._eve_stopping:
+            elif (
+                demand.eve
+                and not self._eve_admitted
+                and not self._eve_stopping
+                and self._layout_admission.wait_idle(0)
+            ):
                 self._eve_epoch += 1
                 self._eve_admitted = True
                 self._eve_phase = "starting"
@@ -884,6 +940,11 @@ class PreviewHost:
             self._post(win32.WM_APP_FAMILIES)
             notification = self._refresh_metadata_locked()
         self._deliver_metadata(notification)
+        self._announce_geometry_changed()
+        if not demand.eve:
+            self._advance_layout_batch(native=False)
+            self._advance_visibility(native=False)
+            self._apply_layouts(native=False)
         if fence is not None and self._crop_store is not None:
             self._crop_store.fence_epoch(fence)
         for outcome in stopped:
@@ -892,6 +953,7 @@ class PreviewHost:
 
     def close_admission(self) -> None:
         """Final nonblocking publication/native fence, before WebView destruction."""
+        self._layout_admission.close()
         with self._lock:
             self._closing = True
             self._capture_until = 0.0
@@ -903,6 +965,9 @@ class PreviewHost:
             notification = self._refresh_metadata_locked()
             epoch = self._crop_epoch
         self._deliver_metadata(notification)
+        self._advance_layout_batch(native=False)
+        self._advance_visibility(native=False)
+        self._apply_layouts(native=False)
         if self._crop_store is not None:
             self._crop_store.fence_epoch(epoch)
 
@@ -920,7 +985,11 @@ class PreviewHost:
     def layout_commands_pending(self) -> bool:
         """Accepted primary commands still own storage, even after native Off."""
         with self._lock:
-            return bool(self._primary_pending)
+            return bool(
+                self._primary_pending
+                or self._pending_layout_leases
+                or self._copy_dispatching
+            )
 
     @property
     def is_stopping(self) -> bool:
@@ -931,7 +1000,12 @@ class PreviewHost:
         # Caller holds _lock. A timeout never transfers ownership. A dead pump
         # alone is insufficient while an off-pump drain still owns storage.
         return self._stopping and (
-            self._starting
+            (
+                self._stop_cleanup_epoch != self._crop_epoch
+                and not self._layout_admission.wait_idle(0)
+            )
+            or self._primary_pending
+            or self._starting
             or self._stop_submitting
             or self.is_running
             or (self._stop_future is not None and not self._stop_future.done())
@@ -979,6 +1053,7 @@ class PreviewHost:
             self._stop_final = False
             self._stop_cleanup_epoch = None
             self._offline_stop_ack = None
+            self._primary_geometry = {}
             self._companion_drain = None
             self._companion_timer_failure = False
             self._crop_runtime_state = {}
@@ -1013,6 +1088,8 @@ class PreviewHost:
     def stop(self, timeout: float = JOIN_TIMEOUT_S, *, final: bool = False) -> bool:
         """Request shutdown; False means incomplete, not canceled. final closes storage."""
         deadline = time.monotonic() + timeout
+        if final:
+            self._layout_admission.close()
         with self._lock:
             self._closing = self._closing or final
             self._stop_submitting = self._crop_store is not None and (
@@ -1026,7 +1103,11 @@ class PreviewHost:
             starting = self._starting
             epoch = self._crop_epoch
             close_store = (
-                final and self._stop_future is not None and not self._stop_final
+                final
+                and self._stop_future is not None
+                and not self._stop_final
+                and not self._primary_pending
+                and self._layout_admission.wait_idle(0)
             )
             # Keep selection/signaling together: an older stop cannot signal a
             # replacement HWND. No callbacks, store calls or waits under here.
@@ -1067,6 +1148,8 @@ class PreviewHost:
             logger.warning("Preview native cleanup remains owned by an exited pump")
             return False
         self._drain_offline_primary()
+        if not self._layout_admission.wait_idle(max(0, deadline - time.monotonic())):
+            return False
         if self._crop_store is not None:
             future = self._drain_offline_crop_commands()
             if future is None:
@@ -1168,6 +1251,8 @@ class PreviewHost:
         with self._lock:
             if (
                 self._crop_dispatching
+                or self._primary_pending
+                or not self._layout_admission.wait_idle(0)
                 or self._eve_delivery_owned()
                 or (self._eve_stopping and self._hwnd is not None)
             ):
@@ -1204,8 +1289,14 @@ class PreviewHost:
                         self._closing,
                         self._crop_epoch,
                     )
-                    need_barrier = stopping and (
-                        self._stop_future is None or (final and not self._stop_final)
+                    need_barrier = (
+                        stopping
+                        and not self._primary_pending
+                        and self._layout_admission.wait_idle(0)
+                        and (
+                            self._stop_future is None
+                            or (final and not self._stop_final)
+                        )
                     )
                 if need_barrier:
                     future = (
@@ -1219,9 +1310,14 @@ class PreviewHost:
                     native = self._eve_delivery_owned() or (
                         self._eve_stopping and self._hwnd is not None
                     )
-                    late_barrier = (self._stopping or self._eve_stopping) and (
-                        self._stop_future is None
-                        or (self._closing and not self._stop_final)
+                    late_barrier = (
+                        (self._stopping or self._eve_stopping)
+                        and not self._primary_pending
+                        and self._layout_admission.wait_idle(0)
+                        and (
+                            self._stop_future is None
+                            or (self._closing and not self._stop_final)
+                        )
                     )
                     if not native and (self._crop_commands or late_barrier):
                         commands, self._crop_commands = self._crop_commands, []
@@ -1322,7 +1418,12 @@ class PreviewHost:
 
     def _watch_crop_stop(self, future: Future, epoch: int, *, final=False) -> None:
         with self._lock:
-            close_needed = self._closing and not final
+            close_needed = (
+                self._closing
+                and not final
+                and not self._primary_pending
+                and self._layout_admission.wait_idle(0)
+            )
             if not close_needed:
                 self._stop_future = future
                 self._stop_final = final
@@ -1346,29 +1447,650 @@ class PreviewHost:
         future.add_done_callback(ready)
 
     def _drain_offline_primary(self) -> None:
-        # Failed HWND creation leaves pre-window intents with no native FIFO.
-        # EVE is fenced, so these handlers perform their storage half only.
         with self._lock:
-            signals, self._pending_primary_signals = self._pending_primary_signals, []
-        for signal in signals:
-            self._apply_primary(signal)
+            if self._hwnd is not None:
+                return
+            self._pending_primary_signals = []
+            if not self._primary_geometry:
+                self._primary_geometry = dict(self._saved)
+            for intent in self._primary_intents:
+                intent.ready = True
+        self._advance_primary(native=False)
 
     def _apply_primary(self, message) -> bool:
+        # Wakes are hints, not ownership. A later Size's wake may be consumed
+        # while the head Reset is waiting on the existing persistence worker.
         with self._lock:
-            if not self._primary_intents or self._primary_intents[0][0] != message:
+            intent = next(
+                (
+                    i
+                    for i in self._primary_intents
+                    if i.message == message and not i.ready
+                ),
+                None,
+            )
+            if intent is None:
                 return False
-            _message, payload = self._primary_intents.popleft()
+            intent.ready = True
+            self._primary_geometry = {
+                key: layout.Entry(win.rect, win.locked)
+                for key, win in self._windows.items()
+            }
+        self._advance_primary(native=True)
+        return True
+
+    def _begin_primary_gesture(
+        self, epoch: int, owner: str
+    ) -> PrimaryLayoutLease | None:
+        with self._lock:
+            if not self._eve_valid(epoch) or self._primary_pending:
+                return None
+            lease = self._layout_admission.try_begin(exclusive=False)
+            if lease is not None:
+                self._gesture_leases[(epoch, owner)] = lease
+            return lease
+
+    def _primary_rect_changed(self, epoch, owner, *args) -> None:
+        with self._lock:
+            lease = self._gesture_leases.get((epoch, owner))
+            admitted = self._eve_valid(epoch) or (
+                lease is not None and self._layout_admission.owns(lease)
+            )
+        if admitted:
+            self._layout_changed(*args)
+
+    def capture_primary_layout(
+        self, lease: PrimaryLayoutLease
+    ) -> Future[PrimaryLayoutCapture]:
+        return self._submit_layout_request(_LayoutRequest(lease, Future()))
+
+    def apply_primary_layout(
+        self,
+        lease: PrimaryLayoutLease,
+        capture: PrimaryLayoutCapture,
+        commit: LayoutCommit,
+        rectangles: Mapping[str, geometry.Rect | None],
+    ) -> Future[PrimaryLayoutLiveResult]:
+        # All recorded keys matter, including null geometry/unchanged visibility.
+        return self._submit_layout_request(
+            _LayoutRequest(lease, Future(), capture, commit, dict(rectangles))
+        )
+
+    def _submit_layout_request(self, request):
+        future = request.future
+        future.set_running_or_notify_cancel()
+        with self._lock:
+            held = self._layout_capture
+            refused = (
+                not request.lease.exclusive
+                or not self._layout_admission.owns(request.lease)
+                or self._layout_request is not None
+                or (request.capture is None and held is not None)
+                or (
+                    request.capture is not None
+                    and (
+                        held is None
+                        or held[0] is not request.lease
+                        or held[1] is not request.capture
+                    )
+                )
+            )
+            if not refused:
+                self._layout_request = request
+                native = self._hwnd is not None and self._eve_valid()
+                if native:
+                    # Failure retains readiness for an existing pump turn.
+                    self._post(win32.WM_APP_PRIMARY_COMPLETE)
+        if refused:
+            future.set_exception(
+                RuntimeError("Preview layout no longer owns admission.")
+            )
+        elif not native:
+            self._advance_layout_batch(native=False)
+        return future
+
+    def _advance_layout_batch(self, *, native: bool) -> None:
+        with self._lock:
+            request = self._layout_request
+            if request is None or request.running:
+                return
+            if not native and self._hwnd is not None and self._eve_valid():
+                return
+            if native and self._crop_dispatching:
+                return
+            request.running = True
+        result, error = None, None
         try:
-            if message == win32.WM_APP_RESET_LAYOUTS:
-                self._reset_layouts()
-            elif message == win32.WM_APP_RESIZE_ONE:
-                self._apply_resizes(payload)
+            if not self._layout_admission.owns(request.lease):
+                raise RuntimeError("Preview layout no longer owns admission.")
+            if request.commit is None:
+                result = self._capture_layout_on_owner(request.lease, native=native)
+                with self._lock:
+                    self._layout_capture = (request.lease, result)
             else:
-                self._apply_resize_all(payload)
+                # Detached authority may be installed after Off without reading
+                # windows. Only the pump is ever allowed into the native phase.
+                with self._lock:
+                    if request.commit.revision <= self._layout_commit_revision:
+                        raise RuntimeError(
+                            "A newer Preview layout is already installed."
+                        )
+                    self._saved = dict(request.commit.layouts)
+                    self._layout_commit_revision = request.commit.revision
+                self._announce_geometry_changed()
+                result = (
+                    self._apply_layout_on_owner(request)
+                    if native
+                    and self._eve_valid(request.capture.eve_epoch)
+                    and self._pump_epoch == request.capture.pump_epoch
+                    else PrimaryLayoutLiveResult("deferred", None)
+                )
+        except Exception as exc:  # noqa: BLE001 -- settle the owned future; native failure cannot strand admission or undo durable configuration.
+            if request.commit is None:
+                error = exc
+            else:
+                result = PrimaryLayoutLiveResult(
+                    "incomplete", str(exc) or type(exc).__name__
+                )
         finally:
             with self._lock:
-                self._primary_pending -= 1
-        return True
+                assert self._layout_request is request
+                self._layout_request = None
+                release = request.release
+            # Nothing authoritative remains when callbacks run, including a
+            # caller releasing inline from Future.set_result(). Never under lock.
+            if error is not None:
+                request.future.set_exception(error)
+            else:
+                request.future.set_result(result)
+            if release:
+                self.release_primary_layout(request.lease)
+
+    def _capture_layout_on_owner(self, lease, *, native):
+        if self._preview_snapshot is None:
+            raise RuntimeError("Committed Preview reader is unavailable.")
+        with self._lock:
+            if self._starting or self._stopping or self._eve_stopping or self._closing:
+                raise RuntimeError("Finish the pending Preview change and try again.")
+            pump_epoch, eve_epoch = self._pump_epoch, self._eve_epoch
+            retained = tuple(self._saved.items())
+        live = native and self._eve_valid(eve_epoch)
+        if live:
+            if any(win._mode is not None for win in self._windows.values()):
+                raise RuntimeError("Finish the pending Preview change and try again.")
+            self._apply_pending_roster(win32.bind())
+        with self._lock:
+            snapshot = self._latest_roster if live else None
+        sessions = (
+            tuple(
+                c.session
+                for c in snapshot.clients
+                if c.session and valid_owner(c.character)
+            )
+            if snapshot
+            else ()
+        )
+        rectangles = []
+        if live:
+            for key, win in self._windows.items():
+                if not valid_owner(key):
+                    continue
+                with self._lock:
+                    if (
+                        not self._eve_valid(eve_epoch)
+                        or self._latest_roster is not snapshot
+                    ):
+                        raise RuntimeError(
+                            "Preview sources changed while capturing; try again."
+                        )
+                rect = win.native_rect()
+                if rect is None:
+                    raise RuntimeError(
+                        f"Could not read the primary preview rectangle for {key}."
+                    )
+                if self._primary_sessions.get(key) not in sessions:
+                    raise RuntimeError(
+                        "Finish the pending Preview discovery change and try again."
+                    )
+                rectangles.append((key, rect))
+        preview = copy.deepcopy(self._preview_snapshot())
+        with self._lock:
+            if not self._layout_admission.owns(lease) or (
+                live
+                and (
+                    not self._eve_valid(eve_epoch)
+                    or self._latest_roster is not snapshot
+                )
+            ):
+                raise RuntimeError(
+                    "Preview sources changed while capturing; try again."
+                )
+        return PrimaryLayoutCapture(
+            pump_epoch,
+            eve_epoch,
+            snapshot.generation if snapshot else 0,
+            sessions,
+            retained,
+            tuple(rectangles),
+            preview,
+        )
+
+    def _layout_session_current(self, capture, session) -> bool:
+        return self._primary_session_current(
+            capture.pump_epoch, capture.eve_epoch, session
+        )
+
+    def _primary_session_current(self, pump_epoch, eve_epoch, session) -> bool:
+        with self._lock:
+            snapshot = self._latest_roster
+            return bool(
+                self._eve_valid(eve_epoch)
+                and self._pump_epoch == pump_epoch
+                and snapshot is not None
+                and any(c.session == session for c in snapshot.clients)
+            )
+
+    def _apply_layout_on_owner(self, request) -> PrimaryLayoutLiveResult:
+        capture, commit = request.capture, request.commit
+        sessions = {s.character: s for s in capture.sessions}
+        excluded = set(commit.excluded)
+        preferred = dict(commit.layouts)
+        failures, deferred = [], []
+        libs = win32.bind()
+        monitors = self._monitors()
+        for key, rect in request.rectangles.items():
+            session = sessions.get(key)
+            if session is None:
+                continue  # Expected offline, not a native failure.
+            if not self._layout_session_current(capture, session):
+                deferred.append(key)
+                continue
+            win = self._windows.get(key)
+            if win is not None and self._primary_sessions.get(key) != session:
+                deferred.append(key)
+                continue
+            self._layout_applied[key] = key in excluded
+            existing = win
+            authorization = win._is_authorized if win is not None else None
+            if win is not None:
+                win._is_authorized = lambda s=session, previous=authorization: (
+                    self._layout_session_current(capture, s)
+                    and (previous is None or previous())
+                )
+            try:
+                if key in excluded:
+                    if win is not None:
+                        if not win.close_checked():
+                            failures.append(f"{key}: could not remove primary preview")
+                        else:
+                            del self._windows[key]
+                            self._primary_sessions.pop(key, None)
+                else:
+                    if win is not None and win._teardown_started:
+                        failures.append(f"{key}: primary preview cleanup is incomplete")
+                        continue
+                    if win is None:
+                        target = (
+                            geometry.clamp_to_monitors(preferred[key].rect, monitors)
+                            if rect is not None
+                            else self._resolve_rect(
+                                key, len(self._windows), monitors, preferred.get(key)
+                            )
+                        )
+                        if not self._layout_session_current(capture, session):
+                            deferred.append(key)
+                            continue
+                        client = self._clients.get(key)
+                        if client is None or (client.hwnd, client.pid) != (
+                            session.hwnd,
+                            session.pid,
+                        ):
+                            deferred.append(key)
+                            continue
+                        win = self._create_primary(
+                            libs,
+                            client,
+                            target,
+                            capture.eve_epoch,
+                            current=lambda s=session, p=capture.pump_epoch, e=capture.eve_epoch: (
+                                self._primary_session_current(p, e, s)
+                            ),
+                        )
+                        if win is None:
+                            if self._layout_session_current(capture, session):
+                                failures.append(
+                                    f"{key}: could not create primary preview"
+                                )
+                            else:
+                                deferred.append(key)
+                            continue
+                        if not self._layout_session_current(capture, session):
+                            deferred.append(key)
+                            if win.close_checked():
+                                continue
+                            failures.append(
+                                f"{key}: could not clean up revoked primary creation"
+                            )
+                        self._windows[key] = win
+                        self._primary_sessions[key] = session
+                        if (
+                            self._layout_session_current(capture, session)
+                            and win._thumb is None
+                        ):
+                            failures.append(
+                                f"{key}: could not create primary thumbnail"
+                            )
+                    if rect is not None and self._layout_session_current(
+                        capture, session
+                    ):
+                        target = geometry.clamp_to_monitors(
+                            preferred[key].rect, monitors
+                        )
+                        if not win.move_checked(target):
+                            if self._layout_session_current(capture, session):
+                                failures.append(
+                                    f"{key}: could not move primary preview"
+                                )
+                            else:
+                                deferred.append(key)
+                    if self._layout_session_current(capture, session):
+                        win.set_focused(key == self._focused_key)
+                        if not self._layout_session_current(capture, session):
+                            deferred.append(key)
+                            continue
+                        win.set_selected(key == self._selected_key)
+                        if not self._layout_session_current(capture, session):
+                            continue
+                        hidden = self._source_hidden(libs, session.hwnd)
+                        if self._layout_session_current(capture, session):
+                            win.set_hidden(hidden)
+                    else:
+                        deferred.append(key)
+            except Exception as exc:  # noqa: BLE001 -- one native failure must not prevent remaining recorded members from being delivered.
+                failures.append(f"{key}: {str(exc) or type(exc).__name__}")
+            finally:
+                # Include refused final stages and retirement inside the last
+                # native call — epoch-only checks cannot detect a replaced source.
+                if not self._layout_session_current(capture, session):
+                    deferred.append(key)
+                if existing is not None:
+                    existing._is_authorized = authorization
+        with self._lock:
+            self._metadata_previewed = frozenset(self._primary_sessions.values())
+            notification = self._refresh_metadata_locked()
+        self._deliver_metadata(notification)
+        if self._eve_valid(capture.eve_epoch):
+            with self._lock:
+                table = dict(self._desired_hotkeys)
+            rebound = self._apply_hotkeys(libs, table)
+            if rebound.live == "incomplete":
+                failures.append(rebound.warning or "Could not rebind Preview keybinds")
+            elif rebound.live == "deferred":
+                deferred.append("Preview keybinds")
+        if not self._eve_valid(capture.eve_epoch):
+            deferred.append("EVE previews are Off")
+        warning = (
+            "; ".join(
+                failures
+                + (
+                    ["Deferred: " + ", ".join(dict.fromkeys(deferred))]
+                    if deferred
+                    else []
+                )
+            )
+            or None
+        )
+        return PrimaryLayoutLiveResult(
+            "incomplete" if failures else "deferred" if deferred else "applied", warning
+        )
+
+    def _reconcile_excluded(self, key, session) -> bool:
+        # Discovery/crops continue while disk is pending. Do not let discovery
+        # apply new durable inclusion before this operation's checked batch, or
+        # deliver it to a same-name replacement captured by a later generation.
+        with self._lock:
+            held = self._layout_capture
+            if held is not None:
+                capture = held[1]
+                if session in capture.sessions and key in self._layout_applied:
+                    return self._layout_applied[key]
+                return key in capture.preview.get("excluded", ())
+        return self._is_excluded(key)
+
+    def refresh_primary_visibility(
+        self, lease: PrimaryLayoutLease
+    ) -> Future[PrimaryLayoutLiveResult]:
+        future = Future()
+        future.set_running_or_notify_cancel()
+        with self._lock:
+            if not self._layout_admission.owns(lease):
+                result = PrimaryLayoutLiveResult(
+                    "incomplete", "Preview change no longer owns admission."
+                )
+            elif not self._eve_valid() or self._hwnd is None:
+                result = PrimaryLayoutLiveResult("deferred", None)
+            else:
+                self._visibility_pending.append((lease, future, self._eve_epoch))
+                self._post(win32.WM_APP_PRIMARY_COMPLETE)
+                result = None
+        if result is not None:
+            future.set_result(result)
+        return future
+
+    def _advance_visibility(self, *, native: bool) -> None:
+        with self._lock:
+            if self._visibility_dispatching or not self._visibility_pending:
+                return
+            if not native and self._hwnd is not None and self._eve_valid():
+                return
+            if native and self._crop_dispatching:
+                return
+            self._visibility_dispatching = True
+            pending, self._visibility_pending = self._visibility_pending, deque()
+        try:
+            for lease, future, epoch in pending:
+                result = PrimaryLayoutLiveResult("deferred", None)
+                if (
+                    native
+                    and self._eve_valid(epoch)
+                    and self._layout_admission.owns(lease)
+                ):
+                    try:
+                        with self._lock:
+                            snapshot = self._latest_roster
+                        if snapshot is not None:
+                            self._reconcile_roster(win32.bind(), snapshot)
+                            if self._crop_controller is not None and self._eve_valid(
+                                epoch
+                            ):
+                                self._crop_controller.reconcile(snapshot)
+                        with self._lock:
+                            table = dict(self._desired_hotkeys)
+                        if self._eve_valid(epoch):
+                            result = self._apply_hotkeys(win32.bind(), table)
+                        if not self._eve_valid(epoch):
+                            result = PrimaryLayoutLiveResult("deferred", None)
+                    except Exception as exc:
+                        # The committed choice survives a failed native reconcile.
+                        logger.exception(
+                            "Could not reconcile primary preview visibility"
+                        )
+                        result = PrimaryLayoutLiveResult(
+                            "incomplete", str(exc) or type(exc).__name__
+                        )
+                future.set_result(result)
+        finally:
+            with self._lock:
+                self._visibility_dispatching = False
+
+    def release_primary_layout(self, lease: PrimaryLayoutLease) -> None:
+        canceled = None
+        with self._lock:
+            request = self._layout_request
+            if request is not None and request.lease is lease:
+                if request.running:
+                    request.release = True
+                    return  # Executing native work, not a timeout, owns completion.
+                canceled, self._layout_request = request, None
+                if (
+                    request.commit is not None
+                    and request.commit.revision > self._layout_commit_revision
+                ):
+                    self._saved = dict(request.commit.layouts)
+                    self._layout_commit_revision = request.commit.revision
+            if self._layout_capture is not None and self._layout_capture[0] is lease:
+                self._layout_capture = None
+                self._layout_applied = {}
+            self._gesture_leases = {
+                key: held
+                for key, held in self._gesture_leases.items()
+                if held is not lease
+            }
+        if canceled is not None:
+            self._announce_geometry_changed()
+            if canceled.commit is None:
+                canceled.future.set_exception(
+                    RuntimeError("Preview capture was released.")
+                )
+            else:
+                canceled.future.set_result(
+                    PrimaryLayoutLiveResult(
+                        "deferred",
+                        "Preview layout was released before native delivery.",
+                    )
+                )
+        self._layout_admission.finish(lease)
+        # Finish BEFORE waking: the lifecycle turn must observe actual idle.
+        with self._lock:
+            native = self._hwnd is not None
+            stopping = self._stopping or self._eve_stopping
+            demand = self._families
+            resume = (
+                demand.eve
+                and not self._eve_admitted
+                and not stopping
+                and not self._eve_failed
+            )
+            if native:
+                self._post(win32.WM_APP_FAMILIES)
+        if not native:
+            if stopping:
+                self._drain_offline_crop_commands()
+                self._settle_offline_stop()
+            if resume and self._layout_admission.wait_idle(0):
+                self.set_families(demand)
+
+    def _primary_ready(self, _done) -> None:
+        with self._lock:
+            self._post(win32.WM_APP_PRIMARY_COMPLETE)
+            detached = self._hwnd is None or not self._eve_valid()
+        if detached:
+            self._advance_primary(native=False)
+
+    def _prepare_primary(self, intent, detached, *, native):
+        if native:
+            self._freeze_primary_gestures()
+        if intent.message == win32.WM_APP_RESET_LAYOUTS:
+            return self._clear_layouts or (lambda: None)
+        if native:
+            if intent.message == win32.WM_APP_RESIZE_ONE:
+                self._apply_resizes(intent.payload)
+            else:
+                self._apply_resize_all(intent.payload)
+        else:
+            sizes = (
+                intent.payload
+                if intent.message == win32.WM_APP_RESIZE_ONE
+                else dict.fromkeys(detached, intent.payload)
+            )
+            for key, (w, h) in sizes.items():
+                entry = detached.get(key)
+                if entry is not None:
+                    entry = layout.Entry(entry.rect._replace(w=w, h=h), entry.locked)
+                    with self._lock:
+                        saved = dict(self._saved)
+                        saved[key] = entry
+                        self._saved = saved
+                        self._primary_geometry[key] = entry
+                    self._on_layout_changed(key, entry.rect, entry.locked)
+                    self._announce_geometry_changed()
+        return self._flush_layouts or (lambda: None)
+
+    def _advance_primary(self, *, native: bool) -> None:
+        # One claim spans preparation, submission and native completion. Neither
+        # an inline future callback nor a pump turn can advance the head twice.
+        with self._lock:
+            if self._primary_dispatching:
+                return
+            if not native and self._hwnd is not None and self._eve_valid():
+                return
+            self._primary_dispatching = True
+        retired = []
+        try:
+            while True:
+                with self._lock:
+                    if not self._primary_intents or not self._primary_intents[0].ready:
+                        break
+                    intent = self._primary_intents[0]
+                    if not intent.prepared:
+                        # Readiness owns detached pump input even if a later
+                        # signal was consumed while this head waited on I/O.
+                        intent.prepared = True
+                        intent.epoch = self._eve_epoch
+                        detached = dict(self._primary_geometry)
+                if intent.future is None:
+                    try:
+                        action = self._prepare_primary(intent, detached, native=native)
+                        if self._crop_store is None:
+                            # Legacy primary-only callers have no dispatcher.
+                            # Production always injects the shared worker lane.
+                            future = Future()
+                            future.set_result(action())
+                        else:
+                            future = self._crop_store.submit_primary(action)
+                    except Exception as exc:  # noqa: BLE001 -- native preparation or worker refusal must terminalize the admitted head, not strand its successors.
+                        future = Future()
+                        future.set_exception(exc)
+                    with self._lock:
+                        intent.future = future
+                    future.add_done_callback(self._primary_ready)
+                if not intent.future.done():
+                    break
+                try:
+                    if (
+                        intent.future.result() is False
+                    ):  # Proven done; never a worker self-wait.
+                        raise OSError("Primary preview persistence did not complete")
+                    if intent.message == win32.WM_APP_RESET_LAYOUTS:
+                        if native:
+                            self._reset_layouts(persist=False, epoch=intent.epoch)
+                        else:
+                            with self._lock:
+                                self._saved = {}
+                            self._announce_geometry_changed()
+                except Exception:
+                    # Failure cannot replay a partially delivered native phase.
+                    logger.exception("Could not complete primary preview layout change")
+                with self._lock:
+                    assert self._primary_intents[0] is intent
+                    self._primary_intents.popleft()
+                    self._primary_pending -= 1
+                retired.extend(intent.leases)
+        finally:
+            with self._lock:
+                self._primary_dispatching = False
+            for lease in retired:
+                self.release_primary_layout(lease)
+            with self._lock:
+                retry = (
+                    bool(self._primary_intents)
+                    and self._primary_intents[0].prepared
+                    and self._primary_intents[0].future is not None
+                    and self._primary_intents[0].future.done()
+                    and (self._hwnd is None or not self._eve_valid())
+                )
+            if retry:
+                self._advance_primary(native=False)
 
     def _settle_offline_stop(self) -> None:
         """A storage barrier can finish without an HWND to carry its wake."""
@@ -1385,6 +2107,7 @@ class PreviewHost:
                 or self._crop_dispatching
                 or self._stop_submitting
                 or self._primary_pending
+                or not self._layout_admission.wait_idle(0)
             ):
                 return
             future = self._stop_future
@@ -1428,9 +2151,19 @@ class PreviewHost:
             saved = dict(self._saved)
             saved[stable_key] = layout.Entry(rect, locked)
             self._saved = saved
+        self._announce_geometry_changed()
         self._on_layout_changed(stable_key, rect, locked)
         if first_layout:
             self._announce_layouts_changed()
+
+    def _announce_geometry_changed(self) -> None:
+        if self._closing or self._on_geometry_changed is None:
+            return
+        try:
+            # Only a bounded dirty admission. Never sample or deliver on the pump.
+            self._on_geometry_changed()
+        except Exception:
+            logger.exception("on_geometry_changed callback raised")
 
     def _announce_layouts_changed(self) -> None:
         # A final freeze can record the first primary drag after WebView closed.
@@ -1761,7 +2494,7 @@ class PreviewHost:
         """
         self._post(win32.WM_APP_REBIND)
 
-    def set_capture(self, armed: bool) -> None:
+    def set_capture(self, armed: bool, session: int | None = None) -> bool:
         """Arm or disarm bind capture. Safe from any thread.
 
         No PostMessageW: unlike set_hotkeys there is nothing for the
@@ -1771,11 +2504,28 @@ class PreviewHost:
         it invites the keystroke.
         """
         with self._lock:
+            if self._closing:
+                return False
+            if session is None:
+                # Compatibility for old callers, never an escape from the
+                # identified protocol once this page has started using it.
+                if self._capture_revision:
+                    return False
+            else:
+                if type(session) is not int or not 0 < session <= 9007199254740991:
+                    return False
+                if session < self._capture_revision or (
+                    armed and session == self._capture_revision
+                ):
+                    return False
+                # Disarm arriving before its arm still retires that session.
+                self._capture_revision = session
+            self._capture_session = session
+            accepted = not armed or self._eve_valid()
             self._capture_until = (
-                time.monotonic() + CAPTURE_TIMEOUT_S
-                if armed and self._eve_valid()
-                else 0.0
+                time.monotonic() + CAPTURE_TIMEOUT_S if armed and accepted else 0.0
             )
+            return accepted
 
     def restyle(self) -> None:
         """Ask every open preview to re-read show_labels, opacity, locked
@@ -1871,79 +2621,131 @@ class PreviewHost:
             saved = dict(self._saved)
             saved[stable_key] = entry
             self._saved = saved
+        self._announce_geometry_changed()
 
     def replace_layout(self, stable_key: str, entry) -> bool:
-        """Commit an offline edit through the store without moving a window."""
-        if self._replace_layout is None:
-            return False
+        """Commit an offline edit without borrowing native pump liveness."""
         with self._lock:
+            if (
+                self._closing
+                or self._primary_pending
+                or self._eve_stopping
+                or self._stop_incomplete()
+            ):
+                return False
+            lease = self._layout_admission.try_begin(exclusive=False)
             previous = self._saved.get(stable_key)
-        if not self._replace_layout(stable_key, entry):
+        if lease is None:
             return False
-        with self._lock:
-            # Like Copy, a later drag owns its own delta and cache entry.
-            # Never hold the host lock while the store waits for disk.
-            if self._saved.get(stable_key) == previous:
-                saved = dict(self._saved)
-                saved[stable_key] = entry
-                self._saved = saved
+        try:
+            if self._replace_layout is None or not self._replace_layout(
+                stable_key, entry
+            ):
+                return False
+            with self._lock:
+                if self._saved.get(stable_key) == previous:
+                    saved = dict(self._saved)
+                    saved[stable_key] = entry
+                    self._saved = saved
+            self._announce_geometry_changed()
+            return True
+        finally:
+            self.release_primary_layout(lease)
+
+    def clear_layouts_offline(self) -> bool:
+        """Bridge-thread wait only; the API's shared lease precedes final close."""
+        if self._clear_layouts is None:
+            return False
+        result = (
+            self._crop_store.submit_primary(self._clear_layouts).result()
+            if self._crop_store is not None
+            else self._clear_layouts()
+        )
+        if result is False:
+            return False
+        self.clear_layout_entries()
         return True
 
     def clear_layout_entries(self) -> None:
-        """Mirror a layout clear already persisted by an offline API path."""
+        """Mirror a committed clear, retiring superseded unstarted Copy payloads."""
         with self._lock:
             self._saved = {}
             self._pending_layouts = {}
+            leases, self._pending_layout_leases = self._pending_layout_leases, []
+        self._announce_geometry_changed()
+        for lease in leases:
+            self.release_primary_layout(lease)
 
     @staticmethod
     def _usable_character(name) -> bool:
         return isinstance(name, str) and bool(name) and not name.startswith("hwnd:")
 
     def copy_layout(self, target: str, source: str) -> str:
-        """Persist source geometry for target, then queue live movement."""
-        if (
-            target == source
-            or not self._usable_character(target)
-            or not self._usable_character(source)
-            or self._replace_layout is None
-        ):
-            return COPY_MISSING
+        """Retain the shared lease through persistence AND copied native movement."""
         with self._lock:
-            source_entry = self._saved.get(source)
-            target_entry = self._saved.get(target)
-        if source_entry is None:
+            if (
+                self._closing
+                or self._primary_pending
+                or self._eve_stopping
+                or self._stop_incomplete()
+            ):
+                return COPY_MISSING
+            lease = self._layout_admission.try_begin(exclusive=False)
+        if lease is None:
             return COPY_MISSING
-        entry = layout.Entry(
-            source_entry.rect,
-            target_entry.locked if target_entry is not None else False,
-        )
-        if not self._replace_layout(target, entry):
-            return COPY_PERSIST_FAILED
-        with self._lock:
-            # A drag that landed while the settings transaction was in
-            # progress is the later user action. LayoutStore has its delta;
-            # do not move the window/cache back to the copied rectangle.
-            if self._saved.get(target) != target_entry:
-                return COPY_OK
-            saved = dict(self._saved)
-            saved[target] = entry
-            self._saved = saved
-            should_post = bool(self._hwnd) and self._eve_valid()
-            if should_post:
-                self._pending_layouts[target] = entry
-        if should_post:
-            self._post(win32.WM_APP_APPLY_LAYOUTS)
-        return COPY_OK
+        retained = False
+        try:
+            if (
+                target == source
+                or not self._usable_character(target)
+                or not self._usable_character(source)
+                or self._replace_layout is None
+            ):
+                return COPY_MISSING
+            with self._lock:
+                source_entry = self._saved.get(source)
+                target_entry = self._saved.get(target)
+            if source_entry is None:
+                return COPY_MISSING
+            entry = layout.Entry(
+                source_entry.rect,
+                target_entry.locked if target_entry is not None else False,
+            )
+            if not self._replace_layout(target, entry):
+                return COPY_PERSIST_FAILED
+            with self._lock:
+                # A later drag keeps its own committed delta and authority.
+                if self._saved.get(target) != target_entry:
+                    return COPY_OK
+                saved = dict(self._saved)
+                saved[target] = entry
+                self._saved = saved
+                if self._hwnd and self._eve_valid():
+                    self._pending_layouts[target] = entry
+                    self._pending_layout_leases.append(lease)
+                    retained = True
+                    # Failure retains readiness for a later existing pump turn.
+                    self._post(win32.WM_APP_APPLY_LAYOUTS)
+            self._announce_geometry_changed()
+            return COPY_OK
+        finally:
+            if not retained:
+                self.release_primary_layout(lease)
 
     def _post_primary_intent(self, message, payload=None) -> bool:
         # Payload and wake share the same FIFO, including the HWND gap. Only
         # adjacent requests coalesce: RESET/bulk resize delimit per-key batches.
         # These are the existing admitted intents, not a second work journal.
-        if self._primary_intents and self._primary_intents[-1][0] == message:
+        lease = self._layout_admission.try_begin(exclusive=False)
+        if lease is None:
+            return False
+        last = self._primary_intents[-1] if self._primary_intents else None
+        if last is not None and last.message == message and not last.prepared:
             if message == win32.WM_APP_RESIZE_ONE:
-                self._primary_intents[-1][1].update(payload)
+                last.payload.update(payload)
             else:
-                self._primary_intents[-1] = (message, payload)
+                last.payload = payload
+            last.leases.append(lease)
             return True
         # Caller holds _lock, so the pump cannot consume this wake before its
         # payload is installed. A failed post has admitted nothing; retaining
@@ -1951,12 +2753,13 @@ class PreviewHost:
         if self._hwnd:
             if not self._post(message):
                 logger.warning("Could not post preview layout command %s", message)
+                self._layout_admission.finish(lease)
                 return False
         else:
             # HWND creation is outside _lock. Choose the pre-window lane once;
             # rechecking after payload insertion could lose both wake paths.
             self._pending_primary_signals.append(message)
-        self._primary_intents.append((message, payload))
+        self._primary_intents.append(_PrimaryIntent(message, payload, [lease]))
         self._primary_pending += 1
         return True
 
@@ -2072,6 +2875,10 @@ class PreviewHost:
             if not consumed:
                 libs.user32.TranslateMessage(ctypes.byref(msg))
                 libs.user32.DispatchMessageW(ctypes.byref(msg))
+            self._advance_primary(native=True)
+            self._advance_layout_batch(native=True)
+            self._advance_visibility(native=True)
+            self._apply_layouts()
             if self._stopping or self._eve_stopping:
                 # A ready drain may still own a picker's fonts. Retry only at
                 # existing message boundaries, after native callbacks unwind.
@@ -2141,6 +2948,7 @@ class PreviewHost:
                 or self._eve_failed
                 or self._crop_dispatching
                 or not self._families.eve
+                or (not self._eve_admitted and not self._layout_admission.wait_idle(0))
             ):
                 return
             if not self._eve_admitted:
@@ -2263,6 +3071,12 @@ class PreviewHost:
 
     def _host_proc(self, hwnd, msg, wparam, lparam):
         libs = win32.bind()
+        self._advance_primary(native=True)
+        self._advance_layout_batch(native=True)
+        self._advance_visibility(native=True)
+        self._apply_layouts()
+        if msg == win32.WM_APP_PRIMARY_COMPLETE:
+            return 0
         if msg == win32.WM_APP_COMPANION_COMMAND:
             self._apply_companion_commands(libs)
             return 0
@@ -2673,8 +3487,11 @@ class PreviewHost:
         desired = {
             key
             for key, client in clients.items()
-            if not self._is_excluded(
-                client.character or last_character.get((client.hwnd, client.pid)) or key
+            if not self._reconcile_excluded(
+                client.character
+                or last_character.get((client.hwnd, client.pid))
+                or key,
+                sessions[key],
             )
         }
         added, removed, kept = reconcile(set(self._windows), desired)
@@ -2694,6 +3511,7 @@ class PreviewHost:
             ):
                 # HWND/PID can be recycled too. Keep preview placement/window
                 # ownership but renew its thumbnail for the new full session.
+                self._windows[key]._is_authorized = lambda e=epoch: self._eve_valid(e)
                 self._windows[key].rebind_client(current)
                 if not self._eve_valid(epoch):
                     self._windows[key].set_system_name(None)
@@ -2701,8 +3519,14 @@ class PreviewHost:
             else:
                 self._windows[key].client = current
 
+        failed_removals = set()
         for key in removed:
-            self._windows.pop(key).close()
+            if not self._eve_valid(epoch):
+                return
+            if self._windows[key].close() is False:
+                failed_removals.add(key)
+            else:
+                del self._windows[key]
 
         # Once per sweep, not once per added preview: the hardware does not
         # change between two keys of the same batch, and a failure here must
@@ -2710,6 +3534,8 @@ class PreviewHost:
         monitors = self._monitors() if added else []
 
         for key in added:
+            if key in failed_removals:
+                continue  # Never replace an HWND whose cleanup is still owned.
             if not self._eve_valid(epoch):
                 return
             client = clients[key]
@@ -2720,63 +3546,32 @@ class PreviewHost:
                 if continuity is not None
                 else self._resolve_rect(key, len(self._windows), monitors, entry)
             )
-            win = PreviewWindow.create(
-                libs,
-                client,
-                rect,
-                on_activate=lambda c, e=epoch: self._activate_client(libs, c, epoch=e),
-                on_rect_changed=lambda *args, e=epoch: (
-                    self._layout_changed(*args) if self._eve_valid(e) else None
-                ),
-                neighbours=lambda k=key: [
-                    w.rect for k2, w in self._windows.items() if k2 != k
-                ],
-                screen=self._screen,
-                # Resolved from the `locked` character-name list, not from
-                # entry.locked: Task 1 moved lock storage to
-                # preview.locked, so the saved layout entry is no longer
-                # the source of truth for what a NEW window opens locked
-                # as. entry.locked is now written by _layout_changed and
-                # deserialized by layout.py but read by nothing -- retained
-                # rather than removed because it still round-trips through
-                # the layouts section of every existing settings file, and
-                # dropping the field would discard that data on the next
-                # save for no gain.
-                locked=self._is_locked(key),
-                hidden=True,
-                is_authorized=lambda e=epoch: self._eve_valid(e),
-                show_labels=self._labels_shown(),
-                label_size=self._current_label_size(),
-                label_marker=self._current_label_markers().get(client.character),
-                opacity=self._current_opacity(),
-                snap=self._snapping(),
-                lock_aspect=self._locking_aspect(),
-                selection_color=self._selection_ring_color(),
-                # Bound per window: the mirror must skip the very window
-                # that is driving the drag, and the key is only known
-                # here, at creation.
-                on_resize_all=lambda rect, k=key, e=epoch: (
-                    self._mirror_resize(k, rect) if self._eve_valid(e) else None
-                ),
-                on_toggle_crop=lambda client, e=epoch: (
-                    self._toggle_crop(libs, client) if self._eve_valid(e) else None
-                ),
-            )
+            win = self._create_primary(libs, client, rect, epoch)
             if win is not None:
                 if not self._eve_valid(epoch):
-                    win.close()
+                    if win.close() is False:
+                        self._windows[key] = win
                     return
                 self._windows[key] = win
 
         with self._lock:
             if not self._eve_valid(epoch):
                 return
+            retained_sessions = {
+                key: session
+                for key, session in self._primary_sessions.items()
+                if key in failed_removals
+            }
             self._primary_sessions = {
-                _roster_stable_key(c): c.session
-                for c in snapshot.clients
-                if c.character
-                and c.session is not None
-                and _roster_stable_key(c) in self._windows
+                **retained_sessions,
+                **{
+                    _roster_stable_key(c): c.session
+                    for c in snapshot.clients
+                    if c.character
+                    and c.session is not None
+                    and _roster_stable_key(c) in self._windows
+                    and _roster_stable_key(c) not in failed_removals
+                },
             }
             self._metadata_previewed = frozenset(self._primary_sessions.values())
             notification = self._refresh_metadata_locked()
@@ -2806,6 +3601,43 @@ class PreviewHost:
                 logger.exception("on_clients_changed callback raised")
 
         self._apply_selection(libs)
+
+    def _create_primary(self, libs, client, rect, epoch, *, current=None):
+        key = client.stable_key
+        return PreviewWindow.create(
+            libs,
+            client,
+            rect,
+            on_activate=lambda c, e=epoch: self._activate_client(libs, c, epoch=e),
+            on_rect_changed=lambda *args, e=epoch, k=key: self._primary_rect_changed(
+                e, k, *args
+            ),
+            neighbours=lambda k=key: [
+                w.rect for k2, w in self._windows.items() if k2 != k
+            ],
+            screen=self._screen,
+            # Effective locks remain global. The legacy Entry.locked bit still
+            # round-trips through settings but does not decide a new window's lock.
+            locked=self._is_locked(key),
+            hidden=True,
+            is_authorized=current or (lambda e=epoch: self._eve_valid(e)),
+            on_gesture_begin=lambda e=epoch, k=key: self._begin_primary_gesture(e, k),
+            on_gesture_end=self.release_primary_layout,
+            show_labels=self._labels_shown(),
+            label_size=self._current_label_size(),
+            label_marker=self._current_label_markers().get(client.character),
+            opacity=self._current_opacity(),
+            snap=self._snapping(),
+            lock_aspect=self._locking_aspect(),
+            selection_color=self._selection_ring_color(),
+            # The driver must not receive its own resize-all mirror.
+            on_resize_all=lambda rect, k=key, e=epoch: (
+                self._mirror_resize(k, rect) if self._eve_valid(e) else None
+            ),
+            on_toggle_crop=lambda client, e=epoch: (
+                self._toggle_crop(libs, client) if self._eve_valid(e) else None
+            ),
+        )
 
     def _apply_selection(self, libs) -> None:
         """Push both flags -- which client has the foreground, and which
@@ -2981,8 +3813,8 @@ class PreviewHost:
                 logger.warning("Preview foreground hook remains registered")
         return hotkeys_released and not self._hook
 
-    def _apply_hotkeys(self, libs, table) -> None:
-        """Unregister everything, then register the new table."""
+    def _apply_hotkeys(self, libs, table) -> PrimaryLayoutLiveResult:
+        """Rebind without confusing retained OS ownership with live success."""
         with self._lock:
             revision = self._hotkey_revision
             if revision:
@@ -2993,13 +3825,18 @@ class PreviewHost:
         if not self._release_hotkeys(libs):
             self._authorize_hotkeys(table, plan)
             self._refresh_hotkey_authority()
-            return
+            return PrimaryLayoutLiveResult(
+                "incomplete",
+                "Could not release Preview keybinds: "
+                + ", ".join(self._registered_text.values())
+                + ". Their registrations are retained for cleanup.",
+            )
 
         epoch = self._eve_epoch
         status = {}
         for ident, text, action in plan:
             if not self._eve_valid(epoch):
-                return
+                return PrimaryLayoutLiveResult("deferred", None)
             parsed = gestures.parse(text)
             ok = bool(
                 libs.user32.RegisterHotKey(self._hwnd, ident, parsed.mods, parsed.vk)
@@ -3010,7 +3847,7 @@ class PreviewHost:
                 self._registered_text[ident] = text
             if not self._eve_valid(epoch):
                 self._release_hotkeys(libs)
-                return
+                return PrimaryLayoutLiveResult("deferred", None)
             status[text] = ok
             if ok:
                 self._registered[ident] = action
@@ -3057,6 +3894,17 @@ class PreviewHost:
                 self._on_hotkey_status(dict(status))
             except Exception:
                 logger.exception("on_hotkey_status callback raised")
+        if not self._eve_valid(epoch):
+            return PrimaryLayoutLiveResult("deferred", None)
+        refused = [text for text, ok in status.items() if not ok]
+        if refused:
+            return PrimaryLayoutLiveResult(
+                "incomplete",
+                "Could not register Preview keybinds: "
+                + ", ".join(refused)
+                + ". Another application may already own them.",
+            )
+        return PrimaryLayoutLiveResult("applied", None)
 
     def _on_hotkey(self, libs, ident) -> None:
         """Keep the one-message entry point for direct callers and tests."""
@@ -3223,11 +4071,15 @@ class PreviewHost:
             if not text:
                 return True
             self._capture_until = 0.0
+            session = self._capture_session
             epoch = self._eve_epoch
         logger.debug("Preview hotkey %s taken by an armed bind capture", text)
         if self._eve_valid(epoch) and self._on_bind_captured is not None:
             try:
-                self._on_bind_captured(text)
+                if session is None:
+                    self._on_bind_captured(text)
+                else:
+                    self._on_bind_captured(text, session)
             except Exception:
                 # Same guard as _on_hotkey_status: this is outside code
                 # called from the wndproc, where sys.unraisablehook would
@@ -4171,7 +5023,7 @@ class PreviewHost:
         # about to be repainted anyway would push a bitmap nobody can see.
         self._apply_visibility(libs)
 
-    def _apply_layouts(self) -> None:
+    def _apply_layouts(self, *, native=True) -> None:
         """Apply copied layouts to targets that are open on this thread.
 
         The saved coordinates stay byte-for-byte copied. Clamping is a display
@@ -4179,15 +5031,28 @@ class PreviewHost:
         the arrangement the user chose rather than a rewritten rescue point.
         """
         with self._lock:
+            if (
+                self._copy_dispatching
+                or (not self._pending_layouts and not self._pending_layout_leases)
+                or (not native and self._eve_valid() and self._hwnd is not None)
+            ):
+                return
+            self._copy_dispatching = True
             pending, self._pending_layouts = dict(self._pending_layouts), {}
+            leases, self._pending_layout_leases = self._pending_layout_leases, []
             epoch = self._eve_epoch
-        if not pending:
-            return
-        monitors = self._monitors()
-        for key, entry in pending.items():
-            win = self._windows.get(key)
-            if win is not None and self._eve_valid(epoch):
-                win.move(geometry.clamp_to_monitors(entry.rect, monitors))
+        try:
+            if pending and native and self._eve_valid(epoch):
+                monitors = self._monitors()
+                for key, entry in pending.items():
+                    win = self._windows.get(key)
+                    if win is not None and self._eve_valid(epoch):
+                        win.move(geometry.clamp_to_monitors(entry.rect, monitors))
+        finally:
+            with self._lock:
+                self._copy_dispatching = False
+            for lease in leases:
+                self.release_primary_layout(lease)
 
     def _apply_resizes(self, pending) -> None:
         """Apply every pending typed size to its still-open window.
@@ -4208,7 +5073,10 @@ class PreviewHost:
             rect = win.rect._replace(w=w, h=h)
             if self._eve_valid():
                 win.move(rect)
-                rect = win.rect
+                # The window rechecks authority at delivery. If Off won that
+                # gap, retain the admitted typed size, not its unmoved cache.
+                if self._eve_valid():
+                    rect = win.rect
             else:
                 win._mode = None
             # Recorded like a drag: a typed size is the user's choice and
@@ -4229,21 +5097,24 @@ class PreviewHost:
             rect = win.rect._replace(w=w, h=h)
             if self._eve_valid():
                 win.move(rect)
-                rect = win.rect
+                # As with single Size, revoked native delivery does not revoke
+                # the already-admitted storage choice.
+                if self._eve_valid():
+                    rect = win.rect
             else:
                 win._mode = None
             self._layout_changed(key, rect, win.locked)
 
-    def _reset_layouts(self) -> None:
+    def _reset_layouts(self, *, persist=True, epoch=None) -> None:
         """Clear saved layouts and re-place every open preview.
 
         Deliberately does NOT record the new rects. They are defaults, and
         writing them back would repopulate the very table this just cleared --
         a reset that leaves the file exactly as full as it found it.
         """
-        epoch = self._eve_epoch
+        epoch = self._eve_epoch if epoch is None else epoch
         had_layouts = bool(self.layout_entries())
-        if self._clear_layouts is not None:
+        if persist and self._clear_layouts is not None:
             self._clear_layouts()
         self.clear_layout_entries()
         if had_layouts:
@@ -4278,44 +5149,52 @@ class PreviewHost:
                 if w > 0 and h > 0:
                     sizes[key] = (w, h)
         with self._lock:
+            changed = sizes != self._client_sizes
             self._client_sizes = sizes
+        if changed:
+            self._announce_geometry_changed()
+
+    def _freeze_primary_gestures(self) -> None:
+        # Only the pump samples window geometry. Reset's earlier gesture must
+        # be committed BEFORE its asynchronous clear, never resurrected by Off.
+        for key, window in list(self._windows.items()):
+            if window._mode in ("move", "resize", "resize_all"):
+                self._layout_changed(key, window.rect, window.locked)
+            window.finish_gesture(record=False)
 
     def _begin_stop(self, libs) -> None:
         """Freeze native activity, then arrange storage completion without waiting."""
         with self._lock:
             if (
                 self._stop_future is not None
-                or self._primary_pending
                 or self._stop_cleanup_epoch == self._crop_epoch
             ):
                 return
             self._eve_stopping = True
             self._eve_phase = "stopping"
             self._capture_until = 0.0
-            dispatching = self._crop_dispatching
-            commands = []
-            if not dispatching:
-                commands, self._crop_commands = self._crop_commands, []
             epoch = self._crop_epoch
         self._clear_pending_activation(libs)
         self._release_eve_registrations(libs)
         self._hotkey_status = {}
-        for key, window in list(self._windows.items()):
-            # Primary drags commit on button-up, unlike crops' per-move deltas.
-            # Freeze a real in-progress move, never an untouched monitor rescue.
-            if window._mode in ("move", "resize", "resize_all"):
-                self._layout_changed(key, window.rect, window.locked)
-            window._mode = None
-            window.locked = True
+        self._freeze_primary_gestures()
+        for window in list(self._windows.values()):
             window.set_hidden(True)
-        # EVE-off must not steal a leased companion picker's capture.
-        if self._companion_family is None or not self._companion_family.temporary_busy:
-            libs.user32.ReleaseCapture()
-        if dispatching:
-            # An accepted offline batch predates pump launch and still owns
-            # submission order. Its finally reposts shutdown; never close the
-            # store ahead of those begun-but-not-yet-submitted config tokens.
-            return
+        # Crop input must stop even while primary admission delays storage
+        # shutdown. Each window releases only its OWN capture; no drain or
+        # temporary-picker cancellation may overtake that accepted storage.
+        if self._crop_controller is not None:
+            self._crop_controller.freeze_windows()
+        with self._lock:
+            if self._primary_pending or not self._layout_admission.wait_idle(0):
+                return
+            if self._crop_dispatching:
+                # The earlier offline batch still owns submission. Its finally
+                # wakes shutdown; never close ahead of its admitted config work.
+                return
+            # Detach only after admission is idle. A prior return must leave
+            # these tokens in the mailbox, not in an abandoned local batch.
+            commands, self._crop_commands = self._crop_commands, []
         if self._crop_store is None:
             # Optional primary-only seam retains its historical teardown path.
             self._finish_eve_stop(libs)
@@ -4341,12 +5220,16 @@ class PreviewHost:
                     lambda done: self._queue_crop_completion(done.result())
                 )
         with self._lock:
-            final = self._closing
-        if final:
+            closing_barrier = (
+                self._closing
+                and not self._primary_pending
+                and self._layout_admission.wait_idle(0)
+            )
+        if closing_barrier:
             future = self._crop_store.close()
         elif commands:
             future = self._crop_store.drain()
-        self._watch_crop_stop(future, epoch, final=final)
+        self._watch_crop_stop(future, epoch, final=closing_barrier)
         self._notify_crop_state()
 
     def _finish_crop_stop(self, libs) -> None:
@@ -4369,6 +5252,11 @@ class PreviewHost:
                 close_needed = final and not self._stop_final
             if not future.done():
                 continue
+            if self._primary_pending or not self._layout_admission.wait_idle(0):
+                # A shared bridge write may have entered during the earlier
+                # ordinary drain. Its submission still precedes final close.
+                self._stop_ready.put((epoch, future))
+                return
             if close_needed:
                 self._watch_crop_stop(self._crop_store.close(), epoch, final=True)
                 continue
@@ -4481,16 +5369,20 @@ class PreviewHost:
             self._last_roster_generation = 0
             self._pending_layouts = {}
             self._pending_primary_signals = []
+            self._primary_geometry = {}
         self._focused_key = None
         self._selected_key = None
         self._foreground = 0
         self._last_character_by_process = {}
         self._client_sizes = {}
+        self._announce_geometry_changed()
         self._registered_text = {}
         self._last_cycled = None
-        for win in list(self._windows.values()):
-            win.close()  # 2. thumbnails + windows
-        self._windows.clear()
+        for key, win in list(self._windows.items()):
+            if win.close() is not False:  # 2. thumbnails + windows
+                del self._windows[key]
+        if self._windows:
+            return False
         if self._hwnd and self._alert_timer:
             libs.user32.KillTimer(self._hwnd, ctypes.c_void_p(ALERT_TIMER_ID))
             self._alert_timer = False
