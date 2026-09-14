@@ -295,9 +295,6 @@ def test_marker_known_owners_commit_and_reset_without_other_runtime_effects(
     if host:
         host.restyle = lambda: observed.append(api._preview_config.get("label_markers"))
     result = api.set_preview_character_marker("Alice", "cyan")
-    if source == "live" and not host:
-        assert not result["applied"]  # exclusion alone is not a new owner source
-        return
     assert result == {
         "applied": True,
         "persisted": True,
@@ -335,7 +332,6 @@ def test_marker_known_owners_commit_and_reset_without_other_runtime_effects(
         (" Alice", "cyan"),
         ("hwnd:123", "cyan"),
         ("Unknown", "cyan"),
-        ("GeometryOnly", "cyan"),
     ],
 )
 def test_marker_invalid_assignment_refuses_without_write_or_restyle(

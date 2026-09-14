@@ -12,7 +12,7 @@ from concurrent.futures import Future
 from dataclasses import dataclass, replace
 from threading import Condition
 
-from . import layout, roster
+from . import roster
 from . import savedlayouts as model
 from .geometry import Rect
 from .layoutadmission import PrimaryLayoutAdmission, PrimaryLayoutLease
@@ -79,9 +79,14 @@ class PreviewLayoutsController:
         self._revision = 0
         self._commit_revision = 0
         self._latest_commit: LayoutCommit | None = None
-        self._preview = copy.deepcopy(initial)
+        # Only these fields have controller-ordered authority. Working geometry
+        # and ordinary owner settings continue changing outside named commits.
+        self._preview = {
+            key: copy.deepcopy(initial.get(key))
+            for key in ("saved_layouts", "excluded")
+        }
 
-    def state(self) -> dict:
+    def state(self, *, memory_owners: tuple[str, ...] | None = None) -> dict:
         with self._condition:
             commit = self._latest_commit
             needs_projection = (
@@ -94,17 +99,19 @@ class PreviewLayoutsController:
                 # Keep the last usable projection, but never discard the durable
                 # authority. A later read can recover without another mutation.
                 logger.exception("Could not rebuild committed Preview state")
-        # Sampling may overlap a commit. Only owner evidence is borrowed; never
-        # replace accepted exclusions/records with a stale sampled dictionary.
-        sampled = model.known_owners(
-            self._ports.read_preview(), self._ports.live_names()
-        )
+        # Sample outside the condition, then overlay protected fields before
+        # deriving owners. Unioning first would resurrect removed saved/excluded
+        # owners from an older sample even while their records stay removed.
+        sampled = self._ports.read_preview()
+        if memory_owners is None:
+            memory_owners = self._ports.live_names()
         admission = self._admission.snapshot()
         with self._condition:
             preview = copy.deepcopy(self._preview)
             revision = self._revision
             operation = copy.deepcopy(self._operation)
             named, closed = self._named is not None, self._closed
+        sampled = {**sampled, **preview}
         records = model.deserialize(preview.get("saved_layouts"))
         shared = not (closed or admission.closed or admission.exclusive)
         return {
@@ -118,7 +125,7 @@ class PreviewLayoutsController:
                 }
                 for r in records
             ],
-            "owners": list(model.known_owners(preview, sampled)),
+            "owners": list(model.known_owners(sampled, memory_owners)),
             "excluded": list(preview.get("excluded") or []),
             "busy": named or admission.exclusive or bool(admission.shared_count),
             "availability": {
@@ -201,7 +208,6 @@ class PreviewLayoutsController:
             ):
                 return
         saved = model.serialize(commit.saved)
-        layouts = layout.serialize(dict(commit.layouts))
         with self._condition:
             # Projection may finish after another caller accepted a newer commit.
             if (
@@ -209,7 +215,7 @@ class PreviewLayoutsController:
                 and commit.revision > self._commit_revision
             ):
                 self._preview.update(
-                    saved_layouts=saved, layouts=layouts, excluded=list(commit.excluded)
+                    saved_layouts=saved, excluded=list(commit.excluded)
                 )
                 self._commit_revision = commit.revision
                 self._revision += 1

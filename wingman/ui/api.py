@@ -64,6 +64,7 @@ from ..preview import gestures as preview_gestures
 from ..preview import host as preview_host_mod
 from ..preview import labelmarkers as preview_labelmarkers
 from ..preview import layout as preview_layout
+from ..preview import savedlayouts as preview_savedlayouts
 from ..preview import window as preview_window
 from ..preview.companioncontroller import CompanionController, CompanionPorts
 from ..preview.labelsize import LABEL_SIZE_PRESETS
@@ -5392,19 +5393,28 @@ class Api:
         _push swallows it. The page asks for this on load.
         """
         section = self._state.settings.get("preview", {})
-        layout_state = self._preview_layouts.state()
+        geometry = self._sample_preview_geometry()
         host = self._preview_host
         # A companion/selection pump does not authorize EVE delivery. The
         # family fence also hides retained native reports during cleanup.
         live = host is not None and host.runtime_enabled
+        characters = host.characters() if live else []
+        # Reuse this getter's fresh geometry evidence rather than sampling the
+        # retained host twice at different moments just to build owner rows.
+        layout_state = self._preview_layouts.state(
+            memory_owners=(
+                *characters,
+                *(s["name"] for s in geometry["layout_sources"]),
+            )
+        )
         return {
-            **self._sample_preview_geometry(),
+            **geometry,
             "enabled": bool(section.get("enabled")),
             "hotkeys": dict(section.get("hotkeys") or {}),
             "roster": list(section.get("seen") or []),
             "label_markers": self._preview_config.get("label_markers", {}),
             "marker_choices": preview_labelmarkers.marker_choices(),
-            "characters": host.characters() if live else [],
+            "characters": characters,
             "registration": host.hotkey_status() if live else {},
             "bookmark_chords": self._bookmark_chords(),
             # Character-name lists, not per-character booleans -- see
@@ -5544,25 +5554,13 @@ class Api:
                 self._field_refused("Choose a listed identification marker.")
             )
         host = self._preview_host
-        online = (
-            set(host.characters())
-            if host is not None and host.runtime_enabled
-            else set()
-        )
+        memory_owners = self._preview_memory_owners()
         try:
             with settings_mod.update(self._state.settings) as doc:
                 # Recheck after acquiring the writer lock, not against a roster
                 # sampled before another owner reset or settings normalization.
-                section = self._preview_config.snapshot()
-                hotkeys = section.get("hotkeys") or {}
-                known = (
-                    online
-                    | set(section.get("seen") or [])
-                    | set(hotkeys.get("characters") or {})
-                    | set(hotkeys.get("group_by_character") or {})
-                    | set(section.get("crops") or {})
-                    | set(section.get("label_markers") or {})
-                )
+                section = doc.get("preview") or {}
+                known = preview_savedlayouts.known_owners(section, memory_owners)
                 if name not in known:
                     raise ValueError("That character is no longer available.")
                 markers = doc.setdefault("preview", {}).setdefault("label_markers", {})
@@ -5862,15 +5860,26 @@ class Api:
     def _usable_preview_character(name) -> bool:
         return isinstance(name, str) and bool(name) and not name.startswith("hwnd:")
 
-    def _preview_known_characters(self) -> set:
-        """Names that can produce a target row on the Previews page."""
-        section = self._state.settings.get("preview", {})
-        names = set(section.get("seen") or []) | set(
-            (section.get("hotkeys") or {}).get("characters") or {}
-        )
+    def _preview_memory_owners(self) -> tuple[str, ...]:
+        """Detached live/retained identity evidence — never called inside a writer."""
         host = self._preview_host
-        if host is not None and host.runtime_enabled:
-            names |= set(host.characters())
+        if host is None:
+            return ()
+        return (
+            *(host.characters() if host.runtime_enabled else ()),
+            *host.layout_entries(),
+        )
+
+    def _preview_known_characters(self) -> set:
+        """Displayed owners, preserving Copy's existing legacy name acceptance."""
+        section = self._preview_config.snapshot()
+        memory_owners = self._preview_memory_owners()
+        names = (
+            set(section.get("seen") or [])
+            | set((section.get("hotkeys") or {}).get("characters") or {})
+            | set(memory_owners)
+            | set(preview_savedlayouts.known_owners(section, memory_owners))
+        )
         return {name for name in names if self._usable_preview_character(name)}
 
     def copy_preview_layout(self, target, source) -> dict:
@@ -6167,11 +6176,7 @@ class Api:
             id_factory=lambda: uuid.uuid4().hex,
             ports=PreviewLayoutsPorts(
                 read_preview=self._preview_config.snapshot,
-                live_names=lambda: (
-                    tuple(self._preview_host.characters())
-                    if self._preview_host is not None
-                    else ()
-                ),
+                live_names=self._preview_memory_owners,
                 capture=self._capture_preview_layout,
                 apply=self._apply_preview_layout,
                 refresh_visibility=self._refresh_preview_layout_visibility,

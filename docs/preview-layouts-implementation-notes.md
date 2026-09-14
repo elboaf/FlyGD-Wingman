@@ -2,8 +2,9 @@
 
 Status: implementation and task-scoped reviews complete through Task 5;
 [Task 6 documentation/acceptance preparation](#task-6--documentation-and-acceptance-preparation)
-recorded below. Fresh final whole-branch review/polish and global gates remain
-coordinator work. Windows/WebView2/live-EVE acceptance and authorized integration
+recorded below. The maintainer accepted four final-review findings; the
+[accepted final-review fix wave](#accepted-final-review-fix-wave) is recorded below.
+Scoped re-review and remaining final gates remain coordinator work. Windows/WebView2/live-EVE acceptance and authorized integration
 remain pending; no feature acceptance or closure of #213 is claimed.
 
 - Spec: [preview-layouts-design.md](preview-layouts-design.md)
@@ -1149,7 +1150,7 @@ No stale source line numbers are used as acceptance anchors.
 | Approved behavior / User interaction — explicit CRUD, stable IDs/hashes | `test_preview_layoutcontroller.py::test_save_and_update_capture_all_sessions_live_and_offline_without_moving`; `test_preview_layoutcontroller.py::test_rename_noop_and_remove_leave_working_arrangement_alone`; `test_preview_layoutcontroller.py::test_stale_or_missing_record_has_no_write_or_native_effects`; `test_preview_savedlayouts.py::test_revision_ignores_character_insertion_order_but_tracks_snapshot_changes` | Real controller/settings/store, controlled native ports; snapshot-only capture does not replace working geometry, stale mutations refuse, canonical hashes track record changes. No installed UI/native run. |
 | Data and compatibility — schema, validation, migration | `test_preview_savedlayouts.py::test_load_keeps_first_valid_id_and_casefolded_name_not_partial_members`; `test_preview_savedlayouts.py::test_extents_and_far_edge_arithmetic_must_be_native_safe`; `test_settings_savedlayouts.py::test_legacy_working_state_does_not_acquire_a_fabricated_snapshot`; `test_settings_savedlayouts.py::test_snapshot_normalization_survives_save_reload_and_unrelated_update` | Pure whole-record validation plus real settings normalization/save/reload. No fabricated migration; no promise of retention through older binaries. |
 | Data and compatibility — lossless exclusions | `test_settings_savedlayouts.py::test_apply_exclusion_merge_over_capacity_is_lossless_in_either_order`; `test_settings_savedlayouts.py::test_failed_persistence_restores_all_exclusions_and_snapshot_state`; `test_settings_savedlayouts.py::test_explicit_exclusions_survive_reload_without_expanding_history`; `test_settings_savedlayouts.py::test_direct_preview_choice_transactions_retain_all_other_exclusions` | Real transactions/reload retain exclusions beyond recent history in either order; rollback preserves prior data/disk bytes. The direct-choice test is a transaction test, not bridge integration. |
-| Data / User interaction — known, excluded-only and saved-only owners | `test_preview_savedlayouts.py::test_known_owners_unions_every_explicit_source_without_casefold_or_cap`; `test_preview_labelmarkers_page.py::test_marker_page_ownership[exclusions]`; `test_preview_savedlayouts_page.py::test_saved_layout_page_ordering[controls-empty]` | Pure exact owner union includes saved-only owners; production JS/DOM doubles keep excluded-only/prototype-like names editable Off. The empty-list page case permits saving known offline owners. No direct saved-only-row assertion, rendering or end-to-end settings-to-WebView coverage is claimed. |
+| Data / User interaction — known, excluded-only and saved-only owners | `test_preview_savedlayouts.py::test_known_owners_unions_every_explicit_source_without_casefold_or_cap`; `test_preview_labelmarkers_page.py::test_marker_page_ownership[exclusions]`; `test_preview_owner_eligibility.py::test_displayed_offline_owner_is_eligible_for_marker_and_copy`; `test_preview_savedlayouts_page.py::test_displayed_owner_controls_use_real_api_receipts` | Pure exact owner union and real settings/Api getters and mutations cover saved-only, retained-layout and exclusion-only owners. Production app/previews/panel with DOM/bridge doubles exercises their Identification and Copy controls using those Api receipts. This is not installed settings-to-WebView coverage. |
 | Capture, apply and ownership — live/default/offline/null/absent | `test_preview_layout_batch.py::test_capture_actual_default_and_live_excluded_offline_detached`; `test_preview_layout_batch.py::test_apply_transaction_is_lossless_for_absent_and_null_members`; `test_preview_layout_batch.py::test_null_unchanged_visibility_checks_recorded_creation_only`; `test_preview_layout_batch.py::test_offline_capture_and_apply_never_start_or_touch_native` | Real settings/writer/host with native doubles; actual-double rectangles differ from cache, untouched defaults are not auto-persisted, null keeps geometry and recorded membership still counts for creation failure. Off/companion-only paths do not start EVE. |
 | Capture / Approved behavior — immediate Apply versus later reopen | `test_preview_layout_batch.py::test_restore_off_reenabled_member_uses_explicit_rect_now_but_not_on_later_arrival`; `test_preview_host.py::test_the_setting_is_read_per_placement_not_captured` | Host/native-double placement distinguishes immediate restore-Off Apply from later replacement; existing placement reads the preference anew. Both installed reopen modes and restart remain unrun. |
 | Capture and ownership — admission, Reset, pending/later writes | `test_preview_layout_admission.py::test_shared_leases_finish_independently_and_ids_do_not_reuse`; `test_preview_layout_admission.py::test_consumed_resize_wake_waits_for_reset_storage_and_retains_leases`; `test_preview_cropstore.py::test_primary_action_uses_existing_worker_and_precedes_close`; `test_preview_layout_batch.py::test_batch_cannot_overtake_an_earlier_debounce`; `test_preview_store.py::test_successful_transaction_leaves_later_recorded_delta_pending` | Pure gate plus Event-controlled real writer/worker ordering with native doubles: every represented lease survives, Reset uses the retained worker, earlier debounce precedes batch and later delta remains pending. Not real Windows input scheduling. |
@@ -1219,3 +1220,123 @@ explicit integration authorization after the coordinator's gates and the agreed
 acceptance decision. Preserve this linked worktree for feedback. Do not close
 #213 before that decision; do not infer permission from completed implementation,
 task reviews or this documentation commit.
+
+## Accepted final-review fix wave
+
+Base: `92a9ea47763b95546d179c373c35c73b6de37b72`. The maintainer accepted all
+four final-review findings. This is one scoped correction wave, not a repeat of
+the plan or a claim that final review is closed.
+
+### Changes and retained boundaries
+
+- Copy and Identification reuse the existing pure `savedlayouts.known_owners`
+  union for saved-only, working/retained-layout and exclusion-only targets.
+  Copy keeps its legacy name acceptance; Identification keeps strict identity
+  and palette validation. Marker eligibility is rechecked from the transaction's
+  own Preview section, not a committed-reader call inside `settings.update`.
+  Host evidence is detached before the transaction. Source validation, Copy's
+  existing shared lease/writer/native path and persistence outcomes are unchanged.
+- Controller presentation caches only the two controller-ordered fields:
+  saved records and exclusions. Current ordinary owner evidence comes from the
+  committed reader and detached current host memory. Protected fields overwrite
+  samples **before** deriving owners, preventing a delayed sample from restoring
+  removed saved/excluded owners. Ordinary working geometry is no longer projected
+  into this cache. Immutable commit retention, ordered recovery and validation
+  remain unchanged; projection-fault tests now inject at saved-record serialization.
+- Internal `state(*, memory_owners=None)` permits the full Api getter to reuse its
+  fresh geometry sample for retained names; standalone reads use the existing
+  port. This preserves the getter's one host-layout read and separate Size/Copy
+  authorities. No new geometry revision, cache, reader, worker or public bridge
+  field is introduced.
+- `onPreviewGeometry` paints only changing Size/Copy action availability. Ordinary
+  Identification, group drafts/selection and dialog invokers remain attached.
+  Only a removed currently focused geometry action gets a local Configure fallback.
+  Capture still defers repaint; no focus history is stored or revived. Shared
+  `panel.js` sticky dialog ownership, navigation and staging guards are untouched.
+- The real dev capture stub tracks the current identified arm/disarm session.
+  `DEV.previewBindCaptured()` consumes it once and emits that session. Stale,
+  unidentified and disarm-before-arm requests cannot revive a retired session;
+  production rejection remains unchanged.
+
+### Regression and local-polish evidence
+
+All Python/Ruff commands use `UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv
+uv run --no-sync` in this linked worktree. No baseline suite was repeated.
+
+- First RED: **22 failed, 1 passed**. Nineteen backend assertions reproduced
+  omitted owners, obsolete startup fields and stale removed-owner resurrection.
+  Three JS harness setup issues (selector, selection seam and Event constructor)
+  were corrected without production edits. Corrected UI RED: **3 failed** for
+  detached Identification, detached Size-dialog invoker and missing dev session.
+- First GREEN attempt: **318 passed, 2 failed**. The projection fault initially
+  hit precommit serialization too, and dev disarm was tested before its asynchronous
+  bridge call arrived. Both harnesses were corrected at those actual boundaries.
+- Next focused gate: **423 passed, 4 failed**. Three old Copy fixtures bypassed
+  committed-reader publication; they now use real settings transactions. The other
+  failure caught an extra host-layout sample for owner rows; the getter now reuses
+  its already-fresh projection. Focused rerun: **427 passed in 37.19s**.
+- Local `polish-core --fix` covered the explicit-base wave only, without reviewers
+  or subagents. Safe edits were an explicit DOM-node reference instead of a child
+  index and Ruff formatting of four touched files. No cleanup/lifetime flattening,
+  speculative owner framework or unrelated behavior change was applied.
+- Fresh broader Preview/Companions/Api/settings/bridge/dev/UI/startup gate:
+  **4,367 passed, 4 Windows-only skips in 205.63s**. XML/log:
+  `/tmp/final-fix-broad.{xml,log}`. This includes retained-owner removal and the
+  transaction-reader boundary assertion added after the focused gate.
+- Fresh Ruff lint and format passed (**451 files formatted**), all-page Node smoke
+  passed, DOM fixture regressions passed **35 tests**, independent offline Cargo
+  passed **1 test** using `/tmp/wingman-preview-layouts-codec`, and release codec
+  availability and `git diff --check` passed.
+
+### Isolated Chrome evidence — not Windows acceptance
+
+`node /tmp/final-fix-browser.cjs` uses the existing localhost:9222 Chrome
+**152.0.7977.64**, creates a new isolated context and new pages, serves only this
+worktree's local assets on an ephemeral loopback port, blocks every other request,
+and closes only its own context/server before disconnecting. Existing tabs,
+profiles, cookies and the shared browser lifetime were not touched.
+
+Both **840×625** and **839×621** passed: viewport/document widths match;
+Preview client/scroll widths are **624/624** and **623/623**, selector widths
+**592/591**. Actual Identification focus stays on the same attached select across
+geometry, then keyboard input changes **cyan to orange**, confirmed by the real
+dev getter. Ordinary group text retains backward selection and remains editable
+(`Useful group draft` → `Useful fleet draft`). Real dev capture commits to A then
+B, consumes/disarms once, and rejects stale/unidentified events. Existing Saved/
+Size/Copy delayed-dialog, sticky queue, navigation/staging and newer-capture checks
+also pass, with zero page errors and zero external request attempts.
+
+The first browser attempt sent ArrowDown before a Home-triggered marker write
+re-enabled the select; this was a driver timing error. The second passed but
+reselected the existing cyan. Final evidence deliberately tests a different value.
+Both earlier runs' artifacts are preserved under `/tmp/final-fix-browser-attempt1/`
+and `/tmp/final-fix-browser-attempt2/`. Final JSON/log:
+`/tmp/final-fix-browser-evidence.json`, `/tmp/final-fix-browser-final.log`.
+Screenshots: `/tmp/final-fix-{identification,focus,empty,pending,error,row-errors}-{840,839}.png`.
+Both Identification screenshots and the 840px capture screenshot were read and
+visually inspected: Orange has a visible focus ring, controls and per-row feedback
+fit, and the newer capture remains visibly armed/focused after old dialogs settle.
+
+No real app/EVE/profile/clipboard, external network/GitHub, push/PR/merge/amend,
+hook bypass, independent reviewer or CodeRabbit was used. Windows/WebView2/native
+input, mixed-DPI/monitor/source bounds and live-EVE acceptance remain NOT RUN.
+The scoped re-review and remaining final gates belong to the coordinator.
+
+### Completed full verification
+
+One full suite ran after the final production/test edits and local polish:
+
+```sh
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync python -m pytest tests/ -q -rs --basetemp=/tmp/final-fix-full --junitxml=/tmp/final-fix-full.xml
+```
+
+**12,919 passed, 13 Windows-only skips in 377.49s**. Log:
+`/tmp/final-fix-full.log`; XML as above. Every skip was inspected: real Windows
+junctions, DPAPI/WinDLL, native pump/user32/gdi32/dwmapi and Windows tray backend.
+No Node or codec prerequisites skipped. No production/test change followed this
+run; only completion evidence was appended. Full commands, intermediate failures,
+interfaces and final commit status are preserved in the ignored
+`.superpowers/sdd/preview-layouts-plan/final-fix-report.md`.
+
+This completes the implementer's accepted fix wave and local verification, not
+the coordinator's scoped re-review or final acceptance gates.

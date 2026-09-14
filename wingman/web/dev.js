@@ -2465,8 +2465,17 @@
     });
   };
 
-  api.set_bind_capture = function (armed) {
+  var previewCaptureSession = 0;
+  var previewCaptureArmed = false;
+  api.set_bind_capture = function (armed, session) {
     console.log('DEV api.set_bind_capture(' + armed + ')');
+    if (typeof session === 'number' && isFinite(session) && Math.floor(session) === session
+        && session > 0 && session <= 9007199254740991 && session >= previewCaptureSession) {
+      if (session > previewCaptureSession) {
+        previewCaptureSession = session;
+        previewCaptureArmed = !!armed;
+      } else if (!armed) previewCaptureArmed = false;
+    }
     // False, not true: in a plain browser there is no preview host and so
     // no chord redirection, and the harness must not imply otherwise. The
     // page does not branch on the value -- it waits for the call, then
@@ -3419,7 +3428,11 @@
     // previewCrops('offline'|'crop-only'|'cap-full'|'pending'|'failed-save'|
     // 'degraded'|'stopping'|'master-off'|'event-before-receipt'|'no-op').
     previewCrops: _devCropScenario,
-    previewBindCaptured: function () { window.onPreviewBindCaptured({gesture: 'Ctrl+Alt+F9'}); },
+    previewBindCaptured: function () {
+      if (!previewCaptureArmed) return;
+      previewCaptureArmed = false;
+      window.onPreviewBindCaptured({gesture: 'Ctrl+Alt+F9', session: previewCaptureSession});
+    },
     finishPreviewCrop: function () { if (_devCropFinish) { _devCropFinish(); } },
     failFleetBarRead: function (value) { fleetBarReadFails = !!value; },
     // `DEV.fleetHiddenLimit()` makes the backend's exact cap reachable from

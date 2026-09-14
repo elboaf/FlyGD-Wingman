@@ -11,6 +11,9 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const {document, Element} = createDOM(data.page);
 Element.prototype.hasAttribute = function(name) { return this.getAttribute(name) !== null; };
 Element.prototype.select = function() { this.selectionStart = 0; this.selectionEnd = this.value.length; };
+Element.prototype.setSelectionRange = function(start, end, direction) {
+  this.selectionStart = start; this.selectionEnd = end; this.selectionDirection = direction;
+};
 // This harness exercises shared dialog focus ownership: the structure-only DOM
 // does not bubble focus events. Keep this behavior local to the interactive page.
 Element.prototype.focus = function() {
@@ -29,7 +32,7 @@ vm.runInContext(fs.readFileSync(web + '/app.js', 'utf8'), context);
 const getters = [], writes = [];
 window.WM.send = (method, ...args) => {
   if (method === 'get_preview_hotkey_state') return new Promise(resolve => getters.push(resolve));
-  if (method === 'set_preview_excluded' || method === 'set_preview_binds') return new Promise((resolve, reject) => writes.push({method, args, resolve, reject}));
+  if (method === 'set_preview_excluded' || method === 'set_preview_binds' || method === 'set_preview_character_marker') return new Promise((resolve, reject) => writes.push({method, args, resolve, reject}));
   if (['set_preview_size', 'copy_preview_layout', 'create_preview_layout', 'apply_preview_layout', 'update_preview_layout',
        'rename_preview_layout', 'remove_preview_layout'].includes(method)) {
     return new Promise((resolve, reject) => writes.push({method, args, resolve, reject}));
@@ -89,7 +92,52 @@ function change(name, checked) {
     }
     return button;
   };
-  if (data.scenario === 'staging-roundtrip') {
+  if (data.scenario === 'owner-controls') {
+    window.WM.openSettingsSection('previews', 'characters');
+    const marker = detailButton('Target', 'marker');
+    assert.equal(marker.disabled, false, 'displayed owner can change Identification');
+    marker.focus(); marker.value = 'cyan'; marker.dispatchEvent({type: 'change'});
+    assert.deepEqual(writes.at(-1).args, ['Target', 'cyan']);
+    writes.at(-1).resolve(clone(data.marker)); await tick();
+    assert.equal(document.querySelector('.preview-marker-select').value, 'cyan');
+    assert.equal(el(marker.getAttribute('aria-describedby')).textContent, '');
+    if (!box('Target').checked) { change('Target', true).resolve(clone(data.visible)); await tick(); }
+    const copy = detailButton('Target', 'copy'); assert.equal(copy.disabled, false); copy.focus(); copy.click();
+    el('dlg-select').value = 'Source'; el('dlg-ok').click(); await tick();
+    assert.deepEqual(writes.at(-1).args, ['Target', 'Source']);
+    assert.equal(data.copied.persisted, true);
+    writes.at(-1).resolve(clone(data.copied)); await tick();
+    assert.ok(!el('preview-copy-status').classList.contains('err'));
+  } else if (data.scenario === 'geometry-detail-focus') {
+    window.WM.openSettingsSection('previews', 'characters');
+    const marker = detailButton('Alice', 'marker'); marker.focus();
+    window.onPreviewGeometry(clone(data.newer_geometry));
+    assert.ok(document.activeElement === marker && document.contains(marker), 'geometry must keep the attached Identification select focused');
+    marker.value = 'cyan'; marker.dispatchEvent({type: 'change'});
+    assert.deepEqual(writes.at(-1).args, ['Alice', 'cyan'], 'retained control still edits the real owner');
+    writes.at(-1).resolve({applied: true, persisted: true, error: null, marker: 'cyan'}); await tick();
+    assert.equal(document.querySelector('.preview-marker-select').value, 'cyan');
+    const manager = document.querySelector('.preview-group-manager'); manager.open = true;
+    const draft = document.querySelector('.group-add-name'); draft.value = 'Useful group draft'; draft.focus();
+    draft.setSelectionRange(7, 12, 'backward');
+    window.onPreviewGeometry(clone(data.newer_copy));
+    assert.ok(document.activeElement === draft, 'geometry leaves ordinary text editing attached');
+    assert.equal(draft.value, 'Useful group draft');
+    assert.deepEqual([draft.selectionStart, draft.selectionEnd, draft.selectionDirection], [7, 12, 'backward']);
+    const copy = detailButton('Alice', 'copy'); copy.focus();
+    window.onPreviewGeometry(clone(data.newer_reset));
+    assert.ok(document.activeElement !== copy, 'removed geometry action cannot retain focus');
+    assert.ok(document.activeElement !== marker, 'removal cannot revive older Identification focus');
+  } else if (data.scenario === 'geometry-detail-dialog') {
+    window.WM.openSettingsSection('previews', 'characters');
+    const size = detailButton('Alice', 'size'); size.focus(); size.click();
+    const draft = el('dlg-input'); draft.value = '640x480'; draft.focus(); draft.setSelectionRange(0, 3, 'forward');
+    window.onPreviewGeometry(clone(data.newer_geometry));
+    assert.ok(document.activeElement === draft);
+    assert.deepEqual([draft.value, draft.selectionStart, draft.selectionEnd], ['640x480', 0, 3]);
+    el('dlg-cancel').click(); await tick();
+    assert.ok(document.activeElement === size && document.contains(size), 'geometry keeps an owned ordinary dialog invoker attached');
+  } else if (data.scenario === 'staging-roundtrip') {
     push(data.created);
     push(data.visible);
     const select = el('preview-layout-select');

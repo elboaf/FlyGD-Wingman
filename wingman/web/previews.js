@@ -211,9 +211,36 @@
     } else {
       geometryState = next;
       overlayGeometry(state, next);
-      if (!quiet) requestRender();
+      if (!quiet) paintGeometry();
     }
     return true;
+  }
+
+  function paintGeometry() {
+    // Geometry changes only action availability. Keep ordinary editors, native
+    // selects and dialog invokers attached — no focus lease crosses this paint.
+    if (capturing) { pendingRender = true; return; }
+    paintRosterAvailability(rows());
+    var detail = document.getElementById(detailId(openDetailName));
+    var actions = detail && detail.querySelector('.geometry-actions');
+    if (!actions) return;
+    var size = actions.querySelector('[data-preview-detail-control="size"]');
+    var copy = actions.querySelector('[data-preview-detail-control="copy"]');
+    var focused = document.activeElement;
+    var off = isExcluded(openDetailName);
+    var sizable = isSizable(openDetailName);
+    if (!!size !== sizable) {
+      var previous = actions.firstChild;
+      actions.insertBefore(sizable ? makeSizeButton(openDetailName, off) : makeSizeFiller(), previous);
+      previous.remove();
+    }
+    if (copySources(openDetailName).length) {
+      if (!copy) actions.appendChild(makeCopyButton(openDetailName, off));
+    } else if (copy) copy.remove();
+    // Only a control actually removed by this paint needs a local fallback.
+    if ((focused === size || focused === copy) && focused && !actions.contains(focused)) {
+      focusConfigure(openDetailName);
+    }
   }
 
   function hydrateGeometry(payload) {

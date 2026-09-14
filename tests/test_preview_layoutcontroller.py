@@ -408,13 +408,22 @@ def test_rename_projection_failure_recovers_new_hash_without_write_or_restart(
     controller, _, path, gate, calls = setup_controller(tmp_path, records=(saved,))
     stale = controller._ports.read_preview()
 
-    def fail(entries):
-        raise OSError("injected serialized geometry projection")
+    def fail(records):
+        if (
+            controller._latest_commit is not None
+            and records is controller._latest_commit.saved
+        ):
+            raise OSError("injected serialized saved-record projection")
+        return model.serialize(records)
 
     # Replace only the controller's projection seam, not settings/store's real
     # serializers: the durable Rename must finish before this fault is reached.
     with monkeypatch.context() as patch:
-        patch.setattr(layoutcontroller, "layout", SimpleNamespace(serialize=fail))
+        patch.setattr(
+            layoutcontroller,
+            "model",
+            SimpleNamespace(**{**vars(model), "serialize": fail}),
+        )
         receipt = controller.rename(saved.id, model.record_revision(saved), "Renamed")
     assert receipt["applied"] and receipt["persisted"] and receipt["warning"]
     assert not receipt["error"]
@@ -548,11 +557,16 @@ def test_delayed_older_cache_recovery_cannot_replace_newer_accepted_commit(
     from wingman.preview import layoutcontroller
 
     controller, _, path, gate, _ = setup_controller(tmp_path)
-    serialize = layoutcontroller.layout.serialize
+    serialize = layoutcontroller.model.serialize
     entered, proceed = threading.Event(), threading.Event()
     broken = True
 
     def project(entries):
+        if (
+            controller._latest_commit is None
+            or entries is not controller._latest_commit.saved
+        ):
+            return serialize(entries)
         if broken:
             raise OSError("injected first cache failure")
         if not entered.is_set():
@@ -562,7 +576,11 @@ def test_delayed_older_cache_recovery_cannot_replace_newer_accepted_commit(
 
     # Stall the actual projection, after its initial sequence check, so recovery
     # must recheck authority before installing the delayed serialized result.
-    monkeypatch.setattr(layoutcontroller, "layout", SimpleNamespace(serialize=project))
+    monkeypatch.setattr(
+        layoutcontroller,
+        "model",
+        SimpleNamespace(**{**vars(model), "serialize": project}),
+    )
     first = controller.set_excluded("First", True)
     assert first["persisted"] and first["warning"]
     broken = False

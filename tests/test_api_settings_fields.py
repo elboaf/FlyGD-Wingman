@@ -632,6 +632,8 @@ def test_copy_preview_layout_changes_only_geometry_without_a_host(
         for key in ("hotkeys", "locked", "never_minimize", "excluded")
     }
 
+    with api_mod.settings_mod.update(api._state.settings):
+        pass  # Publish the fixture through the same committed reader as production.
     result = api.copy_preview_layout("Target", "Source")
 
     assert result == {"applied": True, "persisted": True, "error": None}
@@ -812,7 +814,8 @@ def test_copy_preview_layout_delegates_to_the_host_snapshot(monkeypatch, tmp_pat
     from wingman.preview import geometry, layout
 
     api, _window, _saved = settings_api(tmp_path, monkeypatch)
-    api._state.settings["preview"]["seen"] = ["Target"]
+    with api_mod.settings_mod.update(api._state.settings) as doc:
+        doc["preview"]["seen"] = ["Target"]
     host = _FakeSizeHost(
         layouts={"Source": layout.Entry(geometry.Rect(1, 2, 320, 210))}
     )
@@ -872,7 +875,8 @@ def test_offline_reset_clears_the_dormant_host_cache(monkeypatch, tmp_path):
 
 def test_copy_preview_layout_reports_a_persistence_failure(monkeypatch, tmp_path):
     api, _window, _saved = settings_api(tmp_path, monkeypatch)
-    api._state.settings["preview"]["seen"] = ["Target"]
+    with api_mod.settings_mod.update(api._state.settings) as doc:
+        doc["preview"]["seen"] = ["Target"]
     api._preview_host = _FakeSizeHost(copy_result="persist_failed")
 
     result = api.copy_preview_layout("Target", "Source")

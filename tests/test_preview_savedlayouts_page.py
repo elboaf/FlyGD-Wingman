@@ -32,6 +32,8 @@ from wingman import settings
         "copy-admitted-subpage",
         "dialog-focus-history",
         "dialog-owned-cancel",
+        "geometry-detail-focus",
+        "geometry-detail-dialog",
         "geometry-ack",
         "geometry-getter",
         "geometry-keybind",
@@ -193,7 +195,49 @@ def test_saved_layout_page_ordering(tmp_path, scenario, monkeypatch):
     assert "PASS " + scenario in result.stdout
 
 
-@pytest.mark.parametrize("scenario", ["reversed", "local", "boundary"])
+@pytest.mark.parametrize("source", ["saved", "retained", "excluded"])
+def test_displayed_owner_controls_use_real_api_receipts(tmp_path, source):
+    from tests.test_preview_owner_eligibility import owner_api
+
+    api = owner_api(tmp_path, source)
+    initial = api.get_preview_hotkey_state()
+    marker = api.set_preview_character_marker("Target", "cyan")
+    visible = api.set_preview_excluded("Target", False)
+    copied = api.copy_preview_layout("Target", "Source")
+    web = Path(__file__).parents[1] / "wingman/web"
+    tree = TextPageTree()
+    tree.feed((web / "index.html").read_text(encoding="utf-8"))
+    data = tmp_path / "owners.json"
+    data.write_text(
+        json.dumps(
+            {
+                "page": tree.root,
+                "scenario": "owner-controls",
+                "initial": initial,
+                "marker": marker,
+                "visible": visible,
+                "copied": copied,
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            "node",
+            str(Path(__file__).parent / "fixtures/preview_savedlayouts.cjs"),
+            str(data),
+            str(web),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=25,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PASS owner-controls" in result.stdout
+
+
+@pytest.mark.parametrize("scenario", ["reversed", "local", "boundary", "dev"])
 def test_capture_session_page_ordering(tmp_path, scenario):
     state = make_state(tmp_path)
     with settings.update(state.settings) as doc:
@@ -216,7 +260,15 @@ def test_capture_session_page_ordering(tmp_path, scenario):
     result = subprocess.run(
         [
             "node",
-            str(Path(__file__).parent / "fixtures/preview_capture_sessions.cjs"),
+            str(
+                Path(__file__).parent
+                / "fixtures"
+                / (
+                    "preview_dev_capture.cjs"
+                    if scenario == "dev"
+                    else "preview_capture_sessions.cjs"
+                )
+            ),
             str(data),
             str(web),
         ],
