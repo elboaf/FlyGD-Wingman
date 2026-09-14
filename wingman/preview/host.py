@@ -1719,6 +1719,9 @@ class PreviewHost:
                             del self._windows[key]
                             self._primary_sessions.pop(key, None)
                 else:
+                    if win is not None and win._teardown_started:
+                        failures.append(f"{key}: primary preview cleanup is incomplete")
+                        continue
                     if win is None:
                         target = (
                             geometry.clamp_to_monitors(preferred[key].rect, monitors)
@@ -1789,6 +1792,8 @@ class PreviewHost:
                             deferred.append(key)
                             continue
                         win.set_selected(key == self._selected_key)
+                        if not self._layout_session_current(capture, session):
+                            continue
                         hidden = self._source_hidden(libs, session.hwnd)
                         if self._layout_session_current(capture, session):
                             win.set_hidden(hidden)
@@ -1797,6 +1802,10 @@ class PreviewHost:
             except Exception as exc:  # noqa: BLE001 -- one native failure must not prevent remaining recorded members from being delivered.
                 failures.append(f"{key}: {str(exc) or type(exc).__name__}")
             finally:
+                # Include refused final stages and retirement inside the last
+                # native call — epoch-only checks cannot detect a replaced source.
+                if not self._layout_session_current(capture, session):
+                    deferred.append(key)
                 if existing is not None:
                     existing._is_authorized = authorization
         with self._lock:

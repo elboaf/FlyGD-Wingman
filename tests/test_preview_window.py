@@ -1601,6 +1601,46 @@ def test_set_labels_creates_and_destroys_the_overlay_window(monkeypatch):
     assert libs.destroyed == [0x9001]
 
 
+@pytest.mark.parametrize("close_first", [False, True])
+def test_failed_label_destruction_survives_restyle_and_reenable(
+    monkeypatch, close_first
+):
+    monkeypatch.setattr(window.chrome, "render_label", lambda *a, **k: _pill_image())
+    monkeypatch.setattr(window.layered, "push", lambda *a, **k: None)
+    w, libs = _overlay_window()
+    w.set_labels(True)
+    label = w._label_hwnd
+    alive = {w.hwnd, label}
+    shown = {label: True}
+
+    def destroy(hwnd):
+        assert hwnd in alive
+        if hwnd == label:
+            return False
+        alive.remove(hwnd)
+        return True
+
+    monkeypatch.setattr(libs.user32, "DestroyWindow", destroy)
+    monkeypatch.setattr(
+        libs.user32,
+        "ShowWindow",
+        lambda h, cmd: shown.update({h: cmd != window.win32.SW_HIDE}),
+    )
+    if close_first:
+        assert w.close_checked() is False
+        assert w._label_hwnd == label and alive == {w.hwnd, label}
+    for _ in range(2):
+        w.set_labels(False)
+        assert w._label_hwnd == label and label in alive
+        assert shown[label] is False
+        w.set_labels(True)
+        assert w._label_hwnd == label and len(libs.created) == 1
+        assert shown[label] is True
+    monkeypatch.setattr(libs.user32, "DestroyWindow", lambda h: alive.remove(h) or True)
+    assert w.close_checked() is True
+    assert not alive and w._label_hwnd is None and w.hwnd is None
+
+
 def test_the_overlay_is_repositioned_by_every_move(monkeypatch):
     """The overlay is a separate HWND in screen coordinates; a move of the
     preview must carry it, or the name stays behind over whatever slid

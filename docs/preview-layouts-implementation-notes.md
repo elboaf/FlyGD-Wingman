@@ -455,3 +455,54 @@ no subagents/reviewers, network/GitHub, real app/EVE/profile/clipboard, push/PR/
 other worktrees or hook bypass. Fresh coordinator review and Windows/WebView2/live
 operator acceptance remain outstanding; portable/native doubles do not establish
 visual or real-desktop acceptance.
+
+## Task 3 — fix round 1, retained teardown and final delivery accounting
+
+Base: `639ab5f149ea45051f295c5a48e797467c4d5eab`. All three Important findings
+were reproduced before production changes. Only host/window primitives, their two
+requested regression files and this evidence changed; no later-task commands/UI.
+
+- `PreviewWindow` records `_teardown_started` before releasing presentation
+  resources. Apply treats that retained HWND as incomplete, not healthy visible
+  ownership. This remains true if ordinary full-session rebind restores only its
+  thumbnail. The conservative approved option is intentional: no automatic repair
+  owner/algorithm; existing removal retries real cleanup before healthy recreation.
+  Null geometry, failed-HWND ownership and committed preferred geometry survive;
+  immediate explicit restore-Off Apply and later-arrival default placement remain
+  distinct.
+- Final member accounting rechecks the full session in the existing `finally`,
+  covering retirement during the last native presentation call as well as refused
+  final stages. A check after selection prevents further delivery to a retired
+  source. Deferred member context never hides an earlier genuine native failure.
+- `_destroy_label_overlay() -> bool` now supplies shared checked retention for
+  close and ordinary `set_labels(False)`. Failed label destruction keeps/hides the
+  owned HWND; restyling/re-enabling reuses it instead of allocating a duplicate.
+  Eventual successful cleanup still destroys the overlay before its primary.
+
+Added 19 regressions using real settings, pump/window paths, native false returns
+and actual roster replacements. An Event-held final `ShowWindow` proves release
+cannot settle the executing future/lease early. No new worker/timer, off-pump
+native work, admission/store/lifecycle rewrite, or real EVE geometry/activation.
+
+Verification uses `UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run
+--no-sync`. Initial RED: **18 expected assertion failures** → selected GREEN:
+**18 passes**; both requested full files: **215 passes**. Additional mutation RED
+proved that thumbnail-only health and pre-final-call checks are insufficient:
+**5 expected failures**, then restored the actual fixes before fresh verification.
+Broad Preview/companion/Wanderer/API/committed-reader/transaction scope:
+**4,018 passed, 5 Windows-only skips in 130.16s**. Local self-polish applied only
+safe test formatting. Ruff lint/format passed (**445 formatted**), all-page Node
+smoke passed, offline Cargo passed (**1 test**), release codec availability and
+`git diff --check` passed.
+
+One final full suite after all fixes:
+
+```sh
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync python -m pytest tests/ -q -rs --basetemp=/tmp/wingman-task3-fix1-full --junitxml=/tmp/wingman-task3-fix1-full.xml
+```
+
+**12,751 passed, 13 Windows-only skips in 331.65s**; no Node/codec skips. Exact
+commands, RED/mutation outputs, interfaces, local-polish scope and concerns are
+appended to `.superpowers/sdd/preview-layouts-plan/task-3-report.md`. No subagents,
+reviewers, network/GitHub, real app/EVE/profile/clipboard, push/PR/merge or hook
+bypass. Coordinator scoped re-review and real Windows acceptance remain pending.

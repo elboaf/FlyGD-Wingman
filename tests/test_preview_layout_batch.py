@@ -543,6 +543,200 @@ def test_failed_batch_removal_stays_owned_through_later_discovery(
     assert hwnd not in r.native.windows
 
 
+@pytest.mark.parametrize("failed_handle", ["primary", "label"])
+@pytest.mark.parametrize("rect", [None, Rect(600, 40, 330, 220)])
+def test_visible_apply_after_partial_teardown_stays_incomplete_until_cleanup(
+    batch_host, monkeypatch, failed_handle, rect
+):
+    r = batch_host
+    r.layouts.transact(lambda p: p.update(restore_preview_positions=False))
+    monkeypatch.setattr(r.host, "_show_labels", lambda: True)
+    eve_on(r)
+    roster(r, 2, client())
+    win = r.call(lambda: r.host._windows["Alice"])
+    hwnd, label = win.hwnd, win._label_hwnd
+    before = r.rectangles[hwnd]
+    destroy = r.native.DestroyWindow
+    failed = hwnd if failed_handle == "primary" else label
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            r.native, "DestroyWindow", lambda h: False if h == failed else destroy(h)
+        )
+        lease, captured = capture(r)
+        try:
+            _, result = apply(
+                r, lease, captured, savedlayouts.SavedCharacter("Alice", False, None)
+            )
+            assert result.live == "incomplete"
+            assert win._thumb is None and hwnd in r.native.windows
+        finally:
+            r.host.release_primary_layout(lease)
+        lease, captured = capture(r)
+        try:
+            commit, result = apply(
+                r, lease, captured, savedlayouts.SavedCharacter("Alice", True, rect)
+            )
+            assert result.live == "incomplete" and "Alice" in result.warning
+            assert r.call(lambda: r.host._windows["Alice"]) is win
+            assert window._WINDOWS[hwnd] is win and hwnd in r.native.windows
+            if rect is None:
+                assert r.rectangles[hwnd] == before
+            assert r.host.layout_entries() == dict(commit.layouts)
+            assert r.reader.get("excluded") == []
+            assert r.reader.get("restore_preview_positions") is False
+        finally:
+            r.host.release_primary_layout(lease)
+        roster(r, 3, client())
+        assert r.call(lambda: r.host._windows["Alice"]) is win
+        # A later source rebind can restore the thumbnail without restoring the
+        # dismantled primary/label. It must not erase partial-teardown history.
+        roster(r, 4, client(serial=2))
+        assert r.call(lambda: r.host._windows["Alice"]) is win
+        assert win._thumb is not None
+        lease, captured = capture(r)
+        try:
+            _, result = apply(
+                r, lease, captured, savedlayouts.SavedCharacter("Alice", True, None)
+            )
+            assert result.live == "incomplete" and "Alice" in result.warning
+            assert r.rectangles[hwnd] == before
+        finally:
+            r.host.release_primary_layout(lease)
+
+    # No repair owner is invented. The existing hidden/remove path retries real
+    # cleanup; only a new healthy primary may subsequently claim live success.
+    lease, captured = capture(r)
+    try:
+        _, result = apply(
+            r, lease, captured, savedlayouts.SavedCharacter("Alice", False, None)
+        )
+        assert result.live == "applied" and hwnd not in r.native.windows
+        assert label not in r.native.windows and hwnd not in window._WINDOWS
+    finally:
+        r.host.release_primary_layout(lease)
+    target = Rect(600, 40, 330, 220)
+    lease, captured = capture(r)
+    try:
+        _, result = apply(
+            r, lease, captured, savedlayouts.SavedCharacter("Alice", True, target)
+        )
+        recovered = r.call(lambda: r.host._windows["Alice"])
+        assert result.live == "applied"
+        assert recovered is not win and recovered._thumb is not None
+        assert recovered._label_hwnd in r.native.windows
+        assert r.rectangles[recovered.hwnd] == target
+    finally:
+        r.host.release_primary_layout(lease)
+    roster(r, 5)
+    roster(r, 6, client(serial=3))
+    assert r.call(lambda: r.host._windows["Alice"].rect) != target
+    assert r.reader.get("restore_preview_positions") is False
+
+
+@pytest.mark.parametrize("stage", ["selected", "source_hidden", "hidden"])
+@pytest.mark.parametrize("retirement", ["replacement", "disappearance"])
+@pytest.mark.parametrize("prior_failure", [False, True])
+def test_final_presentation_retirement_is_deferred_without_hiding_prior_failure(
+    batch_host, monkeypatch, stage, retirement, prior_failure
+):
+    r = batch_host
+    eve_on(r)
+    bob = client("Bob", hwnd=17)
+    roster(r, 2, client(), bob)
+    win = r.call(lambda: r.host._windows["Alice"])
+    r.call(lambda: win.set_hidden(True))  # The final call must actually show an HWND.
+    lease, captured = capture(r)
+    trace = []
+    retired = []
+
+    def observe(name, action):
+        def run(*args):
+            if r.host._layout_request is None or (
+                name == "source_hidden" and args[1] != client().hwnd
+            ):
+                return action(*args)
+            trace.append(name)
+            result = action(*args)
+            if name == stage and not retired:
+                retired.append(True)
+                entries = (
+                    (client(serial=2), bob) if retirement == "replacement" else (bob,)
+                )
+                r.host.apply_roster(RosterSnapshot(3, entries))
+            return result
+
+        return run
+
+    with monkeypatch.context() as patch:
+        patch.setattr(win, "set_selected", observe("selected", win.set_selected))
+        patch.setattr(
+            r.host, "_source_hidden", observe("source_hidden", r.host._source_hidden)
+        )
+        patch.setattr(win, "set_hidden", observe("hidden", win.set_hidden))
+        members = []
+        if prior_failure:
+            patch.setattr(r.native, "SetWindowPos", lambda *args: False)
+            members.append(
+                savedlayouts.SavedCharacter("Bob", True, Rect(600, 40, 330, 220))
+            )
+        members.append(savedlayouts.SavedCharacter("Alice", True, None))
+        try:
+            _, result = apply(r, lease, captured, *members)
+            assert retired
+            assert result.live == ("incomplete" if prior_failure else "deferred")
+            assert "Deferred: Alice" in result.warning
+            if prior_failure:
+                assert "Bob: could not move" in result.warning
+            assert (
+                trace
+                == {
+                    "selected": ["selected"],
+                    "source_hidden": ["selected", "source_hidden"],
+                    "hidden": ["selected", "source_hidden", "hidden"],
+                }[stage]
+            )
+        finally:
+            r.host.release_primary_layout(lease)
+
+
+def test_retirement_inside_last_native_show_keeps_future_and_lease_until_return(
+    batch_host, monkeypatch
+):
+    r = batch_host
+    eve_on(r)
+    roster(r, 2, client())
+    win = r.call(lambda: r.host._windows["Alice"])
+    r.call(lambda: win.set_hidden(True))
+    lease, captured = capture(r)
+    commit = r.layouts.transact(lambda p: None)
+    entered, release = Event(), Event()
+    show = r.native.ShowWindow
+
+    def blocked(hwnd, command):
+        result = show(hwnd, command)
+        if hwnd == win.hwnd and command == win32.SW_SHOWNOACTIVATE:
+            entered.set()
+            assert release.wait(5)
+        return result
+
+    with monkeypatch.context() as patch:
+        patch.setattr(r.native, "ShowWindow", blocked)
+        future = r.host.apply_primary_layout(lease, captured, commit, {"Alice": None})
+        try:
+            assert entered.wait(5)
+            r.host.apply_roster(RosterSnapshot(3, (client(serial=2),)))
+            r.host.release_primary_layout(lease)
+            assert not future.done() and r.host._layout_admission.owns(lease)
+        finally:
+            release.set()
+        try:
+            result = future.result(5)
+            assert result.live == "deferred" and "Alice" in result.warning
+        finally:
+            r.host.release_primary_layout(lease)
+    assert r.host._layout_admission.wait_idle(5)
+
+
 def test_monitor_rescue_never_changes_preferred_geometry(batch_host):
     r = batch_host
     eve_on(r)

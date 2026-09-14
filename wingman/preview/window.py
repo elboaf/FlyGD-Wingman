@@ -368,6 +368,7 @@ class PreviewWindow:
         self._screen = screen
         self.hwnd = None
         self._thumb = None
+        self._teardown_started = False
         # The character-name overlay window's HWND, or None. See
         # _ensure_label_overlay for why the name is a window at all.
         self._label_hwnd = None
@@ -608,8 +609,8 @@ class PreviewWindow:
         self.show_labels = bool(shown)
         if shown:
             self._ensure_label_overlay()
-        else:
-            self._destroy_label_overlay()
+        elif not self._destroy_label_overlay():
+            self._sync_label_visibility()
 
     def _ensure_label_overlay(self) -> None:
         if not self.show_labels or self.hwnd is None:
@@ -718,12 +719,16 @@ class PreviewWindow:
             )
             self._label_visible = visible
 
-    def _destroy_label_overlay(self) -> None:
+    def _destroy_label_overlay(self) -> bool:
         if self._label_hwnd is None:
-            return
-        self._libs.user32.DestroyWindow(self._label_hwnd)
+            return True
+        # Restyling and close share ownership: a failed destroy must not allow
+        # re-enabling labels to allocate a second overlay over the retained one.
+        if not self._libs.user32.DestroyWindow(self._label_hwnd):
+            return False
         self._label_hwnd = None
         self._label_visible = False
+        return True
 
     def set_hidden(self, hidden: bool) -> None:
         """Take this preview off the screen, or put it back.
@@ -1289,15 +1294,13 @@ class PreviewWindow:
         # Before anything is destroyed: a client that quits mid-alert
         # otherwise leaks one DC and up to six DIBs for the life of the
         # process, and a fleet-wide aggression arms every preview at once.
+        # A retained HWND is cleanup ownership, not proof of a healthy primary:
+        # later Apply must not bless resources already dismantled by this close.
+        self._teardown_started = True
         self._free_frames()
         self._release_thumb()
-        # Close the overlay explicitly before its owner (Windows would also
-        # destroy it with that owner). A failed HWND remains reachable for retry.
-        if self._label_hwnd is not None:
-            if not self._libs.user32.DestroyWindow(self._label_hwnd):
-                return False
-            self._label_hwnd = None
-            self._label_visible = False
+        if not self._destroy_label_overlay():
+            return False
         if self.hwnd:
             if not self._libs.user32.DestroyWindow(self.hwnd):
                 return False
