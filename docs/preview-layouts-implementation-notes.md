@@ -895,4 +895,29 @@ exclusion edits without newer revisions (two tests), and expected group-dialog
 writes after navigation/new capture. The recovery changed only those test seams;
 no production correction was required. The focused recovery gate passed
 **74 tests in 15.42s** (`/tmp/task5-harness-recovery`). The completed-source full
-rerun is pending; no green full-suite claim is made at this checkpoint.
+rerun was pending at that checkpoint. The test-only recovery is committed as
+`4f05ea5d` — `test(previews): align legacy harnesses with settled geometry ownership`.
+
+Completed-source final verification:
+
+```sh
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync python -m pytest tests/ -q -rs --basetemp=/tmp/wingman-task5-verified-full --junitxml=/tmp/wingman-task5-verified-full.xml
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync ruff check .
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync ruff format --check .
+node scripts/js_smoke.js
+cargo test --locked --offline --manifest-path packaging/settings-codec/Cargo.toml --target-dir /tmp/wingman-preview-layouts-codec
+git diff --check
+```
+
+**12,883 passed, 13 Windows-only skips in 367.94s**. No Node/codec skips.
+Log: `/tmp/wingman-task5-verified-full.log`; XML as above. Fresh Ruff lint passed,
+format reported **450 files already formatted**, every page passed JS smoke,
+Cargo passed **1 test**, and diff whitespace checks passed. Final two-floor
+browser verification also passed after the alignment/focus fixes, with zero
+page errors. No source or test change followed the successful full run.
+
+Task 5 is implemented and locally verified. The exact task report is
+`.superpowers/sdd/preview-layouts-plan/task-5-report.md`. Windows/WebView2/live-EVE
+acceptance remains explicitly unverified; Task 6 and branch integration were not
+performed. No remaining portable gate or known Task 5 production correctness
+finding from this local pass.
