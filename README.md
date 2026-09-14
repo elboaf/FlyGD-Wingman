@@ -69,9 +69,14 @@ half needs no Google account. Neither requires the other.
 - **Live client previews.** A small always-on-top mirror of each running EVE
   client. Click one to switch to that client; drag to move, drag the corner to
   resize, and positions are remembered per character. Per-character keybinds
-  and cycle-forward / cycle-back chords work from any application. Wingman
-  never moves or resizes the game window itself — EVE reads a resize as a
-  resolution change and rewrites its own configuration.
+  and cycle-forward / cycle-back chords work from any application. Use **Saved layouts**
+  in **Settings → Previews → Windows → Placement** to keep explicit snapshots of
+  primary-preview positions, sizes and Preview choices, including known offline
+  characters — not crops, companions or global preferences. Ordinary edits never
+  update a saved name; Apply leaves unrecorded characters unchanged. Saved geometry
+  applies immediately where possible; later openings still follow **Reopen previews
+  where you last put them**. Wingman never moves or resizes the game window itself —
+  EVE reads a resize as a resolution change and rewrites its own configuration.
 - **Profiles.** Copy one character's or account's EVE settings onto others,
   with a backup taken first and restore available.
 - **Skills.** Per-character readiness against skill plans you keep in a folder,

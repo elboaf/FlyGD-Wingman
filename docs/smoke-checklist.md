@@ -15,6 +15,102 @@ dev checks are separate evidence, not installed Windows/WebView2 acceptance.
 
 Run on Windows against a real install before each release.
 
+## Saved layouts (#213) — Windows acceptance NOT RUN
+
+**Every item in this section is NOT RUN.** Implementation and task-scoped reviews
+are complete, including the maintainer-approved shared presentation worker and
+reviewed page-lifetime fixes. Fresh final whole-branch review/polish and global
+gates remain coordinator work; neither those gates nor portable/isolated-Chrome
+passes establish Windows/WebView2/live-EVE acceptance. See the
+[coverage and pending integration boundary](preview-layouts-implementation-notes.md#task-6--documentation-and-acceptance-preparation).
+No push, PR, integration or issue closure is authorized by this checklist.
+
+For a later explicitly authorized pass, record commit/build, Windows/WebView2
+version, display scaling, monitor arrangement, reopen preference, steps and actual
+outcomes. Use disposable Wingman settings and operator-approved clients. Cover
+null/saved-only members with an approved synthetic Wingman settings fixture if
+needed, never by editing real EVE profiles. Arrange only Wingman's windows.
+Measure source bounds and foreground **after Wingman's UI has focus**, then again
+after each layout action; opening Settings itself is not layout-induced focus
+stealing. Observe sources read-only: never move, resize or maximize EVE to set up
+or measure this test. Keep browser/staging evidence separate from real operations.
+
+- [ ] **Multiple, hidden, offline, null and absent members (NOT RUN).** Arrange
+      several named primaries at distinct sizes/positions; include an excluded
+      live member, offline retained member and visibility-only/null-rectangle
+      member. Save current as…, change the working arrangement, then Apply….
+      Only recorded characters change; null geometry keeps its current rectangle.
+      A character first known after Save remains absent from that snapshot and
+      keeps its geometry/Preview choice. All-hidden snapshots remain valid;
+      temporary hide-active/lost-focus hiding is not a saved Preview exclusion.
+- [ ] **Explicit CRUD and unchanged sources (NOT RUN).** Save/Update capture
+      untouched live default placements and offline choices without explicitly
+      repositioning existing primaries. Rename/Remove change only the named
+      record; ordinary drag/Size/Copy/Reset/Preview edits never autosave into it.
+      Check empty/duplicate names, stale-record refusal, retry and Cancel on
+      disposable data. Apply warns to save the old arrangement first and names
+      its actual member count. Real EVE bounds and foreground remain unchanged
+      for all layout operations; only Wingman previews are geometry targets.
+- [ ] **Lossless exclusions and offline editing (NOT RUN).** With an approved
+      Wingman fixture containing exclusions beyond recent history, Apply another
+      hidden member, then make it visible again. No absent exclusion is evicted.
+      Excluded-only and saved-only owners remain editable with Previews Off;
+      unrelated settings writes and restart retain every explicit exclusion.
+- [ ] **Both reopen modes (NOT RUN).** Repeat with Reopen previews where you
+      last put them On and Off. Apply uses explicit geometry immediately for
+      current and re-enabled live primaries in either mode. Later source arrivals
+      and Wingman restart obey the unchanged preference (saved placement On,
+      default stack Off). Applying never overwrites the named snapshot or flips
+      that preference; Off-mode ordinary edits are still remembered.
+- [ ] **Source replacement and outcomes (NOT RUN).** Log out/relaunch or replace
+      a named source during capture/Apply, including a reused window/session
+      identity where reproducible. Capture refuses or delivery defers safely;
+      no replacement inherits stale batch effects. Expected offline members are
+      not failures. Using authorized fault injection only, distinguish a refused
+      save (no layout effects) from durable save with deferred/incomplete live
+      delivery. Verify retained ownership/retry after native failure; never claim
+      an unexercised fault was tested or roll back over a later edit.
+- [ ] **Locks, labels, alerts and Wanderer (NOT RUN).** Apply to locked and
+      unlocked primaries; effective locks and click/right-click meaning remain
+      unchanged. Inspect label/thumbnail alignment, label sizes/markers and an
+      active alert after resizing. Existing fresh Wanderer labels, expiry and
+      Show labels/hiding policies remain correct. Layout actions do not change
+      keybinds, appearance, alert/foreground policy or Wanderer configuration,
+      steal focus, or reveal a policy-hidden preview. Any live Wanderer or alert
+      exercise needs its own authorization; a fixture is not deployed acceptance.
+- [ ] **Independent crops and companions (NOT RUN).** Keep a crop enabled while
+      its primary is excluded/re-included by Apply; its definition and geometry
+      stay independent. Move/use companions across EVE Off/on and an Off Apply
+      with only the companion pump running. No snapshot saves, moves or disables
+      either family, changes their demand, or steals their mouse capture.
+- [ ] **Monitor rescue (NOT RUN).** At equal and mixed DPI, negative desktop
+      coordinates and an authorized removed-monitor setup, Apply rescues only
+      Wingman's off-screen previews. Preferred working coordinates and the named
+      record remain unchanged by rescue; explicit Save/Update may capture the
+      rescued live arrangement. Repeat after reconnecting the monitor. Do not
+      infer this result from portable clamping tests or change source geometry.
+- [ ] **Pending ordinary edits and lifecycle (NOT RUN).** Exercise drag, typed
+      Size, Copy, Reset and Preview choices around Save/Apply, including a held
+      save/native completion where safely injectable. Conflicts refuse with a
+      retry rather than queue a hidden action; settled later edits win. Off fences
+      EVE delivery immediately, On waits/refuses until retained work settles, and
+      Off Apply saves without starting EVE. Restart preserves working/named state.
+      Quit while work is pending: no lost later edit, orphaned preview/label,
+      late page/native reopening, second owner or indefinite shutdown. Test both
+      ordinary Quit and final runtime/window teardown; note any unexercised race.
+- [ ] **Actual WebView2 dialogs and capture focus (NOT RUN).** At 840×625 and the
+      observed 839×621 floor, and 100/125/150/200% scaling, check wrapping, readable
+      independent row errors, mounted status, keyboard prompts/Cancel/Escape,
+      scrim and queued-dialog return/fallback. Selection and tab changes add no
+      reads/writes; drafts and scroll survive pushes. Capture A→B, cancel/rearm,
+      local fallback, section/tab leave and delayed replies must preserve the
+      currently armed session and actual focused element. Old Saved/Size/Copy
+      answers must neither admit stale work nor reclaim newer capture focus;
+      blur/dialog re-entry cannot revive revoked return focus. Already-admitted
+      Copy still settles/refreshes after leaving without reclaiming focus. In
+      isolated staging, plain entry/exit without live pushes preserves live
+      geometry, exclusions, selection and feedback; no fixture mutation escapes.
+
 ## Hide the active EVE client's previews (#212) — Windows acceptance NOT RUN
 
 Linux native doubles and private Chrome checks are not acceptance of this native

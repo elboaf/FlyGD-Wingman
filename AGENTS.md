@@ -139,7 +139,23 @@ reached through injected seams or lazy `windll` binding):
   windows, gestures, cycle keybinds, per-character geometry store, and the
   cropped-preview family (`crops.py` pure geometry, `cropstore.py` committed
   authority, `cropcontroller.py`/`cropwindow.py`/`croppicker.py` pump-owned
-  natives). `runtime.py` is the sole production start/stop owner, merging
+  natives). `savedlayouts.py` defines immutable explicit primary snapshots
+  (geometry and Preview choices only); `layoutcontroller.py` owns named operations
+  and exclusion receipts on borrowed bridge-call threads. `layoutadmission.py`
+  supplies one completion-bound shared/exclusive gate to the controller and host:
+  Save/Update/Apply reserve exclusive admission, ordinary geometry/visibility work
+  retains shared leases until completion. The existing `LayoutStore.transact`
+  orders acknowledged settings commits behind debounce writes, restoring drained
+  deltas on failure with newer pending edits winning. Primary Reset uses the
+  existing CropStore command worker, not a second writer or executor. Named
+  snapshots never autosave; `preview.layouts` remains the working arrangement.
+  Explicit exclusions are lossless configuration; recent `seen` stays capped.
+  The pump captures actual owned rectangles and applies committed member batches
+  fenced by full source sessions; absent members stay unchanged, and null
+  rectangles preserve geometry while their recorded visibility still applies.
+  Size defaults and retained Copy geometry have separate authorities, projected
+  through one ordered `onPreviewGeometry` observation stream (not queue ACKs).
+  `runtime.py` is the sole production start/stop owner, merging
   independent family demands and one temporary selection lease through one
   retained executor. `host.py` owns every HWND on one shared pump;
   `runtime_enabled` authorizes EVE delivery, while `is_running` means only pump
