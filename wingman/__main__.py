@@ -1060,10 +1060,12 @@ def main() -> int:
             # a later delivery stage; no native/presentation lock covers join.
             # These are nonblocking fences; the later shutdown_previews joins
             # storage first, then native runtime, outside shutdown_lock.
+            # Includes saved-layout publication/admission. Its bridge callers
+            # drain later, outside shutdown_lock, before runtime shutdown.
+            api._close_eve_runtime()
             companion_controller.close_publication()
             companion_controller.close_admission()
             preview_runtime.close_admission()
-            api._close_eve_runtime()
             api._stop_fleet_presentation()
             api.shutdown_fleet_sharing()
             with api._fleetbar_lifecycle_lock:

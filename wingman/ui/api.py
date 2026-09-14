@@ -33,6 +33,7 @@ import threading
 import time
 import uuid
 import webbrowser
+from concurrent.futures import Future
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
@@ -67,7 +68,9 @@ from ..preview import window as preview_window
 from ..preview.companioncontroller import CompanionController, CompanionPorts
 from ..preview.labelsize import LABEL_SIZE_PRESETS
 from ..preview.layoutadmission import PrimaryLayoutAdmission
+from ..preview.layoutcontroller import PreviewLayoutsController, PreviewLayoutsPorts
 from ..preview.runtime import PreviewRuntime
+from ..preview.savedlayouts import PrimaryLayoutCapture, PrimaryLayoutLiveResult
 from ..preview.store import LayoutStore
 from ..telemetry.model import CustomMatcherHealth
 from ..upload.controller import (
@@ -500,6 +503,7 @@ class Api:
             if preview_runtime is not None
             else PreviewRuntime(preview_host)
         )
+        self._preview_layouts = self._build_preview_layouts_controller()
         self._preview_revision = 0
         self._preview_runtime_authorized = False
         self._companions = (
@@ -4555,7 +4559,7 @@ class Api:
             self._eve_runtime_closed = True
             self._alerts_controller.close_runtime()
             telemetry = self._telemetry
-        self._preview_layout_admission.close()
+        self._preview_layouts.close_admission()
         self._wanderer.close_admission()
         # This only fences ingress; no consumer callback or join. Keep the
         # retained owner even when its later bounded stop cannot finish.
@@ -4794,7 +4798,11 @@ class Api:
         if not self._wanderer.stop():
             logger.warning("Wanderer runtime is still stopping")
         try:
-            if not self._companions.shutdown():
+            if not self._preview_layouts.shutdown():
+                logger.warning(
+                    "Preview layouts are still settling; retaining preview owner"
+                )
+            elif not self._companions.shutdown():
                 # Keep the native owner alive to deliver admitted storage's
                 # promote/discard completion. A later shutdown may retry the join.
                 logger.warning(
@@ -5264,6 +5272,7 @@ class Api:
         _push swallows it. The page asks for this on load.
         """
         section = self._state.settings.get("preview", {})
+        layout_state = self._preview_layouts.state()
         host = self._preview_host
         # A companion/selection pump does not authorize EVE delivery. The
         # family fence also hides retained native reports during cleanup.
@@ -5315,7 +5324,8 @@ class Api:
             # entirely. Rides this payload rather than a second round trip
             # for the same reason the other two do -- row state belongs in
             # the one place previews.js already reads it from.
-            "excluded": list(section.get("excluded") or []),
+            "excluded": list(layout_state["excluded"]),
+            "layout_state": layout_state,
             # Sizes for the Size... dialog: what the preview is now, and
             # what its client's shape is, so the page can name the size
             # that would not distort it. client_sizes is sampled on the
@@ -5970,12 +5980,9 @@ class Api:
         both are read by PreviewHost as membership tests
         (_is_locked/_is_never_minimize), never by key lookup.
 
-        Shared by set_preview_locked, set_never_minimize and
-        set_preview_excluded below rather than duplicated: the
-        add/remove-by-name logic is identical, only the settings key
-        differs -- and what each caller does AFTERWARDS does not, which is
-        why the live-update call stays with the caller rather than moving
-        in here (two restyle, one sweeps and rebinds).
+        Lock and Never minimize share this policy. Exclusions instead use
+        the layout controller's acknowledged writer/revision domain, since
+        a bulk snapshot can change those choices atomically.
         """
         try:
             with settings_mod.update(self._state.settings) as doc:
@@ -6026,26 +6033,91 @@ class Api:
         return result
 
     def set_preview_excluded(self, name, excluded) -> dict:
-        """Persist whether *name* is opted out of previews entirely.
+        return self._preview_layouts.set_excluded(name, excluded)
 
-        Unlike restyle, this changes which primary windows and keybind
-        registrations exist. The host reconciles its latest admitted roster
-        and rebinds before completing the future; only this bridge thread
-        waits, with no state lock held. Off/unavailable delivery is deferred.
+    def create_preview_layout(self, name) -> dict:
+        return self._preview_layouts.save_current(name)
 
-        The refresh carries no hotkey table: re-reading and re-pushing one
-        here could overwrite a concurrent bind edit. The pump uses its current
-        desired table, preserving the existing payload-free rebind contract.
-        """
-        with self._preview_setting_change(serialize=False) as lease:
-            if lease is None:
-                return self._field_refused("Another preview change is still pending.")
-            result = self._toggle_preview_roster("excluded", name, bool(excluded))
-            if result["persisted"] and self._preview_host is not None:
-                live = self._preview_host.refresh_primary_visibility(lease).result()
-                if live.warning:
-                    result["warning"] = live.warning
-            return result
+    def apply_preview_layout(self, layout_id, revision) -> dict:
+        return self._preview_layouts.apply(layout_id, revision)
+
+    def update_preview_layout(self, layout_id, revision) -> dict:
+        return self._preview_layouts.update_saved(layout_id, revision)
+
+    def rename_preview_layout(self, layout_id, revision, name) -> dict:
+        return self._preview_layouts.rename(layout_id, revision, name)
+
+    def remove_preview_layout(self, layout_id, revision) -> dict:
+        return self._preview_layouts.remove(layout_id, revision)
+
+    def _build_preview_layouts_controller(self):
+        return PreviewLayoutsController(
+            self._preview_config.snapshot(),
+            store=self._preview_layout_store,
+            admission=self._preview_layout_admission,
+            id_factory=lambda: uuid.uuid4().hex,
+            ports=PreviewLayoutsPorts(
+                read_preview=self._preview_config.snapshot,
+                live_names=lambda: (
+                    tuple(self._preview_host.characters())
+                    if self._preview_host is not None
+                    else ()
+                ),
+                capture=self._capture_preview_layout,
+                apply=self._apply_preview_layout,
+                refresh_visibility=self._refresh_preview_layout_visibility,
+                release=self._release_preview_layout,
+                publish_state=self._publish_preview_layouts,
+            ),
+        )
+
+    @staticmethod
+    def _settled_preview_layout(value):
+        future = Future()
+        future.set_result(value)
+        return future
+
+    def _capture_preview_layout(self, lease):
+        if self._preview_host is not None:
+            return self._preview_host.capture_primary_layout(lease)
+        preview = self._preview_config.snapshot()
+        return self._settled_preview_layout(
+            PrimaryLayoutCapture(
+                0,
+                0,
+                0,
+                (),
+                tuple(preview_layout.deserialize(preview.get("layouts")).items()),
+                (),
+                preview,
+            )
+        )
+
+    def _apply_preview_layout(self, lease, capture, commit, rectangles):
+        if self._preview_host is not None:
+            return self._preview_host.apply_primary_layout(
+                lease, capture, commit, rectangles
+            )
+        return self._settled_preview_layout(PrimaryLayoutLiveResult("deferred", None))
+
+    def _refresh_preview_layout_visibility(self, lease):
+        # No hotkey table is sampled or replayed here. The pump reconciles its
+        # latest desired table, including unrelated in-flight keybind edits.
+        if self._preview_host is not None:
+            return self._preview_host.refresh_primary_visibility(lease)
+        return self._settled_preview_layout(PrimaryLayoutLiveResult("deferred", None))
+
+    def _release_preview_layout(self, lease):
+        if self._preview_host is not None:
+            self._preview_host.release_primary_layout(lease)
+
+    def _publish_preview_layouts(self, payload):
+        if self._preview_publication_open():
+            self._push(
+                "onPreviewLayouts",
+                payload,
+                delivery_allowed=self._preview_publication_open,
+            )
 
     # ---- Gamelog alerts --------------------------------------------------
 

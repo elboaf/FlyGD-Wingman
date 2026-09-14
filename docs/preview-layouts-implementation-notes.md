@@ -506,3 +506,81 @@ commands, RED/mutation outputs, interfaces, local-polish scope and concerns are
 appended to `.superpowers/sdd/preview-layouts-plan/task-3-report.md`. No subagents,
 reviewers, network/GitHub, real app/EVE/profile/clipboard, push/PR/merge or hook
 bypass. Coordinator scoped re-review and real Windows acceptance remain pending.
+
+## Task 4 — controller, semantic bridge and revision-safe Preview choices
+
+Base: `a0581968586c422b349a995437fc10d39069c7de`. Added one
+`PreviewLayoutsController` and frozen ports over the existing shared store,
+admission and host futures. Five one-line named-layout facades and the existing
+exclusion facade delegate to it. No named-layout controls, new executor/runtime,
+store, gate, schema or native-path rewrite. Main's existing pair is reused exactly,
+including host-unavailable startup; production capture reads committed Preview
+state and generated IDs use `uuid.uuid4().hex`.
+
+Named operations reserve one nonqueueing slot. Save/Update/Apply acquire exclusive
+leases; Rename/Remove and ordinary exclusions use shared leases. Borrowed bridge
+threads wait through capture, acknowledged persistence and native settlement,
+without controller locks spanning ports/futures/publication. Captures include all
+session names, including excluded/failed-primary clients, without modifying the
+host's exact capture token. Apply sends that exact token and lease plus every
+recorded member key, nulls included; coordinates come from committed authority.
+Snapshot-only operations never mirror captured geometry into the host.
+
+Controller view revisions, canonical record hashes and successful store sequences
+remain separate. Delayed older exclusion callbacks cannot replace newer accepted
+choices; receipts return latest accepted state. A same-choice retry normally avoids
+a write, but obtains a newer acknowledged store sequence when a prior successful
+callback has not reached the cache. Refusals have no runtime effect. Postcommit
+cache/page/native/release failures preserve durable acceptance and warning context;
+native outcome is separate. Pending Apply state records successful persistence
+while its native future is still unsettled. Final admission/publication closes
+before page destruction; controller drain precedes runtime shutdown outside locks,
+and timeouts retain both owners for retry.
+
+`onPreviewLayouts` has one literal Api adapter, allowlist entry and production-page
+handler. Existing hotkey hydration includes `layout_state` and mirrors its committed
+exclusions. The page accepts exclusion state by revision across handlers, hydration
+and per-attempt receipts, preserves other drafts/policies and screenshot isolation,
+and does not bump the hotkey-table `pushes` counter. Native/external busy without
+a pending named operation remains explicitly retryable without a new push or poll;
+the maintainer's matching plan clarification is included. No new screen controls
+or CSS changed.
+
+### Verification and local self-polish
+
+All Python/Ruff commands used `UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv
+uv run --no-sync`. Detailed commands, failed attempts, interfaces and local review
+are in `.superpowers/sdd/preview-layouts-plan/task-4-report.md`.
+
+- Controller RED: **26 missing-module failures**. Additional RED caught delayed
+  same-choice acknowledgement, release-error settlement and pending durable state.
+  Page RED: **8 expected failures** after correcting the DOM-parser setup, covering
+  stale hydration/refusal handling and the absent semantic handler.
+- Initial integration: **2 failed, 407 passed**; updated legacy receipt assertions
+  and a direct-dictionary exclusion fixture to the committed controller interface.
+  First broad run: **3 failed, 3,861 passed, 4 Windows-only skips**. Its concurrent
+  exclusion test rendezvous now precedes the shared writer instead of deadlocking
+  inside its lock; the generated checkbox wrapper again sits immediately after the
+  input type assignment. These are recorded failures, not passing coverage.
+- Focused controller/page/bridge/API/wiring/transaction/committed-reader/conventions:
+  **631 passed**. Includes real pump/controller composition proving actual capture,
+  excluded-session membership, exact Apply delivery and unchanged reopen-Off policy.
+- Fresh broad Preview/companions/API/bridge/committed-reader/transactions/page/JS/
+  startup gate: **3,898 passed, 4 Windows-only skips in 130.43s**.
+- Local polish inspected ordering, lock boundaries, final receipts, publication
+  fences, legacy compatibility and final diff; safe import/format cleanup applied.
+  Ruff lint and format passed (**448 formatted**), all-page Node smoke passed,
+  independent offline Cargo passed (**1 test**), release codec availability and
+  `git diff --check` passed.
+
+One completed-task full suite:
+
+```sh
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync python -m pytest tests/ -q -rs --basetemp=/tmp/wingman-task4-full-verified --junitxml=/tmp/wingman-task4-full-verified.xml
+```
+
+**12,809 passed, 13 Windows-only skips in 327.17s**; no Node/codec prerequisite
+skips. No subagents/reviewers, network/GitHub, real app/EVE/profile/clipboard,
+other worktrees, push/PR/merge or hook bypass. Task 5 controls and Task 6 remain
+unimplemented; browser rendering and Windows/WebView2/live-EVE acceptance remain
+unverified. No known unresolved Task 4 correctness blocker after local verification.

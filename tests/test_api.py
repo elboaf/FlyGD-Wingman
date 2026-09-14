@@ -102,6 +102,40 @@ def pushes(window: FakeWindow) -> list[tuple[str, object]]:
     return out
 
 
+def test_saved_layouts_without_host_share_writer_and_hydrate_authoritative_choices(
+    tmp_path,
+):
+    from wingman import settings
+    from wingman.preview.layoutadmission import PrimaryLayoutAdmission
+    from wingman.preview.store import LayoutStore
+
+    state = make_state(tmp_path)
+    with settings.update(state.settings) as doc:
+        doc.setdefault("preview", {})["excluded"] = ["Pilot"]
+    gate = PrimaryLayoutAdmission()
+    store = LayoutStore(lambda: settings.update(state.settings))
+    api = Api(state, layout_admission=gate, layout_store=store)
+    api._window = FakeWindow()
+    assert api._preview_layouts._store is store
+    assert api._preview_layouts._admission is gate
+    created = api.create_preview_layout("Offline")
+    assert created["applied"] and created["persisted"] and created["live"] is None
+    saved = created["state"]["layouts"][0]
+    assert saved["character_count"] == 1
+    assert api.set_preview_excluded("Pilot", False)["live"] == "deferred"
+    applied = api.apply_preview_layout(saved["id"], saved["revision"])
+    assert applied["persisted"] and applied["live"] == "deferred"
+    state = api.get_preview_hotkey_state()
+    assert state["excluded"] == state["layout_state"]["excluded"] == ["Pilot"]
+    assert any(name == "onPreviewLayouts" for name, payload in pushes(api._window))
+    api._close_eve_runtime()
+    api._window.evaluated.clear()
+    api._publish_preview_layouts(applied["state"])
+    assert not api.create_preview_layout("Late")["applied"]
+    assert not api._window.evaluated
+    assert api._preview_layouts.shutdown(0)
+
+
 def test_push_calls_the_named_handler_with_a_json_payload(tmp_path):
     window = FakeWindow()
     api = make_api(tmp_path, window)

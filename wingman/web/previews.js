@@ -8,6 +8,13 @@
   WM.handle('onPreviewCrops', function (payload) {
     acceptCrops(payload);
   });
+  WM.handle('onPreviewLayouts', function (payload) {
+    acceptLayouts(payload);
+  });
+  var layoutState = null;
+  var excludedHydrated = false;
+  var excludedRequests = Object.create(null);
+  var excludedErrors = Object.create(null);
   // This fixture replaces the entire preview table, not just the crop field.
   // Keep write/read entry points and delayed dialog continuations local-only
   // while installed; the ordinary bridge remains untouched for other pages.
@@ -18,6 +25,8 @@
       state = screenshotLive.state;
       cropState = screenshotLive.crops;
       cropHydrated = screenshotLive.hydrated;
+      layoutState = screenshotLive.layouts;
+      excludedHydrated = screenshotLive.excludedHydrated;
       markerFields = screenshotLive.markerFields;
       groupManagerRestore = screenshotLive.managerDraft;
       releaseGroupFocus();
@@ -46,6 +55,7 @@
       managerDraft.restoreSelection = true;
     }
     var live = {state: state, crops: cropState, hydrated: cropHydrated,
+                layouts: layoutState, excludedHydrated: excludedHydrated,
                 markerFields: markerFields, managerDraft: managerDraft || {value: '', control: null}};
     // Boundary paints must not snapshot the outgoing domain's unsent text.
     // Only the draft/selection is saved; live payloads and marker receipts keep
@@ -58,6 +68,7 @@
     // Fixture revisions are not host revisions. Preserve the host snapshot,
     // render in a separate revision domain, then restore the latest live push.
     cropState = {revision: -1, definitions: {}, operations: {}, statuses: {}};
+    layoutState = null;
     fixture.preview.crops = fixture.crops;
     window.onPreviewHotkeys(fixture.preview);
     screenshotLive = live;
@@ -160,6 +171,46 @@
     return null;
   }
 
+  function acceptLayouts(payload, quiet) {
+    var current = screenshotLive ? screenshotLive.layouts : layoutState;
+    if (!payload || typeof payload.revision !== 'number'
+        || (current && payload.revision < current.revision)) { return false; }
+    if (screenshotLive) {
+      screenshotLive.layouts = payload;
+      screenshotLive.excludedHydrated = true;
+      screenshotLive.state.excluded = payload.excluded.slice();
+      screenshotLive.state.layout_state = payload;
+      return true;
+    }
+    layoutState = payload;
+    excludedHydrated = true;
+    state.excluded = payload.excluded.slice();
+    state.layout_state = payload;
+    // No `pushes` increment: layout delivery carries no replacement keybind table.
+    if (!quiet) { requestRender(); }
+    return true;
+  }
+
+  function hydrateLayouts(payload) {
+    acceptLayouts(payload.layout_state, true);
+    var current = screenshotLive ? screenshotLive.layouts : layoutState;
+    if (current) {
+      payload.excluded = current.excluded.slice();
+      payload.layout_state = current;
+    }
+    if (screenshotLive) { screenshotLive.excludedHydrated = true; }
+    else { excludedHydrated = true; }
+  }
+
+  function exclusionUnavailable(name) {
+    if (!excludedHydrated || excludedRequests[name]) { return true; }
+    if (!layoutState) { return false; } // older dev/fixture payloads
+    if (layoutState.operation && layoutState.operation.pending) { return true; }
+    // A native gesture has no completion push. A stale advisory busy refusal
+    // must leave explicit retry possible; the backend still rechecks its lease.
+    return !layoutState.busy && !layoutState.availability.visibility;
+  }
+
   function rows() {
     // Running first, then known-but-offline, then any binding whose
     // character is in neither -- a chord with no row would be invisible.
@@ -176,7 +227,7 @@
     });
     // Explicit exclusions outlive recent history. Without their own row,
     // an offline owner beyond that cap has no route back to Preview enabled.
-    (state.excluded || []).forEach(function (n) {
+    (state.excluded || []).concat((state.layout_state || {}).owners || []).forEach(function (n) {
       if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
     });
     Object.keys(state.hotkeys.characters || {}).forEach(function (n) {
@@ -1481,6 +1532,9 @@
   function makeExcludedCheck(name) {
     var box = document.createElement('input');
     box.type = 'checkbox';
+    var label = WM.make('label', 'check optout', '');
+    label.prepend(WM.make('span', 'box'));
+    label.prepend(box);
     // Ticked means THIS CHARACTER GETS A PREVIEW, the inverse of what is
     // stored. `preview.excluded` stays an opt-out roster -- absent means
     // shown, which is what every existing install expects, so nothing
@@ -1493,7 +1547,9 @@
     // It also reads correctly at rest for the first time. Unticked-means-
     // shown made the ordinary state of this screen thirteen empty boxes
     // beside thirteen working previews -- the opposite of the truth.
-    box.checked = !isExcluded(name);
+    var pending = !screenshotLive && excludedRequests[name];
+    box.checked = pending ? pending.wanted : !isExcluded(name);
+    box.disabled = !screenshotLive && exclusionUnavailable(name);
     // No word beside the box: the column header carries it once. That
     // RETIRES the width problem this control was named for, rather than
     // working around it. Measured at the 840px floor when the label was
@@ -1519,35 +1575,40 @@
     // text wants the box's 15px, so the phrase moved into a heading
     // rendered once instead of being cut to fit a track.
     box.setAttribute('aria-label', 'Show a preview for ' + name);
-    var label = WM.make('label', 'check optout', '');
     label.title = 'Untick to hide this character’s primary preview, not its crop. Its own '
                 + 'keybind and the cycle keybinds skip it too. Its keybind, '
                 + 'size and position are kept for when you tick it again.';
-    label.prepend(WM.make('span', 'box'));
-    label.prepend(box);
+    if (!screenshotLive && excludedErrors[name]) {
+      label.title += ' ' + excludedErrors[name];
+      box.setAttribute('aria-invalid', 'true');
+    }
     box.addEventListener('change', function () {
-      if (screenshotLive) { return; }
+      if (screenshotLive || exclusionUnavailable(name)) { return; }
       // `wanted` is what the BOX now says (this character is previewed);
       // `excluded` is what the roster stores, and they are opposites. The
       // endpoint keeps the roster's sense, so the inversion happens here,
       // once, at the boundary -- not in api.py, which would change a
       // persisted key's meaning for the sake of a label.
       var wanted = box.checked;
-      // Same generation guard the Lock and Size handlers carry, and for
-      // the same reason: onPreviewHotkeys replaces `state` wholesale when
-      // an EVE client opens or closes, so a save resolving after that
-      // would write a pre-write roster over the newer payload. Filter
-      // first and concatenate onto the filtered list, so a name the newer
-      // payload already carries cannot be added twice.
-      var before = pushes;
+      var attempt = {wanted: wanted, pushes: pushes};
+      excludedRequests[name] = attempt;
+      box.disabled = true;
       WM.send('set_preview_excluded', name, !wanted).then(function (res) {
-        if (!res || !res.applied) { box.checked = !wanted; return; }
-        if (pushes !== before) { return; }
-        var without = (state.excluded || []).filter(function (n) {
-          return n !== name;
-        });
-        state.excluded = wanted ? without : without.concat(name);
-        requestRender();
+        acceptLayouts(res && res.state, true);
+        if (excludedRequests[name] !== attempt) { return; }
+        delete excludedRequests[name];
+        if (!res || !res.applied) {
+          excludedErrors[name] = res && res.error ? res.error : 'That Preview choice was not saved. Try again.';
+        } else {
+          delete excludedErrors[name];
+          // Compatibility only until the first revisioned state. Production
+          // receipts always carry authoritative choices, including refusals.
+          if (!layoutState && !screenshotLive && pushes === attempt.pushes) {
+            var without = (state.excluded || []).filter(function (n) { return n !== name; });
+            state.excluded = wanted ? without : without.concat(name);
+          }
+        }
+        if (!screenshotLive) { requestRender(); }
       });
     });
     return label;
@@ -2627,6 +2688,7 @@
     });
     return WM.send('get_preview_hotkey_state').then(function (payload) {
       if (!payload) { return; }
+      hydrateLayouts(payload);
       acceptMarkers(payload, screenshotLive ? screenshotLive.markerFields : markerFields, markerVersions);
       if (screenshotLive) {
         screenshotLive.state = payload;
@@ -2695,6 +2757,7 @@
   // the two lists together.
   WM.handle('onPreviewHotkeys', function (payload) {
     if (!payload) { return; }
+    hydrateLayouts(payload);
     acceptMarkers(payload, screenshotLive ? screenshotLive.markerFields : markerFields);
     if (screenshotLive) {
       screenshotLive.state = payload;

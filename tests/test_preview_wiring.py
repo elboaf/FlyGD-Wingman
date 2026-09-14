@@ -15,6 +15,114 @@ import pytest
 
 from tests.preview_runtime_helpers import HostLifecycle
 from tests.test_api import make_api
+from tests.test_preview_host import crop_pump as crop_pump
+from tests.test_preview_layout_batch import batch_host as batch_host
+from tests.test_preview_layout_batch import writer as writer
+from tests.test_preview_runtime_review import runtime_pump as runtime_pump
+
+
+def test_real_host_controller_composition_captures_and_applies_exact_native_state(
+    batch_host, tmp_path
+):
+    from tests.test_api import Api, make_state
+    from tests.test_preview_cropcontroller import client
+    from tests.test_preview_layout_batch import roster
+    from tests.test_preview_runtime_review import eve_on
+    from wingman.preview.geometry import Rect
+
+    r = batch_host
+    r.layouts.transact(
+        lambda p: p.update(excluded=["Bob"], restore_preview_positions=False)
+    )
+    state = make_state(tmp_path)
+    state.settings = r.doc
+    publish = r.runtime._callback
+    api = Api(
+        state,
+        preview_host=r.host,
+        preview_runtime=r.runtime,
+        layout_store=r.layouts,
+        layout_admission=r.host._layout_admission,
+    )
+    r.runtime.set_state_callback(
+        lambda state: (api._preview_runtime_changed(state), publish(state))
+    )
+    assert api._preview_layouts._store is r.layouts
+    assert api._preview_layouts._admission is r.host._layout_admission
+    eve_on(r)
+    roster(r, 2, client(), client("Bob", hwnd=17))
+    hwnd = r.call(lambda: r.host._windows["Alice"].hwnd)
+    r.rectangles[hwnd] = Rect(600, 40, 330, 220)
+    saved = api.create_preview_layout("Actual")
+    assert saved["persisted"]
+    selected = saved["state"]["layouts"][0]
+    assert selected["character_count"] == 2, (
+        "excluded sessions without primaries are captured"
+    )
+    r.rectangles[hwnd] = Rect(40, 40, 320, 210)
+    result = api.apply_preview_layout(selected["id"], selected["revision"])
+    assert result["persisted"] and result["live"] == "applied"
+    assert r.call(lambda: r.host._windows["Alice"].native_rect()) == Rect(
+        600, 40, 330, 220
+    )
+    assert r.reader.get("restore_preview_positions") is False
+    assert r.reader.get("excluded") == ["Bob"]
+    assert r.host._layout_capture is None
+    assert r.host._layout_admission.wait_idle(0)
+
+
+def test_layout_shutdown_timeout_retains_controller_and_runtime_for_retry(
+    tmp_path, monkeypatch
+):
+    api = make_api(tmp_path)
+    controller = api._preview_layouts
+    runtime = api._preview_runtime
+    order = []
+    monkeypatch.setattr(
+        controller, "shutdown", lambda timeout=5: order.append("layouts") or False
+    )
+    monkeypatch.setattr(runtime, "shutdown", lambda: order.append("runtime") or True)
+    api.shutdown_previews()
+    assert order == ["layouts"]
+    assert api._preview_layouts is controller and api._preview_runtime is runtime
+    monkeypatch.setattr(
+        controller, "shutdown", lambda timeout=5: order.append("layouts") or True
+    )
+    api.shutdown_previews()
+    assert order == ["layouts", "layouts", "runtime"]
+
+
+def test_layout_late_commit_after_page_destruction_is_saved_without_publication(
+    tmp_path, monkeypatch
+):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from wingman import settings
+
+    api = make_api(tmp_path)
+    entered, proceed = threading.Event(), threading.Event()
+    original = settings._save_locked
+
+    def persist(*args):
+        entered.set()
+        assert proceed.wait(5)
+        original(*args)
+
+    monkeypatch.setattr(settings, "_save_locked", persist)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(api.set_preview_excluded, "Pilot", True)
+        try:
+            assert entered.wait(5)
+            api._close_eve_runtime()
+            api._window.destroy()
+            api._window.evaluated.clear()
+            assert not api._preview_layouts.shutdown(0)
+        finally:
+            proceed.set()
+        res = pending.result(5)
+    assert res["persisted"] and res["live"] == "deferred"
+    assert not api._window.evaluated
+    assert api._preview_layouts.shutdown(0)
 
 
 def test_api_delivers_only_committed_revisions_to_injected_runtime(
@@ -1852,18 +1960,19 @@ def test_set_preview_excluded_is_a_no_op_without_a_host(tmp_path, monkeypatch):
     api = make_api(tmp_path)
     api._state.settings["preview"] = {}
 
-    assert api.set_preview_excluded("Aiga Otsolen", True) == {
-        "applied": True,
-        "persisted": True,
-        "error": None,
-    }
+    result = api.set_preview_excluded("Aiga Otsolen", True)
+    assert result["applied"] and result["persisted"] and result["error"] is None
+    assert result["live"] == "deferred"
+    assert result["state"]["excluded"] == ["Aiga Otsolen"]
 
 
 def test_get_preview_hotkey_state_reports_disabled(tmp_path):
     api = make_api(tmp_path)
-    api._state.settings["preview"] = {"excluded": ["Aiga Otsolen"]}
+    # The controller owns exclusion authority; bypassing it with a mutable
+    # working dictionary is no longer a simulated committed page choice.
+    api.set_preview_excluded("Aiga Otsolen", True)
     assert api.get_preview_hotkey_state()["excluded"] == ["Aiga Otsolen"]
-    api._state.settings["preview"] = {}
+    api.set_preview_excluded("Aiga Otsolen", False)
     assert api.get_preview_hotkey_state()["excluded"] == []
 
 

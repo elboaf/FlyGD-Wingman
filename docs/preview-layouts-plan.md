@@ -110,6 +110,11 @@ The retained `operation` describes named actions only; ordinary checkbox receipt
 still carry their own operation IDs and do not build a second history. `busy`
 reflects active admission as well as the named slot. Native gestures need no page
 push; a read or attempted action rechecks real admission rather than trusting it.
+Do not latch a transient external-busy capability into permanently disabled UI:
+when `busy` is true without a pending named operation, keep explicit retries
+available and let the backend recheck admission. Known local/named pending work,
+missing hydration and non-busy unavailability still disable the affected actions.
+No polling or new admission-completion page callback is required.
 
 Final receipts contain `{applied, persisted, error, operation_id, live, warning,
 state}`. They are final results, not queue acknowledgements. Before completion,
@@ -627,8 +632,9 @@ navigate away -> settle Apply -> assert no dialog reopen or focus theft
   from supplied records. Save/Update/Apply use `availability.capture`;
   Rename/Remove use `availability.edit`; Preview checkboxes use
   `availability.visibility` plus their own pending ownership. Save also needs a
-  known owner; selection alone stays usable while a mutation is pending. Prompts
-  own free text; Remove confirms with existing danger styling; Apply warns about
+  known owner; selection alone stays usable while a mutation is pending. Treat
+  external-busy capabilities as advisory and retain explicit retry as described
+  above; an ended native gesture sends no new page payload. Prompts own free text; Remove confirms with existing danger styling; Apply warns about
   replacing the affected working arrangement and leaving other characters alone.
   Show the reopen-Off consequence from acknowledged settings, not a guessed value.
 - [ ] Keep saved-layout state separate from the hotkey table. Extend Task 4's
