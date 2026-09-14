@@ -2,7 +2,8 @@
 
 Status: approved for implementation planning in the maintainer conversation,
 after independent review of the lossless-exclusion revision returned SHIP.
-Implementation has not started. Inspected base: `76afd3dc34f20eb071c97f25cd6d891ae11c352a`.
+Implementation is in progress. Publication-ownership scope awaits a maintainer
+decision. Inspected base: `76afd3dc34f20eb071c97f25cd6d891ae11c352a`.
 
 ## Approved behavior
 
