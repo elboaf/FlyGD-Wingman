@@ -38,6 +38,7 @@ def main_api(r, tmp_path, monkeypatch):
         "_on_layout_changed",
         "_on_clients_changed",
         "_on_layouts_changed",
+        "_on_geometry_changed",
         "_on_hotkey_status",
         "_on_bind_captured",
         "_on_crops_changed",

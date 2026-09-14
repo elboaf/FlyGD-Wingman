@@ -20,13 +20,19 @@ vm.runInContext(fs.readFileSync(web + '/app.js', 'utf8'), context);
 const getters = [], writes = [];
 window.WM.send = (method, ...args) => {
   if (method === 'get_preview_hotkey_state') return new Promise(resolve => getters.push(resolve));
-  if (method === 'set_preview_excluded' || method === 'set_preview_binds') return new Promise(resolve => writes.push({method, args, resolve}));
+  if (method === 'set_preview_excluded' || method === 'set_preview_binds') return new Promise((resolve, reject) => writes.push({method, args, resolve, reject}));
+  if (['set_preview_size', 'create_preview_layout', 'apply_preview_layout', 'update_preview_layout',
+       'rename_preview_layout', 'remove_preview_layout'].includes(method)) {
+    return new Promise((resolve, reject) => writes.push({method, args, resolve, reject}));
+  }
+  if (method === 'parse_preview_size') return Promise.resolve({w: 600, h: 400, error: null});
   if (method === 'set_bind_capture') return Promise.resolve(true);
   if (method === 'capture_preview_bind') return Promise.resolve({gesture: 'Ctrl+F8', error: null});
   if (method === 'get_preview_crop_state' || method === 'alert_bookmarks') return Promise.resolve(null);
   throw new Error('Unexpected bridge call ' + method);
 };
 vm.runInContext(fs.readFileSync(web + '/previews.js', 'utf8'), context);
+vm.runInContext(fs.readFileSync(web + '/panel.js', 'utf8'), context);
 const row = name => Array.from(document.querySelectorAll('#preview-binds .lab')).find(el => el.title === name).parentNode;
 const box = name => row(name).querySelector('input[type=checkbox]');
 const bind = name => row(name).querySelector('.bindbtn');
@@ -44,8 +50,234 @@ function change(name, checked) {
     assert.equal(box('Alice').checked, false, 'old initial hydration cannot restore old exclusions');
     return console.log('PASS early');
   }
+  if (data.scenario === 'controls-unhydrated') {
+    for (const action of ['save', 'apply', 'update', 'rename', 'remove']) {
+      const control = document.getElementById('preview-layout-' + action);
+      assert.equal(control.disabled, true); control.click();
+    }
+    assert.equal(writes.length, 0);
+    return console.log('PASS controls-unhydrated');
+  }
   getters.shift()(clone(data.initial)); await tick();
-  if (data.scenario === 'reversed') {
+  if (data.scenario.startsWith('controls-')) {
+    const el = id => document.getElementById(id);
+    const select = el('preview-layout-select');
+    const button = action => el('preview-layout-' + action);
+    assert.ok(select, 'labelled saved-layout selector exists');
+    assert.equal(el('preview-layout-save').textContent, 'Save current as…');
+    assert.equal(el('preview-layout-status').getAttribute('role'), 'status');
+    const choose = receipt => {
+      push(receipt);
+      select.value = receipt.state.layouts[0].id;
+      select.dispatchEvent({type: 'change'});
+    };
+    const accept = async text => {
+      if (text !== undefined) el('dlg-input').value = text;
+      el('dlg-ok').click(); await tick();
+    };
+    const status = () => el('preview-layout-status').textContent;
+    if (data.scenario === 'controls-unavailable') {
+      window.onPreviewHotkeys(clone(data.unavailable));
+      assert.equal(button('save').disabled, true);
+      assert.match(status(), /Open a named EVE client/);
+    } else if (data.scenario === 'controls-reopen') {
+      choose(data.created);
+      assert.equal(el('preview-layout-reopen').hidden, true, 'unknown settings do not guess Off');
+      document.dispatchEvent({type: 'wm:settings', detail: {settings: {preview: {restore_preview_positions: false}}}});
+      assert.equal(el('preview-layout-reopen').hidden, false);
+      button('apply').click();
+      assert.match(el('dlg-body').textContent, /default stack/);
+      el('dlg-cancel').click(); await tick();
+      document.dispatchEvent({type: 'wm:preview-restore-positions', detail: {enabled: true}});
+      assert.equal(el('preview-layout-reopen').hidden, true);
+    } else if (data.scenario === 'controls-staged-receipt') {
+      choose(data.created);
+      button('apply').click(); await accept();
+      const pending = writes.at(-1);
+      window.WM.previewCropScreenshot({kind: 'preview-crop-screenshot-v1', owner: 'Alice', preview: clone(data.initial),
+        crops: {...data.initial.crops, definitions: {Alice: {}}}});
+      pending.resolve(clone(data.geometry_apply)); await tick();
+      assert.equal(box('Alice').checked, true);
+      button('save').click(); assert.equal(writes.length, 1);
+      window.WM.previewCropScreenshot(null);
+      assert.equal(select.value, data.created.state.layouts[0].id);
+      assert.equal(box('Alice').checked, false);
+      assert.equal(el('overlay').hidden, true);
+    } else if (data.scenario === 'controls-failed-save' || data.scenario === 'controls-incomplete') {
+      choose(data.created);
+      button('save').click(); await accept('Refused');
+      writes.at(-1).resolve(clone(data.scenario === 'controls-failed-save' ? data.failed_save : data.incomplete)); await tick();
+      assert.match(status(), data.scenario === 'controls-failed-save' ? /Disk unavailable/ : /incomplete/);
+      assert.equal(button('save').disabled, false);
+    } else if (data.scenario === 'controls-empty') {
+      assert.equal(button('apply').disabled, true);
+      assert.equal(button('save').disabled, false, 'known offline owner can be saved');
+      assert.match(status(), /Save current as/);
+    } else if (data.scenario === 'controls-select') {
+      choose(data.created);
+      assert.equal(writes.length, 0);
+      assert.equal(getters.length, 0);
+      window.WM.settingsTab('previews', 'characters');
+      window.WM.settingsTab('previews', 'windows');
+      assert.equal(select.value, data.created.state.layouts[0].id);
+      assert.equal(getters.length, 0, 'subpages never add reads');
+      window.onPreviewHotkeys(clone(data.initial));
+      assert.equal(select.value, data.created.state.layouts[0].id);
+    } else if (data.scenario === 'controls-cancel') {
+      choose(data.created);
+      for (const action of ['save', 'apply', 'update', 'rename', 'remove']) {
+        button(action).focus(); button(action).click();
+        assert.equal(el('overlay').hidden, false);
+        el('dlg-cancel').click(); await tick();
+        assert.equal(writes.length, 0);
+        assert.equal(document.activeElement, button(action), 'Cancel returns to the invoker');
+      }
+    } else if (data.scenario === 'controls-busy') {
+      choose(data.created);
+      push(data.refused);
+      assert.equal(button('apply').disabled, false, 'external busy without a named operation remains retryable');
+      button('apply').click(); await accept();
+      writes.at(-1).resolve(clone(data.stale)); await tick();
+      assert.match(status(), /changed/);
+      assert.equal(button('apply').disabled, false);
+    } else if (data.scenario === 'controls-errors') {
+      choose(data.created);
+      button('save').click(); await accept('HIDDEN');
+      writes.at(-1).resolve(clone(data.duplicate)); await tick();
+      assert.match(status(), /already/);
+      button('apply').click(); await accept();
+      writes.at(-1).resolve(clone(data.stale)); await tick();
+      assert.match(status(), /changed/);
+      button('save').click(); await accept('Fleet');
+      writes.at(-1).reject(new Error('Bridge disconnected')); await tick();
+      assert.match(status(), /Bridge disconnected/);
+      assert.equal(button('save').disabled, false);
+    } else if (data.scenario === 'controls-staging' || data.scenario === 'controls-capture') {
+      choose(data.created);
+      button('save').click();
+      if (data.scenario === 'controls-staging') {
+        window.WM.previewCropScreenshot({kind: 'preview-crop-screenshot-v1', owner: 'Alice', preview: clone(data.initial),
+          crops: {...data.initial.crops, definitions: {Alice: {}}}});
+        window.WM.previewCropScreenshot(null);
+      } else {
+        push(data.visible);
+        bind('Bob').click(); await tick();
+      }
+      await accept('Late');
+      assert.equal(writes.length, 0, 'late dialog cannot mutate across staging or a newer capture');
+      if (data.scenario === 'controls-capture') assert.equal(bind('Bob').textContent, 'Press a key…');
+    } else if (data.scenario === 'controls-pending') {
+      choose(data.created);
+      const ordinary = change('Alice', true);
+      button('apply').click(); await accept();
+      const apply = writes.at(-1);
+      assert.equal(apply.method, 'apply_preview_layout');
+      button('apply').click();
+      assert.equal(writes.length, 2, 'repeated click cannot queue another operation');
+      assert.equal(select.disabled, false, 'selection stays usable while named work is pending');
+      push(data.bulk);
+      ordinary.resolve(clone(data.visible)); await tick();
+      assert.equal(box('Bob').checked, false);
+      document.dispatchEvent({type: 'wm:section', detail: 'general'});
+      const other = el('btn-settings'); other.focus();
+      apply.resolve(clone(data.geometry_apply)); await tick();
+      assert.equal(el('overlay').hidden, true);
+      assert.equal(document.activeElement, other, 'late receipt cannot steal focus');
+    } else {
+      const action = data.scenario.slice('controls-'.length);
+      choose(action === 'rename' ? data.updated : action === 'remove' ? data.renamed : data.created);
+      const selected = select.value;
+      button(action).click();
+      assert.equal(el('overlay').hidden, false);
+      if (action === 'remove') assert.equal(el('dlg-ok').classList.contains('danger'), true);
+      if (action === 'apply') assert.match(el('dlg-body').textContent, /other characters|Other characters/);
+      await accept(action === 'save' ? 'Hidden' : action === 'rename' ? '__proto__' : undefined);
+      const pending = writes.at(-1);
+      const methods = {save: 'create', apply: 'apply', update: 'update', rename: 'rename', remove: 'remove'};
+      assert.equal(pending.method, methods[action] + '_preview_layout');
+      if (action !== 'save') assert.equal(pending.args[0], selected);
+      const receipt = {save: data.created, apply: data.geometry_apply, update: data.updated, rename: data.renamed, remove: data.removed}[action];
+      pending.resolve(clone(receipt)); await tick();
+      assert.match(status(), /saved|Saved|Applied|applied|Renamed|Removed/);
+      if (action === 'remove') assert.equal(select.value, '');
+      if (action === 'rename') assert.ok(select.options.some(option => option.textContent.includes('__proto__')));
+    }
+  } else if (data.scenario === 'row-rejected') {
+    const pending = change('Alice', false);
+    pending.reject(new Error('Bridge disconnected')); await tick();
+    assert.equal(box('Alice').disabled, false);
+    assert.match(document.getElementById(box('Alice').getAttribute('aria-describedby')).textContent, /Bridge disconnected/);
+  } else if (data.scenario === 'row-feedback') {
+    const first = change('Alice', false);
+    first.resolve(clone(data.refused)); await tick();
+    const described = box('Alice').getAttribute('aria-describedby');
+    assert.ok(described, 'refusal is linked to its own row');
+    assert.match(document.getElementById(described).textContent, /pending/);
+    const second = change('Bob', false);
+    second.resolve(clone(data.refused)); await tick();
+    assert.match(document.getElementById(box('Alice').getAttribute('aria-describedby')).textContent, /pending/);
+    const retry = change('Alice', true);
+    retry.resolve(clone(data.retry)); await tick();
+    assert.match(document.getElementById(box('Bob').getAttribute('aria-describedby')).textContent, /pending/);
+  } else if (data.scenario.startsWith('geometry-')) {
+    const sizeDialog = () => {
+      if (!document.querySelector('[data-preview-detail-control="size"]')) {
+        row('Alice').querySelector('[data-preview-configure]').click();
+      }
+      document.querySelector('[data-preview-detail-control="size"]').click();
+      return document.getElementById('dlg-input').value;
+    };
+    if (data.scenario.startsWith('geometry-dialog-')) {
+      sizeDialog();
+      if (data.scenario === 'geometry-dialog-navigation') document.dispatchEvent({type: 'wm:section', detail: 'general'});
+      else { bind('Bob').click(); await tick(); }
+      document.getElementById('dlg-input').value = '600x400';
+      document.getElementById('dlg-ok').click(); await tick();
+      assert.equal(writes.length, 0, 'Size dialog may not act after navigation or a newer capture');
+    } else if (data.scenario === 'geometry-ack') {
+      assert.equal(sizeDialog(), '500x300');
+      document.getElementById('dlg-input').value = '600x400';
+      document.getElementById('dlg-ok').click(); await tick();
+      const ack = writes.at(-1);
+      assert.equal(ack.method, 'set_preview_size');
+      // The 600 edit was never sampled. Apply returns equal 500 values with a
+      // newer observation, so value comparison cannot fence the old ACK.
+      window.onPreviewGeometry(clone(data.geometry_apply.geometry));
+      ack.resolve(clone(data.size_ack)); await tick();
+      assert.equal(sizeDialog(), '500x300', 'queue ACK must not overwrite settled Apply geometry');
+      document.getElementById('dlg-cancel').click(); await tick();
+      window.onPreviewGeometry(clone(data.newer_geometry));
+      assert.equal(sizeDialog(), '700x450', 'later ordinary Size wins');
+      document.getElementById('dlg-cancel').click(); await tick();
+      window.onPreviewGeometry(clone(data.newer_copy));
+      assert.equal(sizeDialog(), '640x480', 'later ordinary Copy wins');
+      document.getElementById('dlg-cancel').click(); await tick();
+      window.onPreviewGeometry(clone(data.newer_reset));
+      assert.equal(document.querySelector('[data-preview-detail-control="size"]'), null, 'Reset retires geometry-only Size eligibility');
+    } else if (data.scenario === 'geometry-getter') {
+      document.dispatchEvent({type: 'wm:section', detail: 'previews'});
+      window.onPreviewGeometry(clone(data.newer_geometry));
+      getters.shift()(clone(data.initial)); await tick();
+      assert.equal(sizeDialog(), '700x450', 'delayed getter overlays accepted geometry');
+      document.getElementById('dlg-cancel').click(); await tick();
+      window.onPreviewHotkeys(clone(data.initial));
+      assert.equal(sizeDialog(), '700x450', 'full push overlays accepted geometry too');
+    } else if (data.scenario === 'geometry-keybind') {
+      bind('Alice').click(); await tick();
+      document.dispatchEvent({type: 'keydown', key: 'F8', code: 'F8', ctrlKey: true}); await tick();
+      const pending = writes.at(-1);
+      window.onPreviewGeometry(clone(data.newer_geometry));
+      pending.resolve(true); await tick();
+      assert.equal(bind('Alice').textContent, 'Ctrl+F8');
+    } else {
+      const fixture = {kind: 'preview-crop-screenshot-v1', owner: 'Alice', preview: clone(data.initial),
+        crops: {...data.initial.crops, definitions: {Alice: {}}}};
+      window.WM.previewCropScreenshot(fixture);
+      window.onPreviewGeometry(clone(data.newer_geometry));
+      window.WM.previewCropScreenshot(null);
+      assert.equal(sizeDialog(), '700x450');
+    }
+  } else if (data.scenario === 'reversed') {
     const first = change('Alice', false), second = change('Bob', false);
     second.resolve(clone(data.both)); await tick();
     first.resolve(clone(data.hidden)); await tick();

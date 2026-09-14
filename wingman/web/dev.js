@@ -525,10 +525,7 @@
   // {applied, persisted, error} shape previews.js reverts the box on, and
   // the re-render it drives off a successful reply, which is how an
   // opted-out row's other controls go grey in the browser.
-  api.set_preview_excluded = function (name, excluded) {
-    console.log('DEV api.set_preview_excluded(', name, excluded, ')');
-    return Promise.resolve({applied: true, persisted: true, error: null});
-  };
+  // Revisioned Preview-choice receipts are installed beside saved layouts below.
 
   // Task 8: a read that validates rather than a plain double -- the page
   // sends whatever was typed and expects {w, h, error} back, mirroring
@@ -2575,6 +2572,13 @@
     "lock_default": false,
     "never_minimize": ["Tanuki Solette"],
     "excluded": ["Sera Vahn"],
+    "geometry_revision": 1,
+    "layout_state": {"revision": 1, "layouts": [], "owners": [
+      "Aiga Otsolen", "Zuelo Parvi", "Corvin Veles", "Tanuki Solette",
+      "Aleksandrina Shadowbanes Voidstriders", "Mara Veld", "Niko Avar",
+      "Sera Vahn", "Dorin Kalt", "Iria Sol", "Vex Noren", "Yara Tolen"
+    ], "excluded": ["Sera Vahn"], "busy": false,
+      "availability": {"capture": true, "edit": true, "visibility": true}, "operation": null},
     "sizes": {"Aiga Otsolen": [1280, 720]},
     "client_sizes": {"Aiga Otsolen": [1920, 1080], "Zuelo Parvi": [1600, 900]},
     "sizable": ["Aiga Otsolen", "Zuelo Parvi", "Corvin Veles", "Tanuki Solette", "Mara Veld"],
@@ -2602,9 +2606,128 @@
       marker: Object.prototype.hasOwnProperty.call(markers, name) ? markers[name] : ''});
   };
 
+  // Saved layout browser fixtures — no production settings/native behavior.
+  var _devLayouts = JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE.layout_state));
+  var _devLayoutSnapshots = Object.create(null), _devLayoutOperation = 0;
+  function _devGeometry() {
+    var fixture = DEV_PREVIEW_HOTKEYS_FIXTURE;
+    fixture.geometry_revision += 1;
+    return JSON.parse(JSON.stringify({geometry_revision: fixture.geometry_revision,
+      sizes: fixture.sizes, sizable: fixture.sizable, layout_sources: fixture.layout_sources,
+      client_sizes: fixture.client_sizes}));
+  }
+  function _devGeometryReceipt() {
+    var geometry = _devGeometry();
+    setTimeout(function () { if (window.onPreviewGeometry) window.onPreviewGeometry(geometry); }, 0);
+    return Promise.resolve({applied: true, persisted: true, error: null});
+  }
+  api.set_preview_size = function (name, w, h) {
+    var fixture = DEV_PREVIEW_HOTKEYS_FIXTURE;
+    Object.defineProperty(fixture.sizes, name, {value: [w, h], writable: true, enumerable: true, configurable: true});
+    fixture.layout_sources.forEach(function (source) {
+      if (source.name === name) { source.geometry.w = w; source.geometry.h = h; }
+    });
+    return _devGeometryReceipt();
+  };
+  api.copy_preview_layout = function (target, name) {
+    var fixture = DEV_PREVIEW_HOTKEYS_FIXTURE;
+    var source = fixture.layout_sources.filter(function (source) { return source.name === name; })[0];
+    if (!source) return Promise.resolve({applied: false, persisted: false, error: 'That saved geometry is unavailable.'});
+    var copied = JSON.parse(JSON.stringify(source));
+    copied.name = target; copied.online = fixture.characters.indexOf(target) !== -1;
+    fixture.layout_sources = fixture.layout_sources.filter(function (source) { return source.name !== target; });
+    fixture.layout_sources.push(copied);
+    if (fixture.sizable.indexOf(target) === -1) fixture.sizable.push(target);
+    return api.set_preview_size(target, copied.geometry.w, copied.geometry.h);
+  };
+  api.reset_preview_layouts = function () {
+    var fixture = DEV_PREVIEW_HOTKEYS_FIXTURE;
+    fixture.layout_sources = []; fixture.sizes = {};
+    fixture.sizable = fixture.characters.slice();
+    return _devGeometryReceipt();
+  };
+  function _devLayoutReceipt(action, error) {
+    _devLayouts.revision += 1;
+    var operation = {id: ++_devLayoutOperation, action: action, pending: false,
+      applied: !error, persisted: !error, error: error || null, warning: null,
+      live: action === 'apply' || action === 'excluded' ? 'deferred' : null};
+    if (action !== 'excluded') _devLayouts.operation = operation;
+    var geometry = _devGeometry();
+    var state = JSON.parse(JSON.stringify(_devLayouts));
+    setTimeout(function () {
+      if (window.onPreviewLayouts) window.onPreviewLayouts(state);
+      if (window.onPreviewGeometry) window.onPreviewGeometry(geometry);
+    }, 0);
+    return Promise.resolve({applied: operation.applied, persisted: operation.persisted,
+      error: operation.error, warning: null, live: operation.live,
+      operation_id: operation.id, state: state, geometry: geometry});
+  }
+  function _devLayoutRecord(id, revision) {
+    return _devLayouts.layouts.filter(function (record) {
+      return record.id === id && record.revision === revision;
+    })[0];
+  }
+  function _devLayoutName(name, id) {
+    return typeof name === 'string' && name.trim() && !/[\x00-\x1f\x7f]/.test(name)
+      && !_devLayouts.layouts.some(function (record) {
+        return record.id !== id && record.name.toLowerCase() === name.trim().toLowerCase();
+      });
+  }
+  function _devLayoutCapture(id) {
+    var fixture = DEV_PREVIEW_HOTKEYS_FIXTURE;
+    _devLayoutSnapshots[id] = JSON.parse(JSON.stringify({sizes: fixture.sizes,
+      layout_sources: fixture.layout_sources, sizable: fixture.sizable, excluded: _devLayouts.excluded}));
+  }
+  api.create_preview_layout = function (name) {
+    if (!_devLayoutName(name)) return _devLayoutReceipt('save', 'Enter a unique, nonblank saved layout name.');
+    var id = 'dev-layout-' + (_devLayoutOperation + 1);
+    _devLayouts.layouts.push({id: id, name: name.trim(), revision: 'dev-' + (_devLayoutOperation + 1),
+      character_count: _devLayouts.owners.length});
+    _devLayoutCapture(id);
+    return _devLayoutReceipt('save');
+  };
+  api.apply_preview_layout = function (id, revision) {
+    if (!_devLayoutRecord(id, revision)) return _devLayoutReceipt('apply', 'That saved layout changed. Select it again and retry.');
+    var saved = JSON.parse(JSON.stringify(_devLayoutSnapshots[id]));
+    DEV_PREVIEW_HOTKEYS_FIXTURE.sizes = saved.sizes;
+    DEV_PREVIEW_HOTKEYS_FIXTURE.layout_sources = saved.layout_sources;
+    DEV_PREVIEW_HOTKEYS_FIXTURE.sizable = saved.sizable;
+    _devLayouts.excluded = saved.excluded;
+    return _devLayoutReceipt('apply');
+  };
+  api.update_preview_layout = function (id, revision) {
+    var record = _devLayoutRecord(id, revision);
+    if (!record) return _devLayoutReceipt('update', 'That saved layout changed. Select it again and retry.');
+    _devLayoutCapture(id);
+    record.revision = 'dev-' + (_devLayoutOperation + 1);
+    record.character_count = _devLayouts.owners.length;
+    return _devLayoutReceipt('update');
+  };
+  api.rename_preview_layout = function (id, revision, name) {
+    var record = _devLayoutRecord(id, revision);
+    if (!record) return _devLayoutReceipt('rename', 'That saved layout changed. Select it again and retry.');
+    if (!_devLayoutName(name, id)) return _devLayoutReceipt('rename', 'Enter a unique, nonblank saved layout name.');
+    record.name = name.trim(); record.revision = 'dev-' + (_devLayoutOperation + 1);
+    return _devLayoutReceipt('rename');
+  };
+  api.remove_preview_layout = function (id, revision) {
+    if (!_devLayoutRecord(id, revision)) return _devLayoutReceipt('remove', 'That saved layout changed. Select it again and retry.');
+    _devLayouts.layouts = _devLayouts.layouts.filter(function (record) { return record.id !== id; });
+    delete _devLayoutSnapshots[id];
+    return _devLayoutReceipt('remove');
+  };
+  api.set_preview_excluded = function (name, excluded) {
+    _devLayouts.excluded = _devLayouts.excluded.filter(function (owner) { return owner !== name; });
+    if (excluded) _devLayouts.excluded.push(name);
+    return _devLayoutReceipt('excluded');
+  };
   api.get_preview_hotkey_state = function () {
     console.log('DEV api.get_preview_hotkey_state()');
     var full = JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE));
+    var geometry = _devGeometry();
+    Object.keys(geometry).forEach(function (key) { full[key] = geometry[key]; });
+    full.layout_state = JSON.parse(JSON.stringify(_devLayouts));
+    full.excluded = full.layout_state.excluded.slice();
     full.hotkeys = _devHotkeysCopy();
     full.crops = _devCropCopy();
     return Promise.resolve(full);
@@ -2932,6 +3055,10 @@
         var full = JSON.parse(JSON.stringify(DEV_PREVIEW_HOTKEYS_FIXTURE));
         full.hotkeys = _devHotkeysCopy();
         full.crops = _devCropCopy();
+        full.layout_state = JSON.parse(JSON.stringify(_devLayouts));
+        full.excluded = full.layout_state.excluded.slice();
+        var geometry = _devGeometry();
+        Object.keys(geometry).forEach(function (key) { full[key] = geometry[key]; });
         window.onPreviewHotkeys(full);
       }
     }, 0);

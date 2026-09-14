@@ -62,6 +62,16 @@ def test_real_host_controller_composition_captures_and_applies_exact_native_stat
     r.rectangles[hwnd] = Rect(40, 40, 320, 210)
     result = api.apply_preview_layout(selected["id"], selected["revision"])
     assert result["persisted"] and result["live"] == "applied"
+    assert (
+        result["geometry"]["geometry_revision"] > saved["geometry"]["geometry_revision"]
+    )
+    assert result["geometry"]["sizes"]["Alice"] == [330, 220]
+    assert result["geometry"]["layout_sources"][0]["geometry"] == {
+        "x": 600,
+        "y": 40,
+        "w": 330,
+        "h": 220,
+    }
     assert r.call(lambda: r.host._windows["Alice"].native_rect()) == Rect(
         600, 40, 330, 220
     )
@@ -1280,9 +1290,13 @@ def test_get_preview_hotkey_state_reports_which_characters_can_be_sized(
     in layouts" in JavaScript would put it in two places.
     """
     api = make_api(tmp_path)
-    api._state.settings["preview"] = {
-        "layouts": {"Aiga Otsolen": {"x": 0, "y": 0, "w": 320, "h": 210}},
-    }
+    from wingman import settings as settings_mod
+
+    # Geometry samples read committed memory, not unacknowledged dict edits.
+    with settings_mod.update(api._state.settings) as doc:
+        doc["preview"] = {
+            "layouts": {"Aiga Otsolen": {"x": 0, "y": 0, "w": 320, "h": 210}},
+        }
     # No host at all: only the dragged character qualifies.
     assert api.get_preview_hotkey_state()["sizable"] == ["Aiga Otsolen"]
 
@@ -1305,7 +1319,8 @@ def test_get_preview_hotkey_state_reports_which_characters_can_be_sized(
 
     # Neither running nor dragged: absent, so the page draws no control.
     api._preview_host = None
-    api._state.settings["preview"] = {"seen": ["Nobody Home"]}
+    with settings_mod.update(api._state.settings) as doc:
+        doc["preview"] = {"seen": ["Nobody Home"]}
     assert api.get_preview_hotkey_state()["sizable"] == []
 
 
@@ -1997,11 +2012,12 @@ def test_apply_preview_default_size_resizes_every_open_preview(tmp_path):
         "error": None,
     }
     assert host.bulk_sizes == [(640, 392)]
-    # The cards show each character's size; every one just changed, so the
-    # push that repaints them is queued here rather than waiting a sweep.
+    # Refresh current geometry, not requested dimensions or an unrelated
+    # keybind table. The real host/store notify again after settlement.
     api._fleet_worker.iterate_once()
-    pushes = [c for c in api._window.evaluated if "onPreviewHotkeys" in c]
+    pushes = [c for c in api._window.evaluated if "onPreviewGeometry" in c]
     assert len(pushes) == 1
+    assert not any("onPreviewHotkeys" in c for c in api._window.evaluated)
 
 
 def test_apply_preview_default_size_is_refused_while_previews_are_stopped(tmp_path):

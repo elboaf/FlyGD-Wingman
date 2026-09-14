@@ -39,8 +39,17 @@ class PreviewLayoutsPorts:
         Future[PrimaryLayoutLiveResult],
     ]
     refresh_visibility: Callable[[PrimaryLayoutLease], Future[PrimaryLayoutLiveResult]]
+    refresh_geometry: Callable[[], dict]
     release: Callable[[PrimaryLayoutLease], None]
     publish_state: Callable[[dict], None]
+
+
+class PreviewGeometryUnavailable(Exception):
+    """A failed fresh observation retains the last detached projection, if any."""
+
+    def __init__(self, message: str, geometry: dict | None):
+        super().__init__(message)
+        self.geometry = geometry
 
 
 class _Unchanged(Exception):
@@ -219,13 +228,14 @@ class PreviewLayoutsController:
             return f"Could not refresh Preview layout state: {exc}"
         return None
 
-    def _receipt(self, operation) -> dict:
+    def _receipt(self, operation, geometry=None) -> dict:
         return {
             **{
                 k: operation[k]
                 for k in ("applied", "persisted", "error", "live", "warning")
             },
             "operation_id": operation["id"],
+            "geometry": geometry,
             "state": self.state(),
         }
 
@@ -270,6 +280,7 @@ class PreviewLayoutsController:
         captured = None
         target = None
         warnings = []
+        geometry = None
         try:
             try:
                 lease = self._admission.try_begin(
@@ -406,6 +417,18 @@ class PreviewLayoutsController:
                     warnings.append(
                         f"Saved, but live Preview application is incomplete: {exc}"
                     )
+            if operation["persisted"]:
+                try:
+                    # Native and retained authority have settled. Apply still
+                    # owns exclusive admission; metadata/visibility remain shared.
+                    geometry = self._ports.refresh_geometry()
+                except Exception as exc:
+                    logger.exception("Could not sample settled Preview geometry")
+                    if isinstance(exc, PreviewGeometryUnavailable):
+                        geometry = exc.geometry
+                    warnings.append(
+                        f"Saved, but could not refresh Preview geometry: {exc}"
+                    )
         finally:
             if lease is not None:
                 try:
@@ -432,7 +455,7 @@ class PreviewLayoutsController:
                         if named and self._operation["id"] == operation["id"]:
                             self._operation = dict(operation)
                             self._revision += 1
-                receipt = self._receipt(operation)
+                receipt = self._receipt(operation, geometry)
             finally:
                 with self._condition:
                     self._active.remove(operation["id"])

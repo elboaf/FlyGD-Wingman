@@ -351,6 +351,7 @@ class PreviewHost:
         layout_store=None,
         layout_admission=None,
         preview_snapshot: Callable[[], dict] | None = None,
+        on_geometry_changed: Callable[[], None] | None = None,
     ):
         # Standalone/manual callers retain EVE-only start(). Binding a runtime
         # callback opts into explicit composite demands before any pump exists.
@@ -445,6 +446,7 @@ class PreviewHost:
         # Announces only when source eligibility changes (a character gains
         # its first complete layout), not on every drag coordinate.
         self._on_layouts_changed = on_layouts_changed
+        self._on_geometry_changed = on_geometry_changed
         self._saved = dict(saved_layouts or {})
         # Read per placement, never captured: a preview is created whenever
         # its client appears, which is usually mid-session, so the value
@@ -855,6 +857,7 @@ class PreviewHost:
                 self._eve_epoch,
                 self._companion_epoch,
             )
+        self._announce_geometry_changed()
         if callback is not None:
             callback(HostAck(*epochs, outcome))
 
@@ -937,6 +940,7 @@ class PreviewHost:
             self._post(win32.WM_APP_FAMILIES)
             notification = self._refresh_metadata_locked()
         self._deliver_metadata(notification)
+        self._announce_geometry_changed()
         if not demand.eve:
             self._advance_layout_batch(native=False)
             self._advance_visibility(native=False)
@@ -1573,6 +1577,7 @@ class PreviewHost:
                         )
                     self._saved = dict(request.commit.layouts)
                     self._layout_commit_revision = request.commit.revision
+                self._announce_geometry_changed()
                 result = (
                     self._apply_layout_on_owner(request)
                     if native
@@ -1942,6 +1947,7 @@ class PreviewHost:
                 if held is not lease
             }
         if canceled is not None:
+            self._announce_geometry_changed()
             if canceled.commit is None:
                 canceled.future.set_exception(
                     RuntimeError("Preview capture was released.")
@@ -2007,6 +2013,7 @@ class PreviewHost:
                         self._saved = saved
                         self._primary_geometry[key] = entry
                     self._on_layout_changed(key, entry.rect, entry.locked)
+                    self._announce_geometry_changed()
         return self._flush_layouts or (lambda: None)
 
     def _advance_primary(self, *, native: bool) -> None:
@@ -2060,6 +2067,7 @@ class PreviewHost:
                         else:
                             with self._lock:
                                 self._saved = {}
+                            self._announce_geometry_changed()
                 except Exception:
                     # Failure cannot replay a partially delivered native phase.
                     logger.exception("Could not complete primary preview layout change")
@@ -2143,9 +2151,19 @@ class PreviewHost:
             saved = dict(self._saved)
             saved[stable_key] = layout.Entry(rect, locked)
             self._saved = saved
+        self._announce_geometry_changed()
         self._on_layout_changed(stable_key, rect, locked)
         if first_layout:
             self._announce_layouts_changed()
+
+    def _announce_geometry_changed(self) -> None:
+        if self._closing or self._on_geometry_changed is None:
+            return
+        try:
+            # Only a bounded dirty admission. Never sample or deliver on the pump.
+            self._on_geometry_changed()
+        except Exception:
+            logger.exception("on_geometry_changed callback raised")
 
     def _announce_layouts_changed(self) -> None:
         # A final freeze can record the first primary drag after WebView closed.
@@ -2603,6 +2621,7 @@ class PreviewHost:
             saved = dict(self._saved)
             saved[stable_key] = entry
             self._saved = saved
+        self._announce_geometry_changed()
 
     def replace_layout(self, stable_key: str, entry) -> bool:
         """Commit an offline edit without borrowing native pump liveness."""
@@ -2628,6 +2647,7 @@ class PreviewHost:
                     saved = dict(self._saved)
                     saved[stable_key] = entry
                     self._saved = saved
+            self._announce_geometry_changed()
             return True
         finally:
             self.release_primary_layout(lease)
@@ -2652,6 +2672,7 @@ class PreviewHost:
             self._saved = {}
             self._pending_layouts = {}
             leases, self._pending_layout_leases = self._pending_layout_leases, []
+        self._announce_geometry_changed()
         for lease in leases:
             self.release_primary_layout(lease)
 
@@ -2705,6 +2726,7 @@ class PreviewHost:
                     retained = True
                     # Failure retains readiness for a later existing pump turn.
                     self._post(win32.WM_APP_APPLY_LAYOUTS)
+            self._announce_geometry_changed()
             return COPY_OK
         finally:
             if not retained:
@@ -5127,7 +5149,10 @@ class PreviewHost:
                 if w > 0 and h > 0:
                     sizes[key] = (w, h)
         with self._lock:
+            changed = sizes != self._client_sizes
             self._client_sizes = sizes
+        if changed:
+            self._announce_geometry_changed()
 
     def _freeze_primary_gestures(self) -> None:
         # Only the pump samples window geometry. Reset's earlier gesture must
@@ -5350,6 +5375,7 @@ class PreviewHost:
         self._foreground = 0
         self._last_character_by_process = {}
         self._client_sizes = {}
+        self._announce_geometry_changed()
         self._registered_text = {}
         self._last_cycled = None
         for key, win in list(self._windows.items()):

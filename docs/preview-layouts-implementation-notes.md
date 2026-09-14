@@ -763,3 +763,124 @@ coordinator's review. Geometry ordering/Off refresh/per-row feedback/controls st
 Task 5. Portable regressions do not establish browser rendering or real Windows/
 WebView2/live-EVE acceptance. No network/GitHub, app/EVE/profile/clipboard access,
 other worktrees, push/PR/merge, amend or hook bypass occurred.
+
+## Task 5 — settled geometry and explicit Saved layouts controls
+
+Base: `11f68b30b76835a48509a82586fee35a2e1b883d`. Task 5 only; the approved
+shared presentation owner and Tasks 1–4 remain in place. No Task 6 integration,
+new settings, host generation, worker, JavaScript module or route.
+
+### Geometry producer/consumer foundation
+
+Api now serializes fresh committed-Preview and detached host-memory observations
+under `_preview_geometry_lock`. Every successful sample advances
+`geometry_revision`, including unchanged geometry. Size defaults use committed
+layouts/configured defaults; Copy uses retained host layouts even while Off;
+Size eligibility combines eligible live names and committed geometry; client
+sizes are eligible host samples only. The full getter takes all four fields
+from one sample. The now-unused `_preview_sizes` implementation was removed;
+its tests exercise the real sampler and committed settings transactions.
+
+The existing presentation mailbox gains only a geometry dirty bit and delivers
+`onPreviewGeometry`. Main's data-only callbacks cover discovery, retained geometry,
+eligibility and client-size changes. Store callbacks run after successful `_write`,
+`replace`, `clear` and `transact` commits, outside writer/settings locks; callback
+failure is logged without falsifying durable success. Default-size commits also
+notify. Ordinary Reset/default-size refreshes no longer replace the keybind table.
+No native, disk, controller-state or page work runs inside the sampling lock.
+
+`PreviewLayoutsPorts.refresh_geometry` runs after native/retained settlement and
+before lease release. Final receipts include `geometry`. A failed sample retains
+the Api cache (or null), preserves durable success and adds a warning through the
+narrow internal `PreviewGeometryUnavailable` exception. Page `acceptGeometry`
+maintains one high-water mark for events, receipts and both full-state paths.
+Geometry delivery never increments the keybind `pushes` counter. The optimistic
+requested-size ACK patch is deleted, including the unsampled 500→600→Apply500 case.
+Later ordinary Size/Copy/Reset and newer observations outrank delayed old replies.
+
+### Controls and ownership
+
+The existing Placement disclosure now contains a labelled, page-local selector
+and wrapping Apply…, Save current as…, Update saved…, Rename… and Remove… rows.
+Selection is never an active layout and makes no bridge call. Named operations
+use existing page dialogs and exact record hashes; Save requires known owners.
+Capabilities remain advisory for external busy state, preserving explicit retry
+without polling. Named pending work blocks conflicting actions, not selection.
+Missing hydration blocks every mutation. Names are rendered through DOM text.
+
+Dialogs disarm capture on entry. Capture, navigation and screenshot boundaries
+invalidate delayed dialog/parse continuations. A dialog keeps its invoker
+focusable for panel.js's synchronous Cancel return; after acceptance, focus moves
+locally only if that invoker still owns it. Settled receipts never restore focus.
+Screenshot staging retains separate live geometry/layout/selection state and
+buffers real receipts without authorizing fixture mutations. Existing group
+name drafts and table/capture render ownership are preserved.
+
+Exclusion feedback is visible, full-row and linked with `aria-describedby`.
+Refusal, deferred/incomplete outcomes and transport failure remain per owner;
+a retry cannot erase another row's error. The single layout status stays mounted.
+Reopen-Off consequences use acknowledged settings and a narrow post-ACK event,
+not the checkbox's uncommitted value. `settings.js` gained that event only.
+
+`TextPageTree` feeds the production app/previews/panel Node harness.
+`screenshot_dom.cjs` consumes opt-in static `node.text` before children; tests
+prove real control text survives and structure-only fixtures remain unchanged.
+Only `dev.js` and existing fixture transports fabricate data. Its revisioned
+saved-layout/geometry fixtures support the new controls and ordinary geometry.
+
+### Task 5 TDD and intermediate verification
+
+All Python/Ruff invocations use
+`UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync`.
+The supplied Task 4 baseline was not rerun.
+
+- Geometry RED: 11 expected missing-sampler/callback failures after correcting
+  test setup to initialize Preview. Initial geometry/controller GREEN: 56 passed.
+- Retained second-drag RED exposed the missing pre-debounce notification; the
+  callback and post-commit tests now distinguish Copy and Size authorities.
+- Four production-page geometry scenarios failed on missing onPreviewGeometry;
+  the foundation gate then passed 233 tests, 35 DOM tests and all-page JS smoke.
+- Fourteen control/per-row scenarios failed before markup/behavior existed.
+  Subsequent RED cases covered rejected exclusion promises, stale Size-dialog
+  navigation/capture, ordinary Reset replacing keybind state, acknowledged reopen
+  events, and revisioned dev geometry.
+- Broad intermediate gate: 3,363 passed, 4 Windows-only skips, 2 failures. The
+  failures were an old test bypassing committed geometry and the lexical grid
+  guard counting full-width feedback as a sixth collapsed cell; both corrected.
+- Later page/settings/dev/shooter/wiring gate: 756 passed. Post-polish focused
+  geometry/page/API/settings-field/wiring/dev gate: 465 passed in 31.91s.
+- Ruff lint passed; format reported 450 files formatted. Node all-page smoke
+  passed. Offline Cargo regression passed 1 test using the supplied target dir.
+
+### Browser evidence — separate from Windows acceptance
+
+Chrome `152.0.7977.64` at the supplied CDP endpoint. Each run created a new
+isolated BrowserContext and pages, closed only that context and disconnected;
+no existing tabs, cookies or profile were used. Requests were restricted to
+`http://127.0.0.1:45063`, serving this worktree's web assets. An initial attempted
+port 8767 was occupied by an older local checkout; actual DOM inspection caught
+that mismatch before interaction, and it was not used as evidence.
+
+At 840×625 and 839×621, document width equals the viewport, and the Preview
+subpage has matching client/scroll widths (624/624 and 623/623). The saved selector
+measures 592px/591px; all action edges fit. Two action rows retain wrapping.
+The mounted status is 18px high for tested one-line outcomes. Keyboard Save,
+Escape cancellation, destructive Cancel focus, selection/no-extra-read behavior,
+pending selection, geometry-push scroll/focus and two independent row errors
+were exercised. Browser checks caught and fixed the shared 150px select basis,
+dialog invoker focus loss and inherited 24px indentation on later row feedback.
+Screenshots were inspected for layout and readable errors, not only captured.
+
+Portable evidence: `/tmp/task5-browser-evidence.json`,
+`/tmp/task5-browser-final.cjs`, `/tmp/task5-browser-final.log`,
+`/tmp/task5-empty-{840,839}.png`, `/tmp/task5-pending-{840,839}.png`,
+`/tmp/task5-error-{840,839}.png`, `/tmp/task5-row-errors-{840,839}.png`.
+These checks are **not Windows/WebView2/live-EVE acceptance**. No real app,
+EVE, profile, clipboard, external network, GitHub, subagent/reviewer, push/PR,
+merge/amend or hook bypass was used.
+
+### Final gate status
+
+Implementation and focused/browser checks are complete. Local polish and the
+completed-source full suite are being finalized; final results will be recorded
+below before Task 5 is reported complete.

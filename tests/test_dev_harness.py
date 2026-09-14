@@ -1760,6 +1760,52 @@ def _dev_preview_fixture() -> dict:
     return _json.loads(body)
 
 
+def test_saved_layout_dev_actions_return_revisioned_receipts(tmp_path):
+    node = shutil.which("node")
+    assert node
+    script = r"""
+const assert = require('node:assert/strict'), fs = require('node:fs'), vm = require('node:vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const fixture = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const api = {}, context = {api, DEV_PREVIEW_HOTKEYS_FIXTURE: fixture, Promise, console, setTimeout,
+  window: {}, _devHotkeysCopy: () => fixture.hotkeys, _devCropCopy: () => ({})};
+vm.runInNewContext(source.slice(source.indexOf('  // Saved layout browser fixtures'),
+  source.indexOf('  // Companions are browser-only fixtures')), context);
+(async () => {
+  const initial = await api.get_preview_hotkey_state();
+  assert.ok(initial.layout_state && initial.geometry_revision);
+  const saved = await api.create_preview_layout('__proto__');
+  assert.equal(saved.persisted, true);
+  const record = saved.state.layouts.find(record => record.name === '__proto__');
+  assert.ok(record.character_count > 0);
+  assert.equal((await api.create_preview_layout('__PROTO__')).applied, false);
+  const applied = await api.apply_preview_layout(record.id, record.revision);
+  assert.ok(applied.geometry.geometry_revision > initial.geometry_revision);
+  assert.equal((await api.rename_preview_layout(record.id, 'stale', 'Other')).applied, false);
+  const renamed = await api.rename_preview_layout(record.id, record.revision, 'Other');
+  const next = renamed.state.layouts.find(record => record.id === saved.state.layouts.at(-1).id);
+  const removed = await api.remove_preview_layout(next.id, next.revision);
+  assert.equal(removed.state.layouts.some(record => record.id === next.id), false);
+  assert.ok(removed.state.revision > saved.state.revision);
+  await api.set_preview_size('Aiga Otsolen', 500, 300);
+  assert.deepEqual(JSON.parse(JSON.stringify((await api.get_preview_hotkey_state()).sizes['Aiga Otsolen'])), [500, 300]);
+  await api.copy_preview_layout('Zuelo Parvi', 'Aiga Otsolen');
+  assert.deepEqual(JSON.parse(JSON.stringify((await api.get_preview_hotkey_state()).sizes['Zuelo Parvi'])), [500, 300]);
+  await api.reset_preview_layouts();
+  assert.equal((await api.get_preview_hotkey_state()).layout_sources.length, 0);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    payload = tmp_path / "preview.json"
+    payload.write_text(json.dumps(_dev_preview_fixture()), encoding="utf-8")
+    result = subprocess.run(
+        [node, "-e", script, str(WEB / "dev.js"), str(payload)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_the_preview_fixture_uses_real_gesture_strings():
     """Previews store `preview/gestures.py` display strings
     ("Ctrl+Alt+Right"), NOT the AHK that Bookmarks stores ("^!Right"). The
@@ -1808,6 +1854,8 @@ def test_the_preview_fixture_carries_online_and_offline_layout_sources():
     The fixture is now a named JSON literal; check via JSON parse.
     """
     fixture = _dev_preview_fixture()
+    assert set(fixture["layout_state"]["owners"]) == set(fixture["roster"])
+    assert fixture["layout_state"]["excluded"] == fixture["excluded"]
     sources = fixture.get("layout_sources", [])
     assert sources, "fixture must have layout_sources"
     assert any(s.get("online") for s in sources), (

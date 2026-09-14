@@ -68,7 +68,11 @@ from ..preview import window as preview_window
 from ..preview.companioncontroller import CompanionController, CompanionPorts
 from ..preview.labelsize import LABEL_SIZE_PRESETS
 from ..preview.layoutadmission import PrimaryLayoutAdmission
-from ..preview.layoutcontroller import PreviewLayoutsController, PreviewLayoutsPorts
+from ..preview.layoutcontroller import (
+    PreviewGeometryUnavailable,
+    PreviewLayoutsController,
+    PreviewLayoutsPorts,
+)
 from ..preview.runtime import PreviewRuntime
 from ..preview.savedlayouts import PrimaryLayoutCapture, PrimaryLayoutLiveResult
 from ..preview.store import LayoutStore
@@ -448,6 +452,10 @@ class Api:
         self._preview_presentation_closed = False
         self._preview_primary_dirty = False
         self._preview_layouts_dirty = False
+        self._preview_geometry_dirty = False
+        self._preview_geometry_lock = threading.Lock()
+        self._preview_geometry_revision = 0
+        self._preview_geometry_cache = None
         self._preview_crops_pending = None
         self._preview_crops_revision = -1
         self._preview_capture_pending = None
@@ -513,6 +521,10 @@ class Api:
             if preview_runtime is not None
             else PreviewRuntime(preview_host)
         )
+        if self._preview_layout_store is not None:
+            self._preview_layout_store.set_commit_callback(
+                self._request_preview_geometry_refresh
+            )
         self._preview_layouts = self._build_preview_layouts_controller()
         self._preview_revision = 0
         self._preview_runtime_authorized = False
@@ -4801,6 +4813,7 @@ class Api:
     def _close_preview_presentation(self) -> None:
         with self._preview_presentation_lock:
             self._preview_presentation_closed = True
+            self._preview_geometry_dirty = False
             self._preview_primary_dirty = self._preview_layouts_dirty = False
             self._preview_crops_pending = self._preview_capture_pending = None
 
@@ -4834,6 +4847,7 @@ class Api:
             if self._preview_presentation_closed:
                 return
             primary, layouts = self._preview_primary_dirty, self._preview_layouts_dirty
+            geometry, self._preview_geometry_dirty = self._preview_geometry_dirty, False
             crops, capture = self._preview_crops_pending, self._preview_capture_pending
             self._preview_primary_dirty = self._preview_layouts_dirty = False
             self._preview_crops_pending = self._preview_capture_pending = None
@@ -4848,6 +4862,11 @@ class Api:
                 )
             except Exception:
                 logger.exception("Could not present Preview hotkeys")
+        if geometry and self._preview_delivery_open():
+            try:
+                self._publish_preview_geometry(self._sample_preview_geometry())
+            except Exception:
+                logger.exception("Could not present Preview geometry")
         if layouts and self._preview_delivery_open():
             try:
                 self._push(
@@ -5378,27 +5397,8 @@ class Api:
         # A companion/selection pump does not authorize EVE delivery. The
         # family fence also hides retained native reports during cleanup.
         live = host is not None and host.runtime_enabled
-        online = set(host.characters() if live else [])
-        # Enumerate and describe one snapshot: saved size-dialog defaults can
-        # lag the host's undebounced placement, which Copy actually uses.
-        layouts = self._preview_layout_entries()
-        layout_sources = [
-            {
-                "name": name,
-                "online": name in online if live else None,
-                "geometry": {
-                    "x": layouts[name].rect.x,
-                    "y": layouts[name].rect.y,
-                    "w": layouts[name].rect.w,
-                    "h": layouts[name].rect.h,
-                },
-            }
-            for name in sorted(
-                layouts,
-                key=lambda name: (name not in online, name.casefold(), name),
-            )
-        ]
         return {
+            **self._sample_preview_geometry(),
             "enabled": bool(section.get("enabled")),
             "hotkeys": dict(section.get("hotkeys") or {}),
             "roster": list(section.get("seen") or []),
@@ -5427,42 +5427,9 @@ class Api:
             # the one place previews.js already reads it from.
             "excluded": list(layout_state["excluded"]),
             "layout_state": layout_state,
-            # Sizes for the Size... dialog: what the preview is now, and
-            # what its client's shape is, so the page can name the size
-            # that would not distort it. client_sizes is sampled on the
-            # preview thread (host._record_client_sizes) precisely so the
-            # bridge thread never touches an HWND.
-            "sizes": self._preview_sizes(),
-            "client_sizes": host.client_sizes() if live else {},
-            # Saved geometry sources are separate from row targets: old
-            # settings may retain a valid offline layout after its roster entry
-            # aged out, and that geometry is still useful to copy.
-            "layout_sources": layout_sources,
             # One section hydration, with the same revised recovery snapshot as
             # the dedicated getter and onPreviewCrops. No second page round trip.
             "crops": self.get_preview_crop_state(),
-            # Which characters set_preview_size can actually succeed for.
-            #
-            # It refuses outright for a character that is neither running
-            # nor already in `layouts` -- there is no x/y to write, and
-            # layout.deserialize drops an entry without a full rect, so a
-            # w/h saved alone would vanish at the next load after the page
-            # had already reported it accepted. That refusal is correct and
-            # stays; what was wrong was offering the control anyway.
-            #
-            # A layouts entry is written when a preview is DRAGGED or
-            # RESIZED (window.py's WM_LBUTTONUP -> host._layout_changed),
-            # not merely when a client runs. So on a fresh install every
-            # offline character fails this, which on a typical roster is
-            # most of the list -- eleven of thirteen in the report this
-            # came from. previews.js renders Size... only for names in
-            # here, which is D6's rule (do not draw a control in the state
-            # where it can do nothing) applied to the column that needed
-            # it most.
-            "sizable": sorted(
-                set(host.characters() if live else [])
-                | set((section.get("layouts") or {}).keys())
-            ),
         }
 
     def _bookmark_chords(self) -> dict:
@@ -5787,6 +5754,7 @@ class Api:
         except OSError:
             logger.exception("Could not persist the default preview size")
             return self._field_refused("Could not save this to settings.")
+        self._request_preview_geometry_refresh()
         return self._field_ok()
 
     def apply_preview_default_size(self) -> dict:
@@ -5816,8 +5784,9 @@ class Api:
             return self._field_refused(
                 "Previews could not accept this change. Try again."
             )
-        # The cards show each character's size; every one just changed.
-        self.push_preview_hotkeys()
+        # Queue success is not the final size. Host/store settlement notifies
+        # geometry without replacing an unrelated in-flight keybind table.
+        self._request_preview_geometry_refresh()
         return self._field_ok()
 
     def set_preview_size(self, name, w, h) -> dict:
@@ -5981,45 +5950,86 @@ class Api:
             return self._field_refused("Could not save this to settings.")
         if not cleared:
             return self._field_refused("Could not save this to settings.")
-        self.push_preview_hotkeys()
+        self._request_preview_geometry_refresh()
         return self._field_ok()
 
-    def _preview_sizes(self) -> dict:
-        """Saved window size per character, for the Size... dialog's default.
+    def _sample_preview_geometry(self) -> dict:
+        """Serialize fresh memory observations, not settings/native transactions.
 
-        Read from settings rather than from the host so an offline character
-        still reports the size it will open at.
-
-        A character only gets a layout entry once _layout_changed has fired
-        -- on drag, or on a prior Size... commit -- so a preview that has
-        never been moved has no entry at all, and Reset previews empties
-        every entry at once. Such a character falls back to
-        (preview.width, preview.height): the same pair __main__.py hands
-        PreviewHost's size= and the one every unsaved preview is actually
-        placed at. Without this the dialog opened on an empty field and the
-        hint quoted a hardcoded 640 that matched nothing on screen.
-
-        The fallback is offered for every name the row list can show --
-        running (host.characters()) and known offline (section["seen"]) --
-        not only names already in layouts, since those are exactly the rows
-        with no entry to read from in the first place.
+        Never call native, disk, controller state or page code in this lock.
+        Even equal values need a new revision: an unobserved Size can intervene
+        before Apply restores the last sampled dimensions.
         """
-        section = self._state.settings.get("preview", {})
-        default = [section.get("width", 320), section.get("height", 210)]
-        layouts = section.get("layouts") or {}
-        out = {}
-        for name, entry in layouts.items():
-            try:
-                out[name] = [int(entry["w"]), int(entry["h"])]
-            except (KeyError, TypeError, ValueError):
-                continue
-        host = self._preview_host
-        names = set(section.get("seen") or [])
-        if host is not None and host.runtime_enabled:
-            names |= set(host.characters())
-        for name in names:
-            out.setdefault(name, list(default))
-        return out
+        with self._preview_geometry_lock:
+            section = self._preview_config.snapshot()
+            host = self._preview_host
+            live = host is not None and host.runtime_enabled
+            online = set(host.characters() if live else [])
+            committed = preview_layout.deserialize(section.get("layouts"))
+            retained = host.layout_entries() if host is not None else committed
+            sources = {
+                name: entry
+                for name, entry in retained.items()
+                if self._usable_preview_character(name)
+            }
+            # Size defaults describe committed geometry, unlike Copy's retained
+            # source positions. Untouched live/seen owners use configured defaults
+            # so their dialog never opens blank or quotes an invented size.
+            sizes = {
+                name: [entry.rect.w, entry.rect.h] for name, entry in committed.items()
+            }
+            for name in set(section.get("seen") or []) | online:
+                sizes.setdefault(
+                    name, [section.get("width", 320), section.get("height", 210)]
+                )
+            payload = {
+                "geometry_revision": self._preview_geometry_revision + 1,
+                "sizes": sizes,
+                "layout_sources": [
+                    {
+                        "name": name,
+                        "online": name in online if live else None,
+                        "geometry": {
+                            "x": sources[name].rect.x,
+                            "y": sources[name].rect.y,
+                            "w": sources[name].rect.w,
+                            "h": sources[name].rect.h,
+                        },
+                    }
+                    for name in sorted(
+                        sources, key=lambda n: (n not in online, n.casefold(), n)
+                    )
+                ],
+                # No complete rect means offline Size has no position to write.
+                "sizable": sorted(online | set(committed)),
+                "client_sizes": host.client_sizes() if live else {},
+            }
+            detached = copy.deepcopy(payload)
+            self._preview_geometry_cache = payload
+            self._preview_geometry_revision = payload["geometry_revision"]
+            return detached
+
+    def _request_preview_geometry_refresh(self) -> None:
+        with self._preview_presentation_lock:
+            if self._preview_presentation_closed:
+                return
+            self._preview_geometry_dirty = True
+        self._fleet_worker.notify()
+
+    def _refresh_preview_geometry(self) -> dict:
+        try:
+            payload = self._sample_preview_geometry()
+        except Exception as exc:
+            with self._preview_geometry_lock:
+                cached = copy.deepcopy(self._preview_geometry_cache)
+            raise PreviewGeometryUnavailable(str(exc), cached) from exc
+        self._request_preview_geometry_refresh()
+        return payload
+
+    def _publish_preview_geometry(self, payload) -> None:
+        self._push(
+            "onPreviewGeometry", payload, delivery_allowed=self._preview_delivery_open
+        )
 
     def set_preview_opacity(self, value) -> dict:
         """Persist the DWM thumbnail opacity, then push it live.
@@ -6165,6 +6175,7 @@ class Api:
                 capture=self._capture_preview_layout,
                 apply=self._apply_preview_layout,
                 refresh_visibility=self._refresh_preview_layout_visibility,
+                refresh_geometry=self._refresh_preview_geometry,
                 release=self._release_preview_layout,
                 publish_state=self._publish_preview_layouts,
             ),

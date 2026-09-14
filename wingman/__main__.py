@@ -438,11 +438,17 @@ def build_preview_host(state, api_box, *, layout_store=None, layout_admission=No
             api = api_box.get("api")
             if api is not None:
                 api.push_preview_hotkeys()
+                api._request_preview_geometry_refresh()
 
         def on_layouts_changed():
             api = api_box.get("api")
             if api is not None:
-                api.push_preview_hotkeys()
+                api._request_preview_geometry_refresh()
+
+        def on_geometry_changed():
+            api = api_box.get("api")
+            if api is not None:
+                api._request_preview_geometry_refresh()
 
         def on_hotkey_status(status):
             api = api_box.get("api")
@@ -563,6 +569,7 @@ def build_preview_host(state, api_box, *, layout_store=None, layout_admission=No
             replace_layout=store.replace,
             on_clients_changed=on_clients_changed,
             on_layouts_changed=on_layouts_changed,
+            on_geometry_changed=on_geometry_changed,
             on_hotkey_status=on_hotkey_status,
             on_bind_captured=on_bind_captured,
             restore_positions=restore_positions,

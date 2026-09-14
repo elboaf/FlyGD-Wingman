@@ -45,6 +45,19 @@ class LayoutStore:
         # after replace() and silently undo the explicit operation.
         self._write_lock = threading.Lock()
         self._revision = 0
+        self._on_commit = None
+
+    def set_commit_callback(self, callback: Callable[[], None]) -> None:
+        """Bind data-only notification during composition, before runtime starts."""
+        self._on_commit = callback
+
+    def _notify_commit(self) -> None:
+        if self._on_commit is not None:
+            try:
+                self._on_commit()
+            except Exception:
+                # The save has already succeeded; presentation cannot falsify it.
+                logger.exception("Could not notify committed Preview geometry")
 
     def record(self, stable_key: str, entry) -> None:
         """Note a preview's new position. Safe from the preview thread."""
@@ -145,6 +158,7 @@ class LayoutStore:
                     self._timer = timer
                 timer.start()
                 return False
+        self._notify_commit()
         if timer is not None:
             timer.start()
         return True
@@ -203,7 +217,8 @@ class LayoutStore:
                             self._timer = retry
                     raise
                 self._revision = prepared.revision
-                return prepared
+            self._notify_commit()
+            return prepared
         finally:
             # An immediate injected timer may enter _write synchronously.
             if retry is not None:
@@ -242,6 +257,7 @@ class LayoutStore:
             except OSError:
                 logger.exception("Could not clear preview layouts")
                 return False
+        self._notify_commit()
         return True
 
     def _write(self) -> None:
@@ -273,3 +289,5 @@ class LayoutStore:
                 # preview thread down -- same posture as ui/api.py's channel
                 # persist, which swallows OSError for the same reason.
                 logger.exception("Could not persist preview state")
+                return
+        self._notify_commit()

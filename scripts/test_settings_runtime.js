@@ -128,6 +128,8 @@ function page(hydrate = true, fightrecorder = false, previewSize = false) {
     return notify.find(input => input.checked) || null;
   };
   const calls = [];
+  const restoreEvents = [];
+  document.addEventListener('wm:preview-restore-positions', event => restoreEvents.push(event.detail.enabled));
   const gates = [];
   const WM = {
     el: id => elements[id] || null,
@@ -146,11 +148,12 @@ function page(hydrate = true, fightrecorder = false, previewSize = false) {
       return promise;
     }
   };
-  vm.runInNewContext(source, {window: {WM}, WM, document, Promise}, {
+  vm.runInNewContext(source, {window: {WM}, WM, document, Promise,
+    CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } }}, {
     filename: 'wingman/web/settings.js'
   });
   const api = {
-    el: id => elements[id], calls, gates, notify,
+    el: id => elements[id], calls, gates, notify, restoreEvents,
     hydrate(settings = {}) {
       document.dispatchEvent({type: 'wm:settings', detail: {
         settings: Object.assign({privacy: 'unlisted', category: '20', notify_mode: 'toast',
@@ -680,6 +683,17 @@ for (const [id, method, initial] of [
     assert.equal(p.el(id).checked, !initial);
   });
 }
+
+test('reopen consequence reports acknowledgements, never drafts or refused preferences', async () => {
+  const p = page();
+  await p.toggle('restore-preview-positions', false);
+  assert.deepEqual(p.restoreEvents, []);
+  await p.reply('set_restore_preview_positions', accepted);
+  assert.deepEqual(p.restoreEvents, [false]);
+  await p.toggle('restore-preview-positions', true);
+  await p.reply('set_restore_preview_positions', refused);
+  assert.deepEqual(p.restoreEvents, [false]);
+});
 
 test('restore-preview refusal is not an applied-but-unsaved result', async () => {
   const p = page();

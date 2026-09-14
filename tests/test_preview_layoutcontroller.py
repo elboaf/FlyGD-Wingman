@@ -63,6 +63,13 @@ def setup_controller(tmp_path, *, records=(), section=None):
             calls.append(("visibility", lease))
             or settled(model.PrimaryLayoutLiveResult("applied", None))
         ),
+        refresh_geometry=lambda: {
+            "geometry_revision": 1,
+            "sizes": {},
+            "layout_sources": [],
+            "sizable": [],
+            "client_sizes": {},
+        },
         release=lambda lease: calls.append(("release", lease)),
         publish_state=lambda state: calls.append(("publish", state)),
     )
