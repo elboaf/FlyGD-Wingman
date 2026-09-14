@@ -154,7 +154,7 @@
       : !eligibility ? 'Eligibility has not been observed.'
       : eligibility.state === 'ready' ? 'Currently eligible to share fleet telemetry.'
       : eligibility.state === 'participation_off' ? 'Server participation is Off.'
-      : 'No verified roster currently makes these characters eligible.');
+      : 'No verified roster currently makes these characters eligible. Check verification and the boss controls below.');
     ((eligibility && eligibility.characters) || []).forEach(function (row) {
       list.appendChild(WM.make('li', '', nameFor(row.character_id)));
     });

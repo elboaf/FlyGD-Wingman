@@ -141,6 +141,10 @@ function settle(p, applied = true) {
     const fresh = document.querySelector('.group-add-name');
     assert.ok(document.activeElement === fresh, 'ordinary push retains Add-name focus');
     assert.equal(fresh.value, 'Unsubmitted fleet', 'ordinary push does not submit or erase text');
+    const label = document.querySelector('.preview-group-manager').querySelector('label');
+    assert.ok(label && label.textContent, 'the typed group name retains a visible label');
+    assert.equal(label.getAttribute('for'), fresh.id, 'label follows the rebuilt input');
+    assert.match(label.textContent, /group.*name/i);
     assert.deepEqual([fresh.selectionStart, fresh.selectionEnd, fresh.selectionDirection], [2, 11, 'backward']);
     assert.equal(writes.length, 0);
   } else if (scenario.startsWith('focus-')) {

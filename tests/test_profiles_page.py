@@ -2272,11 +2272,10 @@ def test_account_identity_shell_centers_at_wide_widths():
 
 
 def test_manual_identity_management_is_a_labelled_subordinate_group():
-    """Manage account names and character links... stays a linkbtn
-    disclosure right after the guided flow, but is now a named, subordinate
-    group -- visibly and programmatically -- rather than trailing the
-    roster step with nothing marking the boundary. Exact copy is untouched:
-    only the group wrapping and its own label are new.
+    """Manual management stays after the guided flow in a named group.
+
+    It is a distinct neutral action, not helper copy or a second accent action.
+    Its label and group boundary remain visible and programmatically associated.
     """
     open_tag = re.search(r'<div class="es-manual-identity"([^>]*)>', ACCOUNT_ROUTE)
     assert open_tag, "the manual management path is no longer its own group"
@@ -2301,7 +2300,7 @@ def test_manual_identity_management_is_a_labelled_subordinate_group():
     # specified_names_and_links_label); this only guards that wrapping the
     # existing controls did not touch it.
     assert (
-        'id="es-manage-toggle" class="linkbtn ai-manage-toggle" type="button">'
+        'id="es-manage-toggle" class="btn ai-manage-toggle" type="button">'
         "Manage account names and character links\u2026</button>" in ACCOUNT_ROUTE
     )
 

@@ -114,7 +114,9 @@ async function gapRegression() {
     } else if (preflight) {
       anchor = target = el('fittings-copy-resolution-note'); pane = el('fittings-copy-body');
       assert.ok(anchor, 'real preflight reply must settle before lower framing');
-      assert.equal(anchor.textContent, 'Enter an alternate name or select Skip for each conflict before reviewing changes. Copies only add fittings; existing fittings are kept.');
+      assert.equal(anchor.textContent, 'Enter an alternate name or select Skip for each conflict before reviewing changes.');
+      assert.equal(pane.querySelector('.fit-copy-summary').nextSibling.textContent,
+        'Copies only add fittings; existing fittings are kept.');
       assert.equal(el('fittings-copy-review').disabled, true);
       assert.equal(document.querySelectorAll('.fit-copy-pair').length, 3);
     } else {
@@ -124,10 +126,11 @@ async function gapRegression() {
       assert.equal(anchor.querySelector('.fit-copy-character').textContent, 'Gio Renn');
       assert.equal(target.textContent, 'Not attempted: rate limit');
       assert.equal(anchor.querySelector('.fit-copy-detail'), null, 'unattempted row has no invented error or repeated guidance');
-      assert.ok(pane.querySelectorAll('.fit-copy-guidance').some(node =>
-        node.parentNode === pane && /before any retry/.test(node.textContent)));
-      assert.ok(pane.querySelectorAll('.fit-copy-guidance').some(node =>
-        node.parentNode === pane && /Rate limit:.*fittings not attempted/.test(node.textContent)));
+      const recovery = pane.querySelector('.fit-copy-recovery');
+      assert.ok(recovery && recovery.parentNode === pane);
+      assert.equal(recovery.children.length, 2);
+      assert.match(recovery.children[0].textContent, /before any retry/i);
+      assert.match(recovery.children[1].textContent, /Rate limit:.*fittings not attempted/);
       assert.equal(el('fittings-copy-close').disabled, false);
     }
     // Layout boundary inputs only: this harness does not render CSS. Nodes
@@ -189,13 +192,22 @@ async function gapRegression() {
     else if (scenario === 'wrong-name') el('fit-name-fit-rifter-solo').value = 'Wrong fitting';
     else if (scenario === 'wrong-description') el('fit-desc-fit-rifter-solo').value = 'Wrong description';
     else if (scenario === 'missing-rack') document.querySelector('.fit-rack').remove();
+    else if (scenario === 'redundant-alias') document.querySelector('.fit-aliases').appendChild(
+      WM.make('p', 'fit-alias-row', 'Rifter - Solo PvP'));
+    else if (scenario === 'missing-reassurance') pane.querySelector('.fit-copy-summary').nextSibling.remove();
     else if (scenario === 'inconsistent-capability') el('es-copy-scope-note').classList.add('warn');
     else if (scenario === 'wrong-pair') document.querySelector('.fit-copy-pair-name').textContent = 'Wrong fitting';
     else if (scenario === 'wrong-summary') document.querySelector('.fit-copy-summary').textContent = '6 copied · 0 failed';
     else if (scenario === 'missing-recovery') pane.querySelectorAll('.fit-copy-guidance')
       .find(node => /Rate limit:/.test(node.textContent)).remove();
     else if (scenario === 'hidden-recovery') pane.querySelectorAll('.fit-copy-guidance')
-      .find(node => /before any retry/.test(node.textContent)).hidden = true;
+      .find(node => /before any retry/i.test(node.textContent)).hidden = true;
+    else if (scenario === 'clipped-recovery') {
+      target = pane.querySelector('.fit-copy-guidance'); overrun = 2;
+    } else if (scenario === 'reversed-recovery') {
+      const group = pane.querySelector('.fit-copy-recovery');
+      group.insertBefore(group.children[1], group.children[0]);
+    }
     if (scenario.startsWith('rounding-') || scenario.startsWith('edge-')) verify();
     else if (!['settled', 'codec-missing'].includes(scenario)) assert.throws(verify, /Screenshot content did not settle/, scenario);
     assert.equal(calls.length, 0, 'new staging/verification must not write, copy, Test, or use the clipboard');
@@ -381,7 +393,7 @@ async function fittingsDetailRegression() {
       const texts = selector => row.querySelectorAll(selector).map(el => el.textContent);
       assert.deepEqual(texts('.fit-rack-name'), ['High power', 'Medium power', 'Low power']);
       assert.deepEqual(texts('.fit-item-name'), ['150mm Light AutoCannon II', '1MN Afterburner II', 'Gyrostabilizer II']);
-      assert.deepEqual(texts('.fit-alias-row'), ['Rifter - Solo PvP', 'Rifter Tackle Fit']);
+      assert.deepEqual(texts('.fit-alias-row'), ['Rifter Tackle Fit']);
       assert.deepEqual(texts('.fit-presence-name'), ['Aria Voss', 'Bex Talon']);
       const metadata = row.querySelector('.fit-metadata-disclosure');
       assert.ok(metadata && metadata.tagName === 'DETAILS', 'metadata editing uses native disclosure');

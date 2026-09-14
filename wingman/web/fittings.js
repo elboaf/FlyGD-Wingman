@@ -751,7 +751,10 @@
       box.appendChild(WM.make('p', 'fit-description', detail.description));
     }
     box.appendChild(modulesNode(detail.items || []));
-    if ((detail.aliases || []).length > 1) box.appendChild(aliasesNode(detail.aliases));
+    // Compare with the visible row title, not an independently refreshed detail
+    // or an unsaved metadata draft. Alias provenance remains untouched.
+    var aliases = (detail.aliases || []).filter(function (alias) { return alias.name !== row.name; });
+    if (aliases.length) box.appendChild(aliasesNode(aliases));
     box.appendChild(presencesNode(detail.presences || []));
     box.appendChild(metadataDisclosureNode(detail));
     var immediateNote = WM.make('p', 'hint fit-immediate-note',
@@ -1403,6 +1406,8 @@
     var host = WM.el('fittings-copy-body');
     host.textContent = '';
     host.appendChild(WM.make('p', 'fit-copy-summary', preflightSummary(copyPreflight)));
+    host.appendChild(WM.make('p', 'hint',
+      'Copies only add fittings; existing fittings are kept.'));
     var hasUnavailable = false;
     (copyPreflight.pairs || []).forEach(function (pair) {
       var row = WM.make('div', 'fit-copy-pair');
@@ -1489,8 +1494,7 @@
       : 'Enter an alternate name or select Skip for each conflict before reviewing changes.';
     WM.el('fittings-copy-review').disabled = !ready;
     WM.el('fittings-copy-review').title = ready ? '' : reason;
-    WM.el('fittings-copy-resolution-note').textContent = reason
-      + ' Copies only add fittings; existing fittings are kept.';
+    WM.el('fittings-copy-resolution-note').textContent = reason;
   }
 
   function presentCopyProgress(ticketId, total) {
@@ -1608,7 +1612,7 @@
       present: '',
       conflict_skipped: 'Choose an alternate name in a new copy review if you still want this fitting.',
       failed: 'Check the error, refresh the target, then review a new copy if still needed.',
-      unknown: 'Check each target\u2019s Personal Fittings in EVE, then refresh characters before any retry. These fittings may already exist.',
+      unknown: 'Before any retry, check each target\u2019s Personal Fittings in EVE, then refresh characters. These fittings may already exist.',
       unattempted_throttle: 'Wait for the ESI limit to clear, refresh characters, then review a new copy for fittings not attempted.',
       cancelled: 'Not attempted. Review a new copy if this fitting is still needed.',
       unavailable: 'Check the reason. For sign-in, use Authenticate character\u2026 in Settings \u203a Character access. Then refresh the target and review a new copy.',
@@ -1655,12 +1659,14 @@
       || (result.results || []).some(function (pair) {
         return pair.status === 'unattempted_throttle';
       });
+    var recovery = WM.make('div', 'fit-copy-recovery');
     Object.keys(sharedRecovery).forEach(function (status) {
       if (!sharedRecovery[status]) return;
-      host.appendChild(WM.make('p', 'hint fit-copy-guidance',
+      recovery.appendChild(WM.make('p', 'hint operational-status fit-copy-guidance',
         (status === 'unknown' ? copyResultLabel(status) : 'Rate limit')
         + ': ' + copyResultGuidance(status)));
     });
+    if (recovery.children.length) host.appendChild(recovery);
     if ((!(result.results || []).length || result.status !== 'complete')
         && result.status !== 'throttled') {
       host.appendChild(WM.make('p', 'notice', result.status === 'cancelled'

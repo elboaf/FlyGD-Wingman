@@ -707,7 +707,7 @@
              first paint until the first payload lands, under an unticked
              switch that already said so. -->
         <div class="row" id="eve-engine-row" hidden><span class="lab"></span>
-          <span class="hint" id="eve-engine-state">Not running</span></div>
+          <span class="hint operational-status" id="eve-engine-state">Not running</span></div>
         <div class="row" id="eve-blockers-row" hidden><span class="lab"></span>
           <span class="hint" id="eve-blockers"></span></div>
         <!-- No `Import from an existing helper...` button. It held the only
@@ -1062,9 +1062,9 @@
                second sentence used to point the reader at the character
                table for the "Never minimize" box this toggle creates, and
                that box no longer lives there. -->
-          <span class="hint" id="preview-minimize-inactive-status">Applies
-            the next time a client is switched away from, not this
-            one.</span></div>
+          <span class="hint" id="preview-minimize-inactive-status">Takes effect
+            on your next client switch: only the client you switch away from is
+            minimized. Turning this on does not minimize any windows now.</span></div>
         <details class="pv-exc" id="preview-nm-exceptions">
           <summary id="preview-nm-exceptions-summary"></summary>
           <div class="pv-exc-list" id="preview-nm-exceptions-list"
@@ -1689,8 +1689,7 @@
           Show the EVE Online tools
         </label>
         <p class="hint">
-          EVE tools, including bookmark keybinds, client previews and Fittings.
-          Turn this off to hide EVE tools. Uploader and Companions remain available.
+          Uploader and Companions remain available with EVE tools hidden.
         </p>
         <p class="field-msg" id="msg-general" hidden></p>
       </section>
@@ -2115,7 +2114,7 @@
 
       <div class="es-manual-identity" role="group" aria-labelledby="es-manual-identity-label">
         <p id="es-manual-identity-label" class="es-manual-identity-label">Manual management</p>
-        <button id="es-manage-toggle" class="linkbtn ai-manage-toggle" type="button">Manage account names and character links…</button>
+        <button id="es-manage-toggle" class="btn ai-manage-toggle" type="button">Manage account names and character links…</button>
         <section id="es-identity-panel" class="es-identity" hidden>
           <h2>Names and character links</h2>
           <div class="row">
@@ -2399,7 +2398,7 @@
         <button class="btn" id="fm-reload" type="button">Reload</button>
         <span class="hint" id="fm-dirty"></span>
         <span class="hint fm-save-note" id="fm-account-context"></span>
-        <span class="hint fm-save-note">Saving needs every EVE client closed.</span>
+        <span class="hint fm-save-note">Edits change only your draft until Save formations. Saving needs every EVE client closed.</span>
         <span class="hint fm-save-note" id="fm-save-status" role="status" aria-live="polite"></span>
       </div>
     </div>

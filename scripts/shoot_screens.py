@@ -1210,7 +1210,7 @@ var pairs = pane.querySelectorAll('.fit-copy-pair');
 check(WM.current_route === 'fittings' && visible(WM.el('fittings-copy-overlay')) && WM.el('overlay').hidden
   && text(WM.el('fittings-copy-title'), 'Copy fittings')
   && pairs.length === expected.pairs.length && pairs.length > 0
-  && text(note, 'Enter an alternate name or select Skip for each conflict before reviewing changes. Copies only add fittings; existing fittings are kept.')
+  && text(note, 'Enter an alternate name or select Skip for each conflict before reviewing changes.')
   && text(review, 'Review changes') && !review.hidden && review.disabled
   && review.getAttribute('aria-describedby') === note.id && WM.el('fittings-copy-start').hidden);
 check(expected.pairs.every(function (pair, index) {
@@ -1224,6 +1224,9 @@ check(expected.pairs.every(function (pair, index) {
 }));
 check(text(WM.el('fittings-copy-unavailable-note'),
   'Close this review to change the selected fittings or target characters, then review again.'));
+var summary = pane.querySelector('.fit-copy-summary');
+check(summary && visible(summary.nextSibling)
+  && text(summary.nextSibling, 'Copies only add fittings; existing fittings are kept.'));
 note.scrollIntoView({block: 'end', behavior: 'instant'});
 check(exposed(note, pane) && exposed(review, WM.el('fittings-copy-dialog')));
 """
@@ -1262,17 +1265,17 @@ var status = row.querySelector('.fit-copy-result'), error = row.querySelector('.
 check(text(name, identity) && text(character, expected.character_name)
   && text(status, 'Not attempted: rate limit') && status.classList.contains(expected.status)
   && (expected.error ? text(error, expected.error) : !error));
-// Shared recovery is above the result rows. Require it to exist and render,
-// but frame the last row's own outcome here, not a repeated instruction.
-var guidance = Array.prototype.slice.call(pane.querySelectorAll('.fit-copy-guidance'));
-check(guidance.some(function (node) {
-  return node.parentNode === pane && visible(node)
-    && /before any retry/.test(node.textContent);
-}) && guidance.some(function (node) {
-  return node.parentNode === pane && visible(node)
-    && /Rate limit:.*fittings not attempted/.test(node.textContent);
-}));
+// Shared recovery remains visible in one sticky group above the lower rows.
+// Verify ordering and exposure as well as presence, never repeat it per row.
+var recovery = pane.querySelector('.fit-copy-recovery');
+var guidance = recovery ? Array.prototype.slice.call(recovery.querySelectorAll('.fit-copy-guidance')) : [];
+check(recovery && recovery.parentNode === pane && visible(recovery)
+  && guidance.length === 2 && guidance.every(function (node) {
+    return node.parentNode === recovery && visible(node);
+  }) && /^Needs verification:.*before any retry/i.test(guidance[0].textContent)
+  && /^Rate limit:.*fittings not attempted/.test(guidance[1].textContent));
 row.scrollIntoView({block: 'end', behavior: 'instant'});
+check(guidance.every(function (node) { return exposed(node, pane); }));
 var requiredNodes = [name, character, status];
 if (expected.error) requiredNodes.push(error);
 check(requiredNodes.every(function (node) { return exposed(node, pane); })
@@ -1298,12 +1301,18 @@ def new_screen_verify_script(screen: Screen) -> str | None:
         # The fixture read resolves on a microtask and replaces the row DOM.
         # Re-query after walk's existing settle wait; a click (or Loading…) is
         # not evidence, and reinjecting/resetting after it collapses the row.
-        detail = load_dev_fittings_screenshot_fixture()["details"]["fit-rifter-solo"]
+        fixture = load_dev_fittings_screenshot_fixture()
+        detail = fixture["details"]["fit-rifter-solo"]
+        entry = next(row for row in fixture["entries"] if row["id"] == detail["id"])
         expected = {
-            "name": detail["name"],
+            "name": entry["name"],
             "racks": len({item["location"] for item in detail["items"]}),
             "items": [item["type_name"] for item in detail["items"]],
-            "aliases": [alias["name"] for alias in detail["aliases"]],
+            "aliases": [
+                alias["name"]
+                for alias in detail["aliases"]
+                if alias["name"] != entry["name"]
+            ],
             "presences": [
                 presence["character_name"] for presence in detail["presences"]
             ],
@@ -1911,6 +1920,31 @@ def _screen_content_setup_script(screen: Screen) -> str | None:
             "  if (!heading) { throw new Error('Preview roster heading is missing'); }\n"
             "  heading.scrollIntoView({block: 'start', behavior: 'instant'});\n"
             "}())"
+        )
+    if screen.key == "settings-alerts":
+        # Settings retains its outer scroll across sections. Frame the live top
+        # after walk's settle wait — no re-entry, preference changes or fixture.
+        # The native checkbox is zero-sized; its .check label is what paints.
+        return _framed_content_script(
+            screen.key,
+            """
+var route = WM.el('route-settings'), section = WM.el('section-alerts');
+var pane = section && section.closest('.settings-pane');
+if (WM.current_route !== 'settings' || WM.current_section !== 'alerts'
+    || !visible(route) || !route.classList.contains('active')
+    || !visible(section) || !section.classList.contains('active')
+    || !visible(pane) || !route.contains(pane)) {
+  throw new Error('Screenshot framing failed: settings-alerts needs the visible active Alerts section and Settings scroller');
+}
+pane.scrollTop = 0;
+var master = section.querySelector('#alert-enabled'), health = section.querySelector('#alerts-health');
+if (!visible(master) || !exposed(master.closest('label.check'), pane)) {
+  throw new Error('Screenshot framing failed: settings-alerts master (#alert-enabled) is missing, hidden, clipped or covered');
+}
+if (!health || !health.textContent.trim() || !exposed(health, pane)) {
+  throw new Error('Screenshot framing failed: settings-alerts readiness (#alerts-health) is missing, empty, hidden, clipped or covered');
+}
+""",
         )
     if screen.key == "settings-alerts-advanced":
         # Task 5. Every id inside #alert-advanced is unchanged from the

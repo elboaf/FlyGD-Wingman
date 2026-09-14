@@ -345,7 +345,7 @@
 
     var actions = WM.make('div', 'characters-actions');
     actions.setAttribute('role', 'cell');
-    var more = WM.make('button', 'linkbtn characters-menu-trigger', '⋯');
+    var more = WM.make('button', 'btn characters-menu-trigger', '⋯');
     more.type = 'button';
     more.title = 'More actions';
     more.setAttribute('aria-haspopup', 'menu');

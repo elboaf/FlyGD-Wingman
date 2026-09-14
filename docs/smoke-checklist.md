@@ -111,6 +111,48 @@ or measure this test. Keep browser/staging evidence separate from real operation
       isolated staging, plain entry/exit without live pushes preserves live
       geometry, exclusions, selection and feedback; no fixture mutation escapes.
 
+## UX review follow-through — remaining Windows acceptance DEFERRED TO RELEASE
+
+The `20260914T004958Z` main-checkout captures are the baseline. The user-driven
+`20260914T024454Z` worktree set received complete Windows/WebView2 visual review:
+all 61 screenshots inspected, no blank/partially initialized surface or new
+blocking visual regression established. Synthetic outcomes remain presentation
+only; headless checks and stills do not establish Windows interaction or NVDA.
+
+After review, the user accepted reveal-on-focus/Edit for Preview conflicts:
+no extra sticky warning or passive auto-scroll is required. The remaining
+Windows interaction/accessibility, codec-equipped Profiles, native-operation,
+persistence and DPI checks below are explicitly deferred to release, not waived
+or marked passed. Record the checkout, build and DPI for that authorized pass.
+No real copies, saves, connection Tests, native source selection or settings
+reset is required merely to populate screenshots.
+
+- [ ] At 840×625 and a wider window, Bookmarks engine state and saved-crop
+      readiness read as current status, not helper text. Expected Off/Waiting
+      is not red; actual errors retain their existing treatment and ownership.
+- [ ] Tab to a conflicted Preview keybind/Edit control below the sticky headings.
+      Its warning and control become readable without scrolling outer Settings.
+      Clicking still arms capture/opens Edit; Escape cancels. A very tall warning
+      leaves the focused control reachable; passive updates do not scroll the view.
+- [ ] Scroll Fittings mixed results to the final row. Shared verification advice
+      precedes rate-limit advice and remains readable without obscuring the final
+      result or Close. Tab/Shift+Tab and Escape retain their existing behavior.
+- [ ] Manual account management is a neutral button, not another accent action.
+      Group-name labels remain visible while typing and after a roster refresh;
+      unsubmitted text and selection survive. Character menu and Skills/Preview
+      disclosure affordances remain clear and keyboard-operable at the floor.
+- [ ] Fittings aliases omit only the visible title, preserving genuine alternatives.
+      Preflight states that copying is additive near the summary. Formation edits
+      are identified as drafts until Save, and the footer fits. General and Fleet
+      guidance preserve feature independence and do not imply successful verification.
+- [ ] The user-driven shooter frames base Alerts at the top with master/readiness
+      visible. Missing, hidden or covered anchors must fail the capture, not yield a
+      misleading PNG. Validate manifest provenance and fixture annotations; never
+      treat synthetic outcomes as completed operations. Keep the native exclusions.
+- [ ] Record Windows codec availability separately. This source worktree initially
+      lacked the Windows codec; do not override capability flags or call its real
+      fallback warning an installer defect. Linux codec tests do not resolve it.
+
 ## Hide the active EVE client's previews (#212) — Windows acceptance NOT RUN
 
 Linux native doubles and private Chrome checks are not acceptance of this native
@@ -3921,8 +3963,13 @@ until they are actually run on Windows.
       doubles nor halves as it crosses monitors.
 - [ ] **Height-only fitting preserves width before, during, and after resize.**
       Add and remove rows, hover/focus header actions, and open/close
-      Characters. Expected: Fleet Bar grows and shrinks by height only; no
-      width snapback occurs during or after a manual resize.
+      Characters. Grow the roster, move the bar by its header, then reduce it
+      to two rows and finally none. Repeat after resizing from each side,
+      including on a monitor left of the primary. Expected: Fleet Bar grows
+      and shrinks by height only, with no empty space left beneath the roster
+      and no width or position snapback. On Windows, the WebView's screen origin
+      includes the resize inset; saved placement must still use the outer
+      window origin. Repeat at 100%, 150%, and 200% display scaling.
 - [ ] **Passive reveal stays no-activate; header actions use explicit
       activation.** Merely showing Fleet Bar does not take focus. Clicking
       `Reset width` or `Hide` activates it only for that action; Tab reaches

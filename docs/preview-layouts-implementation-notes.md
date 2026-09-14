@@ -1429,3 +1429,40 @@ decision remain separate; #216 importer work is not part of this change.
 3. Why are saved-record hashes, store/view sequences and geometry observation revisions separate?
 4. Why do current owner evidence and geometry-only painting matter for offline row actions and keyboard editing?
 5. Which guarantees still require the unrun Windows/WebView2/live-EVE acceptance pass?
+
+## Upstream integration — scoped verification, not final PR gates
+
+The coordinator authorized merging upstream `ba67e9da9286d5a577ba0a209ac43ff67f415b1c`
+(PRs #233 and #234) into reviewed feature HEAD
+`c323a50a242c6f6ee652f7634bb126dc6ef177e0`, without amending prior commits.
+Both smoke-checklist sections are retained: Saved layouts remains NOT RUN, and
+upstream UX interaction/native acceptance remains deferred to release. Upstream
+Fleet Bar inset-to-outer coordinate conversion, readiness styling, direct-only
+conflict reveal and persistent group-name labeling are preserved.
+
+The warning fixture combines upstream Copy-availability cases with the branch's
+fresh geometry/layout revisions and identified capture calls. Scoped inspection
+found one auto-merge gap: geometry-only painting still called the newly contextual
+`makeSizeFiller` without its owner/exclusion arguments and left guidance stale
+when Copy sources changed. It now refreshes only that noninteractive filler while
+keeping unrelated editors and existing action/dialog invokers attached. Regression
+coverage includes own-only/other/no source transitions and excluded targets.
+Native Preview code, shared presentation ownership, layout admission, persistence,
+source/session fencing and dialog/geometry-revision contracts are unchanged.
+
+Local integration verification: warning RED **1 failed, 27 passed**, then focused
+page GREEN **139 passed**; broader affected Python/Node/bridge/style/docs coverage
+**4,239 passed, 4 Windows-only skips**; after local polish, focused recheck
+**745 passed**. Ruff lint and format (**451 files**), all-page JS smoke and direct
+Node DOM/Fleet/Fittings checks (**192 passed**) passed. One direct Node invocation
+initially omitted the required `WINGMAN_PYWEBVIEW_CUSTOMIZE`; rerunning with the
+installed pywebview file passed, with no production change. Exact commands, merge
+resolution evidence and commit identity are retained in ignored
+`.superpowers/sdd/preview-layouts-plan/upstream-integration-report.md`.
+
+No fresh full suite, independent review or CodeRabbit was run for this integration
+step. The coordinator owns actual CodeRabbit review, fresh full verification on
+the eventual PR source, push/PR actions and acceptance decisions. No remote or real
+app/EVE/profile/clipboard operation occurred here. Windows/WebView2/live-EVE
+acceptance remains NOT RUN; prior evidence above is historical, not a claim that
+these new integration edits have received final PR re-verification.

@@ -231,12 +231,15 @@ async function page(options = {}) {
   window.screenX = options.x ?? 20;
   window.screenY = options.y ?? 30;
   const nativeMoves = [];
+  const contentInset = options.contentInset ?? { left: 0, top: 0 };
   function attachNativeBridge() {
     window.pywebview = { api, platform: 'edgechromium', _jsApiCallback: (method, args, id) => {
       assert.equal(method, 'pywebviewMoveWindow');
       assert.equal(id, 'move');
       nativeMoves.push(Array.from(args));
-      [window.screenX, window.screenY] = args;
+      // WebView2 reports the child origin, while MoveWindow takes outer coords.
+      window.screenX = args[0] + contentInset.left;
+      window.screenY = args[1] + contentInset.top;
     } };
     vm.runInContext(customize, context, { filename: 'pywebview/customize.js' });
   }
@@ -649,6 +652,20 @@ for (const result of [
     assert.equal(p.el('fleet-title-error').textContent, result.error || '');
   });
 }
+
+test('header release and resize feedback forward the inset WebView screen origin', async () => {
+  const p = await page({ x: 46, y: 60, contentInset: { left: 6, top: 0 } });
+  await p.mousedown();
+  assert.deepEqual(p.calls('save_fleet_bar_pos')[0].args, [A, 46, 60, 'begin']);
+  await settle(p.calls('save_fleet_bar_pos')[0], { status: 'dragging', drag_id: 17 });
+  await p.mousemove(-120, 160);
+  await p.mouseup();
+  assert.deepEqual(p.nativeMoves, [[-120, 160]]);
+  assert.deepEqual(p.calls('save_fleet_bar_pos')[1].args, [A, -114, 160, 'end', 17]);
+  await settle(p.calls('save_fleet_bar_pos')[1]);
+  await p.advance(150);
+  assert.deepEqual(p.calls('settle_fleet_bar_resize')[0].args, [A, 420, -114]);
+});
 
 for (const warningWhen of ['before-status', 'after-status', 'after-end']) {
   test('actual customize position-only header status cannot retire delayed width failure: ' + warningWhen, async () => {
