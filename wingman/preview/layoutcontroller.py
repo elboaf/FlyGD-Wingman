@@ -69,9 +69,22 @@ class PreviewLayoutsController:
         self._next_id = 0
         self._revision = 0
         self._commit_revision = 0
+        self._latest_commit: LayoutCommit | None = None
         self._preview = copy.deepcopy(initial)
 
     def state(self) -> dict:
+        with self._condition:
+            commit = self._latest_commit
+            needs_projection = (
+                commit is not None and commit.revision > self._commit_revision
+            )
+        if needs_projection:
+            try:
+                self._accept_commit(commit)
+            except Exception:
+                # Keep the last usable projection, but never discard the durable
+                # authority. A later read can recover without another mutation.
+                logger.exception("Could not rebuild committed Preview state")
         # Sampling may overlap a commit. Only owner evidence is borrowed; never
         # replace accepted exclusions/records with a stale sampled dictionary.
         sampled = model.known_owners(
@@ -172,10 +185,20 @@ class PreviewLayoutsController:
         return record, name
 
     def _accept_commit(self, commit: LayoutCommit) -> None:
+        with self._condition:
+            if (
+                commit is not self._latest_commit
+                or commit.revision <= self._commit_revision
+            ):
+                return
         saved = model.serialize(commit.saved)
         layouts = layout.serialize(dict(commit.layouts))
         with self._condition:
-            if commit.revision > self._commit_revision:
+            # Projection may finish after another caller accepted a newer commit.
+            if (
+                commit is self._latest_commit
+                and commit.revision > self._commit_revision
+            ):
                 self._preview.update(
                     saved_layouts=saved, layouts=layouts, excluded=list(commit.excluded)
                 )
@@ -220,7 +243,11 @@ class PreviewLayoutsController:
                 "warning": None,
                 "error": None,
             }
-            records = model.deserialize(self._preview.get("saved_layouts"))
+            records = (
+                self._latest_commit.saved
+                if self._latest_commit is not None
+                else model.deserialize(self._preview.get("saved_layouts"))
+            )
         try:
             _, name = self._validate(action, records, layout_id, revision, name)
         except ValueError as exc:
@@ -272,8 +299,10 @@ class PreviewLayoutsController:
                         current = list(section.get("excluded") or [])
                         if (name in current) == excluded:
                             with self._condition:
-                                acknowledged = current == self._preview.get(
-                                    "excluded", []
+                                acknowledged = (
+                                    tuple(current) == self._latest_commit.excluded
+                                    if self._latest_commit is not None
+                                    else current == self._preview.get("excluded", [])
                                 )
                             if acknowledged:
                                 raise _Unchanged
@@ -328,6 +357,14 @@ class PreviewLayoutsController:
             except Exception as exc:  # noqa: BLE001 -- borrowed bridge thread must settle precommit failures and release its exact lease.
                 operation["error"] = str(exc) or type(exc).__name__
             else:
+                # Retain immutable authority before any fallible projection or
+                # publication. Delayed older callers cannot replace this receipt.
+                with self._condition:
+                    if (
+                        self._latest_commit is None
+                        or commit.revision > self._latest_commit.revision
+                    ):
+                        self._latest_commit = commit
                 # Never let cache/page/native failures turn a durable acceptance
                 # into a false rollback receipt. Native still consumes the commit.
                 operation.update(applied=True, persisted=True)

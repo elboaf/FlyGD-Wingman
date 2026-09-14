@@ -4,6 +4,7 @@ import copy
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -389,6 +390,189 @@ def test_failures_distinguish_rollback_from_successful_commit(
     )
     assert res["error"] if effect == "persist" else res["warning"]
     assert gate.wait_idle(0)
+
+
+def test_rename_projection_failure_recovers_new_hash_without_write_or_restart(
+    tmp_path, monkeypatch
+):
+    from wingman.preview import layoutcontroller
+
+    saved = record()
+    controller, _, path, gate, calls = setup_controller(tmp_path, records=(saved,))
+    stale = controller._ports.read_preview()
+
+    def fail(entries):
+        raise OSError("injected serialized geometry projection")
+
+    # Replace only the controller's projection seam, not settings/store's real
+    # serializers: the durable Rename must finish before this fault is reached.
+    with monkeypatch.context() as patch:
+        patch.setattr(layoutcontroller, "layout", SimpleNamespace(serialize=fail))
+        receipt = controller.rename(saved.id, model.record_revision(saved), "Renamed")
+    assert receipt["applied"] and receipt["persisted"] and receipt["warning"]
+    assert not receipt["error"]
+    assert (
+        settings.load(path)["preview"]["saved_layouts"]["items"][0]["name"] == "Renamed"
+    )
+    before = path.read_bytes()
+    controller._ports = replace(controller._ports, read_preview=lambda: stale)
+    recovered = controller.state()
+    assert recovered["layouts"][0]["name"] == "Renamed"
+    new_hash = recovered["layouts"][0]["revision"]
+    assert new_hash == model.record_revision(replace(saved, name="Renamed"))
+    assert recovered["revision"] > receipt["state"]["revision"]
+    assert path.read_bytes() == before
+    refused = controller.rename(saved.id, model.record_revision(saved), "Retry")
+    assert not refused["persisted"] and "changed" in refused["error"]
+    assert path.read_bytes() == before
+    retry = controller.rename(saved.id, new_hash, "Retry")
+    assert retry["persisted"] and retry["state"]["layouts"][0]["name"] == "Retry"
+    assert not native_calls(calls)
+    assert controller.shutdown(0) and gate.wait_idle(0)
+
+
+@pytest.mark.parametrize("action", ["save", "update", "remove", "apply", "excluded"])
+def test_failed_cache_recovers_all_mutations_from_commit_not_sampled_preview(
+    tmp_path, monkeypatch, action
+):
+    saved = model.SavedLayout(
+        "1" * 32,
+        "Original",
+        (
+            model.SavedCharacter("Pilot", False, Rect(10, 20, 300, 200)),
+            model.SavedCharacter("Nullable", True, None),
+        ),
+    )
+    controller, _, path, gate, calls = setup_controller(
+        tmp_path,
+        records=(saved,),
+        section={"seen": ["Offline"], "excluded": ["Absent", "Nullable"]},
+    )
+    stale = controller._ports.read_preview()
+
+    def fail(commit):
+        raise OSError("injected cache failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(controller, "_accept_commit", fail)
+        if action == "save":
+            receipt = controller.save_current("Second")
+        elif action == "excluded":
+            receipt = controller.set_excluded("Other", True)
+        else:
+            method = (
+                controller.update_saved
+                if action == "update"
+                else getattr(controller, action)
+            )
+            receipt = method(saved.id, model.record_revision(saved))
+    assert receipt["applied"] and receipt["persisted"] and receipt["warning"]
+    assert receipt["error"] is None
+    durable = settings.load(path)["preview"]
+    before = path.read_bytes()
+    controller._ports = replace(controller._ports, read_preview=lambda: stale)
+    state = controller.state()
+    assert state["layouts"] == [
+        {
+            "id": r.id,
+            "name": r.name,
+            "revision": model.record_revision(r),
+            "character_count": len(r.characters),
+        }
+        for r in model.deserialize(durable["saved_layouts"])
+    ]
+    assert state["excluded"] == durable["excluded"]
+    assert path.read_bytes() == before
+    assert state["revision"] > receipt["state"]["revision"]
+    if action == "apply":
+        delivered = next(c for c in calls if c[0] == "apply")
+        assert delivered[4] == {"Pilot": Rect(10, 20, 300, 200), "Nullable": None}
+        assert state["excluded"] == ["Absent", "Pilot"]
+    elif action == "excluded":
+        assert state["excluded"] == ["Absent", "Nullable", "Other"]
+        assert "Other" in state["owners"]
+    state["layouts"].clear()
+    state["excluded"].clear()
+    assert controller.state()["excluded"] == durable["excluded"]
+    assert controller.shutdown(0) and gate.wait_idle(0)
+
+
+def test_validation_and_noop_acknowledgement_use_commit_even_while_cache_is_broken(
+    tmp_path, monkeypatch
+):
+    saved = record()
+    controller, _, path, gate, calls = setup_controller(tmp_path, records=(saved,))
+
+    def fail(commit):
+        raise OSError("injected cache failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(controller, "_accept_commit", fail)
+        assert controller.rename(saved.id, model.record_revision(saved), "Renamed")[
+            "persisted"
+        ]
+        before = path.read_bytes()
+        duplicate = controller.save_current("Renamed")
+        assert not duplicate["persisted"] and "name" in duplicate["error"]
+        assert path.read_bytes() == before and not native_calls(calls)
+        retry = controller.rename(
+            saved.id, model.record_revision(replace(saved, name="Renamed")), "Latest"
+        )
+        assert retry["persisted"] and not retry["error"]
+        assert controller.set_excluded("Pilot", True)["persisted"]
+        writes = []
+        original = settings._save_locked
+        patch.setattr(
+            settings,
+            "_save_locked",
+            lambda *args: (writes.append(args), original(*args))[1],
+        )
+        assert controller.set_excluded("Pilot", True)["persisted"]
+        assert not writes
+    state = controller.state()
+    assert state["layouts"][0]["name"] == "Latest"
+    assert state["excluded"] == ["Pilot"]
+    assert controller.shutdown(0) and gate.wait_idle(0)
+
+
+def test_delayed_older_cache_recovery_cannot_replace_newer_accepted_commit(
+    tmp_path, monkeypatch
+):
+    from wingman.preview import layoutcontroller
+
+    controller, _, path, gate, _ = setup_controller(tmp_path)
+    serialize = layoutcontroller.layout.serialize
+    entered, proceed = threading.Event(), threading.Event()
+    broken = True
+
+    def project(entries):
+        if broken:
+            raise OSError("injected first cache failure")
+        if not entered.is_set():
+            entered.set()
+            assert proceed.wait(5)
+        return serialize(entries)
+
+    # Stall the actual projection, after its initial sequence check, so recovery
+    # must recheck authority before installing the delayed serialized result.
+    monkeypatch.setattr(layoutcontroller, "layout", SimpleNamespace(serialize=project))
+    first = controller.set_excluded("First", True)
+    assert first["persisted"] and first["warning"]
+    broken = False
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        recovery = pool.submit(controller.state)
+        try:
+            assert entered.wait(5)
+            second = controller.set_excluded("Second", True)
+            assert second["state"]["excluded"] == ["First", "Second"]
+        finally:
+            proceed.set()
+        delayed = recovery.result(5)
+    assert delayed["excluded"] == ["First", "Second"]
+    assert delayed["revision"] >= second["state"]["revision"]
+    assert controller.state()["excluded"] == ["First", "Second"]
+    assert settings.load(path)["preview"]["excluded"] == ["First", "Second"]
+    assert controller.shutdown(0) and gate.wait_idle(0)
 
 
 @pytest.mark.parametrize("stage", ["capture", "native"])

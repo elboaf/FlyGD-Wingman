@@ -584,3 +584,77 @@ skips. No subagents/reviewers, network/GitHub, real app/EVE/profile/clipboard,
 other worktrees, push/PR/merge or hook bypass. Task 5 controls and Task 6 remain
 unimplemented; browser rendering and Windows/WebView2/live-EVE acceptance remain
 unverified. No known unresolved Task 4 correctness blocker after local verification.
+
+## Task 4 — fix round 1 cache-authority checkpoint; task gate open
+
+Base: `aa6ee2c86e60f73a12a5af729ce1b6bdb72aefea`. The subsequent review found a
+real cache-authority blocker, superseding the earlier local no-blocker claim.
+This checkpoint fixes that finding only; the inherited pump-to-page publication
+gap requires maintainer architecture approval. **Task 4 is not closed.**
+
+Reproduced Rename through real settings/store while failing only the controller's
+serialized geometry projection: disk and receipt acknowledged `Renamed`, but after
+restoring serialization a fresh read still returned `Original`. The controller had
+lost its successful `LayoutCommit` before recording authority, and owner-only
+committed-reader sampling could not restore its records, hashes or exclusions.
+
+`preview/layoutcontroller.py` now retains the latest immutable acknowledged commit
+under its short condition before fallible projection/publication, ordered strictly
+by the store sequence. `state()` retries a missing projection from that retained
+receipt without another mutation, settings write or restart. Failed projection
+leaves the previous usable view and logs the failure; successful recovery advances
+the view revision. Projection runs outside the condition and rechecks latest
+commit identity/sequence before installation, so delayed recovery cannot supersede
+a newer accepted generation. Named preflight validation and same-choice exclusion
+acknowledgement use immutable authority even while its presentation cache is broken.
+No port/wait/page work under locks; no new executor, worker, timer, state writer,
+public interface, schema or native-delivery path. Exact capture/lease forwarding,
+null-member Apply maps and truthful postcommit persisted results remain unchanged.
+
+Eight new cases in `tests/test_preview_layoutcontroller.py` cover Rename/new-hash
+recovery and retry, all other mutations/exclusions, stale sampled dictionaries,
+validation and write-free no-op acknowledgement while projection is broken, and
+Event-delayed older projection versus newer accepted authority. Existing lifecycle,
+reversed-commit, native identity and lock-boundary cases remain green.
+
+All Python/Ruff invocations used `UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv
+uv run --no-sync`. Exact commands/XML paths are appended to the ignored Task 4
+report. Rename RED: **1 expected failure, 37 deselected**. Expanded controller RED:
+**8 expected failures, 37 passed** → controller GREEN: **45 passed**. A mutation
+that removed only the post-projection authority check produced **1 expected failure**
+(dropped the newer exclusion), then was restored before fresh verification.
+
+Fresh focused gate:
+
+```sh
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync python -m pytest tests/test_preview_layoutcontroller.py tests/test_preview_savedlayouts_page.py tests/test_api.py tests/test_preview_wiring.py tests/test_bridge_contract.py tests/test_settings_transactions.py tests/test_settings_committed_preview.py tests/test_preview_layout_admission.py tests/test_preview_layout_batch.py tests/test_preview_runtime.py tests/test_preview_runtime_boundaries.py tests/test_preview_runtime_review.py tests/test_preview_store.py tests/test_page_conventions.py tests/test_js_smoke.py -q -rs --tb=short --basetemp=/tmp/wingman-task4-fix1-cache-focused --junitxml=/tmp/wingman-task4-fix1-cache-focused.xml
+```
+
+**811 passed in 33.13s, no skips.** Local `polish-core --fix` reviewed the final
+diff, authority/lock/exception paths and tests; only safe Ruff formatting was
+applied. Fresh `ruff check .` passed, `ruff format --check .` reported **448 files
+already formatted**, all-page Node smoke passed, and `git diff --check` passed.
+
+Fresh broader gate:
+
+```sh
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync python -m pytest tests/test_preview*.py tests/test_companion*.py tests/test_api*.py tests/test_bridge_contract.py tests/test_settings_committed_preview.py tests/test_settings_transactions.py tests/test_page_conventions.py tests/test_js_smoke.py tests/test_startup.py -q -rs --tb=short --basetemp=/tmp/wingman-task4-fix1-cache-broad --junitxml=/tmp/wingman-task4-fix1-cache-broad.xml
+```
+
+**3906 passed, 4 Windows-only skips in 131.00s**. Skips require the real native
+pump/window station or user32/gdi32/dwmapi; no Node/codec prerequisite skips.
+No full-suite/Cargo rerun: the coordinator explicitly says no full suite is needed
+for this bounded checkpoint.
+
+The inherited native pump → hotkey callback → Api page-publication gap remains
+unresolved and untouched; these results do not establish the no-page-work-on-pump
+guarantee. The coordinator's architecture investigation found that satisfying the
+blanket rule requires broadening the existing Fleet presentation owner/startup and
+capture-session interface, or explicitly narrowing the rule to new operation-local
+deferral. Either needs maintainer approval; **neither handoff is implemented here**.
+The coordinator will ask the maintainer after this clean checkpoint. Do not route
+Preview through the conditional recording-folder watcher scheduler or add another
+executor/timer. Task 5 per-row feedback/geometry hydration and controls remain
+deferred. No subagents/reviewers, network/GitHub, real app/EVE/profile/clipboard,
+push/PR/merge/amend or hook bypass. Browser and real Windows/WebView2/live-EVE
+acceptance remain unverified.
