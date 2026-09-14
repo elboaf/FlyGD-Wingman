@@ -302,7 +302,12 @@ class PreviewWindow:
         label_marker: str | None = None,
         hidden: bool = False,
         is_authorized=None,
+        on_gesture_begin=None,
+        on_gesture_end=None,
     ):
+        self._on_gesture_begin = on_gesture_begin
+        self._on_gesture_end = on_gesture_end
+        self._gesture = None
         self._libs = libs
         self._is_authorized = is_authorized
         self.client = client
@@ -409,6 +414,8 @@ class PreviewWindow:
         label_marker: str | None = None,
         hidden: bool = False,
         is_authorized=None,
+        on_gesture_begin=None,
+        on_gesture_end=None,
     ):
         self = cls(
             libs,
@@ -430,6 +437,8 @@ class PreviewWindow:
             label_marker=label_marker,
             hidden=hidden,
             is_authorized=is_authorized,
+            on_gesture_begin=on_gesture_begin,
+            on_gesture_end=on_gesture_end,
         )
         _ensure_class(libs)
         self.hwnd = libs.user32.CreateWindowExW(
@@ -966,7 +975,32 @@ class PreviewWindow:
                 self._invalidate_frames()
 
     # -- input -----------------------------------------------------------
+    def _begin_gesture(self) -> bool:
+        if self._gesture is None:
+            self._gesture = (
+                self._on_gesture_begin() if self._on_gesture_begin is not None else True
+            )
+        return self._gesture is not None
+
+    def finish_gesture(self, *, record=True) -> None:
+        """Freeze before retiring ownership; capture loss may re-enter wndproc.
+
+        An Off freeze can record through retained layout authority, bypassing
+        the revoked live callback, then retire this gesture with record=False.
+        """
+        mode, self._mode = self._mode, None
+        lease, self._gesture = self._gesture, None
+        try:
+            if record and mode in ("move", "resize", "resize_all"):
+                self._on_rect_changed(self.client.stable_key, self.rect, self.locked)
+        finally:
+            if lease is not None and self._on_gesture_end is not None:
+                self._on_gesture_end(lease)
+
     def _on_message(self, msg, wparam, lparam):
+        if msg in (win32.WM_CAPTURECHANGED, win32.WM_CANCELMODE):
+            self.finish_gesture()
+            return 0
         # The button grammar, when previews are NOT locked in place:
         #
         #   left click            -> switch to the client (selected ring)
@@ -1001,6 +1035,9 @@ class PreviewWindow:
                 return 0
             pt = _lparam_point(lparam)
             if self._mode is not None:
+                if self._mode == "denied_left" or not self._begin_gesture():
+                    self._mode = "denied_left"
+                    return 0
                 # The SECOND button of the chord. Whichever gesture the
                 # first button armed, both-buttons now means resize-all.
                 # Re-anchoring to the CURRENT rect and cursor is what
@@ -1015,6 +1052,8 @@ class PreviewWindow:
             resizing = msg == win32.WM_LBUTTONDOWN and geometry.hit_resize_handle(
                 geometry.Rect(0, 0, self.rect.w, self.rect.h), *pt
             )
+            if (resizing or msg == win32.WM_RBUTTONDOWN) and not self._begin_gesture():
+                return 0
             if msg == win32.WM_LBUTTONDOWN:
                 self._mode = "resize" if resizing else "pending_left"
             else:
@@ -1052,6 +1091,8 @@ class PreviewWindow:
             return 0
 
         if msg == win32.WM_MOUSEMOVE and self._mode:
+            if self._mode == "denied_left":
+                return 0
             if PERF:
                 t0 = time.perf_counter()
                 p = self._perf
@@ -1071,6 +1112,11 @@ class PreviewWindow:
                 # preview around is not a request to bring its client
                 # forward. (A locked preview never reaches this branch at
                 # all: its press switched on the way down.)
+                if not self._begin_gesture():
+                    # A refused drag is not a click. A genuine click still
+                    # activates on release, independently of layout admission.
+                    self._mode = "denied_left"
+                    return 0
                 self._mode = "move"
             if self._mode in ("resize", "resize_all"):
                 self.move(
@@ -1099,6 +1145,8 @@ class PreviewWindow:
             return 0
 
         if msg in (win32.WM_LBUTTONUP, win32.WM_RBUTTONUP) and self._mode:
+            mode = self._mode
+            self.finish_gesture()
             self._libs.user32.ReleaseCapture()
             if PERF and getattr(self, "_perf", None):
                 p = self._perf
@@ -1116,7 +1164,7 @@ class PreviewWindow:
                     p["gap"] * 1000,
                 )
                 self._perf = None
-            if self._mode == "pending_left":
+            if mode == "pending_left":
                 # The click that never dragged. Acknowledged BEFORE the
                 # handoff, and regardless of whether the switch that
                 # follows succeeds: Windows refuses a foreground change
@@ -1130,13 +1178,10 @@ class PreviewWindow:
                 # the roster and the settings -- and it has to know them
                 # BEFORE the foreground moves.
                 self._on_activate(self.client)
-                self._mode = None
-                return 0
-            self._mode = None
-            self._on_rect_changed(self.client.stable_key, self.rect, self.locked)
             return 0
 
         if msg == win32.WM_DESTROY:
+            self.finish_gesture()
             self._release_thumb()
             return 0
         return None
@@ -1153,6 +1198,7 @@ class PreviewWindow:
         The overlay last: it is owned by this window and Windows destroys
         owned windows with their owner, but doing it explicitly keeps the
         HWND bookkeeping honest and the destruction order legible."""
+        self.finish_gesture()
         # Before anything is destroyed: a client that quits mid-alert
         # otherwise leaks one DC and up to six DIBs for the life of the
         # process, and a fleet-wide aggression arms every preview at once.

@@ -646,7 +646,11 @@ class _FakeLibs:
 
 
 def _window_for_gestures(
-    locked, on_activate=lambda c: None, on_resize_all=None, on_toggle_crop=None
+    locked,
+    on_activate=lambda c: None,
+    on_resize_all=None,
+    on_toggle_crop=None,
+    **gesture_options,
 ):
     client = type(
         "C",
@@ -672,10 +676,81 @@ def _window_for_gestures(
         lambda: Rect(0, 0, 1920, 1080),
         locked=locked,
         **options,
+        **gesture_options,
     )
     w.hwnd = 1
     w.redraw = lambda force=False: None
     return w, libs
+
+
+@pytest.mark.parametrize("end", ["up", "capture", "cancel", "close", "freeze"])
+def test_gesture_lease_retires_once_after_final_geometry(end, monkeypatch):
+    from wingman.preview.layoutadmission import PrimaryLayoutAdmission
+
+    gate = PrimaryLayoutAdmission()
+    recorded, completed = [], []
+
+    def finish(lease):
+        assert recorded == [Rect(100, 100, 400, 260)]
+        completed.append(lease)
+        gate.finish(lease)
+
+    w, libs = _window_for_gestures(
+        False,
+        on_gesture_begin=lambda: gate.try_begin(exclusive=False),
+        on_gesture_end=finish,
+    )
+    w.lock_aspect = False
+    w._on_rect_changed = lambda key, rect, locked: recorded.append(rect)
+    monkeypatch.setattr(libs.user32, "DestroyWindow", lambda hwnd: True, raising=False)
+    w._on_message(window.win32.WM_RBUTTONDOWN, 0, 0)
+    assert gate.try_begin(exclusive=True) is None
+    libs.cursor = (80, 50)
+    w._on_message(window.win32.WM_MOUSEMOVE, 0, 0)
+    if end == "close":
+        w.close()
+    elif end == "freeze":
+        w.finish_gesture()
+    else:
+        message = {
+            "up": window.win32.WM_RBUTTONUP,
+            "capture": window.win32.WM_CAPTURECHANGED,
+            "cancel": window.win32.WM_CANCELMODE,
+        }[end]
+        w._on_message(message, 0, 0)
+    w._on_message(window.win32.WM_CAPTURECHANGED, 0, 0)
+    assert len(completed) == 1
+    assert gate.wait_idle(0)
+    assert w._mode is None
+
+
+def test_exclusive_refuses_drag_without_changing_click_or_crop_meaning():
+    from wingman.preview.layoutadmission import PrimaryLayoutAdmission
+
+    gate = PrimaryLayoutAdmission()
+    lease = gate.try_begin(exclusive=True)
+    activated, crops = [], []
+    w, libs = _window_for_gestures(
+        False,
+        on_activate=activated.append,
+        on_toggle_crop=crops.append,
+        on_gesture_begin=lambda: gate.try_begin(exclusive=False),
+        on_gesture_end=gate.finish,
+    )
+    w._on_message(window.win32.WM_LBUTTONDOWN, 0, 0)
+    w._on_message(window.win32.WM_LBUTTONUP, 0, 0)
+    assert activated == [w.client]
+    w._on_message(window.win32.WM_LBUTTONDOWN, 0, 0)
+    libs.cursor = (80, 50)
+    w._on_message(window.win32.WM_MOUSEMOVE, 0, 0)
+    w._on_message(window.win32.WM_LBUTTONUP, 0, 0)
+    w._on_message(window.win32.WM_RBUTTONDOWN, 0, 0)
+    assert w.rect == Rect(100, 100, 320, 210)
+    assert activated == [w.client] and not crops and not w.locked
+    w.locked = True
+    w._on_message(window.win32.WM_RBUTTONDOWN, 0, 0)
+    assert crops == [w.client]
+    gate.finish(lease)
 
 
 def test_a_left_click_activates_on_release(monkeypatch):

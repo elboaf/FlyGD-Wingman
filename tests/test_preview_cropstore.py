@@ -79,6 +79,85 @@ def startup_failure(request, monkeypatch):
         executor.shutdown(wait=False)
 
 
+def test_primary_action_uses_existing_worker_and_precedes_close(make_store):
+    store, _ = make_store()
+    entered, release = Event(), Event()
+    order = []
+
+    def action():
+        entered.set()
+        assert release.wait(5)
+        order.append("primary")
+        return 42
+
+    first = store.submit_primary(action)
+    assert entered.wait(5)
+    try:
+        executor = store._executor
+        second = store.submit_primary(lambda: order.append("later"))
+        closing = store.close()
+        assert not first.cancel() and not closing.done()
+        with pytest.raises(RuntimeError, match="closed"):
+            store.submit_primary(lambda: None)
+        assert store._executor is executor
+    finally:
+        release.set()
+    assert first.result(3) == 42
+    second.result(3)
+    assert closing.result(3)
+    assert order == ["primary", "later"]
+
+
+def test_primary_failure_preserves_context_and_does_not_kill_worker(make_store):
+    store, _ = make_store()
+
+    def fail():
+        raise OSError("primary disk unavailable")
+
+    future = store.submit_primary(fail)
+    with pytest.raises(OSError, match="primary disk unavailable"):
+        future.result(3)
+    assert store.submit_primary(lambda: "still alive").result(3) == "still alive"
+
+
+def test_primary_start_failure_settles_future_and_never_runs_retired_job(
+    make_store, startup_failure
+):
+    store, _ = make_store(executor_factory=startup_failure.factory)
+    called = []
+    future = store.submit_primary(lambda: called.append("stale"))
+    with pytest.raises(RuntimeError, match="worker resources exhausted"):
+        future.result(3)
+    startup_failure.failing = False
+    assert store.submit_primary(lambda: "retry").result(3) == "retry"
+    assert called == []
+
+
+def test_primary_callbacks_and_actions_run_outside_metadata_condition(make_store):
+    store, _ = make_store()
+    entered, release = Event(), Event()
+
+    def action():
+        entered.set()
+        assert release.wait(5)
+        with ThreadPoolExecutor(max_workers=1) as reader:
+            return reader.submit(store.snapshot).result(2)
+
+    future = store.submit_primary(action)
+    assert entered.wait(5)
+    completed = Event()
+
+    def callback(_):
+        with ThreadPoolExecutor(max_workers=1) as reader:
+            reader.submit(store.snapshot).result(2)
+        completed.set()
+
+    future.add_done_callback(callback)
+    release.set()
+    future.result(3)
+    assert completed.wait(3)
+
+
 def test_specific_cancellation_reason_does_not_overwrite_terminal_outcome(make_store):
     store, _ = make_store(initial={"Alice": definition()})
     token = store.begin("Alice", epoch=0, session=None)
