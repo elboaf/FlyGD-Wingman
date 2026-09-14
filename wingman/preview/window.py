@@ -300,8 +300,11 @@ class PreviewWindow:
         *,
         label_size=DEFAULT_LABEL_SIZE,
         label_marker: str | None = None,
+        hidden: bool = False,
+        is_authorized=None,
     ):
         self._libs = libs
+        self._is_authorized = is_authorized
         self.client = client
         self.rect = rect
         # Restored from the saved layout, not assumed False: a preview the
@@ -330,12 +333,9 @@ class PreviewWindow:
         # mouse-move) so no second parsed copy can drift from it.
         self.selection_color = selection_color
         self.selected = False
-        # Whether hide-on-lost-focus currently has this window off screen.
-        # Not a saved setting and not per character: the host recomputes it
-        # for every preview on every sweep, and a new window is always
-        # created visible -- _apply_visibility hides it on the same sweep
-        # if the foreground says so.
-        self.hidden = False
+        # Host-owned windows prepare hidden; publication decides visibility
+        # after native preparation. Standalone callers retain visible creation.
+        self.hidden = hidden
         # Whether the client owns the foreground right now, as opposed to
         # `selected` above, which is the sticky ring. Only the alerts read
         # it; see set_focused.
@@ -407,6 +407,8 @@ class PreviewWindow:
         *,
         label_size=DEFAULT_LABEL_SIZE,
         label_marker: str | None = None,
+        hidden: bool = False,
+        is_authorized=None,
     ):
         self = cls(
             libs,
@@ -426,6 +428,8 @@ class PreviewWindow:
             on_toggle_crop,
             label_size=label_size,
             label_marker=label_marker,
+            hidden=hidden,
+            is_authorized=is_authorized,
         )
         _ensure_class(libs)
         self.hwnd = libs.user32.CreateWindowExW(
@@ -450,7 +454,8 @@ class PreviewWindow:
             return None
         _WINDOWS[int(self.hwnd)] = self
         self.redraw()
-        libs.user32.ShowWindow(self.hwnd, win32.SW_SHOWNOACTIVATE)
+        if not self.hidden:
+            libs.user32.ShowWindow(self.hwnd, win32.SW_SHOWNOACTIVATE)
         self._thumb = Thumbnail.register(libs, self.hwnd, client.hwnd)
         if self._thumb is not None:
             self._thumb.update(
@@ -675,7 +680,12 @@ class PreviewWindow:
     def _sync_label_visibility(self) -> None:
         if self._label_hwnd is None:
             return
-        visible = self.show_labels and not self.hidden and self._label_img is not None
+        visible = (
+            self.show_labels
+            and not self.hidden
+            and self._label_img is not None
+            and (self._is_authorized is None or self._is_authorized())
+        )
         if visible != self._label_visible:
             self._libs.user32.ShowWindow(
                 self._label_hwnd, win32.SW_SHOWNOACTIVATE if visible else win32.SW_HIDE
@@ -713,6 +723,8 @@ class PreviewWindow:
         Idempotent, like set_selected/set_focused and for the same reason:
         the host applies this to every window on every sweep.
         """
+        if not hidden and self._is_authorized is not None and not self._is_authorized():
+            hidden = True
         if hidden == self.hidden:
             return
         self.hidden = hidden

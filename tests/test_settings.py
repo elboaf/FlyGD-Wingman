@@ -100,6 +100,7 @@ def test_defaults_are_the_documented_values():
             # Off: previews leaving the screen is opt-in, and an upgrading
             # install has no such key.
             "hide_on_lost_focus": False,
+            "hide_active_preview": False,
             "never_minimize": [],
             "excluded": [],
             "locked": [],

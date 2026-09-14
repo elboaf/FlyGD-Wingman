@@ -23,7 +23,7 @@ def client(name="Alice", hwnd=16, pid=101, serial=1):
 def runtime(monkeypatch):
     from tests.test_preview_thumbnail import FakeDwm
 
-    posted, closed, made = [], [], []
+    posted, closed, made, shown = [], [], [], []
     native = SimpleNamespace(
         dwmapi=FakeDwm(),
         user32=SimpleNamespace(
@@ -32,6 +32,7 @@ def runtime(monkeypatch):
             GetClientRect=lambda *args: 0,
             PeekMessageW=lambda *args: 0,
             DestroyWindow=lambda hwnd: closed.append(hwnd),
+            ShowWindow=lambda hwnd, mode: shown.append((hwnd, mode)),
             PostQuitMessage=lambda code: None,
         ),
     )
@@ -63,8 +64,29 @@ def runtime(monkeypatch):
         h._apply_pending_roster(None)
 
     return SimpleNamespace(
-        host=h, native=native, posted=posted, made=made, closed=closed, roster=roster
+        host=h,
+        native=native,
+        posted=posted,
+        made=made,
+        closed=closed,
+        roster=roster,
+        shown=shown,
     )
+
+
+def test_active_hiding_preserves_metadata_eligibility_and_delivery(runtime):
+    r, c = runtime, client()
+    r.host._hide_active_preview = lambda: True
+    r.host._foreground = c.hwnd
+    r.roster(1, c)
+    assert r.made[0].hidden
+    assert r.shown == []
+    assert r.host._metadata_previewed == frozenset({c.session})
+    r.host.set_metadata_generation(1)
+    r.host.submit_metadata(1, {c.session: "HOME"})
+    r.host._apply_metadata()
+    assert r.made[0]._system_name == "HOME"
+    assert r.shown == []
 
 
 def test_metadata_coalesces_values_and_wakes_without_touching_windows_at_ingress(

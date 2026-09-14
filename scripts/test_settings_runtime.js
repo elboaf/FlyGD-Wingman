@@ -82,7 +82,8 @@ function page(hydrate = true, fightrecorder = false, previewSize = false) {
     'msg-general', 'msg-about', 'msg-uploads', 'msg-notify', 'msg-recdir',
     'msg-gamelogs', 'msg-discord', 'category-draft', 'btn-auth', 'tos-link', 'btn-update-check',
     'btn-update-download', 'btn-update-install', 'restore-preview-positions',
-    'restore-preview-positions-status', 'preview-label-size', 'preview-label-size-status'
+    'restore-preview-positions-status', 'preview-label-size', 'preview-label-size-status',
+    'preview-hide-active-preview', 'preview-hide-active-preview-status'
   ];
   if (fightrecorder) ids.push('fr-status', 'btn-fr-check', 'btn-fr-update', 'msg-fightrecorder',
     'preview-minimize-inactive', 'preview-minimize-inactive-status', 'sigbar-enabled', 'sigbar-enabled-status');
@@ -241,6 +242,51 @@ test('a delayed client-size hint never replaces the default-size refusal', async
   assert.equal(p.el('preview-default-size').value, 'bad size');
   assert.deepEqual(p.calls, []);
 });
+
+test('active preview checkbox hydrates before writing and stays editable while off', async () => {
+  const box = markup.getElementById('preview-hide-active-preview');
+  assert.ok(box, 'active-preview control is present');
+  assert.ok(box.closest('label').classList.contains('check'));
+  const p = page(false);
+  await p.toggle('preview-hide-active-preview', true);
+  assert.equal(p.calls.length, 0);
+  p.hydrate({preview: {enabled: false, hide_active_preview: true}});
+  assert.equal(p.el('preview-hide-active-preview').checked, true);
+  assert.equal(p.el('preview-hide-active-preview').disabled, false);
+  p.hydrate({preview: {enabled: false}});
+  assert.equal(p.el('preview-hide-active-preview').checked, false);
+});
+
+test('active preview rapid replies preserve queued choices and field-local refusal', async () => {
+  const p = page();
+  await p.toggle('preview-hide-active-preview', true);
+  await p.toggle('preview-hide-active-preview', false);
+  assert.equal(p.calls.length, 1);
+  p.hydrate({preview: {hide_active_preview: true}});
+  assert.equal(p.el('preview-hide-active-preview').checked, false);
+  await p.reply('set_preview_hide_active_preview', accepted, [true]);
+  assert.equal(p.el('preview-hide-active-preview').checked, false);
+  await p.reply('set_preview_hide_active_preview', refused, [false]);
+  assert.equal(p.el('preview-hide-active-preview').checked, true);
+  assert.equal(p.el('preview-hide-active-preview-status').textContent, 'Not accepted');
+  p.el('preview-label-size-status').textContent = 'Other field failure';
+  await p.toggle('preview-hide-active-preview', false);
+  await p.reply('set_preview_hide_active_preview', accepted, [false]);
+  assert.equal(p.el('preview-hide-active-preview').checked, false);
+  assert.equal(p.el('preview-hide-active-preview-status').textContent, '');
+  assert.equal(p.el('preview-label-size-status').textContent, 'Other field failure');
+});
+
+for (const reply of [null, {applied: false, persisted: false}, {applied: true, persisted: false}]) {
+  test('active preview gives honest feedback for ' + JSON.stringify(reply), async () => {
+    const p = page();
+    await p.toggle('preview-hide-active-preview', true);
+    await p.reply('set_preview_hide_active_preview', reply);
+    assert.equal(p.el('preview-hide-active-preview').checked, !!(reply && reply.applied));
+    assert.ok(p.el('preview-hide-active-preview-status').textContent);
+    if (!reply || !reply.applied) assert.doesNotMatch(p.el('preview-hide-active-preview-status').textContent, /for this session/);
+  });
+}
 
 test('label size has production markup and a registered change owner', async () => {
   assert.ok(markup.getElementById('preview-label-size'), 'label-size select exists');

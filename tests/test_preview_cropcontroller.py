@@ -113,7 +113,7 @@ def rig(monkeypatch):
     monkeypatch.setattr(croppicker, "_ensure_class", lambda libs: None)
     opened = []
 
-    def make(initial=None):
+    def make(initial=None, **options):
         from wingman.preview.cropcontroller import CropController
 
         native = Resources()
@@ -141,6 +141,7 @@ def rig(monkeypatch):
             publish=states.append,
             post_complete=completions.put,
             next_geometry_sequence=lambda: next(sequence),
+            **options,
         )
         r = type("Rig", (), {})()
         r.controller, r.store, r.native = c, store, native
@@ -256,6 +257,76 @@ def test_toggle_switches_an_existing_secondary_off_then_on(
             deserialize(r.transaction.writes[-1]["preview"]["crops"])["Alice"]
             == expected
         )
+
+
+@pytest.mark.parametrize("phase", ["creation", "promotion", "restore"])
+@pytest.mark.parametrize("change", ["focus", "authority"])
+def test_reveal_rechecks_policy_and_authority_after_native_preparation(
+    rig, monkeypatch, phase, change
+):
+    state = {"hidden": phase == "restore", "authorized": True}
+    r = rig(
+        {"Alice": DEFINITION} if phase != "promotion" else {},
+        is_hidden=lambda client: state["hidden"],
+        is_authorized=lambda epoch, client: state["authorized"],
+    )
+    if phase != "creation":
+        roster(r, 1, client())
+    if phase == "promotion":
+        request(r)
+        confirm(r)
+    if phase == "restore":
+        state["hidden"] = False
+    original = cropwindow.CropWindow._refresh
+    prepared = []
+
+    def prepare(window):
+        result = original(window)
+        if not window.hidden:
+            prepared.append(window.hwnd)
+            state["hidden" if change == "focus" else "authorized"] = change == "focus"
+        return result
+
+    monkeypatch.setattr(cropwindow.CropWindow, "_refresh", prepare)
+    before = len(r.native.events)
+    if phase == "creation":
+        roster(r, 1, client())
+    elif phase == "promotion":
+        finish(r)
+    else:
+        r.controller.set_hidden(False)
+    assert prepared, "test must reach visible DWM preparation"
+    assert not any(
+        call[0] == "show" and call[2] == win32.SW_SHOWNOACTIVATE
+        for call in r.native.events[before:]
+    )
+    if change == "focus":
+        assert r.controller.live["Alice"].window.hidden
+        assert r.states[-1]["live_count"] == 1
+        assert r.states[-1]["statuses"]["Alice"] == "live"
+        state["hidden"] = False
+        monkeypatch.setattr(cropwindow.CropWindow, "_refresh", original)
+        r.controller.set_hidden(False)
+        assert not r.controller.live["Alice"].window.hidden
+
+
+def test_focus_change_during_admitted_crop_save_does_not_cancel_live_hidden_result(rig):
+    state = {"active": False}
+    r = rig(is_hidden=lambda client: state["active"])
+    roster(r, 1, client())
+    r.transaction.release.clear()
+    token, _ = request(r)
+    try:
+        confirm(r)
+        assert r.transaction.entered.wait(5)
+        state["active"] = True
+    finally:
+        r.transaction.release.set()
+    finish(r)
+    assert r.store.snapshot()["operations"][token.operation_id]["persisted"]
+    assert r.controller.live["Alice"].window.hidden
+    assert r.states[-1]["live_count"] == 1
+    assert r.states[-1]["statuses"]["Alice"] == "live"
 
 
 def test_toggle_without_a_saved_secondary_is_a_no_op(rig):
@@ -1479,8 +1550,9 @@ def test_host_ingress_fences_unadmitted_work_without_native_reconcile(rig, monke
     assert r.store.put(newer, DEFINITION).result(5).persisted
 
 
+@pytest.mark.parametrize("hide_active", [False, True])
 def test_host_crop_activation_bypasses_primary_exclusion_and_uses_current_session(
-    rig, monkeypatch
+    rig, monkeypatch, hide_active
 ):
     from wingman.preview import host
 
@@ -1489,7 +1561,9 @@ def test_host_crop_activation_bypasses_primary_exclusion_and_uses_current_sessio
         on_layout_changed=lambda *args: None,
         crop_store=r.store,
         excluded=lambda: ["Alice"],
+        hide_active_preview=lambda: hide_active,
     )
+    h._foreground = 16
     h._crop_epoch = 1
     monkeypatch.setattr(h, "_monitors", lambda: [MONITOR])
     monkeypatch.setattr(h, "_activate_client", lambda libs, c: r.activated.append(c))
@@ -1498,6 +1572,10 @@ def test_host_crop_activation_bypasses_primary_exclusion_and_uses_current_sessio
     h._apply_pending_roster(r.native.lib)
     assert h._windows == {} and "Alice" in h._clients
     live = h._crop_controller.live["Alice"].window
+    assert live.hidden is hide_active
+    if hide_active:
+        assert not any(e[0] == "show" and e[1] == live.hwnd for e in r.native.events)
+    assert h._crop_controller.live.keys() == {"Alice"}
     live._on_activate(live.client)
     assert r.activated[-1].stable_key == "Alice" and r.activated[-1].hwnd == 16
     h.apply_roster(RosterSnapshot(2, (client(serial=2, hwnd=42),)))

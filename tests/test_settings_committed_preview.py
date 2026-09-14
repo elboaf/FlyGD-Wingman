@@ -40,6 +40,7 @@ def _host_config(monkeypatch, document):
         ("opacity", {"opacity": 100}, 255, 100),
         ("minimize_inactive_clients", {"minimize_inactive_clients": True}, False, True),
         ("hide_on_lost_focus", {"hide_on_lost_focus": True}, False, True),
+        ("hide_active_preview", {"hide_active_preview": True}, False, True),
         ("never_minimize", {"never_minimize": ["Alice"]}, [], ["Alice"]),
         ("locked", {"locked": ["Alice"]}, [], ["Alice"]),
         ("excluded", {"excluded": ["Alice"]}, [], ["Alice"]),

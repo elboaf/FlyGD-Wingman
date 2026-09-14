@@ -553,14 +553,14 @@ class PrototypePreviewHost(PreviewHost):
 
     # -- inherited passes ------------------------------------------------
 
-    def _apply_visibility(self, libs, foreground) -> None:
+    def _apply_visibility(self, libs) -> None:
         """Crops follow the primary previews' hide decision exactly.
 
         The decision itself is not re-derived: `_previews_hidden` is what
         the base pass just applied, and a second visibility.should_hide
         call here could disagree with it on the same sweep.
         """
-        super()._apply_visibility(libs, foreground)
+        super()._apply_visibility(libs)
         for _hwnd, _pid, crop in self._live_crops().values():
             crop.set_hidden(self._previews_hidden)
 

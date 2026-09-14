@@ -14,6 +14,13 @@ owns the foreground -- a different thing that happens to be dead.
 """
 
 
+def should_hide_source(*, global_hidden, hide_active, foreground, source_hwnd) -> bool:
+    """Presentation only: an unknown foreground never nominates a source."""
+    return global_hidden or bool(
+        hide_active and foreground and foreground == source_hwnd
+    )
+
+
 def should_hide(*, enabled, foreground, client_hwnds, foreground_is_ours) -> bool:
     """Whether every preview should be hidden right now.
 
