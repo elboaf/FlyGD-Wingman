@@ -2,10 +2,9 @@
 
 Status: approved for implementation planning in the maintainer conversation,
 after independent review of the lossless-exclusion revision returned SHIP.
-Implementation and task-scoped reviews are complete through Task 5. Task 6
-[documentation and acceptance preparation](preview-layouts-implementation-notes.md#task-6--documentation-and-acceptance-preparation)
-is recorded; fresh final whole-branch review/polish and global gates remain
-coordinator work. Windows/WebView2/live-EVE acceptance and authorized integration
+Local implementation, task reviews, accepted final-review corrections, polish
+and fresh portable gates are complete; see the
+[final verification record](preview-layouts-implementation-notes.md#final-local-review-and-verification). Windows/WebView2/live-EVE acceptance and authorized integration
 are still pending; #213 is not closed. The maintainer approved the
 [shared-presentation amendment](preview-layouts-publication-amendment.md), retaining
 the blanket no-page-work-on-pump guarantee. Inspected base: `76afd3dc34f20eb071c97f25cd6d891ae11c352a`.

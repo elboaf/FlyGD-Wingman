@@ -1340,3 +1340,92 @@ interfaces and final commit status are preserved in the ignored
 
 This completes the implementer's accepted fix wave and local verification, not
 the coordinator's scoped re-review or final acceptance gates.
+
+## Final local review and verification
+
+The independent whole-implementation review covered
+`ad7aa79764476f034a4923027ddca09e0e0629b1` through
+`92a9ea47763b95546d179c373c35c73b6de37b72`. Its four findings were explicitly
+accepted by the maintainer and fixed in
+`873ae82c80334aa1138460f873ad6d1cc6c8f3a6`. A separate isolated, foreground
+cross-family scoped review found **all four addressed and no new
+Critical/Important breakage**. Neither review changed repository files.
+The full review also supplied the consolidated polish analysis: no safe
+behavior-preserving auto-fixes were recommended; behavioral findings were not
+auto-applied. The accepted fix wave received its own local polish and tests.
+
+The final correction uses the existing exact owner union for offered row actions,
+retains only saved/excluded controller authority rather than startup owner history,
+updates geometry-dependent controls without detaching unrelated editors, and makes
+the dev capture driver carry and consume its real session. No new worker, store,
+persisted schema or native operation was introduced by these corrections.
+
+### Fresh coordinator gates
+
+After the scoped review, these commands ran against the final source above:
+
+```sh
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync python -m pytest tests/ -q -rs --basetemp=/tmp/wingman-preview-layouts-final --junitxml=/tmp/wingman-preview-layouts-final.xml
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync ruff check .
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync ruff format --check .
+node scripts/js_smoke.js
+node --test tests/fixtures/screenshot_dom.test.cjs
+cargo test --locked --offline --manifest-path packaging/settings-codec/Cargo.toml --target-dir /tmp/wingman-preview-layouts-codec
+git diff --check ad7aa797..HEAD
+```
+
+Results: **12,919 passed, 13 Windows-only skips in 409.17s**; Ruff lint/format
+passed; every page module loaded; all **35 DOM tests** and the **Cargo regression**
+passed; range whitespace check passed. Node was **v26.5.0**, and
+`wingman.evesettings.codec.codec_available()` confirmed the installed release codec
+during verification. No Node/codec prerequisite was skipped. Full output is retained in
+`/tmp/wingman-preview-layouts-final.log` and
+`/tmp/wingman-preview-layouts-final-checks.log`, with the XML path above.
+
+The skipped cases require real Windows junctions, DPAPI/WinDLL, a native Preview
+message pump/window station, user32/gdi32/dwmapi, or the Windows tray backend.
+They are not a substitute for the separately listed operator checklist. The
+previous isolated Chrome checks remain browser evidence at **840×625** and
+**839×621**, including meaningful Identification editing and focus/selection,
+not Windows/WebView2/live-EVE acceptance. No source/test edits followed these
+coordinator gates; only this final documentation record was updated.
+
+### Execution rulings and costs
+
+These summarize the coordinator's recorded implementation decisions; the ignored
+plan evidence remains retained rather than deleted.
+
+| Ruling | Reason | Cost if wrong |
+|---|---|---|
+| Introduce visibility completion/result types with admission, before native batches. | Ordinary exclusion leases must last through reconciliation/rebind. | Small internal interface/task-placement rework. |
+| Retain plan-scoped evidence until explicit cleanup/integration authorization. | Keep detailed test and review provenance available for feedback. | Ignored local disk usage. |
+| Permit serialized detached cache/storage continuation after revocation or with no executable native phase, using the existing CropStore queue. | Settle admitted storage without starting another owner or touching natives off-pump. | Intent reordering or stranded shutdown; dedicated event-controlled tests cover these boundaries. |
+| Pass every recorded member to Apply, including null rectangles. | Preserve membership for inclusion/failure accounting while null geometry stays unchanged. | Internal interface rework; omitting keys risks affecting or blaming absent members. |
+| Keep explicit retries available for external busy admission without a pending named operation. | Native gesture completion does not send another page payload. | An extra harmless refused attempt while still busy. |
+| Land geometry refresh port, projection and page guards together in Task 5. | Avoid a provisional producer interface without correct stale-reply handling. | Task-placement changes only. |
+
+The broader shared-presentation change and all final-review corrections were
+maintainer-approved decisions, not silent scope expansions. Geometry revisions
+order fresh observations; they do not promise a settings/native cross-source
+atomic transaction or simultaneous multi-window visual application.
+
+### Remaining integration and operator boundary
+
+Local implementation, task reviews, accepted final-review fixes, polish and fresh
+portable gates are complete. **Windows/WebView2/live-EVE acceptance is NOT RUN**;
+[the smoke checklist](smoke-checklist.md) retains the source-bounds/focus,
+mixed-monitor/DPI, live-session replacement, family independence and pending-work
+shutdown checks. Forced developer page reload against a surviving capture host is
+not covered by the page-lifetime capture protocol.
+
+No push, PR, merge or issue closure was performed. The feature worktree and evidence
+are preserved. Authorized integration and the maintainer's #213 acceptance/closure
+decision remain separate; #216 importer work is not part of this change.
+
+### Reviewer knowledge check
+
+1. Why do ordinary placement edits not update a named snapshot?
+2. Why must an admitted layout lease survive queue submission and native/storage completion?
+3. Why are saved-record hashes, store/view sequences and geometry observation revisions separate?
+4. Why do current owner evidence and geometry-only painting matter for offline row actions and keyboard editing?
+5. Which guarantees still require the unrun Windows/WebView2/live-EVE acceptance pass?

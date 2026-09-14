@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11+, existing settings transactions and injected Win32 seams, plain HTML/CSS/ES5, pytest and Node page harnesses.
 
-**Spec:** [preview-layouts-design.md](preview-layouts-design.md), including the accepted lossless-exclusion revision and maintainer-approved publication amendment. Implementation and task-scoped reviews are complete through Task 5; see the [current acceptance map](preview-layouts-implementation-notes.md#task-6--documentation-and-acceptance-preparation). Fresh final whole-branch review/polish and global gates remain coordinator work. Windows acceptance and authorized integration remain pending; #213 is not closed. The original execution checklists below are retained, not retroactively marked as evidence.
+**Spec:** [preview-layouts-design.md](preview-layouts-design.md), including the accepted lossless-exclusion revision and maintainer-approved publication amendment. Local implementation, task reviews, accepted final-review corrections, polish and fresh portable gates are complete; see the [final verification record](preview-layouts-implementation-notes.md#final-local-review-and-verification) and [acceptance map](preview-layouts-implementation-notes.md#task-6--documentation-and-acceptance-preparation). Windows acceptance and authorized integration remain pending; #213 is not closed. The original execution checklists below are retained, not retroactively marked as evidence.
 
 **Planning baseline:** source `76afd3dc34f20eb071c97f25cd6d891ae11c352a`, design `9f9734a4d414054e1f1c89dd585fd65dfe361576`. Existing symbols below refer to that source baseline; new interfaces are explicitly marked proposed.
 
