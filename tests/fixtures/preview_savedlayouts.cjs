@@ -11,6 +11,15 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const {document, Element} = createDOM(data.page);
 Element.prototype.hasAttribute = function(name) { return this.getAttribute(name) !== null; };
 Element.prototype.select = function() { this.selectionStart = 0; this.selectionEnd = this.value.length; };
+// This harness exercises shared dialog focus ownership: the structure-only DOM
+// does not bubble focus events. Keep this behavior local to the interactive page.
+Element.prototype.focus = function() {
+  if (this.disabled || document.activeElement === this) return;
+  document.activeElement = this;
+  for (let target = this; target; target = target.parentNode) {
+    target.dispatchEvent({type: 'focusin', target: this});
+  }
+};
 const window = new Element('window');
 Object.assign(window, {window, document, console, Promise, setTimeout, clearTimeout,
   getComputedStyle: () => ({visibility: 'visible'}),
@@ -21,7 +30,7 @@ const getters = [], writes = [];
 window.WM.send = (method, ...args) => {
   if (method === 'get_preview_hotkey_state') return new Promise(resolve => getters.push(resolve));
   if (method === 'set_preview_excluded' || method === 'set_preview_binds') return new Promise((resolve, reject) => writes.push({method, args, resolve, reject}));
-  if (['set_preview_size', 'create_preview_layout', 'apply_preview_layout', 'update_preview_layout',
+  if (['set_preview_size', 'copy_preview_layout', 'create_preview_layout', 'apply_preview_layout', 'update_preview_layout',
        'rename_preview_layout', 'remove_preview_layout'].includes(method)) {
     return new Promise((resolve, reject) => writes.push({method, args, resolve, reject}));
   }
@@ -59,8 +68,120 @@ function change(name, checked) {
     return console.log('PASS controls-unhydrated');
   }
   getters.shift()(clone(data.initial)); await tick();
-  if (data.scenario.startsWith('controls-')) {
-    const el = id => document.getElementById(id);
+  const el = id => document.getElementById(id);
+  const stage = () => {
+    const fixture = clone(data.initial);
+    fixture.geometry_revision = 9999;
+    fixture.sizes.Alice = [999, 777];
+    fixture.layout_sources[0].geometry.w = 999;
+    fixture.layout_state = clone(data.created.state);
+    fixture.layout_state.revision = 9999;
+    fixture.layout_state.excluded = ['Bob'];
+    fixture.layout_state.layouts[0].name = 'Fixture only';
+    window.WM.previewCropScreenshot({kind: 'preview-crop-screenshot-v1', owner: 'Alice', preview: fixture,
+      crops: {...data.initial.crops, definitions: {Alice: {}}}});
+  };
+  const detailButton = (name, control) => {
+    let button = document.querySelector('[data-preview-detail-control="' + control + '"]');
+    if (!button || row(name).querySelector('[data-preview-configure]').getAttribute('aria-expanded') !== 'true') {
+      row(name).querySelector('[data-preview-configure]').click();
+      button = document.querySelector('[data-preview-detail-control="' + control + '"]');
+    }
+    return button;
+  };
+  if (data.scenario === 'staging-roundtrip') {
+    push(data.created);
+    push(data.visible);
+    const select = el('preview-layout-select');
+    select.value = data.created.state.layouts[0].id; select.dispatchEvent({type: 'change'});
+    el('preview-layout-save').click();
+    el('dlg-input').value = 'Duplicate'; el('dlg-ok').click(); await tick();
+    writes.at(-1).reject(new Error('Saved live feedback')); await tick();
+    change('Alice', false).reject(new Error('Alice live feedback')); await tick();
+    const feedback = el('preview-layout-status').textContent;
+    const selection = select.value;
+    stage();
+    assert.equal(box('Bob').checked, false, 'fixture has different choices');
+    window.WM.previewCropScreenshot(null); // deliberately no live push/receipt during staging
+    detailButton('Alice', 'size').click();
+    assert.equal(el('dlg-input').value, '500x300', 'fixture geometry must not mutate retained live state');
+    el('dlg-cancel').click(); await tick();
+    assert.equal(box('Bob').checked, true, 'fixture exclusions must not mutate retained live state');
+    assert.equal(select.value, selection);
+    assert.ok(select.options.some(option => option.textContent.includes('Hidden')));
+    assert.equal(el('preview-layout-status').textContent, feedback);
+    assert.match(el(box('Alice').getAttribute('aria-describedby')).textContent, /Alice live feedback/);
+    window.onPreviewGeometry(clone(data.newer_geometry));
+    detailButton('Alice', 'size').click();
+    assert.equal(el('dlg-input').value, '700x450', 'fixture revision cannot poison live geometry high-water');
+    el('dlg-cancel').click(); await tick();
+    push(data.bulk);
+    assert.equal(box('Bob').checked, false, 'live layout high-water is restored too');
+  } else if (data.scenario.startsWith('copy-dialog-')) {
+    const copy = detailButton('Bob', 'copy');
+    copy.focus(); copy.click();
+    el('dlg-select').value = 'Alice';
+    const boundary = data.scenario.slice('copy-dialog-'.length);
+    if (boundary === 'navigation') document.dispatchEvent({type: 'wm:section', detail: 'general'});
+    if (boundary === 'subpage') {
+      window.WM.settingsTab('previews', 'windows');
+      window.WM.settingsTab('previews', 'characters');
+    }
+    if (boundary === 'staging') { stage(); window.WM.previewCropScreenshot(null); }
+    if (boundary === 'configure') row('Alice').querySelector('[data-preview-configure]').click();
+    if (boundary === 'attempt') copy.click(); // queued newer chooser, same detail interaction
+    if (boundary === 'capture') { bind('Bob').focus(); bind('Bob').click(); await tick(); }
+    el('dlg-ok').click(); await tick();
+    assert.equal(writes.length, 0, 'stale chooser cannot admit Copy after ' + boundary);
+    if (boundary === 'attempt') {
+      el('dlg-select').value = 'Alice'; el('dlg-ok').click(); await tick();
+      assert.equal(writes.length, 1, 'only the latest chooser may admit Copy');
+      assert.deepEqual(writes[0].args, ['Bob', 'Alice']);
+    }
+    if (boundary === 'capture') {
+      assert.ok(document.activeElement === bind('Bob'), 'old Copy dialog must not steal newer capture focus');
+      assert.equal(bind('Bob').textContent, 'Press a key…');
+    }
+  } else if (data.scenario === 'dialog-focus-history') {
+    const invoker = el('preview-layout-save');
+    invoker.focus(); invoker.click();
+    const queued = window.WM.confirm('Queued question', 'Must still be answered');
+    bind('Bob').focus(); bind('Bob').click(); await tick();
+    bind('Bob').blur(); // losing newer focus cannot revive the original lease
+    el('dlg-input').focus();
+    el('dlg-ok').click(); await tick();
+    assert.equal(el('dlg-title').textContent, 'Queued question');
+    el('dlg-cancel').click();
+    assert.equal(await queued, false);
+    assert.ok(document.activeElement !== invoker, 'returning to the dialog cannot revive revoked return focus');
+    assert.equal(bind('Bob').textContent, 'Press a key…');
+    assert.equal(writes.length, 0);
+  } else if (data.scenario === 'dialog-owned-cancel') {
+    for (const [name, action] of [['Alice', 'size'], ['Bob', 'copy']]) {
+      const invoker = detailButton(name, action);
+      invoker.focus(); invoker.click();
+      const queued = window.WM.confirm('Queued question', 'Must still be answered');
+      el('dlg-cancel').click(); await tick();
+      assert.equal(el('dlg-title').textContent, 'Queued question');
+      document.dispatchEvent({type: 'keydown', key: 'Escape'});
+      assert.equal(await queued, false);
+      assert.ok(document.activeElement === invoker, 'ordinary queued Cancel returns to ' + action);
+      assert.equal(el('overlay').hidden, true);
+      assert.equal(writes.length, 0);
+    }
+  } else if (data.scenario === 'copy-admitted-subpage') {
+    window.WM.settingsTab('previews', 'characters');
+    detailButton('Bob', 'copy').click();
+    el('dlg-select').value = 'Alice'; el('dlg-ok').click(); await tick();
+    const pending = writes.at(-1);
+    assert.equal(pending.method, 'copy_preview_layout');
+    window.WM.settingsTab('previews', 'windows');
+    const newerFocus = el('preview-layout-save'); newerFocus.focus();
+    pending.resolve({applied: true, persisted: true, error: null}); await tick();
+    assert.equal(getters.length, 1, 'already-admitted Copy still refreshes after navigation');
+    getters.shift()({...clone(data.initial), ...clone(data.newer_copy)}); await tick();
+    assert.ok(document.activeElement === newerFocus, 'late refresh cannot reclaim detail focus');
+  } else if (data.scenario.startsWith('controls-')) {
     const select = el('preview-layout-select');
     const button = action => el('preview-layout-' + action);
     assert.ok(select, 'labelled saved-layout selector exists');
@@ -154,18 +275,21 @@ function change(name, checked) {
       assert.equal(button('save').disabled, false);
     } else if (data.scenario === 'controls-staging' || data.scenario === 'controls-capture') {
       choose(data.created);
-      button('save').click();
+      button('save').focus(); button('save').click();
       if (data.scenario === 'controls-staging') {
         window.WM.previewCropScreenshot({kind: 'preview-crop-screenshot-v1', owner: 'Alice', preview: clone(data.initial),
           crops: {...data.initial.crops, definitions: {Alice: {}}}});
         window.WM.previewCropScreenshot(null);
       } else {
         push(data.visible);
-        bind('Bob').click(); await tick();
+        bind('Bob').focus(); bind('Bob').click(); await tick();
       }
       await accept('Late');
       assert.equal(writes.length, 0, 'late dialog cannot mutate across staging or a newer capture');
-      if (data.scenario === 'controls-capture') assert.equal(bind('Bob').textContent, 'Press a key…');
+      if (data.scenario === 'controls-capture') {
+        assert.ok(document.activeElement === bind('Bob'), 'old Saved dialog must not steal newer capture focus');
+        assert.equal(bind('Bob').textContent, 'Press a key…');
+      }
     } else if (data.scenario === 'controls-pending') {
       choose(data.created);
       const ordinary = change('Alice', true);
@@ -224,16 +348,21 @@ function change(name, checked) {
       if (!document.querySelector('[data-preview-detail-control="size"]')) {
         row('Alice').querySelector('[data-preview-configure]').click();
       }
+      document.querySelector('[data-preview-detail-control="size"]').focus();
       document.querySelector('[data-preview-detail-control="size"]').click();
       return document.getElementById('dlg-input').value;
     };
     if (data.scenario.startsWith('geometry-dialog-')) {
       sizeDialog();
       if (data.scenario === 'geometry-dialog-navigation') document.dispatchEvent({type: 'wm:section', detail: 'general'});
-      else { bind('Bob').click(); await tick(); }
+      else { bind('Bob').focus(); bind('Bob').click(); await tick(); }
       document.getElementById('dlg-input').value = '600x400';
       document.getElementById('dlg-ok').click(); await tick();
       assert.equal(writes.length, 0, 'Size dialog may not act after navigation or a newer capture');
+      if (data.scenario === 'geometry-dialog-capture') {
+        assert.ok(document.activeElement === bind('Bob'), 'old Size dialog must not steal newer capture focus');
+        assert.equal(bind('Bob').textContent, 'Press a key…');
+      }
     } else if (data.scenario === 'geometry-ack') {
       assert.equal(sizeDialog(), '500x300');
       document.getElementById('dlg-input').value = '600x400';

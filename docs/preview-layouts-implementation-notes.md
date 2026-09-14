@@ -921,3 +921,141 @@ Task 5 is implemented and locally verified. The exact task report is
 acceptance remains explicitly unverified; Task 6 and branch integration were not
 performed. No remaining portable gate or known Task 5 production correctness
 finding from this local pass.
+
+## Task 5 — fix round 1, page-lifetime corrections
+
+Base: `891c9c743a580e548d837942399b5233f88209b3`. The coordinator's review
+found three concrete gaps, superseding the earlier local no-finding claim.
+**All three are fixed and verified below; Task 5's gate remains OPEN for scoped
+coordinator re-review. Task 6 is untouched.**
+
+### Changes / interfaces
+
+- `web/previews.js` detaches the fixture's `state` target before invoking full
+  hydration. `acceptLayouts`/`acceptGeometry` can no longer overwrite the retained
+  live object while `screenshotLive` is not yet installed. Plain entry/exit with
+  no live payload preserves geometry, exclusions, layout selection and feedback;
+  existing independent revisions and real-reply buffering remain unchanged.
+- Copy's chooser checks its captured `detailInteraction` and `copyAttempt` before
+  any mutation or cancellation-side effect. Navigation, completed staging, newer
+  Configure/capture/chooser attempts revoke **admission**, not settlement of work
+  already sent. The existing admitted-Copy status/refresh path stays unchanged.
+- `web/panel.js` tracks one internal `returnFocusOwned` boolean for the existing
+  dialog queue. Focus outside the visible overlay revokes return ownership until
+  that queue drains, even after blur or focus back into the dialog. Final `next()`
+  skips obsolete restoration before promise continuations run. Ordinary owned
+  Cancel, Escape, queue advancement, focus trap, scrim and rendered fallback stay
+  intact. No per-dialog option or public signature was needed; no control was
+  disabled as a focus workaround.
+- Ten production app/previews/panel scenarios added; Saved/Size tests now assert
+  `document.activeElement` identity and armed capture, not only labels and write
+  count. The interactive fixture alone supplies bubbling `focusin`; the shared
+  structure-only DOM helper is unchanged. No backend/sampler/native/runtime/store,
+  schema, bridge, worker or source-window behavior changed.
+
+### RED / GREEN and local polish
+
+Every Python/Ruff command uses
+`UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync` in the
+existing `feature/preview-layouts` linked worktree.
+
+- `python -m pytest tests/test_preview_savedlayouts_page.py -k 'roundtrip or copy
+  or controls-capture or geometry-dialog-capture' -q --tb=short
+  --basetemp=/tmp/task5-fix1-red-page --junitxml=/tmp/task5-fix1-red-page.xml`:
+  **10 failed**. Fixture999x777 instead of live500x300 and stale Copy writes
+  reproduced directly; cyclic-DOM assertion diagnostics caused three timeouts.
+  Changing only the diagnostic assertions to boolean identity comparisons and
+  repeating with `/tmp/task5-fix1-red-page2` and matching XML gave **10 failures
+  in 5.61s**, including explicit Saved/Size focus theft. One extra admitted-Copy
+  test had not actually changed tabs; corrected to Characters→Windows.
+- Staging tests were corrected to use a rejected Save (not an authoritative
+  duplicate-name receipt that itself excluded Bob) and to inspect Size before
+  applying exclusions that intentionally disable that control. Staging GREEN:
+  `python -m pytest tests/test_preview_savedlayouts_page.py -k '(roundtrip or
+  staging or staged or admitted) and not copy-dialog' -q --tb=short
+  --basetemp=/tmp/task5-fix1-green-staging2`: **6 passed in 3.90s**.
+- Copy GREEN/focus RED: `python -m pytest tests/test_preview_savedlayouts_page.py
+  -k 'copy or controls-capture or geometry-dialog-capture' -q --tb=short
+  --basetemp=/tmp/task5-fix1-green-copy-red-focus`: **6 passed, 3 expected focus
+  failures in 5.19s**. Copy now refuses stale sends; shared panel still stole
+  Saved/Size/Copy capture focus before its fix.
+- Queue/history RED: `python -m pytest tests/test_preview_savedlayouts_page.py
+  -k 'dialog-focus-history or dialog-owned-cancel' -q --tb=short
+  --basetemp=/tmp/task5-fix1-red-focus-history`: **1 expected failure, 1 passed**.
+- After the panel guard, `python -m pytest tests/test_preview_savedlayouts_page.py
+  -q --tb=short --basetemp=/tmp/task5-fix1-green-page
+  --junitxml=/tmp/task5-fix1-green-page.xml`: **48 passed in 14.00s**.
+
+Local diagnose/TDD/receiving-code-review and scoped blind-spot/polish passes only;
+no independent reviewer, subagent or CodeRabbit. `polish-core --fix` inspected the
+explicit-base diff and relevant hydration, queued focus and Copy consumers. Safe
+cleanup removed one redundant local test-helper declaration; no further production
+change. Repository ES5 and ownership conventions take precedence over generic
+modern-JS simplification. Full per-command intermediate failures are retained in
+`.superpowers/sdd/preview-layouts-plan/task-5-report.md` and matching `/tmp` logs.
+
+### Portable final verification
+
+An initial broader command used nonexistent `test_settings_tabs_runtime.py` and
+collected nothing. Corrected gate:
+
+```sh
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync python -m pytest tests/test_preview_savedlayouts_page.py tests/test_preview_crops_page.py tests/test_preview_labelmarkers_page.py tests/test_preview_group_backward.py tests/test_preview_warning_grouping.py tests/test_settings_runtime.py tests/test_settings_page.py tests/test_page_conventions.py tests/test_bridge_contract.py tests/test_dev_harness.py tests/test_shoot_screens.py tests/test_fittings_page.py tests/test_js_smoke.py -q -rs --tb=short --basetemp=/tmp/task5-fix1-broad-ui2 --junitxml=/tmp/task5-fix1-broad-ui2.xml
+```
+
+**814 passed in 85.91s**, no skips. Shared-panel Fittings consumers, settings/tab
+runtime, Preview crop/marker/group owners, dialog/page conventions and dev/shooter
+coverage justify this broader UI scope. Log `/tmp/task5-fix1-broad-ui2.log`.
+
+One completed full suite after local polish, justified by shared-panel/interactive
+DOM changes, not one per edit:
+
+```sh
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync python -m pytest tests/ -q -rs --basetemp=/tmp/task5-fix1-final-full --junitxml=/tmp/task5-fix1-final-full.xml
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync ruff check .
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync ruff format --check .
+node scripts/js_smoke.js
+node --test tests/fixtures/screenshot_dom.test.cjs
+cargo test --locked --offline --manifest-path packaging/settings-codec/Cargo.toml --target-dir /tmp/wingman-preview-layouts-codec
+git diff --check
+```
+
+**12,893 passed, 13 Windows-only skips in 367.83s**, no failures/errors. Full log:
+`/tmp/task5-fix1-final-full.log`; XML as above. All skips inspected: junctions,
+DPAPI/WinDLL, real pump/user32/gdi32/dwmapi and Windows tray backend; no Node/codec
+skips. Ruff lint passed; format reported **450 files already formatted**; all-page
+JS smoke passed; DOM tests **35 passed**; offline Cargo **1 passed**; whitespace
+check passed. No production/test changes followed the completed full suite.
+
+### Browser DOM / screenshots — not Windows acceptance
+
+`node /tmp/task5-fix1-browser.cjs` rechecked Chrome **152.0.7977.64** through the
+supplied localhost:9222 endpoint, using a **new isolated BrowserContext** and new
+pages only. No existing tabs/profile/cookies were used. Its temporary server served
+only worktree web assets from a dynamically allocated loopback port, with all
+nonmatching requests blocked; no outgoing request was attempted. It closed only
+its own pages/context/server and disconnected, leaving the shared Chrome running.
+
+Both **840×625** and **839×621** passed. Document width equals viewport; Preview
+client/scroll widths **624/624**, **623/623**; selectors **592/591**. Original
+wrapping, mounted status, keyboard Save/Escape, destructive Cancel, zero reads for
+selection/subpages, pending selection, geometry focus/scroll and independent row
+errors passed. New checks prove plain fixture entry/exit preserves live defaults,
+choices, selection and feedback; old Saved/Size/Copy answers leave the actual active
+focus on the newer still-armed capture; stale Copy staging/navigation/attempts send
+zero writes; blur→dialog re-entry→queued settlement cannot revive old return focus.
+Owned Size/Copy queue/Escape return and unavailable-invoker visible fallback pass.
+
+Evidence JSON: `/tmp/task5-fix1-browser-evidence.json`; driver/log:
+`/tmp/task5-fix1-browser.{cjs,log}`. Screenshots:
+`/tmp/task5-fix1-{empty,pending,error,row-errors,focus}-{840,839}.png`.
+**Both error and focus screenshots were read and visually inspected**: Saved
+controls wrap and feedback fits; Zuelo Parvi's “Press a key…” has the visible focus
+ring with no dialog left over it. Other screenshots were captured; their measured
+assertions are DOM evidence rather than additional visual judgment.
+
+Windows/WebView2/live-EVE, native focus/input, mixed-DPI/monitor rescue and actual
+source bounds remain unverified. No real app/EVE/profile/clipboard, external
+network/GitHub, push/PR/merge/amend/--no-verify or Task 6 action. Re-review focus:
+pre-hydration detachment, chooser admission versus already-sent receipts, and the
+shared queue's sticky return-focus ownership. Task 5 gate remains open.

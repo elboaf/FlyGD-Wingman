@@ -85,6 +85,9 @@
     geometryState = null;
     layoutSelection = '';
     fixture.preview.crops = fixture.crops;
+    // Hydration overlays layouts/geometry onto state before replacing it. Detach
+    // that target now, while screenshotLive is still reserved for real replies.
+    state = fixture.preview;
     window.onPreviewHotkeys(fixture.preview);
     screenshotLive = live;
   };
@@ -1534,7 +1537,8 @@
       WM.choose('Copy preview geometry',
                 'Copy size and position to "' + name + '".',
                 groups, 'Copy', 'Copy from', {compact: true}).then(function (source) {
-        if (screenshotLive) { return; }
+        // Revoke chooser admission, not settlement of a Copy already sent.
+        if (screenshotLive || interaction !== detailInteraction || attempt !== copyAttempt) { return; }
         if (source === null) {
           clearDetailFocus(name, 'copy');
           return;
