@@ -20,7 +20,9 @@ def run_preview_warning_grouping(tmp_path, scenario):
             next(
                 s for s in shoot.SCREENS if s.key == "settings-previews-sticky-conflict"
             )
-        ),
+        )
+        if scenario.startswith("sticky-")
+        else None,
     }
     payload = tmp_path / "preview-grouping.json"
     payload.write_text(json.dumps(data), encoding="utf-8")
@@ -59,6 +61,34 @@ def test_preview_warning_grouping_and_sticky_stage(tmp_path, scenario):
     assert f"PASS preview warning grouping {scenario}" in result.stdout.splitlines(), (
         result.stdout + result.stderr
     )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "focus",
+        "click",
+        "pointer-click",
+        "edit-focus",
+        "edit-click",
+        "group-height",
+        "bottom-clamp",
+        "tall-warning",
+        "tall-visible-control",
+        "visible",
+        "top-cycle",
+        "hidden",
+        "inactive",
+        "unrelated",
+        "resolved",
+        "passive",
+    ],
+)
+def test_preview_conflict_reveal_on_direct_interaction(tmp_path, case):
+    """Production listeners, not the screenshot staging scroll helper."""
+    result = run_preview_warning_grouping(tmp_path, "reveal-" + case)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"PASS preview warning grouping reveal-{case}" in result.stdout.splitlines()
 
 
 @pytest.mark.parametrize("scenario", ["not-a-scenario", "sticky-not-a-scenario"])

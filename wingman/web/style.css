@@ -2309,7 +2309,7 @@ button.btn:disabled,
 }
 /* A glyph keeps the repeated row action quiet, while an explicit square
    target remains easy to acquire and gives the ellipsis a stable centre. */
-.characters-menu-trigger {
+.btn.characters-menu-trigger {
   min-width: 28px; min-height: 28px; padding: 0 6px;
   font-size: 16px; line-height: 1; white-space: nowrap;
 }
@@ -2414,6 +2414,10 @@ button.btn:disabled,
 /* Five labels occupy six tracks. Cover the trailing flexible space too:
    full-width warnings otherwise show through beyond the last cell's shadow. */
 #preview-binds .bind-head > span:last-child { grid-column: 5 / -1; }
+/* Match the centered bind value, not its left border. At the floor the
+   neighboring Preview label otherwise has only a 3px gutter; this preserves
+   the name track and every control's shared column. */
+#preview-binds .bind-head > span:nth-child(3) { justify-content: center; }
 /* The rule that opens the table is drawn by an EMPTY `.bind-group` before
    the header row (previews.js), not by the header cells themselves.
 
@@ -2459,9 +2463,9 @@ button.btn:disabled,
    legend this replaces was rejected in round 5 because it sat above the
    first row of a list ~780px tall and had scrolled off for most of the
    rows it explained; a heading that can leave its own block is the same
-   defect wearing a different word. Sticky against `.settings-pane`, which
-   is the scroller (`overflow-y: auto`), so it cannot leave while a single
-   row it heads is still on screen.
+   defect wearing a different word. Sticky against the Characters & cycling
+   subpage, which owns scrolling rather than the outer `.settings-pane`, so
+   it cannot leave while a single row it heads is still on screen.
 
    It needs a background: sticky only stops it MOVING, and the rows would
    otherwise scroll through the text. `--panel` matches the card's own
@@ -4238,6 +4242,9 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   max-width: 72ch; overflow-wrap: anywhere;
 }
 .operational-status { margin: 10px 0; }
+/* Inline engine state and the existing crop field already own their spacing.
+   Retain .hint so refused/error states still use the shared .hint.err rule. */
+#eve-engine-state, .preview-crop-status.operational-status { margin: 0; }
 .companion-availability { display: block; margin: 6px 0; }
 .companion-availability[hidden] { display: none; }
 .settings .inline-hint { color: var(--text-faint); font-size: var(--fs-muted); }
@@ -5216,6 +5223,11 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   pointer-events: none;
 }
 .chev { width: 10px; flex: none; color: var(--text-faint); font-size: 9px; }
+/* These disclose an editable/detail surface. Keep their existing row targets
+   and column geometry, but make the affordance as legible as its label. */
+.skills-row-top .chev, .preview-configure .chev {
+  color: var(--text-dim); font-size: var(--fs-muted);
+}
 /* max-width is what closes the ~1000px gap between a row's subject and
    its answer. `flex: 1` alone let the name box eat every spare pixel and
    push the status to the far edge: measured 427 CSS px of nothing between
@@ -5540,6 +5552,14 @@ button.btn.danger:disabled {
 }
 .fit-copy-pair:last-child { border-bottom: 0; }
 .fit-copy-guidance { grid-column: 1 / -1; }
+/* One sticky owner keeps verification before retry advice while reading lower
+   results. It stays inside the existing 55vh body, never above the dialog. */
+.fit-copy-recovery {
+  position: sticky; top: 0; z-index: 1; flex: none;
+  padding: 6px 0; background: var(--panel);
+  border-bottom: 1px solid var(--field-border);
+}
+.fit-copy-recovery > .fit-copy-guidance + .fit-copy-guidance { margin-top: 6px; }
 .fit-copy-pair-name, .fit-copy-result { color: var(--text); }
 .fit-copy-character { color: var(--text); font-size: var(--fs-body); }
 .fit-copy-detail { color: var(--text-dim); font-size: var(--fs-body); }

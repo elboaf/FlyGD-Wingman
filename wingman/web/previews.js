@@ -379,6 +379,60 @@
     return state.hotkeys.groups || [];
   }
 
+  // A bind can receive focus while its warning is under a sticky heading.
+  // Scroll only this subpage, only on direct bind/Edit interaction. Rows use
+  // display:contents, so their boxes cannot tell us what the user can see.
+  function revealBindConflict(conflict, button, control) {
+    var pane = WM.el('settings-previews-characters');
+    if (!conflict || pane.hidden || WM.current_route !== 'settings'
+        || WM.current_section !== 'previews'
+        || !WM.el('section-previews').classList.contains('active')) return;
+    var port = pane.getBoundingClientRect();
+    var warning = conflict.getBoundingClientRect();
+    var bind = button.getBoundingClientRect();
+    var target = control.getBoundingClientRect();
+    if (!port.height || !warning.height || !bind.height || !target.height) return;
+
+    // Only preceding headings can cover this row. Cycle commands precede the
+    // character header; the Offline heading must not affect online rows.
+    var head = null;
+    var group = null;
+    var previous = conflict.parentNode.previousElementSibling;
+    while (previous) {
+      if (previous.classList.contains('bind-head')) head = previous;
+      if (!group && previous.classList.contains('bind-group') && previous.textContent) group = previous;
+      previous = previous.previousElementSibling;
+    }
+    var top = port.top;
+    if (head) {
+      Array.prototype.forEach.call(head.children, function (cell) {
+        var bounds = cell.getBoundingClientRect();
+        top = Math.max(top, Math.min(bounds.bottom, port.top + bounds.height));
+      });
+    }
+    if (group) {
+      var bounds = group.getBoundingClientRect();
+      top = Math.max(top, Math.min(bounds.bottom, top + bounds.height));
+    }
+    // Reserve the measured sticky stack even when this scroll will pin it for
+    // the first time. Leave a small focus-ring gutter, subject to the end clamp.
+    top += 4;
+    var bottom = port.bottom - 4;
+    var first = Math.min(warning.top, bind.top, target.top);
+    var last = Math.max(warning.bottom, bind.bottom, target.bottom);
+    var delta = first < top ? first - top : last > bottom ? last - bottom : 0;
+    if (last - first > bottom - top) {
+      // An oversized warning cannot fit with its controls. Bottom-align the
+      // controls to expose as much adjacent guidance as possible, not just a
+      // sliver above an already-visible bind. Never hide the focus owner.
+      first = Math.min(bind.top, target.top);
+      last = Math.max(bind.bottom, target.bottom);
+      delta = last - first > bottom - top ? first - top : last - bottom;
+    }
+    if (delta) pane.scrollTop = Math.max(0, Math.min(
+      pane.scrollTop + delta, pane.scrollHeight - pane.clientHeight));
+  }
+
   function makeRow(label, gesture, online, onSet, character, conflict) {
     var row = WM.make('div', 'row');
     if (character) row.setAttribute('data-preview-character', character);
@@ -521,8 +575,14 @@
     // avoid removing -- omitting the attribute here is what avoids it.
     if (conflict) {
       button.setAttribute('aria-describedby', conflict.id);
+      button.addEventListener('focus', function () {
+        // Mouse-down focus must not move the target before mouse-up delivers
+        // its click. The click path reveals it after that press is complete.
+        if (!button.matches(':active')) revealBindConflict(conflict, button, button);
+      });
     }
     button.addEventListener('click', function () {
+      revealBindConflict(conflict, button, button);
       beginCapture(button, onSet);
     });
     // Gate on both !off (character opted out) and !groupBusy (a group write
@@ -564,7 +624,13 @@
     // matching control in bookmarks.js. The two lists build the same row
     // and their labels have to agree.
     var typed = WM.make('button', 'linkbtn', 'Edit…');
+    if (conflict) {
+      typed.addEventListener('focus', function () {
+        if (!typed.matches(':active')) revealBindConflict(conflict, button, typed);
+      });
+    }
     typed.addEventListener('click', function () {
+      revealBindConflict(conflict, button, typed);
       if (screenshotLive) { return; }
       endCapture();
       // The app's own dialog -- see the matching comment in bookmarks.js.
@@ -1073,7 +1139,7 @@
     });
     actions.appendChild(remove);
     field.appendChild(actions);
-    var hint = WM.make('div', 'hint preview-crop-status');
+    var hint = WM.make('div', 'hint operational-status preview-crop-status');
     hint.id = detailId(name) + '-crop-status';
     hint.setAttribute('role', 'status');
     [check, select, remove].forEach(function (control) {
@@ -1305,7 +1371,7 @@
     if (isSizable(name)) {
       actions.appendChild(makeSizeButton(name, off));
     } else {
-      actions.appendChild(makeSizeFiller());
+      actions.appendChild(makeSizeFiller(name, off));
     }
     if (copySources(name).length) {
       actions.appendChild(makeCopyButton(name, off));
@@ -1696,11 +1762,13 @@
     render();
   }
 
-  function makeSizeFiller() {
+  function makeSizeFiller(name, off) {
     // A hover-only dash hid the prerequisite from anyone scanning the detail.
     return WM.make('span', 'size-none',
       'Size editing needs a preview or saved placement. '
-      + (state.enabled ? 'Start this client.' : 'Enable previews, then start this client.'));
+      + (state.enabled ? 'Start this client.' : 'Enable previews, then start this client.')
+      + (!off && copySources(name).length
+        ? ' Or use Copy… to copy size and position from another preview.' : ''));
   }
 
   // The column headers, built ONCE above the character rows -- which is
@@ -2521,8 +2589,11 @@
     var nameField = WM.make('input', 'field group-add-name');
     nameField.type = 'text';
     nameField.setAttribute('data-group-control', 'name');
-    nameField.placeholder = 'New group name';
+    nameField.id = 'preview-new-group-name';
     nameField.setAttribute('aria-label', 'New group name');
+    var nameLabel = WM.make('label', 'preview-detail-label', 'New group name');
+    nameLabel.setAttribute('for', nameField.id);
+    body.appendChild(nameLabel);
     var addBtn = WM.make('button', 'btn group-add-btn', 'Add');
     addBtn.setAttribute('data-group-control', 'add');
     WM.setEnabled(addBtn, !groupBusy);

@@ -229,6 +229,31 @@ function selectionBoxes(p) {
 }
 function selectedRows(p) { return selectionBoxes(p).filter(box => box.checked).map(box => box.value); }
 
+for (const [name, names, expected] of [
+  ['current title only', ['Sabre tackle', 'Sabre tackle'], []],
+  ['one alternative', ['Fleet tackle'], ['Fleet tackle']],
+  ['exact title match only', ['Sabre tackle', 'sabre tackle', 'Other'], ['sabre tackle', 'Other']],
+  ['no aliases', [], []]
+]) {
+  test('alias presentation keeps provenance and filters the visible title: ' + name, async () => {
+    const p = await page(); await p.route('fittings');
+    await settle(p.last('fittings_state'), state());
+    p.el('fittings-list').querySelector('.fit-row-toggle').click(); await flush();
+    const payload = detail('fit-1', 'Independent detail title');
+    payload.aliases = names.map((value, index) => ({name: value, description: 'Source ' + index}));
+    const unchanged = JSON.stringify(payload);
+    await settle(p.last('fittings_detail'), payload);
+    const aliases = () => p.el('fittings-list').querySelectorAll('.fit-alias-row').map(row => row.textContent);
+    assert.deepEqual(aliases(), expected);
+    assert.equal(!!p.el('fittings-list').querySelector('.fit-aliases'), expected.length > 0);
+    setMetadataOpen(p, true);
+    input(p.el('fit-name-fit-1'), 'Fleet tackle');
+    assert.deepEqual(aliases(), expected, 'an unsaved metadata draft is not the displayed title');
+    assert.equal(JSON.stringify(payload), unchanged, 'presentation must not edit alias provenance');
+    assert.equal(p.calls().length, 2, 'rendering and drafting must not issue writes');
+  });
+}
+
 test('selection names distinguish identical fit and hull names by current page row without changing selection', async () => {
   const p = await page(); await p.route('fittings');
   const payload = state(['fit-1', 'fit-2', 'fit-3']);
@@ -962,6 +987,35 @@ function sameNamePreflight() {
     ] };
 }
 
+for (const resolving of [false, true]) {
+  test(`additive-only reassurance follows the ${resolving ? 'conflict' : 'ready'} review summary once`, async () => {
+    const p = await page();
+    await p.route('fittings');
+    await settle(p.last('fittings_state'), state());
+    const review = preflight();
+    if (resolving) {
+      review.requires_resolution = true;
+      review.write_count = 0;
+      review.counts = { conflict: 1 };
+      review.pairs[0].status = 'conflict';
+    }
+    await reviewCopy(p, review);
+    const body = p.el('fittings-copy-body');
+    const summary = body.querySelector('.fit-copy-summary');
+    const reassurance = body.children[body.children.indexOf(summary) + 1];
+    assert.match(reassurance.textContent, /only add fittings.*existing fittings.*kept/i,
+      'safety context belongs before the pair list, including without conflicts');
+    assert.equal(body.querySelectorAll('p').filter(node => /only add fittings/i.test(node.textContent)).length, 1);
+    if (resolving) {
+      input(body.querySelector('.fit-copy-alternate'), 'Alternate tackle');
+      const reason = p.el(p.el('fittings-copy-review').getAttribute('aria-describedby'));
+      assert.match(reason.textContent, /review.*alternate names.*skips/i);
+      assert.doesNotMatch(reason.textContent, /only add fittings/i, 'resolution help must not duplicate safety context');
+    }
+    assert.equal(p.calls('fittings_start_copy').length, 0);
+  });
+}
+
 test('unresolved copy conflicts keep labels, recovery instructions and review reason until checked', async () => {
   const p = await page();
   await p.route('fittings');
@@ -1314,7 +1368,7 @@ test('mixed copy results summarize outcomes and give status-specific safe next s
   pairs.forEach((pair, index) => assert.match(pair.textContent, expectations[index]));
   assert.doesNotMatch(pairs[0].textContent, /No action needed/i);
   assert.doesNotMatch(pairs[1].textContent, /No action needed/i);
-  assert.match(body.textContent, /check.*target.*EVE.*refresh.*before.*retry/i);
+  assert.match(body.textContent, /before.*retry.*check.*target.*EVE.*refresh/i);
   assert.match(body.textContent, /rate limit.*wait.*refresh.*review/i);
   assert.equal(p.calls().length, before, 'displaying advice must not issue any operation');
   assert.equal(body.querySelector('button'), null, 'no automatic retry control');
@@ -1335,9 +1389,16 @@ for (const operationStatus of ['complete', 'throttled']) {
     const before = p.calls().length;
     await complete(p, { status: operationStatus, operation_id: '', write_count: 3, results: rows });
     const body = p.el('fittings-copy-body');
-    const guidance = body.children.filter(node => node.classList.contains('fit-copy-guidance'));
+    const recovery = body.querySelector('.fit-copy-recovery');
+    assert.ok(recovery, 'shared advice has one scroll-persistent group inside the existing body');
+    assert.equal(recovery.parentNode, body, 'recovery stays within the dialog scroll budget');
+    assert.equal(body.querySelectorAll('.fit-copy-recovery').length, 1);
+    const guidance = recovery.querySelectorAll('.fit-copy-guidance');
     assert.equal(guidance.length, 2, 'one verification and one rate-limit recovery, not one per row');
-    assert.match(guidance[0].textContent, /verification.*Personal Fittings.*EVE.*refresh.*before.*retry/i);
+    assert.ok(guidance.every(node => node.classList.contains('hint') && node.classList.contains('operational-status')));
+    assert.ok(body.children.indexOf(recovery) < body.children.indexOf(body.querySelector('.fit-copy-pair')));
+    assert.equal(p.focused(), p.el('fittings-copy-close'), 'results retain their Close focus owner');
+    assert.match(guidance[0].textContent, /verification.*before.*retry.*Personal Fittings.*EVE.*refresh/i);
     assert.match(guidance[0].textContent, /may already exist/i);
     assert.match(guidance[1].textContent, /rate limit.*wait.*refresh.*review/i);
     const rendered = body.querySelectorAll('.fit-copy-pair');
@@ -1357,6 +1418,47 @@ for (const operationStatus of ['complete', 'throttled']) {
     assert.equal(body.querySelector('button'), null);
   });
 }
+
+test('shared recovery resets with each result and copy phase without bridge or focus side effects', async () => {
+  const p = await editor();
+  const body = p.el('fittings-copy-body');
+  const cases = [
+    {statuses: ['unattempted_throttle', 'unknown', 'unknown'], count: 2},
+    {statuses: ['unknown'], count: 1, first: /Needs verification/},
+    {statuses: ['success'], count: 0},
+    {statuses: [], status: 'throttled', count: 1, first: /Rate limit/}
+  ];
+  for (const [index, item] of cases.entries()) {
+    const ticket = 'recovery-' + index;
+    await beginCopy(p, ticket);
+    assert.equal(body.querySelector('.fit-copy-recovery'), null, 'progress retires previous recovery');
+    const before = p.calls().length;
+    const outcome = result(item.statuses);
+    if (item.status) outcome.status = item.status;
+    await complete(p, outcome, ticket);
+    const recovery = body.querySelector('.fit-copy-recovery');
+    assert.equal(recovery?.children.length || 0, item.count);
+    if (!item.count) assert.equal(recovery, null, 'no empty sticky surface on ordinary results');
+    if (item.first) assert.match(recovery.children[0].textContent, item.first);
+    if (item.count === 2) {
+      assert.match(recovery.children[0].textContent, /Needs verification/);
+      assert.match(recovery.children[1].textContent, /Rate limit/);
+    }
+    assert.equal(p.focused(), p.el('fittings-copy-close'));
+    body.focus(); body.scrollTop = 200;
+    await p.progress({kind: 'copy', phase: 'progress', ticket_id: 'obsolete', completed: 1, total: 1});
+    assert.equal(p.focused(), body, 'stale pushes do not move the result reader');
+    assert.equal(body.scrollTop, 200);
+    assert.equal(body.querySelector('.fit-copy-recovery'), recovery);
+    assert.equal(p.calls().length, before);
+    p.el('fittings-copy-close').click();
+    button(p.el('fittings-notices'), 'Last copy results\u2026').click();
+    assert.equal(body.querySelector('.fit-copy-recovery')?.children.length || 0, item.count, 'reopening does not duplicate recovery');
+    assert.equal(p.calls().length, before);
+    p.el('fittings-copy-close').click();
+  }
+  assert.deepEqual(p.errors, []);
+});
 
 test('last results reopen session-only, with no preflight/start and no stale ticket interference', async () => {
   const p = await editor();
@@ -1824,7 +1926,7 @@ test('copy recovery labels keep semantic outcomes and point to real authenticati
   assert.match(body.querySelector('.fit-copy-summary').textContent, /1 needs verification/);
   const rows = body.querySelectorAll('.fit-copy-pair');
   assert.match(rows[1].textContent, /request timed out/);
-  assert.match(body.querySelector('.fit-copy-guidance').textContent, /Personal Fittings.*EVE.*refresh.*before.*retry/i);
+  assert.match(body.querySelector('.fit-copy-guidance').textContent, /before.*retry.*Personal Fittings.*EVE.*refresh/i);
   assert.match(rows[3].querySelector('.fit-copy-guidance').textContent, /Authenticate character.*Settings.*Character access/);
   assert.equal(p.calls().length, before);
   assert.equal(body.querySelector('button'), null);
