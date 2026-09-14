@@ -181,6 +181,12 @@ Proposed host methods:
 - `refresh_primary_visibility(lease) -> Future[PrimaryLayoutLiveResult]`
 - `release_primary_layout(lease) -> None`
 
+`rectangles` is `Mapping[str, Rect | None]` containing **every recorded member**.
+A null value leaves that member's geometry untouched while retaining its identity
+for scoped visibility reconciliation and native failure accounting. Omitting null
+members would make an unchanged visible/hidden choice indistinguishable from a
+character outside the snapshot; do not infer membership from geometry or deltas.
+
 `release_primary_layout` retires operation-local native state, finishes its
 lease, then wakes the existing family/stop completion path. Wake after finishing,
 not before: an early wake can observe the lease still active and strand shutdown.
@@ -457,7 +463,7 @@ read_preview: Callable[[], dict]
 live_names: Callable[[], tuple[str, ...]]
 capture: Callable[[PrimaryLayoutLease], Future[PrimaryLayoutCapture]]
 apply: Callable[[PrimaryLayoutLease, PrimaryLayoutCapture, LayoutCommit,
-                 Mapping[str, Rect]], Future[PrimaryLayoutLiveResult]]
+                 Mapping[str, Rect | None]], Future[PrimaryLayoutLiveResult]]
 refresh_visibility: Callable[[PrimaryLayoutLease], Future[PrimaryLayoutLiveResult]]
 release: Callable[[PrimaryLayoutLease], None]
 publish_state: Callable[[dict], None]

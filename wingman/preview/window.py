@@ -441,6 +441,12 @@ class PreviewWindow:
             on_gesture_end=on_gesture_end,
         )
         _ensure_class(libs)
+
+        def authorized():
+            return self._is_authorized is None or self._is_authorized()
+
+        if not authorized():
+            return None
         self.hwnd = libs.user32.CreateWindowExW(
             win32.WS_EX_LAYERED
             | win32.WS_EX_TOOLWINDOW
@@ -462,17 +468,28 @@ class PreviewWindow:
             logger.warning("CreateWindowExW failed for %s", client.stable_key)
             return None
         _WINDOWS[int(self.hwnd)] = self
+        # A revoked creation still returns its owned HWND for caller cleanup,
+        # never an invisible leak and never permission to bind a retired source.
+        if not authorized():
+            return self
         self.redraw()
+        if not authorized():
+            return self
         if not self.hidden:
             libs.user32.ShowWindow(self.hwnd, win32.SW_SHOWNOACTIVATE)
+        if not authorized():
+            return self
         self._thumb = Thumbnail.register(libs, self.hwnd, client.hwnd)
+        if not authorized():
+            return self
         if self._thumb is not None:
             self._thumb.update(
                 geometry.thumbnail_rect(self.rect, self._inset),
                 self.opacity,
             )
         # After the preview itself exists: the overlay is owned by it.
-        self._ensure_label_overlay()
+        if authorized():
+            self._ensure_label_overlay()
         return self
 
     def rebind_client(self, client) -> None:
@@ -935,6 +952,42 @@ class PreviewWindow:
             return True
         return False
 
+    def native_rect(self) -> geometry.Rect | None:
+        """Sample our actual destination, never the EVE source or cached guess."""
+        import ctypes
+
+        if not self.hwnd:
+            return None
+        rect = win32.RECT()
+        if not self._libs.user32.GetWindowRect(self.hwnd, ctypes.byref(rect)):
+            return None
+        width, height = rect.right - rect.left, rect.bottom - rect.top
+        if width <= 0 or height <= 0:
+            return None
+        return geometry.Rect(rect.left, rect.top, width, height)
+
+    def move_checked(self, rect: geometry.Rect) -> bool:
+        """Apply explicit geometry only after native acknowledgment.
+
+        move() intentionally retains the gesture path's unchecked contract.
+        Both paths share rendering/cache maintenance after adopting geometry.
+        """
+        if not self.hwnd or (
+            self._is_authorized is not None and not self._is_authorized()
+        ):
+            return False
+        resized = (rect.w, rect.h) != (self.rect.w, self.rect.h)
+        if not self._libs.user32.SetWindowPos(
+            self.hwnd, None, rect.x, rect.y, rect.w, rect.h, 0x0010 | 0x0004
+        ):
+            return False
+        self.rect = rect
+        if resized and self._alert is not None:
+            # Even a later label/render failure must not replay old-sized frames.
+            self._invalidate_frames()
+        self._moved(rect, resized, checked=True)
+        return True
+
     def move(self, rect) -> None:
         """Reposition and, only if the size changed, re-render.
 
@@ -954,14 +1007,22 @@ class PreviewWindow:
         self._libs.user32.SetWindowPos(
             self.hwnd, None, rect.x, rect.y, rect.w, rect.h, 0x0010 | 0x0004
         )
+        self._moved(rect, resized)
+
+    def _moved(self, rect, resized, *, checked=False) -> None:
+        def authorized():
+            return not checked or self._is_authorized is None or self._is_authorized()
+
+        if not authorized():
+            return
         # The overlay is a separate HWND in SCREEN coordinates, so unlike
         # the thumbnail it must be re-placed on a pure move too.
         self._sync_label()
-        if resized:
+        if resized and authorized():
             # The bitmap is sized to the window, so a resize must re-push
             # it or the surface stays at the old dimensions.
             self.redraw()
-            if self._thumb is not None:
+            if self._thumb is not None and authorized():
                 self._thumb.update(
                     geometry.thumbnail_rect(rect, self._inset),
                     self.opacity,
@@ -1214,20 +1275,32 @@ class PreviewWindow:
             self._thumb.close()
             self._thumb = None
 
-    def close(self) -> None:
+    def close_checked(self) -> bool:
+        """Explicit batch seam; ordinary cleanup must retain the same failures."""
+        return self.close()
+
+    def close(self) -> bool:
         """Thumbnail first: its destination is this window, and
         unregistering after DestroyWindow leaves DWM holding a dead HWND.
-        The overlay last: it is owned by this window and Windows destroys
-        owned windows with their owner, but doing it explicitly keeps the
-        HWND bookkeeping honest and the destruction order legible."""
+        The overlay precedes its owner: Windows destroys owned windows with
+        their owner, so checking both calls afterward would count the already
+        destroyed overlay as a failure. Failed handles remain owned for retry."""
         self.finish_gesture()
         # Before anything is destroyed: a client that quits mid-alert
         # otherwise leaks one DC and up to six DIBs for the life of the
         # process, and a fleet-wide aggression arms every preview at once.
         self._free_frames()
         self._release_thumb()
+        # Close the overlay explicitly before its owner (Windows would also
+        # destroy it with that owner). A failed HWND remains reachable for retry.
+        if self._label_hwnd is not None:
+            if not self._libs.user32.DestroyWindow(self._label_hwnd):
+                return False
+            self._label_hwnd = None
+            self._label_visible = False
         if self.hwnd:
+            if not self._libs.user32.DestroyWindow(self.hwnd):
+                return False
             _WINDOWS.pop(int(self.hwnd), None)
-            self._libs.user32.DestroyWindow(self.hwnd)
             self.hwnd = None
-        self._destroy_label_overlay()
+        return True

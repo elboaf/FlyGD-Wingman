@@ -362,3 +362,96 @@ Node smoke passed; `git diff --check` passed. No full-suite/Cargo rerun for this
 small scoped fix; no external effects or independent review. Exact commands,
 outputs and interfaces are appended to the Task 2 report. Coordinator re-review
 and Windows/WebView2/live-EVE operator acceptance remain outstanding.
+
+## Task 3 — acknowledged writer and checked native batches
+
+Base: `4d0bb6fd295bf26f7fc560adc1265495ee2bed6c`. Implemented only the persistence
+and host/window primitives; controller, bridge actions and UI remain later work.
+`LayoutCommit` and `PrimaryLayoutCapture` use the agreed immutable records and
+operation-owned detached Preview dictionary. `PrimaryLayoutLiveResult` and the
+reviewed shared admission/store/runtime pair are reused, not replaced.
+
+`LayoutStore.transact(mutate_preview)` orders behind debounce/replace/clear,
+drains ordinary deltas/names under its short pending lock, merges before mutation,
+and explicitly normalizes and prepares the receipt inside `settings.update()`.
+Settings' final normalization is tested as a fixed point. Save/publication must
+succeed before the sequence advances or the receipt returns. Any exception
+restores drained work, with newer geometry winning and names replayed oldest
+first; retained work is re-armed outside the writer lock. Snapshot-only changes
+do not install captured live coordinates into the working arrangement.
+
+The host adds `capture_primary_layout(lease)` and
+`apply_primary_layout(lease, capture, commit, rectangles)` futures. The coordinator's
+`Mapping[str, Rect | None]` ruling is implemented: every recorded key participates
+in inclusion/failure checks, null geometry never moves a window, and absent members
+are not painted or blamed. Geometry is taken from the durable commit, even when
+persisted coordinates already match but the actual window differs. Full captured
+sessions/epochs fence delivery and newly re-enabled live members receive explicit
+geometry even with reopen Off. Later arrivals retain the global reopen behavior;
+monitor rescue never rewrites preferred coordinates. Metadata membership follows
+checked primary inclusion; hotkey rebind consumes the already-held desired table
+and its reviewed real failure outcome.
+
+Capture samples actual owned HWND rectangles on the pump, includes excluded live
+sessions and retained offline/committed state, refuses a failed native read or
+changed source, and never fabricates missing rectangles. Stable offline operations
+use detached state without starting a pump or touching windows. A single claimed
+request retains readiness through failed posts. Off/final closure can settle only
+unstarted native work; executing callbacks keep their lease/future until unwound.
+Release clears operation-local state before retiring admission and waking lifecycle.
+Discovery/crops continue; a scoped inclusion view prevents a discovery wake in the
+durable-commit/apply gap from performing the unchecked membership change first.
+
+Supporting native corrections are necessary for truthful failure accounting:
+`native_rect()` checks `GetWindowRect`; `move_checked()` checks `SetWindowPos`
+before adopting geometry and shares successful label/thumbnail maintenance with
+legacy `move()` (whose unchecked-success contract is preserved). Checked resizing
+invalidates active alert frames before fallible follow-up rendering. Creation
+rechecks authorization before later native stages. `close_checked()`/`close()`
+return actual destruction success and retain failed handles; discovery/teardown
+must not discard or replace them. Revoked creation with failed cleanup is also
+retained by the host. Main injects the existing committed reader's snapshot callable;
+this is one composition line, not a later-task controller/bridge command.
+
+### Verification and self-review
+
+All Python/Ruff commands used `UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv
+uv run --no-sync`. Detailed commands, failed attempts and per-case evidence are in
+`.superpowers/sdd/preview-layouts-plan/task-3-report.md`.
+
+- Writer RED: **10 missing-transact failures** → writer/store/committed-reader
+  **82 passes**. Native RED: **6 missing-seam failures**; first GREEN attempt
+  exposed a missing local ctypes import, corrected before subsequent verification.
+- Host RED: **15 missing-capture failures, 10 passes**. Event/native RED cases
+  then caught unrecorded painting, lost retained authority on queued release,
+  dropped failed-destruction ownership, stale source binding during creation,
+  stale metadata membership, post-revocation follow-up rendering/rectangle reads,
+  and revoked-creation cleanup loss. Every reproduced boundary was fixed and
+  included in the final regression run. Initial test fixture mistakes used the
+  wrong reopen key and an invalid/unregistered hotkey shape; corrected to real
+  settings/hotkey interfaces rather than weakening production checks.
+- Focused store/host/window/admission/runtime/metadata/committed-reader gate:
+  **781 passed, 1 Windows-only skip**. Broad Preview/companions/API/transaction
+  gate: **3,529 passed, 4 Windows-only skips in 106.19s**. Its earlier attempt
+  exposed four metadata-fixture failures from missing native boolean returns;
+  those fixtures now return the actual successful `DestroyWindow` contract.
+- First full run: **2 failed, 12,729 passed, 13 Windows-only skips in 305.60s**.
+  Both failures were the same missing destruction-success return in Wanderer's
+  native fixture. Corrected that fixture; follow-up native/lifecycle/Wanderer gate
+  **270 passed, 1 Windows-only skip** (also includes the last revoked-cleanup RED).
+- Final completed-tree full run:
+  `python -m pytest tests/ -q -rs --basetemp=/tmp/wingman-task3-full-final
+  --junitxml=/tmp/wingman-task3-full-final.xml` — **12,732 passed, 13 Windows-only
+  skips in 312.95s**. No Node/codec prerequisite skips. The failed full XML is
+  retained separately as `/tmp/wingman-task3-full-verified.xml`.
+- Fresh Ruff lint/format: **passed, 445 formatted**. Node all-page smoke: **PASS**.
+  Offline Cargo regression: **1 passed**; release codec availability asserted.
+  Final diff whitespace check passed. Self-polish was local only: inspected
+  ownership/lock order, failure reporting, comments, interfaces and the final diff;
+  applied safe import/format cleanup and the regression-tested corrections above.
+
+No new executor, worker, runtime owner, schema, dependency or source-window action;
+no subagents/reviewers, network/GitHub, real app/EVE/profile/clipboard, push/PR/merge,
+other worktrees or hook bypass. Fresh coordinator review and Windows/WebView2/live
+operator acceptance remain outstanding; portable/native doubles do not establish
+visual or real-desktop acceptance.

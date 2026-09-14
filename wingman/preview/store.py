@@ -18,8 +18,10 @@ Two rules the tests pin, both of which a naive implementation breaks:
 
 import logging
 import threading
+from collections.abc import Callable
 
-from . import layout, roster
+from .. import settings
+from . import layout, roster, savedlayouts
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,7 @@ class LayoutStore:
         # particular, an old debounce that has already woken cannot land
         # after replace() and silently undo the explicit operation.
         self._write_lock = threading.Lock()
+        self._revision = 0
 
     def record(self, stable_key: str, entry) -> None:
         """Note a preview's new position. Safe from the preview thread."""
@@ -145,6 +148,66 @@ class LayoutStore:
         if timer is not None:
             timer.start()
         return True
+
+    def transact(
+        self, mutate_preview: Callable[[dict], None]
+    ) -> savedlayouts.LayoutCommit:
+        """Acknowledge one normalized durable generation, after ordinary deltas.
+
+        Never consult a committed reader or re-enter settings here. Its context
+        prepares publication before saving, then publishes by reference swap.
+        Our receipt must likewise be allocated before that irreversible save.
+        """
+        retry = None
+        try:
+            with self._write_lock:
+                with self._lock:
+                    pending, self._pending = self._pending, {}
+                    names, self._pending_names = self._pending_names, []
+                    if self._timer is not None:
+                        self._timer.cancel()
+                        self._timer = None
+                try:
+                    with self._update_settings() as live:
+                        section = live.setdefault("preview", {})
+                        layouts = dict(section.get("layouts") or {})
+                        layouts.update(layout.serialize(pending))
+                        section["layouts"] = layouts
+                        for name in names:
+                            section["seen"] = roster.touch(
+                                section.get("seen", []),
+                                name,
+                                protected=self._protected(section),
+                            )
+                        mutate_preview(section)
+                        section = settings.validated_preview(section)
+                        live["preview"] = section
+                        prepared = savedlayouts.LayoutCommit(
+                            revision=self._revision + 1,
+                            layouts=tuple(
+                                layout.deserialize(section["layouts"]).items()
+                            ),
+                            excluded=tuple(section["excluded"]),
+                            saved=savedlayouts.deserialize(section["saved_layouts"]),
+                        )
+                except BaseException:
+                    # New input is never made to wait for disk. Keep its newer
+                    # geometry and replay names oldest first (touch prepends).
+                    with self._lock:
+                        self._pending = {**pending, **self._pending}
+                        self._pending_names = names + self._pending_names
+                        if self._timer is not None:
+                            self._timer.cancel()
+                        if self._pending or self._pending_names:
+                            retry = self._timer_factory(self._debounce_s, self._write)
+                            self._timer = retry
+                    raise
+                self._revision = prepared.revision
+                return prepared
+        finally:
+            # An immediate injected timer may enter _write synchronously.
+            if retry is not None:
+                retry.start()
 
     def clear(self) -> bool:
         """Discard every saved layout. The one wholesale write this class allows.

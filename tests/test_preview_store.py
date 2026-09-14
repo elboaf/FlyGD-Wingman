@@ -343,6 +343,27 @@ def test_replace_supersedes_a_pending_delta_for_the_same_character():
     )
 
 
+def test_successful_transaction_leaves_later_recorded_delta_pending(tmp_path):
+    from wingman import settings
+
+    path = tmp_path / "settings.json"
+    doc = settings.load(path)
+    store = LayoutStore(lambda: settings.update(doc, path), timer=FakeTimer)
+    store.record("Alice", Entry(Rect(9, 2, 320, 210)))
+
+    def mutate(preview):
+        # This boundary stands in for a later caller: record never needs the
+        # settings lock and its delta belongs to the next ordinary write.
+        store.record("Alice", Entry(Rect(90, 2, 320, 210)))
+        preview["layouts"]["Alice"]["x"] = 20
+
+    commit = store.transact(mutate)
+    assert dict(commit.layouts)["Alice"].rect.x == 20
+    assert settings.load(path)["preview"]["layouts"]["Alice"]["x"] == 20
+    store.flush()
+    assert settings.load(path)["preview"]["layouts"]["Alice"]["x"] == 90
+
+
 def test_clear_empties_every_saved_layout():
     live = {"preview": {"layouts": {"Alice": {"x": 1, "y": 2, "w": 3, "h": 4}}}}
     store = LayoutStore(_updater(live), timer=FakeTimer)

@@ -370,6 +370,7 @@ def bind() -> Libs:
         ),
         (user32, "LoadCursorW", HANDLE, [wintypes.HINSTANCE, ctypes.c_wchar_p]),
         (user32, "GetClientRect", BOOL, [HWND, ctypes.POINTER(wintypes.RECT)]),
+        (user32, "GetWindowRect", BOOL, [HWND, ctypes.POINTER(RECT)]),
         (user32, "ClientToScreen", BOOL, [HWND, ctypes.POINTER(POINT)]),
         (user32, "ScreenToClient", BOOL, [HWND, ctypes.POINTER(POINT)]),
         (

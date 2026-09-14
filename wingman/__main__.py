@@ -545,6 +545,7 @@ def build_preview_host(state, api_box, *, layout_store=None, layout_admission=No
             return (section_now.get("width", 320), section_now.get("height", 210))
 
         return PreviewHost(
+            preview_snapshot=preview_config.snapshot,
             layout_store=store,
             layout_admission=admission,
             on_layout_changed=on_layout_changed,

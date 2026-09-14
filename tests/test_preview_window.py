@@ -403,6 +403,114 @@ class _RecordingWindow(window.PreviewWindow):
         self.renders += 1
 
 
+@pytest.mark.parametrize("ok", [True, False])
+def test_checked_native_rectangle_never_fabricates_cached_geometry(monkeypatch, ok):
+    w = _RecordingWindow(R)
+    w.hwnd = 42
+    read = []
+
+    def get_rect(hwnd, pointer):
+        read.append(hwnd)
+        pointer._obj.left, pointer._obj.top = -400, 30
+        pointer._obj.right, pointer._obj.bottom = -80, 240
+        return ok
+
+    monkeypatch.setattr(w._libs.user32, "GetWindowRect", get_rect, raising=False)
+    assert w.native_rect() == (Rect(-400, 30, 320, 210) if ok else None)
+    assert read == [42]  # Owned destination, never client.hwnd.
+    assert w.rect == R
+    w.hwnd = None
+    assert w.native_rect() is None and read == [42]
+
+
+@pytest.mark.parametrize("authorized", [True, False])
+def test_checked_move_does_not_adopt_failed_geometry(monkeypatch, authorized):
+    w = _RecordingWindow(R)
+    w.hwnd = 42
+    w._is_authorized = lambda: authorized
+    delivered = []
+    monkeypatch.setattr(
+        w._libs.user32, "SetWindowPos", lambda *args: delivered.append(args) or False
+    )
+    assert w.move_checked(Rect(200, 300, 640, 420)) is False
+    assert w.rect == R and not w.renders
+    assert len(delivered) == int(authorized)
+    if authorized:
+        assert delivered[0][0] == 42
+        assert delivered[0][-1] == 0x0010 | 0x0004
+        # Legacy move deliberately keeps its existing unchecked contract.
+        w.move(Rect(200, 300, 640, 420))
+        assert w.rect == Rect(200, 300, 640, 420)
+
+
+def test_checked_move_fences_followup_rendering_after_native_revocation(monkeypatch):
+    w = _RecordingWindow(R)
+    live = [True]
+    w._is_authorized = lambda: live[0]
+
+    def revoke(*args):
+        live[0] = False
+        return True
+
+    monkeypatch.setattr(w._libs.user32, "SetWindowPos", revoke)
+    label_moves = []
+    monkeypatch.setattr(w, "_sync_label", lambda: label_moves.append(True))
+    w._thumb = _FakeThumb()
+    assert w.move_checked(Rect(400, 500, 640, 420)) is True
+    assert w.rect == Rect(400, 500, 640, 420)  # The admitted native call did apply.
+    assert not label_moves and not w.renders and not w._thumb.calls
+
+
+def test_checked_resize_updates_label_thumbnail_and_invalidates_active_alert(
+    monkeypatch,
+):
+    pushes = []
+    monkeypatch.setattr(
+        window.layered,
+        "push",
+        lambda libs, hwnd, image, x, y: pushes.append((image.size, x, y)),
+    )
+    w, _ = _overlay_window()
+    w._ensure_label_overlay()
+    w.set_system_name("HOME")
+    w._thumb = _FakeThumb()
+    w._set_inset(6)
+    w._thumb.calls.clear()
+    w._alert = object()
+    freed = []
+    w._frames = type("Frames", (), {"close": lambda self, libs: freed.append(True)})()
+    monkeypatch.setattr(w, "redraw", lambda force=False: None)
+    assert w.move_checked(Rect(400, 500, 120, 90)) is True
+    assert w.rect == Rect(400, 500, 120, 90)
+    assert pushes[-1][1:] == (406, 506)
+    assert w._thumb.calls == [(Rect(6, 6, 108, 78), 255)]
+    assert freed == [True] and w._frames is None and w._alert is not None
+
+
+def test_checked_close_retains_failed_owned_hwnd_for_cleanup(monkeypatch):
+    w = _RecordingWindow(R)
+    w.hwnd = 42
+    window._WINDOWS[42] = w
+    destroyed = []
+    monkeypatch.setattr(
+        w._libs.user32,
+        "DestroyWindow",
+        lambda hwnd: destroyed.append(hwnd) and False,
+        raising=False,
+    )
+    try:
+        assert w.close_checked() is False
+        assert w.hwnd == 42 and window._WINDOWS[42] is w
+        monkeypatch.setattr(
+            w._libs.user32, "DestroyWindow", lambda hwnd: destroyed.append(hwnd) or True
+        )
+        assert w.close_checked() is True
+        assert w.hwnd is None and 42 not in window._WINDOWS
+        assert destroyed == [42, 42]
+    finally:
+        window._WINDOWS.pop(42, None)
+
+
 def test_a_pure_move_does_not_re_render_the_chrome():
     """A drag emits mouse-moves at >100Hz. Re-rendering a Pillow image and
     pushing ~67k pixels on each one is what made dragging stutter -- and

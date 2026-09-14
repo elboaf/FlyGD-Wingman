@@ -9,8 +9,10 @@ import hashlib
 import json
 from dataclasses import dataclass
 
+from ..telemetry.model import ClientSessionId
 from .crops import valid_owner
 from .geometry import Rect
+from .layout import Entry
 
 _INT_MIN = -(2**31)
 _INT_MAX = 2**31 - 1
@@ -34,6 +36,25 @@ class SavedLayout:
     id: str
     name: str
     characters: tuple[SavedCharacter, ...]
+
+
+@dataclass(frozen=True)
+class PrimaryLayoutCapture:
+    pump_epoch: int
+    eve_epoch: int
+    roster_generation: int
+    sessions: tuple[ClientSessionId, ...]
+    retained: tuple[tuple[str, Entry], ...]
+    live_rectangles: tuple[tuple[str, Rect], ...]
+    preview: dict
+
+
+@dataclass(frozen=True)
+class LayoutCommit:
+    revision: int
+    layouts: tuple[tuple[str, Entry], ...]
+    excluded: tuple[str, ...]
+    saved: tuple[SavedLayout, ...]
 
 
 def _rectangle(raw: object) -> Rect:

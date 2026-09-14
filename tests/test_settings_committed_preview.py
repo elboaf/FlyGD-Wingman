@@ -29,6 +29,23 @@ def _host_config(monkeypatch, document):
     return host
 
 
+def test_host_capture_reader_is_detached_and_never_observes_a_candidate(
+    monkeypatch, tmp_path
+):
+    path = tmp_path / "settings.json"
+    document = settings.load(path)
+    read = _host_config(monkeypatch, document).preview_snapshot
+    before = read()
+    with settings.update(document, path) as live:
+        live["preview"]["excluded"] = ["Alice"]
+        assert read() == before
+    captured = read()
+    assert captured["excluded"] == ["Alice"]
+    captured["excluded"].append("Bob")
+    assert read()["excluded"] == ["Alice"]
+    assert before["excluded"] == []
+
+
 @pytest.mark.parametrize("save_fails", [False, True], ids=["commit", "rollback"])
 @pytest.mark.parametrize(
     "callback,values,before,after",
