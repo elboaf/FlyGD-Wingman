@@ -45,7 +45,7 @@ def touch(seen, name, *, cap: int = CAP, protected=()) -> list:
     return out
 
 
-def deserialize(raw, *, cap: int = CAP) -> list:
+def deserialize(raw, *, cap: int | None = CAP) -> list:
     """Rebuild the roster, dropping anything malformed.
 
     Deliberately forgiving, matching preview/layout.py and settings.py: a
@@ -57,4 +57,4 @@ def deserialize(raw, *, cap: int = CAP) -> list:
     for name in raw:
         if _usable(name) and name not in out:
             out.append(name)
-    return out[:cap]
+    return out if cap is None else out[:cap]

@@ -23,6 +23,7 @@ from .preview import gestures as preview_gestures
 from .preview import labelmarkers as preview_labelmarkers
 from .preview import layout as preview_layout
 from .preview import roster as preview_roster
+from .preview import savedlayouts as preview_savedlayouts
 from .preview.labelsize import DEFAULT_LABEL_SIZE, LABEL_SIZE_PRESETS
 from .wanderer.model import normalize_base_url, normalize_map_identifier
 
@@ -174,6 +175,7 @@ def _preview_defaults() -> dict:
         # validated_preview for the migration it gates.
         "defaults_version": _PREVIEW_DEFAULTS_VERSION,
         "layouts": {},
+        "saved_layouts": {"version": 1, "items": []},
         # One independent definition per named owner; absence needs no migration.
         "crops": {},
         # The two flat cycle chords are the All-cycle (forward and back).
@@ -536,6 +538,11 @@ def validated_preview(raw) -> dict:
     # re-parsing the raw dict.
     parsed_layouts = preview_layout.deserialize(raw.get("layouts"))
     section["layouts"] = preview_layout.serialize(parsed_layouts)
+    # Unrelated writes must retain explicit snapshots without capturing the
+    # working arrangement. A malformed member costs its whole named record.
+    section["saved_layouts"] = preview_savedlayouts.serialize(
+        preview_savedlayouts.deserialize(raw.get("saved_layouts"))
+    )
     # Rebuilt on every settings transaction, not just load: without this,
     # writing an unrelated field would silently erase every saved crop.
     section["crops"] = preview_crops.serialize(
@@ -620,11 +627,13 @@ def validated_preview(raw) -> dict:
         section["hide_on_lost_focus"] = raw["hide_on_lost_focus"]
     if isinstance(raw.get("hide_active_preview"), bool):
         section["hide_active_preview"] = raw["hide_active_preview"]
-    # All three lists have exactly the roster's constraints, including the
-    # hwnd: rejection: a client at character-select has no stable name to
-    # exempt from minimizing, lock in place, or opt out of previews.
+    # All three lists keep the roster's identity rules, including hwnd:
+    # rejection: a client at character-select has no stable name to exempt
+    # from minimizing, lock in place, or opt out of previews. Explicit Preview
+    # choices are configuration, not history — never evict an exclusion merely
+    # because a different owner was hidden or an unrelated setting was saved.
     section["never_minimize"] = preview_roster.deserialize(raw.get("never_minimize"))
-    section["excluded"] = preview_roster.deserialize(raw.get("excluded"))
+    section["excluded"] = preview_roster.deserialize(raw.get("excluded"), cap=None)
     raw_locked = raw.get("locked")
     combined_locked = list(raw_locked) if isinstance(raw_locked, list) else []
     if stored_version < _PREVIEW_DEFAULTS_VERSION:

@@ -33,6 +33,7 @@ window.WM.send = (method, ...args) => {
   }
   if (method === 'capture_preview_bind') return Promise.resolve({gesture: 'Alt+Down', error: null});
   if (method === 'set_preview_binds') return Promise.resolve(true);
+  if (method === 'set_preview_excluded') return Promise.resolve({applied: true, persisted: true, error: null});
   if (method === 'get_preview_crop_state') return Promise.resolve(null);
   throw new Error('Unexpected bridge call ' + method);
 };
@@ -113,6 +114,29 @@ function tab(name) { document.dispatchEvent({type: 'wm:settings-tab', detail: {s
     assert.equal(document.activeElement.id, 'preview-roster-heading');
     push(p); assert.equal(configure('Pilot69'), undefined, 'tombstone blocks stale resurrection without sourcing empty row');
     assert.ok(configure('Pilot68'));
+  } else if (scenario === 'exclusions') {
+    const p = payload(); p.enabled = false; p.characters = [];
+    p.roster = Array.from({length: 64}, (_, i) => 'Pilot' + i);
+    p.excluded = p.roster.concat(['Pilot64', 'constructor', '__proto__', 'Pilot64']);
+    push(p);
+    assert.equal(document.querySelectorAll('[data-preview-configure]').length, 67, 'excluded-only owners survive history cap without duplicate rows');
+    for (const name of ['Pilot64', 'constructor', '__proto__']) {
+      const row = configure(name); assert.ok(row, 'excluded-only owner ' + name);
+      const box = row.parentNode.querySelector('.optout').querySelector('input');
+      assert.equal(box.getAttribute('aria-label'), 'Show a preview for ' + name);
+      assert.equal(box.checked, false, 'excluded means Preview unchecked');
+      assert.equal(box.disabled, false, 'the only route back remains editable with previews Off');
+      box.checked = true; box.dispatchEvent({type: 'change'}); await tick();
+      assert.deepEqual(calls.filter(c => c[0] === 'set_preview_excluded').at(-1), ['set_preview_excluded', name, false]);
+      assert.equal(configure(name), undefined, 'cleared exclusion no longer independently sources a row');
+    }
+    const visible = configure('Pilot0').parentNode.querySelector('.optout').querySelector('input');
+    visible.checked = true; visible.dispatchEvent({type: 'change'}); await tick();
+    const checked = configure('Pilot0').parentNode.querySelector('.optout').querySelector('input');
+    assert.equal(checked.checked, true, 'retained owner redraws Preview as enabled');
+    checked.checked = false; checked.dispatchEvent({type: 'change'}); await tick();
+    assert.deepEqual(calls.filter(c => c[0] === 'set_preview_excluded').at(-1), ['set_preview_excluded', 'Pilot0', true]);
+    assert.equal(configure('Pilot0').parentNode.querySelector('.optout').querySelector('input').checked, false);
   } else if (scenario === 'refresh') {
     change('Alice', 'cyan'); writes[0].resolve(null); await tick();
     assert.equal(select().value, '');

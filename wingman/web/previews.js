@@ -174,6 +174,11 @@
     state.roster.forEach(function (n) {
       if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
     });
+    // Explicit exclusions outlive recent history. Without their own row,
+    // an offline owner beyond that cap has no route back to Preview enabled.
+    (state.excluded || []).forEach(function (n) {
+      if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
+    });
     Object.keys(state.hotkeys.characters || {}).forEach(function (n) {
       if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
     });

@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
         "receipts",
         "owners",
         "retention",
+        "exclusions",
         "refresh",
         "navigation",
         "screenshot",
