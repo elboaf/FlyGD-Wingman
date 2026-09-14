@@ -28,7 +28,9 @@ The original narrow boundary is recorded in
 [preview-identification-design.md](preview-identification-design.md#independence-from-saved-layouts).
 The maintainer subsequently approved explicit snapshots, leaving absent
 characters unchanged, and respecting the global reopen preference for later
-openings. The remaining sections propose how to deliver those decisions.
+openings. Following independent review, the maintainer also approved lossless
+retention of explicit Preview exclusions rather than a capacity-based Apply
+refusal. The remaining sections propose how to deliver those decisions.
 
 ## User interaction
 
@@ -107,6 +109,19 @@ geometry**, not “reset to defaults.” Strictly validate integer coordinates,
 positive dimensions and safe native representability before admitting a write.
 Do not copy the legacy `layout.Entry.locked` field into named records: effective
 locks are global, and explicit geometry application does not alter them.
+
+**Explicit exclusions are configuration, not recent history.** Retain every valid
+entry in `preview.excluded`, independently of the 64-entry recent-history cap.
+Preserve its existing identity validation and deduplication; remove only its
+truncation. Do not raise the shared roster cap or broaden this change to other
+per-character policies. `preview.seen` remains bounded as today.
+
+Apply must preserve every existing exclusion for absent characters, add every
+recorded hidden character, and remove only recorded visible characters. The
+merged list must survive normalization, persistence, reload and unrelated writes
+without eviction, regardless of insertion order. Exceeding 64 exclusions is not
+an Apply refusal or a reason to silently drop a choice. Excluded-only owners
+must remain available on the character page even outside recent history.
 
 Normalization must retain this collection on every unrelated settings write.
 A malformed record must not become a partially applied snapshot: reject the
@@ -215,11 +230,25 @@ Existing seams inspected: `preview/layout.py` (`Entry`, serialization),
 an acceptable substitute for the acknowledged operation above. The existing
 optimistic live Reset endpoint is not the receipt template either.
 
+The inspected `settings.py:627` normalizes `preview.excluded` with
+`roster.deserialize()`, whose `roster.py:60` return truncates to its default cap
+of 64. `settings.update()` normalizes every write (`settings.py:1188`). This is a
+required compatibility change for the lossless contract, not an existing
+capability: with 64 absent excluded characters, appending one newly hidden member
+currently drops the new choice; prepending it evicts an existing exclusion.
+
 Before implementation is accepted, require:
 
 - Pure-model tests for membership, null geometry, strict validation, independent
   defaults, names/IDs, malformed whole-record rejection and unrelated-write
   round trips. No change to old installs' current state.
+- Capacity-boundary tests through real settings transactions and save/reload:
+  start with 64 excluded characters absent from a snapshot, apply one additional
+  hidden member, and retain all 65 in either merge order. Making that member
+  visible removes only its exclusion. Failed persistence restores the complete
+  prior list; direct Preview-choice and unrelated writes must not reintroduce
+  truncation. Verify recent history still caps at 64 and an excluded-only owner
+  beyond that history remains editable on the page.
 - Event-controlled store/controller/pump tests for pending and in-flight writes,
   active drags, untouched placements, offline operations, rollback, later edits,
   stale callbacks, failed posts, source replacement and Off/on/Quit admission.
