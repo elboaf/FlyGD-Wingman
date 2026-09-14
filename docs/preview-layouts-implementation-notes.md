@@ -1516,3 +1516,52 @@ PR publication. No CodeRabbit/reviewer/subagent, network/remote action, real app
 EVE/profile/clipboard operation, push/PR/merge/amend or hook bypass occurred in
 this fix task. Windows/WebView2/live-EVE acceptance remains **NOT RUN**, and the
 maintainer's issue-acceptance/closure decision stays separate.
+
+## PR-source verification and CodeRabbit
+
+At the maintainer's explicit request, the branch integrated upstream `main`
+through `ba67e9da9286d5a577ba0a209ac43ff67f415b1c` and received actual authenticated
+CodeRabbit CLI **0.7.6** review, not another local model labeled as CodeRabbit:
+
+```sh
+coderabbit review --agent --committed --base origin/main
+coderabbit review --agent --committed --base-commit 25483ef06345c57bc6801b0ee31b1fd02270561b
+```
+
+The first completed review covered **76 files**, returning **9 entries for
+6 distinct minor/trivial findings**. All six verified corrections were committed
+at `f35fc3e32e070167d6d2c58e56d0adc01de8f775`. The actual follow-up covered the
+**15 changed fix files and returned zero findings**. Across the two completed
+reviews, every one of the **79 changed PR paths** was listed as reviewed. Raw
+JSONL is retained at `/tmp/wingman-preview-layouts-coderabbit-25483ef.log` and
+`/tmp/wingman-preview-layouts-coderabbit-confirm-f35fc3e.log`. No usage-credit
+override or paid-extra flag was used. Prior independent reviews and polish retain
+their separate provenance; the integration and CodeRabbit fixes also received
+local polish in fix mode, with edits inspected and verification rerun.
+
+Fresh full verification ran on that final production/test commit:
+
+```sh
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync python -m pytest tests/ -q -rs --basetemp=/tmp/wingman-preview-layouts-pr-final --junitxml=/tmp/wingman-preview-layouts-pr-final.xml
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync ruff check .
+UV_PROJECT_ENVIRONMENT=/tmp/wingman-preview-layouts-venv uv run --no-sync ruff format --check .
+node scripts/js_smoke.js
+node --test tests/fixtures/screenshot_dom.test.cjs
+cargo test --locked --offline --manifest-path packaging/settings-codec/Cargo.toml --target-dir /tmp/wingman-preview-layouts-codec
+git diff --check origin/main..HEAD
+```
+
+**12,986 passed, 13 Windows-only skips in 367.71s**. Every skip was inspected:
+Windows junctions, DPAPI/WinDLL, native Preview pump/window station and APIs, or
+Windows tray backend. Node **v26.5.0** and the installed release codec were checked
+before pytest; neither prerequisite was skipped. Ruff lint/format (**451 files**),
+every page's executable JS smoke, **35 DOM tests**, the **Cargo regression** and
+range whitespace checks passed. Logs: `/tmp/wingman-preview-layouts-pr-final.log`
+and `/tmp/wingman-preview-layouts-pr-checks.log`; XML is named in the command.
+Only the final evidence/checklist documentation changed after these source gates.
+
+The maintainer authorized push and PR creation, not merge, release or issue closure.
+**Windows/WebView2/live-EVE acceptance remains NOT RUN.** Portable tests, the actual
+CodeRabbit reviews and earlier isolated Chrome checks do not replace the operator
+smoke matrix. Preserve the linked feature worktree and ignored evidence for PR
+feedback. This PR references issue #213 without automatically closing it.

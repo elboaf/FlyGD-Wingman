@@ -19,9 +19,9 @@ Run on Windows against a real install before each release.
 
 **Every item in this section is NOT RUN.** Implementation and task-scoped reviews
 are complete, including the maintainer-approved shared presentation worker and
-reviewed page-lifetime fixes. The prior final portable review/polish and global
-gates are complete; see the exact [coordinator verification record](preview-layouts-implementation-notes.md#fresh-coordinator-gates).
-The fresh post-integration/post-CodeRabbit full run remains coordinator work.
+reviewed page-lifetime fixes. Portable review/polish, actual CodeRabbit review
+and fresh post-integration/post-CodeRabbit global gates are complete; see the
+[PR-source verification record](preview-layouts-implementation-notes.md#pr-source-verification-and-coderabbit).
 Neither the completed gates nor portable/isolated-Chrome passes establish
 Windows/WebView2/live-EVE acceptance.
 No push, PR, integration or issue closure is authorized by this checklist.
