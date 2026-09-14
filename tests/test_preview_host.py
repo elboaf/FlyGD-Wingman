@@ -63,6 +63,7 @@ def crop_pump(monkeypatch):
     from wingman.preview import croppicker, cropwindow
     from wingman.preview.cropstore import CropStore
     from wingman.preview.layoutadmission import PrimaryLayoutAdmission
+    from wingman.preview.store import LayoutStore
     from wingman.telemetry.model import RosterSnapshot
 
     opened = []
@@ -78,6 +79,9 @@ def crop_pump(monkeypatch):
         native = Resources()
         initial = {"Alice": DEFINITION} if initial is None else initial
         transaction = Transaction(initial)
+        # API compositions borrow this same writer rather than a missing host store.
+        if layout_store is None:
+            layout_store = LayoutStore(update_settings or transaction.update)
         store = CropStore(
             update_settings or transaction.update,
             initial,

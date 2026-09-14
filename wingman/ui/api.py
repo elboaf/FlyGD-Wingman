@@ -495,6 +495,10 @@ class Api:
         host_admission = getattr(preview_host, "_layout_admission", None)
         host_store = getattr(preview_host, "_layout_store", None)
         if host_admission is not None:
+            if host_store is None:
+                raise ValueError(
+                    "Preview host layout admission requires a layout store"
+                )
             if layout_store is not None and layout_store is not host_store:
                 raise ValueError("Preview host and Api must share their layout store")
             if layout_admission is not None and layout_admission is not host_admission:
@@ -506,11 +510,7 @@ class Api:
         self._preview_layout_store = (
             layout_store
             if layout_store is not None
-            else (
-                None
-                if host_admission is not None
-                else LayoutStore(lambda: settings_mod.update(state.settings))
-            )
+            else LayoutStore(lambda: settings_mod.update(state.settings))
         )
         self._preview_layout_admission = (
             layout_admission
@@ -522,10 +522,9 @@ class Api:
             if preview_runtime is not None
             else PreviewRuntime(preview_host)
         )
-        if self._preview_layout_store is not None:
-            self._preview_layout_store.set_commit_callback(
-                self._request_preview_geometry_refresh
-            )
+        self._preview_layout_store.set_commit_callback(
+            self._request_preview_geometry_refresh
+        )
         self._preview_layouts = self._build_preview_layouts_controller()
         self._preview_revision = 0
         self._preview_runtime_authorized = False

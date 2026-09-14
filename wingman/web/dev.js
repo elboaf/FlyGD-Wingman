@@ -2653,6 +2653,10 @@
     var fixture = DEV_PREVIEW_HOTKEYS_FIXTURE;
     fixture.layout_sources = []; fixture.sizes = {};
     fixture.sizable = fixture.characters.slice();
+    var defaults = settingsPayload().settings.preview;
+    fixture.sizable.forEach(function (name) {
+      fixture.sizes[name] = [defaults.width, defaults.height];
+    });
     return _devGeometryReceipt();
   };
   function _devLayoutReceipt(action, error) {

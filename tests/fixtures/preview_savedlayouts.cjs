@@ -233,6 +233,10 @@ function change(name, checked) {
     const select = el('preview-layout-select');
     const button = action => el('preview-layout-' + action);
     assert.ok(select, 'labelled saved-layout selector exists');
+    const group = el('preview-layouts');
+    assert.equal(group.getAttribute('role'), 'group');
+    assert.equal(group.getAttribute('aria-labelledby'), 'preview-layout-select-label');
+    assert.equal(el(group.getAttribute('aria-labelledby')).getAttribute('for'), select.id);
     assert.equal(el('preview-layout-save').textContent, 'Save current as…');
     assert.equal(el('preview-layout-status').getAttribute('role'), 'status');
     const choose = receipt => {

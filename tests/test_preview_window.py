@@ -495,7 +495,7 @@ def test_checked_close_retains_failed_owned_hwnd_for_cleanup(monkeypatch):
     monkeypatch.setattr(
         w._libs.user32,
         "DestroyWindow",
-        lambda hwnd: destroyed.append(hwnd) and False,
+        lambda hwnd: destroyed.append(hwnd) or False,
         raising=False,
     )
     try:

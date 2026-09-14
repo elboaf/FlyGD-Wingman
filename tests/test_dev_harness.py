@@ -1768,7 +1768,10 @@ const assert = require('node:assert/strict'), fs = require('node:fs'), vm = requ
 const source = fs.readFileSync(process.argv[1], 'utf8');
 const fixture = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const api = {}, context = {api, DEV_PREVIEW_HOTKEYS_FIXTURE: fixture, Promise, console, setTimeout,
-  window: {}, _devHotkeysCopy: () => fixture.hotkeys, _devCropCopy: () => ({})};
+  window: {}, _devHotkeysCopy: () => fixture.hotkeys, _devCropCopy: () => ({}),
+  customScenario: '', devCustomCopy: value => value, devCustomRules: [], fleetBarState: () => ({})};
+vm.runInNewContext(source.slice(source.indexOf('  function settingsPayload('),
+  source.indexOf('  // Exact copy of Api._update_snapshot_locked')), context);
 vm.runInNewContext(source.slice(source.indexOf('  // Saved layout browser fixtures'),
   source.indexOf('  // Companions are browser-only fixtures')), context);
 (async () => {

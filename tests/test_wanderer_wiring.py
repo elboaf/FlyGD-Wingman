@@ -6,13 +6,14 @@ from typing import get_args
 
 import pytest
 
-from tests.test_api import make_api, pushes
+from tests.test_api import FakeWindow, make_api, make_state, pushes
 from tests.test_preview_metadata import client
 from tests.test_preview_metadata import runtime as runtime
 from tests.test_startup import startup as startup
 from wingman import __main__ as main_mod
 from wingman import settings
 from wingman.preview.host import PreviewHost
+from wingman.preview.store import LayoutStore
 from wingman.ui import copy as copy_mod
 from wingman.ui.api import Api
 from wingman.wanderer.client import ErrorCode
@@ -45,8 +46,10 @@ def test_api_composes_nonsecret_state_and_transaction_facades(tmp_path):
 
 
 def test_metadata_availability_not_running_or_runtime_enabled(tmp_path, monkeypatch):
-    host = PreviewHost(on_layout_changed=lambda *args: None)
-    api = make_api(tmp_path, preview_host=host)
+    state = make_state(tmp_path)
+    store = LayoutStore(lambda: settings.update(state.settings))
+    host = PreviewHost(on_layout_changed=lambda *args: None, layout_store=store)
+    api = Api(state, preview_host=host, layout_store=store)
     assert hasattr(api, "_wanderer")
     try:
         with monkeypatch.context() as patch:
@@ -83,7 +86,10 @@ def test_controller_receives_only_created_named_primary_sessions(
         "set_metadata_generation",
         PreviewHost.set_metadata_generation.__get__(runtime.host),
     )
-    api = make_api(tmp_path, preview_host=runtime.host)
+    state = make_state(tmp_path)
+    store = LayoutStore(lambda: settings.update(state.settings))
+    runtime.host._layout_store = store
+    api = Api(state, preview_host=runtime.host, layout_store=store)
     runtime.host._hwnd = 999
     runtime.host._eve_admitted = True
     runtime.host._metadata_ready_epoch = runtime.host._eve_epoch
@@ -126,8 +132,11 @@ def test_failed_preview_master_transaction_does_not_change_wanderer_gate(
 def test_early_and_final_shutdown_detach_before_host_native_stop(
     tmp_path, monkeypatch, entrypoint
 ):
-    host = PreviewHost(on_layout_changed=lambda *args: None)
-    api = make_api(tmp_path, preview_host=host)
+    state = make_state(tmp_path)
+    store = LayoutStore(lambda: settings.update(state.settings))
+    host = PreviewHost(on_layout_changed=lambda *args: None, layout_store=store)
+    api = Api(state, preview_host=host, layout_store=store)
+    api._window = FakeWindow()
     assert hasattr(api, "_wanderer")
     assert api._wanderer.start()
     callback = host._metadata_callback

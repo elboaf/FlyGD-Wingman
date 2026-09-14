@@ -13,6 +13,7 @@ from wingman.preview.cropstore import CropStore
 from wingman.preview.geometry import Rect
 from wingman.preview.host import PreviewHost
 from wingman.preview.runtime import PreviewRuntime
+from wingman.preview.store import LayoutStore
 from wingman.telemetry.model import RosterSnapshot
 
 
@@ -28,6 +29,8 @@ def crop_api(tmp_path):
     host = PreviewHost(
         on_layout_changed=lambda *args: None,
         crop_store=store,
+        layout_store=api._preview_layout_store,
+        layout_admission=api._preview_layout_admission,
         on_crops_changed=api.push_preview_crops,
     )
     api._preview_host = host
@@ -84,8 +87,12 @@ def test_loaded_malformed_owner_drops_alone_and_canonical_owner_remains_manageab
         initial,
         executor_factory=lambda: ThreadPoolExecutor(max_workers=1),
     )
-    host = PreviewHost(on_layout_changed=lambda *args: None, crop_store=store)
-    api = make_api(tmp_path, preview_host=host)
+    host = PreviewHost(
+        on_layout_changed=lambda *args: None,
+        crop_store=store,
+        layout_store=LayoutStore(transaction.update),
+    )
+    api = make_api(tmp_path, preview_host=host, layout_store=host._layout_store)
     try:
         assert set(api.get_preview_crop_state()["definitions"]) == {"Alice"}
         refused(api.remove_preview_crop(owner))

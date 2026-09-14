@@ -1218,7 +1218,7 @@ performed in this task.
 **Integration remains separate:** no push, PR, merge, amend or release; obtain
 explicit integration authorization after the coordinator's gates and the agreed
 acceptance decision. Preserve this linked worktree for feedback. Do not close
-#213 before that decision; do not infer permission from completed implementation,
+issue #213 before that decision; do not infer permission from completed implementation,
 task reviews or this documentation commit.
 
 ## Accepted final-review fix wave
@@ -1466,3 +1466,53 @@ the eventual PR source, push/PR actions and acceptance decisions. No remote or r
 app/EVE/profile/clipboard operation occurred here. Windows/WebView2/live-EVE
 acceptance remains NOT RUN; prior evidence above is historical, not a claim that
 these new integration edits have received final PR re-verification.
+
+## CodeRabbit follow-up — narrow verified corrections
+
+The coordinator's authenticated CodeRabbit CLI **0.7.6** reviewed 76 committed
+files against `origin/main` at integrated base
+`25483ef06345c57bc6801b0ee31b1fd02270561b`. Its raw JSONL
+(`/tmp/wingman-preview-layouts-coderabbit-25483ef.log`) contains nine findings,
+six unique: smoke status, issue-reference clarity, named-group semantics, dev
+Reset defaults, a Win32 failure stub and missing host/store composition. The
+smoke/group/dev entries each repeat once. This correction pass read the review
+as untrusted data and verified only those regions, not the whole branch again.
+
+- The smoke introduction now links the completed prior coordinator gates while
+  explicitly retaining the fresh post-integration/post-CodeRabbit full run as
+  pending. All Saved layouts manual acceptance items are unchanged and NOT RUN.
+  Historical `#213` wording is clarified to `issue #213`; no heading-parser
+  behavior or issue closure is claimed.
+- Saved-layout controls expose their existing label with `role="group"`, covered
+  by the production-page Node harness. Real dev Reset repopulates live Size
+  defaults from the current settings payload (480×300 in this fixture), clears
+  Copy sources and retains the existing receipt/revision behavior. The real dev
+  regression exercises the getter and Reset, not a copied reset implementation.
+- `Api` rejects host admission without its store instead of letting `None` reach
+  the layout controller. Baseline reproduction confirmed Save returned
+  `'NoneType' object has no attribute 'transact'`; no API-only fallback existed.
+  Missing/mismatched/shared pairs and default/no-host persistence are covered.
+  Crop, Wanderer, Custom Alerts and telemetry fixtures now compose one shared
+  store correctly; their behavior assertions remain intact. No production owner,
+  writer, persistence schema or native operation was added.
+- The checked-close failure stub explicitly returns `False`, preserving both
+  HWND tracking and the existing successful cleanup check.
+
+Corrected RED: **4 failed, 6 passed** (missing-store refusal, named-group role,
+and absent dev size entries); three initial fixture setup failures were corrected
+before production edits. Compatibility runs identified additional legitimate
+store-less host fixtures, which were repaired rather than bypassing admission.
+After local `polish-core --fix` and fixture corrections, the fresh affected
+Api/Preview/Wanderer/Companion/Custom Alerts/settings/telemetry/bridge/page/dev/docs/
+packaging gate passed **5,634 tests with 5 Windows-only skips in 272.54s**.
+All-page JS smoke, **35 Node DOM tests**, Ruff lint and format (**451 files**) and
+whitespace checks passed. Log/XML: `/tmp/wingman-cr-fix-final2.{log,xml}`.
+Exact commands, intermediate results, local polish and normal commit identity
+are retained in `.superpowers/sdd/preview-layouts-plan/coderabbit-fix-report.md`.
+
+This is scoped portable verification, **not a fresh full-suite result**. The
+coordinator owns actual CodeRabbit confirmation and the fresh FULL suite before
+PR publication. No CodeRabbit/reviewer/subagent, network/remote action, real app,
+EVE/profile/clipboard operation, push/PR/merge/amend or hook bypass occurred in
+this fix task. Windows/WebView2/live-EVE acceptance remains **NOT RUN**, and the
+maintainer's issue-acceptance/closure decision stays separate.
