@@ -3488,6 +3488,12 @@ class Api:
                 x, y = int(x), int(y)
             except (TypeError, ValueError):
                 return None
+            # WebView2 screenX/Y locate the inset child, not the outer form.
+            # Admit and persist outer coordinates or a valid release is rejected,
+            # leaving the old cached position to fence every later height fit.
+            insets = self._fleetbar_resize_insets or fleetbar.ZERO_INSETS
+            x -= insets.left
+            y -= insets.top
             gesture = self._fleetbar_resize_gesture
             native = gesture.snapshot() if gesture is not None else None
             if phase == "begin":
@@ -3605,6 +3611,9 @@ class Api:
                 x = int(x)
             except (TypeError, ValueError):
                 return None
+            # The native gesture records the outer form; the page's screenX
+            # starts inside its left resize band, just as in header releases.
+            x -= (self._fleetbar_resize_insets or fleetbar.ZERO_INSETS).left
             if content_width <= 0:
                 return None
             if not fleetbar.is_visible(bar):

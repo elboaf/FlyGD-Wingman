@@ -3825,8 +3825,13 @@ until they are actually run on Windows.
       doubles nor halves as it crosses monitors.
 - [ ] **Height-only fitting preserves width before, during, and after resize.**
       Add and remove rows, hover/focus header actions, and open/close
-      Characters. Expected: Fleet Bar grows and shrinks by height only; no
-      width snapback occurs during or after a manual resize.
+      Characters. Grow the roster, move the bar by its header, then reduce it
+      to two rows and finally none. Repeat after resizing from each side,
+      including on a monitor left of the primary. Expected: Fleet Bar grows
+      and shrinks by height only, with no empty space left beneath the roster
+      and no width or position snapback. On Windows, the WebView's screen origin
+      includes the resize inset; saved placement must still use the outer
+      window origin. Repeat at 100%, 150%, and 200% display scaling.
 - [ ] **Passive reveal stays no-activate; header actions use explicit
       activation.** Merely showing Fleet Bar does not take focus. Clicking
       `Reset width` or `Hide` activates it only for that action; Tab reaches
