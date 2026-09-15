@@ -187,19 +187,40 @@ def label_layout(
 
     Measurement only. The cache needs the clipped strings as well as dimensions:
     one line can change its ellipsis while the other keeps the pill's size fixed.
+
+    *label* may be None: show_labels and show_system_names hide their lines
+    independently (PreviewWindow._sync_label), so the pill can be a name, a
+    location, or both. A location-only pill carries no marker -- markers
+    identify a character, and riding a location pill would miscolour a
+    system with a character's dot. A requested-but-refused primary (empty,
+    or clipped to a bare ellipsis under a marker) still refuses the whole
+    pill, exactly as before: identification supplements a readable name.
     """
-    if not label:
+    if label is not None and not label:
+        # Legacy: a resolved-but-empty name never produced a pill, even
+        # with metadata to show under it. Only None -- the line's toggle
+        # off -- unlocks a location-only pill.
         return None
-    font = _font(font_size)
+    if label is None and not secondary:
+        return None
     probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
-    prefix = LABEL_MARKER_SIZE + LABEL_MARKER_GAP if marker else 0
-    text = _ellipsize(probe, label, font, max_w=max_w - LABEL_PAD_X * 2 - prefix)
-    # Identification supplements a readable name; never show a marker alone.
-    # The unmarked path retains even its legacy ellipsis-only appearance.
-    if not text or (marker and text == "…"):
-        return None
-    width = probe.textlength(text, font=font) + prefix
-    height = font_size + LABEL_PAD_Y * 2 + 4
+    text = ""
+    width = 0.0
+    height = 0
+    if label is not None:
+        font = _font(font_size)
+        prefix = LABEL_MARKER_SIZE + LABEL_MARKER_GAP if marker else 0
+        text = _ellipsize(probe, label, font, max_w=max_w - LABEL_PAD_X * 2 - prefix)
+        # Identification supplements a readable name; never show a marker alone.
+        # The unmarked path retains even its legacy ellipsis-only appearance.
+        if not text or (marker and text == "…"):
+            return None
+        width = probe.textlength(text, font=font) + prefix
+        height = font_size + LABEL_PAD_Y * 2 + 4
+    else:
+        # Location-only: the small line gets the same vertical padding the
+        # name line's +4/+2 budget gives it, not an edge-to-edge bitmap.
+        height = LABEL_PAD_Y * 2
     if max_h is not None and height > max_h:
         return None
     second = ""
@@ -212,6 +233,10 @@ def label_layout(
         if second:
             width = max(width, probe.textlength(second, font=small_font))
             height += small_size + 2
+    if not text and not second:
+        # A location the available height refuses shows no pill at all --
+        # same rule as a name that cannot fit, one branch later than it.
+        return None
     return ((int(width) + LABEL_PAD_X * 2, height), text, second)
 
 
@@ -245,12 +270,11 @@ def render_label(
     if layout is None:
         return None
     (w, h), text, second = layout
-    font = _font(font_size)
     img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     d.rounded_rectangle([0, 0, w - 1, h - 1], radius=6, fill=LABEL_BG)
     primary_x = LABEL_PAD_X
-    if marker:
+    if marker and text:
         marker_y = (font_size + LABEL_PAD_Y * 2 + 4 - LABEL_MARKER_SIZE) // 2
         d.rounded_rectangle(
             [
@@ -263,11 +287,17 @@ def render_label(
             fill=(*MARKER_PALETTE[marker][1], 255),
         )
         primary_x += LABEL_MARKER_SIZE + LABEL_MARKER_GAP
-    d.text((primary_x, LABEL_PAD_Y + 2), text, font=font, fill=LABEL_FG)
+    if text:
+        font = _font(font_size)
+        d.text((primary_x, LABEL_PAD_Y + 2), text, font=font, fill=LABEL_FG)
     if second:
         small_font = _font(max(1, font_size - 3))
+        # Below the name line when there is one; when the name line is
+        # hidden the location IS the pill's content and renders at the
+        # top, +2 like every primary row.
+        second_y = LABEL_PAD_Y + font_size + 4 if text else LABEL_PAD_Y + 2
         d.text(
-            (LABEL_PAD_X, LABEL_PAD_Y + font_size + 4),
+            (LABEL_PAD_X, second_y),
             second,
             font=small_font,
             fill=LABEL_SECONDARY_FG,

@@ -162,7 +162,13 @@ class Runtime:
             "push",
             lambda libs, hwnd, image, *args: self.painted.append((hwnd, image)),
         )
-        self.host = host.PreviewHost(on_layout_changed=lambda *args: None)
+        # The location line's callable is wired explicitly: these tests
+        # exercise metadata delivery, not the settings read, and the
+        # unwired fallback is Off because the shipped setting is opt-in.
+        self.host = host.PreviewHost(
+            on_layout_changed=lambda *args: None,
+            show_system_names=lambda: True,
+        )
         self.host._hwnd = 999
         # Completed standalone EVE activation in this pump-free HTTP harness.
         self.host._metadata_ready_epoch = 0

@@ -1582,10 +1582,15 @@ def test_set_labels_creates_and_destroys_the_overlay_window(monkeypatch):
     """The pill rides in its own WS_EX_LAYERED|WS_EX_TRANSPARENT window,
     owned by the preview: owned composites above the owner -- above the
     DWM thumbnail, which is the whole point -- and the style pair makes
-    it click-through so no mouse gesture is stolen from the preview."""
+    it click-through so no mouse gesture is stolen from the preview.
+
+    The overlay window is shared by the Wanderer location line, so it
+    also exists when only that line is switched on."""
     monkeypatch.setattr(window.chrome, "render_label", lambda *a, **k: _pill_image())
     monkeypatch.setattr(window.layered, "push", lambda *a, **k: None)
-    w, libs = _overlay_window(show_labels=False)
+    # Both lines off, so set_labels(False) below is the last one out and
+    # destroys the shared window.
+    w, libs = _overlay_window(show_labels=False, show_system_names=False)
     assert w._label_hwnd is None
 
     w.set_labels(True)
@@ -1601,13 +1606,38 @@ def test_set_labels_creates_and_destroys_the_overlay_window(monkeypatch):
     assert libs.destroyed == [0x9001]
 
 
+def test_location_only_keeps_the_overlay_window_without_a_name(monkeypatch):
+    """The decoupling's window rule: the overlay exists whenever either
+    line is switched on, and dies only when both are off."""
+    monkeypatch.setattr(window.chrome, "render_label", lambda *a, **k: _pill_image())
+    monkeypatch.setattr(window.layered, "push", lambda *a, **k: None)
+    w, libs = _overlay_window(show_labels=False, show_system_names=False)
+    w.set_labels(False)
+    assert w._label_hwnd is None
+
+    w.set_system_names_shown(True)
+    w.set_labels(False)
+    assert w._label_hwnd == 0x9001
+
+    w.set_labels(True)
+    assert w._label_hwnd == 0x9001
+
+    w.set_labels(False)
+    w.set_system_names_shown(False)
+    w.set_labels(False)
+    assert w._label_hwnd is None
+    assert libs.destroyed == [0x9001]
+
+
 @pytest.mark.parametrize("close_first", [False, True])
 def test_failed_label_destruction_survives_restyle_and_reenable(
     monkeypatch, close_first
 ):
     monkeypatch.setattr(window.chrome, "render_label", lambda *a, **k: _pill_image())
     monkeypatch.setattr(window.layered, "push", lambda *a, **k: None)
-    w, libs = _overlay_window()
+    # The location line is off, so set_labels(False) below is the last one
+    # out and takes the destruction path this test exists for.
+    w, libs = _overlay_window(show_labels=True, show_system_names=False)
     w.set_labels(True)
     label = w._label_hwnd
     alive = {w.hwnd, label}
@@ -1783,7 +1813,7 @@ def test_label_size_changes_only_the_label_cache(monkeypatch):
 
     monkeypatch.setattr(window.chrome, "render_label", record)
     monkeypatch.setattr(window.layered, "push", lambda *a: None)
-    w, libs = _overlay_window()
+    w, libs = _overlay_window(show_system_names=True)
     w._thumb = _FakeThumb()
     w._ensure_label_overlay()
     first = w._label_img
@@ -1843,7 +1873,9 @@ def test_label_size_layout_equivalent_moves_reuse_bitmap(
         "push",
         lambda libs, hwnd, image, x, y: pushed.append((image, x, y)),
     )
-    w, libs = _overlay_window(label_size=key, label_marker=marker)
+    w, libs = _overlay_window(
+        label_size=key, label_marker=marker, show_system_names=True
+    )
     w.rect = Rect(100, 100, *size)
     w._inset = inset
     w._ensure_label_overlay()
@@ -1865,7 +1897,9 @@ def test_label_size_layout_equivalent_moves_reuse_bitmap(
 def test_label_size_height_transitions_contain_and_restore_without_source_geometry(
     monkeypatch, key, font_size, inset, primary, secondary, marker
 ):
-    w, libs = _overlay_window(label_size=key, label_marker=marker)
+    w, libs = _overlay_window(
+        label_size=key, label_marker=marker, show_system_names=True
+    )
     w.client.hwnd = 0xA11
     w.client.character = primary
     w.rect = Rect(100, 100, 120, 90)
@@ -1916,7 +1950,7 @@ def test_system_text_invalidates_equal_size_label_without_chrome_or_thumbnail_wo
 
     monkeypatch.setattr(window.chrome, "render_label", record)
     monkeypatch.setattr(window.layered, "push", lambda *args: None)
-    w, _ = _overlay_window()
+    w, _ = _overlay_window(show_system_names=True)
     w._thumb = _FakeThumb()
     w.redraw = lambda *a, **k: pytest.fail("metadata must not repaint chrome")
     w._ensure_label_overlay()
@@ -1956,7 +1990,9 @@ def test_hidden_label_updates_and_enabling_labels_do_not_reveal_overlay(
 ):
     shown = []
     monkeypatch.setattr(window.layered, "push", lambda *args: None)
-    w, libs = _overlay_window(show_labels=False, label_marker=marker)
+    w, libs = _overlay_window(
+        show_labels=False, label_marker=marker, show_system_names=True
+    )
     libs.user32.ShowWindow = lambda hwnd, command: shown.append((hwnd, command))
     w.set_hidden(True)
     shown.clear()
@@ -1970,6 +2006,71 @@ def test_hidden_label_updates_and_enabling_labels_do_not_reveal_overlay(
     assert w._label_img.height > 31
 
 
+def test_name_and_location_lines_gate_independently(monkeypatch):
+    """The decoupling itself: each line renders only while its own toggle
+    is on, whichever combination that is, and the same system name
+    produces a different pill under each."""
+    pills = {
+        "both": _pill_image(w=120, h=53),
+        "name": _pill_image(w=90, h=31),
+        "location": _pill_image(w=60, h=16),
+    }
+
+    def render(label, max_w, font_size, secondary, *, max_h=None, marker=None):
+        if label is None:
+            return pills["location"]
+        return pills["both" if secondary else "name"]
+
+    rendered = []
+    monkeypatch.setattr(
+        window.chrome,
+        "render_label",
+        lambda *a, **k: rendered.append(a[0]) or render(*a, **k),
+    )
+    monkeypatch.setattr(window.layered, "push", lambda *args: None)
+    w, libs = _overlay_window(show_labels=False, show_system_names=False)
+    libs.user32.ShowWindow = lambda hwnd, cmd: None
+    w.set_system_name("HOME")
+
+    # Location only: overlay exists, pill is the location one, name hidden.
+    w.set_system_names_shown(True)
+    w.set_labels(False)
+    assert w._label_hwnd == 0x9001
+    assert w._label_img is pills["location"]
+    assert rendered == [None]
+
+    # Name joins in without touching the location toggle.
+    w.set_labels(True)
+    assert w._label_img is pills["both"]
+    assert rendered == [None, "Pilot"]
+
+    # Name off again: back to location-only, with the name line gone.
+    w.set_labels(False)
+    assert w._label_img is pills["location"]
+    assert rendered == [None, "Pilot", None]
+
+    # Both off: no pill, overlay window gone.
+    w.set_system_names_shown(False)
+    w.set_labels(False)
+    assert w._label_hwnd is None
+
+
+def test_location_gates_off_the_name_not_the_pill(monkeypatch):
+    """The old coupling, asserted gone: with names hidden, arriving
+    metadata must still produce a visible location pill."""
+    monkeypatch.setattr(window.chrome, "render_label", lambda *a, **k: _pill_image())
+    monkeypatch.setattr(window.layered, "push", lambda *args: None)
+    w, libs = _overlay_window(show_labels=False, show_system_names=False)
+    libs.user32.ShowWindow = lambda hwnd, cmd: None
+    w.set_labels(False)
+
+    w.set_system_names_shown(True)
+    w.set_system_name("HOME")
+    assert w._label_hwnd == 0x9001
+    assert w._label_img is not None
+    assert w._label_visible is True
+
+
 @pytest.mark.parametrize("marker", [None, "blue"])
 def test_secondary_label_moves_resizes_and_follows_alert_inset_without_rebuilding_frames(
     monkeypatch,
@@ -1981,7 +2082,7 @@ def test_secondary_label_moves_resizes_and_follows_alert_inset_without_rebuildin
         "push",
         lambda libs, hwnd, image, x, y: pushes.append((image.size, x, y)),
     )
-    w, _ = _overlay_window(label_marker=marker)
+    w, _ = _overlay_window(label_marker=marker, show_system_names=True)
     w._ensure_label_overlay()
     w.set_system_name("W" * 60)
     w.selected = True
@@ -2038,7 +2139,7 @@ def test_two_line_cache_repaints_when_ellipsis_changes_but_dimensions_do_not(
     monkeypatch.setattr(window.chrome, "label_layout", layout)
     monkeypatch.setattr(window.chrome, "render_label", render)
     monkeypatch.setattr(window.layered, "push", lambda *args: None)
-    w, _ = _overlay_window()
+    w, _ = _overlay_window(show_system_names=True)
     w.client.character = "Pilot Alpha"
     w.rect = Rect(100, 100, 120, 90)
     w.set_system_name("HOME")

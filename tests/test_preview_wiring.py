@@ -1108,6 +1108,48 @@ def test_set_preview_show_labels_restyles_even_without_a_host(tmp_path, monkeypa
     }
 
 
+def test_set_preview_show_system_names_persists_and_restyles(tmp_path, monkeypatch):
+    writes = _no_disk(monkeypatch)
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    api._state.settings["preview"] = {"show_system_names": False}
+    assert api.set_preview_show_system_names(True) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+    assert api._state.settings["preview"]["show_system_names"] is True
+    assert len(writes) == 1
+    assert host.restyles == 1
+
+
+def test_set_preview_show_system_names_is_independent_of_show_labels(
+    tmp_path, monkeypatch
+):
+    """The whole point of the second toggle: flipping one line's switch
+    must not touch the other line's committed value."""
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    api._state.settings["preview"] = {"show_labels": False}
+    assert api.set_preview_show_system_names(True)["persisted"] is True
+    assert api._state.settings["preview"]["show_labels"] is False
+    assert api._state.settings["preview"]["show_system_names"] is True
+
+
+def test_set_preview_show_system_names_is_a_no_op_without_a_disk_write(
+    tmp_path, monkeypatch
+):
+    writes = _no_disk(monkeypatch)
+    api = make_api(tmp_path)
+    api._state.settings["preview"] = {"show_system_names": True}
+    assert api.set_preview_show_system_names(True) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+    }
+    assert len(writes) == 0
+
+
 def test_set_preview_opacity_persists_and_restyles(tmp_path, monkeypatch):
     writes = _no_disk(monkeypatch)
     host = FakeHost()
@@ -1416,20 +1458,23 @@ def test_the_host_reads_show_labels_and_opacity_live(monkeypatch):
                 "height": 210,
                 "layouts": {},
                 "show_labels": False,
+                "show_system_names": True,
                 "opacity": 180,
             }
         }
     )
     host = main_mod.build_preview_host(state, {})
     assert host._labels_shown() is False
+    assert host._system_names_shown() is True
     assert host._current_opacity() == 180
 
     from wingman import settings
 
     monkeypatch.setattr(settings, "_save_locked", lambda *args: None)
     with settings.update(state.settings) as live:
-        live["preview"].update(show_labels=True, opacity=90)
+        live["preview"].update(show_labels=True, show_system_names=False, opacity=90)
     assert host._labels_shown() is True
+    assert host._system_names_shown() is False
     assert host._current_opacity() == 90
 
 
@@ -1452,6 +1497,10 @@ def test_the_host_defaults_labels_on_and_fully_opaque_when_the_keys_are_absent(
     state = SimpleNamespace(settings={"preview": {}})
     host = main_mod.build_preview_host(state, {})
     assert host._labels_shown() is True
+    # Absent means OFF for the location line: the toggle ships opt-in, and
+    # an upgrading user who had labels off (often to hide locations) must
+    # not get the line back through the side door.
+    assert host._system_names_shown() is False
     assert host._current_opacity() == 255
 
 

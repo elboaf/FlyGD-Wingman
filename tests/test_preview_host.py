@@ -4796,6 +4796,9 @@ class _VisibilityWindow:
     def redraw(self, force=False):
         pass
 
+    def set_system_names_shown(self, shown):
+        self.show_system_names = shown
+
     def set_labels(self, shown):
         self.show_labels = shown
 
@@ -5229,22 +5232,29 @@ class _FakeRestyleThumb:
 
 class _RestyleWindow(_HiddenState):
     """Duck-types just what _restyle touches: public chrome attributes,
-    set_labels(), redraw(), and a thumbnail. Not a real PreviewWindow --
-    that needs an HWND, which is out of reach here."""
+    set_labels(), set_system_names_shown(), redraw(), and a thumbnail.
+    Not a real PreviewWindow -- that needs an HWND, which is out of reach
+    here."""
 
     def __init__(self, rect, show_labels=True, opacity=255, locked=False, inset=None):
         self.rect = rect
         self.show_labels = show_labels
+        self.show_system_names = False
         self.opacity = opacity
         self.locked = locked
         self.redraws = 0
         self.label_calls = []
+        self.system_name_calls = []
         self.label_size = "standard"
         self.label_sizes_seen = []
         # The real PreviewWindow widens this to ALERT_BORDER for the
         # duration of an alert, so _restyle cannot assume BORDER.
         self._inset = host.window_mod.BORDER if inset is None else inset
         self._thumb = _FakeRestyleThumb()
+
+    def set_system_names_shown(self, shown):
+        self.system_name_calls.append(shown)
+        self.show_system_names = shown
 
     def set_labels(self, shown):
         self.label_calls.append(shown)
@@ -5319,6 +5329,25 @@ def test_restyle_leaves_the_thumbnail_at_the_full_interior_either_way():
         (geometry.thumbnail_rect(win.rect, host.window_mod.BORDER), 255)
     ]
     assert win._thumb.calls[0][0].h == win.rect.h - host.window_mod.BORDER * 2
+
+
+def test_restyle_pushes_the_location_switch_and_the_name_switch_independently():
+    """The two toggles travel the same restyle but must not share a value:
+    one system-name write per window, one set_labels call, either order
+    of truthiness. This is the decoupling's host half."""
+    h = host.PreviewHost(
+        on_layout_changed=lambda *a: None,
+        show_labels=lambda: False,
+        show_system_names=lambda: True,
+    )
+    win = _RestyleWindow(geometry.Rect(0, 0, 320, 210))
+    h._windows = {"Alice": win}
+
+    h._restyle()
+
+    assert win.system_name_calls == [True]
+    assert win.label_calls == [False]
+    assert win.show_system_names is True and win.show_labels is False
 
 
 def _captured_on_activate(monkeypatch, client_hwnd=0x1000):

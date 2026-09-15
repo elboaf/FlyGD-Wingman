@@ -5599,6 +5599,16 @@ class Api:
             self._preview_host.restyle()
         return result
 
+    def set_preview_show_system_names(self, enabled) -> dict:
+        """Persist whether preview thumbnails show the Wanderer location
+        line, independent of the character-name label -- either line can
+        be on alone. Live-pushed via PreviewHost.restyle() for the same
+        reason as set_preview_show_labels."""
+        result = self._write_preview_setting(("show_system_names",), bool(enabled))
+        if self._preview_host is not None:
+            self._preview_host.restyle()
+        return result
+
     def parse_preview_size(self, text) -> dict:
         """Validate a typed "1280x720", mirroring parse_preview_bind.
 

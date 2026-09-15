@@ -3131,6 +3131,19 @@ Enable previews in Settings before starting.
       window that was never mapped, and the feature looked simply dead.)
       Also check hide-on-lost-focus takes the pill with the preview, and
       that quitting Wingman with labels on leaves no orphan pill behind.
+- [ ] **The location line is its own toggle.** With Wanderer names
+      configured and connected in Settings › Previews › Wanderer names,
+      tick `Show the system location on each preview` (Appearance, right
+      under the character-name toggle). Expected with both toggles on: the
+      pill shows the character name with the system beneath it, unchanged
+      from before. Turn `Show the character name` off: the location-only
+      pill remains, smaller, top-left, and carries no colour marker even
+      for a marked character. Turn the location off too: the pill is gone
+      entirely and dragging the preview leaves nothing floating. Turn the
+      name back on: the pill returns. With previews off, the checkbox still
+      commits and survives a restart. (Requires a configured Wanderer
+      connection; with none, the checkbox is inert by design — there is no
+      location data to draw.)
 - [ ] Clicking a preview brings that client to the foreground. If Windows
       refuses the switch, the log has `Activation of 0x… did not take` at INFO.
 - [ ] **The ring marks the client you last used, and stays there.** With

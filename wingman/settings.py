@@ -200,6 +200,13 @@ def _preview_defaults() -> dict:
         # On by default -- it is what shipped, and turning it off would
         # silently restyle every existing install's previews.
         "show_labels": True,
+        # Off by default, unlike show_labels: this is the Wanderer
+        # location line's own switch, and showing it must be asked for.
+        # It is independent of show_labels -- either line can be on
+        # alone -- so a user who turned labels off to hide locations can
+        # now keep names off without losing the location, and vice
+        # versa. See PreviewWindow._sync_label for the rendering half.
+        "show_system_names": False,
         "label_size": DEFAULT_LABEL_SIZE,
         "label_markers": {},
         # Off by default: it changes what happens to a real game window
@@ -621,6 +628,12 @@ def validated_preview(raw) -> dict:
     section["alerts"] = validated_alerts(raw.get("alerts"))
     if isinstance(raw.get("show_labels"), bool):
         section["show_labels"] = raw["show_labels"]
+    # Absent keeps the default (Off): a pre-toggle file normalizes to Off,
+    # deliberately NOT copied from show_labels -- some users turned labels
+    # off precisely to hide the location line, and the upgrade must not
+    # hand it back to them. Only a stored bool survives normalization.
+    if isinstance(raw.get("show_system_names"), bool):
+        section["show_system_names"] = raw["show_system_names"]
     if isinstance(raw.get("minimize_inactive_clients"), bool):
         section["minimize_inactive_clients"] = raw["minimize_inactive_clients"]
     if isinstance(raw.get("hide_on_lost_focus"), bool):

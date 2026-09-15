@@ -413,6 +413,81 @@ def test_secondary_line_adds_height_not_a_blank_placeholder():
     assert chrome.render_label("", 300, secondary="HOME") is None
 
 
+def test_location_only_pill_renders_without_a_name_line():
+    """label=None, secondary set: the location line is the pill's whole
+    content. Same padding budget as any other pill, secondary-colour text
+    at the top where the name line would start, and no name pixels at all."""
+    only = chrome.render_label(None, 300, secondary="HOME")
+    both = chrome.render_label("Pilot", 300, secondary="HOME")
+    assert only is not None
+    # No primary row in the height: pads + the small text row (+2), the
+    # same budget a secondary line adds under a name.
+    assert only.height == chrome.LABEL_PAD_Y * 2 + (17 - 3) + 2
+    assert only.width > 0
+    top = chrome.LABEL_PAD_Y + 2
+    # Text pixels are blends of the secondary colour over the pill's
+    # background, so anything not equal to the background (and not the
+    # transparent corner anti-aliasing, which keeps the background RGB)
+    # is text. The text row must sit inside the pill, not below the name
+    # line's absent offset.
+    text_rows = {
+        y
+        for y in range(only.height)
+        for x in range(only.width)
+        if only.getpixel((x, y))[3] and only.getpixel((x, y))[:3] != chrome.LABEL_BG[:3]
+    }
+    assert min(text_rows) >= top
+    assert max(text_rows) < only.height - chrome.LABEL_PAD_Y
+    # The secondary colour (not the bright name colour) draws it.
+    colors = {
+        only.getpixel((x, y))[:3]
+        for y in range(only.height)
+        for x in range(only.width)
+        if only.getpixel((x, y))[3]
+    }
+    assert chrome.LABEL_SECONDARY_FG[:3] in colors
+    assert chrome.LABEL_FG[:3] not in colors
+    # A name+location pill still draws the name in the primary colour.
+    both_colors = {
+        both.getpixel((x, y))[:3]
+        for y in range(both.height)
+        for x in range(both.width)
+        if both.getpixel((x, y))[3]
+    }
+    assert chrome.LABEL_FG[:3] in both_colors
+
+
+def test_location_only_pill_drops_the_marker_and_stays_a_pill():
+    """Markers identify a character, so a location-only pill carries none.
+    No marker prefix means no extra width, and the pill keeps the rounded
+    background either way."""
+    marked = chrome.render_label(None, 300, secondary="HOME", marker="cyan")
+    unmarked = chrome.render_label(None, 300, secondary="HOME")
+    assert marked is not None and unmarked is not None
+    assert marked.size == unmarked.size
+    # No cyan anywhere: the dot is not drawn on a location-only pill.
+    target = chrome.MARKER_PALETTE["cyan"][1]
+    for y in range(marked.height):
+        for x in range(marked.width):
+            r, g, b, a = marked.getpixel((x, y))
+            if a and (r, g, b) == target:
+                pytest.fail("marker colour found on a location-only pill")
+    assert marked.getpixel((2, 2))[:3] == chrome.LABEL_BG[:3]
+    assert marked.getpixel((0, 0))[3] == 0  # corner outside the radius
+
+
+def test_no_line_means_no_pill_and_a_refused_location_shows_nothing():
+    """Both toggles off (or no location text yet) draws nothing. A
+    location the available height refuses shows no pill at all, same as
+    a name that cannot fit."""
+    assert chrome.render_label(None, 300, secondary=None) is None
+    assert chrome.render_label(None, 300, secondary="") is None
+    assert chrome.render_label(None, 300, secondary="HOME", max_h=10) is None
+    # The name line alone keeps its own rules.
+    assert chrome.render_label("Pilot", 300, secondary=None) is not None
+    assert chrome.render_label(None, 300, secondary="HOME") is not None
+
+
 def test_both_lines_ellipsize_independently(monkeypatch):
     from PIL import ImageDraw
 
@@ -520,8 +595,12 @@ def test_presets_draw_independent_lines_at_requested_sizes(
     one = chrome.render_label("Pilot", width, font_size, max_h=78)
     blank = chrome.render_label("Pilot", width, font_size, "", max_h=78)
     assert blank.size == one.size and blank.tobytes() == one.tobytes()
-    for primary in ("", None):
-        assert chrome.render_label(primary, width, font_size, "HOME", max_h=78) is None
+    # Legacy: a resolved-but-empty name never produced a pill, even with
+    # metadata to show under it. None is the line's toggle-off signal and
+    # unlocks the location-only pill instead -- that is the show_system_
+    # names decoupling, not a regression of the rule above.
+    assert chrome.render_label("", width, font_size, "HOME", max_h=78) is None
+    assert chrome.render_label(None, width, font_size, "HOME", max_h=78) is not None
 
 
 @pytest.mark.parametrize("font_size", [p[1] for p in LABEL_SIZE_PRESETS.values()])
