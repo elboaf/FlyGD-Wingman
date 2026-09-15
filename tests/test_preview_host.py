@@ -3274,6 +3274,46 @@ def test_three_cycle_next_hotkeys_fold_to_one_three_step_activation(monkeypatch)
     assert h._last_cycled == "Delta"
 
 
+def test_a_stored_cycle_order_decides_the_walk(monkeypatch):
+    """The feature: the preference is read live at dispatch and renumbers
+    the walk, here moving Delta to the front ahead of the alphabet."""
+    h, libs = _batch_hotkey_host()
+    h._cycle_order = lambda: {"Bravo": 1}
+    h._registered = {1: ("cycle", 1)}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    # Foreground is Alice. With Bravo pinned to 1 the walk is Bravo, Alice,
+    # Carol, Delta -- so "next" lands on Carol, not alphabetical Bravo.
+    h._on_hotkeys(libs, [1])
+
+    assert activated == [0x3333]
+    assert h._last_cycled == "Carol"
+
+
+def test_a_failed_cycle_order_read_falls_back_to_name_order(monkeypatch):
+    """Same posture as the excluded roster: a settings read that raises must
+    cost the keypress nothing beyond today's alphabetical walk."""
+    h, libs = _batch_hotkey_host()
+
+    def broken():
+        raise RuntimeError("settings unavailable")
+
+    h._cycle_order = broken
+    h._registered = {1: ("cycle", 1)}
+    activated = []
+    monkeypatch.setattr(
+        h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
+    )
+
+    h._on_hotkeys(libs, [1])
+
+    assert activated == [0x2222]
+    assert h._last_cycled == "Bravo"
+
+
 def test_focus_then_cycle_applies_cycle_to_the_virtual_focus_target(monkeypatch):
     h, libs = _batch_hotkey_host()
     h._registered = {1: ("focus", ("Carol",)), 2: ("cycle", 1)}

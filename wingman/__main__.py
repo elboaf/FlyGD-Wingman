@@ -522,6 +522,13 @@ def build_preview_host(state, api_box, *, layout_store=None, layout_admission=No
             # preview working, not blank the screen on upgrade.
             return preview_config.get("excluded", [])
 
+        def cycle_order():
+            # Same live read as excluded: cycle.step resolves it at every
+            # keypress, so a renumber in Settings reaches the next press.
+            # Empty when absent, and cycle.effective_order turns empty into
+            # the plain alphabetical walk that shipped.
+            return preview_config.get("cycle_order", {})
+
         def snap():
             # Read live for the same reason as restore_positions: the
             # setting is changed while previews are running.
@@ -595,6 +602,7 @@ def build_preview_host(state, api_box, *, layout_store=None, layout_admission=No
             locked=locked,
             lock_default=lock_default,
             excluded=excluded,
+            cycle_order=cycle_order,
             snap=snap,
             lock_aspect=lock_aspect,
             selection_color=selection_color,

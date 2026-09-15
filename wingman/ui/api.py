@@ -59,6 +59,7 @@ from ..eveauth import application as eveauth_application
 from ..evesettings.controller import ProfilesController, ProfilesPorts
 from ..fleetsharing.projection import verified_character_ids
 from ..preview import crops as preview_crops
+from ..preview import cycle as preview_cycle
 from ..preview import geometry as preview_geometry
 from ..preview import gestures as preview_gestures
 from ..preview import host as preview_host_mod
@@ -5461,6 +5462,15 @@ class Api:
             "roster": list(section.get("seen") or []),
             "label_markers": self._preview_config.get("label_markers", {}),
             "marker_choices": preview_labelmarkers.marker_choices(),
+            # Stored cycle preference, plus the page-ready effective map.
+            # The page never re-derives the auto-assignment rule: the card
+            # paints numbers straight from cycle_order_effective, which is
+            # computed over the same known-owner union the rows merge from.
+            "cycle_order": dict(section.get("cycle_order") or {}),
+            "cycle_order_effective": preview_cycle.effective_order(
+                sorted(set(layout_state["owners"])),
+                section.get("cycle_order") or {},
+            ),
             "characters": characters,
             "registration": host.hotkey_status() if live else {},
             "bookmark_chords": self._bookmark_chords(),
@@ -5626,6 +5636,69 @@ class Api:
             return receipt(self._field_refused("Could not save this to settings."))
         if host is not None:
             host.restyle()
+        return receipt(self._field_ok())
+
+    def set_preview_cycle_order(self, name, value) -> dict:
+        """Commit one character's cycle preference, including while offline.
+
+        Accepts an int (set) or None / empty (clear, back to auto-assign).
+        The host reads preview.cycle_order at every keypress, so there is
+        nothing to push live -- the next press of the cycle keybind already
+        walks the new order."""
+
+        def receipt(result):
+            committed = self._preview_config.get("cycle_order", {})
+            return dict(
+                result, number=committed.get(name) if isinstance(name, str) else None
+            )
+
+        if not preview_labelmarkers.valid_owner(name):
+            return receipt(self._field_refused("Choose a known character."))
+        if value is not None and (isinstance(value, str) and not value.strip()):
+            value = None
+        if isinstance(value, str):
+            try:
+                value = int(value.strip())
+            except ValueError:
+                return receipt(
+                    self._field_refused("Enter a whole number between 1 and 999.")
+                )
+        if value is not None:
+            if isinstance(value, bool) or not isinstance(value, int):
+                return receipt(
+                    self._field_refused("Enter a whole number between 1 and 999.")
+                )
+            clamped = max(
+                preview_cycle.MIN_PREFERENCE, min(preview_cycle.MAX_PREFERENCE, value)
+            )
+            if clamped != value:
+                return receipt(
+                    self._field_refused("Enter a whole number between 1 and 999.")
+                )
+            value = clamped
+        memory_owners = self._preview_memory_owners()
+        try:
+            with settings_mod.update(self._state.settings) as doc:
+                # Recheck after acquiring the writer lock, not against a roster
+                # sampled before another owner reset or settings normalization.
+                section = doc.get("preview") or {}
+                known = preview_savedlayouts.known_owners(section, memory_owners)
+                if name not in known:
+                    raise ValueError("That character is no longer available.")
+                stored = doc.setdefault("preview", {}).setdefault("cycle_order", {})
+                if stored.get(name) == value:
+                    raise _SettingUnchanged
+                if value is None:
+                    stored.pop(name, None)
+                else:
+                    stored[name] = value
+        except _SettingUnchanged:
+            pass
+        except ValueError as exc:
+            return receipt(self._field_refused(str(exc)))
+        except OSError:
+            logger.exception("Could not persist cycle order for %s", name)
+            return receipt(self._field_refused("Could not save this to settings."))
         return receipt(self._field_ok())
 
     def set_preview_show_labels(self, enabled) -> dict:

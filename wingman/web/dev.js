@@ -522,6 +522,14 @@
     return Promise.resolve({applied: true, persisted: true, error: null});
   };
 
+  // Same receipt tier. The real endpoint returns the committed number so
+  // the card can state where the character landed; the fixture echoes it.
+  api.set_preview_cycle_order = function (name, value) {
+    console.log('DEV api.set_preview_cycle_order(', name, value, ')');
+    return Promise.resolve({applied: true, persisted: true, error: null,
+                            number: value});
+  };
+
   // Same tier again. The real endpoint also sweeps and rebinds, neither of
   // which exists under ?dev=1 -- what the harness has to double is the
   // {applied, persisted, error} shape previews.js reverts the box on, and
@@ -2677,6 +2685,11 @@
   // 'Aleksandrina Shadowbanes Voidstriders' (37 chars) is load-bearing: the
   // only row that exercises ellipsis in the bounded name track and the title
   // attribute fallback at the 840px viewport floor.
+  // cycle_order below is stored preference (Aiga first, Corvin second);
+  // cycle_order_effective adds the auto-assigned numbers for every other
+  // name, mirroring cycle.effective_order's output shape. Both keys stay
+  // comment-free INSIDE the literal: it is parsed as strict JSON by
+  // tests/test_dev_harness.py and scripts/shoot_screens.py.
   var DEV_PREVIEW_HOTKEYS_FIXTURE = {
     "enabled": true,
     "label_markers": {"Aiga Otsolen": "cyan", "Sera Vahn": "orange"},
@@ -2730,6 +2743,13 @@
     "lock_default": false,
     "never_minimize": ["Tanuki Solette"],
     "excluded": ["Sera Vahn"],
+    "cycle_order": {"Aiga Otsolen": 1, "Corvin Veles": 2},
+    "cycle_order_effective": {"Aiga Otsolen": 1, "Corvin Veles": 2,
+                              "Zuelo Parvi": 3, "Tanuki Solette": 4,
+                              "Aleksandrina Shadowbanes Voidstriders": 5,
+                              "Mara Veld": 6, "Niko Avar": 7, "Sera Vahn": 8,
+                              "Dorin Kalt": 9, "Iria Sol": 10,
+                              "Vex Noren": 11, "Yara Tolen": 12},
     "geometry_revision": 1,
     "layout_state": {"revision": 1, "layouts": [], "owners": [
       "Aiga Otsolen", "Zuelo Parvi", "Corvin Veles", "Tanuki Solette",

@@ -3829,3 +3829,90 @@ def test_preview_detail_clears_both_sticky_headers_inside_its_subpage():
         "scroll-margin-top: calc(var(--preview-bind-head-height) * 2)"
         in detail.group(1)
     ), "the detail needs clearance for both sticky preview headers"
+
+
+# ---- cycle order -----------------------------------------------------
+
+
+def test_cycle_order_commit_persists_and_rides_the_state_payload(tmp_path):
+    from wingman import settings
+
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    with settings.update(api._state.settings) as doc:
+        doc.setdefault("preview", settings._preview_defaults()).update(
+            seen=["Alice", "Bravo", "Charlie"]
+        )
+    result = api.set_preview_cycle_order("Charlie", 1)
+    assert result == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+        "number": 1,
+    }
+    assert settings.load()["preview"]["cycle_order"] == {"Charlie": 1}
+    payload = api.get_preview_hotkey_state()
+    assert payload["cycle_order"] == {"Charlie": 1}
+    # The page paints the EFFECTIVE map, never re-deriving auto-assignment:
+    # Charlie took 1, so the unset characters pick up 2 and 3 alphabetically.
+    assert payload["cycle_order_effective"] == {
+        "Alice": 2,
+        "Bravo": 3,
+        "Charlie": 1,
+    }
+    # Clearing is a delete, not a zero.
+    assert api.set_preview_cycle_order("Charlie", None) == {
+        "applied": True,
+        "persisted": True,
+        "error": None,
+        "number": None,
+    }
+    assert settings.load()["preview"]["cycle_order"] == {}
+    assert api._state.settings["preview"]["cycle_order"] == {}
+    assert api.set_preview_cycle_order("Charlie", "")["number"] is None
+
+
+def test_cycle_order_offline_owner_and_out_of_range_value(tmp_path, monkeypatch):
+    """Offline characters are configurable, exactly like markers; a number
+    outside the bracket is refused without a write."""
+    from wingman import settings
+
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    with settings.update(api._state.settings) as doc:
+        doc.setdefault("preview", settings._preview_defaults()).update(
+            seen=["Alice"], cycle_order={"Alice": 5}
+        )
+    # Offline (FakeHost.characters() is []), but known through `seen`.
+    result = api.set_preview_cycle_order("Alice", 2)
+    assert result["applied"] and result["number"] == 2
+    assert settings.load()["preview"]["cycle_order"] == {"Alice": 2}
+
+    before = copy.deepcopy(api._state.settings)
+    monkeypatch.setattr(
+        settings, "_save_locked", lambda *args: pytest.fail("out of range saved")
+    )
+    for bad in ("0", "1000", "4.5", "two"):
+        result = api.set_preview_cycle_order("Alice", bad)
+        assert result["applied"] is result["persisted"] is False
+        assert result["error"] and result["number"] == 2
+    assert api._state.settings == before
+
+
+def test_cycle_order_unknown_owner_refused_without_write(tmp_path, monkeypatch):
+    from wingman import settings
+
+    host = FakeHost()
+    api = make_api(tmp_path, preview_host=host)
+    with settings.update(api._state.settings) as doc:
+        doc.setdefault("preview", settings._preview_defaults()).update(
+            seen=["Alice"], cycle_order={"Alice": 5}
+        )
+    before = copy.deepcopy(api._state.settings)
+    monkeypatch.setattr(
+        settings, "_save_locked", lambda *args: pytest.fail("unknown owner saved")
+    )
+    result = api.set_preview_cycle_order("Unknown", 3)
+    assert result["applied"] is result["persisted"] is False
+    assert result["error"] and result["number"] is None
+    assert api._state.settings == before

@@ -581,3 +581,42 @@ def test_preview_cycle_groups_non_dict_group_by_character_rejected():
     assert hotkeys["characters"] == {"Bob": "Ctrl+F1"}
     assert hotkeys["cycle_next"] == "Ctrl+Alt+Right"
     assert hotkeys["cycle_prev"] == "Ctrl+Alt+Left"
+
+
+# ---- cycle_order -----------------------------------------------------
+
+
+def test_cycle_order_defaults_independent_and_survives_unrelated_write(tmp_path):
+    first, second = settings.load(), settings.load()
+    assert first["preview"]["cycle_order"] == {}
+    first["preview"]["cycle_order"]["Alice"] = 2
+    assert second["preview"]["cycle_order"] == {}
+    assert settings.DEFAULTS["preview"]["cycle_order"] == {}
+    path = tmp_path / "settings.json"
+    live = settings.load(path)
+    with settings.update(live, path) as doc:
+        doc["preview"]["cycle_order"] = {"Alice": 2}
+    with settings.update(live, path) as doc:
+        doc["channel_title"] = "Unrelated"
+    assert settings.load(path)["preview"]["cycle_order"] == {"Alice": 2}
+
+
+def test_cycle_order_validation_drops_malformed_and_clamps_the_rest():
+    normalized = settings.validated_preview(
+        {
+            "cycle_order": {
+                "Alice": 5,
+                "Bravo": True,  # bool, not a number
+                "Charlie": "3",  # string, not a number
+                "hwnd:9": 1,  # no stable identity
+                " Bad ": 2,  # not a valid owner name
+                "Eve": -40,  # clamped into the bracket
+            }
+        }
+    )["cycle_order"]
+    assert normalized == {"Alice": 5, "Eve": 1}
+
+
+def test_a_non_dict_cycle_order_falls_back_without_resetting_other_settings():
+    normalized = settings.validated_preview({"cycle_order": "nope", "enabled": True})
+    assert normalized["cycle_order"] == {} and normalized["enabled"] is True

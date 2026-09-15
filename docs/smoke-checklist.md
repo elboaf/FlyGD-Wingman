@@ -6640,3 +6640,33 @@ warnings on the Previews side.
       bind or turn EVE previews off, including with companions still running. Queued
       revoked native actions cannot activate/capture. A failed native release stays
       tracked until cleanup succeeds; reactivation does not create a second owner.
+
+## Cycle order preference (Characters & cycling) — NOT RUN
+
+The cycle keybinds walk stored numeric preferences (Settings › Previews ›
+Characters & cycling › Cycle order). Auto-assigned numbers are derived in
+`wingman/preview/cycle.py` and shipped in the state payload; the page only
+paints them.
+
+- [ ] **Card renders with the truth.** Open Settings › Previews › Characters &
+      cycling with at least two known characters. Every character shows a
+      number; characters with no stored preference show their auto-assigned
+      number (numbered characters first ascending, then the rest
+      alphabetically). With Previews Off the card still lists known
+      characters.
+- [ ] **A stored number reorders the cycle.** Give a mid-alphabet character
+      number 1, press Enter, then press the All-forward cycle keybind from a
+      running client: the walk follows the numbers, and the saved number
+      survives an app restart.
+- [ ] **Commit rule.** A number commits on Enter only — typing without Enter
+      and clicking away must leave the previous value on the next render.
+      Out-of-range or non-numeric input shows the card's error line and does
+      not save. Clearing a field and pressing Enter removes the stored
+      number (the character drops back to auto-assignment) without
+      renumbering anyone else's stored values.
+- [ ] **Push safety.** With a number half-typed, start or stop an EVE client
+      so `onPreviewHotkeys` fires: the draft must survive (the card is not
+      rebuilt underneath the focused input).
+- [ ] **Offline rows.** A known-but-offline character's number is editable
+      and takes effect when that character next runs. A group cycle keybind
+      follows the same numeric order restricted to its members.

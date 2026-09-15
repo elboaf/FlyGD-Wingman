@@ -98,6 +98,7 @@ def test_defaults_are_the_documented_values():
             "show_system_names": False,
             "label_size": "standard",
             "label_markers": {},
+            "cycle_order": {},
             "minimize_inactive_clients": False,
             # Off: previews leaving the screen is opt-in, and an upgrading
             # install has no such key.

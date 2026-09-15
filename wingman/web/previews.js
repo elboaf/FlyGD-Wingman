@@ -2274,8 +2274,94 @@
     });
   }
 
-  function appendBindRow(label, gesture, online, onSet, character, ownerKind) {
-    // Computed once, before makeRow, so this row's bind button can point
+  // ---- Cycle order card ----------------------------------------------
+  //
+  // The page paints numbers straight from state.cycle_order_effective and
+  // never re-derives the auto-assignment rule: Python owns it (cycle.py)
+  // and computes the map over the same known-owner union the bind rows
+  // merge from. Committing goes through set_preview_cycle_order and a
+  // refresh, so the effective numbers of every OTHER character re-render
+  // from Python's answer rather than being guessed at here.
+
+  function cycleOrderStatus(text, error) {
+    var status = WM.el('preview-cycle-order-status');
+    if (!status) { return; }
+    status.textContent = text || '';
+    status.classList.toggle('err', !!error);
+    status.hidden = !status.textContent;
+  }
+
+  function effectiveNumber(name) {
+    return (state.cycle_order_effective || {})[name];
+  }
+
+  function renderCycleOrder() {
+    var list = WM.el('preview-cycle-order');
+    if (!list) { return; }
+    // A push must not rebuild the card underneath a draft the user is
+    // typing: an EVE client opening or closing fires onPreviewHotkeys
+    // routinely, and render() runs on every one. Skip only the rebuild --
+    // the input's value is still the draft, and the next render after
+    // blur (or the refresh that follows Enter) repaints the truth.
+    var active = document.activeElement;
+    if (active && active.dataset
+        && active.dataset.cycleOrder !== undefined) { return; }
+    var all = rows();
+    list.textContent = '';
+    if (!all.length) { return; }
+    all.forEach(function (entry) {
+      var row = WM.make('div', 'row');
+      var name = WM.make('span', 'cycle-order-name', entry.name);
+      name.title = entry.name;
+      if (state.enabled && entry.online === false) { name.classList.add('dim'); }
+      row.appendChild(name);
+      var num = document.createElement('input');
+      num.type = 'number';
+      num.className = 'field cycle-order-num';
+      num.min = '1';
+      num.max = '999';
+      num.step = '1';
+      // The EFFECTIVE number, not just the stored one: the card shows the
+      // order the cycle will actually walk, so auto-assigned characters
+      // are visible in it instead of looking unconfigured.
+      num.value = String(effectiveNumber(entry.name) || '');
+      num.setAttribute('data-cycle-order', entry.name);
+      num.setAttribute('aria-label', 'Cycle order for ' + entry.name);
+      num.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') {
+          num.value = String(effectiveNumber(entry.name) || '');
+          cycleOrderStatus('', false);
+        } else if (event.key === 'Enter') {
+          commitCycleOrder(entry.name, num.value);
+        }
+      });
+      row.appendChild(num);
+      list.appendChild(row);
+    });
+  }
+
+  function commitCycleOrder(name, raw) {
+    var text = (raw || '').trim();
+    var value = text === '' ? null : parseInt(text, 10);
+    if (text !== '' && (value === null || isNaN(value) || String(value) !== text
+                        || value < 1 || value > 999)) {
+      cycleOrderStatus('Enter a whole number between 1 and 999.', true);
+      return;
+    }
+    cycleOrderStatus('Saving…', false);
+    WM.send('set_preview_cycle_order', name, value).then(function (res) {
+      if (!res || !res.applied) {
+        cycleOrderStatus(
+          (res && res.error) || 'That number was not saved.', true);
+        renderCycleOrder();
+        return;
+      }
+      cycleOrderStatus('Saved ' + name + ' at ' + res.number + '.', false);
+      refresh();
+    });
+  }
+
+  function appendBindRow(label, gesture, online, onSet, character, ownerKind) {    // Computed once, before makeRow, so this row's bind button can point
     // aria-describedby at the exact conflict node this render appends AND
     // so makeBindConflict filters cycleOwners()/sharers() against this
     // row's own identity -- never against `label`, which a named group or
@@ -2432,6 +2518,7 @@
     paintRosterAvailability(list);
     renderLockBlock();
     renderNeverMinimizeBlock();
+    renderCycleOrder();
     if (cropRosterEdit) {
       var draft = host.querySelector('.group-add-name');
       var edit = cropRosterEdit;
@@ -3031,6 +3118,7 @@
       state.locked = state.locked || [];
       state.never_minimize = state.never_minimize || [];
       state.excluded = state.excluded || [];
+      state.cycle_order_effective = state.cycle_order_effective || {};
       acceptCrops(payload.crops, true);
       recover.forEach(function (request) { settleCropRequests(request); });
       if (beforeRender) { beforeRender(); }
@@ -3101,6 +3189,7 @@
     state.locked = state.locked || [];
     state.never_minimize = state.never_minimize || [];
     state.excluded = state.excluded || [];
+    state.cycle_order_effective = state.cycle_order_effective || {};
     acceptCrops(payload.crops, true);
     requestRender();
   });

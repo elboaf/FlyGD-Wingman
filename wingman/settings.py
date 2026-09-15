@@ -19,6 +19,7 @@ from .alerts import patterns as alert_patterns
 from .alerts import state as alert_state
 from .preview import companions as preview_companions
 from .preview import crops as preview_crops
+from .preview import cycle as preview_cycle
 from .preview import gestures as preview_gestures
 from .preview import labelmarkers as preview_labelmarkers
 from .preview import layout as preview_layout
@@ -209,6 +210,11 @@ def _preview_defaults() -> dict:
         "show_system_names": False,
         "label_size": DEFAULT_LABEL_SIZE,
         "label_markers": {},
+        # Per-character cycle preference, {name: int}. Absence is not an
+        # error: cycle.effective_order auto-assigns unset characters the
+        # next free numbers alphabetically, so a new key changes nothing
+        # for existing installs and needs no defaults_version bump.
+        "cycle_order": {},
         # Off by default: it changes what happens to a real game window
         # (minimizing it), which must be asked for rather than assumed.
         "minimize_inactive_clients": False,
@@ -487,6 +493,7 @@ def validated_preview(raw) -> dict:
     section["label_markers"] = preview_labelmarkers.validated_markers(
         raw.get("label_markers")
     )
+    section["cycle_order"] = preview_cycle.validated_stored(raw.get("cycle_order"))
     label_size = raw.get("label_size")
     if isinstance(label_size, str) and label_size in LABEL_SIZE_PRESETS:
         section["label_size"] = label_size
