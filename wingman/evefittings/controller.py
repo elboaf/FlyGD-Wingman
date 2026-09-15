@@ -14,7 +14,7 @@ import time
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -23,6 +23,8 @@ from ..eveauth.cleanup import CleanupVerification
 from ..eveauth.controller import MutationResult
 from ..eveesi import EsiClient, authenticated_get
 from . import contracts, names, store
+from .eft import EftCandidate, EftError, parse_eft, render_eft, resolve_eft
+from .inventory import InventoryResolver
 from .model import (
     FINGERPRINT_VERSION,
     CharacterSnapshot,
@@ -35,10 +37,12 @@ from .model import (
     WriteIntent,
     canonical_equal,
     canonicalize,
+    canonicalize_items,
     fingerprint,
+    merge_source_alias,
     new_library_entry,
+    new_local_entry,
     normalized_name_key,
-    retain_aliases,
     validate_remote_snapshot,
     validate_supersession,
 )
@@ -51,6 +55,10 @@ MSG_CLEANUP_UNVERIFIED = "Fittings cleanup could not be verified from disk."
 MSG_CLEANUP_SAVE_FAILED = "Could not save Fittings cleanup."
 _MAX_ERROR_CHARS = store.MAX_ERROR_CHARS
 SHUTDOWN_WAIT_SECONDS = 2.0
+_EFT_REVIEW_SECONDS = 15 * 60
+_CLIPBOARD_STOPPING = "The fitting subsystem is shutting down."
+_CLIPBOARD_BUSY = "Another fitting clipboard operation is in progress."
+_REVIEW_AGAIN = "Review the fitting text again before adding it."
 
 
 def _utcnow() -> datetime:
@@ -115,6 +123,13 @@ class _PreflightTicket:
     requires_resolution: bool
 
 
+@dataclass(frozen=True)
+class _EftReview:
+    review_id: str
+    expires_at: float
+    candidate: EftCandidate
+
+
 class FittingsController:
     """The only runtime writer of ``eve_fittings.json``."""
 
@@ -132,6 +147,8 @@ class FittingsController:
         save_state=store.save_fittings,
         id_factory: Callable[[], str] = lambda: str(uuid.uuid4()),
         batch_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
+        resolver: InventoryResolver | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._state_path = Path(state_path)
         self._names_path = Path(names_path)
@@ -164,6 +181,18 @@ class FittingsController:
         self._ticket_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex
         self._operation_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex
         self._stopping = threading.Event()
+        self._clipboard_gate = threading.Lock()
+        # Admission fences commits and notifications against closure, without
+        # holding the state lock during page delivery or cosmetic disk I/O.
+        self._clipboard_admission = threading.RLock()
+        self._eft_review: _EftReview | None = None  # guarded by _tickets_lock
+        self._eft_review_generation = 0
+        self._monotonic = monotonic
+        self._resolver = (
+            resolver
+            if resolver is not None
+            else InventoryResolver(self._client, stopping=self._stopping.is_set)
+        )
         self._state, warnings, load_health = store.load_fittings_with_health(
             self._state_path
         )
@@ -471,14 +500,8 @@ class FittingsController:
                 ).append(match.id)
             else:
                 alias = SourceAlias(fitting.name, fitting.description, fitting.items)
-                aliases = retain_aliases(
-                    (*match.aliases, alias),
-                    preferred_name=match.preferred_name,
-                    preferred_description=match.preferred_description,
-                )
-                if aliases != match.aliases:
-                    match = replace(match, aliases=aliases, updated_utc=timestamp)
-                    entries[positions[match.id]] = match
+                match = merge_source_alias(match, alias, now=timestamp)
+                entries[positions[match.id]] = match
 
             old = previous.get(fitting.fitting_id)
             same_presence = old is not None and old.library_entry_id == match.id
@@ -1568,6 +1591,215 @@ class FittingsController:
             self._cancelled_tickets.update(targets & live)
         return True
 
+    # ----- reviewed local clipboard operations ----------------------------
+
+    @staticmethod
+    def _eft_error(error: EftError) -> str:
+        return (
+            f"Line {error.line_number}: {error.message}"
+            if error.line_number is not None
+            else error.message
+        )
+
+    @staticmethod
+    def _review_error(error: str) -> dict:
+        return {
+            "ok": False,
+            "review_id": "",
+            "name": "",
+            "ship_name": "",
+            "items": [],
+            "warnings": [],
+            "existing_entry_id": "",
+            "error": error,
+        }
+
+    @staticmethod
+    def _import_error(error: str) -> dict:
+        return {
+            "applied": False,
+            "persisted": False,
+            "entry_id": "",
+            "created": False,
+            "error": error,
+        }
+
+    def _eft_match_locked(self, candidate: EftCandidate) -> LibraryEntry | None:
+        content = canonicalize_items(candidate.ship_type_id, candidate.items)
+        entries = list(self._state.entries)
+        positions = {entry.id: index for index, entry in enumerate(entries)}
+        versions = {entry.fingerprint_version for entry in entries}
+        digest_index: dict[tuple[int, str], list[str]] = {}
+        for entry in entries:
+            digest_index.setdefault(
+                (entry.fingerprint_version, entry.digest), []
+            ).append(entry.id)
+        return self._find_content_match(
+            content, entries, positions, digest_index, versions
+        )
+
+    def review_eft(self, text: object) -> dict:
+        """Resolve one fit without writing it; every attempt replaces prior review."""
+        with self._tickets_lock:
+            self._eft_review = None
+            self._eft_review_generation += 1
+            generation = self._eft_review_generation
+        if not self._clipboard_gate.acquire(blocking=False):
+            return self._review_error(_CLIPBOARD_BUSY)
+        try:
+            if self._stopping.is_set():
+                return self._review_error(_CLIPBOARD_STOPPING)
+            parsed = parse_eft(text)
+            candidate = resolve_eft(parsed, self._resolver.for_import(parsed))
+            with self._clipboard_admission:
+                if self._stopping.is_set():
+                    return self._review_error(_CLIPBOARD_STOPPING)
+                with self._lock:
+                    match = self._eft_match_locked(candidate)
+                with self._tickets_lock:
+                    if generation != self._eft_review_generation:
+                        return self._review_error(_REVIEW_AGAIN)
+                    review = _EftReview(
+                        uuid.uuid4().hex,
+                        self._monotonic() + _EFT_REVIEW_SECONDS,
+                        candidate,
+                    )
+                    self._eft_review = review
+                verified_names = dict(candidate.verified_names)
+                return {
+                    "ok": True,
+                    "review_id": review.review_id,
+                    "name": candidate.name,
+                    "ship_name": verified_names[candidate.ship_type_id],
+                    "items": [
+                        {
+                            "flag": item.flag,
+                            "location": contracts.RACK_BY_FLAG.get(
+                                item.flag, item.flag
+                            ),
+                            "type_id": item.type_id,
+                            "type_name": verified_names[item.type_id],
+                            "quantity": item.quantity,
+                        }
+                        for item in candidate.items
+                    ],
+                    "warnings": [asdict(warning) for warning in candidate.warnings],
+                    "existing_entry_id": match.id if match is not None else "",
+                    "error": "",
+                }
+        except EftError as exc:
+            return self._review_error(self._eft_error(exc))
+        finally:
+            self._clipboard_gate.release()
+
+    def import_eft(self, review_id: object) -> dict:
+        """Commit exactly the retained review, deduplicating against current state."""
+        if not self._clipboard_gate.acquire(blocking=False):
+            return self._import_error(_CLIPBOARD_BUSY)
+        try:
+            with self._clipboard_admission:
+                if self._stopping.is_set():
+                    return self._import_error(_CLIPBOARD_STOPPING)
+                with self._tickets_lock:
+                    review = self._eft_review
+                    if (
+                        not isinstance(review_id, str)
+                        or review is None
+                        or review.review_id != review_id
+                        or self._monotonic() >= review.expires_at
+                    ):
+                        return self._import_error(_REVIEW_AGAIN)
+                    self._eft_review = None
+                candidate = review.candidate
+                with self._lock:
+                    match = self._eft_match_locked(candidate)
+                    created = match is None
+                    if created:
+                        if len(self._state.entries) >= contracts.MAX_LIBRARY_ENTRIES:
+                            return self._import_error("The fitting library is full.")
+                        match = new_local_entry(
+                            candidate.ship_type_id,
+                            candidate.name,
+                            "",
+                            candidate.items,
+                            entry_id=self._id_factory(),
+                            now=self._now(),
+                        )
+                        entries = (*self._state.entries, match)
+                    else:
+                        match = merge_source_alias(
+                            match,
+                            SourceAlias(candidate.name, "", candidate.items),
+                            now=self._now(),
+                        )
+                        entries = tuple(
+                            match if entry.id == match.id else entry
+                            for entry in self._state.entries
+                        )
+                    state = replace(self._state, entries=entries)
+                    if state != self._state and not self._publish_locked(state):
+                        return self._import_error("The fitting could not be saved.")
+                    # The ticket, not the evictable resolver cache, owns these
+                    # names. Even an existing/no-op match needs this handoff.
+                    self._names.merge_verified(dict(candidate.verified_names))
+            try:
+                names.save(self._names_path, self._names)
+            except (OSError, ValueError):
+                logger.warning("Could not save fitting type names", exc_info=True)
+            with self._clipboard_admission:
+                if not self._stopping.is_set():
+                    self._notify_changed({"reason": "import", "entry_id": match.id})
+            return {
+                "applied": True,
+                "persisted": True,
+                "entry_id": match.id,
+                "created": created,
+                "error": "",
+            }
+        finally:
+            self._clipboard_gate.release()
+
+    def export_eft(self, entry_id: object) -> dict:
+        """Render a verified snapshot, then refuse if its source changed meanwhile."""
+        refusal = {"ok": False, "text": "", "error": "The fitting no longer exists."}
+        if not isinstance(entry_id, str) or not entry_id:
+            return refusal
+        if not self._clipboard_gate.acquire(blocking=False):
+            return {**refusal, "error": _CLIPBOARD_BUSY}
+        try:
+            if self._stopping.is_set():
+                return {**refusal, "error": _CLIPBOARD_STOPPING}
+            with self._lock:
+                source = next(
+                    (entry for entry in self._state.entries if entry.id == entry_id),
+                    None,
+                )
+            if source is None:
+                return refusal
+            text = render_eft(source, self._resolver.for_export(source))
+            with self._clipboard_admission:
+                if self._stopping.is_set():
+                    return {**refusal, "error": _CLIPBOARD_STOPPING}
+                with self._lock:
+                    current = next(
+                        (
+                            entry
+                            for entry in self._state.entries
+                            if entry.id == entry_id
+                        ),
+                        None,
+                    )
+                    if current != source:
+                        return {
+                            **refusal,
+                            "error": "The fitting changed. Export it again.",
+                        }
+                    return {"ok": True, "text": text, "error": ""}
+        except EftError as exc:
+            return {**refusal, "error": self._eft_error(exc)}
+        finally:
+            self._clipboard_gate.release()
+
     # ----- workspace queries ----------------------------------------------
     #
     # Search, collection selection, sorting, and pagination are backend
@@ -1579,45 +1811,88 @@ class FittingsController:
 
     def workspace(self, filters: dict | None = None) -> dict:
         """One bounded page plus rail/roster summaries for the route."""
-        collection_id, search, ship_type_id, page = self._parsed_filters(filters)
         # Authority is never consulted while self._lock is held -- the same
         # lock-order rule _refresh_one and _authorised_get already follow.
         authority_characters = self._authority.characters
         with self._lock:
             state = self._state
-            refreshing = self._refresh_gate.locked()
-            load_warnings = list(self._load_warnings)
-            scoped = self._scoped_entries_locked(state, collection_id)
-            entries = self._searched_entries_locked(scoped, search, ship_type_id)
-            entries = sorted(
-                entries, key=lambda entry: (entry.preferred_name.casefold(), entry.id)
-            )
-            total = len(entries)
-            start = (page - 1) * contracts.PAGE_SIZE
-            page_entries = entries[start : start + contracts.PAGE_SIZE]
-            presence_counts = self._presence_counts_locked(state)
-            rows = [
-                self._summary_row(entry, presence_counts.get(entry.id, 0))
-                for entry in page_entries
-            ]
-            collections = self._collection_summaries_locked(state)
-            # Ship options for the current COLLECTION scope, ahead of search
-            # and the ship filter itself -- so narrowing by name or ship does
-            # not also shrink the dropdown that offers the other ships to
-            # pick from.
-            ships = self._ship_options_locked(scoped)
-        characters = [
+            payload = self._workspace_locked(state, self._parsed_filters(filters))
+        payload["characters"] = [
             self._character_summary(character, state)
             for character in authority_characters
         ]
+        return payload
+
+    def locate_entry(self, entry_id: object) -> dict:
+        """Locate and project All fittings from one immutable library snapshot."""
+        refusal = {
+            "ok": False,
+            "entry_id": "",
+            "workspace": None,
+            "error": "The fitting no longer exists.",
+        }
+        if not isinstance(entry_id, str) or not entry_id:
+            return refusal
+        if self._stopping.is_set():
+            return {**refusal, "error": _CLIPBOARD_STOPPING}
+        authority_characters = self._authority.characters
+        with self._lock:
+            state = self._state
+            entries = self._ordered_entries(state.entries)
+            index = next(
+                (i for i, entry in enumerate(entries) if entry.id == entry_id), None
+            )
+            if index is None:
+                return refusal
+            page = index // contracts.PAGE_SIZE + 1
+            payload = self._workspace_locked(
+                state, (_ALL_SCOPE, "", None, page), ordered=entries
+            )
+        payload["characters"] = [
+            self._character_summary(character, state)
+            for character in authority_characters
+        ]
+        if self._stopping.is_set():
+            return {**refusal, "error": _CLIPBOARD_STOPPING}
+        return {"ok": True, "entry_id": entry_id, "workspace": payload, "error": ""}
+
+    @staticmethod
+    def _ordered_entries(entries: Iterable[LibraryEntry]) -> list[LibraryEntry]:
+        return sorted(
+            entries, key=lambda entry: (entry.preferred_name.casefold(), entry.id)
+        )
+
+    def _workspace_locked(
+        self,
+        state: FittingsState,
+        filters: tuple[str, str, int | None, int],
+        *,
+        ordered: list[LibraryEntry] | None = None,
+    ) -> dict:
+        collection_id, search, ship_type_id, page = filters
+        scoped = self._scoped_entries_locked(state, collection_id)
+        entries = (
+            ordered
+            if ordered is not None
+            else self._ordered_entries(
+                self._searched_entries_locked(scoped, search, ship_type_id)
+            )
+        )
+        start = (page - 1) * contracts.PAGE_SIZE
+        presence_counts = self._presence_counts_locked(state)
+        # Ship options precede search/ship filtering so narrowing the query
+        # does not remove the other ships from the dropdown.
         return {
             "available": True,
-            "warnings": load_warnings,
-            "collections": collections,
-            "characters": characters,
-            "ships": ships,
-            "rows": rows,
-            "total": total,
+            "warnings": list(self._load_warnings),
+            "collections": self._collection_summaries_locked(state),
+            "characters": [],
+            "ships": self._ship_options_locked(scoped),
+            "rows": [
+                self._summary_row(entry, presence_counts.get(entry.id, 0))
+                for entry in entries[start : start + contracts.PAGE_SIZE]
+            ],
+            "total": len(entries),
             "page": page,
             "page_size": contracts.PAGE_SIZE,
             "max_copy_writes": contracts.MAX_COPY_WRITES,
@@ -1626,7 +1901,7 @@ class FittingsController:
                 "search": search,
                 "ship_type_id": ship_type_id,
             },
-            "refreshing": refreshing,
+            "refreshing": self._refresh_gate.locked(),
         }
 
     def detail(self, entry_id: object) -> dict | None:
@@ -2232,13 +2507,17 @@ class FittingsController:
 
     def shutdown(self) -> None:
         """Cancel queued work and wait a bounded time for active requests."""
-        self._stopping.set()
+        deadline = time.monotonic() + SHUTDOWN_WAIT_SECONDS
+        with self._clipboard_admission:
+            self._stopping.set()
+            with self._tickets_lock:
+                self._eft_review = None
+                self._eft_review_generation += 1
         # _copy_cancelled() reads _stopping first, so a running copy stops
         # at its next pair without needing a ticket entry; this call covers
         # the pending tickets for symmetry with the page's own cancel.
         self.cancel_copy()
-        deadline = time.monotonic() + SHUTDOWN_WAIT_SECONDS
-        for gate in (self._copy_gate, self._refresh_gate):
+        for gate in (self._copy_gate, self._refresh_gate, self._clipboard_gate):
             remaining = max(0.0, deadline - time.monotonic())
             acquired = gate.acquire(timeout=remaining)
             if acquired:

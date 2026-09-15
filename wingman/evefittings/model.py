@@ -14,7 +14,7 @@ import unicodedata
 import uuid
 from collections import defaultdict
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from . import contracts
@@ -352,27 +352,67 @@ def new_library_entry(
     now: datetime | None = None,
     fingerprint_version: int = FINGERPRINT_VERSION,
 ) -> LibraryEntry:
-    content = canonicalize(fitting)
+    return new_local_entry(
+        fitting.ship_type_id,
+        fitting.name,
+        fitting.description,
+        fitting.items,
+        entry_id=entry_id,
+        now=now,
+        fingerprint_version=fingerprint_version,
+    )
+
+
+def new_local_entry(
+    ship_type_id: int,
+    name: str,
+    description: str,
+    items: tuple[RemoteItem, ...],
+    *,
+    entry_id: str | None = None,
+    now: datetime | None = None,
+    fingerprint_version: int = FINGERPRINT_VERSION,
+) -> LibraryEntry:
+    """Construct from validated content without requiring a remote identity."""
+    content = canonicalize_items(ship_type_id, items)
     timestamp = now or datetime.now(UTC)
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=UTC)
     else:
         timestamp = timestamp.astimezone(UTC)
-    alias = SourceAlias(fitting.name, fitting.description, fitting.items)
+    alias = SourceAlias(name, description, items)
     return LibraryEntry(
         id=entry_id or str(uuid.uuid4()),
         content=content,
         fingerprint_version=fingerprint_version,
         digest=fingerprint(content, version=fingerprint_version),
-        source_template=fitting.items,
-        deployment_template=deployment_template(fitting),
-        preferred_name=fitting.name,
-        preferred_description=fitting.description,
+        source_template=items,
+        deployment_template=None
+        if any(item.flag == "Invalid" for item in items)
+        else items,
+        preferred_name=name,
+        preferred_description=description,
         aliases=(alias,),
         collection_ids=(),
         superseded_by=None,
         created_utc=timestamp,
         updated_utc=timestamp,
+    )
+
+
+def merge_source_alias(
+    entry: LibraryEntry, alias: SourceAlias, *, now: datetime
+) -> LibraryEntry:
+    """Retain observed metadata without overwriting curation or exact templates."""
+    aliases = retain_aliases(
+        (*entry.aliases, alias),
+        preferred_name=entry.preferred_name,
+        preferred_description=entry.preferred_description,
+    )
+    return (
+        replace(entry, aliases=aliases, updated_utc=now)
+        if aliases != entry.aliases
+        else entry
     )
 
 

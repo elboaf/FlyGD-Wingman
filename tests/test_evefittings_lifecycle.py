@@ -367,6 +367,141 @@ def test_forget_during_in_flight_post_waits_then_refuses_unknown(tmp_path):
     assert fittings.state.intents[0].status == "unknown"
 
 
+@pytest.mark.parametrize("operation", ["review", "export"])
+def test_clipboard_shutdown_fences_delayed_resolver_and_drains_its_gate(
+    tmp_path, operation
+):
+    from tests.test_evefittings_clipboard import (
+        TEXT,
+        BlockingResolver,
+        entry,
+        make_controller,
+    )
+
+    resolver = BlockingResolver()
+    fittings, _, _ = make_controller(
+        tmp_path, resolver=resolver, initial=FittingsState(entries=(entry(),))
+    )
+    results, notifications = [], []
+    fittings._changed = notifications.append
+
+    def work():
+        return (
+            fittings.review_eft(TEXT)
+            if operation == "review"
+            else fittings.export_eft("seed")
+        )
+
+    worker = threading.Thread(target=lambda: results.append(work()))
+    stopped = threading.Event()
+    stopper = threading.Thread(target=lambda: (fittings.shutdown(), stopped.set()))
+    worker.start()
+    assert resolver.started.wait(2)
+    stopper.start()
+    assert fittings._stopping.wait(2)
+    assert not stopped.wait(0.05)
+    resolver.release.set()
+    worker.join(3)
+    stopper.join(3)
+    assert not worker.is_alive() and not stopper.is_alive()
+    assert not results[0]["ok"] and results[0]["error"]
+    assert not fittings.review_eft(TEXT)["ok"]
+    assert not fittings.import_eft("late")["applied"]
+    assert not fittings.export_eft("seed")["ok"]
+    assert not fittings.locate_entry("seed")["ok"]
+    assert len(fittings.state.entries) == 1 and notifications == []
+
+
+def test_clipboard_shutdown_during_cosmetic_save_suppresses_late_notice(
+    tmp_path, monkeypatch
+):
+    from tests.test_evefittings_clipboard import TEXT, make_controller
+    from wingman.evefittings import controller as controller_module
+    from wingman.evefittings import names
+
+    cache_started, release_cache = threading.Event(), threading.Event()
+    notices, results = [], []
+
+    def save_names(*_args):
+        cache_started.set()
+        assert release_cache.wait(3)
+
+    monkeypatch.setattr(names, "save", save_names)
+    monkeypatch.setattr(controller_module, "SHUTDOWN_WAIT_SECONDS", 0.05)
+    fittings, _, path = make_controller(tmp_path, changed=notices.append)
+    review = fittings.review_eft(TEXT)
+    worker = threading.Thread(
+        target=lambda: results.append(fittings.import_eft(review["review_id"]))
+    )
+    worker.start()
+    assert cache_started.wait(
+        2
+    )  # The library commit and in-memory names already succeeded.
+    fittings.shutdown()
+    assert not fittings.import_eft(review["review_id"])["applied"]
+    release_cache.set()
+    worker.join(3)
+    assert not worker.is_alive()
+    assert results[0]["applied"] and results[0]["persisted"]
+    assert notices == []
+    from wingman.evefittings.store import load_fittings
+
+    assert load_fittings(path)[0] == fittings.state
+
+
+def test_clipboard_admitted_save_finishes_before_shutdown_closure(tmp_path):
+    from tests.test_evefittings_clipboard import TEXT, make_controller
+
+    started, release = threading.Event(), threading.Event()
+    results = []
+
+    def save(path, state):
+        started.set()
+        assert release.wait(3)
+        save_fittings(path, state)
+
+    fittings, _, _ = make_controller(tmp_path, save_state=save)
+    review = fittings.review_eft(TEXT)
+    worker = threading.Thread(
+        target=lambda: results.append(fittings.import_eft(review["review_id"]))
+    )
+    stopper = threading.Thread(target=fittings.shutdown)
+    worker.start()
+    assert started.wait(2)
+    stopper.start()
+    assert not fittings._stopping.wait(0.05)
+    release.set()
+    worker.join(3)
+    stopper.join(3)
+    assert not worker.is_alive() and not stopper.is_alive()
+    assert results[0]["persisted"]
+    assert not fittings.review_eft(TEXT)["ok"]
+    assert len(fittings.state.entries) == 1
+
+
+def test_clipboard_drain_uses_existing_single_shutdown_deadline(tmp_path, monkeypatch):
+    from tests.test_evefittings_clipboard import make_controller
+    from wingman.evefittings import controller as controller_module
+
+    fittings, _, _ = make_controller(tmp_path)
+    waits = []
+    clock = [0.0]
+
+    class SlowGate:
+        def acquire(self, *, timeout):
+            waits.append(timeout)
+            clock[0] += timeout
+            return False
+
+    monkeypatch.setattr(controller_module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(controller_module, "SHUTDOWN_WAIT_SECONDS", 2.0)
+    fittings._copy_gate = SlowGate()
+    fittings._refresh_gate = SlowGate()
+    fittings._clipboard_gate = SlowGate()
+    fittings.shutdown()
+    assert waits == [2.0, 0.0, 0.0]
+
+
 def test_shutdown_waits_for_in_flight_refresh(tmp_path):
     authority = _authority(tmp_path)
     client = BlockingRefreshClient()

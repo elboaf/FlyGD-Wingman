@@ -82,6 +82,60 @@ def test_fittings_state_unavailable_fallback_does_not_touch_a_controller(tmp_pat
     assert api.fittings_state(None)["available"] is False
 
 
+# ---- reviewed local clipboard operations ---------------------------------
+
+
+def test_clipboard_bridge_uses_real_controller_and_local_store(tmp_path):
+    from tests.test_evefittings_clipboard import TEXT, make_controller
+
+    controller, _, _ = make_controller(tmp_path)
+    api = make_api(tmp_path, fittings=controller)
+    review = api.fittings_review_eft(TEXT)
+    result = api.fittings_import_eft(review["review_id"])
+    assert result["created"] and result["persisted"]
+    assert (
+        api.fittings_export_eft(result["entry_id"])["text"]
+        == "[Rifter, Pasted]\n\nDamage Control II\n"
+    )
+    located = api.fittings_locate_entry(result["entry_id"])
+    assert located["ok"]
+    assert located["workspace"]["rows"][0]["id"] == result["entry_id"]
+    assert api.fittings_detail(result["entry_id"])["ship_name"] == "Rifter"
+
+
+def test_clipboard_bridge_absent_subsystem_shapes(tmp_path):
+    api = make_api(tmp_path)
+    export = api.fittings_export_eft("entry")
+    assert export == {"ok": False, "text": "", "error": export["error"]}
+    review = api.fittings_review_eft("text")
+    assert review == {
+        "ok": False,
+        "review_id": "",
+        "name": "",
+        "ship_name": "",
+        "items": [],
+        "warnings": [],
+        "existing_entry_id": "",
+        "error": review["error"],
+    }
+    imported = api.fittings_import_eft("ticket")
+    assert imported == {
+        "applied": False,
+        "persisted": False,
+        "entry_id": "",
+        "created": False,
+        "error": imported["error"],
+    }
+    located = api.fittings_locate_entry("entry")
+    assert located == {
+        "ok": False,
+        "entry_id": "",
+        "workspace": None,
+        "error": located["error"],
+    }
+    assert all(result["error"] for result in (export, review, imported, located))
+
+
 # ---- fittings_detail ------------------------------------------------------
 
 
