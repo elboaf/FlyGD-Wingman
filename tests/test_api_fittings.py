@@ -17,6 +17,8 @@ import threading
 import time
 from unittest.mock import Mock
 
+import pytest
+
 from tests.test_api import make_api
 
 
@@ -101,6 +103,113 @@ def test_clipboard_bridge_uses_real_controller_and_local_store(tmp_path):
     assert located["ok"]
     assert located["workspace"]["rows"][0]["id"] == result["entry_id"]
     assert api.fittings_detail(result["entry_id"])["ship_name"] == "Rifter"
+
+
+def test_blocked_clipboard_api_callback_does_not_block_shutdown_closure(
+    tmp_path, monkeypatch
+):
+    from tests.test_api import FakeWindow
+    from tests.test_evefittings_clipboard import TEXT, make_controller
+    from wingman.evefittings import controller as controller_module
+
+    entered, release, stopped = threading.Event(), threading.Event(), threading.Event()
+    held_locks, results = [], []
+
+    class BlockingWindow(FakeWindow):
+        def evaluate_js(self, script):
+            held_locks.append(
+                (
+                    controller._clipboard_admission._is_owned(),
+                    controller._lock._is_owned(),
+                )
+            )
+            entered.set()
+            assert release.wait(3)
+            super().evaluate_js(script)
+
+    api = make_api(tmp_path, window=BlockingWindow())
+    controller, _, _ = make_controller(tmp_path, changed=api._push_fittings_changed)
+    api._fittings = controller
+    api._sigbar_window = FakeWindow()
+    monkeypatch.setattr(controller_module, "SHUTDOWN_WAIT_SECONDS", 0.05)
+    review_id = api.fittings_review_eft(TEXT)["review_id"]
+    worker = threading.Thread(
+        target=lambda: results.append(api.fittings_import_eft(review_id))
+    )
+    stopper = threading.Thread(target=lambda: (controller.shutdown(), stopped.set()))
+    worker.start()
+    try:
+        assert entered.wait(2)
+        stopper.start()
+        assert controller._stopping.wait(0.3), (
+            "evaluate_js must not hold the closure lock"
+        )
+        assert stopped.wait(0.3), "the existing lane drain must honor its budget"
+        assert controller._clipboard_gate.locked()  # Timed-out callback stays tracked.
+        assert held_locks == [(False, False)]
+    finally:
+        release.set()
+        worker.join(3)
+        if stopper.ident is not None:
+            stopper.join(3)
+    assert not worker.is_alive() and not stopper.is_alive()
+    assert results[0]["persisted"]
+    assert len(api._window.evaluated) == 1  # Already admitted, not cancelled mid-call.
+    assert api._sigbar_window.evaluated == []  # No later page stage after closure.
+
+
+@pytest.mark.parametrize("closure", ["controller", "page"])
+def test_clipboard_api_rechecks_closure_at_actual_page_delivery(
+    tmp_path, monkeypatch, closure
+):
+    from tests.test_api import FakeWindow
+    from tests.test_evefittings_clipboard import TEXT, make_controller
+    from wingman.evefittings import controller as controller_module
+    from wingman.ui import api as api_module
+
+    entered, release, stopped = threading.Event(), threading.Event(), threading.Event()
+    original_payload = api_module._page_payload
+
+    def delayed_serialization(payload):
+        if isinstance(payload, dict) and payload.get("reason") == "import":
+            entered.set()
+            assert release.wait(3)
+        return original_payload(payload)
+
+    monkeypatch.setattr(api_module, "_page_payload", delayed_serialization)
+    monkeypatch.setattr(controller_module, "SHUTDOWN_WAIT_SECONDS", 0.05)
+    api = make_api(tmp_path)
+    controller, _, _ = make_controller(tmp_path, changed=api._push_fittings_changed)
+    api._fittings = controller
+    api._sigbar_window = FakeWindow()
+    review_id = api.fittings_review_eft(TEXT)["review_id"]
+    results = []
+    worker = threading.Thread(
+        target=lambda: results.append(api.fittings_import_eft(review_id))
+    )
+
+    def close():
+        if closure == "controller":
+            controller.shutdown()
+        else:
+            api._close_eve_runtime()  # Production pre-window-destruction fence.
+        stopped.set()
+
+    stopper = threading.Thread(target=close)
+    worker.start()
+    try:
+        assert entered.wait(2)
+        stopper.start()
+        assert stopped.wait(0.3)
+    finally:
+        release.set()
+        worker.join(3)
+        if stopper.ident is not None:
+            stopper.join(3)
+    assert not worker.is_alive() and not stopper.is_alive()
+    assert results[0]["persisted"]
+    assert api._window.evaluated == [] and api._sigbar_window.evaluated == []
+    controller.shutdown()
 
 
 def test_clipboard_bridge_absent_subsystem_shapes(tmp_path):

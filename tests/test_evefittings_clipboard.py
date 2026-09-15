@@ -370,6 +370,73 @@ def test_persistence_refusal_never_publishes_partial_import(
         assert saved == []
 
 
+@pytest.mark.parametrize("initial_kind", ["new", "alias"])
+def test_failed_save_keeps_review_for_same_id_retry(tmp_path, initial_kind):
+    saved = []
+
+    def save(path, state):
+        saved.append(state)
+        if len(saved) == 1:
+            raise OSError("transient disk refusal")
+        store.save_fittings(path, state)
+
+    initial = (
+        None
+        if initial_kind == "new"
+        else model.FittingsState(entries=(entry(name="Curated"),))
+    )
+    controller, client, path = make_controller(
+        tmp_path, initial=initial, save_state=save
+    )
+    review = controller.review_eft(TEXT)
+    calls = len(client.calls)
+    before = controller.state
+    first = controller.import_eft(review["review_id"])
+    assert not first["applied"] and not first["persisted"]
+    assert controller.state == before
+
+    retry = controller.import_eft(review["review_id"])
+
+    assert retry["applied"] and retry["persisted"]
+    assert retry["created"] is (initial_kind == "new")
+    assert len(saved) == 2 and len(client.calls) == calls
+    assert store.load_fittings(path) == (controller.state, ())
+    assert not controller.import_eft(review["review_id"])["applied"]
+
+
+@pytest.mark.parametrize("replacement", ["invalid", TEXT.replace("Pasted", "New")])
+def test_retry_never_restores_review_invalidated_during_failed_save(
+    tmp_path, replacement
+):
+    retry_started, release_retry = threading.Event(), threading.Event()
+    saved = []
+
+    def save(_path, state):
+        saved.append(state)
+        if len(saved) == 2:
+            retry_started.set()
+            assert release_retry.wait(3)
+        raise OSError("disk still unavailable")
+
+    controller, _, _ = make_controller(tmp_path, save_state=save)
+    review_id = controller.review_eft(TEXT)["review_id"]
+    assert not controller.import_eft(review_id)["persisted"]
+    results = []
+    worker = threading.Thread(
+        target=lambda: results.append(controller.import_eft(review_id))
+    )
+    worker.start()
+    try:
+        assert retry_started.wait(2), "the same review must reach the writer on retry"
+        assert not controller.review_eft(replacement)["ok"]  # Busy still invalidates.
+    finally:
+        release_retry.set()
+        worker.join(3)
+    assert not worker.is_alive() and not results[0]["persisted"]
+    assert not controller.import_eft(review_id)["applied"]
+    assert len(saved) == 2 and controller.state.entries == ()
+
+
 def test_store_file_size_limit_refuses_import_without_replacing_disk_or_memory(
     tmp_path, monkeypatch
 ):

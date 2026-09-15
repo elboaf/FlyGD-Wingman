@@ -794,7 +794,24 @@ class Api:
         keep. The page re-queries `fittings_state` for whatever it is
         currently viewing; this only tells it something changed.
         """
-        self._push("onFittingsChanged", payload)
+        self._push(
+            "onFittingsChanged",
+            payload,
+            delivery_allowed=(
+                self._fittings_clipboard_delivery_allowed
+                if payload.get("reason") == "import"
+                else None
+            ),
+        )
+
+    def _fittings_clipboard_delivery_allowed(self) -> bool:
+        # The page closes before subsystem shutdown on ordinary Quit. Each
+        # evaluate_js needs its own short check, never a lock spanning the call.
+        return (
+            not self._eve_runtime_closed
+            and self._fittings is not None
+            and self._fittings.clipboard_delivery_allowed()
+        )
 
     def _push_fittings_progress(self, payload) -> None:
         """Literal adapter for FittingsController's `progress` callback."""

@@ -182,8 +182,8 @@ class FittingsController:
         self._operation_id_factory: Callable[[], str] = lambda: uuid.uuid4().hex
         self._stopping = threading.Event()
         self._clipboard_gate = threading.Lock()
-        # Admission fences commits and notifications against closure, without
-        # holding the state lock during page delivery or cosmetic disk I/O.
+        # Admission serializes storage commits and short delivery checks with
+        # closure. Callback execution must never hold this or the state lock.
         self._clipboard_admission = threading.RLock()
         self._eft_review: _EftReview | None = None  # guarded by _tickets_lock
         self._eft_review_generation = 0
@@ -1709,7 +1709,6 @@ class FittingsController:
                         or self._monotonic() >= review.expires_at
                     ):
                         return self._import_error(_REVIEW_AGAIN)
-                    self._eft_review = None
                 candidate = review.candidate
                 with self._lock:
                     match = self._eft_match_locked(candidate)
@@ -1742,13 +1741,18 @@ class FittingsController:
                     # The ticket, not the evictable resolver cache, owns these
                     # names. Even an existing/no-op match needs this handoff.
                     self._names.merge_verified(dict(candidate.verified_names))
+                with self._tickets_lock:
+                    # Consume only after success; a failed save remains retryable.
+                    # Never restore a ticket that a newer review invalidated while
+                    # the writer ran, nor clear anything except this exact review.
+                    if self._eft_review is review:
+                        self._eft_review = None
             try:
                 names.save(self._names_path, self._names)
             except (OSError, ValueError):
                 logger.warning("Could not save fitting type names", exc_info=True)
-            with self._clipboard_admission:
-                if not self._stopping.is_set():
-                    self._notify_changed({"reason": "import", "entry_id": match.id})
+            if self.clipboard_delivery_allowed():
+                self._notify_changed({"reason": "import", "entry_id": match.id})
             return {
                 "applied": True,
                 "persisted": True,
@@ -1758,6 +1762,15 @@ class FittingsController:
             }
         finally:
             self._clipboard_gate.release()
+
+    def clipboard_delivery_allowed(self) -> bool:
+        """Admit a delivery stage, not its potentially blocking callback lifetime.
+
+        The existing clipboard gate tracks the whole call for bounded draining.
+        Api rechecks this at each actual page boundary after serialization.
+        """
+        with self._clipboard_admission:
+            return not self._stopping.is_set()
 
     def export_eft(self, entry_id: object) -> dict:
         """Render a verified snapshot, then refuse if its source changed meanwhile."""
