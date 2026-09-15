@@ -1087,3 +1087,13 @@ def test_the_split_controls_exist_and_are_wired():
     )
     assert "WM.send('split_locally', WM.list.selectedIds());" in PANEL_JS
     assert "split_locally" in API_PY
+    # The tick is the button's ONLY visibility signal, so its change
+    # handler must run the same synchronous refresh the selection events
+    # run. The first cut wired it to refreshPanelText alone (an async
+    # round trip that paints nothing until it returns), so ticking the box
+    # showed no button until the next selection change.
+    assert re.search(
+        r"f-split'\)\.addEventListener\('change', function \(\) \{\s*"
+        r"refreshPanelText\(\);\s*refreshEnabled\(\);",
+        PANEL_JS,
+    )

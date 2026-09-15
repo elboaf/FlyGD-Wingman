@@ -43,7 +43,18 @@
   // numbers PARTS (the count is ffmpeg's answer), so its tick changes the
   // label for the same reason.
   WM.el('f-stitch').addEventListener('change', refreshPanelText);
-  WM.el('f-split').addEventListener('change', refreshPanelText);
+  // Split's tick does MORE than retitle: it is the Process locally
+  // button's only visibility signal, and refreshEnabled runs on SELECTION
+  // events. Ticking the checkbox alone used to leave the button hidden
+  // until the next selection change -- a click that did nothing visible,
+  // fixed here by running the same refresh on both inputs. (refreshPanelText
+  // is deliberately not enough: it paints on an async round trip, and the
+  // button showing a round trip late is the flash U4 already ruled out for
+  // the summary above.)
+  WM.el('f-split').addEventListener('change', function () {
+    refreshPanelText();
+    refreshEnabled();
+  });
 
   // ---- what can act, and what cannot -----------------------------------
   // X1 execution, through S1's WM.setEnabled. The rule in its comment is
