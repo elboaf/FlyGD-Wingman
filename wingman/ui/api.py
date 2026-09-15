@@ -796,7 +796,24 @@ class Api:
         keep. The page re-queries `fittings_state` for whatever it is
         currently viewing; this only tells it something changed.
         """
-        self._push("onFittingsChanged", payload)
+        self._push(
+            "onFittingsChanged",
+            payload,
+            delivery_allowed=(
+                self._fittings_clipboard_delivery_allowed
+                if payload.get("reason") == "import"
+                else None
+            ),
+        )
+
+    def _fittings_clipboard_delivery_allowed(self) -> bool:
+        # The page closes before subsystem shutdown on ordinary Quit. Each
+        # evaluate_js needs its own short check, never a lock spanning the call.
+        return (
+            not self._eve_runtime_closed
+            and self._fittings is not None
+            and self._fittings.clipboard_delivery_allowed()
+        )
 
     def _push_fittings_progress(self, payload) -> None:
         """Literal adapter for FittingsController's `progress` callback."""
@@ -7251,6 +7268,50 @@ class Api:
         if self._fittings is None:
             return _empty_fittings_state(self._authority_warnings)
         return self._fittings.workspace(filters)
+
+    def fittings_export_eft(self, entry_id) -> dict:
+        if self._fittings is None:
+            return {
+                "ok": False,
+                "text": "",
+                "error": "The fitting library is unavailable.",
+            }
+        return self._fittings.export_eft(entry_id)
+
+    def fittings_review_eft(self, text) -> dict:
+        if self._fittings is None:
+            return {
+                "ok": False,
+                "review_id": "",
+                "name": "",
+                "ship_name": "",
+                "items": [],
+                "warnings": [],
+                "existing_entry_id": "",
+                "error": "The fitting library is unavailable.",
+            }
+        return self._fittings.review_eft(text)
+
+    def fittings_import_eft(self, review_id) -> dict:
+        if self._fittings is None:
+            return {
+                "applied": False,
+                "persisted": False,
+                "entry_id": "",
+                "created": False,
+                "error": "The fitting library is unavailable.",
+            }
+        return self._fittings.import_eft(review_id)
+
+    def fittings_locate_entry(self, entry_id) -> dict:
+        if self._fittings is None:
+            return {
+                "ok": False,
+                "entry_id": "",
+                "workspace": None,
+                "error": "The fitting library is unavailable.",
+            }
+        return self._fittings.locate_entry(entry_id)
 
     def fittings_detail(self, entry_id) -> dict | None:
         """One expanded fitting for the route's detail pane.

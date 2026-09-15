@@ -33,6 +33,12 @@
   var expandedId = '';     // at most one expanded row, matching one detail fetch
   var detail = null;       // fittings_detail() payload for expandedId
   var detailSeq = 0;       // invalidates a superseded detail reply
+  var detailError = '';
+  var importDraft = emptyImportDraft();
+  var importRequest = null; // distinct from queries: an import push can precede its receipt
+  var detachedImportDraft = null;
+  var locateOwner = null;
+  var exportOwner = null;
   var selected = {};       // entry_id -> true, pruned to the rendered page
   // Only edited IDs, never a second library: retained across page/filter changes,
   // retired by acknowledgement, deliberate discard, or confirmed deletion.
@@ -101,6 +107,15 @@
         || payload.copy_progress_completed !== Math.floor(payload.copy_progress_completed)
         || payload.copy_progress_completed < 1
         || payload.copy_progress_completed > payload.copy_result.results.length)) return false;
+    if (payload.clipboard) {
+      var clipboard = payload.clipboard;
+      var review = clipboard.review;
+      if (typeof clipboard.text !== 'string' || typeof clipboard.entry_id !== 'string'
+          || !review || !review.ok || typeof review.review_id !== 'string'
+          || !Array.isArray(review.items) || review.items.length > 512
+          || !Array.isArray(review.warnings) || review.warnings.length > 1024
+          || !clipboard.receipt || !clipboard.export) return false;
+    }
     return true;
   }
 
@@ -220,11 +235,14 @@
   }
 
   function requestState() {
+    cancelLocate();
+    cancelExport();
+    detailSeq += 1;
+    requestSequence += 1;
     if (screenshotFixture) {
       render(screenshotWorkspace(currentFilters()));
       return;
     }
-    requestSequence += 1;
     var wanted = requestSequence;
     WM.send('fittings_state', currentFilters()).then(function (payload) {
       // A live read started before CDP injection must not repaint over the
@@ -259,6 +277,9 @@
   }
 
   WM.handle('onFittingsChanged', function (payload) {
+    // Revoke before a requery: a source rename/delete invalidates clipboard
+    // delivery even while its replacement workspace is still in flight.
+    cancelExport();
     // A page missing this ID may simply be filtered. Only an explicit deletion
     // retires an off-page draft, including when this route is hidden.
     if (payload && payload.reason === 'delete') delete metadataDrafts[payload.entry_id];
@@ -266,6 +287,10 @@
     // directly -- see the design doc's "no whole-library pushes". The
     // page re-asks for whatever it is currently looking at.
     if (asked) requestState();
+    if (!screenshotFixture && payload && payload.reason === 'delete'
+        && importDraft.result && importDraft.result.entry_id === payload.entry_id) {
+      setImportStatus('Fitting no longer exists. Close this panel or import a new fitting.', true);
+    }
   });
 
   WM.handle('onFittingsProgress', function (payload) {
@@ -300,12 +325,25 @@
     }
     if (WM.current_route !== 'fittings' || !validScreenshotFixture(payload)
         || (copyHistoryOperation && copyHistoryOperation.pending)) return;
+    cancelImportRequest();
+    cancelLocate();
+    cancelExport();
+    requestSequence += 1;
+    detailSeq += 1;
+    if (!screenshotFixture) detachedImportDraft = importDraft;
+    importDraft = emptyImportDraft();
+    renderImportDraft();
     screenshotFixture = JSON.parse(JSON.stringify(payload));
     renderScreenshotState();
   });
 
   document.addEventListener('wm:route', function (event) {
     if (event.detail !== 'fittings') {
+      cancelImportRequest();
+      cancelLocate();
+      cancelExport();
+      requestSequence += 1;
+      detailSeq += 1;
       // Cleanup for the one thing this route arms outside its own markup:
       // a debounced search request.
       if (searchDebounce) { clearTimeout(searchDebounce); searchDebounce = null; }
@@ -322,6 +360,11 @@
         detail = null;
       }
       screenshotFixture = null;
+      if (detachedImportDraft) {
+        importDraft = detachedImportDraft;
+        detachedImportDraft = null;
+        renderImportDraft();
+      }
       clearSelection();
       // Settings owns sign-in and Forget, so a hidden-route authority change
       // must be picked up by the next real Fittings entry.
@@ -482,6 +525,8 @@
       reopen.addEventListener('click', function () {
         if (copyOverlayOpen || copyPhase === 'progress'
             || (copyHistoryOperation && copyHistoryOperation.pending)) return;
+        cancelExport();
+        cancelLocate();
         copyDialogGeneration += 1;
         copyInvoker = reopen;
         copyOverlayOpen = true;
@@ -515,6 +560,10 @@
   }
 
   WM.el('fittings-search').addEventListener('input', function () {
+    cancelLocate();
+    cancelExport();
+    requestSequence += 1; // typing revokes before the debounce admits another query
+    detailSeq += 1;
     filters.search = WM.el('fittings-search').value;
     filters.page = 1;
     clearSelection();
@@ -542,6 +591,357 @@
     requestState();
   });
 
+  // ---- local clipboard import / export --------------------------------
+
+  function emptyImportDraft() {
+    return { open: false, text: '', review: null, result: null,
+             needsReview: false, canReviewAgain: false, status: '', error: false };
+  }
+
+  function setImportStatus(text, isError) {
+    importDraft.status = text;
+    importDraft.error = !!isError;
+    var node = WM.el('fittings-import-status');
+    node.textContent = text;
+    if (isError) node.classList.add('err');
+    else node.classList.remove('err');
+  }
+
+  function importAvailable() {
+    return WM.current_route === 'fittings' && importDraft.open && !copyOverlayOpen
+      && WM.el('overlay').hidden;
+  }
+
+  function updateImportControls() {
+    var pending = !!importRequest;
+    WM.el('fittings-import-read').disabled = pending;
+    WM.el('fittings-import-review').textContent = importDraft.canReviewAgain || importDraft.needsReview
+      ? 'Review again' : 'Review';
+    WM.el('fittings-import-review').disabled = pending || !importDraft.text.trim()
+      || (!!importDraft.review && !importDraft.needsReview && !importDraft.canReviewAgain);
+    WM.el('fittings-import-add').disabled = pending || !importDraft.review
+      || importDraft.needsReview || !!importDraft.result;
+    WM.el('fittings-import-show').hidden = !importDraft.result;
+  }
+
+  function renderImportDraft() {
+    WM.el('fittings-import-panel').hidden = !importDraft.open;
+    WM.el('fittings-import-open').setAttribute('aria-expanded', String(importDraft.open));
+    WM.el('fittings-import-text').value = importDraft.text;
+    var host = WM.el('fittings-import-candidate');
+    host.textContent = '';
+    host.hidden = !importDraft.review;
+    if (importDraft.review) {
+      var review = importDraft.review;
+      host.appendChild(WM.make('p', '', review.name + ' \u2014 ' + review.ship_name));
+      host.appendChild(modulesNode(review.items));
+      // Keep source order and every warning, including after successful Add.
+      // These describe the reviewed interpretation, not persisted metadata.
+      review.warnings.forEach(function (warning) {
+        host.appendChild(WM.make('p', 'fit-import-warning',
+          warning.message));
+      });
+    }
+    setImportStatus(importDraft.status, importDraft.error);
+    updateImportControls();
+  }
+
+  function cancelImportRequest() {
+    if (!importRequest) return;
+    var kind = importRequest.kind;
+    importRequest = null;
+    // A sent Add may have committed even when its UI owner leaves. Keep the
+    // review visible, but do not resurrect an ambiguously consumed ticket.
+    if (kind === 'add') importDraft.needsReview = true;
+    setImportStatus(kind === 'add'
+      ? 'Add result not confirmed here. Check the library before reviewing again.'
+      : 'Request cancelled. Your text is kept.');
+    updateImportControls();
+  }
+
+  function newImportText(text) {
+    cancelImportRequest();
+    cancelLocate();
+    importDraft.text = text;
+    importDraft.review = null;
+    importDraft.result = null;
+    importDraft.needsReview = false;
+    importDraft.canReviewAgain = false;
+    importDraft.status = '';
+    importDraft.error = false;
+    // Do not replace the textarea while typing; its caret/scroll are native.
+    var candidate = WM.el('fittings-import-candidate');
+    candidate.textContent = '';
+    candidate.hidden = true;
+    setImportStatus('');
+    updateImportControls();
+  }
+
+  function beginImportRequest(kind, button) {
+    var owner = { kind: kind, draft: importDraft };
+    importRequest = owner;
+    // Handoff before disabling the invoking button; never focus on a reply.
+    if (document.activeElement === button) WM.el('fittings-import-close').focus({ preventScroll: true });
+    updateImportControls();
+    return owner;
+  }
+
+  function ownsImport(owner) {
+    return importRequest === owner && importDraft === owner.draft
+      && WM.current_route === 'fittings' && importDraft.open;
+  }
+
+  function screenshotClipboard() {
+    return screenshotFixture && screenshotFixture.clipboard;
+  }
+
+  WM.el('fittings-import-open').addEventListener('click', function () {
+    if (WM.current_route !== 'fittings' || copyOverlayOpen) return;
+    importDraft.open = true;
+    renderImportDraft();
+    WM.el('fittings-import-text').focus({ preventScroll: true });
+    // One-click import for a fresh draft, never silent replacement of retained
+    // text or a completed review whose warnings are still being read.
+    if (!importDraft.text && !importDraft.review && !importDraft.result) {
+      readImportClipboard(WM.el('fittings-import-read'));
+    }
+  });
+
+  function closeImport() {
+    var ownedFocus = WM.el('fittings-import-panel').contains(document.activeElement);
+    cancelImportRequest();
+    cancelLocate();
+    importDraft = emptyImportDraft();
+    renderImportDraft();
+    if (ownedFocus && WM.current_route === 'fittings' && !copyOverlayOpen && WM.el('overlay').hidden) {
+      WM.el('fittings-import-open').focus({ preventScroll: true });
+    }
+  }
+  WM.el('fittings-import-close').addEventListener('click', closeImport);
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape' || event.defaultPrevented || !importAvailable()
+        || !WM.el('fittings-import-panel').contains(event.target)) return;
+    event.preventDefault();
+    closeImport();
+  });
+  WM.el('fittings-import-text').addEventListener('input', function () {
+    newImportText(WM.el('fittings-import-text').value);
+  });
+
+  WM.el('fittings-import-read').addEventListener('click', function () {
+    readImportClipboard(this);
+  });
+
+  function readImportClipboard(button) {
+    if (!importAvailable() || importRequest) return;
+    var owner = beginImportRequest('read', button);
+    setImportStatus('Reading clipboard\u2026');
+    function failed() {
+      if (!ownsImport(owner)) return;
+      importRequest = null;
+      setImportStatus(screenshotFixture ? 'No clipboard text in this screenshot fixture. Paste manually.'
+        : 'Could not read the clipboard. Paste fitting text manually, then Review.', true);
+      updateImportControls();
+    }
+    try {
+      // Only opener/Read clicks reach this browser call. Detached screenshot
+      // data must explicitly supply text; it never falls back to the OS clipboard.
+      var fixture = screenshotClipboard();
+      var pending = screenshotFixture
+        ? (fixture ? Promise.resolve(fixture.text) : Promise.reject(new Error('No fixture')))
+        : navigator.clipboard.readText();
+      pending.then(function (text) {
+        if (!ownsImport(owner)) return;
+        importRequest = null;
+        newImportText(text);
+        WM.el('fittings-import-text').value = text;
+        setImportStatus('Clipboard text ready. Review before adding.');
+      }, failed);
+    } catch (err) { failed(); }
+  }
+
+  WM.el('fittings-import-review').addEventListener('click', function () {
+    if (!importAvailable() || this.disabled || importRequest || !importDraft.text.trim()) return;
+    importDraft.review = null;
+    importDraft.result = null;
+    importDraft.needsReview = false;
+    importDraft.canReviewAgain = false;
+    renderImportDraft();
+    var owner = beginImportRequest('review', this);
+    setImportStatus('Reviewing fitting\u2026');
+    var fixture = screenshotClipboard();
+    var pending = screenshotFixture
+      ? Promise.resolve(fixture && fixture.text === importDraft.text ? fixture.review : null)
+      : WM.send('fittings_review_eft', importDraft.text);
+    pending.then(function (payload) {
+      if (!ownsImport(owner)) return;
+      importRequest = null;
+      if (!payload || !payload.ok) {
+        setImportStatus(payload && payload.error || (screenshotFixture
+          ? 'This text is not covered by the screenshot fixture.'
+          : 'Review not confirmed. Your text is kept; try Review again.'), true);
+        updateImportControls();
+        return;
+      }
+      importDraft.review = payload;
+      setImportStatus(payload.existing_entry_id
+        ? 'Matching content is already in the library. Add will keep the existing fitting.'
+        : 'Review the fitting and any warnings, then Add to library.');
+      renderImportDraft();
+    });
+  });
+
+  WM.el('fittings-import-add').addEventListener('click', function () {
+    if (!importAvailable() || importRequest || !importDraft.review
+        || importDraft.needsReview || importDraft.result) return;
+    var owner = beginImportRequest('add', this);
+    var reviewId = importDraft.review.review_id;
+    setImportStatus('Adding to library\u2026');
+    var fixture = screenshotClipboard();
+    var pending = screenshotFixture
+      ? Promise.resolve(fixture && fixture.review.review_id === reviewId ? fixture.receipt : null)
+      : WM.send('fittings_import_eft', reviewId);
+    pending.then(function (payload) {
+      if (!ownsImport(owner)) return;
+      importRequest = null;
+      if (!payload || !payload.applied || !payload.persisted) {
+        // A save refusal can retry this ID, but an expired/consumed ticket
+        // needs a fresh Review. Offer both without classifying error prose.
+        importDraft.canReviewAgain = true;
+        setImportStatus(payload && payload.error
+          || 'Add not confirmed. Your reviewed text is kept; try Add to library again.', true);
+        updateImportControls();
+        return;
+      }
+      importDraft.result = payload;
+      importDraft.text = '';
+      WM.el('fittings-import-text').value = '';
+      setImportStatus(payload.created ? 'Added a new fitting to the library.'
+        : 'Already in the library; the existing fitting was kept.');
+      updateImportControls();
+    });
+  });
+
+  function cancelLocate() {
+    if (!locateOwner) return;
+    locateOwner = null;
+    setImportStatus('Show fitting cancelled. Use Show fitting to try again.');
+  }
+
+  document.addEventListener('focusin', function (event) {
+    if (locateOwner && event.target !== WM.el('fittings-import-show')) locateOwner.focus = false;
+    if (!WM.el('overlay').hidden) cancelExport();
+  });
+
+  WM.el('fittings-import-show').addEventListener('click', function () {
+    if (!importAvailable() || !importDraft.result || locateOwner) return;
+    cancelExport();
+    if (searchDebounce) { clearTimeout(searchDebounce); searchDebounce = null; }
+    requestSequence += 1;
+    detailSeq += 1;
+    var owner = { sequence: requestSequence, draft: importDraft,
+                  focus: document.activeElement === this };
+    locateOwner = owner;
+    var id = importDraft.result.entry_id;
+    setImportStatus('Finding fitting\u2026');
+    var pending;
+    if (screenshotFixture) {
+      var workspace = screenshotWorkspace({collection_id: 'all', search: '', ship_type_id: null, page: 1});
+      pending = Promise.resolve({ok: workspace.rows.some(function (row) { return row.id === id; }),
+        entry_id: id, workspace: workspace, error: 'Fitting is not in this screenshot fixture.'});
+    } else pending = WM.send('fittings_locate_entry', id);
+    pending.then(function (payload) {
+      if (locateOwner !== owner || owner.sequence !== requestSequence
+          || owner.draft !== importDraft || WM.current_route !== 'fittings' || !importDraft.open) return;
+      locateOwner = null;
+      if (!payload || !payload.ok || !payload.workspace) {
+        setImportStatus(payload && payload.error || 'Fitting is unavailable. Use Show fitting to try again.', true);
+        return;
+      }
+      // Locator already owns one ordered workspace snapshot. Re-reading its
+      // page would lose a target renamed/inserted across the boundary meanwhile.
+      filters = {collection_id: 'all', search: '', ship_type_id: null, page: payload.workspace.page};
+      WM.el('fittings-search').value = '';
+      expandedId = payload.entry_id;
+      detail = null;
+      detailError = '';
+      clearSelection();
+      render(payload.workspace);
+      setImportStatus('Showing fitting in All fittings.');
+      var target = WM.el('fit-toggle-' + payload.entry_id);
+      if (owner.focus && document.activeElement === WM.el('fittings-import-show') && target
+          && !copyOverlayOpen && WM.el('overlay').hidden) {
+        target.focus();
+      }
+    });
+  });
+
+  function cancelExport() {
+    if (!exportOwner) return;
+    var owner = exportOwner;
+    exportOwner = null;
+    owner.button.disabled = false;
+    owner.status.textContent = 'Clipboard copy cancelled. Try Copy to clipboard again.';
+  }
+
+  function exportNode(current) {
+    var box = WM.make('div', 'fit-clipboard-actions');
+    var button = WM.make('button', 'btn', 'Copy to clipboard');
+    var status = WM.make('p', 'field-msg fit-export-status');
+    status.setAttribute('role', 'status');
+    button.title = 'Export the saved fitting name and items, not unsaved metadata.';
+    box.appendChild(button);
+    box.appendChild(status);
+    button.addEventListener('click', function () {
+      if (exportOwner || WM.current_route !== 'fittings' || expandedId !== current.id
+          || !document.contains(button) || copyOverlayOpen || !WM.el('overlay').hidden) return;
+      var owner = {id: current.id, button: button, status: status, fixture: screenshotFixture};
+      exportOwner = owner;
+      if (document.activeElement === button) {
+        WM.el('fit-toggle-' + current.id).focus({ preventScroll: true });
+      }
+      button.disabled = true;
+      status.classList.remove('err');
+      status.textContent = 'Preparing clipboard text\u2026';
+      function owns() {
+        return exportOwner === owner && WM.current_route === 'fittings'
+          && expandedId === owner.id && owner.fixture === screenshotFixture
+          && document.contains(button) && !copyOverlayOpen && WM.el('overlay').hidden;
+      }
+      function finish(text, error) {
+        if (!owns()) return;
+        exportOwner = null;
+        button.disabled = false;
+        status.textContent = text;
+        if (error) status.classList.add('err');
+        else status.classList.remove('err');
+      }
+      function failed() { finish('Could not write to the clipboard. Check clipboard access and try again.', true); }
+      var fixture = screenshotClipboard();
+      var pending = screenshotFixture
+        ? Promise.resolve(fixture && fixture.entry_id === current.id ? fixture.export : null)
+        : WM.send('fittings_export_eft', current.id);
+      pending.then(function (payload) {
+        if (!owns()) return;
+        if (!payload || !payload.ok) {
+          finish(payload && payload.error || (screenshotFixture
+            ? 'This fitting has no clipboard export in the screenshot fixture.'
+            : 'Export not confirmed. Try Copy to clipboard again.'), true);
+          return;
+        }
+        try {
+          // Check ownership immediately before the irreversible browser call.
+          // The OS promise cannot be cancelled after delivery has started.
+          var writing = screenshotFixture ? Promise.resolve() : navigator.clipboard.writeText(payload.text);
+          writing.then(function () {
+            finish(screenshotFixture ? 'Clipboard copy simulated for screenshot.' : 'Copied to clipboard.');
+          }, failed);
+        } catch (err) { failed(); }
+      });
+    });
+    return box;
+  }
+
   // ---- the list, one page at a time ------------------------------------
 
   function collectionNames(ids) {
@@ -551,6 +951,7 @@
   }
 
   function renderList() {
+    cancelExport(); // the row's controls are about to detach, even without a query
     var host = WM.el('fittings-list');
     var empty = WM.el('fittings-empty');
     var editor = host.querySelector('.fit-metadata-disclosure');
@@ -561,11 +962,14 @@
       metadataEditors[editorId] = editor.open;
     }
     var active = document.activeElement;
-    var focusId = editor && editor.contains(active) ? active.id : '';
+    var focusId = (editor && editor.contains(active))
+      || (active && active.classList.contains('fit-row-toggle') && host.contains(active))
+      ? active.id : '';
     var start = focusId ? active.selectionStart : null;
     var end = focusId ? active.selectionEnd : null;
     var direction = focusId ? active.selectionDirection : null;
-    var scrollTop = host.scrollTop;
+    var scroller = WM.el('fittings-workspace-scroll');
+    var scrollTop = scroller.scrollTop;
     host.textContent = '';
     var rows = STATE.rows || [];
     if (!rows.length) {
@@ -574,25 +978,28 @@
                         || filters.collection_id !== 'all');
       empty.textContent = filtered
         ? 'No fittings match the current filters.'
-        : 'Authenticate a character in Settings › Character access, then return and press Refresh characters.';
+        : 'Use Import from clipboard… to add a fitting, or authenticate a character in Settings › Character access and press Refresh characters.';
       return;
     }
     empty.hidden = true;
     rows.forEach(function (row, index) { host.appendChild(rowNode(row, index)); });
+    // Emptying the list can clamp its parent to zero even without owned focus.
+    scroller.scrollTop = scrollTop;
     if (focusId && WM.current_route === 'fittings' && !copyOverlayOpen
         && WM.el('overlay').hidden) {
       var replacement = WM.el(focusId);
       // Discard disappears after acceptance; a pending Save may be disabled.
       // Keep focus in that fitting's editor rather than on a retired control.
       if (!replacement || replacement.disabled || !replacement.getClientRects().length) {
-        replacement = WM.el('fit-metadata-summary-' + editor.getAttribute('data-entry-id'));
+        replacement = editor
+          ? WM.el('fit-metadata-summary-' + editor.getAttribute('data-entry-id')) : null;
       }
       if (replacement && replacement.getClientRects().length) {
         replacement.focus({ preventScroll: true });
         if (replacement.id === focusId && typeof start === 'number' && typeof end === 'number') {
           replacement.setSelectionRange(start, end, direction);
         }
-        host.scrollTop = scrollTop;
+        scroller.scrollTop = scrollTop;
       }
     }
   }
@@ -678,6 +1085,7 @@
     top.appendChild(label);
 
     var toggle = WM.make('button', 'fit-row-toggle');
+    toggle.id = 'fit-toggle-' + row.id;
     toggle.setAttribute('aria-expanded', expandedId === row.id ? 'true' : 'false');
     var chevron = WM.make('span', 'chev', expandedId === row.id ? '\u25be' : '\u25b8');
     chevron.setAttribute('aria-hidden', 'true');
@@ -709,6 +1117,10 @@
   }
 
   function toggleRow(id) {
+    cancelLocate();
+    cancelExport();
+    detailError = '';
+    detailSeq += 1;
     if (expandedId === id) {
       expandedId = '';
       detail = null;
@@ -722,6 +1134,7 @@
   }
 
   function requestDetail(id) {
+    detailError = '';
     detailSeq += 1;
     var token = detailSeq;
     var pending = screenshotFixture
@@ -729,8 +1142,10 @@
     pending.then(function (payload) {
       // A plan-switch-style guard: the row may have collapsed, or another
       // row may have been opened, while this reply was in flight.
-      if (token !== detailSeq || expandedId !== id) return;
+      if (token !== detailSeq || expandedId !== id || WM.current_route !== 'fittings') return;
       detail = payload;
+      detailError = payload ? ''
+        : 'Fitting detail is unavailable or no longer exists. Close and reopen it, or use Show fitting again.';
       renderList();
     });
   }
@@ -740,7 +1155,7 @@
   function detailNode(row) {
     var box = WM.make('div', 'fit-detail');
     if (!detail) {
-      box.appendChild(WM.make('p', 'hint', 'Loading\u2026'));
+      box.appendChild(WM.make('p', 'hint', detailError || 'Loading\u2026'));
       return box;
     }
     if (!row.deployable) {
@@ -750,6 +1165,7 @@
     if (detail.description) {
       box.appendChild(WM.make('p', 'fit-description', detail.description));
     }
+    box.appendChild(exportNode(detail));
     box.appendChild(modulesNode(detail.items || []));
     // Compare with the visible row title, not an independently refreshed detail
     // or an unsaved metadata draft. Alias provenance remains untouched.
@@ -933,6 +1349,7 @@
       value.pending = true;
       value.error = '';
       updateStatus();
+      cancelExport();
       WM.send('fittings_update_metadata', current.id, name, description)
         .then(function (applied) {
           if (metadataDrafts[current.id] !== value) return;
@@ -1051,6 +1468,7 @@
       ? 'This fitting is still present on a character and cannot be deleted.'
       : '';
     button.addEventListener('click', function () {
+      cancelExport();
       WM.confirm('Delete fitting',
                  'Delete \u201c' + current.name + '\u201d from the library? '
                  + 'This never removes it from a character.',
@@ -1171,6 +1589,8 @@
 
   function openCopyOverlay() {
     if (!visibleSelectedIds().length) return;
+    cancelExport();
+    cancelLocate();
     copyDialogGeneration += 1;
     activeCopyTicket = '';
     copyInvoker = WM.el('fittings-copy-selected');

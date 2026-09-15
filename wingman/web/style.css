@@ -5437,7 +5437,28 @@ button.btn.danger:disabled {
    fitting row (name/ship/meta instead of a character's readiness) and its
    expanded detail (rack-grouped modules instead of a requirement list). */
 
-.fit-list { flex: 1; min-height: 0; overflow-y: auto; width: 100%; }
+/* Import and its complete review share the workspace scroller, so a long
+   warning list cannot squeeze the fitting list out of the 840x625 floor. */
+.fit-workspace-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.fit-list { width: 100%; }
+#fittings-import-open { margin-bottom: 8px; }
+.fit-import-panel {
+  display: flex; flex-direction: column; gap: 8px; min-width: 0;
+  padding: 4px 0 12px; margin-bottom: 8px;
+  border-bottom: 1px solid var(--row-line);
+}
+.fit-import-panel[hidden] { display: none; }
+.fit-import-panel > .lab { color: var(--text-dim); font-size: var(--fs-body); }
+#fittings-import-text { width: 100%; min-height: 76px; resize: vertical; }
+.fit-clipboard-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.fit-clipboard-actions > [hidden] { display: none; }
+.fit-import-candidate { display: flex; flex-direction: column; gap: 6px; }
+.fit-import-candidate[hidden] { display: none; }
+.fit-import-candidate, #fittings-import-status, .fit-export-status { overflow-wrap: anywhere; }
+.fit-import-warning { color: var(--warn); font-size: var(--fs-muted); }
+#fittings-import-status, .fit-export-status { min-height: 18px; margin: 0; }
+.fit-export-status { flex: 1 1 180px; }
+.fit-import-candidate .fit-item-name { min-width: 0; overflow-wrap: anywhere; }
 .fit-row {
   border-bottom: 1px solid var(--row-line);
   border-left: 2px solid transparent;

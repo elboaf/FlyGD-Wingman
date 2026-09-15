@@ -63,6 +63,22 @@ class TypeNameCache:
                 added += 1
         return added
 
+    def merge_verified(self, mapping: Mapping[int, str]) -> None:
+        """Prioritize a bounded, verified clipboard candidate over cosmetic cache data.
+
+        Unlike background enrichment, this handoff must replace stale spellings
+        and make room for every imported label before the success is delivered.
+        The candidate holds at most 513 names, well below this cache's bound.
+        """
+        with self._lock:
+            for type_id in mapping:
+                self._names.pop(type_id, None)
+            for type_id in tuple(self._names):
+                if len(self._names) + len(mapping) <= MAX_ENTRIES:
+                    break
+                del self._names[type_id]
+            self._names.update(mapping)
+
     def type_names(self) -> dict[int, str]:
         with self._lock:
             return dict(self._names)

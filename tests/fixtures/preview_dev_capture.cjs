@@ -8,7 +8,7 @@ const web = process.argv[3];
 const {document, Element} = createDOM(data.page);
 Element.prototype.hasAttribute = function(name) { return this.getAttribute(name) !== null; };
 const window = new Element('window');
-Object.assign(window, {window, document, console, Promise, URLSearchParams, location: {search: '?dev=1'},
+Object.assign(window, {window, document, console, Promise, URLSearchParams, navigator: {}, location: {search: '?dev=1'},
   setTimeout: () => 1, clearTimeout: () => {}, setInterval: () => 1, clearInterval: () => {},
   getComputedStyle: () => ({visibility: 'visible'}),
   Event: class { constructor(type) { this.type = type; } },

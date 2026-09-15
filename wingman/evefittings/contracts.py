@@ -74,6 +74,12 @@ MAX_OPERATION_RECORDS = 200
 COMPLETED_OPERATION_MAX_AGE = timedelta(days=90)
 MAX_STATE_BYTES = 64 * 1024 * 1024
 
+# Clipboard refusal bounds, independent of remote fitting schema validation.
+MAX_EFT_BYTES = 64 * 1024
+MAX_EFT_LINES = 2048
+MAX_EFT_QUANTITY = 2**31 - 1
+MAX_EFT_TYPE_NAME_CHARS = 256
+
 # --- Rack classes --------------------------------------------------------
 # Numbered slots canonicalize to one of these; see the design doc's
 # "Numbered slots normalize to rack classes" list. Bay-style locations
