@@ -248,6 +248,39 @@ an invalid credential forever. Turning automatic verification Off cancels its
 future work and stops the automatic sources it owns, without stopping another
 account's valid verification.
 
+### Stop semantics, including older clients
+
+Each automatically managed source must retain an immutable association with its
+owning automatic-verification consent and consent generation. Source generation
+and consent generation are distinct: starting a future fleet must not turn an
+old source command into authority over a newer opt-in.
+
+An authorized Stop targeting an automatic source disables its owning consent
+**only when that consent generation is still current**. In one serialized
+transition, disable the desired automatic mode, fence queued/in-flight source
+creation for that generation, and stop the automatic sources it owns. An
+acknowledged Stop must not be immediately undone by reconciliation. Apply this
+rule even if the targeted source naturally ended before Stop arrived, provided
+its owning consent generation is still current.
+
+This applies to existing clients' source-specific Stop command as well as the new
+UI. The server resolves the consent binding from the targeted source; an older
+client need not supply a consent-generation field it does not know about. Retain
+existing account authorization and source-generation checks. Never infer the
+binding from whichever consent happens to be current for the account; an unknown
+or purged source identifier cannot disable current automation by association.
+
+A delayed or repeated Stop bound to an older consent generation may settle that
+old source under the existing source-command rules, but must not disable a newer
+opt-in or stop its sources. Re-enabling automatic verification creates a new
+consent generation, and an old source must never be rebound to it. Concurrent
+Stop and opt-in operations must recheck these bindings in the same transaction
+that changes intent, so the serialized outcome cannot be overwritten by old work.
+
+Stopping a manually created source retains its existing source-specific behavior:
+it does not disable automatic consent or stop unrelated sources. Manual and
+automatic provenance must remain distinguishable throughout retention and retry.
+
 Keep automatic verification opt-in separate from this PC's telemetry transmission
 switch. A boss can maintain verification while not publishing their own metrics;
 that is existing supported behavior. The ordinary participant sees no boss setup
@@ -277,6 +310,10 @@ Use Settings > Fleet telemetry, not a new top-level destination.
   diagnostics into Troubleshooting. Do not delete their safety/recovery semantics.
 - Retain a clear automatic-verification Off action and a separate local Fleet Bar
   visibility control. Leaving the page does not alter runtime intent.
+- For an automatic source, label the current UI action **Turn off automatic
+  verification**, making its consent-wide effect explicit. An accepted Stop from
+  an older client must also be reflected as automatic mode Off on other devices;
+  late status responses must not overwrite a newer opt-in.
 
 No success screen may require the user to remember an unmentioned second Start
 or Refresh. Returning from authorization must honor current opt-in, binding and
@@ -301,6 +338,15 @@ Acceptance must include delayed responses and metadata competition during combat
 low damage that rounds to zero, unknown attacker names, fleet-wide tackle copies,
 missing logs, disconnects, stale/replayed responses, late messages after Off,
 identity changes, revoked grants, old clients, and a source owned by another player.
+
+Stop acceptance additionally covers: an older client stopping an automatic source;
+Stop racing with queued/in-flight reconciliation; a source ending naturally before
+its Stop arrives; repeated Stop after a new opt-in; delayed Stop from an older
+consent generation; multiple automatic sources/paired devices sharing one consent;
+unknown or purged source identifiers; and manual-source Stop leaving automatic
+consent and unrelated sources unchanged. Assert the persisted consent, resulting
+source authority, worker admission and cross-device status, not only the command
+response.
 
 ## Discovery verification and review boundary
 
