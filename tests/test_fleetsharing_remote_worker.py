@@ -2,10 +2,11 @@
 
 import threading
 from dataclasses import replace
+from datetime import timedelta
 
 import pytest
 
-from tests.test_fleetsharing_worker import _snapshot, drive, rig
+from tests.test_fleetsharing_worker import NOW, _date, _snapshot, drive, rig
 from wingman.fleetsharing.model import CatalogueCharacter, FleetCatalogue, PublishRow
 from wingman.telemetry.model import FleetRow, FleetSnapshot, StreamHealth
 
@@ -150,6 +151,60 @@ def test_no_current_eligibility_never_falls_back_to_all_owned_ids(condition):
     else:
         worker._state = replace(worker._state, observed_participation=None)
     assert not worker._publication()
+
+
+def _publication_case(expired_ids=(), amounts=(10, 20)):
+    worker, _client, _store, mono = rig()
+    drive(worker, mono, 14)
+    worker._catalogue = FleetCatalogue(
+        9, (CatalogueCharacter(1, "Alice"), CatalogueCharacter(2, "Bob"))
+    )
+    template = worker._eligibility.characters[0]
+    now = NOW + timedelta(seconds=mono[0] - 1000)
+    worker._eligibility = replace(
+        worker._eligibility,
+        characters=tuple(
+            replace(
+                template,
+                character_id=cid,
+                expires_at=_date(
+                    now + timedelta(seconds=0 if cid in expired_ids else 10)
+                ),
+            )
+            for cid in (1, 2)
+        ),
+    )
+    worker.submit(
+        FleetSnapshot(
+            (FleetRow("Alice", amounts[0]), FleetRow("Bob", amounts[1])),
+            StreamHealth("active"),
+        )
+    )
+    return worker
+
+
+@pytest.mark.parametrize("expired_ids", [(1,), (1, 2)])
+def test_expired_active_permission_suspends_whole_replacement(expired_ids):
+    worker = _publication_case(expired_ids)
+    assert worker._publication() is None
+
+
+def test_expired_quiet_member_does_not_block_fresh_active_member():
+    worker = _publication_case((1,), amounts=(0, 20))
+    assert worker._publication() == (PublishRow(2, 20, ()),)
+
+
+def test_real_inactivity_remains_an_empty_replacement():
+    worker = _publication_case((1, 2), amounts=(0, 0))
+    assert worker._publication() == ()
+
+
+def test_authoritative_not_verified_remains_an_empty_replacement():
+    worker = _publication_case()
+    worker._eligibility = replace(
+        worker._eligibility, state="not_verified", characters=()
+    )
+    assert worker._publication() == ()
 
 
 @pytest.mark.parametrize("stream", ["remote", "catalogue"])

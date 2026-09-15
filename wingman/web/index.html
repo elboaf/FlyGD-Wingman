@@ -203,20 +203,6 @@
             <input type="checkbox" id="f-stitch"><span class="box"></span>
             Stitch selected into one video
           </label>
-          <!-- A second checkbox returns, and the Uploader 15 finding above
-               ("two adjacent checkboxes are too close to distinguish by
-               aim") is the reason this one is worded and placed the way it
-               is: a different VERB ("Split"), a different consequence
-               (parts, not one video), and enough margin that the two boxes
-               do not read as a pair of radios. Split works with ONE or
-               more selected -- it answers YouTube's unverified-upload
-               limit, not the join question -- so panel.js enables it on a
-               wider rule than Stitch and the two checkboxes are rarely
-               greyed together. -->
-          <label class="check" id="lab-split" style="margin-top:10px">
-            <input type="checkbox" id="f-split"><span class="box"></span>
-            Split into parts under 15 minutes
-          </label>
           <!-- The two-line hint that used to sit here is gone (round 3,
                finding 3). It read "Select two or more recordings to stitch
                them into one video", which is the mechanism, not the
@@ -278,16 +264,47 @@
                something the user cannot get back, and stopping an upload
                destroys nothing -- the videos already sent stay on the
                channel, which is what the message says in as many words. -->
+          <!-- The CLIP EDITOR: the single-selection counterpart of the
+               stitch checkbox. Selecting EXACTLY one recording shows it
+               (panel.js owns the rule), giving a preview of the file, a
+               timeline with draggable in/out handles snapped to keyframes,
+               and a Cut that writes `<stem> - clip.mkv` into the recording
+               folder -- nothing uploads. Hidden with 0 or 2+ selected,
+               because there is nothing to edit; this is the documented
+               exception to "disabled, NOT hidden", which governs CONTROLS,
+               not context surfaces (the #panel-empty-note precedent). If
+               the page engine cannot decode the recording's codec (HEVC,
+               for one), #clip-video errors and the editor degrades to
+               timecodes -- the cut never depended on the picture. -->
+          <div id="clip-editor" hidden>
+            <video id="clip-video" controls preload="metadata"></video>
+            <p class="hint" id="clip-nopreview" hidden></p>
+            <div id="clip-track">
+              <div id="clip-band"></div>
+              <div id="clip-playhead"></div>
+              <div class="clip-handle" id="clip-in" title="Clip start"></div>
+              <div class="clip-handle" id="clip-out" title="Clip end"></div>
+            </div>
+            <div class="clip-times">
+              <span id="clip-tc-in">0:00</span>
+              <span id="clip-tc-play">0:00</span>
+              <span id="clip-tc-out">0:00</span>
+            </div>
+            <div class="clip-actions">
+              <button class="btn" id="btn-clip-set-in">Set start</button>
+              <button class="btn" id="btn-clip-set-out">Set end</button>
+              <button class="btn" id="btn-clip-play-sel">Play selection</button>
+            </div>
+            <button class="btn" id="btn-cut-clip">Cut clip</button>
+          </div>
           <div class="actions">
             <button class="btn acc" id="btn-upload">Upload</button>
-            <!-- Visible while EITHER box is ticked: the button's meaning
-                 follows the checkboxes. Stitch alone joins the selection
-                 into one file kept in the recording folder; Split alone
-                 makes the <15-minute parts; both joins and then segments,
-                 the same composition the upload path uses. Hidden rather
-                 than disabled because with neither ticked there is no
-                 action waiting to be unlocked, there is nothing at all. -->
-            <button class="btn" id="btn-process-local" hidden>Process locally</button>
+            <!-- Visible only while Stitch is ticked (which needs two or
+                 more selected): the joined file is kept in the recording
+                 folder, nothing uploads. Hidden rather than disabled
+                 because with the box unticked there is no action waiting
+                 to be unlocked, there is nothing at all. -->
+            <button class="btn" id="btn-stitch-local" hidden>Stitch locally</button>
             <button class="btn" id="btn-retry" disabled>Retry</button>
             <button class="btn" id="btn-cancel" hidden>Cancel</button>
           </div>
@@ -1166,22 +1183,18 @@
         <p class="operational-status" id="wanderer-coverage"></p>
         <p class="hint">Uses map-local names for your current named previews. Character labels must be shown.</p>
         <div class="row">
-          <label class="lab" for="wanderer-url">Application URL (HTTPS)</label>
-          <input class="field" id="wanderer-url" type="url" disabled spellcheck="false" autocomplete="off" placeholder="https://wanderer.example" aria-describedby="wanderer-url-draft wanderer-connection-error">
+          <label class="lab" for="wanderer-url">Map URL</label>
+          <input class="field" id="wanderer-url" type="url" disabled spellcheck="false" autocomplete="off" placeholder="https://wanderer.ltd/your-map" aria-describedby="wanderer-url-help wanderer-url-draft wanderer-connection-error">
         </div>
+        <p class="hint" id="wanderer-url-help">Open your map in Wanderer and paste the address from your browser, not its settings or character-list page.</p>
         <p class="hint" id="wanderer-url-draft"></p>
         <div class="row">
-          <label class="lab" for="wanderer-map">Map slug or UUID</label>
-          <input class="field" id="wanderer-map" type="text" disabled spellcheck="false" autocomplete="off" aria-describedby="wanderer-map-draft wanderer-connection-error">
-        </div>
-        <p class="hint" id="wanderer-map-draft"></p>
-        <div class="row">
           <label class="lab" for="wanderer-token">Map API token</label>
-          <span class="hint" id="wanderer-credential">No token stored for the saved URL and map.</span>
+          <span class="hint" id="wanderer-credential">No token stored for the saved map URL.</span>
           <input class="field" id="wanderer-token" type="password" disabled spellcheck="false" autocomplete="new-password" aria-describedby="wanderer-token-draft wanderer-connection-error wanderer-credential">
         </div>
-        <p class="hint" id="wanderer-token-draft">Stored only on this PC, protected by Windows. Leave blank to reuse only the same saved URL and map.</p>
-        <p class="hint" id="wanderer-save-note">Test connection saves the URL, map and token, then checks access. It does not turn names on.</p>
+        <p class="hint" id="wanderer-token-draft">Stored only on this PC, protected by Windows. Leave blank to reuse the token for the same saved map URL.</p>
+        <p class="hint" id="wanderer-save-note">Test connection saves the map URL and token, then checks access. It does not turn names on.</p>
         <p class="field-msg" id="wanderer-connection-error" hidden></p>
         <div class="row">
           <button class="btn" id="wanderer-test" type="button" disabled aria-describedby="wanderer-save-note wanderer-connection-error wanderer-test-status wanderer-test-error">Test connection</button>

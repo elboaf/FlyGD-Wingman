@@ -13,17 +13,15 @@ the whole point: if it needs a window to test, it does not belong here.
 """
 
 import datetime
-import math
 
 from .. import discord, library, uploader
-from ..stitch import SEGMENT_CHUNK_SECONDS as _CHUNK_SECONDS
 
 
 def wanderer_status(status: str, error_code: str | None) -> str:
     """Explain safe semantic health only, never a server body or exception."""
     if status == "error":
         return {
-            "invalid_configuration": "Check the Wanderer application URL, map and token, then test again.",
+            "invalid_configuration": "Check the Wanderer map URL and token, then test again.",
             "invalid_token": "Wanderer rejected the token. Replace it, then test again.",
             "forbidden": "Wanderer denied access. Check the token and map permissions.",
             "scope_forbidden": "The token needs tracked-character location read access.",
@@ -33,7 +31,7 @@ def wanderer_status(status: str, error_code: str | None) -> str:
             "map_not_found": "Wanderer could not find this map.",
             "rate_limited": "Wanderer is limiting requests. Wait before testing again.",
             "unsupported_version": "This Wanderer server uses an unsupported API version.",
-            "redirect_refused": "Wanderer redirected the request. Check the application URL.",
+            "redirect_refused": "Wanderer redirected the request. Check the map URL.",
             "tls_error": "The secure connection to Wanderer could not be verified.",
             "timeout": "Wanderer did not respond in time.",
             "invalid_snapshot": "Wanderer returned invalid location data. Existing names expire normally.",
@@ -42,7 +40,7 @@ def wanderer_status(status: str, error_code: str | None) -> str:
         )
     return {
         "off": "Wanderer names are off.",
-        "setup_incomplete": "Enter an application URL, map and token, then test the connection.",
+        "setup_incomplete": "Enter a map URL and token, then test the connection.",
         "previews_unavailable": "Waiting for previews to be enabled and available.",
         "connecting": "Connecting to Wanderer…",
         "connected": "Connected to Wanderer.",
@@ -138,7 +136,6 @@ def format_upload_confirm(
     privacy: str,
     channel_title: str,
     stitch: bool,
-    split: bool,
     discord_webhook: str,
 ) -> str:
     """The body of the confirm shown before anything is published.
@@ -181,20 +178,7 @@ def format_upload_confirm(
     count = len(infos)
     where = channel_title or "not known yet (learned from this upload)"
 
-    if split:
-        # The exact part count is not knowable at confirm time (keyframe
-        # cuts), so the estimate says "about" and states the ceiling rule.
-        # The estimate rides the same constant the splitter uses, so the
-        # dialog cannot promise a number the split will not produce.
-        parts = max(1, math.ceil(total_seconds / _CHUNK_SECONDS))
-        shown = uploader.build_body(title, "", privacy, "", 0, 1)["snippet"]["title"]
-        verb = "stitched and split" if stitch else "split"
-        what = (
-            f"{count} recording{'s' if count != 1 else ''} {verb} into about "
-            f"{parts} part{'s' if parts != 1 else ''} (each under 15 minutes)"
-        )
-        titles = f'"{shown}" (numbered per part)'
-    elif stitch:
+    if stitch:
         shown = uploader.build_body(title, "", privacy, "", 0, 1)["snippet"]["title"]
         what = f"{count} recordings stitched into one video"
         titles = f'"{shown}"'
@@ -356,7 +340,7 @@ def format_destination(channel_title: str, privacy: str) -> str:
     return f"Uploads go to {channel_title}"
 
 
-def format_title_hint(count: int, stitch: bool, split: bool = False) -> str:
+def format_title_hint(count: int, stitch: bool) -> str:
     """The Title field's label, which depends on what is selected.
 
     uploader.build_body appends "(n/total)" to every title in a batch and
@@ -364,15 +348,9 @@ def format_title_hint(count: int, stitch: bool, split: bool = False) -> str:
     so a user typing one title got ten differently-named public videos and
     found out afterwards. The label is the cheapest place to say it, because
     it is already beside the field being misunderstood.
-
-    A split job numbers PARTS, and the part count is an ffmpeg answer, not
-    something the page or this label can know up front -- so the disclosure
-    names the fact without a number.
     """
-    if count <= 1 and not split:
+    if count <= 1 or (stitch and count <= 1):
         return "Title"
-    if split:
-        return "Title (applies to every part, numbered)"
     if stitch:
         return "Title (one stitched video)"
     return f"Title (applies to all {count}, numbered 1-{count})"
@@ -758,3 +736,38 @@ def account_line(state: str, channel_title: str = "") -> str:
     if state == "connected" and channel_title:
         return f"{message} as {channel_title}"
     return message
+
+
+def format_span(start: float, end: float) -> str:
+    """A clip's marker span as the strip reads it: "0:12-0:47" with an
+    EN DASH (U+2013) as the separator.
+
+    An en dash, matching the punctuation every range the app prints uses.
+    One implementation: the strip line and any future surface naming a
+    span must not disagree about the separator or the rounding, so this is
+    the only formatter. (The dash is written as an escape; ruff's
+    ambiguous-character rule rightly keeps unmarked look-alikes out.)
+    """
+
+    def _clock(seconds: float) -> str:
+        seconds = max(0, int(seconds))
+        minutes, secs = divmod(seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+
+    dash = "\u2013"
+    return f"{_clock(start)}{dash}{_clock(end)}"
+
+
+def clip_no_preview_note() -> str:
+    """Why the clip editor has no picture for this recording.
+
+    Chromium -- WebView2's page engine, not FFmpeg -- decodes the preview,
+    and its stock build has no HEVC decoder. The CUT never depends on a
+    codec (FFmpeg reads what OBS wrote), so the honest sentence says the
+    picture is what is missing and nothing is gated on it.
+    """
+    return (
+        "Preview unavailable: this recording's codec can't be shown in the "
+        "app. The timecodes below still work, and the clip will cut fine."
+    )

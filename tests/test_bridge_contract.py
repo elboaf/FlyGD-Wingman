@@ -432,7 +432,7 @@ def test_custom_alert_facades_are_exact_single_line_delegates(facade, delegate, 
     [
         ("wanderer_state", "state", []),
         ("set_wanderer_enabled", "set_enabled", ["enabled"]),
-        ("test_wanderer_connection", "test_connection", ["base", "map", "token"]),
+        ("test_wanderer_connection", "test_connection", ["map_url", "token"]),
         ("remove_wanderer_connection", "remove_connection", ["revision"]),
     ],
 )
@@ -643,18 +643,18 @@ def test_uploader_facade_methods_delegate_lexically_to_private_controller_method
     assert "getattr(self._uploader" not in source
     expected = {
         "list_rows": ("list_rows", ["preselect"]),
-        "panel_text": ("panel_text", ["ids", "stitch", "split"]),
+        "panel_text": ("panel_text", ["ids", "stitch"]),
         "delete_selected": ("delete_selected", ["ids"]),
         "copy_path": ("copy_path", ["row_id"]),
         "open_path": ("open_path", ["row_id"]),
         "play_recording": ("play_recording", ["row_id"]),
         "rename_recording": ("rename_recording", ["row_id", "stem"]),
         "open_recording_dir": ("open_recording_dir", []),
-        "start_upload": (
-            "start_upload",
-            ["title", "description", "stitch", "split", "ids"],
-        ),
-        "process_locally": ("process_locally", ["ids", "stitch", "split"]),
+        "start_upload": ("start_upload", ["title", "description", "stitch", "ids"]),
+        "stitch_locally": ("stitch_locally", ["ids"]),
+        "clip_source": ("clip_source", ["row_id"]),
+        "clip_keyframes": ("clip_keyframes", ["row_id"]),
+        "cut_clip": ("cut_clip", ["row_id", "start", "end"]),
         "cancel_upload": ("cancel_upload", []),
         "retry": ("retry", []),
         "post_recent_logs": ("post_recent_logs", []),

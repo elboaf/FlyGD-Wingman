@@ -17,7 +17,7 @@ from ..settings import validated_wanderer
 from ..telemetry.model import ClientSessionId
 from .client import WandererClient
 from .credentials import CredentialStore, validate_token
-from .model import normalize_base_url, normalize_map_identifier
+from .model import parse_map_url
 from .worker import MetadataPublisher, WandererWorker, WorkerConfig
 
 MetadataCallback = Callable[[int, frozenset[ClientSessionId], bool, int], None]
@@ -377,7 +377,7 @@ class WandererController:
                 section = {**self._section, "base_url": "", "map_identifier": ""}
             return self._save_connection(section, None)
 
-    def test_connection(self, base, map, token) -> dict:
+    def test_connection(self, map_url, token) -> dict:
         """Save the submitted connection, then request Test on the existing lane.
 
         applied/persisted describe configuration, never asynchronous admission.
@@ -388,11 +388,13 @@ class WandererController:
             result = self._closed_result()
             if result is None:
                 try:
-                    base, map = normalize_base_url(base), normalize_map_identifier(map)
+                    base, map = parse_map_url(map_url)
                     if token != "":
                         token = validate_token(token)
                 except (ValueError, OSError):
-                    result = self._result(False, "Enter a valid URL, map and token.")
+                    result = self._result(
+                        False, "Enter a valid HTTPS map URL and token."
+                    )
             if result is None:
                 with self._condition:
                     section, saved_token = dict(self._section), self._token
@@ -401,9 +403,7 @@ class WandererController:
                         section["base_url"],
                         section["map_identifier"],
                     ) or saved_token is None:
-                        result = self._result(
-                            False, "Enter a token for this URL and map."
-                        )
+                        result = self._result(False, "Enter a token for this map URL.")
                     else:
                         # Already saved: do not rewrite/reconfigure or cancel an
                         # admitted Test simply because its binding was re-entered.

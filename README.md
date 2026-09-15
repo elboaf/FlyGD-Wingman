@@ -168,10 +168,13 @@ installed/frozen checks remain separate manual acceptance.
 
 **Settings → Previews → Wanderer names** can add a smaller system-name line
 under each named preview's character label. This is **off by default**. Enter
-one HTTPS Wanderer application URL (including any deployment prefix), one map
-slug/UUID, and that map's read-only integration token. Use the tracked-character
-locations integration credential, not a write-capable public API key.
-**Test connection** saves the entered URL, map and token together, then requests
+the full HTTPS URL of your open Wanderer map (for example,
+`https://wanderer.ltd/your-map`) and that map's read-only integration token.
+Copy the map itself, not its settings or character-list page. Wingman extracts
+the server address and map identifier, including self-hosted deployment prefixes.
+Use the integration credential for tracked-character locations, not a
+write-capable public API key. Existing saved connections do not need to be entered again.
+**Test connection** saves the entered map URL and token together, then requests
 a real test without enabling names. Enter in any connection field does the same;
 blur does not save. Automatic polling also requires Client previews and an
 available preview host. A saved connection and a Test that could not start are
@@ -191,7 +194,7 @@ Windows DPAPI protects the token **and its normalized URL/map binding**. It is
 never returned to the page, written into ordinary settings, or logged by this
 integration. DPAPI protects storage at rest, not against code running as your
 Windows user. Leave the token blank to reuse it only for the same saved,
-normalized URL and map. Changing either requires a supplied token. Turning names
+normalized server and map. Changing either requires a supplied token. Turning names
 off retains the connection. **Remove connection** confirms and clears Wingman's
 saved URL, map and protected token together, retaining the independent enabled
 preference; it does not revoke or change anything in Wanderer.

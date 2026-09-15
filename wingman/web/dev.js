@@ -159,14 +159,16 @@
       ? wandererAck('The connection changed. Confirm removal again.')
       : wandererChange({base_url: '', map_identifier: '', credential_present: false}));
   };
-  api.test_wanderer_connection = function (base, map, token) {
+  api.test_wanderer_connection = function (mapUrl, token) {
     // Never log, cache or echo the entry. Only presence reaches dev state.
-    base = base.trim().replace(/\/+$/, ''); map = map.trim();
-    if (!/^https:\/\//.test(base) || !map) {
-      return wandererTestAck(wandererAck('Enter a valid URL, map and token.'), false);
+    // This fixture handles map-root examples; Python owns production validation.
+    var parts = /^(https:\/\/[^/?#]+(?:\/[^/?#]+)*)\/([A-Za-z0-9._~-]+)$/.exec(mapUrl.trim().replace(/\/+$/, ''));
+    if (!parts || parts[2] === '.' || parts[2] === '..') {
+      return wandererTestAck(wandererAck('Paste the full HTTPS URL of your open Wanderer map.'), false);
     }
+    var base = parts[1], map = parts[2];
     if (!token && (!wanderer.credential_present || base !== wanderer.base_url || map !== wanderer.map_identifier)) {
-      return wandererTestAck(wandererAck('Enter a token for this URL and map.'), false);
+      return wandererTestAck(wandererAck('Enter a token for this map URL.'), false);
     }
     var busy = wanderer.test_pending || wanderer.test_in_flight;
     var result = token ? wandererChange({base_url: base, map_identifier: map, credential_present: true}, true) : wandererAck();
@@ -393,7 +395,7 @@
       })
     };
   }
-  ['delete_selected', 'start_upload', 'process_locally', 'retry', 'cancel_upload',
+  ['delete_selected', 'start_upload', 'stitch_locally', 'cut_clip', 'retry', 'cancel_upload',
    'open_path', 'copy_path', 'detect_folder',
    // The Uploader's three quick actions. Doubled rather than added to
    // test_dev_harness.py's known-gaps list because ?dev=1 is the only way
@@ -416,6 +418,26 @@
   api.rename_recording = function (rowId, stem) {
     console.log('DEV api.rename_recording(', rowId, stem, ')');
     return Promise.resolve({ ok: true, error: '' });
+  };
+
+  // The clip editor's bridge calls. The dev fixture has no real video
+  // file, so the <video> element errors and ?dev=1 exercises the DEGRADED
+  // editor -- timeline, handles and Cut all driven by these numbers, no
+  // picture. That is the fallback path a H.264 install never sees.
+  api.clip_source = function (rowId) {
+    console.log('DEV api.clip_source(', rowId, ')');
+    return Promise.resolve({
+      ok: true,
+      uri: '',
+      duration: 754,
+      note: "Preview unavailable: this recording's codec can't be shown in "
+            + 'the app. The timecodes below still work, and the clip will '
+            + 'cut fine.',
+    });
+  };
+  api.clip_keyframes = function (rowId) {
+    console.log('DEV api.clip_keyframes(', rowId, ')');
+    return Promise.resolve({ keys: [0, 61.5, 183, 312.2, 487, 604.9, 742] });
   };
 
   // NOT generic stubs. The per-field endpoints return

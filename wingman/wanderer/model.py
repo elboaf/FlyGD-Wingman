@@ -97,6 +97,30 @@ def normalize_map_identifier(value: str) -> str:
     raise ValueError("Wanderer map must be a valid slug or UUID.")
 
 
+def parse_map_url(value: str) -> tuple[str, str]:
+    """Split a full HTTPS map-root URL into the existing saved binding.
+
+    The final component is the map; every preceding path component belongs to
+    the deployment prefix. Do not guess reserved routes or rewrite subpages.
+    """
+    try:
+        # Keep both existing field limits, plus the joining and optional final /.
+        _require(
+            isinstance(value, str)
+            and len(value) <= MAX_BASE_URL_BYTES + MAX_MAP_BYTES + 2
+        )
+        value = value.strip(" ")
+        _require(all(32 < ord(c) < 127 for c in value))
+        _require(not any(c in value for c in "\\?#@%"))
+        base, _, identifier = value.removesuffix("/").rpartition("/")
+        # Otherwise base normalization could hide an empty component before map.
+        _require(not base.endswith("/"))
+        return normalize_base_url(base), normalize_map_identifier(identifier)
+    except ValueError:
+        pass  # Discard even hidden parser context; it can contain the pasted URL.
+    raise ValueError("Wanderer map URL must be a valid HTTPS map-root URL.")
+
+
 def _require(condition: bool) -> None:
     if not condition:
         raise ValueError("Invalid Wanderer value.")

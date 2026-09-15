@@ -494,11 +494,16 @@ implementation task.
       clears cached names as soon as headers arrive, even with a stalled error
       body, and pauses automatic polling. No fallback to another map or ESI.
 - [ ] **11 — Credential and field lifecycle (NOT RUN for the simplified form).**
-      Enter URL/map/token in any order while names are Off. Test connection (or
-      Enter in any field) saves the complete connection and requests a real test,
-      without enabling names or labels; blur/change never saves. No Apply or
-      Replace buttons remain. A blank token reuses only the same normalized saved
-      URL/map; changing either requires a token. Edit each field while its grouped
+      Paste the full HTTPS URL of the open map and enter its token in either order
+      while names are Off. No separate slug/UUID field should appear. Check a
+      self-hosted URL with a deployment prefix and an existing saved connection;
+      entry must not change saved settings. A partial legacy connection asks for
+      the full map URL without erasing saved values. Missing-map, HTTP, query or
+      fragment URLs show a safe error; no credential-bearing input is echoed.
+      Test connection (or Enter in either field) saves the complete connection
+      and requests a real test, without enabling names or labels; blur/change
+      never saves. No Apply or Replace buttons remain. A blank token reuses only
+      the same normalized saved server/map; changing either requires a token. Edit each field while its grouped
       reply is pending: only still-owned drafts normalize/revert, and a submitted
       password clears without erasing a newer password. Health pushes do not edit
       inputs. Toggle Off/on independently. Remove confirms and clears URL/map/token,
@@ -1310,35 +1315,40 @@ somewhere stale and nothing on that screen is worth reviewing.
       the last field typed and the button clicked, stating a precondition
       the greyed label already shows. With two selected the checkbox goes
       live and there is still no sentence.
-- [ ] **Split into parts, upload everything (workflow 1).** Select one or
-      more recordings, tick `Split into parts under 15 minutes`, press
-      `Upload`. Expected: a confirm naming "split into about N parts (each
-      under 15 minutes)"; after confirming, the strip shows
-      `Stitching with FFmpeg…` (two or more selected) then
-      `Splitting with FFmpeg…`, then each part uploads (`Uploading file i
-      of N`); the final line reads `Uploaded N parts to YouTube.` With one
-      recording selected the stitch step must be skipped entirely. No
-      YouTube link appears on the source rows.
-- [ ] **Split locally, pick parts by hand (workflow 2).** With the split
-      checkbox ticked, press the `Process locally` button that appears in
-      the action row. Expected: the strip reports stitching/splitting, then
-      `Split into N parts in the recording folder.` and the list rebuilds
-      showing `<stem> - part 1.mkv`, `part 2.mkv`, … as ordinary rows.
-      Select one part and upload it with the plain (unticked) Upload path;
-      delete the rest. Nothing uploads automatically.
-- [ ] **Stitch locally (workflow 2, stitch ticked).** Select two or more
-      recordings, tick `Stitch selected into one video` ONLY, and press
-      `Process locally`. Expected: `Stitched into <stem> - stitched.mkv in
-      the recording folder.`, one new row, originals untouched, no parts.
-- [ ] **Both ticks locally.** Tick BOTH boxes, press `Process locally`.
-      Expected: parts named `<stem> - part N.mkv` and NO
-      `<stem> - stitched.mkv` — join first, then segment, the same
-      composition as the upload-all path.
-- [ ] **The button follows the ticks immediately.** Ticking EITHER box
-      shows `Process locally` at once (no selection change needed — the
-      first cut only refreshed on selection events); unticking both hides
-      it. Select nothing: both checkboxes untick and the button hides.
-      Select one: `Split…` is live while `Stitch…` is greyed.
+- [ ] **The clip editor appears for exactly one selection.** Select one
+      recording. Expected: the panel shows the clip editor (preview, one
+      timeline bar, in/out handles, Set start / Set end / Play selection /
+      Cut clip). Select a second row: the editor disappears and the stitch
+      checkbox + `Stitch locally` button become the local-processing lane.
+      Select nothing: both editor and button are gone. Ticking Stitch
+      shows `Stitch locally` IMMEDIATELY (no selection change needed).
+- [ ] **Clip preview plays and scrubs.** With the editor open: the video
+      plays (served from a loopback HTTP port -- WebView2 refuses direct
+      file:// media); clicking or press-dragging the timeline scrubs the
+      playhead and seeks; the playhead follows playback.
+- [ ] **Markers snap and read true.** Drag the in-handle: it snaps DOWN to
+      a keyframe (the readout shows the snapped time — what a cut will
+      actually take; stream copy cannot start mid-GOP, so a clip may begin
+      a few seconds early, never late). Handles may not cross. Set
+      start / Set end take the playhead position. Play selection plays the
+      marked range and stops at the out point.
+- [ ] **Cut clip lands a file.** Press Cut clip. Expected: the strip shows
+      `Cutting clip with FFmpeg…`, then
+      `Clipped <start>–<end> to <stem> - clip.mkv in the recording folder.`,
+      the list rebuilds with the clip as an ordinary row, the source is
+      untouched, nothing uploaded. Cut again from the same selection: the
+      new file is `- clip (2).mkv`, no overwrite. A sub-second span is
+      refused with a strip line, not a dialog.
+- [ ] **The editor degrades without a decoder.** Point the recording
+      folder at a file Chromium cannot decode (e.g. an HEVC recording).
+      Expected: no picture, a one-line note explaining the preview is
+      unavailable, and the timeline/markers/scrubbing/cut still work from
+      timecodes — Set start / Set end track the scrubbed playhead.
+      Nothing is gated on the picture.
+- [ ] **Stitch locally (multi-selection lane).** Select two or more
+      recordings, tick `Stitch selected into one video` ONLY, press
+      `Stitch locally`. Expected: `Stitched into <stem> - stitched.mkv in
+      the recording folder.`, one new row, originals untouched.
 - [ ] **Open folder opens the watched folder.** Press it in the list footer
       with a folder configured: Explorer opens on that folder. This is the
       only affordance on this screen that reaches the FILES — double-click

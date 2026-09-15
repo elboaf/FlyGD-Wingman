@@ -48,19 +48,23 @@ vm.runInContext(source.slice(start, end), context);
     context.wandererScenario(kind);
     scenarios[kind] = await api.wanderer_state();
   }
-  const failed = await api.test_wanderer_connection('https://refused.example', 'new-map', String.fromCharCode(120));
+  const failed = await api.test_wanderer_connection('https://refused.example/new-map', String.fromCharCode(120));
   context.wandererScenario('connected');
   const revision = (await api.wanderer_state()).revision;
   const staleRemove = await api.remove_wanderer_connection(revision - 1);
   const removed = await api.remove_wanderer_connection(revision);
-  const blank = await api.test_wanderer_connection('https://wanderer.example', 'new-map', '');
-  const replaced = await api.test_wanderer_connection('https://wanderer.example', 'new-map', String.fromCharCode(120));
-  const rebound = await api.test_wanderer_connection('https://other.example', 'new-map', '');
+  const blank = await api.test_wanderer_connection('https://wanderer.example/new-map', '');
+  const replaced = await api.test_wanderer_connection('https://wanderer.example/new-map', String.fromCharCode(120));
+  const rebound = await api.test_wanderer_connection('https://other.example/new-map', '');
   await api.set_wanderer_enabled(false);
-  const admitted = await api.test_wanderer_connection('https://wanderer.example', 'new-map', '');
+  const admitted = await api.test_wanderer_connection('https://wanderer.example/new-map', '');
   const after = await api.wanderer_state();
+  const punctuated = await api.test_wanderer_connection('https://self.example/prefix/Map_1.~', String.fromCharCode(120));
+  const sameMap = await api.test_wanderer_connection('https://self.example/prefix/Map_1.~', '');
+  const dot = await api.test_wanderer_connection('https://self.example/prefix/.', String.fromCharCode(120));
+  const dotdot = await api.test_wanderer_connection('https://self.example/prefix/..', String.fromCharCode(120));
   console.log(JSON.stringify({scenarios, failed, staleRemove, removed, blank, rebound, replaced,
-    admitted, after, pushes}));
+    admitted, after, punctuated, sameMap, dot, dotdot, pushes}));
 })().catch(error => {console.error(error); process.exitCode = 1;});
 """
     run = subprocess.run(
@@ -118,6 +122,19 @@ vm.runInContext(source.slice(start, end), context);
     assert data["admitted"]["test_generation"] == data["after"]["generation"]
     assert data["after"]["enabled"] is False
     assert data["after"]["test_result"] == "success"
+    assert data["punctuated"]["test_accepted"] is True
+    assert (
+        data["punctuated"]["acknowledged"]["base_url"] == "https://self.example/prefix"
+    )
+    assert data["punctuated"]["acknowledged"]["map_identifier"] == "Map_1.~"
+    assert data["sameMap"]["test_accepted"] is True
+    assert (
+        data["sameMap"]["acknowledged"]["revision"]
+        == data["punctuated"]["acknowledged"]["revision"]
+    )
+    for refused in (data["dot"], data["dotdot"]):
+        assert refused["applied"] is False
+        assert refused["acknowledged"] == data["punctuated"]["acknowledged"]
     assert any(p["test_pending"] for p in data["pushes"])
     assert any(p["test_in_flight"] for p in data["pushes"])
     assert '"token":' not in run.stdout
@@ -136,7 +153,7 @@ def test_wanderer_card_is_in_previews_with_accessible_safe_controls():
     assert heading and tab
     assert heading[1] != tab[1], "Connection heading must not repeat its selected tab"
     assert re.search(r'id="wanderer-remove"[^>]*>Remove connection</button>', previews)
-    for field in ("url", "map", "token"):
+    for field in ("url", "token"):
         assert f'for="wanderer-{field}"' in previews
         assert f'id="wanderer-{field}-apply"' not in previews
         assert f'aria-describedby="wanderer-{field}' in previews
@@ -159,7 +176,7 @@ def test_wanderer_card_is_in_previews_with_accessible_safe_controls():
             'id="wanderer-url"'
         )
     assert 'id="wanderer-connection-error"' in previews
-    assert "saves the URL, map and token" in previews
+    assert "saves the map URL and token" in previews
     source = (WEB / "wanderer.js").read_text(encoding="utf-8")
     initial_hint = re.search(r'id="wanderer-token-draft"[^>]*>([^<]+)</p>', previews)
     painted_hint = re.search(r"el\('token-draft'\)\.textContent = '([^']*)';", source)

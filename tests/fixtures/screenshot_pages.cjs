@@ -95,7 +95,7 @@ async function gapRegression() {
       assert.equal(el('wanderer-test').disabled, false);
       assert.equal(el('wanderer-remove').disabled, false);
       assert.equal(el('wanderer-save-note').textContent,
-        'Test connection saves the URL, map and token, then checks access. It does not turn names on.');
+        'Test connection saves the map URL and token, then checks access. It does not turn names on.');
     } else if (profiles) {
       anchor = target = el('es-copy-scope-note'); pane = el('es-work');
       assert.equal(el('es-copy-scope').hidden, !state.selective_copy_available);

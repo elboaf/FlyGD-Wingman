@@ -1012,6 +1012,8 @@ class Api:
                 format_progress=copy_mod.format_progress,
                 format_upload_cancelled=copy_mod.format_upload_cancelled,
                 format_destination=copy_mod.format_destination,
+                format_span=copy_mod.format_span,
+                format_clip_note=copy_mod.clip_no_preview_note,
             ),
             rows=rows if rows is not None else RowSnapshot(),
             scheduler=Scheduler,
@@ -1092,8 +1094,8 @@ class Api:
     def list_rows(self, preselect: set | None = None) -> None:
         return self._uploader.list_rows(preselect)
 
-    def panel_text(self, ids: list[str], stitch: bool, split: bool = False) -> dict:
-        return self._uploader.panel_text(ids, stitch, split)
+    def panel_text(self, ids: list[str], stitch: bool) -> dict:
+        return self._uploader.panel_text(ids, stitch)
 
     def delete_selected(self, ids) -> None:
         return self._uploader.delete_selected(ids)
@@ -1113,11 +1115,20 @@ class Api:
     def open_recording_dir(self) -> bool:
         return self._uploader.open_recording_dir()
 
-    def start_upload(self, title, description, stitch, split, ids) -> None:
-        return self._uploader.start_upload(title, description, stitch, split, ids)
+    def start_upload(self, title, description, stitch, ids) -> None:
+        return self._uploader.start_upload(title, description, stitch, ids)
 
-    def process_locally(self, ids, stitch, split) -> None:
-        return self._uploader.process_locally(ids, stitch, split)
+    def stitch_locally(self, ids) -> None:
+        return self._uploader.stitch_locally(ids)
+
+    def clip_source(self, row_id: str) -> dict:
+        return self._uploader.clip_source(row_id)
+
+    def clip_keyframes(self, row_id: str) -> dict:
+        return self._uploader.clip_keyframes(row_id)
+
+    def cut_clip(self, row_id: str, start, end) -> None:
+        return self._uploader.cut_clip(row_id, start, end)
 
     def cancel_upload(self) -> None:
         return self._uploader.cancel_upload()
@@ -4553,8 +4564,8 @@ class Api:
     def set_wanderer_enabled(self, enabled) -> dict:
         return self._wanderer.set_enabled(enabled)
 
-    def test_wanderer_connection(self, base, map, token) -> dict:
-        return self._wanderer.test_connection(base, map, token)
+    def test_wanderer_connection(self, map_url, token) -> dict:
+        return self._wanderer.test_connection(map_url, token)
 
     def remove_wanderer_connection(self, revision) -> dict:
         return self._wanderer.remove_connection(revision)
