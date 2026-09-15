@@ -257,7 +257,7 @@ def renewed_source_proof(
 @pytest.mark.parametrize("changing", [False, True])
 @pytest.mark.parametrize("latency", [0.08, 0.2, 0.4, 0.6])
 def test_renewed_source_preserves_active_publications(changing, latency):
-    client, _, _, _ = run_owner(
+    client, _, timeline, _ = run_owner(
         publisher=True,
         watch=True,
         latency=latency,
@@ -268,6 +268,7 @@ def test_renewed_source_preserves_active_publications(changing, latency):
     assert all(rows for _, rows in client.published)
     times = [t for t, _ in client.published]
     assert max(b - a for a, b in pairwise(times)) < 3.0
+    assert timeline.end - times[-1] < 3.0
     operations = {op for op, _, _ in client.calls}
     assert {"fetch_sources", "fetch_catalogue", "read_snapshot"} <= operations
 
@@ -290,7 +291,7 @@ def test_authoritative_source_loss_still_withdraws_active_local_metrics():
 @pytest.mark.parametrize("phase", [0, 2, 4])
 @pytest.mark.parametrize("skew", [-0.5, 0.5])
 def test_source_phase_and_small_clock_skew_do_not_withdraw(period, phase, skew):
-    client, _, _, _ = run_owner(
+    client, _, timeline, _ = run_owner(
         publisher=True,
         watch=True,
         latency=0.6,
@@ -305,6 +306,7 @@ def test_source_phase_and_small_clock_skew_do_not_withdraw(period, phase, skew):
     assert all(rows for _, rows in client.published)
     times = [t for t, _ in client.published]
     assert max(b - a for a, b in pairwise(times)) < 10.0
+    assert timeline.end - times[-1] < 10.0
 
 
 def test_due_independent_bucket_does_not_wait_for_post_operation_poll():
