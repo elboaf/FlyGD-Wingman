@@ -41,20 +41,19 @@
   // Stitching collapses a batch into ONE video, so the numbering
   // disclosure must appear and disappear with this checkbox too. Split
   // numbers PARTS (the count is ffmpeg's answer), so its tick changes the
-  // label for the same reason.
-  WM.el('f-stitch').addEventListener('change', refreshPanelText);
-  // Split's tick does MORE than retitle: it is the Process locally
-  // button's only visibility signal, and refreshEnabled runs on SELECTION
-  // events. Ticking the checkbox alone used to leave the button hidden
-  // until the next selection change -- a click that did nothing visible,
-  // fixed here by running the same refresh on both inputs. (refreshPanelText
-  // is deliberately not enough: it paints on an async round trip, and the
-  // button showing a round trip late is the flash U4 already ruled out for
-  // the summary above.)
-  WM.el('f-split').addEventListener('change', function () {
+  // label for the same reason. BOTH ticks also drive the Process locally
+  // button's visibility (it shows while either is ticked), so each runs
+  // the same synchronous refresh -- selection events alone would repeat
+  // the first-cut bug where ticking a box showed nothing until the
+  // selection next changed. (refreshPanelText is deliberately not enough:
+  // it paints on an async round trip, and a button showing a round trip
+  // late is the flash U4 already ruled out for the summary above.)
+  function refreshOnTick() {
     refreshPanelText();
     refreshEnabled();
-  });
+  }
+  WM.el('f-stitch').addEventListener('change', refreshOnTick);
+  WM.el('f-split').addEventListener('change', refreshOnTick);
 
   // ---- what can act, and what cannot -----------------------------------
   // X1 execution, through S1's WM.setEnabled. The rule in its comment is
@@ -114,14 +113,18 @@
     // Split answers a different question than Stitch -- "does it fit under
     // YouTube's unverified-upload limit", not "is it one fight" -- so it
     // means something with ONE video selected and takes the wider rule.
-    // Its Process locally button exists only while the box is ticked;
-    // hidden rather than disabled because with split unticked there is no
-    // action waiting to be unlocked (see the note in index.html).
     WM.setEnabled('f-split', selected > 0);
     WM.el('lab-split').classList.toggle('disabled', selected < 1);
     if (selected < 1) WM.el('f-split').checked = false;
-    WM.el('btn-split-local').hidden = !WM.el('f-split').checked;
-    WM.setEnabled('btn-split-local', selected > 0);
+    // Process locally covers BOTH local workflows, so its visibility is
+    // the OR of the two ticks; its meaning follows them (stitch alone
+    // joins to one kept file, split alone makes parts, both joins then
+    // segments -- the same composition as the upload path). Hidden rather
+    // than disabled: with neither ticked there is no action waiting to be
+    // unlocked, there is nothing at all.
+    WM.el('btn-process-local').hidden =
+      !WM.el('f-split').checked && !WM.el('f-stitch').checked;
+    WM.setEnabled('btn-process-local', selected > 0);
   }
   document.addEventListener('wm:selection', refreshEnabled);
 
@@ -149,14 +152,16 @@
             WM.list.selectedIds());
   });
 
-  // Workflow 2 of the split feature: process WITHOUT uploading. Stitch +
-  // split run locally and the parts land in the recording folder as
-  // ordinary rows, so the worthwhile part(s) can be picked and uploaded
-  // by hand. Sends unconditionally like Upload -- "an upload is already
-  // in progress" is Python's sentence, and a page-side early return would
-  // swallow it.
-  WM.el('btn-split-local').addEventListener('click', function () {
-    WM.send('split_locally', WM.list.selectedIds());
+  // Workflow 2 of the split feature: process WITHOUT uploading. The tick
+  // state travels with the click -- Python composes the pipeline from it
+  // exactly as the upload path does. Sends unconditionally like Upload --
+  // "an upload is already in progress" is Python's sentence, and a
+  // page-side early return would swallow it.
+  WM.el('btn-process-local').addEventListener('click', function () {
+    WM.send('process_locally',
+            WM.list.selectedIds(),
+            WM.el('f-stitch').checked,
+            WM.el('f-split').checked);
   });
 
   WM.el('btn-retry').addEventListener('click', function () {

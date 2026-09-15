@@ -654,7 +654,7 @@ def test_uploader_facade_methods_delegate_lexically_to_private_controller_method
             "start_upload",
             ["title", "description", "stitch", "split", "ids"],
         ),
-        "split_locally": ("split_locally", ["ids"]),
+        "process_locally": ("process_locally", ["ids", "stitch", "split"]),
         "cancel_upload": ("cancel_upload", []),
         "retry": ("retry", []),
         "post_recent_logs": ("post_recent_logs", []),

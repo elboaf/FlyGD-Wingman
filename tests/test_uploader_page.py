@@ -1073,27 +1073,38 @@ def test_stopping_an_upload_shares_the_slot_it_cannot_be_live_beside():
 def test_the_split_controls_exist_and_are_wired():
     """The split feature's surface: a checkbox answering the length
     question (enabled from ONE selected, unlike Stitch's two), a hidden
-    button that exists only while it is ticked, and both sides of its
-    bridge call."""
+    button shown while EITHER tick is on, and both sides of its bridge
+    call."""
     assert 'id="lab-split"' in HTML and 'id="f-split"' in HTML
-    assert re.search(r'id="btn-split-local"[^>]*hidden', HTML)
+    assert re.search(r'id="btn-process-local"[^>]*hidden', HTML)
     # Wider enable rule than Stitch: one video can be over the limit.
     assert re.search(r"WM\.setEnabled\('f-split', selected > 0\)", PANEL_JS)
     assert re.search(r"WM\.setEnabled\('f-stitch', selected > 1\)", PANEL_JS)
     # A tick left behind by a vanished selection must not survive.
     assert re.search(r"selected < 1\) WM\.el\('f-split'\)\.checked = false", PANEL_JS)
+    # The button's meaning follows the checkboxes: stitch alone joins to
+    # one kept file, split alone makes parts, both joins then segments.
+    # Hidden only when NEITHER tick is on.
     assert re.search(
-        r"btn-split-local'\)\.hidden = !WM\.el\('f-split'\)\.checked", PANEL_JS
+        r"btn-process-local'\)\.hidden =\s*"
+        r"!WM\.el\('f-split'\)\.checked && !WM\.el\('f-stitch'\)\.checked",
+        PANEL_JS,
     )
-    assert "WM.send('split_locally', WM.list.selectedIds());" in PANEL_JS
-    assert "split_locally" in API_PY
-    # The tick is the button's ONLY visibility signal, so its change
-    # handler must run the same synchronous refresh the selection events
-    # run. The first cut wired it to refreshPanelText alone (an async
-    # round trip that paints nothing until it returns), so ticking the box
-    # showed no button until the next selection change.
     assert re.search(
-        r"f-split'\)\.addEventListener\('change', function \(\) \{\s*"
-        r"refreshPanelText\(\);\s*refreshEnabled\(\);",
+        r"WM\.send\('process_locally',\s*WM\.list\.selectedIds\(\),\s*"
+        r"WM\.el\('f-stitch'\)\.checked,\s*WM\.el\('f-split'\)\.checked\);",
+        PANEL_JS,
+    )
+    assert "process_locally" in API_PY
+    # The ticks are the button's ONLY visibility signals, so each change
+    # handler must run the same synchronous refresh the selection events
+    # run. The first cut wired the tick to refreshPanelText alone (an
+    # async round trip that paints nothing until it returns), so ticking a
+    # box showed no button until the next selection change.
+    assert re.search(
+        r"function refreshOnTick\(\) \{\s*"
+        r"refreshPanelText\(\);\s*refreshEnabled\(\);\s*\}\s*"
+        r"WM\.el\('f-stitch'\)\.addEventListener\('change', refreshOnTick\);\s*"
+        r"WM\.el\('f-split'\)\.addEventListener\('change', refreshOnTick\);",
         PANEL_JS,
     )

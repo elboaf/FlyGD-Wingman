@@ -1326,10 +1326,19 @@ somewhere stale and nothing on that screen is worth reviewing.
       showing `<stem> - part 1.mkv`, `part 2.mkv`, … as ordinary rows.
       Select one part and upload it with the plain (unticked) Upload path;
       delete the rest. Nothing uploads automatically.
-- [ ] **Split controls follow the selection.** Select nothing: both
-      checkboxes untick and `Process locally` disappears. Select one:
-      `Split…` is live while `Stitch…` is greyed. Tick split, then drop the
-      selection to zero: the button hides again.
+- [ ] **Stitch locally (workflow 2, stitch ticked).** Select two or more
+      recordings, tick `Stitch selected into one video` ONLY, and press
+      `Process locally`. Expected: `Stitched into <stem> - stitched.mkv in
+      the recording folder.`, one new row, originals untouched, no parts.
+- [ ] **Both ticks locally.** Tick BOTH boxes, press `Process locally`.
+      Expected: parts named `<stem> - part N.mkv` and NO
+      `<stem> - stitched.mkv` — join first, then segment, the same
+      composition as the upload-all path.
+- [ ] **The button follows the ticks immediately.** Ticking EITHER box
+      shows `Process locally` at once (no selection change needed — the
+      first cut only refreshed on selection events); unticking both hides
+      it. Select nothing: both checkboxes untick and the button hides.
+      Select one: `Split…` is live while `Stitch…` is greyed.
 - [ ] **Open folder opens the watched folder.** Press it in the list footer
       with a folder configured: Explorer opens on that folder. This is the
       only affordance on this screen that reaches the FILES — double-click

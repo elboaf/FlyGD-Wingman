@@ -1113,8 +1113,8 @@ class Api:
     def start_upload(self, title, description, stitch, split, ids) -> None:
         return self._uploader.start_upload(title, description, stitch, split, ids)
 
-    def split_locally(self, ids) -> None:
-        return self._uploader.split_locally(ids)
+    def process_locally(self, ids, stitch, split) -> None:
+        return self._uploader.process_locally(ids, stitch, split)
 
     def cancel_upload(self) -> None:
         return self._uploader.cancel_upload()

@@ -1191,25 +1191,48 @@ class UploaderController:
         finally:
             self._work_gate.release_upload()
 
-    def split_locally(self, ids) -> None:
-        """Workflow 2: stitch + split to the recording folder, upload nothing.
+    def process_locally(self, ids, do_stitch, do_split) -> None:
+        """Workflow 2: stitch and/or split to the recording folder, upload
+        nothing.
 
-        The parts land in the recording folder as ordinary files, so the
-        next list rebuild lists them like any recording -- which is the
-        whole design: the user picks the worthwhile part(s) themselves,
+        The produced files land in the recording folder as ordinary files,
+        so the next list rebuild lists them like any recording -- which is
+        the whole design: the user picks the worthwhile part(s) themselves,
         uploads them with the plain path, and deletes the rest. No new row
         machinery, no auto-upload of a pile of 15-minute videos nobody
         asked for.
 
+        *do_stitch* joins the selection into ONE file (`<stem> - stitched`);
+        *do_split* segments into `<15-minute parts`. Both together is the
+        same composition as the upload path: join the timeline first, THEN
+        segment the join. Sources are always kept -- this action creates,
+        never destroys.
+
         Sends-unconditionally posture, same as Upload: a page-side guard
         would swallow Python's sentence for why nothing happened.
         """
+        do_stitch, do_split = bool(do_stitch), bool(do_split)
         pairs = [
             (rid, info) for rid in ids if (info := self._rows.resolve(rid)) is not None
         ]
         if not pairs:
             self._ports.alert(
-                "warning", "No Selection", "Select at least one video to split."
+                "warning", "No Selection", "Select at least one video to process."
+            )
+            return
+        if not do_stitch and not do_split:
+            # The page hides the button unless a box is ticked; a stale
+            # page still gets a sentence rather than a silent no-op.
+            self._ports.alert(
+                "warning", "Nothing to Do", "Tick Stitch or Split to process locally."
+            )
+            return
+        if do_stitch and len(pairs) < 2 and not do_split:
+            # Same rule as the upload path: a join of one file is not a
+            # join. A split tick rescues the click, because splitting one
+            # recording is the feature working as intended.
+            self._ports.alert(
+                "warning", "Stitch", "Select at least two videos to stitch."
             )
             return
         claim = self._work_gate.claim_upload()
@@ -1224,7 +1247,7 @@ class UploaderController:
         try:
             self._split_thread = threading.Thread(
                 target=self._run_claimed_upload,
-                args=(self._split_local_worker, pairs),
+                args=(self._split_local_worker, pairs, do_stitch, do_split),
                 daemon=True,
             )
             self._split_thread.start()
@@ -1233,16 +1256,18 @@ class UploaderController:
             self._work_gate.release_upload()
             raise
 
-    def _unique_part_path(self, folder: Path, stem: str, index: int) -> Path:
-        base = f"{stem} - part {index}"
-        candidate = folder / f"{base}.mkv"
+    def _unique_stem_path(self, folder: Path, base_stem: str) -> Path:
+        candidate = folder / f"{base_stem}.mkv"
         n = 2
         while candidate.exists():
-            candidate = folder / f"{base} ({n}).mkv"
+            candidate = folder / f"{base_stem} ({n}).mkv"
             n += 1
         return candidate
 
-    def _split_local_worker(self, pairs) -> None:
+    def _unique_part_path(self, folder: Path, stem: str, index: int) -> Path:
+        return self._unique_stem_path(folder, f"{stem} - part {index}")
+
+    def _split_local_worker(self, pairs, do_stitch, do_split) -> None:
         try:
             folder = self._state.recording_dir
             if folder is None or not Path(folder).is_dir():
@@ -1256,8 +1281,9 @@ class UploaderController:
             stem = ordered[0].path.stem
             sources = [i.path for i in ordered]
             written: list[Path] = []
+            merged_name: str | None = None
             try:
-                if len(sources) > 1:
+                if do_stitch and len(sources) > 1:
                     self._ports.progress(
                         0.0,
                         "Stitching with FFmpeg…",
@@ -1267,24 +1293,41 @@ class UploaderController:
                     with stitch.stitched(
                         sources, self._state.ffmpeg_bin, paths.tmp_dir()
                     ) as merged:
-                        written = self._write_parts(merged, folder, stem)
+                        if do_split:
+                            written = self._write_parts(merged, folder, stem)
+                        else:
+                            # Move the join itself into the folder, inside
+                            # the CM: the temp exists only within it, and
+                            # the move makes its cleanup a no-op.
+                            dest = self._unique_stem_path(folder, f"{stem} - stitched")
+                            shutil.move(str(merged), str(dest))
+                            merged_name = dest.name
+                elif do_split:
+                    written = self._write_parts(ordered[0].path, folder, stem)
                 else:
-                    written = self._write_parts(infos[0].path, folder, stem)
+                    # Unreachable: do_stitch with one source was refused at
+                    # dispatch, and neither-flag was refused there too.
+                    return
             finally:
                 # Clear the indeterminate bar on every exit; the error paths
                 # below then own the strip.
                 self._ports.progress(0.0, busy=False)
             self.list_rows()
-            self._ports.status(
-                f"Split into {len(written)} parts in the recording folder.",
-                "SUCCESS",
-                busy=False,
-            )
+            if merged_name is not None:
+                done = f"Stitched into {merged_name} in the recording folder."
+            elif do_stitch:
+                done = (
+                    f"Stitched and split into {len(written)} parts in the "
+                    "recording folder."
+                )
+            else:
+                done = f"Split into {len(written)} parts in the recording folder."
+            self._ports.status(done, "SUCCESS", busy=False)
         except (stitch.StitchError, stitch.SplitError) as exc:
-            self._ports.alert("error", "Split Failed", str(exc))
+            self._ports.alert("error", "Process Failed", str(exc))
             self._ports.status(f"Error: {exc}", "ERROR", busy=False)
         except Exception as exc:
-            logger.warning("Local split failed", exc_info=True)
+            logger.warning("Local process failed", exc_info=True)
             self._ports.status(f"Error: {exc}", "ERROR", busy=False)
 
     def _write_parts(self, src, folder: Path, stem: str) -> list[Path]:

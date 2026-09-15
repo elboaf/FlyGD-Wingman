@@ -1481,7 +1481,9 @@ def join_split(api):
         assert not thread.is_alive()
 
 
-def test_split_locally_lands_parts_in_the_recording_folder(monkeypatch, tmp_path):
+def test_process_locally_split_lands_parts_in_the_recording_folder(
+    monkeypatch, tmp_path
+):
     api, _window, _rows = api_with(tmp_path)
     sent = fakes.record_pushes(api)
 
@@ -1499,7 +1501,7 @@ def test_split_locally_lands_parts_in_the_recording_folder(monkeypatch, tmp_path
 
     monkeypatch.setattr("wingman.upload.controller.stitch.segmented", fake_segmented)
 
-    api.split_locally(["r1"])
+    api.process_locally(["r1"], False, True)
     join_split(api)
 
     assert (tmp_path / "r1 - part 1.mkv").exists()
@@ -1515,11 +1517,11 @@ def test_split_locally_lands_parts_in_the_recording_folder(monkeypatch, tmp_path
     assert not api._uploader.busy()
 
 
-def test_split_locally_refuses_while_an_upload_is_running(tmp_path):
+def test_process_locally_refuses_while_an_upload_is_running(tmp_path):
     api, _window, _rows = api_with(tmp_path)
     assert api._work_gate.claim_upload()
     try:
-        api.split_locally(["r1"])
+        api.process_locally(["r1"], False, True)
         assert api._alert.raised == [
             ("warning", "Busy", "An upload is already in progress.")
         ]
@@ -1528,10 +1530,103 @@ def test_split_locally_refuses_while_an_upload_is_running(tmp_path):
         api._work_gate.release_upload()
 
 
-def test_split_locally_with_no_selection_says_so(tmp_path):
+def test_process_locally_with_no_selection_says_so(tmp_path):
     api, _window, _rows = api_with(tmp_path)
-    api.split_locally([])
+    api.process_locally([], False, True)
     assert api._alert.raised == [
-        ("warning", "No Selection", "Select at least one video to split.")
+        ("warning", "No Selection", "Select at least one video to process.")
+    ]
+    assert api._uploader._split_thread is None
+
+
+# ----- process locally: stitch paths ----------------------------------------
+# Stitch ticked means the LOCAL pipeline can join: one file kept in the
+# recording folder, sources untouched. Both ticks compose exactly as the
+# upload path does -- join the timeline first, then segment the join.
+
+
+def test_process_locally_stitch_keeps_one_merged_file(monkeypatch, tmp_path):
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+
+    import contextlib
+
+    @contextlib.contextmanager
+    def fake_stitched(sources, ffmpeg_bin, tmp):
+        tmp.mkdir(parents=True, exist_ok=True)
+        merged = tmp / "merged.mkv"
+        merged.write_bytes(b"x")
+        yield merged
+
+    monkeypatch.setattr("wingman.upload.controller.stitch.stitched", fake_stitched)
+
+    api.process_locally(["r1", "r2"], True, False)
+    join_split(api)
+
+    # Named for the earliest recording, in the recording folder; the
+    # sources are untouched and NO parts were made.
+    assert (tmp_path / "r1 - stitched.mkv").exists()
+    assert not list(tmp_path.glob("* - part *.mkv"))
+    assert fakes.payloads(sent, "onStatus")[-1]["text"] == (
+        "Stitched into r1 - stitched.mkv in the recording folder."
+    )
+    assert fakes.payloads(sent, "onRows")
+    assert not api._uploader.busy()
+
+
+def test_process_locally_stitch_and_split_makes_parts_not_a_merged_file(
+    monkeypatch, tmp_path
+):
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+
+    import contextlib
+
+    @contextlib.contextmanager
+    def fake_stitched(sources, ffmpeg_bin, tmp):
+        tmp.mkdir(parents=True, exist_ok=True)
+        merged = tmp / "merged.mkv"
+        merged.write_bytes(b"x")
+        yield merged
+
+    @contextlib.contextmanager
+    def fake_segmented(src, tmp, ffmpeg_bin):
+        tmp.mkdir(parents=True, exist_ok=True)
+        made = [tmp / f"split-x{i}.mkv" for i in (1, 2)]
+        for path in made:
+            path.write_bytes(b"x")
+        yield made
+
+    monkeypatch.setattr("wingman.upload.controller.stitch.stitched", fake_stitched)
+    monkeypatch.setattr("wingman.upload.controller.stitch.segmented", fake_segmented)
+
+    api.process_locally(["r1", "r2"], True, True)
+    join_split(api)
+
+    assert (tmp_path / "r1 - part 1.mkv").exists()
+    assert (tmp_path / "r1 - part 2.mkv").exists()
+    assert not (tmp_path / "r1 - stitched.mkv").exists()
+    assert fakes.payloads(sent, "onStatus")[-1]["text"] == (
+        "Stitched and split into 2 parts in the recording folder."
+    )
+
+
+def test_process_locally_stitching_one_recording_is_refused(tmp_path):
+    """Same rule as the upload path: a join of one file is not a join."""
+    api, _window, _rows = api_with(tmp_path)
+    api.process_locally(["r1"], True, False)
+    assert api._alert.raised == [
+        ("warning", "Stitch", "Select at least two videos to stitch.")
+    ]
+    assert api._uploader._split_thread is None
+
+
+def test_process_locally_with_neither_box_ticked_says_so(tmp_path):
+    """The page hides the button unless a box is ticked; a stale page gets
+    a sentence rather than a silent no-op."""
+    api, _window, _rows = api_with(tmp_path)
+    api.process_locally(["r1"], False, False)
+    assert api._alert.raised == [
+        ("warning", "Nothing to Do", "Tick Stitch or Split to process locally.")
     ]
     assert api._uploader._split_thread is None
