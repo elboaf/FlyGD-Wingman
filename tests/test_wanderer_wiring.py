@@ -28,14 +28,14 @@ def test_api_composes_nonsecret_state_and_transaction_facades(tmp_path):
         assert state["enabled"] is False
         assert state["credential_present"] is False
         result = api.test_wanderer_connection(
-            "https://EXAMPLE.test:443/prefix/", "map", ""
+            "https://EXAMPLE.test:443/prefix/map/", ""
         )
         assert not result["applied"] and not result["test_accepted"]
         assert result["acknowledged"]["base_url"] == ""
         assert api.set_wanderer_enabled(True)["applied"]
         assert settings.load()["wanderer"]["enabled"]
         result = api.test_wanderer_connection(
-            "http://unsafe.example", "map", "never-return-this"
+            "http://unsafe.example/map", "never-return-this"
         )
         assert not result["applied"]
         assert "never-return-this" not in json.dumps(result)
@@ -241,11 +241,20 @@ def test_status_copy_explains_every_safe_health_state(status):
 
 def test_invalid_configuration_copy_guides_input_correction():
     message = copy_mod.wanderer_status("error", "invalid_configuration")
-    assert message == (
-        "Check the Wanderer application URL, map and token, then test again."
-    )
+    assert message == "Check the Wanderer map URL and token, then test again."
     assert message != copy_mod.wanderer_status("error", "transport_error")
     assert message != copy_mod.wanderer_status("error", "service_unavailable")
+
+
+@pytest.mark.parametrize(
+    "status,code", [("setup_incomplete", None), ("error", "redirect_refused")]
+)
+def test_connection_guidance_names_the_single_map_url_field(status, code):
+    message = copy_mod.wanderer_status(status, code)
+    assert "map URL" in message
+    assert "application URL" not in message
+    if status == "setup_incomplete":
+        assert "token" in message and "test" in message
 
 
 @pytest.mark.parametrize("code", get_args(ErrorCode))

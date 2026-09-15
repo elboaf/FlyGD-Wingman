@@ -432,7 +432,7 @@ def test_custom_alert_facades_are_exact_single_line_delegates(facade, delegate, 
     [
         ("wanderer_state", "state", []),
         ("set_wanderer_enabled", "set_enabled", ["enabled"]),
-        ("test_wanderer_connection", "test_connection", ["base", "map", "token"]),
+        ("test_wanderer_connection", "test_connection", ["map_url", "token"]),
         ("remove_wanderer_connection", "remove_connection", ["revision"]),
     ],
 )

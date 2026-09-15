@@ -40,7 +40,7 @@ def test_first_setup_protects_binding_then_saves_before_single_runtime_commit(
     monkeypatch.setattr(settings, "_save_locked", save)
     try:
         result = rig.controller.test_connection(
-            " HTTPS://WANDERER.example:443/prefix/ ", " map ", TOKEN
+            " HTTPS://WANDERER.example:443/prefix/map/ ", TOKEN
         )
         assert result["applied"] and result["persisted"] and result["test_accepted"]
         assert result["test_error"] is None
@@ -69,7 +69,7 @@ def test_blank_token_reuses_only_current_normalized_binding_without_disk_reload(
     monkeypatch.setattr(rig.store, "load", forbidden)
     monkeypatch.setattr(rig.store, "replace", forbidden)
     result = rig.controller.test_connection(
-        " https://WANDERER.example:443/prefix/ ", " map ", ""
+        " https://WANDERER.example:443/prefix/map/ ", ""
     )
     assert result["test_accepted"]
     assert result["acknowledged"]["revision"] == 0
@@ -77,14 +77,21 @@ def test_blank_token_reuses_only_current_normalized_binding_without_disk_reload(
 
 
 @pytest.mark.parametrize(
-    "base,map_id", [("https://other.example", "map"), (BASE, "other")]
+    "base,map_id",
+    [
+        ("https://other.example", "map"),
+        (BASE, "other"),
+        (BASE, "Map"),
+        ("https://wanderer.example/Prefix", "map"),
+        ("https://wanderer.example:8443/prefix", "map"),
+    ],
 )
 def test_changed_binding_blank_token_refused_even_if_old_file_matches(
     rig, base, map_id
 ):
     rig.store.replace(base, map_id, "stranded-token")
     before = rig.store.snapshot()
-    result = rig.controller.test_connection(base, map_id, "")
+    result = rig.controller.test_connection(base + "/" + map_id, "")
     assert (
         not result["applied"]
         and not result["persisted"]
@@ -94,6 +101,90 @@ def test_changed_binding_blank_token_refused_even_if_old_file_matches(
     assert result["acknowledged"]["map_identifier"] == "map"
     assert rig.store.snapshot() == before
     assert rig.worker._request_thread is None
+
+
+@pytest.mark.parametrize(
+    "map_url,token",
+    [
+        ("https://wanderer.example", TOKEN),
+        ("http://unsafe.example/map", TOKEN),
+        ("https://SENSITIVE_SENTINEL.example/map?token=private", TOKEN),
+        (BASE + "/map\n", TOKEN),
+        (BASE + "/map", "SENSITIVE_SENTINEL\n"),
+        (None, TOKEN),
+        (BASE + "/map", None),
+    ],
+)
+def test_invalid_submitted_connection_preserves_acknowledgement_and_never_writes_or_tests(
+    rig, map_url, token, caplog
+):
+    before = rig.controller.state()
+    protected = rig.store.snapshot()
+    result = rig.controller.test_connection(map_url, token)
+    assert not result["applied"] and not result["persisted"]
+    assert not result["test_accepted"]
+    assert result["error"]
+    assert rig.controller.state() == before
+    assert rig.store.snapshot() == protected
+    assert not paths.settings_file().exists()
+    assert rig.worker._request_thread is None
+    assert "SENSITIVE_SENTINEL" not in json.dumps(result) + caplog.text
+    assert TOKEN not in json.dumps(result) + caplog.text
+
+
+@pytest.mark.parametrize("base,map_id", [(BASE, ""), ("", "map")])
+@pytest.mark.parametrize("operation", ["test", "remove"])
+def test_partial_saved_binding_survives_reads_toggle_and_invalid_test_until_replaced_or_removed(
+    tmp_path, base, map_id, operation
+):
+    section = {"enabled": False, "base_url": base, "map_identifier": map_id}
+    rig = Rig(tmp_path, previews=False, section=section)
+    protected = rig.store.snapshot()
+    try:
+        rig.start()
+        state = rig.controller.state()
+        assert (state["base_url"], state["map_identifier"]) == (base, map_id)
+        assert not state["credential_present"]
+        assert rig.worker._request_thread is None
+        assert rig.controller.set_enabled(True)["persisted"]
+        assert settings.load()["wanderer"] == {**section, "enabled": True}
+        refused = rig.controller.test_connection("", TOKEN)
+        assert not refused["persisted"] and not refused["test_accepted"]
+        assert (
+            refused["acknowledged"]["base_url"],
+            refused["acknowledged"]["map_identifier"],
+        ) == (base, map_id)
+        assert rig.store.snapshot() == protected
+        assert rig.worker._request_thread is None
+        if operation == "test":
+            result = rig.controller.test_connection(
+                "https://new.example/prefix/New-Map", "new-token"
+            )
+            expected = {
+                "enabled": True,
+                "base_url": "https://new.example/prefix",
+                "map_identifier": "New-Map",
+            }
+            assert result["test_accepted"]
+            assert rig.client.call(1).args == (
+                "https://new.example/prefix",
+                "New-Map",
+                "new-token",
+                None,
+            )
+            assert (
+                rig.store.load("https://new.example/prefix", "New-Map") == "new-token"
+            )
+        else:
+            result = rig.controller.remove_connection(
+                refused["acknowledged"]["revision"]
+            )
+            expected = {"enabled": True, "base_url": "", "map_identifier": ""}
+            assert rig.store.snapshot() is None
+        assert result["persisted"]
+        assert settings.load()["wanderer"] == expected
+    finally:
+        rig.close()
 
 
 @pytest.mark.parametrize("operation", ["test", "remove"])
@@ -122,7 +213,7 @@ def test_failed_settings_compensates_exact_ciphertext_without_runtime_admission(
 
     monkeypatch.setattr(settings, "_save_locked", fail)
     result = (
-        rig.controller.test_connection("https://new.example", "new-map", "candidate")
+        rig.controller.test_connection("https://new.example/new-map", "candidate")
         if operation == "test"
         else rig.controller.remove_connection(state["revision"])
     )
@@ -148,7 +239,7 @@ def test_first_setup_failed_save_restores_absent_credential(tmp_path, monkeypatc
 
     monkeypatch.setattr(settings, "_save_locked", fail)
     try:
-        result = rig.controller.test_connection(BASE, "map", TOKEN)
+        result = rig.controller.test_connection(BASE + "/map", TOKEN)
         assert not result["persisted"]
         assert rig.store.snapshot() is None
         assert not result["acknowledged"]["credential_present"]
@@ -170,7 +261,7 @@ def test_failed_compensation_closes_admission_and_does_not_claim_healthy_rollbac
     monkeypatch.setattr(settings, "_save_locked", fail)
     monkeypatch.setattr(rig.store, "restore", fail)
     result = (
-        rig.controller.test_connection(BASE, "map", "candidate")
+        rig.controller.test_connection(BASE + "/map", "candidate")
         if operation == "test"
         else rig.controller.remove_connection(before["revision"])
     )
@@ -181,7 +272,9 @@ def test_failed_compensation_closes_admission_and_does_not_claim_healthy_rollbac
     assert "restore" in result["error"].lower() and "restart" in result["error"].lower()
     assert rig.controller.state()["status"] == "persistence_error"
     assert not rig.controller.start()
-    assert not rig.controller.test_connection(BASE, "map", "candidate")["test_accepted"]
+    assert not rig.controller.test_connection(BASE + "/map", "candidate")[
+        "test_accepted"
+    ]
     assert rig.host.closed and rig.host.callback is None
     assert rig.worker._request_thread is None
     assert rig.controller._token is None
@@ -198,7 +291,7 @@ def test_snapshot_failure_refuses_before_any_protected_or_settings_write(
         raise OSError(TOKEN)
 
     monkeypatch.setattr(rig.store, "snapshot", fail)
-    result = rig.controller.test_connection(BASE, "new-map", "candidate")
+    result = rig.controller.test_connection(BASE + "/new-map", "candidate")
     assert not result["persisted"] and not result["test_accepted"]
     assert rig.store._path.read_bytes() == protected
     assert rig.controller.state() == before
@@ -211,9 +304,7 @@ def test_successful_save_survives_worker_owner_start_failure(rig, monkeypatch):
         raise RuntimeError(TOKEN)
 
     monkeypatch.setattr(rig.controller, "_thread_factory", fail)
-    result = rig.controller.test_connection(
-        "https://new.example", "new-map", "candidate"
-    )
+    result = rig.controller.test_connection("https://new.example/new-map", "candidate")
     assert result["applied"] and result["persisted"] and result["error"] is None
     assert not result["test_accepted"] and result["test_error"]
     assert settings.load()["wanderer"]["base_url"] == "https://new.example"
@@ -224,11 +315,11 @@ def test_successful_save_survives_worker_owner_start_failure(rig, monkeypatch):
 
 
 def test_new_saved_configuration_is_distinct_from_busy_test_admission(rig):
-    first = rig.controller.test_connection(BASE, "map", "")
+    first = rig.controller.test_connection(BASE + "/map", "")
     assert first["test_accepted"]
     call = rig.client.call(1)
     owner = rig.worker._request_thread
-    result = rig.controller.test_connection("https://new.example", "new", "new-token")
+    result = rig.controller.test_connection("https://new.example/new", "new-token")
     assert result["applied"] and result["persisted"]
     assert result["error"] is None
     assert not result["test_accepted"] and result["test_error"]
@@ -265,7 +356,7 @@ def test_shutdown_during_grouped_save_reports_persisted_but_no_test_or_cached_to
     monkeypatch.setattr(settings, "_save_locked", save)
     owner = threading.Thread(
         target=lambda: results.append(
-            rig.controller.test_connection(BASE, "new", "new-token")
+            rig.controller.test_connection(BASE + "/new", "new-token")
         )
     )
     owner.start()

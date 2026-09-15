@@ -116,8 +116,7 @@ function assertContent() {
       assert.match(WM.el('dlg-select-detail').textContent, /home chain and fleet route planning/);
     }
   } else if (family === 'wanderer') {
-    assert.equal(WM.el('wanderer-url').value, 'https://wanderer.example');
-    assert.equal(WM.el('wanderer-map').value, 'home-chain');
+    assert.equal(WM.el('wanderer-url').value, 'https://wanderer.example/home-chain');
     assert.equal(WM.el('wanderer-token').value, '');
     assert.equal(WM.el('wanderer-url-draft').textContent, '');
     assert.match(WM.el('wanderer-health').textContent, /Connected to Wanderer/);
@@ -286,7 +285,6 @@ function mutations() {
       assert.equal(WM.el('companion-status').textContent, 'Loading companions…');
     } else if (family === 'wanderer') {
       assert.equal(WM.el('wanderer-url').value, '');
-      assert.equal(WM.el('wanderer-map').value, '');
       assert.equal(WM.el('wanderer-token').value, '');
       assert.equal(WM.el('wanderer-coverage').textContent, '');
       assert.notEqual(WM.el('wanderer-credential').textContent, 'Token stored for this connection.');
@@ -297,7 +295,7 @@ function mutations() {
     }
     staging = false; reply = liveReply; WM.openSettingsSection(data.section); await tick();
     if (family === 'companions') assert.match(WM.el('companion-list').textContent, /Live companion/);
-    else if (family === 'wanderer') assert.equal(WM.el('wanderer-url').value, 'https://live.example');
+    else if (family === 'wanderer') assert.equal(WM.el('wanderer-url').value, 'https://live.example/live-map');
     else assert.match(WM.el('sharing-connection').textContent, /https:\/\/live.example/);
     console.log('PASS current screenshot cold cleanup'); return;
   }
@@ -343,9 +341,9 @@ function mutations() {
     const rebound = {...clone(live.state), revision: 8, generation: 7, map_identifier: 'new-binding'};
     window.onWandererState(rebound);
     if (buffered) {
-      assert.equal(WM.el('wanderer-map').value, 'home-chain');
+      assert.equal(WM.el('wanderer-url').value, 'https://wanderer.example/home-chain');
       run(data.cleanup);
-      assert.equal(WM.el('wanderer-map').value, 'new-binding');
+      assert.equal(WM.el('wanderer-url').value, 'https://live.example/new-binding');
     }
     assert.equal(WM.el('wanderer-health').textContent, 'Connecting…');
     assert.equal(WM.el('wanderer-coverage').textContent, '');
@@ -423,7 +421,7 @@ function mutations() {
     console.log('PASS current screenshot fleet-focused'); return;
   }
   if (family === 'wanderer') {
-    for (const [name, value] of [['url', 'https://private-draft.example'], ['map', 'private-map'], ['token', 'private-token']]) {
+    for (const [name, value] of [['url', 'https://private-draft.example/private-map'], ['token', 'private-token']]) {
       WM.el('wanderer-' + name).value = value;
       WM.el('wanderer-' + name).dispatchEvent({type: 'input'});
     }
@@ -468,8 +466,7 @@ function mutations() {
     run(data.cleanup); await tick();
     assert.equal(calls.length, 0, 'cleanup must stay local too');
     if (family === 'wanderer') {
-      assert.equal(WM.el('wanderer-url').value, 'https://live.example');
-      assert.equal(WM.el('wanderer-map').value, 'live-map-updated');
+      assert.equal(WM.el('wanderer-url').value, 'https://live.example/live-map-updated');
       assert.equal(WM.el('wanderer-token').value, '', 'never restore secret drafts');
     } else if (family === 'companions') {
       assert.match(WM.el('companion-list').textContent, /Live companion updated/);
@@ -510,7 +507,7 @@ function mutations() {
       ['companion_preview_reset_geometry', 'screenshot-map', 7]);
   } else if (family === 'wanderer') {
     assert.deepEqual(calls.find(call => call[0] === 'test_wanderer_connection'),
-      ['test_wanderer_connection', 'https://live.example', 'live-map-updated', '']);
+      ['test_wanderer_connection', 'https://live.example/live-map-updated', '']);
   }
   console.log('PASS current screenshot ' + data.key + ' ' + data.scenario);
 })().catch(error => { console.error(error); process.exitCode = 1; });

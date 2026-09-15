@@ -265,8 +265,10 @@ its global status-strip toggle; its boot hydration is independent of section
 visibility. Section re-entry retries only failed initial hydration, never adds
 reads after success. `fleetsharing.js` owns the shared setup view, not worker lifetime.
 `wanderer.js` owns the Wanderer names card in Settings > Previews; health pushes
-never overwrite field drafts. Test saves submitted URL/map/token as one connection;
-blank tokens reuse only the current normalized binding, and Remove clears all three
+never overwrite field drafts. The form takes a full map URL and token; Python
+extracts the server address/map identifier, preserving the saved binding format.
+Test saves the submitted connection; blank tokens reuse only the current normalized
+binding, and Remove clears the server address, map identifier and token
 while retaining the independent enable preference.
 `WM.route` switches destinations, `WM.section` switches
 Settings groups; both have enter/leave contracts. Uploading and Previews also have
@@ -321,7 +323,7 @@ Hard rules from `DESIGN.md` worth knowing before you touch a screen:
 - Settings has no Save button: every field commits through a per-field endpoint
   returning `{applied, persisted, error}`. Discrete controls commit on change;
   free text commits on Enter or an explicit button, never on blur. Wanderer's
-  bound URL/map/token are the scoped grouped exception: Test saves the connection,
+  bound map URL/token fields are the scoped grouped exception: Test saves the connection,
   while each field still owns its drafts. Nothing commits before the first payload
   renders.
 - Title-bar space is the scarce resource; `MIN_WIDTH`/`MIN_HEIGHT` in
