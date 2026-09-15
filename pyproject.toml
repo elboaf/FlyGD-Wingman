@@ -92,6 +92,7 @@ packages = [
     "wingman.preview",
     "wingman.alerts",
     "wingman.evesettings",
+    "wingman.settingssharing",
     "wingman.eveauth",
     "wingman.eveskills",
     "wingman.telemetry",
