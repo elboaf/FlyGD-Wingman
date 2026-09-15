@@ -1862,4 +1862,90 @@
 
     refresh(false);
   }());
+
+  // ---- Configuration backup (Settings export/import) --------------------
+  // Two user-initiated file operations and one confirm-owned review; no
+  // field commits, so the only hydration rule is that neither button acts
+  // before the first payload has painted. Import is review-then-apply: the
+  // summary Python computed -- never one re-derived here -- is what the
+  // confirm shows, and Cancel discards the pending offer so a superseded
+  // review_id can never be applied later.
+  (function () {
+    var msg = WM.el('msg-backup');
+    // Payload gate, owned HERE rather than the form's `hydrated` flag: that
+    // flag lives in the renderer block above and is out of this IIFE's
+    // scope, so reading it from a handler was a silent ReferenceError --
+    // the buttons rendered but every click died before its first line.
+    var sawPayload = false;
+    document.addEventListener('wm:settings', function () {
+      sawPayload = true;
+    });
+
+    function say(text, tone) {
+      msg.textContent = text || '';
+      msg.className = 'field-msg' + (tone ? ' ' + tone : '');
+      msg.hidden = !text;
+    }
+
+    function refreshSettings() {
+      // get_settings is a return, not a push (app.js argues this at the
+      // startup read); after an apply the whole form re-renders through
+      // the same onSettings handler that hydrated it at load, so every
+      // card reads the imported document rather than its stale copy.
+      WM.send('get_settings').then(function (payload) {
+        if (payload) { window.onSettings(payload); }
+      });
+    }
+
+    WM.el('btn-settings-export').addEventListener('click', function () {
+      if (!sawPayload) { return; }
+      say('');
+      WM.send('settings_export_file').then(function (reply) {
+        if (!reply) { say('The export could not be written.', 'err'); return; }
+        if (reply.cancelled) { return; }
+        if (reply.ok) { say('Settings exported to ' + reply.path + '.'); }
+        else { say(reply.error || 'The export could not be written.', 'err'); }
+      });
+    });
+
+    WM.el('btn-settings-import').addEventListener('click', function () {
+      if (!sawPayload) { return; }
+      say('');
+      WM.send('settings_import_read').then(function (reply) {
+        if (!reply) { say('The import could not be read.', 'err'); return; }
+        if (reply.cancelled) { return; }
+        if (!reply.ok || !reply.review_id) {
+          say(reply.error || 'That file is not a Wingman settings export.', 'err');
+          return;
+        }
+        confirmImport(reply);
+      });
+    });
+
+    function confirmImport(reply) {
+      var changed = (reply.summary && reply.summary.changed) || [];
+      var body = changed.length
+        ? 'This will replace ' + changed.length + ' settings: '
+          + changed.join(', ') + '.'
+        : 'Nothing in this file differs from your current settings.';
+      WM.confirm('Import settings?',
+                 body + ' Your Discord webhook is never imported.',
+                 {destructive: changed.length > 0})
+        .then(function (yes) {
+          if (!yes) {
+            WM.send('settings_import_discard', reply.review_id).catch(function () {});
+            return;
+          }
+          WM.send('settings_import_apply', reply.review_id).then(function (applied) {
+            if (!applied || !applied.ok) {
+              say((applied && applied.error) || 'The import could not be applied.',
+                  'err');
+              return;
+            }
+            say('Settings imported.');
+            refreshSettings();
+          });
+        });
+    }
+  }());
 }());

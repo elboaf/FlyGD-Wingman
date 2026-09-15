@@ -1,9 +1,19 @@
 """Cadence is enforced by the owner, including the synchronous test seam."""
 
 from dataclasses import replace
+from datetime import timedelta
 from itertools import pairwise
 
-from test_fleetsharing_worker import DEVICE, FakeRelayClient, _worker
+import pytest
+from test_fleetsharing_worker import (
+    DEVICE,
+    NOW,
+    FakeRelayClient,
+    _date,
+    _worker,
+    drive,
+    rig,
+)
 
 
 def test_consecutive_renewal_and_catalogue_cannot_share_a_read_slot():
@@ -112,3 +122,42 @@ def test_retiring_command_history_preserves_active_retry_service_and_bucket_dead
     assert scheduler.choose((Work("fetch_device", "device"),), 71.99) is None
     assert scheduler.choose((active,), 100.99) is None
     assert scheduler.choose((active,), 101) == active
+
+
+@pytest.mark.parametrize("remaining, expected", [(3.01, 2), (3.0, 1), (0.0, 1)])
+def test_due_eligibility_becomes_urgent_near_expiry(remaining, expected):
+    from wingman.fleetsharing.scheduling import Scheduler, Work
+
+    worker, _client, _store, mono = rig()
+    drive(worker, mono, 14)
+    expiry = NOW + timedelta(seconds=mono[0] - 1000 + remaining)
+    worker._eligibility = replace(
+        worker._eligibility,
+        characters=tuple(
+            replace(entry, expires_at=_date(expiry))
+            for entry in worker._eligibility.characters
+        ),
+    )
+    worker._due["eligibility"] = mono[0]
+    work = next(w for w in worker._work(True) if w.key == "eligibility")
+    assert work.priority == expected
+    assert work.due == mono[0]
+    if expected == 1:
+        scheduler = Scheduler()
+        snapshot = Work("read_snapshot", "read", periodic=True)
+        assert scheduler.choose((snapshot, work), mono[0]) == work
+        off = Work("publish_snapshot", "withdraw", priority=0, payload=())
+        assert scheduler.choose((work, off), mono[0]) == off
+
+
+def test_urgent_eligibility_still_obeys_retry_and_shared_read_cadence():
+    from wingman.fleetsharing.scheduling import Scheduler, Work
+
+    scheduler = Scheduler()
+    urgent = Work("fetch_eligibility", "eligibility", priority=1, periodic=True)
+    snapshot = Work("read_snapshot", "read", periodic=True)
+    scheduler.completed(urgent, 10, failed=True)
+    assert scheduler.choose((urgent, snapshot), 10.49) is None
+    assert scheduler.choose((urgent,), 10.5) is None
+    assert scheduler.choose((urgent, snapshot), 10.5) == snapshot
+    assert scheduler.choose((urgent,), 11) == urgent

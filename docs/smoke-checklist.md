@@ -494,11 +494,16 @@ implementation task.
       clears cached names as soon as headers arrive, even with a stalled error
       body, and pauses automatic polling. No fallback to another map or ESI.
 - [ ] **11 — Credential and field lifecycle (NOT RUN for the simplified form).**
-      Enter URL/map/token in any order while names are Off. Test connection (or
-      Enter in any field) saves the complete connection and requests a real test,
-      without enabling names or labels; blur/change never saves. No Apply or
-      Replace buttons remain. A blank token reuses only the same normalized saved
-      URL/map; changing either requires a token. Edit each field while its grouped
+      Paste the full HTTPS URL of the open map and enter its token in either order
+      while names are Off. No separate slug/UUID field should appear. Check a
+      self-hosted URL with a deployment prefix and an existing saved connection;
+      entry must not change saved settings. A partial legacy connection asks for
+      the full map URL without erasing saved values. Missing-map, HTTP, query or
+      fragment URLs show a safe error; no credential-bearing input is echoed.
+      Test connection (or Enter in either field) saves the complete connection
+      and requests a real test, without enabling names or labels; blur/change
+      never saves. No Apply or Replace buttons remain. A blank token reuses only
+      the same normalized saved server/map; changing either requires a token. Edit each field while its grouped
       reply is pending: only still-owned drafts normalize/revert, and a submitted
       password clears without erasing a newer password. Health pushes do not edit
       inputs. Toggle Off/on independently. Remove confirms and clears URL/map/token,

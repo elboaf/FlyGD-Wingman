@@ -59,20 +59,29 @@
     }
     paint();
   };
-  var keys = {enabled: 'enabled', url: 'base_url', map: 'map_identifier'};
-  ['enabled', 'url', 'map', 'token', 'connection', 'test', 'remove'].forEach(function (name) {
+  var keys = {enabled: 'enabled', url: 'url'};
+  ['enabled', 'url', 'token', 'connection', 'test', 'remove'].forEach(function (name) {
     fields[name] = {edit: 0, request: 0, pending: 0, error: '', tail: Promise.resolve()};
   });
 
   function el(name) { return WM.el('wanderer-' + name); }
   function value(name) { return name === 'enabled' ? el(name).checked : el(name).value; }
-  function restore(name) {
-    if (name === 'enabled') el(name).checked = acknowledged.enabled;
-    else if (keys[name]) el(name).value = acknowledged[keys[name]];
+  function baseline(name) {
+    if (name === 'url') {
+      // Partial legacy settings are not a map URL. Opening the form never
+      // rewrites them; Test or Remove remains the explicit recovery action.
+      return acknowledged.base_url && acknowledged.map_identifier
+        ? acknowledged.base_url + '/' + acknowledged.map_identifier : '';
+    }
+    return acknowledged[keys[name]];
   }
-  function dirty(name) { return acknowledged && value(name) !== acknowledged[keys[name]]; }
+  function restore(name) {
+    if (name === 'enabled') el(name).checked = baseline(name);
+    else if (keys[name]) el(name).value = baseline(name);
+  }
+  function dirty(name) { return acknowledged && value(name) !== baseline(name); }
   function connectionBusy() {
-    return fields.url.pending || fields.map.pending || fields.token.pending || fields.remove.pending;
+    return fields.url.pending || fields.token.pending || fields.remove.pending;
   }
 
   // Read only safe fields. A later acknowledgement from another field may
@@ -92,7 +101,7 @@
     if (!acknowledged.enabled) return 'Off — connection settings remain editable.';
     if (acknowledged.credential_error) return 'Token unreadable — enter it again or remove the connection.';
     if (!acknowledged.base_url || !acknowledged.map_identifier || !acknowledged.credential_present) {
-      return 'Setup needed — enter the URL, map and token, then test the connection.';
+      return 'Setup needed — enter the map URL and token, then test the connection.';
     }
     if (!p || p.revision < acknowledged.revision) return 'Connecting…';
     if (!p.previews_enabled || !p.host_available) return 'Waiting for previews — enable them to show names.';
@@ -113,20 +122,20 @@
   }
 
   function paint() {
-    ['enabled', 'url', 'map', 'token'].forEach(function (name) {
+    ['enabled', 'url', 'token'].forEach(function (name) {
       el(name).disabled = !hydrated;
     });
-    ['url', 'map'].forEach(function (name) {
-      el(name + '-draft').textContent = fields[name].pending ? 'Saving submitted connection…'
-        : dirty(name) ? 'Not saved — press Enter or Test connection.' : '';
-    });
+    var incomplete = acknowledged && !!acknowledged.base_url !== !!acknowledged.map_identifier;
+    el('url-draft').textContent = fields.url.pending ? 'Saving submitted connection…'
+      : dirty('url') ? 'Not saved — press Enter or Test connection.'
+      : incomplete ? 'Saved connection is incomplete — paste the full map URL, then test the connection.' : '';
     ['enabled', 'connection', 'test', 'remove'].forEach(function (name) {
       var slot = el(name + '-error');
       slot.textContent = fields[name].error;
       slot.className = 'field-msg err';
       slot.hidden = !fields[name].error;
     });
-    el('token-draft').textContent = 'Stored only on this PC, protected by Windows. Leave blank to reuse only the same saved URL and map.';
+    el('token-draft').textContent = 'Stored only on this PC, protected by Windows. Leave blank to reuse the token for the same saved map URL.';
     var currentHealth = health && acknowledged && health.revision === acknowledged.revision ? health : null;
     var testing = testWaiting || (currentHealth && (currentHealth.test_pending || currentHealth.test_in_flight));
     el('test').disabled = !hydrated || confirming || !!connectionBusy() || !!testing;
@@ -139,8 +148,8 @@
         : currentHealth && currentHealth.test_result_text ? 'Test: ' + currentHealth.test_result_text : '';
     if (!acknowledged) return;
     el('credential').textContent = acknowledged.credential_error ? 'Stored token could not be read.'
-      : acknowledged.credential_present ? 'Token stored for the saved URL and map.'
-        : 'No token stored for the saved URL and map. Remove connection also clears any token saved for an earlier URL or map.';
+      : acknowledged.credential_present ? 'Token stored for the saved map URL.'
+        : 'No token stored for the saved map URL. Remove connection also clears any token saved for an earlier connection.';
     el('health').textContent = connectionText(currentHealth);
     // These are WorkerState's current-session projection counts, never a map
     // roster or persisted recent-character list. Expired names are not available.
@@ -223,7 +232,7 @@
     var request = ++field.request;
     var edit = ++field.edit;
     var owned = {};
-    var inputs = name === 'enabled' ? ['enabled'] : ['url', 'map', 'token'];
+    var inputs = name === 'enabled' ? ['enabled'] : ['url', 'token'];
     inputs.forEach(function (key) {
       owned[key] = fields[key].edit;
       if (key !== name) fields[key].pending += 1;
@@ -292,8 +301,7 @@
 
   function testConnection() {
     if (screenshotFixture || el('test').disabled) return;
-    var base = el('url').value;
-    var map = el('map').value;
+    var mapUrl = el('url').value;
     var token = el('token').value;
     // Clear at submission, never on a later reply over a newer password draft.
     // The secret has no acknowledged baseline or binding history on the page.
@@ -306,13 +314,13 @@
     testPriorResult = health && health.revision === testRevision ? health.test_result : null;
     fields.test.error = '';
     commit('test', function () {
-      var response = WM.send('test_wanderer_connection', base, map, token);
+      var response = WM.send('test_wanderer_connection', mapUrl, token);
       token = null;
       return response;
     });
   }
 
-  ['url', 'map', 'token'].forEach(function (name) {
+  ['url', 'token'].forEach(function (name) {
     el(name).addEventListener('input', function () {
       fields[name].edit += 1;
       interaction += 1;
@@ -333,7 +341,7 @@
     var revision = acknowledged.revision;
     confirming = true;
     paint();
-    WM.confirm('Remove Wanderer connection?', 'Deletes the saved URL, map and protected token from this PC. '
+    WM.confirm('Remove Wanderer connection?', 'Deletes the saved map URL and protected token from this PC. '
       + 'The enabled preference stays unchanged. You will need to enter the connection again.').then(function (ok) {
       confirming = false;
       if (ok && owner === interaction && revision === acknowledged.revision) {

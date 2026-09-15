@@ -83,7 +83,10 @@ function page(hydrate = true, fightrecorder = false, previewSize = false) {
     'msg-gamelogs', 'msg-discord', 'category-draft', 'btn-auth', 'tos-link', 'btn-update-check',
     'btn-update-download', 'btn-update-install', 'restore-preview-positions',
     'restore-preview-positions-status', 'preview-label-size', 'preview-label-size-status',
-    'preview-hide-active-preview', 'preview-hide-active-preview-status'
+    'preview-hide-active-preview', 'preview-hide-active-preview-status',
+    // Configuration backup: the module registers listeners on all three at
+    // load, so an absent id would leave every registration below it dead.
+    'btn-settings-export', 'btn-settings-import', 'msg-backup'
   ];
   if (fightrecorder) ids.push('fr-status', 'btn-fr-check', 'btn-fr-update', 'msg-fightrecorder',
     'preview-minimize-inactive', 'preview-minimize-inactive-status', 'sigbar-enabled', 'sigbar-enabled-status');

@@ -159,14 +159,16 @@
       ? wandererAck('The connection changed. Confirm removal again.')
       : wandererChange({base_url: '', map_identifier: '', credential_present: false}));
   };
-  api.test_wanderer_connection = function (base, map, token) {
+  api.test_wanderer_connection = function (mapUrl, token) {
     // Never log, cache or echo the entry. Only presence reaches dev state.
-    base = base.trim().replace(/\/+$/, ''); map = map.trim();
-    if (!/^https:\/\//.test(base) || !map) {
-      return wandererTestAck(wandererAck('Enter a valid URL, map and token.'), false);
+    // This fixture handles map-root examples; Python owns production validation.
+    var parts = /^(https:\/\/[^/?#]+(?:\/[^/?#]+)*)\/([A-Za-z0-9._~-]+)$/.exec(mapUrl.trim().replace(/\/+$/, ''));
+    if (!parts || parts[2] === '.' || parts[2] === '..') {
+      return wandererTestAck(wandererAck('Paste the full HTTPS URL of your open Wanderer map.'), false);
     }
+    var base = parts[1], map = parts[2];
     if (!token && (!wanderer.credential_present || base !== wanderer.base_url || map !== wanderer.map_identifier)) {
-      return wandererTestAck(wandererAck('Enter a token for this URL and map.'), false);
+      return wandererTestAck(wandererAck('Enter a token for this map URL.'), false);
     }
     var busy = wanderer.test_pending || wanderer.test_in_flight;
     var result = token ? wandererChange({base_url: base, map_identifier: map, credential_present: true}, true) : wandererAck();
@@ -2409,6 +2411,54 @@
   api.get_settings = function () {
     console.log('DEV api.get_settings()');
     return Promise.resolve(settingsPayload());
+  };
+
+  // ---- Settings export/import: file dialogs do not exist in dev, so both
+  // operations resolve to the paths the page can paint without touching a
+  // real document. The import offer is tracked so Discard/Apply honour the
+  // review_id the way the controller does.
+  var devSettingsOffer = null;
+
+  api.settings_export_file = function () {
+    console.log('DEV api.settings_export_file()');
+    return Promise.resolve(
+      {ok: true, cancelled: false, error: '', path: 'dev/wingman-settings.json'});
+  };
+
+  api.settings_import_read = function () {
+    console.log('DEV api.settings_import_read()');
+    var reviewId = 'dev-settings-' + Math.random().toString(36).slice(2);
+    devSettingsOffer = reviewId;
+    return Promise.resolve({
+      ok: true, cancelled: false, error: '', review_id: reviewId,
+      summary: {changed: ['privacy', 'notify_mode'], kept: ['discord_webhook']}
+    });
+  };
+
+  api.settings_import_review = function (reviewId) {
+    console.log('DEV api.settings_import_review(', reviewId, ')');
+    if (devSettingsOffer !== reviewId) {
+      return Promise.resolve({ok: false, error: 'That import offer is no longer current.',
+        summary: {}});
+    }
+    return Promise.resolve({ok: true, error: '',
+      summary: {changed: ['privacy', 'notify_mode'], kept: ['discord_webhook']}});
+  };
+
+  api.settings_import_apply = function (reviewId) {
+    console.log('DEV api.settings_import_apply(', reviewId, ')');
+    if (devSettingsOffer !== reviewId) {
+      return Promise.resolve({ok: false, error: 'That import offer is no longer current.'});
+    }
+    devSettingsOffer = null;
+    return Promise.resolve({ok: true, error: ''});
+  };
+
+  api.settings_import_discard = function (reviewId) {
+    console.log('DEV api.settings_import_discard(', reviewId, ')');
+    if (devSettingsOffer !== reviewId) return Promise.resolve(false);
+    devSettingsOffer = null;
+    return Promise.resolve(true);
   };
 
   api.update_status = function () {

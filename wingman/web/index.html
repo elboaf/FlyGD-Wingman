@@ -1183,22 +1183,18 @@
         <p class="operational-status" id="wanderer-coverage"></p>
         <p class="hint">Uses map-local names for your current named previews. Character labels must be shown.</p>
         <div class="row">
-          <label class="lab" for="wanderer-url">Application URL (HTTPS)</label>
-          <input class="field" id="wanderer-url" type="url" disabled spellcheck="false" autocomplete="off" placeholder="https://wanderer.example" aria-describedby="wanderer-url-draft wanderer-connection-error">
+          <label class="lab" for="wanderer-url">Map URL</label>
+          <input class="field" id="wanderer-url" type="url" disabled spellcheck="false" autocomplete="off" placeholder="https://wanderer.ltd/your-map" aria-describedby="wanderer-url-help wanderer-url-draft wanderer-connection-error">
         </div>
+        <p class="hint" id="wanderer-url-help">Open your map in Wanderer and paste the address from your browser, not its settings or character-list page.</p>
         <p class="hint" id="wanderer-url-draft"></p>
         <div class="row">
-          <label class="lab" for="wanderer-map">Map slug or UUID</label>
-          <input class="field" id="wanderer-map" type="text" disabled spellcheck="false" autocomplete="off" aria-describedby="wanderer-map-draft wanderer-connection-error">
-        </div>
-        <p class="hint" id="wanderer-map-draft"></p>
-        <div class="row">
           <label class="lab" for="wanderer-token">Map API token</label>
-          <span class="hint" id="wanderer-credential">No token stored for the saved URL and map.</span>
+          <span class="hint" id="wanderer-credential">No token stored for the saved map URL.</span>
           <input class="field" id="wanderer-token" type="password" disabled spellcheck="false" autocomplete="new-password" aria-describedby="wanderer-token-draft wanderer-connection-error wanderer-credential">
         </div>
-        <p class="hint" id="wanderer-token-draft">Stored only on this PC, protected by Windows. Leave blank to reuse only the same saved URL and map.</p>
-        <p class="hint" id="wanderer-save-note">Test connection saves the URL, map and token, then checks access. It does not turn names on.</p>
+        <p class="hint" id="wanderer-token-draft">Stored only on this PC, protected by Windows. Leave blank to reuse the token for the same saved map URL.</p>
+        <p class="hint" id="wanderer-save-note">Test connection saves the map URL and token, then checks access. It does not turn names on.</p>
         <p class="field-msg" id="wanderer-connection-error" hidden></p>
         <div class="row">
           <button class="btn" id="wanderer-test" type="button" disabled aria-describedby="wanderer-save-note wanderer-connection-error wanderer-test-status wanderer-test-error">Test connection</button>
@@ -1788,6 +1784,27 @@
           launching it by hand.
         </p>
         <p class="field-msg" id="msg-about" hidden></p>
+      </section>
+
+      <!-- User-initiated file operations, not field commits: neither button
+           needs the hydration gate for correctness, but both stay dark
+           until the payload first lands so neither can act on a document
+           the page has not seen. The webhook sentence is a standing
+           property of the format (settingssharing.EXCLUDED_KEYS), not a
+           state of this install, so it reads as a hint rather than a
+           status. -->
+      <section class="card">
+        <h2>Configuration backup</h2>
+        <p class="hint">
+          Export every Wingman setting to a JSON file you can keep, edit or
+          share. Importing replaces the settings the file carries; your
+          Discord webhook is never exported or imported.
+        </p>
+        <div class="actions">
+          <button class="btn" id="btn-settings-export">Export settings&hellip;</button>
+          <button class="btn" id="btn-settings-import">Import settings&hellip;</button>
+        </div>
+        <p class="field-msg" id="msg-backup" hidden></p>
       </section>
 
     </div>

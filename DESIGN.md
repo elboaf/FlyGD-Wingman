@@ -652,9 +652,11 @@ the old Preview choice. Apply does not change global preferences, including the
 reopen rule for later openings. Management remains usable with Previews Off;
 Apply then saves for later without enabling previews.
 
-**Wanderer's connection is a scoped grouped exception.** Its URL, map and token
-form one bound credential, saved explicitly by **Test connection** or Enter in
-any of those fields; the nearby note states that Test saves. It has no separate
+**Wanderer's connection is a scoped grouped exception.** Its full map URL and
+token form one bound credential, saved explicitly by **Test connection** or Enter
+in either field; the nearby note states that Test saves. Python extracts the
+server address and map identifier; the page never asks users for a slug. Existing
+saved bindings render as one map URL without migrating settings on entry. It has no separate
 Apply/Replace actions and no blur commit. The enable toggle remains independent.
 A grouped acknowledgement still owns each field separately, so it cannot erase
 a newer draft in another field. Configuration persistence and asynchronous Test

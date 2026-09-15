@@ -21,7 +21,7 @@ def wanderer_status(status: str, error_code: str | None) -> str:
     """Explain safe semantic health only, never a server body or exception."""
     if status == "error":
         return {
-            "invalid_configuration": "Check the Wanderer application URL, map and token, then test again.",
+            "invalid_configuration": "Check the Wanderer map URL and token, then test again.",
             "invalid_token": "Wanderer rejected the token. Replace it, then test again.",
             "forbidden": "Wanderer denied access. Check the token and map permissions.",
             "scope_forbidden": "The token needs tracked-character location read access.",
@@ -31,7 +31,7 @@ def wanderer_status(status: str, error_code: str | None) -> str:
             "map_not_found": "Wanderer could not find this map.",
             "rate_limited": "Wanderer is limiting requests. Wait before testing again.",
             "unsupported_version": "This Wanderer server uses an unsupported API version.",
-            "redirect_refused": "Wanderer redirected the request. Check the application URL.",
+            "redirect_refused": "Wanderer redirected the request. Check the map URL.",
             "tls_error": "The secure connection to Wanderer could not be verified.",
             "timeout": "Wanderer did not respond in time.",
             "invalid_snapshot": "Wanderer returned invalid location data. Existing names expire normally.",
@@ -40,7 +40,7 @@ def wanderer_status(status: str, error_code: str | None) -> str:
         )
     return {
         "off": "Wanderer names are off.",
-        "setup_incomplete": "Enter an application URL, map and token, then test the connection.",
+        "setup_incomplete": "Enter a map URL and token, then test the connection.",
         "previews_unavailable": "Waiting for previews to be enabled and available.",
         "connecting": "Connecting to Wanderer…",
         "connected": "Connected to Wanderer.",

@@ -77,6 +77,7 @@ from ..preview.layoutcontroller import (
 from ..preview.runtime import PreviewRuntime
 from ..preview.savedlayouts import PrimaryLayoutCapture, PrimaryLayoutLiveResult
 from ..preview.store import LayoutStore
+from ..settingssharing import SettingsShareController, SettingsSharePorts
 from ..telemetry.model import CustomMatcherHealth
 from ..upload.controller import (
     PROBE_DRAIN_S,
@@ -667,6 +668,7 @@ class Api:
         # construction itself must not touch the page or start Profiles work.
         self._preview_runtime.set_state_callback(self._preview_runtime_changed)
         self._profiles = self._build_profiles_controller()
+        self._settingsshare = self._build_settings_share_controller()
         self._wanderer = self._build_wanderer_controller()
         if self._fleet_sharing is not None:
             self._sharing_status_unsubscribe = self._fleet_sharing.subscribe_status(
@@ -2118,6 +2120,23 @@ class Api:
     def clear_discord_webhook(self) -> dict:
         """Remove the webhook: the explicit counterpart to the above."""
         return self._with_webhook_status(self._write_setting("discord_webhook", ""))
+
+    # ----- Settings export/import -----------------------------------------
+
+    def settings_export_file(self) -> dict:
+        return self._settingsshare.export_file()
+
+    def settings_import_read(self) -> dict:
+        return self._settingsshare.import_read()
+
+    def settings_import_review(self, review_id: str) -> dict:
+        return self._settingsshare.import_review(review_id)
+
+    def settings_import_apply(self, review_id: str) -> dict:
+        return self._settingsshare.import_apply(review_id)
+
+    def settings_import_discard(self, review_id: str) -> bool:
+        return self._settingsshare.import_discard(review_id)
 
     def _with_webhook_status(self, result: dict) -> dict:
         """Carry the new summary line back on the commit's own return.
@@ -4544,8 +4563,8 @@ class Api:
     def set_wanderer_enabled(self, enabled) -> dict:
         return self._wanderer.set_enabled(enabled)
 
-    def test_wanderer_connection(self, base, map, token) -> dict:
-        return self._wanderer.test_connection(base, map, token)
+    def test_wanderer_connection(self, map_url, token) -> dict:
+        return self._wanderer.test_connection(map_url, token)
 
     def remove_wanderer_connection(self, revision) -> dict:
         return self._wanderer.remove_connection(revision)
@@ -6949,6 +6968,33 @@ class Api:
             directory="",
             save_filename=suggested,
             file_types=("Wingman UI setup (*.json)",),
+        )
+        return str(chosen[0]) if chosen else ""
+
+    def _build_settings_share_controller(self) -> SettingsShareController:
+        return SettingsShareController(
+            self._state.settings,
+            ports=SettingsSharePorts(
+                choose_settings_input=self._choose_settings_input,
+                choose_settings_output=self._choose_settings_output,
+            ),
+        )
+
+    def _choose_settings_input(self) -> str:
+        chosen = self._window.create_file_dialog(
+            _open_file_dialog_kind(),
+            directory="",
+            allow_multiple=False,
+            file_types=("Wingman settings export (*.json)",),
+        )
+        return str(chosen[0]) if chosen else ""
+
+    def _choose_settings_output(self, suggested: str) -> str:
+        chosen = self._window.create_file_dialog(
+            _save_file_dialog_kind(),
+            directory="",
+            save_filename=suggested,
+            file_types=("Wingman settings export (*.json)",),
         )
         return str(chosen[0]) if chosen else ""
 
