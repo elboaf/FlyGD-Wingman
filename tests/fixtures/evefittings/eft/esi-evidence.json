@@ -195,6 +195,24 @@
       }
     },
     {
+      "id": "group-547",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/groups/547/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:56:28.128196+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:56:28 GMT",
+      "raw_body_sha256": "2c48cf2d75f0f0237a0251ce9f14c49680d1dea7dcaa06aeb0d93d0aba3c3371",
+      "body_projection": {
+        "category_id": 6,
+        "group_id": 547,
+        "name": "Carrier",
+        "published": true,
+        "types": [23757, 23911, 23915, 24483, 42132]
+      },
+      "provenance": "Task 2 follow-up: live public response captured separately to fill the missing Thanatos group; body_projection here retains the complete body."
+    },
+    {
       "id": "group-55",
       "method": "GET",
       "url": "https://esi.evetech.net/universe/groups/55/",

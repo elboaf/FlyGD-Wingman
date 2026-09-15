@@ -73,6 +73,21 @@ def entry(entry_id, content, *, superseded_by=None):
     )
 
 
+def test_canonicalize_items_needs_no_remote_fitting_identity():
+    rows = (
+        model.RemoteItem("HiSlot7", 200, 2),
+        model.RemoteItem("HiSlot0", 200, 3),
+        model.RemoteItem("Cargo", 200, 4),
+        model.RemoteItem("Invalid", 300, 1),
+    )
+    content = model.canonicalize_items(100, rows)
+    assert content.key() == (
+        100,
+        (("Cargo", 200, 4), ("Invalid", 300, 1), ("high", 200, 5)),
+    )
+    assert canonicalize(RemoteFitting(999, 100, "Name", "Description", rows)) == content
+
+
 def test_numbered_slot_order_is_equivalent():
     left, right = validate_remote_snapshot(fixture("get-equivalent-slots.json"))
 

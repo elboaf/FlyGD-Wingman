@@ -255,15 +255,22 @@ def validate_remote_snapshot(raw: object) -> tuple[RemoteFitting, ...]:
 
 def canonicalize(fitting: RemoteFitting) -> CanonicalContent:
     """Collapse numbered positions and aggregate exact canonical rows."""
+    return canonicalize_items(fitting.ship_type_id, fitting.items)
+
+
+def canonicalize_items(
+    ship_type_id: int, items: Iterable[RemoteItem]
+) -> CanonicalContent:
+    """Canonical content without inventing a remote fitting identity."""
     quantities: dict[tuple[str, int], int] = defaultdict(int)
-    for item in fitting.items:
+    for item in items:
         location = contracts.RACK_BY_FLAG.get(item.flag, item.flag)
         quantities[(location, item.type_id)] += item.quantity
     items = tuple(
         CanonicalItem(location, type_id, quantity)
         for (location, type_id), quantity in sorted(quantities.items())
     )
-    return CanonicalContent(fitting.ship_type_id, items)
+    return CanonicalContent(ship_type_id, items)
 
 
 def _digest(value: str) -> str:
