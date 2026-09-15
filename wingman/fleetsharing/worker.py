@@ -33,7 +33,7 @@ from . import state as s
 from .client import FleetRelayClient, FleetRelayError
 from .config import resolve_relay_origin
 from .model import FleetCatalogue, PublishRow
-from .scheduling import OPERATIONS, Scheduler, Work
+from .scheduling import OPERATIONS, SIGNED_INTERVAL_S, Scheduler, Work
 
 logger = logging.getLogger(__name__)
 BASE_BACKOFF_S = 1.0
@@ -41,6 +41,8 @@ MAX_BACKOFF_S = 30.0
 IDLE_POLL_S = 0.5
 INERT_POLL_S = 15.0
 CATALOGUE_REFRESH_INTERVAL_S = 60.0
+ELIGIBILITY_REFRESH_INTERVAL_S = 2.0
+ELIGIBILITY_URGENCY_WINDOW_S = ELIGIBILITY_REFRESH_INTERVAL_S + 2 * SIGNED_INTERVAL_S
 SESSION_RENEWAL_INTERVAL_S = 600.0
 MAX_SNAPSHOT_AGE_S = 5.0
 # A 2s heartbeat plus a read that just misses it exhausts the 3s live budget,
@@ -1316,12 +1318,7 @@ class FleetSharingWorker:
                         due=self._due["catalogue"],
                         periodic=True,
                     ),
-                    Work(
-                        "fetch_eligibility",
-                        "eligibility",
-                        due=self._due["eligibility"],
-                        periodic=True,
-                    ),
+                    self._eligibility_work(),
                     Work("read_snapshot", "read", due=self._due["read"], periodic=True),
                 )
             )
@@ -1340,6 +1337,24 @@ class FleetSharingWorker:
                     )
                 )
         return tuple(work)
+
+    def _eligibility_work(self) -> Work:
+        eligibility = self._eligibility
+        urgent = (
+            eligibility is not None
+            and eligibility.state == "ready"
+            and any(
+                self._remaining(entry.expires_at) <= ELIGIBILITY_URGENCY_WINDOW_S
+                for entry in eligibility.characters
+            )
+        )
+        return Work(
+            "fetch_eligibility",
+            "eligibility",
+            due=self._due["eligibility"],
+            priority=1 if urgent else 2,
+            periodic=True,
+        )
 
     @staticmethod
     def _source_work_key(command):
@@ -1529,7 +1544,7 @@ class FleetSharingWorker:
             self._due["catalogue"] = self._clock() + CATALOGUE_REFRESH_INTERVAL_S
         elif operation == "fetch_eligibility":
             self._eligibility = result
-            self._due["eligibility"] = self._clock() + 2.0
+            self._due["eligibility"] = self._clock() + ELIGIBILITY_REFRESH_INTERVAL_S
             self._update_status(eligibility=result)
         elif operation == "publish_snapshot":
             self._last_published = work.payload

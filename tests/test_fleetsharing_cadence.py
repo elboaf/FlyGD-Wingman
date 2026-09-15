@@ -7,6 +7,7 @@ are virtual. No thread sleeps, sockets, provider state or wall-clock deadlines.
 """
 
 import heapq
+import math
 import threading
 from dataclasses import replace
 from datetime import timedelta
@@ -20,6 +21,7 @@ from test_fleetsharing_worker import (
     OPERATION_BUCKETS,
     PAIRED_STATE,
     FakeRelayClient,
+    _date,
     _InMemoryStateStore,
     _snapshot,
     _worker,
@@ -205,6 +207,104 @@ def run_owner(
             for a, b in pairwise(attempts)
         )
     return client, samples, timeline, events
+
+
+def renewed_source_proof(
+    *,
+    changing=False,
+    source_until=None,
+    source_period=6,
+    source_phase=2,
+    clock_skew=0,
+):
+    def configure(worker, client, timeline):
+        original = client.fetch_eligibility
+        server_utc = client.utc
+        worker._utc_clock = lambda: server_utc() + timedelta(seconds=clock_skew)
+
+        def eligibility(**args):
+            started = timeline.now
+            result = original(**args)
+            if source_until is not None and started >= source_until:
+                return replace(result, state="not_verified", characters=())
+            expiry = NOW + timedelta(
+                seconds=(
+                    math.floor((started - 1000 - source_phase) / source_period)
+                    * source_period
+                    + source_phase
+                    + 10
+                )
+            )
+            return replace(
+                result,
+                characters=tuple(
+                    replace(entry, expires_at=_date(expiry))
+                    for entry in result.characters
+                ),
+            )
+
+        client.fetch_eligibility = eligibility
+        if changing:
+            for second in range(60):
+                timeline.at(
+                    1000 + second,
+                    lambda n=second: worker.submit(_snapshot(10 + n % 5)),
+                )
+
+    return configure
+
+
+@pytest.mark.parametrize("changing", [False, True])
+@pytest.mark.parametrize("latency", [0.08, 0.2, 0.4, 0.6])
+def test_renewed_source_preserves_active_publications(changing, latency):
+    client, _, _, _ = run_owner(
+        publisher=True,
+        watch=True,
+        latency=latency,
+        duration=60,
+        configure=renewed_source_proof(changing=changing),
+    )
+    assert client.published
+    assert all(rows for _, rows in client.published)
+    times = [t for t, _ in client.published]
+    assert max(b - a for a, b in pairwise(times)) < 3.0
+    operations = {op for op, _, _ in client.calls}
+    assert {"fetch_sources", "fetch_catalogue", "read_snapshot"} <= operations
+
+
+def test_authoritative_source_loss_still_withdraws_active_local_metrics():
+    client, _, _, _ = run_owner(
+        publisher=True,
+        watch=True,
+        latency=0.6,
+        duration=60,
+        configure=renewed_source_proof(source_until=1030),
+    )
+    empty = [(t, rows) for t, rows in client.published if not rows]
+    assert len(empty) == 1
+    assert empty[0][0] >= 1030
+    assert all(not rows for t, rows in client.published if t >= empty[0][0])
+
+
+@pytest.mark.parametrize("period", [5, 6])
+@pytest.mark.parametrize("phase", [0, 2, 4])
+@pytest.mark.parametrize("skew", [-0.5, 0.5])
+def test_source_phase_and_small_clock_skew_do_not_withdraw(period, phase, skew):
+    client, _, _, _ = run_owner(
+        publisher=True,
+        watch=True,
+        latency=0.6,
+        duration=60,
+        configure=renewed_source_proof(
+            source_period=period,
+            source_phase=phase,
+            clock_skew=skew,
+        ),
+    )
+    assert client.published
+    assert all(rows for _, rows in client.published)
+    times = [t for t, _ in client.published]
+    assert max(b - a for a, b in pairwise(times)) < 10.0
 
 
 def test_due_independent_bucket_does_not_wait_for_post_operation_poll():
