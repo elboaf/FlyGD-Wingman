@@ -1310,6 +1310,26 @@ somewhere stale and nothing on that screen is worth reviewing.
       the last field typed and the button clicked, stating a precondition
       the greyed label already shows. With two selected the checkbox goes
       live and there is still no sentence.
+- [ ] **Split into parts, upload everything (workflow 1).** Select one or
+      more recordings, tick `Split into parts under 15 minutes`, press
+      `Upload`. Expected: a confirm naming "split into about N parts (each
+      under 15 minutes)"; after confirming, the strip shows
+      `Stitching with FFmpeg…` (two or more selected) then
+      `Splitting with FFmpeg…`, then each part uploads (`Uploading file i
+      of N`); the final line reads `Uploaded N parts to YouTube.` With one
+      recording selected the stitch step must be skipped entirely. No
+      YouTube link appears on the source rows.
+- [ ] **Split locally, pick parts by hand (workflow 2).** With the split
+      checkbox ticked, press the `Process locally` button that appears in
+      the action row. Expected: the strip reports stitching/splitting, then
+      `Split into N parts in the recording folder.` and the list rebuilds
+      showing `<stem> - part 1.mkv`, `part 2.mkv`, … as ordinary rows.
+      Select one part and upload it with the plain (unticked) Upload path;
+      delete the rest. Nothing uploads automatically.
+- [ ] **Split controls follow the selection.** Select nothing: both
+      checkboxes untick and `Process locally` disappears. Select one:
+      `Split…` is live while `Stitch…` is greyed. Tick split, then drop the
+      selection to zero: the button hides again.
 - [ ] **Open folder opens the watched folder.** Press it in the list footer
       with a folder configured: Explorer opens on that folder. This is the
       only affordance on this screen that reaches the FILES — double-click

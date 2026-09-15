@@ -643,14 +643,18 @@ def test_uploader_facade_methods_delegate_lexically_to_private_controller_method
     assert "getattr(self._uploader" not in source
     expected = {
         "list_rows": ("list_rows", ["preselect"]),
-        "panel_text": ("panel_text", ["ids", "stitch"]),
+        "panel_text": ("panel_text", ["ids", "stitch", "split"]),
         "delete_selected": ("delete_selected", ["ids"]),
         "copy_path": ("copy_path", ["row_id"]),
         "open_path": ("open_path", ["row_id"]),
         "play_recording": ("play_recording", ["row_id"]),
         "rename_recording": ("rename_recording", ["row_id", "stem"]),
         "open_recording_dir": ("open_recording_dir", []),
-        "start_upload": ("start_upload", ["title", "description", "stitch", "ids"]),
+        "start_upload": (
+            "start_upload",
+            ["title", "description", "stitch", "split", "ids"],
+        ),
+        "split_locally": ("split_locally", ["ids"]),
         "cancel_upload": ("cancel_upload", []),
         "retry": ("retry", []),
         "post_recent_logs": ("post_recent_logs", []),

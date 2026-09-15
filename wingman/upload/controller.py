@@ -16,6 +16,7 @@ import datetime
 import logging
 import os
 import queue
+import shutil
 import sys
 import threading
 import weakref
@@ -151,6 +152,12 @@ class UploadJob:
     # user has since unchecked the box.
     logs: bool = False
     start_index: int = 0
+    # Split-into-parts jobs. `parts` is filled in by the worker once ffmpeg
+    # has spoken (the keyframe cut decides the real count); `done_parts`
+    # counts the parts that finished so a cancel can report honestly.
+    split: bool = False
+    parts: int = 0
+    done_parts: int = 0
 
 
 def _upload_summary(job: UploadJob) -> str:
@@ -173,12 +180,21 @@ def _upload_summary(job: UploadJob) -> str:
     sentence (see _skip_logs), which keeps the primary action first in
     every variant instead of behind the side-effect.
     """
-    count = 1 if job.stitch else len(job.items)
+    if job.split:
+        count = job.parts or 1
+    elif job.stitch:
+        count = 1
+    else:
+        count = len(job.items)
     if count == 1:
         shown = uploader.build_body(job.title, "", job.privacy, "", 0, 1)["snippet"][
             "title"
         ]
         return f'Uploaded "{shown}" to YouTube'
+    if job.split:
+        # "parts", not "recordings": the videos on the channel are chunks of
+        # one fight, and the sentence should say so.
+        return f"Uploaded {count} parts to YouTube"
     # The noun is "recordings", matching the confirm the user just read.
     # The titles are numbered per item, so there is no one name to give.
     return f"Uploaded {count} recordings to YouTube"
@@ -334,6 +350,11 @@ class UploaderController:
         self._work_gate = gate
         self._upload_thread: threading.Thread | None = None
         self._delete_thread: threading.Thread | None = None
+        # Workflow 2 of the split feature: stitch+segment to the recording
+        # folder, chunks kept, nothing uploaded. Runs under the same shared
+        # work gate as an upload (ffmpeg work Quit must wait out), on its
+        # own handle because the question it answers is different.
+        self._split_thread: threading.Thread | None = None
         # The standalone combat-log post, and Play. Separate handles rather
         # than one "work" slot because each answers a different question:
         # busy() (an upload, which a list rebuild would damage and Quit
@@ -496,7 +517,7 @@ class UploaderController:
             if id(info) in outstanding
         ]
 
-    def panel_text(self, ids: list[str], stitch: bool) -> dict:
+    def panel_text(self, ids: list[str], stitch: bool, split: bool = False) -> dict:
         """Both selection-dependent strings, for the page to render.
 
         Selection and the stitch checkbox are client state and never cross
@@ -518,7 +539,9 @@ class UploaderController:
         infos = self._rows.resolve_many(ids)
         return {
             "summary": self._ports.format_selection_summary(infos),
-            "title_hint": self._ports.format_title_hint(len(infos), bool(stitch)),
+            "title_hint": self._ports.format_title_hint(
+                len(infos), bool(stitch), bool(split)
+            ),
         }
 
     # ----- delete, open, copy ------------------------------------------------
@@ -1071,7 +1094,7 @@ class UploaderController:
         with self._logs_lock:
             return self._logs_running
 
-    def start_upload(self, title, description, stitch, ids) -> None:
+    def start_upload(self, title, description, stitch, split, ids) -> None:
         # No `logs` parameter. Uploader 8: the checkbox had no true second
         # state -- "there is no scenario where I don't want to upload logs
         # also" -- so the choice moved out of one click from Upload and
@@ -1106,7 +1129,7 @@ class UploaderController:
                 "warning", "No Selection", "Select at least one video to upload."
             )
             return
-        if stitch and len(pairs) < 2:
+        if stitch and not split and len(pairs) < 2:
             self._ports.alert(
                 "warning", "Stitch", "Select at least two videos to stitch."
             )
@@ -1127,6 +1150,7 @@ class UploaderController:
             title=title,
             description=description,
             stitch=bool(stitch),
+            split=bool(split),
             privacy=privacy,
             category=category,
             # Unconditional now. The webhook predicate downstream is what
@@ -1167,6 +1191,122 @@ class UploaderController:
         finally:
             self._work_gate.release_upload()
 
+    def split_locally(self, ids) -> None:
+        """Workflow 2: stitch + split to the recording folder, upload nothing.
+
+        The parts land in the recording folder as ordinary files, so the
+        next list rebuild lists them like any recording -- which is the
+        whole design: the user picks the worthwhile part(s) themselves,
+        uploads them with the plain path, and deletes the rest. No new row
+        machinery, no auto-upload of a pile of 15-minute videos nobody
+        asked for.
+
+        Sends-unconditionally posture, same as Upload: a page-side guard
+        would swallow Python's sentence for why nothing happened.
+        """
+        pairs = [
+            (rid, info) for rid in ids if (info := self._rows.resolve(rid)) is not None
+        ]
+        if not pairs:
+            self._ports.alert(
+                "warning", "No Selection", "Select at least one video to split."
+            )
+            return
+        claim = self._work_gate.claim_upload()
+        if not claim:
+            if claim.reason == "upload":
+                self._ports.alert(
+                    "warning", "Busy", "An upload is already in progress."
+                )
+            else:
+                self._ports.update_preparing(show_window=False)
+            return
+        try:
+            self._split_thread = threading.Thread(
+                target=self._run_claimed_upload,
+                args=(self._split_local_worker, pairs),
+                daemon=True,
+            )
+            self._split_thread.start()
+        except Exception:
+            self._split_thread = None
+            self._work_gate.release_upload()
+            raise
+
+    def _unique_part_path(self, folder: Path, stem: str, index: int) -> Path:
+        base = f"{stem} - part {index}"
+        candidate = folder / f"{base}.mkv"
+        n = 2
+        while candidate.exists():
+            candidate = folder / f"{base} ({n}).mkv"
+            n += 1
+        return candidate
+
+    def _split_local_worker(self, pairs) -> None:
+        try:
+            folder = self._state.recording_dir
+            if folder is None or not Path(folder).is_dir():
+                self._ports.status(
+                    "No recording folder is set. Choose one in Settings.", "WARNING"
+                )
+                return
+            folder = Path(folder)
+            infos = [info for _, info in pairs]
+            ordered = stitch.order_for_stitch(infos)
+            stem = ordered[0].path.stem
+            sources = [i.path for i in ordered]
+            written: list[Path] = []
+            try:
+                if len(sources) > 1:
+                    self._ports.progress(
+                        0.0,
+                        "Stitching with FFmpeg…",
+                        mode="indeterminate",
+                        busy=True,
+                    )
+                    with stitch.stitched(
+                        sources, self._state.ffmpeg_bin, paths.tmp_dir()
+                    ) as merged:
+                        written = self._write_parts(merged, folder, stem)
+                else:
+                    written = self._write_parts(infos[0].path, folder, stem)
+            finally:
+                # Clear the indeterminate bar on every exit; the error paths
+                # below then own the strip.
+                self._ports.progress(0.0, busy=False)
+            self.list_rows()
+            self._ports.status(
+                f"Split into {len(written)} parts in the recording folder.",
+                "SUCCESS",
+                busy=False,
+            )
+        except (stitch.StitchError, stitch.SplitError) as exc:
+            self._ports.alert("error", "Split Failed", str(exc))
+            self._ports.status(f"Error: {exc}", "ERROR", busy=False)
+        except Exception as exc:
+            logger.warning("Local split failed", exc_info=True)
+            self._ports.status(f"Error: {exc}", "ERROR", busy=False)
+
+    def _write_parts(self, src, folder: Path, stem: str) -> list[Path]:
+        """Segment `src` and move the chunks into the recording folder.
+
+        shutil.move rather than rename: the temp dir is state-dir local and
+        the recording folder routinely lives on another drive, where a bare
+        rename is an OSError. Moves happen inside the segmented CM -- the
+        chunks exist only within it, and the ones already moved make its
+        cleanup a tolerated no-op.
+        """
+        written = []
+        with stitch.segmented(src, paths.tmp_dir(), self._state.ffmpeg_bin) as chunks:
+            self._ports.progress(
+                0.0, "Splitting with FFmpeg…", mode="indeterminate", busy=True
+            )
+            for index, chunk in enumerate(chunks, start=1):
+                dest = self._unique_part_path(folder, stem, index)
+                shutil.move(str(chunk), str(dest))
+                written.append(dest)
+        return written
+
     def _confirm_then_upload(self, job: UploadJob) -> None:
         # The confirm runs on the worker, not in start_upload, because
         # _confirm blocks until the page calls dialog_response -- and
@@ -1180,6 +1320,7 @@ class UploaderController:
             job.privacy,
             self._state.settings.get("channel_title", ""),
             job.stitch,
+            job.split,
             # Read here rather than snapshotted onto the job: the confirm
             # has to describe the webhook _post_combat_logs will find when
             # it runs, and Settings is reachable between the two.
@@ -1303,7 +1444,26 @@ class UploaderController:
             uploader.save_credentials(creds, paths.token_file())
             youtube = build("youtube", "v3", credentials=creds, cache_discovery=False)
 
-            if job.stitch:
+            if job.split:
+                # Split-into-parts job. Several sources are joined first
+                # (the whole fight is one timeline), one source is used
+                # as-is; the result is then segmented and every part is
+                # uploaded in order. Parts are temporaries with the same
+                # lifecycle as the stitched file: consumed inside the
+                # context manager, deleted on every exit.
+                ordered = stitch.order_for_stitch(job.items)
+                sources = [i.path for i in ordered]
+                if len(sources) > 1:
+                    self._ports.progress(
+                        0.0, "Stitching with FFmpeg…", mode="indeterminate", busy=True
+                    )
+                    with stitch.stitched(
+                        sources, self._state.ffmpeg_bin, paths.tmp_dir()
+                    ) as merged:
+                        self._upload_parts(youtube, MediaFileUpload, job, merged)
+                else:
+                    self._upload_parts(youtube, MediaFileUpload, job, job.items[0].path)
+            elif job.stitch:
                 ordered = stitch.order_for_stitch(job.items)
                 sources = [i.path for i in ordered]
                 # A stream copy runs at disk speed, but a multi-gigabyte
@@ -1356,8 +1516,15 @@ class UploaderController:
             # format_upload_cancelled refuses to let the message hide. The
             # stitch path never advances `index`, and it is one video, so it
             # reports the zero case.
-            done = 0 if job.stitch else index
-            text = self._ports.format_upload_cancelled(done, len(job.items))
+            if job.split:
+                # `index` never advances on this path; the job carries the
+                # honest count of parts that finished.
+                text = self._ports.format_upload_cancelled(
+                    job.done_parts, job.parts or 1
+                )
+            else:
+                done = 0 if job.stitch else index
+                text = self._ports.format_upload_cancelled(done, len(job.items))
             # No _retry_state and no onRetryAvailable, per D5: Retry exists
             # to recover from a failure, and a stop is not one. Offering it
             # here would also re-arm the slot the Cancel button was just
@@ -1369,10 +1536,10 @@ class UploaderController:
             self._ports.status(text, "WARNING", busy=False)
             self._ports.progress(self._last_pct, kind="WARNING", busy=False)
         except uploader.UploadFailed as exc:
-            # Stitched failures cannot resume: the context manager has
-            # already deleted the merged file the session points at, which
-            # is the correct trade for never leaking multi-GB temporaries.
-            # Retry re-stitches instead.
+            # Stitched and split failures cannot resume: the context
+            # managers have already deleted the merged file and the chunks
+            # the session points at, which is the correct trade for never
+            # leaking multi-GB temporaries. Retry re-runs the whole job.
             # Gated on RETRY as well, not just on the stitch path: only a
             # RETRY outcome enables Retry, so for anything else the
             # retained request is unreachable -- and it keeps the
@@ -1382,6 +1549,7 @@ class UploaderController:
             resumable = (
                 exc.request is not None
                 and not job.stitch
+                and not job.split
                 and exc.outcome is uploader.Outcome.RETRY
             )
             self._retry_state = RetryState(
@@ -1410,6 +1578,39 @@ class UploaderController:
             # Retry and the two are never live at once, so a Cancel left
             # armed would sit beside the Retry a failure just enabled.
             self._ports.publish_cancel_available({"available": False})
+
+    def _upload_parts(self, youtube, MediaFileUpload, job, src) -> None:
+        """Segment one file and upload every part, inside the split CM.
+
+        Runs on the upload thread, inside `_upload_worker`'s try, so its
+        exceptions land in the same handlers a stitch failure does. The
+        real part count is ffmpeg's answer (keyframe cuts), so the job's
+        numbering fields are filled here rather than at dispatch -- the
+        cancel message and the success summary both read them.
+        """
+        self._ports.progress(
+            0.0, "Splitting with FFmpeg…", mode="indeterminate", busy=True
+        )
+        with stitch.segmented(src, paths.tmp_dir(), self._state.ffmpeg_bin) as chunks:
+            job.parts = len(chunks)
+            self._ports.progress(0.0, busy=True)
+            # Armed here, not before: ffmpeg has no interruption seam, and
+            # a Cancel that did nothing for the seconds a split takes is
+            # the dead-button state D5 exists to remove.
+            self._ports.publish_cancel_available({"available": True})
+            for part_index, chunk in enumerate(chunks):
+                self._upload_one(
+                    youtube,
+                    MediaFileUpload,
+                    chunk,
+                    job,
+                    part_index,
+                    len(chunks),
+                    close_media=True,
+                )
+                # Parts 0..part_index are on the channel; the next call
+                # overwrites this only after another part succeeds.
+                job.done_parts = part_index + 1
 
     def _upload_one(
         self,

@@ -27,7 +27,8 @@
 
   function refreshPanelText() {
     var seq = ++panelSeq;
-    WM.send('panel_text', WM.list.selectedIds(), WM.el('f-stitch').checked)
+    WM.send('panel_text', WM.list.selectedIds(),
+            WM.el('f-stitch').checked, WM.el('f-split').checked)
       .then(function (text) {
         // Clicks can outrun replies; only the newest answer may paint, or a
         // slow earlier reply overwrites a newer count.
@@ -38,8 +39,11 @@
   }
   document.addEventListener('wm:selection', refreshPanelText);
   // Stitching collapses a batch into ONE video, so the numbering
-  // disclosure must appear and disappear with this checkbox too.
+  // disclosure must appear and disappear with this checkbox too. Split
+  // numbers PARTS (the count is ffmpeg's answer), so its tick changes the
+  // label for the same reason.
   WM.el('f-stitch').addEventListener('change', refreshPanelText);
+  WM.el('f-split').addEventListener('change', refreshPanelText);
 
   // ---- what can act, and what cannot -----------------------------------
   // X1 execution, through S1's WM.setEnabled. The rule in its comment is
@@ -95,6 +99,18 @@
     // A box left ticked while its control is inert would still be read by
     // start_upload's caller below, so the checked state has to follow.
     if (selected < 2) WM.el('f-stitch').checked = false;
+
+    // Split answers a different question than Stitch -- "does it fit under
+    // YouTube's unverified-upload limit", not "is it one fight" -- so it
+    // means something with ONE video selected and takes the wider rule.
+    // Its Process locally button exists only while the box is ticked;
+    // hidden rather than disabled because with split unticked there is no
+    // action waiting to be unlocked (see the note in index.html).
+    WM.setEnabled('f-split', selected > 0);
+    WM.el('lab-split').classList.toggle('disabled', selected < 1);
+    if (selected < 1) WM.el('f-split').checked = false;
+    WM.el('btn-split-local').hidden = !WM.el('f-split').checked;
+    WM.setEnabled('btn-split-local', selected > 0);
   }
   document.addEventListener('wm:selection', refreshEnabled);
 
@@ -111,12 +127,25 @@
     // Four arguments, not five. The combat-log checkbox is gone
     // (Uploader 8) and start_upload's `logs` parameter went with it in the
     // same commit; logs are unconditional and a configured webhook is what
-    // decides the post.
+    // decides the post. With Split ticked the job uploads EVERY part of
+    // the fight; the confirm that follows names that cost in Python's
+    // words before anything is published.
     WM.send('start_upload',
             WM.el('f-title').value,
             WM.el('f-desc').value,
             WM.el('f-stitch').checked,
+            WM.el('f-split').checked,
             WM.list.selectedIds());
+  });
+
+  // Workflow 2 of the split feature: process WITHOUT uploading. Stitch +
+  // split run locally and the parts land in the recording folder as
+  // ordinary rows, so the worthwhile part(s) can be picked and uploaded
+  // by hand. Sends unconditionally like Upload -- "an upload is already
+  // in progress" is Python's sentence, and a page-side early return would
+  // swallow it.
+  WM.el('btn-split-local').addEventListener('click', function () {
+    WM.send('split_locally', WM.list.selectedIds());
   });
 
   WM.el('btn-retry').addEventListener('click', function () {

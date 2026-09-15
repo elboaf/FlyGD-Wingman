@@ -393,7 +393,7 @@
       })
     };
   }
-  ['delete_selected', 'start_upload', 'retry', 'cancel_upload',
+  ['delete_selected', 'start_upload', 'split_locally', 'retry', 'cancel_upload',
    'open_path', 'copy_path', 'detect_folder',
    // The Uploader's three quick actions. Doubled rather than added to
    // test_dev_harness.py's known-gaps list because ?dev=1 is the only way

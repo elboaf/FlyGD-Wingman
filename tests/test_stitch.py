@@ -256,3 +256,101 @@ def test_sweep_orphans_survives_a_per_file_unlink_failure(tmp_path, monkeypatch)
     monkeypatch.setattr(Path, "unlink", _raise_unlink)
     assert stitch.sweep_orphans(tmp_path) == 0
     assert (tmp_path / "stitch-abc123.mkv").exists()
+
+
+def _ok_segment(count):
+    """A runner that produces `count` numbered chunk files."""
+
+    def _run(cmd, **kw):
+        out_pattern = cmd[-1]
+        stem = out_pattern.rsplit("%03d", 1)[0]
+        for i in range(count):
+            Path(f"{stem}{i:03d}.mkv").write_bytes(b"chunk")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    return _run
+
+
+def test_build_segment_command_is_a_stream_copy_at_the_chunk_target(tmp_path):
+    cmd = stitch.build_segment_command(
+        tmp_path / "in.mkv", tmp_path / "s%03d.mkv", "ffmpeg"
+    )
+    assert cmd == [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(tmp_path / "in.mkv"),
+        "-f",
+        "segment",
+        "-segment_time",
+        "870",
+        "-reset_timestamps",
+        "1",
+        "-c",
+        "copy",
+        str(tmp_path / "s%03d.mkv"),
+    ]
+
+
+def test_segmented_yields_numbered_chunks_in_order(tmp_path):
+    src = tmp_path / "in.mkv"
+    src.write_bytes(b"x")
+    with stitch.segmented(src, tmp_path, "ffmpeg", runner=_ok_segment(3)) as chunks:
+        assert len(chunks) == 3
+        # Numbered by ffmpeg itself, so the list order IS playback order.
+        assert chunks == sorted(chunks, key=lambda c: c.name)
+        assert all(c.exists() for c in chunks)
+
+
+def test_segmented_cleans_up_on_success(tmp_path):
+    src = tmp_path / "in.mkv"
+    src.write_bytes(b"x")
+    with stitch.segmented(src, tmp_path, "ffmpeg", runner=_ok_segment(2)):
+        pass
+    assert list(tmp_path.glob("split-*.mkv")) == []
+
+
+def test_segmented_cleans_up_when_the_body_raises(tmp_path):
+    """Same contract as stitched(): cleanup must not depend on success --
+    a failed part-2 upload must not leak part-1."""
+    src = tmp_path / "in.mkv"
+    src.write_bytes(b"x")
+    with (
+        pytest.raises(RuntimeError),
+        stitch.segmented(src, tmp_path, "ffmpeg", runner=_ok_segment(2)),
+    ):
+        raise RuntimeError("upload failed")
+    assert list(tmp_path.glob("split-*.mkv")) == []
+
+
+def test_segmented_raises_when_ffmpeg_fails(tmp_path):
+    src = tmp_path / "in.mkv"
+    src.write_bytes(b"x")
+    with (
+        pytest.raises(stitch.SplitError),
+        stitch.segmented(src, tmp_path, "ffmpeg", runner=_fail),
+    ):
+        pass
+    assert list(tmp_path.glob("split-*.mkv")) == []
+
+
+def test_segmented_raises_when_ffmpeg_produces_no_output(tmp_path):
+    src = tmp_path / "in.mkv"
+    src.write_bytes(b"x")
+
+    def _empty(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    with (
+        pytest.raises(stitch.SplitError, match="no output"),
+        stitch.segmented(src, tmp_path, "ffmpeg", runner=_empty),
+    ):
+        pass
+
+
+def test_sweep_orphans_also_removes_split_artifacts(tmp_path):
+    (tmp_path / "split-abc123.mkv").write_bytes(b"x")
+    (tmp_path / "stitch-def456.mkv").write_bytes(b"x")
+    (tmp_path / "unrelated.mkv").write_bytes(b"x")
+    assert stitch.sweep_orphans(tmp_path) == 2
+    assert (tmp_path / "unrelated.mkv").exists()
