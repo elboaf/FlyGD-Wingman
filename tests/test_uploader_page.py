@@ -404,18 +404,18 @@ def test_the_combat_log_control_is_gone_and_its_sentence_is_not():
 
 def test_start_upload_is_called_with_what_it_now_accepts():
     """The signature lost its `logs` parameter in the same commit that
-    removed the control. Nothing executes this page, so a five-argument
-    call against a four-argument method fails at a user's click and
-    nowhere else -- this is the only thing that reads both sides."""
+    removed the control. Nothing executes this page, so a wrong-argument
+    call against the method fails at a user's click and nowhere else --
+    this is the only thing that reads both sides."""
     call = re.search(r"WM\.send\('start_upload',(.*?)\);", PANEL_JS, re.DOTALL)
     assert call, "panel.js should still start uploads"
-    # title, description, stitch, ids
-    assert call.group(1).count(",") == 3
+    # title, description, stitch, split, ids
+    assert call.group(1).count(",") == 4
 
     signature = re.search(r"def start_upload\(self,([^)]*)\)", API_PY)
     assert signature
     params = [p.strip() for p in signature.group(1).split(",") if p.strip()]
-    assert params == ["title", "description", "stitch", "ids"]
+    assert params == ["title", "description", "stitch", "split", "ids"]
 
 
 def test_the_empty_state_names_the_folder_it_watched():
@@ -1068,3 +1068,43 @@ def test_stopping_an_upload_shares_the_slot_it_cannot_be_live_beside():
     assert "hidden" in actions[actions.index('id="btn-cancel"') :]
     assert re.search(r"onCancelAvailable", PANEL_JS)
     assert re.search(r"btn-retry'\)\.hidden = on", PANEL_JS)
+
+
+def test_the_split_controls_exist_and_are_wired():
+    """The split feature's surface: a checkbox answering the length
+    question (enabled from ONE selected, unlike Stitch's two), a hidden
+    button shown while EITHER tick is on, and both sides of its bridge
+    call."""
+    assert 'id="lab-split"' in HTML and 'id="f-split"' in HTML
+    assert re.search(r'id="btn-process-local"[^>]*hidden', HTML)
+    # Wider enable rule than Stitch: one video can be over the limit.
+    assert re.search(r"WM\.setEnabled\('f-split', selected > 0\)", PANEL_JS)
+    assert re.search(r"WM\.setEnabled\('f-stitch', selected > 1\)", PANEL_JS)
+    # A tick left behind by a vanished selection must not survive.
+    assert re.search(r"selected < 1\) WM\.el\('f-split'\)\.checked = false", PANEL_JS)
+    # The button's meaning follows the checkboxes: stitch alone joins to
+    # one kept file, split alone makes parts, both joins then segments.
+    # Hidden only when NEITHER tick is on.
+    assert re.search(
+        r"btn-process-local'\)\.hidden =\s*"
+        r"!WM\.el\('f-split'\)\.checked && !WM\.el\('f-stitch'\)\.checked",
+        PANEL_JS,
+    )
+    assert re.search(
+        r"WM\.send\('process_locally',\s*WM\.list\.selectedIds\(\),\s*"
+        r"WM\.el\('f-stitch'\)\.checked,\s*WM\.el\('f-split'\)\.checked\);",
+        PANEL_JS,
+    )
+    assert "process_locally" in API_PY
+    # The ticks are the button's ONLY visibility signals, so each change
+    # handler must run the same synchronous refresh the selection events
+    # run. The first cut wired the tick to refreshPanelText alone (an
+    # async round trip that paints nothing until it returns), so ticking a
+    # box showed no button until the next selection change.
+    assert re.search(
+        r"function refreshOnTick\(\) \{\s*"
+        r"refreshPanelText\(\);\s*refreshEnabled\(\);\s*\}\s*"
+        r"WM\.el\('f-stitch'\)\.addEventListener\('change', refreshOnTick\);\s*"
+        r"WM\.el\('f-split'\)\.addEventListener\('change', refreshOnTick\);",
+        PANEL_JS,
+    )

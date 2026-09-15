@@ -27,7 +27,8 @@
 
   function refreshPanelText() {
     var seq = ++panelSeq;
-    WM.send('panel_text', WM.list.selectedIds(), WM.el('f-stitch').checked)
+    WM.send('panel_text', WM.list.selectedIds(),
+            WM.el('f-stitch').checked, WM.el('f-split').checked)
       .then(function (text) {
         // Clicks can outrun replies; only the newest answer may paint, or a
         // slow earlier reply overwrites a newer count.
@@ -38,8 +39,21 @@
   }
   document.addEventListener('wm:selection', refreshPanelText);
   // Stitching collapses a batch into ONE video, so the numbering
-  // disclosure must appear and disappear with this checkbox too.
-  WM.el('f-stitch').addEventListener('change', refreshPanelText);
+  // disclosure must appear and disappear with this checkbox too. Split
+  // numbers PARTS (the count is ffmpeg's answer), so its tick changes the
+  // label for the same reason. BOTH ticks also drive the Process locally
+  // button's visibility (it shows while either is ticked), so each runs
+  // the same synchronous refresh -- selection events alone would repeat
+  // the first-cut bug where ticking a box showed nothing until the
+  // selection next changed. (refreshPanelText is deliberately not enough:
+  // it paints on an async round trip, and a button showing a round trip
+  // late is the flash U4 already ruled out for the summary above.)
+  function refreshOnTick() {
+    refreshPanelText();
+    refreshEnabled();
+  }
+  WM.el('f-stitch').addEventListener('change', refreshOnTick);
+  WM.el('f-split').addEventListener('change', refreshOnTick);
 
   // ---- what can act, and what cannot -----------------------------------
   // X1 execution, through S1's WM.setEnabled. The rule in its comment is
@@ -95,6 +109,22 @@
     // A box left ticked while its control is inert would still be read by
     // start_upload's caller below, so the checked state has to follow.
     if (selected < 2) WM.el('f-stitch').checked = false;
+
+    // Split answers a different question than Stitch -- "does it fit under
+    // YouTube's unverified-upload limit", not "is it one fight" -- so it
+    // means something with ONE video selected and takes the wider rule.
+    WM.setEnabled('f-split', selected > 0);
+    WM.el('lab-split').classList.toggle('disabled', selected < 1);
+    if (selected < 1) WM.el('f-split').checked = false;
+    // Process locally covers BOTH local workflows, so its visibility is
+    // the OR of the two ticks; its meaning follows them (stitch alone
+    // joins to one kept file, split alone makes parts, both joins then
+    // segments -- the same composition as the upload path). Hidden rather
+    // than disabled: with neither ticked there is no action waiting to be
+    // unlocked, there is nothing at all.
+    WM.el('btn-process-local').hidden =
+      !WM.el('f-split').checked && !WM.el('f-stitch').checked;
+    WM.setEnabled('btn-process-local', selected > 0);
   }
   document.addEventListener('wm:selection', refreshEnabled);
 
@@ -111,12 +141,27 @@
     // Four arguments, not five. The combat-log checkbox is gone
     // (Uploader 8) and start_upload's `logs` parameter went with it in the
     // same commit; logs are unconditional and a configured webhook is what
-    // decides the post.
+    // decides the post. With Split ticked the job uploads EVERY part of
+    // the fight; the confirm that follows names that cost in Python's
+    // words before anything is published.
     WM.send('start_upload',
             WM.el('f-title').value,
             WM.el('f-desc').value,
             WM.el('f-stitch').checked,
+            WM.el('f-split').checked,
             WM.list.selectedIds());
+  });
+
+  // Workflow 2 of the split feature: process WITHOUT uploading. The tick
+  // state travels with the click -- Python composes the pipeline from it
+  // exactly as the upload path does. Sends unconditionally like Upload --
+  // "an upload is already in progress" is Python's sentence, and a
+  // page-side early return would swallow it.
+  WM.el('btn-process-local').addEventListener('click', function () {
+    WM.send('process_locally',
+            WM.list.selectedIds(),
+            WM.el('f-stitch').checked,
+            WM.el('f-split').checked);
   });
 
   WM.el('btn-retry').addEventListener('click', function () {

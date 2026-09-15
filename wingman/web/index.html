@@ -203,6 +203,20 @@
             <input type="checkbox" id="f-stitch"><span class="box"></span>
             Stitch selected into one video
           </label>
+          <!-- A second checkbox returns, and the Uploader 15 finding above
+               ("two adjacent checkboxes are too close to distinguish by
+               aim") is the reason this one is worded and placed the way it
+               is: a different VERB ("Split"), a different consequence
+               (parts, not one video), and enough margin that the two boxes
+               do not read as a pair of radios. Split works with ONE or
+               more selected -- it answers YouTube's unverified-upload
+               limit, not the join question -- so panel.js enables it on a
+               wider rule than Stitch and the two checkboxes are rarely
+               greyed together. -->
+          <label class="check" id="lab-split" style="margin-top:10px">
+            <input type="checkbox" id="f-split"><span class="box"></span>
+            Split into parts under 15 minutes
+          </label>
           <!-- The two-line hint that used to sit here is gone (round 3,
                finding 3). It read "Select two or more recordings to stitch
                them into one video", which is the mechanism, not the
@@ -266,6 +280,14 @@
                channel, which is what the message says in as many words. -->
           <div class="actions">
             <button class="btn acc" id="btn-upload">Upload</button>
+            <!-- Visible while EITHER box is ticked: the button's meaning
+                 follows the checkboxes. Stitch alone joins the selection
+                 into one file kept in the recording folder; Split alone
+                 makes the <15-minute parts; both joins and then segments,
+                 the same composition the upload path uses. Hidden rather
+                 than disabled because with neither ticked there is no
+                 action waiting to be unlocked, there is nothing at all. -->
+            <button class="btn" id="btn-process-local" hidden>Process locally</button>
             <button class="btn" id="btn-retry" disabled>Retry</button>
             <button class="btn" id="btn-cancel" hidden>Cancel</button>
           </div>

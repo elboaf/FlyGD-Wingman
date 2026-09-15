@@ -13,8 +13,10 @@ the whole point: if it needs a window to test, it does not belong here.
 """
 
 import datetime
+import math
 
 from .. import discord, library, uploader
+from ..stitch import SEGMENT_CHUNK_SECONDS as _CHUNK_SECONDS
 
 
 def wanderer_status(status: str, error_code: str | None) -> str:
@@ -136,6 +138,7 @@ def format_upload_confirm(
     privacy: str,
     channel_title: str,
     stitch: bool,
+    split: bool,
     discord_webhook: str,
 ) -> str:
     """The body of the confirm shown before anything is published.
@@ -178,7 +181,20 @@ def format_upload_confirm(
     count = len(infos)
     where = channel_title or "not known yet (learned from this upload)"
 
-    if stitch:
+    if split:
+        # The exact part count is not knowable at confirm time (keyframe
+        # cuts), so the estimate says "about" and states the ceiling rule.
+        # The estimate rides the same constant the splitter uses, so the
+        # dialog cannot promise a number the split will not produce.
+        parts = max(1, math.ceil(total_seconds / _CHUNK_SECONDS))
+        shown = uploader.build_body(title, "", privacy, "", 0, 1)["snippet"]["title"]
+        verb = "stitched and split" if stitch else "split"
+        what = (
+            f"{count} recording{'s' if count != 1 else ''} {verb} into about "
+            f"{parts} part{'s' if parts != 1 else ''} (each under 15 minutes)"
+        )
+        titles = f'"{shown}" (numbered per part)'
+    elif stitch:
         shown = uploader.build_body(title, "", privacy, "", 0, 1)["snippet"]["title"]
         what = f"{count} recordings stitched into one video"
         titles = f'"{shown}"'
@@ -340,7 +356,7 @@ def format_destination(channel_title: str, privacy: str) -> str:
     return f"Uploads go to {channel_title}"
 
 
-def format_title_hint(count: int, stitch: bool) -> str:
+def format_title_hint(count: int, stitch: bool, split: bool = False) -> str:
     """The Title field's label, which depends on what is selected.
 
     uploader.build_body appends "(n/total)" to every title in a batch and
@@ -348,9 +364,15 @@ def format_title_hint(count: int, stitch: bool) -> str:
     so a user typing one title got ten differently-named public videos and
     found out afterwards. The label is the cheapest place to say it, because
     it is already beside the field being misunderstood.
+
+    A split job numbers PARTS, and the part count is an ffmpeg answer, not
+    something the page or this label can know up front -- so the disclosure
+    names the fact without a number.
     """
-    if count <= 1 or (stitch and count <= 1):
+    if count <= 1 and not split:
         return "Title"
+    if split:
+        return "Title (applies to every part, numbered)"
     if stitch:
         return "Title (one stitched video)"
     return f"Title (applies to all {count}, numbered 1-{count})"
