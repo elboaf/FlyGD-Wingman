@@ -93,7 +93,15 @@ def test_settings_subpages_own_the_existing_controls_and_accessible_tabs():
 def test_window_disclosures_keep_exceptions_with_their_preferences():
     nodes = SettingsMarkup().nodes
     for group, controls, opened in (
-        ("appearance", ("preview-show-labels", "preview-opacity"), True),
+        (
+            "appearance",
+            (
+                "preview-show-labels",
+                "preview-show-system-names",
+                "preview-opacity",
+            ),
+            True,
+        ),
         ("placement", ("preview-lock-default", "preview-lock-exceptions"), True),
         ("size", ("preview-default-size", "btn-preview-apply-size"), False),
         ("switching", ("preview-minimize-inactive", "preview-nm-exceptions"), False),

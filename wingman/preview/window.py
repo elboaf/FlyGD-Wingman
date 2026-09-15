@@ -291,6 +291,9 @@ class PreviewWindow:
         screen,
         locked=False,
         show_labels=True,
+        # Off, like the setting it mirrors: the location line is opt-in.
+        # show_labels=True above only because its own setting defaults on.
+        show_system_names=False,
         opacity: int = 255,
         snap=True,
         lock_aspect=True,
@@ -319,6 +322,11 @@ class PreviewWindow:
         # Set once from the host at creation; the live restyle path lets this
         # change on an already-open window.
         self.show_labels = show_labels
+        # The Wanderer location line's own switch, independent of show_labels:
+        # the pill renders whichever line(s) its own toggle shows -- see
+        # _sync_label. Set once from the host at creation; the live restyle
+        # path lets this change on an already-open window.
+        self.show_system_names = show_system_names
         self.label_size = label_size
         self.label_marker = label_marker
         # A DWM thumbnail property, not a bitmap one -- see the note on
@@ -404,6 +412,7 @@ class PreviewWindow:
         screen,
         locked=False,
         show_labels=True,
+        show_system_names=False,
         opacity: int = 255,
         snap=True,
         lock_aspect=True,
@@ -428,6 +437,7 @@ class PreviewWindow:
             screen,
             locked,
             show_labels,
+            show_system_names,
             opacity,
             snap,
             lock_aspect,
@@ -603,17 +613,40 @@ class PreviewWindow:
         self._system_name = text
         self._sync_label()
 
+    def set_system_names_shown(self, shown: bool) -> None:
+        """Show or hide the Wanderer location line. Idempotent, like every
+        setter the host calls per restyle.
+
+        Symmetric with set_labels around the one shared overlay window:
+        switching a line on creates the window if it does not exist yet;
+        switching the last one off destroys it. Turning the location off
+        while the name is still shown only drops the line.
+        """
+        self.show_system_names = bool(shown)
+        if shown:
+            self._ensure_label_overlay()
+        elif not self.show_labels and not self._destroy_label_overlay():
+            self._sync_label_visibility()
+        else:
+            self._sync_label()
+
     def set_labels(self, shown: bool) -> None:
         """Show or hide the name overlay. Idempotent, like every setter
-        the host calls per restyle."""
+        the host calls per restyle.
+
+        Symmetric with set_system_names_shown: the overlay window is
+        shared, so it is destroyed only when the location line is off
+        too, and a failed destroy falls back to hiding it."""
         self.show_labels = bool(shown)
         if shown:
             self._ensure_label_overlay()
-        elif not self._destroy_label_overlay():
+        elif not self.show_system_names and not self._destroy_label_overlay():
             self._sync_label_visibility()
+        else:
+            self._sync_label()
 
     def _ensure_label_overlay(self) -> None:
-        if not self.show_labels or self.hwnd is None:
+        if (not self.show_labels and not self.show_system_names) or self.hwnd is None:
             return
         if self._label_hwnd is None:
             self._label_hwnd = self._libs.user32.CreateWindowExW(
@@ -653,10 +686,15 @@ class PreviewWindow:
         ~67k), and the render is cache-keyed on the pill's own layout —
         measured per move with label_layout(), no pixels drawn — so a
         drag re-renders only when the width changes either clipped line.
+
+        The two lines gate independently: show_labels owns the name,
+        show_system_names owns the Wanderer location. The overlay window
+        itself lives whenever either line wants it.
         """
         if self._label_hwnd is None:
             return
-        label = self._label_text()
+        label = self._label_text() if self.show_labels else None
+        second = self._system_name if self.show_system_names else None
         font_size = LABEL_SIZE_PRESETS[self.label_size][1]
         max_w = self.rect.w - self._inset * 2
         max_h = max(0, self.rect.h - self._inset * 2)
@@ -664,13 +702,13 @@ class PreviewWindow:
             label,
             max_w,
             font_size,
-            self._system_name,
+            second,
             max_h=max_h,
             marker=self.label_marker,
         )
         key = (
             label,
-            self._system_name,
+            second,
             layout,
             font_size,
             chrome.LABEL_PAD_X,
@@ -689,7 +727,7 @@ class PreviewWindow:
                 label,
                 max_w,
                 font_size,
-                self._system_name,
+                second,
                 max_h=max_h,
                 marker=self.label_marker,
             )
@@ -708,7 +746,7 @@ class PreviewWindow:
         if self._label_hwnd is None:
             return
         visible = (
-            self.show_labels
+            (self.show_labels or self.show_system_names)
             and not self.hidden
             and self._label_img is not None
             and (self._is_authorized is None or self._is_authorized())
