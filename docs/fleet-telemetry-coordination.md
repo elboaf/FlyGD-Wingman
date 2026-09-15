@@ -65,9 +65,9 @@ remain coordinator/user decisions after review.
 
 | Pass | Deliverable | Principal repository surface | Status |
 | --- | --- | --- | --- |
-| C — shared contract | Concrete extended combat/age/compatibility proposal, schema needs, mixed-version matrix | Both protocol/transport layers and authGD relay/schema | Proposal/reconciliation complete; consolidated contract draft running: `c98ead78-f517-490` |
+| C — shared contract | Concrete extended combat/age/compatibility proposal, schema needs, mixed-version matrix | Both protocol/transport layers and authGD relay/schema | Proposal/reconciliation and consolidated contract draft complete: `c98ead78-f517-490`; review gate open |
 | A — automatic verification | Persistent consent/source lifecycle proposal, legacy Stop fencing, worker/recovery and test-resource ownership | authGD lifecycle/jobs/routes; Wingman control boundary | Proposal/Stop trace and real-worker probe complete; compatibility decision needed |
-| M — client combat model | Local activity and independent EWAR attribution model, preserved Alert behavior, snapshot/projection interfaces | Wingman telemetry and consumers | Proposal complete; isolated model plan draft running: `d5222744-530d-478` |
+| M — client combat model | Local activity and independent EWAR attribution model, preserved Alert behavior, snapshot/projection interfaces | Wingman telemetry and consumers | Proposal and isolated model plan draft complete: `d5222744-530d-478`; contract handoff gate open |
 | U — presentation/setup | UI/bridge ownership and minimal setup flow, empty/stale/mixed-version states, executable/browser/native checks | Wingman Fleet Bar/settings and authGD setup pages | Proposal complete: `e2cdbb5a-3208-487` |
 
 These passes inspect and propose only. They do not independently implement new
@@ -127,7 +127,9 @@ Review these before deployment. The audit artifact is retained locally.
 
 Full proposal artifacts are in this plan's ignored workspace:
 `.superpowers/sdd/fleet-telemetry-coordination/` (`combat-contract-proposal.md`,
-`automatic-proposal.md`, `model-proposal.md`, `ui-proposal.md`). They are proposals,
+`automatic-proposal.md`, `model-proposal.md`, `ui-proposal.md`). Consolidated
+`combat-contract-draft.md` and `model-plan-draft.md` are also ready for review.
+All dispatched planning/probe agents have finished. These artifacts are drafts,
 not authorization to implement competing schemas.
 
 Confirmed coordination constraints:
