@@ -252,7 +252,7 @@ def test_state_retries_reverse_handoff_and_page_recovers_coverage(rig, monkeypat
         assert entered.wait(2)
         # The read has captured old acknowledgement. Commit/reconfigure and
         # finish a new snapshot before allowing its worker sample to continue.
-        assert rig.controller.test_connection(BASE, "map", TOKEN)["applied"]
+        assert rig.controller.test_connection(BASE + "/map", TOKEN)["applied"]
         with rig.worker_cv:
             rig.clock.now = 102
             rig.worker_cv.notify_all()
@@ -357,7 +357,7 @@ def test_failed_credential_replace_and_remove_retain_runtime(rig, monkeypatch):
     monkeypatch.setattr(rig.store, "replace", fail)
     monkeypatch.setattr(rig.store, "remove", fail)
     for result in (
-        rig.controller.test_connection(BASE, "map", "new-token"),
+        rig.controller.test_connection(BASE + "/map", "new-token"),
         rig.controller.remove_connection(rig.controller.state()["revision"]),
     ):
         assert not result["applied"] and not result["persisted"]
@@ -447,12 +447,12 @@ def test_off_test_is_async_does_not_enable_and_shutdown_retains_owners(tmp_path)
     rig = Rig(tmp_path, enabled=False, previews=False)
     try:
         rig.start()
-        result = rig.controller.test_connection(BASE, "map", "")
+        result = rig.controller.test_connection(BASE + "/map", "")
         assert result["applied"] and result["persisted"] and result["test_accepted"]
         assert not result["acknowledged"]["enabled"]
         call = rig.client.call(1)
         assert rig.controller.state()["test_in_flight"]
-        refused = rig.controller.test_connection(BASE, "map", "")
+        refused = rig.controller.test_connection(BASE + "/map", "")
         assert refused["applied"] and refused["persisted"]
         assert not refused["test_accepted"] and refused["test_error"]
         worker = rig.worker
@@ -506,12 +506,12 @@ def test_unexpected_storage_exception_never_reaches_bridge(rig, monkeypatch, ope
         monkeypatch.setattr(settings, "_save_locked", fail)
 
         def call():
-            return rig.controller.test_connection(BASE, "other", "new-token")
+            return rig.controller.test_connection(BASE + "/other", "new-token")
     elif operation == "replace":
         monkeypatch.setattr(rig.store, "replace", fail)
 
         def call():
-            return rig.controller.test_connection(BASE, "map", "new-token")
+            return rig.controller.test_connection(BASE + "/map", "new-token")
     else:
         monkeypatch.setattr(rig.store, "remove", fail)
 
@@ -584,7 +584,7 @@ def test_every_automatic_gate_prevents_network_but_test_does_not_enable(tmp_path
         before = rig.controller.state()["enabled"]
         current = rig.controller.state()
         result = rig.controller.test_connection(
-            current["base_url"], current["map_identifier"], ""
+            current["base_url"] + "/" + current["map_identifier"], ""
         )
         assert result["test_accepted"] is (gate in {"off", "previews", "host"})
         assert rig.controller.state()["enabled"] is before
@@ -599,7 +599,7 @@ def test_every_automatic_gate_prevents_network_but_test_does_not_enable(tmp_path
 def test_test_admission_waits_behind_poll_on_one_http_lane(rig):
     rig.start()
     poll = rig.client.call(1)
-    assert rig.controller.test_connection(BASE, "map", "")["test_accepted"]
+    assert rig.controller.test_connection(BASE + "/map", "")["test_accepted"]
     assert rig.controller.state()["test_pending"]
     assert not rig.controller.state()["test_in_flight"]
     poll.reply(success())
@@ -627,7 +627,7 @@ def test_callback_never_waits_for_credential_protection(rig, monkeypatch):
 
     monkeypatch.setattr(rig.store, "replace", protect)
     owner = threading.Thread(
-        target=lambda: rig.controller.test_connection(BASE, "map", "new-token")
+        target=lambda: rig.controller.test_connection(BASE + "/map", "new-token")
     )
     owner.start()
     assert entered.wait(2)
@@ -725,7 +725,7 @@ def test_test_outcome_text_does_not_change_when_next_automatic_request_fails(rig
     rig.start()
     rig.client.call(1).reply(success())
     rig.wait(lambda s: not s["in_flight"])
-    assert rig.controller.test_connection(BASE, "map", "")["test_accepted"]
+    assert rig.controller.test_connection(BASE + "/map", "")["test_accepted"]
     with rig.worker_cv:
         rig.clock.now = 102
         rig.worker_cv.notify_all()

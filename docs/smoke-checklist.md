@@ -245,7 +245,7 @@ connections or select native sources merely to populate screenshots.
       do not rewind newer edits. The timed/persistent explanation includes Test
       and the foreground client. Empty live regions remain mounted.
 - [ ] Wanderer's saved-token cue precedes the intentionally empty token input,
-      without narrowing it or describing edited URL/map drafts as saved. Plugin
+      without narrowing it or describing an edited map URL draft as saved. Plugin
       readiness is legible without a redundant label; loading still performs
       only the existing local plugin check.
 - [ ] Correct a formation import name conflict. Review cannot reparse unchanged
@@ -494,11 +494,16 @@ implementation task.
       clears cached names as soon as headers arrive, even with a stalled error
       body, and pauses automatic polling. No fallback to another map or ESI.
 - [ ] **11 — Credential and field lifecycle (NOT RUN for the simplified form).**
-      Enter URL/map/token in any order while names are Off. Test connection (or
-      Enter in any field) saves the complete connection and requests a real test,
-      without enabling names or labels; blur/change never saves. No Apply or
-      Replace buttons remain. A blank token reuses only the same normalized saved
-      URL/map; changing either requires a token. Edit each field while its grouped
+      Paste the full HTTPS URL of the open map and enter its token in either order
+      while names are Off. No separate slug/UUID field should appear. Check a
+      self-hosted URL with a deployment prefix and an existing saved connection;
+      entry must not change saved settings. A partial legacy connection asks for
+      the full map URL without erasing saved values. Missing-map, HTTP, query or
+      fragment URLs show a safe error; no credential-bearing input is echoed.
+      Test connection (or Enter in either field) saves the complete connection
+      and requests a real test, without enabling names or labels; blur/change
+      never saves. No Apply or Replace buttons remain. A blank token reuses only
+      the same normalized saved server/map; changing either requires a token. Edit each field while its grouped
       reply is pending: only still-owned drafts normalize/revert, and a submitted
       password clears without erasing a newer password. Health pushes do not edit
       inputs. Toggle Off/on independently. Remove confirms and clears URL/map/token,
@@ -1416,7 +1421,7 @@ lifecycle checks are separate evidence, not native acceptance.
 - [ ] In Uploading › Combat logs, reveal the webhook, switch tabs and return:
       it is masked again and its draft remains. Section and route leaving also
       re-mask it. Enter/Remove and inline persistence errors behave as before.
-- [ ] In Previews › Wanderer names, retain URL/map/token drafts across tabs and
+- [ ] In Previews › Wanderer names, retain map URL/token drafts across tabs and
       health updates. Test still saves the bound connection without enabling
       names; Remove still confirms. No subpage switch starts another read/Test.
 - [ ] Switch previews Off: the same master state appears on every subpage and

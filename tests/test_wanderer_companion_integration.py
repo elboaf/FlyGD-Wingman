@@ -141,7 +141,7 @@ def test_unrelated_pump_does_not_authorize_automatic_metadata_but_test_works(
     r.wanderer._apply_runtime()
     assert not r.wanderer.state()["automatic_ready"]
     assert r.worker._request_thread is None
-    assert r.wanderer.test_connection(BASE, "map", "")["test_accepted"]
+    assert r.wanderer.test_connection(BASE + "/map", "")["test_accepted"]
     r.client.call(1).reply(success())
     r.wait_metadata(lambda state: state["test_result"] == "success")
     assert not r.wanderer.state()["automatic_ready"]
@@ -203,7 +203,9 @@ def test_delayed_generation_handoff_cannot_acquire_a_new_eve_epoch(shared, monke
     with ThreadPoolExecutor(max_workers=1) as pool:
         # Force a new *ready* connection config to pause after capture, not an
         # already-disabled config which could never start automatic HTTP.
-        changing = pool.submit(r.wanderer.test_connection, BASE, "new-map", "new-token")
+        changing = pool.submit(
+            r.wanderer.test_connection, BASE + "/new-map", "new-token"
+        )
         assert entered.wait(5)
         try:
             r.runtime.set_eve(False, 2)
@@ -348,7 +350,7 @@ def test_companion_toggle_preserves_fresh_metadata_generation_and_pending_test(s
     r.client.call(1).reply(success())
     r.wait_metadata(lambda state: state["available"] == 1)
     assert label(r) == "HOME"
-    assert r.wanderer.test_connection(BASE, "map", "")["test_accepted"]
+    assert r.wanderer.test_connection(BASE + "/map", "")["test_accepted"]
     generation = r.wanderer.state()["generation"]
     for enabled in (False, True):
         assert r.receipt(r.controller.set_master(enabled))["persisted"]
@@ -598,7 +600,7 @@ def test_test_refuses_rejected_epoch_handoff_instead_of_testing_old_connection(
         until(lambda: r.runtime.snapshot().eve == "active")
         r.roster(3)
         try:
-            result = r.wanderer.test_connection(BASE, "new-map", "new-token")
+            result = r.wanderer.test_connection(BASE + "/new-map", "new-token")
             assert result["persisted"]
             assert not result["test_accepted"], (
                 "rejected handoff must not test the old binding"
@@ -607,7 +609,7 @@ def test_test_refuses_rejected_epoch_handoff_instead_of_testing_old_connection(
         finally:
             callback(*notifications[-1])
     r.wait_metadata(lambda state: state["generation"] > 1 and state["automatic_ready"])
-    assert r.wanderer.test_connection(BASE, "new-map", "")["test_accepted"]
+    assert r.wanderer.test_connection(BASE + "/new-map", "")["test_accepted"]
     r.advance(102)
     call = r.client.call(2)
     assert call.args[:3] == (BASE, "new-map", "new-token")

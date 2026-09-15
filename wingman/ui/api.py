@@ -4552,8 +4552,8 @@ class Api:
     def set_wanderer_enabled(self, enabled) -> dict:
         return self._wanderer.set_enabled(enabled)
 
-    def test_wanderer_connection(self, base, map, token) -> dict:
-        return self._wanderer.test_connection(base, map, token)
+    def test_wanderer_connection(self, map_url, token) -> dict:
+        return self._wanderer.test_connection(map_url, token)
 
     def remove_wanderer_connection(self, revision) -> dict:
         return self._wanderer.remove_connection(revision)

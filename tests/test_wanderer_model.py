@@ -469,6 +469,115 @@ def test_invalid_map_identifier(value):
         normalize_map_identifier(value)
 
 
+@pytest.mark.parametrize(
+    "value,want",
+    [
+        ("https://Example.COM/My-Map", ("https://example.com", "My-Map")),
+        (
+            " HTTPS://Example.COM:443/Wanderer/nested/My-Map/ ",
+            ("https://example.com/Wanderer/nested", "My-Map"),
+        ),
+        (
+            "https://example.com:8443/prefix/Map_1.~",
+            ("https://example.com:8443/prefix", "Map_1.~"),
+        ),
+        (
+            "https://example.com/AABBCCDD-1234-5678-9ABC-123456789ABC",
+            ("https://example.com", "aabbccdd-1234-5678-9abc-123456789abc"),
+        ),
+        (
+            "https://[2001:0db8::1]:443/prefix/map",
+            ("https://[2001:db8::1]/prefix", "map"),
+        ),
+        ("https://127.0.0.1/map", ("https://127.0.0.1", "map")),
+        (
+            "https://example.com/map/My-Map",
+            ("https://example.com/map", "My-Map"),
+        ),
+        (
+            "https://example.com/maps/settings/characters/My-Map",
+            ("https://example.com/maps/settings/characters", "My-Map"),
+        ),
+    ],
+)
+def test_map_url_splits_last_component_without_guessing_deployment_routes(value, want):
+    from wingman.wanderer.model import parse_map_url
+
+    assert parse_map_url(value) == want
+    assert parse_map_url(want[0] + "/" + want[1]) == want
+
+
+@pytest.mark.parametrize("suffix", ["", "/"])
+def test_map_url_roundtrips_maximum_existing_base_and_slug_bounds(suffix):
+    from wingman.wanderer.model import parse_map_url
+
+    base = "https://example.com/" + "p" * (2048 - len("https://example.com/"))
+    slug = "s" * 255
+    assert parse_map_url(base + "/" + slug + suffix) == (base, slug)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        True,
+        {},
+        b"https://example.com/map",
+        "",
+        "  ",
+        "https://example.com",
+        "https://example.com/",
+        "http://example.com/map",
+        "ftp://example.com/map",
+        "//example.com/map",
+        "https:example.com/map",
+        "https://user:SENSITIVE_SENTINEL@example.com/map",
+        "https://example.com/map?token=SENSITIVE_SENTINEL",
+        "https://example.com/map#SENSITIVE_SENTINEL",
+        "https://example.com/map?",
+        "https://example.com/map#",
+        "https://example.com/prefix/\\map",
+        "https://example.com/../map",
+        "https://example.com/prefix/..",
+        "https://example.com/prefix/./",
+        "https://example.com/%2e%2e/map",
+        "https://example.com/%2f/map",
+        "https://example.com/map%2f",
+        "https://example.com//map",
+        "https://example.com/prefix//map",
+        "https://example.com/map//",
+        "\thttps://example.com/map",
+        "\x00https://example.com/map",
+        "https://example.com/pre\nfix/map",
+        "https://example.com:\n443/map",
+        "https://example.com/ma\rp",
+        "https://example.com/map\t",
+        "https://example.com/ map",
+        "https://example.com/my map",
+        "https://example.com/máp",
+        "https://example.com:0/map",
+        "https://example.com:65536/map",
+        "https://example.com:/map",
+        "https://[v1.example]/map",
+        "https://[::1]evil/map",
+        "https://127.1/map",
+        "https://0x7f000001/map",
+        "https://example.com/" + "s" * 256,
+        "https://example.com/" + "p" * 2048 + "/map",
+    ],
+)
+def test_map_url_rejects_unsafe_or_missing_identity_without_secret_exception_context(
+    value,
+):
+    from wingman.wanderer.model import parse_map_url
+
+    with pytest.raises(ValueError) as caught:
+        parse_map_url(value)
+    assert "SENSITIVE_SENTINEL" not in "".join(traceback.format_exception(caught.value))
+    assert caught.value.__context__ is None
+    assert caught.value.__cause__ is None
+
+
 def test_package_is_in_explicit_distribution_list():
     project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
     assert "wingman.wanderer" in project["tool"]["setuptools"]["packages"]
