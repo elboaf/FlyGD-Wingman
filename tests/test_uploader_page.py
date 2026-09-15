@@ -1142,6 +1142,19 @@ def test_the_clip_editor_degrades_without_a_decoder():
     assert re.search(r"WM\.el\('clip-video'\)\.hidden = true;", PANEL_JS)
 
 
+def test_the_clip_playhead_is_first_class_state():
+    """Set start / Set end must read an INDEPENDENT playhead, not the
+    media element: in degraded mode there is no decode, and buttons that
+    read a dead element always answer 0 -- meaningless. Scrubbing on the
+    track moves the same state the playing video updates."""
+    assert re.search(r"play: 0,", PANEL_JS)
+    # Scrubbing writes the playhead, with or without a decoder.
+    assert re.search(r"clipSetPlay\(trackTime\(ev\)\);", PANEL_JS)
+    # The marker buttons read the playhead state, never video.currentTime.
+    assert "clipSetMarks(clipSnapIn(clip.play), clip.markOut);" in PANEL_JS
+    assert "clipSetMarks(clip.markIn, clip.play);" in PANEL_JS
+
+
 def test_the_clip_editor_releases_the_file_when_hidden():
     """A media element holding the recording open blocks a rename or
     delete of the user's own file on Windows, so the shared hide path must

@@ -55,19 +55,10 @@ def fake_webview(monkeypatch):
     def start(**kwargs):
         calls["start_kwargs"] = kwargs
 
-    # `settings` mirrors pywebview's real module-level dict: window.py
-    # writes ALLOW_FILE_URLS into it (the clip editor's file:// media
-    # exception), so the double must carry one too -- shared with the
-    # calls dict so a test can read what the write landed.
-    calls["webview_settings"] = {"ALLOW_FILE_URLS": False}
     monkeypatch.setitem(
         sys.modules,
         "webview",
-        SimpleNamespace(
-            create_window=create_window,
-            start=start,
-            settings=calls["webview_settings"],
-        ),
+        SimpleNamespace(create_window=create_window, start=start),
     )
     return calls
 
@@ -313,14 +304,3 @@ def test_the_login_launch_builds_the_window_without_showing_it(fake_webview):
     # Everything else about the window is unchanged by starting hidden.
     assert kwargs["min_size"] == (840, 625)
     assert kwargs["frameless"] is True
-
-
-def test_the_clip_editor_file_url_exception_is_enabled(fake_webview):
-    """The clip editor's <video> points at the recording's own file from a
-    file:// page, which Chromium blocks unless ALLOW_FILE_URLS is on. This
-    is one half of the deliberate exception; clip_source (upload
-    controller) is the other, and both comments say so."""
-    window_mod.create(_bare_api())
-    # The write landed: the double starts False, so only window.py's
-    # enabling could flip it.
-    assert fake_webview["webview_settings"]["ALLOW_FILE_URLS"] is True

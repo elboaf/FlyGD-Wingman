@@ -27,6 +27,7 @@ from pathlib import Path
 
 from .. import (
     clips,
+    clipserve,
     combatlog,
     discord,
     durations,
@@ -1314,7 +1315,14 @@ class UploaderController:
             duration, _ = library.probe(info.path, self._state.ffprobe_bin)
         return {
             "ok": True,
-            "uri": info.path.as_uri(),
+            # A loopback URL, not a file URI: WebView2's URL safety check
+            # rejects <video> file:// loads outright (measured, not
+            # guessed -- the failure is MEDIA_ELEMENT_ERROR "Media load
+            # rejected by URL safety check"), and clipserve exists to be
+            # the road around it. clipserve's docstring carries the full
+            # story; the ALLOW_FILE_URLS flag does NOT reach media
+            # elements.
+            "uri": clipserve.url_for(info.path),
             "duration": duration,
             # Copy travels with the answer: the page renders this note when
             # its <video> element reports the file undecodable. One tested

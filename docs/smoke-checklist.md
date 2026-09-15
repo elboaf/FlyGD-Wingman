@@ -1318,7 +1318,9 @@ somewhere stale and nothing on that screen is worth reviewing.
       Select nothing: both editor and button are gone. Ticking Stitch
       shows `Stitch locally` IMMEDIATELY (no selection change needed).
 - [ ] **Clip preview plays and scrubs.** With the editor open: the video
-      plays; clicking the timeline seeks; the playhead follows playback.
+      plays (served from a loopback HTTP port -- WebView2 refuses direct
+      file:// media); clicking or press-dragging the timeline scrubs the
+      playhead and seeks; the playhead follows playback.
 - [ ] **Markers snap and read true.** Drag the in-handle: it snaps DOWN to
       a keyframe (the readout shows the snapped time — what a cut will
       actually take; stream copy cannot start mid-GOP, so a clip may begin
@@ -1335,7 +1337,8 @@ somewhere stale and nothing on that screen is worth reviewing.
 - [ ] **The editor degrades without a decoder.** Point the recording
       folder at a file Chromium cannot decode (e.g. an HEVC recording).
       Expected: no picture, a one-line note explaining the preview is
-      unavailable, and the timeline/markers/cut still work from timecodes.
+      unavailable, and the timeline/markers/scrubbing/cut still work from
+      timecodes — Set start / Set end track the scrubbed playhead.
       Nothing is gated on the picture.
 - [ ] **Stitch locally (multi-selection lane).** Select two or more
       recordings, tick `Stitch selected into one video` ONLY, press

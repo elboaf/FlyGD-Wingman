@@ -1442,7 +1442,10 @@ def test_clip_source_hands_over_the_uri_and_duration(tmp_path):
     (tmp_path / "r1.mkv").write_bytes(b"x")  # the existence check is real
     result = api.clip_source("r1")
     assert result["ok"] is True
-    assert result["uri"].startswith("file:")
+    # A loopback URL, NOT a file URI: WebView2's URL safety check rejects
+    # <video> file:// loads (measured), so clipserve serves the bytes.
+    assert result["uri"].startswith("http://127.0.0.1:")
+    assert result["uri"].endswith("/r1.mkv")
     assert result["duration"] == fakes.info(tmp_path / "r1.mkv").duration
     assert result["note"]  # the degrade note travels with the answer
 

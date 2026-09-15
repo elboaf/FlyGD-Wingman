@@ -159,6 +159,12 @@
   var clip = {
     rowId: null, duration: 0, keys: [], noteText: '',
     markIn: 0, markOut: 0, seq: 0, degraded: false, playingSel: false,
+    // The playhead is FIRST-CLASS state, not an alias of the media
+    // element's currentTime: in degraded mode there is no decode to sync
+    // to, and Set start / Set end must still mean something there. The
+    // video updates it while playing; clicks and drags on the track move
+    // it -- and seek the video too, when there is one.
+    play: 0,
   };
 
   function clipPad(n) { return (n < 10 ? '0' : '') + n; }
@@ -180,7 +186,8 @@
     WM.el('clip-out').style.left = clipPct(clip.markOut) + '%';
     WM.el('clip-tc-in').textContent = clipFmt(clip.markIn);
     WM.el('clip-tc-out').textContent = clipFmt(clip.markOut);
-    WM.el('clip-tc-play').textContent = clipFmt(clipVideoTime());
+    WM.el('clip-playhead').style.left = clipPct(clip.play) + '%';
+    WM.el('clip-tc-play').textContent = clipFmt(clip.play);
   }
 
   // Nearest keyframe at or BEFORE t: what a stream-copy cut can actually
@@ -196,8 +203,10 @@
     return best;
   }
 
-  function clipVideoTime() {
-    return (!clip.degraded && clip.video && clip.video.currentTime) || 0;
+  function clipSetPlay(t) {
+    clip.play = Math.max(0, Math.min(t, clip.duration));
+    if (!clip.degraded && clip.video) clip.video.currentTime = clip.play;
+    clipRender();
   }
 
   function clipSetMarks(markIn, markOut) {
@@ -274,6 +283,7 @@
   (function () {
     var track = WM.el('clip-track');
     var dragging = null;
+    var scrubbing = false;
 
     function trackTime(ev) {
       var rect = track.getBoundingClientRect();
@@ -315,19 +325,40 @@
       document.addEventListener('pointerup', onUp);
       ev.preventDefault();
     });
-    track.addEventListener('click', function (ev) {
-      if (!clip.degraded && clip.video && clip.duration > 0) {
-        clip.video.currentTime = trackTime(ev);
+    // Left-click (and press-drag) on the track SCRUBS: the playhead is
+    // first-class state, so this works with no decode at all -- which is
+    // what makes Set start / Set end meaningful in degraded mode, where
+    // they used to read a dead element and always answered 0.
+    track.addEventListener('pointerdown', function (ev) {
+      if (clip.duration <= 0) return;
+      if (ev.target.classList && ev.target.classList.contains('clip-handle')) {
+        return;  // handles run their own drag
       }
+      scrubbing = true;
+      track.setPointerCapture(ev.pointerId);
+      clipSetPlay(trackTime(ev));
+      ev.preventDefault();
+    });
+    track.addEventListener('pointermove', function (ev) {
+      if (!scrubbing) return;
+      clipSetPlay(trackTime(ev));
+      ev.preventDefault();
+    });
+    track.addEventListener('pointerup', function () {
+      scrubbing = false;
+    });
+    track.addEventListener('pointercancel', function () {
+      scrubbing = false;
     });
   }());
 
-  // Playhead follows the preview; Play selection plays in→out and stops.
+  // While the preview plays, the element drives the playhead state; the
+  // track's own pointer handlers own it while scrubbing.
   WM.el('clip-video').addEventListener('timeupdate', function () {
     if (WM.el('clip-editor').hidden || clip.degraded) return;
     var v = WM.el('clip-video');
-    WM.el('clip-playhead').style.left = clipPct(v.currentTime) + '%';
-    WM.el('clip-tc-play').textContent = clipFmt(v.currentTime);
+    clip.play = v.currentTime;
+    clipRender();
     if (clip.playingSel && v.currentTime >= clip.markOut) {
       clip.playingSel = false;
       v.pause();
@@ -335,10 +366,10 @@
   });
 
   WM.el('btn-clip-set-in').addEventListener('click', function () {
-    clipSetMarks(clipSnapIn(clipVideoTime()), clip.markOut);
+    clipSetMarks(clipSnapIn(clip.play), clip.markOut);
   });
   WM.el('btn-clip-set-out').addEventListener('click', function () {
-    clipSetMarks(clip.markIn, clipVideoTime());
+    clipSetMarks(clip.markIn, clip.play);
   });
   WM.el('btn-clip-play-sel').addEventListener('click', function () {
     if (clip.degraded || !clip.video) return;
