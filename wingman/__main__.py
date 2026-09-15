@@ -477,6 +477,13 @@ def build_preview_host(state, api_box, *, layout_store=None, layout_admission=No
             # restyle every existing install's previews.
             return bool(preview_config.get("show_labels", True))
 
+        def show_system_names():
+            # Absent means off: the Wanderer location line's own switch,
+            # and showing it is opt-in -- an upgrading install that had
+            # labels off (often to hide locations) must not get them back
+            # through the side door. Same committed read as show_labels.
+            return bool(preview_config.get("show_system_names", False))
+
         def label_size():
             return preview_config.get("label_size", DEFAULT_LABEL_SIZE)
 
@@ -574,6 +581,7 @@ def build_preview_host(state, api_box, *, layout_store=None, layout_admission=No
             on_bind_captured=on_bind_captured,
             restore_positions=restore_positions,
             show_labels=show_labels,
+            show_system_names=show_system_names,
             label_size=label_size,
             label_markers=lambda: preview_config.get("label_markers", {}),
             opacity=opacity,

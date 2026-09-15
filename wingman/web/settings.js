@@ -1044,6 +1044,54 @@
   });
 }());
 
+// ---- Preview system locations ---------------------------------------------
+// Same shape and same failure semantics as the show-labels block above:
+// a persistence failure is `applied: false`, the box goes back, and the
+// status line always says something. One difference it does not have:
+// whether the line can render anything depends on the Wanderer connection,
+// so the hint says where that lives.
+(function () {
+  var box = WM.el('preview-show-system-names');
+  var status = WM.el('preview-show-system-names-status');
+  if (!box || !status) { return; }
+
+  var DEFAULT_HINT = status.textContent;
+
+  function say(text) { status.textContent = text || DEFAULT_HINT; }
+
+  // Covered by #preview-depends like the rest of the card: with previews
+  // off this sets tomorrow's label, not today's.
+  box.addEventListener('change', function () {
+    var wanted = box.checked;
+    WM.send('set_preview_show_system_names', wanted).then(function (res) {
+      if (!res) {
+        box.checked = !wanted;
+        say('Could not reach the app. Nothing was changed.');
+        return;
+      }
+      if (!res.applied) {
+        box.checked = !wanted;
+        say(res.error || 'That value was not accepted.');
+        return;
+      }
+      if (!res.persisted) {
+        say('Showing system locations is ' + (wanted ? 'on' : 'off')
+          + ' for this session, but could not be written to settings \u2014 '
+          + 'it will not survive a restart.');
+      } else {
+        say('');
+      }
+    });
+  });
+
+  document.addEventListener('wm:settings', function (ev) {
+    var s = (ev.detail || {}).settings || {};
+    // Absent means off: the toggle ships default-off, and an upgrading
+    // user's file predates the key.
+    box.checked = !!(s.preview && s.preview.show_system_names === true);
+  });
+}());
+
 // ---- Preview opacity --------------------------------------------------
 // The "border and label stay full strength" sentence is a separate static
 // hint in index.html, not this status line: it has to stay on screen even

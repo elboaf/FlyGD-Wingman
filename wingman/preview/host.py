@@ -328,6 +328,7 @@ class PreviewHost:
         on_bind_captured=None,
         restore_positions=None,
         show_labels=None,
+        show_system_names=None,
         opacity=None,
         minimize_inactive_clients=None,
         never_minimize=None,
@@ -460,6 +461,11 @@ class PreviewHost:
         # wired this yet", not "off"; _labels_shown/_current_opacity/etc.
         # below fall back to today's shipped behaviour in that case.
         self._show_labels = show_labels
+        # The Wanderer location line's own switch, read live like
+        # _show_labels: the checkbox has to reach an open preview. None is
+        # "not wired this yet", not "off"; _system_names_shown below owns
+        # the fallback, exactly as _labels_shown does for names.
+        self._show_system_names = show_system_names
         self._label_size = label_size
         self._label_markers = label_markers
         self._opacity = opacity
@@ -3624,6 +3630,7 @@ class PreviewHost:
             on_gesture_begin=lambda e=epoch, k=key: self._begin_primary_gesture(e, k),
             on_gesture_end=self.release_primary_layout,
             show_labels=self._labels_shown(),
+            show_system_names=self._system_names_shown(),
             label_size=self._current_label_size(),
             label_marker=self._current_label_markers().get(client.character),
             opacity=self._current_opacity(),
@@ -4763,6 +4770,22 @@ class PreviewHost:
             logger.exception("Could not read show_labels; defaulting to labels on")
             return True
 
+    def _system_names_shown(self) -> bool:
+        """Whether the Wanderer location line is shown, read live.
+
+        Same guard as _labels_shown, but the fallback is OFF: the line is
+        opt-in, so a read that fails must not turn locations on.
+        """
+        if self._show_system_names is None:
+            return False
+        try:
+            return bool(self._show_system_names())
+        except Exception:
+            logger.exception(
+                "Could not read show_system_names; defaulting to locations hidden"
+            )
+            return False
+
     def _current_label_size(self) -> str:
         """Read committed presentation without letting a callback kill the pump."""
         if self._label_size is None:
@@ -4983,6 +5006,7 @@ class PreviewHost:
         """
         epoch = self._eve_epoch
         show_labels = self._labels_shown()
+        show_system_names = self._system_names_shown()
         label_size = self._current_label_size()
         label_markers = self._current_label_markers()
         opacity = self._current_opacity()
@@ -4991,9 +5015,13 @@ class PreviewHost:
                 return
             # set_labels, not an attribute write: the label is a window
             # now (see PreviewWindow._ensure_label_overlay), so showing
-            # or hiding it is the method's whole job.
+            # or hiding it is the method's whole job. Both toggles take
+            # the method: one overlay window serves both lines, and each
+            # setter creates it when its line is the first one on and
+            # destroys it when its line is the last one off.
             win.label_size = label_size
             win.label_marker = label_markers.get(key)
+            win.set_system_names_shown(show_system_names)
             win.set_labels(show_labels)
             win.opacity = opacity
             win.locked = self._is_locked(key)

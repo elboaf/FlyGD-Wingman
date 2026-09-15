@@ -434,8 +434,10 @@
    'set_start_on_login',
    // Task 6: same shape again, and set_preview_show_labels/set_preview_
    // opacity revert their control on a refused write just like the rest
-   // of this list.
-   'set_preview_show_labels', 'set_preview_opacity', 'set_preview_label_size',
+   // of this list. set_preview_show_system_names is the location line's
+   // own toggle and follows the same revert-on-refusal contract.
+   'set_preview_show_labels', 'set_preview_show_system_names',
+   'set_preview_opacity', 'set_preview_label_size',
    // Task 10: same shape; settings.js reverts the checkbox on anything
    // that is not `applied`, same as every entry above.
    'set_minimize_inactive_clients',
@@ -2056,7 +2058,8 @@
           // is what makes the card eyeballable under ?dev=1 at all.
           preview: { enabled: true, restore_preview_positions: true,
             hide_active_preview: false,
-            show_labels: true, label_size: 'standard', opacity: 255, snap: true, lock_aspect: true,
+            show_labels: true, show_system_names: false,
+            label_size: 'standard', opacity: 255, snap: true, lock_aspect: true,
             selection_color: '#ff5a00',
             // The global default size. Present because the real payload
             // always carries it -- get_settings ships `dict(cfg)` whole --

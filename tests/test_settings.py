@@ -95,6 +95,7 @@ def test_defaults_are_the_documented_values():
                 },
             },
             "show_labels": True,
+            "show_system_names": False,
             "label_size": "standard",
             "label_markers": {},
             "minimize_inactive_clients": False,
