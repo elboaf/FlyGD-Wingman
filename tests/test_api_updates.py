@@ -116,7 +116,7 @@ def test_upload_and_handoff_race_has_exactly_one_winner(tmp_path):
 
     def upload_call():
         bridge_calls.wait(timeout=2)
-        api.start_upload("Fight", "", False, False, ["r1"])
+        api.start_upload("Fight", "", False, ["r1"])
 
     def handoff_call():
         bridge_calls.wait(timeout=2)
@@ -202,7 +202,7 @@ def test_upload_refusal_keeps_handoff_reason_if_state_changes_before_alert(
 
     api._work_gate.claim_upload = paused_claim
     bridge = threading.Thread(
-        target=lambda: api.start_upload("Fight", "", False, False, ["r1"])
+        target=lambda: api.start_upload("Fight", "", False, ["r1"])
     )
     bridge.start()
     after_claim.wait(timeout=2)
@@ -220,7 +220,7 @@ def test_upload_refused_while_quitting_explains_update_shutdown(tmp_path):
     api, _window = _upload_api(tmp_path)
     assert api._work_gate.claim_quit(force_upload=False)
 
-    api.start_upload("Fight", "", False, False, ["r1"])
+    api.start_upload("Fight", "", False, ["r1"])
 
     assert api._uploader._upload_thread is None
     assert api._alert.raised == [
@@ -286,7 +286,7 @@ def test_upload_claim_lives_until_worker_finally(tmp_path):
         release.wait(5)
 
     api._uploader._confirm_then_upload = block
-    api.start_upload("Fight", "", False, False, ["r1"])
+    api.start_upload("Fight", "", False, ["r1"])
 
     assert entered.wait(1)
     assert api._busy()
@@ -319,7 +319,7 @@ def test_upload_is_claimed_before_thread_start(tmp_path, monkeypatch):
         real_start(thread)
 
     monkeypatch.setattr(api_mod.threading.Thread, "start", start)
-    api.start_upload("Fight", "", False, False, ["r1"])
+    api.start_upload("Fight", "", False, ["r1"])
     monkeypatch.undo()
     _join_upload(api)
 
@@ -372,7 +372,7 @@ def test_upload_start_failure_clears_thread_and_claim(tmp_path, monkeypatch):
     monkeypatch.setattr(api_mod.threading, "Thread", _StartFailureThread)
 
     with pytest.raises(RuntimeError, match="cannot start worker"):
-        api.start_upload("Fight", "", False, False, ["r1"])
+        api.start_upload("Fight", "", False, ["r1"])
 
     assert api._uploader._upload_thread is None
     assert not api._busy()
@@ -1061,7 +1061,7 @@ def test_install_claim_excludes_upload_before_revalidation(tmp_path):
     api.install_update()
     assert service.launch_entered.wait(1)
     assert api._work_gate.handoff_phase() == "revalidating"
-    api.start_upload("Fight", "", False, False, ["r1"])
+    api.start_upload("Fight", "", False, ["r1"])
 
     assert api._alert.raised[-1] == (
         "info",

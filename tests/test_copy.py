@@ -290,7 +290,6 @@ def test_one_recording_reads_the_same_on_all_three_surfaces():
         privacy="unlisted",
         channel_title="Z",
         stitch=False,
-        split=False,
         discord_webhook="",
     )
 
@@ -313,7 +312,6 @@ def test_an_hour_long_recording_reads_the_same_on_all_three_surfaces():
         privacy="unlisted",
         channel_title="Z",
         stitch=False,
-        split=False,
         discord_webhook="",
     )
 
@@ -399,58 +397,3 @@ def test_a_stopped_upload_always_states_how_many_landed():
     # "Stopped", not "Cancelled" or "Failed": the user asked for this.
     for uploaded in (0, 1, 3):
         assert copy_mod.format_upload_cancelled(uploaded, 3).startswith("Stopped.")
-
-
-def test_a_split_confirm_estimates_parts_and_discloses_numbering():
-    """The split dialog cannot know the real part count (keyframe cuts
-    decide it), so it estimates from the same constant the splitter uses
-    and says the rule rather than a promise."""
-    one = _info(size=1024, duration=4000.0)
-    body = copy_mod.format_upload_confirm(
-        [one],
-        title="Fight",
-        privacy="unlisted",
-        channel_title="Z",
-        stitch=False,
-        split=True,
-        discord_webhook="",
-    )
-    import math
-
-    from wingman.stitch import SEGMENT_CHUNK_SECONDS
-
-    parts = max(1, math.ceil(4000 / SEGMENT_CHUNK_SECONDS))
-    assert f"split into about {parts} part" in body
-    assert "each under 15 minutes" in body
-    assert "(numbered per part)" in body
-
-
-def test_a_stitched_split_confirm_names_both_verbs():
-    one = _info(size=1024, duration=900.0)
-    body = copy_mod.format_upload_confirm(
-        [one, one],
-        title="Fight",
-        privacy="unlisted",
-        channel_title="",
-        stitch=True,
-        split=True,
-        discord_webhook="",
-    )
-    assert "stitched and split" in body
-
-
-def test_a_split_title_hint_discloses_part_numbering():
-    assert copy_mod.format_title_hint(1, False, True) == (
-        "Title (applies to every part, numbered)"
-    )
-    assert copy_mod.format_title_hint(4, True, True) == (
-        "Title (applies to every part, numbered)"
-    )
-    # Untouched by the new argument: the older three shapes.
-    assert copy_mod.format_title_hint(1, False, False) == "Title"
-    # Pre-existing shape: a one-video stitch is still "Title" (nothing is
-    # numbered when the count is one).
-    assert copy_mod.format_title_hint(1, True, False) == "Title"
-    assert copy_mod.format_title_hint(4, False, False) == (
-        "Title (applies to all 4, numbered 1-4)"
-    )

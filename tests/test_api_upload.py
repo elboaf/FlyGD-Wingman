@@ -6,9 +6,11 @@ only thing asserting them was a widget.
 """
 
 import datetime
+import pathlib
 import threading
 
 from tests import fakes
+from wingman import clips as clips_mod
 from wingman import combatlog, discord, library, uploader
 from wingman import links as links_mod
 from wingman.ui import api as api_mod
@@ -31,7 +33,7 @@ def join(api):
 
 def test_uploading_nothing_says_so_rather_than_starting_an_empty_job(tmp_path):
     api, _window, _rows = api_with(tmp_path)
-    api.start_upload("t", "d", False, False, [])
+    api.start_upload("t", "d", False, [])
     assert api._alert.raised == [
         ("warning", "No Selection", "Select at least one video to upload.")
     ]
@@ -42,7 +44,7 @@ def test_stitching_one_recording_is_refused_with_its_own_message(tmp_path):
     """Distinct from the no-selection warning: the user picked something,
     it just cannot be joined to itself."""
     api, _window, _rows = api_with(tmp_path)
-    api.start_upload("t", "d", True, False, ["r1"])
+    api.start_upload("t", "d", True, ["r1"])
     assert api._alert.raised == [
         ("warning", "Stitch", "Select at least two videos to stitch.")
     ]
@@ -55,7 +57,7 @@ def test_a_second_upload_is_refused_while_one_is_running(tmp_path):
     api._uploader._upload_thread = threading.Thread(target=gate.wait, daemon=True)
     api._uploader._upload_thread.start()
     try:
-        api.start_upload("t", "d", False, False, ["r1"])
+        api.start_upload("t", "d", False, ["r1"])
         assert api._alert.raised == [
             ("warning", "Busy", "An upload is already in progress.")
         ]
@@ -77,7 +79,7 @@ def test_publishing_confirms_first_and_declining_uploads_nothing(monkeypatch, tm
     fakes.stub_auth(monkeypatch)
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
 
-    api.start_upload("Fight", "d", False, False, ["r1", "r2"])
+    api.start_upload("Fight", "d", False, ["r1", "r2"])
     join(api)
 
     assert called == []
@@ -119,7 +121,7 @@ def test_a_finished_upload_links_every_row_it_covered(monkeypatch, tmp_path):
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
     monkeypatch.setattr(uploader, "upload", fake_upload_ok())
 
-    api.start_upload("Fight", "d", False, False, ["r1", "r2"])
+    api.start_upload("Fight", "d", False, ["r1", "r2"])
     join(api)
 
     links = fakes.payloads(sent, "onLink")
@@ -146,7 +148,7 @@ def test_each_finished_upload_is_persisted_as_it_lands(monkeypatch, tmp_path):
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
     monkeypatch.setattr(uploader, "upload", fake_upload_ok())
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     info = api._uploader._rows.resolve("r1")
@@ -181,7 +183,7 @@ def test_a_refresh_landing_mid_upload_does_not_lose_the_link(monkeypatch, tmp_pa
 
     monkeypatch.setattr(uploader, "upload", refresh_then_upload)
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     stored = links_mod.load(store_file)
@@ -199,7 +201,7 @@ def test_progress_text_names_the_file_and_the_bar_tracks_the_batch(
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
     monkeypatch.setattr(uploader, "upload", fake_upload_ok(fractions=(0.5,)))
 
-    api.start_upload("Fight", "d", False, False, ["r1", "r2"])
+    api.start_upload("Fight", "d", False, ["r1", "r2"])
     join(api)
 
     bars = [p for p in fakes.payloads(sent, "onProgress") if p["text"]]
@@ -231,7 +233,7 @@ def test_the_destination_channel_is_learned_and_persisted(monkeypatch, tmp_path)
         lambda data, path=None: saved.update(data),
     )
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     (channel,) = fakes.payloads(sent, "onChannel")
@@ -266,7 +268,7 @@ def test_a_completed_upload_clears_retry_and_says_so(monkeypatch, tmp_path):
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
     monkeypatch.setattr(uploader, "upload", fake_upload_ok())
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     assert {
@@ -296,7 +298,7 @@ def test_stitching_switches_the_bar_to_indeterminate_and_back(monkeypatch, tmp_p
 
     monkeypatch.setattr("wingman.upload.controller.stitch.stitched", fake_stitched)
 
-    api.start_upload("Fight", "d", True, False, ["r1", "r2"])
+    api.start_upload("Fight", "d", True, ["r1", "r2"])
     join(api)
 
     modes = [p["mode"] for p in fakes.payloads(sent, "onProgress")]
@@ -323,7 +325,7 @@ def test_a_retryable_failure_offers_retry_and_keeps_the_session(monkeypatch, tmp
         uploader, "upload", failing_upload(uploader.Outcome.RETRY, session)
     )
 
-    api.start_upload("Fight", "d", False, False, ["r1", "r2"])
+    api.start_upload("Fight", "d", False, ["r1", "r2"])
     join(api)
 
     assert fakes.payloads(sent, "onRetryAvailable")[-1] == {"available": True}
@@ -346,7 +348,7 @@ def test_a_permanent_failure_offers_no_retry_and_drops_the_session(
         uploader, "upload", failing_upload(uploader.Outcome.QUOTA, object())
     )
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     assert fakes.payloads(sent, "onRetryAvailable") == []
@@ -371,7 +373,7 @@ def test_a_stitched_failure_cannot_resume_even_when_retryable(monkeypatch, tmp_p
 
     monkeypatch.setattr("wingman.upload.controller.stitch.stitched", fake_stitched)
 
-    api.start_upload("Fight", "d", True, False, ["r1", "r2"])
+    api.start_upload("Fight", "d", True, ["r1", "r2"])
     join(api)
 
     assert api._uploader._retry_state.request is None
@@ -387,7 +389,7 @@ def test_retry_resumes_the_session_then_finishes_the_rest(monkeypatch, tmp_path)
     monkeypatch.setattr(
         uploader, "upload", failing_upload(uploader.Outcome.RETRY, session)
     )
-    api.start_upload("Fight", "d", False, False, ["r1", "r2"])
+    api.start_upload("Fight", "d", False, ["r1", "r2"])
     join(api)
 
     def resume(req, *, on_progress=None, on_retry=None, on_response=None, **kw):
@@ -437,7 +439,7 @@ def test_the_stored_privacy_and_category_decide_the_upload(monkeypatch, tmp_path
     monkeypatch.setattr(
         api._uploader, "_confirm_then_upload", lambda job: jobs.append(job)
     )
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
     assert (jobs[0].privacy, jobs[0].category) == ("private", "27")
 
@@ -449,7 +451,7 @@ def test_the_confirm_dialog_names_the_privacy_that_will_be_used(tmp_path):
     api, _window, _rows = api_with(tmp_path, settings={"privacy": "private"})
     api._confirm = fakes.Answers(answer=False)
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     ((_title, body),) = api._confirm.asked
@@ -471,7 +473,7 @@ def test_the_confirm_names_the_discord_half_when_logs_are_requested(tmp_path):
     api, _window, _rows = api_with(tmp_path, settings={"discord_webhook": HOOK})
     api._confirm = fakes.Answers(answer=False)
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     ((_title, body),) = api._confirm.asked
@@ -490,7 +492,7 @@ def test_the_confirm_withdraws_the_discord_promise_on_a_fresh_install(tmp_path):
     api, _window, _rows = api_with(tmp_path)
     api._confirm = fakes.Answers(answer=False)
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     ((_title, body),) = api._confirm.asked
@@ -508,7 +510,7 @@ def test_declining_the_confirm_posts_no_logs_either(monkeypatch, tmp_path):
         api_mod.discord, "post_archive", lambda hook, path, content: posted.append(path)
     )
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     assert posted == []
@@ -579,7 +581,7 @@ def test_one_upload_publishes_the_video_and_then_posts_the_logs(monkeypatch, tmp
         )[1],
     )
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     assert order == ["video", "logs"]
@@ -605,7 +607,7 @@ def test_the_video_finishing_is_not_the_end_of_the_status_line(monkeypatch, tmp_
         ),
     )
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     texts = [p["text"] for p in fakes.payloads(sent, "onStatus")]
@@ -637,7 +639,7 @@ def test_logs_are_posted_without_being_asked_for(monkeypatch, tmp_path):
         )[1],
     )
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     assert len(posted) == 1
@@ -672,7 +674,7 @@ def test_an_unconfigured_webhook_says_nothing_at_all(monkeypatch, tmp_path):
     )
     sent = fakes.record_pushes(api)
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     assert fakes.payloads(sent, "onLink")[0]["url"] == uploader.watch_url("vid123")
@@ -696,7 +698,7 @@ def test_a_webhook_that_does_not_parse_still_warns(monkeypatch, tmp_path):
     )
     sent = fakes.record_pushes(api)
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     assert fakes.payloads(sent, "onLink")[0]["url"] == uploader.watch_url("vid123")
@@ -722,7 +724,7 @@ def test_a_missing_gamelogs_folder_skips_the_logs_and_keeps_the_video(
     monkeypatch.setattr(api_mod.combatlog, "find_gamelogs_dir", lambda: None)
     sent = fakes.record_pushes(api)
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     final = fakes.payloads(sent, "onStatus")[-1]
@@ -741,7 +743,7 @@ def test_an_unreadable_duration_skips_the_logs_and_names_the_file(
     rows.infos["r1"].probed = True
     sent = fakes.record_pushes(api)
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     final = fakes.payloads(sent, "onStatus")[-1]
@@ -766,7 +768,7 @@ def test_an_unprobed_recording_is_probed_rather_than_blamed(monkeypatch, tmp_pat
         ),
     )
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     # KEY IS `id`, matching every other duration message.
@@ -790,7 +792,7 @@ def test_a_failed_video_posts_no_logs_and_leaves_them_to_retry(monkeypatch, tmp_
     )
     sent = fakes.record_pushes(api)
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     assert posted == []
@@ -806,7 +808,7 @@ def test_a_retried_upload_still_posts_the_logs_it_promised(monkeypatch, tmp_path
     monkeypatch.setattr(
         uploader, "upload", failing_upload(uploader.Outcome.RETRY, object())
     )
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     posted = []
@@ -849,7 +851,7 @@ def test_a_posted_archive_is_deleted_and_the_drop_note_is_appended(
         ),
     )
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     final = fakes.payloads(sent, "onStatus")[-1]
@@ -873,7 +875,7 @@ def test_a_rejected_archive_is_kept_and_its_location_named(monkeypatch, tmp_path
         ),
     )
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     assert archive_path.exists()
@@ -892,7 +894,7 @@ def test_a_failure_after_the_archive_exists_still_names_it(monkeypatch, tmp_path
 
     monkeypatch.setattr(api_mod.combatlog, "summarize_archive", boom)
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     body = api._alert.raised[-1][2]
@@ -918,7 +920,7 @@ def test_a_crash_in_the_log_half_does_not_report_the_video_as_failed(
 
     monkeypatch.setattr(api_mod.library, "probe", boom)
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     # The video really did publish.
@@ -949,12 +951,12 @@ def test_the_busy_guard_still_holds_while_the_logs_are_posting(monkeypatch, tmp_
 
     monkeypatch.setattr(api_mod.discord, "post_archive", blocking_post)
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     try:
         assert posting.wait(timeout=5)
         # The video is already published and linked at this point.
         assert api._busy()
-        api.start_upload("Fight again", "d", False, False, ["r2"])
+        api.start_upload("Fight again", "d", False, ["r2"])
         assert api._alert.raised[-1] == (
             "warning",
             "Busy",
@@ -1027,7 +1029,7 @@ def test_an_upload_in_flight_is_marked_busy_and_its_result_is_not(
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
     monkeypatch.setattr(uploader, "upload", fake_upload_ok(fractions=(0.5,)))
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     strip = fakes.payloads(sent, "onStatus") + fakes.payloads(sent, "onProgress")
@@ -1061,7 +1063,7 @@ def test_a_stitch_is_busy_so_a_route_change_cannot_blank_it(monkeypatch, tmp_pat
 
     monkeypatch.setattr("wingman.upload.controller.stitch.stitched", fake_stitched)
 
-    api.start_upload("Fight", "d", True, False, ["r1", "r2"])
+    api.start_upload("Fight", "d", True, ["r1", "r2"])
     join(api)
 
     (indeterminate,) = [
@@ -1082,7 +1084,7 @@ def test_a_failed_upload_leaves_a_settled_strip(monkeypatch, tmp_path):
         uploader, "upload", failing_upload(uploader.Outcome.RETRY, object())
     )
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     final = fakes.payloads(sent, "onStatus")[-1]
@@ -1100,7 +1102,7 @@ def test_a_batch_names_the_count_rather_than_one_title(monkeypatch, tmp_path):
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
     monkeypatch.setattr(uploader, "upload", fake_upload_ok())
 
-    api.start_upload("Fight", "d", False, False, ["r1", "r2"])
+    api.start_upload("Fight", "d", False, ["r1", "r2"])
     join(api)
 
     assert (
@@ -1126,7 +1128,7 @@ def test_a_stitched_batch_is_one_video_and_takes_the_title_form(monkeypatch, tmp
 
     monkeypatch.setattr("wingman.upload.controller.stitch.stitched", fake_stitched)
 
-    api.start_upload("Fight", "d", True, False, ["r1", "r2"])
+    api.start_upload("Fight", "d", True, ["r1", "r2"])
     join(api)
 
     assert (
@@ -1208,7 +1210,7 @@ def test_stopping_a_batch_reports_what_actually_reached_the_channel(
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
     monkeypatch.setattr(uploader, "upload", cancelling_upload(api, 2))
 
-    api.start_upload("Fight", "d", False, False, ["r1", "r2", "r3", "r4"])
+    api.start_upload("Fight", "d", False, ["r1", "r2", "r3", "r4"])
     join(api)
 
     # Two finished and were linked; the stop did not un-upload them.
@@ -1230,7 +1232,7 @@ def test_stopping_before_anything_lands_says_nothing_was_uploaded(
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
     monkeypatch.setattr(uploader, "upload", cancelling_upload(api, 0))
 
-    api.start_upload("Fight", "d", False, False, ["r1", "r2"])
+    api.start_upload("Fight", "d", False, ["r1", "r2"])
     join(api)
 
     assert rows.links == {}
@@ -1249,7 +1251,7 @@ def test_a_stop_never_offers_retry(monkeypatch, tmp_path):
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
     monkeypatch.setattr(uploader, "upload", cancelling_upload(api, 0))
 
-    api.start_upload("Fight", "d", False, False, ["r1", "r2"])
+    api.start_upload("Fight", "d", False, ["r1", "r2"])
     join(api)
 
     assert api._uploader._retry_state is None
@@ -1265,7 +1267,7 @@ def test_the_cancel_control_is_disarmed_however_the_job_ends(monkeypatch, tmp_pa
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
     monkeypatch.setattr(uploader, "upload", fake_upload_ok())
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     armed = fakes.payloads(sent, "onCancelAvailable")
@@ -1283,7 +1285,7 @@ def test_the_cancel_control_goes_before_the_combat_log_half_runs(monkeypatch, tm
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
     monkeypatch.setattr(uploader, "upload", fake_upload_ok())
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     names = [name for name, _ in sent]
@@ -1312,7 +1314,7 @@ def test_a_stop_left_over_from_one_job_cannot_abort_the_next(monkeypatch, tmp_pa
     assert api._uploader._cancel.is_set()
     monkeypatch.setattr(uploader, "upload", fake_upload_ok())
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     assert rows.links == {"r1": uploader.watch_url("vid123")}
@@ -1327,7 +1329,7 @@ def test_a_finished_upload_tells_the_page_the_job_is_over(monkeypatch, tmp_path)
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
     monkeypatch.setattr(uploader, "upload", fake_upload_ok())
 
-    api.start_upload("Fight", "d", False, False, ["r1"])
+    api.start_upload("Fight", "d", False, ["r1"])
     join(api)
 
     assert fakes.payloads(sent, "onUploadDone") == [{}]
@@ -1344,208 +1346,26 @@ def test_a_stopped_job_never_claims_completion(monkeypatch, tmp_path):
     fakes.install_google(monkeypatch, fakes.FakeYouTube())
     monkeypatch.setattr(uploader, "upload", cancelling_upload(api, 1))
 
-    api.start_upload("Fight", "d", False, False, ["r1", "r2", "r3"])
+    api.start_upload("Fight", "d", False, ["r1", "r2", "r3"])
     join(api)
 
     assert fakes.payloads(sent, "onUploadDone") == []
     assert fakes.payloads(sent, "onStatus")[-1]["text"] == "Stopped. 1 of 3 uploaded."
 
 
-# ----- split into parts -----------------------------------------------------
-# YouTube's unverified-upload wall makes >15-minute uploads impossible for
-# some users, so a split job joins the selection (when several), segments
-# the result and uploads every part. The parts are temporaries with the
-# stitched file's lifecycle: consumed inside the context manager, deleted
-# on every exit. `segmented` is faked here the way `stitched` is above.
+# ----- stitch locally (the multi-selection local lane) -----------------------
+# The joined file is KEPT in the recording folder, nothing uploads, and the
+# originals are untouched.
 
 
-def _fake_segmented(chunks):
-    import contextlib
-
-    @contextlib.contextmanager
-    def fake(src, tmp, ffmpeg_bin):
-        yield chunks
-
-    return fake
-
-
-def test_a_split_job_uploads_every_part_in_order(monkeypatch, tmp_path):
-    api, _window, _rows = api_with(tmp_path)
-    sent = fakes.record_pushes(api)
-    fakes.stub_auth(monkeypatch)
-    fakes.install_google(monkeypatch, fakes.FakeYouTube())
-    monkeypatch.setattr(uploader, "upload", fake_upload_ok())
-
-    import contextlib
-
-    @contextlib.contextmanager
-    def fake_stitched(sources, ffmpeg_bin, tmp):
-        yield tmp_path / "merged.mkv"
-
-    monkeypatch.setattr("wingman.upload.controller.stitch.stitched", fake_stitched)
-    monkeypatch.setattr(
-        "wingman.upload.controller.stitch.segmented",
-        _fake_segmented([tmp_path / f"p{i}.mkv" for i in (1, 2, 3)]),
-    )
-
-    api.start_upload("Fight", "d", False, True, ["r1", "r2"])
-    join(api)
-
-    progress = [p.get("text", "") for p in fakes.payloads(sent, "onProgress")]
-    assert "Uploading file 3 of 3" in " | ".join(progress)
-    # The part count is ffmpeg's answer, recorded on the job.
-    assert api._uploader._retry_state is None
-    assert fakes.payloads(sent, "onStatus")[-1]["text"] == (
-        "Uploaded 3 parts to YouTube."
-    )
-    # No per-row links: the parts are chunks of one fight, not the source
-    # recordings, and a link cell on a source row would claim the wrong
-    # video. (Contrast the stitched path, where every source row IS the
-    # one video that landed.)
-    assert fakes.payloads(sent, "onLink") == []
-
-
-def test_a_single_video_split_never_stitches(monkeypatch, tmp_path):
-    """Split answers the length question, not the join question: one
-    recording over the limit is split as-is, no stitch demanded."""
-    api, _window, _rows = api_with(tmp_path)
-    sent = fakes.record_pushes(api)
-    fakes.stub_auth(monkeypatch)
-    fakes.install_google(monkeypatch, fakes.FakeYouTube())
-    monkeypatch.setattr(uploader, "upload", fake_upload_ok())
-
-    def boom(*a, **k):
-        raise AssertionError("a single-source split must not stitch")
-
-    monkeypatch.setattr("wingman.upload.controller.stitch.stitched", boom)
-    monkeypatch.setattr(
-        "wingman.upload.controller.stitch.segmented",
-        _fake_segmented([tmp_path / "p1.mkv", tmp_path / "p2.mkv"]),
-    )
-
-    api.start_upload("Fight", "d", False, True, ["r1"])
-    join(api)
-
-    assert fakes.payloads(sent, "onStatus")[-1]["text"] == (
-        "Uploaded 2 parts to YouTube."
-    )
-
-
-def test_stopping_a_split_reports_the_parts_that_landed(monkeypatch, tmp_path):
-    api, _window, _rows = api_with(tmp_path)
-    sent = fakes.record_pushes(api)
-    fakes.stub_auth(monkeypatch)
-    fakes.install_google(monkeypatch, fakes.FakeYouTube())
-    monkeypatch.setattr(uploader, "upload", cancelling_upload(api, 1))
-    monkeypatch.setattr(
-        "wingman.upload.controller.stitch.segmented",
-        _fake_segmented([tmp_path / f"p{i}.mkv" for i in (1, 2, 3)]),
-    )
-
-    api.start_upload("Fight", "d", False, True, ["r1"])
-    join(api)
-
-    assert fakes.payloads(sent, "onStatus")[-1]["text"] == ("Stopped. 1 of 3 uploaded.")
-
-
-def test_a_split_failure_never_offers_retry(monkeypatch, tmp_path):
-    """The context manager deletes the chunks the session points at, so a
-    resumable session is worthless -- Retry re-runs the whole split."""
-    api, _window, _rows = api_with(tmp_path)
-    fakes.stub_auth(monkeypatch)
-    fakes.install_google(monkeypatch, fakes.FakeYouTube())
-    monkeypatch.setattr(
-        uploader, "upload", failing_upload(uploader.Outcome.RETRY, object())
-    )
-    monkeypatch.setattr(
-        "wingman.upload.controller.stitch.segmented",
-        _fake_segmented([tmp_path / "p1.mkv"]),
-    )
-
-    api.start_upload("Fight", "d", False, True, ["r1"])
-    join(api)
-
-    assert api._uploader._retry_state.request is None
-
-
-# ----- split locally (workflow 2) -------------------------------------------
-# Process WITHOUT uploading: the parts land in the recording folder as
-# ordinary files, the next list rebuild lists them, and the user picks the
-# worthwhile part(s) to upload by hand.
-
-
-def join_split(api):
-    thread = api._uploader._split_thread
+def join_stitch(api):
+    thread = api._uploader._stitch_thread
     if thread is not None:
         thread.join(timeout=5)
         assert not thread.is_alive()
 
 
-def test_process_locally_split_lands_parts_in_the_recording_folder(
-    monkeypatch, tmp_path
-):
-    api, _window, _rows = api_with(tmp_path)
-    sent = fakes.record_pushes(api)
-
-    import contextlib
-
-    @contextlib.contextmanager
-    def fake_segmented(src, tmp, ffmpeg_bin):
-        # The faked chunks must exist on disk: the worker MOVES them into
-        # the recording folder, from the temp dir the controller hands in.
-        tmp.mkdir(parents=True, exist_ok=True)
-        made = [tmp / f"split-x{i}.mkv" for i in (1, 2)]
-        for path in made:
-            path.write_bytes(b"x")
-        yield made
-
-    monkeypatch.setattr("wingman.upload.controller.stitch.segmented", fake_segmented)
-
-    api.process_locally(["r1"], False, True)
-    join_split(api)
-
-    assert (tmp_path / "r1 - part 1.mkv").exists()
-    assert (tmp_path / "r1 - part 2.mkv").exists()
-    # The temp chunks went with the move, not left behind.
-    assert list(tmp_path.glob("split-x*.mkv")) == []
-    assert fakes.payloads(sent, "onStatus")[-1]["text"] == (
-        "Split into 2 parts in the recording folder."
-    )
-    # The list was rebuilt so the new parts are on screen.
-    assert fakes.payloads(sent, "onRows")
-    # The gate is released however the worker ends.
-    assert not api._uploader.busy()
-
-
-def test_process_locally_refuses_while_an_upload_is_running(tmp_path):
-    api, _window, _rows = api_with(tmp_path)
-    assert api._work_gate.claim_upload()
-    try:
-        api.process_locally(["r1"], False, True)
-        assert api._alert.raised == [
-            ("warning", "Busy", "An upload is already in progress.")
-        ]
-        assert api._uploader._split_thread is None
-    finally:
-        api._work_gate.release_upload()
-
-
-def test_process_locally_with_no_selection_says_so(tmp_path):
-    api, _window, _rows = api_with(tmp_path)
-    api.process_locally([], False, True)
-    assert api._alert.raised == [
-        ("warning", "No Selection", "Select at least one video to process.")
-    ]
-    assert api._uploader._split_thread is None
-
-
-# ----- process locally: stitch paths ----------------------------------------
-# Stitch ticked means the LOCAL pipeline can join: one file kept in the
-# recording folder, sources untouched. Both ticks compose exactly as the
-# upload path does -- join the timeline first, then segment the join.
-
-
-def test_process_locally_stitch_keeps_one_merged_file(monkeypatch, tmp_path):
+def test_stitch_locally_keeps_one_merged_file(monkeypatch, tmp_path):
     api, _window, _rows = api_with(tmp_path)
     sent = fakes.record_pushes(api)
 
@@ -1560,13 +1380,11 @@ def test_process_locally_stitch_keeps_one_merged_file(monkeypatch, tmp_path):
 
     monkeypatch.setattr("wingman.upload.controller.stitch.stitched", fake_stitched)
 
-    api.process_locally(["r1", "r2"], True, False)
-    join_split(api)
+    api.stitch_locally(["r1", "r2"])
+    join_stitch(api)
 
-    # Named for the earliest recording, in the recording folder; the
-    # sources are untouched and NO parts were made.
+    # Named for the earliest recording, in the recording folder.
     assert (tmp_path / "r1 - stitched.mkv").exists()
-    assert not list(tmp_path.glob("* - part *.mkv"))
     assert fakes.payloads(sent, "onStatus")[-1]["text"] == (
         "Stitched into r1 - stitched.mkv in the recording folder."
     )
@@ -1574,59 +1392,143 @@ def test_process_locally_stitch_keeps_one_merged_file(monkeypatch, tmp_path):
     assert not api._uploader.busy()
 
 
-def test_process_locally_stitch_and_split_makes_parts_not_a_merged_file(
-    monkeypatch, tmp_path
-):
+def test_stitch_locally_refuses_while_an_upload_is_running(tmp_path):
     api, _window, _rows = api_with(tmp_path)
-    sent = fakes.record_pushes(api)
-
-    import contextlib
-
-    @contextlib.contextmanager
-    def fake_stitched(sources, ffmpeg_bin, tmp):
-        tmp.mkdir(parents=True, exist_ok=True)
-        merged = tmp / "merged.mkv"
-        merged.write_bytes(b"x")
-        yield merged
-
-    @contextlib.contextmanager
-    def fake_segmented(src, tmp, ffmpeg_bin):
-        tmp.mkdir(parents=True, exist_ok=True)
-        made = [tmp / f"split-x{i}.mkv" for i in (1, 2)]
-        for path in made:
-            path.write_bytes(b"x")
-        yield made
-
-    monkeypatch.setattr("wingman.upload.controller.stitch.stitched", fake_stitched)
-    monkeypatch.setattr("wingman.upload.controller.stitch.segmented", fake_segmented)
-
-    api.process_locally(["r1", "r2"], True, True)
-    join_split(api)
-
-    assert (tmp_path / "r1 - part 1.mkv").exists()
-    assert (tmp_path / "r1 - part 2.mkv").exists()
-    assert not (tmp_path / "r1 - stitched.mkv").exists()
-    assert fakes.payloads(sent, "onStatus")[-1]["text"] == (
-        "Stitched and split into 2 parts in the recording folder."
-    )
+    assert api._work_gate.claim_upload()
+    try:
+        api.stitch_locally(["r1", "r2"])
+        assert api._alert.raised == [
+            ("warning", "Busy", "An upload is already in progress.")
+        ]
+        assert api._uploader._stitch_thread is None
+    finally:
+        api._work_gate.release_upload()
 
 
-def test_process_locally_stitching_one_recording_is_refused(tmp_path):
-    """Same rule as the upload path: a join of one file is not a join."""
+def test_stitch_locally_with_no_selection_says_so(tmp_path):
     api, _window, _rows = api_with(tmp_path)
-    api.process_locally(["r1"], True, False)
+    api.stitch_locally([])
+    assert api._alert.raised == [
+        ("warning", "No Selection", "Select at least one video to stitch.")
+    ]
+    assert api._uploader._stitch_thread is None
+
+
+def test_stitch_locally_with_one_recording_is_refused(tmp_path):
+    """A join of one file is not a join -- the upload path's rule."""
+    api, _window, _rows = api_with(tmp_path)
+    api.stitch_locally(["r1"])
     assert api._alert.raised == [
         ("warning", "Stitch", "Select at least two videos to stitch.")
     ]
-    assert api._uploader._split_thread is None
+    assert api._uploader._stitch_thread is None
 
 
-def test_process_locally_with_neither_box_ticked_says_so(tmp_path):
-    """The page hides the button unless a box is ticked; a stale page gets
-    a sentence rather than a silent no-op."""
+# ----- the clip editor's bridge calls ----------------------------------------
+# Single selection: clip_source hands the file URI to the page (the one
+# deliberate exception to paths-never-cross), clip_keyframes feeds the
+# timeline, cut_clip cuts with a stream copy. Nothing here uploads.
+
+
+def join_clip(api):
+    thread = api._uploader._clip_thread
+    if thread is not None:
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+
+def test_clip_source_hands_over_the_uri_and_duration(tmp_path):
     api, _window, _rows = api_with(tmp_path)
-    api.process_locally(["r1"], False, False)
-    assert api._alert.raised == [
-        ("warning", "Nothing to Do", "Tick Stitch or Split to process locally.")
-    ]
-    assert api._uploader._split_thread is None
+    (tmp_path / "r1.mkv").write_bytes(b"x")  # the existence check is real
+    result = api.clip_source("r1")
+    assert result["ok"] is True
+    assert result["uri"].startswith("file:")
+    assert result["duration"] == fakes.info(tmp_path / "r1.mkv").duration
+    assert result["note"]  # the degrade note travels with the answer
+
+
+def test_clip_source_reports_a_stale_row(tmp_path):
+    api, _window, _rows = api_with(tmp_path)
+    assert api.clip_source("nope")["ok"] is False
+
+
+def test_clip_keyframes_reads_the_file(monkeypatch, tmp_path):
+    api, _window, _rows = api_with(tmp_path)
+    (tmp_path / "r1.mkv").write_bytes(b"x")
+    seen = {}
+
+    def fake_keyframes(path, ffprobe_bin):
+        seen["path"] = path
+        return [0.0, 12.5]
+
+    monkeypatch.setattr("wingman.upload.controller.clips.keyframes", fake_keyframes)
+    assert api.clip_keyframes("r1") == {"keys": [0.0, 12.5]}
+    assert seen["path"] == tmp_path / "r1.mkv"
+
+
+def test_cut_clip_writes_the_clip_and_refreshes_the_list(monkeypatch, tmp_path):
+    api, _window, _rows = api_with(tmp_path)
+    sent = fakes.record_pushes(api)
+    commands = []
+
+    def fake_runner(cmd, **kw):
+        commands.append(cmd)
+        out = pathlib.Path(cmd[-1])
+        out.write_bytes(b"clip")
+        import subprocess
+
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    real_cut = clips_mod.cut
+
+    def fake_cut(src, out, start, seconds, ffmpeg_bin, runner=fake_runner):
+        # The controller reads clips.cut through the module, so patching
+        # the attribute works -- but the fake must call the ORIGINAL
+        # captured above, not the module attribute it just replaced.
+        return real_cut(src, out, start, seconds, ffmpeg_bin, runner=runner)
+
+    monkeypatch.setattr("wingman.upload.controller.clips.cut", fake_cut)
+
+    (tmp_path / "r1.mkv").write_bytes(b"x")
+    api.cut_clip("r1", 5.0, 20.0)
+    join_clip(api)
+
+    assert (tmp_path / "r1 - clip.mkv").exists()
+    # `-ss` BEFORE `-i`, relative `-t`, stream copy.
+    cmd = commands[0]
+    assert cmd[cmd.index("-ss") + 1] == "5.000"
+    assert cmd.index("-ss") < cmd.index("-i")
+    assert cmd[cmd.index("-t") + 1] == "15.000"
+    assert "-c" in cmd and "copy" in cmd[cmd.index("-c") :]
+    assert fakes.payloads(sent, "onStatus")[-1]["text"] == (
+        "Clipped 0:05\u20130:20 to r1 - clip.mkv in the recording folder."
+    )
+    assert fakes.payloads(sent, "onRows")
+    assert not api._uploader.busy()
+
+
+def test_cut_clip_refuses_a_too_short_span(tmp_path):
+    api, _window, _rows = api_with(tmp_path)
+    api.cut_clip("r1", 5.0, 5.2)
+    assert api._uploader._clip_thread is None
+    assert not api._alert.raised  # a strip line, not a dialog
+
+
+def test_cut_clip_refuses_while_an_upload_is_running(tmp_path):
+    api, _window, _rows = api_with(tmp_path)
+    (tmp_path / "r1.mkv").write_bytes(b"x")
+    assert api._work_gate.claim_upload()
+    try:
+        api.cut_clip("r1", 0.0, 10.0)
+        assert api._alert.raised == [
+            ("warning", "Busy", "An upload is already in progress.")
+        ]
+        assert api._uploader._clip_thread is None
+    finally:
+        api._work_gate.release_upload()
+
+
+def test_cut_clip_with_a_stale_row_says_so(tmp_path):
+    api, _window, _rows = api_with(tmp_path)
+    api.cut_clip("nope", 0.0, 10.0)
+    assert api._uploader._clip_thread is None

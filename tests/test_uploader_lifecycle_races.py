@@ -928,7 +928,7 @@ def test_full_upload_refresh_keeps_duration_url_and_work_gate(rig, monkeypatch):
     rid = rows.rows()[0]["id"]
     captured = rows.resolve(rid)
     entered, release = pause_foreground(monkeypatch)
-    api.start_upload("Fight", "", False, False, [rid])
+    api.start_upload("Fight", "", False, [rid])
     try:
         assert entered.wait(5)
         during = (

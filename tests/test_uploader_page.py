@@ -409,13 +409,13 @@ def test_start_upload_is_called_with_what_it_now_accepts():
     this is the only thing that reads both sides."""
     call = re.search(r"WM\.send\('start_upload',(.*?)\);", PANEL_JS, re.DOTALL)
     assert call, "panel.js should still start uploads"
-    # title, description, stitch, split, ids
-    assert call.group(1).count(",") == 4
+    # title, description, stitch, ids
+    assert call.group(1).count(",") == 3
 
     signature = re.search(r"def start_upload\(self,([^)]*)\)", API_PY)
     assert signature
     params = [p.strip() for p in signature.group(1).split(",") if p.strip()]
-    assert params == ["title", "description", "stitch", "split", "ids"]
+    assert params == ["title", "description", "stitch", "ids"]
 
 
 def test_the_empty_state_names_the_folder_it_watched():
@@ -1070,41 +1070,85 @@ def test_stopping_an_upload_shares_the_slot_it_cannot_be_live_beside():
     assert re.search(r"btn-retry'\)\.hidden = on", PANEL_JS)
 
 
-def test_the_split_controls_exist_and_are_wired():
-    """The split feature's surface: a checkbox answering the length
-    question (enabled from ONE selected, unlike Stitch's two), a hidden
-    button shown while EITHER tick is on, and both sides of its bridge
-    call."""
-    assert 'id="lab-split"' in HTML and 'id="f-split"' in HTML
-    assert re.search(r'id="btn-process-local"[^>]*hidden', HTML)
-    # Wider enable rule than Stitch: one video can be over the limit.
-    assert re.search(r"WM\.setEnabled\('f-split', selected > 0\)", PANEL_JS)
-    assert re.search(r"WM\.setEnabled\('f-stitch', selected > 1\)", PANEL_JS)
-    # A tick left behind by a vanished selection must not survive.
-    assert re.search(r"selected < 1\) WM\.el\('f-split'\)\.checked = false", PANEL_JS)
-    # The button's meaning follows the checkboxes: stitch alone joins to
-    # one kept file, split alone makes parts, both joins then segments.
-    # Hidden only when NEITHER tick is on.
+def test_the_split_controls_are_gone():
+    """The 15-minute split feature was replaced by the clip editor; nothing
+    of its surface may survive where the page or the bridge can see it."""
+    for haystack, label in (
+        (HTML, "index.html"),
+        (PANEL_JS, "panel.js"),
+        (API_PY, "api.py"),
+    ):
+        assert "f-split" not in haystack, label
+        assert "split_locally" not in haystack, label
+        assert "process_locally" not in haystack, label
+
+
+def test_the_stitch_local_button_follows_the_stitch_tick():
+    """Stitch locally is the multi-selection local-processing lane. The
+    button shows only while the stitch checkbox is ticked -- which itself
+    needs two selected -- and appears on the TICK itself, not the next
+    selection change (the first cut attached visibility to selection
+    events only; ticking a box showed nothing until the selection moved).
+    """
+    assert 'id="btn-stitch-local"' in HTML
     assert re.search(
-        r"btn-process-local'\)\.hidden =\s*"
-        r"!WM\.el\('f-split'\)\.checked && !WM\.el\('f-stitch'\)\.checked",
-        PANEL_JS,
+        r"btn-stitch-local'\)\.hidden = !WM\.el\('f-stitch'\)\.checked", PANEL_JS
     )
-    assert re.search(
-        r"WM\.send\('process_locally',\s*WM\.list\.selectedIds\(\),\s*"
-        r"WM\.el\('f-stitch'\)\.checked,\s*WM\.el\('f-split'\)\.checked\);",
-        PANEL_JS,
-    )
-    assert "process_locally" in API_PY
-    # The ticks are the button's ONLY visibility signals, so each change
-    # handler must run the same synchronous refresh the selection events
-    # run. The first cut wired the tick to refreshPanelText alone (an
-    # async round trip that paints nothing until it returns), so ticking a
-    # box showed no button until the next selection change.
     assert re.search(
         r"function refreshOnTick\(\) \{\s*"
         r"refreshPanelText\(\);\s*refreshEnabled\(\);\s*\}\s*"
-        r"WM\.el\('f-stitch'\)\.addEventListener\('change', refreshOnTick\);\s*"
-        r"WM\.el\('f-split'\)\.addEventListener\('change', refreshOnTick\);",
+        r"WM\.el\('f-stitch'\)\.addEventListener\('change', refreshOnTick\);",
+        PANEL_JS,
+    )
+    assert "WM.send('stitch_locally', WM.list.selectedIds());" in PANEL_JS
+    assert "stitch_locally" in API_PY
+
+
+def test_the_clip_editor_exists_and_is_single_selection():
+    """The clip editor is the single-selection lane: shown for exactly one
+    selected row, hidden for zero or several. This is the documented
+    exception to "disabled, NOT hidden" -- an editor for a selection that
+    does not exist is not a disabled control, it is nothing (the
+    #panel-empty-note precedent)."""
+    assert re.search(r'id="clip-editor"[^>]*hidden', HTML)
+    assert re.search(
+        r"var ids = WM\.list\.selectedIds\(\);\s*"
+        r"if \(ids\.length === 1\) clipShow\(ids\[0\]\);\s*"
+        r"else clipHide\(\);",
+        PANEL_JS,
+    )
+    # Python owns the file path; the page asks for it per selection.
+    assert re.search(r"WM\.send\('clip_source',\s*rowId\)", PANEL_JS)
+    assert "clip_source" in API_PY
+    assert "clip_keyframes" in API_PY
+    # Cut sends the markers to Python, which re-clamps and cuts.
+    assert re.search(
+        r"WM\.send\('cut_clip',\s*clip\.rowId,\s*clip\.markIn,\s*clip\.markOut\);",
+        PANEL_JS,
+    )
+    assert "cut_clip" in API_PY
+
+
+def test_the_clip_editor_degrades_without_a_decoder():
+    """Chromium, not FFmpeg, decodes the preview -- HEVC gets no picture.
+    The editor must keep working: the dead element hides, Python's note is
+    shown, and the timeline still runs off the bridge-provided duration."""
+    assert re.search(
+        r"clip-video'\)\.addEventListener\('error', function \(\) \{", PANEL_JS
+    )
+    assert re.search(r"clip\.degraded = true;", PANEL_JS)
+    assert re.search(r"note\.textContent = clip\.noteText \|\| '';", PANEL_JS)
+    # A dead black box with controls reads as broken: the element hides.
+    assert re.search(r"WM\.el\('clip-video'\)\.hidden = true;", PANEL_JS)
+
+
+def test_the_clip_editor_releases_the_file_when_hidden():
+    """A media element holding the recording open blocks a rename or
+    delete of the user's own file on Windows, so the shared hide path must
+    drop the source, not merely hide the element."""
+    assert re.search(
+        r"clip\.video\.pause\(\);\s*"
+        r"clip\.video\.removeAttribute\('src'\);\s*"
+        r"clip\.video\.load\(\);",
         PANEL_JS,
     )

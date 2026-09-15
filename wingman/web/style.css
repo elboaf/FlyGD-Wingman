@@ -5630,3 +5630,41 @@ button.btn.danger:disabled {
   .pill.warn .led { animation: none; }
   #update-progress::-webkit-progress-value { transition: none; }
 }
+
+/* ---- clip editor (Uploader: single-selection clip) ---------------------- */
+/* Shown by panel.js only while EXACTLY one recording is selected; `hidden`
+   needs this override because #clip-editor sets display when visible. */
+#clip-editor[hidden] { display: none; }
+#clip-editor { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+
+/* The preview is panel-width and 16:9; `width: 100%` keeps any aspect. The
+   element is REMOVED from the layout, not just hidden, when the codec
+   cannot decode -- an empty black box with controls reads as broken. */
+#clip-video { width: 100%; aspect-ratio: 16 / 9; background: var(--field);
+              border-radius: var(--radius-sm); }
+#clip-video[hidden] { display: none; }
+
+#clip-nopreview[hidden] { display: none; }
+
+/* The timeline: a fixed-height bar, position:relative so ticks, band,
+   playhead and handles position off percentages in panel.js. Tall enough
+   that a handle is grabbable at 200% scaling without pixel-hunting. */
+#clip-track { position: relative; height: 28px; border-radius: var(--radius-sm);
+              background: var(--control); border: 1px solid var(--control-border);
+              touch-action: none; }
+#clip-band { position: absolute; top: 0; bottom: 0;
+             background: color-mix(in srgb, var(--brand) 28%, transparent);
+             border-left: 2px solid var(--brand); border-right: 2px solid var(--brand);
+             pointer-events: none; }
+#clip-playhead { position: absolute; top: 0; bottom: 0; width: 2px;
+                 background: var(--text); pointer-events: none; }
+.clip-handle { position: absolute; top: -2px; bottom: -2px; width: 12px;
+               margin-left: -6px; background: var(--brand);
+               border-radius: var(--radius-sm); cursor: ew-resize; }
+.clip-handle::after { content: ""; position: absolute; inset: 8px 5px;
+                      background: rgba(255, 255, 255, .75); border-radius: 1px; }
+
+.clip-times { display: flex; justify-content: space-between;
+              font-size: var(--fs-mono); color: var(--text-faint); }
+.clip-actions { display: flex; gap: 8px; }
+.clip-actions .btn { flex: 1; padding: 7px 8px; }

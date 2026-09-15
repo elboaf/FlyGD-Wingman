@@ -1,9 +1,8 @@
-"""Concatenate recordings into a single file for upload, and split one file
-into chunks short enough for YouTube's unverified-upload limit.
+"""Concatenate recordings into a single file for upload.
 
-The temp artifacts' lifetime is owned by context managers so cleanup happens
-on every exit path. The pre-2.0 code deleted the stitched file only after a
-successful upload, so any failure leaked a multi-gigabyte file permanently.
+The temp file's lifetime is owned by a context manager so cleanup happens on
+every exit path. The pre-2.0 code deleted it only after a successful upload,
+so any failure leaked a multi-gigabyte file permanently.
 """
 
 import logging
@@ -18,16 +17,8 @@ from .library import VideoInfo
 logger = logging.getLogger(__name__)
 
 _PREFIX = "stitch-"
-_SPLIT_PREFIX = "split-"
 _SUFFIX = ".mkv"
 _LIST_SUFFIX = ".txt"
-
-# Target length of one split chunk. The segment muxer can only cut on
-# keyframes, so a chunk runs as long as the keyframe AT OR AFTER the target
-# -- up to one GOP past it -- and YouTube's verification wall is on the
-# length the container reports. 14m30s leaves minutes of headroom, which is
-# cheap: one extra part per hour of footage is the whole cost.
-SEGMENT_CHUNK_SECONDS = 870
 
 # In a console=False PyInstaller build, every subprocess.run() would
 # otherwise flash a black console window — and this one runs for the
@@ -41,10 +32,6 @@ _NO_WINDOW_KWARGS = (
 
 class StitchError(RuntimeError):
     """ffmpeg failed to produce a concatenated file."""
-
-
-class SplitError(RuntimeError):
-    """ffmpeg failed to produce split chunks."""
 
 
 def order_for_stitch(infos: list[VideoInfo]) -> list[VideoInfo]:
@@ -144,85 +131,17 @@ def stitched(
                 )
 
 
-def build_segment_command(src: Path, out_pattern: Path, ffmpeg_bin: str) -> list[str]:
-    """Split by stream copy -- no re-encode, the same trade as the concat.
-
-    The segment muxer cuts on input keyframes, so with `-c copy` each chunk
-    is a valid standalone file produced at disk speed. The muxer never cuts
-    BEFORE the target, so a chunk can overshoot it by up to one GOP; the
-    target (SEGMENT_CHUNK_SECONDS) is chosen to absorb that.
-
-    `-reset_timestamps 1` makes each chunk start at zero; without it every
-    part carries the offset of its place in the source, which some players
-    render as minutes of black before the first frame.
-    """
-    return [
-        ffmpeg_bin,
-        "-y",
-        "-i",
-        str(src),
-        "-f",
-        "segment",
-        "-segment_time",
-        str(SEGMENT_CHUNK_SECONDS),
-        "-reset_timestamps",
-        "1",
-        "-c",
-        "copy",
-        str(out_pattern),
-    ]
-
-
-@contextmanager
-def segmented(src, tmp_dir, ffmpeg_bin, runner=subprocess.run):
-    """Yield the chunk files a split produced, deleting them on every exit.
-
-    Same contract as `stitched`: the caller consumes the chunks inside the
-    block, and cleanup is unconditional -- including on a cancel or a failed
-    upload partway through the list. ffmpeg numbers the chunks itself via
-    the %03d in the output pattern, so the yielded order is playback order.
-    """
-    src = Path(src)
-    tmp_dir = Path(tmp_dir)
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"{_SPLIT_PREFIX}{uuid.uuid4().hex}"
-    out_pattern = tmp_dir / f"{stem}%03d{_SUFFIX}"
-    chunks: list[Path] = []
-    try:
-        result = runner(
-            build_segment_command(src, out_pattern, ffmpeg_bin),
-            capture_output=True,
-            text=True,
-            **_NO_WINDOW_KWARGS,
-        )
-        chunks = sorted(tmp_dir.glob(f"{stem}*{_SUFFIX}"))
-        if result.returncode != 0:
-            raise SplitError(result.stderr.strip() or "ffmpeg failed")
-        if not chunks:
-            raise SplitError("ffmpeg reported success but produced no output")
-        yield chunks
-    finally:
-        for path in chunks:
-            try:
-                path.unlink()
-            except FileNotFoundError:
-                pass
-            except OSError:
-                logger.warning("Could not remove split chunk %s", path, exc_info=True)
-
-
 def sweep_orphans(tmp_dir: Path) -> int:
     """Delete stitch and split artifacts left behind by a crash. Returns the count."""
     tmp_dir = Path(tmp_dir)
     if not tmp_dir.is_dir():
         return 0
     removed = 0
-    for prefix in (_PREFIX, _SPLIT_PREFIX):
-        for suffix in (_SUFFIX, _LIST_SUFFIX):
-            for path in tmp_dir.glob(f"{prefix}*{suffix}"):
-                try:
-                    path.unlink()
-                    removed += 1
-                except OSError:
-                    pass
+    for suffix in (_SUFFIX, _LIST_SUFFIX):
+        for path in tmp_dir.glob(f"{_PREFIX}*{suffix}"):
+            try:
+                path.unlink()
+                removed += 1
+            except OSError:
+                pass
     return removed

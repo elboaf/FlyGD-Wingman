@@ -198,6 +198,16 @@ def create(api, hidden: bool = False) -> "webview.Window":
     """
     import webview
 
+    # The clip editor's <video> element points at the selected recording's
+    # own file, and the page itself is a file:// origin. Chromium blocks
+    # one local file loading another from a file:// page unless this is
+    # on. It is the enabling half of a DELIBERATE exception to the
+    # paths-never-cross-to-the-page rule; the other half -- clip_source,
+    # the only bridge call that hands a path over, and only for the one
+    # row being edited -- records the same fact in upload/controller.py,
+    # so neither half is tidied away alone.
+    webview.settings["ALLOW_FILE_URLS"] = True
+
     x, y = _placement(WIDTH, HEIGHT)
     window = webview.create_window(
         TITLE,
