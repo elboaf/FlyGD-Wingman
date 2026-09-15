@@ -1363,20 +1363,25 @@ class FleetSharingWorker:
                 self._latest = latest = None
         if latest is None:
             return None
-        eligible = {
-            c.character_id
-            for c in self._eligibility.characters
-            if self._remaining(c.expires_at) > 0
-        }
         if (
             self._eligibility.state != "ready"
             or self._eligibility.participation_generation
             != getattr(self._state.observed_participation, "generation", None)
         ):
-            eligible = set()
-        return projection.project_snapshot(
-            latest[0], self._catalogue, eligible_character_ids=frozenset(eligible)
+            return ()
+        entries = {c.character_id: c for c in self._eligibility.characters}
+        rows = projection.project_snapshot(
+            latest[0],
+            self._catalogue,
+            eligible_character_ids=frozenset(entries),
         )
+        # An atomic subset would withdraw active members whose cached proof
+        # merely needs refresh. The relay still enforces current authority.
+        if any(
+            self._remaining(entries[row.character_id].expires_at) <= 0 for row in rows
+        ):
+            return None
+        return rows
 
     def _recovery_work(self):
         pending = self._state.pending_recovery
