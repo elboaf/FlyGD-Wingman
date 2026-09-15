@@ -1,0 +1,984 @@
+{
+  "provenance": "Live unauthenticated public ESI responses, deliberately projected to fitting metadata. These are not full raw responses. Non-inventory name results, descriptions, attributes and unrelated headers omitted; raw-body hashes refer to original responses, not projections.",
+  "request_headers": {
+    "User-Agent": "FlyGD-Wingman/5.6.4 (+https://github.com/elboaf/FlyGD-Wingman)",
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+    "X-Compatibility-Date": "2026-08-12",
+    "Accept-Language": "en"
+  },
+  "records": [
+    {
+      "id": "effect-11",
+      "method": "GET",
+      "url": "https://esi.evetech.net/dogma/effects/11/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:08.124234+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:08 GMT",
+      "raw_body_sha256": "7199f02dd72c428235cd10d0d4fb388673ca51563a75ad3416cf6058571c389b",
+      "body_projection": {
+        "effect_category": 0,
+        "effect_id": 11,
+        "name": "loPower"
+      }
+    },
+    {
+      "id": "effect-12",
+      "method": "GET",
+      "url": "https://esi.evetech.net/dogma/effects/12/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:08.146468+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:08 GMT",
+      "raw_body_sha256": "1d961d0e185c0a013d8eebf749385141116bcd3d980b33eaabc58b90153853bc",
+      "body_projection": {
+        "effect_category": 0,
+        "effect_id": 12,
+        "name": "hiPower"
+      }
+    },
+    {
+      "id": "effect-13",
+      "method": "GET",
+      "url": "https://esi.evetech.net/dogma/effects/13/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:08.161229+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:08 GMT",
+      "raw_body_sha256": "d38aa36e149a1c4f2c5bc7efa90208d95e8c5d87673c7a4ac5060243bd35491e",
+      "body_projection": {
+        "effect_category": 0,
+        "effect_id": 13,
+        "name": "medPower"
+      }
+    },
+    {
+      "id": "effect-2663",
+      "method": "GET",
+      "url": "https://esi.evetech.net/dogma/effects/2663/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:08.173285+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:08 GMT",
+      "raw_body_sha256": "39021b30184933da188b489205e0c9ae006f8c602d45e4804f949c5f1d9aaca5",
+      "body_projection": {
+        "effect_category": 0,
+        "effect_id": 2663,
+        "name": "rigSlot"
+      }
+    },
+    {
+      "id": "effect-3772",
+      "method": "GET",
+      "url": "https://esi.evetech.net/dogma/effects/3772/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:08.479354+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:08 GMT",
+      "raw_body_sha256": "5b094cdec021de503fd9f6088ecb7e1e7ff155282f3c53e0957a8ddb7f6f58bf",
+      "body_projection": {
+        "effect_category": 0,
+        "effect_id": 3772,
+        "name": "subSystem"
+      }
+    },
+    {
+      "id": "effect-6306",
+      "method": "GET",
+      "url": "https://esi.evetech.net/dogma/effects/6306/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:08.503835+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:08 GMT",
+      "raw_body_sha256": "46901d9a0d930e6d5088e11d48feb52321fc04fd9cc46254cf3621bc09c1fc39",
+      "body_projection": {
+        "effect_category": 0,
+        "effect_id": 6306,
+        "name": "serviceSlot"
+      }
+    },
+    {
+      "id": "group-100",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/groups/100/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:07.433761+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:07 GMT",
+      "raw_body_sha256": "c47fa58662ef7d72776bda2f7386fa65adca0552783265a0ddc1aa688b8da472",
+      "body_projection": {
+        "category_id": 18,
+        "group_id": 100,
+        "name": "Combat Drone",
+        "published": true
+      }
+    },
+    {
+      "id": "group-1321",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/groups/1321/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:07.785957+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:08 GMT",
+      "raw_body_sha256": "b0fb7f017d0ac09ccca3bb8ee38450d72d14f6b88bf6e0e490ce68bdbb54a574",
+      "body_projection": {
+        "category_id": 66,
+        "group_id": 1321,
+        "name": "Structure Citadel Service Module",
+        "published": true
+      }
+    },
+    {
+      "id": "group-1652",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/groups/1652/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:07.822581+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:08 GMT",
+      "raw_body_sha256": "ceaa5d352f0567f78e4a780c8e92fa767448e8374b3a5b184f409f0ca4167bc7",
+      "body_projection": {
+        "category_id": 87,
+        "group_id": 1652,
+        "name": "Light Fighter",
+        "published": true
+      }
+    },
+    {
+      "id": "group-1657",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/groups/1657/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:07.804749+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:08 GMT",
+      "raw_body_sha256": "ed8f3d7b7c407ddf8e53d44609c10db41d4a3ba159e28ac5e0ac442e5fc6a169",
+      "body_projection": {
+        "category_id": 65,
+        "group_id": 1657,
+        "name": "Citadel",
+        "published": true
+      }
+    },
+    {
+      "id": "group-25",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/groups/25/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:07.034801+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:07 GMT",
+      "raw_body_sha256": "8d3069101789a6a6e48eed40b3868424c7dc8d6957a56918456cc6c790d95788",
+      "body_projection": {
+        "category_id": 6,
+        "group_id": 25,
+        "name": "Frigate",
+        "published": true
+      }
+    },
+    {
+      "id": "group-46",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/groups/46/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:07.038740+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:07 GMT",
+      "raw_body_sha256": "23545ab50f3f2f4bd2e48be076523a4ca8559ee22ea229b48e247eabb864da62",
+      "body_projection": {
+        "category_id": 7,
+        "group_id": 46,
+        "name": "Propulsion Module",
+        "published": true
+      }
+    },
+    {
+      "id": "group-55",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/groups/55/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:07.041156+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:07 GMT",
+      "raw_body_sha256": "a17fb842d1a6a5a335fa84554dd3bfde4e71488a04d191509fe5ab54496d0953",
+      "body_projection": {
+        "category_id": 7,
+        "group_id": 55,
+        "name": "Projectile Weapon",
+        "published": true
+      }
+    },
+    {
+      "id": "group-60",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/groups/60/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:07.065925+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:07 GMT",
+      "raw_body_sha256": "b79e05b4f07f28b0b0094efd69f201c3ca2da3d9e1d028aeb44ddf543a6eff62",
+      "body_projection": {
+        "category_id": 7,
+        "group_id": 60,
+        "name": "Damage Control",
+        "published": true
+      }
+    },
+    {
+      "id": "group-777",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/groups/777/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:07.449167+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:07 GMT",
+      "raw_body_sha256": "21d4c155b38634328419e21dbb33d9a192f38dddfc6ee154cb64b09172d14c0c",
+      "body_projection": {
+        "category_id": 7,
+        "group_id": 777,
+        "name": "Rig Projectile Weapon",
+        "published": true
+      }
+    },
+    {
+      "id": "group-83",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/groups/83/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:07.405816+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:07 GMT",
+      "raw_body_sha256": "bbd20d2c28fa402984db0476453a3bb9ea449cba756cad7127f882f7e7aecb7b",
+      "body_projection": {
+        "category_id": 8,
+        "group_id": 83,
+        "name": "Projectile Ammo",
+        "published": true
+      }
+    },
+    {
+      "id": "group-954",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/groups/954/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:07.461593+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:07 GMT",
+      "raw_body_sha256": "56a500d976bbfa3c17132081225d3e86fdb43202dce09ccb4d05aa07040a7135",
+      "body_projection": {
+        "category_id": 32,
+        "group_id": 954,
+        "name": "Defensive Subsystem",
+        "published": true
+      }
+    },
+    {
+      "id": "group-963",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/groups/963/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:07.756152+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:07 GMT",
+      "raw_body_sha256": "2f5084fee064b23ea724a162c8d2995b465ae1b066961ff98af488a9591f5944",
+      "body_projection": {
+        "category_id": 6,
+        "group_id": 963,
+        "name": "Strategic Cruiser",
+        "published": true
+      }
+    },
+    {
+      "id": "ids",
+      "method": "POST",
+      "url": "https://esi.evetech.net/universe/ids/",
+      "request_json": [
+        "Rifter",
+        "Damage Control II",
+        "1MN Afterburner II",
+        "200mm AutoCannon II",
+        "Small Projectile Burst Aerator I",
+        "Tengu",
+        "Tengu Defensive - Covert Reconfiguration",
+        "Astrahus",
+        "Standup Market Hub I",
+        "Hobgoblin II",
+        "Firbolg I",
+        "Republic Fleet EMP S"
+      ],
+      "status": 200,
+      "captured_utc": "2026-09-15T00:30:49.996365+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:30:50 GMT",
+      "raw_body_sha256": "be4b2d220d905551dd33dc29a86ce0382ce182fa90503410ca369267cf665e10",
+      "body_projection": {
+        "inventory_types": [
+          {
+            "id": 587,
+            "name": "Rifter"
+          },
+          {
+            "id": 2048,
+            "name": "Damage Control II"
+          },
+          {
+            "id": 438,
+            "name": "1MN Afterburner II"
+          },
+          {
+            "id": 2889,
+            "name": "200mm AutoCannon II"
+          },
+          {
+            "id": 31668,
+            "name": "Small Projectile Burst Aerator I"
+          },
+          {
+            "id": 29984,
+            "name": "Tengu"
+          },
+          {
+            "id": 35832,
+            "name": "Astrahus"
+          },
+          {
+            "id": 2456,
+            "name": "Hobgoblin II"
+          },
+          {
+            "id": 21898,
+            "name": "Republic Fleet EMP S"
+          },
+          {
+            "id": 45589,
+            "name": "Tengu Defensive - Covert Reconfiguration"
+          },
+          {
+            "id": 35892,
+            "name": "Standup Market Hub I"
+          },
+          {
+            "id": 23059,
+            "name": "Firbolg I"
+          }
+        ]
+      }
+    },
+    {
+      "id": "malformed-ids",
+      "method": "POST",
+      "url": "https://esi.evetech.net/universe/ids/",
+      "request_json": {
+        "names": []
+      },
+      "status": 400,
+      "captured_utc": "2026-09-15T00:30:49.907140+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:30:50 GMT",
+      "raw_body_sha256": "1a5403e0be5075e52cba073d27fd32a650256f68bd6859dd60f9bbe61f13dff9",
+      "body_projection": {
+        "error": "Invalid body JSON type, 'names' is required"
+      }
+    },
+    {
+      "id": "missing-type",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/types/0/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:30:49.775587+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:30:50 GMT",
+      "raw_body_sha256": "42201dabd80850265b64bd9979880e73fc03f6e4522ffb9e00e5a35c3a2f8a5c",
+      "body_projection": {
+        "capacity": 0.0,
+        "group_id": 0,
+        "name": "#System",
+        "published": false,
+        "type_id": 0,
+        "volume": 0.0
+      }
+    },
+    {
+      "id": "names-unresolved",
+      "method": "POST",
+      "url": "https://esi.evetech.net/universe/ids/",
+      "request_json": [
+        "wingman-task1-no-such-inventory-type-239817",
+        "rifter",
+        " Rifter "
+      ],
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:40.025467+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:40 GMT",
+      "raw_body_sha256": "1f9cf60d2e39eed1b02ef3bfbf49974aa4698c1c2406c2b8888d655abd495f97",
+      "body_projection": {
+        "inventory_types": [
+          {
+            "id": 587,
+            "name": "Rifter"
+          }
+        ]
+      }
+    },
+    {
+      "id": "names",
+      "method": "POST",
+      "url": "https://esi.evetech.net/universe/names/",
+      "request_json": [
+        587,
+        2488,
+        230
+      ],
+      "status": 200,
+      "captured_utc": "2026-09-15T00:30:49.622796+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:30:50 GMT",
+      "raw_body_sha256": "be48de12c91cc2cc6f676f6a278b9365730a7d5e5dc8b3e5440bdb2ea9e81bcb",
+      "body_projection": [
+        {
+          "category": "inventory_type",
+          "id": 587,
+          "name": "Rifter"
+        },
+        {
+          "category": "inventory_type",
+          "id": 2488,
+          "name": "Warrior II"
+        },
+        {
+          "category": "inventory_type",
+          "id": 230,
+          "name": "Antimatter Charge M"
+        }
+      ]
+    },
+    {
+      "id": "type-2048",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/types/2048/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:05.338436+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:05 GMT",
+      "raw_body_sha256": "8c5d666d2afa18cd0b7519a27176293ad0b418a0ee84bb965840aaedf149e600",
+      "body_projection": {
+        "capacity": 0.0,
+        "dogma_effects": [
+          {
+            "effect_id": 11,
+            "is_default": false
+          },
+          {
+            "effect_id": 16,
+            "is_default": false
+          },
+          {
+            "effect_id": 2302,
+            "is_default": false
+          }
+        ],
+        "group_id": 60,
+        "name": "Damage Control II",
+        "published": true,
+        "type_id": 2048,
+        "volume": 5.0
+      }
+    },
+    {
+      "id": "type-2147483647",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/types/2147483647/",
+      "request_json": null,
+      "status": 404,
+      "captured_utc": "2026-09-15T00:31:06.584874+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:06 GMT",
+      "raw_body_sha256": "8124f7b84fcbf4c6ae11020bd4b9c64fa7a6ea7d79a704a9126b077826808291",
+      "body_projection": {
+        "error": "Type not found"
+      }
+    },
+    {
+      "id": "type-21898",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/types/21898/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:06.072922+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:06 GMT",
+      "raw_body_sha256": "03003343cce4cdfbdd414eb3d8bea1fd27604f8f98bf6432d55fc563cfe94032",
+      "body_projection": {
+        "capacity": 0.0,
+        "dogma_effects": [
+          {
+            "effect_id": 596,
+            "is_default": false
+          },
+          {
+            "effect_id": 600,
+            "is_default": false
+          },
+          {
+            "effect_id": 1173,
+            "is_default": false
+          }
+        ],
+        "group_id": 83,
+        "name": "Republic Fleet EMP S",
+        "published": true,
+        "type_id": 21898,
+        "volume": 0.0025
+      }
+    },
+    {
+      "id": "type-23059",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/types/23059/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:06.108028+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:06 GMT",
+      "raw_body_sha256": "ddf8b594608865c95794ea21490f5adf3c044869da0fc5a8b6333f14dd706d24",
+      "body_projection": {
+        "capacity": 0.0,
+        "dogma_effects": [
+          {
+            "effect_id": 6431,
+            "is_default": false
+          },
+          {
+            "effect_id": 6441,
+            "is_default": false
+          },
+          {
+            "effect_id": 6465,
+            "is_default": true
+          }
+        ],
+        "group_id": 1652,
+        "name": "Firbolg I",
+        "published": true,
+        "type_id": 23059,
+        "volume": 1000.0
+      }
+    },
+    {
+      "id": "type-23911",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/types/23911/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:39.955688+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:40 GMT",
+      "raw_body_sha256": "2be510272aac4bc3f8e469950645ed6ecf7227caefc30a5fa7984fac3f77b542",
+      "body_projection": {
+        "capacity": 2800.0,
+        "dogma_effects": [
+          {
+            "effect_id": 1615,
+            "is_default": false
+          },
+          {
+            "effect_id": 1617,
+            "is_default": false
+          },
+          {
+            "effect_id": 6104,
+            "is_default": false
+          },
+          {
+            "effect_id": 6597,
+            "is_default": false
+          },
+          {
+            "effect_id": 6601,
+            "is_default": false
+          },
+          {
+            "effect_id": 6619,
+            "is_default": false
+          },
+          {
+            "effect_id": 6627,
+            "is_default": false
+          },
+          {
+            "effect_id": 6662,
+            "is_default": false
+          },
+          {
+            "effect_id": 6783,
+            "is_default": false
+          },
+          {
+            "effect_id": 12098,
+            "is_default": false
+          },
+          {
+            "effect_id": 12594,
+            "is_default": false
+          },
+          {
+            "effect_id": 12869,
+            "is_default": false
+          }
+        ],
+        "group_id": 547,
+        "name": "Thanatos",
+        "published": true,
+        "type_id": 23911,
+        "volume": 13095000.0
+      }
+    },
+    {
+      "id": "type-2456",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/types/2456/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:05.747404+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:05 GMT",
+      "raw_body_sha256": "1a9688db15ee6b492398be6357c212a39f996eecc4fe42d9b677b5fda5fee85b",
+      "body_projection": {
+        "capacity": 0.0,
+        "dogma_effects": [
+          {
+            "effect_id": 10,
+            "is_default": true
+          }
+        ],
+        "group_id": 100,
+        "name": "Hobgoblin II",
+        "published": true,
+        "type_id": 2456,
+        "volume": 5.0
+      }
+    },
+    {
+      "id": "type-2889",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/types/2889/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:05.345285+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:05 GMT",
+      "raw_body_sha256": "f630aa06af2389d17d3d7d01ba6f761e763544a884a715d1abb22bc7ce39eed6",
+      "body_projection": {
+        "capacity": 0.3,
+        "dogma_effects": [
+          {
+            "effect_id": 12,
+            "is_default": false
+          },
+          {
+            "effect_id": 16,
+            "is_default": false
+          },
+          {
+            "effect_id": 34,
+            "is_default": true
+          },
+          {
+            "effect_id": 42,
+            "is_default": false
+          },
+          {
+            "effect_id": 253,
+            "is_default": false
+          },
+          {
+            "effect_id": 254,
+            "is_default": false
+          },
+          {
+            "effect_id": 263,
+            "is_default": false
+          },
+          {
+            "effect_id": 3025,
+            "is_default": false
+          }
+        ],
+        "group_id": 55,
+        "name": "200mm AutoCannon II",
+        "published": true,
+        "type_id": 2889,
+        "volume": 5.0
+      }
+    },
+    {
+      "id": "type-29984",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/types/29984/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:05.702258+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:05 GMT",
+      "raw_body_sha256": "41cc34d43bad0ae2c341fb70c0dd1a43723cfbe8438828f211b5282576a6b105",
+      "body_projection": {
+        "capacity": 460.0,
+        "dogma_effects": [
+          {
+            "effect_id": 4188,
+            "is_default": false
+          },
+          {
+            "effect_id": 6009,
+            "is_default": false
+          },
+          {
+            "effect_id": 6908,
+            "is_default": false
+          }
+        ],
+        "group_id": 963,
+        "name": "Tengu",
+        "published": true,
+        "type_id": 29984,
+        "volume": 92000.0
+      }
+    },
+    {
+      "id": "type-31668",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/types/31668/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:05.729616+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:05 GMT",
+      "raw_body_sha256": "ae18ee58319c769bd8125def06f7ef0e1a33d1df59efd4b929bb0eacee9cbaf5",
+      "body_projection": {
+        "capacity": 0.0,
+        "dogma_effects": [
+          {
+            "effect_id": 2663,
+            "is_default": true
+          },
+          {
+            "effect_id": 2708,
+            "is_default": false
+          },
+          {
+            "effect_id": 2797,
+            "is_default": false
+          }
+        ],
+        "group_id": 777,
+        "name": "Small Projectile Burst Aerator I",
+        "published": true,
+        "type_id": 31668,
+        "volume": 5.0
+      }
+    },
+    {
+      "id": "type-35832",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/types/35832/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:05.703788+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:05 GMT",
+      "raw_body_sha256": "90215b83d57c28e394bd0e501e629900ef1093faa9739a083107e3c4b0129da4",
+      "body_projection": {
+        "capacity": 0.0,
+        "dogma_effects": [
+          {
+            "effect_id": 6565,
+            "is_default": false
+          },
+          {
+            "effect_id": 6568,
+            "is_default": false
+          },
+          {
+            "effect_id": 7008,
+            "is_default": false
+          },
+          {
+            "effect_id": 7039,
+            "is_default": false
+          },
+          {
+            "effect_id": 7040,
+            "is_default": false
+          }
+        ],
+        "group_id": 1657,
+        "name": "Astrahus",
+        "published": true,
+        "type_id": 35832,
+        "volume": 8000.0
+      }
+    },
+    {
+      "id": "type-35892",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/types/35892/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:06.090255+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:06 GMT",
+      "raw_body_sha256": "aa9f454cbdb11cb5e444c94532f6ddd04c569bd532a103dba3826591f9eb9b1f",
+      "body_projection": {
+        "capacity": 0.0,
+        "dogma_effects": [
+          {
+            "effect_id": 16,
+            "is_default": false
+          },
+          {
+            "effect_id": 6306,
+            "is_default": false
+          },
+          {
+            "effect_id": 7009,
+            "is_default": false
+          }
+        ],
+        "group_id": 1321,
+        "name": "Standup Market Hub I",
+        "published": true,
+        "type_id": 35892,
+        "volume": 32000.0
+      }
+    },
+    {
+      "id": "type-438",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/types/438/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:05.336552+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:05 GMT",
+      "raw_body_sha256": "3705e5a24e252d2fc6980b7793027c63c6351ecbeb26e08057fa96fbf16108e4",
+      "body_projection": {
+        "capacity": 0.0,
+        "dogma_effects": [
+          {
+            "effect_id": 13,
+            "is_default": false
+          },
+          {
+            "effect_id": 16,
+            "is_default": false
+          },
+          {
+            "effect_id": 3175,
+            "is_default": false
+          },
+          {
+            "effect_id": 6731,
+            "is_default": true
+          }
+        ],
+        "group_id": 46,
+        "name": "1MN Afterburner II",
+        "published": true,
+        "type_id": 438,
+        "volume": 5.0
+      }
+    },
+    {
+      "id": "type-45589",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/types/45589/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:06.079721+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:06 GMT",
+      "raw_body_sha256": "49eb1d5324bd98587a317bc083e095f86017cd5922757d5cf42dbb889100c442",
+      "body_projection": {
+        "capacity": 300.0,
+        "dogma_effects": [
+          {
+            "effect_id": 896,
+            "is_default": false
+          },
+          {
+            "effect_id": 2252,
+            "is_default": false
+          },
+          {
+            "effect_id": 3771,
+            "is_default": false
+          },
+          {
+            "effect_id": 3772,
+            "is_default": false
+          },
+          {
+            "effect_id": 3774,
+            "is_default": false
+          },
+          {
+            "effect_id": 3808,
+            "is_default": false
+          },
+          {
+            "effect_id": 3810,
+            "is_default": false
+          },
+          {
+            "effect_id": 3811,
+            "is_default": false
+          },
+          {
+            "effect_id": 3964,
+            "is_default": false
+          },
+          {
+            "effect_id": 5460,
+            "is_default": false
+          },
+          {
+            "effect_id": 6920,
+            "is_default": false
+          },
+          {
+            "effect_id": 6945,
+            "is_default": false
+          },
+          {
+            "effect_id": 6947,
+            "is_default": false
+          },
+          {
+            "effect_id": 8468,
+            "is_default": false
+          }
+        ],
+        "group_id": 954,
+        "name": "Tengu Defensive - Covert Reconfiguration",
+        "published": true,
+        "type_id": 45589,
+        "volume": 40.0
+      }
+    },
+    {
+      "id": "type-587",
+      "method": "GET",
+      "url": "https://esi.evetech.net/universe/types/587/",
+      "request_json": null,
+      "status": 200,
+      "captured_utc": "2026-09-15T00:31:05.360663+00:00",
+      "response_date": "Tue, 15 Sep 2026 00:31:05 GMT",
+      "raw_body_sha256": "0f121f45503d785b1e30de117ac81af337e02fd2d64f97573764c3230c2c7b96",
+      "body_projection": {
+        "capacity": 140.0,
+        "dogma_effects": [
+          {
+            "effect_id": 5779,
+            "is_default": false
+          },
+          {
+            "effect_id": 7248,
+            "is_default": false
+          }
+        ],
+        "group_id": 25,
+        "name": "Rifter",
+        "published": true,
+        "type_id": 587,
+        "volume": 27289.0
+      }
+    }
+  ]
+}
