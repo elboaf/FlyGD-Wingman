@@ -1244,10 +1244,25 @@ check(exposed(note, pane) && exposed(review, WM.el('fittings-copy-dialog')));
             status: sum(row["status"] == status for row in results)
             for status in ("success", "present", "unknown", "failed")
         }
+        counts["other"] = len(results) - sum(counts.values())
         summary = (
-            f"{counts['success']} copied · {counts['present']} already present"
-            f" · {counts['unknown']} {'needs' if counts['unknown'] == 1 else 'need'} verification"
-            f" · {counts['failed']} failed · {len(results) - sum(counts.values())} not copied"
+            " · ".join(
+                f"{counts[status]} {label}"
+                for status, label in (
+                    (
+                        "unknown",
+                        "needs verification"
+                        if counts["unknown"] == 1
+                        else "need verification",
+                    ),
+                    ("failed", "failed"),
+                    ("other", "not copied"),
+                    ("success", "copied"),
+                    ("present", "already present"),
+                )
+                if counts[status]
+            )
+            or "No copy results."
         )
         body = (
             (

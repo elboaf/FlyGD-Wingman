@@ -1250,7 +1250,11 @@ test('copy identity labels remain literal text for long markup-like names', asyn
   assert.equal(status.children.length, 0);
 });
 
-for (const count of [0, 1, 2]) {
+for (const [count, outcomeSummary] of [
+  [0, '3 not copied · 4 already present'],
+  [1, '1 needs verification · 4 not copied · 4 already present'],
+  [2, '2 need verification · 5 not copied · 4 already present']
+]) {
   test(`copy counts ${count} distinguish plans, fitting/character checks, attempts and copied outcomes`, async () => {
     const p = await page();
     await p.route('fittings');
@@ -1280,8 +1284,7 @@ for (const count of [0, 1, 2]) {
     assert.equal(body.querySelector('.fit-copy-summary').textContent, '1 of ' + total + ' fitting/character checks complete');
     await complete(p, { status: 'complete', write_count: count, results });
     const completed = body.querySelector('.fit-copy-summary').textContent;
-    assert.match(completed, /0 copied.*4 already present/);
-    assert.match(completed, new RegExp(count + (count === 1 ? ' needs verification' : ' need verification')));
+    assert.equal(completed, outcomeSummary);
     assert.match(body.querySelector('.hint').textContent,
       new RegExp('^' + count + (count === 1 ? ' addition attempted' : ' additions attempted')));
     assert.doesNotMatch(body.textContent, /remote write|addition[s]? planned/);
@@ -1354,11 +1357,7 @@ test('mixed copy results summarize outcomes and give status-specific safe next s
                             'unknown', 'unattempted_throttle', 'cancelled', 'unavailable']));
   const body = p.el('fittings-copy-body');
   const summary = body.querySelector('.fit-copy-summary').textContent;
-  assert.match(summary, /1 copied/);
-  assert.match(summary, /1 already present/);
-  assert.match(summary, /1 needs verification/);
-  assert.match(summary, /1 failed/);
-  assert.match(summary, /4 not copied/);
+  assert.equal(summary, '1 needs verification · 1 failed · 4 not copied · 1 copied · 1 already present');
   const pairs = body.querySelectorAll('.fit-copy-pair');
   const expectations = [
     /Copied/, /Already present/, /alternate name.*review/i,
@@ -1373,6 +1372,28 @@ test('mixed copy results summarize outcomes and give status-specific safe next s
   assert.equal(p.calls().length, before, 'displaying advice must not issue any operation');
   assert.equal(body.querySelector('button'), null, 'no automatic retry control');
 });
+
+for (const [statuses, expected] of [
+  [[], 'No copy results.'],
+  [['success'], '1 copied'],
+  [['present', 'present'], '2 already present'],
+  [['unknown'], '1 needs verification'],
+  [['unknown', 'unknown'], '2 need verification'],
+  [['failed'], '1 failed'],
+  [['cancelled', 'unavailable', 'future_status'], '3 not copied']
+]) {
+  test(`copy outcome summary omits absent categories: ${expected}`, async () => {
+    const p = await editor();
+    await beginCopy(p);
+    const before = p.calls().length;
+    await complete(p, result(statuses));
+    const body = p.el('fittings-copy-body');
+    assert.equal(body.querySelector('.fit-copy-summary').textContent, expected);
+    assert.equal(body.querySelectorAll('.fit-copy-pair').length, statuses.length);
+    assert.equal(p.calls().length, before, 'summarizing must not issue operations');
+    assert.match(body.textContent, /Nothing is retried automatically/);
+  });
+}
 
 for (const operationStatus of ['complete', 'throttled']) {
   test(`repeated ${operationStatus} copy recovery is shared without losing fitting, hull, target or error`, async () => {
@@ -1782,7 +1803,7 @@ test('partial cancellation does not describe the whole operation as unattempted'
   value.write_count = 1;
   await complete(p, value);
   const body = p.el('fittings-copy-body');
-  assert.match(body.querySelector('.fit-copy-summary').textContent, /1 copied.*1 not copied/);
+  assert.equal(body.querySelector('.fit-copy-summary').textContent, '1 not copied · 1 copied');
   const operationNotice = body.querySelector('.notice');
   assert.ok(!operationNotice || !/Not attempted/.test(operationNotice.textContent));
   assert.match(body.querySelectorAll('.fit-copy-pair')[1].textContent, /Not attempted/);
@@ -1936,6 +1957,7 @@ test('empty worker refusal is explained without claiming successful completion',
   const p = await editor();
   await beginCopy(p);
   await complete(p, { status: 'invalid_ticket', operation_id: '', results: [], write_count: 0 });
+  assert.equal(p.el('fittings-copy-body').querySelector('.fit-copy-summary').textContent, 'No copy results.');
   assert.match(p.el('fittings-copy-body').textContent, /expired.*review/i);
   assert.doesNotMatch(p.el('fittings-copy-body').textContent, /all.*copied/i);
   assert.equal(p.calls('fittings_start_copy').length, 1);
