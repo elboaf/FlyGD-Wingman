@@ -1,4 +1,8 @@
-"""Execute Fittings draft/result behavior, not browser layout or native focus."""
+"""Execute real Fittings draft/result and clipboard ownership behavior.
+
+Deferred bridge and browser-clipboard seams never touch the OS. This does not
+render layout or establish Windows/WebView2 clipboard and focus acceptance.
+"""
 
 import shutil
 import subprocess

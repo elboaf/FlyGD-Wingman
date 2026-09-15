@@ -73,6 +73,10 @@ Then, well behind: **Profiles, Skills and Fittings**. Fleet-preparation
 work, done occasionally in a block and then not thought about for weeks.
 Fittings consolidates and curates Personal Fittings, then distributes selected
 fits through explicit additive copies; it is not background synchronization.
+EFT clipboard import is reviewed, with explicit normalization warnings, before
+**Add to library** saves locally — never to a character. Export uses the saved
+fit and refuses content EFT cannot preserve; clipboard actions do not replace
+the primary **Copy selected** character workflow.
 
 None of the three outranks the others. A change that helps one at the
 clear expense of another needs a reason.

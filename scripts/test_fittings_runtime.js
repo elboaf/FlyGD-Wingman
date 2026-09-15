@@ -12,7 +12,8 @@ class EventTarget {
   constructor() { this.listeners = {}; }
   addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); }
   dispatchEvent(event) {
-    for (const fn of this.listeners[event.type] || []) fn(event);
+    event.target ||= this;
+    for (const fn of this.listeners[event.type] || []) fn.call(this, event);
   }
 }
 
@@ -52,6 +53,7 @@ class Element extends EventTarget {
     this.text = String(value);
     this.children.forEach(child => { child.parentNode = null; });
     this.children = [];
+    if (this.onChildrenCleared) this.onChildrenCleared();
   }
   get textContent() { return this.text + this.children.map(c => c.textContent).join(''); }
   appendChild(child) { child.parentNode = this; this.children.push(child); return child; }
@@ -103,7 +105,7 @@ async function settle(call, payload) {
 function input(node, value) { node.value = value; node.dispatchEvent({ type: 'input' }); }
 function tick(node) { node.checked = !node.checked; node.dispatchEvent({ type: 'change' }); }
 
-async function page() {
+async function page(options = {}) {
   const nodes = new Map();
   const document = new EventTarget();
   document.body = Object.assign(new Element('body'), { ownerDocument: document });
@@ -120,6 +122,14 @@ async function page() {
     node.disabled = /\bdisabled\b/.test(match[0]);
     nodes.set(node.id, node);
   }
+  // The clipboard panel is static, unlike rebuilt rows. Keep its real parent
+  // relationships for Escape/focus ownership without fabricating controls.
+  const panel = nodes.get('fittings-import-panel');
+  if (panel) {
+    for (const id of ['fittings-import-text', 'fittings-import-read', 'fittings-import-review',
+      'fittings-import-add', 'fittings-import-close', 'fittings-import-show',
+      'fittings-import-status', 'fittings-import-candidate']) panel.appendChild(nodes.get(id));
+  }
   const findId = (node, id) => node.id === id ? node
     : node.children.map(child => findId(child, id)).find(Boolean);
   document.getElementById = id => nodes.get(id)
@@ -134,7 +144,8 @@ async function page() {
   const api = {};
   for (const method of ['fittings_state', 'fittings_detail', 'fittings_update_metadata',
     'fittings_set_membership', 'fittings_set_supersession', 'fittings_refresh', 'fittings_delete_entry',
-    'fittings_preflight_copy', 'fittings_start_copy', 'fittings_cancel_copy']) {
+    'fittings_preflight_copy', 'fittings_start_copy', 'fittings_cancel_copy',
+    'fittings_review_eft', 'fittings_import_eft', 'fittings_export_eft', 'fittings_locate_entry']) {
     api[method] = (...args) => new Promise((resolve, reject) => {
       calls.push({ method, args, resolve, reject });
     });
@@ -145,8 +156,18 @@ async function page() {
   window.getComputedStyle = () => ({ visibility: 'visible' });
   const timers = new Map();
   let timerId = 0;
+  const reads = [], writes = [];
+  const clipboard = {};
+  for (const [method, records] of [['readText', reads], ['writeText', writes]]) {
+    clipboard[method] = (...args) => {
+      if (options[method] === 'throw') throw new Error('Clipboard denied synchronously');
+      return new Promise((resolve, reject) => records.push({ args, resolve, reject }));
+    };
+  }
+  const navigator = { clipboard: options.clipboard === false ? undefined : clipboard };
+  window.navigator = navigator;
   const context = vm.createContext({
-    window, document,
+    window, document, navigator,
     setTimeout: fn => { timers.set(++timerId, fn); return timerId; },
     clearTimeout: id => timers.delete(id),
     CustomEvent: class { constructor(type, options = {}) {
@@ -169,7 +190,11 @@ async function page() {
     progress: async payload => { window.onFittingsProgress(payload); await flush(); },
     screenshot: async payload => { window.onFittingsScreenshotState(payload); await flush(); },
     timers: async () => { for (const fn of timers.values()) fn(); timers.clear(); await flush(); },
-    confirmations, errors
+    key: key => document.dispatchEvent({type: 'keydown', key, target: document.activeElement,
+      preventDefault() { this.defaultPrevented = true; }}),
+    focusEvent: node => { node.focus(); document.dispatchEvent({type: 'focusin', target: node}); },
+    throwBridge: method => { api[method] = () => { throw new Error('injected synchronous bridge refusal'); }; },
+    reads, writes, confirmations, errors
   };
 }
 
@@ -1951,6 +1976,635 @@ test('copy recovery labels keep semantic outcomes and point to real authenticati
   assert.match(rows[3].querySelector('.fit-copy-guidance').textContent, /Authenticate character.*Settings.*Character access/);
   assert.equal(p.calls().length, before);
   assert.equal(body.querySelector('button'), null);
+});
+
+// Clipboard regressions exercise production listeners, not a second state machine.
+const eftText = '[Rifter, Fleet <fit>]\n200mm AutoCannon II, Republic Fleet EMP S /offline\nHobgoblin II x5\n';
+function eftReview() {
+  return {ok: true, review_id: 'opaque-review', name: 'Fleet <fit>', ship_name: 'Rifter',
+    items: [{flag: 'HiSlot0', location: 'high', type_id: 2889, type_name: '200mm AutoCannon II', quantity: 1},
+      {flag: 'DroneBay', location: 'DroneBay', type_id: 2456, type_name: 'Hobgoblin II', quantity: 5}],
+    warnings: [
+      {code: 'loaded_charge_omitted', line_number: 2, message: 'Line 2: Loaded charge selection Republic Fleet EMP S is not retained; EFT specifies no quantity. Explicit cargo quantities are unchanged.'},
+      {code: 'offline_omitted', line_number: 2, message: 'Line 2: Offline state is not retained; the module remains in the fitting.'},
+      {code: 'bay_convention', line_number: 3, message: 'Line 3: Hobgoblin II x5 is interpreted as DroneBay content; EFT does not preserve Cargo/bay intent.'}
+    ], existing_entry_id: '', error: ''};
+}
+function importControl(p, name) {
+  const node = p.el('fittings-import-' + name);
+  assert.ok(node, 'missing clipboard import control: ' + name);
+  return node;
+}
+async function importPage(options) {
+  const p = await page(options); await p.route('fittings');
+  const empty = state([]); empty.characters = [];
+  await settle(p.last('fittings_state'), empty);
+  assert.equal(p.reads.length, 0, 'route entry must not read the clipboard');
+  importControl(p, 'open').click();
+  assert.equal(importControl(p, 'panel').hidden, false);
+  return p;
+}
+async function reviewedImport(options) {
+  const p = await importPage(options);
+  input(importControl(p, 'text'), eftText);
+  importControl(p, 'review').click(); await flush();
+  assert.deepEqual(p.last('fittings_review_eft').args, [eftText]);
+  await settle(p.last('fittings_review_eft'), eftReview());
+  return p;
+}
+async function addedImport(created = true) {
+  const p = await reviewedImport();
+  importControl(p, 'add').click(); await flush();
+  await settle(p.last('fittings_import_eft'), {applied: true, persisted: true,
+    entry_id: 'imported', created, error: ''});
+  return p;
+}
+function locatorSnapshot() {
+  const payload = state(['imported', 'neighbour']);
+  payload.page = 2; payload.page_size = 100; payload.total = 202;
+  payload.rows[0].name = 'Located snapshot';
+  return {ok: true, entry_id: 'imported', workspace: payload, error: ''};
+}
+
+test('clipboard warnings retain exactly one codec-owned line prefix before and after Add', async () => {
+  const fixtures = path.join(__dirname, '..', 'tests', 'fixtures', 'evefittings', 'eft');
+  const cases = JSON.parse(fs.readFileSync(path.join(fixtures, 'cases.json'), 'utf8')).cases;
+  for (const fixture of cases.filter(c => c.approved_import.ok && c.approved_import.warnings.length)) {
+    const p = await importPage();
+    input(importControl(p, 'text'), fs.readFileSync(path.join(fixtures, fixture.file), 'utf8'));
+    importControl(p, 'review').click(); await flush();
+    const review = eftReview();
+    review.warnings = fixture.approved_import.warnings;
+    await settle(p.last('fittings_review_eft'), review);
+    for (const stage of ['Review', 'Add']) {
+      if (stage === 'Add') {
+        importControl(p, 'add').click(); await flush();
+        await settle(p.last('fittings_import_eft'), {applied: true, persisted: true,
+          entry_id: 'imported', created: true, error: ''});
+      }
+      const messages = importControl(p, 'candidate').querySelectorAll('.fit-import-warning').map(w => w.textContent);
+      assert.deepEqual(messages, fixture.approved_import.warnings.map(w => w.message), fixture.id + ' after ' + stage);
+      assert.ok(messages.every(message => (message.match(/Line \d+:/g) || []).length === 1));
+    }
+  }
+});
+
+test('clipboard import is explicit, usable without characters and reviews normalized rows/warnings before Add', async () => {
+  const p = await importPage();
+  assert.match(p.el('fittings-empty').textContent, /Import from clipboard/);
+  assert.equal(importControl(p, 'add').disabled, true);
+  assert.equal(p.reads.length, 1, 'the fresh opener click requests clipboard text without a second click');
+  await settle(p.reads[0], eftText);
+  assert.equal(importControl(p, 'text').value, eftText);
+  assert.equal(p.calls('fittings_review_eft').length, 0, 'paste is not Review');
+  importControl(p, 'review').click(); await flush();
+  assert.equal(importControl(p, 'add').disabled, true);
+  await settle(p.last('fittings_review_eft'), eftReview());
+  const candidate = importControl(p, 'candidate');
+  assert.match(candidate.textContent, /Fleet <fit>.*Rifter/);
+  assert.match(candidate.textContent, /200mm AutoCannon II.*Hobgoblin II.*5/s);
+  const warnings = candidate.querySelectorAll('.fit-import-warning');
+  assert.deepEqual(warnings.map(w => w.textContent), eftReview().warnings.map(w => w.message));
+  assert.ok(warnings.every(w => w.getClientRects().length && w.children.length === 0));
+  assert.equal(importControl(p, 'add').disabled, false);
+  assert.equal(p.calls('fittings_import_eft').length, 0, 'Review never adds');
+  importControl(p, 'add').click(); await flush();
+  assert.deepEqual(p.last('fittings_import_eft').args, ['opaque-review'], 'Add sends only the opaque ticket');
+  assert.doesNotMatch(importControl(p, 'status').textContent, /Added|Already in/);
+  // Real controller notification may precede its receipt; neither may select a row.
+  await p.changed({reason: 'import', entry_id: 'imported'});
+  await settle(p.last('fittings_state'), state(['imported']));
+  await settle(p.last('fittings_import_eft'), {applied: true, persisted: true, entry_id: 'imported', created: true, error: ''});
+  assert.equal(importControl(p, 'text').value, '');
+  assert.match(importControl(p, 'status').textContent, /Added.*library/);
+  assert.equal(candidate.querySelectorAll('.fit-import-warning').length, 3, 'warnings survive successful Add');
+  assert.equal(importControl(p, 'show').hidden, false);
+  assert.deepEqual(selectedRows(p), []);
+  assert.equal(p.calls('fittings_preflight_copy').length, 0);
+  assert.equal(p.calls('fittings_detail').length, 0, 'success does not automatically open or focus a fit');
+});
+
+for (const mode of ['missing', 'throw', 'reject']) {
+  test('clipboard read ' + mode + ' keeps manual paste usable without auto-review', async () => {
+    const p = await importPage(mode === 'missing' ? {clipboard: false} : {readText: mode});
+    if (mode === 'reject') {
+      assert.equal(p.reads.length, 1, 'fresh opener attempts the read');
+      p.reads.at(-1).reject(new Error('denied'));
+    }
+    await flush();
+    assert.equal(importControl(p, 'text').value, '');
+    assert.match(importControl(p, 'status').textContent, /paste.*manually/i);
+    input(importControl(p, 'text'), eftText);
+    importControl(p, 'read').click();
+    if (mode === 'reject') p.reads.at(-1).reject(new Error('replacement denied'));
+    await flush();
+    assert.equal(importControl(p, 'text').value, eftText, 'failed explicit replacement preserves the manual draft');
+    assert.match(importControl(p, 'status').textContent, /paste.*manually/i);
+    assert.equal(importControl(p, 'read').disabled, false);
+    assert.equal(p.calls('fittings_review_eft').length, 0);
+    importControl(p, 'review').click(); await flush();
+    await settle(p.last('fittings_review_eft'), eftReview());
+    assert.equal(importControl(p, 'add').disabled, false);
+  });
+}
+
+for (const stage of ['read', 'review', 'add']) {
+  for (const revoke of ['typing', 'route', 'screenshot', 'close']) {
+    test('clipboard delayed ' + stage + ' loses ownership to ' + revoke, async () => {
+      const p = stage === 'add' ? await reviewedImport() : await importPage();
+      input(importControl(p, 'text'), eftText);
+      if (stage === 'add') {
+        importControl(p, 'review').click(); await flush();
+        await settle(p.last('fittings_review_eft'), eftReview());
+      }
+      importControl(p, stage === 'read' ? 'read' : stage === 'review' ? 'review' : 'add').click(); await flush();
+      const pending = stage === 'read' ? p.reads.at(-1) : p.last('fittings_' + (stage === 'review' ? 'review_eft' : 'import_eft'));
+      assert.ok(pending);
+      if (revoke === 'typing') input(importControl(p, 'text'), 'Newer draft');
+      if (revoke === 'route') { await p.route('main'); p.el('nav-main').focus(); }
+      if (revoke === 'screenshot') await p.screenshot(devScreenshot());
+      if (revoke === 'close') importControl(p, 'close').click();
+      const active = p.focused(), text = importControl(p, 'text').value;
+      await settle(pending, stage === 'read' ? 'Old clipboard' : stage === 'review' ? eftReview()
+        : {applied: true, persisted: true, entry_id: 'imported', created: true, error: ''});
+      assert.equal(importControl(p, 'text').value, text);
+      assert.equal(p.focused(), active, 'a stale promise cannot reclaim focus');
+      assert.equal(importControl(p, 'show').hidden, true);
+      if (revoke === 'typing') assert.equal(importControl(p, 'candidate').textContent, '');
+    });
+  }
+}
+
+for (const failure of ['refused', 'reject']) {
+  test('clipboard Add ' + failure + ' retains reviewed text and same-ID retry', async () => {
+    const p = await reviewedImport();
+    const before = importControl(p, 'candidate').textContent;
+    importControl(p, 'add').click(); await flush();
+    if (failure === 'reject') p.last('fittings_import_eft').reject(new Error('lost reply'));
+    else await settle(p.last('fittings_import_eft'), {applied: false, persisted: false, entry_id: '', created: false, error: 'Disk full'});
+    await flush();
+    assert.equal(importControl(p, 'text').value, eftText);
+    assert.equal(importControl(p, 'candidate').textContent, before);
+    assert.equal(importControl(p, 'add').disabled, false);
+    assert.equal(importControl(p, 'review').disabled, false, 're-review is available without requiring it for same-ID save retry');
+    assert.equal(importControl(p, 'review').textContent, 'Review again');
+    assert.match(importControl(p, 'status').textContent, failure === 'refused' ? /Disk full/ : /not confirmed/i);
+    importControl(p, 'add').click(); await flush();
+    assert.deepEqual(p.last('fittings_import_eft').args, ['opaque-review']);
+    assert.equal(p.calls('fittings_review_eft').length, 1);
+    await settle(p.last('fittings_import_eft'), {applied: true, persisted: true, entry_id: 'imported', created: false, error: ''});
+    assert.match(importControl(p, 'status').textContent, /Already in.*library/i);
+    assert.equal(importControl(p, 'candidate').textContent, before);
+  });
+}
+
+test('clipboard fresh opener preserves newer typing and reopening drafts requires explicit replacement', async () => {
+  const p = await importPage();
+  assert.equal(p.reads.length, 1);
+  const first = p.reads[0];
+  input(importControl(p, 'text'), 'Manual draft');
+  await settle(first, 'Stale initial clipboard');
+  assert.equal(importControl(p, 'text').value, 'Manual draft');
+  importControl(p, 'open').click();
+  assert.equal(p.reads.length, 1, 'reopening a nonempty draft must not replace it');
+  assert.equal(importControl(p, 'text').value, 'Manual draft');
+  importControl(p, 'read').click();
+  assert.equal(p.reads.length, 2, 'Read clipboard explicitly replaces an existing draft');
+  await settle(p.reads.at(-1), eftText);
+  assert.equal(importControl(p, 'text').value, eftText);
+  assert.equal(p.calls('fittings_review_eft').length, 0);
+  importControl(p, 'close').click(); importControl(p, 'open').click();
+  assert.equal(p.reads.length, 3, 'closing starts a fresh empty-draft open');
+});
+
+test('clipboard opener keeps reviewed warnings and successful result instead of reading again', async () => {
+  const p = await reviewedImport();
+  const reads = p.reads.length;
+  const candidate = importControl(p, 'candidate').textContent;
+  await p.route('main'); await p.route('fittings');
+  importControl(p, 'open').click();
+  assert.equal(p.reads.length, reads);
+  assert.equal(importControl(p, 'text').value, eftText);
+  assert.equal(importControl(p, 'candidate').textContent, candidate);
+  importControl(p, 'add').click(); await flush();
+  await settle(p.last('fittings_import_eft'), {applied: true, persisted: true, entry_id: 'imported', created: true, error: ''});
+  importControl(p, 'open').click();
+  assert.equal(p.reads.length, reads, 'a cleared successful submission is not a fresh draft');
+  assert.equal(importControl(p, 'candidate').textContent, candidate);
+  assert.equal(importControl(p, 'show').hidden, false);
+});
+
+test('clipboard expiry refusal offers Review again without editing text or parsing backend prose', async () => {
+  const p = await reviewedImport();
+  const candidate = importControl(p, 'candidate').textContent;
+  importControl(p, 'add').click(); await flush();
+  // Exact current controller shape/message for expired OR consumed tickets.
+  await settle(p.last('fittings_import_eft'), {applied: false, persisted: false, entry_id: '', created: false,
+    error: 'Review the fitting text again before adding it.'});
+  assert.equal(importControl(p, 'text').value, eftText);
+  assert.equal(importControl(p, 'candidate').textContent, candidate);
+  assert.equal(importControl(p, 'add').disabled, false);
+  assert.equal(importControl(p, 'review').disabled, false);
+  assert.equal(importControl(p, 'review').textContent, 'Review again');
+  importControl(p, 'review').click(); await flush();
+  assert.equal(p.calls('fittings_review_eft').length, 2);
+  assert.deepEqual(p.last('fittings_review_eft').args, [eftText]);
+  assert.equal(importControl(p, 'add').disabled, true, 'old ticket cannot be added during replacement review');
+  await settle(p.last('fittings_review_eft'), {...eftReview(), review_id: 'fresh-review'});
+  importControl(p, 'add').click(); await flush();
+  assert.deepEqual(p.last('fittings_import_eft').args, ['fresh-review']);
+  await settle(p.last('fittings_import_eft'), {applied: true, persisted: true, entry_id: 'imported', created: false, error: ''});
+  assert.equal(importControl(p, 'text').value, '');
+  assert.match(importControl(p, 'status').textContent, /Already in/);
+});
+
+for (const replyTiming of ['during-results', 'after-close']) {
+  test('clipboard export cancelled by Last copy results: ' + replyTiming, async () => {
+    const p = await editor();
+    await beginCopy(p); await complete(p, result(['success']));
+    p.el('fittings-copy-close').click();
+    const copy = button(p.el('fittings-list'), 'Copy to clipboard');
+    copy.click(); await flush();
+    const exportReply = p.last('fittings_export_eft');
+    button(p.el('fittings-notices'), 'Last copy results\u2026').click();
+    if (replyTiming === 'after-close') p.el('fittings-copy-close').click();
+    await settle(exportReply, {ok: true, text: 'obsolete export', error: ''});
+    if (replyTiming === 'during-results') p.el('fittings-copy-close').click();
+    assert.equal(p.writes.length, 0, 'results entry revokes delivery permanently, not just while the overlay is open');
+    assert.equal(copy.disabled, false, 'cancelled export cannot strand its button');
+    assert.doesNotMatch(p.el('fittings-list').textContent, /Preparing clipboard text/);
+    copy.click(); await flush();
+    assert.equal(p.calls('fittings_export_eft').length, 2, 'cancelled owner cannot block a new explicit export');
+  });
+}
+
+test('clipboard import exposes its public ESI lookup notice before Review', async () => {
+  const p = await importPage();
+  const note = p.el('fittings-import-help');
+  assert.match(note.textContent, /Type names may be looked up through ESI\./);
+  assert.ok(note.getClientRects().length);
+  assert.equal(p.calls('fittings_review_eft').length, 0);
+});
+
+test('clipboard invalid review retains text, exposes refusal, and never enables Add', async () => {
+  const p = await importPage();
+  input(importControl(p, 'text'), 'invalid');
+  importControl(p, 'review').click(); await flush();
+  await settle(p.last('fittings_review_eft'), {ok: false, review_id: '', name: '', ship_name: '',
+    items: [], warnings: [], existing_entry_id: '', error: 'Line 1: expected a fitting header.'});
+  assert.equal(importControl(p, 'text').value, 'invalid');
+  assert.match(importControl(p, 'status').textContent, /Line 1/);
+  assert.equal(importControl(p, 'candidate').textContent, '');
+  assert.equal(importControl(p, 'add').disabled, true);
+  importControl(p, 'add').dispatchEvent({type: 'click'});
+  assert.equal(p.calls('fittings_import_eft').length, 0);
+});
+
+test('clipboard close returns focus locally; importing and selection paint preserve metadata nodes and scroll', async () => {
+  const p = await editor();
+  const name = p.el('fit-name-fit-1'), host = p.el('fittings-list');
+  input(name, 'Metadata draft'); name.focus(); host.scrollTop = 76;
+  importControl(p, 'open').click();
+  input(importControl(p, 'text'), eftText);
+  p.el('fittings-select-page').click();
+  assert.equal(p.el('fit-name-fit-1'), name);
+  assert.equal(name.value, 'Metadata draft');
+  assert.equal(metadataDisclosure(p).open, true);
+  assert.equal(host.scrollTop, 76);
+  importControl(p, 'text').focus(); p.key('Escape');
+  assert.equal(importControl(p, 'panel').hidden, true);
+  assert.equal(p.focused(), importControl(p, 'open'));
+});
+
+test('clipboard Show fitting renders the locator snapshot directly when live ordering crosses a page boundary', async () => {
+  const p = await addedImport();
+  const before = p.calls('fittings_state').length;
+  importControl(p, 'show').focus(); importControl(p, 'show').click(); await flush();
+  assert.deepEqual(p.last('fittings_locate_entry').args, ['imported']);
+  const snapshot = locatorSnapshot();
+  // The live next read would exclude the target after a rename/insertion.
+  // No second state call is permitted to recreate that race.
+  await settle(p.last('fittings_locate_entry'), snapshot);
+  assert.equal(p.calls('fittings_state').length, before);
+  assert.equal(p.el('fittings-page-label').textContent, 'Page 2 of 3');
+  assert.match(p.el('fittings-list').textContent, /Located snapshot/);
+  assert.deepEqual(p.last('fittings_detail').args, ['imported']);
+  await settle(p.last('fittings_detail'), detail('imported', 'Renamed after snapshot'));
+  assert.match(p.el('fittings-list').textContent, /Saved description/);
+  assert.deepEqual(selectedRows(p), []);
+  assert.equal(importControl(p, 'candidate').querySelectorAll('.fit-import-warning').length, 3);
+});
+
+for (const revoke of ['search', 'page', 'collection', 'query', 'route', 'screenshot', 'row']) {
+  test('clipboard Show fitting loses pending locator/focus to ' + revoke, async () => {
+    const p = await addedImport();
+    await p.changed({reason: 'refresh'});
+    await settle(p.last('fittings_state'), state(['fit-1', 'fit-2']));
+    importControl(p, 'show').focus(); importControl(p, 'show').click(); await flush();
+    const pending = p.last('fittings_locate_entry');
+    if (revoke === 'search') input(p.el('fittings-search'), 'new filter');
+    if (revoke === 'page') p.el('fittings-page-next').dispatchEvent({type: 'click'});
+    if (revoke === 'collection') p.el('fittings-collections').children[1].click();
+    if (revoke === 'query') {
+      await p.changed({reason: 'refresh'});
+      await settle(p.last('fittings_state'), state(['newer']));
+    }
+    if (revoke === 'route') await p.route('main');
+    if (revoke === 'screenshot') await p.screenshot(devScreenshot());
+    if (revoke === 'row') p.el('fittings-list').querySelector('.fit-row-toggle').click();
+    p.el('fittings-search').focus();
+    const active = p.focused(), list = p.el('fittings-list').textContent;
+    await settle(pending, locatorSnapshot());
+    assert.equal(p.el('fittings-list').textContent, list);
+    assert.equal(p.focused(), active);
+    assert.equal(p.calls('fittings_detail').some(call => call.args[0] === 'imported'), false);
+    assert.doesNotMatch(importControl(p, 'status').textContent, /Finding/);
+  });
+}
+
+for (const phase of ['locate', 'detail']) {
+  test('clipboard Show fitting deletion during ' + phase + ' ends with recoverable status, not endless Loading', async () => {
+    const p = await addedImport();
+    importControl(p, 'show').click(); await flush();
+    if (phase === 'locate') await settle(p.last('fittings_locate_entry'), {ok: false, entry_id: '', workspace: null, error: 'Fitting no longer exists.'});
+    else {
+      await settle(p.last('fittings_locate_entry'), locatorSnapshot());
+      await settle(p.last('fittings_detail'), null);
+    }
+    assert.match(importControl(p, 'status').textContent + p.el('fittings-list').textContent, /no longer|unavailable/i);
+    assert.doesNotMatch(p.el('fittings-list').textContent, /Loading/);
+    assert.equal(importControl(p, 'show').disabled, false);
+  });
+}
+
+test('clipboard export uses saved identity and reports Copied only after actual write completion', async () => {
+  const p = await editor();
+  input(p.el('fit-name-fit-1'), 'Unsaved different name');
+  button(p.el('fittings-list'), 'Copy to clipboard').click(); await flush();
+  assert.deepEqual(p.last('fittings_export_eft').args, ['fit-1']);
+  assert.equal(p.writes.length, 0);
+  await settle(p.last('fittings_export_eft'), {ok: true, text: '[Sabre, Saved name]\n', error: ''});
+  assert.deepEqual(p.writes[0].args, ['[Sabre, Saved name]\n']);
+  assert.doesNotMatch(p.el('fittings-list').textContent, /Copied to clipboard/);
+  await settle(p.writes[0], undefined);
+  assert.match(p.el('fittings-list').textContent, /Copied to clipboard/);
+  assert.equal(p.el('fit-name-fit-1').value, 'Unsaved different name');
+  assert.equal(p.calls('fittings_update_metadata').length, 0);
+});
+
+for (const mode of ['refused', 'throw', 'reject', 'missing']) {
+  test('clipboard export ' + mode + ' never claims Copied', async () => {
+    const p = await page(mode === 'missing' ? {clipboard: false} : {writeText: mode});
+    await p.route('fittings'); await settle(p.last('fittings_state'), state());
+    p.el('fittings-list').querySelector('.fit-row-toggle').click(); await flush();
+    await settle(p.last('fittings_detail'), detail());
+    button(p.el('fittings-list'), 'Copy to clipboard').click(); await flush();
+    await settle(p.last('fittings_export_eft'), mode === 'refused'
+      ? {ok: false, text: '', error: 'Stored charge cannot be represented.'}
+      : {ok: true, text: 'EFT', error: ''});
+    if (mode === 'reject') { p.writes[0].reject(new Error('denied')); await flush(); }
+    assert.doesNotMatch(p.el('fittings-list').textContent, /Copied to clipboard/);
+    assert.match(p.el('fittings-list').textContent, mode === 'refused' ? /Stored charge/ : /clipboard.*(denied|unavailable|failed)|could not.*clipboard/i);
+    assert.equal(button(p.el('fittings-list'), 'Copy to clipboard').disabled, false);
+    if (mode !== 'reject') assert.equal(p.writes.length, 0);
+  });
+}
+
+for (const revoke of ['collapse', 'row', 'route', 'source-push', 'rename', 'delete', 'screenshot', 'filter']) {
+  test('clipboard export revokes before OS delivery on ' + revoke, async () => {
+    const p = await editor();
+    await repaint(p, state(['fit-1', 'fit-2']));
+    const exportButton = button(p.el('fittings-list'), 'Copy to clipboard');
+    exportButton.click(); await flush();
+    const pending = p.last('fittings_export_eft');
+    if (revoke === 'collapse') p.el('fittings-list').querySelector('.fit-row-toggle').click();
+    if (revoke === 'row') p.el('fittings-list').querySelectorAll('.fit-row-toggle')[1].click();
+    if (revoke === 'route') await p.route('main');
+    if (revoke === 'source-push') await p.changed({reason: 'metadata', entry_id: 'fit-1'});
+    if (revoke === 'rename') { input(p.el('fit-name-fit-1'), 'Rename'); button(metadata(p), 'Save').click(); }
+    if (revoke === 'delete') { button(p.el('fittings-list'), 'Delete fitting').click(); await settle(p.confirmations.at(-1), true); }
+    if (revoke === 'screenshot') await p.screenshot(devScreenshot());
+    if (revoke === 'filter') input(p.el('fittings-search'), 'new');
+    await settle(pending, {ok: true, text: 'stale text', error: ''});
+    assert.equal(p.writes.length, 0, 'revocation must precede touching clipboard');
+    const before = p.calls('fittings_export_eft').length;
+    exportButton.dispatchEvent({type: 'click'});
+    await flush();
+    if (['collapse', 'row', 'route', 'screenshot'].includes(revoke)) {
+      assert.equal(p.calls('fittings_export_eft').length, before, 'detached controls are not admission');
+    }
+  });
+}
+
+test('clipboard screenshot simulates only its explicit case and restores the detached real draft', async () => {
+  const p = await reviewedImport();
+  const fixture = devScreenshot();
+  assert.ok(fixture.clipboard, 'dev.js must supply an explicit simulated clipboard case');
+  const liveReads = p.reads.length;
+  await p.screenshot(fixture);
+  const before = p.calls().length;
+  importControl(p, 'open').click(); importControl(p, 'read').click(); await flush();
+  assert.equal(importControl(p, 'text').value, fixture.clipboard.text);
+  importControl(p, 'review').click(); await flush();
+  assert.equal(importControl(p, 'candidate').querySelectorAll('.fit-import-warning').length, 3);
+  importControl(p, 'add').click(); await flush();
+  importControl(p, 'show').click(); await flush();
+  button(p.el('fittings-list'), 'Copy to clipboard').click(); await flush();
+  assert.match(p.el('fittings-list').textContent, /simulated/i);
+  assert.equal(p.calls().length, before);
+  assert.equal(p.reads.length, liveReads); assert.equal(p.writes.length, 0);
+  await p.screenshot({kind: 'fittings-screenshot-v1', clear: true});
+  await p.route('fittings');
+  assert.equal(importControl(p, 'text').value, eftText);
+  assert.equal(importControl(p, 'candidate').querySelectorAll('.fit-import-warning').length, 3);
+  assert.equal(importControl(p, 'show').hidden, true, 'synthetic result never becomes a real locator target');
+  assert.equal(importControl(p, 'add').disabled, false);
+});
+
+test('clipboard dev endpoints and navigator shim simulate exact cases, not permissive fallback success', async () => {
+  const source = fs.readFileSync(path.join(web, 'dev.js'), 'utf8');
+  const start = source.indexOf('  // ---- simulated fittings clipboard ----');
+  const end = source.indexOf('  // ---- end simulated fittings clipboard ----', start);
+  assert.ok(start !== -1 && end > start, 'dev clipboard simulation must be explicit');
+  const fixture = devScreenshot();
+  assert.deepEqual(fixture.clipboard.review.items, fixture.details['fit-clipboard'].items,
+    'the explicit screenshot review and saved example cannot drift');
+  assert.equal(fixture.collections.find(row => row.id === 'all').count, fixture.entries.length);
+  assert.equal(fixture.collections.find(row => row.id === 'unfiled').count,
+    fixture.entries.filter(row => row.is_unfiled).length);
+  let realClipboardCalls = 0;
+  const navigator = {clipboard: {readText() { realClipboardCalls++; }, writeText() { realClipboardCalls++; }}};
+  const api = {}, fittings = {entries: []};
+  const context = vm.createContext({navigator, api, fittings, Promise,
+    DEV_FITTINGS_SCREENSHOT_FIXTURE: fixture,
+    fitPushChanged() {},
+    // The existing dev workspace implementation is exercised separately by
+    // page runtime. The locator must supply it directly, not expose an index.
+    fitWorkspace(filters) { return {...state(['fit-clipboard']), page: filters.page}; },
+    FIT_PAGE_SIZE: 100});
+  const orderStart = source.indexOf('  function fitOrder(');
+  const orderEnd = source.indexOf('  function fitWorkspace(', orderStart);
+  vm.runInContext(source.slice(orderStart, orderEnd) + source.slice(start, end), context);
+  const text = await navigator.clipboard.readText();
+  assert.equal(text, fixture.clipboard.text);
+  const refused = await api.fittings_review_eft('not the authored fixture');
+  assert.equal(refused.ok, false); assert.equal(refused.review_id, '');
+  assert.deepEqual(Array.from(refused.items), []);
+  const review = await api.fittings_review_eft(text);
+  assert.equal(review.ok, true); assert.equal(review.warnings.length, 3);
+  assert.equal((await api.fittings_import_eft('guessed')).applied, false);
+  const created = await api.fittings_import_eft(review.review_id);
+  assert.equal(created.created, true); assert.equal(created.persisted, true);
+  const repeated = await api.fittings_review_eft(text);
+  assert.equal((await api.fittings_import_eft(repeated.review_id)).created, false);
+  assert.equal((await api.fittings_export_eft('unknown')).ok, false);
+  const exported = await api.fittings_export_eft(created.entry_id);
+  assert.equal(exported.ok, true);
+  await navigator.clipboard.writeText(exported.text);
+  assert.equal(await navigator.clipboard.readText(), exported.text);
+  assert.equal(realClipboardCalls, 0, 'dev must never fall back to the real browser clipboard');
+  assert.equal((await api.fittings_locate_entry(created.entry_id)).workspace.rows[0].id, 'fit-clipboard');
+  assert.equal((await api.fittings_locate_entry('deleted')).ok, false);
+});
+
+for (const phase of ['read', 'review', 'add', 'locate']) {
+  test('clipboard ' + phase + ' survives a generic dialog without stranding its pending owner', async () => {
+    const p = phase === 'locate' ? await addedImport() : phase === 'add' ? await reviewedImport() : await importPage();
+    if (phase === 'review') input(importControl(p, 'text'), eftText);
+    importControl(p, phase === 'locate' ? 'show' : phase).click(); await flush();
+    p.el('overlay').hidden = false; p.el('dlg-ok').focus();
+    const pending = phase === 'read' ? p.reads[0] : p.last('fittings_' +
+      ({review: 'review_eft', add: 'import_eft', locate: 'locate_entry'}[phase]));
+    await settle(pending, phase === 'read' ? eftText : phase === 'review' ? eftReview()
+      : phase === 'locate' ? locatorSnapshot() : {applied: true, persisted: true, entry_id: 'imported', created: true, error: ''});
+    assert.equal(p.focused(), p.el('dlg-ok'));
+    p.el('overlay').hidden = true;
+    assert.equal(importControl(p, 'read').disabled, false);
+    assert.doesNotMatch(importControl(p, 'status').textContent, /Reading|Reviewing|Adding|Finding/);
+  });
+}
+
+for (const phase of ['review', 'add', 'export', 'locate']) {
+  test('clipboard bridge ' + phase + ' synchronous refusal remains recoverable', async () => {
+    const p = phase === 'add' ? await reviewedImport() : phase === 'locate' ? await addedImport()
+      : phase === 'export' ? await editor() : await importPage();
+    const method = 'fittings_' + ({review: 'review_eft', add: 'import_eft', export: 'export_eft', locate: 'locate_entry'}[phase]);
+    p.throwBridge(method);
+    if (phase === 'review') input(importControl(p, 'text'), eftText);
+    if (phase === 'export') button(p.el('fittings-list'), 'Copy to clipboard').click();
+    else importControl(p, phase === 'locate' ? 'show' : phase).click();
+    await flush();
+    const status = phase === 'export' ? p.el('fittings-list').textContent : importControl(p, 'status').textContent;
+    assert.match(status, /not confirmed|unavailable/i);
+    assert.equal(p.errors.length, 1, 'WM.send catches the synchronous bridge exception');
+    assert.equal(p.writes.length, 0);
+    if (phase === 'add') assert.equal(importControl(p, 'add').disabled, false);
+  });
+}
+
+test('clipboard Show fitting fences both a previous query and its delayed detail against newer search', async () => {
+  const p = await addedImport();
+  await p.changed({reason: 'refresh'});
+  const oldState = p.last('fittings_state');
+  importControl(p, 'show').focus(); importControl(p, 'show').click(); await flush();
+  await settle(p.last('fittings_locate_entry'), locatorSnapshot());
+  const lateDetail = p.last('fittings_detail');
+  await settle(oldState, state(['old-page']));
+  assert.match(p.el('fittings-list').textContent, /Located snapshot/);
+  input(p.el('fittings-search'), 'new'); p.el('fittings-search').focus();
+  await p.timers(); await settle(p.last('fittings_state'), state(['new-page']));
+  await settle(lateDetail, detail('imported', 'Stale', 'Do not render this'));
+  assert.doesNotMatch(p.el('fittings-list').textContent, /Located snapshot|Do not render/);
+  assert.equal(p.focused(), p.el('fittings-search'));
+});
+
+for (const outcome of ['resolve', 'reject']) {
+  test('clipboard write ' + outcome + ' after collapse cannot repaint or block a new export', async () => {
+    const p = await editor();
+    button(p.el('fittings-list'), 'Copy to clipboard').click(); await flush();
+    await settle(p.last('fittings_export_eft'), {ok: true, text: 'text', error: ''});
+    p.el('fittings-list').querySelector('.fit-row-toggle').click();
+    p.el('fittings-list').querySelector('.fit-row-toggle').click(); await flush();
+    await settle(p.last('fittings_detail'), detail());
+    if (outcome === 'reject') { p.writes[0].reject(new Error('late')); await flush(); }
+    else await settle(p.writes[0], undefined);
+    assert.doesNotMatch(p.el('fittings-list').textContent, /Copied to clipboard|Could not write/);
+    button(p.el('fittings-list'), 'Copy to clipboard').click(); await flush();
+    assert.equal(p.calls('fittings_export_eft').length, 2);
+  });
+}
+
+test('clipboard workspace scroll survives list replacement and focus handoff stays local to the invoking export', async () => {
+  const p = await editor();
+  const scroller = p.el('fittings-workspace-scroll');
+  const host = p.el('fittings-list');
+  // Simulate the browser clamping the enclosing scroller when its tall child
+  // is emptied. Restoring the retired list's own scrollTop cannot recover it.
+  host.onChildrenCleared = () => { scroller.scrollTop = 0; };
+  scroller.scrollTop = 214;
+  input(p.el('fit-name-fit-1'), 'Kept');
+  await repaint(p);
+  assert.equal(scroller.scrollTop, 214);
+  const copy = button(host, 'Copy to clipboard');
+  copy.focus(); copy.click(); await flush();
+  assert.equal(p.focused(), p.el('fit-toggle-fit-1'), 'handoff precedes disabling the focused export');
+  assert.equal(scroller.scrollTop, 214);
+  p.el('fittings-search').focus();
+  await settle(p.last('fittings_export_eft'), {ok: true, text: 'text', error: ''});
+  await settle(p.writes[0], undefined);
+  assert.equal(p.focused(), p.el('fittings-search'), 'a completed write does not take focus back');
+});
+
+test('clipboard shown target deleted by push remains recoverable when its old detail is fenced out', async () => {
+  const p = await addedImport();
+  importControl(p, 'show').click(); await flush();
+  await settle(p.last('fittings_locate_entry'), locatorSnapshot());
+  const pending = p.last('fittings_detail');
+  await p.changed({reason: 'delete', entry_id: 'imported'});
+  await settle(p.last('fittings_state'), state([]));
+  await settle(pending, detail('imported'));
+  assert.match(importControl(p, 'status').textContent, /no longer exists/);
+  assert.doesNotMatch(p.el('fittings-list').textContent, /Loading/);
+  assert.equal(importControl(p, 'show').disabled, false);
+});
+
+test('clipboard locator focus relinquishment cannot revive when focus returns to Show', async () => {
+  const p = await addedImport();
+  p.focusEvent(importControl(p, 'show')); importControl(p, 'show').click(); await flush();
+  p.focusEvent(p.el('fittings-search'));
+  p.focusEvent(importControl(p, 'show'));
+  await settle(p.last('fittings_locate_entry'), locatorSnapshot());
+  assert.equal(p.focused(), importControl(p, 'show'));
+});
+
+test('clipboard export released by row repaint permits another export rather than retaining detached controls', async () => {
+  const p = await editor();
+  input(p.el('fit-name-fit-1'), 'draft');
+  button(p.el('fittings-list'), 'Copy to clipboard').click(); await flush();
+  const old = p.last('fittings_export_eft');
+  button(metadata(p), 'Discard changes').click(); await settle(p.confirmations.at(-1), true);
+  await settle(old, {ok: true, text: 'obsolete', error: ''});
+  assert.equal(p.writes.length, 0);
+  button(p.el('fittings-list'), 'Copy to clipboard').click(); await flush();
+  assert.equal(p.calls('fittings_export_eft').length, 2);
+});
+
+test('clipboard screenshot without an explicit clipboard fixture fails closed for every new operation', async () => {
+  const p = await editor();
+  const fixture = devScreenshot(); delete fixture.clipboard;
+  await p.screenshot(fixture);
+  const before = p.calls().length;
+  importControl(p, 'open').click(); importControl(p, 'read').click(); await flush();
+  input(importControl(p, 'text'), eftText); importControl(p, 'review').click(); await flush();
+  importControl(p, 'add').dispatchEvent({type: 'click'});
+  importControl(p, 'show').dispatchEvent({type: 'click'});
+  p.el('fittings-list').querySelector('.fit-row-toggle').click(); await flush();
+  const copy = p.el('fittings-list').querySelectorAll('button').find(node => node.textContent === 'Copy to clipboard');
+  if (copy) copy.click();
+  await flush();
+  assert.equal(p.calls().length, before);
+  assert.equal(p.reads.length, 0); assert.equal(p.writes.length, 0);
+  assert.match(importControl(p, 'status').textContent, /screenshot/i);
 });
 
 test('empty worker refusal is explained without claiming successful completion', async () => {

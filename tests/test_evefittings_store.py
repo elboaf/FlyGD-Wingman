@@ -111,6 +111,28 @@ def full_state(*, intent_status="unknown"):
     )
 
 
+def test_clipboard_entry_round_trip_uses_unchanged_schema_without_remote_identity(
+    tmp_path,
+):
+    from tests.test_evefittings_clipboard import add, make_controller
+
+    controller, _, path = make_controller(tmp_path)
+    result = add(controller)
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert document["presences"] == document["snapshots"] == document["intents"] == []
+    assert "remote_fitting_id" not in document["entries"][0]
+    assert "warnings" not in document["entries"][0]
+    assert document["entries"][0]["preferred_description"] == ""
+    assert load_fittings(path) == (controller.state, ())
+    assert_cleanup_verifiable_after_normalized_save(tmp_path, controller.state)
+    reloaded, _, _ = make_controller(tmp_path)
+    assert reloaded.detail(result["entry_id"])["ship_name"] == "Rifter"
+    assert (
+        reloaded.detail(result["entry_id"])["items"][0]["type_name"]
+        == "Damage Control II"
+    )
+
+
 def test_round_trip_preserves_stable_ids_templates_aliases_and_collections(tmp_path):
     path = tmp_path / "eve_fittings.json"
     original = full_state()

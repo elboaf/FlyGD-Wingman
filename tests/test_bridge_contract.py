@@ -46,6 +46,30 @@ WEB = Path(__file__).resolve().parent.parent / "wingman" / "web"
 API = Path(__file__).resolve().parent.parent / "wingman" / "ui" / "api.py"
 
 
+@pytest.mark.parametrize(
+    "method, argument",
+    [
+        ("export_eft", "entry_id"),
+        ("review_eft", "text"),
+        ("import_eft", "review_id"),
+        ("locate_entry", "entry_id"),
+    ],
+)
+def test_fittings_clipboard_facades_keep_reviewed_authority_in_controller(
+    method, argument
+):
+    from wingman.ui.api import Api
+
+    name = f"fittings_{method}"
+    assert list(inspect.signature(getattr(Api, name)).parameters) == ["self", argument]
+    body = api_method_body(name)
+    assert f"return self._fittings.{method}({argument})" in body
+    assert "Thread(" not in body and "_spawn" not in body
+    assert "_confirm(" not in body and "_push(" not in body
+    page = (WEB / "fittings.js").read_text(encoding="utf-8")
+    assert f"WM.send('{name}', " in page
+
+
 def test_marker_commit_matches_the_bridge_signature():
     from wingman.ui.api import Api
 

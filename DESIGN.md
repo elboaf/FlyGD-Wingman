@@ -609,6 +609,22 @@ focus and text selection restored only when that editor still owns focus.
 A newer route, row or dialog must never have focus taken back by a refresh.
 Save remains explicit, and disclosure state is session-only.
 
+Fittings' neutral **Import from clipboard…** opens an inline EFT draft and
+attempts a read only when text, review and result are all absent. Reopening a
+retained draft or result preserves it; **Read clipboard** explicitly replaces
+text, and clipboard refusal leaves manual paste available. Route entry never
+reads the clipboard. **Review** shows normalized items and all line-specific
+bay, loaded-ammo and offline-state warnings before the separate, local-only
+**Add to library** action. Type-name lookup through ESI is disclosed beside
+the draft. Editing text invalidates its review; list refreshes do not discard it.
+A failed save retains the same review for Add retry while current and unexpired;
+**Review again** also permits explicit recovery without editing the text.
+Success keeps warnings visible and offers **Show fitting**, not automatic
+selection or character copying. Per-detail EFT export uses saved metadata,
+never an unsaved editor draft, and refuses unrepresentable saved content before
+clipboard delivery. Clipboard controls stay neutral; **Copy selected** remains
+the sole accent action.
+
 Fittings' **Select page** selects only the currently displayed filtered page, not
 hidden pages or the whole library. **Clear selection** and individual checkboxes
 share that page-owned selection; existing filter/page/route pruning remains in

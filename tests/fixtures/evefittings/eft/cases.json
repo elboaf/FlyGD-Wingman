@@ -1,0 +1,564 @@
+{
+  "status": "APPROVED conventional-import contract; source-backed, live acceptance deferred to final smoke",
+  "provenance": {
+    "kind": "source-derived authored examples; NOT live EVE or Pyfa captures",
+    "project": "pyfa-org/Pyfa",
+    "commit": "8b04f3b271e614b3e103853b44a7851a63d79d0e",
+    "release_version": null,
+    "source_path": "service/port/eft.py",
+    "source_sha256": "6a20ab1cb79857265d3930566796093d7d51b83fe9b3279b8427e54dbf9dc9ae",
+    "method": "Executed only AST-selected pinned exporter functions with authored SimpleNamespace fit/item doubles and pinned enums. Market sorting stubbed. No Pyfa application or SDE. Names/IDs from public ESI. One terminal LF added to fixture files."
+  },
+  "cases": [
+    {
+      "id": "ordinary-racks-cargo",
+      "file": "ordinary-racks-cargo.eft",
+      "ship_type_id": 587,
+      "name": "Authored ordinary racks",
+      "expected_rows": [
+        {
+          "flag": "LoSlot0",
+          "type_id": 2048,
+          "quantity": 1
+        },
+        {
+          "flag": "MedSlot0",
+          "type_id": 438,
+          "quantity": 1
+        },
+        {
+          "flag": "HiSlot0",
+          "type_id": 2889,
+          "quantity": 1
+        },
+        {
+          "flag": "HiSlot2",
+          "type_id": 2889,
+          "quantity": 1
+        },
+        {
+          "flag": "RigSlot0",
+          "type_id": 31668,
+          "quantity": 1
+        },
+        {
+          "flag": "Cargo",
+          "type_id": 21898,
+          "quantity": 100
+        }
+      ],
+      "alternative_rows": null,
+      "note": "Candidate exact occupied rows from authored rack arrays; empty markers consume positions, not content rows. Not an in-game viability claim.",
+      "approved_import": {
+        "ok": true,
+        "items": [
+          {
+            "flag": "LoSlot0",
+            "type_id": 2048,
+            "quantity": 1
+          },
+          {
+            "flag": "MedSlot0",
+            "type_id": 438,
+            "quantity": 1
+          },
+          {
+            "flag": "HiSlot0",
+            "type_id": 2889,
+            "quantity": 1
+          },
+          {
+            "flag": "HiSlot2",
+            "type_id": 2889,
+            "quantity": 1
+          },
+          {
+            "flag": "RigSlot0",
+            "type_id": 31668,
+            "quantity": 1
+          },
+          {
+            "flag": "Cargo",
+            "type_id": 21898,
+            "quantity": 100
+          }
+        ],
+        "warnings": [],
+        "error": null
+      },
+      "approved_export": {
+        "normalized_candidate": true,
+        "original_alternatives": []
+      }
+    },
+    {
+      "id": "subsystem",
+      "file": "subsystem.eft",
+      "ship_type_id": 29984,
+      "name": "Authored subsystem",
+      "expected_rows": [
+        {
+          "flag": "SubSystemSlot1",
+          "type_id": 45589,
+          "quantity": 1
+        }
+      ],
+      "alternative_rows": null,
+      "note": "Candidate source-array position, not an EVE client slot capture.",
+      "approved_import": {
+        "ok": true,
+        "items": [
+          {
+            "flag": "SubSystemSlot1",
+            "type_id": 45589,
+            "quantity": 1
+          }
+        ],
+        "warnings": [],
+        "error": null
+      },
+      "approved_export": {
+        "normalized_candidate": true,
+        "original_alternatives": []
+      }
+    },
+    {
+      "id": "service",
+      "file": "service.eft",
+      "ship_type_id": 35832,
+      "name": "Authored service",
+      "expected_rows": [
+        {
+          "flag": "ServiceSlot0",
+          "type_id": 35892,
+          "quantity": 1
+        }
+      ],
+      "alternative_rows": null,
+      "note": "Structure hull exercises service syntax; no in-game fit viability claim.",
+      "approved_import": {
+        "ok": true,
+        "items": [
+          {
+            "flag": "ServiceSlot0",
+            "type_id": 35892,
+            "quantity": 1
+          }
+        ],
+        "warnings": [],
+        "error": null
+      },
+      "approved_export": {
+        "normalized_candidate": true,
+        "original_alternatives": []
+      }
+    },
+    {
+      "id": "ambiguous-drone-location",
+      "file": "ambiguous-drone-location.eft",
+      "ship_type_id": 29984,
+      "name": "Authored drone collision",
+      "expected_rows": null,
+      "alternative_rows": [
+        [
+          {
+            "flag": "LoSlot0",
+            "type_id": 2048,
+            "quantity": 1
+          },
+          {
+            "flag": "DroneBay",
+            "type_id": 2456,
+            "quantity": 5
+          }
+        ],
+        [
+          {
+            "flag": "LoSlot0",
+            "type_id": 2048,
+            "quantity": 1
+          },
+          {
+            "flag": "Cargo",
+            "type_id": 2456,
+            "quantity": 5
+          }
+        ]
+      ],
+      "note": "Pinned exporter produced identical bytes for these two authored locations; no unique expected rows.",
+      "approved_import": {
+        "ok": true,
+        "items": [
+          {
+            "flag": "LoSlot0",
+            "type_id": 2048,
+            "quantity": 1
+          },
+          {
+            "flag": "DroneBay",
+            "type_id": 2456,
+            "quantity": 5
+          }
+        ],
+        "warnings": [
+          {
+            "code": "bay_convention",
+            "line_number": 6,
+            "message": "Line 6: Hobgoblin II x5 is interpreted as DroneBay content; EFT does not preserve Cargo/bay intent."
+          }
+        ],
+        "error": null
+      },
+      "approved_export": {
+        "normalized_candidate": true,
+        "original_alternatives": [
+          {
+            "index": 0,
+            "ok": true,
+            "refusal_reason": null
+          },
+          {
+            "index": 1,
+            "ok": false,
+            "refusal_reason": "Cargo drone/fighter would become bay content"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ambiguous-fighter-location",
+      "file": "ambiguous-fighter-location.eft",
+      "ship_type_id": 23911,
+      "name": "Authored fighter collision",
+      "expected_rows": null,
+      "alternative_rows": [
+        [
+          {
+            "flag": "LoSlot0",
+            "type_id": 2048,
+            "quantity": 1
+          },
+          {
+            "flag": "FighterBay",
+            "type_id": 23059,
+            "quantity": 9
+          }
+        ],
+        [
+          {
+            "flag": "LoSlot0",
+            "type_id": 2048,
+            "quantity": 1
+          },
+          {
+            "flag": "Cargo",
+            "type_id": 23059,
+            "quantity": 9
+          }
+        ]
+      ],
+      "note": "Pinned exporter produced identical bytes for two authored locations; capacity/legality is not evaluated. No unique expected rows.",
+      "approved_import": {
+        "ok": true,
+        "items": [
+          {
+            "flag": "LoSlot0",
+            "type_id": 2048,
+            "quantity": 1
+          },
+          {
+            "flag": "FighterBay",
+            "type_id": 23059,
+            "quantity": 9
+          }
+        ],
+        "warnings": [
+          {
+            "code": "bay_convention",
+            "line_number": 6,
+            "message": "Line 6: Firbolg I x9 is interpreted as FighterBay content; EFT does not preserve Cargo/bay intent."
+          }
+        ],
+        "error": null
+      },
+      "approved_export": {
+        "normalized_candidate": true,
+        "original_alternatives": [
+          {
+            "index": 0,
+            "ok": true,
+            "refusal_reason": null
+          },
+          {
+            "index": 1,
+            "ok": false,
+            "refusal_reason": "Cargo drone/fighter would become bay content"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ambiguous-inline-charge",
+      "file": "ambiguous-inline-charge.eft",
+      "ship_type_id": 587,
+      "name": "Authored inline charge",
+      "expected_rows": null,
+      "alternative_rows": [
+        [
+          {
+            "flag": "HiSlot0",
+            "type_id": 2889,
+            "quantity": 1
+          },
+          {
+            "flag": "HiSlot0",
+            "type_id": 21898,
+            "quantity": 1
+          },
+          {
+            "flag": "Cargo",
+            "type_id": 21898,
+            "quantity": 100
+          }
+        ],
+        [
+          {
+            "flag": "HiSlot0",
+            "type_id": 2889,
+            "quantity": 1
+          },
+          {
+            "flag": "HiSlot0",
+            "type_id": 21898,
+            "quantity": 120
+          },
+          {
+            "flag": "Cargo",
+            "type_id": 21898,
+            "quantity": 100
+          }
+        ]
+      ],
+      "note": "Exporter reads charge.typeName only. Alternative rows illustrate existing Wingman identity, NOT quantities recovered from EFT or a live Pyfa quantity property. No unique expected rows.",
+      "approved_import": {
+        "ok": true,
+        "items": [
+          {
+            "flag": "HiSlot0",
+            "type_id": 2889,
+            "quantity": 1
+          },
+          {
+            "flag": "Cargo",
+            "type_id": 21898,
+            "quantity": 100
+          }
+        ],
+        "warnings": [
+          {
+            "code": "loaded_charge_omitted",
+            "line_number": 3,
+            "message": "Line 3: Loaded charge selection Republic Fleet EMP S is not retained; EFT specifies no quantity. Explicit cargo quantities are unchanged."
+          }
+        ],
+        "error": null
+      },
+      "approved_export": {
+        "normalized_candidate": true,
+        "original_alternatives": [
+          {
+            "index": 0,
+            "ok": false,
+            "refusal_reason": "fitted charge quantity is unrepresentable"
+          },
+          {
+            "index": 1,
+            "ok": false,
+            "refusal_reason": "fitted charge quantity is unrepresentable"
+          }
+        ]
+      }
+    },
+    {
+      "id": "offline-inline-charge",
+      "file": "offline-inline-charge.eft",
+      "ship_type_id": 587,
+      "name": "Authored offline charge",
+      "expected_rows": null,
+      "alternative_rows": null,
+      "provenance": {
+        "kind": "authored contract example, NOT live EVE/Pyfa capture",
+        "basis": "pinned Pyfa syntax plus approved Wingman import policy; not executed full Pyfa exporter"
+      },
+      "note": "Both omissions are disclosed in source-line order; module and explicit cargo remain.",
+      "approved_import": {
+        "ok": true,
+        "items": [
+          {
+            "flag": "HiSlot0",
+            "type_id": 2889,
+            "quantity": 1
+          },
+          {
+            "flag": "Cargo",
+            "type_id": 21898,
+            "quantity": 100
+          }
+        ],
+        "warnings": [
+          {
+            "code": "loaded_charge_omitted",
+            "line_number": 3,
+            "message": "Line 3: Loaded charge selection Republic Fleet EMP S is not retained; EFT specifies no quantity. Explicit cargo quantities are unchanged."
+          },
+          {
+            "code": "offline_omitted",
+            "line_number": 3,
+            "message": "Line 3: Offline state is not retained; the module remains in the fitting."
+          }
+        ],
+        "error": null
+      },
+      "approved_export": {
+        "normalized_candidate": true,
+        "original_alternatives": []
+      }
+    },
+    {
+      "id": "same-type-bay-cargo",
+      "file": "same-type-bay-cargo.eft",
+      "ship_type_id": 29984,
+      "name": "Authored two drone sections",
+      "expected_rows": null,
+      "alternative_rows": null,
+      "provenance": {
+        "kind": "authored contract example, NOT live EVE/Pyfa capture",
+        "basis": "pinned Pyfa syntax plus approved Wingman import policy; not executed full Pyfa exporter"
+      },
+      "note": "Two source sections do not override approved bay mapping; exact counts aggregate canonically to 7. This is NOT lossless recovery of original section intent.",
+      "approved_import": {
+        "ok": true,
+        "items": [
+          {
+            "flag": "LoSlot0",
+            "type_id": 2048,
+            "quantity": 1
+          },
+          {
+            "flag": "DroneBay",
+            "type_id": 2456,
+            "quantity": 5
+          },
+          {
+            "flag": "DroneBay",
+            "type_id": 2456,
+            "quantity": 2
+          }
+        ],
+        "warnings": [
+          {
+            "code": "bay_convention",
+            "line_number": 6,
+            "message": "Line 6: Hobgoblin II x5 is interpreted as DroneBay content; EFT does not preserve Cargo/bay intent."
+          },
+          {
+            "code": "bay_convention",
+            "line_number": 9,
+            "message": "Line 9: Hobgoblin II x2 is interpreted as DroneBay content; EFT does not preserve Cargo/bay intent."
+          }
+        ],
+        "error": null
+      },
+      "approved_export": {
+        "normalized_candidate": true,
+        "original_alternatives": []
+      }
+    },
+    {
+      "id": "unsupported-mutation",
+      "file": "unsupported-mutation.eft",
+      "ship_type_id": 587,
+      "name": "Authored mutation refusal",
+      "expected_rows": null,
+      "alternative_rows": null,
+      "provenance": {
+        "kind": "authored contract example, NOT live EVE/Pyfa capture",
+        "basis": "pinned Pyfa syntax plus approved Wingman import policy; not executed full Pyfa exporter"
+      },
+      "note": "Authored negative mutation reference; details deliberately absent. Refuse rather than stripping suffix.",
+      "approved_import": {
+        "ok": false,
+        "items": [],
+        "warnings": [],
+        "error": {
+          "code": "unsupported_mutation",
+          "line_number": 3
+        }
+      },
+      "approved_export": {
+        "normalized_candidate": false,
+        "original_alternatives": []
+      }
+    },
+    {
+      "id": "malformed-quantity",
+      "file": "malformed-quantity.eft",
+      "ship_type_id": 587,
+      "name": "Authored quantity refusal",
+      "expected_rows": null,
+      "alternative_rows": null,
+      "provenance": {
+        "kind": "authored contract example, NOT live EVE/Pyfa capture",
+        "basis": "pinned Pyfa syntax plus approved Wingman import policy; not executed full Pyfa exporter"
+      },
+      "note": "Known inventory name does not make a zero quantity acceptable.",
+      "approved_import": {
+        "ok": false,
+        "items": [],
+        "warnings": [],
+        "error": {
+          "code": "invalid_quantity",
+          "line_number": 3
+        }
+      },
+      "approved_export": {
+        "normalized_candidate": false,
+        "original_alternatives": []
+      }
+    },
+    {
+      "id": "unknown-inline-charge",
+      "file": "unknown-inline-charge.eft",
+      "ship_type_id": 587,
+      "name": "Authored unknown charge",
+      "expected_rows": null,
+      "alternative_rows": null,
+      "provenance": {
+        "kind": "authored contract example, NOT live EVE/Pyfa capture",
+        "basis": "pinned Pyfa syntax plus approved Wingman import policy; not executed full Pyfa exporter"
+      },
+      "note": "Synthetic nonexistent name is injected as unresolved in tests; omission approval must not skip charge lookup or convert errors into warnings.",
+      "approved_import": {
+        "ok": false,
+        "items": [],
+        "warnings": [],
+        "error": {
+          "code": "unresolved_name",
+          "line_number": 3
+        }
+      },
+      "approved_export": {
+        "normalized_candidate": false,
+        "original_alternatives": []
+      }
+    }
+  ],
+  "approved_policy": {
+    "quantity_drone_fighter": "dedicated bay with per-line warning; Cargo/bay intent is not recoverable",
+    "other_quantities": "Cargo, except unsupported implants/boosters/mutations",
+    "inline_charge": "resolve/validate charge, omit selection with per-line warning",
+    "offline": "retain module, omit state with per-line warning",
+    "export": "canonical round-trip under approved grammar or whole-export refusal"
+  },
+  "provenance_scope": "Root exporter-execution provenance applies to the original cases without a per-case provenance object. New per-case provenance overrides it; later authored contract examples were not executed through Pyfa."
+}

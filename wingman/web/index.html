@@ -2626,8 +2626,29 @@
         <button class="btn" id="fittings-clear-selection" disabled>Clear selection</button>
       </div>
 
-      <div class="fit-list" id="fittings-list"></div>
-      <div class="empty" id="fittings-empty" hidden></div>
+      <div class="fit-workspace-scroll" id="fittings-workspace-scroll">
+        <button class="btn" id="fittings-import-open" aria-expanded="false"
+                aria-controls="fittings-import-panel">Import from clipboard…</button>
+        <div class="fit-import-panel" id="fittings-import-panel" hidden>
+          <label class="lab" for="fittings-import-text">Fitting text (EFT)</label>
+          <textarea class="field" id="fittings-import-text" rows="4" spellcheck="false"
+                    aria-describedby="fittings-import-help"></textarea>
+          <p class="hint" id="fittings-import-help">Paste one fitting or use Read clipboard. Type names may be looked up through ESI. Review before adding to your local library; no character fittings are changed.</p>
+          <div class="fit-clipboard-actions">
+            <button class="btn" id="fittings-import-read">Read clipboard</button>
+            <button class="btn" id="fittings-import-review" disabled>Review</button>
+            <button class="btn" id="fittings-import-close">Close</button>
+          </div>
+          <div class="fit-import-candidate" id="fittings-import-candidate" hidden></div>
+          <div class="fit-clipboard-actions">
+            <button class="btn" id="fittings-import-add" disabled>Add to library</button>
+            <button class="btn" id="fittings-import-show" hidden>Show fitting</button>
+          </div>
+          <p class="field-msg" id="fittings-import-status" role="status"></p>
+        </div>
+        <div class="fit-list" id="fittings-list"></div>
+        <div class="empty" id="fittings-empty" hidden></div>
+      </div>
 
       <div class="fit-pager" id="fittings-pager" hidden>
         <button class="linkbtn" id="fittings-page-prev">Previous</button>
