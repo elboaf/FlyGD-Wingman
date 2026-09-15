@@ -1634,10 +1634,14 @@
         counts[pair.status] += 1;
       } else counts.other += 1;
     });
-    return counts.success + ' copied \u00b7 ' + counts.present + ' already present'
-      + ' \u00b7 ' + counts.unknown + (counts.unknown === 1 ? ' needs verification' : ' need verification')
-      + ' \u00b7 ' + counts.failed + ' failed'
-      + ' \u00b7 ' + counts.other + ' not copied';
+    // Lead with work that needs attention without changing pair order or outcomes.
+    var parts = [];
+    if (counts.unknown) parts.push(counts.unknown + (counts.unknown === 1 ? ' needs verification' : ' need verification'));
+    if (counts.failed) parts.push(counts.failed + ' failed');
+    if (counts.other) parts.push(counts.other + ' not copied');
+    if (counts.success) parts.push(counts.success + ' copied');
+    if (counts.present) parts.push(counts.present + ' already present');
+    return parts.join(' \u00b7 ') || 'No copy results.';
   }
 
   function renderCopyResults(result) {

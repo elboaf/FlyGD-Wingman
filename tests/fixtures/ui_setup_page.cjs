@@ -1204,7 +1204,7 @@ async function importMain() {
     assert.match(WM.el('setup-retention').textContent, /ship labels.*retained|keep.*ship labels/i);
     if (scenario === 'native-no-copied-layout-caveat') {
       assert.doesNotMatch(availableText(WM.el('setup-import')), /This layout is copied|manual adjustment in EVE/);
-      assert.match(WM.el('setup-type').textContent, /no window layout/i);
+      assert.match(WM.el('setup-type').textContent, /^In the new profile, replaces.*overview.*no window layout/i);
       assert.equal(WM.el('setup-display-notice').hidden, true);
       assert.equal(document.activeElement.id, 'setup-summary');
     }
@@ -1235,7 +1235,7 @@ async function importMain() {
       for (const id of ['setup-destination', 'setup-target', 'setup-type', 'setup-retention', 'setup-warnings']) {
         assert.equal(disclosureOf(WM.el(id)), null, id + ' is part of the visible decision');
       }
-      assert.match(WM.el('setup-type').textContent, /replaces.*overview.*layout/i);
+      assert.match(WM.el('setup-type').textContent, /^In the new profile, replaces.*overview.*layout/i);
       for (const id of ['setup-counts', 'setup-native', 'setup-windows', 'setup-limitations', 'setup-limits', 'setup-display-notice']) {
         assert.ok(disclosureOf(WM.el(id)), id + ' belongs in a native disclosure');
       }

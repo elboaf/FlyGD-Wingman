@@ -15,6 +15,47 @@ dev checks are separate evidence, not installed Windows/WebView2 acceptance.
 
 Run on Windows against a real install before each release.
 
+## Clarity follow-up — installed Windows acceptance NOT RUN (2026-09-14)
+
+Source-worktree evidence (2026-09-14–15): the full main-window capture and
+supplemental expanded Profiles groups, minimize exceptions and native-YAML
+review were visually checked. The synthetic dialog keyboard check was
+user-confirmed; cancellation and return focus were independently observed.
+The live window used 200% scaling. Native-YAML and Fittings operation results
+were synthetic, and 840×625 captures used CDP emulation. Other native scaling
+values, native minimum-window resizing and assistive-technology announcements
+remain NOT RUN. This source evidence does not close the installed-release checks
+below.
+
+Record the checkout, branch/SHA, dirty state, build and display scaling. These
+checks cover presentation only; use the shooter's synthetic import/copy stages,
+not real copies, imports, deletion or connection tests. Do not reset settings or
+open native previews/pickers to obtain evidence. A source-checkout capture is not
+installed-build acceptance.
+
+- [ ] Run `scripts/shoot_screens.py` from the intended checkout with its Windows
+      settings codec available. Confirm Profiles' copy-scope view shows selective
+      group guidance rather than the missing-codec/whole-file fallback. Do not
+      change group selections or copy a profile just to populate the capture.
+- [ ] In staged mixed Fittings results, nonzero needs-verification, failed and
+      not-copied counts precede settled outcomes; zero categories are omitted.
+      Pair identities/order, exact totals, operation reference and the shared
+      verification-before-retry guidance remain intact, including at 840×625.
+- [ ] Import setup's Changes sentence explicitly starts with the new-profile
+      scope. Both native YAML and Wingman-preset variants retain their different
+      layout consequences; Keeps and Create remain readable without committing.
+- [ ] Previews → Windows → When you switch away reads “Minimize the client you
+      switch away from”. The next-switch/no-immediate-effect guidance and
+      exceptions remain beside it; no native minimization is needed for this
+      wording check. Advanced pulse controls remain unchanged.
+- [ ] Separately exercise keyboard navigation, visible focus, tab/disclosure
+      operation and dialog Cancel/Escape/return focus with controlled disposable
+      or synthetic data. Record actual observations, not inferred behavior from
+      screenshots or Node tests; do not confirm writes during this pass.
+- [ ] Check wrapping, reachable controls and absence of horizontal overflow at
+      the logical floor and 100/125/150/200% Windows display scaling. Record
+      untested settings as NOT RUN; a CDP-emulated floor is not the DPI matrix.
+
 ## Saved layouts (#213) — Windows acceptance NOT RUN
 
 **Every item in this section is NOT RUN.** Implementation and task-scoped reviews

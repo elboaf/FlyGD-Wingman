@@ -685,8 +685,8 @@
     // layout windows is the native configuration-only case, not local geometry.
     var native = counts.layoutWindows === 0;
     WM.el('setup-type').textContent = native
-      ? 'Replaces the active overview configuration from native YAML; no window layout is imported.'
-      : 'Replaces the active overview configuration and supported in-space layout from the Wingman preset.';
+      ? 'In the new profile, replaces the active overview configuration from native YAML; no window layout is imported.'
+      : 'In the new profile, replaces the active overview configuration and supported in-space layout from the Wingman preset.';
     WM.el('setup-counts').textContent = [quantity(counts.presets, 'filter'), quantity(counts.tabs, 'tab'),
       quantity(counts.windowGroups, 'overview group'), quantity(counts.shipLabels, 'ship label'),
       quantity(counts.layoutWindows, 'layout window')].join(' · ');
