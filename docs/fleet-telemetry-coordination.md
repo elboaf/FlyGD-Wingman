@@ -4,7 +4,7 @@ Status: parallel discovery and contract planning. No remaining-feature implement
 
 ## Authority and bases
 
-- Approved behavior: [fleet-telemetry-v2-design.md](fleet-telemetry-v2-design.md), sections 2–6, including the accepted legacy Stop/consent-generation rules.
+- Approved behavior: [fleet-telemetry-v2-design.md](fleet-telemetry-v2-design.md), sections 2–6, with the user's subsequent approval to drop v1 shared-fleet compatibility. Consent-generation safety remains required.
 - Timing work is complete and merged: Wingman PR #246, merge `62e1645cf9f49f11ea9af83ffe4ad619a9de5bdf`. Do not amend or reimplement that PR.
 - Wingman integration base: `62e1645cf9f49f11ea9af83ffe4ad619a9de5bdf`.
 - authGD integration base: `a9bfb49cc0424c1d6156ec905ef94b94cb119e16`.
@@ -29,8 +29,13 @@ other worktrees, and the old merged timing branch are left untouched.
 - Stopping an automatic source disables its current owning consent generation;
   delayed/repeated old Stops cannot disable a newer opt-in; manual Stop semantics
   remain source-specific.
-- Explicit extended-data consent and mixed-version compatibility. No inference of
-  automatic permission from historical pairing, grants or manual Starts.
+- One required new shared-fleet contract. The user permits v1 clients to stop
+  working: no v1 fallback, dual row shapes, legacy projections or old-client Stop
+  guarantee. Replace mixed-version success testing with old-request rejection and
+  cutover fencing tests. This resolves the previous legacy Stop decision gate.
+- Explicit extended-data and automatic consent remain required. No inference of
+  automatic permission from historical pairing, grants or manual Starts. Preserve
+  identities/credentials during upgrade; no automatic grant/key/settings erasure.
 
 ## Parallelization policy
 
@@ -42,7 +47,7 @@ authorize concurrent edits to a shared checkout.
 
 Serialize the parts whose disagreements create cross-repository breakage:
 
-1. Freeze one shared combat/compatibility contract and one automatic-consent
+1. Freeze one required shared combat/cutover contract and one automatic-consent
    contract, with cross-language fixtures and independent review.
 2. Give authGD schema/migration generation a single owner. Do not let parallel
    lanes generate migrations from competing schema snapshots.
@@ -54,7 +59,7 @@ Serialize the parts whose disagreements create cross-repository breakage:
 5. Isolate authGD test databases and service ports before parallel integration
    tests. Until isolation is verified, serialize database/e2e runs; pure/unit and
    Wingman tests can proceed independently.
-6. Run full cross-repository and mixed-version gates on the integrated result,
+6. Run full cross-repository, current-contract and old-version rejection gates on the integrated result,
    not only green lane branches. Keep Windows and live two-PC acceptance distinct.
 
 No lane may push, merge a shared branch, deploy, change production consent/data,
@@ -65,10 +70,10 @@ remain coordinator/user decisions after review.
 
 | Pass | Deliverable | Principal repository surface | Status |
 | --- | --- | --- | --- |
-| C — shared contract | Concrete extended combat/age/compatibility proposal, schema needs, mixed-version matrix | Both protocol/transport layers and authGD relay/schema | Proposal/reconciliation and consolidated contract draft complete: `c98ead78-f517-490`; review gate open |
-| A — automatic verification | Persistent consent/source lifecycle proposal, legacy Stop fencing, worker/recovery and test-resource ownership | authGD lifecycle/jobs/routes; Wingman control boundary | Proposal/Stop trace and real-worker probe complete; compatibility decision needed |
-| M — client combat model | Local activity and independent EWAR attribution model, preserved Alert behavior, snapshot/projection interfaces | Wingman telemetry and consumers | Proposal and isolated model plan draft complete: `d5222744-530d-478`; contract handoff gate open |
-| U — presentation/setup | UI/bridge ownership and minimal setup flow, empty/stale/mixed-version states, executable/browser/native checks | Wingman Fleet Bar/settings and authGD setup pages | Proposal complete: `e2cdbb5a-3208-487` |
+| C — shared contract | Required combat/age contract, schema needs, rejection/cutover matrix | Both protocol/transport layers and authGD relay/schema | Simplification running: `4198e20d-d47c-499` |
+| A — automatic verification | Persistent consent/source lifecycle, current-client Off/Stop, worker/recovery and test ownership | authGD lifecycle/jobs/routes; Wingman control boundary | Decision unblocked; plan running: `8ade9390-ecf1-40d` |
+| M — client combat model | Local activity and independent EWAR attribution model, preserved Alert behavior, snapshot/projection interfaces | Wingman telemetry and consumers | Existing draft revised by C's draft owner to remove wire-compatibility obligations |
+| U — presentation/setup | UI/bridge ownership and minimal setup flow, empty/stale/update-required states and UI checks | Wingman Fleet Bar/settings and authGD setup pages | Initial proposal retained as evidence; its legacy-UI promises are superseded |
 
 These passes inspect and propose only. They do not independently implement new
 wire fields, consent storage or production behavior. Their proposals will be
@@ -80,8 +85,8 @@ reconciled into reviewed contracts and executable lane plans.
 | --- | --- | --- |
 | Shared contract/schema foundation | Version/capability fixtures, DTO definitions and additive generated schema | C + A + M decisions and contract review |
 | Client combat model | Ten-second directional metrics; thirty-second activity; independent effect/attacker observations | Domain model contract |
-| Relay extended combat | Validated extended publications/reads, age propagation and legacy projection | Shared contract/schema foundation |
-| Client shared transport | Negotiation, extended projection/receipt aging and compatible state recovery | Shared contract + client combat interfaces |
+| Relay extended combat | Validated current-format publications/reads, age propagation and unsupported-request rejection | Shared contract/schema foundation |
+| Client shared transport | Required-version checks, projection/receipt aging and consent-safe state upgrade/recovery | Shared contract + client combat interfaces |
 | Server automatic verification | Durable desired mode, bounded server reconciliation, generation-safe Off/Stop | Consent/schema foundation |
 | Presentation/setup | Consistent rows, indicators/names, guided continuation and diagnostics | Stable payload/control interfaces; runtime integration at final gate |
 
@@ -128,38 +133,43 @@ Review these before deployment. The audit artifact is retained locally.
 Full proposal artifacts are in this plan's ignored workspace:
 `.superpowers/sdd/fleet-telemetry-coordination/` (`combat-contract-proposal.md`,
 `automatic-proposal.md`, `model-proposal.md`, `ui-proposal.md`). Consolidated
-`combat-contract-draft.md` and `model-plan-draft.md` are also ready for review.
-All dispatched planning/probe agents have finished. These artifacts are drafts,
-not authorization to implement competing schemas.
+`combat-contract-draft.md` and `model-plan-draft.md` are being simplified for the
+approved breaking cutover; `automatic-plan-draft.md` is being prepared in parallel.
+Original reports/probes remain historical discovery evidence. Their v1 support,
+legacy Stop promise, downgrade support and mixed-version success requirements are
+superseded by the updated master design. Drafts are not frozen interfaces.
 
 Confirmed coordination constraints:
 
-- Current v1 response keys/capability arrays are closed; negotiation must cover
-  device/pairing/recovery as well as snapshot data.
+- Current v1 response keys/capability arrays are closed. The new required boundary
+  must cover device/pairing/recovery, controls and snapshots; unsupported old
+  requests must not gain authority or expanded consent. There is no obligation to
+  project new data or capability arrays into old response shapes.
 - Preserve existing Alert `source` strings; their decoration affects NPC filtering.
   Fleet labels need a separate safe field, not source normalization.
 - Keep complete local roster snapshots for visibility settings and duplicate
   suppression. Filter combat display/publication later.
 - The existing E2E certificate pins an older Wingman commit; integration must
-  deliberately update/add a current mixed-version gate, not bypass the pin.
+  deliberately update/add a current-contract gate and pinned old-client rejection
+  fixture, not bypass the pin.
 - Confirmed by source trace: the old desktop retires Stop on an ended-source GET,
   reporting acknowledged without necessarily sending a Stop. A natural end also
   advances source generation, so a sent old-generation Stop conflicts before the
   proposed consent handler. The server cannot honor an intent it never receives.
-  This conflicts with the approved design's unconditional old-client/natural-end
-  promise. The real-worker/fake-relay probe reproduced both paths: zero Stop
+  This exposed a conflict in the previous old-client/natural-end promise, now
+  superseded by the approved breaking cutover. The probe reproduced both paths: zero Stop
   requests when the preflight observation is already ended; one conflicting Stop
   and no rebased retry when natural end races the POST. Both locally acknowledge
   and clear the durable pending command. The isolated probe exited 0; it did not
   implement automation or contact a live service.
-  Recommendation awaiting user approval: preserve v1 telemetry and existing
-  authorization/CAS; require upgraded Wingman for reliable automatic-verification
-  control. An actually received, authorized generation-matching legacy Stop still
-  disables its current owning consent. Do not mutate GETs or silently waive CAS.
+  User decision: v1 support is unnecessary and old clients may stop working.
+  No old-client workaround is required. Updated clients must settle explicit
+  consent-aware Off/Stop; keep generation checks and read-only GETs.
 - Contract reconciliation recommends independently aged named/unnamed observations,
-  a neutral `control-v2` representation separate from permissions, pinned timing
-  origins surviving sharing-session/owner replacement, and binding extension data
-  to the row publication identity. These remain draft decisions for contract review.
+  pinned timing origins surviving sharing-session/owner replacement, and binding
+  telemetry data to its publication identity. Separate optional format-negotiation
+  machinery is no longer required for v1 compatibility; choose the minimal single
+  required-version boundary during the revised contract review.
 - Durable explicit automatic mode before a grant is sufficient for continuation:
   the existing grant-only callback may save authorization, while reconciliation
   observes current consent. No separate callback-driven consent activation or

@@ -1,8 +1,15 @@
 # Fleet telemetry: reliable delivery, consistent combat rows, automatic setup
 
-Status: behavioral direction approved; detailed design awaiting review.
+Status: behavioral direction approved, including the breaking shared-fleet cutover below; detailed contract review remains pending.
 
-Bases inspected:
+Compatibility decision: the user explicitly permits v1 shared-fleet clients to
+stop working. The release requires updated clients; maintaining v1 telemetry,
+dual-format projections or old-client Stop behavior is no longer a requirement.
+This supersedes the earlier compatibility promise, not the authorization,
+consent-generation or explicit opt-in requirements. No live cutover is authorized
+by this design change.
+
+Original discovery bases inspected:
 - Wingman `961507949ff3fae93b40506bcad03f8449353a6e`.
 - authGD `15d346d3ee648943426172003b92199d67795e29`.
 
@@ -83,7 +90,7 @@ source's authority.
 
 1. Patch the timing and add more instructions beside existing controls. Smallest
    immediate change, but leaves recurring setup and local/remote inconsistency.
-2. **Recommended:** fix timing independently, then add a negotiated combat format,
+2. **Recommended:** fix timing independently, then add one required combat format,
    one activity policy, and persistent server-owned verification intent behind a
    simpler Wingman setup flow. Preserves the current runtime owners and allows a
    staged rollout.
@@ -134,7 +141,7 @@ not extend combat activity. Tackle counts only for its proven victim; fleet-wide
 broadcast copies must not mark every reader as tackled.
 
 An active row can therefore display 0 outgoing / 0 incoming while its 30-second
-activity hold elapses. Both local and upgraded remote rows follow this rule.
+activity hold elapses. Both local and remote rows follow this rule.
 Expiry removes the row, not its collection state or saved local visibility choice.
 Maintain stable ordering while a row exists; reappearing local rows use established
 local ordering, and remote ordering remains deterministic.
@@ -183,9 +190,10 @@ combat model. Preserve shared parsing and victim attribution guarantees.
 
 ## 4. Extended shared combat contract
 
-Introduce an explicitly negotiated combat format/capability. Do not add fields to
-strict v1 DTOs or silently broaden existing device consent. The extended format
-carries the information necessary for:
+Introduce one explicitly versioned combat contract/capability, required for shared
+fleet operation after cutover. Reject unsupported old requests rather than
+reinterpreting them, and do not silently broaden existing device consent. The
+new format carries the information necessary for:
 
 - outgoing and incoming DPS, with unavailable distinguishable from zero;
 - remaining row-activity lifetime / equivalent bounded age;
@@ -202,23 +210,35 @@ The relay remains the authorization authority on every accepted write/read. It
 validates dimensions, names, counts, ages and body sizes; it retains the current
 source/session/link/participation proof for every row.
 
-### Compatibility and rollout
+### Breaking cutover and rollout
 
-- Deploy compatible server readers/writers and generated additive migrations
-  before enabling the new client format. Do not edit previously applied migrations.
-- Preserve v1 for older desktops with its exact narrow shape; do not fabricate
-  incoming data or aggressors for v1 publications.
-- Extended fields require the publishing device's explicitly approved capability.
-  Do not forward richer fields to a receiver that has not negotiated the format.
-- A new client can explain an older peer's limited data without claiming parity
-  that the old sender cannot provide. Incoming remains unavailable, not zero.
+- Deploy the new server contract and reviewed generated migrations before enabling
+  the updated clients. Do not edit previously applied migrations.
+- After cutover, v1 shared-fleet reads, publications and controls are unsupported.
+  Reject them without admitting data or mutating consent/authority. There is no
+  v1 fallback, legacy row representation or narrow projection to maintain.
+- Detect an unsupported server/client contract and fail closed. Updated clients
+  should explain that an update is required; old clients need not understand the
+  new message or remain usable. Unrelated local Wingman tools are unaffected.
+- Expanded data still requires explicit publishing approval. Old pairing, grants
+  and session acknowledgement do not automatically approve richer telemetry or
+  persistent automatic verification.
+- Do not render pre-cutover telemetry as new-format observations or invent missing
+  incoming data/activity ages. Pin how stale rows and in-flight old work are fenced
+  during cutover; unsupported stored telemetry cannot be served as fresh new data.
 - Preserve the signed one-request lane, attempted-revision journal, request-binding
-  checks, and non-rejuvenating publication identities.
-- Mode enablement/deployment is an explicit operational step after cross-version
-  tests and live acceptance, not an incidental side effect of installing code.
+  checks, non-rejuvenating publication identities and identity/revocation fences.
+  Existing signing primitives or historical identifiers need not be renamed merely
+  because they contain `v1`; API support and cryptographic scheme versions differ.
+- No legacy-server/client downgrade guarantee is required. Recovery must preserve
+  consent and identity safety; dropping compatibility is not permission to erase
+  pairings, grants, keys or settings, or rotate token-encryption keys.
+- Deployment and activation remain explicit operational steps after current-client
+  integration and old-version rejection/cutover tests. No production change or
+  mode enablement is an incidental side effect of installing development code.
 
 The implementation plan must pin one authoritative wire/schema contract, test
-vectors and compatibility matrix before either repository implements the extension.
+vectors and cutover/rejection matrix before either repository implements it.
 
 ## 5. Persistent automatic verification
 
@@ -248,7 +268,7 @@ an invalid credential forever. Turning automatic verification Off cancels its
 future work and stops the automatic sources it owns, without stopping another
 account's valid verification.
 
-### Stop semantics, including older clients
+### Stop semantics for the updated contract
 
 Each automatically managed source must retain an immutable association with its
 owning automatic-verification consent and consent generation. Source generation
@@ -263,12 +283,18 @@ acknowledged Stop must not be immediately undone by reconciliation. Apply this
 rule even if the targeted source naturally ended before Stop arrived, provided
 its owning consent generation is still current.
 
-This applies to existing clients' source-specific Stop command as well as the new
-UI. The server resolves the consent binding from the targeted source; an older
-client need not supply a consent-generation field it does not know about. Retain
-existing account authorization and source-generation checks. Never infer the
-binding from whichever consent happens to be current for the account; an unknown
-or purged source identifier cannot disable current automation by association.
+The updated client must settle an explicit consent-aware Off/Stop operation.
+Merely observing an ended source is not acknowledgement that automatic mode was
+disabled. Keep source-generation checks for source-directed commands and current
+consent-generation/revision checks for automatic-mode controls; handle conflicts
+without rebasing an old opt-out onto a newer opt-in. For a source-directed Stop,
+the server resolves its immutable consent binding rather than inferring it from
+whichever consent is current. An unknown or purged source identifier cannot
+disable current automation by association.
+
+Older clients' local Stop-convergence behavior need not be supported. Rejecting
+their unsupported protocol closes that compatibility issue without making GETs
+mutate consent or weakening generation checks.
 
 A delayed or repeated Stop bound to an older consent generation may settle that
 old source under the existing source-command rules, but must not disable a newer
@@ -311,9 +337,9 @@ Use Settings > Fleet telemetry, not a new top-level destination.
 - Retain a clear automatic-verification Off action and a separate local Fleet Bar
   visibility control. Leaving the page does not alter runtime intent.
 - For an automatic source, label the current UI action **Turn off automatic
-  verification**, making its consent-wide effect explicit. An accepted Stop from
-  an older client must also be reflected as automatic mode Off on other devices;
-  late status responses must not overwrite a newer opt-in.
+  verification**, making its consent-wide effect explicit. An accepted automatic
+  Off/Stop must be reflected on other updated devices; late status responses must
+  not overwrite a newer opt-in.
 
 No success screen may require the user to remember an unmentioned second Start
 or Refresh. Returning from authorization must honor current opt-in, binding and
@@ -324,7 +350,7 @@ page/runtime ownership, not replay a cancelled or superseded action.
 1. Timing fix and focused regression, deployable without protocol/schema changes.
 2. Combat model/activity and independently expiring aggressor tests; preserve Alert
    behavior and local-only functionality.
-3. Versioned server/client contract, additive migration, mixed-version tests, and
+3. Required server/client contract, reviewed migration, old-version rejection tests, and
    two-account integration for outgoing, incoming-only, NEUT-only and named tackle.
 4. Consistent local/remote row behavior and empty/error states, with actual rendered
    browser checks and separately recorded Windows/WebView2 smoke.
@@ -337,9 +363,10 @@ Acceptance must include delayed responses and metadata competition during combat
 30-second quiet holds with zero DPS, multiple aggressors with independent expiry,
 low damage that rounds to zero, unknown attacker names, fleet-wide tackle copies,
 missing logs, disconnects, stale/replayed responses, late messages after Off,
-identity changes, revoked grants, old clients, and a source owned by another player.
+identity changes, revoked grants, unsupported old clients, cutover fencing, and a
+source owned by another player.
 
-Stop acceptance additionally covers: an older client stopping an automatic source;
+Stop acceptance additionally covers: an updated client disabling automatic mode;
 Stop racing with queued/in-flight reconciliation; a source ending naturally before
 its Stop arrives; repeated Stop after a new opt-in; delayed Stop from an older
 consent generation; multiple automatic sources/paired devices sharing one consent;
@@ -357,7 +384,7 @@ new feature tests, authGD migration, deployment or Windows change acceptance has
 been performed for this design.
 
 Review this design before implementation planning, particularly persistent
-account-level opt-in, extended telemetry consent/compatibility, independent
+account-level opt-in, extended telemetry consent and required-client cutover, independent
 aggressor expiry, and the distinction between 30-second activity and transport
 freshness. Exact DTO fields, retention/body limits, migrations and file-level
 steps will be specified in the implementation plan and contract review.
