@@ -1612,6 +1612,20 @@ button.btn:disabled,
 .pv-exc-list { columns: 170px; column-gap: 16px; margin: 8px 0 0 16px; }
 .pv-exc-list > .check { break-inside: avoid; padding: 2px 0; }
 
+/* Cycle order rows (Settings > Previews > Characters & cycling). These rows
+   are deliberately NOT the stacked .lab/.field shape the settings rows above
+   enforce: name and number belong on one line, like the bind list's own
+   name track. The name ellipsizes in a bounded track; the number is a short
+   fixed .field, not full-measure -- a one-to-three digit value in a
+   URL-wide box reads as empty (the same argument that carried the size
+   field's 12ch cap). */
+.cycle-order-name {
+  flex: 0 1 320px; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; color: var(--text);
+}
+.cycle-order-name.dim { color: var(--text-faint); }
+#preview-cycle-order .cycle-order-num { flex: 0 0 auto; width: 6em; }
+
 /* Prose that TEACHES rather than prose that warns, folded away.
 
    The card carried 1706 characters of resting hint -- 6.3x Alerts, 2.6x a

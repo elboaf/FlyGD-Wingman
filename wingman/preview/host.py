@@ -335,6 +335,7 @@ class PreviewHost:
         locked=None,
         lock_default=None,
         excluded=None,
+        cycle_order=None,
         snap=None,
         lock_aspect=None,
         selection_color=None,
@@ -501,6 +502,11 @@ class PreviewHost:
         # the opt-out is a statement about the character, not about one
         # window.
         self._excluded = excluded
+        # preview.cycle_order: per-character {name: int} walk preference for
+        # the cycle keybinds. Read live at dispatch time (not cached at
+        # registration) so a renumber in Settings reaches the very next
+        # keypress, same contract as _excluded.
+        self._cycle_order = cycle_order
         # Same reasoning as _restore_positions/_show_labels/etc.: read
         # live so a Settings toggle mid-session reaches previews already
         # open. None means "the caller has not wired this yet" -- see
@@ -4001,7 +4007,10 @@ class PreviewHost:
                     target = None
                     continue
                 target = cycle.step(
-                    keys, target or resolved_cursor or self._last_cycled, value
+                    keys,
+                    target or resolved_cursor or self._last_cycled,
+                    value,
+                    self._stored_cycle_order(),
                 )
                 if target is not None:
                     resolved_cursor = target
@@ -4021,7 +4030,12 @@ class PreviewHost:
                     continue
                 history = self._last_group_cycled.get(group_id)
                 delta = -1 if kind == "cycle_group_prev" else 1
-                target = cycle.step(keys, target or resolved_cursor or history, delta)
+                target = cycle.step(
+                    keys,
+                    target or resolved_cursor or history,
+                    delta,
+                    self._stored_cycle_order(),
+                )
                 if target is not None:
                     resolved_cursor = target
                     last_group_targets[group_id] = target
@@ -4950,6 +4964,18 @@ class PreviewHost:
         except Exception:
             logger.exception("Could not read excluded; defaulting to included")
             return False
+
+    def _stored_cycle_order(self) -> dict:
+        """The stored per-character cycle preference, read live. Same guard
+        as _is_excluded: a failed settings read must fall back to the
+        alphabetical walk, not kill the keypress."""
+        if self._cycle_order is None:
+            return {}
+        try:
+            return self._cycle_order() or {}
+        except Exception:
+            logger.exception("Could not read cycle_order; defaulting to name order")
+            return {}
 
     def _cycle_keys(self) -> list:
         """The characters the cycle keybinds walk.

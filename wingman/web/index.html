@@ -1251,6 +1251,24 @@
           <span class="hint" id="preview-copy-status"
                 role="status" hidden></span></div>
       </section>
+      <section class="card" id="preview-cycle-order-card">
+        <h2>Cycle order</h2>
+        <!-- The list is previews.js's renderCycleOrder, one row per known
+             character. Numbers are the page's ONLY free-text control on
+             this subpage, so the commit rule is said here rather than
+             guessed at per row (DESIGN.md: free text commits on Enter,
+             never blur). -->
+        <div class="row"><span class="lab"></span>
+          <span class="hint">Give each character a number and the cycle
+            keybinds visit them lowest number first. Characters without a
+            number keep their place after the numbered ones, alphabetically.
+            Type a number and press Enter; clear it and press Enter to
+            remove one.</span></div>
+        <div id="preview-cycle-order"></div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="preview-cycle-order-status"
+                role="status" hidden></span></div>
+      </section>
       </section>
     </div>
 
