@@ -25,9 +25,13 @@ TYPE = "settings"
 MAX_BYTES = 4 * 1024 * 1024
 
 # discord_webhook embeds its token in the URL -- the only secret that lives
-# in settings.json. It is dropped on export and dropped again on import, so
-# a hand-added webhook in a shared file can never overwrite the recipient's.
-EXCLUDED_KEYS = frozenset({"discord_webhook"})
+# in settings.json. channel_id/channel_title are not configuration at all:
+# they are learned from the last upload's videos.insert response and are a
+# property of the connected Google account, so exporting them would only
+# make the recipient's Settings card describe a channel they are not signed
+# into. All three are dropped on export and dropped again on import, so a
+# hand-edited entry in a shared file can never reach the live document.
+EXCLUDED_KEYS = frozenset({"discord_webhook", "channel_id", "channel_title"})
 
 
 class SettingsShareError(ValueError):

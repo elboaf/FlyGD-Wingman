@@ -85,6 +85,21 @@ def test_parse_rejects_a_webhook_smuggled_into_the_settings_object():
     assert "discord_webhook" not in imported
 
 
+def test_learned_channel_state_is_never_exported_or_imported():
+    current = live_settings()
+    current["channel_id"] = "UClearned-from-the-last-upload"
+    current["channel_title"] = "Someone elses channel"
+    exported = export_document(current)["settings"]
+    assert "channel_id" not in exported and "channel_title" not in exported
+    imported = parse_text(export_text(current))
+    assert "channel_id" not in imported and "channel_title" not in imported
+    # And the recipient's learned state survives an import.
+    with settings_mod.update(current):
+        apply_document(imported, current)
+    assert current["channel_id"] == "UClearned-from-the-last-upload"
+    assert current["channel_title"] == "Someone elses channel"
+
+
 def test_parse_drops_unknown_top_level_keys():
     text = export_text(live_settings())
     document = json.loads(text)
