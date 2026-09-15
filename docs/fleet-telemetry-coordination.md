@@ -70,9 +70,9 @@ remain coordinator/user decisions after review.
 
 | Pass | Deliverable | Principal repository surface | Status |
 | --- | --- | --- | --- |
-| C — shared contract | Required combat/age contract, schema needs, rejection/cutover matrix | Both protocol/transport layers and authGD relay/schema | Simplification running: `4198e20d-d47c-499` |
-| A — automatic verification | Persistent consent/source lifecycle, current-client Off/Stop, worker/recovery and test ownership | authGD lifecycle/jobs/routes; Wingman control boundary | Decision unblocked; plan running: `8ade9390-ecf1-40d` |
-| M — client combat model | Local activity and independent EWAR attribution model, preserved Alert behavior, snapshot/projection interfaces | Wingman telemetry and consumers | Existing draft revised by C's draft owner to remove wire-compatibility obligations |
+| C — shared contract | Required combat/age contract, schema needs, rejection/cutover matrix | Both protocol/transport layers and authGD relay/schema | Simplified draft complete: `4198e20d-d47c-499`; required `/api/fleet/v2/*`, `protocol:2` proposed for review |
+| A — automatic verification | Persistent consent/source lifecycle, current-client Off/Stop, worker/recovery and test ownership | authGD lifecycle/jobs/routes; Wingman control boundary | Updated-client plan complete: `8ade9390-ecf1-40d`; six TDD slices ready for contract review |
+| M — client combat model | Local activity and independent EWAR attribution model, preserved Alert behavior, snapshot/projection interfaces | Wingman telemetry and consumers | Draft updated: wire-compatibility obligations removed; internal/Alert behavior retained |
 | U — presentation/setup | UI/bridge ownership and minimal setup flow, empty/stale/update-required states and UI checks | Wingman Fleet Bar/settings and authGD setup pages | Initial proposal retained as evidence; its legacy-UI promises are superseded |
 
 These passes inspect and propose only. They do not independently implement new
@@ -133,8 +133,9 @@ Review these before deployment. The audit artifact is retained locally.
 Full proposal artifacts are in this plan's ignored workspace:
 `.superpowers/sdd/fleet-telemetry-coordination/` (`combat-contract-proposal.md`,
 `automatic-proposal.md`, `model-proposal.md`, `ui-proposal.md`). Consolidated
-`combat-contract-draft.md` and `model-plan-draft.md` are being simplified for the
-approved breaking cutover; `automatic-plan-draft.md` is being prepared in parallel.
+`combat-contract-draft.md`, `model-plan-draft.md` and `automatic-plan-draft.md`
+now reflect the approved breaking cutover. Both revision agents completed; the
+next gate is independent review of the concrete contracts before implementation.
 Original reports/probes remain historical discovery evidence. Their v1 support,
 legacy Stop promise, downgrade support and mixed-version success requirements are
 superseded by the updated master design. Drafts are not frozen interfaces.
