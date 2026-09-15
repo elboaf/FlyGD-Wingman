@@ -5417,6 +5417,56 @@ for these items.
       ring, Escape closes when safe, and no browser-native confirm/prompt/alert
       appears.
 
+### Clipboard fittings (local library only)
+
+- [ ] **Browser geometry is separate from Windows acceptance.** At 840x625 and
+      839px width, open Import from clipboard… beside an expanded metadata draft.
+      The compact panel, complete review/warnings, errors and list share one
+      workspace scroller; no horizontal overflow, clipped controls or new modal.
+      Tab/Shift+Tab reach every action; Escape closes only the focused import
+      panel and returns to its opener without scrolling. Copy selected is still
+      the sole accent. Record browser and installed WebView2 results separately.
+- [ ] **Clipboard is click-only with manual fallback.** With an empty library and
+      no authorized characters, opening Fittings or the import panel never reads
+      the clipboard. Read clipboard is explicit; deny access and paste manually.
+      Review displays the normalized hull/name/items but never adds automatically.
+      Invalid text remains editable with the whole-fit refusal. No character
+      fitting is written or selected by Review/Add/Show fitting.
+- [ ] **Conventional interpretation is disclosed before Add.** Use the examples
+      in `docs/reference/fittings-clipboard-format.md`: drone/fighter bay lines,
+      inline charges and `/offline`. All warnings appear in source order, with
+      line numbers (inline charge before offline on the same line), and remain
+      visible after new-entry or duplicate success until close/new text. Explicit
+      Cargo quantities stay exact. Add sends only the reviewed ticket.
+- [ ] **Save refusal is retryable without changing the review.** Cause a local
+      save refusal, confirm textarea/items/warnings remain and retry Add using
+      the same ticket. Clear only the matching successful draft. Type a newer
+      draft during delayed Read/Review/Add; old replies must not replace text,
+      enable an old candidate, claim success or take focus. Repeat across route
+      leave and screenshot staging; no synthetic result becomes a live ticket.
+- [ ] **Show fitting uses its returned snapshot.** Add/duplicate a fitting while
+      filtered or on another page. Show fitting opens its All fittings page from
+      one locator reply, without a second state query. Delay the reply across a
+      rename/insertion crossing the page boundary, newer filter/page/query/route
+      and row choices. Old replies never overwrite a newer view or take focus.
+      Delete the target before locate or detail completes: show a recoverable
+      unavailable/missing message, never endless Loading.
+- [ ] **Export is saved content, not a metadata draft.** In an expanded fitting,
+      Copy to clipboard requests export for its stable ID. Confirm the clipboard
+      contains the saved preferred name and representable items, and Copied only
+      appears after actual browser write success. Refused exports never touch
+      clipboard; denial/synchronous failure remains recoverable. Collapse,
+      switch rows/routes, rename/delete, push changed source or stage screenshots
+      while export is delayed: the old callback must never deliver text.
+- [ ] **Dev/screenshot never access the real clipboard or bridge.** `?dev=1`
+      replaces navigator.clipboard with an explicit in-memory sample. Use
+      `DEV.fittingsClipboard('read-denied'|'write-denied'|'review-refused'|'save-refused')`
+      to exercise refusals; `'ready'` permits the same-ID save retry. Read the
+      sample and add twice to distinguish new/duplicate. Unsupported text/exports
+      refuse instead of generic successful stubs. Detached screenshots simulate
+      only `DEV_FITTINGS_SCREENSHOT_FIXTURE.clipboard`; a fixture without that
+      case fails closed. Restore the live draft on screenshot teardown.
+
 ### Explicit additive copy
 
 - [ ] **Preflight names every classification and exact cost.** Build one batch

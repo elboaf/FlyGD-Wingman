@@ -1255,23 +1255,23 @@
     }, 0);
   }
 
-  api.fittings_state = function (filters) {
-    console.log('DEV api.fittings_state(', filters, ')');
+  function fitOrder(a, b) {
+    var an = a.name.toLowerCase(), bn = b.name.toLowerCase();
+    if (an < bn) return -1;
+    if (an > bn) return 1;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  }
+
+  function fitWorkspace(filters) {
     filters = filters || {};
     var collectionId = filters.collection_id || 'all';
     var page = filters.page && filters.page > 0 ? filters.page : 1;
     var scoped = fitScoped(collectionId);
     var filtered = fitFiltered(scoped, filters.search, filters.ship_type_id);
-    filtered = filtered.slice().sort(function (a, b) {
-      var an = a.name.toLowerCase();
-      var bn = b.name.toLowerCase();
-      if (an < bn) return -1;
-      if (an > bn) return 1;
-      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-    });
+    filtered = filtered.slice().sort(fitOrder);
     var start = (page - 1) * FIT_PAGE_SIZE;
     var rows = filtered.slice(start, start + FIT_PAGE_SIZE).map(fitSummaryRow);
-    return Promise.resolve({
+    return {
       available: true,
       warnings: [],
       collections: fitCollectionSummaries(),
@@ -1289,7 +1289,11 @@
       filters: { collection_id: collectionId, search: filters.search || '',
                  ship_type_id: filters.ship_type_id || null },
       refreshing: fittings.refreshing
-    });
+    };
+  }
+  api.fittings_state = function (filters) {
+    console.log('DEV api.fittings_state(', filters, ')');
+    return Promise.resolve(fitWorkspace(filters));
   };
 
   api.fittings_detail = function (entryId) {
@@ -1406,6 +1410,25 @@
   var DEV_FITTINGS_SCREENSHOT_FIXTURE = {
     "kind": "fittings-screenshot-v1",
     "max_copy_writes": 20,
+    "clipboard": {
+      "entry_id": "fit-clipboard",
+      "text": "[Rifter, Clipboard review example]\n\n200mm AutoCannon II, Republic Fleet EMP S /offline\n\nHobgoblin II x5\n",
+      "review": {
+        "ok": true, "review_id": "screenshot-clipboard-review", "name": "Clipboard review example", "ship_name": "Rifter",
+        "items": [
+          {"flag": "HiSlot0", "location": "high", "type_id": 2889, "type_name": "200mm AutoCannon II", "quantity": 1},
+          {"flag": "DroneBay", "location": "DroneBay", "type_id": 2456, "type_name": "Hobgoblin II", "quantity": 5}
+        ],
+        "warnings": [
+          {"code": "loaded_charge_omitted", "line_number": 3, "message": "Republic Fleet EMP S selection is not retained because EFT specifies no quantity; explicit cargo quantities are unchanged."},
+          {"code": "offline_omitted", "line_number": 3, "message": "Offline state is not retained; 200mm AutoCannon II remains in the fitting."},
+          {"code": "bay_convention", "line_number": 5, "message": "Hobgoblin II x5 is interpreted as DroneBay content; EFT does not preserve Cargo/bay intent."}
+        ],
+        "existing_entry_id": "fit-clipboard", "error": ""
+      },
+      "receipt": {"applied": true, "persisted": true, "entry_id": "fit-clipboard", "created": false, "error": ""},
+      "export": {"ok": true, "text": "[Rifter, Clipboard review example]\n\n200mm AutoCannon II\n\n\nHobgoblin II x5\n", "error": ""}
+    },
     "copy_roles": {
       "unknown_character_id": 90000015,
       "throttle_character_id": 90000016
@@ -1420,13 +1443,14 @@
       {"character_id": 90000016, "character_name": "Gio Renn", "status": "enabled", "fetched_utc": "2026-09-03T10:00:00+00:00", "error": "", "stale": false}
     ],
     "collections": [
-      {"id": "all", "name": "All fittings", "count": 27},
-      {"id": "unfiled", "name": "Unfiled", "count": 25},
+      {"id": "all", "name": "All fittings", "count": 28},
+      {"id": "unfiled", "name": "Unfiled", "count": 26},
       {"id": "superseded", "name": "Superseded", "count": 1},
       {"id": "dev-alliance", "name": "Alliance", "count": 2},
       {"id": "dev-ratting", "name": "Ratting", "count": 0}
     ],
     "entries": [
+      {"id": "fit-clipboard", "name": "Clipboard review example", "ship_type_id": 587, "ship_name": "Rifter", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-15T00:00:00+00:00"},
       {"id": "fit-conflict-existing", "name": "Fleet Doctrine Alpha", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 1, "deployable": true, "updated_utc": "2026-08-15T00:00:00+00:00"},
       {"id": "fit-conflict-source", "name": "Fleet Doctrine Alpha", "ship_type_id": 587, "ship_name": "Rifter", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-02T00:00:00+00:00"},
       {"id": "fit-merlin-fleet", "name": "Merlin - Fleet Doctrine", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": ["dev-alliance"], "is_unfiled": false, "superseded_by": null, "presence_count": 1, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"},
@@ -1456,6 +1480,15 @@
       {"id": "fit-gen-21", "name": "Generated Fit 022", "ship_type_id": 603, "ship_name": "Merlin", "collection_ids": [], "is_unfiled": true, "superseded_by": null, "presence_count": 0, "deployable": true, "updated_utc": "2026-09-01T00:00:00+00:00"}
     ],
     "details": {
+      "fit-clipboard": {
+        "id": "fit-clipboard", "name": "Clipboard review example", "description": "", "ship_type_id": 587, "ship_name": "Rifter", "deployable": true,
+        "collection_ids": [], "superseded_by": null, "created_utc": "2026-09-15T00:00:00+00:00", "updated_utc": "2026-09-15T00:00:00+00:00",
+        "items": [
+          {"flag": "HiSlot0", "location": "high", "type_id": 2889, "type_name": "200mm AutoCannon II", "quantity": 1},
+          {"flag": "DroneBay", "location": "DroneBay", "type_id": 2456, "type_name": "Hobgoblin II", "quantity": 5}
+        ],
+        "aliases": [], "presences": []
+      },
       "fit-rifter-solo": {
         "id": "fit-rifter-solo", "name": "Rifter - Solo PvP", "description": "Fast tackle, disengages on a scram.", "ship_type_id": 587, "ship_name": "Rifter", "deployable": true, "collection_ids": [], "superseded_by": null, "created_utc": "2026-08-01T00:00:00+00:00", "updated_utc": "2026-08-01T00:00:00+00:00",
         "items": [
@@ -1527,6 +1560,71 @@
   };
 
   fittings.max_copy_writes = DEV_FITTINGS_SCREENSHOT_FIXTURE.max_copy_writes;
+
+  // ---- simulated fittings clipboard ----
+  // Explicit browser-only replacement: no real clipboard, even if the browser
+  // grants access. Only the authored sample is reviewable/exportable; unknown
+  // text/IDs refuse rather than a generic stub claiming successful persistence.
+  var fitClipboardFixture = DEV_FITTINGS_SCREENSHOT_FIXTURE.clipboard;
+  var fitClipboardText = fitClipboardFixture.text;
+  var fitClipboardMode = 'ready';
+  var fitClipboardReview = '';
+  var fitClipboardSequence = 0;
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+    readText: function () {
+      return fitClipboardMode === 'read-denied' ? Promise.reject(new Error('Simulated clipboard denial'))
+        : Promise.resolve(fitClipboardText);
+    },
+    writeText: function (text) {
+      if (fitClipboardMode === 'write-denied') return Promise.reject(new Error('Simulated clipboard denial'));
+      fitClipboardText = text;
+      return Promise.resolve();
+    }
+  }});
+  api.fittings_review_eft = function (text) {
+    fitClipboardReview = '';
+    if (fitClipboardMode === 'review-refused' || text !== fitClipboardFixture.text) {
+      return Promise.resolve({ok: false, review_id: '', name: '', ship_name: '', items: [], warnings: [],
+        existing_entry_id: '', error: 'Dev review supports only the authored Read clipboard sample. No real clipboard or ESI is used.'});
+    }
+    var review = JSON.parse(JSON.stringify(fitClipboardFixture.review));
+    fitClipboardReview = 'dev-clipboard-' + (++fitClipboardSequence);
+    review.review_id = fitClipboardReview;
+    review.existing_entry_id = fittings.entries.some(function (entry) {
+      return entry.id === fitClipboardFixture.entry_id;
+    }) ? fitClipboardFixture.entry_id : '';
+    return Promise.resolve(review);
+  };
+  api.fittings_import_eft = function (reviewId) {
+    if (!fitClipboardReview || reviewId !== fitClipboardReview || fitClipboardMode === 'save-refused') {
+      return Promise.resolve({applied: false, persisted: false, entry_id: '', created: false,
+        error: fitClipboardMode === 'save-refused' ? 'Simulated save failure. Retry Add after clearing the failure.' : 'Review the dev sample first.'});
+    }
+    var created = !fittings.entries.some(function (entry) { return entry.id === fitClipboardFixture.entry_id; });
+    if (created) fittings.entries.push(JSON.parse(JSON.stringify(
+      DEV_FITTINGS_SCREENSHOT_FIXTURE.details[fitClipboardFixture.entry_id])));
+    fitClipboardReview = '';
+    fitPushChanged('import');
+    return Promise.resolve({applied: true, persisted: true, entry_id: fitClipboardFixture.entry_id,
+      created: created, error: ''});
+  };
+  api.fittings_export_eft = function (entryId) {
+    var entry = fittings.entries.filter(function (entry) { return entry.id === entryId; })[0];
+    if (!entry || entryId !== fitClipboardFixture.entry_id || entry.name !== fitClipboardFixture.review.name) {
+      return Promise.resolve({ok: false, text: '', error: 'Dev export supports only the unchanged Clipboard review example. No real clipboard or ESI is used.'});
+    }
+    return Promise.resolve(JSON.parse(JSON.stringify(fitClipboardFixture.export)));
+  };
+  api.fittings_locate_entry = function (entryId) {
+    var ordered = fittings.entries.slice().sort(fitOrder);
+    var index = ordered.map(function (entry) { return entry.id; }).indexOf(entryId);
+    if (index < 0) return Promise.resolve({ok: false, entry_id: '', workspace: null, error: 'Fitting no longer exists.'});
+    return Promise.resolve({ok: true, entry_id: entryId, error: '', workspace: fitWorkspace({
+      collection_id: 'all', search: '', ship_type_id: null, page: Math.floor(index / FIT_PAGE_SIZE) + 1
+    })});
+  };
+  // ---- end simulated fittings clipboard ----
+
   var fitCopyTickets = {};
   var fitCopyTicketIndex = 0;
   var fitCopyCancelled = false;
@@ -3460,6 +3558,13 @@
     // The same bounded fixture scripts/shoot_screens.py injects into the live
     // app. This manual driver keeps every field browser-consumed rather than
     // leaving a Python-only JSON island in dev.js.
+    fittingsClipboard: function (mode) {
+      // Set ready to retry the same reviewed ID after a simulated save refusal.
+      if (['ready', 'read-denied', 'write-denied', 'review-refused', 'save-refused'].indexOf(mode) === -1) return false;
+      fitClipboardMode = mode;
+      fitClipboardText = fitClipboardFixture.text;
+      return true;
+    },
     fittingsScreenshot: function () {
       window.onFittingsScreenshotState(
         JSON.parse(JSON.stringify(DEV_FITTINGS_SCREENSHOT_FIXTURE)));

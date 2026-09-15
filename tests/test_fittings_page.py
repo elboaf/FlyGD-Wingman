@@ -28,6 +28,41 @@ CSS = re.sub(
 )
 
 
+def test_clipboard_import_is_inline_labelled_and_keeps_status_mounted():
+    tree = PageTree()
+    tree.feed(HTML)
+
+    def descendants(node):
+        yield node
+        for child in node["children"]:
+            yield from descendants(child)
+
+    nodes = list(descendants(tree.root))
+    by_id = {node["attrs"].get("id"): node for node in nodes}
+    panel = by_id["fittings-import-panel"]
+    assert "hidden" in panel["attrs"]
+    assert "card" not in panel["attrs"].get("class", "").split()
+    scroll = list(descendants(by_id["fittings-workspace-scroll"]))
+    assert panel in scroll and by_id["fittings-list"] in scroll
+    assert scroll.index(panel) < scroll.index(by_id["fittings-list"])
+    field = by_id["fittings-import-text"]
+    assert field["tag"] == "textarea" and "field" in field["attrs"]["class"]
+    assert any(
+        node["tag"] == "label"
+        and node["attrs"].get("for") == "fittings-import-text"
+        and "lab" in node["attrs"].get("class", "").split()
+        for node in nodes
+    )
+    status = by_id["fittings-import-status"]["attrs"]
+    assert status["role"] == "status" and "hidden" not in status
+    for name in ("open", "read", "review", "add", "close", "show"):
+        classes = by_id[f"fittings-import-{name}"]["attrs"]["class"].split()
+        assert "btn" in classes and "acc" not in classes
+    assert "disabled" in by_id["fittings-import-add"]["attrs"]
+    for selector in (r"\.fit-import-panel", r"\.fit-import-candidate"):
+        assert re.search(selector + r"\[hidden\]\s*\{\s*display:\s*none", CSS)
+
+
 def test_the_nav_button_exists_and_points_at_the_route():
     """The fourth destination, in the same shape the other three take:
     a `.navbtn` with `data-route` naming a route the page actually has."""

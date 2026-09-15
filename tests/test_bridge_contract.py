@@ -66,6 +66,8 @@ def test_fittings_clipboard_facades_keep_reviewed_authority_in_controller(
     assert f"return self._fittings.{method}({argument})" in body
     assert "Thread(" not in body and "_spawn" not in body
     assert "_confirm(" not in body and "_push(" not in body
+    page = (WEB / "fittings.js").read_text(encoding="utf-8")
+    assert f"WM.send('{name}', " in page
 
 
 def test_marker_commit_matches_the_bridge_signature():
