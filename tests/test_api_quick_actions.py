@@ -252,7 +252,7 @@ def test_an_upload_is_refused_while_a_post_runs_with_its_own_sentence(
     api._uploader._logs_thread = threading.Thread(target=gate.wait, daemon=True)
     api._uploader._logs_thread.start()
     try:
-        api.start_upload("t", "d", False, False, ["r0"])
+        api.start_upload("t", "d", False, ["r0"])
         assert api._uploader._upload_thread is None
         ((kind, _title, body),) = api._alert.raised
         assert kind == "warning"

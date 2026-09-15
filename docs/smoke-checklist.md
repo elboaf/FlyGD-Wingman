@@ -245,7 +245,7 @@ connections or select native sources merely to populate screenshots.
       do not rewind newer edits. The timed/persistent explanation includes Test
       and the foreground client. Empty live regions remain mounted.
 - [ ] Wanderer's saved-token cue precedes the intentionally empty token input,
-      without narrowing it or describing an edited map URL draft as saved. Plugin
+      without narrowing it or describing edited URL/map drafts as saved. Plugin
       readiness is legible without a redundant label; loading still performs
       only the existing local plugin check.
 - [ ] Correct a formation import name conflict. Review cannot reparse unchanged
@@ -1315,35 +1315,40 @@ somewhere stale and nothing on that screen is worth reviewing.
       the last field typed and the button clicked, stating a precondition
       the greyed label already shows. With two selected the checkbox goes
       live and there is still no sentence.
-- [ ] **Split into parts, upload everything (workflow 1).** Select one or
-      more recordings, tick `Split into parts under 15 minutes`, press
-      `Upload`. Expected: a confirm naming "split into about N parts (each
-      under 15 minutes)"; after confirming, the strip shows
-      `Stitching with FFmpeg…` (two or more selected) then
-      `Splitting with FFmpeg…`, then each part uploads (`Uploading file i
-      of N`); the final line reads `Uploaded N parts to YouTube.` With one
-      recording selected the stitch step must be skipped entirely. No
-      YouTube link appears on the source rows.
-- [ ] **Split locally, pick parts by hand (workflow 2).** With the split
-      checkbox ticked, press the `Process locally` button that appears in
-      the action row. Expected: the strip reports stitching/splitting, then
-      `Split into N parts in the recording folder.` and the list rebuilds
-      showing `<stem> - part 1.mkv`, `part 2.mkv`, … as ordinary rows.
-      Select one part and upload it with the plain (unticked) Upload path;
-      delete the rest. Nothing uploads automatically.
-- [ ] **Stitch locally (workflow 2, stitch ticked).** Select two or more
-      recordings, tick `Stitch selected into one video` ONLY, and press
-      `Process locally`. Expected: `Stitched into <stem> - stitched.mkv in
-      the recording folder.`, one new row, originals untouched, no parts.
-- [ ] **Both ticks locally.** Tick BOTH boxes, press `Process locally`.
-      Expected: parts named `<stem> - part N.mkv` and NO
-      `<stem> - stitched.mkv` — join first, then segment, the same
-      composition as the upload-all path.
-- [ ] **The button follows the ticks immediately.** Ticking EITHER box
-      shows `Process locally` at once (no selection change needed — the
-      first cut only refreshed on selection events); unticking both hides
-      it. Select nothing: both checkboxes untick and the button hides.
-      Select one: `Split…` is live while `Stitch…` is greyed.
+- [ ] **The clip editor appears for exactly one selection.** Select one
+      recording. Expected: the panel shows the clip editor (preview, one
+      timeline bar, in/out handles, Set start / Set end / Play selection /
+      Cut clip). Select a second row: the editor disappears and the stitch
+      checkbox + `Stitch locally` button become the local-processing lane.
+      Select nothing: both editor and button are gone. Ticking Stitch
+      shows `Stitch locally` IMMEDIATELY (no selection change needed).
+- [ ] **Clip preview plays and scrubs.** With the editor open: the video
+      plays (served from a loopback HTTP port -- WebView2 refuses direct
+      file:// media); clicking or press-dragging the timeline scrubs the
+      playhead and seeks; the playhead follows playback.
+- [ ] **Markers snap and read true.** Drag the in-handle: it snaps DOWN to
+      a keyframe (the readout shows the snapped time — what a cut will
+      actually take; stream copy cannot start mid-GOP, so a clip may begin
+      a few seconds early, never late). Handles may not cross. Set
+      start / Set end take the playhead position. Play selection plays the
+      marked range and stops at the out point.
+- [ ] **Cut clip lands a file.** Press Cut clip. Expected: the strip shows
+      `Cutting clip with FFmpeg…`, then
+      `Clipped <start>–<end> to <stem> - clip.mkv in the recording folder.`,
+      the list rebuilds with the clip as an ordinary row, the source is
+      untouched, nothing uploaded. Cut again from the same selection: the
+      new file is `- clip (2).mkv`, no overwrite. A sub-second span is
+      refused with a strip line, not a dialog.
+- [ ] **The editor degrades without a decoder.** Point the recording
+      folder at a file Chromium cannot decode (e.g. an HEVC recording).
+      Expected: no picture, a one-line note explaining the preview is
+      unavailable, and the timeline/markers/scrubbing/cut still work from
+      timecodes — Set start / Set end track the scrubbed playhead.
+      Nothing is gated on the picture.
+- [ ] **Stitch locally (multi-selection lane).** Select two or more
+      recordings, tick `Stitch selected into one video` ONLY, press
+      `Stitch locally`. Expected: `Stitched into <stem> - stitched.mkv in
+      the recording folder.`, one new row, originals untouched.
 - [ ] **Open folder opens the watched folder.** Press it in the list footer
       with a folder configured: Explorer opens on that folder. This is the
       only affordance on this screen that reaches the FILES — double-click
@@ -1421,7 +1426,7 @@ lifecycle checks are separate evidence, not native acceptance.
 - [ ] In Uploading › Combat logs, reveal the webhook, switch tabs and return:
       it is masked again and its draft remains. Section and route leaving also
       re-mask it. Enter/Remove and inline persistence errors behave as before.
-- [ ] In Previews › Wanderer names, retain map URL/token drafts across tabs and
+- [ ] In Previews › Wanderer names, retain URL/map/token drafts across tabs and
       health updates. Test still saves the bound connection without enabling
       names; Remove still confirms. No subpage switch starts another read/Test.
 - [ ] Switch previews Off: the same master state appears on every subpage and

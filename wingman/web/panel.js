@@ -27,8 +27,7 @@
 
   function refreshPanelText() {
     var seq = ++panelSeq;
-    WM.send('panel_text', WM.list.selectedIds(),
-            WM.el('f-stitch').checked, WM.el('f-split').checked)
+    WM.send('panel_text', WM.list.selectedIds(), WM.el('f-stitch').checked)
       .then(function (text) {
         // Clicks can outrun replies; only the newest answer may paint, or a
         // slow earlier reply overwrites a newer count.
@@ -39,21 +38,19 @@
   }
   document.addEventListener('wm:selection', refreshPanelText);
   // Stitching collapses a batch into ONE video, so the numbering
-  // disclosure must appear and disappear with this checkbox too. Split
-  // numbers PARTS (the count is ffmpeg's answer), so its tick changes the
-  // label for the same reason. BOTH ticks also drive the Process locally
-  // button's visibility (it shows while either is ticked), so each runs
-  // the same synchronous refresh -- selection events alone would repeat
-  // the first-cut bug where ticking a box showed nothing until the
-  // selection next changed. (refreshPanelText is deliberately not enough:
-  // it paints on an async round trip, and a button showing a round trip
-  // late is the flash U4 already ruled out for the summary above.)
+  // disclosure must appear and disappear with this checkbox too -- and the
+  // tick also drives the Stitch locally button's visibility, so this runs
+  // the same synchronous refresh the selection events run. Selection
+  // events alone would repeat the first-cut bug where ticking a box
+  // showed nothing until the selection next changed.
+  // (refreshPanelText is deliberately not enough: it paints on an async
+  // round trip, and a button showing a round trip late is the flash U4
+  // already ruled out for the summary above.)
   function refreshOnTick() {
     refreshPanelText();
     refreshEnabled();
   }
   WM.el('f-stitch').addEventListener('change', refreshOnTick);
-  WM.el('f-split').addEventListener('change', refreshOnTick);
 
   // ---- what can act, and what cannot -----------------------------------
   // X1 execution, through S1's WM.setEnabled. The rule in its comment is
@@ -110,21 +107,13 @@
     // start_upload's caller below, so the checked state has to follow.
     if (selected < 2) WM.el('f-stitch').checked = false;
 
-    // Split answers a different question than Stitch -- "does it fit under
-    // YouTube's unverified-upload limit", not "is it one fight" -- so it
-    // means something with ONE video selected and takes the wider rule.
-    WM.setEnabled('f-split', selected > 0);
-    WM.el('lab-split').classList.toggle('disabled', selected < 1);
-    if (selected < 1) WM.el('f-split').checked = false;
-    // Process locally covers BOTH local workflows, so its visibility is
-    // the OR of the two ticks; its meaning follows them (stitch alone
-    // joins to one kept file, split alone makes parts, both joins then
-    // segments -- the same composition as the upload path). Hidden rather
-    // than disabled: with neither ticked there is no action waiting to be
-    // unlocked, there is nothing at all.
-    WM.el('btn-process-local').hidden =
-      !WM.el('f-split').checked && !WM.el('f-stitch').checked;
-    WM.setEnabled('btn-process-local', selected > 0);
+    // Stitch locally is visible only while the stitch checkbox is ticked
+    // (which itself needs two selected). Hidden rather than disabled:
+    // with the box unticked there is no action waiting to be unlocked,
+    // there is nothing at all. The single-selection lane is the clip
+    // editor below, which owns its own visibility.
+    WM.el('btn-stitch-local').hidden = !WM.el('f-stitch').checked;
+    WM.setEnabled('btn-stitch-local', selected > 1);
   }
   document.addEventListener('wm:selection', refreshEnabled);
 
@@ -138,30 +127,276 @@
   // landing. The disabled attribute is what the user reads; the Python
   // message is what they get if they arrive anyway.
   WM.el('btn-upload').addEventListener('click', function () {
-    // Four arguments, not five. The combat-log checkbox is gone
+    // Three arguments beyond the fields. The combat-log checkbox is gone
     // (Uploader 8) and start_upload's `logs` parameter went with it in the
     // same commit; logs are unconditional and a configured webhook is what
-    // decides the post. With Split ticked the job uploads EVERY part of
-    // the fight; the confirm that follows names that cost in Python's
-    // words before anything is published.
+    // decides the post.
     WM.send('start_upload',
             WM.el('f-title').value,
             WM.el('f-desc').value,
             WM.el('f-stitch').checked,
-            WM.el('f-split').checked,
             WM.list.selectedIds());
   });
 
-  // Workflow 2 of the split feature: process WITHOUT uploading. The tick
-  // state travels with the click -- Python composes the pipeline from it
-  // exactly as the upload path does. Sends unconditionally like Upload --
-  // "an upload is already in progress" is Python's sentence, and a
-  // page-side early return would swallow it.
-  WM.el('btn-process-local').addEventListener('click', function () {
-    WM.send('process_locally',
-            WM.list.selectedIds(),
-            WM.el('f-stitch').checked,
-            WM.el('f-split').checked);
+  // Stitch locally: the joined file is KEPT in the recording folder,
+  // nothing uploads, and the originals are untouched. Sends
+  // unconditionally like Upload -- "an upload is already in progress" is
+  // Python's sentence, and a page-side early return would swallow it.
+  WM.el('btn-stitch-local').addEventListener('click', function () {
+    WM.send('stitch_locally', WM.list.selectedIds());
+  });
+
+  // ---- the clip editor (exactly one selected) --------------------------
+  // The single-selection lane: preview the recording, drag in/out handles
+  // snapped to keyframes, cut. NOTHING here uploads -- the clip lands in
+  // the recording folder as an ordinary row. Visible only while EXACTLY
+  // one row is selected (the documented exception to "disabled, NOT
+  // hidden": this is a context surface, like #panel-empty-note, not a
+  // control being withheld). Python owns the file path -- the page asks
+  // for it per selection through clip_source, the one bridge call that
+  // hands a URI over, and re-asks on every change, so a stale editor
+  // cannot point at a file the list no longer knows.
+  var clip = {
+    rowId: null, duration: 0, keys: [], noteText: '',
+    markIn: 0, markOut: 0, seq: 0, degraded: false, playingSel: false,
+    // The playhead is FIRST-CLASS state, not an alias of the media
+    // element's currentTime: in degraded mode there is no decode to sync
+    // to, and Set start / Set end must still mean something there. The
+    // video updates it while playing; clicks and drags on the track move
+    // it -- and seek the video too, when there is one.
+    play: 0,
+  };
+
+  function clipPad(n) { return (n < 10 ? '0' : '') + n; }
+  function clipFmt(t) {
+    t = Math.max(0, Math.floor(t));
+    var h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60;
+    return h ? h + ':' + clipPad(m) + ':' + clipPad(s) : m + ':' + clipPad(s);
+  }
+  function clipPct(t) {
+    return clip.duration > 0
+      ? Math.max(0, Math.min(100, (t / clip.duration) * 100)) : 0;
+  }
+
+  function clipRender() {
+    WM.el('clip-band').style.left = clipPct(clip.markIn) + '%';
+    WM.el('clip-band').style.width =
+      (clipPct(clip.markOut) - clipPct(clip.markIn)) + '%';
+    WM.el('clip-in').style.left = clipPct(clip.markIn) + '%';
+    WM.el('clip-out').style.left = clipPct(clip.markOut) + '%';
+    WM.el('clip-tc-in').textContent = clipFmt(clip.markIn);
+    WM.el('clip-tc-out').textContent = clipFmt(clip.markOut);
+    WM.el('clip-playhead').style.left = clipPct(clip.play) + '%';
+    WM.el('clip-tc-play').textContent = clipFmt(clip.play);
+  }
+
+  // Nearest keyframe at or BEFORE t: what a stream-copy cut can actually
+  // deliver as a start point. The cut may begin early -- that is the
+  // keyframe trade the feature accepted -- and the READOUTS show the
+  // snapped value so what you see is what gets cut.
+  function clipSnapIn(t) {
+    var best = 0;
+    for (var i = 0; i < clip.keys.length; i += 1) {
+      if (clip.keys[i] <= t + 0.001) best = clip.keys[i];
+      else break;
+    }
+    return best;
+  }
+
+  function clipSetPlay(t) {
+    clip.play = Math.max(0, Math.min(t, clip.duration));
+    if (!clip.degraded && clip.video) clip.video.currentTime = clip.play;
+    clipRender();
+  }
+
+  function clipSetMarks(markIn, markOut) {
+    clip.markIn = Math.max(0, Math.min(markIn, clip.duration));
+    clip.markOut = Math.max(clip.markIn + 0.5, Math.min(markOut, clip.duration));
+    clipRender();
+  }
+
+  function clipHide() {
+    clip.seq += 1;  // orphan any in-flight clip_source reply
+    clip.rowId = null;
+    WM.el('clip-editor').hidden = true;
+    // Releasing the source matters on Windows: a media element holding the
+    // file open would block a rename or delete of the user's recording.
+    if (clip.video) {
+      clip.video.pause();
+      clip.video.removeAttribute('src');
+      clip.video.load();
+    }
+  }
+
+  function clipShow(rowId) {
+    if (clip.rowId === rowId && !WM.el('clip-editor').hidden) return;
+    clipHide();
+    var seq = ++clip.seq;
+    clip.rowId = rowId;
+    clip.video = WM.el('clip-video');
+    WM.send('clip_source', rowId).then(function (src) {
+      if (seq !== clip.seq || !src) return;
+      if (!src.ok) { clipHide(); return; }
+      clip.noteText = src.note || '';
+      clip.duration = Number(src.duration) || 0;
+      // A zero duration means even ffprobe could not read the file; a
+      // timeline without a length is a lie, so the editor stays dark and
+      // the list's own Length column already said "?".
+      if (clip.duration <= 0) { clipHide(); return; }
+      clip.degraded = false;
+      WM.el('clip-nopreview').hidden = true;
+      WM.el('clip-video').hidden = false;
+      clip.markIn = 0;
+      clip.markOut = clip.duration;
+      WM.el('clip-video').src = src.uri;
+      WM.el('clip-editor').hidden = false;
+      clipRender();
+      WM.send('clip_keyframes', rowId).then(function (kf) {
+        if (seq !== clip.seq || !kf) return;
+        clip.keys = (kf.keys || []).map(Number).filter(function (k) {
+          return isFinite(k);
+        });
+        // First-render snapping so the default band tells the truth about
+        // what a cut at 0 includes.
+        clip.markIn = clipSnapIn(clip.markIn);
+        clipRender();
+      });
+    });
+  }
+
+  // Degrade: Chromium (not FFmpeg) decodes the preview, and its stock
+  // build has no HEVC. The cut NEVER depended on the picture -- drop the
+  // dead element (an empty black box with controls reads as broken), show
+  // Python's note, and keep the timeline working from the bridge-provided
+  // duration.
+  WM.el('clip-video').addEventListener('error', function () {
+    if (WM.el('clip-editor').hidden) return;
+    clip.degraded = true;
+    WM.el('clip-video').hidden = true;
+    var note = WM.el('clip-nopreview');
+    note.textContent = clip.noteText || '';
+    note.hidden = !note.textContent;
+  });
+
+  // Track interactions: one pointer model for both handles. Clicking the
+  // track (not a handle) seeks the preview.
+  (function () {
+    var track = WM.el('clip-track');
+    var dragging = null;
+    var scrubbing = false;
+
+    function trackTime(ev) {
+      var rect = track.getBoundingClientRect();
+      var frac = (ev.clientX - rect.left) / Math.max(1, rect.width);
+      return Math.max(0, Math.min(1, frac)) * clip.duration;
+    }
+
+    function onMove(ev) {
+      if (!dragging) return;
+      var t = trackTime(ev);
+      if (dragging === 'in') {
+        // The in marker SNAPS DOWN to the nearest keyframe live, so the
+        // band during the drag is the cut the button will make.
+        var snapped = clipSnapIn(t);
+        clipSetMarks(snapped, Math.max(clip.markOut, snapped + 0.5));
+      } else {
+        clipSetMarks(clip.markIn, t);
+      }
+      ev.preventDefault();
+    }
+
+    function onUp(ev) {
+      if (!dragging) return;
+      dragging = null;
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      if (ev) ev.preventDefault();
+    }
+
+    WM.el('clip-in').addEventListener('pointerdown', function (ev) {
+      dragging = 'in';
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+      ev.preventDefault();
+    });
+    WM.el('clip-out').addEventListener('pointerdown', function (ev) {
+      dragging = 'out';
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+      ev.preventDefault();
+    });
+    // Left-click (and press-drag) on the track SCRUBS: the playhead is
+    // first-class state, so this works with no decode at all -- which is
+    // what makes Set start / Set end meaningful in degraded mode, where
+    // they used to read a dead element and always answered 0.
+    track.addEventListener('pointerdown', function (ev) {
+      if (clip.duration <= 0) return;
+      if (ev.target.classList && ev.target.classList.contains('clip-handle')) {
+        return;  // handles run their own drag
+      }
+      scrubbing = true;
+      track.setPointerCapture(ev.pointerId);
+      clipSetPlay(trackTime(ev));
+      ev.preventDefault();
+    });
+    track.addEventListener('pointermove', function (ev) {
+      if (!scrubbing) return;
+      clipSetPlay(trackTime(ev));
+      ev.preventDefault();
+    });
+    track.addEventListener('pointerup', function () {
+      scrubbing = false;
+    });
+    track.addEventListener('pointercancel', function () {
+      scrubbing = false;
+    });
+  }());
+
+  // While the preview plays, the element drives the playhead state; the
+  // track's own pointer handlers own it while scrubbing.
+  WM.el('clip-video').addEventListener('timeupdate', function () {
+    if (WM.el('clip-editor').hidden || clip.degraded) return;
+    var v = WM.el('clip-video');
+    clip.play = v.currentTime;
+    clipRender();
+    if (clip.playingSel && v.currentTime >= clip.markOut) {
+      clip.playingSel = false;
+      v.pause();
+    }
+  });
+
+  WM.el('btn-clip-set-in').addEventListener('click', function () {
+    clipSetMarks(clipSnapIn(clip.play), clip.markOut);
+  });
+  WM.el('btn-clip-set-out').addEventListener('click', function () {
+    clipSetMarks(clip.markIn, clip.play);
+  });
+  WM.el('btn-clip-play-sel').addEventListener('click', function () {
+    if (clip.degraded || !clip.video) return;
+    clip.playingSel = true;
+    clip.video.currentTime = clip.markIn;
+    clip.video.play();
+  });
+
+  WM.el('btn-cut-clip').addEventListener('click', function () {
+    // Sends unconditionally like Upload: "too short", "an upload is
+    // running", a stale row -- every refusal is a Python sentence, and a
+    // page-side early return would swallow it.
+    WM.send('cut_clip', clip.rowId, clip.markIn, clip.markOut);
+  });
+
+  // The editor lives on the selection event: a different selection count
+  // hides it, exactly-one re-arms it for that row, and re-selecting the
+  // SAME row keeps everything as it was.
+  document.addEventListener('wm:selection', function () {
+    var ids = WM.list.selectedIds();
+    if (ids.length === 1) clipShow(ids[0]);
+    else clipHide();
+  });
+  // Leaving the route must not leave the file playing in a hidden panel.
+  document.addEventListener('wm:route', function () {
+    if (clip.video && !clip.degraded) clip.video.pause();
+    clip.playingSel = false;
   });
 
   WM.el('btn-retry').addEventListener('click', function () {

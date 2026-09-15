@@ -121,7 +121,6 @@ def test_every_fact_carries_the_same_separator():
         privacy="unlisted",
         channel_title="Z",
         stitch=False,
-        split=False,
         discord_webhook="",
     )
     rows = _fact_lines(body)
@@ -148,7 +147,6 @@ def test_a_wrapped_fact_is_indented_to_the_value_column():
         privacy="unlisted",
         channel_title="Z",
         stitch=False,
-        split=False,
         discord_webhook="",
     )
     continuation = [ln for ln in body.split("\n") if ln.startswith(copy_mod._FACT_SEP)]
@@ -168,7 +166,6 @@ def test_confirm_names_channel_privacy_and_totals():
         privacy="unlisted",
         channel_title="Zoolanders",
         stitch=False,
-        split=False,
         discord_webhook="",
     )
     assert "Zoolanders" in body
@@ -185,7 +182,6 @@ def test_confirm_shows_the_numbering_the_batch_will_actually_get():
         privacy="unlisted",
         channel_title="Z",
         stitch=False,
-        split=False,
         discord_webhook="",
     )
     assert "Fight (1/3)" in body
@@ -199,7 +195,6 @@ def test_confirm_shows_the_untitled_fallback_rather_than_an_empty_quote():
         privacy="unlisted",
         channel_title="Z",
         stitch=False,
-        split=False,
         discord_webhook="",
     )
     assert "Untitled" in body
@@ -212,7 +207,6 @@ def test_confirm_for_a_stitch_describes_one_video():
         privacy="unlisted",
         channel_title="Z",
         stitch=True,
-        split=False,
         discord_webhook="",
     )
     assert "one video" in body
@@ -226,7 +220,6 @@ def test_confirm_flags_an_unknown_channel_rather_than_leaving_it_blank():
         privacy="unlisted",
         channel_title="",
         stitch=False,
-        split=False,
         discord_webhook="",
     )
     assert "not known yet" in body
@@ -239,7 +232,6 @@ def test_confirm_says_it_is_public_and_irreversible():
         privacy="public",
         channel_title="Z",
         stitch=False,
-        split=False,
         discord_webhook="",
     )
     assert "cannot be undone" in body.lower()
@@ -255,7 +247,6 @@ def test_confirm_says_when_combat_logs_will_follow_the_upload():
         privacy="unlisted",
         channel_title="Z",
         stitch=False,
-        split=False,
         discord_webhook=HOOK,
     )
     assert "combat logs" in body.lower()
@@ -272,7 +263,6 @@ def test_the_irreversibility_warning_covers_the_discord_half_too():
         privacy="unlisted",
         channel_title="Z",
         stitch=False,
-        split=False,
         discord_webhook=HOOK,
     )
     closing = body.rsplit("\n\n", 1)[-1]
@@ -293,7 +283,6 @@ def test_confirm_states_the_no_webhook_case_as_a_fact_not_as_a_refusal():
         privacy="unlisted",
         channel_title="Z",
         stitch=False,
-        split=False,
         discord_webhook="",
     )
     assert "not posted" in body
@@ -313,7 +302,6 @@ def test_confirm_does_not_promise_discord_when_no_webhook_is_configured():
         privacy="unlisted",
         channel_title="Z",
         stitch=False,
-        split=False,
         discord_webhook="",
     )
     assert "posted to Discord" not in body
@@ -331,7 +319,6 @@ def test_the_irreversibility_line_drops_discord_when_nothing_will_be_posted():
         privacy="unlisted",
         channel_title="Z",
         stitch=False,
-        split=False,
         discord_webhook="",
     )
     closing = body.rsplit("\n\n", 1)[-1]
@@ -349,7 +336,6 @@ def test_an_unparseable_webhook_is_treated_as_no_webhook_by_the_confirm():
         privacy="unlisted",
         channel_title="Z",
         stitch=False,
-        split=False,
         discord_webhook="https://example.com/nope",
     )
     assert "posted to Discord" not in body
