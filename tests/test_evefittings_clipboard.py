@@ -466,7 +466,15 @@ def test_expired_or_replaced_review_cannot_commit(tmp_path, replacement):
 
 
 @pytest.mark.parametrize(
-    "text", [None, {}, "bad", "[Rifter, Name]\nUnknown inventory", "x" * 65537]
+    "text",
+    [
+        None,
+        {},
+        "bad",
+        "[Rifter, Name]\nUnknown inventory",
+        # Keep the payload out of Windows' size-limited PYTEST_CURRENT_TEST.
+        pytest.param("x" * 65537, id="oversized-input"),
+    ],
 )
 def test_review_refusal_has_no_actionable_partial_payload(tmp_path, text):
     controller, _, _ = make_controller(tmp_path)

@@ -289,7 +289,8 @@ def test_all_six_racks_preserve_leading_holes_and_refuse_overflow(
         "[Rifter, A]\n" + "x" * 257,
         "[Rifter, A]\n" + "\n" * 2048 + "Damage Control II",
         "[Rifter, A]\n" + "Republic Fleet EMP S x1\n" * 513,
-        "[Rifter, A]\n" + "é" * 33000,
+        # Keep the payload out of Windows' size-limited PYTEST_CURRENT_TEST.
+        pytest.param("[Rifter, A]\n" + "é" * 33000, id="oversized-utf8-input"),
         "[Rifter, A]\n\ud800",
     ],
 )
