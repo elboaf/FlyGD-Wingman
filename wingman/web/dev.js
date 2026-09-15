@@ -2391,6 +2391,54 @@
     return Promise.resolve(settingsPayload());
   };
 
+  // ---- Settings export/import: file dialogs do not exist in dev, so both
+  // operations resolve to the paths the page can paint without touching a
+  // real document. The import offer is tracked so Discard/Apply honour the
+  // review_id the way the controller does.
+  var devSettingsOffer = null;
+
+  api.settings_export_file = function () {
+    console.log('DEV api.settings_export_file()');
+    return Promise.resolve(
+      {ok: true, cancelled: false, error: '', path: 'dev/wingman-settings.json'});
+  };
+
+  api.settings_import_read = function () {
+    console.log('DEV api.settings_import_read()');
+    var reviewId = 'dev-settings-' + Math.random().toString(36).slice(2);
+    devSettingsOffer = reviewId;
+    return Promise.resolve({
+      ok: true, cancelled: false, error: '', review_id: reviewId,
+      summary: {changed: ['privacy', 'notify_mode'], kept: ['discord_webhook']}
+    });
+  };
+
+  api.settings_import_review = function (reviewId) {
+    console.log('DEV api.settings_import_review(', reviewId, ')');
+    if (devSettingsOffer !== reviewId) {
+      return Promise.resolve({ok: false, error: 'That import offer is no longer current.',
+        summary: {}});
+    }
+    return Promise.resolve({ok: true, error: '',
+      summary: {changed: ['privacy', 'notify_mode'], kept: ['discord_webhook']}});
+  };
+
+  api.settings_import_apply = function (reviewId) {
+    console.log('DEV api.settings_import_apply(', reviewId, ')');
+    if (devSettingsOffer !== reviewId) {
+      return Promise.resolve({ok: false, error: 'That import offer is no longer current.'});
+    }
+    devSettingsOffer = null;
+    return Promise.resolve({ok: true, error: ''});
+  };
+
+  api.settings_import_discard = function (reviewId) {
+    console.log('DEV api.settings_import_discard(', reviewId, ')');
+    if (devSettingsOffer !== reviewId) return Promise.resolve(false);
+    devSettingsOffer = null;
+    return Promise.resolve(true);
+  };
+
   api.update_status = function () {
     return Promise.resolve(devUpdateState());
   };

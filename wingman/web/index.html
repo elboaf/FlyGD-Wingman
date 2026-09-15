@@ -1773,6 +1773,27 @@
         <p class="field-msg" id="msg-about" hidden></p>
       </section>
 
+      <!-- User-initiated file operations, not field commits: neither button
+           needs the hydration gate for correctness, but both stay dark
+           until the payload first lands so neither can act on a document
+           the page has not seen. The webhook sentence is a standing
+           property of the format (settingssharing.EXCLUDED_KEYS), not a
+           state of this install, so it reads as a hint rather than a
+           status. -->
+      <section class="card">
+        <h2>Configuration backup</h2>
+        <p class="hint">
+          Export every Wingman setting to a JSON file you can keep, edit or
+          share. Importing replaces the settings the file carries; your
+          Discord webhook is never exported or imported.
+        </p>
+        <div class="actions">
+          <button class="btn" id="btn-settings-export">Export settings&hellip;</button>
+          <button class="btn" id="btn-settings-import">Import settings&hellip;</button>
+        </div>
+        <p class="field-msg" id="msg-backup" hidden></p>
+      </section>
+
     </div>
 
     </div>
