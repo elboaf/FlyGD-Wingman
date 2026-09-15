@@ -1,10 +1,10 @@
 # Fittings clipboard — implementation notes
 
-Documentation checkpoint: parent verification at `b633aee6`, based on `286596be`,
-plus the final warning-prefix correction described below. The parent full suite
-passed and the 41-file independent review found no blockers, only that cosmetic
-issue. Final-fix scoped re-review and fresh parent verification remain separate
-from those results. This is not Windows/WebView2 or live EVE/Pyfa acceptance.
+Verified implementation: `1d5c2618`, based on `286596be`. The post-polish full
+suite passed **13,224 tests with 13 expected Windows-only skips**. Whole-change
+independent review and the scoped warning-prefix correction review are complete,
+with no open code-level findings. Fresh lint, JS smoke, Cargo and simulated
+Chrome checks passed. Windows/WebView2 and live EVE/Pyfa acceptance remain open.
 
 ## What changed and how it works
 
@@ -119,14 +119,14 @@ progress ledger, including its consequence if the interpretation is wrong.
 
 1. Ruling: Treat “great, lets continue” as authorization to execute the revised plan, not permission to ignore its Task 1 compatibility gates — public interchange/persisted-content choices still require approval if evidence forces a scope change — wrong interpretation would cost rework, not remote writes.
 2. Ruling: Interpret incoming quantity drones/fighters by category regardless of visual section; warn per affected line, preserve counts — source format lacks definitive cargo/bay authority and user accepted conventional interpretation — wrong interpretation costs a reviewed import correction, never automatic character writes. Stored Cargo drones/fighters still refuse export.
-3. Ruling: Fresh opener reads clipboard only when text/review/result are absent; reopening a retained draft/result preserves it and Read clipboard remains explicit replacement — follows approved one-click first import without discarding drafts — wrong interpretation costs one explicit read when resuming, not lost user edits.
-4. Ruling: Permit a minimal pure canonicalize_items helper with the existing canonicalize adapter unchanged if needed — avoids manufacturing remote fitting IDs merely to compare local content — wrong choice costs a small internal refactor, not stored schema/identity changes.
+3. Ruling: Permit a minimal pure canonicalize_items helper with the existing canonicalize adapter unchanged if needed — avoids manufacturing remote fitting IDs merely to compare local content — wrong choice costs a small internal refactor, not stored schema/identity changes.
+4. Ruling: Fresh opener reads clipboard only when text/review/result are absent; reopening a retained draft/result preserves it and Read clipboard remains explicit replacement — follows approved one-click first import without discarding drafts — wrong interpretation costs one explicit read when resuming, not lost user edits.
 
 ## Verification evidence and open gates
 
-Results below distinguish supplied parent evidence and recorded task results
-from this final fix's focused runs. Counts overlap; do not sum them. No full-suite
-rerun was performed in this fix wave.
+Results below distinguish recorded task checks from fresh parent verification
+on `1d5c2618` after the final fix. Counts overlap; do not sum them. The parent
+reran the complete suite after the scoped correction.
 
 | Gate / command or coverage | Recorded result | Remaining limitation |
 | --- | --- | --- |
@@ -135,23 +135,27 @@ rerun was performed in this fix wave.
 | Task 3 fix: `uv run --no-sync python -m pytest tests/test_evefittings_clipboard.py tests/test_evefittings_lifecycle.py tests/test_api_fittings.py tests/test_bridge_contract.py -q` | 255 passed; targeted 7 RED → GREEN | Injected blocking window, not WebView2 |
 | Task 4: `node --test scripts/test_fittings_runtime.js` | 151 passed; targeted fix 9 RED → GREEN | DOM/bridge doubles, not CSS rendering |
 | Task 4: `uv run --no-sync python -m pytest tests/test_fittings_runtime.py tests/test_fittings_page.py tests/test_bridge_contract.py tests/test_page_conventions.py tests/test_dev_harness.py -q` | 481 passed | Includes Node harness; overlapping count |
-| Parent Chrome script freshly rerun at `72050584`, widths 1280/840/839 | **PASS**: first-opener auto-read, server-invalidated ticket → Review again, failed-save same-ID retry, Add/Show/export, retained warnings, metadata draft/focus/caret, manual-paste refusal; no horizontal overflow/page errors; one accent action | Simulated dev clipboard only; scratch `browser-check-results.json` records results, not real clipboard/Windows acceptance |
-| Parent global Ruff check / format check at `b633aee6` | Passed; 456 files already formatted | Supplied parent evidence, before final cosmetic fix |
-| Parent `node scripts/js_smoke.js` at `b633aee6` | PASS every page module loaded | Top-level execution only |
-| Parent native prerequisites / Cargo regression at `b633aee6` | Release codec built and installed in checkout `packaging/bin`, availability confirmed; Cargo 1 test passed; Node on PATH | Not Windows runtime verification |
+| Parent Chrome script freshly rerun at `1d5c2618`, widths 1280/840/839 | **PASS**: first-opener auto-read, server-invalidated ticket → Review again, failed-save same-ID retry, Add/Show/export, retained single-prefix warnings, metadata draft/focus/caret, manual-paste refusal; no horizontal overflow/page errors; one accent action | Simulated dev clipboard only; scratch `browser-check-results.json` records results, not real clipboard/Windows acceptance |
+| Parent global Ruff check / format check at `1d5c2618` | Passed; 456 files already formatted | Whole repository, configured exclusions retained |
+| Parent `node scripts/js_smoke.js` at `1d5c2618` | PASS every page module loaded | Top-level execution only |
+| Parent native prerequisites / Cargo regression at `1d5c2618` | Release codec built and installed in checkout `packaging/bin`, availability confirmed; fresh Cargo 1 test passed; Node on PATH | Not Windows runtime verification |
 | Parent full pytest at `22d319f8` | **13223 passed, 1 failed, 13 expected Windows-only skips** | Missing `navigator` in preview dev VM; not a full pass |
 | Harness-only fix `72050584`: isolated dev capture test; `tests/test_preview_savedlayouts_page.py` | 1 passed; 54 passed; JS smoke passed | Superseded by parent full pass below |
 | Parent full pytest at `b633aee6` | **13224 passed, 13 expected Windows-only skips in 464.53s**; no missing Node/native skips | Supplied parent evidence; predates final cosmetic fix |
-| Whole-change independent review `d11c644f-1418-40e` at `b633aee6`, 41 files | No blockers; one minor/high-confidence duplicate warning-prefix finding, corrected in this wave | Final-fix scoped re-review remains with parent; no separate polish result supplied |
+| Whole-change structured polish/review `d11c644f-1418-40e` at `b633aee6`, 41 files | Completed correctness, silent-failure, comments and type/API review; no blockers or safe-auto-fix recommendations; one minor warning-prefix issue corrected through the tested fix workflow | One structured pass followed the repository's broad-review rule |
+| Scoped final correction review `e6346271-1353-484`, `b633aee6..1d5c2618` | **APPROVED**: finding addressed, no new Important breakage | Read-only review; parent fresh verification recorded below |
 | Final cosmetic fix on `b633aee6`: production-shaped warning regression | **RED → GREEN**: duplicate `Line 6: Line 6:` reproduced; approved codec warning messages rendered unchanged before and after Add | DOM/bridge doubles; codec exact-message tests run below |
 | Final fix: `node --test scripts/test_fittings_runtime.js` | **152 passed**, 0 failed | Not browser rendering |
 | Final fix: `uv run --no-sync python -m pytest tests/test_evefittings_*.py tests/test_api_fittings.py tests/test_fittings_*.py -q` | **591 passed in 40.70s** | Focused fittings coverage only, not another full-suite run |
 | Final fix: JS smoke; `node --check` on `fittings.js`, `dev.js`, runtime harness; focused Python Ruff check/format | PASS; syntax PASS; Ruff PASS, 22 files already formatted | No Python files changed; initial mistaken Ruff invocation on JS was inapplicable, corrected to fittings Python scope |
+| Parent post-polish `uv run --no-sync python -m pytest tests/ -q -rs` at `1d5c2618` | **13224 passed, 13 skipped in 446.16s** | All skips require actual Windows junctions, DPAPI/WinDLL, a window station/native bindings or Windows tray; no missing Node/native codec skips |
 | Installed Windows/WebView2 clipboard, DPI and live EVE/Pyfa interchange smoke | **Not run / open** | Follow [smoke checklist](smoke-checklist.md); no manual acceptance claim |
 
-Parent scoped re-review and fresh verification follow this final cosmetic fix.
+Local implementation, review and automated/browser verification are complete.
 Task 5's real Windows/WebView2 and live EVE/Pyfa acceptance remains open; the
 recorded automated and simulated-browser results do not close that manual gate.
+The branch and linked worktree are retained; no push, PR, merge or release has
+been performed.
 
 ## Reviewer focus
 
