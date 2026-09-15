@@ -383,6 +383,15 @@ def test_tentative_failed_master_off_does_not_drop_telemetry_session_revocation(
     api._preview_runtime = PreviewRuntime(h)
     api._preview_runtime.set_state_callback(api._preview_runtime_changed)
     discovery = FakeDiscovery()
+    discovery_started = Event()
+    start_discovery = discovery.start
+
+    def signal_discovery_start():
+        result = start_discovery()
+        discovery_started.set()
+        return result
+
+    monkeypatch.setattr(discovery, "start", signal_discovery_start)
 
     def stream_factory(*, custom_snapshot):
         assert custom_snapshot is None  # This crop-only runtime has no Alerts owner.
@@ -400,13 +409,18 @@ def test_tentative_failed_master_off_does_not_drop_telemetry_session_revocation(
     try:
         api.start_previews_if_enabled()
         assert h._ready.wait(5)
+        # Pump readiness can precede the runtime owner's telemetry reconciliation.
+        # Discovery subscribes before start; publish only after that boundary.
+        assert discovery_started.wait(5)
         presentation_thread = api._fleet_worker._thread
         assert presentation_thread is not None and presentation_thread.is_alive()
         discovery.publish(RosterSnapshot(1, (client(),)))
         runtime.dispatch_once(0)
         r.call(lambda: None)
         receipt = api.select_preview_crop("Alice")
+        assert receipt["pending"], receipt
         r.call(lambda: None)
+        assert h.crop_state()["statuses"].get("Alice") == "selecting"
         entered, release = Event(), Event()
         attempted = Event()
         save = settings._save_locked
