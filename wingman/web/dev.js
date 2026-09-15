@@ -1420,9 +1420,9 @@
           {"flag": "DroneBay", "location": "DroneBay", "type_id": 2456, "type_name": "Hobgoblin II", "quantity": 5}
         ],
         "warnings": [
-          {"code": "loaded_charge_omitted", "line_number": 3, "message": "Republic Fleet EMP S selection is not retained because EFT specifies no quantity; explicit cargo quantities are unchanged."},
-          {"code": "offline_omitted", "line_number": 3, "message": "Offline state is not retained; 200mm AutoCannon II remains in the fitting."},
-          {"code": "bay_convention", "line_number": 5, "message": "Hobgoblin II x5 is interpreted as DroneBay content; EFT does not preserve Cargo/bay intent."}
+          {"code": "loaded_charge_omitted", "line_number": 3, "message": "Line 3: Loaded charge selection Republic Fleet EMP S is not retained; EFT specifies no quantity. Explicit cargo quantities are unchanged."},
+          {"code": "offline_omitted", "line_number": 3, "message": "Line 3: Offline state is not retained; the module remains in the fitting."},
+          {"code": "bay_convention", "line_number": 5, "message": "Line 5: Hobgoblin II x5 is interpreted as DroneBay content; EFT does not preserve Cargo/bay intent."}
         ],
         "existing_entry_id": "fit-clipboard", "error": ""
       },

@@ -1,9 +1,10 @@
 # Fittings clipboard — implementation notes
 
-Documentation checkpoint: implementation through `72050584`, based on `286596be`.
-Tasks 2–4 have focused verification, scoped review and a fresh Chrome rerender;
-whole-change polish/review and final full-suite rerun remain pending. This is not
-Windows/WebView2 or live EVE/Pyfa acceptance.
+Documentation checkpoint: parent verification at `b633aee6`, based on `286596be`,
+plus the final warning-prefix correction described below. The parent full suite
+passed and the 41-file independent review found no blockers, only that cosmetic
+issue. Final-fix scoped re-review and fresh parent verification remain separate
+from those results. This is not Windows/WebView2 or live EVE/Pyfa acceptance.
 
 ## What changed and how it works
 
@@ -74,7 +75,11 @@ sole accent action. A fresh opener reads only with no text, review or result;
 reopening an existing draft/result preserves it. **Read clipboard** is explicit
 replacement, route entry is clipboard-free, and denied/missing clipboard access
 leaves manual paste usable. Successful Add retains warnings and offers Show,
-without automatic selection or character writes.
+without automatic selection or character writes. The codec owns each warning's
+complete line-prefixed message; the final cosmetic fix renders it verbatim rather
+than adding a second prefix. Dev/runtime messages now match that contract, and
+approved `cases.json` warning objects exercise the real renderer before and after
+Add. No backend contract or formatting helper changed.
 
 The first controller implementation consumed tickets too early on save failure.
 The correction retains the exact immutable ticket until successful commit/no-op;
@@ -119,8 +124,9 @@ progress ledger, including its consequence if the interpretation is wrong.
 
 ## Verification evidence and open gates
 
-Results below are supplied parent evidence or recorded task results, not reruns
-by this documentation checkpoint. Counts overlap; do not sum them.
+Results below distinguish supplied parent evidence and recorded task results
+from this final fix's focused runs. Counts overlap; do not sum them. No full-suite
+rerun was performed in this fix wave.
 
 | Gate / command or coverage | Recorded result | Remaining limitation |
 | --- | --- | --- |
@@ -130,16 +136,22 @@ by this documentation checkpoint. Counts overlap; do not sum them.
 | Task 4: `node --test scripts/test_fittings_runtime.js` | 151 passed; targeted fix 9 RED → GREEN | DOM/bridge doubles, not CSS rendering |
 | Task 4: `uv run --no-sync python -m pytest tests/test_fittings_runtime.py tests/test_fittings_page.py tests/test_bridge_contract.py tests/test_page_conventions.py tests/test_dev_harness.py -q` | 481 passed | Includes Node harness; overlapping count |
 | Parent Chrome script freshly rerun at `72050584`, widths 1280/840/839 | **PASS**: first-opener auto-read, server-invalidated ticket → Review again, failed-save same-ID retry, Add/Show/export, retained warnings, metadata draft/focus/caret, manual-paste refusal; no horizontal overflow/page errors; one accent action | Simulated dev clipboard only; scratch `browser-check-results.json` records results, not real clipboard/Windows acceptance |
-| Global Ruff check / format check | Passed; 456 files already formatted | Parent evidence before final wrap-up |
-| `node scripts/js_smoke.js` | PASS every page module loaded | Top-level execution only |
-| Native prerequisites / Cargo regression | Release codec built and installed in checkout `packaging/bin`, availability confirmed; Cargo 1 test passed; Node on PATH | Not Windows runtime verification |
+| Parent global Ruff check / format check at `b633aee6` | Passed; 456 files already formatted | Supplied parent evidence, before final cosmetic fix |
+| Parent `node scripts/js_smoke.js` at `b633aee6` | PASS every page module loaded | Top-level execution only |
+| Parent native prerequisites / Cargo regression at `b633aee6` | Release codec built and installed in checkout `packaging/bin`, availability confirmed; Cargo 1 test passed; Node on PATH | Not Windows runtime verification |
 | Parent full pytest at `22d319f8` | **13223 passed, 1 failed, 13 expected Windows-only skips** | Missing `navigator` in preview dev VM; not a full pass |
-| Harness-only fix `72050584`: isolated dev capture test; `tests/test_preview_savedlayouts_page.py` | 1 passed; 54 passed; JS smoke passed | Final full-suite rerun **pending** |
-| Whole-change `polish-core --fix`, diff inspection and independent review | **Pending** | Scoped task reviews are not this final gate |
+| Harness-only fix `72050584`: isolated dev capture test; `tests/test_preview_savedlayouts_page.py` | 1 passed; 54 passed; JS smoke passed | Superseded by parent full pass below |
+| Parent full pytest at `b633aee6` | **13224 passed, 13 expected Windows-only skips in 464.53s**; no missing Node/native skips | Supplied parent evidence; predates final cosmetic fix |
+| Whole-change independent review `d11c644f-1418-40e` at `b633aee6`, 41 files | No blockers; one minor/high-confidence duplicate warning-prefix finding, corrected in this wave | Final-fix scoped re-review remains with parent; no separate polish result supplied |
+| Final cosmetic fix on `b633aee6`: production-shaped warning regression | **RED → GREEN**: duplicate `Line 6: Line 6:` reproduced; approved codec warning messages rendered unchanged before and after Add | DOM/bridge doubles; codec exact-message tests run below |
+| Final fix: `node --test scripts/test_fittings_runtime.js` | **152 passed**, 0 failed | Not browser rendering |
+| Final fix: `uv run --no-sync python -m pytest tests/test_evefittings_*.py tests/test_api_fittings.py tests/test_fittings_*.py -q` | **591 passed in 40.70s** | Focused fittings coverage only, not another full-suite run |
+| Final fix: JS smoke; `node --check` on `fittings.js`, `dev.js`, runtime harness; focused Python Ruff check/format | PASS; syntax PASS; Ruff PASS, 22 files already formatted | No Python files changed; initial mistaken Ruff invocation on JS was inapplicable, corrected to fittings Python scope |
 | Installed Windows/WebView2 clipboard, DPI and live EVE/Pyfa interchange smoke | **Not run / open** | Follow [smoke checklist](smoke-checklist.md); no manual acceptance claim |
 
-Update these rows with fresh results before final integration. Task 5 remains
-open until its automated, review and manual gates are accounted for separately.
+Parent scoped re-review and fresh verification follow this final cosmetic fix.
+Task 5's real Windows/WebView2 and live EVE/Pyfa acceptance remains open; the
+recorded automated and simulated-browser results do not close that manual gate.
 
 ## Reviewer focus
 

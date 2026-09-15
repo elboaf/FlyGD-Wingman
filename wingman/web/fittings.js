@@ -639,7 +639,7 @@
       // These describe the reviewed interpretation, not persisted metadata.
       review.warnings.forEach(function (warning) {
         host.appendChild(WM.make('p', 'fit-import-warning',
-          'Line ' + warning.line_number + ': ' + warning.message));
+          warning.message));
       });
     }
     setImportStatus(importDraft.status, importDraft.error);

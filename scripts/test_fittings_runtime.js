@@ -1964,9 +1964,9 @@ function eftReview() {
     items: [{flag: 'HiSlot0', location: 'high', type_id: 2889, type_name: '200mm AutoCannon II', quantity: 1},
       {flag: 'DroneBay', location: 'DroneBay', type_id: 2456, type_name: 'Hobgoblin II', quantity: 5}],
     warnings: [
-      {code: 'loaded_charge_omitted', line_number: 2, message: 'Republic Fleet EMP S selection is not retained: no quantity. Explicit cargo quantities are unchanged.'},
-      {code: 'offline_omitted', line_number: 2, message: 'Offline state is not retained; the module remains.'},
-      {code: 'bay_convention', line_number: 3, message: 'Hobgoblin II x5 is interpreted as DroneBay content; cargo/bay intent is not preserved.'}
+      {code: 'loaded_charge_omitted', line_number: 2, message: 'Line 2: Loaded charge selection Republic Fleet EMP S is not retained; EFT specifies no quantity. Explicit cargo quantities are unchanged.'},
+      {code: 'offline_omitted', line_number: 2, message: 'Line 2: Offline state is not retained; the module remains in the fitting.'},
+      {code: 'bay_convention', line_number: 3, message: 'Line 3: Hobgoblin II x5 is interpreted as DroneBay content; EFT does not preserve Cargo/bay intent.'}
     ], existing_entry_id: '', error: ''};
 }
 function importControl(p, name) {
@@ -2005,6 +2005,29 @@ function locatorSnapshot() {
   return {ok: true, entry_id: 'imported', workspace: payload, error: ''};
 }
 
+test('clipboard warnings retain exactly one codec-owned line prefix before and after Add', async () => {
+  const fixtures = path.join(__dirname, '..', 'tests', 'fixtures', 'evefittings', 'eft');
+  const cases = JSON.parse(fs.readFileSync(path.join(fixtures, 'cases.json'), 'utf8')).cases;
+  for (const fixture of cases.filter(c => c.approved_import.ok && c.approved_import.warnings.length)) {
+    const p = await importPage();
+    input(importControl(p, 'text'), fs.readFileSync(path.join(fixtures, fixture.file), 'utf8'));
+    importControl(p, 'review').click(); await flush();
+    const review = eftReview();
+    review.warnings = fixture.approved_import.warnings;
+    await settle(p.last('fittings_review_eft'), review);
+    for (const stage of ['Review', 'Add']) {
+      if (stage === 'Add') {
+        importControl(p, 'add').click(); await flush();
+        await settle(p.last('fittings_import_eft'), {applied: true, persisted: true,
+          entry_id: 'imported', created: true, error: ''});
+      }
+      const messages = importControl(p, 'candidate').querySelectorAll('.fit-import-warning').map(w => w.textContent);
+      assert.deepEqual(messages, fixture.approved_import.warnings.map(w => w.message), fixture.id + ' after ' + stage);
+      assert.ok(messages.every(message => (message.match(/Line \d+:/g) || []).length === 1));
+    }
+  }
+});
+
 test('clipboard import is explicit, usable without characters and reviews normalized rows/warnings before Add', async () => {
   const p = await importPage();
   assert.match(p.el('fittings-empty').textContent, /Import from clipboard/);
@@ -2020,7 +2043,7 @@ test('clipboard import is explicit, usable without characters and reviews normal
   assert.match(candidate.textContent, /Fleet <fit>.*Rifter/);
   assert.match(candidate.textContent, /200mm AutoCannon II.*Hobgoblin II.*5/s);
   const warnings = candidate.querySelectorAll('.fit-import-warning');
-  assert.deepEqual(warnings.map(w => w.textContent), eftReview().warnings.map(w => 'Line ' + w.line_number + ': ' + w.message));
+  assert.deepEqual(warnings.map(w => w.textContent), eftReview().warnings.map(w => w.message));
   assert.ok(warnings.every(w => w.getClientRects().length && w.children.length === 0));
   assert.equal(importControl(p, 'add').disabled, false);
   assert.equal(p.calls('fittings_import_eft').length, 0, 'Review never adds');
