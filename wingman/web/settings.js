@@ -1872,6 +1872,14 @@
   // review_id can never be applied later.
   (function () {
     var msg = WM.el('msg-backup');
+    // Payload gate, owned HERE rather than the form's `hydrated` flag: that
+    // flag lives in the renderer block above and is out of this IIFE's
+    // scope, so reading it from a handler was a silent ReferenceError --
+    // the buttons rendered but every click died before its first line.
+    var sawPayload = false;
+    document.addEventListener('wm:settings', function () {
+      sawPayload = true;
+    });
 
     function say(text, tone) {
       msg.textContent = text || '';
@@ -1890,7 +1898,7 @@
     }
 
     WM.el('btn-settings-export').addEventListener('click', function () {
-      if (!hydrated) { return; }
+      if (!sawPayload) { return; }
       say('');
       WM.send('settings_export_file').then(function (reply) {
         if (!reply) { say('The export could not be written.', 'err'); return; }
@@ -1901,7 +1909,7 @@
     });
 
     WM.el('btn-settings-import').addEventListener('click', function () {
-      if (!hydrated) { return; }
+      if (!sawPayload) { return; }
       say('');
       WM.send('settings_import_read').then(function (reply) {
         if (!reply) { say('The import could not be read.', 'err'); return; }
