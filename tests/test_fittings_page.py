@@ -47,6 +47,9 @@ def test_clipboard_import_is_inline_labelled_and_keeps_status_mounted():
     assert scroll.index(panel) < scroll.index(by_id["fittings-list"])
     field = by_id["fittings-import-text"]
     assert field["tag"] == "textarea" and "field" in field["attrs"]["class"]
+    help_node = by_id[field["attrs"]["aria-describedby"]]
+    assert scroll.index(help_node) < scroll.index(by_id["fittings-import-review"])
+    assert "hidden" not in help_node["attrs"]
     assert any(
         node["tag"] == "label"
         and node["attrs"].get("for") == "fittings-import-text"

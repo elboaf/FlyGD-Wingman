@@ -5427,8 +5427,11 @@ for these items.
       panel and returns to its opener without scrolling. Copy selected is still
       the sole accent. Record browser and installed WebView2 results separately.
 - [ ] **Clipboard is click-only with manual fallback.** With an empty library and
-      no authorized characters, opening Fittings or the import panel never reads
-      the clipboard. Read clipboard is explicit; deny access and paste manually.
+      no authorized characters, route entry never reads the clipboard. Clicking
+      Import from clipboard… for a fresh empty draft opens the panel and attempts
+      one read; deny access and paste manually. Reopening retained nonempty text
+      or a reviewed result preserves it; Read clipboard explicitly replaces it.
+      The textarea notice explains that type names may be looked up through ESI.
       Review displays the normalized hull/name/items but never adds automatically.
       Invalid text remains editable with the whole-fit refusal. No character
       fitting is written or selected by Review/Add/Show fitting.
@@ -5440,8 +5443,11 @@ for these items.
       Cargo quantities stay exact. Add sends only the reviewed ticket.
 - [ ] **Save refusal is retryable without changing the review.** Cause a local
       save refusal, confirm textarea/items/warnings remain and retry Add using
-      the same ticket. Clear only the matching successful draft. Type a newer
-      draft during delayed Read/Review/Add; old replies must not replace text,
+      the same ticket. Review again is also available after any Add refusal;
+      expire/consume a ticket and recover without editing the text. Re-review is
+      optional for a save retry and never starts automatically. Clear only the
+      matching successful draft. Type a newer draft during delayed Read/Review/Add;
+      old replies must not replace text,
       enable an old candidate, claim success or take focus. Repeat across route
       leave and screenshot staging; no synthetic result becomes a live ticket.
 - [ ] **Show fitting uses its returned snapshot.** Add/duplicate a fitting while
@@ -5457,7 +5463,10 @@ for these items.
       appears after actual browser write success. Refused exports never touch
       clipboard; denial/synchronous failure remains recoverable. Collapse,
       switch rows/routes, rename/delete, push changed source or stage screenshots
-      while export is delayed: the old callback must never deliver text.
+      while export is delayed: the old callback must never deliver text. Also
+      open Last copy results and settle export both while visible and after
+      closing: no old clipboard delivery or disabled Preparing button remains.
+      An already-started browser write cannot be undone by cancellation.
 - [ ] **Dev/screenshot never access the real clipboard or bridge.** `?dev=1`
       replaces navigator.clipboard with an explicit in-memory sample. Use
       `DEV.fittingsClipboard('read-denied'|'write-denied'|'review-refused'|'save-refused')`

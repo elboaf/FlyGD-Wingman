@@ -525,6 +525,8 @@
       reopen.addEventListener('click', function () {
         if (copyOverlayOpen || copyPhase === 'progress'
             || (copyHistoryOperation && copyHistoryOperation.pending)) return;
+        cancelExport();
+        cancelLocate();
         copyDialogGeneration += 1;
         copyInvoker = reopen;
         copyOverlayOpen = true;
@@ -593,7 +595,7 @@
 
   function emptyImportDraft() {
     return { open: false, text: '', review: null, result: null,
-             needsReview: false, status: '', error: false };
+             needsReview: false, canReviewAgain: false, status: '', error: false };
   }
 
   function setImportStatus(text, isError) {
@@ -613,8 +615,10 @@
   function updateImportControls() {
     var pending = !!importRequest;
     WM.el('fittings-import-read').disabled = pending;
+    WM.el('fittings-import-review').textContent = importDraft.canReviewAgain || importDraft.needsReview
+      ? 'Review again' : 'Review';
     WM.el('fittings-import-review').disabled = pending || !importDraft.text.trim()
-      || (!!importDraft.review && !importDraft.needsReview);
+      || (!!importDraft.review && !importDraft.needsReview && !importDraft.canReviewAgain);
     WM.el('fittings-import-add').disabled = pending || !importDraft.review
       || importDraft.needsReview || !!importDraft.result;
     WM.el('fittings-import-show').hidden = !importDraft.result;
@@ -662,6 +666,7 @@
     importDraft.review = null;
     importDraft.result = null;
     importDraft.needsReview = false;
+    importDraft.canReviewAgain = false;
     importDraft.status = '';
     importDraft.error = false;
     // Do not replace the textarea while typing; its caret/scroll are native.
@@ -695,6 +700,11 @@
     importDraft.open = true;
     renderImportDraft();
     WM.el('fittings-import-text').focus({ preventScroll: true });
+    // One-click import for a fresh draft, never silent replacement of retained
+    // text or a completed review whose warnings are still being read.
+    if (!importDraft.text && !importDraft.review && !importDraft.result) {
+      readImportClipboard(WM.el('fittings-import-read'));
+    }
   });
 
   function closeImport() {
@@ -719,8 +729,12 @@
   });
 
   WM.el('fittings-import-read').addEventListener('click', function () {
+    readImportClipboard(this);
+  });
+
+  function readImportClipboard(button) {
     if (!importAvailable() || importRequest) return;
-    var owner = beginImportRequest('read', this);
+    var owner = beginImportRequest('read', button);
     setImportStatus('Reading clipboard\u2026');
     function failed() {
       if (!ownsImport(owner)) return;
@@ -730,8 +744,8 @@
       updateImportControls();
     }
     try {
-      // Only this click reads the browser clipboard. Detached screenshot data
-      // must explicitly supply text; it never falls back to the OS clipboard.
+      // Only opener/Read clicks reach this browser call. Detached screenshot
+      // data must explicitly supply text; it never falls back to the OS clipboard.
       var fixture = screenshotClipboard();
       var pending = screenshotFixture
         ? (fixture ? Promise.resolve(fixture.text) : Promise.reject(new Error('No fixture')))
@@ -744,13 +758,14 @@
         setImportStatus('Clipboard text ready. Review before adding.');
       }, failed);
     } catch (err) { failed(); }
-  });
+  }
 
   WM.el('fittings-import-review').addEventListener('click', function () {
     if (!importAvailable() || this.disabled || importRequest || !importDraft.text.trim()) return;
     importDraft.review = null;
     importDraft.result = null;
     importDraft.needsReview = false;
+    importDraft.canReviewAgain = false;
     renderImportDraft();
     var owner = beginImportRequest('review', this);
     setImportStatus('Reviewing fitting\u2026');
@@ -790,8 +805,9 @@
       if (!ownsImport(owner)) return;
       importRequest = null;
       if (!payload || !payload.applied || !payload.persisted) {
-        // A refused save retains the controller ticket: retry this exact ID,
-        // not a fresh Review that would replace its normalized interpretation.
+        // A save refusal can retry this ID, but an expired/consumed ticket
+        // needs a fresh Review. Offer both without classifying error prose.
+        importDraft.canReviewAgain = true;
         setImportStatus(payload && payload.error
           || 'Add not confirmed. Your reviewed text is kept; try Add to library again.', true);
         updateImportControls();

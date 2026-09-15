@@ -1980,7 +1980,6 @@ async function importPage(options) {
   await settle(p.last('fittings_state'), empty);
   assert.equal(p.reads.length, 0, 'route entry must not read the clipboard');
   importControl(p, 'open').click();
-  assert.equal(p.reads.length, 0, 'opening only reveals the manual-paste panel');
   assert.equal(importControl(p, 'panel').hidden, false);
   return p;
 }
@@ -2010,8 +2009,7 @@ test('clipboard import is explicit, usable without characters and reviews normal
   const p = await importPage();
   assert.match(p.el('fittings-empty').textContent, /Import from clipboard/);
   assert.equal(importControl(p, 'add').disabled, true);
-  importControl(p, 'read').click();
-  assert.equal(p.reads.length, 1, 'only the Read clipboard click requests OS text');
+  assert.equal(p.reads.length, 1, 'the fresh opener click requests clipboard text without a second click');
   await settle(p.reads[0], eftText);
   assert.equal(importControl(p, 'text').value, eftText);
   assert.equal(p.calls('fittings_review_eft').length, 0, 'paste is not Review');
@@ -2045,11 +2043,18 @@ test('clipboard import is explicit, usable without characters and reviews normal
 for (const mode of ['missing', 'throw', 'reject']) {
   test('clipboard read ' + mode + ' keeps manual paste usable without auto-review', async () => {
     const p = await importPage(mode === 'missing' ? {clipboard: false} : {readText: mode});
+    if (mode === 'reject') {
+      assert.equal(p.reads.length, 1, 'fresh opener attempts the read');
+      p.reads.at(-1).reject(new Error('denied'));
+    }
+    await flush();
+    assert.equal(importControl(p, 'text').value, '');
+    assert.match(importControl(p, 'status').textContent, /paste.*manually/i);
     input(importControl(p, 'text'), eftText);
     importControl(p, 'read').click();
-    if (mode === 'reject') p.reads[0].reject(new Error('denied'));
+    if (mode === 'reject') p.reads.at(-1).reject(new Error('replacement denied'));
     await flush();
-    assert.equal(importControl(p, 'text').value, eftText);
+    assert.equal(importControl(p, 'text').value, eftText, 'failed explicit replacement preserves the manual draft');
     assert.match(importControl(p, 'status').textContent, /paste.*manually/i);
     assert.equal(importControl(p, 'read').disabled, false);
     assert.equal(p.calls('fittings_review_eft').length, 0);
@@ -2069,7 +2074,7 @@ for (const stage of ['read', 'review', 'add']) {
         await settle(p.last('fittings_review_eft'), eftReview());
       }
       importControl(p, stage === 'read' ? 'read' : stage === 'review' ? 'review' : 'add').click(); await flush();
-      const pending = stage === 'read' ? p.reads[0] : p.last('fittings_' + (stage === 'review' ? 'review_eft' : 'import_eft'));
+      const pending = stage === 'read' ? p.reads.at(-1) : p.last('fittings_' + (stage === 'review' ? 'review_eft' : 'import_eft'));
       assert.ok(pending);
       if (revoke === 'typing') input(importControl(p, 'text'), 'Newer draft');
       if (revoke === 'route') { await p.route('main'); p.el('nav-main').focus(); }
@@ -2097,6 +2102,8 @@ for (const failure of ['refused', 'reject']) {
     assert.equal(importControl(p, 'text').value, eftText);
     assert.equal(importControl(p, 'candidate').textContent, before);
     assert.equal(importControl(p, 'add').disabled, false);
+    assert.equal(importControl(p, 'review').disabled, false, 're-review is available without requiring it for same-ID save retry');
+    assert.equal(importControl(p, 'review').textContent, 'Review again');
     assert.match(importControl(p, 'status').textContent, failure === 'refused' ? /Disk full/ : /not confirmed/i);
     importControl(p, 'add').click(); await flush();
     assert.deepEqual(p.last('fittings_import_eft').args, ['opaque-review']);
@@ -2106,6 +2113,94 @@ for (const failure of ['refused', 'reject']) {
     assert.equal(importControl(p, 'candidate').textContent, before);
   });
 }
+
+test('clipboard fresh opener preserves newer typing and reopening drafts requires explicit replacement', async () => {
+  const p = await importPage();
+  assert.equal(p.reads.length, 1);
+  const first = p.reads[0];
+  input(importControl(p, 'text'), 'Manual draft');
+  await settle(first, 'Stale initial clipboard');
+  assert.equal(importControl(p, 'text').value, 'Manual draft');
+  importControl(p, 'open').click();
+  assert.equal(p.reads.length, 1, 'reopening a nonempty draft must not replace it');
+  assert.equal(importControl(p, 'text').value, 'Manual draft');
+  importControl(p, 'read').click();
+  assert.equal(p.reads.length, 2, 'Read clipboard explicitly replaces an existing draft');
+  await settle(p.reads.at(-1), eftText);
+  assert.equal(importControl(p, 'text').value, eftText);
+  assert.equal(p.calls('fittings_review_eft').length, 0);
+  importControl(p, 'close').click(); importControl(p, 'open').click();
+  assert.equal(p.reads.length, 3, 'closing starts a fresh empty-draft open');
+});
+
+test('clipboard opener keeps reviewed warnings and successful result instead of reading again', async () => {
+  const p = await reviewedImport();
+  const reads = p.reads.length;
+  const candidate = importControl(p, 'candidate').textContent;
+  await p.route('main'); await p.route('fittings');
+  importControl(p, 'open').click();
+  assert.equal(p.reads.length, reads);
+  assert.equal(importControl(p, 'text').value, eftText);
+  assert.equal(importControl(p, 'candidate').textContent, candidate);
+  importControl(p, 'add').click(); await flush();
+  await settle(p.last('fittings_import_eft'), {applied: true, persisted: true, entry_id: 'imported', created: true, error: ''});
+  importControl(p, 'open').click();
+  assert.equal(p.reads.length, reads, 'a cleared successful submission is not a fresh draft');
+  assert.equal(importControl(p, 'candidate').textContent, candidate);
+  assert.equal(importControl(p, 'show').hidden, false);
+});
+
+test('clipboard expiry refusal offers Review again without editing text or parsing backend prose', async () => {
+  const p = await reviewedImport();
+  const candidate = importControl(p, 'candidate').textContent;
+  importControl(p, 'add').click(); await flush();
+  // Exact current controller shape/message for expired OR consumed tickets.
+  await settle(p.last('fittings_import_eft'), {applied: false, persisted: false, entry_id: '', created: false,
+    error: 'Review the fitting text again before adding it.'});
+  assert.equal(importControl(p, 'text').value, eftText);
+  assert.equal(importControl(p, 'candidate').textContent, candidate);
+  assert.equal(importControl(p, 'add').disabled, false);
+  assert.equal(importControl(p, 'review').disabled, false);
+  assert.equal(importControl(p, 'review').textContent, 'Review again');
+  importControl(p, 'review').click(); await flush();
+  assert.equal(p.calls('fittings_review_eft').length, 2);
+  assert.deepEqual(p.last('fittings_review_eft').args, [eftText]);
+  assert.equal(importControl(p, 'add').disabled, true, 'old ticket cannot be added during replacement review');
+  await settle(p.last('fittings_review_eft'), {...eftReview(), review_id: 'fresh-review'});
+  importControl(p, 'add').click(); await flush();
+  assert.deepEqual(p.last('fittings_import_eft').args, ['fresh-review']);
+  await settle(p.last('fittings_import_eft'), {applied: true, persisted: true, entry_id: 'imported', created: false, error: ''});
+  assert.equal(importControl(p, 'text').value, '');
+  assert.match(importControl(p, 'status').textContent, /Already in/);
+});
+
+for (const replyTiming of ['during-results', 'after-close']) {
+  test('clipboard export cancelled by Last copy results: ' + replyTiming, async () => {
+    const p = await editor();
+    await beginCopy(p); await complete(p, result(['success']));
+    p.el('fittings-copy-close').click();
+    const copy = button(p.el('fittings-list'), 'Copy to clipboard');
+    copy.click(); await flush();
+    const exportReply = p.last('fittings_export_eft');
+    button(p.el('fittings-notices'), 'Last copy results\u2026').click();
+    if (replyTiming === 'after-close') p.el('fittings-copy-close').click();
+    await settle(exportReply, {ok: true, text: 'obsolete export', error: ''});
+    if (replyTiming === 'during-results') p.el('fittings-copy-close').click();
+    assert.equal(p.writes.length, 0, 'results entry revokes delivery permanently, not just while the overlay is open');
+    assert.equal(copy.disabled, false, 'cancelled export cannot strand its button');
+    assert.doesNotMatch(p.el('fittings-list').textContent, /Preparing clipboard text/);
+    copy.click(); await flush();
+    assert.equal(p.calls('fittings_export_eft').length, 2, 'cancelled owner cannot block a new explicit export');
+  });
+}
+
+test('clipboard import exposes its public ESI lookup notice before Review', async () => {
+  const p = await importPage();
+  const note = p.el('fittings-import-help');
+  assert.match(note.textContent, /Type names may be looked up through ESI\./);
+  assert.ok(note.getClientRects().length);
+  assert.equal(p.calls('fittings_review_eft').length, 0);
+});
 
 test('clipboard invalid review retains text, exposes refusal, and never enables Add', async () => {
   const p = await importPage();
@@ -2261,6 +2356,7 @@ test('clipboard screenshot simulates only its explicit case and restores the det
   const p = await reviewedImport();
   const fixture = devScreenshot();
   assert.ok(fixture.clipboard, 'dev.js must supply an explicit simulated clipboard case');
+  const liveReads = p.reads.length;
   await p.screenshot(fixture);
   const before = p.calls().length;
   importControl(p, 'open').click(); importControl(p, 'read').click(); await flush();
@@ -2272,7 +2368,7 @@ test('clipboard screenshot simulates only its explicit case and restores the det
   button(p.el('fittings-list'), 'Copy to clipboard').click(); await flush();
   assert.match(p.el('fittings-list').textContent, /simulated/i);
   assert.equal(p.calls().length, before);
-  assert.equal(p.reads.length, 0); assert.equal(p.writes.length, 0);
+  assert.equal(p.reads.length, liveReads); assert.equal(p.writes.length, 0);
   await p.screenshot({kind: 'fittings-screenshot-v1', clear: true});
   await p.route('fittings');
   assert.equal(importControl(p, 'text').value, eftText);
