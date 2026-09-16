@@ -194,7 +194,14 @@
   // deliver as a start point. The cut may begin early -- that is the
   // keyframe trade the feature accepted -- and the READOUTS show the
   // snapped value so what you see is what gets cut.
+  // An empty key list (probe failed, no ffprobe, timeout) stands the
+  // position as given -- the same contract clips.py states -- because
+  // ffmpeg's own input-side seek still finds a keyframe; returning 0
+  // here would pin the start marker to the timeline origin forever.
   function clipSnapIn(t) {
+    if (clip.keys.length === 0) {
+      return Math.max(0, Math.min(t, clip.duration));
+    }
     var best = 0;
     for (var i = 0; i < clip.keys.length; i += 1) {
       if (clip.keys[i] <= t + 0.001) best = clip.keys[i];
