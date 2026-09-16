@@ -1,6 +1,6 @@
 # Fleet telemetry remaining-work coordination
 
-Status: parallel discovery and contract planning. No remaining-feature implementation has started.
+Status: shared contract review requires revision; an isolated local-model core slice is approved for implementation. No server/protocol implementation or rollout is authorized yet.
 
 ## Authority and bases
 
@@ -135,7 +135,9 @@ Full proposal artifacts are in this plan's ignored workspace:
 `automatic-proposal.md`, `model-proposal.md`, `ui-proposal.md`). Consolidated
 `combat-contract-draft.md`, `model-plan-draft.md` and `automatic-plan-draft.md`
 now reflect the approved breaking cutover. Both revision agents completed; the
-next gate is independent review of the concrete contracts before implementation.
+independent review is complete (REVISE), with six Important findings awaiting user
+acceptance before shared-contract edits. Its complete unedited report is
+`contract-review.md` in the same workspace.
 Original reports/probes remain historical discovery evidence. Their v1 support,
 legacy Stop promise, downgrade support and mixed-version success requirements are
 superseded by the updated master design. Drafts are not frozen interfaces.
@@ -176,5 +178,31 @@ Confirmed coordination constraints:
   observes current consent. No separate callback-driven consent activation or
   continuation ledger is justified by the inspected flow.
 
-Do not let these shared-contract checks block unrelated preparation, but do not
-start implementations that would bake their unresolved assumptions into source.
+## Current review and independent execution
+
+Reviewer `fd8a5001-e203-4ba` returned shared-contract REVISE and local-model
+CONDITIONAL. Six Important findings cover origin ordering, measurement sampling,
+aggregate response bounds, Off at receipt saturation, incomplete automatic/control
+interfaces, and cutover/journal migration. No shared-contract finding has been
+silently applied or waived; the user receives the unedited review plus the
+coordinator's separate assessment.
+
+The coordinator approves the narrow internal model handoff already proposed by M
+and consumed by C/U: frozen local deadlines and accepted IDs, with no transport
+mapping inside metrics. [Local core plan](fleet-combat-model-core-plan.md) authorizes
+only values/readers and row activity plus its lifecycle fencing. Named parsing,
+Unicode/bounds and independent effect production remain gated. This permits useful
+implementation without guessing the unresolved wire or server contracts.
+
+Test-isolation inventory `5bcf9178-32f5-42d` found the shared default port 5433 is
+owned by another development container. Do not use or alter it blindly. Separate
+explicit test resources must be allocated before authGD DB tests. Full Vitest also
+has a cross-worktree 3987/3988 lifecycle-test collision; serialize those runs.
+Inventory/proposed allocations are retained in `test-isolation-inventory.md`; no
+authGD test resources or schemas have been changed by this preparation.
+
+Fresh full Wingman coordinator baseline is running under `970328d7-0dee-458`, with
+checkout-local native codec prerequisites. Its result remains pending.
+
+Do not let shared-contract checks block independent approved model work, but do
+not implement assumptions inside the six unresolved shared-contract findings.
