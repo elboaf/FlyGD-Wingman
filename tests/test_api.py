@@ -1139,9 +1139,7 @@ def test_set_preview_binds_rejects_an_unparseable_chord(tmp_path):
     # A real settings document always has this section (settings.DEFAULTS);
     # make_state's minimal fixture does not, so seed it to prove a rejected
     # chord leaves the existing table untouched rather than KeyError-ing.
-    api._state.settings["preview"] = {
-        "hotkeys": {"characters": {}}
-    }
+    api._state.settings["preview"] = {"hotkeys": {"characters": {}}}
 
     assert api.set_preview_binds({"characters": {"Alice": "nonsense"}}) is False
     assert api._state.settings["preview"]["hotkeys"]["characters"] == {}
@@ -1237,8 +1235,13 @@ def test_preview_chords_are_active_only_when_windows_actually_holds_them(tmp_pat
         "hotkeys": {
             "characters": {"Alice": "Ctrl+Alt+1"},
             "groups": [
-                {"id": "dps", "name": "DPS", "members": ["Alice"],
-                 "cycle": "Ctrl+Alt+Right", "cycle_prev": ""}
+                {
+                    "id": "dps",
+                    "name": "DPS",
+                    "members": ["Alice"],
+                    "cycle": "Ctrl+Alt+Right",
+                    "cycle_prev": "",
+                }
             ],
         }
     }

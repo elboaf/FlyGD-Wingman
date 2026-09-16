@@ -3999,9 +3999,7 @@ class PreviewHost:
                 continue
             history = self._last_group_cycled.get(group_id)
             delta = -1 if kind == "cycle_group_prev" else 1
-            target = cycle.step(
-                keys, target or resolved_cursor or history, delta
-            )
+            target = cycle.step(keys, target or resolved_cursor or history, delta)
             if target is not None:
                 resolved_cursor = target
                 last_group_targets[group_id] = target

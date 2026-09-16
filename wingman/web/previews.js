@@ -2301,6 +2301,29 @@
 
   var rememberCycleGroupFocusHeld = null;
 
+  // Member mutations repaint the whole card, so the Up/Down/Remove button
+  // that started the write would otherwise drop focus mid-keyboard run.
+  // The click records the exact control (memberBtn sets
+  // rememberCycleGroupFocusHeld); this consumes it once against the fresh
+  // DOM, matching on stable data attributes -- indices shift with the list.
+  function restoreCycleGroupFocus() {
+    var held = rememberCycleGroupFocusHeld;
+    rememberCycleGroupFocusHeld = null;
+    if (!held || screenshotLive || capturing) { return; }
+    var controls = document.querySelectorAll(
+      '#preview-cycle-groups [data-group-control]');
+    for (var i = 0; i < controls.length; i++) {
+      var control = controls[i];
+      if (control.getAttribute('data-group-id') === held.groupId
+          && control.getAttribute('data-group-control') === held.control
+          && control.getAttribute('data-member-index') === held.member
+          && visibleGroupControl(control)) {
+        control.focus();
+        return;
+      }
+    }
+  }
+
   function makeMemberRow(group, index, count) {
     var name = group.members[index];
     var row = WM.make('div', 'row cycle-member-row');

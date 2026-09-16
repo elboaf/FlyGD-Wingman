@@ -117,8 +117,7 @@ def test_cycle_groups_with_member_order_round_trip_through_the_envelope():
     hotkeys = target["preview"]["hotkeys"]
     assert "cycle_next" not in hotkeys and "group_by_character" not in hotkeys
     assert hotkeys["groups"] == [
-        {"id": "g1", "name": "DPS", "members": [], "cycle": "Ctrl+F2",
-         "cycle_prev": ""}
+        {"id": "g1", "name": "DPS", "members": [], "cycle": "Ctrl+F2", "cycle_prev": ""}
     ]
 
 

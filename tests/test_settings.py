@@ -391,9 +391,7 @@ def test_preview_defaults_are_not_shared_between_calls():
 
 def test_validated_preview_keeps_parseable_gestures():
     section = settings.validated_preview(
-        {
-            "hotkeys": {"characters": {"Alice": "Ctrl+F1"}}
-        }
+        {"hotkeys": {"characters": {"Alice": "Ctrl+F1"}}}
     )
     assert section["hotkeys"]["characters"] == {"Alice": "Ctrl+F1"}
 

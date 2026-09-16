@@ -2384,7 +2384,12 @@ def test_cycle_actions_carry_direction():
         {
             "characters": {},
             "groups": [
-                {"id": "dps", "name": "DPS", "cycle": "Ctrl+Alt+Right", "cycle_prev": "Ctrl+Alt+Left"},
+                {
+                    "id": "dps",
+                    "name": "DPS",
+                    "cycle": "Ctrl+Alt+Right",
+                    "cycle_prev": "Ctrl+Alt+Left",
+                },
             ],
         }
     )
@@ -3548,9 +3553,7 @@ def test_group_cycle_cancels_to_foreground_without_activation(monkeypatch):
     """A single group cycle that resolves back to the foreground window
     must not activate (no-op cancellation)."""
     h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
-    h._active_hotkeys = {
-        "groups": [{"id": "dps", "name": "DPS", "members": ["Alice"]}]
-    }
+    h._active_hotkeys = {"groups": [{"id": "dps", "name": "DPS", "members": ["Alice"]}]}
     h._registered = {1: ("cycle_group", "dps")}
     activated = []
     monkeypatch.setattr(
@@ -3691,9 +3694,7 @@ def test_empty_cycle_batch_does_not_add_a_target_none_diagnostic(monkeypatch, ca
         h._on_hotkeys(libs, [1])
 
     messages = [record.message for record in caplog.records]
-    assert (
-        messages.count("Group cycle keybind 'empty' had nothing to visit") == 1
-    )
+    assert messages.count("Group cycle keybind 'empty' had nothing to visit") == 1
     assert "Preview hotkey target None is not running" not in messages
 
 
@@ -7099,9 +7100,7 @@ def test_empty_group_after_direct_focus_preserves_focused_target(monkeypatch):
     """An empty named group following a direct-focus action must not cancel
     the focus result.  The final dispatch target remains Carol."""
     h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
-    h._active_hotkeys = {
-        "groups": [{"id": "empty", "name": "Empty", "members": []}]
-    }
+    h._active_hotkeys = {"groups": [{"id": "empty", "name": "Empty", "members": []}]}
     h._registered = {
         1: ("focus", ("Carol",)),
         2: ("cycle_group", "empty"),

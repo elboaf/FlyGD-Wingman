@@ -490,9 +490,7 @@ def test_pre_group_all_cycle_keys_are_read_no_longer():
                 "cycle_next": "Ctrl+Alt+Right",
                 "cycle_prev": "Ctrl+Alt+Left",
                 "group_by_character": {"Alice": "dps"},
-                "groups": [
-                    {"id": "dps", "name": "DPS", "cycle": "Ctrl+F2"}
-                ],
+                "groups": [{"id": "dps", "name": "DPS", "cycle": "Ctrl+F2"}],
             }
         }
     )["hotkeys"]
@@ -500,8 +498,13 @@ def test_pre_group_all_cycle_keys_are_read_no_longer():
     assert "cycle_next" not in result and "cycle_prev" not in result
     assert "group_by_character" not in result
     assert result["groups"] == [
-        {"id": "dps", "name": "DPS", "members": [], "cycle": "Ctrl+F2",
-         "cycle_prev": ""}
+        {
+            "id": "dps",
+            "name": "DPS",
+            "members": [],
+            "cycle": "Ctrl+F2",
+            "cycle_prev": "",
+        }
     ]
 
 
@@ -510,8 +513,12 @@ def test_preview_cycle_groups_normalize_independently_and_membership_is_exclusiv
         {
             "hotkeys": {
                 "groups": [
-                    {"id": "dps", "name": " DPS ", "members": ["Alice", "Alice", "hwnd:7"],
-                     "cycle": "Alt+Ctrl+F2"},
+                    {
+                        "id": "dps",
+                        "name": " DPS ",
+                        "members": ["Alice", "Alice", "hwnd:7"],
+                        "cycle": "Alt+Ctrl+F2",
+                    },
                     {"id": "bad", "name": "", "members": ["Bob"], "cycle": "Ctrl+F3"},
                     {"id": "dup-name", "name": "dps", "cycle": "Ctrl+F4"},
                     {"id": "logi", "name": "Logistics", "cycle": "nonsense"},
@@ -520,10 +527,20 @@ def test_preview_cycle_groups_normalize_independently_and_membership_is_exclusiv
         }
     )["hotkeys"]
     assert hotkeys["groups"] == [
-        {"id": "dps", "name": "DPS", "members": ["Alice"],
-         "cycle": "Ctrl+Alt+F2", "cycle_prev": ""},
-        {"id": "logi", "name": "Logistics", "members": [],
-         "cycle": "", "cycle_prev": ""},
+        {
+            "id": "dps",
+            "name": "DPS",
+            "members": ["Alice"],
+            "cycle": "Ctrl+Alt+F2",
+            "cycle_prev": "",
+        },
+        {
+            "id": "logi",
+            "name": "Logistics",
+            "members": [],
+            "cycle": "",
+            "cycle_prev": "",
+        },
     ]
 
 
@@ -581,6 +598,11 @@ def test_pre_group_membership_and_chords_are_wiped_not_migrated(tmp_path):
     assert "cycle_next" not in reloaded and "cycle_prev" not in reloaded
     assert "group_by_character" not in reloaded
     assert reloaded["groups"] == [
-        {"id": "dps", "name": "DPS", "members": [], "cycle": "Ctrl+F2",
-         "cycle_prev": ""}
+        {
+            "id": "dps",
+            "name": "DPS",
+            "members": [],
+            "cycle": "Ctrl+F2",
+            "cycle_prev": "",
+        }
     ]

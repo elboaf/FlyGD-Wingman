@@ -1655,7 +1655,7 @@ button.btn:disabled,
   width: auto; flex: 1 1 auto; min-width: 0; align-self: center;
 }
 .cycle-group-chords .row > .bindbtn { flex: 0 0 auto; }
-.cycle-group-chords .row > .preview-bind-conflict { flex: 1 0 100%; }
+.cycle-group-chords .row > :where(.preview-bind-conflict) { flex: 1 0 100%; }
 .cycle-group-chords .row > span:empty { display: none; }
 
 /* Prose that TEACHES rather than prose that warns, folded away.

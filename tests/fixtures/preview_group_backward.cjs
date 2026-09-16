@@ -126,6 +126,12 @@ function settle(p, applied = true) {
       window: {onPreviewHotkeys: p => published.push(p)}, _devCropCopy: () => ({})};
     vm.createContext(dev);
     vm.runInContext(source.slice(start, end), dev);
+    // The reworked hotkeys fixture no longer carries the saved-layout keys
+    // its own layout slice reads at load; seed the minimum here so this
+    // scenario can reach the cycle-group stubs below it.
+    vm.runInContext('DEV_PREVIEW_HOTKEYS_FIXTURE.layout_state = {excluded: []};'
+      + 'DEV_PREVIEW_HOTKEYS_FIXTURE.sizes = {}; DEV_PREVIEW_HOTKEYS_FIXTURE.sizable = [];'
+      + 'DEV_PREVIEW_HOTKEYS_FIXTURE.client_sizes = {}; DEV_PREVIEW_HOTKEYS_FIXTURE.geometry_revision = 0;', dev);
     vm.runInContext(source.slice(source.indexOf('  // Saved layout browser fixtures'),
       source.indexOf('  // Companions are browser-only fixtures')), dev);
     vm.runInContext(source.slice(source.indexOf('  var _devPreviewHotkeys ='), source.indexOf('  api.list_rows =')), dev);

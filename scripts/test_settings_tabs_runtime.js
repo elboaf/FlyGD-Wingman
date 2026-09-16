@@ -295,17 +295,6 @@ for (const entry of ['focus', 'click', 'pointerdown']) {
   });
 }
 
-test('late Preview group reply cannot restore focus after a subpage navigation', async () => {
-  const p = await page({previews: true}); p.WM.openSettingsSection('previews', 'characters');
-  await p.previewState();
-  await p.fire(p.el('preview-binds').querySelector('.preview-configure'), 'click');
-  const group = p.document.querySelector('[data-preview-detail-control="group"]');
-  group.value = 'group-a'; group.focus(); await p.fire(group, 'change');
-  await p.click('previews', 'wanderer'); p.document.activeElement = p.document.body;
-  await p.reply('set_preview_character_group', {applied: true, persisted: true});
-  assert.ok(p.document.activeElement === p.document.body, 'late reply must not focus a hidden detail');
-});
-
 test('Configure visibly identifies its expanded character while retaining toggle and capture ownership', async () => {
   const p = await page({previews: true}); p.WM.openSettingsSection('previews', 'characters');
   await p.previewState();

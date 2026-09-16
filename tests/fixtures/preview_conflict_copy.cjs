@@ -20,7 +20,7 @@ vm.runInContext(fs.readFileSync(web + '/previews.js', 'utf8'), runtime);
 const gesture = 'Ctrl+Alt+1';
 function render(hotkeys = {}, extra = {}) {
   window.onPreviewHotkeys({
-    enabled: true, hotkeys: {characters: {}, cycle_next: '', cycle_prev: '', groups: [], group_by_character: {}, ...hotkeys},
+    enabled: true, hotkeys: {characters: {}, groups: [], ...hotkeys},
     roster: ['Alice', 'Bravo'], characters: ['Alice'], registration: {[gesture]: true},
     bookmark_chords: {active: [], latent: []}, locked: [], lock_default: false,
     never_minimize: [], excluded: [], sizes: {}, client_sizes: {}, layout_sources: [], sizable: [],
@@ -50,39 +50,37 @@ function message(owner) {
   render({characters: {Alice: gesture}}, {enabled: false, registration: {}, bookmark_chords: {active: [gesture], latent: []}});
   assert.match(message('character:Alice'), /bookmark may take this keybind/);
   // Character focus always precedes any cycle in host.plan_registrations.
-  render({characters: {Alice: gesture, Bravo: gesture}, cycle_next: gesture});
-  for (const owner of ['character:Alice', 'character:Bravo', 'cycle:next']) {
+  render({characters: {Alice: gesture, Bravo: gesture},
+    groups: [{id: 'g1', name: 'Fleet', cycle: gesture}]});
+  for (const owner of ['character:Alice', 'character:Bravo', 'group:g1']) {
     assert.match(message(owner), /Character focus takes priority; this keybind will not cycle/);
   }
-  assert.match(message('character:Alice'), /conflicts with All forward/);
-  assert.match(message('cycle:next'), /conflicts with Alice, Bravo/);
-  render({characters: {Bravo: gesture}, cycle_prev: gesture});
-  assert.match(message('cycle:prev'), /Character focus takes priority; this keybind will not cycle/,
-    'a non-excluded offline focus owner still precedes cycling');
-  // All forward, then All back, then named groups in configured order.
-  render({cycle_next: gesture, cycle_prev: gesture,
+  assert.match(message('group:g1'), /conflicts with Alice, Bravo/);
+  render({characters: {Bravo: gesture},
     groups: [{id: 'g1', name: 'Fleet', cycle: gesture}]});
-  for (const owner of ['cycle:next', 'cycle:prev', 'group:g1']) {
-    assert.match(message(owner), /All forward takes priority; the other cycle actions will not run/);
-    assert.equal(warning(owner).parentNode.querySelector('.bindbtn').title, message(owner),
-      'the tooltip must not contradict which cycle action wins');
-  }
-  render({cycle_prev: gesture, groups: [{id: 'g1', name: 'Fleet', cycle: gesture}]});
-  assert.match(message('group:g1'), /All back takes priority/);
+  assert.match(message('group:g1'), /Character focus takes priority; this keybind will not cycle/,
+    'a non-excluded offline focus owner still precedes cycling');
+  // Forward beats back within a group; stored order breaks group-vs-group ties.
+  render({groups: [{id: 'g1', name: 'Fleet', cycle: gesture},
+    {id: 'g2', name: 'Backup', cycle_prev: gesture}]});
+  assert.match(message('group-prev:g2'), /cycle group Fleet forward takes priority; the other cycle actions will not run/);
+  assert.equal(warning('group-prev:g2').parentNode.querySelector('.bindbtn').title, message('group-prev:g2'),
+    'the tooltip must not contradict which cycle action wins');
   render({groups: [{id: 'g2', name: 'Second', cycle: gesture}, {id: 'g1', name: 'First', cycle: gesture}]});
   assert.match(message('group:g1'), /cycle group Second forward takes priority/);
   // Same displayed label is not the same owner.
-  render({cycle_next: gesture, groups: [{id: 'g1', name: 'All forward', cycle: gesture}]});
-  assert.match(message('cycle:next'), /conflicts with cycle group All forward/);
+  render({groups: [{id: 'g1', name: 'Fleet', cycle: gesture}, {id: 'g2', name: 'Second', cycle: gesture}]});
+  assert.match(message('group:g2'), /conflicts with cycle group Fleet forward/);
   // Supported character sharing must not acquire a new conflict or lose its help.
   render({characters: {Alice: gesture, Bravo: gesture}});
   assert.equal(warning('character:Alice'), null);
   assert.equal(warning('character:Bravo'), null);
   assert.match(document.querySelector('[data-preview-configure="Alice"]').parentNode.querySelector('.bindbtn').title, /Shared with Bravo/);
   // Existing exclusion, latent, and refused-registration guards stay authoritative.
-  render({characters: {Alice: gesture}, cycle_next: gesture}, {excluded: ['Alice']});
+  render({characters: {Alice: gesture},
+    groups: [{id: 'g1', name: 'Fleet', cycle: gesture}]}, {excluded: ['Alice']});
   assert.equal(warning('character:Alice'), null);
-  assert.equal(warning('cycle:next'), null);
+  assert.equal(warning('group:g1'), null);
   render({characters: {Alice: gesture}}, {bookmark_chords: {active: [], latent: [gesture]}});
   assert.equal(warning('character:Alice'), null);
   render({characters: {Alice: gesture}}, {registration: {[gesture]: false}, bookmark_chords: {active: [gesture], latent: []}});

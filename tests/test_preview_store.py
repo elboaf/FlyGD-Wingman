@@ -36,8 +36,7 @@ def test_crop_owners_and_existing_protections_survive_roster_eviction(finish, tm
     )
     live["preview"]["hotkeys"].update(
         characters={"C59": "Ctrl+F1"},
-        groups=[{"id": "dps", "name": "DPS", "cycle": ""}],
-        group_by_character={"C61": "dps"},
+        groups=[{"id": "dps", "name": "DPS", "members": ["C61"], "cycle": ""}],
     )
     store = LayoutStore(lambda: settings.update(live, path), timer=FakeTimer)
     for i in range(10):
@@ -409,7 +408,9 @@ def test_a_group_assigned_character_is_protected_from_eviction():
             "seen": [f"C{i}" for i in range(64)],
             "hotkeys": {
                 "characters": {},
-                "group_by_character": {"C63": "dps"},
+                "groups": [
+                    {"id": "dps", "name": "DPS", "members": ["C63"], "cycle": ""}
+                ],
             },
         }
     }
@@ -435,7 +436,9 @@ def test_group_assignment_protection_survives_roster_cap_recovery():
             "seen": [f"C{i}" for i in range(64)],
             "hotkeys": {
                 "characters": {},
-                "group_by_character": {"C63": "dps"},
+                "groups": [
+                    {"id": "dps", "name": "DPS", "members": ["C63"], "cycle": ""}
+                ],
             },
             "excluded": [],
         }

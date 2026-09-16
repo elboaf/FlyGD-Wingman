@@ -3658,43 +3658,6 @@ def test_the_volume_slider_commits_on_change_not_on_input():
 # ---------------------------------------------------------------------------
 
 
-def test_group_select_does_not_add_row_appendchild():
-    """makeGroupSelect must never call row.appendChild -- that would add a
-    sixth grid cell and break the five-track layout.  The cell-count guard
-    (test_the_previews_grid_has_one_track_per_cell_makeRow_appends) reads
-    makeRow's `row.appendChild(` calls, so a row.appendChild inside
-    makeGroupSelect that is called from makeRow would silently inflate the
-    count even though the selector body is in a different function."""
-    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
-    assert "function makeGroupSelect" in src, (
-        "makeGroupSelect is not defined in previews.js"
-    )
-    body = src.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
-    assert "row.appendChild" not in body, (
-        "makeGroupSelect calls row.appendChild; that is a sixth grid cell "
-        "and breaks the five-track layout"
-    )
-
-
-def test_group_select_is_owned_by_the_character_detail():
-    """Assignment is an infrequent per-character setting, not a roster cell."""
-    body = _makerow_body()
-    assert "makeGroupSelect" not in body
-
-    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
-    detail = src.split("function makeCharacterDetail(", 1)[1].split("\n  function ", 1)[
-        0
-    ]
-    assert "groups().length" in detail
-    assert "makeGroupSelect(characterName)" in detail
-
-
-def test_group_select_is_styled_inside_the_detail_without_a_new_track():
-    """The detail preserves the five collapsed-row tracks."""
-    assert ".preview-character-detail .preview-group-select" in CSS
-    assert _preview_binds_cell_tracks() == 5
-
-
 def test_marker_control_is_named_and_configure_only():
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
     assert "makeMarkerSelect" not in _makerow_body()
@@ -3727,7 +3690,6 @@ def test_character_detail_and_conflict_span_the_preview_grid():
     detail = src.split("function makeCharacterDetail(", 1)[1].split("\n  function ", 1)[
         0
     ]
-    assert "makeGroupSelect" in detail
     assert "makeGeometryActions" in detail
 
     for selector in (".preview-character-detail", ".preview-bind-conflict"):
@@ -3757,7 +3719,7 @@ def test_character_conflict_is_inside_its_row_ahead_of_optional_detail():
     """Warnings leave the sticky edge before their owner, never after a detail."""
     js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
     append = js.split("function appendBindRow", 1)[1].split("function render()", 1)[0]
-    row = append.index("host.appendChild(makeRow")
+    row = append.index("host.appendChild(makeBindRow")
     detail = append.index("host.appendChild(makeCharacterDetail")
     assert row < detail
     assert "host.appendChild(conflict)" not in append
@@ -3796,9 +3758,11 @@ def test_bind_conflict_gets_a_stable_id_for_its_bind_button_to_reference():
     id_fn = js.split("function bindConflictId", 1)[1].split("\n  function ", 1)[0]
     assert "encodeURIComponent(ownerKey)" in id_fn
 
-    append = js.split("function appendBindRow", 1)[1].split("function render()", 1)[0]
-    assert "var ownerKey = character ? 'character:' + character : ownerKind;" in append
-    assert "conflict.id = bindConflictId(ownerKey)" in append
+    builder = js.split("function makeBindRow(", 1)[1].split(
+        "function appendBindRow", 1
+    )[0]
+    assert "var ownerKey = character ? 'character:' + character : ownerKind;" in builder
+    assert "conflict.id = bindConflictId(ownerKey)" in builder
 
 
 def test_cycle_owners_carry_a_stable_key_beside_their_rendered_text():
@@ -3811,11 +3775,7 @@ def test_cycle_owners_carry_a_stable_key_beside_their_rendered_text():
     """
     js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
     body = js.split("function cycleOwners(gesture)", 1)[1].split("\n  function ", 1)[0]
-    assert "key: 'cycle:next'" in body
-    assert "key: 'cycle:prev'" in body
     assert "key: 'group:' + group.id" in body
-    assert "text: 'All forward'" in body
-    assert "text: 'All back'" in body
     assert "text: 'cycle group ' + group.name" in body
 
 
@@ -3860,16 +3820,12 @@ def test_makebindconflict_filters_conflicting_owners_by_key_not_by_label():
 
 
 def test_bind_conflict_id_keys_off_owner_kind_not_display_label():
-    """A named group may legally be named exactly "All forward" or "All
-    back" -- create_preview_cycle_group and rename_preview_cycle_group only
-    enforce uniqueness among groups, never against the two fixed cycle
-    labels. A label-derived conflict id would then collide with the real
-    All-forward or All-back row's id, leaving aria-describedby pointing at
-    an ambiguous target. bindConflictId must therefore key off an explicit
-    owner kind supplied by each call site -- never off `label` at all --
-    and the fixed cycle rows and named-group rows must each pass a token
-    that cannot collide with the other kind's, whatever a group is named
-    or however its id is generated.
+    """A label-derived conflict id could collide across rows (a character
+    and a group are free to share a display label), leaving
+    aria-describedby pointing at an ambiguous target. bindConflictId must
+    therefore key off an explicit owner kind supplied by each call site --
+    never off `label` at all -- and a named-group row must pass a token
+    derived from its stable id, not its user-chosen name.
     """
     js = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
 
@@ -3882,17 +3838,8 @@ def test_bind_conflict_id_keys_off_owner_kind_not_display_label():
         "group sharing its exact label"
     )
 
-    # Each non-character row passes an explicit, fixed owner-kind token --
-    # not anything derived from `label` or `group.name` -- so a group
-    # named "All forward"/"All back" cannot alias the real cycle row.
-    assert "'cycle:next'" in js, (
-        "the All-forward row must pass a fixed owner-kind token distinct "
-        "from any group's own key"
-    )
-    assert "'cycle:prev'" in js, (
-        "the All-back row must pass a fixed owner-kind token distinct "
-        "from any group's own key"
-    )
+    # Each non-character row passes an explicit owner-kind token -- not
+    # anything derived from `label` or `group.name`.
     assert "'group:' + group.id" in js, (
         "a named-group row must key off its own stable group.id, not its "
         "user-chosen (and therefore collidable) group.name"
@@ -3914,18 +3861,18 @@ def test_bind_row_button_references_its_conflict_via_aria_describedby():
     assert "if (conflict) {" in body
     assert "button.setAttribute('aria-describedby', conflict.id)" in body
 
-    append = (
+    builder = (
         _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
-        .split("function appendBindRow", 1)[1]
-        .split("function render()", 1)[0]
+        .split("function makeBindRow(", 1)[1]
+        .split("function appendBindRow", 1)[0]
     )
-    conflict_computed = append.index("var conflict = makeBindConflict(")
-    row_built = append.index("host.appendChild(makeRow")
+    conflict_computed = builder.index("var conflict = makeBindConflict(")
+    row_built = builder.index("return makeRow(")
     assert conflict_computed < row_built, (
         "the conflict element must exist before makeRow builds the button "
         "that references its id"
     )
-    assert "makeRow(label, gesture, online, onSet, character, conflict)" in append
+    assert "makeRow(label, gesture, online, onSet, character, conflict)" in builder
 
 
 def test_geometry_focus_intent_is_scoped_to_the_copy_refresh():
@@ -4063,22 +4010,22 @@ def test_group_manager_css_does_not_apply_sticky_positioning():
         )
 
 
-def test_rows_includes_group_by_character_keys():
-    """Finding #3: rows() must include every key in
-    hotkeys.group_by_character so persisted offline assignments always
-    have a select that can clear them."""
+def test_rows_includes_cycle_group_members():
+    """Membership is a group's own ordered list now; a member with no
+    running/seen/bind entry still needs a row -- offline membership stays
+    editable and visible (design \u00a76)."""
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
     block = src.split("function rows()", 1)[1].split("function sharers", 1)[0]
-    assert "group_by_character" in block, (
-        "rows() does not consult hotkeys.group_by_character; a character with "
-        "a persisted assignment but no running/seen/bind entry has no row and "
-        "no way to clear the assignment"
+    assert "g.members" in block, (
+        "rows() does not consult the groups' member lists; a character whose "
+        "only record is a group membership would have no row and no way to "
+        "remove or reorder it while offline"
     )
 
 
 def test_every_group_mutation_handler_has_synchronous_busy_guard():
-    """Finding #4: setGroupBind, makeGroupSelect's change handler, doAdd,
-    renameGroup, and deleteGroup must all check `if (groupBusy) { return; }`
+    """Finding #4: setGroupBind, setCycleGroupMembers, doAdd, renameGroup,
+    and deleteGroup must all check `if (groupBusy) { return; }`
     synchronously before sending anything, so a second click during capture
     cannot submit twice."""
     src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
@@ -4089,10 +4036,12 @@ def test_every_group_mutation_handler_has_synchronous_busy_guard():
         "setGroupBind lacks a synchronous groupBusy early-return guard"
     )
 
-    # makeGroupSelect's change handler
-    sel_block = src.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
-    assert re.search(r"if\s*\(\s*groupBusy\s*\)\s*\{?\s*return", sel_block), (
-        "makeGroupSelect change handler lacks a synchronous groupBusy guard"
+    # setCycleGroupMembers (the card's member add/remove/reorder endpoint)
+    mem_block = src.split("function setCycleGroupMembers", 1)[1].split(
+        "\n  function ", 1
+    )[0]
+    assert re.search(r"if\s*\(\s*groupBusy\s*\)\s*\{?\s*return", mem_block), (
+        "setCycleGroupMembers lacks a synchronous groupBusy early-return guard"
     )
 
     # doAdd inside makeGroupManager
@@ -4114,15 +4063,6 @@ def test_every_group_mutation_handler_has_synchronous_busy_guard():
     assert re.search(r"if\s*\(\s*groupBusy\s*\)\s*\{?\s*return", del_block), (
         "deleteGroup lacks a synchronous groupBusy early-return guard"
     )
-
-
-def test_group_focus_restoration_delegates_to_the_current_detail_intent():
-    """A group response must never independently focus a closed detail."""
-    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
-    block = src.split("function focusGroupSelect", 1)[1].split("\n  function ", 1)[0]
-    assert "detailFocusIntent.name !== characterName" in block
-    assert "restoreDetailFocus()" in block
-    assert "querySelector" not in block
 
 
 def test_refusal_handler_applies_authoritative_hotkeys_on_generation_match():
@@ -4196,46 +4136,6 @@ def _extract_refusal_arm(block):
     after = block.split("!res.applied", 1)[1]
     arm, _, _ = after.partition("return;")
     return arm
-
-
-def test_assignment_refusal_applies_authoritative_hotkeys():
-    """Fix wave 2 - makeGroupSelect's refusal branch must apply res.hotkeys to
-    state.hotkeys when res.hotkeys is present and no newer push has landed
-    (generation/before guard).  Without this, a refused assignment leaves the
-    page showing stale group membership until the next refresh() round-trip.
-
-    The branch must still clear groupBusy (unconditionally, before any return),
-    call requestRender(), and restore focus via focusGroupSelect().
-    """
-    src = _strip_js_comments((WEB / "previews.js").read_text(encoding="utf-8"))
-    # Isolate makeGroupSelect's then-callback
-    ms_block = src.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
-    refusal_arm = _extract_refusal_arm(ms_block)
-
-    # Must apply res.hotkeys under a generation/before guard
-    has_hotkeys_assign = "res.hotkeys" in refusal_arm and "state.hotkeys" in refusal_arm
-    has_generation_guard = "pushes" in refusal_arm and "before" in refusal_arm
-    assert has_hotkeys_assign, (
-        "makeGroupSelect refusal arm does not assign res.hotkeys to state.hotkeys; "
-        "the authoritative table must be applied on generation match to avoid a "
-        "stale-group round-trip"
-    )
-    assert has_generation_guard, (
-        "makeGroupSelect refusal arm applies res.hotkeys without a generation "
-        "guard (pushes !== before check); a newer push's table would be "
-        "overwritten by the stale response"
-    )
-
-    # Cleanup must be unconditional: groupBusy=false, requestRender, focus
-    assert "groupBusy = false" in ms_block, (
-        "makeGroupSelect callback does not reset groupBusy; busy lock leaks"
-    )
-    assert "requestRender()" in ms_block, (
-        "makeGroupSelect refusal arm does not call requestRender()"
-    )
-    assert "focusGroupSelect" in ms_block, (
-        "makeGroupSelect refusal arm does not restore focus via focusGroupSelect"
-    )
 
 
 def test_add_refusal_applies_authoritative_hotkeys():

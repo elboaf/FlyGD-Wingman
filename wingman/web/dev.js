@@ -2755,7 +2755,17 @@
     "lock_default": false,
     "never_minimize": ["Tanuki Solette"],
     "excluded": ["Sera Vahn"],
-"layout_sources": [
+    "geometry_revision": 1,
+    "layout_state": {"revision": 1, "layouts": [], "owners": [
+      "Aiga Otsolen", "Zuelo Parvi", "Corvin Veles", "Tanuki Solette",
+      "Aleksandrina Shadowbanes Voidstriders", "Mara Veld", "Niko Avar",
+      "Sera Vahn", "Dorin Kalt", "Iria Sol", "Vex Noren", "Yara Tolen"
+    ], "excluded": ["Sera Vahn"], "busy": false,
+      "availability": {"capture": true, "edit": true, "visibility": true}, "operation": null},
+    "sizes": {"Aiga Otsolen": [1280, 720]},
+    "client_sizes": {"Aiga Otsolen": [1920, 1080], "Zuelo Parvi": [1600, 900]},
+    "sizable": ["Aiga Otsolen", "Zuelo Parvi", "Corvin Veles", "Tanuki Solette", "Mara Veld"],
+    "layout_sources": [
       {"name": "Aiga Otsolen", "online": true, "geometry": {"x": 24, "y": 48, "w": 1280, "h": 720}},
       {"name": "Tanuki Solette", "online": false, "geometry": {"x": -400, "y": 48, "w": 320, "h": 210}}
     ],

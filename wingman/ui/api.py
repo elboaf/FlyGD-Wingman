@@ -5266,9 +5266,7 @@ class Api:
         if not isinstance(members, list):
             with self._preview_hotkey_lock:
                 current = self._preview_hotkeys()
-            return self._preview_group_result(
-                False, "members must be a list", current
-            )
+            return self._preview_group_result(False, "members must be a list", current)
         clean: list = []
         for name in members:
             if not self._usable_preview_character(name):
