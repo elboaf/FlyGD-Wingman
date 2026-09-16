@@ -2415,6 +2415,228 @@
 // instead of a hand-typed copy that drifts. Presets iterate the same
 // table, so a new preset appears in dev by regenerating, not editing.
   var DEV_THEMES = {
+  "carls-jr": {
+    "roles": {
+      "--bg": "#0a0a0a",
+      "--panel": "#1a1a1a",
+      "--panel-border": "#2e2e2e",
+      "--field": "#050505",
+      "--field-border": "#303030",
+      "--text": "#f5f0e6",
+      "--text-dim": "#c9c4b8",
+      "--text-faint": "#98948a",
+      "--text-label": "#a5a196",
+      "--text-btn": "#d9d4c8",
+      "--brand": "#f7a800",
+      "--brand-deep": "#6b4700",
+      "--brand-text": "#ffc133",
+      "--acc-top": "#f7a800",
+      "--acc-bottom": "#d18e00",
+      "--brand-edge": "#ffc133",
+      "--focus-ring": "#ffc133",
+      "--ok": "#74c241",
+      "--warn": "#f7a800",
+      "--err": "#f0444f",
+      "--danger": "#f0444f",
+      "--danger-solid": "#b8122c",
+      "--unmet": "#f0a263",
+      "--training": "#45c8d4",
+      "--link": "#7aa2f7",
+      "--card-top": "#202020",
+      "--sunken": "#0b0b0b",
+      "--titlebar-top": "#1f1f1f",
+      "--titlebar-bottom": "#121212",
+      "--titlebar-inset": "#303030",
+      "--statusbar-top": "#171717",
+      "--statusbar-bottom": "#0e0e0e",
+      "--wash-top": "#1c1508",
+      "--wash-bottom": "#1a0a10",
+      "--hover": "#3a3a3a",
+      "--control": "#242424",
+      "--control-border": "#383838",
+      "--control-hover": "#303030",
+      "--control-edge": "#94908a",
+      "--field-focus-border": "#3e3e3e",
+      "--scrollbar": "#2b2b2b",
+      "--scrollbar-hover": "#3b3b3b",
+      "--fleet-incoming-threat": "#d19700",
+      "--row-line": "#202020",
+      "--row-hover": "#1c1c1c",
+      "--row-active": "#232323",
+      "--row-ring": "#343434",
+      "--row-ring-focus": "#4b4b4b"
+    },
+    "swatches": [
+      {
+        "name": "Char Black",
+        "hex": "#1a1a1a",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Char Gray",
+        "hex": "#2e2e2e",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Patty Brown",
+        "hex": "#6b3a1f",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Charbroil Red Dark",
+        "hex": "#b8122c",
+        "families": [
+          "surface",
+          "danger"
+        ]
+      },
+      {
+        "name": "Char Black Deep",
+        "hex": "#0a0a0a",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Cola Caramel",
+        "hex": "#3d1f0a",
+        "families": [
+          "base",
+          "surface"
+        ]
+      },
+      {
+        "name": "Diner White",
+        "hex": "#f5f0e6",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Diner White Dim",
+        "hex": "#c9c4b8",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Bun Tan",
+        "hex": "#e8c99b",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Milkshake Cream",
+        "hex": "#fff4dc",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Star Yellow",
+        "hex": "#f7a800",
+        "families": [
+          "text",
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Star Bright",
+        "hex": "#ffc133",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Cheese Orange",
+        "hex": "#ff8a1f",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Chrome Silver",
+        "hex": "#c8c8d0",
+        "families": [
+          "text",
+          "accent"
+        ]
+      },
+      {
+        "name": "Lettuce Green",
+        "hex": "#5fa832",
+        "families": [
+          "success"
+        ]
+      },
+      {
+        "name": "Charbroil Red",
+        "hex": "#e31837",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Charbroil Deep",
+        "hex": "#8a0d20",
+        "families": [
+          "danger"
+        ]
+      }
+    ],
+    "legal": {
+      "surface": [
+        "#1a1a1a",
+        "#2e2e2e",
+        "#6b3a1f",
+        "#b8122c",
+        "#3d1f0a"
+      ],
+      "base": [
+        "#0a0a0a",
+        "#3d1f0a"
+      ],
+      "text": [
+        "#f5f0e6",
+        "#c9c4b8",
+        "#e8c99b",
+        "#fff4dc",
+        "#f7a800",
+        "#c8c8d0"
+      ],
+      "accent": [
+        "#f7a800",
+        "#ffc133",
+        "#ff8a1f",
+        "#c8c8d0",
+        "#e31837"
+      ],
+      "danger": [
+        "#b8122c",
+        "#e31837",
+        "#8a0d20"
+      ],
+      "success": [
+        "#5fa832"
+      ],
+      "warning": [
+        "#f7a800",
+        "#ffc133",
+        "#ff8a1f"
+      ]
+    }
+  },
   "brawndo": {
     "roles": {
       "--bg": "#050505",
@@ -4348,7 +4570,7 @@
     }
   }
 };
-  var DEV_THEME_PRESETS = [{id: 'brawndo', name: 'Brawndo: Thirst Mutilator'}, {id: 'purple-cobras', name: 'Purple Cobras'}, {id: 'merica', name: 'Merica'}, {id: 'idiocracy', name: 'Idiocracy'}, {id: 'ron-burgundy', name: 'Ron Burgundy'}, {id: 'dodgeball', name: 'Dodgeball'}, {id: 'tropic-thunder', name: 'Tropic Thunder'}, {id: 'wingman-dark', name: 'Wingman Dark'}, {id: 'zoolander', name: 'Zoolander'}];
+  var DEV_THEME_PRESETS = [{id: 'carls-jr', name: "Carl's Jr"}, {id: 'brawndo', name: 'Brawndo: Thirst Mutilator'}, {id: 'purple-cobras', name: 'Purple Cobras'}, {id: 'merica', name: 'Merica'}, {id: 'idiocracy', name: 'Idiocracy'}, {id: 'ron-burgundy', name: 'Ron Burgundy'}, {id: 'dodgeball', name: 'Dodgeball'}, {id: 'tropic-thunder', name: 'Tropic Thunder'}, {id: 'wingman-dark', name: 'Wingman Dark'}, {id: 'zoolander', name: 'Zoolander'}];
   var DEV_THEME_LABELS = {"surface": "Panels & controls", "base": "App background", "text": "Text", "accent": "Accent", "danger": "Danger", "success": "Success", "warning": "Warning"};
   var DEV_THEME_DESCRIPTIONS = {"surface": "Cards, buttons, fields, scrollbars and the row highlights \u2014 most of the window's chrome.", "base": "The page behind everything: the app backdrop, text field wells, recessed bands and list rows.", "text": "Every piece of text \u2014 headings, body, labels and hints \u2014 at the preset's brightness steps, whatever hue you choose.", "accent": "The Upload button, focused fields, ticks and glows: the app's one call-to-action colour.", "danger": "Delete buttons and destructive hovers \u2014 the colour that must never be mistaken for the accent.", "success": "Green status marks, like the Ready rungs on the Skills roster.", "warning": "Amber status marks \u2014 plan problems and the Fleet Bar's incoming-threat tint."};
   var devTheme = { preset: 'wingman-dark', families: {} };

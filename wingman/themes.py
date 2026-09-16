@@ -357,6 +357,57 @@ WINGMAN_DARK_ROLES = {
     "--row-ring-focus": "#554e65",
 }
 
+CARLS_JR_ROLES = {
+    "--bg": "#0a0a0a",
+    "--panel": "#1a1a1a",
+    "--panel-border": "#2e2e2e",
+    "--field": "#050505",
+    "--field-border": "#303030",
+    "--text": "#f5f0e6",
+    "--text-dim": "#c9c4b8",
+    "--text-faint": "#98948a",
+    "--text-label": "#a5a196",
+    "--text-btn": "#d9d4c8",
+    "--brand": "#f7a800",
+    "--brand-deep": "#6b4700",
+    "--brand-text": "#ffc133",
+    "--acc-top": "#f7a800",
+    "--acc-bottom": "#d18e00",
+    "--brand-edge": "#ffc133",
+    "--focus-ring": "#ffc133",
+    "--ok": "#74c241",
+    "--warn": "#f7a800",
+    "--err": "#f0444f",
+    "--danger": "#f0444f",
+    "--danger-solid": "#b8122c",
+    "--unmet": "#f0a263",
+    "--training": "#45c8d4",
+    "--link": "#7aa2f7",
+    "--card-top": "#202020",
+    "--sunken": "#0b0b0b",
+    "--titlebar-top": "#1f1f1f",
+    "--titlebar-bottom": "#121212",
+    "--titlebar-inset": "#303030",
+    "--statusbar-top": "#171717",
+    "--statusbar-bottom": "#0e0e0e",
+    "--wash-top": "#1c1508",
+    "--wash-bottom": "#1a0a10",
+    "--hover": "#3a3a3a",
+    "--control": "#242424",
+    "--control-border": "#383838",
+    "--control-hover": "#303030",
+    "--control-edge": "#94908a",
+    "--field-focus-border": "#3e3e3e",
+    "--scrollbar": "#2b2b2b",
+    "--scrollbar-hover": "#3b3b3b",
+    "--fleet-incoming-threat": "#d19700",
+    "--row-line": "#202020",
+    "--row-hover": "#1c1c1c",
+    "--row-active": "#232323",
+    "--row-ring": "#343434",
+    "--row-ring-focus": "#4b4b4b",
+}
+
 BRAWNDO_ROLES = {
     "--bg": "#050505",
     "--panel": "#141414",
@@ -766,6 +817,38 @@ ZOOLANDER_ROLES = {
 }
 
 PRESETS = {
+    "carls-jr": _preset(
+        "carls-jr",
+        "Carl's Jr",
+        CARLS_JR_ROLES,
+        [
+            # Char-black grill surfaces; Patty Brown and Charbroil Red
+            # Dark let a user tint the kitchen warmer. Star Yellow owns
+            # the accent slot -- the star logo, the focus ring, the
+            # Order Now flame -- because Charbroil Red is cast as BOTH
+            # primary and danger. Warning stays faithful Star Yellow,
+            # the Brawndo-style deliberate hue-share.
+            ("Char Black", "#1a1a1a", ["surface"]),
+            ("Char Gray", "#2e2e2e", ["surface"]),
+            ("Patty Brown", "#6b3a1f", ["surface"]),
+            ("Charbroil Red Dark", "#b8122c", ["surface", "danger"]),
+            ("Char Black Deep", "#0a0a0a", ["base"]),
+            ("Cola Caramel", "#3d1f0a", ["base", "surface"]),
+            ("Diner White", "#f5f0e6", ["text"]),
+            ("Diner White Dim", "#c9c4b8", ["text"]),
+            ("Bun Tan", "#e8c99b", ["text"]),
+            ("Milkshake Cream", "#fff4dc", ["text"]),
+            ("Star Yellow", "#f7a800", ["text", "accent", "warning"]),
+            ("Star Bright", "#ffc133", ["accent", "warning"]),
+            ("Cheese Orange", "#ff8a1f", ["accent", "warning"]),
+            ("Chrome Silver", "#c8c8d0", ["text", "accent"]),
+            ("Lettuce Green", "#5fa832", ["success"]),
+            ("Charbroil Red", "#e31837", ["accent", "danger"]),
+            ("Charbroil Deep", "#8a0d20", ["danger"]),
+        ],
+        "#0a0a0a",
+        "#ffffff",
+    ),
     "brawndo": _preset(
         "brawndo",
         "Brawndo: Thirst Mutilator",
