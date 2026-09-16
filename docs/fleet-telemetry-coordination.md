@@ -201,8 +201,19 @@ has a cross-worktree 3987/3988 lifecycle-test collision; serialize those runs.
 Inventory/proposed allocations are retained in `test-isolation-inventory.md`; no
 authGD test resources or schemas have been changed by this preparation.
 
-Fresh full Wingman coordinator baseline is running under `970328d7-0dee-458`, with
-checkout-local native codec prerequisites. Its result remains pending.
+Fresh full Wingman coordinator baseline completed under `970328d7-0dee-458`:
+13,382 passed, 13 expected Windows-only skips in 478.69s; Cargo 1 passed; Ruff lint
+and format passed (460 files). Native release codec was built/installed in this
+checkout. The coordinator independently parsed JUnit and confirmed the source/test
+contents remain identical to tested `02642242`; later coordinator commits are docs.
+Logs and exact commands are in `baseline-report.md` and sibling baseline artifacts.
+
+Local core worktree: `/mnt/c/dev/flygd-wingman/.worktrees/fleet-combat-model`, branch
+`feat/fleet-combat-model`, based on `4db10294`. Task 1 is committed as `10271167`
+and independently spec/quality approved with no findings (35 new cases; 185 focused
+passes). Task 2 row-activity/lifetime production is running under
+`7abdd9d7-5f2b-4ec`. This partial core is not the completed model or a release.
+Its task ledger lives in that worktree's `.superpowers/sdd/fleet-combat-model-core-plan/`.
 
 Do not let shared-contract checks block independent approved model work, but do
 not implement assumptions inside the six unresolved shared-contract findings.
