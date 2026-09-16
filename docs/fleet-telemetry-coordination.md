@@ -1,6 +1,6 @@
 # Fleet telemetry remaining-work coordination
 
-Status: local-model core and shared profile/name foundation integrated and verified. All six shared-contract findings are addressed; independent re-review is READY. Session 1 is authorized for remaining local-model work. Wire/schema, transport, automatic verification and presentation remain to implement; no rollout is authorized.
+Status: shared profile/name foundation and complete local combat model integrated and verified. All six shared-contract findings are addressed; independent re-review is READY. Session 1's foundation/model assignment is complete. Wire/schema, transport, automatic verification and presentation remain to implement; no rollout is authorized.
 
 ## Authority and bases
 
@@ -75,7 +75,7 @@ remain coordinator/user decisions after review.
 | --- | --- | --- | --- |
 | C — shared contract | Required combat/age contract, schema needs, rejection/cutover matrix | Both protocol/transport layers and authGD relay/schema | Reviewed contract READY: `cd2c7b2e-2623-4db`; all six findings addressed, required v2 boundary pinned |
 | A — automatic verification | Persistent consent/source lifecycle, current-client Off/Stop, worker/recovery and test ownership | authGD lifecycle/jobs/routes; Wingman control boundary | Reviewed automatic/control contract and six-slice plan; implementation awaits shared foundation |
-| M — client combat model | Local activity and independent EWAR attribution model, preserved Alert behavior, snapshot/projection interfaces | Wingman telemetry and consumers | Core Tasks 1/4 complete; profile foundation accepted and integrated; remaining names/carry/effects work authorized |
+| M — client combat model | Local activity and independent EWAR attribution model, preserved Alert behavior, snapshot/projection interfaces | Wingman telemetry and consumers | All local-model tasks complete: foundation and names/carry/independent effects accepted and integrated |
 | U — presentation/setup | UI/bridge ownership and minimal setup flow, empty/stale/update-required states and UI checks | Wingman Fleet Bar/settings and authGD setup pages | Initial proposal retained as evidence; its legacy-UI promises are superseded |
 
 These passes inspect and propose only. They do not independently implement new
@@ -239,6 +239,13 @@ integrated in both repositories. See the [dependency checkpoint](fleet-telemetry
 for provenance, interface ruling, fresh verification and Phase B authorization.
 This does not complete wire DTO/codec or schema foundation work.
 
+Phase B subsequently completed Tasks 2/3/5, including the final complete-framing
+correction. The [local-model checkpoint](fleet-telemetry-model-verification.md)
+records all four source/integration commits, independent audit acceptance, verified
+corrected full-suite evidence and 1,253 fresh integration passes. Existing lifetime
+and row-activity authorities remain; the old shared EWAR hold is now replaced by
+independent observations. Session 1's original branch remains preserved.
+
 Test-isolation inventory `5bcf9178-32f5-42d` found the shared default port 5433 is
 owned by another development container. Do not use or alter it blindly. Separate
 explicit test resources must be allocated before authGD DB tests. Full Vitest also
@@ -270,8 +277,9 @@ The model worktree and `.superpowers/sdd/fleet-combat-model-core-plan/` evidence
 remain available. This core did not apply the six shared-contract findings; their
 newly authorized remediation is tracked separately in `findings-resolution-ledger.md`.
 
-Next: Session 1 executes remaining local-model Tasks 2/3/5 on its existing branch;
-backend and transport lanes consume the accepted profile checkpoint. Assign remaining
-wire/schema ownership without recreating the completed model core or profile helpers. Real persistence/transaction,
+Next: backend and transport lanes consume the accepted profile and complete model
+checkpoints in parallel, with one schema/migration owner and serialized shared
+integration wiring. Do not recreate model/core/profile work. Session 1's assignment
+is complete; UI work requires a new bounded ownership/interface brief. Real persistence/transaction,
 clock/suspend, large-response resource, browser and two-PC gates remain required;
 closed contracts are not proof that those implementations already exist.
