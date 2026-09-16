@@ -106,6 +106,13 @@ _INCOMING_NEUT_RE = re.compile(
 # Anchor the action and its source preposition too: the permissive Alert source
 # search can skip malformed outer markup and find a clean fragment inside a name.
 # Timestamp text may be malformed, but cannot swallow markup or another frame.
+# Also consume the complete target through the line end. A "to" lookahead can
+# accept an injected name prefix, even before a complete fake named target that
+# passes the legacy victim gate at its first ticker. With no extra markup in
+# source/target text, this is the same sole target that legacy admission reads.
+# Targets use player_scramble's "you!", npc_scramble's decorated pilot/ticker/hull,
+# or the plain named rendering covered by the stream's named-victim regression.
+# Permit one line ending: the stream splits on LF and can leave Windows' CR.
 _OBSERVED_NAME_RE = re.compile(
     r"\A(?:\[[^\[\]<>\r\n]*\] )?\(combat\) <color=0xffffffff><b>"
     r"Warp (?:scramble attempt|disruption (?:attempt|zone))</b> "
@@ -113,7 +120,15 @@ _OBSERVED_NAME_RE = re.compile(
     r"<color=0xffffffff><b><color=0xffffffff><fontsize=12>"
     r"(?P<name>[^<>\[\]]*) \[[^<>\[\]\s]+(?: [^<>\[\]\s]+)*\]</color>"
     r"<color=0xfff0f000> [^<>\s]+(?: [^<>\s]+)*</color>"
-    r"<color=0xffffffff></b>(?= <color=0x77ffffff><font size=10>to\b)",
+    r"<color=0xffffffff></b> <color=0x77ffffff><font size=10>to <b>"
+    r"<color=0xffffffff></font>"
+    r"(?:you!|"
+    r"<color=0xffffffff><fontsize=12>[^<>\[\]\s]+(?: [^<>\[\]\s]+)* "
+    r"\[[^<>\[\]\s]+(?: [^<>\[\]\s]+)*\]</color>"
+    r"<color=0xfff0f000> [^<>\[\]\s]+(?: [^<>\[\]\s]+)*</color><color=0xffffffff>|"
+    r"[^<>\[\]\s]+(?: [^<>\[\]\s]+)* \[[^<>\[\]\s]+(?: [^<>\[\]\s]+)*\] "
+    r"[^<>\[\]\s]+(?: [^<>\[\]\s]+)*)"
+    r"(?:\r?\n|\r)?\Z",
     re.IGNORECASE,
 )
 

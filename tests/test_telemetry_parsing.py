@@ -258,6 +258,128 @@ def test_malformed_outer_source_cannot_harvest_clean_nested_name():
     assert fact.observed_name is None
 
 
+@pytest.mark.parametrize(
+    "target_form, expected_target",
+    [
+        ("preposition_only", "you!"),
+        (
+            "plain_named",
+            "Torvin Wexley [OXWLD] Drekavac [KVOS] Taranis to you!",
+        ),
+        (
+            "decorated_named",
+            "Torvin Wexley [OXWLD] Drekavac [KVOS] Taranis to you!",
+        ),
+    ],
+)
+def test_source_cannot_harvest_clean_prefix_before_fake_target(
+    target_form, expected_target
+):
+    fake_target = ""
+    if target_form == "plain_named":
+        _, target_line = _fixture("player_scramble.txt")
+        fake_target = target_line.split("<font size=10>to", 1)[1].replace(
+            "you!", "Torvin Wexley [OXWLD] Drekavac"
+        )
+    elif target_form == "decorated_named":
+        _, target_line = _fixture("npc_scramble.txt")
+        fake_target = target_line.split("<font size=10>to", 1)[1]
+    who, line = _tackle_with_name(
+        "Prefix [FAKE]</color><color=0xfff0f000> Hull</color>"
+        "<color=0xffffffff></b> <color=0x77ffffff><font size=10>to" + fake_target
+    )
+
+    parsed = parsing.parse_line(line, who)
+    (fact,) = parsed.facts
+    assert fact.kind == "incoming_scram"
+    assert fact.amount is None
+    assert fact.target == expected_target
+    assert parsed.occurred_at == datetime.datetime(2025, 11, 14, 6, 41, 8, tzinfo=UTC)
+    assert parsed.timestamp_error is None
+    # The complete fake named targets still pass legacy victim admission at
+    # their first ticker. Neither that nor a lone "to" proves a whole source.
+    assert fact.source.encode("utf-8") == b"Prefix [FAKE] Hull"
+    assert patterns.match_line(line, who) == patterns.Match(
+        "warp_scramble", "Prefix [FAKE] Hull"
+    )
+    assert patterns.is_likely_npc(fact.source) is False
+    assert fact.observed_name is None
+
+
+@pytest.mark.parametrize("target_form", ["you", "plain_named", "decorated_named"])
+@pytest.mark.parametrize("ending", ["", "\n", "\r\n", "\r"])
+def test_complete_supported_target_preserves_name(target_form, ending):
+    who, line = _tackle_with_name("Talia Renn")
+    target = expected_target = "you!"
+    if target_form != "you":
+        target = expected_target = "Torvin Wexley [OXWLD] Drekavac"
+    if target_form == "decorated_named":
+        _, target_line = _fixture("npc_scramble.txt")
+        target = target_line.split("</font>")[-1]
+    line = line.removesuffix("you!") + target + ending
+    (fact,) = parsing.parse_line(line, who).facts
+    assert fact.kind == "incoming_scram"
+    assert fact.target == expected_target
+    assert fact.source.encode("utf-8") == b"Talia Renn [KVOS] Taranis"
+    assert patterns.match_line(line, who) == patterns.Match(
+        "warp_scramble", "Talia Renn [KVOS] Taranis"
+    )
+    assert fact.observed_name == "Talia Renn"
+
+
+@pytest.mark.parametrize(
+    "old, replacement",
+    [
+        ("to <b>", "to <b><i></i>"),
+        ("<color=0xffffffff></font>you!", "<color=0xffffffff>you!"),
+        ("to <b><color=0xffffffff></font>you!", "to <b>you!"),
+        ("you!", "<i>you!</i>"),
+        ("you!", "you!</b>"),
+        ("you!", "you!<font size=10>"),
+    ],
+)
+def test_malformed_target_framing_keeps_legacy_tackle_unnamed(old, replacement):
+    who, line = _tackle_with_name("Talia Renn")
+    line = line.replace(old, replacement)
+    (fact,) = parsing.parse_line(line, who).facts
+    assert fact.kind == "incoming_scram"
+    assert fact.target == "you!"
+    assert fact.source.encode("utf-8") == b"Talia Renn [KVOS] Taranis"
+    assert patterns.match_line(line, who) == patterns.Match(
+        "warp_scramble", "Talia Renn [KVOS] Taranis"
+    )
+    assert fact.observed_name is None
+
+
+@pytest.mark.parametrize("decorated", [False, True])
+@pytest.mark.parametrize(
+    "remainder, expected_suffix",
+    [
+        (" [EXTRA] Hull", " [EXTRA] Hull"),
+        ("</b>", ""),
+        ("<font size=10>", ""),
+        ("\nextra", " extra"),
+    ],
+)
+def test_named_target_remainder_cannot_leave_clean_source_accepted(
+    decorated, remainder, expected_suffix
+):
+    who, line = _tackle_with_name("Talia Renn")
+    target = "Torvin Wexley [OXWLD] Drekavac"
+    if decorated:
+        _, target_line = _fixture("npc_scramble.txt")
+        target = target_line.split("</font>")[-1]
+    line = line.removesuffix("you!") + target + remainder
+    (fact,) = parsing.parse_line(line, who).facts
+    assert fact.kind == "incoming_scram"
+    assert fact.target == "Torvin Wexley [OXWLD] Drekavac" + expected_suffix
+    assert fact.source.encode("utf-8") == b"Talia Renn [KVOS] Taranis"
+    assert patterns.match_line(line, who) == patterns.Match(
+        "warp_scramble", "Talia Renn [KVOS] Taranis"
+    )
+    assert fact.observed_name is None
+
+
 @pytest.mark.parametrize("prefix", ["broken ", "<font size=10>from</font "])
 def test_observed_name_does_not_skip_unverified_leading_frame(prefix):
     who, line = _tackle_with_name("Talia Renn")
