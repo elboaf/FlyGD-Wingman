@@ -357,6 +357,57 @@ WINGMAN_DARK_ROLES = {
     "--row-ring-focus": "#554e65",
 }
 
+MERICA_ROLES = {
+    "--bg": "#050f22",
+    "--panel": "#0a1e3f",
+    "--panel-border": "#14264a",
+    "--field": "#03080f",
+    "--field-border": "#1e3055",
+    "--text": "#ffffff",
+    "--text-dim": "#c9c9d4",
+    "--text-faint": "#a0a0ac",
+    "--text-label": "#a8a8b4",
+    "--text-btn": "#d4d4de",
+    "--brand": "#c5a253",
+    "--brand-deep": "#5c4a20",
+    "--brand-text": "#d4b062",
+    "--acc-top": "#c5a253",
+    "--acc-bottom": "#a8873e",
+    "--brand-edge": "#e0bc70",
+    "--focus-ring": "#e0bc70",
+    "--ok": "#6f9e55",
+    "--warn": "#ffd23f",
+    "--err": "#e04a55",
+    "--danger": "#e04a55",
+    "--danger-solid": "#8b1a28",
+    "--unmet": "#e08a5a",
+    "--training": "#45c8d4",
+    "--link": "#7aa2f7",
+    "--card-top": "#0d2348",
+    "--sunken": "#040a18",
+    "--titlebar-top": "#10234a",
+    "--titlebar-bottom": "#081228",
+    "--titlebar-inset": "#1a3055",
+    "--statusbar-top": "#0c1d3c",
+    "--statusbar-bottom": "#060f20",
+    "--wash-top": "#122050",
+    "--wash-bottom": "#0a1230",
+    "--hover": "#16295a",
+    "--control": "#112244",
+    "--control-border": "#1e3260",
+    "--control-hover": "#182c5c",
+    "--control-edge": "#8c90a8",
+    "--field-focus-border": "#24386a",
+    "--scrollbar": "#17275a",
+    "--scrollbar-hover": "#22336a",
+    "--fleet-incoming-threat": "#c5a253",
+    "--row-line": "#0d2044",
+    "--row-hover": "#0b1c3c",
+    "--row-active": "#10244a",
+    "--row-ring": "#1c3260",
+    "--row-ring-focus": "#2c4478",
+}
+
 IDIOCRACY_ROLES = {
     "--bg": "#0a0a0a",
     "--panel": "#141414",
@@ -613,6 +664,35 @@ ZOOLANDER_ROLES = {
 }
 
 PRESETS = {
+    "merica": _preset(
+        "merica",
+        "Merica",
+        MERICA_ROLES,
+        [
+            # Navy field surfaces; Old Glory Red Dark, Liberty Teal and
+            # Field Green let a user tint the flag toward one stripe.
+            # Eagle Gold owns the accent slot -- the template's own
+            # "Launch Freedom" CTA and focus colour -- because Old Glory
+            # Red is cast as BOTH primary and danger, and this app cannot
+            # have Upload and Delete in one colour.
+            ("Navy", "#0a1e3f", ["surface"]),
+            ("Old Glory Blue Dark", "#2a2950", ["surface"]),
+            ("Liberty Teal", "#1f6f6b", ["surface", "accent"]),
+            ("Field Green", "#2d4a1e", ["surface", "success"]),
+            ("Asphalt", "#1a1a1e", ["surface", "base"]),
+            ("Navy Deep", "#050f22", ["base"]),
+            ("Asphalt Deep", "#0a0a0d", ["base"]),
+            ("Star White", "#ffffff", ["text"]),
+            ("Star White Dim", "#e8e8ec", ["text"]),
+            ("Eagle Gold", "#c5a253", ["text", "accent"]),
+            ("Eagle Gold Bright", "#e0bc70", ["accent"]),
+            ("Old Glory Red", "#b22234", ["accent", "danger"]),
+            ("Old Glory Red Dark", "#8b1a28", ["surface", "danger"]),
+            ("Caution Yellow", "#ffd23f", ["accent", "warning"]),
+        ],
+        "#050f22",
+        "#ffffff",
+    ),
     "idiocracy": _preset(
         "idiocracy",
         "Idiocracy",

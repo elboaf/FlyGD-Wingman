@@ -2415,6 +2415,202 @@
 // instead of a hand-typed copy that drifts. Presets iterate the same
 // table, so a new preset appears in dev by regenerating, not editing.
   var DEV_THEMES = {
+  "merica": {
+    "roles": {
+      "--bg": "#050f22",
+      "--panel": "#0a1e3f",
+      "--panel-border": "#14264a",
+      "--field": "#03080f",
+      "--field-border": "#1e3055",
+      "--text": "#ffffff",
+      "--text-dim": "#c9c9d4",
+      "--text-faint": "#a0a0ac",
+      "--text-label": "#a8a8b4",
+      "--text-btn": "#d4d4de",
+      "--brand": "#c5a253",
+      "--brand-deep": "#5c4a20",
+      "--brand-text": "#d4b062",
+      "--acc-top": "#c5a253",
+      "--acc-bottom": "#a8873e",
+      "--brand-edge": "#e0bc70",
+      "--focus-ring": "#e0bc70",
+      "--ok": "#6f9e55",
+      "--warn": "#ffd23f",
+      "--err": "#e04a55",
+      "--danger": "#e04a55",
+      "--danger-solid": "#8b1a28",
+      "--unmet": "#e08a5a",
+      "--training": "#45c8d4",
+      "--link": "#7aa2f7",
+      "--card-top": "#0d2348",
+      "--sunken": "#040a18",
+      "--titlebar-top": "#10234a",
+      "--titlebar-bottom": "#081228",
+      "--titlebar-inset": "#1a3055",
+      "--statusbar-top": "#0c1d3c",
+      "--statusbar-bottom": "#060f20",
+      "--wash-top": "#122050",
+      "--wash-bottom": "#0a1230",
+      "--hover": "#16295a",
+      "--control": "#112244",
+      "--control-border": "#1e3260",
+      "--control-hover": "#182c5c",
+      "--control-edge": "#8c90a8",
+      "--field-focus-border": "#24386a",
+      "--scrollbar": "#17275a",
+      "--scrollbar-hover": "#22336a",
+      "--fleet-incoming-threat": "#c5a253",
+      "--row-line": "#0d2044",
+      "--row-hover": "#0b1c3c",
+      "--row-active": "#10244a",
+      "--row-ring": "#1c3260",
+      "--row-ring-focus": "#2c4478"
+    },
+    "swatches": [
+      {
+        "name": "Navy",
+        "hex": "#0a1e3f",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Old Glory Blue Dark",
+        "hex": "#2a2950",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Liberty Teal",
+        "hex": "#1f6f6b",
+        "families": [
+          "surface",
+          "accent"
+        ]
+      },
+      {
+        "name": "Field Green",
+        "hex": "#2d4a1e",
+        "families": [
+          "surface",
+          "success"
+        ]
+      },
+      {
+        "name": "Asphalt",
+        "hex": "#1a1a1e",
+        "families": [
+          "surface",
+          "base"
+        ]
+      },
+      {
+        "name": "Navy Deep",
+        "hex": "#050f22",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Asphalt Deep",
+        "hex": "#0a0a0d",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Star White",
+        "hex": "#ffffff",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Star White Dim",
+        "hex": "#e8e8ec",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Eagle Gold",
+        "hex": "#c5a253",
+        "families": [
+          "text",
+          "accent"
+        ]
+      },
+      {
+        "name": "Eagle Gold Bright",
+        "hex": "#e0bc70",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Old Glory Red",
+        "hex": "#b22234",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Old Glory Red Dark",
+        "hex": "#8b1a28",
+        "families": [
+          "surface",
+          "danger"
+        ]
+      },
+      {
+        "name": "Caution Yellow",
+        "hex": "#ffd23f",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      }
+    ],
+    "legal": {
+      "surface": [
+        "#0a1e3f",
+        "#2a2950",
+        "#1f6f6b",
+        "#2d4a1e",
+        "#1a1a1e",
+        "#8b1a28"
+      ],
+      "base": [
+        "#1a1a1e",
+        "#050f22",
+        "#0a0a0d"
+      ],
+      "text": [
+        "#ffffff",
+        "#e8e8ec",
+        "#c5a253"
+      ],
+      "accent": [
+        "#1f6f6b",
+        "#c5a253",
+        "#e0bc70",
+        "#b22234",
+        "#ffd23f"
+      ],
+      "danger": [
+        "#b22234",
+        "#8b1a28"
+      ],
+      "success": [
+        "#2d4a1e"
+      ],
+      "warning": [
+        "#ffd23f"
+      ]
+    }
+  },
   "idiocracy": {
     "roles": {
       "--bg": "#0a0a0a",
@@ -3702,7 +3898,7 @@
     }
   }
 };
-  var DEV_THEME_PRESETS = [{id: 'idiocracy', name: 'Idiocracy'}, {id: 'ron-burgundy', name: 'Ron Burgundy'}, {id: 'dodgeball', name: 'Dodgeball'}, {id: 'tropic-thunder', name: 'Tropic Thunder'}, {id: 'wingman-dark', name: 'Wingman Dark'}, {id: 'zoolander', name: 'Zoolander'}];
+  var DEV_THEME_PRESETS = [{id: 'merica', name: 'Merica'}, {id: 'idiocracy', name: 'Idiocracy'}, {id: 'ron-burgundy', name: 'Ron Burgundy'}, {id: 'dodgeball', name: 'Dodgeball'}, {id: 'tropic-thunder', name: 'Tropic Thunder'}, {id: 'wingman-dark', name: 'Wingman Dark'}, {id: 'zoolander', name: 'Zoolander'}];
   var DEV_THEME_LABELS = {"surface": "Panels & controls", "base": "App background", "text": "Text", "accent": "Accent", "danger": "Danger", "success": "Success", "warning": "Warning"};
   var DEV_THEME_DESCRIPTIONS = {"surface": "Cards, buttons, fields, scrollbars and the row highlights \u2014 most of the window's chrome.", "base": "The page behind everything: the app backdrop, text field wells, recessed bands and list rows.", "text": "Every piece of text \u2014 headings, body, labels and hints \u2014 at the preset's brightness steps, whatever hue you choose.", "accent": "The Upload button, focused fields, ticks and glows: the app's one call-to-action colour.", "danger": "Delete buttons and destructive hovers \u2014 the colour that must never be mistaken for the accent.", "success": "Green status marks, like the Ready rungs on the Skills roster.", "warning": "Amber status marks \u2014 plan problems and the Fleet Bar's incoming-threat tint."};
   var devTheme = { preset: 'wingman-dark', families: {} };
