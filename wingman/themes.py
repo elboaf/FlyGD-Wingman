@@ -357,6 +357,57 @@ WINGMAN_DARK_ROLES = {
     "--row-ring-focus": "#554e65",
 }
 
+TACO_BELL_ROLES = {
+    "--bg": "#050510",
+    "--panel": "#0a0a1f",
+    "--panel-border": "#1a1a3e",
+    "--field": "#02020a",
+    "--field-border": "#20204e",
+    "--text": "#f5f0ff",
+    "--text-dim": "#c4bed4",
+    "--text-faint": "#aba5c4",
+    "--text-label": "#b6b0cd",
+    "--text-btn": "#d6d0e8",
+    "--brand": "#ff1f8f",
+    "--brand-deep": "#6b0a3f",
+    "--brand-text": "#ff5aab",
+    "--acc-top": "#ff1f8f",
+    "--acc-bottom": "#d1187c",
+    "--brand-edge": "#ff5aab",
+    "--focus-ring": "#ff5aab",
+    "--ok": "#74c241",
+    "--warn": "#ffd400",
+    "--err": "#f04a50",
+    "--danger": "#f04a50",
+    "--danger-solid": "#b8121c",
+    "--unmet": "#f0a263",
+    "--training": "#45c8d4",
+    "--link": "#7aa2f7",
+    "--card-top": "#12123a",
+    "--sunken": "#04040e",
+    "--titlebar-top": "#141438",
+    "--titlebar-bottom": "#0a0a20",
+    "--titlebar-inset": "#20205a",
+    "--statusbar-top": "#0e0e2c",
+    "--statusbar-bottom": "#080818",
+    "--wash-top": "#1c0a2e",
+    "--wash-bottom": "#0a0a30",
+    "--hover": "#1e1e52",
+    "--control": "#141438",
+    "--control-border": "#24245c",
+    "--control-hover": "#1e1e52",
+    "--control-edge": "#8f8cab",
+    "--field-focus-border": "#2a2a68",
+    "--scrollbar": "#191943",
+    "--scrollbar-hover": "#26265e",
+    "--fleet-incoming-threat": "#d4b400",
+    "--row-line": "#101030",
+    "--row-hover": "#0d0d28",
+    "--row-active": "#121238",
+    "--row-ring": "#202052",
+    "--row-ring-focus": "#323274",
+}
+
 CARLS_JR_ROLES = {
     "--bg": "#0a0a0a",
     "--panel": "#1a1a1a",
@@ -817,6 +868,36 @@ ZOOLANDER_ROLES = {
 }
 
 PRESETS = {
+    "taco-bell": _preset(
+        "taco-bell",
+        "Taco Bell",
+        TACO_BELL_ROLES,
+        [
+            # Midnight drive-thru surfaces; Bell Purple and Bell Bright
+            # tint the whole lot toward the bell, Drive-Thru Cyan toward
+            # the neon. Fire Pink takes the accent slot faithfully -- its
+            # danger (Sauce Red) is a distinct hue, so unlike Dodgeball
+            # and friends the collision rule does not fire.
+            ("Midnight Blue", "#0a0a1f", ["surface"]),
+            ("Bell Purple", "#702082", ["surface"]),
+            ("Bell Bright", "#9b2fa8", ["surface"]),
+            ("Drive-Thru Cyan", "#00e5ff", ["surface", "accent"]),
+            ("Midnight Deep", "#050510", ["base"]),
+            ("Bell Deep", "#2e0a38", ["base", "surface"]),
+            ("Neon White", "#f5f0ff", ["text"]),
+            ("Neon White Dim", "#c9c0e0", ["text"]),
+            ("Shell Tan", "#e8c88a", ["text"]),
+            ("Fire Pink", "#ff1f8f", ["text", "accent"]),
+            ("Fire Pink Bright", "#ff5aab", ["accent"]),
+            ("Cheese Yellow", "#ffd400", ["text", "accent", "warning"]),
+            ("Cheese Bright", "#ffe44a", ["accent", "warning"]),
+            ("Lava Orange", "#ff6b1a", ["accent", "danger"]),
+            ("Sauce Red", "#e8242f", ["danger"]),
+            ("Lettuce Green", "#5fa832", ["success"]),
+        ],
+        "#050510",
+        "#ffffff",
+    ),
     "carls-jr": _preset(
         "carls-jr",
         "Carl's Jr",

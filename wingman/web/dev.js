@@ -2415,6 +2415,218 @@
 // instead of a hand-typed copy that drifts. Presets iterate the same
 // table, so a new preset appears in dev by regenerating, not editing.
   var DEV_THEMES = {
+  "taco-bell": {
+    "roles": {
+      "--bg": "#050510",
+      "--panel": "#0a0a1f",
+      "--panel-border": "#1a1a3e",
+      "--field": "#02020a",
+      "--field-border": "#20204e",
+      "--text": "#f5f0ff",
+      "--text-dim": "#c4bed4",
+      "--text-faint": "#aba5c4",
+      "--text-label": "#b6b0cd",
+      "--text-btn": "#d6d0e8",
+      "--brand": "#ff1f8f",
+      "--brand-deep": "#6b0a3f",
+      "--brand-text": "#ff5aab",
+      "--acc-top": "#ff1f8f",
+      "--acc-bottom": "#d1187c",
+      "--brand-edge": "#ff5aab",
+      "--focus-ring": "#ff5aab",
+      "--ok": "#74c241",
+      "--warn": "#ffd400",
+      "--err": "#f04a50",
+      "--danger": "#f04a50",
+      "--danger-solid": "#b8121c",
+      "--unmet": "#f0a263",
+      "--training": "#45c8d4",
+      "--link": "#7aa2f7",
+      "--card-top": "#12123a",
+      "--sunken": "#04040e",
+      "--titlebar-top": "#141438",
+      "--titlebar-bottom": "#0a0a20",
+      "--titlebar-inset": "#20205a",
+      "--statusbar-top": "#0e0e2c",
+      "--statusbar-bottom": "#080818",
+      "--wash-top": "#1c0a2e",
+      "--wash-bottom": "#0a0a30",
+      "--hover": "#1e1e52",
+      "--control": "#141438",
+      "--control-border": "#24245c",
+      "--control-hover": "#1e1e52",
+      "--control-edge": "#8f8cab",
+      "--field-focus-border": "#2a2a68",
+      "--scrollbar": "#191943",
+      "--scrollbar-hover": "#26265e",
+      "--fleet-incoming-threat": "#d4b400",
+      "--row-line": "#101030",
+      "--row-hover": "#0d0d28",
+      "--row-active": "#121238",
+      "--row-ring": "#202052",
+      "--row-ring-focus": "#323274"
+    },
+    "swatches": [
+      {
+        "name": "Midnight Blue",
+        "hex": "#0a0a1f",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Bell Purple",
+        "hex": "#702082",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Bell Bright",
+        "hex": "#9b2fa8",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Drive-Thru Cyan",
+        "hex": "#00e5ff",
+        "families": [
+          "surface",
+          "accent"
+        ]
+      },
+      {
+        "name": "Midnight Deep",
+        "hex": "#050510",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Bell Deep",
+        "hex": "#2e0a38",
+        "families": [
+          "base",
+          "surface"
+        ]
+      },
+      {
+        "name": "Neon White",
+        "hex": "#f5f0ff",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Neon White Dim",
+        "hex": "#c9c0e0",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Shell Tan",
+        "hex": "#e8c88a",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Fire Pink",
+        "hex": "#ff1f8f",
+        "families": [
+          "text",
+          "accent"
+        ]
+      },
+      {
+        "name": "Fire Pink Bright",
+        "hex": "#ff5aab",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Cheese Yellow",
+        "hex": "#ffd400",
+        "families": [
+          "text",
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Cheese Bright",
+        "hex": "#ffe44a",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Lava Orange",
+        "hex": "#ff6b1a",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Sauce Red",
+        "hex": "#e8242f",
+        "families": [
+          "danger"
+        ]
+      },
+      {
+        "name": "Lettuce Green",
+        "hex": "#5fa832",
+        "families": [
+          "success"
+        ]
+      }
+    ],
+    "legal": {
+      "surface": [
+        "#0a0a1f",
+        "#702082",
+        "#9b2fa8",
+        "#00e5ff",
+        "#2e0a38"
+      ],
+      "base": [
+        "#050510",
+        "#2e0a38"
+      ],
+      "text": [
+        "#f5f0ff",
+        "#c9c0e0",
+        "#e8c88a",
+        "#ff1f8f",
+        "#ffd400"
+      ],
+      "accent": [
+        "#00e5ff",
+        "#ff1f8f",
+        "#ff5aab",
+        "#ffd400",
+        "#ffe44a",
+        "#ff6b1a"
+      ],
+      "danger": [
+        "#ff6b1a",
+        "#e8242f"
+      ],
+      "success": [
+        "#5fa832"
+      ],
+      "warning": [
+        "#ffd400",
+        "#ffe44a"
+      ]
+    }
+  },
   "carls-jr": {
     "roles": {
       "--bg": "#0a0a0a",
@@ -4570,7 +4782,7 @@
     }
   }
 };
-  var DEV_THEME_PRESETS = [{id: 'carls-jr', name: "Carl's Jr"}, {id: 'brawndo', name: 'Brawndo: Thirst Mutilator'}, {id: 'purple-cobras', name: 'Purple Cobras'}, {id: 'merica', name: 'Merica'}, {id: 'idiocracy', name: 'Idiocracy'}, {id: 'ron-burgundy', name: 'Ron Burgundy'}, {id: 'dodgeball', name: 'Dodgeball'}, {id: 'tropic-thunder', name: 'Tropic Thunder'}, {id: 'wingman-dark', name: 'Wingman Dark'}, {id: 'zoolander', name: 'Zoolander'}];
+  var DEV_THEME_PRESETS = [{id: 'taco-bell', name: 'Taco Bell'}, {id: 'carls-jr', name: "Carl's Jr"}, {id: 'brawndo', name: 'Brawndo: Thirst Mutilator'}, {id: 'purple-cobras', name: 'Purple Cobras'}, {id: 'merica', name: 'Merica'}, {id: 'idiocracy', name: 'Idiocracy'}, {id: 'ron-burgundy', name: 'Ron Burgundy'}, {id: 'dodgeball', name: 'Dodgeball'}, {id: 'tropic-thunder', name: 'Tropic Thunder'}, {id: 'wingman-dark', name: 'Wingman Dark'}, {id: 'zoolander', name: 'Zoolander'}];
   var DEV_THEME_LABELS = {"surface": "Panels & controls", "base": "App background", "text": "Text", "accent": "Accent", "danger": "Danger", "success": "Success", "warning": "Warning"};
   var DEV_THEME_DESCRIPTIONS = {"surface": "Cards, buttons, fields, scrollbars and the row highlights \u2014 most of the window's chrome.", "base": "The page behind everything: the app backdrop, text field wells, recessed bands and list rows.", "text": "Every piece of text \u2014 headings, body, labels and hints \u2014 at the preset's brightness steps, whatever hue you choose.", "accent": "The Upload button, focused fields, ticks and glows: the app's one call-to-action colour.", "danger": "Delete buttons and destructive hovers \u2014 the colour that must never be mistaken for the accent.", "success": "Green status marks, like the Ready rungs on the Skills roster.", "warning": "Amber status marks \u2014 plan problems and the Fleet Bar's incoming-threat tint."};
   var devTheme = { preset: 'wingman-dark', families: {} };
