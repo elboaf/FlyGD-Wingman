@@ -3,16 +3,17 @@
 Catalogue and legacy PublishRow dataclasses are relay values, per
 docs/superpowers/specs/2026-09-04-shared-fleet-telemetry-design.md.
 PublicationSource instead retains local telemetry's immutable snapshot and
-admission authority; CombatProjectionRow is also local-only. Neither is
-serialized: local paths, source identities,
-log details and monotonic timestamps must not leave the machine.
+admission authority; CombatProjectionRow and the Timed* receiver values are also
+local-only. They are not serialized: local paths, source identities, log details
+and monotonic timestamps must not leave the machine.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
+from fractions import Fraction
+from typing import Literal, Protocol
 
 from ..telemetry.model import EffectObservation, FleetRow, FleetSnapshot
 
@@ -58,6 +59,37 @@ class CombatProjectionRow:
     character_id: int
     row: FleetRow
     observations: tuple[EffectObservation, ...]
+
+
+@dataclass(frozen=True)
+class TimedObservation:
+    name: str | None
+    expires_at_mono: Fraction
+
+
+@dataclass(frozen=True)
+class TimedEffect:
+    kind: Literal["SCRAM", "POINT", "NEUT"]
+    observations: tuple[TimedObservation, ...]
+
+
+@dataclass(frozen=True)
+class TimedRemoteRow:
+    """Local-only projection; UUIDs and receipt/paint times are not time authority."""
+
+    character_id: int
+    character_name: str
+    outgoing_dps: int | None
+    incoming_dps: int | None
+    sampled_at_mono: Fraction
+    activity_expires_at_mono: Fraction
+    effects: tuple[TimedEffect, ...]
+
+
+@dataclass(frozen=True)
+class TimedSnapshot:
+    server_time_ms: int
+    rows: tuple[TimedRemoteRow, ...]
 
 
 @dataclass(frozen=True)

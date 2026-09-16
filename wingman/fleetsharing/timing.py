@@ -14,13 +14,22 @@ from types import MappingProxyType
 
 from ..combatprofile import LIMITS
 from ..telemetry.model import FleetSnapshot, ObservationId
-from .model import CombatProjectionRow, FleetCatalogue, PublicationSource
+from .model import (
+    CombatProjectionRow,
+    FleetCatalogue,
+    PublicationSource,
+    TimedEffect,
+    TimedObservation,
+    TimedRemoteRow,
+    TimedSnapshot,
+)
 from .projection import _resolved_combat_rows, project_combat_snapshot
 from .protocol import (
     API_VERSION,
     EFFECT_ORDER,
     JS_SAFE_MAX,
     CombatRow,
+    CombatSnapshot,
     parse_combat_put,
 )
 from .scheduling import Scheduler
@@ -45,6 +54,21 @@ class _Anchor:
 
 
 @dataclass(frozen=True)
+class _ReceiverRecord:
+    server_time_ms: int
+    offset: Fraction
+
+
+@dataclass(frozen=True)
+class _ReceiverState:
+    records: tuple[_ReceiverRecord, ...] = ()
+    last_server_time_ms: int | None = None
+    payload: TimedSnapshot | None = None
+    recovering: bool = False
+    recovery_r0: int | None = None
+
+
+@dataclass(frozen=True)
 class _TimingState:
     """One immutable accepted aggregate; baselines survive diagnostic pruning."""
 
@@ -55,6 +79,7 @@ class _TimingState:
     last_received_at: Fraction | None = None
     last_server_time_ms: int | None = None
     anchor: _Anchor | None = None
+    receiver: _ReceiverState = _ReceiverState()
 
 
 @dataclass(frozen=True)
@@ -152,7 +177,7 @@ def _combat_rows(
 class TimingContext:
     """Retain across same-domain consumers; all mutation is signed-lane-owned.
 
-    No internal lock, thread, timer, authentication or continuity recovery is
+    No internal lock, thread, timer, authentication or operational recovery is
     provided here. The owner fences identity/generations before calling these
     private methods and must serialize candidate/commit with those checks.
     """
@@ -176,6 +201,144 @@ class TimingContext:
         self._next_stage_at: Fraction | None = None
         self._publication_epoch = object()
         self._publisher_cutoff: Fraction | None = None
+        self._next_get_at: Fraction | None = None
+        self._snapshot_started_at: Fraction | None = None
+
+    def _start_snapshot_get(self, *, started_at: float) -> bool:
+        """Record actual before_send admission, including attempts that later fail.
+
+        This exact GET-start floor complements, never replaces, the retained
+        scheduler's completion bucket. The caller still charges every completion.
+        No telemetry source ticket is involved in remote receiving.
+        """
+        if not isfinite(started_at):
+            return False
+        a = Fraction(started_at)
+        if self._next_get_at is not None and a < self._next_get_at:
+            return False
+        self._next_get_at = a + Fraction(LIMITS["signed_interval_ms"], 1000)
+        self._snapshot_started_at = a
+        return True
+
+    def _snapshot_candidate(
+        self, snapshot: CombatSnapshot, *, started_at: float, received_at: float
+    ) -> _TimingCandidate | None:
+        """Prepare ONE already codec-validated, authenticated, bound GET return.
+
+        All diagnostic/receiver/anchor/payload work is detached. Final outer
+        authority checks and the existing pointer commit remain caller-owned.
+        A recovery candidate may commit evidence without producing a payload.
+        """
+        if (
+            not isfinite(started_at)
+            or Fraction(started_at) != self._snapshot_started_at
+        ):
+            return None
+        self._snapshot_started_at = None
+        diagnostic = self._diagnostic_candidate(
+            started_at=started_at,
+            received_at=received_at,
+            server_time_ms=snapshot.server_time_ms,
+        )
+        if diagnostic is None:
+            return None
+        # The diagnostic's separate last-DB baseline includes every accepted
+        # snapshot (and device anchor), so it also enforces R >= last receiver R.
+        offset = (
+            Fraction(started_at)
+            - Fraction(snapshot.server_time_ms, 1000)
+            - Fraction(LIMITS["clock_margin_ms"], 1000)
+        )
+
+        records = [
+            record
+            for record in diagnostic.base.receiver.records
+            if snapshot.server_time_ms - record.server_time_ms < LIMITS["activity_ms"]
+        ]
+        records.append(_ReceiverRecord(snapshot.server_time_ms, offset))
+        if len(records) > LIMITS["receiver_capacity"]:
+            return None
+        previous = diagnostic.base.receiver
+        r0 = previous.recovery_r0
+        if previous.recovering and r0 is None:
+            r0 = snapshot.server_time_ms
+        recovering = (
+            previous.recovering and snapshot.server_time_ms < r0 + LIMITS["activity_ms"]
+        )
+        receiver = replace(
+            previous,
+            records=tuple(records),
+            last_server_time_ms=snapshot.server_time_ms,
+            payload=None,
+            recovering=recovering,
+            recovery_r0=r0,
+        )
+        if recovering:
+            return replace(
+                diagnostic, state=replace(diagnostic.state, receiver=receiver)
+            )
+        endpoints = tuple(record.server_time_ms for record in records)
+        minima = [record.offset for record in records]
+        for i in range(len(minima) - 2, -1, -1):
+            minima[i] = min(minima[i], minima[i + 1])
+
+        def origin(age_ms: int) -> Fraction:
+            # For every currently legal x, covering intervals are exactly the
+            # suffix R_i >= x, for BOTH horizons. The just-appended GET covers x.
+            # O(n) preprocessing once; O(log n) per origin, never a history scan.
+            x = snapshot.server_time_ms - age_ms
+            return Fraction(x, 1000) + minima[bisect_left(endpoints, x)]
+
+        lifetime = Fraction(LIMITS["activity_ms"], 1000)
+        payload = TimedSnapshot(
+            snapshot.server_time_ms,
+            tuple(
+                TimedRemoteRow(
+                    row.character_id,
+                    row.character_name,
+                    row.outgoing_dps,
+                    row.incoming_dps,
+                    origin(row.age_ms),
+                    origin(row.activity_age_ms) + lifetime,
+                    tuple(
+                        TimedEffect(
+                            effect.kind,
+                            tuple(
+                                TimedObservation(o.name, origin(o.age_ms) + lifetime)
+                                for o in effect.observations
+                            ),
+                        )
+                        for effect in row.effects
+                    ),
+                )
+                for row in snapshot.rows
+            ),
+        )
+        receiver = replace(receiver, payload=payload)
+        return replace(diagnostic, state=replace(diagnostic.state, receiver=receiver))
+
+    def _receiver_lost_history(self) -> None:
+        """Explicit signed-lane loss, never ordinary clear or session recovery.
+
+        S4 must fence use/late completions and withdraw the presentation payload
+        before ordering this hook. Keep diagnostic/order/cadence protection and
+        any contradiction latch. No clock/DB/identity domain is reset here, and
+        passing the fixed barrier cannot open the outer operational fence.
+        """
+        if self._state.receiver.recovering:
+            return
+        self._snapshot_started_at = None
+        self._state = replace(
+            self._state,
+            anchor=None,
+            receiver=replace(
+                self._state.receiver,
+                records=(),
+                payload=None,
+                recovering=True,
+                recovery_r0=None,
+            ),
+        )
 
     def _stage_publication(
         self,
@@ -399,7 +562,8 @@ class TimingContext:
         S4 must synchronously fence its worker before ordering this operation.
         Reset/paused/untrustworthy elapsed requires fresh model/context, not this
         cutoff. Keep pins, pacing and a latched contradiction; never auto-unlatch
-        or infer permission to recover. S3 must coordinate its receiver barrier.
+        or infer permission to recover. The outer owner orders receiver history
+        loss separately, only when that protection was actually lost.
         """
         if not isfinite(cutoff):
             raise ValueError("Continuity cutoff must be finite.")
@@ -466,7 +630,8 @@ class TimingContext:
             return None
         return _TimingCandidate(
             state,
-            _TimingState(
+            replace(
+                state,
                 exchanges=tuple(exchanges),
                 lo=lo,
                 hi=hi,
