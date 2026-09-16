@@ -1,6 +1,6 @@
 # Fleet telemetry remaining-work coordination
 
-Status: isolated local-model core implemented, reviewed, fully tested and integrated locally. Shared contract review still requires six user-accepted revisions before server/protocol implementation; no rollout is authorized.
+Status: local-model core integrated and verified. All six shared-contract findings are accepted; initial revision/proof passes are complete and shared state/interface reconciliation is running. Independent re-review still gates dependent implementation; no rollout is authorized.
 
 ## Authority and bases
 
@@ -135,8 +135,8 @@ Full proposal artifacts are in this plan's ignored workspace:
 `automatic-proposal.md`, `model-proposal.md`, `ui-proposal.md`). Consolidated
 `combat-contract-draft.md`, `model-plan-draft.md` and `automatic-plan-draft.md`
 now reflect the approved breaking cutover. Both revision agents completed; the
-independent review is complete (REVISE), with six Important findings awaiting user
-acceptance before shared-contract edits. Its complete unedited report is
+independent review is complete (REVISE). The user has now explicitly accepted all
+six Important findings for correction; revisions and bounded proof checks are running. Its complete unedited report is
 `contract-review.md` in the same workspace.
 Original reports/probes remain historical discovery evidence. Their v1 support,
 legacy Stop promise, downgrade support and mixed-version success requirements are
@@ -183,9 +183,31 @@ Confirmed coordination constraints:
 Reviewer `fd8a5001-e203-4ba` returned shared-contract REVISE and local-model
 CONDITIONAL. Six Important findings cover origin ordering, measurement sampling,
 aggregate response bounds, Off at receipt saturation, incomplete automatic/control
-interfaces, and cutover/journal migration. No shared-contract finding has been
-silently applied or waived; the user receives the unedited review plus the
-coordinator's separate assessment.
+interfaces, and cutover/journal migration. The user received the unedited review
+plus the coordinator's assessment and explicitly accepted all six. None is waived.
+
+Revision ownership in the ignored coordination workspace:
+- `3a5429d2-46b6-437`: findings 1–3, combat clock/measurement/limits contract.
+- `22fa50ce-9c28-41e`: findings 4–5, automatic/receipt/Stop/pre-session/ticket contract.
+- `9a3d3234-8108-4fc`: finding 6, cutover sequence and persisted-journal transition matrix.
+
+Each owner wrote separate draft/annex and scratch-proof files; none changed
+production source, generated migrations, contacted a database or deployed.
+Initial proofs cover 1,944 origin-order vectors, 7,778 bounded automatic transition
+sequences and 778 legacy-state/cutover checks. These are offline models, not
+application integration tests.
+
+Follow-up corrected persistent receiver latency bias with bounded origin intervals,
+added non-destructive browser Off using existing own-account authentication, and
+kept queued same-CAS Off valid across long disconnection. No invented source-session
+column was added: inspection corrected that premise; existing source provenance
+plus the new explicit consent binding remain the contract.
+
+Single reconciliation owner `0dfed316-6713-4e4` now closes the exact combined state4
+journal/reserves and cross-annex names/outcomes, then the coordinator requests
+independent re-review. Remaining-model planning marks core Tasks1/4 complete and
+keeps names/effects gated on the shared profile. Accepted findings are not marked
+resolved merely because revised prose exists.
 
 The coordinator approves the narrow internal model handoff already proposed by M
 and consumed by C/U: frozen local deadlines and accepted IDs, with no transport
@@ -204,8 +226,9 @@ authGD test resources or schemas have been changed by this preparation.
 Fresh full Wingman coordinator baseline completed under `970328d7-0dee-458`:
 13,382 passed, 13 expected Windows-only skips in 478.69s; Cargo 1 passed; Ruff lint
 and format passed (460 files). Native release codec was built/installed in this
-checkout. The coordinator independently parsed JUnit and confirmed the source/test
-contents remain identical to tested `02642242`; later coordinator commits are docs.
+checkout. At that pre-core baseline checkpoint the coordinator independently
+parsed JUnit and confirmed source/test parity with `02642242`. The later core
+integration has its separate verification below.
 Logs and exact commands are in `baseline-report.md` and sibling baseline artifacts.
 
 Local core worktree: `/mnt/c/dev/flygd-wingman/.worktrees/fleet-combat-model`, branch
@@ -221,7 +244,8 @@ coordinator focused run passed 317 tests and Ruff. See
 [core verification](fleet-combat-model-core-verification.md). This is not the
 completed model, UI integration or a release. No push/main merge occurred.
 The model worktree and `.superpowers/sdd/fleet-combat-model-core-plan/` evidence
-remain available; the six shared-contract findings remain unapplied.
+remain available. This core did not apply the six shared-contract findings; their
+newly authorized remediation is tracked separately in `findings-resolution-ledger.md`.
 
 Do not let shared-contract checks block independent approved model work, but do
 not implement assumptions inside the six unresolved shared-contract findings.
