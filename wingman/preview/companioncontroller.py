@@ -66,7 +66,7 @@ class _Operation:
     receipt: dict
     action: str
     expected: int | None
-    proposal: CompanionDefinition | bool | None = None
+    proposal: CompanionDefinition | bool | dict | None = None
     binding: SourceBinding | None = None
     prepared_window: Rect | None = None
     token: CompanionToken | None = None
@@ -489,6 +489,40 @@ class CompanionController:
             except _Refused as exc:
                 return self._refusal_locked(exc, id)
 
+    def reload(self, section: dict) -> dict:
+        """Adopt an imported companion snapshot wholesale.
+
+        A settings import replaces companion_previews behind this
+        controller's back, and unlike the per-key preview stores this class
+        persists the whole companion_previews value -- so the next user
+        transaction would save the stale in-memory definitions over the
+        import. Runs as one serialized non-native operation: removals,
+        additions and edits are adopted, the generation bumps invalidate
+        in-flight page edits, and reconcile/reset delivery moves the live
+        windows to match.
+        """
+        section = section if isinstance(section, dict) else {}
+        with self._condition:
+            try:
+                raw = section.get("definitions")
+                if not isinstance(raw, (list, tuple)):
+                    # A wholesale adopt must never read a malformed section as
+                    # "adopt nothing": that would delete every saved companion.
+                    raise ValueError("Imported companion definitions are malformed")
+                definitions = {d.id: d for d in validate_definitions(raw)}
+                proposal = {
+                    "enabled": section.get("enabled") is True,
+                    "definitions": definitions,
+                }
+            except ValueError as exc:
+                return self._refusal_locked(exc)
+            try:
+                op = self._reserve_locked("reload")
+            except _Refused as exc:
+                return self._refusal_locked(exc)
+            op.proposal = proposal
+            return self._queue_locked(op)
+
     def reset_geometry(self, id: str, expected_generation: int) -> dict:
         with self._condition:
             try:
@@ -751,6 +785,10 @@ class CompanionController:
                     identity = op.receipt["id"]
                     if op.action == "master":
                         enabled = op.proposal
+                    elif op.action == "reload":
+                        # The imported snapshot IS the new authority, entire.
+                        enabled = op.proposal["enabled"]
+                        proposed = dict(op.proposal["definitions"])
                     elif op.action == "remove":
                         proposed.pop(identity)
                     else:
@@ -768,6 +806,8 @@ class CompanionController:
                     "definitions": serialize_definitions(tuple(proposed.values())),
                 }
             with self._condition:
+                previous = self._definitions
+                resets = []
                 self._definitions = proposed
                 self._enabled = enabled
                 if op.action == "remove":
@@ -786,6 +826,45 @@ class CompanionController:
                     # the page; absent IDs reject callbacks without an unbounded
                     # permanent tombstone table.
                     self._next_generations.pop(identity, None)
+                elif op.action == "reload":
+                    for stale in [
+                        key
+                        for key in {*previous, *self._rows, *self._generations}
+                        if key not in proposed
+                    ]:
+                        # Mirror remove's bookkeeping for every identity the
+                        # import no longer carries.
+                        self._rows.pop(stale, None)
+                        self._selections.pop(stale, None)
+                        self._generations.pop(stale, None)
+                        self._geometry.pop(stale, None)
+                        self._physical.pop(stale, None)
+                        self._handoff_geometry.pop(stale, None)
+                        self._sequences = {
+                            key: seq
+                            for key, seq in self._sequences.items()
+                            if key[0] != stale
+                        }
+                        self._next_generations.pop(stale, None)
+                    for key, definition in proposed.items():
+                        generation = self._next_generations.get(key, 0) + 1
+                        self._generations[key] = generation
+                        self._next_generations[key] = generation
+                        row = self._rows.setdefault(key, self._new_row())
+                        row["error"] = None
+                        # Pre-import debounced geometry belongs to the old
+                        # arrangement; the import supersedes it.
+                        self._geometry.pop(key, None)
+                        old = previous.get(key)
+                        if (
+                            old is not None
+                            and key in self._physical
+                            and old.window != definition.window
+                        ):
+                            # A live window moved in the import: claim the
+                            # imported rect and deliver it via reset below.
+                            self._physical[key] = definition.window
+                            resets.append((key, definition.window))
                 elif op.action != "master":
                     old_generation = self._generations.get(identity)
                     generation = (
@@ -860,6 +939,21 @@ class CompanionController:
                 self._ports.submit_native(
                     CompanionCommand("reset", token, op.proposal.window)
                 )
+            elif op.action == "reload" and resets:
+                # Same rule as reset, per moved window: the bumped generation
+                # must reach the native row before its explicit move.
+                self._sync_runtime()
+                state = self._ports.runtime.snapshot()
+                for moved, window in resets:
+                    token = CompanionToken(
+                        op.receipt["operation_id"],
+                        moved,
+                        state.pump_epoch,
+                        state.companion_epoch,
+                        self._generations[moved],
+                        None,
+                    )
+                    self._ports.submit_native(CompanionCommand("reset", token, window))
             self._finish(op, applied=True, persisted=True)
 
     def _handle_sources(self, op, payload):

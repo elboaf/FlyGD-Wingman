@@ -6966,8 +6966,42 @@ class Api:
             ports=SettingsSharePorts(
                 choose_settings_input=self._choose_settings_input,
                 choose_settings_output=self._choose_settings_output,
+                on_applied=self._on_settings_import_applied,
             ),
         )
+
+    def _on_settings_import_applied(self) -> None:
+        """Make an imported document take effect on the running previews.
+
+        Runs on the import's borrowed bridge thread, after the document is
+        durable and its committed snapshot refreshed. Order matters: drop
+        the layout store's undebounced pre-import drags before anything
+        re-reads the document, then adopt layouts in the host (which also
+        re-places open previews), then rebuild crops and companions from
+        the same snapshot. Restyle comes last so the per-window cached
+        rosters (locked, never_minimize, labels, opacity) re-read the
+        imported values too -- lock is read per drag from the live window,
+        so without it the checkbox would move and the lock would not.
+        """
+        logger.info("Applying an imported settings document to live preview state")
+        section = self._preview_config.snapshot()
+        self._preview_layout_store.discard_pending_layouts()
+        if self._preview_host is not None:
+            logger.debug("Reload: adopting imported preview layouts")
+            self._preview_host.reload_layouts(
+                preview_layout.deserialize(section.get("layouts"))
+            )
+            logger.debug("Reload: adopting imported crop definitions")
+            self._preview_host.reload_crop_definitions(section)
+            logger.debug("Reload: restyling open previews from imported rosters")
+            self._preview_host.restyle()
+        logger.debug("Reload: adopting imported companion previews")
+        self._companions.reload(self._state.settings.get("companion_previews", {}))
+        # The page hears through the existing owners: the layouts dirty flag
+        # reaches the presentation worker, and the companion controller
+        # publishes its own state after the reload transaction commits.
+        self._publish_preview_layouts(self._preview_layouts.state())
+        logger.info("Imported settings applied to live preview state")
 
     def _choose_settings_input(self) -> str:
         chosen = self._window.create_file_dialog(

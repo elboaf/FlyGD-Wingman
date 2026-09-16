@@ -229,6 +229,37 @@ class LayoutStore:
             if retry is not None:
                 retry.start()
 
+    def discard_pending_layouts(self) -> None:
+        """Drop undebounced position deltas without writing them.
+
+        A settings import has just replaced the document behind this store's
+        back. Replaying a pre-import drag would resurrect exactly the old
+        position the import overwrote -- per key, silently, up to a debounce
+        after the apply. Pending NAMES are still written: character discovery
+        shares this single timer (see record_character) and must not lose its
+        roster touch.
+        """
+        with self._write_lock:
+            with self._lock:
+                self._pending = {}
+                names, self._pending_names = list(self._pending_names), []
+                if self._timer is not None:
+                    self._timer.cancel()
+                    self._timer = None
+            try:
+                with self._update_settings() as live:
+                    section = live.setdefault("preview", {})
+                    for name in names:
+                        section["seen"] = roster.touch(
+                            section.get("seen", []),
+                            name,
+                            protected=self._protected(section),
+                        )
+            except OSError:
+                logger.exception("Could not persist preview state")
+                return
+        self._notify_commit()
+
     def clear(self) -> bool:
         """Discard every saved layout. The one wholesale write this class allows.
 

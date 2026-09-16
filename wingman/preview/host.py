@@ -1998,6 +1998,10 @@ class PreviewHost:
             self._freeze_primary_gestures()
         if intent.message == win32.WM_APP_RESET_LAYOUTS:
             return self._clear_layouts or (lambda: None)
+        if intent.message == win32.WM_APP_RELOAD_LAYOUTS:
+            # The import already persisted the document; there is no writer
+            # to order this intent behind, only native movement left.
+            return lambda: None
         if native:
             if intent.message == win32.WM_APP_RESIZE_ONE:
                 self._apply_resizes(intent.payload)
@@ -2074,6 +2078,10 @@ class PreviewHost:
                             with self._lock:
                                 self._saved = {}
                             self._announce_geometry_changed()
+                    elif intent.message == win32.WM_APP_RELOAD_LAYOUTS and native:
+                        # Adoption already happened at post time; only the
+                        # re-place is pump-owned, and only when native.
+                        self._reload_layouts_on_owner(epoch=intent.epoch)
                 except Exception:
                     # Failure cannot replay a partially delivered native phase.
                     logger.exception("Could not complete primary preview layout change")
@@ -2658,6 +2666,18 @@ class PreviewHost:
         finally:
             self.release_primary_layout(lease)
 
+    def reload_crop_definitions(self, section: dict) -> None:
+        """Adopt imported crop definitions and rebuild the live crop family.
+
+        Safe from any thread. The store drops its pre-import dirty geometry
+        and restarts generations, so the next roster reconcile closes every
+        existing crop window and re-creates it from the imported definition;
+        the sweep nudge makes that happen now rather than at the next poll.
+        """
+        if self._crop_store is not None:
+            self._crop_store.reload(section)
+        self.request_sweep()
+
     def clear_layouts_offline(self) -> bool:
         """Bridge-thread wait only; the API's shared lease precedes final close."""
         if self._clear_layouts is None:
@@ -2775,6 +2795,35 @@ class PreviewHost:
             if not self._eve_valid():
                 return False
             return self._post_primary_intent(win32.WM_APP_RESET_LAYOUTS)
+
+    def reload_layouts(self, entries: dict) -> bool:
+        """Adopt an imported layouts snapshot; re-place open previews.
+
+        Safe from any thread. The settings document was already written by
+        the importer; this only makes the pump's in-memory authority agree
+        with it, so previews opened later also place from the imported
+        geometry even when EVE is off right now and nothing can move.
+        Pending per-key native payloads are retired with the entries: they
+        are pre-import movements whose delivery would undo the import.
+        """
+        with self._lock:
+            if self._closing or self._eve_stopping or self._stopping:
+                # A stopping family must not be fed new native work: the
+                # intent would only be drained by the stop path anyway, and
+                # racing it is how an import on a dying pump wedges quit.
+                return False
+            self._saved = dict(entries)
+            self._pending_layouts = {}
+            leases, self._pending_layout_leases = self._pending_layout_leases, []
+            posted = (
+                self._post_primary_intent(win32.WM_APP_RELOAD_LAYOUTS)
+                if self._eve_valid()
+                else True
+            )
+        self._announce_geometry_changed()
+        for lease in leases:
+            self.release_primary_layout(lease)
+        return posted
 
     def client_sizes(self) -> dict:
         """Last sampled client-area size per character. Safe from any thread."""
@@ -3116,6 +3165,7 @@ class PreviewHost:
             win32.WM_APP_RESIZE_ONE,
             win32.WM_APP_RESIZE_ALL,
             win32.WM_APP_RESET_LAYOUTS,
+            win32.WM_APP_RELOAD_LAYOUTS,
         ):
             if self._apply_primary(msg) and (self._stopping or self._eve_stopping):
                 self._begin_stop(libs)
@@ -5135,6 +5185,29 @@ class PreviewHost:
                 win._mode = None
                 continue
             win.move(rect)
+
+    def _reload_layouts_on_owner(self, *, epoch) -> None:
+        """Re-place open previews from the adopted imported entries.
+
+        Modeled on _reset_layouts, but resolving each window's own entry,
+        and never recording: the document already holds these rects, and
+        writing the (possibly monitor-clamped) placement back would churn
+        the debounce behind the importer's back. Keys the import has no
+        entry for keep their current position -- the import overlays keys
+        it carries and says nothing about the rest.
+        """
+        entries = self.layout_entries()
+        if not entries:
+            return
+        monitors = self._monitors()
+        for index, (key, win) in enumerate(self._windows.items()):
+            entry = entries.get(key)
+            if entry is None:
+                continue
+            if not self._eve_valid(epoch):
+                win._mode = None
+                continue
+            win.move(self._resolve_rect(key, index, monitors, entry))
 
     def _record_client_sizes(self, libs, clients) -> None:
         """Sample each client's client-area size, on the preview thread.

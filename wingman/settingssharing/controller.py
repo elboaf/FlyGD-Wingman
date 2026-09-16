@@ -29,6 +29,11 @@ class SettingsSharePorts:
 
     choose_settings_input: Callable[[], str]
     choose_settings_output: Callable[[str], str]
+    # Called once after a successful apply, outside the settings.update()
+    # block: the imported document is durable, and live consumers (preview
+    # layouts, crops, companions) must be told to re-read it. Optional so
+    # headless compositions need no stub.
+    on_applied: Callable[[], None] | None = None
 
 
 class SettingsShareController:
@@ -130,6 +135,15 @@ class SettingsShareController:
             # only the report is left to own here.
             logger.exception("Could not apply a settings import")
             return {**reply, "error": str(error)}
+        if self._ports.on_applied is not None:
+            try:
+                # Outside the update() block on purpose: settings calls are
+                # not re-entrant inside one. A live-refresh failure cannot
+                # un-apply the durable import, so it must not reach the page
+                # as an apply error inviting a second apply of a claimed id.
+                self._ports.on_applied()
+            except Exception:  # The import is already durable; swallow and log.
+                logger.exception("Could not apply an import to live preview state")
         return {**reply, "ok": True}
 
     def import_discard(self, review_id: str) -> bool:

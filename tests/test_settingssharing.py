@@ -359,3 +359,73 @@ def test_import_offer_is_single_slot_and_claimed_by_identity(tmp_path):
     assert controller.import_apply(offer_b["review_id"])["ok"] is True
     assert settings_mod.load()["notify_mode"] == "popup"
     assert controller.import_discard(offer_b["review_id"]) is False
+
+
+# ---- apply-side live refresh -----------------------------------------------
+
+
+def applied_ports(calls, **kwargs):
+    return SettingsSharePorts(
+        choose_settings_input=always(kwargs.get("input_path", "")),
+        choose_settings_output=always(kwargs.get("output_path", "")),
+        on_applied=lambda: calls.append("applied"),
+    )
+
+
+def test_apply_invokes_on_applied_once_after_the_save(tmp_path):
+    source = live_settings()
+    source["privacy"] = "public"
+    (tmp_path / "source.json").write_text(export_text(source), encoding="utf-8")
+    calls = []
+    controller = SettingsShareController(
+        live_settings(),
+        ports=applied_ports(calls, input_path=str(tmp_path / "source.json")),
+    )
+    read = controller.import_read()
+    assert controller.import_apply(read["review_id"])["ok"] is True
+    assert calls == ["applied"]
+    # The port runs after the document is durable.
+    assert settings_mod.load()["privacy"] == "public"
+
+
+def test_failed_or_superseded_applies_never_invoke_on_applied(tmp_path):
+    calls = []
+    controller = SettingsShareController(live_settings(), ports=applied_ports(calls))
+    # No offer was ever read: the id is stale and nothing is applied.
+    assert controller.import_apply("missing")["ok"] is False
+    assert calls == []
+    # A discarded offer cannot trigger the port either.
+    source = live_settings()
+    (tmp_path / "source.json").write_text(export_text(source), encoding="utf-8")
+    controller = SettingsShareController(
+        live_settings(),
+        ports=applied_ports(calls, input_path=str(tmp_path / "source.json")),
+    )
+    read = controller.import_read()
+    assert controller.import_discard(read["review_id"]) is True
+    assert controller.import_apply(read["review_id"])["ok"] is False
+    assert calls == []
+
+
+def test_on_applied_failure_does_not_fail_the_apply(tmp_path):
+    source = live_settings()
+    source["privacy"] = "public"
+    (tmp_path / "source.json").write_text(export_text(source), encoding="utf-8")
+
+    def explode():
+        raise RuntimeError("live refresh failed")
+
+    controller = SettingsShareController(
+        live_settings(),
+        ports=SettingsSharePorts(
+            choose_settings_input=always(str(tmp_path / "source.json")),
+            choose_settings_output=always(""),
+            on_applied=explode,
+        ),
+    )
+    read = controller.import_read()
+    apply = controller.import_apply(read["review_id"])
+    # The import is already durable; a live-refresh failure must not reach
+    # the page as an apply error inviting a second apply of a claimed id.
+    assert apply["ok"] is True and apply["error"] == ""
+    assert settings_mod.load()["privacy"] == "public"
