@@ -10,12 +10,21 @@ from uuid import UUID
 
 import pytest
 from test_fleetsharing_client import ORIGIN, _headers_of, error_transport
-from test_fleetsharing_protocol import ROW
 
 from wingman.fleetsharing import crypto
 from wingman.fleetsharing import protocol as p
 from wingman.fleetsharing.client import FleetRelayClient, FleetRelayError
 
+# Keep the legacy production-client/worker harness independent of the v2 codec
+# fixtures. This row migrates with those callers, not by deleting their tests.
+ROW = {
+    "character_id": 42,
+    "character_name": "Alice",
+    "dps": 0,
+    "ewar": [],
+    "state": "live",
+    "age_ms": 0,
+}
 FIXTURE = json.loads(
     (Path(__file__).parent / "fixtures/fleet-snapshot-publication-v1.json").read_text()
 )
