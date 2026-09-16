@@ -357,6 +357,57 @@ WINGMAN_DARK_ROLES = {
     "--row-ring-focus": "#554e65",
 }
 
+RON_BURGUNDY_ROLES = {
+    "--bg": "#1f0f08",
+    "--panel": "#3b1f0f",
+    "--panel-border": "#4a2a14",
+    "--field": "#0a0503",
+    "--field-border": "#4a3018",
+    "--text": "#f0e8d8",
+    "--text-dim": "#c4b89c",
+    "--text-faint": "#9c917a",
+    "--text-label": "#a89d84",
+    "--text-btn": "#ded3bd",
+    "--brand": "#d4881f",
+    "--brand-deep": "#5f3a0c",
+    "--brand-text": "#e89a3a",
+    "--acc-top": "#d4881f",
+    "--acc-bottom": "#b87418",
+    "--brand-edge": "#f0a838",
+    "--focus-ring": "#f0a838",
+    "--ok": "#6fae8c",
+    "--warn": "#c9a227",
+    "--err": "#de4a5f",
+    "--danger": "#de4a5f",
+    "--danger-solid": "#9c1834",
+    "--unmet": "#d89060",
+    "--training": "#45c8d4",
+    "--link": "#7aa2f7",
+    "--card-top": "#432412",
+    "--sunken": "#150a05",
+    "--titlebar-top": "#47260f",
+    "--titlebar-bottom": "#2a1509",
+    "--titlebar-inset": "#553520",
+    "--statusbar-top": "#2f1a0c",
+    "--statusbar-bottom": "#1d0f06",
+    "--wash-top": "#33200e",
+    "--wash-bottom": "#221408",
+    "--hover": "#4f2f18",
+    "--control": "#42230f",
+    "--control-border": "#58371c",
+    "--control-hover": "#4f2f18",
+    "--control-edge": "#9a8a70",
+    "--field-focus-border": "#553a1e",
+    "--scrollbar": "#44260f",
+    "--scrollbar-hover": "#57351a",
+    "--fleet-incoming-threat": "#c9a227",
+    "--row-line": "#35200f",
+    "--row-hover": "#2f1c0d",
+    "--row-active": "#3a2412",
+    "--row-ring": "#50331c",
+    "--row-ring-focus": "#6b4a2e",
+}
+
 DODGEBALL_ROLES = {
     "--bg": "#0d0d0d",
     "--panel": "#1a1a1a",
@@ -511,6 +562,36 @@ ZOOLANDER_ROLES = {
 }
 
 PRESETS = {
+    "ron-burgundy": _preset(
+        "ron-burgundy",
+        "Ron Burgundy",
+        RON_BURGUNDY_ROLES,
+        [
+            # Wood-panel surfaces; Broadcast Blue and Velvet Green let a
+            # user tint the newsroom to the channel's other sets. Scotch
+            # Amber owns the accent slot -- the template's own "Stay
+            # Classy" CTA and focus colour -- because the template casts
+            # burgundy as primary AND red as danger, and this app cannot
+            # have Upload and Delete within a hue-step of each other.
+            ("Mahogany", "#3b1f0f", ["surface"]),
+            ("Wood Panel", "#4a2a14", ["surface"]),
+            ("Walnut", "#5c3418", ["surface"]),
+            ("Broadcast Blue", "#1e3a8a", ["surface", "accent"]),
+            ("Velvet Green", "#2f4f3e", ["surface", "success"]),
+            ("Mahogany Deep", "#1f0f08", ["base"]),
+            ("Studio Black", "#0f0805", ["base"]),
+            ("Newsprint", "#f0e8d8", ["text"]),
+            ("Newsprint Dim", "#c4b89c", ["text"]),
+            ("Tan", "#c9a876", ["text"]),
+            ("Scotch Amber", "#d4881f", ["text", "accent", "warning"]),
+            ("Gold Mic", "#c9a227", ["accent", "warning"]),
+            ("Cravat Burgundy", "#8b1e3f", ["accent", "danger"]),
+            ("Cravat Burgundy Dark", "#5f1329", ["danger"]),
+            ("Sex Panther Red", "#c41e3a", ["accent", "danger"]),
+        ],
+        "#1f0f08",
+        "#ffffff",
+    ),
     "dodgeball": _preset(
         "dodgeball",
         "Dodgeball",

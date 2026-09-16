@@ -2415,6 +2415,210 @@
 // instead of a hand-typed copy that drifts. Presets iterate the same
 // table, so a new preset appears in dev by regenerating, not editing.
   var DEV_THEMES = {
+  "ron-burgundy": {
+    "roles": {
+      "--bg": "#1f0f08",
+      "--panel": "#3b1f0f",
+      "--panel-border": "#4a2a14",
+      "--field": "#0a0503",
+      "--field-border": "#4a3018",
+      "--text": "#f0e8d8",
+      "--text-dim": "#c4b89c",
+      "--text-faint": "#9c917a",
+      "--text-label": "#a89d84",
+      "--text-btn": "#ded3bd",
+      "--brand": "#d4881f",
+      "--brand-deep": "#5f3a0c",
+      "--brand-text": "#e89a3a",
+      "--acc-top": "#d4881f",
+      "--acc-bottom": "#b87418",
+      "--brand-edge": "#f0a838",
+      "--focus-ring": "#f0a838",
+      "--ok": "#6fae8c",
+      "--warn": "#c9a227",
+      "--err": "#de4a5f",
+      "--danger": "#de4a5f",
+      "--danger-solid": "#9c1834",
+      "--unmet": "#d89060",
+      "--training": "#45c8d4",
+      "--link": "#7aa2f7",
+      "--card-top": "#432412",
+      "--sunken": "#150a05",
+      "--titlebar-top": "#47260f",
+      "--titlebar-bottom": "#2a1509",
+      "--titlebar-inset": "#553520",
+      "--statusbar-top": "#2f1a0c",
+      "--statusbar-bottom": "#1d0f06",
+      "--wash-top": "#33200e",
+      "--wash-bottom": "#221408",
+      "--hover": "#4f2f18",
+      "--control": "#42230f",
+      "--control-border": "#58371c",
+      "--control-hover": "#4f2f18",
+      "--control-edge": "#9a8a70",
+      "--field-focus-border": "#553a1e",
+      "--scrollbar": "#44260f",
+      "--scrollbar-hover": "#57351a",
+      "--fleet-incoming-threat": "#c9a227",
+      "--row-line": "#35200f",
+      "--row-hover": "#2f1c0d",
+      "--row-active": "#3a2412",
+      "--row-ring": "#50331c",
+      "--row-ring-focus": "#6b4a2e"
+    },
+    "swatches": [
+      {
+        "name": "Mahogany",
+        "hex": "#3b1f0f",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Wood Panel",
+        "hex": "#4a2a14",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Walnut",
+        "hex": "#5c3418",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Broadcast Blue",
+        "hex": "#1e3a8a",
+        "families": [
+          "surface",
+          "accent"
+        ]
+      },
+      {
+        "name": "Velvet Green",
+        "hex": "#2f4f3e",
+        "families": [
+          "surface",
+          "success"
+        ]
+      },
+      {
+        "name": "Mahogany Deep",
+        "hex": "#1f0f08",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Studio Black",
+        "hex": "#0f0805",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Newsprint",
+        "hex": "#f0e8d8",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Newsprint Dim",
+        "hex": "#c4b89c",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Tan",
+        "hex": "#c9a876",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Scotch Amber",
+        "hex": "#d4881f",
+        "families": [
+          "text",
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Gold Mic",
+        "hex": "#c9a227",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Cravat Burgundy",
+        "hex": "#8b1e3f",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Cravat Burgundy Dark",
+        "hex": "#5f1329",
+        "families": [
+          "danger"
+        ]
+      },
+      {
+        "name": "Sex Panther Red",
+        "hex": "#c41e3a",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      }
+    ],
+    "legal": {
+      "surface": [
+        "#3b1f0f",
+        "#4a2a14",
+        "#5c3418",
+        "#1e3a8a",
+        "#2f4f3e"
+      ],
+      "base": [
+        "#1f0f08",
+        "#0f0805"
+      ],
+      "text": [
+        "#f0e8d8",
+        "#c4b89c",
+        "#c9a876",
+        "#d4881f"
+      ],
+      "accent": [
+        "#1e3a8a",
+        "#d4881f",
+        "#c9a227",
+        "#8b1e3f",
+        "#c41e3a"
+      ],
+      "danger": [
+        "#8b1e3f",
+        "#5f1329",
+        "#c41e3a"
+      ],
+      "success": [
+        "#2f4f3e"
+      ],
+      "warning": [
+        "#d4881f",
+        "#c9a227"
+      ]
+    }
+  },
   "dodgeball": {
     "roles": {
       "--bg": "#0d0d0d",
@@ -3270,7 +3474,7 @@
     }
   }
 };
-  var DEV_THEME_PRESETS = [{id: 'dodgeball', name: 'Dodgeball'}, {id: 'tropic-thunder', name: 'Tropic Thunder'}, {id: 'wingman-dark', name: 'Wingman Dark'}, {id: 'zoolander', name: 'Zoolander'}];
+  var DEV_THEME_PRESETS = [{id: 'ron-burgundy', name: 'Ron Burgundy'}, {id: 'dodgeball', name: 'Dodgeball'}, {id: 'tropic-thunder', name: 'Tropic Thunder'}, {id: 'wingman-dark', name: 'Wingman Dark'}, {id: 'zoolander', name: 'Zoolander'}];
   var DEV_THEME_LABELS = {"surface": "Panels & controls", "base": "App background", "text": "Text", "accent": "Accent", "danger": "Danger", "success": "Success", "warning": "Warning"};
   var DEV_THEME_DESCRIPTIONS = {"surface": "Cards, buttons, fields, scrollbars and the row highlights \u2014 most of the window's chrome.", "base": "The page behind everything: the app backdrop, text field wells, recessed bands and list rows.", "text": "Every piece of text \u2014 headings, body, labels and hints \u2014 at the preset's brightness steps, whatever hue you choose.", "accent": "The Upload button, focused fields, ticks and glows: the app's one call-to-action colour.", "danger": "Delete buttons and destructive hovers \u2014 the colour that must never be mistaken for the accent.", "success": "Green status marks, like the Ready rungs on the Skills roster.", "warning": "Amber status marks \u2014 plan problems and the Fleet Bar's incoming-threat tint."};
   var devTheme = { preset: 'wingman-dark', families: {} };
