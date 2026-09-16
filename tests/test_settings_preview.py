@@ -473,25 +473,36 @@ def test_preview_cycle_groups_default_empty_and_are_not_shared():
     first = settings._preview_defaults()
     second = settings._preview_defaults()
     assert first["hotkeys"]["groups"] == []
-    assert first["hotkeys"]["group_by_character"] == {}
-    first["hotkeys"]["groups"].append({"id": "dps", "name": "DPS", "cycle": ""})
+    first["hotkeys"]["groups"].append(
+        {"id": "dps", "name": "DPS", "members": ["Alice"], "cycle": ""}
+    )
     assert second["hotkeys"]["groups"] == []
 
 
-def test_legacy_preview_cycle_binds_survive_without_group_migration():
+def test_pre_group_all_cycle_keys_are_read_no_longer():
+    """The All-cycle chords and checkbox membership cannot represent an
+    order, so the new model simply does not read them: the keys are
+    dropped by the projection, not migrated."""
     result = settings.validated_preview(
         {
             "hotkeys": {
                 "characters": {"Alice": "Ctrl+F1"},
                 "cycle_next": "Ctrl+Alt+Right",
                 "cycle_prev": "Ctrl+Alt+Left",
+                "group_by_character": {"Alice": "dps"},
+                "groups": [
+                    {"id": "dps", "name": "DPS", "cycle": "Ctrl+F2"}
+                ],
             }
         }
     )["hotkeys"]
-    assert result["cycle_next"] == "Ctrl+Alt+Right"
-    assert result["cycle_prev"] == "Ctrl+Alt+Left"
-    assert result["groups"] == []
-    assert result["group_by_character"] == {}
+    assert result["characters"] == {"Alice": "Ctrl+F1"}
+    assert "cycle_next" not in result and "cycle_prev" not in result
+    assert "group_by_character" not in result
+    assert result["groups"] == [
+        {"id": "dps", "name": "DPS", "members": [], "cycle": "Ctrl+F2",
+         "cycle_prev": ""}
+    ]
 
 
 def test_preview_cycle_groups_normalize_independently_and_membership_is_exclusive():
@@ -499,25 +510,21 @@ def test_preview_cycle_groups_normalize_independently_and_membership_is_exclusiv
         {
             "hotkeys": {
                 "groups": [
-                    {"id": "dps", "name": " DPS ", "cycle": "Alt+Ctrl+F2"},
-                    {"id": "bad", "name": "", "cycle": "Ctrl+F3"},
+                    {"id": "dps", "name": " DPS ", "members": ["Alice", "Alice", "hwnd:7"],
+                     "cycle": "Alt+Ctrl+F2"},
+                    {"id": "bad", "name": "", "members": ["Bob"], "cycle": "Ctrl+F3"},
                     {"id": "dup-name", "name": "dps", "cycle": "Ctrl+F4"},
                     {"id": "logi", "name": "Logistics", "cycle": "nonsense"},
                 ],
-                "group_by_character": {
-                    "Alice": "dps",
-                    "Bob": "logi",
-                    "Carol": "missing",
-                    "hwnd:123": "dps",
-                },
             }
         }
     )["hotkeys"]
     assert hotkeys["groups"] == [
-        {"id": "dps", "name": "DPS", "cycle": "Ctrl+Alt+F2", "cycle_prev": ""},
-        {"id": "logi", "name": "Logistics", "cycle": "", "cycle_prev": ""},
+        {"id": "dps", "name": "DPS", "members": ["Alice"],
+         "cycle": "Ctrl+Alt+F2", "cycle_prev": ""},
+        {"id": "logi", "name": "Logistics", "members": [],
+         "cycle": "", "cycle_prev": ""},
     ]
-    assert hotkeys["group_by_character"] == {"Alice": "dps", "Bob": "logi"}
 
 
 def test_preview_cycle_groups_repeated_ids_keeps_first_valid():
@@ -545,8 +552,6 @@ def test_preview_cycle_groups_non_list_groups_rejected():
         {
             "hotkeys": {
                 "characters": {"Alice": "Ctrl+F1"},
-                "cycle_next": "Ctrl+Alt+Right",
-                "cycle_prev": "Ctrl+Alt+Left",
                 "groups": "not-a-list",  # Malformed
             }
         }
@@ -555,68 +560,27 @@ def test_preview_cycle_groups_non_list_groups_rejected():
     assert hotkeys["groups"] == []
     # Unrelated fields are preserved
     assert hotkeys["characters"] == {"Alice": "Ctrl+F1"}
-    assert hotkeys["cycle_next"] == "Ctrl+Alt+Right"
-    assert hotkeys["cycle_prev"] == "Ctrl+Alt+Left"
 
 
-def test_preview_cycle_groups_non_dict_group_by_character_rejected():
-    """Explicit: non-dict group_by_character field is rejected without error; unrelated fields intact."""
-    hotkeys = settings.validated_preview(
-        {
-            "hotkeys": {
-                "characters": {"Bob": "Ctrl+F1"},
-                "cycle_next": "Ctrl+Alt+Right",
-                "cycle_prev": "Ctrl+Alt+Left",
-                "groups": [{"id": "dps", "name": "DPS", "cycle": "Ctrl+F2"}],
-                "group_by_character": "not-a-dict",  # Malformed
-            }
-        }
-    )["hotkeys"]
-    # Non-dict group_by_character is silently rejected, stays empty
-    assert hotkeys["group_by_character"] == {}
-    # Groups are intact
-    assert len(hotkeys["groups"]) == 1
-    assert hotkeys["groups"][0]["id"] == "dps"
-    # Unrelated fields are preserved
-    assert hotkeys["characters"] == {"Bob": "Ctrl+F1"}
-    assert hotkeys["cycle_next"] == "Ctrl+Alt+Right"
-    assert hotkeys["cycle_prev"] == "Ctrl+Alt+Left"
-
-
-# ---- cycle_order -----------------------------------------------------
-
-
-def test_cycle_order_defaults_independent_and_survives_unrelated_write(tmp_path):
-    first, second = settings.load(), settings.load()
-    assert first["preview"]["cycle_order"] == {}
-    first["preview"]["cycle_order"]["Alice"] = 2
-    assert second["preview"]["cycle_order"] == {}
-    assert settings.DEFAULTS["preview"]["cycle_order"] == {}
+def test_pre_group_membership_and_chords_are_wiped_not_migrated(tmp_path):
+    """A pre-group file round-trips into the new schema: its All-cycle
+    chords and group_by_character mapping are gone, its group (with empty
+    membership -- order cannot be invented) survives."""
     path = tmp_path / "settings.json"
     live = settings.load(path)
     with settings.update(live, path) as doc:
-        doc["preview"]["cycle_order"] = {"Alice": 2}
-    with settings.update(live, path) as doc:
-        doc["channel_title"] = "Unrelated"
-    assert settings.load(path)["preview"]["cycle_order"] == {"Alice": 2}
-
-
-def test_cycle_order_validation_drops_malformed_and_clamps_the_rest():
-    normalized = settings.validated_preview(
-        {
-            "cycle_order": {
-                "Alice": 5,
-                "Bravo": True,  # bool, not a number
-                "Charlie": "3",  # string, not a number
-                "hwnd:9": 1,  # no stable identity
-                " Bad ": 2,  # not a valid owner name
-                "Eve": -40,  # clamped into the bracket
-            }
+        doc["preview"]["hotkeys"] = {
+            "characters": {"Alice": "Ctrl+F1"},
+            "cycle_next": "Ctrl+Alt+Right",
+            "cycle_prev": "Ctrl+Alt+Left",
+            "group_by_character": {"Alice": "dps"},
+            "groups": [{"id": "dps", "name": "DPS", "cycle": "Ctrl+F2"}],
         }
-    )["cycle_order"]
-    assert normalized == {"Alice": 5, "Eve": 1}
-
-
-def test_a_non_dict_cycle_order_falls_back_without_resetting_other_settings():
-    normalized = settings.validated_preview({"cycle_order": "nope", "enabled": True})
-    assert normalized["cycle_order"] == {} and normalized["enabled"] is True
+    reloaded = settings.load(path)["preview"]["hotkeys"]
+    assert reloaded["characters"] == {"Alice": "Ctrl+F1"}
+    assert "cycle_next" not in reloaded and "cycle_prev" not in reloaded
+    assert "group_by_character" not in reloaded
+    assert reloaded["groups"] == [
+        {"id": "dps", "name": "DPS", "members": [], "cycle": "Ctrl+F2",
+         "cycle_prev": ""}
+    ]

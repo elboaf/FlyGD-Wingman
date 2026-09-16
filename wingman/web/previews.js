@@ -99,7 +99,7 @@
   var host = WM.el('preview-binds');
   if (!host) { return; }
 
-  var state = {hotkeys: {characters: {}, cycle_next: '', cycle_prev: ''},
+  var state = {hotkeys: {characters: {}, groups: []},
                characters: [], roster: [], registration: {},
                bookmark_chords: {active: [], latent: []}, enabled: false,
                locked: [], lock_default: false,
@@ -461,11 +461,13 @@
     Object.keys(state.hotkeys.characters || {}).forEach(function (n) {
       if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
     });
-    // group_by_character: a character with a persisted group assignment
-    // but no running/seen/bind entry needs a row so the select can clear
-    // the assignment (design §6: "offline membership is still editable").
-    Object.keys(state.hotkeys.group_by_character || {}).forEach(function (n) {
-      if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
+    // Cycle-group members: membership is a group's own ordered list now,
+    // and a member with no running/seen/bind entry still needs a row --
+    // offline membership stays editable and visible (design §6).
+    (groups() || []).forEach(function (g) {
+      (g.members || []).forEach(function (n) {
+        if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
+      });
     });
     Object.keys(cropState.definitions || {}).forEach(function (n) {
       if (!seen[n]) { seen[n] = 1; out.push({name: n, online: false}); }
@@ -506,10 +508,9 @@
     // them genuinely loses the registration -- unlike two characters,
     // which now share it.
     var cycles = 0;
-    if (state.hotkeys.cycle_next === gesture) { cycles += 1; }
-    if (state.hotkeys.cycle_prev === gesture) { cycles += 1; }
-    // Named group cycles also compete for registrations; a group chord
-    // matching cycle_next/cycle_prev (or another group) is a duplicate.
+    // Cycling exists only through groups now; any chord claimed by more
+    // than one group -- or by a group and a character focus -- is a real
+    // registration collision the plan will drop, so it is a duplicate.
     state.hotkeys.groups.forEach(function (g) {
       if (g.cycle === gesture) { cycles += 1; }
       if (g.cycle_prev === gesture) { cycles += 1; }
@@ -548,12 +549,6 @@
     // genuinely conflicting owner merely because its rendered text
     // happened to match some other owner's label.
     var owners = [];
-    if (state.hotkeys.cycle_next === gesture) {
-      owners.push({key: 'cycle:next', text: 'All forward'});
-    }
-    if (state.hotkeys.cycle_prev === gesture) {
-      owners.push({key: 'cycle:prev', text: 'All back'});
-    }
     groups().forEach(function (group) {
       if (group.cycle === gesture) {
         owners.push({key: 'group:' + group.id, text: 'cycle group ' + group.name + ' forward'});
@@ -1000,13 +995,6 @@
     detail.setAttribute('data-preview-character', characterName);
     detail.appendChild(WM.make('h3', 'preview-detail-heading', 'Configure ' + characterName));
 
-    if (groups().length) {
-      var assignment = WM.make('div', 'preview-detail-field');
-      assignment.appendChild(WM.make('span', 'preview-detail-label', 'Cycle group'));
-      assignment.appendChild(makeGroupSelect(characterName));
-      detail.appendChild(assignment);
-    }
-
     var identification = WM.make('div', 'preview-detail-field');
     identification.appendChild(WM.make('span', 'preview-detail-label', 'Identification marker'));
     identification.appendChild(makeMarkerSelect(characterName));
@@ -1268,7 +1256,7 @@
       var names = rows().map(function (entry) { return entry.name; }).join('\n');
       if (names !== previousNames) {
         var draft = host.querySelector('.group-add-name');
-        var manager = host.querySelector('.preview-group-manager');
+        var manager = document.querySelector('.preview-group-manager');
         // Native <details> toggle events are queued; read the actual open
         // state if a crop delivery overtakes that event.
         if (manager) { groupManagerOpen = manager.open; }
@@ -2274,94 +2262,183 @@
     });
   }
 
-  // ---- Cycle order card ----------------------------------------------
+  // ---- Cycle groups card ----------------------------------------------
   //
-  // The page paints numbers straight from state.cycle_order_effective and
-  // never re-derives the auto-assignment rule: Python owns it (cycle.py)
-  // and computes the map over the same known-owner union the bind rows
-  // merge from. Committing goes through set_preview_cycle_order and a
-  // refresh, so the effective numbers of every OTHER character re-render
-  // from Python's answer rather than being guessed at here.
+  // Cycling exists only through groups. A group is a named, ORDERED member
+  // list -- the list order IS the cycle order -- with its own forward/back
+  // chords, which render as ordinary bind rows in the table above. This
+  // card owns the membership half: per group, the ordered member rows with
+  // Up/Down/Remove, and an Add select of known characters. Every mutation
+  // goes through set_preview_cycle_group_members with the FULL new list --
+  // add, remove and reorder are one endpoint, because the order is the
+  // data. No groups defined means no cycle chords registered at all, which
+  // is the designed empty state, not a gap.
 
-  function cycleOrderStatus(text, error) {
-    var status = WM.el('preview-cycle-order-status');
-    if (!status) { return; }
-    status.textContent = text || '';
-    status.classList.toggle('err', !!error);
-    status.hidden = !status.textContent;
-  }
-
-  function effectiveNumber(name) {
-    return (state.cycle_order_effective || {})[name];
-  }
-
-  function renderCycleOrder() {
-    var list = WM.el('preview-cycle-order');
-    if (!list) { return; }
-    // A push must not rebuild the card underneath a draft the user is
-    // typing: an EVE client opening or closing fires onPreviewHotkeys
-    // routinely, and render() runs on every one. Skip only the rebuild --
-    // the input's value is still the draft, and the next render after
-    // blur (or the refresh that follows Enter) repaints the truth.
-    var active = document.activeElement;
-    if (active && active.dataset
-        && active.dataset.cycleOrder !== undefined) { return; }
-    var all = rows();
-    list.textContent = '';
-    if (!all.length) { return; }
-    all.forEach(function (entry) {
-      var row = WM.make('div', 'row');
-      var name = WM.make('span', 'cycle-order-name', entry.name);
-      name.title = entry.name;
-      if (state.enabled && entry.online === false) { name.classList.add('dim'); }
-      row.appendChild(name);
-      var num = document.createElement('input');
-      num.type = 'number';
-      num.className = 'field cycle-order-num';
-      num.min = '1';
-      num.max = '999';
-      num.step = '1';
-      // The EFFECTIVE number, not just the stored one: the card shows the
-      // order the cycle will actually walk, so auto-assigned characters
-      // are visible in it instead of looking unconfigured.
-      num.value = String(effectiveNumber(entry.name) || '');
-      num.setAttribute('data-cycle-order', entry.name);
-      num.setAttribute('aria-label', 'Cycle order for ' + entry.name);
-      num.addEventListener('keydown', function (event) {
-        if (event.key === 'Escape') {
-          num.value = String(effectiveNumber(entry.name) || '');
-          cycleOrderStatus('', false);
-        } else if (event.key === 'Enter') {
-          commitCycleOrder(entry.name, num.value);
-        }
-      });
-      row.appendChild(num);
-      list.appendChild(row);
-    });
-  }
-
-  function commitCycleOrder(name, raw) {
-    var text = (raw || '').trim();
-    var value = text === '' ? null : parseInt(text, 10);
-    if (text !== '' && (value === null || isNaN(value) || String(value) !== text
-                        || value < 1 || value > 999)) {
-      cycleOrderStatus('Enter a whole number between 1 and 999.', true);
-      return;
-    }
-    cycleOrderStatus('Saving…', false);
-    WM.send('set_preview_cycle_order', name, value).then(function (res) {
+  function setCycleGroupMembers(group, next) {
+    if (screenshotLive) { return; }
+    if (groupBusy) { return; }
+    endCapture();
+    groupBusy = true;
+    requestRender();
+    var before = pushes;
+    WM.send('set_preview_cycle_group_members', group.id, next).then(function (res) {
+      groupBusy = false;
       if (!res || !res.applied) {
-        cycleOrderStatus(
-          (res && res.error) || 'That number was not saved.', true);
-        renderCycleOrder();
-        return;
+        WM.send('alert_bookmarks',
+                res && res.error ? res.error : 'That member change was not saved.');
+        if (res && res.hotkeys && pushes === before) {
+          state.hotkeys = res.hotkeys;
+          state.hotkeys.groups = state.hotkeys.groups || [];
+        }
+      } else if (res.hotkeys && pushes === before) {
+        state.hotkeys = res.hotkeys;
+        state.hotkeys.groups = state.hotkeys.groups || [];
       }
-      cycleOrderStatus('Saved ' + name + ' at ' + res.number + '.', false);
-      refresh();
+      requestRender();
+      restoreCycleGroupFocus();
     });
   }
 
-  function appendBindRow(label, gesture, online, onSet, character, ownerKind) {    // Computed once, before makeRow, so this row's bind button can point
+  var rememberCycleGroupFocusHeld = null;
+
+  function makeMemberRow(group, index, count) {
+    var name = group.members[index];
+    var row = WM.make('div', 'row cycle-member-row');
+    row.setAttribute('data-group-id', group.id);
+    var lab = WM.make('span', 'cycle-order-name', name);
+    lab.title = name;
+    // Offline is information, not an error: the member is skipped at
+    // cycle time and keeps its place until it runs again.
+    var entry = rows().some(function (e) { return e.name === name && e.online; });
+    if (state.enabled && !entry) { lab.classList.add('dim'); }
+    row.appendChild(lab);
+
+    function memberBtn(label, control, disabled, action) {
+      var btn = WM.make('button', 'btn cycle-member-btn', label);
+      btn.setAttribute('data-group-id', group.id);
+      btn.setAttribute('data-group-control', control);
+      btn.setAttribute('data-member-index', String(index));
+      btn.setAttribute('aria-label', label + ' ' + name + ' in ' + group.name);
+      WM.setEnabled(btn, !groupBusy && !disabled);
+      btn.addEventListener('click', function () {
+        rememberCycleGroupFocusHeld = {groupId: group.id, control: control,
+                                       member: String(index)};
+        action();
+      });
+      return btn;
+    }
+    row.appendChild(memberBtn('↑', 'up', index === 0, function () {
+      var next = group.members.slice();
+      var moved = next.splice(index, 1)[0];
+      next.splice(index - 1, 0, moved);
+      setCycleGroupMembers(group, next);
+    }));
+    row.appendChild(memberBtn('↓', 'down', index === count - 1, function () {
+      var next = group.members.slice();
+      var moved = next.splice(index, 1)[0];
+      next.splice(index + 1, 0, moved);
+      setCycleGroupMembers(group, next);
+    }));
+    row.appendChild(memberBtn('Remove', 'remove', false, function () {
+      var next = group.members.slice();
+      next.splice(index, 1);
+      setCycleGroupMembers(group, next);
+    }));
+    return row;
+  }
+
+  function makeCycleGroupPanel(group) {
+    var panel = WM.make('div', 'cycle-group-panel');
+    panel.setAttribute('data-group-id', group.id);
+    var head = WM.make('div', 'cycle-group-head');
+    head.appendChild(WM.make('span', 'cycle-group-name', group.name));
+    var count = (group.members || []).length;
+    head.appendChild(WM.make('span', 'cycle-group-count',
+                             count === 1 ? '1 member' : count + ' members'));
+    panel.appendChild(head);
+
+    // The group's own forward/back chords, rendered with the same bind-row
+    // machinery as the table above -- capture, Edit…, Clear, clash
+    // warnings -- but living HERE, where the group is configured, not in
+    // the character table. `true`, not online state: a chord is not a
+    // character and has nothing to dim.
+    var chords = WM.make('div', 'cycle-group-chords');
+    chords.appendChild(makeBindRow('Forward', group.cycle, true,
+                                   function (g) { setGroupBind(group.id, g); },
+                                   undefined, 'group:' + group.id));
+    chords.appendChild(makeBindRow('Back', group.cycle_prev, true,
+                                   function (g) { setGroupBind(group.id, g, true); },
+                                   undefined, 'group-prev:' + group.id));
+    panel.appendChild(chords);
+
+    if (count) {
+      group.members.forEach(function (_name, index) {
+        panel.appendChild(makeMemberRow(group, index, count));
+      });
+    } else {
+      panel.appendChild(WM.make('p', 'hint', 'No characters in this group yet.'));
+    }
+
+    // Add-member select: every known character not already a member,
+    // known = the same merged list the bind table renders.
+    var taken = Object.create(null);
+    (group.members || []).forEach(function (n) { taken[n] = 1; });
+    var candidates = rows().filter(function (e) { return !taken[e.name]; });
+    if (candidates.length) {
+      var addRow = WM.make('div', 'row cycle-add-row');
+      addRow.setAttribute('data-group-id', group.id);
+      var sel = WM.make('select', 'field cycle-add-select');
+      sel.setAttribute('data-group-id', group.id);
+      sel.setAttribute('data-group-control', 'add');
+      sel.setAttribute('aria-label', 'Add a character to ' + group.name);
+      candidates.forEach(function (e) {
+        var opt = document.createElement('option');
+        opt.value = e.name;
+        opt.textContent = e.name + (e.online ? '' : ' (offline)');
+        sel.appendChild(opt);
+      });
+      WM.setEnabled(sel, !groupBusy);
+      var addBtn = WM.make('button', 'btn', 'Add');
+      addBtn.setAttribute('data-group-id', group.id);
+      addBtn.setAttribute('data-group-control', 'add-confirm');
+      WM.setEnabled(addBtn, !groupBusy);
+      addBtn.addEventListener('click', function () {
+        if (screenshotLive || groupBusy) { return; }
+        var chosen = sel.value;
+        if (!chosen) { return; }
+        var next = (group.members || []).slice();
+        next.push(chosen);
+        setCycleGroupMembers(group, next);
+      });
+      addRow.appendChild(sel);
+      addRow.appendChild(addBtn);
+      panel.appendChild(addRow);
+    }
+    return panel;
+  }
+
+  function renderCycleGroups() {
+    var list = WM.el('preview-cycle-groups');
+    if (!list) { return; }
+    list.textContent = '';
+    // Manager first: creating a group is the card's entry point, and its
+    // panels -- where each group is actually configured -- read top to
+    // bottom below it. Rendered even when groups().length is 0 so the
+    // Add field is always available.
+    list.appendChild(makeGroupManager());
+    groups().forEach(function (group) {
+      list.appendChild(makeCycleGroupPanel(group));
+    });
+    var empty = WM.el('preview-cycle-groups-empty');
+    if (empty) { empty.hidden = !!groups().length; }
+  }
+
+  // Build one bind row WITHOUT appending it. Group chord rows are rendered
+  // inside their group's own panel in the Cycle groups card, character rows
+  // inside the bind table -- the same makeRow shape and conflict machinery
+  // everywhere, only the destination differs.
+  function makeBindRow(label, gesture, online, onSet, character, ownerKind) {
+    // Computed once, before makeRow, so this row's bind button can point
     // aria-describedby at the exact conflict node this render appends AND
     // so makeBindConflict filters cycleOwners()/sharers() against this
     // row's own identity -- never against `label`, which a named group or
@@ -2374,7 +2451,11 @@
     if (conflict) {
       conflict.id = bindConflictId(ownerKey);
     }
-    host.appendChild(makeRow(label, gesture, online, onSet, character, conflict));
+    return makeRow(label, gesture, online, onSet, character, conflict);
+  }
+
+  function appendBindRow(label, gesture, online, onSet, character, ownerKind) {
+    host.appendChild(makeBindRow(label, gesture, online, onSet, character, ownerKind));
     if (character && openDetailName === character) {
       host.appendChild(makeCharacterDetail(character, isExcluded(character)));
     }
@@ -2421,43 +2502,14 @@
       off.hidden = !!(state.enabled || !off.textContent);
     }
 
-    // `true`, not state.enabled: the cycle chords are not characters and
-    // have no online state to report. Dimming them while previews were
-    // off was half of what made the whole list grey at once.
-    appendBindRow('All forward', state.hotkeys.cycle_next,
-                  true, function (g) { setBind('cycle_next', g); },
-                  undefined, 'cycle:next');
-    appendBindRow('All back', state.hotkeys.cycle_prev,
-                  true, function (g) { setBind('cycle_prev', g); },
-                  undefined, 'cycle:prev');
-
-    // Paired named-group directions use the existing rows, with direction
-    // before the name so long-name ellipsis never hides which bind this is.
-    // Each direction is rendered by
-    // the shared makeRow so it inherits the five-track shape and the same
-    // Clear/Edit… controls. Rendered after All rows and before the
-    // character divider -- the task brief's wireframe B ordering.
-    groups().forEach(function (group) {
-      appendBindRow('Forward · ' + group.name, group.cycle, true,
-                    function (g) { setGroupBind(group.id, g); },
-                    undefined, 'group:' + group.id);
-      appendBindRow('Back · ' + group.name, group.cycle_prev, true,
-                    function (g) { setGroupBind(group.id, g, true); },
-                    undefined, 'group-prev:' + group.id);
-    });
-
-    // Manage groups disclosure: Add/Rename…/Delete. Rendered after group
-    // rows and before the character separator so it lives in the "keys"
-    // section of the table. Rendered even when groups().length is 0 so
-    // the Add field is always available.
-    host.appendChild(makeGroupManager());
-
     // An UNNAMED rule, then the column headers. The rule used to be a
     // `.bind-group` reading `Characters`, which sat one line above a
     // column header reading `Character` -- the same word twice, naming the
     // same thing, in two type treatments. The word went; the separation
-    // stayed, because the two cycle rows above are app commands with no
-    // character attached and ran into the list without it.
+    // stayed. With the cycle groups moved to their own card below, every
+    // row this table renders is now a character -- but the rule still
+    // separates the table's top from its first row, where the sticky
+    // column header pins.
     //
     // It is a spanning element rather than a border on the header cells
     // because `.row` is display:contents here: a per-cell border is cut by
@@ -2518,7 +2570,7 @@
     paintRosterAvailability(list);
     renderLockBlock();
     renderNeverMinimizeBlock();
-    renderCycleOrder();
+    renderCycleGroups();
     if (cropRosterEdit) {
       var draft = host.querySelector('.group-add-name');
       var edit = cropRosterEdit;
@@ -2632,7 +2684,6 @@
         if (res && res.hotkeys && generation === pushes) {
           state.hotkeys = res.hotkeys;
           state.hotkeys.groups = state.hotkeys.groups || [];
-          state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
           requestRender();
         } else {
           refresh();
@@ -2653,109 +2704,9 @@
       if (res.hotkeys) {
         state.hotkeys = res.hotkeys;
         state.hotkeys.groups = state.hotkeys.groups || [];
-        state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
       }
       requestRender();
     });
-  }
-
-  // Build the group assignment <select> for one character detail. The
-  // detail spans the grid, so returning this control never adds a row cell.
-  //
-  // Not gated on the `off` (opted-out) state: unlike the keybind button
-  // and Size..., which can do nothing for an opted-out character, group
-  // membership is saved and waits for the preview to come back.
-  function makeGroupSelect(characterName) {
-    var sel = WM.make('select', 'field preview-group-select');
-    sel.setAttribute('aria-label', 'Cycle group for ' + characterName);
-    sel.setAttribute('data-preview-detail-control', 'group');
-
-    // Always-first option: no group assigned (All only).
-    var allOpt = document.createElement('option');
-    allOpt.value = '';
-    allOpt.textContent = 'All only';
-    sel.appendChild(allOpt);
-
-    // One option per named group, in creation order.
-    groups().forEach(function (g) {
-      var opt = document.createElement('option');
-      opt.value = g.id;
-      opt.textContent = g.name;
-      sel.appendChild(opt);
-    });
-
-    // Reflect current assignment.
-    var gbc = state.hotkeys.group_by_character || {};
-    sel.value = ownValue(gbc, characterName) || '';
-    // Disabled during any group write (assignment, lifecycle, or bind) so
-    // concurrent changes from multiple selects can't stack.
-    WM.setEnabled(sel, !groupBusy);
-
-    sel.addEventListener('change', function () {
-      // Synchronous guard: a concurrent write must be rejected before any
-      // state change.  Without this, rapid changes under an armed capture
-      // (where requestRender() defers) can stack.
-      if (screenshotLive) { return; }
-      if (groupBusy) { return; }
-      var selectedId = sel.value;
-      rememberDetailFocus(characterName, 'group');
-      // Disable lifecycle and assignment controls for the duration.
-      groupBusy = true;
-      requestRender();
-      // Capture the push generation before the bridge call. If a newer
-      // onPreviewHotkeys push arrives while the call is in flight it
-      // replaces state.hotkeys wholesale; applying the stale response
-      // on top of that would overwrite the authoritative table. Same
-      // guard as setGroupBind.
-      var before = pushes;
-      WM.send('set_preview_character_group', characterName, selectedId)
-        .then(function (res) {
-          groupBusy = false;
-          if (!res || !res.applied) {
-            // Revert: re-read from state.
-            sel.value = ownValue(state.hotkeys.group_by_character, characterName) || '';
-            WM.send('alert_bookmarks',
-                    res && res.error
-                      ? res.error
-                      : 'That group change was not saved.');
-            // Apply the authoritative table when available and no newer push
-            // has landed since the call was issued.  This keeps the groups
-            // list coherent without a full refresh() round-trip.
-            if (res && res.hotkeys && pushes === before) {
-              state.hotkeys = res.hotkeys;
-              state.hotkeys.groups = state.hotkeys.groups || [];
-              state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
-            }
-            requestRender();
-            focusGroupSelect(characterName);
-            return;
-          }
-          if (pushes !== before) {
-            // A newer push already applied authoritative state; skip the
-            // stale hotkeys update but still repaint so disabled controls
-            // are re-enabled (groupBusy is already false above).
-            requestRender();
-            focusGroupSelect(characterName);
-            return;
-          }
-          if (res.hotkeys) {
-            state.hotkeys = res.hotkeys;
-            state.hotkeys.groups = state.hotkeys.groups || [];
-            state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
-          }
-          requestRender();
-          focusGroupSelect(characterName);
-        });
-    });
-    return sel;
-  }
-
-  // Restore only the still-current detail intent. `restoreDetailFocus` owns
-  // the interaction token check, preventing a late assignment reply from
-  // focusing a closed detail or any control after the section has changed.
-  function focusGroupSelect(characterName) {
-    if (!detailFocusIntent || detailFocusIntent.name !== characterName) { return; }
-    restoreDetailFocus();
   }
 
   function visibleGroupControl(control) {
@@ -2767,7 +2718,7 @@
   // Ordinary refreshes own neither the Add draft nor a new focus decision.
   // Capture just before detaching, so even a deferred paint uses today's owner.
   function snapshotGroupManager() {
-    var manager = host.querySelector('.preview-group-manager');
+    var manager = document.querySelector('.preview-group-manager');
     if (!manager) { return null; }
     groupManagerOpen = manager.open;
     var field = manager.querySelector('.group-add-name');
@@ -2781,7 +2732,7 @@
 
   function restoreGroupManager(edit, returnFocus) {
     if (!edit) { return; }
-    var manager = host.querySelector('.preview-group-manager');
+    var manager = document.querySelector('.preview-group-manager');
     var field = manager.querySelector('.group-add-name');
     field.value = edit.value;
     if (edit.restoreSelection) {
@@ -2809,7 +2760,7 @@
   }
 
   function rememberGroupFocus() {
-    var manager = host.querySelector('.preview-group-manager');
+    var manager = document.querySelector('.preview-group-manager');
     groupFocusPending = !!(manager && manager.open
       && manager.contains(document.activeElement)
       && visibleGroupControl(document.activeElement));
@@ -2824,7 +2775,7 @@
   function finishGroupDialog(intent) {
     if (!intent || groupDialogFocus !== intent) { return false; }
     groupDialogFocus = null;
-    var manager = host.querySelector('.preview-group-manager');
+    var manager = document.querySelector('.preview-group-manager');
     if (screenshotLive || capturing || !WM.el('overlay').hidden
         || !manager || !manager.open) { return false; }
     // Keep today's draft, but recover the invoker by stable control/group ID.
@@ -2867,7 +2818,6 @@
             if (res && res.hotkeys && pushes === before) {
               state.hotkeys = res.hotkeys;
               state.hotkeys.groups = state.hotkeys.groups || [];
-              state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
             }
             requestRender();
             focusGroupManager();
@@ -2879,7 +2829,6 @@
           } else if (res.hotkeys) {
             state.hotkeys = res.hotkeys;
             state.hotkeys.groups = state.hotkeys.groups || [];
-            state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
           }
           requestRender();
           focusGroupManager();
@@ -2894,7 +2843,7 @@
     releaseGroupFocus();
     if (!pending || screenshotLive || capturing || !WM.el('overlay').hidden
         || document.activeElement !== document.body) { return; }
-    var manager = host.querySelector('.preview-group-manager');
+    var manager = document.querySelector('.preview-group-manager');
     var field = manager && manager.querySelector('.group-add-name');
     if (manager && manager.open && visibleGroupControl(field)) { field.focus(); }
   }
@@ -2908,14 +2857,10 @@
     if (screenshotLive) { return; }
     if (groupBusy) { return; }
     endCapture();
-    var gbc = state.hotkeys.group_by_character || {};
-    var members = Object.keys(gbc).filter(function (n) {
-      return gbc[n] === group.id;
-    });
-    var memberText = members.length === 1
-      ? '1 character' : members.length + ' characters';
-    var msg = 'Delete group "' + group.name + '"? ' + memberText +
-              ' will return to All only cycling.';
+    var count = (group.members || []).length;
+    var memberText = count === 1 ? '1 character' : count + ' characters';
+    var msg = 'Delete group "' + group.name + '"? Its ' + memberText +
+              ' and its cycle keybinds go with it.';
     var intent = beginGroupDialog();
     var interaction = detailInteraction;
     WM.confirm('Delete group', msg).then(function (confirmed) {
@@ -2937,7 +2882,6 @@
           if (res && res.hotkeys && pushes === before) {
             state.hotkeys = res.hotkeys;
             state.hotkeys.groups = state.hotkeys.groups || [];
-            state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
           }
           requestRender();
           // Refusal: the group is still present; repaint re-enables its
@@ -2952,7 +2896,6 @@
         } else if (res.hotkeys) {
           state.hotkeys = res.hotkeys;
           state.hotkeys.groups = state.hotkeys.groups || [];
-          state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
         }
         requestRender();
         focusGroupManager();
@@ -2962,9 +2905,9 @@
 
   // Build the "Manage groups" disclosure: a collapsed <details> with a
   // <summary> showing "Manage groups (N)", then a text field and Add button,
-  // then one Rename…/Delete row per existing group.  Rendered inside
-  // #preview-binds spanning the full grid width via .preview-group-manager.
-  // Uses <details> rather than a plain div so:
+  // then one Rename…/Delete row per existing group.  Rendered at the top of
+  // the Cycle groups card, directly above the per-group member panels it
+  // creates and deletes.  Uses <details> rather than a plain div so:
   //   1. The panel is collapsible -- it does not stay permanently expanded.
   //   2. It does NOT inherit the bind-group sticky-header CSS that would
   //      pin it at the top and overlay character rows.
@@ -3031,7 +2974,6 @@
           if (res && res.hotkeys && pushes === before) {
             state.hotkeys = res.hotkeys;
             state.hotkeys.groups = state.hotkeys.groups || [];
-            state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
           }
           requestRender();
           // The old nameField is detached by requestRender(); query the new
@@ -3045,7 +2987,6 @@
         } else if (res.hotkeys) {
           state.hotkeys = res.hotkeys;
           state.hotkeys.groups = state.hotkeys.groups || [];
-          state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
         }
         requestRender();
         // The old nameField is detached by requestRender(); query the new one.
@@ -3111,14 +3052,11 @@
       }
       state = payload;
       pushes += 1;
-      state.hotkeys = state.hotkeys || {characters: {}, cycle_next: '',
-                                        cycle_prev: ''};
+      state.hotkeys = state.hotkeys || {characters: {}, groups: []};
       state.hotkeys.groups = state.hotkeys.groups || [];
-      state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
       state.locked = state.locked || [];
       state.never_minimize = state.never_minimize || [];
       state.excluded = state.excluded || [];
-      state.cycle_order_effective = state.cycle_order_effective || {};
       acceptCrops(payload.crops, true);
       recover.forEach(function (request) { settleCropRequests(request); });
       if (beforeRender) { beforeRender(); }
@@ -3182,14 +3120,11 @@
     }
     state = payload;
     pushes += 1;
-    state.hotkeys = state.hotkeys || {characters: {}, cycle_next: '',
-                                      cycle_prev: ''};
+    state.hotkeys = state.hotkeys || {characters: {}, groups: []};
     state.hotkeys.groups = state.hotkeys.groups || [];
-    state.hotkeys.group_by_character = state.hotkeys.group_by_character || {};
     state.locked = state.locked || [];
     state.never_minimize = state.never_minimize || [];
     state.excluded = state.excluded || [];
-    state.cycle_order_effective = state.cycle_order_effective || {};
     acceptCrops(payload.crops, true);
     requestRender();
   });

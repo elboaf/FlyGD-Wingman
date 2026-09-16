@@ -1125,9 +1125,7 @@ def test_set_preview_binds_persists_and_pushes_to_the_host(tmp_path):
     fake_host = _FakeHost()
     api = make_api(tmp_path, preview_host=fake_host)
 
-    ok = api.set_preview_binds(
-        {"characters": {"Alice": "ctrl+f1"}, "cycle_next": "", "cycle_prev": ""}
-    )
+    ok = api.set_preview_binds({"characters": {"Alice": "ctrl+f1"}})
 
     assert ok is True
     stored = api._state.settings["preview"]["hotkeys"]["characters"]
@@ -1142,7 +1140,7 @@ def test_set_preview_binds_rejects_an_unparseable_chord(tmp_path):
     # make_state's minimal fixture does not, so seed it to prove a rejected
     # chord leaves the existing table untouched rather than KeyError-ing.
     api._state.settings["preview"] = {
-        "hotkeys": {"characters": {}, "cycle_next": "", "cycle_prev": ""}
+        "hotkeys": {"characters": {}}
     }
 
     assert api.set_preview_binds({"characters": {"Alice": "nonsense"}}) is False
@@ -1238,8 +1236,10 @@ def test_preview_chords_are_active_only_when_windows_actually_holds_them(tmp_pat
     api._state.settings["preview"] = {
         "hotkeys": {
             "characters": {"Alice": "Ctrl+Alt+1"},
-            "cycle_next": "Ctrl+Alt+Right",
-            "cycle_prev": "",
+            "groups": [
+                {"id": "dps", "name": "DPS", "members": ["Alice"],
+                 "cycle": "Ctrl+Alt+Right", "cycle_prev": ""}
+            ],
         }
     }
     # get_bookmarks reads its own section too; this test is about the

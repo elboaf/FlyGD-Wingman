@@ -1623,8 +1623,40 @@ button.btn:disabled,
   flex: 0 1 320px; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; color: var(--text);
 }
-.cycle-order-name.dim { color: var(--text-faint); }
-#preview-cycle-order .cycle-order-num { flex: 0 0 auto; width: 6em; }
+.cycle-order-name.dim, .cycle-member-row .cycle-order-name.dim {
+  color: var(--text-faint);
+}
+
+/* Cycle groups card (Settings > Previews > Characters & cycling). One
+   panel per group: a name/count heading, the ordered member rows (order
+   IS the cycle order), then the Add row. The rows reuse the bind list's
+   ellipsis-in-a-bounded-track name treatment and small fixed buttons --
+   the same vocabulary as #preview-binds, because this is the same kind of
+   list, just ordered and editable in place. */
+.cycle-group-panel { margin: 0 0 16px 0; }
+.cycle-group-head {
+  display: flex; align-items: baseline; gap: 8px; margin: 4px 0 6px 0;
+}
+.cycle-group-name { color: var(--text); font-size: var(--fs-body); }
+.cycle-group-count { color: var(--text-dim); font-size: var(--fs-muted); }
+.cycle-member-row { align-items: center; }
+.cycle-member-row .cycle-order-name { flex: 1 1 auto; }
+.cycle-member-btn { flex: 0 0 auto; }
+.cycle-add-row { margin-top: 6px; }
+.cycle-add-row .cycle-add-select { flex: 1 1 auto; min-width: 0; }
+
+/* The chord rows inside a group panel reuse makeRow, so they must opt out
+   of the settings-row stacked-label treatment (`width: 100%` on .lab) that
+   would push the chord button to its own line: name left, chord button
+   right, conflict text wrapping below like it does in the bind table. */
+.cycle-group-chords { margin: 2px 0 8px 0; }
+.cycle-group-chords .row { flex-wrap: wrap; row-gap: 4px; }
+.cycle-group-chords .row > .lab {
+  width: auto; flex: 1 1 auto; min-width: 0; align-self: center;
+}
+.cycle-group-chords .row > .bindbtn { flex: 0 0 auto; }
+.cycle-group-chords .row > .preview-bind-conflict { flex: 1 0 100%; }
+.cycle-group-chords .row > span:empty { display: none; }
 
 /* Prose that TEACHES rather than prose that warns, folded away.
 

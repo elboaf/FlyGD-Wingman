@@ -252,12 +252,12 @@ def plan_registrations(table) -> list:
             by_chord.setdefault(gestures.display(parsed), []).append(name)
 
     entries = [(chord, ("focus", tuple(names))) for chord, names in by_chord.items()]
-    entries.append((table.get("cycle_next"), ("cycle", 1)))
-    entries.append((table.get("cycle_prev"), ("cycle", -1)))
+    # Cycle chords exist only through groups: a group's own forward/back
+    # pair. No groups means no cycle registration of any kind. Append every
+    # back action after the established forwards, not beside its group: a
+    # new back bind must never displace a later group's forward.
     groups = table.get("groups")
     if isinstance(groups, list):
-        # Append every back action after the established forwards, not beside
-        # its group: a new back bind must never displace a later group's forward.
         for key, kind in (("cycle", "cycle_group"), ("cycle_prev", "cycle_group_prev")):
             for group in groups:
                 if not isinstance(group, dict):
@@ -335,7 +335,6 @@ class PreviewHost:
         locked=None,
         lock_default=None,
         excluded=None,
-        cycle_order=None,
         snap=None,
         lock_aspect=None,
         selection_color=None,
@@ -498,15 +497,10 @@ class PreviewHost:
         # preview.excluded: characters opted out of primary previews. Read
         # live like the rest, and read in THREE places rather than one --
         # _reconcile_roster (no window), _registerable (no hotkey
-        # registration) and _cycle_keys (not a stop on the walk) -- because
-        # the opt-out is a statement about the character, not about one
-        # window.
+        # registration) and _group_cycle_keys (not a stop on a group's
+        # walk) -- because the opt-out is a statement about the character,
+        # not about one window.
         self._excluded = excluded
-        # preview.cycle_order: per-character {name: int} walk preference for
-        # the cycle keybinds. Read live at dispatch time (not cached at
-        # registration) so a renumber in Settings reaches the very next
-        # keypress, same contract as _excluded.
-        self._cycle_order = cycle_order
         # Same reasoning as _restore_positions/_show_labels/etc.: read
         # live so a Settings toggle mid-session reaches previews already
         # open. None means "the caller has not wired this yet" -- see
@@ -3975,7 +3969,6 @@ class PreviewHost:
         target = foreground_key
         resolved_cursor = foreground_key
         cycle_seen = False
-        last_cycle_target = None
         last_group_targets = {}
         final_action = None
         for _ident, action in registered:
@@ -3993,55 +3986,26 @@ class PreviewHost:
                 continue
 
             cycle_seen = True
-            if kind == "cycle":
-                keys = self._cycle_keys()
-                if not keys:
-                    # Distinct from the "not running" no-op below, and it has
-                    # to be: every candidate here IS running, and was left out
-                    # on purpose. Borrowing that message would send a reader
-                    # looking for a client that is on screen in front of them.
-                    logger.debug(
-                        "Cycle keybind had nothing to visit: every running "
-                        "character is opted out of previews"
-                    )
-                    target = None
-                    continue
-                target = cycle.step(
-                    keys,
-                    target or resolved_cursor or self._last_cycled,
-                    value,
-                    self._stored_cycle_order(),
-                )
-                if target is not None:
-                    resolved_cursor = target
-                    last_cycle_target = target
-            else:  # cycle_group / cycle_group_prev share membership and history
-                group_id = value
-                keys = self._group_cycle_keys(group_id)
-                if not keys:
-                    logger.debug(
-                        "Group cycle keybind %r had nothing to visit", group_id
-                    )
-                    # Empty group is a no-op: preserve whatever target a
-                    # prior cycle or direct-focus action already resolved.
-                    # Setting target = None here would cancel an earlier
-                    # successful result in the same rapid batch (design §4:
-                    # "An empty group is a logged no-op").
-                    continue
-                history = self._last_group_cycled.get(group_id)
-                delta = -1 if kind == "cycle_group_prev" else 1
-                target = cycle.step(
-                    keys,
-                    target or resolved_cursor or history,
-                    delta,
-                    self._stored_cycle_order(),
-                )
-                if target is not None:
-                    resolved_cursor = target
-                    last_group_targets[group_id] = target
+            # cycle_group / cycle_group_prev share membership and history.
+            # Cycling exists only through groups -- there is no All-cycle.
+            group_id = value
+            keys = self._group_cycle_keys(group_id)
+            if not keys:
+                logger.debug("Group cycle keybind %r had nothing to visit", group_id)
+                # Empty group is a no-op: preserve whatever target a prior
+                # direct-focus action already resolved. Setting target = None
+                # here would cancel an earlier successful result in the same
+                # rapid batch (design §4: "An empty group is a logged no-op").
+                continue
+            history = self._last_group_cycled.get(group_id)
+            delta = -1 if kind == "cycle_group_prev" else 1
+            target = cycle.step(
+                keys, target or resolved_cursor or history, delta
+            )
+            if target is not None:
+                resolved_cursor = target
+                last_group_targets[group_id] = target
 
-        if last_cycle_target is not None:
-            self._last_cycled = last_cycle_target
         for gid, gtarget in last_group_targets.items():
             self._last_group_cycled[gid] = gtarget
 
@@ -4965,49 +4929,36 @@ class PreviewHost:
             logger.exception("Could not read excluded; defaulting to included")
             return False
 
-    def _stored_cycle_order(self) -> dict:
-        """The stored per-character cycle preference, read live. Same guard
-        as _is_excluded: a failed settings read must fall back to the
-        alphabetical walk, not kill the keypress."""
-        if self._cycle_order is None:
-            return {}
-        try:
-            return self._cycle_order() or {}
-        except Exception:
-            logger.exception("Could not read cycle_order; defaulting to name order")
-            return {}
-
-    def _cycle_keys(self) -> list:
-        """The characters the cycle keybinds walk.
-
-        characters() minus the opted-out, and deliberately NOT a change to
-        characters() itself: that one feeds the page's row list, which has
-        to keep showing an excluded character or there would be no row left
-        to re-enable them from.
-
-        Note what this does NOT filter: the ANCHOR in _on_hotkeys is still
-        resolved against _clients, so cycling while an excluded character's
-        own client holds the foreground finds an anchor that is not in this
-        list. cycle.step then takes its documented "anchor has gone"
-        branch and restarts at the first name rather than continuing from
-        the neighbour. Left as it is: it is the same fallback as cycling
-        from a browser, it self-corrects on the next press, and filtering
-        the anchor too would mean inventing a position in a walk this
-        character is deliberately not part of.
-        """
-        return [key for key in self.characters() if not self._is_excluded(key)]
-
     def _group_cycle_keys(self, group_id: str) -> list:
-        """Like _cycle_keys but restricted to members of *group_id*.
+        """The names one group's chord walks, in the group's own order.
+
+        The member list stored on the group IS the cycle order, so this is
+        a filter, never a sort: intersect with characters() (who is
+        actually running -- an offline member is skipped, not a stop) and
+        drop the opted-out, so an excluded character is not a stop on a
+        walk they deliberately opted out of.
 
         Reads _active_hotkeys, the snapshot installed by _apply_hotkeys,
-        so dispatch always sees the membership that was live when the last
-        rebind completed -- never a partially-applied pending table.
+        so dispatch always sees the membership and order that were live
+        when the last rebind completed -- never a partially-applied pending
+        table.
+
+        Note what this does NOT filter: the ANCHOR in _on_hotkeys is still
+        resolved against _clients, so cycling while a member's own client
+        holds the foreground works even when an edge just left them outside
+        this list. cycle.step takes its documented "anchor has gone" branch
+        then, the same fallback as cycling from a browser, and it
+        self-corrects on the next press.
         """
-        memberships = self._active_hotkeys.get("group_by_character") or {}
-        return [
-            name for name in self._cycle_keys() if memberships.get(name) == group_id
-        ]
+        running = set(self.characters())
+        for group in self._active_hotkeys.get("groups") or []:
+            if isinstance(group, dict) and group.get("id") == group_id:
+                return [
+                    name
+                    for name in group.get("members") or []
+                    if name in running and not self._is_excluded(name)
+                ]
+        return []
 
     def _restyle(self, libs=None) -> None:
         """Push live show_labels/opacity/locked onto every open preview,

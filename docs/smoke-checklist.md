@@ -6651,32 +6651,40 @@ warnings on the Previews side.
       revoked native actions cannot activate/capture. A failed native release stays
       tracked until cleanup succeeds; reactivation does not create a second owner.
 
-## Cycle order preference (Characters & cycling) — NOT RUN
+## Cycle groups rework (Characters & cycling) — NOT RUN
 
-The cycle keybinds walk stored numeric preferences (Settings › Previews ›
-Characters & cycling › Cycle order). Auto-assigned numbers are derived in
-`wingman/preview/cycle.py` and shipped in the state payload; the page only
-paints them.
+Cycling exists only through cycle groups: a named, ordered member list with
+its own forward/back global chords. The All-cycle, the per-character numeric
+preference and the per-character group-assignment select are gone; stored
+pre-group state (flat chords, checkbox membership) is wiped, not migrated.
 
-- [ ] **Card renders with the truth.** Open Settings › Previews › Characters &
-      cycling with at least two known characters. Every character shows a
-      number; characters with no stored preference show their auto-assigned
-      number (numbered characters first ascending, then the rest
-      alphabetically). With Previews Off the card still lists known
-      characters.
-- [ ] **A stored number reorders the cycle.** Give a mid-alphabet character
-      number 1, press Enter, then press the All-forward cycle keybind from a
-      running client: the walk follows the numbers, and the saved number
-      survives an app restart.
-- [ ] **Commit rule.** A number commits on Enter only — typing without Enter
-      and clicking away must leave the previous value on the next render.
-      Out-of-range or non-numeric input shows the card's error line and does
-      not save. Clearing a field and pressing Enter removes the stored
-      number (the character drops back to auto-assignment) without
-      renumbering anyone else's stored values.
-- [ ] **Push safety.** With a number half-typed, start or stop an EVE client
-      so `onPreviewHotkeys` fires: the draft must survive (the card is not
-      rebuilt underneath the focused input).
-- [ ] **Offline rows.** A known-but-offline character's number is editable
-      and takes effect when that character next runs. A group cycle keybind
-      follows the same numeric order restricted to its members.
+- [ ] **Empty state.** With no groups defined there are no cycle rows in the
+      keybind table, the Cycle groups card shows its "no cycle groups yet"
+      hint, and pressing any previously stored cycle chord does nothing.
+      Previews, focus keybinds and everything else keep working.
+- [ ] **Create and populate.** "Manage groups" in the keybind table creates a
+      group; its forward/back rows appear in the table first (before
+      character rows) and take chords like any bind row. The Cycle groups
+      card shows the group with no members; add two or three known
+      characters from the Add select, including one offline.
+- [ ] **Order is the list.** Arrange members with Up/Down so the order
+      differs from alphabetical, then press the group's forward chord: the
+      walk follows the list order, visits only running members, and skips
+      the offline one. Back walks the reverse direction. Restart the app and
+      confirm order and membership survived.
+- [ ] **Membership edits.** Remove a member, reorder mid-list, add a member
+      while a cycle press is being repeated: controls disable while a write
+      is in flight and re-enable after; the focused Up/Down/Remove button
+      regains focus after the repaint.
+- [ ] **Delete and rename.** Rename a group from Manage groups: the chord
+      rows relabel and keep working. Delete a group: its chord rows and
+      member panel disappear and its chords unregister.
+- [ ] **Overlap is warn-not-block.** Give two groups the same forward chord:
+      the table shows the duplicate-chord clash warning, registration keeps
+      one of them (per the reported registration status), and nothing
+      crashes or silently drops the other group's membership.
+- [ ] **Excluded member.** Opt a member out of previews (row checkbox): the
+      walk skips them but membership and order are retained, and the member
+      stays listed and editable.
+- [ ] **Unrelated writes.** With groups configured, drag a preview, save a
+      crop and toggle a setting: no group loses members, order or chords.

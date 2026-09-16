@@ -59,7 +59,6 @@ from ..eveauth import application as eveauth_application
 from ..evesettings.controller import ProfilesController, ProfilesPorts
 from ..fleetsharing.projection import verified_character_ids
 from ..preview import crops as preview_crops
-from ..preview import cycle as preview_cycle
 from ..preview import geometry as preview_geometry
 from ..preview import gestures as preview_gestures
 from ..preview import host as preview_host_mod
@@ -5029,10 +5028,11 @@ class Api:
         }
 
     def set_preview_binds(self, section) -> bool:
-        """Replace the character keybinds and All-cycle chords, persist them,
-        and push the full table to the host.
+        """Replace the character keybinds, persist them, and push the full
+        table to the host.
 
-        Groups and group membership are left unchanged.
+        Cycle groups are left unchanged -- they carry their own chords and
+        are edited through their own endpoints.
 
         Returns False on a chord that will not parse rather than silently
         dropping it: the page needs to tell a rejected entry from a saved
@@ -5041,7 +5041,7 @@ class Api:
         """
         if not isinstance(section, dict):
             return False
-        table = {"characters": {}, "cycle_next": "", "cycle_prev": ""}
+        table = {"characters": {}}
         characters = section.get("characters")
         if isinstance(characters, dict):
             for name, text in characters.items():
@@ -5053,22 +5053,12 @@ class Api:
                 if parsed is None:
                     return False
                 table["characters"][name] = preview_gestures.display(parsed)
-        for key in ("cycle_next", "cycle_prev"):
-            text = section.get(key)
-            if not text:
-                continue
-            parsed = preview_gestures.parse(text)
-            if parsed is None:
-                return False
-            table[key] = preview_gestures.display(parsed)
 
         with self._preview_hotkey_lock:
             try:
                 with settings_mod.update(self._state.settings) as cfg:
                     hotkeys = cfg.setdefault("preview", {}).setdefault("hotkeys", {})
                     hotkeys["characters"] = table["characters"]
-                    hotkeys["cycle_next"] = table["cycle_next"]
-                    hotkeys["cycle_prev"] = table["cycle_prev"]
             except OSError:
                 logger.exception("Could not persist preview hotkeys")
                 return False
@@ -5112,6 +5102,7 @@ class Api:
                         {
                             "id": new_id,
                             "name": clean_name,
+                            "members": [],
                             "cycle": "",
                             "cycle_prev": "",
                         }
@@ -5172,7 +5163,7 @@ class Api:
         return self._preview_group_result(True, None, result_table)
 
     def delete_preview_cycle_group(self, group_id) -> dict:
-        """Delete a cycle group and remove all character memberships.
+        """Delete a cycle group; its member list dies with it.
 
         Returns {applied, persisted, error, hotkeys}.
         """
@@ -5189,10 +5180,6 @@ class Api:
                     hotkeys["groups"] = [g for g in groups if g.get("id") != group_id]
                     if len(hotkeys["groups"]) == orig_len:
                         raise ValueError(f"No group with id {group_id!r}")
-                    mapping = hotkeys.setdefault("group_by_character", {})
-                    hotkeys["group_by_character"] = {
-                        name: gid for name, gid in mapping.items() if gid != group_id
-                    }
             except ValueError as exc:
                 current = self._preview_hotkeys()
                 return self._preview_group_result(False, str(exc), current)
@@ -5260,38 +5247,47 @@ class Api:
                 self._preview_host.set_hotkeys(result_table)
         return self._preview_group_result(True, None, result_table)
 
-    def set_preview_character_group(self, name, group_id) -> dict:
-        """Assign a character to a cycle group, or remove the assignment.
+    def set_preview_cycle_group_members(self, group_id, members) -> dict:
+        """Replace a group's ordered member list wholesale.
 
-        An empty group_id removes the character from its group (All-only).
+        The list order IS the cycle order, so add, remove and reorder are
+        all this one endpoint: the page sends the full new list. Names are
+        validated with the same stable-name boundary as the rest of the
+        preview APIs; offline characters are allowed (they are skipped at
+        cycle time, not refused here). Duplicates collapse to the first
+        occurrence.
+
         Returns {applied, persisted, error, hotkeys}.
-        Uses the same stable-name boundary as other preview APIs.
         """
-        if not self._usable_preview_character(name):
+        if not isinstance(group_id, str) or not group_id:
+            with self._preview_hotkey_lock:
+                current = self._preview_hotkeys()
+            return self._preview_group_result(False, "Invalid group_id", current)
+        if not isinstance(members, list):
             with self._preview_hotkey_lock:
                 current = self._preview_hotkeys()
             return self._preview_group_result(
-                False, f"Invalid character name: {name!r}", current
+                False, "members must be a list", current
             )
-        if not isinstance(group_id, str):
-            with self._preview_hotkey_lock:
-                current = self._preview_hotkeys()
-            return self._preview_group_result(
-                False, "group_id must be a string", current
-            )
+        clean: list = []
+        for name in members:
+            if not self._usable_preview_character(name):
+                with self._preview_hotkey_lock:
+                    current = self._preview_hotkeys()
+                return self._preview_group_result(
+                    False, f"Invalid character name: {name!r}", current
+                )
+            if name not in clean:
+                clean.append(name)
         with self._preview_hotkey_lock:
             try:
                 with settings_mod.update(self._state.settings) as cfg:
                     hotkeys = cfg.setdefault("preview", {}).setdefault("hotkeys", {})
-                    mapping = hotkeys.setdefault("group_by_character", {})
-                    if group_id == "":
-                        mapping.pop(name, None)
-                    else:
-                        groups = hotkeys.setdefault("groups", [])
-                        valid_ids = {g.get("id") for g in groups}
-                        if group_id not in valid_ids:
-                            raise ValueError(f"No group with id {group_id!r}")
-                        mapping[name] = group_id
+                    groups = hotkeys.setdefault("groups", [])
+                    target = next((g for g in groups if g.get("id") == group_id), None)
+                    if target is None:
+                        raise ValueError(f"No group with id {group_id!r}")
+                    target["members"] = clean
             except ValueError as exc:
                 current = self._preview_hotkeys()
                 return self._preview_group_result(False, str(exc), current)
@@ -5300,16 +5296,6 @@ class Api:
                 current = self._preview_hotkeys()
                 return self._preview_group_result(False, "Persist error", current)
             result_table = self._preview_hotkeys()
-            # Finding 2: the normalizer enforces a 64-entry roster cap on
-            # group_by_character.  If the assignment was silently discarded,
-            # the operation did not really apply; refuse it truthfully and do
-            # not deliver a table that claims the dropped assignment to the host.
-            if group_id and name not in result_table.get("group_by_character", {}):
-                return self._preview_group_result(
-                    False,
-                    f"Roster cap reached; {name!r} was not assigned to {group_id!r}",
-                    result_table,
-                )
             if self._preview_host is not None:
                 self._preview_host.set_hotkeys(result_table)
         return self._preview_group_result(True, None, result_table)
@@ -5473,15 +5459,6 @@ class Api:
             "roster": list(section.get("seen") or []),
             "label_markers": self._preview_config.get("label_markers", {}),
             "marker_choices": preview_labelmarkers.marker_choices(),
-            # Stored cycle preference, plus the page-ready effective map.
-            # The page never re-derives the auto-assignment rule: the card
-            # paints numbers straight from cycle_order_effective, which is
-            # computed over the same known-owner union the rows merge from.
-            "cycle_order": dict(section.get("cycle_order") or {}),
-            "cycle_order_effective": preview_cycle.effective_order(
-                sorted(set(layout_state["owners"])),
-                section.get("cycle_order") or {},
-            ),
             "characters": characters,
             "registration": host.hotkey_status() if live else {},
             "bookmark_chords": self._bookmark_chords(),
@@ -5647,69 +5624,6 @@ class Api:
             return receipt(self._field_refused("Could not save this to settings."))
         if host is not None:
             host.restyle()
-        return receipt(self._field_ok())
-
-    def set_preview_cycle_order(self, name, value) -> dict:
-        """Commit one character's cycle preference, including while offline.
-
-        Accepts an int (set) or None / empty (clear, back to auto-assign).
-        The host reads preview.cycle_order at every keypress, so there is
-        nothing to push live -- the next press of the cycle keybind already
-        walks the new order."""
-
-        def receipt(result):
-            committed = self._preview_config.get("cycle_order", {})
-            return dict(
-                result, number=committed.get(name) if isinstance(name, str) else None
-            )
-
-        if not preview_labelmarkers.valid_owner(name):
-            return receipt(self._field_refused("Choose a known character."))
-        if value is not None and (isinstance(value, str) and not value.strip()):
-            value = None
-        if isinstance(value, str):
-            try:
-                value = int(value.strip())
-            except ValueError:
-                return receipt(
-                    self._field_refused("Enter a whole number between 1 and 999.")
-                )
-        if value is not None:
-            if isinstance(value, bool) or not isinstance(value, int):
-                return receipt(
-                    self._field_refused("Enter a whole number between 1 and 999.")
-                )
-            clamped = max(
-                preview_cycle.MIN_PREFERENCE, min(preview_cycle.MAX_PREFERENCE, value)
-            )
-            if clamped != value:
-                return receipt(
-                    self._field_refused("Enter a whole number between 1 and 999.")
-                )
-            value = clamped
-        memory_owners = self._preview_memory_owners()
-        try:
-            with settings_mod.update(self._state.settings) as doc:
-                # Recheck after acquiring the writer lock, not against a roster
-                # sampled before another owner reset or settings normalization.
-                section = doc.get("preview") or {}
-                known = preview_savedlayouts.known_owners(section, memory_owners)
-                if name not in known:
-                    raise ValueError("That character is no longer available.")
-                stored = doc.setdefault("preview", {}).setdefault("cycle_order", {})
-                if stored.get(name) == value:
-                    raise _SettingUnchanged
-                if value is None:
-                    stored.pop(name, None)
-                else:
-                    stored[name] = value
-        except _SettingUnchanged:
-            pass
-        except ValueError as exc:
-            return receipt(self._field_refused(str(exc)))
-        except OSError:
-            logger.exception("Could not persist cycle order for %s", name)
-            return receipt(self._field_refused("Could not save this to settings."))
         return receipt(self._field_ok())
 
     def set_preview_show_labels(self, enabled) -> dict:
@@ -6766,8 +6680,8 @@ class Api:
             "groups": list(bookmarks.bind_groups()),
             "windows": evewindows.list_eve_windows(),
             "collisions": bookmarks.collisions(section["keybinds"]),
-            # Mirror character-focus and All forward/back overlap here.
-            # Named cycle-group keys are not included in this reverse summary.
+            # Mirror character-focus and cycle-group chord overlap here --
+            # _preview_chords collects focus and every group's forward/back.
             # Registration alone does not prove delivery in a selected EVE window.
             "preview_chords": self._preview_chords(),
             # Human labels for the bound keys. Computed here rather than in
@@ -6828,8 +6742,12 @@ class Api:
             chord
             for chord in [
                 *(hotkeys.get("characters") or {}).values(),
-                hotkeys.get("cycle_next"),
-                hotkeys.get("cycle_prev"),
+                *(
+                    g.get(key)
+                    for key in ("cycle", "cycle_prev")
+                    for g in (hotkeys.get("groups") or [])
+                    if isinstance(g, dict)
+                ),
             ]
             if chord
         }

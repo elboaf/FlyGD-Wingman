@@ -32,7 +32,13 @@ def test_group_directions_normalize_independently(fields, forward, back):
         {"hotkeys": {"groups": [{"id": "g:prev", "name": " All back ", **fields}]}}
     )
     assert result["hotkeys"]["groups"] == [
-        {"id": "g:prev", "name": "All back", "cycle": forward, "cycle_prev": back}
+        {
+            "id": "g:prev",
+            "name": "All back",
+            "members": [],
+            "cycle": forward,
+            "cycle_prev": back,
+        }
     ]
 
 
@@ -55,6 +61,7 @@ def test_group_back_api_set_clear_rename_delete_and_forward_signature(
         {
             "id": "g:prev",
             "name": "All back",
+            "members": [],
             "cycle": "Ctrl+F2",
             "cycle_prev": "Ctrl+Alt+F3",
         }
@@ -72,9 +79,15 @@ def test_group_back_api_set_clear_rename_delete_and_forward_signature(
     # Save-and-report duplicates, not a new duplicate-refusal policy.
     assert setter("g:prev", "Ctrl+F2")["applied"]
     assert api.rename_preview_cycle_group("g:prev", "Alice")["hotkeys"]["groups"] == [
-        {"id": "g:prev", "name": "Alice", "cycle": "Ctrl+F2", "cycle_prev": "Ctrl+F2"}
+        {
+            "id": "g:prev",
+            "name": "Alice",
+            "members": [],
+            "cycle": "Ctrl+F2",
+            "cycle_prev": "Ctrl+F2",
+        }
     ]
-    assert api.set_preview_binds({"characters": {}, "cycle_next": "", "cycle_prev": ""})
+    assert api.set_preview_binds({"characters": {}})
     assert api._preview_hotkeys()["groups"][0]["cycle_prev"] == "Ctrl+F2"
     assert setter("g:prev", "  ")["hotkeys"]["groups"][0]["cycle_prev"] == ""
     assert api._preview_hotkeys()["groups"][0]["cycle"] == "Ctrl+F2"
@@ -170,18 +183,30 @@ def test_group_direction_writes_serialize_without_lost_fields(tmp_path):
     assert not first.is_alive() and not second.is_alive()
     assert len(results) == 2 and all(r["applied"] for r in results)
     assert [t["groups"][0] for t in deliveries] == [
-        {"id": "g", "name": "DPS", "cycle": "Ctrl+F2", "cycle_prev": ""},
-        {"id": "g", "name": "DPS", "cycle": "Ctrl+F2", "cycle_prev": "Ctrl+F3"},
+        {
+            "id": "g",
+            "name": "DPS",
+            "members": [],
+            "cycle": "Ctrl+F2",
+            "cycle_prev": "",
+        },
+        {
+            "id": "g",
+            "name": "DPS",
+            "members": [],
+            "cycle": "Ctrl+F2",
+            "cycle_prev": "Ctrl+F3",
+        },
     ]
     assert settings.load()["preview"]["hotkeys"]["groups"] == deliveries[-1]["groups"]
 
 
 def test_named_back_plans_append_after_all_established_forward_actions():
+    """Every back action follows every forward, not its own group: a new
+    back bind must never displace a later group's forward."""
     plan = host.plan_registrations(
         {
             "characters": {"Alice": "Ctrl+F1"},
-            "cycle_next": "Ctrl+F2",
-            "cycle_prev": "Ctrl+F3",
             "groups": [
                 {"id": "early", "cycle": "Ctrl+F4", "cycle_prev": "Ctrl+F6"},
                 {"id": "late", "cycle": "Ctrl+F5", "cycle_prev": "Ctrl+F7"},
@@ -191,8 +216,6 @@ def test_named_back_plans_append_after_all_established_forward_actions():
     )
     assert [(text, action) for _, text, action in plan] == [
         ("Ctrl+F1", ("focus", ("Alice",))),
-        ("Ctrl+F2", ("cycle", 1)),
-        ("Ctrl+F3", ("cycle", -1)),
         ("Ctrl+F4", ("cycle_group", "early")),
         ("Ctrl+F5", ("cycle_group", "late")),
         ("Ctrl+F6", ("cycle_group_prev", "early")),
@@ -202,28 +225,30 @@ def test_named_back_plans_append_after_all_established_forward_actions():
 
 
 @pytest.mark.parametrize(
-    "winner", ["character", "all-forward", "all-back", "later-forward", "earlier-back"]
+    "winner", ["character", "two-forwards", "later-forward", "earlier-back"]
 )
 def test_named_back_canonical_duplicates_keep_registration_priority(winner):
+    """No All-cycle remains, but duplicates still fight: a character chord
+    beats any group chord (characters plan first) and an earlier group's
+    chord beats a later group's (stored order), yet every forward beats
+    every back -- so a later FORWARD legitimately wins over an earlier
+    BACK on the same chord."""
     table = {"characters": {}, "groups": [{"id": "early", "cycle_prev": "alt+ctrl+f3"}]}
     if winner == "character":
         table["characters"] = {"Alice": "Ctrl+Alt+F3"}
         expected = ("focus", ("Alice",))
-    elif winner.startswith("all"):
-        table["cycle_next" if winner == "all-forward" else "cycle_prev"] = "Ctrl+Alt+F3"
-        expected = ("cycle", 1 if winner == "all-forward" else -1)
+    elif winner == "two-forwards":
+        # Same chord as early's back too -- the duplicate BACK still loses,
+        # so the whole plan collapses to one registration on one chord.
+        table["groups"][0]["cycle"] = "Ctrl+Alt+F3"
+        table["groups"].append({"id": "later", "cycle": "Ctrl+Alt+F3"})
+        expected = ("cycle_group", "early")
+    elif winner == "later-forward":
+        table["groups"].append({"id": "later", "cycle": "Ctrl+Alt+F3"})
+        expected = ("cycle_group", "later")
     else:
-        table["groups"].append(
-            {
-                "id": "later",
-                "cycle" if winner == "later-forward" else "cycle_prev": "Ctrl+Alt+F3",
-            }
-        )
-        expected = (
-            ("cycle_group", "later")
-            if winner == "later-forward"
-            else ("cycle_group_prev", "early")
-        )
+        table["groups"].append({"id": "later", "cycle_prev": "Ctrl+Alt+F3"})
+        expected = ("cycle_group_prev", "early")
     assert [(t, a) for _, t, a in host.plan_registrations(table)] == [
         ("Ctrl+Alt+F3", expected)
     ]
@@ -277,16 +302,6 @@ def test_named_back_canonical_duplicates_keep_registration_priority(winner):
             "Carol",
             "Carol",
         ),
-        (
-            "Alice",
-            None,
-            None,
-            ["Alice", "Bravo", "Carol"],
-            [],
-            [3, 2, 4],
-            None,
-            "Bravo",
-        ),
         ("Alice", None, None, ["Alice"], [], [2], None, "Alice"),
         ("Alice", None, None, ["Offline"], [], [2], None, None),
         ("Alice", None, None, ["Bravo"], ["Bravo"], [2], None, None),
@@ -313,7 +328,7 @@ def test_named_back_uses_existing_sequential_cursor_and_shared_history(
         h._clients[foreground].hwnd if foreground else 0
     )
     h._is_excluded = lambda name: name in excluded
-    h._active_hotkeys = {"group_by_character": {name: "g" for name in members}}
+    h._active_hotkeys = {"groups": [{"id": "g", "name": "G", "members": members}]}
     if history:
         h._last_group_cycled["g"] = history
     if pending:
@@ -322,7 +337,6 @@ def test_named_back_uses_existing_sequential_cursor_and_shared_history(
         1: ("cycle_group", "g"),
         2: ("cycle_group_prev", "g"),
         3: ("focus", ("Carol",)),
-        4: ("cycle", -1),
     }
     activated = []
     monkeypatch.setattr(
@@ -340,8 +354,9 @@ def test_named_back_revocation_keeps_os_cleanup_debt_but_rejects_queued_action(
     h._hwnd = 0x99
     monkeypatch.setattr(h, "_post", lambda *args: None)  # drive pump calls below
     table = {
-        "groups": [{"id": "g", "cycle_prev": "Ctrl+F3"}],
-        "group_by_character": {"Alice": "g", "Bravo": "g", "Carol": "g"},
+        "groups": [
+            {"id": "g", "cycle_prev": "Ctrl+F3", "members": ["Alice", "Bravo", "Carol"]}
+        ],
     }
     h.set_hotkeys(table)
     h._apply_hotkeys(libs, table)
@@ -351,7 +366,7 @@ def test_named_back_revocation_keeps_os_cleanup_debt_but_rejects_queued_action(
         h, "_activate_client", lambda libs, c: activated.append(c.stable_key)
     )
     # A committed membership change takes effect even ahead of native REBIND.
-    table["group_by_character"] = {"Alice": "g", "Bravo": "g"}
+    table["groups"][0]["members"] = ["Alice", "Bravo"]
     h.set_hotkeys(table)
     h._on_hotkeys(libs, [1])
     assert activated == ["Bravo"]
@@ -434,10 +449,22 @@ def test_group_back_survives_unrelated_transaction_and_reload():
     cfg = settings.load()
     with settings.update(cfg) as doc:
         doc["preview"]["hotkeys"]["groups"] = [
-            {"id": "g", "name": "DPS", "cycle": "Ctrl+F2", "cycle_prev": "Ctrl+F3"}
+            {
+                "id": "g",
+                "name": "DPS",
+                "members": [],
+                "cycle": "Ctrl+F2",
+                "cycle_prev": "Ctrl+F3",
+            }
         ]
     with settings.update(cfg) as doc:
         doc["preview"]["show_labels"] = False
     assert settings.load()["preview"]["hotkeys"]["groups"] == [
-        {"id": "g", "name": "DPS", "cycle": "Ctrl+F2", "cycle_prev": "Ctrl+F3"}
+        {
+            "id": "g",
+            "name": "DPS",
+            "members": [],
+            "cycle": "Ctrl+F2",
+            "cycle_prev": "Ctrl+F3",
+        }
     ]

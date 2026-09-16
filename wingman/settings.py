@@ -19,7 +19,6 @@ from .alerts import patterns as alert_patterns
 from .alerts import state as alert_state
 from .preview import companions as preview_companions
 from .preview import crops as preview_crops
-from .preview import cycle as preview_cycle
 from .preview import gestures as preview_gestures
 from .preview import labelmarkers as preview_labelmarkers
 from .preview import layout as preview_layout
@@ -179,16 +178,17 @@ def _preview_defaults() -> dict:
         "saved_layouts": {"version": 1, "items": []},
         # One independent definition per named owner; absence needs no migration.
         "crops": {},
-        # The two flat cycle chords are the All-cycle (forward and back).
-        # Groups and per-character membership are stored alongside them
-        # and default to empty, so existing installs need no migration --
-        # the schema grew in place.
+        # Cycling exists only through cycle groups. A group is a named,
+        # ORDERED member list -- list order is the cycle order -- with its
+        # own forward/back global chords. No groups means no cycle chords
+        # registered at all. The pre-group schema (flat cycle_next/prev
+        # All-cycle chords, group_by_character checkbox membership) is
+        # deliberately not migrated: the model it stored cannot represent
+        # an order, and the feature is young. Old keys are dropped by the
+        # projection, not carried.
         "hotkeys": {
             "characters": {},
-            "cycle_next": "",
-            "cycle_prev": "",
             "groups": [],
-            "group_by_character": {},
         },
         "seen": [],
         # Where a preview OPENS: on, at the rect the user last dragged
@@ -210,11 +210,6 @@ def _preview_defaults() -> dict:
         "show_system_names": False,
         "label_size": DEFAULT_LABEL_SIZE,
         "label_markers": {},
-        # Per-character cycle preference, {name: int}. Absence is not an
-        # error: cycle.effective_order auto-assigns unset characters the
-        # next free numbers alphabetically, so a new key changes nothing
-        # for existing installs and needs no defaults_version bump.
-        "cycle_order": {},
         # Off by default: it changes what happens to a real game window
         # (minimizing it), which must be asked for rather than assumed.
         "minimize_inactive_clients": False,
@@ -493,7 +488,6 @@ def validated_preview(raw) -> dict:
     section["label_markers"] = preview_labelmarkers.validated_markers(
         raw.get("label_markers")
     )
-    section["cycle_order"] = preview_cycle.validated_stored(raw.get("cycle_order"))
     label_size = raw.get("label_size")
     if isinstance(label_size, str) and label_size in LABEL_SIZE_PRESETS:
         section["label_size"] = label_size
@@ -578,13 +572,13 @@ def validated_preview(raw) -> dict:
                     section["hotkeys"]["characters"][name] = preview_gestures.display(
                         parsed
                     )
-        for key in ("cycle_next", "cycle_prev"):
-            parsed = preview_gestures.parse(raw_hotkeys.get(key))
-            if parsed is not None:
-                section["hotkeys"][key] = preview_gestures.display(parsed)
-
         # Normalize cycle groups: track seen IDs and case-folded names,
-        # keep first valid occurrence.
+        # keep first valid occurrence. Members are the group's OWN ordered
+        # list -- list order is the cycle order -- validated with the
+        # roster's identity rules and deduplicated, first occurrence wins.
+        # A pre-group file's group entries carry no `members` and normalize
+        # to empty lists; its flat All-cycle chords and
+        # group_by_character membership are simply not read.
         groups = raw_hotkeys.get("groups")
         valid_ids = set()
         seen_names = set()
@@ -608,6 +602,9 @@ def validated_preview(raw) -> dict:
                     {
                         "id": group_id,
                         "name": clean_name,
+                        "members": preview_roster.deserialize(
+                            raw_group.get("members"), cap=None
+                        ),
                         "cycle": preview_gestures.display(parsed) if parsed else "",
                         "cycle_prev": (
                             preview_gestures.display(previous) if previous else ""
@@ -616,17 +613,6 @@ def validated_preview(raw) -> dict:
                 )
                 valid_ids.add(group_id)
                 seen_names.add(folded)
-
-        # Normalize membership: deserialize character names to reject hwnd:,
-        # then filter to only valid group IDs.
-        group_by_character = raw_hotkeys.get("group_by_character")
-        if isinstance(group_by_character, dict):
-            # Use roster.deserialize to handle character name validation.
-            valid_names = preview_roster.deserialize(list(group_by_character.keys()))
-            for name in valid_names:
-                group_id = group_by_character.get(name)
-                if isinstance(group_id, str) and group_id in valid_ids:
-                    section["hotkeys"]["group_by_character"][name] = group_id
 
     section["seen"] = preview_roster.deserialize(raw.get("seen"))
     # Without this line the whole section is rebuilt from defaults on every
