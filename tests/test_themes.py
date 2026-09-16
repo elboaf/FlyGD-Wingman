@@ -82,8 +82,12 @@ def test_derivation_preserves_lightness():
 
 
 def test_default_resolve_is_the_preset_mapping():
-    """The computed channels (--brand-rgb, the wash fades, --on-accent,
-    the fleet threat tint) are derived, never stored twice."""
+    """The default mapping resolves to itself: every declared role passes
+    through untouched, the computed channels (--brand-rgb, the wash fades,
+    --on-accent, the fleet threat tint) are derived rather than stored
+    twice, and resolving is idempotent. Some preset tables carry the
+    computed keys baked in (their default mapping WAS a resolve over
+    picks), some do not; both must land in the same place."""
     computed = {
         "--on-accent",
         "--brand-rgb",
@@ -95,7 +99,8 @@ def test_default_resolve_is_the_preset_mapping():
         effective = themes.resolve(preset, {})
         for role, value in preset["roles"].items():
             assert effective[role] == value
-        assert set(effective) - set(preset["roles"]) == computed
+        assert computed <= set(effective)
+        assert themes.resolve(preset, {}) == effective
 
 
 def test_resolve_ignores_unknown_families_and_disallowed_swatches():
