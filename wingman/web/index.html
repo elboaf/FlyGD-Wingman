@@ -1733,6 +1733,25 @@
     <div class="settings" id="section-general">
 
       <section class="card">
+        <h2>Appearance</h2>
+        <div class="row">
+          <label class="lab" for="theme-preset">Theme</label>
+          <select class="field" id="theme-preset"></select>
+        </div>
+        <p class="hint">
+          Customise re-points element families at colours from the theme's
+          own palette. Each pick keeps the palette's measured lightness, so
+          every combination stays readable.
+        </p>
+        <div class="actions">
+          <button class="btn" id="btn-theme-customise" aria-expanded="false"
+                  aria-controls="theme-composer">Customise colours</button>
+        </div>
+        <div id="theme-composer" hidden></div>
+        <p class="field-msg" id="msg-theme" hidden></p>
+      </section>
+
+      <section class="card">
         <h2>EVE Online tools</h2>
         <label class="check">
           <input type="checkbox" id="show-eve-tools"><span class="box"></span>
@@ -2896,6 +2915,7 @@
     </div>
   </div>
 
+  <script src="themeapply.js"></script>
   <script src="app.js"></script>
   <script src="characters.js"></script>
   <script src="bookmarks.js"></script>

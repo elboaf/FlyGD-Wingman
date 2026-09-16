@@ -82,6 +82,8 @@ async function page(now) {
   }
   // app.js boot reads are unrelated to this lane; no payload/push needed.
   api.list_rows = api.get_settings = api.update_status = () => null;
+  // Boot read: app.js asks once for the theme payload.
+  api.theme_state = () => null;
   const window = new EventTarget();
   window.pywebview = { api };
   const context = vm.createContext({
