@@ -2415,6 +2415,254 @@
 // instead of a hand-typed copy that drifts. Presets iterate the same
 // table, so a new preset appears in dev by regenerating, not editing.
   var DEV_THEMES = {
+  "brawndo": {
+    "roles": {
+      "--bg": "#050505",
+      "--panel": "#141414",
+      "--panel-border": "#242424",
+      "--field": "#030303",
+      "--field-border": "#2c2c2c",
+      "--text": "#ffffff",
+      "--text-dim": "#c9c9d2",
+      "--text-faint": "#96969e",
+      "--text-label": "#a3a3ab",
+      "--text-btn": "#d6d6de",
+      "--brand": "#39ff14",
+      "--brand-deep": "#1a6b0a",
+      "--brand-text": "#7dff52",
+      "--acc-top": "#39ff14",
+      "--acc-bottom": "#2bc40e",
+      "--brand-edge": "#7dff52",
+      "--focus-ring": "#7dff52",
+      "--ok": "#39ff14",
+      "--warn": "#ffe600",
+      "--err": "#f0443a",
+      "--danger": "#f0443a",
+      "--danger-solid": "#b81e14",
+      "--unmet": "#f0975c",
+      "--training": "#45c8d4",
+      "--link": "#7aa2f7",
+      "--card-top": "#191919",
+      "--sunken": "#040404",
+      "--titlebar-top": "#1b1b1b",
+      "--titlebar-bottom": "#0f0f0f",
+      "--titlebar-inset": "#292929",
+      "--statusbar-top": "#141414",
+      "--statusbar-bottom": "#0c0c0c",
+      "--wash-top": "#0c1a06",
+      "--wash-bottom": "#171303",
+      "--hover": "#2a2a2a",
+      "--control": "#1f1f1f",
+      "--control-border": "#2f2f2f",
+      "--control-hover": "#282828",
+      "--control-edge": "#8f8f98",
+      "--field-focus-border": "#383838",
+      "--scrollbar": "#232323",
+      "--scrollbar-hover": "#323232",
+      "--fleet-incoming-threat": "#d4bf00",
+      "--row-line": "#181818",
+      "--row-hover": "#151515",
+      "--row-active": "#1b1b1b",
+      "--row-ring": "#2d2d2d",
+      "--row-ring-focus": "#444444"
+    },
+    "swatches": [
+      {
+        "name": "Metal Dark",
+        "hex": "#141414",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Flavor Purple",
+        "hex": "#7b2fbe",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Power Blue",
+        "hex": "#0055a5",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Can Aluminum Dark",
+        "hex": "#8a8a96",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Metal Black",
+        "hex": "#0a0a0a",
+        "families": [
+          "base",
+          "surface"
+        ]
+      },
+      {
+        "name": "Metal Deep",
+        "hex": "#050505",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Lightning White",
+        "hex": "#ffffff",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Lightning White Dim",
+        "hex": "#e0e0e8",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Can Aluminum",
+        "hex": "#c8c8d0",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Chrome Bright",
+        "hex": "#e8e8f0",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Brawndo Green",
+        "hex": "#39ff14",
+        "families": [
+          "text",
+          "accent",
+          "success"
+        ]
+      },
+      {
+        "name": "Green Bright",
+        "hex": "#5fff3d",
+        "families": [
+          "accent",
+          "success"
+        ]
+      },
+      {
+        "name": "Electrolyte Yellow",
+        "hex": "#ffe600",
+        "families": [
+          "text",
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Electrolyte Yellow Bright",
+        "hex": "#fff44a",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Electric Cyan",
+        "hex": "#00e5ff",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Flavor Purple Bright",
+        "hex": "#9b4fde",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Power Blue",
+        "hex": "#0055a5",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Caution Orange",
+        "hex": "#ff6b1a",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Thirst Mutilator Red",
+        "hex": "#e8291c",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Thirst Mutilator Red Dark",
+        "hex": "#b81e14",
+        "families": [
+          "danger"
+        ]
+      }
+    ],
+    "legal": {
+      "surface": [
+        "#141414",
+        "#7b2fbe",
+        "#0055a5",
+        "#8a8a96",
+        "#0a0a0a"
+      ],
+      "base": [
+        "#0a0a0a",
+        "#050505"
+      ],
+      "text": [
+        "#ffffff",
+        "#e0e0e8",
+        "#c8c8d0",
+        "#e8e8f0",
+        "#39ff14",
+        "#ffe600"
+      ],
+      "accent": [
+        "#39ff14",
+        "#5fff3d",
+        "#ffe600",
+        "#fff44a",
+        "#00e5ff",
+        "#9b4fde",
+        "#0055a5",
+        "#ff6b1a",
+        "#e8291c"
+      ],
+      "danger": [
+        "#ff6b1a",
+        "#e8291c",
+        "#b81e14"
+      ],
+      "success": [
+        "#39ff14",
+        "#5fff3d"
+      ],
+      "warning": [
+        "#ffe600",
+        "#fff44a"
+      ]
+    }
+  },
   "purple-cobras": {
     "roles": {
       "--bg": "#050208",
@@ -4100,7 +4348,7 @@
     }
   }
 };
-  var DEV_THEME_PRESETS = [{id: 'purple-cobras', name: 'Purple Cobras'}, {id: 'merica', name: 'Merica'}, {id: 'idiocracy', name: 'Idiocracy'}, {id: 'ron-burgundy', name: 'Ron Burgundy'}, {id: 'dodgeball', name: 'Dodgeball'}, {id: 'tropic-thunder', name: 'Tropic Thunder'}, {id: 'wingman-dark', name: 'Wingman Dark'}, {id: 'zoolander', name: 'Zoolander'}];
+  var DEV_THEME_PRESETS = [{id: 'brawndo', name: 'Brawndo: Thirst Mutilator'}, {id: 'purple-cobras', name: 'Purple Cobras'}, {id: 'merica', name: 'Merica'}, {id: 'idiocracy', name: 'Idiocracy'}, {id: 'ron-burgundy', name: 'Ron Burgundy'}, {id: 'dodgeball', name: 'Dodgeball'}, {id: 'tropic-thunder', name: 'Tropic Thunder'}, {id: 'wingman-dark', name: 'Wingman Dark'}, {id: 'zoolander', name: 'Zoolander'}];
   var DEV_THEME_LABELS = {"surface": "Panels & controls", "base": "App background", "text": "Text", "accent": "Accent", "danger": "Danger", "success": "Success", "warning": "Warning"};
   var DEV_THEME_DESCRIPTIONS = {"surface": "Cards, buttons, fields, scrollbars and the row highlights \u2014 most of the window's chrome.", "base": "The page behind everything: the app backdrop, text field wells, recessed bands and list rows.", "text": "Every piece of text \u2014 headings, body, labels and hints \u2014 at the preset's brightness steps, whatever hue you choose.", "accent": "The Upload button, focused fields, ticks and glows: the app's one call-to-action colour.", "danger": "Delete buttons and destructive hovers \u2014 the colour that must never be mistaken for the accent.", "success": "Green status marks, like the Ready rungs on the Skills roster.", "warning": "Amber status marks \u2014 plan problems and the Fleet Bar's incoming-threat tint."};
   var devTheme = { preset: 'wingman-dark', families: {} };

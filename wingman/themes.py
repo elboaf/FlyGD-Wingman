@@ -357,6 +357,57 @@ WINGMAN_DARK_ROLES = {
     "--row-ring-focus": "#554e65",
 }
 
+BRAWNDO_ROLES = {
+    "--bg": "#050505",
+    "--panel": "#141414",
+    "--panel-border": "#242424",
+    "--field": "#030303",
+    "--field-border": "#2c2c2c",
+    "--text": "#ffffff",
+    "--text-dim": "#c9c9d2",
+    "--text-faint": "#96969e",
+    "--text-label": "#a3a3ab",
+    "--text-btn": "#d6d6de",
+    "--brand": "#39ff14",
+    "--brand-deep": "#1a6b0a",
+    "--brand-text": "#7dff52",
+    "--acc-top": "#39ff14",
+    "--acc-bottom": "#2bc40e",
+    "--brand-edge": "#7dff52",
+    "--focus-ring": "#7dff52",
+    "--ok": "#39ff14",
+    "--warn": "#ffe600",
+    "--err": "#f0443a",
+    "--danger": "#f0443a",
+    "--danger-solid": "#b81e14",
+    "--unmet": "#f0975c",
+    "--training": "#45c8d4",
+    "--link": "#7aa2f7",
+    "--card-top": "#191919",
+    "--sunken": "#040404",
+    "--titlebar-top": "#1b1b1b",
+    "--titlebar-bottom": "#0f0f0f",
+    "--titlebar-inset": "#292929",
+    "--statusbar-top": "#141414",
+    "--statusbar-bottom": "#0c0c0c",
+    "--wash-top": "#0c1a06",
+    "--wash-bottom": "#171303",
+    "--hover": "#2a2a2a",
+    "--control": "#1f1f1f",
+    "--control-border": "#2f2f2f",
+    "--control-hover": "#282828",
+    "--control-edge": "#8f8f98",
+    "--field-focus-border": "#383838",
+    "--scrollbar": "#232323",
+    "--scrollbar-hover": "#323232",
+    "--fleet-incoming-threat": "#d4bf00",
+    "--row-line": "#181818",
+    "--row-hover": "#151515",
+    "--row-active": "#1b1b1b",
+    "--row-ring": "#2d2d2d",
+    "--row-ring-focus": "#444444",
+}
+
 PURPLE_COBRAS_ROLES = {
     "--bg": "#050208",
     "--panel": "#1a0d24",
@@ -715,6 +766,42 @@ ZOOLANDER_ROLES = {
 }
 
 PRESETS = {
+    "brawndo": _preset(
+        "brawndo",
+        "Brawndo: Thirst Mutilator",
+        BRAWNDO_ROLES,
+        [
+            # Metal-black neutrals; Mocha-style brand tints come from
+            # Flavor Purple, Power Blue and Can Aluminum Dark.
+            # Success stays Brawndo Green DELIBERATELY -- unlike
+            # Idiocracy, where Mountain Dew took the slot -- because this
+            # template's whole identity is that everything is Brawndo;
+            # the accent/success hue-sharing is the joke, and the
+            # composer can split them for anyone it bothers.
+            ("Metal Dark", "#141414", ["surface"]),
+            ("Flavor Purple", "#7b2fbe", ["surface"]),
+            ("Power Blue", "#0055a5", ["surface"]),
+            ("Can Aluminum Dark", "#8a8a96", ["surface"]),
+            ("Metal Black", "#0a0a0a", ["base", "surface"]),
+            ("Metal Deep", "#050505", ["base"]),
+            ("Lightning White", "#ffffff", ["text"]),
+            ("Lightning White Dim", "#e0e0e8", ["text"]),
+            ("Can Aluminum", "#c8c8d0", ["text"]),
+            ("Chrome Bright", "#e8e8f0", ["text"]),
+            ("Brawndo Green", "#39ff14", ["text", "accent", "success"]),
+            ("Green Bright", "#5fff3d", ["accent", "success"]),
+            ("Electrolyte Yellow", "#ffe600", ["text", "accent", "warning"]),
+            ("Electrolyte Yellow Bright", "#fff44a", ["accent", "warning"]),
+            ("Electric Cyan", "#00e5ff", ["accent"]),
+            ("Flavor Purple Bright", "#9b4fde", ["accent"]),
+            ("Power Blue", "#0055a5", ["accent"]),
+            ("Caution Orange", "#ff6b1a", ["accent", "danger"]),
+            ("Thirst Mutilator Red", "#e8291c", ["accent", "danger"]),
+            ("Thirst Mutilator Red Dark", "#b81e14", ["danger"]),
+        ],
+        "#000000",
+        "#ffffff",
+    ),
     "purple-cobras": _preset(
         "purple-cobras",
         "Purple Cobras",
