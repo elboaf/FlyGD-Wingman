@@ -155,6 +155,62 @@ def decode_json(raw: bytes) -> object:
         raise _invalid() from None
 
 
+def _wire_integer(lexeme: str) -> int:
+    """JSON's tokenizer supplies valid syntax; never round through a float.
+
+    Strip coefficient zeros before considering an exponent. A nonzero coefficient
+    needs a nonnegative decimal shift and at most 16 final digits. Thus even an
+    exponent with millions of digits cannot demand exponent-sized work/allocation.
+    """
+    negative = lexeme.startswith("-")
+    mantissa, _, exponent = lexeme.lstrip("-").lower().partition("e")
+    whole, _, fraction = mantissa.partition(".")
+    coefficient = (whole + fraction).lstrip("0")
+    if not coefficient:
+        return 0  # Exact zero stays zero even with arbitrarily spelled exponents.
+    significant = coefficient.rstrip("0")
+    trailing = len(coefficient) - len(significant)
+    exponent_digits = exponent.lstrip("+-").lstrip("0") or "0"
+    # Beyond this magnitude no nonzero <=16-digit integer can result, even if
+    # every mantissa digit cancels the exponent. Compare strings before int().
+    cap = str(len(lexeme) + 16)
+    if len(exponent_digits) > len(cap) or (
+        len(exponent_digits) == len(cap) and exponent_digits > cap
+    ):
+        raise _invalid()
+    shift = int(exponent_digits)
+    if exponent.startswith("-"):
+        shift = -shift
+    shift += trailing - len(fraction)
+    if shift < 0 or len(significant) + shift > 16:
+        raise _invalid()
+    value = int(significant) * 10**shift
+    if value > JS_SAFE_MAX:
+        raise _invalid()
+    return -value if negative else value
+
+
+def decode_wire_json(raw: bytes) -> object:
+    """Exact integer-only wire JSON; callers bound raw bytes per operation first.
+
+    Keep decode_json's legacy persisted-state semantics separate. DTO validators
+    still reject Python floats; only original numeric lexemes permit conversion.
+    Decoding never replaces the original bytes used for request signing.
+    """
+    if not isinstance(raw, bytes):
+        raise _invalid()
+    try:
+        return json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_constant,
+            parse_int=_wire_integer,
+            parse_float=_wire_integer,
+        )
+    except (ValueError, RecursionError):
+        raise _invalid() from None
+
+
 def exact_object(value: object, fields: str) -> dict:
     if not isinstance(value, dict) or set(value) != set(fields.split()):
         raise _invalid()
@@ -191,7 +247,7 @@ def text(value: object, maximum: int = MAX_CHARACTER_NAME) -> str:
     if (
         not isinstance(value, str)
         or not 1 <= len(value) <= maximum
-        or any(combatprofile._forbidden(ord(char)) for char in value)
+        or any(combatprofile.is_forbidden_scalar(ord(char)) for char in value)
     ):
         raise _invalid()
     return value
@@ -1226,9 +1282,7 @@ def parse_pairing_begun(value: object, *, origin: str) -> PairingBegun:
     return PairingBegun(uuid(d["pairing_id"]), approval, utc_date(d["expires_at"]))
 
 
-def _parse_catalogue(
-    value: object, *, nested: bool, revision_max: int
-) -> FleetCatalogue:
+def parse_catalogue(value: object, *, nested: bool = False) -> FleetCatalogue:
     d = (
         exact_object(value, "revision characters")
         if nested
@@ -1243,20 +1297,16 @@ def _parse_catalogue(
             )
         )
     return FleetCatalogue(
-        integer(d["revision"], 0, revision_max),
+        integer(d["revision"], 0, 0xFFFFFFFF),
         _unique(tuple(characters), "character_id"),
     )
-
-
-def parse_catalogue(value: object, *, nested: bool = False) -> FleetCatalogue:
-    return _parse_catalogue(value, nested=nested, revision_max=0xFFFFFFFF)
 
 
 def parse_pairing_completed(value: object) -> PairingCompleted:
     d = envelope(value, "session_id catalogue")
     return PairingCompleted(
         token(d["session_id"]),
-        _parse_catalogue(d["catalogue"], nested=True, revision_max=INT4_MAX),
+        parse_catalogue(d["catalogue"], nested=True),
     )
 
 
@@ -1332,6 +1382,18 @@ def _combat_row(value: object) -> CombatRow:
     )
 
 
+def _validate_combat_origins(rows: tuple[CombatRow, ...], time_ms: int) -> None:
+    # Reconstructed origins must be nonnegative even before runtime clock checks.
+    # GET's transport age is bounded by activity age in _combat_read_row.
+    for row in rows:
+        if row.activity_age_ms > time_ms or any(
+            observation.age_ms > time_ms
+            for effect in row.effects
+            for observation in effect.observations
+        ):
+            raise _invalid()
+
+
 def parse_combat_put(value: object) -> CombatPut:
     d = envelope(value, "sampled_at_ms rows")
     rows = tuple(
@@ -1341,6 +1403,7 @@ def parse_combat_put(value: object) -> CombatPut:
     sampled_at_ms = integer(d["sampled_at_ms"], 0, JS_SAFE_MAX)
     if not rows and sampled_at_ms != 0:
         raise _invalid()
+    _validate_combat_origins(rows, sampled_at_ms)
     return CombatPut(sampled_at_ms, rows)
 
 
@@ -1362,6 +1425,8 @@ def _combat_read_row(value: object) -> CombatReadRow:
             "effects": d["effects"],
         }
     )
+    if age_ms > row.activity_age_ms:
+        raise _invalid()
     return CombatReadRow(
         row.character_id,
         row.outgoing_dps,
@@ -1380,7 +1445,9 @@ def parse_snapshot(value: object) -> CombatSnapshot:
     rows = tuple(_combat_read_row(v) for v in array(d["rows"], MAX_REMOTE_ROWS))
     _unique(rows, "character_id")
     _unique(rows, "publication_id")
-    return CombatSnapshot(integer(d["server_time_ms"], 0, JS_SAFE_MAX), rows)
+    server_time_ms = integer(d["server_time_ms"], 0, JS_SAFE_MAX)
+    _validate_combat_origins(rows, server_time_ms)
+    return CombatSnapshot(server_time_ms, rows)
 
 
 # Import continuity only — never discard the required DB-time authority.

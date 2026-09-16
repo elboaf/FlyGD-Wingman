@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from wingman import combatprofile
 from wingman.combatprofile import (
     LIMITS,
     normalize_observed_name,
@@ -57,3 +58,54 @@ def test_non_json_external_values_are_not_coerced(value):
     assert normalize_observed_name(value) is None
     assert validate_observed_name(value) is False
     assert observed_name_key(value) is None
+
+
+@pytest.mark.parametrize(
+    "value,forbidden",
+    [
+        (0, True),
+        (0x200D, True),
+        (0xD800, True),
+        (0xE000, True),
+        (0x378, True),
+        (0x2028, True),
+        (0x2029, True),
+        (0x10FFFF, True),
+        (ord("A"), False),
+        (ord("<"), False),
+        (ord(">"), False),
+        (0x20, False),
+        (0xA0, False),
+        (0x301, False),
+        (0x1FAE9, False),
+        (-1, True),
+        (0x110000, True),
+        (True, True),
+        (False, True),
+        (65.0, True),
+        ("A", True),
+        (None, True),
+        ([], True),
+    ],
+)
+def test_public_scalar_predicate_is_frozen_category_only_and_fails_closed(
+    value, forbidden
+):
+    assert combatprofile.is_forbidden_scalar(value) is forbidden
+
+
+def test_public_scalar_predicate_rejects_integer_subclasses():
+    class Point(int):
+        pass
+
+    assert combatprofile.is_forbidden_scalar(Point(65)) is True
+
+
+def test_public_scalar_predicate_matches_every_frozen_range_edge():
+    ranges = PROFILE["forbidden_ranges"]
+    for start, end in ranges:
+        for point in (start - 1, start, end, end + 1):
+            expected = not 0 <= point <= 0x10FFFF or any(
+                low <= point <= high for low, high in ranges
+            )
+            assert combatprofile.is_forbidden_scalar(point) is expected

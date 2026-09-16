@@ -235,7 +235,7 @@ def test_full_tackle_capacity_remains_parseable_and_independent_by_kind():
             {"kind": "NEUT", "observations": [{"name": None, "age_ms": 29999}]},
         ],
     }
-    parsed = p.parse_combat_put({"protocol": 2, "sampled_at_ms": 12345, "rows": [row]})
+    parsed = p.parse_combat_put({"protocol": 2, "sampled_at_ms": 29999, "rows": [row]})
     assert sum(len(effect.observations) for effect in parsed.rows[0].effects) == 19
 
 
@@ -557,6 +557,41 @@ def test_snapshot_import_alias_retains_server_time_authority():
     result = p.parse_observed_snapshot(FIXTURE["valid"]["combat_get"])
     assert isinstance(result, p.CombatSnapshot)
     assert result.server_time_ms == 12500
+
+
+def test_identity_approval_and_observed_name_policies_stay_separate():
+    from wingman import combatprofile
+
+    assert p.text("\U0001fae9" * 200) == "\U0001fae9" * 200
+    assert p.text(" <Identity> e\u0301 ") == " <Identity> e\u0301 "
+    with pytest.raises(ValueError):
+        p.text("A" * 201)
+    assert combatprofile.validate_observed_name("A" * 64)
+    assert not combatprofile.validate_observed_name("A" * 65)
+    assert not combatprofile.validate_observed_name("<Identity>")
+    assert not combatprofile.validate_observed_name("e\u0301")
+    for length in (200, 201, 2048):
+        url = "/" + "a" * (length - 1)
+        value = {**FIXTURE["valid"]["pairing_begun"], "approval_url": url}
+        assert p.parse_pairing_begun(value, origin=ORIGIN).approval_url == ORIGIN + url
+    with pytest.raises(ValueError):
+        p.parse_pairing_begun(
+            {**FIXTURE["valid"]["pairing_begun"], "approval_url": "/" + "a" * 2048},
+            origin=ORIGIN,
+        )
+
+
+def test_identity_codec_uses_public_frozen_category_seam(monkeypatch):
+    from wingman import combatprofile
+
+    original = combatprofile.is_forbidden_scalar
+    # A caller regression: bypassing this shared seam would accept the sentinel.
+    monkeypatch.setattr(
+        combatprofile, "is_forbidden_scalar", lambda cp: cp == 65 or original(cp)
+    )
+    assert p.text("Bob") == "Bob"
+    with pytest.raises(ValueError):
+        p.text("Alice")
 
 
 def test_pairing_relative_url_is_stored_as_same_origin_absolute():

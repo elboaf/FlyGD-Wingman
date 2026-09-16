@@ -13,7 +13,7 @@ from wingman.fleetsharing import crypto
 from wingman.fleetsharing import protocol as p
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "fleet-api-v2.json"
-FIXTURE_HASH = "e1303bbe8a04f4595611e9555befc8d14d2cdfba6e72c8413b1e1db71d737d06"
+FIXTURE_HASH = "cde5318e54d46ad2b6e9769f65685831e9f23bf429dad9a49b8e8a8d9c1877fc"
 FIXTURE = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
 
 

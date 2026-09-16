@@ -40,6 +40,7 @@ DECODERS = {
     "date": p.utc_date,
     "text": p.text,
     "capabilities": p.capabilities,
+    "integer": lambda value: p.integer(value, -p.JS_SAFE_MAX, p.JS_SAFE_MAX),
 }
 
 
@@ -94,12 +95,26 @@ def test_shared_codec_vector(case):
 
 @pytest.mark.parametrize("case", FIXTURE["raw_vectors"], ids=lambda case: case["name"])
 def test_fixed_raw_json_vectors(case):
-    with pytest.raises(ValueError):
-        value = p.decode_json(case["wire"].encode("utf-8"))
-        decoder = (
-            p.parse_error if case["decoder"] == "error" else DECODERS[case["decoder"]]
-        )
-        decoder(value)
+    decoder = p.parse_error if case["decoder"] == "error" else DECODERS[case["decoder"]]
+    raw = case["wire"].encode("utf-8")
+    assert type(case["accept"]) is bool
+    if "decoded_fields" in case:
+        # A rejected unsupported integral version must reach the DTO as an int,
+        # not fail prematurely because its exact spelling included a decimal.
+        value = p.decode_wire_json(raw)
+        for path, expected in case["decoded_fields"]:
+            actual = descend(value, path)
+            assert type(actual) is type(expected)
+            assert actual == expected
+        if case["accept"]:
+            decoder(value)
+        else:
+            with pytest.raises(ValueError):
+                decoder(value)
+    else:
+        assert case["accept"] is False
+        with pytest.raises(ValueError):
+            decoder(p.decode_wire_json(raw))
 
 
 @pytest.mark.parametrize(

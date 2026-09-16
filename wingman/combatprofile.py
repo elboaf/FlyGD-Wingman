@@ -65,6 +65,17 @@ def _forbidden(cp: int) -> bool:
     return index >= 0 and cp <= _forbidden_ranges[index][1]
 
 
+def is_forbidden_scalar(value: object) -> bool:
+    """Frozen C/Zl/Zp membership, failing closed on invalid code-point inputs.
+
+    This shared category seam imposes no length, trim, NFC, markup or case policy.
+    Observed labels and identity/URL callers retain their distinct text contracts.
+    """
+    if type(value) is not int or not 0 <= value <= 0x10FFFF:
+        return True
+    return _forbidden(value)
+
+
 def _decompose(cp: int, output: list[int]) -> None:
     syllable = cp - _S_BASE
     if 0 <= syllable < _S_COUNT:

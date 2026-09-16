@@ -217,14 +217,14 @@ def test_eligibility_and_combat_codecs_allow_real_boundaries():
         ),
         character_name="Alice",
         state="live",
-        age_ms=2500,
+        age_ms=500,
         publication_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     )
 
     for age, state in [(2999, "live"), (3000, "stale"), (9999, "stale")]:
         data = copy.deepcopy(FIXTURE["valid"]["combat_get"])
         data["rows"][0]["age_ms"] = age
-        data["rows"][0]["state"] = state
+        data["rows"][0].update(state=state, activity_age_ms=10000, effects=[])
         assert p.parse_snapshot(data).rows[0].age_ms == age
 
     rows = [
@@ -232,7 +232,11 @@ def test_eligibility_and_combat_codecs_allow_real_boundaries():
         for index in range(32)
     ]
     assert (
-        len(p.parse_combat_put({"protocol": 2, "sampled_at_ms": 1, "rows": rows}).rows)
+        len(
+            p.parse_combat_put(
+                {"protocol": 2, "sampled_at_ms": 12345, "rows": rows}
+            ).rows
+        )
         == 32
     )
     assert (
@@ -262,7 +266,7 @@ def test_eligibility_and_combat_codecs_allow_real_boundaries():
         ),
         (
             "effects",
-            [{"kind": "NEUT", "observations": [{"name": "Pilot", "age_ms": 1}]}],
+            [{"kind": "NEUT", "observations": [{"name": "Pilot", "age_ms": 1000}]}],
         ),
         (
             "effects",
@@ -393,16 +397,49 @@ def test_recovery_rejects_malformed_variants(payload):
         p.parse_recovery_result(payload)
 
 
-def test_pairing_completion_uses_nested_int4_catalogue_revision_only():
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize(
+    "revision,accept",
+    [
+        (0, True),
+        (2147483647, True),
+        (2147483648, True),
+        (3820012610, True),  # Actual empty service catalogue fingerprint.
+        (3112514310, True),  # Actual 92100001:Alpha service fingerprint.
+        (4294967295, True),
+        (-1, False),
+        (4294967296, False),
+        (1.5, False),
+        (True, False),
+    ],
+)
+def test_catalogue_uint32_fingerprint_standalone_and_pairing(nested, revision, accept):
     from wingman.fleetsharing import protocol as p
 
-    result = p.parse_pairing_completed(FIXTURE["valid"]["pairing_completed"])
-    assert result.catalogue.revision == 2147483647
+    catalogue = {"revision": revision, "characters": []}
+    if nested:
+        payload = {"protocol": 2, "session_id": TOKEN, "catalogue": catalogue}
+        parser = p.parse_pairing_completed
+    else:
+        payload = {"protocol": 2, **catalogue}
+        parser = p.parse_catalogue
+    if not accept:
+        with pytest.raises(ValueError):
+            parser(payload)
+        return
+    result = parser(payload)
+    assert (result.catalogue if nested else result).revision == revision
 
-    payload = copy.deepcopy(FIXTURE["valid"]["pairing_completed"])
-    payload["catalogue"]["revision"] = 2147483648
-    with pytest.raises(ValueError):
-        p.parse_pairing_completed(payload)
+
+def test_catalogue_uint32_does_not_widen_signed_or_source_counters():
+    from wingman.fleetsharing import protocol as p
+
+    assert p.integer(2147483647) == 2147483647
+    for value in (2147483648, 3820012610, 4294967295, 2.0, True):
+        with pytest.raises(ValueError):
+            p.integer(value)
+        with pytest.raises(ValueError):
+            p.parse_source({**SOURCE, "generation": value})
 
 
 @pytest.mark.parametrize(

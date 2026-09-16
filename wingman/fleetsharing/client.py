@@ -156,7 +156,7 @@ def _status_error(path: str, method: str, status: int, raw: bytes) -> FleetRelay
     code = _classify_status(status)
     if len(raw) <= MAX_RESPONSE_BYTES:
         try:
-            data = protocol.envelope(protocol.decode_json(raw), "error")
+            data = protocol.envelope(protocol.decode_wire_json(raw), "error")
             known = _known_errors(path, method, status)
             code = protocol.enum(data["error"], known)
         except ValueError:
@@ -618,7 +618,7 @@ class FleetRelayClient:
             raise FleetRelayError(
                 status, "malformed_response", "Fleet relay response was too large."
             )
-        parsed = _parse(protocol.decode_json, raw)
+        parsed = _parse(protocol.decode_wire_json, raw)
         if not isinstance(parsed, dict):
             raise FleetRelayError(
                 status,
