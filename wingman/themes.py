@@ -357,6 +357,57 @@ WINGMAN_DARK_ROLES = {
     "--row-ring-focus": "#554e65",
 }
 
+IDIOCRACY_ROLES = {
+    "--bg": "#0a0a0a",
+    "--panel": "#141414",
+    "--panel-border": "#262626",
+    "--field": "#050505",
+    "--field-border": "#2a2a2a",
+    "--text": "#f5f5f5",
+    "--text-dim": "#b8b8b8",
+    "--text-faint": "#8f8f8f",
+    "--text-label": "#9c9c9c",
+    "--text-btn": "#d9d9d9",
+    "--brand": "#39ff14",
+    "--brand-deep": "#1a6b0a",
+    "--brand-text": "#7dff52",
+    "--acc-top": "#39ff14",
+    "--acc-bottom": "#2bc40e",
+    "--brand-edge": "#7dff52",
+    "--focus-ring": "#7dff52",
+    "--ok": "#b8d41e",
+    "--warn": "#ffe600",
+    "--err": "#f0443a",
+    "--danger": "#f0443a",
+    "--danger-solid": "#b81e14",
+    "--unmet": "#f0975c",
+    "--training": "#45c8d4",
+    "--link": "#7aa2f7",
+    "--card-top": "#1a1a1a",
+    "--sunken": "#060606",
+    "--titlebar-top": "#1c1c1c",
+    "--titlebar-bottom": "#101010",
+    "--titlebar-inset": "#2a2a2a",
+    "--statusbar-top": "#151515",
+    "--statusbar-bottom": "#0d0d0d",
+    "--wash-top": "#0e1a08",
+    "--wash-bottom": "#16060f",
+    "--hover": "#2a2a2a",
+    "--control": "#1f1f1f",
+    "--control-border": "#303030",
+    "--control-hover": "#282828",
+    "--control-edge": "#8f8f8f",
+    "--field-focus-border": "#383838",
+    "--scrollbar": "#242424",
+    "--scrollbar-hover": "#333333",
+    "--fleet-incoming-threat": "#d4bf00",
+    "--row-line": "#181818",
+    "--row-hover": "#151515",
+    "--row-active": "#1b1b1b",
+    "--row-ring": "#2e2e2e",
+    "--row-ring-focus": "#454545",
+}
+
 RON_BURGUNDY_ROLES = {
     "--bg": "#1f0f08",
     "--panel": "#3b1f0f",
@@ -562,6 +613,39 @@ ZOOLANDER_ROLES = {
 }
 
 PRESETS = {
+    "idiocracy": _preset(
+        "idiocracy",
+        "Idiocracy",
+        IDIOCRACY_ROLES,
+        [
+            # CRT-black neutrals; Mocha, Jacked Purple and Costco Blue let
+            # a user tint the static toward one brand. Brawndo Green takes
+            # the accent slot -- it IS the theme's identity -- so success
+            # defaults to Mountain Dew rather than wearing the accent.
+            ("CRT Dark", "#141414", ["surface"]),
+            ("Starbucks Mocha", "#6b4226", ["surface"]),
+            ("Jacked Purple", "#7b2fbe", ["surface"]),
+            ("Costco Blue", "#0055a5", ["surface"]),
+            ("CRT Black", "#0a0a0a", ["base", "surface"]),
+            ("TV Static", "#f5f5f5", ["text"]),
+            ("TV Static Dim", "#b8b8b8", ["text"]),
+            ("Starbucks Cream", "#e8d5b7", ["text"]),
+            ("Brawndo Green", "#39ff14", ["text", "accent", "success"]),
+            ("Mountain Dew", "#ccff00", ["text", "accent", "success"]),
+            ("Electrolyte Yellow", "#ffe600", ["accent", "warning", "text"]),
+            ("Nacho Cheese", "#f5a623", ["accent", "warning"]),
+            ("Carl's Jr Star", "#f7941d", ["accent", "warning"]),
+            ("Gatorade Orange", "#ff6b1a", ["accent"]),
+            ("MTV Pink", "#ff1fa0", ["accent", "danger"]),
+            ("Costco Red", "#e8291c", ["accent", "danger"]),
+            ("Fudd Burgundy", "#8b1e1e", ["danger"]),
+        ],
+        # Pure black, not CRT Black: Gatorade Orange as the accent leaves
+        # the dark label at 4.45:1 against the gradient's bottom stop --
+        # the only pool pick CRT Black cannot carry.
+        "#000000",
+        "#ffffff",
+    ),
     "ron-burgundy": _preset(
         "ron-burgundy",
         "Ron Burgundy",
