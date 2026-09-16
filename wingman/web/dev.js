@@ -2410,70 +2410,506 @@
   // correct under ?dev=1 and was wrong under Python. A double that is more
   // complete than the thing it doubles hides exactly the bug it should
   // have caught.
-  // The theme payload, with the Wingman Dark pool and an EMPTY effective
-  // map: the applier no-ops on empty, so dev still renders the shipped
-  // stylesheet rather than a JS-maintained copy of it. The composer
-  // swatches are the point -- they must be eyeballable under ?dev=1
-  // without Python, the way every other card's payload is fabricated here.
+// Generated from wingman/themes.py (python side of this session):
+// the full preset tables, so dev exercises the REAL names and pools
+// instead of a hand-typed copy that drifts.
+  var DEV_THEMES = {
+  "wingman-dark": {
+    "roles": {
+      "--bg": "#0c0d10",
+      "--panel": "#17151c",
+      "--panel-border": "#231f2a",
+      "--field": "#0c0a0f",
+      "--field-border": "#282430",
+      "--text": "#e8eaed",
+      "--text-dim": "#9aa2b1",
+      "--text-faint": "#7d8492",
+      "--text-label": "#8b93a1",
+      "--text-btn": "#c8cdd6",
+      "--brand": "#8430d9",
+      "--brand-deep": "#4a0083",
+      "--brand-text": "#ad5aff",
+      "--acc-top": "#9438e8",
+      "--acc-bottom": "#7a1fc8",
+      "--brand-edge": "#a95cf0",
+      "--focus-ring": "#c99cff",
+      "--ok": "#4ade80",
+      "--warn": "#d29922",
+      "--err": "#f85149",
+      "--danger": "#f85149",
+      "--danger-solid": "#d9291c",
+      "--unmet": "#ff9668",
+      "--training": "#45c8d4",
+      "--link": "#7aa2f7",
+      "--card-top": "#191426",
+      "--sunken": "#131117",
+      "--titlebar-top": "#1b1528",
+      "--titlebar-bottom": "#121016",
+      "--titlebar-inset": "#292530",
+      "--statusbar-top": "#14101c",
+      "--statusbar-bottom": "#0f0c14",
+      "--wash-top": "#1d1030",
+      "--wash-bottom": "#170f26",
+      "--hover": "#27232e",
+      "--control": "#211d28",
+      "--control-border": "#302c39",
+      "--control-hover": "#2a2634",
+      "--control-edge": "#787181",
+      "--field-focus-border": "#433c52",
+      "--scrollbar": "#2c2835",
+      "--scrollbar-hover": "#3b3548",
+      "--fleet-incoming-threat": "#be9550",
+      "--row-line": "#1d1a24",
+      "--row-hover": "#1b1822",
+      "--row-active": "#1f1b27",
+      "--row-ring": "#383244",
+      "--row-ring-focus": "#554e65"
+    },
+    "swatches": [
+      {
+        "name": "Panel",
+        "hex": "#17151c",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Card top",
+        "hex": "#191426",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Hover",
+        "hex": "#27232e",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Control",
+        "hex": "#211d28",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Row",
+        "hex": "#1d1a24",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Background",
+        "hex": "#0c0d10",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Sunken",
+        "hex": "#131117",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Field",
+        "hex": "#0c0a0f",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Ice",
+        "hex": "#e8eaed",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Bright",
+        "hex": "#c8cdd6",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Dim",
+        "hex": "#9aa2b1",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Label",
+        "hex": "#8b93a1",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Violet",
+        "hex": "#8430d9",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Light violet",
+        "hex": "#ad5aff",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Deep violet",
+        "hex": "#7a1fc8",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Teal",
+        "hex": "#45c8d4",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Gold",
+        "hex": "#d29922",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Red",
+        "hex": "#f85149",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Solid red",
+        "hex": "#d9291c",
+        "families": [
+          "danger"
+        ]
+      },
+      {
+        "name": "Green",
+        "hex": "#4ade80",
+        "families": [
+          "success"
+        ]
+      }
+    ],
+    "legal": {
+      "surface": [
+        "#17151c",
+        "#191426",
+        "#27232e",
+        "#211d28",
+        "#1d1a24"
+      ],
+      "base": [
+        "#0c0d10",
+        "#131117",
+        "#0c0a0f"
+      ],
+      "text": [
+        "#e8eaed",
+        "#c8cdd6",
+        "#9aa2b1",
+        "#8b93a1"
+      ],
+      "accent": [
+        "#8430d9",
+        "#ad5aff",
+        "#7a1fc8",
+        "#45c8d4",
+        "#d29922",
+        "#f85149"
+      ],
+      "danger": [
+        "#f85149",
+        "#d9291c"
+      ],
+      "success": [
+        "#4ade80"
+      ],
+      "warning": [
+        "#d29922"
+      ]
+    }
+  },
+  "zoolander": {
+    "roles": {
+      "--bg": "#08080f",
+      "--panel": "#0d0d1a",
+      "--panel-border": "#1c1c34",
+      "--field": "#06060e",
+      "--field-border": "#282848",
+      "--text": "#e8edf2",
+      "--text-dim": "#a8b2bd",
+      "--text-faint": "#7e8899",
+      "--text-label": "#8a94a6",
+      "--text-btn": "#c9d1dc",
+      "--brand": "#7cb342",
+      "--brand-deep": "#3e5c1f",
+      "--brand-text": "#8fc654",
+      "--acc-top": "#7cb342",
+      "--acc-bottom": "#639532",
+      "--brand-edge": "#97cc5d",
+      "--focus-ring": "#97cc5d",
+      "--ok": "#8bc34a",
+      "--warn": "#d4a843",
+      "--err": "#e91e8c",
+      "--danger": "#e91e8c",
+      "--danger-solid": "#c0156f",
+      "--unmet": "#c67b4a",
+      "--training": "#45c8d4",
+      "--link": "#7aa2f7",
+      "--card-top": "#16162e",
+      "--sunken": "#0a0a16",
+      "--titlebar-top": "#14142e",
+      "--titlebar-bottom": "#0c0c1c",
+      "--titlebar-inset": "#26264a",
+      "--statusbar-top": "#0f0f24",
+      "--statusbar-bottom": "#0a0a18",
+      "--wash-top": "#16163a",
+      "--wash-bottom": "#10102e",
+      "--hover": "#1f1f40",
+      "--control": "#1a1a38",
+      "--control-border": "#2c2c52",
+      "--control-hover": "#242448",
+      "--control-edge": "#7e88a8",
+      "--field-focus-border": "#34345e",
+      "--scrollbar": "#232348",
+      "--scrollbar-hover": "#30305a",
+      "--fleet-incoming-threat": "#d4a843",
+      "--row-line": "#1a1a34",
+      "--row-hover": "#16162c",
+      "--row-active": "#1c1c38",
+      "--row-ring": "#30305a",
+      "--row-ring-focus": "#484878"
+    },
+    "swatches": [
+      {
+        "name": "Magnum",
+        "hex": "#1a1a2e",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Steel blue",
+        "hex": "#2c3e5c",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Cobalt",
+        "hex": "#3d5a80",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Surface hover",
+        "hex": "#2a2a4a",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Magnum deep",
+        "hex": "#0d0d1a",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Gasoline fight",
+        "hex": "#08080f",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Derelicte",
+        "hex": "#2a1a1a",
+        "families": [
+          "surface",
+          "base"
+        ]
+      },
+      {
+        "name": "Ice",
+        "hex": "#e8edf2",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Bone",
+        "hex": "#f5f0e8",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Silver",
+        "hex": "#a8b2bd",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Lime",
+        "hex": "#7cb342",
+        "families": [
+          "accent",
+          "success"
+        ]
+      },
+      {
+        "name": "Gold",
+        "hex": "#d4a843",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Coral",
+        "hex": "#e8574a",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Orange mocha",
+        "hex": "#c67b4a",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Hot magenta",
+        "hex": "#e91e8c",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Gasoline",
+        "hex": "#6b3fa0",
+        "families": [
+          "accent"
+        ]
+      }
+    ],
+    "legal": {
+      "surface": [
+        "#1a1a2e",
+        "#2c3e5c",
+        "#3d5a80",
+        "#2a2a4a",
+        "#2a1a1a"
+      ],
+      "base": [
+        "#0d0d1a",
+        "#08080f",
+        "#2a1a1a"
+      ],
+      "text": [
+        "#e8edf2",
+        "#f5f0e8",
+        "#a8b2bd"
+      ],
+      "accent": [
+        "#7cb342",
+        "#d4a843",
+        "#e8574a",
+        "#c67b4a",
+        "#e91e8c",
+        "#6b3fa0"
+      ],
+      "danger": [
+        "#e8574a",
+        "#c67b4a",
+        "#e91e8c"
+      ],
+      "success": [
+        "#7cb342"
+      ],
+      "warning": [
+        "#d4a843"
+      ]
+    }
+  }
+};
+  var DEV_THEME_LABELS = {"surface": "Panels & controls", "base": "App background", "text": "Text", "accent": "Accent", "danger": "Danger", "success": "Success", "warning": "Warning"};
+  var devTheme = { preset: 'wingman-dark', families: {} };
+
+  function devThemePayload() {
+    var pool = DEV_THEMES[devTheme.preset];
+    return {
+      presets: [{id: 'wingman-dark', name: 'Wingman Dark'},
+                {id: 'zoolander', name: 'Zoolander'}],
+      preset: devTheme.preset,
+      families: JSON.parse(JSON.stringify(devTheme.families)),
+      effective: {},
+      swatches: pool.swatches,
+      legal: pool.legal,
+      family_labels: DEV_THEME_LABELS
+    };
+  }
+
+  function devThemePush() {
+    var payload = devThemePayload();
+    if (window.onTheme) window.onTheme(payload);
+  }
+
   api.theme_state = function () {
     console.log('DEV api.theme_state()');
-    return Promise.resolve({
-      presets: [{id: 'wingman-dark', name: 'Wingman Dark'},
-              {id: 'zoolander', name: 'Zoolander'}],
-      preset: 'wingman-dark',
-      families: {},
-      effective: {},
-      swatches: [
-        {name: 'Panel', hex: '#17151c', families: ['surface']},
-        {name: 'Card top', hex: '#191426', families: ['surface']},
-        {name: 'Hover', hex: '#27232e', families: ['surface']},
-        {name: 'Control', hex: '#211d28', families: ['surface']},
-        {name: 'Row', hex: '#1d1a24', families: ['surface']},
-        {name: 'Background', hex: '#0c0d10', families: ['base']},
-        {name: 'Sunken', hex: '#131117', families: ['base']},
-        {name: 'Field', hex: '#0c0a0f', families: ['base']},
-        {name: 'Ice', hex: '#e8eaed', families: ['text']},
-        {name: 'Bright', hex: '#c8cdd6', families: ['text']},
-        {name: 'Dim', hex: '#9aa2b1', families: ['text']},
-        {name: 'Label', hex: '#8b93a1', families: ['text']},
-        {name: 'Violet', hex: '#8430d9', families: ['accent']},
-        {name: 'Light violet', hex: '#ad5aff', families: ['accent']},
-        {name: 'Deep violet', hex: '#7a1fc8', families: ['accent']},
-        {name: 'Teal', hex: '#45c8d4', families: ['accent']},
-        {name: 'Gold', hex: '#d29922', families: ['accent', 'warning']},
-        {name: 'Red', hex: '#f85149', families: ['accent', 'danger']},
-        {name: 'Solid red', hex: '#d9291c', families: ['danger']},
-        {name: 'Green', hex: '#4ade80', families: ['success']}
-      ],
-      legal: {
-        surface: ['#17151c', '#191426', '#27232e', '#211d28', '#1d1a24'],
-        base: ['#0c0d10', '#131117', '#0c0a0f'],
-        text: ['#e8eaed', '#c8cdd6', '#9aa2b1', '#8b93a1'],
-        accent: ['#8430d9', '#ad5aff', '#7a1fc8', '#45c8d4', '#d29922', '#f85149'],
-        danger: ['#f85149', '#d9291c'],
-        success: ['#4ade80'],
-        warning: ['#d29922']
-      },
-      family_labels: {
-        surface: 'Panels & controls', base: 'App background', text: 'Text',
-        accent: 'Accent', danger: 'Danger', success: 'Success',
-        warning: 'Warning'
-      }
-    });
+    return Promise.resolve(devThemePayload());
   };
 
   api.theme_set_preset = function (id) {
     console.log('DEV api.theme_set_preset(', id, ')');
+    if (DEV_THEMES[id]) {
+      devTheme.preset = id;
+      devTheme.families = {};
+      // Python pushes onTheme after every accepted write; dev mirrors that
+      // so the composer and the closed dropdowns repaint the same way.
+      devThemePush();
+    }
     return Promise.resolve({applied: true, persisted: true, error: ''});
   };
 
   api.theme_set_family = function (family, hex) {
     console.log('DEV api.theme_set_family(', family, hex, ')');
+    if (hex) { devTheme.families[family] = hex; }
+    else { delete devTheme.families[family]; }
+    devThemePush();
     return Promise.resolve({applied: true, persisted: true, error: ''});
   };
 
   api.theme_reset = function () {
     console.log('DEV api.theme_reset()');
+    devTheme.families = {};
+    devThemePush();
     return Promise.resolve({applied: true, persisted: true, error: ''});
   };
 
