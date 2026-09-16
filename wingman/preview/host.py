@@ -2807,7 +2807,10 @@ class PreviewHost:
         are pre-import movements whose delivery would undo the import.
         """
         with self._lock:
-            if self._closing:
+            if self._closing or self._eve_stopping or self._stopping:
+                # A stopping family must not be fed new native work: the
+                # intent would only be drained by the stop path anyway, and
+                # racing it is how an import on a dying pump wedges quit.
                 return False
             self._saved = dict(entries)
             self._pending_layouts = {}
