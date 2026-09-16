@@ -1,16 +1,28 @@
-"""Frozen wire-safe data model for the fleet-sharing protocol boundary.
+"""Fleet-sharing wire DTOs and the process-local publication consumer port.
 
-Every dataclass here is exactly what may cross the network to or from
-authGD's relay, per
-docs/superpowers/specs/2026-09-04-shared-fleet-telemetry-design.md. None of
-them may ever hold a local path, a source id, a log detail, or a
-timestamp: those are local telemetry's own correctness machinery
-(wingman.telemetry.model) and must never leave the machine.
+The existing dataclasses are wire-safe values for authGD's relay, per
+docs/superpowers/specs/2026-09-04-shared-fleet-telemetry-design.md.
+PublicationSource instead retains local telemetry's immutable snapshot and
+admission authority. It is never serialized: local paths, source identities,
+log details and monotonic timestamps must not leave the machine.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol
+
+from ..telemetry.model import FleetSnapshot
+
+
+class PublicationSource(Protocol):
+    @property
+    def snapshot(self) -> FleetSnapshot: ...
+
+    def is_current(self) -> bool: ...
+
+    def admit_start(self, validate: Callable[[], None]) -> bool: ...
 
 
 @dataclass(frozen=True)
