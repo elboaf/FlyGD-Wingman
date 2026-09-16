@@ -254,7 +254,8 @@ def test_hwnd_arriving_during_primary_admission_does_not_lose_accepted_reset(
         assert r.api.set_preview_enabled(True)
         assert r.api.reset_preview_layouts()["applied"]
         assert r.host._ready.wait(5)
-        r.call(lambda: None)
+        # Pump readiness does not settle Reset's off-pump persistence.
+        assert r.host._layout_admission.wait_idle(5)
         assert r.api._state.settings["preview"]["layouts"] == {}
         assert r.runtime.shutdown(5)
     finally:
@@ -319,8 +320,9 @@ def test_offline_character_size_cannot_overtake_accepted_live_reset(layout_api):
     with parked(r):
         assert r.api.reset_preview_layouts()["applied"]
         refused(r.api.set_preview_size("Alice", 640, 400))
-    r.call(lambda: None)
-    r.layouts.flush()
+    # Reset retains admission through worker persistence and native completion;
+    # a pump no-op or debounce flush can overtake that separate worker lane.
+    assert r.host._layout_admission.wait_idle(5)
     assert r.api._state.settings["preview"]["layouts"] == {}
 
 
