@@ -11,7 +11,8 @@ from hashlib import sha256
 
 import pytest
 from cryptography.hazmat.primitives.serialization import load_der_public_key
-from test_fleetsharing_protocol import FIXTURE
+from test_fleetsharing_client import framing_headers, request_binding
+from test_fleetsharing_protocol import FIXTURE, TOKEN
 
 from wingman.fleetsharing import client, crypto
 from wingman.fleetsharing import protocol as p
@@ -158,6 +159,7 @@ class Response(io.BytesIO):
     def __init__(self, raw, status=200):
         super().__init__(raw)
         self.status = status
+        self.headers = framing_headers()
         self.read_sizes = []
 
     def read(self, size=-1):
@@ -166,43 +168,62 @@ class Response(io.BytesIO):
 
 
 @pytest.mark.parametrize("lexeme", [b"2.0", b"2e0", b"20e-1"])
-def test_actual_client_reader_exact_numbers_without_claiming_v2_framing(lexeme):
-    response = Response(b'{"protocol":1,"n":' + lexeme + b"}")
-    relay = client.FleetRelayClient(
-        "https://relay.example.test", transport=lambda *a, **k: response
+def test_actual_client_reader_exact_numbers_with_v2_framing(lexeme):
+    response = Response(b'{"protocol":2,"revision":' + lexeme + b',"characters":[]}')
+
+    def transport(request, **kwargs):
+        response.headers = framing_headers(request_binding(request))
+        return response
+
+    result = client.FleetRelayClient(
+        "https://relay.example.test", transport=transport
+    ).fetch_catalogue(
+        session_id=TOKEN,
+        private_key=bytes(32),
+        revision=1,
     )
-    result = relay._send(client.DEVICE_PATH, "GET", b"", headers=None)
-    assert type(result["n"]) is int and result["n"] == 2
+    assert type(result.revision) is int and result.revision == 2
     assert response.closed
-    assert response.read_sizes == [client.MAX_RESPONSE_BYTES + 1]
+    assert response.read_sizes == [1048577]
 
 
 @pytest.mark.parametrize(
     "lexeme", [b"2.0000000000000001", b"1e-99999", b"9007199254740992"]
 )
-def test_actual_client_reader_refuses_lossy_numbers_before_old_envelope_gate(lexeme):
-    response = Response(b'{"protocol":1,"n":' + lexeme + b"}")
-    relay = client.FleetRelayClient(
-        "https://relay.example.test", transport=lambda *a, **k: response
-    )
+def test_actual_client_reader_refuses_lossy_numbers_before_dto_acceptance(lexeme):
+    response = Response(b'{"protocol":2,"revision":' + lexeme + b',"characters":[]}')
+
+    def transport(request, **kwargs):
+        response.headers = framing_headers(request_binding(request))
+        return response
+
     with pytest.raises(client.FleetRelayError) as error:
-        relay._send(client.DEVICE_PATH, "GET", b"", headers=None)
+        client.FleetRelayClient(
+            "https://relay.example.test", transport=transport
+        ).fetch_catalogue(
+            session_id=TOKEN,
+            private_key=bytes(32),
+            revision=1,
+        )
     assert error.value.code == "malformed_response"
     assert response.closed
 
 
-def test_actual_client_still_refuses_v2_success_until_transport_migration():
+def test_actual_client_admits_exact_integral_v2_success_after_transport_migration():
     response = Response(b'{"protocol":2.0,"revision":0,"characters":[]}')
-    relay = client.FleetRelayClient(
-        "https://relay.example.test", transport=lambda *a, **k: response
+
+    def transport(request, **kwargs):
+        response.headers = framing_headers(request_binding(request))
+        return response
+
+    result = client.FleetRelayClient(
+        "https://relay.example.test", transport=transport
+    ).fetch_catalogue(
+        session_id=TOKEN,
+        private_key=bytes.fromhex(FIXTURE["private_key_hex"]),
+        revision=1,
     )
-    with pytest.raises(client.FleetRelayError) as error:
-        relay.fetch_catalogue(
-            session_id="test",
-            private_key=bytes.fromhex(FIXTURE["private_key_hex"]),
-            revision=1,
-        )
-    assert error.value.code == "protocol_mismatch"
+    assert result.revision == 0 and result.characters == ()
 
 
 @pytest.mark.parametrize("http_error", [False, True])
@@ -211,9 +232,9 @@ def test_actual_client_still_refuses_v2_success_until_transport_migration():
     [
         ("2.0", "update_required"),
         ("20e-1", "update_required"),
-        ("2.0000000000000001", "bad_request"),
-        ("1.0", "bad_request"),
-        ("3e0", "bad_request"),
+        ("2.0000000000000001", "malformed_response"),
+        ("1.0", "protocol_mismatch"),
+        ("3e0", "protocol_mismatch"),
     ],
 )
 def test_actual_client_error_reader_exact_version_and_safe_fallback(
@@ -224,7 +245,9 @@ def test_actual_client_error_reader_exact_version_and_safe_fallback(
 
     def transport(request, **kwargs):
         if http_error:
-            raise urllib.error.HTTPError(request.full_url, 400, "test", {}, response)
+            raise urllib.error.HTTPError(
+                request.full_url, 400, "test", response.headers, response
+            )
         return response
 
     relay = client.FleetRelayClient("https://relay.example.test", transport=transport)
@@ -238,18 +261,20 @@ def test_actual_client_error_reader_exact_version_and_safe_fallback(
 
 
 def test_actual_client_signs_original_bytes_not_decoded_numeric_values():
-    raw = b'{"protocol":1.0,"n":20e-1}'
-    assert p.decode_wire_json(raw) == {"protocol": 1, "n": 2}
+    raw = b'{"protocol":2.0,"capabilities":[]}'
+    assert p.decode_wire_json(raw) == {"protocol": 2, "capabilities": []}
     requests = []
 
     def transport(request, **kwargs):
         requests.append(request)
-        return Response(b'{"protocol":1}')
+        response = Response(b'{"protocol":2}')
+        response.headers = framing_headers(request_binding(request))
+        return response
 
     key = bytes.fromhex(FIXTURE["private_key_hex"])
     relay = client.FleetRelayClient("https://relay.example.test", transport=transport)
     relay._send_signed(
-        client.DEVICE_PATH, "PUT", raw, "test", key, 1, datetime(2026, 1, 1, tzinfo=UTC)
+        client.DEVICE_PATH, "PUT", raw, TOKEN, key, 1, datetime(2026, 1, 1, tzinfo=UTC)
     )
     (request,) = requests
     assert request.data == raw
@@ -259,7 +284,7 @@ def test_actual_client_signs_original_bytes_not_decoded_numeric_values():
         protocol=1,
         method="PUT",
         path=client.DEVICE_PATH,
-        session_id="test",
+        session_id=TOKEN,
         issued_at=headers["x-fleet-issued-at"],
         revision=1,
         body_sha256=sha256(raw).hexdigest(),
