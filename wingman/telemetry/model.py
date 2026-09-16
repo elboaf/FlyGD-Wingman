@@ -3,8 +3,10 @@ from __future__ import annotations
 import datetime
 from dataclasses import dataclass
 from typing import Generic, TypeVar
+from uuid import UUID
 
 T = TypeVar("T")
+ObservationId = tuple[UUID, int]
 
 
 @dataclass(frozen=True)
@@ -114,12 +116,28 @@ class CustomMatcherHealth:
 
 
 @dataclass(frozen=True)
+class EffectObservation:
+    kind: str
+    expires_at_mono: float
+    observation_id: ObservationId
+    name: str | None = None
+
+
+@dataclass(frozen=True)
+class CombatActivity:
+    expires_at_mono: float | None = None
+    observation_id: ObservationId | None = None
+    observations: tuple[EffectObservation, ...] = ()
+
+
+@dataclass(frozen=True)
 class FleetRow:
     character: str
     dps: int | None
     ewar: tuple[str, ...] = ()
     log_status: str | None = None
     incoming_dps: int | None = None
+    combat: CombatActivity | None = None
 
 
 @dataclass(frozen=True)
@@ -128,3 +146,4 @@ class FleetSnapshot:
     stream_health: StreamHealth
     metric_error: str | None = None
     activation_generation: int = 0
+    sampled_at_mono: float | None = None
