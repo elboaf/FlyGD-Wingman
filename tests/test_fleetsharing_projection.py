@@ -10,9 +10,12 @@ catalogue character, and never carries anything beyond `character_id`,
 
 import dataclasses
 from itertools import combinations
+from math import inf, nan
+from uuid import UUID
 
 import pytest
 
+from wingman.fleetsharing import projection
 from wingman.fleetsharing.model import CatalogueCharacter, FleetCatalogue, PublishRow
 from wingman.fleetsharing.projection import (
     MAX_PUBLISH_DPS,
@@ -20,7 +23,13 @@ from wingman.fleetsharing.projection import (
     project_snapshot,
     validate_publish_batch,
 )
-from wingman.telemetry.model import FleetRow, FleetSnapshot, StreamHealth
+from wingman.telemetry.model import (
+    CombatActivity,
+    EffectObservation,
+    FleetRow,
+    FleetSnapshot,
+    StreamHealth,
+)
 
 HEALTH = StreamHealth(state="active")
 
@@ -235,6 +244,108 @@ def test_full_eligible_projection_is_never_truncated_to_wire_limit(count):
             validate_publish_batch(rows)
     else:
         assert len(validate_publish_batch(rows)) == 32
+
+
+@pytest.mark.parametrize("outgoing,incoming", [(0, 900), (0, 0), (None, 0), (0, None)])
+def test_combat_projection_preserves_original_nullable_measurement_and_evidence(
+    outgoing, incoming
+):
+    row = FleetRow(
+        "Alice",
+        outgoing,
+        incoming_dps=incoming,
+        combat=CombatActivity(
+            40.0, (UUID(int=1), 2), (EffectObservation("NEUT", 39.0, (UUID(int=1), 1)),)
+        ),
+    )
+    snapshot = dataclasses.replace(_snapshot(row), sampled_at_mono=10.0)
+    selected = projection.project_combat_snapshot(
+        snapshot, CATALOGUE, eligible_character_ids=frozenset({42}), now_mono=10.0
+    )
+    assert len(selected) == 1
+    assert selected[0].character_id == 42
+    assert selected[0].row is row
+    assert selected[0].observations == row.combat.observations
+
+
+def test_combat_projection_resolves_full_catalogue_before_eligibility():
+    row = FleetRow(
+        "Alice", 0, incoming_dps=2, combat=CombatActivity(40.0, (UUID(int=1), 1))
+    )
+    snapshot = dataclasses.replace(_snapshot(row), sampled_at_mono=10.0)
+    ambiguous = FleetCatalogue(
+        1, (CatalogueCharacter(42, "Alice"), CatalogueCharacter(43, " ALICE "))
+    )
+    assert (
+        projection.project_combat_snapshot(
+            snapshot, ambiguous, eligible_character_ids=frozenset({42}), now_mono=10.0
+        )
+        == ()
+    )
+    assert (
+        projection.project_combat_snapshot(
+            snapshot, CATALOGUE, eligible_character_ids=frozenset(), now_mono=10.0
+        )
+        == ()
+    )
+
+
+def test_combat_projection_prunes_independent_effects_not_measured_dps_or_row():
+    old = EffectObservation("SCRAM", 10.0, (UUID(int=1), 1), "Old")
+    live = EffectObservation("POINT", 40.0, (UUID(int=1), 2), "Live")
+    row = FleetRow(
+        "Alice",
+        123,
+        incoming_dps=None,
+        combat=CombatActivity(40.0, (UUID(int=1), 2), (old, live)),
+    )
+    snapshot = dataclasses.replace(_snapshot(row), sampled_at_mono=10.0)
+    selected = projection.project_combat_snapshot(
+        snapshot, CATALOGUE, eligible_character_ids=frozenset({42}), now_mono=10.0
+    )
+    assert selected[0].row is row
+    assert selected[0].row.dps == 123
+    assert selected[0].observations == (live,)
+    assert snapshot.rows[0].combat.observations == (old, live)
+
+
+@pytest.mark.parametrize("deadline", [nan, inf, -inf, 41.0])
+def test_combat_projection_refuses_invalid_timing_instead_of_pruning_or_subset(
+    deadline,
+):
+    invalid = EffectObservation("POINT", deadline, (UUID(int=1), 1), "A")
+    row = FleetRow(
+        "Alice",
+        0,
+        incoming_dps=3,
+        combat=CombatActivity(40.0, (UUID(int=1), 2), (invalid,)),
+    )
+    snapshot = dataclasses.replace(_snapshot(row), sampled_at_mono=10.0)
+    assert (
+        projection.project_combat_snapshot(
+            snapshot, CATALOGUE, eligible_character_ids=frozenset({42}), now_mono=10.0
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("outgoing,incoming", [(None, None), (0, 0)])
+def test_combat_projection_omits_unavailable_or_genuinely_expired_rows(
+    outgoing, incoming
+):
+    row = FleetRow(
+        "Alice",
+        outgoing,
+        incoming_dps=incoming,
+        combat=CombatActivity(10.0, (UUID(int=1), 1)),
+    )
+    snapshot = dataclasses.replace(_snapshot(row), sampled_at_mono=10.0)
+    assert (
+        projection.project_combat_snapshot(
+            snapshot, CATALOGUE, eligible_character_ids=frozenset({42}), now_mono=10.0
+        )
+        == ()
+    )
 
 
 class TestValidatePublishBatch:

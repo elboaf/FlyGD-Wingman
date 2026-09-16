@@ -1,9 +1,10 @@
 """Fleet-sharing wire DTOs and the process-local publication consumer port.
 
-The existing dataclasses are wire-safe values for authGD's relay, per
+Catalogue and legacy PublishRow dataclasses are relay values, per
 docs/superpowers/specs/2026-09-04-shared-fleet-telemetry-design.md.
 PublicationSource instead retains local telemetry's immutable snapshot and
-admission authority. It is never serialized: local paths, source identities,
+admission authority; CombatProjectionRow is also local-only. Neither is
+serialized: local paths, source identities,
 log details and monotonic timestamps must not leave the machine.
 """
 
@@ -13,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from ..telemetry.model import FleetSnapshot
+from ..telemetry.model import EffectObservation, FleetRow, FleetSnapshot
 
 
 class PublicationSource(Protocol):
@@ -48,6 +49,15 @@ class FleetCatalogue:
 
     revision: int
     characters: tuple[CatalogueCharacter, ...] = ()
+
+
+@dataclass(frozen=True)
+class CombatProjectionRow:
+    """Local selection, not a wire DTO: keep original measurement and evidence."""
+
+    character_id: int
+    row: FleetRow
+    observations: tuple[EffectObservation, ...]
 
 
 @dataclass(frozen=True)

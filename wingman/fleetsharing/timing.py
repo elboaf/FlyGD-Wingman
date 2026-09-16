@@ -5,12 +5,24 @@ authenticated, request-bound responses may reach diagnostic candidacy. A feasibl
 rolling intersection is necessary, not proof against hidden clock faults.
 """
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from bisect import bisect_left
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
 from fractions import Fraction
 from math import isfinite
+from types import MappingProxyType
 
 from ..combatprofile import LIMITS
+from ..telemetry.model import FleetSnapshot, ObservationId
+from .model import CombatProjectionRow, FleetCatalogue, PublicationSource
+from .projection import _resolved_combat_rows, project_combat_snapshot
+from .protocol import (
+    API_VERSION,
+    EFFECT_ORDER,
+    JS_SAFE_MAX,
+    CombatRow,
+    parse_combat_put,
+)
 from .scheduling import Scheduler
 
 _DIAGNOSTIC_WINDOW_MS = (
@@ -51,6 +63,92 @@ class _TimingCandidate:
     state: _TimingState
 
 
+@dataclass(frozen=True)
+class _Evidence:
+    key: tuple
+    coordinate: Fraction
+    horizon: Fraction
+    signature: object
+
+
+@dataclass(frozen=True)
+class _Pin:
+    evidence: _Evidence
+    origin_ms: int
+
+
+@dataclass(frozen=True)
+class _PublisherState:
+    associations: Mapping[tuple, _Pin]
+
+
+@dataclass(frozen=True)
+class _PreparedPublication:
+    source: PublicationSource
+    snapshot: FleetSnapshot
+    sampled_at_mono: float
+    sampled_at_ms: int
+    rows: tuple[CombatRow, ...]
+    pins: tuple[_Pin, ...]
+    _staged_at: Fraction
+    # Reference identity, not a second mutable payload or a cryptographic seal.
+    # Keeping this tiny binding avoids re-projecting or reading the source under
+    # its leaf lock. Callers retain this value, never construct/restamp it.
+    _seal: tuple
+
+
+def _event(
+    character_id: int,
+    slot: str | tuple[str, str | None],
+    observation_id: ObservationId,
+    deadline: float,
+) -> _Evidence:
+    horizon = Fraction(deadline)
+    return _Evidence(
+        (character_id, observation_id[0], slot, observation_id),
+        horizon - Fraction(LIMITS["activity_ms"], 1000),
+        horizon,
+        horizon,
+    )
+
+
+def _combat_rows(
+    sample_ms: int,
+    row_evidence: list[tuple[CombatProjectionRow, _Evidence, tuple[_Evidence, ...]]],
+    associations: Mapping[tuple, _Pin],
+) -> tuple[CombatRow, ...]:
+    """Reuse the closed codec for all wire dimensions before committing pins."""
+    rows = []
+    for selected, row_event, effects in row_evidence:
+        observations = selected.observations
+        kinds = sorted({o.kind for o in observations}, key=EFFECT_ORDER.index)
+        rows.append(
+            {
+                "character_id": selected.character_id,
+                "outgoing_dps": selected.row.dps,
+                "incoming_dps": selected.row.incoming_dps,
+                "activity_age_ms": sample_ms - associations[row_event.key].origin_ms,
+                "effects": [
+                    {
+                        "kind": kind,
+                        "observations": [
+                            {
+                                "name": o.name,
+                                "age_ms": sample_ms - associations[event.key].origin_ms,
+                            }
+                            for o, event in zip(observations, effects, strict=True)
+                            if o.kind == kind
+                        ],
+                    }
+                    for kind in kinds
+                ],
+            }
+        )
+    return parse_combat_put(
+        {"protocol": API_VERSION, "sampled_at_ms": sample_ms, "rows": rows}
+    ).rows
+
+
 class TimingContext:
     """Retain across same-domain consumers; all mutation is signed-lane-owned.
 
@@ -74,6 +172,245 @@ class TimingContext:
         # Later workers borrow this existing scheduler, never a second read
         # bucket. All actual completions, even failed/obsolete ones, consume it.
         self._scheduler = Scheduler()
+        self._publisher = _PublisherState(MappingProxyType({}))
+        self._next_stage_at: Fraction | None = None
+        self._publication_epoch = object()
+        self._publisher_cutoff: Fraction | None = None
+
+    def _stage_publication(
+        self,
+        source: PublicationSource,
+        catalogue: FleetCatalogue,
+        *,
+        eligible_character_ids: frozenset[int],
+    ) -> _PreparedPublication | None:
+        """Prepare selected work on the signed lane, never on submit or scans.
+
+        Nonempty prepared result or None only; empty projection is NOT an
+        intentional withdrawal. Pins and original payload associations commit
+        together before signing. S4 owns all authority fences and the final gate.
+        """
+        stamp = self._clock()
+        if not isfinite(stamp):
+            return None
+        now = Fraction(stamp)
+        if self._next_stage_at is not None and now < self._next_stage_at:
+            return None
+        # Admission consumes the slot even when preparation subsequently refuses.
+        self._next_stage_at = now + Fraction(LIMITS["signed_interval_ms"], 1000)
+        if self._inconsistent or source.is_current() is not True:
+            return None
+        snapshot = source.snapshot
+        if snapshot.sampled_at_mono is None or not isfinite(snapshot.sampled_at_mono):
+            return None
+        m = Fraction(snapshot.sampled_at_mono)
+        anchor = self._state.anchor
+        if (
+            anchor is None
+            or not 0 <= 1000 * (now - m) < LIMITS["input_age_ms"]
+            or not 0
+            <= 1000 * (now - anchor.received_at)
+            <= LIMITS["anchor_lifetime_ms"]
+        ):
+            return None
+        selected = project_combat_snapshot(
+            snapshot,
+            catalogue,
+            eligible_character_ids=eligible_character_ids,
+            now_mono=now,
+        )
+        if not selected or len(selected) > LIMITS["put_rows"]:
+            return None
+        # A changed deadline cannot disguise an immutable conflict as expiry.
+        # Projection has validated times; check original members, including those
+        # genuinely pruned from this attempt, against every still-protected key.
+        for character_id, row in _resolved_combat_rows(
+            snapshot, catalogue, eligible_character_ids
+        ):
+            activity = row.combat
+            if activity is None or activity.observation_id is None:
+                continue
+            original = [
+                _event(
+                    character_id,
+                    "row",
+                    activity.observation_id,
+                    activity.expires_at_mono,
+                )
+            ]
+            original.extend(
+                _event(
+                    character_id, (o.kind, o.name), o.observation_id, o.expires_at_mono
+                )
+                for o in activity.observations
+            )
+            for event in original:
+                previous = self._publisher.associations.get(event.key)
+                if (
+                    previous is not None
+                    and previous.evidence.horizon > now
+                    and previous.evidence != event
+                ):
+                    return None
+        signature = tuple(
+            (r.character, r.dps, r.incoming_dps, r.combat) for r in snapshot.rows
+        )
+        sample = _Evidence(
+            (snapshot.activation_generation, m),
+            m,
+            m + Fraction(LIMITS["transport_ms"], 1000),
+            signature,
+        )
+        evidence = [sample]
+        row_evidence = []
+        for selected_row in selected:
+            row = selected_row.row
+            activity = row.combat
+            row_event = _event(
+                selected_row.character_id,
+                "row",
+                activity.observation_id,
+                activity.expires_at_mono,
+            )
+            effects = tuple(
+                _event(
+                    selected_row.character_id,
+                    (o.kind, o.name),
+                    o.observation_id,
+                    o.expires_at_mono,
+                )
+                for o in selected_row.observations
+            )
+            evidence.extend((row_event, *effects))
+            row_evidence.append((selected_row, row_event, effects))
+        if self._publisher_cutoff is not None and any(
+            event.coordinate <= self._publisher_cutoff for event in evidence
+        ):
+            return None
+        # All work is detached; abandonment after the single swap keeps every pin.
+        associations = {
+            key: pin
+            for key, pin in self._publisher.associations.items()
+            if pin.evidence.horizon > now
+        }
+        incoming_keys = {event.key for event in evidence}
+        if (
+            len(evidence) > LIMITS["associations_per_attempt"]
+            or len(associations) + len(incoming_keys - associations.keys())
+            > LIMITS["association_capacity"]
+        ):
+            return None
+        points = {
+            pin.evidence.coordinate: pin.origin_ms for pin in associations.values()
+        }
+        coordinates = sorted(points)
+        for event in sorted(evidence, key=lambda event: event.coordinate):
+            if event.key in associations:
+                if associations[event.key].evidence != event:
+                    return None
+                continue
+            x = event.coordinate
+            if x not in points:
+                index = bisect_left(coordinates, x)
+                lower = points[coordinates[index - 1]] if index else 0
+                upper = (
+                    points[coordinates[index]]
+                    if index < len(coordinates)
+                    else JS_SAFE_MAX
+                )
+                delta = 1000 * (x - anchor.received_at)
+                candidate = (
+                    anchor.server_time_ms
+                    + delta.numerator // delta.denominator
+                    - LIMITS["clock_margin_ms"]
+                )
+                if candidate < 0 or lower > upper:
+                    return None
+                points[x] = min(upper, max(lower, candidate))
+                coordinates.insert(index, x)
+            associations[event.key] = _Pin(event, points[x])
+        s = associations[sample.key].origin_ms
+        try:
+            rows = _combat_rows(s, row_evidence, associations)
+        except ValueError:
+            # A dimensional/origin failure is one refusal, never a repaired subset.
+            return None
+        pins = tuple(associations[e.key] for e in evidence)
+        values = (source, snapshot, snapshot.sampled_at_mono, s, rows, pins, now)
+        prepared = _PreparedPublication(*values, (self._publication_epoch, *values))
+        self._publisher = _PublisherState(MappingProxyType(associations))
+        return prepared
+
+    def _validate_publication(self, prepared: _PreparedPublication) -> None:
+        """Bounded final timing gate, safe UNDER PublicationSource's leaf lock.
+
+        The caller owns worker/session/identity/consent checks and invokes this
+        through the ORIGINAL source.admit_start. Do not read source.snapshot,
+        call is_current/admit_start, sign, serialize, or acquire any lock here.
+        The private seal retains exact immutable values validated at staging;
+        validation performs at most one bounded association lookup per pin.
+        """
+        stamp = self._clock()
+        values = (
+            prepared.source,
+            prepared.snapshot,
+            prepared.sampled_at_mono,
+            prepared.sampled_at_ms,
+            prepared.rows,
+            prepared.pins,
+            prepared._staged_at,
+        )
+        if (
+            self._inconsistent
+            or not isfinite(stamp)
+            or len(prepared._seal) != len(values) + 1
+            or prepared._seal[0] is not self._publication_epoch
+            or any(
+                actual is not original
+                for actual, original in zip(values, prepared._seal[1:], strict=True)
+            )
+        ):
+            raise ValueError("Obsolete publication association.")
+        now = Fraction(stamp)
+        m = Fraction(prepared.sampled_at_mono)
+        anchor = self._state.anchor
+        if (
+            now < prepared._staged_at
+            or not 0 <= 1000 * (now - m) < LIMITS["input_age_ms"]
+            or anchor is None
+            or not 0
+            <= 1000 * (now - anchor.received_at)
+            <= LIMITS["anchor_lifetime_ms"]
+            or any(
+                pin.evidence.horizon <= now
+                or self._publisher.associations.get(pin.evidence.key) is not pin
+                or (
+                    self._publisher_cutoff is not None
+                    and pin.evidence.coordinate <= self._publisher_cutoff
+                )
+                for pin in prepared.pins
+            )
+        ):
+            raise ValueError("Publication timing is no longer admissible.")
+
+    def _publisher_lost_continuity(self, *, cutoff: float) -> None:
+        """Signed-lane loss handling ONLY with trustworthy elapsed continuity.
+
+        S4 must synchronously fence its worker before ordering this operation.
+        Reset/paused/untrustworthy elapsed requires fresh model/context, not this
+        cutoff. Keep pins, pacing and a latched contradiction; never auto-unlatch
+        or infer permission to recover. S3 must coordinate its receiver barrier.
+        """
+        if not isfinite(cutoff):
+            raise ValueError("Continuity cutoff must be finite.")
+        cutoff_ratio = Fraction(cutoff)
+        self._publisher_cutoff = (
+            cutoff_ratio
+            if self._publisher_cutoff is None
+            else max(self._publisher_cutoff, cutoff_ratio)
+        )
+        self._publication_epoch = object()
+        self._state = replace(self._state, anchor=None)
 
     def _diagnostic_candidate(
         self, *, started_at: float, received_at: float, server_time_ms: int
