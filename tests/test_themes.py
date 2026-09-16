@@ -134,6 +134,15 @@ def test_legal_swatches_respect_family_tags():
     assert "#8430d9" not in themes.legal_swatches(wingman, "text", {})
 
 
+def test_every_family_has_a_label_and_a_description():
+    """The dropdown is named by the label and explained by the description;
+    one without the other is either a mystery noun or an orphan sentence.
+    Both travel to the page in the theme payload."""
+    for family in themes.FAMILIES:
+        assert themes.FAMILY_LABELS[family]
+        assert themes.FAMILY_DESCRIPTIONS[family]
+
+
 def test_settings_ship_the_theme_section():
     fresh = settings._fresh_defaults()
     assert fresh["theme"] == {"preset": "wingman-dark", "families": {}}

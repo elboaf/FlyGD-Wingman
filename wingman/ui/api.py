@@ -6617,6 +6617,7 @@ class Api:
                 for family in themes.FAMILIES
             },
             "family_labels": themes.FAMILY_LABELS,
+            "family_descriptions": themes.FAMILY_DESCRIPTIONS,
         }
 
     def _push_theme(self) -> None:

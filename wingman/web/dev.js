@@ -2860,6 +2860,7 @@
   }
 };
   var DEV_THEME_LABELS = {"surface": "Panels & controls", "base": "App background", "text": "Text", "accent": "Accent", "danger": "Danger", "success": "Success", "warning": "Warning"};
+  var DEV_THEME_DESCRIPTIONS = {"surface": "Cards, buttons, fields, scrollbars and the row highlights -- most of the window's chrome.", "base": "The page behind everything: the app backdrop, text field wells, recessed bands and list rows.", "text": "Every piece of text -- headings, body, labels and hints -- at the preset's brightness steps, whatever hue you choose.", "accent": "The Upload button, focused fields, ticks and glows: the app's one call-to-action colour.", "danger": "Delete buttons and destructive hovers -- the colour that must never be mistaken for the accent.", "success": "Green status marks, like the Ready rungs on the Skills roster.", "warning": "Amber status marks -- plan problems and the Fleet Bar's incoming-threat tint."};
   var devTheme = { preset: 'wingman-dark', families: {} };
 
   function devThemePayload() {
@@ -2872,7 +2873,8 @@
       effective: {},
       swatches: pool.swatches,
       legal: pool.legal,
-      family_labels: DEV_THEME_LABELS
+      family_labels: DEV_THEME_LABELS,
+      family_descriptions: DEV_THEME_DESCRIPTIONS
     };
   }
 

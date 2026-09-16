@@ -2096,6 +2096,11 @@
       button.addEventListener('click', function () { toggleMenu(control); });
       control.appendChild(menu);
       row.appendChild(control);
+      if (t.family_descriptions && t.family_descriptions[family]) {
+        var hint = WM.make('p', 'hint theme-family-hint',
+                           t.family_descriptions[family]);
+        row.appendChild(hint);
+      }
       host.appendChild(row);
     });
 

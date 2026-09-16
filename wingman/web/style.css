@@ -3241,6 +3241,10 @@ button.btn:disabled,
 /* The theme-default row: a family with no pick wears the preset's own
    mapping, which is a real state worth naming in the list. */
 .theme-menu li button.theme-default-option { color: var(--text-dim); font-style: italic; }
+/* The what-does-this-change hint under each family dropdown. Full
+   flex-basis so it stacks below the control instead of squeezing
+   beside it in the wrapping row. */
+.theme-family-hint { flex-basis: 100%; margin: 0; }
 
 /* Custom rules share the Settings card and its pane's one scrollbar.
    Rows are separators, not nested cards; only one inline editor is open.

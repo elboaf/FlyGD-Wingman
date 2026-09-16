@@ -38,6 +38,41 @@ FAMILY_LABELS = {
     "warning": "Warning",
 }
 
+# What each family actually recolours, one sentence, rendered under its
+# dropdown. "Accent" alone names a token role, not anything a user can
+# picture; the sentence is the picture. Kept beside FAMILY_LABELS because
+# the two answer the same question at different depths and must move
+# together if a family's reach ever changes.
+FAMILY_DESCRIPTIONS = {
+    "surface": (
+        "Cards, buttons, fields, scrollbars and the row highlights -- "
+        "most of the window's chrome."
+    ),
+    "base": (
+        "The page behind everything: the app backdrop, text field wells, "
+        "recessed bands and list rows."
+    ),
+    "text": (
+        "Every piece of text -- headings, body, labels and hints -- at "
+        "the preset's brightness steps, whatever hue you choose."
+    ),
+    "accent": (
+        "The Upload button, focused fields, ticks and glows: the app's "
+        "one call-to-action colour."
+    ),
+    "danger": (
+        "Delete buttons and destructive hovers -- the colour that must "
+        "never be mistaken for the accent."
+    ),
+    "success": (
+        "Green status marks, like the Ready rungs on the Skills roster."
+    ),
+    "warning": (
+        "Amber status marks -- plan problems and the Fleet Bar's "
+        "incoming-threat tint."
+    ),
+}
+
 # Roles derived from each family's swatch, as (role, reference-role) pairs.
 # The reference role supplies the lightness that survives recolouring; the
 # key is what the page receives. Keeping the reference IN THE PRESET (not
