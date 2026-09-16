@@ -10,6 +10,29 @@ ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "wingman" / "web"
 
 
+def test_wanderer_retains_compact_identity_without_pinning_the_whole_form():
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    context = re.search(
+        r'<header class="scroll-context"[^>]*>(.*?)</header>', html, re.DOTALL
+    )
+    assert context, "Wanderer needs a bounded local context at the scroll edge"
+    assert 'id="wanderer-heading"' in context.group(1)
+    # A pinned editable switch must not leave its refusal scrolled offscreen.
+    for field in ("enabled", "health", "coverage", "url", "token", "enabled-error"):
+        assert f'id="wanderer-{field}"' not in context.group(1)
+    assert html.count('id="wanderer-health"') == 1
+    css = (WEB / "style.css").read_text(encoding="utf-8")
+    rule = re.search(r"\.scroll-context\s*\{([^}]*)\}", css)
+    assert rule and "position: sticky" in rule.group(1)
+    assert "background: var(--panel)" in rule.group(1)
+    assert "top: 0" in rule.group(1)
+    pane = re.search(r"#settings-previews-wanderer\s*\{([^}]*)\}", css)
+    clearance = (
+        re.search(r"scroll-padding-top:\s*(\d+)px", pane.group(1)) if pane else None
+    )
+    assert clearance and int(clearance.group(1)) >= 38 + 4
+
+
 def test_wanderer_runtime():
     node = shutil.which("node")
     assert node, "Node is required for Wanderer response-ownership coverage"

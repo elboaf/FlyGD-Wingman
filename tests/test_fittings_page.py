@@ -28,6 +28,20 @@ CSS = re.sub(
 )
 
 
+def test_expanded_fitting_keeps_its_identity_above_the_detail():
+    rule = re.search(r"\.fit-row\.open > \.fit-row-top\s*\{([^}]*)\}", CSS)
+    assert rule, "Only the expanded fitting needs retained row identity"
+    for prop in ("position: sticky", "top: 0", "background: var(--panel)", "z-index:"):
+        assert prop in rule.group(1)
+    workspace = re.search(r"\.fit-workspace-scroll\s*\{([^}]*)\}", CSS)
+    clearance = (
+        re.search(r"scroll-padding-top:\s*(\d+)px", workspace.group(1))
+        if workspace
+        else None
+    )
+    assert clearance and int(clearance.group(1)) >= 36 + 4
+
+
 def test_clipboard_import_is_inline_labelled_and_keeps_status_mounted():
     tree = PageTree()
     tree.feed(HTML)

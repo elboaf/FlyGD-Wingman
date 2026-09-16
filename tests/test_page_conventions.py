@@ -2502,6 +2502,29 @@ def test_the_previews_header_stays_above_rows_while_settings_scrolls():
         )
 
 
+def test_sticky_edges_cover_fractional_scrollport_boundaries():
+    """Opaque fills alone leave a hairline at fractional CSS-pixel edges."""
+    for selector in (
+        ".characters-head",
+        ".bind-head > span",
+        "#preview-binds .bind-group:not(:empty)",
+        ".fit-copy-recovery",
+    ):
+        rule = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", CSS)
+        assert rule and "0 -1px var(--panel)" in rule.group(1), selector
+
+
+def test_nested_work_panes_contain_wheel_scrolling():
+    for selector in (
+        "#characters-roster",
+        "#section-previews .settings-subpage",
+        ".fit-workspace-scroll",
+        "#fittings-copy-body",
+    ):
+        rules = re.findall(re.escape(selector) + r"\s*\{([^}]*)\}", CSS)
+        assert any("overscroll-behavior-y: contain" in rule for rule in rules), selector
+
+
 def test_preview_sticky_header_paints_the_trailing_track():
     """Five labels share six tracks; full-width warnings must not show through.
 

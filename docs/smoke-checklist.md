@@ -1399,6 +1399,29 @@ somewhere stale and nothing on that screen is worth reviewing.
       seen-entry tracking: the recreated file may not be re-announced until
       the app restarts. That is expected behavior, not a bug to report.
 
+## Screenshot UX foundation — Windows/WebView2 acceptance
+
+Plan `PLAN-cb2f7ba3`, step 1 only. Isolated Chromium checks passed at 840×625,
+839×621 and 1015×633 for the Characters roster, Preview table/Offline stack,
+Wanderer lower controls, Fittings metadata and copy-result recovery. These used
+synthetic presentation fixtures, not live EVE, network, persistence or clipboard
+operations. The checks below remain **NOT RUN** in Windows/WebView2.
+
+- [ ] At 100/125/150/200% scaling, scroll Characters and the Preview table through
+      their sticky headers. No row fragments bleed above or through the headers;
+      Offline stays below the column labels while its rows remain visible.
+- [ ] Scroll Wanderer to Test/Remove. Map connection stays visible; the enable
+      switch scrolls with its own refusal message. Tab/Shift+Tab through URL,
+      token and actions: focus clears the retained header, including with long
+      health/error messages. Switching subpages retains drafts and scroll
+      without submitting a field.
+- [ ] Open a fitting and Edit metadata, then scroll through its details. The
+      existing fitting row remains visible, releases at its own boundary, and
+      does not cover focused fields. Refresh still retains draft/focus/scroll.
+- [ ] Scroll mixed copy results to the bottom. No hairline of an earlier row
+      appears above recovery guidance. Wheel at each affected pane's boundary
+      must not move another pane; Close and row menus remain reachable.
+
 ## Settings subpages — Windows/WebView2 acceptance
 
 The approved subpage layout is implemented, but the following installed-app
