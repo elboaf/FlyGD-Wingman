@@ -5,6 +5,8 @@ from __future__ import annotations
 import datetime
 import re
 
+from wingman.combatprofile import normalize_observed_name
+
 from .model import ParsedFact, ParsedLine
 
 UTC = datetime.UTC
@@ -94,6 +96,33 @@ _INCOMING_NEUT_RE = re.compile(
     r"<b>(?P<source>.+?)</b>",
     re.IGNORECASE,
 )
+
+
+# Only the separated pilot/ticker/hull shape in player_scramble.txt proves a
+# label boundary. Bare bold sources (including real unresolved players) do not.
+# The single space before '[' belongs to that separator; all other candidate
+# whitespace reaches raw validation unchanged. Extra brackets/markup are
+# ambiguous, not something to strip away to manufacture a plausible name.
+# Anchor the action and its source preposition too: the permissive Alert source
+# search can skip malformed outer markup and find a clean fragment inside a name.
+# Timestamp text may be malformed, but cannot swallow markup or another frame.
+_OBSERVED_NAME_RE = re.compile(
+    r"\A(?:\[[^\[\]<>\r\n]*\] )?\(combat\) <color=0xffffffff><b>"
+    r"Warp (?:scramble attempt|disruption (?:attempt|zone))</b> "
+    r"<color=0x77ffffff><font size=10>from</font> "
+    r"<color=0xffffffff><b><color=0xffffffff><fontsize=12>"
+    r"(?P<name>[^<>\[\]]*) \[[^<>\[\]\s]+(?: [^<>\[\]\s]+)*\]</color>"
+    r"<color=0xfff0f000> [^<>\s]+(?: [^<>\s]+)*</color>"
+    r"<color=0xffffffff></b>(?= <color=0x77ffffff><font size=10>to\b)",
+    re.IGNORECASE,
+)
+
+
+def _extract_observed_name(line: str) -> str | None:
+    match = _OBSERVED_NAME_RE.match(line)
+    if match is None:
+        return None
+    return normalize_observed_name(match.group("name"))
 
 
 def strip_markup(text: str) -> str:
@@ -241,6 +270,7 @@ def parse_line(line: str, character: str) -> ParsedLine:
                             ),
                             source=_extract_source(line),
                             target=target,
+                            observed_name=_extract_observed_name(line),
                         )
                     )
             elif _is_outgoing_damage(lower):

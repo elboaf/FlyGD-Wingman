@@ -1,5 +1,6 @@
 """Immutable local combat evidence and caller-clock readers."""
 
+import datetime
 from dataclasses import FrozenInstanceError
 from uuid import UUID
 
@@ -8,6 +9,55 @@ import pytest
 from wingman.telemetry import combat, model
 
 TOKEN = UUID("00000000-0000-0000-0000-000000000001")
+
+
+def test_parsed_fact_appends_observed_name_after_legacy_positional_prefix():
+    fact = model.ParsedFact("incoming_scram", 7, "Source [CORP] Hull", "Victim")
+    assert (fact.kind, fact.amount, fact.source, fact.target) == (
+        "incoming_scram",
+        7,
+        "Source [CORP] Hull",
+        "Victim",
+    )
+    assert fact.observed_name is None
+    assert model.ParsedFact("incoming_scram") == model.ParsedFact(
+        "incoming_scram", None, "", "", None
+    )
+    named = model.ParsedFact("incoming_scram", 7, fact.source, fact.target, "Source")
+    assert named.observed_name == "Source"
+    assert (named.kind, named.amount, named.source, named.target) == (
+        fact.kind,
+        fact.amount,
+        fact.source,
+        fact.target,
+    )
+    with pytest.raises(FrozenInstanceError):
+        named.observed_name = "Other"
+
+
+def test_combat_fact_appends_observed_name_after_legacy_positional_prefix():
+    occurred_at = datetime.datetime(2025, 11, 14, tzinfo=datetime.UTC)
+    source_id = model.SourceId("gamelog.txt", occurred_at)
+    prefix = ("Victim", 3, source_id, occurred_at, "incoming_scram")
+    fact = model.CombatFact(*prefix, 7, "Source [CORP] Hull")
+    assert (
+        fact.character,
+        fact.source_generation,
+        fact.source_id,
+        fact.occurred_at,
+        fact.kind,
+        fact.amount,
+        fact.source,
+    ) == (*prefix, 7, "Source [CORP] Hull")
+    assert fact.observed_name is None
+    assert model.CombatFact(*prefix) == model.CombatFact(*prefix, None, "", None)
+    named = model.CombatFact(*prefix, 7, fact.source, "Source")
+    assert named.observed_name == "Source"
+    assert named.source == fact.source
+    assert named.source_id is source_id
+    assert named.occurred_at is occurred_at
+    with pytest.raises(FrozenInstanceError):
+        named.observed_name = "Other"
 
 
 def test_legacy_row_positional_prefix_and_defaults_remain_compatible():
