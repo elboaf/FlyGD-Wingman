@@ -944,6 +944,7 @@ class GameLogStream:
                         kind=fact.kind,
                         amount=fact.amount,
                         source=fact.source,
+                        observed_name=fact.observed_name,
                     )
                 )
             self._match_custom(line, character, gen, sid, pending, stop_event)

@@ -9,6 +9,7 @@ import datetime
 import os
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -986,6 +987,124 @@ class TestDedupBeforeCap:
 
 
 class TestCombatFactParsing:
+    @pytest.fixture
+    def player_scramble_line(self):
+        path = Path(__file__).parent / "fixtures" / "gamelogs" / "player_scramble.txt"
+        return next(
+            line
+            for line in path.read_text(encoding="utf-8-sig").splitlines(keepends=True)
+            if "Warp scramble attempt" in line
+        )
+
+    def test_appended_tackle_carries_observed_name(
+        self, tmp_path, player_scramble_line
+    ):
+        stream = _stream()
+        received = _collect(stream)
+        path = _log(tmp_path, "Torvin Wexley")
+        try:
+            stream.start(tmp_path)
+            stream.scan_once(NOW)
+            (active,) = [e for e in received if isinstance(e, SourceLifecycle)]
+            assert active.active
+            with path.open("a", encoding="utf-8") as output:
+                output.write(player_scramble_line)
+            stream.scan_once(NOW)
+            (fact,) = [e for e in received if isinstance(e, CombatFact)]
+            assert fact.character == "Torvin Wexley"
+            assert fact.kind == "incoming_scram"
+            assert fact.amount is None
+            assert fact.source.encode("utf-8") == b"Talia Renn [KVOS] Taranis"
+            assert fact.occurred_at == datetime.datetime(
+                2025, 11, 14, 6, 41, 8, tzinfo=UTC
+            )
+            assert fact.source_generation == active.generation
+            assert fact.source_id == active.source_id
+            assert fact.observed_name == "Talia Renn"
+        finally:
+            stream.stop()
+
+    @pytest.mark.parametrize("reader", ["Torvin Wexley", "Nobody Atall", "Talia Renn"])
+    def test_named_victim_tackle_only_reaches_victim(
+        self, tmp_path, player_scramble_line, reader
+    ):
+        line = player_scramble_line.replace("you!", "Torvin Wexley [OXWLD] Drekavac")
+        stream = _stream()
+        received = _collect(stream)
+        path = _log(tmp_path, reader)
+        try:
+            stream.start(tmp_path)
+            stream.scan_once(NOW)
+            assert stream.characters() == (reader,)
+            with path.open("a", encoding="utf-8") as output:
+                output.write(line)
+            stream.scan_once(NOW)
+            facts = [e for e in received if isinstance(e, CombatFact)]
+            if reader == "Torvin Wexley":
+                (fact,) = facts
+                assert fact.kind == "incoming_scram"
+                assert fact.observed_name == "Talia Renn"
+            else:
+                assert facts == []
+        finally:
+            stream.stop()
+
+    def test_split_utf8_preserves_observed_tackle_name(
+        self, tmp_path, player_scramble_line
+    ):
+        line = player_scramble_line.replace("Talia Renn", "Straße Renn").encode("utf-8")
+        cut = line.index(b"\xc3\x9f") + 1
+        stream = _stream()
+        received = _collect(stream)
+        path = _log(tmp_path, "Torvin Wexley")
+        try:
+            stream.start(tmp_path)
+            stream.scan_once(NOW)
+            with path.open("ab") as output:
+                output.write(line[:cut])
+            stream.scan_once(NOW)
+            assert not [e for e in received if isinstance(e, CombatFact)]
+            with path.open("ab") as output:
+                output.write(line[cut:])
+            stream.scan_once(NOW)
+            facts = [e for e in received if isinstance(e, CombatFact)]
+            (fact,) = facts
+            assert fact.kind == "incoming_scram"
+            assert fact.source.encode("utf-8") == b"Stra\xc3\x9fe Renn [KVOS] Taranis"
+            assert fact.observed_name == "Straße Renn"
+            stream.scan_once(NOW)
+            assert [e for e in received if isinstance(e, CombatFact)] == facts
+        finally:
+            stream.stop()
+
+    def test_appended_unresolved_tackle_remains_unnamed(self, tmp_path):
+        fixture = (
+            Path(__file__).parent / "fixtures" / "gamelogs" / "player_unresolved.txt"
+        )
+        line = next(
+            line
+            for line in fixture.read_text(encoding="utf-8-sig").splitlines(
+                keepends=True
+            )
+            if "Warp disruption attempt" in line
+        )
+        stream = _stream()
+        received = _collect(stream)
+        path = _log(tmp_path, "Rendik Ashvale")
+        try:
+            stream.start(tmp_path)
+            stream.scan_once(NOW)
+            with path.open("a", encoding="utf-8") as output:
+                output.write(line)
+            stream.scan_once(NOW)
+            (fact,) = [e for e in received if isinstance(e, CombatFact)]
+            assert fact.kind == "incoming_point"
+            assert fact.amount is None
+            assert fact.source.encode("utf-8") == b"Doran Velk Proteus"
+            assert fact.observed_name is None
+        finally:
+            stream.stop()
+
     def test_incoming_damage(self, tmp_path):
         stream = _stream()
         received = _collect(stream)
