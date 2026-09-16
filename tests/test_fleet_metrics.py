@@ -7,10 +7,15 @@ current instant, mutated between calls) and a deterministic monotonic clock
 """
 
 import datetime
+from uuid import UUID
 
+import pytest
+
+from wingman.telemetry.combat import combat_row_visible, read_combat
 from wingman.telemetry.metrics import NO_LOG, TACKLE_TAG, FleetMetrics
 from wingman.telemetry.model import (
     ClientSessionId,
+    CombatActivity,
     CombatFact,
     RosterClient,
     RosterSnapshot,
@@ -863,6 +868,362 @@ class TestSpecificEwarAndActivity:
         )
 
         assert _row(metrics.snapshot(4, HEALTH), "Alice").ewar == ()
+
+
+# ---------------------------------------------------------------------------
+# Row activity and lifetime fencing
+# ---------------------------------------------------------------------------
+
+
+class TestRowActivity:
+    def _bound(self):
+        metrics, utc, mono = _metrics(mono=100.0)
+        metrics.consume(_env(1, _roster(_session("Alice"))))
+        metrics.consume(_env(2, _lifecycle("Alice")))
+        return metrics, utc, mono
+
+    @pytest.mark.parametrize("kind", ["incoming_damage", "outgoing_damage"])
+    @pytest.mark.parametrize("amount", [0, 1])
+    def test_zero_dps_still_has_thirty_second_activity(self, kind, amount):
+        metrics, utc, mono = self._bound()
+        metrics.consume(_env(3, _damage("Alice", amount, NOW, kind=kind)))
+        metrics.consume(
+            _env(4, _roster(_session("zulu"), _session("Alice"), _session("bob")))
+        )
+        snapshot = metrics.snapshot(5, HEALTH)
+        row = _row(snapshot, "Alice")
+        assert (row.dps, row.incoming_dps) == (0, 0)
+        assert row.combat is not None
+        token, sequence = row.combat.observation_id
+        assert isinstance(token, UUID)
+        assert sequence == 3
+        assert row.combat == CombatActivity(130.0, (token, 3))
+        assert combat_row_visible(row, now_mono=129.999)
+        assert not combat_row_visible(row, now_mono=130.0)
+
+        utc[0] = NOW + datetime.timedelta(seconds=30)
+        mono[0] = 130.0
+        expired = metrics.snapshot(6, HEALTH)
+        assert [r.character for r in expired.rows] == ["Alice", "bob", "zulu"]
+        assert _row(expired, "Alice").combat == row.combat
+        for name in ("bob", "zulu"):
+            missing = _row(expired, name)
+            assert (missing.dps, missing.incoming_dps, missing.log_status) == (
+                None,
+                None,
+                NO_LOG,
+            )
+            assert missing.combat == CombatActivity()
+            assert not combat_row_visible(missing, now_mono=100.0)
+
+    @pytest.mark.parametrize("kind", ["incoming_damage", "outgoing_damage"])
+    @pytest.mark.parametrize(
+        "age, deadline", [(10, 120.0), (15, 115.0), (29.999, 100.001)]
+    )
+    def test_delayed_damage_has_only_event_time_remainder(self, kind, age, deadline):
+        metrics, _, _ = self._bound()
+        metrics.consume(
+            _env(
+                3,
+                _damage("Alice", 100, NOW - datetime.timedelta(seconds=age), kind=kind),
+            )
+        )
+        row = _row(metrics.snapshot(4, HEALTH), "Alice")
+        assert (row.dps, row.incoming_dps) == (0, 0)
+        assert row.combat is not None
+        assert row.combat.expires_at_mono == deadline
+        assert combat_row_visible(row, now_mono=deadline - 0.0001)
+        assert not combat_row_visible(row, now_mono=deadline)
+
+    @pytest.mark.parametrize(
+        "kind, tag",
+        [
+            ("incoming_scram", "SCRAM"),
+            ("incoming_point", "POINT"),
+            ("incoming_neut", "NEUT"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "age, deadline", [(15, 115.0), (-3, 130.0), (-3600, 130.0)]
+    )
+    def test_accepted_ewar_qualifies_without_producing_effect_observations(
+        self, kind, tag, age, deadline
+    ):
+        metrics, _, _ = self._bound()
+        metrics.consume(
+            _env(3, _ewar("Alice", kind, NOW - datetime.timedelta(seconds=age)))
+        )
+        row = _row(metrics.snapshot(4, HEALTH), "Alice")
+        assert row.ewar == (tag,)
+        assert row.combat is not None
+        assert row.combat.expires_at_mono == deadline
+        assert row.combat.observation_id[1] == 3
+        assert row.combat.observations == ()
+        assert combat_row_visible(row, now_mono=deadline - 0.001)
+        assert not combat_row_visible(row, now_mono=deadline)
+
+    @pytest.mark.parametrize("kind", ["incoming_damage", "outgoing_damage"])
+    def test_damage_future_policy_applies_before_row_activity(self, kind):
+        metrics, _, _ = self._bound()
+        metrics.consume(
+            _env(
+                3,
+                _damage(
+                    "Alice",
+                    100,
+                    NOW + datetime.timedelta(seconds=2, microseconds=1),
+                    kind=kind,
+                ),
+            )
+        )
+        rejected = metrics.snapshot(4, HEALTH)
+        assert _row(rejected, "Alice").combat == CombatActivity()
+        assert (
+            rejected.metric_error
+            == f"future {kind.removesuffix('_damage')} damage timestamp for Alice"
+        )
+        metrics.consume(
+            _env(
+                3, _damage("Alice", 100, NOW + datetime.timedelta(seconds=2), kind=kind)
+            )
+        )
+        corrected = metrics.snapshot(5, HEALTH)
+        row = _row(corrected, "Alice")
+        assert row.combat is not None
+        assert row.combat.expires_at_mono == 130.0
+        assert row.combat.observation_id[1] == 3
+        assert (row.dps, row.incoming_dps) == (
+            (10, 0) if kind == "outgoing_damage" else (0, 10)
+        )
+        assert corrected.metric_error is None
+
+    @pytest.mark.parametrize(
+        "fact",
+        [
+            _damage("Alice", None, NOW),
+            _damage("Alice", None, NOW, kind="incoming_damage"),
+            _damage("Alice", 1, None),
+            _damage("Alice", 1, None, kind="incoming_damage"),
+            _tackle("Alice", None),
+            _damage("Alice", 100, NOW - datetime.timedelta(seconds=30)),
+            _damage(
+                "Alice",
+                100,
+                NOW - datetime.timedelta(seconds=30),
+                kind="incoming_damage",
+            ),
+            _tackle("Alice", NOW - datetime.timedelta(seconds=30)),
+            _ewar("Alice", "incoming_miss", NOW),
+            _ewar("Alice", "outgoing_miss", NOW),
+            _ewar("Alice", "warp", NOW),
+            _damage("Alice", 100, NOW, source_generation=99),
+            _damage("Alice", 100, NOW, source_id=_source_id("other.txt")),
+            "chatter",
+        ],
+    )
+    def test_rejected_facts_do_not_renew_or_consume_correction_sequence(self, fact):
+        metrics, _, _ = self._bound()
+        metrics.consume(
+            _env(3, _damage("Alice", 0, NOW - datetime.timedelta(seconds=5)))
+        )
+        before = _row(metrics.snapshot(4, HEALTH), "Alice").combat
+        assert before is not None
+        assert before.expires_at_mono == 125.0
+        metrics.consume(_env(5, fact))
+        assert _row(metrics.snapshot(6, HEALTH), "Alice").combat == before
+        metrics.consume(_env(5, _damage("Alice", 0, NOW)))
+        corrected = _row(metrics.snapshot(7, HEALTH), "Alice").combat
+        assert corrected == CombatActivity(130.0, (before.observation_id[0], 5))
+
+    def test_ids_advance_only_with_deadline_and_stay_independent_per_row(self):
+        metrics, utc, mono = self._bound()
+        metrics.consume(_env(3, _roster(_session("Alice"), _session("bob"))))
+        metrics.consume(_env(4, _lifecycle("bob")))
+        metrics.consume(_env(5, _damage("Alice", 0, NOW)))
+        metrics.consume(_env(6, _damage("bob", 0, NOW - datetime.timedelta(seconds=5))))
+        before = metrics.snapshot(7, HEALTH)
+        alice = _row(before, "Alice").combat
+        bob = _row(before, "bob").combat
+        assert alice is not None and bob is not None
+        assert alice.expires_at_mono == 130.0
+        assert bob.expires_at_mono == 125.0
+        assert alice.observation_id[0] != bob.observation_id[0]
+        metrics.consume(_env(8, _tackle("Alice", NOW)))  # Equal deadline.
+        metrics.consume(
+            _env(9, _damage("Alice", 0, NOW - datetime.timedelta(seconds=1)))
+        )
+        utc[0] = NOW + datetime.timedelta(seconds=10)
+        mono[0] = 110.0
+        metrics.consume(
+            _env(9, _damage("Alice", 0, utc[0]))
+        )  # Already accepted sequence.
+        metrics.consume(_env(8, _damage("Alice", 0, utc[0])))  # Out of order.
+        unchanged = metrics.snapshot(10, HEALTH)
+        assert _row(unchanged, "Alice").combat == alice
+        assert _row(unchanged, "bob").combat == bob
+        metrics.consume(_env(11, _damage("Alice", 0, utc[0])))
+        after = metrics.snapshot(12, HEALTH)
+        assert _row(after, "Alice").combat == CombatActivity(
+            140.0, (alice.observation_id[0], 11)
+        )
+        assert _row(after, "bob").combat == bob
+        assert not combat_row_visible(_row(after, "bob"), now_mono=125.0)
+        assert combat_row_visible(_row(after, "Alice"), now_mono=125.0)
+
+    @pytest.mark.parametrize("age", [0, 15])
+    def test_incoming_row_activity_does_not_extend_legacy_ewar(self, age):
+        metrics, utc, mono = self._bound()
+        metrics.consume(_env(3, _tackle("Alice", NOW)))
+        utc[0] = NOW + datetime.timedelta(seconds=20)
+        mono[0] = 120.0
+        metrics.consume(
+            _env(
+                4,
+                _damage(
+                    "Alice",
+                    0,
+                    utc[0] - datetime.timedelta(seconds=age),
+                    kind="incoming_damage",
+                ),
+            )
+        )
+        utc[0] = NOW + datetime.timedelta(seconds=30)
+        mono[0] = 130.0
+        row = _row(metrics.snapshot(5, HEALTH), "Alice")
+        assert row.ewar == ()
+        assert row.combat is not None
+        assert row.combat.expires_at_mono == (150.0 if age == 0 else 135.0)
+        assert combat_row_visible(row, now_mono=130.0)
+
+    def test_unchanged_roster_and_active_rebind_preserve_lifetime(self):
+        metrics, utc, mono = self._bound()
+        metrics.consume(_env(3, _damage("Alice", 100, NOW)))
+        original = _row(metrics.snapshot(4, HEALTH), "Alice").combat
+        assert original is not None
+        metrics.consume(_env(5, _roster(_session("Alice"))))
+        metrics.consume(_env(6, _lifecycle("Alice")))
+        metrics.consume(_env(5, _lifecycle("Alice", active=False)))
+        utc[0] = NOW + datetime.timedelta(seconds=1)
+        mono[0] = 101.0
+        metrics.consume(_env(6, _damage("Alice", 100, utc[0])))
+        row = _row(metrics.snapshot(7, HEALTH), "Alice")
+        assert row.combat == original
+        assert row.dps == 10
+        metrics.consume(_env(8, _damage("Alice", 0, utc[0])))
+        assert _row(metrics.snapshot(9, HEALTH), "Alice").combat == CombatActivity(
+            131.0, (original.observation_id[0], 8)
+        )
+
+    @pytest.mark.parametrize(
+        "change",
+        [
+            "retire",
+            "generation",
+            "source",
+            "hwnd",
+            "pid",
+            "session_generation",
+            "remove",
+            "reset",
+        ],
+    )
+    def test_invalidation_clears_activity_and_fences_stale_facts(self, change):
+        metrics, _, _ = self._bound()
+        metrics.consume(_env(3, _damage("Alice", 100, NOW)))
+        original = _row(metrics.snapshot(4, HEALTH), "Alice").combat
+        assert original is not None
+        generation, source_id = 1, _source_id()
+        if change == "retire":
+            metrics.consume(_env(10, _lifecycle("Alice", active=False)))
+        elif change in ("generation", "source"):
+            generation = 2 if change == "generation" else 1
+            source_id = _source_id("new.txt") if change == "source" else _source_id()
+            metrics.consume(
+                _env(
+                    10, _lifecycle("Alice", generation=generation, source_id=source_id)
+                )
+            )
+        else:
+            if change == "reset":
+                metrics.reset()
+            elif change == "remove":
+                metrics.consume(_env(9, _roster()))
+            if change in ("reset", "remove"):
+                assert metrics.snapshot(10, HEALTH).rows == ()
+            session = _session(
+                "Alice",
+                hwnd=2 if change == "hwnd" else 1,
+                pid=101 if change == "pid" else 100,
+                generation=2 if change == "session_generation" else 1,
+            )
+            metrics.consume(_env(10, _roster(session)))
+        cleared = _row(metrics.snapshot(11, HEALTH), "Alice")
+        assert cleared.combat == CombatActivity()
+        assert not combat_row_visible(cleared, now_mono=100.0)
+        # A queued old fact is either unbound, wrong-source or behind the bind.
+        metrics.consume(_env(9, _damage("Alice", 999, NOW)))
+        metrics.consume(
+            _env(12, _lifecycle("Alice", generation=generation, source_id=source_id))
+        )
+        metrics.consume(
+            _env(
+                11,
+                _damage(
+                    "Alice", 999, NOW, source_generation=generation, source_id=source_id
+                ),
+            )
+        )
+        rebound = _row(metrics.snapshot(13, HEALTH), "Alice")
+        assert rebound.combat == CombatActivity()
+        assert (rebound.dps, rebound.incoming_dps, rebound.ewar) == (0, 0, ())
+        metrics.consume(
+            _env(
+                14,
+                _damage(
+                    "Alice", 0, NOW, source_generation=generation, source_id=source_id
+                ),
+            )
+        )
+        new = _row(metrics.snapshot(15, HEALTH), "Alice").combat
+        assert new is not None
+        assert new.expires_at_mono == 130.0
+        assert new.observation_id[0] != original.observation_id[0]
+        assert new.observation_id[1] == 14
+
+    def test_full_reset_cannot_reuse_id_even_with_same_source_and_sequence(self):
+        metrics, _, _ = self._bound()
+        metrics.consume(_env(3, _damage("Alice", 0, NOW)))
+        original = _row(metrics.snapshot(4, HEALTH), "Alice").combat
+        metrics.reset()
+        metrics.consume(
+            _env(3, _damage("Alice", 999, NOW))
+        )  # No roster: drop, never queue.
+        metrics.consume(_env(1, _roster(_session("Alice"))))
+        metrics.consume(_env(2, _lifecycle("Alice")))
+        assert _row(metrics.snapshot(3, HEALTH), "Alice").combat == CombatActivity()
+        metrics.consume(_env(3, _damage("Alice", 0, NOW)))
+        new = _row(metrics.snapshot(4, HEALTH), "Alice").combat
+        assert original is not None and new is not None
+        assert new.observation_id[1] == original.observation_id[1] == 3
+        assert new.observation_id[0] != original.observation_id[0]
+
+    def test_snapshot_samples_once_and_readers_never_rewrite_measurement_time(self):
+        ticks = iter([123.0, 124.0, 125.0])
+        metrics = FleetMetrics(_clock=lambda: next(ticks), _utc_now=lambda: NOW)
+        metrics.consume(_env(1, _roster(_session("Alice"), _session("bob"))))
+        metrics.consume(_env(2, _lifecycle("Alice")))
+        first = metrics.snapshot(3, HEALTH)
+        assert first.sampled_at_mono == 123.0
+        row = _row(first, "Alice")
+        assert read_combat(row, now_mono=500.0) == CombatActivity()
+        assert not combat_row_visible(row, now_mono=500.0)
+        second = metrics.snapshot(4, HEALTH)
+        assert second.sampled_at_mono == 124.0
+        assert first.sampled_at_mono == 123.0
+        metrics.reset()
+        empty = metrics.snapshot(5, HEALTH)
+        assert empty.rows == ()
+        assert empty.sampled_at_mono == 125.0
 
 
 # ---------------------------------------------------------------------------

@@ -84,7 +84,8 @@ sampled once per fact:
 
 * older than ten seconds (``occurred_at <= now - 10s``) does not enter the
   DPS deque. If it remains inside the 30-second combat-activity window, it
-  can still keep already-observed EWAR visible without replaying old damage.
+  can still keep the row active and already-observed EWAR visible without
+  replaying old damage.
 * more than two seconds in the future is dropped AND recorded as
   ``FleetSnapshot.metric_error`` -- one-second log-timestamp precision and
   polling boundaries do not explain a two-second-plus skew. Up to two
@@ -106,10 +107,8 @@ clamp and ``metric_error`` policy, same per-fact timestamp/sequence guards
 exposed as ``FleetRow.incoming_dps``. The one deliberate asymmetry: an
 accepted outgoing-damage fact refreshes the 30-second observed-EWAR
 activity deadline (see below); an accepted incoming-damage fact never does.
-Taking damage is not evidence that THIS character is still actively
-fighting the way dealing damage or effecting/being-effected by EWAR is, so
-an old-out-of-window incoming fact is simply rejected rather than kept
-alive for its activity side effect.
+This legacy EWAR boundary is preserved separately from row activity: incoming
+hits inside the 30-second row window qualify even when too old to enter DPS.
 
 Incoming EWAR activity
 ----------------------
@@ -126,6 +125,17 @@ at 30 seconds and converted to a monotonic deadline, so delayed reads cannot
 grant a fresh full window. An older delayed fact may add its tag but cannot
 shorten a later activity deadline. Session/source changes clear the tags
 immediately.
+
+Row activity
+------------
+Accepted damage in either direction (including literal zero) and incoming EWAR
+keep a row active for 30 seconds from event time, independently of DPS rounding
+and the legacy EWAR hold above. A strictly later deadline records the accepted
+fact's sequence with an opaque source/session lifetime token. Equal or older
+deadlines keep the prior ID, including after expiry. Invalidation clears this
+evidence and rotates the token; unchanged active rebinds retain it. Snapshots
+export the actual monotonic measurement time, never a reader's later clock.
+Effect observations and names are not produced in this intermediate slice.
 """
 
 from __future__ import annotations
@@ -136,9 +146,11 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
+from uuid import UUID, uuid4
 
 from .model import (
     ClientSessionId,
+    CombatActivity,
     CombatFact,
     FleetRow,
     FleetSnapshot,
@@ -157,6 +169,8 @@ DPS_WINDOW = datetime.timedelta(seconds=10)
 FUTURE_CLAMP = datetime.timedelta(seconds=2)
 # EVE reports effect attempts but no reliable incoming-effect-ended event.
 EWAR_ACTIVITY_WINDOW = datetime.timedelta(seconds=30)
+# Row visibility is independent of legacy EWAR hold and ten-second DPS.
+ROW_ACTIVITY_WINDOW = datetime.timedelta(seconds=30)
 
 NO_LOG = "NO LOG"
 SCRAM_TAG = "SCRAM"
@@ -224,6 +238,8 @@ class _CharacterState:
     incoming_damage: deque[tuple[datetime.datetime, int]] = field(default_factory=deque)
     ewar: set[str] = field(default_factory=set)
     activity_deadline: float | None = None
+    lifetime_token: UUID = field(default_factory=uuid4)
+    combat: CombatActivity = field(default_factory=CombatActivity)
 
 
 class FleetMetrics:
@@ -331,6 +347,8 @@ class FleetMetrics:
             state.incoming_damage.clear()
             state.ewar.clear()
             state.activity_deadline = None
+            state.lifetime_token = uuid4()
+            state.combat = CombatActivity()
             return
 
         changed = (
@@ -342,6 +360,8 @@ class FleetMetrics:
             state.incoming_damage.clear()
             state.ewar.clear()
             state.activity_deadline = None
+            state.lifetime_token = uuid4()
+            state.combat = CombatActivity()
         state.source_generation = lifecycle.generation
         state.source_id = lifecycle.source_id
         state.bound = True
@@ -373,11 +393,11 @@ class FleetMetrics:
 
         accepted = False
         if fact.kind == "outgoing_damage":
-            accepted = self._ingest_damage(state, fact, incoming=False)
+            accepted = self._ingest_damage(state, fact, sequence, incoming=False)
         elif fact.kind == "incoming_damage":
-            accepted = self._ingest_damage(state, fact, incoming=True)
+            accepted = self._ingest_damage(state, fact, sequence, incoming=True)
         elif fact.kind in _EWAR_TAGS:
-            accepted = self._ingest_ewar(state, fact)
+            accepted = self._ingest_ewar(state, fact, sequence)
 
         if accepted:
             # Only an actually-accepted fact advances the floor: a fact
@@ -387,7 +407,7 @@ class FleetMetrics:
             state.last_fact_sequence = sequence
 
     def _ingest_damage(
-        self, state: _CharacterState, fact: CombatFact, *, incoming: bool
+        self, state: _CharacterState, fact: CombatFact, sequence: int, *, incoming: bool
     ) -> bool:
         if fact.amount is None or fact.occurred_at is None:
             return False  # A malformed/missing timestamp suppresses only this fact.
@@ -412,43 +432,66 @@ class FleetMetrics:
                 return False
             occurred_at = now  # Tolerate log/poll precision.
 
-        if incoming:
-            # Incoming damage never refreshes observed EWAR activity: the
-            # spec is explicit that incoming damage is not itself evidence
-            # of THIS character still actively fighting the way outgoing
-            # damage or an EWAR effect is. An old-out-of-window incoming
-            # fact has no activity side effect to preserve, so it is simply
-            # rejected.
-            if occurred_at <= now - DPS_WINDOW:
-                return False
-        else:
-            active = self._refresh_activity(state, occurred_at)
-            if occurred_at <= now - DPS_WINDOW:
-                # Too old for DPS can still be recent combat activity.
-                # Accepting it preserves the 30-second EWAR observation
-                # without replaying damage into the shorter ten-second
-                # calculation.
-                if active:
-                    self._metric_error = None
-                return active
+        mono = self._clock()
+        if not incoming:
+            # Keep the legacy EWAR hold outgoing-only during this row-only slice.
+            self._refresh_activity(state, occurred_at, now=now, mono=mono)
+        active = self._refresh_row_activity(
+            state, sequence, occurred_at, now=now, mono=mono
+        )
+        if occurred_at <= now - DPS_WINDOW:
+            # Either direction can qualify for row activity without replaying
+            # damage into the shorter ten-second calculation.
+            if active:
+                self._metric_error = None
+            return active
 
         damage.append((occurred_at, fact.amount))
         self._metric_error = None  # A later accepted timestamp clears it.
         return True
 
-    def _ingest_ewar(self, state: _CharacterState, fact: CombatFact) -> bool:
+    def _ingest_ewar(
+        self, state: _CharacterState, fact: CombatFact, sequence: int
+    ) -> bool:
         if fact.occurred_at is None:
             return False
-        if not self._refresh_activity(state, fact.occurred_at):
+        now = self._utc_now()
+        mono = self._clock()
+        if not self._refresh_activity(state, fact.occurred_at, now=now, mono=mono):
             return False
+        self._refresh_row_activity(
+            state, sequence, fact.occurred_at, now=now, mono=mono
+        )
         state.ewar.add(_EWAR_TAGS[fact.kind])
         self._metric_error = None  # A later accepted metric fact clears it too.
         return True
 
-    def _refresh_activity(
-        self, state: _CharacterState, occurred_at: datetime.datetime
+    def _refresh_row_activity(
+        self,
+        state: _CharacterState,
+        sequence: int,
+        occurred_at: datetime.datetime,
+        *,
+        now: datetime.datetime,
+        mono: float,
     ) -> bool:
-        mono = self._clock()
+        remaining = occurred_at + ROW_ACTIVITY_WINDOW - now
+        if remaining <= datetime.timedelta(0):
+            return False
+        candidate = mono + min(remaining, ROW_ACTIVITY_WINDOW).total_seconds()
+        previous = state.combat.expires_at_mono
+        if previous is None or candidate > previous:
+            state.combat = CombatActivity(candidate, (state.lifetime_token, sequence))
+        return True
+
+    def _refresh_activity(
+        self,
+        state: _CharacterState,
+        occurred_at: datetime.datetime,
+        *,
+        now: datetime.datetime,
+        mono: float,
+    ) -> bool:
         if state.activity_deadline is not None and mono >= state.activity_deadline:
             # Expiry must be observed at ingestion too. Otherwise a new fight
             # arriving between snapshots extends the old deadline and revives
@@ -456,7 +499,7 @@ class FleetMetrics:
             state.ewar.clear()
             state.activity_deadline = None
 
-        remaining = occurred_at + EWAR_ACTIVITY_WINDOW - self._utc_now()
+        remaining = occurred_at + EWAR_ACTIVITY_WINDOW - now
         if remaining <= datetime.timedelta(0):
             return False
         remaining = min(remaining, EWAR_ACTIVITY_WINDOW)
@@ -492,6 +535,7 @@ class FleetMetrics:
                         ewar=(),
                         log_status=NO_LOG,
                         incoming_dps=None,
+                        combat=state.combat,
                     )
                 )
                 continue
@@ -515,10 +559,14 @@ class FleetMetrics:
                     ewar=ewar,
                     log_status=None,
                     incoming_dps=incoming_dps,
+                    combat=state.combat,
                 )
             )
 
         rows.sort(key=lambda row: row.character.casefold())
         return FleetSnapshot(
-            rows=tuple(rows), stream_health=health, metric_error=self._metric_error
+            rows=tuple(rows),
+            stream_health=health,
+            metric_error=self._metric_error,
+            sampled_at_mono=mono,
         )
