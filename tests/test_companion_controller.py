@@ -651,3 +651,67 @@ def test_max_enabled_is_admission_not_global_native_capacity(tmp_path):
         assert "8" in refused["error"]
     finally:
         assert harness.controller.shutdown()
+
+
+def test_reload_adopts_imported_snapshot_wholesale(tmp_path):
+    """An import replaces companion_previews behind the controller's back,
+    and this controller persists the whole value -- so the reload must
+    replace in-memory authority, not patch it, or the next user edit would
+    save the stale definitions over the import."""
+    old = CompanionDefinition(
+        1,
+        uuid4().hex,
+        "Map",
+        True,
+        "whole",
+        SourceDescriptor(r"c:\apps\map.exe", "map.exe", "Map", "Map", "exact", "Map"),
+        Rect(0, 0, 320, 210),
+        None,
+    )
+    harness = Harness(
+        tmp_path, {"enabled": False, "definitions": serialize_definitions([old])}
+    )
+    try:
+        moved = replace(old, window=Rect(50, 60, 320, 210))
+        added = replace(old, id=uuid4().hex, label="Notes")
+        # A live native window exists for the pre-import companion only.
+        old_id = old.id
+        harness.controller._physical[old_id] = old.window
+
+        pending = harness.controller.reload(
+            {
+                "enabled": True,
+                "definitions": serialize_definitions([moved, added]),
+            }
+        )
+        receipt = harness.receipt(pending)
+        assert receipt["applied"] and receipt["persisted"] and not receipt["error"]
+
+        state = harness.controller.state()
+        assert {row["id"] for row in state["rows"]} == {moved.id, added.id}
+        assert harness.data["companion_previews"]["enabled"] is True
+        assert {d["id"] for d in harness.data["companion_previews"]["definitions"]} == {
+            moved.id,
+            added.id,
+        }
+
+        # The live window that moved gets an explicit reset; the added one is
+        # left to reconcile, which must carry the imported specs.
+        reset = harness.command("reset")
+        assert reset.token.id == old_id and reset.payload == moved.window
+        until(lambda: any(c.kind == "reconcile" for c in harness.commands))
+        reconcile = next(c for c in harness.commands if c.kind == "reconcile")
+        assert {spec.definition.id for spec in reconcile.payload[0]} == {
+            moved.id,
+            added.id,
+        }
+    finally:
+        assert harness.controller.shutdown()
+
+
+def test_reload_of_a_malformed_section_is_refused_without_state_change(h):
+    before = h.controller.state()
+    refused = h.controller.reload({"definitions": "not-a-list"})
+    assert refused["pending"] is False and refused["error"]
+    after = h.controller.state()
+    assert [r["id"] for r in after["rows"]] == [r["id"] for r in before["rows"]]

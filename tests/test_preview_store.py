@@ -452,3 +452,26 @@ def test_group_assignment_protection_survives_roster_cap_recovery():
     )
     # The newly-seen character must also be present.
     assert "NewCharacter" in live["preview"]["seen"]
+
+
+def test_discard_pending_layouts_drops_deltas_but_keeps_committed():
+    """A settings import replaces the document behind the store's back; a
+    debounce firing afterwards must not write the old drag over it. Unlike
+    clear(), layouts already committed to the document stay untouched."""
+    live = {"preview": {"layouts": {"Alice": {"x": 1, "y": 2, "w": 3, "h": 4}}}}
+    store = LayoutStore(_updater(live), timer=FakeTimer)
+    store.record("Alice", Entry(Rect(9, 9, 3, 4)))
+    timer = store._timer
+    store.discard_pending_layouts()
+    assert timer.cancelled
+    assert live["preview"]["layouts"] == {"Alice": {"x": 1, "y": 2, "w": 3, "h": 4}}
+
+
+def test_discard_pending_layouts_keeps_a_pending_roster_name():
+    """record_character shares the layout timer on purpose, so dropping the
+    deltas must not lose a character discovered moments before the import."""
+    live = {"preview": {"layouts": {}, "seen": []}}
+    store = LayoutStore(_updater(live), timer=FakeTimer)
+    store.record_character("Bob")
+    store.discard_pending_layouts()
+    assert live["preview"]["seen"] == ["Bob"]

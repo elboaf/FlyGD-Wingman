@@ -1021,3 +1021,29 @@ def test_movement_flushed_before_put_admission_still_updates_its_destination(
         future = store.put(token, definition(500))
     assert future.result(timeout=3).persisted
     assert store.snapshot()["definitions"]["Alice"]["window"]["x"] == 91
+
+
+def test_reload_adopts_imported_definitions_and_refuses_stale_geometry(make_store):
+    """An import replaces the document behind the store's back. The reload
+    must drop pre-import dirty moves (they would write the old rect over
+    the import) and invalidate live generations (a stale window's later
+    recordings must not either)."""
+    from wingman.preview.crops import deserialize
+
+    store, _ = make_store()
+    token = store.begin("C1", epoch=1, session=None)
+    store.put(token, definition(x=11)).result(timeout=3)
+
+    imported = {
+        "preview": {"crops": serialize({"C1": definition(x=99), "C2": definition(x=5)})}
+    }
+    store.reload(imported["preview"])
+    snapshot = store.snapshot()
+    defs = deserialize(snapshot["definitions"])
+    assert defs["C1"].window.x == 99 and "C2" in defs
+    assert snapshot["generations"] == {"C1": 0, "C2": 0}
+
+    # The old live window's generation is 1; after reload nothing accepts it.
+    store.record_geometry("C1", 1, 1, Rect(1, 1, 10, 10))
+    store.drain().result(timeout=3)
+    assert deserialize(store.snapshot()["definitions"])["C1"].window.x == 99

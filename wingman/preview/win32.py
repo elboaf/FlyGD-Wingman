@@ -126,6 +126,9 @@ WM_APP_CROP_STOP_READY = WM_APP + 12
 # Independent, coalesced session metadata — never an alert queue entry.
 WM_APP_METADATA = WM_APP + 16
 WM_APP_PRIMARY_COMPLETE = WM_APP + 17
+# Adopt an imported layouts snapshot: the entries travel in the intent's
+# Python mailbox, this only carries the re-place wake, same as RESET_LAYOUTS.
+WM_APP_RELOAD_LAYOUTS = WM_APP + 18
 WM_APP_FAMILIES = WM_APP + 13
 # Commands wake the bounded companion mailbox; completion resumes family cleanup
 # after the controller's admitted persistence has drained.

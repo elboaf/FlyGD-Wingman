@@ -16,7 +16,7 @@ from typing import Generic, TypeVar
 
 from wingman.telemetry.model import ClientSessionId, RosterSnapshot
 
-from .crops import CropDefinition, CropToken, CropWriteResult, serialize
+from .crops import CropDefinition, CropToken, CropWriteResult, deserialize, serialize
 from .geometry import Rect
 
 RECENT_RESULT_LIMIT = 32
@@ -248,6 +248,32 @@ class CropStore:
             )
             startup_failure = self._start_locked()
         self._complete_start(startup_failure)
+
+    def reload(self, section: dict) -> None:
+        """Adopt imported crop definitions, dropping pre-import authority.
+
+        A settings import has just replaced the document behind this store's
+        back. Dirty pre-import moves are dropped: flushing them would write
+        the old rect over the import. Generations restart at zero so every
+        live window's recorded generation is invalidated -- its geometry
+        events are refused, and the roster reconcile closes and re-creates
+        each crop from the imported definition instead. Reserved generations
+        stay monotonic so a stale token can never re-adopt an old slot.
+
+        An admitted definition write that is mid-I/O at this moment can
+        still commit over the import; nothing here can retract it, and the
+        reconcile's generation check bounds the damage to that one name.
+        """
+        definitions = deserialize((section or {}).get("crops"))
+        with self._condition:
+            if self._close_future is not None:
+                return
+            self._definitions = definitions
+            self._generations = dict.fromkeys(definitions, 0)
+            self._dirty = {}
+            self._sequences = {}
+            self._revision += 1
+            self._condition.notify_all()
 
     def snapshot(self) -> dict:
         with self._condition:
