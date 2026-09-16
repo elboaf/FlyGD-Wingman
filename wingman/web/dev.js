@@ -2412,8 +2412,205 @@
   // have caught.
 // Generated from wingman/themes.py (python side of this session):
 // the full preset tables, so dev exercises the REAL names and pools
-// instead of a hand-typed copy that drifts.
+// instead of a hand-typed copy that drifts. Presets iterate the same
+// table, so a new preset appears in dev by regenerating, not editing.
   var DEV_THEMES = {
+  "tropic-thunder": {
+    "roles": {
+      "--bg": "#1a2410",
+      "--panel": "#2e2719",
+      "--panel-border": "#3d3423",
+      "--field": "#141b0c",
+      "--field-border": "#3d3826",
+      "--text": "#d9d2c1",
+      "--text-dim": "#aba596",
+      "--text-faint": "#97907a",
+      "--text-label": "#9d9681",
+      "--text-btn": "#c6bfae",
+      "--brand": "#ff6b1a",
+      "--brand-deep": "#6b2a08",
+      "--brand-text": "#ff8b47",
+      "--acc-top": "#ff6b1a",
+      "--acc-bottom": "#e85d04",
+      "--brand-edge": "#ff9557",
+      "--focus-ring": "#ffab63",
+      "--ok": "#96a94e",
+      "--warn": "#ffd23f",
+      "--err": "#e05246",
+      "--danger": "#e05246",
+      "--danger-solid": "#8b1e1e",
+      "--unmet": "#e09a6a",
+      "--training": "#45c8d4",
+      "--link": "#7aa2f7",
+      "--card-top": "#342c1d",
+      "--sunken": "#171c0e",
+      "--titlebar-top": "#37301f",
+      "--titlebar-bottom": "#201b12",
+      "--titlebar-inset": "#463d28",
+      "--statusbar-top": "#241f14",
+      "--statusbar-bottom": "#171308",
+      "--wash-top": "#2d2a16",
+      "--wash-bottom": "#1c1a0e",
+      "--hover": "#3a3222",
+      "--control": "#332c1e",
+      "--control-border": "#46402c",
+      "--control-hover": "#413a28",
+      "--control-edge": "#9a8f72",
+      "--field-focus-border": "#4a4330",
+      "--scrollbar": "#38311f",
+      "--scrollbar-hover": "#48402a",
+      "--fleet-incoming-threat": "#c9a93c",
+      "--row-line": "#262015",
+      "--row-hover": "#221d13",
+      "--row-active": "#2a2417",
+      "--row-ring": "#3f3826",
+      "--row-ring-focus": "#574e36"
+    },
+    "swatches": [
+      {
+        "name": "River Mud",
+        "hex": "#5c4a2e",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "River Mud Dark",
+        "hex": "#2e2719",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "River Mud Light",
+        "hex": "#3d3423",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Jungle Rot",
+        "hex": "#2d4a1e",
+        "families": [
+          "surface",
+          "base"
+        ]
+      },
+      {
+        "name": "Flare-lit mud",
+        "hex": "#38301f",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Jungle Rot Deep",
+        "hex": "#1a2410",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Blackface Blunder",
+        "hex": "#1a1613",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Sunken green",
+        "hex": "#141b0c",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Dog Tag",
+        "hex": "#d9d2c1",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Elephant Grass",
+        "hex": "#7a8b3c",
+        "families": [
+          "text",
+          "success"
+        ]
+      },
+      {
+        "name": "Napalm Dawn",
+        "hex": "#ff6b1a",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Agent Orange",
+        "hex": "#e85d04",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Flare Gun",
+        "hex": "#ffd23f",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Hollywood Teal",
+        "hex": "#1f6f6b",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Blood Diamond",
+        "hex": "#8b1e1e",
+        "families": [
+          "danger"
+        ]
+      }
+    ],
+    "legal": {
+      "surface": [
+        "#5c4a2e",
+        "#2e2719",
+        "#3d3423",
+        "#2d4a1e",
+        "#38301f"
+      ],
+      "base": [
+        "#2d4a1e",
+        "#1a2410",
+        "#1a1613",
+        "#141b0c"
+      ],
+      "text": [
+        "#d9d2c1",
+        "#7a8b3c"
+      ],
+      "accent": [
+        "#ff6b1a",
+        "#e85d04",
+        "#ffd23f",
+        "#1f6f6b"
+      ],
+      "danger": [
+        "#8b1e1e"
+      ],
+      "success": [
+        "#7a8b3c"
+      ],
+      "warning": [
+        "#ffd23f"
+      ]
+    }
+  },
   "wingman-dark": {
     "roles": {
       "--bg": "#0c0d10",
@@ -2859,6 +3056,7 @@
     }
   }
 };
+  var DEV_THEME_PRESETS = [{id: 'tropic-thunder', name: 'Tropic Thunder'}, {id: 'wingman-dark', name: 'Wingman Dark'}, {id: 'zoolander', name: 'Zoolander'}];
   var DEV_THEME_LABELS = {"surface": "Panels & controls", "base": "App background", "text": "Text", "accent": "Accent", "danger": "Danger", "success": "Success", "warning": "Warning"};
   var DEV_THEME_DESCRIPTIONS = {"surface": "Cards, buttons, fields, scrollbars and the row highlights \u2014 most of the window's chrome.", "base": "The page behind everything: the app backdrop, text field wells, recessed bands and list rows.", "text": "Every piece of text \u2014 headings, body, labels and hints \u2014 at the preset's brightness steps, whatever hue you choose.", "accent": "The Upload button, focused fields, ticks and glows: the app's one call-to-action colour.", "danger": "Delete buttons and destructive hovers \u2014 the colour that must never be mistaken for the accent.", "success": "Green status marks, like the Ready rungs on the Skills roster.", "warning": "Amber status marks \u2014 plan problems and the Fleet Bar's incoming-threat tint."};
   var devTheme = { preset: 'wingman-dark', families: {} };
@@ -2866,8 +3064,7 @@
   function devThemePayload() {
     var pool = DEV_THEMES[devTheme.preset];
     return {
-      presets: [{id: 'wingman-dark', name: 'Wingman Dark'},
-                {id: 'zoolander', name: 'Zoolander'}],
+      presets: DEV_THEME_PRESETS,
       preset: devTheme.preset,
       families: JSON.parse(JSON.stringify(devTheme.families)),
       effective: {},

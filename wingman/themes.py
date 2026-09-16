@@ -64,12 +64,9 @@ FAMILY_DESCRIPTIONS = {
         "Delete buttons and destructive hovers — the colour that must "
         "never be mistaken for the accent."
     ),
-    "success": (
-        "Green status marks, like the Ready rungs on the Skills roster."
-    ),
+    "success": ("Green status marks, like the Ready rungs on the Skills roster."),
     "warning": (
-        "Amber status marks — plan problems and the Fleet Bar's "
-        "incoming-threat tint."
+        "Amber status marks — plan problems and the Fleet Bar's incoming-threat tint."
     ),
 }
 
@@ -360,6 +357,57 @@ WINGMAN_DARK_ROLES = {
     "--row-ring-focus": "#554e65",
 }
 
+TROPIC_THUNDER_ROLES = {
+    "--bg": "#1a2410",
+    "--panel": "#2e2719",
+    "--panel-border": "#3d3423",
+    "--field": "#141b0c",
+    "--field-border": "#3d3826",
+    "--text": "#d9d2c1",
+    "--text-dim": "#aba596",
+    "--text-faint": "#97907a",
+    "--text-label": "#9d9681",
+    "--text-btn": "#c6bfae",
+    "--brand": "#ff6b1a",
+    "--brand-deep": "#6b2a08",
+    "--brand-text": "#ff8b47",
+    "--acc-top": "#ff6b1a",
+    "--acc-bottom": "#e85d04",
+    "--brand-edge": "#ff9557",
+    "--focus-ring": "#ffab63",
+    "--ok": "#96a94e",
+    "--warn": "#ffd23f",
+    "--err": "#e05246",
+    "--danger": "#e05246",
+    "--danger-solid": "#8b1e1e",
+    "--unmet": "#e09a6a",
+    "--training": "#45c8d4",
+    "--link": "#7aa2f7",
+    "--card-top": "#342c1d",
+    "--sunken": "#171c0e",
+    "--titlebar-top": "#37301f",
+    "--titlebar-bottom": "#201b12",
+    "--titlebar-inset": "#463d28",
+    "--statusbar-top": "#241f14",
+    "--statusbar-bottom": "#171308",
+    "--wash-top": "#2d2a16",
+    "--wash-bottom": "#1c1a0e",
+    "--hover": "#3a3222",
+    "--control": "#332c1e",
+    "--control-border": "#46402c",
+    "--control-hover": "#413a28",
+    "--control-edge": "#9a8f72",
+    "--field-focus-border": "#4a4330",
+    "--scrollbar": "#38311f",
+    "--scrollbar-hover": "#48402a",
+    "--fleet-incoming-threat": "#c9a93c",
+    "--row-line": "#262015",
+    "--row-hover": "#221d13",
+    "--row-active": "#2a2417",
+    "--row-ring": "#3f3826",
+    "--row-ring-focus": "#574e36",
+}
+
 ZOOLANDER_ROLES = {
     "--bg": "#08080f",
     "--panel": "#0d0d1a",
@@ -412,6 +460,33 @@ ZOOLANDER_ROLES = {
 }
 
 PRESETS = {
+    "tropic-thunder": _preset(
+        "tropic-thunder",
+        "Tropic Thunder",
+        TROPIC_THUNDER_ROLES,
+        [
+            # The template's own surfaces: mud and jungle. Pool tags keep
+            # Dog Tag and its ramp as the only text drivers, so the AA
+            # cross-product below stays about bright-on-dark.
+            ("River Mud", "#5c4a2e", ["surface"]),
+            ("River Mud Dark", "#2e2719", ["surface"]),
+            ("River Mud Light", "#3d3423", ["surface"]),
+            ("Jungle Rot", "#2d4a1e", ["surface", "base"]),
+            ("Flare-lit mud", "#38301f", ["surface"]),
+            ("Jungle Rot Deep", "#1a2410", ["base"]),
+            ("Blackface Blunder", "#1a1613", ["base"]),
+            ("Sunken green", "#141b0c", ["base"]),
+            ("Dog Tag", "#d9d2c1", ["text"]),
+            ("Elephant Grass", "#7a8b3c", ["text", "success"]),
+            ("Napalm Dawn", "#ff6b1a", ["accent"]),
+            ("Agent Orange", "#e85d04", ["accent"]),
+            ("Flare Gun", "#ffd23f", ["accent", "warning"]),
+            ("Hollywood Teal", "#1f6f6b", ["accent"]),
+            ("Blood Diamond", "#8b1e1e", ["danger"]),
+        ],
+        "#1a1613",
+        "#ffffff",
+    ),
     "wingman-dark": _preset(
         "wingman-dark",
         "Wingman Dark",
