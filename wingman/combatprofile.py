@@ -12,7 +12,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 # The same package-relative layout is used by wheels and PyInstaller's datas.
-# A missing/broken resource fails import with its path — never a host fallback.
+# A missing resource reports its path; malformed data fails import — never a host fallback.
 _profile = json.loads(
     (Path(__file__).with_name("data") / "fleet-combat-v2-profile.json").read_text(
         encoding="utf-8"
