@@ -245,12 +245,30 @@ async function cropRegression() {
     el.dispatchEvent({type: 'change'});
   };
   const actions = {
-    clear: () => button('.rowacts button', 'Clear').click(),
+    // Clear a row that is NOT the owner's: the invariant under test is
+    // that the write carries the RESTORED live table (owner's bind intact),
+    // not the synthetic staged one. The group/All rows that used to sit
+    // above the character rows are gone.
+    // Clear a row that is NOT the owner's: the invariant under test is
+    // that the write carries the RESTORED live table (owner's bind intact),
+    // not the synthetic staged one. Character rows render online-first in
+    // roster order with the owner first, so the second Clear button belongs
+    // to a different character. The group/All rows that used to sit above
+    // them are gone from this table.
+    clear: () => {
+      const clears = [...document.querySelectorAll('.rowacts button')]
+        .filter(el => el.textContent === 'Clear');
+      assert.ok(clears.length > 1, 'rendered character Clear controls');
+      clears[1].click();
+    },
+    // Group chord rows live in the Cycle groups card now, one pair per
+    // panel; DPS is the first panel with a forward bind.
     'group-clear': () => {
-      const row = document.querySelectorAll('.row').find(row => row.querySelector('.lab-name')?.textContent === 'Forward · DPS');
-      assert.ok(row, 'rendered DPS forward group row');
+      const row = [...document.querySelectorAll('#preview-cycle-groups .row')]
+        .find(row => row.querySelector('.lab-name')?.textContent === 'Forward');
+      assert.ok(row, 'rendered a group forward chord row');
       const clear = row.querySelectorAll('.rowacts button').find(el => el.textContent === 'Clear');
-      assert.ok(clear, 'rendered DPS forward Clear control');
+      assert.ok(clear, 'rendered a group forward Clear control');
       clear.click();
     },
     capture: () => document.querySelector('.bindbtn').click(),
@@ -259,7 +277,19 @@ async function cropRegression() {
     exclude: () => change(document.querySelector('.optout input')),
     lock: () => change(document.querySelector('[data-preview-lock]')),
     'never-minimize': () => change(document.querySelector('.nm input')),
-    group: () => change(detail('group'), 'g-logi'),
+    // Membership moved into the Cycle groups card: assignment is the
+    // group's Add select + Add button, writing the FULL member list
+    // through set_preview_cycle_group_members.
+    group: () => {
+      const sel = document.querySelector(
+        '#preview-cycle-groups .cycle-add-select[data-group-id="g-logi"]');
+      assert.ok(sel, 'rendered the Logistics add-member select');
+      sel.value = sel.options[0].value;
+      const add = document.querySelector(
+        '#preview-cycle-groups [data-group-control="add-confirm"][data-group-id="g-logi"]');
+      assert.ok(add, 'rendered the Logistics Add button');
+      add.click();
+    },
     add: () => { document.querySelector('.group-add-name').value = 'New group'; document.querySelector('.group-add-btn').click(); },
     rename: () => document.querySelector('.group-rename-btn').click(),
     delete: () => document.querySelector('.group-delete-btn').click(),
@@ -272,7 +302,7 @@ async function cropRegression() {
     clear: 'set_preview_binds', 'group-clear': 'set_preview_cycle_group_bind', capture: 'set_bind_capture',
     bind: 'set_preview_binds', size: 'set_preview_size', copy: 'copy_preview_layout',
     exclude: 'set_preview_excluded', lock: 'set_preview_locked', 'never-minimize': 'set_never_minimize',
-    group: 'set_preview_character_group', add: 'create_preview_cycle_group', rename: 'rename_preview_cycle_group',
+    group: 'set_preview_cycle_group_members', add: 'create_preview_cycle_group', rename: 'rename_preview_cycle_group',
     delete: 'delete_preview_cycle_group', 'crop-select': 'select_preview_crop', 'crop-remove': 'remove_preview_crop',
     'crop-enabled': 'set_preview_crop_enabled', reentry: 'get_preview_hotkey_state'
   };

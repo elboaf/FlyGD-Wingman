@@ -53,10 +53,7 @@ def test_defaults_are_the_documented_values():
             "crops": {},
             "hotkeys": {
                 "characters": {},
-                "cycle_next": "",
-                "cycle_prev": "",
                 "groups": [],
-                "group_by_character": {},
             },
             "seen": [],
             "restore_preview_positions": True,
@@ -380,10 +377,7 @@ def test_preview_defaults_carry_an_empty_hotkey_table():
     section = settings._preview_defaults()
     assert section["hotkeys"] == {
         "characters": {},
-        "cycle_next": "",
-        "cycle_prev": "",
         "groups": [],
-        "group_by_character": {},
     }
     assert section["seen"] == []
 
@@ -397,16 +391,9 @@ def test_preview_defaults_are_not_shared_between_calls():
 
 def test_validated_preview_keeps_parseable_gestures():
     section = settings.validated_preview(
-        {
-            "hotkeys": {
-                "characters": {"Alice": "Ctrl+F1"},
-                "cycle_next": "Ctrl+Alt+Right",
-                "cycle_prev": "",
-            }
-        }
+        {"hotkeys": {"characters": {"Alice": "Ctrl+F1"}}}
     )
     assert section["hotkeys"]["characters"] == {"Alice": "Ctrl+F1"}
-    assert section["hotkeys"]["cycle_next"] == "Ctrl+Alt+Right"
 
 
 def test_validated_preview_drops_one_bad_gesture_not_the_section():
@@ -436,10 +423,7 @@ def test_validated_preview_falls_back_on_a_malformed_hotkey_section():
     section = settings.validated_preview({"hotkeys": "nonsense"})
     assert section["hotkeys"] == {
         "characters": {},
-        "cycle_next": "",
-        "cycle_prev": "",
         "groups": [],
-        "group_by_character": {},
     }
 
 
@@ -452,15 +436,18 @@ def test_only_explicit_preview_exclusions_lose_the_history_cap():
             "never_minimize": names,
             "locked": names,
             "hotkeys": {
-                "groups": [{"id": "g", "name": "Group"}],
-                "group_by_character": dict.fromkeys(names, "g"),
+                "groups": [
+                    {"id": "g", "name": "Group", "members": [*names, "hwnd:1", ""]}
+                ],
             },
         }
     )
     assert preview["excluded"] == names
     for key in ("seen", "never_minimize", "locked"):
         assert preview[key] == names[:64]
-    assert list(preview["hotkeys"]["group_by_character"]) == names[:64]
+    # Group members use the roster's identity rules but no cap: a 70-member
+    # group survives normalization intact.
+    assert preview["hotkeys"]["groups"][0]["members"] == names
     fleet = settings.validated_fleet_bar({"hidden": names, "seen": names})
     assert fleet["hidden"] == names[:64] and fleet["seen"] == names[:64]
 

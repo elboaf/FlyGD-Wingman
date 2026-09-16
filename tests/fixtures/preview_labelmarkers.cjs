@@ -43,7 +43,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const clone = value => JSON.parse(JSON.stringify(value));
 function payload(markers = {}) {
   return {enabled: true, characters: ['Alice'], roster: ['Alice', 'Bob'],
-    hotkeys: {characters: {}, cycle_next: '', cycle_prev: '', groups: [], group_by_character: {}},
+    hotkeys: {characters: {}, groups: []},
     label_markers: markers, marker_choices: data.choices, registration: {},
     bookmark_chords: {active: [], latent: []}, locked: [], excluded: [], never_minimize: [],
     sizes: {}, client_sizes: {}, sizable: [], layout_sources: [],

@@ -180,7 +180,13 @@ def known_owners(section: dict, live_names: tuple[str, ...]) -> tuple[str, ...]:
         section.get("seen") or [],
         section.get("excluded") or [],
         hotkeys.get("characters") or {},
-        hotkeys.get("group_by_character") or {},
+        # Every cycle group's ordered member list; membership is editable
+        # while offline, so its names must survive as known owners.
+        *(
+            group.get("members") or []
+            for group in hotkeys.get("groups") or []
+            if isinstance(group, dict)
+        ),
         section.get("locked") or [],
         section.get("never_minimize") or [],
         section.get("crops") or {},

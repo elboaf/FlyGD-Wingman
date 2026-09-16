@@ -498,7 +498,7 @@ def test_native_failure_is_incomplete_and_retains_commit(
         elif failure == "remove":
             p.setattr(r.native, "DestroyWindow", lambda *args: False)
         else:
-            r.host.set_hotkeys({"cycle_next": "Ctrl+F1"})
+            r.host.set_hotkeys({"characters": {"Alice": "Ctrl+F1"}, "groups": []})
             p.setattr(r.native, "RegisterHotKey", lambda *args: False)
         try:
             commit, result = apply(

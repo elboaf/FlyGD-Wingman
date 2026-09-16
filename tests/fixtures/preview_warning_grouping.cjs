@@ -55,11 +55,17 @@ function deliver(payload) {
     calls.length = 0;
     const payload = JSON.parse(JSON.stringify(data.fixture));
     if (kind === 'group-height') payload.characters = [];
-    if (kind === 'top-cycle') payload.hotkeys.cycle_next = 'Ctrl+Alt+1';
+    if (kind === 'top-cycle') payload.hotkeys.groups = [{id: 'g-top', name: 'Top', members: [], cycle: 'Ctrl+Alt+1', cycle_prev: ''}];
     if (kind === 'resolved') payload.bookmark_chords.active = [];
     window.onPreviewHotkeys(payload);
     const host = document.getElementById('preview-binds');
-    const row = kind === 'top-cycle' ? host.querySelector('.row') : configure().parentNode;
+    // No All rows any more: the first .row is the sticky column header,
+    // so top-cycle targets the first row that actually holds a bind -- the
+    // conflict it injects (group chord == that character's bind) surfaces
+    // at the very top of the scroll port.
+    const row = kind === 'top-cycle'
+      ? [...host.querySelectorAll('.row')].find(node => node.querySelector('.bindbtn'))
+      : configure().parentNode;
     const bind = row.querySelector('.bindbtn');
     const edit = row.querySelectorAll('.linkbtn').find(node => node.textContent === 'Edit…');
     const warning = row.querySelector('.preview-bind-conflict');
@@ -184,7 +190,7 @@ function deliver(payload) {
     // priority local conflict/refusal or an inactive/opted-out registration.
     for (const kind of ['duplicate', 'refused', 'latent', 'excluded', 'resolved', 'unknown']) {
       const next = JSON.parse(JSON.stringify(payload));
-      if (kind === 'duplicate') next.hotkeys.cycle_next = gesture;
+      if (kind === 'duplicate') next.hotkeys.groups = [{id: 'g-top', name: 'Top', members: [], cycle: gesture, cycle_prev: ''}];
       if (kind === 'refused') next.registration[gesture] = false;
       if (kind === 'latent') next.bookmark_chords = {active: [], latent: [gesture]};
       if (kind === 'excluded') next.excluded = [owner];
@@ -193,7 +199,7 @@ function deliver(payload) {
       deliver(next);
       if (kind === 'unknown') assert.ok(repair(), 'configured overlap remains repairable without a registration report');
       else assert.ok(!repair(), kind + ' must not offer an unrelated repair');
-      if (kind === 'duplicate') assert.match(warning().textContent, /conflicts with All forward/);
+      if (kind === 'duplicate') assert.match(warning().textContent, /conflicts with cycle group Top forward/);
       if (kind === 'refused') assert.match(warning().textContent, /owned by another application/);
       if (['latent', 'excluded', 'resolved'].includes(kind)) {
         assert.equal(warning(), null);

@@ -15,7 +15,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_fleet_navigation_releases_capture_without_writing_binds(tmp_path):
     assert shutil.which("node"), "Node is mandatory for navigation regression coverage"
-    api = Api(make_state(tmp_path, **settings.load()))
+    state = make_state(tmp_path, **settings.load())
+    # A known character gives the characters pane a bind row to arm; the
+    # All-cycle rows that used to render unconditionally are gone.
+    state.settings.setdefault("preview", {})["seen"] = ["Alice"]
+    api = Api(state)
     try:
         tree = PageTree()
         tree.feed((ROOT / "wingman/web/index.html").read_text(encoding="utf-8"))

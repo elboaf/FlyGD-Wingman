@@ -38,7 +38,6 @@ def test_crop_owners_join_null_prototype_roster():
 def test_crop_only_roster_repaint_preserves_group_draft_and_safe_name_lookup():
     assert "cropRosterEdit" in body("acceptCrops")
     assert "draft.value = edit.value" in body("render")
-    assert "ownValue(gbc, characterName)" in body("makeGroupSelect")
     assert "ownValue(state.hotkeys.characters, entry.name)" in body("render")
 
 

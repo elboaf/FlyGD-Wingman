@@ -2124,35 +2124,39 @@ def test_preview_hotkey_lock_is_private(tmp_path):
 
 
 def test_set_preview_binds_preserves_cycle_groups(tmp_path, monkeypatch):
-    """set_preview_binds owns characters/cycle_next/cycle_prev only.
-    Pre-existing groups and group_by_character must survive the write."""
+    """set_preview_binds owns characters only. Groups carry their own chords
+    and members, edited through their own endpoints, and must survive the
+    write untouched -- including a member list that would not survive any
+    per-character round trip."""
     _no_disk(monkeypatch)
     api = make_api(tmp_path)
     api._state.settings["preview"] = {
         "hotkeys": {
             "characters": {},
-            "cycle_next": "",
-            "cycle_prev": "",
-            "groups": [{"id": "dps", "name": "DPS", "cycle": "Ctrl+F3"}],
-            "group_by_character": {"Alice": "dps"},
+            "groups": [
+                {
+                    "id": "dps",
+                    "name": "DPS",
+                    "members": ["Alice", "Bravo"],
+                    "cycle": "Ctrl+F3",
+                    "cycle_prev": "Ctrl+F4",
+                }
+            ],
         }
     }
-    assert (
-        api.set_preview_binds(
-            {
-                "characters": {"Bob": "Ctrl+F2"},
-                "cycle_next": "Ctrl+F1",
-                "cycle_prev": "",
-            }
-        )
-        is True
-    )
+    assert api.set_preview_binds({"characters": {"Bob": "Ctrl+F2"}}) is True
     hotkeys = api._state.settings["preview"]["hotkeys"]
-    assert hotkeys["groups"][0]["id"] == "dps"
-    assert hotkeys["group_by_character"] == {"Alice": "dps"}
+    assert hotkeys["groups"] == [
+        {
+            "id": "dps",
+            "name": "DPS",
+            "members": ["Alice", "Bravo"],
+            "cycle": "Ctrl+F3",
+            "cycle_prev": "Ctrl+F4",
+        }
+    ]
     # Owned fields were still applied:
     assert hotkeys["characters"] == {"Bob": "Ctrl+F2"}
-    assert hotkeys["cycle_next"] == "Ctrl+F1"
 
 
 # --- Step 5: Lifecycle and assignment tests ---
@@ -2164,13 +2168,20 @@ def test_create_rename_assign_and_delete_cycle_group(tmp_path, monkeypatch):
     created = api.create_preview_cycle_group(" DPS ")
     assert created["applied"] is True
     assert created["hotkeys"]["groups"] == [
-        {"id": "group-id", "name": "DPS", "cycle": "", "cycle_prev": ""}
+        {
+            "id": "group-id",
+            "name": "DPS",
+            "members": [],
+            "cycle": "",
+            "cycle_prev": "",
+        }
     ]
-    assert api.set_preview_character_group("Alice", "group-id")["applied"]
+    assert api.set_preview_cycle_group_members("group-id", ["Alice"])["applied"]
     assert api.rename_preview_cycle_group("group-id", "Damage")["applied"]
     deleted = api.delete_preview_cycle_group("group-id")
+    # A group's member list dies with the group -- there is no separate
+    # mapping left to clean up.
     assert deleted["hotkeys"]["groups"] == []
-    assert deleted["hotkeys"]["group_by_character"] == {}
 
 
 def test_create_cycle_group_rejects_empty_name(tmp_path, monkeypatch):
@@ -2244,32 +2255,38 @@ def test_set_preview_cycle_group_bind_rejects_bad_gesture(tmp_path, monkeypatch)
     assert result["error"]
 
 
-def test_set_preview_character_group_removes_mapping_on_empty_id(tmp_path, monkeypatch):
-    """Empty group_id clears the character's mapping (All-only)."""
+def test_set_preview_cycle_group_members_reject_hwnd_name(tmp_path, monkeypatch):
+    """Members validate with the same stable-name boundary as the rest of
+    the preview APIs: a client at character-select has no name to cycle to."""
     _no_disk(monkeypatch)
     api = make_api(tmp_path, id_factory=lambda: "g1")
     api.create_preview_cycle_group("DPS")
-    api.set_preview_character_group("Alice", "g1")
-    result = api.set_preview_character_group("Alice", "")
-    assert result["applied"] is True
-    assert "Alice" not in result["hotkeys"]["group_by_character"]
-
-
-def test_set_preview_character_group_rejects_hwnd_name(tmp_path, monkeypatch):
-    _no_disk(monkeypatch)
-    api = make_api(tmp_path, id_factory=lambda: "g1")
-    api.create_preview_cycle_group("DPS")
-    result = api.set_preview_character_group("hwnd:12345", "g1")
+    result = api.set_preview_cycle_group_members("g1", ["Alice", "hwnd:12345"])
     assert result["applied"] is False
     assert result["error"]
 
 
-def test_set_preview_character_group_rejects_stale_group_id(tmp_path, monkeypatch):
+def test_set_preview_cycle_group_members_reject_stale_group_id(tmp_path, monkeypatch):
     _no_disk(monkeypatch)
     api = make_api(tmp_path)
-    result = api.set_preview_character_group("Alice", "no-such-group")
+    result = api.set_preview_cycle_group_members("no-such-group", ["Alice"])
     assert result["applied"] is False
     assert result["error"]
+
+
+def test_set_preview_cycle_group_members_dedup_and_replace_wholesale(
+    tmp_path, monkeypatch
+):
+    """The list order IS the cycle order, so the write replaces the whole
+    list and collapses duplicates to their first occurrence -- removal is
+    just a shorter list, reordering a permuted one."""
+    _no_disk(monkeypatch)
+    api = make_api(tmp_path, id_factory=lambda: "g1")
+    api.create_preview_cycle_group("DPS")
+    api.set_preview_cycle_group_members("g1", ["Alice", "Bravo"])
+    result = api.set_preview_cycle_group_members("g1", ["Bravo", "Alice", "Bravo"])
+    assert result["applied"] is True
+    assert result["hotkeys"]["groups"][0]["members"] == ["Bravo", "Alice"]
 
 
 def test_cycle_group_methods_work_without_host(tmp_path, monkeypatch):
@@ -2289,7 +2306,13 @@ def test_cycle_group_methods_deliver_to_host_when_present(tmp_path, monkeypatch)
     api.create_preview_cycle_group("DPS")
     assert host.hotkeys is not None
     assert host.hotkeys["groups"] == [
-        {"id": "g1", "name": "DPS", "cycle": "", "cycle_prev": ""}
+        {
+            "id": "g1",
+            "name": "DPS",
+            "members": [],
+            "cycle": "",
+            "cycle_prev": "",
+        }
     ]
 
 
@@ -2343,10 +2366,15 @@ def test_preview_hotkey_writer_keeps_host_delivery_in_persist_order(
     api._state.settings["preview"] = {
         "hotkeys": {
             "characters": {},
-            "cycle_next": "",
-            "cycle_prev": "",
-            "groups": [{"id": "dps", "name": "DPS", "cycle": ""}],
-            "group_by_character": {},
+            "groups": [
+                {
+                    "id": "dps",
+                    "name": "DPS",
+                    "members": [],
+                    "cycle": "",
+                    "cycle_prev": "",
+                }
+            ],
         }
     }
 
@@ -2355,7 +2383,7 @@ def test_preview_hotkey_writer_keeps_host_delivery_in_persist_order(
     )
 
     def assign():
-        api.set_preview_character_group("Alice", "dps")
+        api.set_preview_cycle_group_members("dps", ["Alice"])
         second_done.set()
 
     first.start()
@@ -2365,14 +2393,27 @@ def test_preview_hotkey_writer_keeps_host_delivery_in_persist_order(
     # While first holds the lock, second cannot yet complete its persist.
     assert not second_done.wait(0.05)
     # The settings dict was NOT mutated by second (it is blocked on the lock).
-    assert api._state.settings["preview"]["hotkeys"]["group_by_character"] == {}
+    assert api._state.settings["preview"]["hotkeys"]["groups"][0]["members"] == []
     release_first.set()
     first.join(1)
     second.join(1)
-    # Both deliveries arrived and in the correct order.
-    assert [table["group_by_character"] for table in deliveries] == [
-        {},
-        {"Alice": "dps"},
+    # Both deliveries arrived and in the correct order: the rename first,
+    # then the membership write, each carrying the other's committed field.
+    assert [table["groups"][0] for table in deliveries] == [
+        {
+            "id": "dps",
+            "name": "Damage",
+            "members": [],
+            "cycle": "",
+            "cycle_prev": "",
+        },
+        {
+            "id": "dps",
+            "name": "Damage",
+            "members": ["Alice"],
+            "cycle": "",
+            "cycle_prev": "",
+        },
     ]
 
 
@@ -2543,53 +2584,24 @@ def test_pre_lock_refusal_excludes_transient_rolled_back_mutation(
     )
 
 
-def test_character_group_assignment_over_64_member_cap_is_refused(
-    tmp_path, monkeypatch
-):
-    """Assigning a 65th character to a group must be refused when the
-    normalizer enforces the 64-entry roster cap on group_by_character.
-
-    Uses real settings.update() (no _no_disk fake) with the test-isolated
-    temp path to exercise real normalization.  The result must have
-    applied=False, persisted=False, the mapping must be absent from the
-    authoritative returned table, and the host must not be called.
-    """
-    # Do NOT call _no_disk — we need real normalization + real disk writes
-    # to the test's temp-isolated LOCALAPPDATA directory.
-
+def test_group_members_have_no_roster_cap(tmp_path, monkeypatch):
+    """A group's member list is capped by nothing but the roster itself --
+    the old 64-entry group_by_character cap does not carry over, and a
+    70-member cycle must survive real normalization and a real disk round
+    trip intact, order included."""
+    # Real normalization + real disk writes to the test-isolated
+    # LOCALAPPDATA directory, so the assertion covers the persisted file.
     host = FakeHost()
     api = make_api(tmp_path, id_factory=lambda: "grp", preview_host=host)
+    assert api.create_preview_cycle_group("DPS")["applied"]
+    members = [f"Char{i:02d}" for i in range(70)]
+    result = api.set_preview_cycle_group_members("grp", members)
+    assert result["applied"] is result["persisted"] is True
+    assert result["hotkeys"]["groups"][0]["members"] == members
+    assert host.hotkeys["groups"][0]["members"] == members
+    from wingman import settings
 
-    # Prime the settings with a group and 64 character-to-group mappings.
-    memberships = {f"Char{i:02d}": "grp" for i in range(64)}
-    api._state.settings["preview"] = {
-        "hotkeys": {
-            "characters": {},
-            "cycle_next": "",
-            "cycle_prev": "",
-            "groups": [{"id": "grp", "name": "DPS", "cycle": ""}],
-            "group_by_character": memberships,
-        }
-    }
-
-    # Assign one more character beyond the cap.
-    new_char = "ExtraChar"
-    result = api.set_preview_character_group(new_char, "grp")
-
-    # Must be refused because normalization drops the assignment.
-    assert result["applied"] is False, (
-        f"Expected refused result, got applied=True; result={result!r}"
-    )
-    assert result["persisted"] is False
-    assert new_char not in result["hotkeys"]["group_by_character"], (
-        "Refused result must not include the dropped mapping"
-    )
-
-    # Host must not be called with a table that claims the assignment.
-    if host.hotkeys is not None:
-        assert new_char not in host.hotkeys.get("group_by_character", {}), (
-            "Host was delivered a table claiming the dropped assignment"
-        )
+    assert settings.load()["preview"]["hotkeys"]["groups"][0]["members"] == members
 
 
 # ---------------------------------------------------------------------------
@@ -2623,9 +2635,10 @@ def test_group_bind_calls_set_preview_cycle_group_bind_not_send():
     )
 
 
-def test_group_rows_rendered_after_all_rows_before_character_divider():
-    """render() appends group rows after the two All rows and before the
-    empty bind-group separator that precedes the column headers."""
+def test_group_chords_render_in_the_card_not_the_character_table():
+    """No All-cycle rows remain anywhere, and the group chord rows render
+    inside each group's own panel -- forward before back, both before the
+    member rows -- never as rows of the character bind table."""
     import re
 
     js = _web("previews.js")
@@ -2634,42 +2647,50 @@ def test_group_rows_rendered_after_all_rows_before_character_divider():
     render_body = stripped.split("function render()", 1)[1].split("function send(", 1)[
         0
     ]
-    all_pos = render_body.index("'All forward'")  # renamed from 'Cycle forward'
-    # groups() helper call appears before bind-group separator (empty divider)
-    groups_call_pos = render_body.index("groups()")
-    divider_pos = render_body.index("'bind-group'")
-    assert all_pos < groups_call_pos < divider_pos, (
-        "group rows are not placed after All rows and before the character divider: "
-        f"all_pos={all_pos}, groups_call_pos={groups_call_pos}, "
-        f"divider_pos={divider_pos}"
+    assert "All forward" not in render_body and "All back" not in render_body, (
+        "the All-cycle rows are gone and must stay gone"
+    )
+    assert "renderCycleGroups()" in render_body, (
+        "render() no longer paints the Cycle groups card"
+    )
+    assert "makeRow(group.name" not in render_body, (
+        "the character table must not build named-group rows itself"
+    )
+    panel_body = stripped.split("function makeCycleGroupPanel", 1)[1].split(
+        "\n  function ", 1
+    )[0]
+    forward_pos = panel_body.index("'Forward'")
+    back_pos = panel_body.index("'Back'")
+    members_pos = panel_body.index("makeMemberRow")
+    assert forward_pos < back_pos < members_pos, (
+        "a group's forward chord, back chord and member rows must render "
+        "top to bottom in that order"
     )
 
 
 def test_group_row_clear_absent_when_no_bind_present():
     """makeRow's Clear gate (only renders when gesture is truthy) already
-    handles group rows -- a group row with an empty bind must not render
-    a Clear button. This is already guaranteed by the shared makeRow path,
-    so the test asserts the group onSet callback passes through makeRow."""
+    handles group chord rows -- a group with an unset bind must not render
+    a Clear button. The card chords pass through the shared makeBindRow
+    path, so the test asserts the group onSet callbacks use it."""
     js = _web("previews.js")
-    # groups helper must pass onSet to makeRow, not build its own row.
-    # groups() returns the array; render() passes each through makeRow.
-    # Just ensure the groups() helper is called in render() context.
-    assert (
-        "groups()" in js.split("function render()", 1)[1].split("function send(", 1)[0]
-    ), "render() does not call groups() to enumerate named-group rows"
+    panel = js.split("function makeCycleGroupPanel", 1)[1].split("\n  function ", 1)[0]
+    assert "makeBindRow('Forward', group.cycle" in panel, (
+        "the group forward chord does not go through the shared makeBindRow "
+        "path -- a row built by hand would not inherit makeRow's Clear gate"
+    )
+    assert "makeBindRow('Back', group.cycle_prev" in panel
 
 
 def test_group_edit_always_available_not_gated_on_off():
-    """Edit… on a group row is never disabled -- groups have no `off` (opted-out)
-    state equivalent. setGroupBind must not pass `off=true` to makeRow."""
+    """Edit… on a group chord row is never disabled by previews being off --
+    groups have no `off` (opted-out) state equivalent. The card passes
+    `true` as the online argument, not state.enabled, and no character
+    (so `off` resolves to false inside makeRow)."""
     js = _web("previews.js")
-    render_body = js.split("function render()", 1)[1].split("function send(", 1)[0]
-    # group rows call makeRow with online=true (not gated on state.enabled)
-    # and no `character` argument (so `off` resolves to false inside makeRow).
-    # The clearest assertion: render() passes `true` as the online arg for groups.
-    assert "makeRow(group.name" in render_body or "groups()" in render_body, (
-        "render() does not iterate named groups at all"
-    )
+    panel = js.split("function makeCycleGroupPanel", 1)[1].split("\n  function ", 1)[0]
+    assert "makeBindRow('Forward', group.cycle, true," in panel
+    assert "makeBindRow('Back', group.cycle_prev, true," in panel
 
 
 def test_capture_ends_before_rename_dialog():
@@ -2731,32 +2752,6 @@ def test_group_delete_uses_wm_confirm_not_window_confirm():
     )
 
 
-def test_make_group_select_returns_a_detail_control_not_a_row_cell():
-    """Assignment remains a returned control and never adds a grid cell."""
-    js = _web("previews.js")
-    assert "function makeGroupSelect" in js, (
-        "makeGroupSelect is not defined in previews.js"
-    )
-    body = js.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
-    # Must not append to row.
-    assert "row.appendChild" not in body, (
-        "makeGroupSelect calls row.appendChild, which would add a sixth "
-        "grid cell and break the five-track layout"
-    )
-    assert "return sel;" in body, "makeGroupSelect must return its control"
-
-
-def test_make_group_select_only_when_groups_exist_in_the_detail():
-    """The detail omits assignment cleanly when no named groups exist."""
-    js = _web("previews.js")
-    assert "function makeCharacterDetail" in js
-    body = js.split("function makeCharacterDetail", 1)[1].split("\n  function ", 1)[0]
-    assert "groups().length" in body, (
-        "makeCharacterDetail does not guard the group select on groups().length; "
-        "the select would render even with no groups defined"
-    )
-
-
 def test_preview_detail_has_single_open_state_and_safe_identity_lookup():
     """Only one character detail survives a render, addressed without CSS escaping."""
     js = _web("previews.js")
@@ -2776,13 +2771,20 @@ def test_authoritative_refresh_closes_a_detail_for_a_missing_character():
 
 
 def test_detail_mutations_restore_focus_only_after_recreating_the_detail():
-    """A rerender must restore the surviving detail before its changed control."""
+    """A rerender must restore the surviving detail before its changed
+    control: intents are remembered against the character's identity and
+    replayed through focusCharacterDetailControl, never by DOM position."""
     js = _web("previews.js")
     assert "detailFocusIntent" in js
     assert "function focusCharacterDetailControl" in js
-    select = js.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
-    assert "rememberDetailFocus(characterName, 'group')" in select
-    assert "focusGroupSelect(characterName)" in select
+    assert "function rememberDetailFocus" in js
+    remember = js.split("function rememberDetailFocus", 1)[1].split("\n  function ", 1)[
+        0
+    ]
+    assert "detailInteraction" in remember, (
+        "remembered detail focus must be scoped to the interaction that "
+        "opened it, or a late reply can steal focus from a newer detail"
+    )
 
 
 def test_preview_conflict_consequences_on_executed_page(tmp_path):
@@ -2838,10 +2840,10 @@ def test_local_bind_conflict_copy_uses_authoritative_collision_state():
         "state.registration",
     ):
         assert source in block
-    append = js.split("function appendBindRow", 1)[1].split("function render()", 1)[0]
+    make_bind_row = js.split("function makeBindRow", 1)[1].split("\n  function ", 1)[0]
     assert (
         "makeBindConflict(label, gesture, character, isExcluded(character), ownerKey)"
-        in append
+        in make_bind_row
     )
 
 
@@ -2897,9 +2899,9 @@ def test_delete_confirm_copy_includes_group_name_and_member_count():
     delete_block = js.split("deleteGroup", 1)
     assert len(delete_block) > 1, "no deleteGroup in previews.js"
     body = delete_block[1].split("\n  function ", 1)[0]
-    # Must reference group_by_character to derive member count.
-    assert "group_by_character" in body, (
-        "deleteGroup does not derive member count from group_by_character"
+    # The count comes from the group's OWN member list now.
+    assert ".members" in body, (
+        "deleteGroup does not derive member count from the group's member list"
     )
     # The confirm dialog body must mention the group name and count.
     confirm_pos = body.find("WM.confirm")
@@ -2927,25 +2929,18 @@ def test_group_busy_disables_controls_during_mutation():
     )
 
 
-def test_state_defaults_fill_groups_and_group_by_character():
-    """The payload normalisation in onPreviewHotkeys and refresh() must
-    fill groups and group_by_character with safe defaults, so later code
-    does not need null checks everywhere."""
+def test_state_defaults_fill_groups():
+    """The push normalisation must fill hotkeys.groups with a safe default,
+    so later code does not need null checks for a pre-group payload."""
     js = _web("previews.js")
-    # Both the push handler and the refresh path normalize state.
-    normalize_block = js.split("onPreviewHotkeys", 1)[1].split(
+    normalize_block = js.split("WM.handle('onPreviewHotkeys'", 1)[1].split(
         "WM.handle('onPreviewBindCaptured'", 1
     )[0]
-    assert "state.hotkeys.groups" in normalize_block, (
+    assert "state.hotkeys = state.hotkeys || {characters: {}, groups: []}" in (
+        normalize_block
+    ), "onPreviewHotkeys does not default the whole hotkeys table"
+    assert "state.hotkeys.groups = state.hotkeys.groups || []" in normalize_block, (
         "onPreviewHotkeys does not default state.hotkeys.groups"
-    )
-    assert "state.hotkeys.group_by_character" in normalize_block, (
-        "onPreviewHotkeys does not default state.hotkeys.group_by_character"
-    )
-    # Also check refresh().
-    refresh_block = js.split("function refresh(", 1)[1].split("\n  }", 1)[0]
-    assert "groups" in refresh_block, (
-        "refresh() does not normalize groups in the returned payload"
     )
 
 
@@ -2995,37 +2990,6 @@ def test_delete_group_restores_focus_to_surviving_control():
     assert focus_pos > render_pos, (
         "focus call appears before requestRender in deleteGroup; "
         "focus must run AFTER repaint so it targets an attached node"
-    )
-
-
-def test_make_group_select_has_generation_guard():
-    """makeGroupSelect's change handler must use a generation guard
-    (store `pushes` before the bridge call, check it before applying
-    res.hotkeys) matching the pattern in setGroupBind and other handlers.
-
-    Without the guard, a Python push that arrives while set_preview_character_group
-    is in flight will have its state overwritten by the stale response.
-    groupBusy prevents concurrent user-initiated requests but does NOT
-    prevent an onPreviewHotkeys push from replacing state.hotkeys wholesale
-    during the in-flight call.
-    """
-    js = _web("previews.js")
-    assert "function makeGroupSelect" in js, (
-        "makeGroupSelect is not defined in previews.js"
-    )
-    body = js.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
-
-    # Must capture pushes before the bridge call.
-    assert "before = pushes" in body, (
-        "makeGroupSelect change handler does not capture the current push "
-        "generation before calling set_preview_character_group. "
-        "Add `var before = pushes;` before WM.send(...)."
-    )
-    # Must check for a newer push before applying res.hotkeys.
-    assert "pushes !== before" in body or "before !== pushes" in body, (
-        "makeGroupSelect does not guard res.hotkeys application with a "
-        "generation check. Add `if (pushes !== before) { return; }` "
-        "before applying res.hotkeys, matching the setGroupBind pattern."
     )
 
 
@@ -3202,72 +3166,15 @@ def test_group_row_bind_controls_disabled_when_group_busy():
         "the existing !off gate) so they stay disabled while any group "
         "write is in flight."
     )
-    # The group select must also be disabled during groupBusy.
-    make_group_select_block = js.split("function makeGroupSelect", 1)[1].split(
+    # The card's Add-member select must also be disabled during groupBusy,
+    # so a membership change cannot fire while another group write is live.
+    panel_body = js.split("function makeCycleGroupPanel", 1)[1].split(
         "\n  function ", 1
     )[0]
-    # The select element must have WM.setEnabled or disabled attribute set
-    # based on groupBusy at creation time.
-    assert (
-        "setEnabled(sel" in make_group_select_block
-        or "groupBusy" in make_group_select_block.split("addEventListener", 1)[0]
-    ), (
-        "makeGroupSelect does not disable the select based on groupBusy at "
-        "creation time. The select must be rendered disabled when groupBusy "
-        "is true, matching the lifecycle controls in makeGroupManager."
-    )
-
-
-def test_make_group_select_stale_success_still_repaints():
-    """makeGroupSelect's stale-push success path (pushes !== before) must
-    call requestRender() before returning.
-
-    Currently: groupBusy = false, then if (pushes !== before) { return; }
-    The early return skips requestRender, leaving the DOM with permanently
-    disabled controls because groupBusy was cleared in JavaScript state but
-    the old DOM nodes (built when groupBusy was true) are never replaced.
-
-    The fix is to move requestRender() outside the stale guard (unconditional
-    after the guard), or include it inside the stale guard block before return.
-    Either way the DOM must be rebuilt whenever the .then() fires.
-    """
-    js = _web("previews.js")
-    assert "function makeGroupSelect" in js, "makeGroupSelect not found in previews.js"
-    block = js.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
-    then_body = block.split(".then(function (res)", 1)
-    assert len(then_body) > 1, "makeGroupSelect has no .then() callback"
-    then_body = then_body[1]
-
-    stale_guard = "if (pushes !== before)"
-    assert stale_guard in then_body, (
-        "makeGroupSelect .then() has no stale-push guard (if pushes !== before)"
-    )
-
-    # The stale guard must NOT be a bare `return` that skips repaint.
-    # Check: the stale guard block itself must contain requestRender, OR
-    # requestRender must appear before the stale guard (unconditional).
-    stale_pos = then_body.find(stale_guard)
-    # Get the guard's inline block content (everything on the same line after the condition)
-    guard_line = then_body[stale_pos : then_body.find("\n", stale_pos)]
-    # A bare `{ return; }` on the same line is the bug
-    is_bare_return = "return;" in guard_line and "requestRender" not in guard_line
-
-    # But the requestRender before the guard must not be inside the refusal block
-    # (which exits via return, so stale successes never reach it)
-    refusal_end = then_body.find("return;", then_body.find("if (!res || !res.applied)"))
-    rr_outside_refusal_before_guard = any(
-        then_body[i : i + 13] == "requestRender" and i > (refusal_end or 0)
-        for i in range(stale_pos)
-    )
-
-    # The guard block itself must not be a bare { return; } unless requestRender
-    # already ran unconditionally for ALL paths (i.e., outside both refusal and stale)
-    assert not is_bare_return or rr_outside_refusal_before_guard, (
-        "makeGroupSelect stale-push guard is a bare `{ return; }` that skips "
-        "requestRender(). The DOM retains disabled controls forever (groupBusy "
-        "was cleared in JS state but the old disabled DOM is never rebuilt). "
-        "Either move requestRender() before the stale guard (unconditional), or "
-        "add requestRender() inside the stale guard block before returning."
+    assert "setEnabled(sel, !groupBusy)" in panel_body, (
+        "the Add-member select is not disabled based on groupBusy at "
+        "creation time. It must render disabled while any group write is "
+        "in flight, matching the lifecycle controls in makeGroupManager."
     )
 
 
@@ -3307,67 +3214,6 @@ def test_delete_group_restores_focus_on_refusal():
         "keyboard focus. After a refused delete the DOM is rebuilt by "
         "requestRender but focus falls to <body>. Add focusGroupManager() "
         "after requestRender in the refusal branch, matching the success path."
-    )
-
-
-def test_make_group_select_restores_focus_after_repaint():
-    """After makeGroupSelect's change handler calls requestRender() and the
-    DOM is rebuilt, focus must be restored to the replacement select for the
-    same character (by stable character identity / aria-label), or to an
-    enabled Previews fallback if that row no longer exists.
-
-    Currently no focus restoration is attempted on success, refusal, or
-    stale-push paths. After requestRender() the old select is detached and
-    the new one has focus on <body>.
-
-    Acceptable patterns in the .then() body:
-    - querySelector('[aria-label="Cycle group for "] + ...') targeting the
-      same character's replacement select
-    - WM.el() or section.querySelector() using the characterName variable
-    - a helper function (focusGroupSelect or similar) called after repaint
-
-    Any of these satisfies the requirement; the key constraint is that the
-    focus target is identified by character identity, not by DOM position,
-    and the call appears after requestRender().
-    """
-    js = _web("previews.js")
-    assert "function makeGroupSelect" in js, "makeGroupSelect not defined"
-    block = js.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
-    then_body = block.split(".then(function (res)", 1)
-    assert len(then_body) > 1, "makeGroupSelect has no .then() callback"
-    then_body = then_body[1]
-
-    # Focus restoration must appear in the .then() body, after requestRender.
-    # Acceptable patterns:
-    # 1. focusGroupSelect or similar named helper
-    # 2. querySelector using 'Cycle group for' + characterName
-    # 3. querySelector using 'preview-group-select' with a focus() call
-    has_focus_restore = (
-        "focusGroupSelect" in then_body
-        or ("Cycle group for" in then_body and ".focus()" in then_body)
-        or ("preview-group-select" in then_body and ".focus()" in then_body)
-        or ("characterName" in then_body and ".focus()" in then_body)
-    )
-    assert has_focus_restore, (
-        "makeGroupSelect .then() does not restore focus to the replacement "
-        "select after requestRender(). The old select node is detached by "
-        "repaint; focus falls to <body>. Identify the replacement by character "
-        "identity (e.g. aria-label or characterName variable) and call "
-        ".focus() on it after requestRender(). Use an enabled Previews control "
-        "as fallback when the row no longer exists."
-    )
-
-    # The focus call must come AFTER requestRender (targeting an attached node).
-    rr_pos = then_body.rfind("requestRender")
-    if "focusGroupSelect" in then_body:
-        focus_pos = then_body.rfind("focusGroupSelect")
-    else:
-        focus_pos = then_body.rfind(".focus()")
-    assert rr_pos != -1, "makeGroupSelect .then() must call requestRender()"
-    assert focus_pos != -1, "makeGroupSelect .then() must have a focus call"
-    assert focus_pos > rr_pos, (
-        "focus call appears before requestRender in makeGroupSelect .then(); "
-        "must run after repaint so it targets an attached (not detached) node"
     )
 
 
@@ -3540,39 +3386,30 @@ def _extract_refusal_content(then_body):
 
 
 def test_assignment_refusal_always_alerts_user():
-    """makeGroupSelect's refusal branch must call WM.send('alert_bookmarks')
-    unconditionally -- showing res.error when available, or a shared fallback
-    message when res is null/malformed.  The conditional
-    `if (res && res.error)` pattern silently swallows failures that arrive
-    without a structured error payload (network drop, server crash, bridge
-    timeout), leaving the user no indication that their assignment was not
-    saved.
+    """setCycleGroupMembers' refusal branch must call
+    WM.send('alert_bookmarks') unconditionally -- showing res.error when
+    available, or a shared fallback message when res is null/malformed
+    (network drop, server crash, bridge timeout), leaving the user no
+    indication that their member change was not saved.
     """
     js = _web("previews.js")
-    assert "function makeGroupSelect" in js
-    body = js.split("function makeGroupSelect", 1)[1].split("\n  function ", 1)[0]
+    assert "function setCycleGroupMembers" in js
+    body = js.split("function setCycleGroupMembers", 1)[1].split("\n  function ", 1)[0]
     then_body = body.split(".then(function (res)", 1)
-    assert len(then_body) > 1, "makeGroupSelect has no .then() callback"
+    assert len(then_body) > 1, "setCycleGroupMembers has no .then() callback"
     refusal = _extract_refusal_content(then_body[1])
-    assert refusal is not None, "makeGroupSelect .then() has no refusal guard"
+    assert refusal is not None, "setCycleGroupMembers .then() has no refusal guard"
     # Must contain an unconditional alert, not one guarded by `res && res.error`.
-    # Acceptable forms: ternary `res && res.error ? ... : 'fallback'`
-    # or two separate sends -- but the second must not be inside `if (res &&`.
     has_unconditional = "alert_bookmarks" in refusal and (
-        # ternary pattern: alert present outside a conditional-only block
         ("res && res.error" in refusal and "?" in refusal)
-        or (
-            # two separate alert sends OR fallback string present
-            "alert_bookmarks" in refusal
-            and "That group change was not saved" in refusal
-        )
+        or ("alert_bookmarks" in refusal and "not saved" in refusal)
     )
     assert has_unconditional, (
-        "makeGroupSelect refusal branch uses `if (res && res.error)` to gate "
-        "WM.send('alert_bookmarks'), so failures without a structured error "
-        "payload are silently swallowed. Replace with a ternary that always "
-        "sends -- e.g.: WM.send('alert_bookmarks', res && res.error "
-        "? res.error : 'That group change was not saved.')"
+        "setCycleGroupMembers refusal branch gates WM.send('alert_bookmarks') "
+        "behind `res && res.error`, so failures without a structured error "
+        "payload are silently swallowed. Use a ternary that always sends -- "
+        "e.g.: WM.send('alert_bookmarks', res && res.error ? res.error : "
+        "'That member change was not saved.')"
     )
 
 
@@ -3813,10 +3650,13 @@ def test_opted_out_or_latent_bookmark_binds_do_not_render_local_errors():
     assert "already owned by another application" in conflict
     assert "conflicts with a configured EVE bookmark keybind" in conflict
 
-    append = js.split("function appendBindRow", 1)[1].split("function render()", 1)[0]
+    # The conflict is wired where the row is BUILT -- makeBindRow passes the
+    # collision-derived conflict (with its stable owner key) into makeRow,
+    # so every row kind shares one registration model.
+    make_bind_row = js.split("function makeBindRow", 1)[1].split("\n  function ", 1)[0]
     assert (
         "makeBindConflict(label, gesture, character, isExcluded(character), ownerKey)"
-        in append
+        in make_bind_row
     )
 
 
@@ -3829,3 +3669,6 @@ def test_preview_detail_clears_both_sticky_headers_inside_its_subpage():
         "scroll-margin-top: calc(var(--preview-bind-head-height) * 2)"
         in detail.group(1)
     ), "the detail needs clearance for both sticky preview headers"
+
+
+# ---- cycle order -----------------------------------------------------

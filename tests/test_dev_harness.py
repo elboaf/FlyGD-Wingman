@@ -1888,7 +1888,9 @@ def test_preview_fixture_covers_the_roster_states_screenshots_need():
     assert len(roster) >= 10
     assert online and offline
     assert any(len(name) >= 30 for name in roster)
-    assert hotkeys["group_by_character"]
+    assert any(g.get("members") for g in hotkeys.get("groups", [])), (
+        "fixture needs a group with members, so the member card renders"
+    )
     assert set(roster) & set(fixture["sizable"])
     assert set(roster) - set(fixture["sizable"])
     long_name = "Aleksandrina Shadowbanes Voidstriders"
@@ -1904,10 +1906,15 @@ def test_preview_fixture_covers_the_roster_states_screenshots_need():
     assert any(len(names) >= 2 for names in by_gesture.values()), (
         "fixture needs a supported shared direct-character bind"
     )
-    assert any(
-        gesture in {hotkeys["cycle_next"], hotkeys["cycle_prev"]}
-        for gesture in direct.values()
-    ), "fixture needs a direct-character/cycle-keybind conflict"
+    group_chords = {
+        chord
+        for group in hotkeys["groups"]
+        for chord in (group.get("cycle"), group.get("cycle_prev"))
+        if chord
+    }
+    assert any(gesture in group_chords for gesture in direct.values()), (
+        "fixture needs a direct-character/cycle-keybind conflict"
+    )
 
 
 def test_preview_fixture_covers_a_named_group_cycle_conflict():
@@ -2088,8 +2095,8 @@ def test_the_preview_groups_fixture_covers_real_states():
     fixture = _dev_preview_fixture()
     hotkeys = fixture.get("hotkeys", {})
     assert hotkeys.get("groups"), "preview fixture lacks groups array"
-    assert hotkeys.get("group_by_character"), (
-        "preview fixture lacks group_by_character map"
+    assert any(g.get("members") for g in hotkeys["groups"]), (
+        "preview fixture lacks a group with members"
     )
     # At least one group must carry a real parseable cycle gesture.
     gestures_in_groups = [g["cycle"] for g in hotkeys["groups"] if g.get("cycle")]
@@ -2127,7 +2134,7 @@ def test_the_preview_group_dev_methods_are_no_longer_known_gaps():
         "rename_preview_cycle_group",
         "delete_preview_cycle_group",
         "set_preview_cycle_group_bind",
-        "set_preview_character_group",
+        "set_preview_cycle_group_members",
     ):
         assert method in stubbed, (
             f"dev.js does not stub {method!r} -- it is still a known gap"
@@ -2189,12 +2196,19 @@ def test_preview_fixture_excluded_character_is_also_assigned_to_a_group():
     fixture = _json.loads(body)
 
     excluded = fixture.get("excluded", [])
-    group_by_character = fixture.get("hotkeys", {}).get("group_by_character", {})
 
-    excluded_and_assigned = [c for c in excluded if c in group_by_character]
+    def _members(fixture):
+        members = set()
+        for group in fixture.get("hotkeys", {}).get("groups", []):
+            members.update(group.get("members") or [])
+        return members
+
+    members = _members(fixture)
+
+    excluded_and_assigned = [c for c in excluded if c in members]
     assert excluded_and_assigned, (
         "fixture must have at least one character who is both excluded[] "
-        "and in group_by_character — currently no such character exists, "
+        "and a cycle-group member — currently no such character exists, "
         "so the opted-out-but-assigned state is never exercised"
     )
 
@@ -2228,14 +2242,21 @@ def test_preview_fixture_nonexcluded_character_without_group_assignment():
 
     roster = fixture.get("roster", [])
     excluded = set(fixture.get("excluded", []))
-    group_by_character = fixture.get("hotkeys", {}).get("group_by_character", {})
+
+    def _members(fixture):
+        members = set()
+        for group in fixture.get("hotkeys", {}).get("groups", []):
+            members.update(group.get("members") or [])
+        return members
+
+    members = _members(fixture)
 
     nonexcluded_unassigned = [
-        c for c in roster if c not in excluded and c not in group_by_character
+        c for c in roster if c not in excluded and c not in members
     ]
     assert nonexcluded_unassigned, (
         "fixture must have at least one roster member who is neither excluded "
-        "nor in group_by_character -- the All-only path for an opted-in character "
+        "nor in any cycle group -- the ungrouped path for an opted-in character "
         "is not exercised otherwise"
     )
 
@@ -2327,13 +2348,11 @@ def test_preview_group_delete_cleans_up_group_by_character():
                 end = i
                 break
     body = DEV_JS[start : end + 1]
-    assert "group_by_character" in body, (
-        "delete_preview_cycle_group must clean up group_by_character entries "
-        "for the deleted group -- stale references break the character-row selects"
-    )
-    # Must remove entries (delete or reassign)
-    assert "delete" in body or "splice" in body, (
-        "delete_preview_cycle_group must remove stale group_by_character entries"
+    # Membership is stored ON the group record, so removing the record is
+    # the whole cleanup -- a deleted group's member list has nowhere stale
+    # to survive.
+    assert "splice" in body or "filter" in body, (
+        "delete_preview_cycle_group must remove the group's record from the groups list"
     )
 
 
@@ -2597,21 +2616,20 @@ def test_preview_bind_method_mutates_cycle_and_calls_push_and_result():
     )
 
 
-def test_preview_assignment_method_mutates_gbc_and_calls_push_and_result():
-    """set_preview_character_group must: update group_by_character (or delete
-    entry for All-only), call _devPushHotkeys(), and return _devGroupResult.
-    """
-    body = _extract_fn_body("api.set_preview_character_group")
-    # Must mutate group_by_character
-    assert "group_by_character" in body, (
-        "set_preview_character_group must mutate group_by_character"
+def test_preview_members_method_writes_list_and_calls_push_and_result():
+    """set_preview_cycle_group_members must: replace the target group's
+    ordered member list, call _devPushHotkeys(), and return
+    _devGroupResult."""
+    body = _extract_fn_body("api.set_preview_cycle_group_members")
+    assert "members" in body, (
+        "set_preview_cycle_group_members must write the members list"
     )
     assert "_devPushHotkeys" in body, (
-        "set_preview_character_group must call _devPushHotkeys() "
+        "set_preview_cycle_group_members must call _devPushHotkeys() "
         "to broadcast the mutation"
     )
     assert "_devGroupResult" in body, (
-        "set_preview_character_group must return _devGroupResult(...) "
+        "set_preview_cycle_group_members must return _devGroupResult(...) "
         "for a consistent result shape"
     )
 
@@ -2836,100 +2854,34 @@ def test_preview_bind_assigns_cycle_field_on_located_group():
     )
 
 
-def test_preview_assignment_both_sets_and_deletes_group_by_character():
-    """set_preview_character_group must handle BOTH paths:
-    - assign path: an own enumerable property (including __proto__)
-    - remove path:  delete gbc[name]      (character returns to All-only)
-
-    A method that only supports one path silently ignores the other,
-    leaving the character perpetually assigned or perpetually in All-only.
-    """
-    body = _extract_fn_body("api.set_preview_character_group")
+def test_preview_members_method_replaces_the_whole_ordered_list():
+    """set_preview_cycle_group_members must REPLACE the target group's
+    members wholesale -- add, remove and reorder are all the one write --
+    and deduplicate while preserving first-occurrence order."""
+    body = _extract_fn_body("api.set_preview_cycle_group_members")
     body = re.sub(r"(?m)^\s*//.*$", "", body)
-    # Define an own property: bracket assignment loses a new __proto__ owner.
-    assert "Object.defineProperty(gbc, name, {value: groupId," in body
-    for flag in ("enumerable: true", "configurable: true", "writable: true"):
-        assert flag in body
-    # Delete path: delete gbc[name]
-    assert re.search(r"delete\s+gbc\s*\[\s*name\s*\]", body) or re.search(
-        r"delete\s+group_by_character\s*\[\s*name\s*\]", body
-    ), (
-        "set_preview_character_group must have a delete path: delete gbc[name] — "
-        "missing it means a character can never return to All-only"
+    assert "target.members = clean" in body, (
+        "set_preview_cycle_group_members must assign the cleaned list to the "
+        "located group's members"
+    )
+    assert "clean.indexOf(name) === -1" in body or ".indexOf(name)" in body, (
+        "set_preview_cycle_group_members must deduplicate, keeping first "
+        "occurrence order"
     )
 
 
-def test_preview_delete_iterates_gbc_and_deletes_each_member():
-    """delete_preview_cycle_group must iterate group_by_character (via forEach,
-    for..in, or Object.keys loop) and delete every entry whose value matches
-    the deleted group's id.
-
-    Simply splicing the group from groups[] without cleaning up gbc leaves
-    stale character assignments pointing to a ghost group id.
-
-    This test is crafted to catch the exact membership-cleanup contract:
-    it checks for both the iteration and the targeted delete, so removing
-    just the forEach/cleanup loop causes a failure.
-    """
+def test_preview_delete_splices_the_group_record():
+    """delete_preview_cycle_group must splice the deleted group's record out
+    of the groups array. Membership lives on the record, so the splice is
+    the whole cleanup -- there is no second map to sweep."""
     body = _extract_fn_body("api.delete_preview_cycle_group")
     body = re.sub(r"(?m)^\s*//.*$", "", body)
-    # Must splice (remove group from array)
     assert "groups.splice" in body or ".splice(" in body, (
         "delete_preview_cycle_group must splice the group from the groups array"
     )
-    # Must iterate gbc — forEach, for..in, or Object.keys are all acceptable
-    assert re.search(r"forEach|for\s*\(|Object\.keys", body), (
-        "delete_preview_cycle_group must iterate group_by_character "
-        "(via forEach, for..in, or Object.keys) to remove stale memberships"
-    )
-    # Must delete (not just reassign) the stale gbc entries
-    assert re.search(r"delete\s+gbc\s*\[", body) or re.search(
-        r"delete\s+group_by_character\s*\[", body
-    ), (
-        "delete_preview_cycle_group must delete stale gbc entries -- "
-        "reassignment or filtering without delete leaves ghost ids"
-    )
-    # Verify the per-entry check targets the deleted groupId (not a generic delete)
     assert "groupId" in body or "group_id" in body, (
-        "delete_preview_cycle_group gbc cleanup must check the entry value "
-        "against the deleted groupId -- blanket delete removes all assignments"
-    )
-
-
-def test_preview_delete_membership_cleanup_is_load_bearing():
-    """Demonstrate that the membership-cleanup check in
-    test_preview_delete_iterates_gbc_and_deletes_each_member is not satisfied
-    by a body that only splices the group.
-
-    This test is a mutation proof: we construct a minimal function body that
-    performs only the splice (no forEach/delete) and verify it FAILS the
-    membership-cleanup assertions.  The test itself should always PASS.
-    """
-    # Construct a stripped body that only splices groups — no cleanup loop
-    minimal_body = (
-        "api.delete_preview_cycle_group = function (groupId) {\n"
-        "  var groups = _devPreviewHotkeys.groups;\n"
-        "  var idx = -1;\n"
-        "  for (var i = 0; i < groups.length; i++) {\n"
-        "    if (groups[i].id === groupId) { idx = i; break; }\n"
-        "  }\n"
-        "  if (idx === -1) { return; }\n"
-        "  groups.splice(idx, 1);\n"  # splice only — no gbc cleanup
-        "  _devPushHotkeys();\n"
-        "  return _devGroupResult(true, null);\n"
-        "}"
-    )
-    # The forEach / for..in / Object.keys requirement must NOT be satisfied
-    has_iteration = bool(re.search(r"forEach|for\s*\(|Object\.keys", minimal_body))
-    # The delete gbc requirement must NOT be satisfied
-    has_delete = bool(
-        re.search(r"delete\s+gbc\s*\[", minimal_body)
-        or re.search(r"delete\s+group_by_character\s*\[", minimal_body)
-    )
-    # BOTH must be absent in the minimal body to prove the tests are non-trivial
-    assert not has_iteration or not has_delete, (
-        "Minimal splice-only body unexpectedly satisfies the cleanup checks -- "
-        "the test assertions may be too loose to catch a missing cleanup loop"
+        "delete_preview_cycle_group must match the deleted group's id -- "
+        "a blanket delete would remove every group"
     )
 
 
@@ -2953,7 +2905,7 @@ def test_preview_group_success_lifecycle_uses_exact_result_arguments():
         "api.rename_preview_cycle_group",
         "api.delete_preview_cycle_group",
         "api.set_preview_cycle_group_bind",
-        "api.set_preview_character_group",
+        "api.set_preview_cycle_group_members",
     )
     result = "returnPromise.resolve(_devGroupResult(true,null));"
     for marker in markers:
@@ -2984,7 +2936,7 @@ def test_preview_dev_push_callback_has_exact_order_and_single_delivery():
 def test_preview_create_appends_exact_group_from_its_locals_before_push():
     body = _normalise_js(_extract_fn_body("api.create_preview_cycle_group"))
     make_id = "varid='g-dev-'+Date.now();"
-    append = "groups.push({id:id,name:clean,cycle:'',cycle_prev:''});"
+    append = "groups.push({id:id,name:clean,members:[],cycle:'',cycle_prev:''});"
     push = "_devPushHotkeys();"
     assert body.count(make_id) == 1
     assert body.count("groups.push(") == 1
@@ -3020,52 +2972,22 @@ def test_preview_bind_updates_only_the_group_located_by_group_id():
     )
 
 
-def test_preview_assignment_branches_use_requested_name_and_group_id():
-    body = _normalise_js(_extract_fn_body("api.set_preview_character_group"))
-    branches = _normalise_js(
-        """
-        if (!groupId) {
-          delete gbc[name];
-        } else {
-          var valid = false;
-          for (var i = 0; i < groups.length; i++) {
-            if (groups[i].id === groupId) { valid = true; break; }
-          }
-          if (!valid) {
-            return Promise.resolve(_devGroupResult(false, 'No group with id \\'' + groupId + '\\''));
-          }
-          Object.defineProperty(gbc, name, {value: groupId,
-            enumerable: true, configurable: true, writable: true});
-        }
-        """
-    )
-    assert body.count(branches) == 1
-    assert body.count("deletegbc[") == 1
-    assert body.count("deletegbc[name];") == 1
-    assert not re.findall(r"gbc\[[^]]+\]=", body)
-    assert body.count("Object.defineProperty(gbc,name,") == 1
-    assert body.index(branches) < body.index("_devPushHotkeys();")
-
-
-def test_preview_delete_removes_matched_group_and_only_its_memberships():
+def test_preview_delete_removes_exactly_the_matched_group():
     body = _extract_fn_body("api.delete_preview_cycle_group")
     normal = _normalise_js(body)
     locate = "if(groups[i].id===groupId){idx=i;break;}"
     remove = "groups.splice(idx,1);"
-    callback = _normalise_js(
-        _extract_callback_body(body, "Object.keys(gbc).forEach(function (charName)")
-    )
 
     assert normal.count(locate) == 1
     assert normal.count("groups.splice(") == 1
     assert normal.count(remove) == 1
-    assert callback == "if(gbc[charName]===groupId){deletegbc[charName];}"
-    assert normal.count("deletegbc[") == 1
-    assert normal.count("deletegbc[charName];") == 1
-    assert (
-        normal.index(locate) < normal.index(remove) < normal.index("Object.keys(gbc)")
+    assert normal.count("deletegbc[") == 0, (
+        "membership is stored on the group record; there is no second "
+        "group_by_character map to sweep"
     )
-    assert normal.index("Object.keys(gbc)") < normal.index("_devPushHotkeys();")
+    assert (
+        normal.index(locate) < normal.index(remove) < normal.index("_devPushHotkeys();")
+    )
 
 
 # ---- dev harness: identification generation contract (Round 1 HIGH) ------

@@ -67,6 +67,60 @@ def test_export_text_round_trips_through_parse():
     assert config["preview"]["snap"] != "mutated"
 
 
+def test_cycle_groups_with_member_order_round_trip_through_the_envelope():
+    """The cycle-group rework changed the shape of preview.hotkeys; the
+    export path is key-agnostic (whole-section deepcopy), so this pins the
+    interplay rather than the mechanism: a group's ordered member list IS
+    the cycle order, and an export/import cycle must not re-sort, dedupe
+    or trim it. An old pre-group envelope, by contrast, imports with
+    members emptied -- the same wipe-on-load the settings validator does,
+    never a migration."""
+    config = live_settings()
+    group = {
+        "id": "g1",
+        "name": "DPS",
+        "members": ["Zulu", "Alpha", "Kilo"],
+        "cycle": "Ctrl+F2",
+        "cycle_prev": "Ctrl+F3",
+    }
+    config["preview"]["hotkeys"]["groups"] = [group]
+    imported = parse_text(export_text(config))
+    assert imported["preview"]["hotkeys"]["groups"] == [group]
+    # And through the real apply path, normalization included.
+    fresh = settings_mod.load()
+    apply_document(imported, fresh)
+    with settings_mod.update(fresh):
+        pass
+    assert fresh["preview"]["hotkeys"]["groups"] == [group]
+
+    old_envelope = {
+        "format": FORMAT,
+        "version": VERSION,
+        "type": TYPE,
+        "settings": {
+            "preview": {
+                "hotkeys": {
+                    "characters": {"Alice": "Ctrl+F1"},
+                    "cycle_next": "Ctrl+Alt+Right",
+                    "cycle_prev": "Ctrl+Alt+Left",
+                    "group_by_character": {"Alice": "g1"},
+                    "groups": [{"id": "g1", "name": "DPS", "cycle": "Ctrl+F2"}],
+                }
+            }
+        },
+    }
+    legacy = parse_text(json.dumps(old_envelope))
+    target = settings_mod.load()
+    apply_document(legacy, target)
+    with settings_mod.update(target):
+        pass
+    hotkeys = target["preview"]["hotkeys"]
+    assert "cycle_next" not in hotkeys and "group_by_character" not in hotkeys
+    assert hotkeys["groups"] == [
+        {"id": "g1", "name": "DPS", "members": [], "cycle": "Ctrl+F2", "cycle_prev": ""}
+    ]
+
+
 def test_export_uses_defaults_for_keys_missing_from_the_document():
     config = live_settings()
     del config["notify_mode"]

@@ -1209,21 +1209,6 @@
       <section class="settings-subpage" id="settings-previews-characters" role="tabpanel" aria-labelledby="settings-tab-previews-characters" tabindex="0" hidden>
       <section class="card" id="preview-keybind-options">
         <h2>Character previews &amp; cycle groups</h2>
-        <details class="settings-key-help">
-          <summary>How global keybinds work</summary>
-        <!-- Keep shared-key guidance in one place; Bookmarks links here.
-             The bookmark engine's scoped hook can consume a key before a
-             Preview RegisterHotKey receives it. Configured collisions do
-             not prove engine liveness or which EVE window is foreground,
-             so never promise an unconditional winner from settings alone. -->
-        <div class="row"><span class="lab"></span>
-          <span class="hint">These work from any application, including a
-            browser, and are released while previews are switched off.
-            Bookmark keybinds run only in selected EVE windows and can
-            take the same keys there. Assign different keys to avoid
-            overlap. Conflicts below and in Settings &rsaquo; Bookmarks
-            describe configured keys, not which action is running.</span></div>
-        </details>
         <!-- Deliberately EMPTY. The sentence is ui/copy.py's
              INERT_NOTES["previews_off"], delivered on the settings payload
              and written in by previews.js (walkthrough Settings 1). It
@@ -1250,8 +1235,9 @@
           <span class="hint">Click a keybind and press the keys you want.
             Edit&hellip; lets you type one instead.</span></div>
         <p class="hint">Characters can share a keybind. It switches to a running
-          match, preferring one that is not already active. Use cycle groups
-          to visit all running members with Preview enabled.</p>
+          match, preferring one that is not already active. Cycle keybinds
+          live on cycle groups below &mdash; with no groups defined, cycling
+          does nothing.</p>
         <div id="preview-binds"></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-binds-empty" tabindex="-1">Start an EVE client to
@@ -1262,6 +1248,27 @@
             here.</span></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-copy-status"
+                role="status" hidden></span></div>
+      </section>
+      <section class="card" id="preview-cycle-groups-card">
+        <h2>Cycle groups</h2>
+        <!-- The panels are previews.js's renderCycleGroups: one per group,
+             each an ordered member list whose order IS the cycle order.
+             Cycling exists only through groups -- no groups defined means
+             no cycle keybinds at all, which is the designed state and
+             what the empty hint below says. -->
+        <div class="row"><span class="lab"></span>
+          <span class="hint">A cycle group is a set of characters with its
+            own forward/back keybinds (set in the list above). The order
+            members are listed here is the order the keybind visits them.
+            Offline members are skipped until they log in.</span></div>
+        <div id="preview-cycle-groups"></div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="preview-cycle-groups-empty" tabindex="-1"
+            >No cycle groups yet, so cycling does nothing. Create one in
+            Manage groups above.</span></div>
+        <div class="row"><span class="lab"></span>
+          <span class="hint" id="preview-cycle-groups-status"
                 role="status" hidden></span></div>
       </section>
       </section>

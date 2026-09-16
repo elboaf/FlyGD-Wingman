@@ -544,6 +544,8 @@
     return Promise.resolve({applied: true, persisted: true, error: null});
   };
 
+
+
   // Same tier again. The real endpoint also sweeps and rebinds, neither of
   // which exists under ?dev=1 -- what the harness has to double is the
   // {applied, persisted, error} shape previews.js reverts the box on, and
@@ -2699,6 +2701,13 @@
   // 'Aleksandrina Shadowbanes Voidstriders' (37 chars) is load-bearing: the
   // only row that exercises ellipsis in the bounded name track and the title
   // attribute fallback at the 840px viewport floor.
+  // Groups carry their OWN ordered member list -- list order is the cycle
+  // order. DPS mixes online and offline members; Logistics keeps Sera Vahn
+  // (excluded, still a member -- exclusion stops previews, not membership,
+  // though the walk does skip her). The empty group stays for the
+  // zero-member UI path. No flat cycle_next/prev: cycling exists only
+  // through groups. The literal stays comment-free INSIDE: it is parsed as
+  // strict JSON by tests/test_dev_harness.py and scripts/shoot_screens.py.
   var DEV_PREVIEW_HOTKEYS_FIXTURE = {
     "enabled": true,
     "label_markers": {"Aiga Otsolen": "cyan", "Sera Vahn": "orange"},
@@ -2720,20 +2729,14 @@
         "Mara Veld": "Ctrl+Shift+2",
         "Niko Avar": "Ctrl+Shift+3"
       },
-      "cycle_next": "Ctrl+Alt+Right",
-      "cycle_prev": "",
       "groups": [
-        {"id": "g-dps",   "name": "DPS",         "cycle": "Ctrl+Shift+1", "cycle_prev": "Ctrl+Shift+2"},
-        {"id": "g-logi",  "name": "Logistics",    "cycle": "Ctrl+Shift+1", "cycle_prev": ""},
-        {"id": "g-empty", "name": "Empty group",  "cycle": "", "cycle_prev": ""}
-      ],
-      "group_by_character": {
-        "Aiga Otsolen": "g-dps",
-        "Tanuki Solette": "g-logi",
-        "Aleksandrina Shadowbanes Voidstriders": "g-dps",
-        "Mara Veld": "g-dps",
-        "Sera Vahn": "g-logi"
-      }
+        {"id": "g-dps",   "name": "DPS",         "members": ["Aiga Otsolen", "Mara Veld", "Corvin Veles", "Aleksandrina Shadowbanes Voidstriders"],
+         "cycle": "Ctrl+Shift+1", "cycle_prev": "Ctrl+Shift+2"},
+        {"id": "g-logi",  "name": "Logistics",    "members": ["Tanuki Solette", "Sera Vahn"],
+         "cycle": "Ctrl+Shift+1", "cycle_prev": ""},
+        {"id": "g-empty", "name": "Empty group",  "members": [],
+         "cycle": "", "cycle_prev": ""}
+      ]
     },
     "characters": ["Aiga Otsolen", "Zuelo Parvi", "Corvin Veles"],
     "roster": [
@@ -2773,7 +2776,7 @@
     var fixture = DEV_PREVIEW_HOTKEYS_FIXTURE;
     var markers = fixture.label_markers;
     var known = fixture.characters.concat(fixture.roster, Object.keys(_devPreviewHotkeys.characters),
-      Object.keys(_devPreviewHotkeys.group_by_character), Object.keys(_devCrops.definitions), Object.keys(markers));
+      _devPreviewHotkeys.groups.flatMap(function (g) { return g.members; }), Object.keys(_devCrops.definitions), Object.keys(markers));
     var valid = typeof name === 'string' && name && name.trim() === name && name.indexOf('hwnd:') !== 0
       && known.indexOf(name) !== -1 && fixture.marker_choices.some(function (choice) { return choice.key === marker; });
     if (valid) {
@@ -3262,7 +3265,7 @@
       }
     }
     var id = 'g-dev-' + Date.now();
-    groups.push({id: id, name: clean, cycle: '', cycle_prev: ''});
+    groups.push({id: id, name: clean, members: [], cycle: '', cycle_prev: ''});
     _devPushHotkeys();
     return Promise.resolve(_devGroupResult(true, null));
   };
@@ -3309,10 +3312,6 @@
       return Promise.resolve(_devGroupResult(false, 'No group with id \'' + groupId + '\''));
     }
     groups.splice(idx, 1);
-    var gbc = _devPreviewHotkeys.group_by_character;
-    Object.keys(gbc).forEach(function (charName) {
-      if (gbc[charName] === groupId) { delete gbc[charName]; }
-    });
     _devPushHotkeys();
     return Promise.resolve(_devGroupResult(true, null));
   };
@@ -3353,27 +3352,31 @@
     return Promise.resolve(_devGroupResult(true, null));
   };
 
-  api.set_preview_character_group = function (name, groupId) {
-    console.log('DEV api.set_preview_character_group(', name, groupId, ')');
-    if (!name) {
-      return Promise.resolve(_devGroupResult(false, 'Invalid character name'));
+  api.set_preview_cycle_group_members = function (groupId, members) {
+    console.log('DEV api.set_preview_cycle_group_members(', groupId, members, ')');
+    if (!groupId) {
+      return Promise.resolve(_devGroupResult(false, 'Invalid group_id'));
+    }
+    if (!Array.isArray(members)) {
+      return Promise.resolve(_devGroupResult(false, 'members must be a list'));
     }
     var groups = _devPreviewHotkeys.groups;
-    var gbc = _devPreviewHotkeys.group_by_character;
-    if (!groupId) {
-      // Empty string removes assignment (All-only).
-      delete gbc[name];
-    } else {
-      var valid = false;
-      for (var i = 0; i < groups.length; i++) {
-        if (groups[i].id === groupId) { valid = true; break; }
-      }
-      if (!valid) {
-        return Promise.resolve(_devGroupResult(false, 'No group with id \'' + groupId + '\''));
-      }
-      Object.defineProperty(gbc, name, {value: groupId,
-        enumerable: true, configurable: true, writable: true});
+    var target = null;
+    for (var i = 0; i < groups.length; i++) {
+      if (groups[i].id === groupId) { target = groups[i]; break; }
     }
+    if (!target) {
+      return Promise.resolve(_devGroupResult(false, "No group with id '" + groupId + "'"));
+    }
+    var clean = [];
+    for (var j = 0; j < members.length; j++) {
+      var name = members[j];
+      if (!name || typeof name !== 'string') {
+        return Promise.resolve(_devGroupResult(false, 'Invalid character name'));
+      }
+      if (clean.indexOf(name) === -1) { clean.push(name); }
+    }
+    target.members = clean;
     _devPushHotkeys();
     return Promise.resolve(_devGroupResult(true, null));
   };

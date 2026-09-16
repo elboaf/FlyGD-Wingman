@@ -305,8 +305,8 @@ def test_known_owners_unions_every_explicit_source_without_casefold_or_cap(model
         "excluded": ["Hidden"],
         "hotkeys": {
             "characters": {"Direct": "Ctrl+F1"},
-            "group_by_character": {"Grouped": "g"},
-            "groups": [{"id": "g", "name": "Not an owner"}],
+            # The group's NAME is never an owner; its members are.
+            "groups": [{"id": "g", "name": "Not an owner", "members": ["Grouped"]}],
         },
         "locked": ["Locked"],
         "never_minimize": ["Minimize"],

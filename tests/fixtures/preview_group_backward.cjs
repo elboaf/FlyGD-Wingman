@@ -69,10 +69,10 @@ vm.runInContext(fs.readFileSync(web + '/previews.js', 'utf8'), context);
 vm.runInContext(fs.readFileSync(web + '/panel.js', 'utf8'), context);
 function payload() {
   return {enabled: true, characters: ['Alice'], roster: ['Alice', 'Bob'],
-    hotkeys: {characters: {}, cycle_next: '', cycle_prev: '', groups: [
-      {id: 'g', name: 'Fleet', cycle: 'Ctrl+F2', cycle_prev: 'Ctrl+F3'},
-      {id: 'g:prev', name: 'All back', cycle: 'Ctrl+F4'},
-    ], group_by_character: {Alice: 'g'}},
+    hotkeys: {characters: {}, groups: [
+      {id: 'g', name: 'Fleet', members: ['Alice'], cycle: 'Ctrl+F2', cycle_prev: 'Ctrl+F3'},
+      {id: 'g:prev', name: 'All back', members: [], cycle: 'Ctrl+F4'},
+    ]},
     label_markers: {}, marker_choices: data.choices, registration: {},
     bookmark_chords: {active: [], latent: []}, locked: [], excluded: [], never_minimize: [],
     sizes: {}, client_sizes: {}, sizable: [], layout_sources: [],
@@ -85,6 +85,18 @@ function row(label) {
 }
 const bind = label => row(label).querySelector('.bindbtn');
 const action = (label, text) => Array.from(row(label).querySelectorAll('button')).find(el => el.textContent === text);
+const gpanel = id => {
+  const p = document.querySelector('#preview-cycle-groups .cycle-group-panel[data-group-id="' + id + '"]');
+  assert.ok(p, 'cycle group panel ' + id);
+  return p;
+};
+const grow = (id, dir) => {
+  const lab = Array.from(gpanel(id).querySelectorAll('.lab')).find(el => el.title === dir);
+  assert.ok(lab, 'group chord row ' + id + ' ' + dir);
+  return lab.parentNode;
+};
+const gbind = (id, dir) => grow(id, dir).querySelector('.bindbtn');
+const gaction = (id, dir, text) => Array.from(grow(id, dir).querySelectorAll('button')).find(el => el.textContent === text);
 const warning = owner => document.getElementById('preview-bind-conflict-' + encodeURIComponent(owner));
 function push(p) { window.onPreviewHotkeys(clone(p)); }
 function key(key, code = key) { document.dispatchEvent({type: 'keydown', key, code, ctrlKey: true}); }
@@ -114,6 +126,12 @@ function settle(p, applied = true) {
       window: {onPreviewHotkeys: p => published.push(p)}, _devCropCopy: () => ({})};
     vm.createContext(dev);
     vm.runInContext(source.slice(start, end), dev);
+    // The reworked hotkeys fixture no longer carries the saved-layout keys
+    // its own layout slice reads at load; seed the minimum here so this
+    // scenario can reach the cycle-group stubs below it.
+    vm.runInContext('DEV_PREVIEW_HOTKEYS_FIXTURE.layout_state = {excluded: []};'
+      + 'DEV_PREVIEW_HOTKEYS_FIXTURE.sizes = {}; DEV_PREVIEW_HOTKEYS_FIXTURE.sizable = [];'
+      + 'DEV_PREVIEW_HOTKEYS_FIXTURE.client_sizes = {}; DEV_PREVIEW_HOTKEYS_FIXTURE.geometry_revision = 0;', dev);
     vm.runInContext(source.slice(source.indexOf('  // Saved layout browser fixtures'),
       source.indexOf('  // Companions are browser-only fixtures')), dev);
     vm.runInContext(source.slice(source.indexOf('  var _devPreviewHotkeys ='), source.indexOf('  api.list_rows =')), dev);
@@ -124,7 +142,7 @@ function settle(p, applied = true) {
     assert.equal(g.cycle, '');
     await api.set_preview_cycle_group_bind(g.id, 'Ctrl+F2');
     const result = await api.set_preview_cycle_group_prev_bind(g.id, 'Ctrl+F3');
-    assert.deepEqual(clone(result.hotkeys.groups.at(-1)), {id: g.id, name: 'Backward test', cycle: 'Ctrl+F2', cycle_prev: 'Ctrl+F3'});
+    assert.deepEqual(clone(result.hotkeys.groups.at(-1)), {id: g.id, name: 'Backward test', members: [], cycle: 'Ctrl+F2', cycle_prev: 'Ctrl+F3'});
     assert.equal((await api.set_preview_cycle_group_prev_bind('stale', 'Ctrl+F4')).applied, false);
     assert.equal((await api.set_preview_cycle_group_prev_bind(g.id, '')).hotkeys.groups.at(-1).cycle_prev, '');
     while (timers.length) timers.shift()();
@@ -191,7 +209,7 @@ function settle(p, applied = true) {
           if (owner === 'route') window.WM.route('main');
           if (owner === 'closed') { manager().open = false; manager().dispatchEvent({type: 'toggle'}); }
           if (owner === 'hidden') document.getElementById('settings-previews-characters').hidden = true;
-          if (owner === 'capture') { bind('Back · Fleet').click(); await tick(); }
+          if (owner === 'capture') { gbind('g', 'Back').click(); await tick(); }
           if (owner === 'queued-dialog') window.WM.prompt('Newer dialog', 'Own this focus', 'newer');
           const answer = document.getElementById(outcome === 'cancel' ? 'dlg-cancel' : 'dlg-ok');
           const newerFocus = () => document.getElementById('preview-enabled').focus();
@@ -308,7 +326,7 @@ function settle(p, applied = true) {
       p.hotkeys.groups.shift(); push(p);
       assert.ok(document.activeElement === name(), 'removed focused group falls back to Add');
       name().value = 'G1 draft'; name().setSelectionRange(2, 5, 'backward');
-      bind('Back · Fleet').focus(); bind('Back · Fleet').click(); await tick(); push(p);
+      gbind('g', 'Back').focus(); gbind('g', 'Back').click(); await tick(); push(p);
       assert.ok(document.querySelector('.capturing'), 'ordinary push never steals armed capture');
       key('Escape'); await tick();
       assert.ok(document.activeElement !== name(), 'capture cancellation does not resurrect manager focus');
@@ -316,14 +334,16 @@ function settle(p, applied = true) {
       assert.equal(writes.length, 0);
     }
   } else if (scenario === 'rows') {
+    // Group chords live in the Cycle groups card now; the bind table
+    // renders character rows only -- running first, then the roster.
     const labels = Array.from(document.querySelectorAll('#preview-binds .lab')).map(el => el.title);
-    assert.deepEqual(labels.slice(0, 6), ['All forward', 'All back', 'Forward · Fleet', 'Back · Fleet', 'Forward · All back', 'Back · All back']);
-    assert.equal(bind('Back · All back').textContent, 'Not set', 'legacy group missing field');
-    assert.equal(action('Back · All back', 'Clear'), undefined);
-    assert.ok(action('Back · All back', 'Edit…'));
+    assert.deepEqual(labels, ['Alice', 'Bob']);
+    assert.equal(gbind('g:prev', 'Back').textContent, 'Not set', 'legacy group missing field');
+    assert.equal(gaction('g:prev', 'Back', 'Clear'), undefined);
+    assert.ok(gaction('g:prev', 'Back', 'Edit…'));
     assert.equal(document.querySelector('[data-preview-configure="Alice"]').parentNode.children.length, 5);
     const p = payload(); p.hotkeys.groups = []; push(p);
-    assert.equal(document.querySelectorAll('#preview-binds .bindbtn').length, 4, 'old no-group setup');
+    assert.equal(document.querySelectorAll('#preview-binds .bindbtn').length, 2, 'groups come and go; every known character keeps its row');
   } else if (scenario === 'conflicts') {
     const p = payload(); const chord = 'Ctrl+F3';
     p.hotkeys.groups[1].cycle = chord;
@@ -336,58 +356,55 @@ function settle(p, applied = true) {
     }
     p.hotkeys.characters.Alice = chord; push(p);
     assert.match(warning('group-prev:g').textContent, /Character focus takes priority/);
-    p.hotkeys.characters = {}; p.hotkeys.cycle_prev = chord; push(p);
-    assert.match(warning('group-prev:g').textContent, /All back takes priority/);
-    p.hotkeys.cycle_next = chord; push(p);
-    assert.match(warning('group-prev:g').textContent, /All forward takes priority/);
     const lone = payload(); lone.bookmark_chords.active = [chord]; push(lone);
     assert.match(warning('group-prev:g').textContent, /configured EVE bookmark keybind/);
     lone.bookmark_chords.active = []; lone.registration[chord] = false; push(lone);
     assert.match(warning('group-prev:g').textContent, /owned by another application/);
     lone.registration = {}; push(lone);
     assert.equal(warning('group-prev:g'), null);
-    assert.ok(bind('Back · Fleet').classList.contains('unknown'));
+    assert.ok(gbind('g', 'Back').classList.contains('unknown'));
     for (const known of [undefined, false, true]) {
       lone.registration = known === undefined ? {} : {[chord]: known}; push(lone);
-      const button = bind('Back · Fleet');
+      const button = gbind('g', 'Back');
       assert.equal(button.textContent, chord, 'accessible name keeps full chord');
       assert.ok(button.title.includes(chord), 'ellipsized cycle chord remains in tooltip');
       if (known === undefined) assert.match(button.title, /Not registered right now/);
       if (known === false) assert.match(button.title, /Another application already owns/);
     }
   } else if (scenario === 'writes') {
-    for (const [label, endpoint, field] of [['Forward · Fleet', 'set_preview_cycle_group_bind', 'cycle'], ['Back · Fleet', 'set_preview_cycle_group_prev_bind', 'cycle_prev']]) {
+    for (const [dir, endpoint, field] of [['Forward', 'set_preview_cycle_group_bind', 'cycle'], ['Back', 'set_preview_cycle_group_prev_bind', 'cycle_prev']]) {
       const p = payload(); push(p);
-      bind(label).click(); await tick(); key('F8'); await tick();
+      gbind('g', dir).click(); await tick(); key('F8'); await tick();
       assert.deepEqual([writes.at(-1).method, ...writes.at(-1).args], [endpoint, 'g', 'Ctrl+F8']);
-      assert.ok(bind('Forward · Fleet').disabled && bind('Back · Fleet').disabled);
+      assert.ok(gbind('g', 'Forward').disabled && gbind('g', 'Back').disabled);
       p.hotkeys.groups[0][field] = 'Ctrl+F8'; settle(p); await tick();
-      assert.equal(bind(label).textContent, 'Ctrl+F8');
-      action(label, 'Clear').click(); assert.deepEqual(writes.at(-1).args, ['g', '']);
-      settle(p, false); await tick(); assert.equal(bind(label).textContent, 'Ctrl+F8');
-      assert.ok(!bind(label).disabled);
-      action(label, 'Edit…').click(); await tick();
+      assert.equal(gbind('g', dir).textContent, 'Ctrl+F8');
+      gaction('g', dir, 'Clear').click(); assert.deepEqual(writes.at(-1).args, ['g', '']);
+      settle(p, false); await tick(); assert.equal(gbind('g', dir).textContent, 'Ctrl+F8');
+      assert.ok(!gbind('g', dir).disabled);
+      gaction('g', dir, 'Edit…').click(); await tick();
       const input = document.getElementById('dlg-input'); input.value = 'Ctrl+F8';
       document.getElementById('dlg-ok').click(); await tick();
       assert.equal(writes.at(-1).method, endpoint); settle(p); await tick();
-      action(label, 'Clear').click(); p.hotkeys.groups[0][field] = ''; settle(p); await tick();
-      assert.equal(bind(label).textContent, 'Not set');
+      gaction('g', dir, 'Clear').click(); p.hotkeys.groups[0][field] = ''; settle(p); await tick();
+      assert.equal(gbind('g', dir).textContent, 'Not set');
     }
   } else if (scenario === 'stale') {
-    const p = payload(); action('Back · Fleet', 'Clear').click();
+    const p = payload(); gaction('g', 'Back', 'Clear').click();
     p.hotkeys.groups[0].name = 'New name'; p.hotkeys.groups[0].cycle_prev = 'Ctrl+F9'; push(p);
     settle(payload()); await tick();
-    assert.equal(bind('Back · New name').textContent, 'Ctrl+F9');
-    assert.equal(bind('Back · New name').disabled, false);
-    action('Back · New name', 'Clear').click();
+    assert.equal(gpanel('g').querySelector('.cycle-group-name').textContent, 'New name');
+    assert.equal(gbind('g', 'Back').textContent, 'Ctrl+F9');
+    assert.equal(gbind('g', 'Back').disabled, false);
+    gaction('g', 'Back', 'Clear').click();
     const deleted = payload(); deleted.hotkeys.groups = []; push(deleted);
-    settle(p); await tick(); assert.equal(document.querySelectorAll('#preview-binds .bindbtn').length, 4);
+    settle(p); await tick(); assert.equal(document.querySelectorAll('#preview-cycle-groups .cycle-group-panel').length, 0);
   } else if (scenario === 'cancel') {
     for (const destination of ['Escape', 'dialog', 'tab', 'section']) {
-      push(payload()); bind('Back · Fleet').click(); await tick();
+      push(payload()); gbind('g', 'Back').click(); await tick();
       assert.ok(document.querySelector('.capturing'));
       if (destination === 'Escape') key('Escape');
-      if (destination === 'dialog') action('Forward · Fleet', 'Edit…').click();
+      if (destination === 'dialog') gaction('g', 'Forward', 'Edit…').click();
       if (destination === 'tab') document.dispatchEvent({type: 'wm:settings-tab', detail: {section: 'previews', tab: 'windows'}});
       if (destination === 'section') document.dispatchEvent({type: 'wm:section', detail: 'general'});
       await tick(); assert.equal(document.querySelector('.capturing'), null);
@@ -398,7 +415,7 @@ function settle(p, applied = true) {
   } else if (scenario === 'marker') {
     document.querySelector('[data-preview-configure="Alice"]').click();
     const marker = document.querySelector('[data-preview-detail-control="marker"]');
-    bind('Back · Fleet').click(); await tick();
+    gbind('g', 'Back').click(); await tick();
     const p = payload(); p.roster.push('New pilot'); push(p);
     assert.equal(document.querySelector('[data-preview-configure="New pilot"]'), null);
     marker.dispatchEvent({type: 'mousedown'});

@@ -2315,8 +2315,10 @@ def test_plan_assigns_one_id_per_binding():
     plan = host.plan_registrations(
         {
             "characters": {"Bravo": "Ctrl+F2", "Alice": "Ctrl+F1"},
-            "cycle_next": "Ctrl+Alt+Right",
-            "cycle_prev": "Ctrl+Alt+Left",
+            "groups": [
+                {"id": "dps", "name": "DPS", "cycle": "Ctrl+Alt+Right"},
+                {"id": "logi", "name": "Logistics", "cycle": "Ctrl+Alt+Left"},
+            ],
         }
     )
     ids = [entry[0] for entry in plan]
@@ -2329,8 +2331,7 @@ def test_plan_is_stable_across_calls():
     id assignment would churn registrations that did not change."""
     table = {
         "characters": {"Alice": "Ctrl+F1", "Bravo": "Ctrl+F2"},
-        "cycle_next": "",
-        "cycle_prev": "",
+        "groups": [{"id": "dps", "name": "DPS", "cycle": ""}],
     }
     assert host.plan_registrations(table) == host.plan_registrations(table)
 
@@ -2339,8 +2340,6 @@ def test_plan_drops_unparseable_and_empty_gestures():
     plan = host.plan_registrations(
         {
             "characters": {"Alice": "", "Bravo": "nonsense", "Carol": "Ctrl+F3"},
-            "cycle_next": "",
-            "cycle_prev": "",
         }
     )
     assert [entry[2] for entry in plan] == [("focus", ("Carol",))]
@@ -2357,8 +2356,6 @@ def test_plan_merges_duplicate_chords():
     plan = host.plan_registrations(
         {
             "characters": {"Bravo": "Ctrl+F1", "Alice": "Ctrl+F1"},
-            "cycle_next": "",
-            "cycle_prev": "",
         }
     )
     assert len(plan) == 1
@@ -2375,23 +2372,29 @@ def test_plan_drops_a_cycle_chord_a_character_already_owns():
     plan = host.plan_registrations(
         {
             "characters": {"Alice": "Ctrl+Alt+Right"},
-            "cycle_next": "Ctrl+Alt+Right",
-            "cycle_prev": "",
+            "groups": [{"id": "dps", "name": "DPS", "cycle": "Ctrl+Alt+Right"}],
         }
     )
     assert [entry[2] for entry in plan] == [("focus", ("Alice",))]
 
 
 def test_cycle_actions_carry_direction():
+    """One group's forward/back pair registers as two distinct actions."""
     plan = host.plan_registrations(
         {
             "characters": {},
-            "cycle_next": "Ctrl+Alt+Right",
-            "cycle_prev": "Ctrl+Alt+Left",
+            "groups": [
+                {
+                    "id": "dps",
+                    "name": "DPS",
+                    "cycle": "Ctrl+Alt+Right",
+                    "cycle_prev": "Ctrl+Alt+Left",
+                },
+            ],
         }
     )
     actions = sorted(entry[2] for entry in plan)
-    assert actions == [("cycle", -1), ("cycle", 1)]
+    assert actions == [("cycle_group", "dps"), ("cycle_group_prev", "dps")]
 
 
 # --- Group planner tests (Step 1) ---
@@ -2401,8 +2404,6 @@ def test_plan_carries_stable_id_for_named_group_cycles():
     plan = host.plan_registrations(
         {
             "characters": {},
-            "cycle_next": "Ctrl+F1",
-            "cycle_prev": "Ctrl+F2",
             "groups": [
                 {"id": "dps-id", "name": "DPS", "cycle": "Ctrl+F3"},
                 {"id": "logi-id", "name": "Logistics", "cycle": "Ctrl+F4"},
@@ -2410,8 +2411,6 @@ def test_plan_carries_stable_id_for_named_group_cycles():
         }
     )
     assert [entry[2] for entry in plan] == [
-        ("cycle", 1),
-        ("cycle", -1),
         ("cycle_group", "dps-id"),
         ("cycle_group", "logi-id"),
     ]
@@ -2422,8 +2421,6 @@ def test_plan_character_chord_beats_group_chord():
     plan = host.plan_registrations(
         {
             "characters": {"Alice": "Ctrl+F3"},
-            "cycle_next": "Ctrl+F1",
-            "cycle_prev": "Ctrl+F2",
             "groups": [
                 {"id": "dps", "name": "DPS", "cycle": "Ctrl+F3"},
             ],
@@ -2434,21 +2431,25 @@ def test_plan_character_chord_beats_group_chord():
     assert ("cycle_group", "dps") not in actions
 
 
-def test_plan_all_cycle_chord_beats_group_chord():
-    """The All cycle chord has earlier entry order -- the group cycle loses."""
+def test_plan_first_group_chord_beats_a_later_group_sharing_it():
+    """No All-cycle remains, but two GROUPS can still fight over one chord.
+
+    Groups are planned in stored order after the characters, so the earlier
+    group's cycle wins the registration and the later duplicate is dropped
+    -- which is what the missing hotkey_status entry reports to the page.
+    """
     plan = host.plan_registrations(
         {
             "characters": {},
-            "cycle_next": "Ctrl+F3",
-            "cycle_prev": "Ctrl+F2",
             "groups": [
                 {"id": "dps", "name": "DPS", "cycle": "Ctrl+F3"},
+                {"id": "logi", "name": "Logistics", "cycle": "Ctrl+F3"},
             ],
         }
     )
     actions = [entry[2] for entry in plan]
-    assert ("cycle", 1) in actions
-    assert ("cycle_group", "dps") not in actions
+    assert ("cycle_group", "dps") in actions
+    assert ("cycle_group", "logi") not in actions
 
 
 def test_plan_group_cycle_with_non_canonical_gesture_is_canonicalized():
@@ -3167,9 +3168,28 @@ def _batch_hotkey_host():
         "Carol": _FakeClient("Carol", hwnd=0x3333),
         "Delta": _FakeClient("Delta", hwnd=0x4444),
     }
+    # Cycling exists only through groups now, so every relative-step test
+    # registers a group cycle whose ordered members are the whole batch
+    # roster -- the group walks the same names the old All-cycle did.
+    h._active_hotkeys = _batch_group_table()
     user32 = _FakeUser32()
     user32.GetForegroundWindow = lambda: 0x1111
     return h, _FakeLibs(user32)
+
+
+def _batch_group_table():
+    """One group covering the four _batch_hotkey_host clients, in order."""
+    return {
+        "groups": [
+            {
+                "id": "all",
+                "name": "Everyone",
+                "members": ["Alice", "Bravo", "Carol", "Delta"],
+                "cycle": "Ctrl+Alt+Right",
+                "cycle_prev": "Ctrl+Alt+Left",
+            }
+        ]
+    }
 
 
 def test_three_focus_hotkeys_activate_only_the_last_target(monkeypatch):
@@ -3219,8 +3239,8 @@ def test_shared_focus_ignores_stale_last_cycle_outside_eve(monkeypatch):
 
 def test_cycle_uses_last_cycle_as_fallback_outside_eve(monkeypatch):
     h, _libs = _batch_hotkey_host()
-    h._last_cycled = "Alice"
-    h._registered = {1: ("cycle", 1)}
+    h._last_group_cycled = {"all": "Alice"}
+    h._registered = {1: ("cycle_group", "all")}
     libs = _FakeLibs(_FakeUser32(foreground=0xDEAD))
     activated = []
     monkeypatch.setattr(
@@ -3230,7 +3250,7 @@ def test_cycle_uses_last_cycle_as_fallback_outside_eve(monkeypatch):
     h._on_hotkeys(libs, [1])
 
     assert activated == [0x2222]
-    assert h._last_cycled == "Bravo"
+    assert h._last_group_cycled == {"all": "Bravo"}
 
 
 def test_a_later_focus_in_a_mixed_batch_does_not_replace_the_cycle_fallback(
@@ -3242,9 +3262,9 @@ def test_a_later_focus_in_a_mixed_batch_does_not_replace_the_cycle_fallback(
     cycle target, exactly as sequential dispatch would after its cycle action.
     """
     h, _libs = _batch_hotkey_host()
-    h._last_cycled = "Alice"
+    h._last_group_cycled = {"all": "Alice"}
     h._registered = {
-        1: ("cycle", 1),
+        1: ("cycle_group", "all"),
         2: ("focus", ("Alice", "Bravo")),
     }
     libs = _FakeLibs(_FakeUser32(foreground=0xDEAD))
@@ -3257,12 +3277,12 @@ def test_a_later_focus_in_a_mixed_batch_does_not_replace_the_cycle_fallback(
     h._on_hotkeys(libs, [1])
 
     assert activated == [0x1111, 0x3333]
-    assert h._last_cycled == "Carol"
+    assert h._last_group_cycled == {"all": "Carol"}
 
 
 def test_three_cycle_next_hotkeys_fold_to_one_three_step_activation(monkeypatch):
     h, libs = _batch_hotkey_host()
-    h._registered = {1: ("cycle", 1)}
+    h._registered = {1: ("cycle_group", "all")}
     activated = []
     monkeypatch.setattr(
         h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
@@ -3271,12 +3291,12 @@ def test_three_cycle_next_hotkeys_fold_to_one_three_step_activation(monkeypatch)
     h._on_hotkeys(libs, [1, 1, 1])
 
     assert activated == [0x4444]
-    assert h._last_cycled == "Delta"
+    assert h._last_group_cycled == {"all": "Delta"}
 
 
 def test_focus_then_cycle_applies_cycle_to_the_virtual_focus_target(monkeypatch):
     h, libs = _batch_hotkey_host()
-    h._registered = {1: ("focus", ("Carol",)), 2: ("cycle", 1)}
+    h._registered = {1: ("focus", ("Carol",)), 2: ("cycle_group", "all")}
     activated = []
     monkeypatch.setattr(
         h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
@@ -3285,13 +3305,13 @@ def test_focus_then_cycle_applies_cycle_to_the_virtual_focus_target(monkeypatch)
     h._on_hotkeys(libs, [1, 2])
 
     assert activated == [0x4444]
-    assert h._last_cycled == "Delta"
+    assert h._last_group_cycled == {"all": "Delta"}
 
 
 def test_failed_focus_does_not_erase_foreground_cursor_for_later_cycle(monkeypatch):
     h, libs = _batch_hotkey_host()
-    h._last_cycled = "Carol"
-    h._registered = {1: ("focus", ("Ghost",)), 2: ("cycle", 1)}
+    h._last_group_cycled = {"all": "Carol"}
+    h._registered = {1: ("focus", ("Ghost",)), 2: ("cycle_group", "all")}
     activated = []
     monkeypatch.setattr(
         h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
@@ -3300,13 +3320,13 @@ def test_failed_focus_does_not_erase_foreground_cursor_for_later_cycle(monkeypat
     h._on_hotkeys(libs, [1, 2])
 
     assert activated == [0x2222]
-    assert h._last_cycled == "Bravo"
+    assert h._last_group_cycled == {"all": "Bravo"}
 
 
 def test_failed_focus_then_cycle_uses_cycle_history_when_outside_eve(monkeypatch):
     h, _libs = _batch_hotkey_host()
-    h._last_cycled = "Carol"
-    h._registered = {1: ("focus", ("Ghost",)), 2: ("cycle", 1)}
+    h._last_group_cycled = {"all": "Carol"}
+    h._registered = {1: ("focus", ("Ghost",)), 2: ("cycle_group", "all")}
     libs = _FakeLibs(_FakeUser32(foreground=0xDEAD))
     activated = []
     monkeypatch.setattr(
@@ -3316,12 +3336,12 @@ def test_failed_focus_then_cycle_uses_cycle_history_when_outside_eve(monkeypatch
     h._on_hotkeys(libs, [1, 2])
 
     assert activated == [0x4444]
-    assert h._last_cycled == "Delta"
+    assert h._last_group_cycled == {"all": "Delta"}
 
 
 def test_failed_focus_does_not_erase_prior_cycle_cursor(monkeypatch):
     h, libs = _batch_hotkey_host()
-    h._registered = {1: ("cycle", 1), 2: ("focus", ("Ghost",))}
+    h._registered = {1: ("cycle_group", "all"), 2: ("focus", ("Ghost",))}
     activated = []
     monkeypatch.setattr(
         h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
@@ -3330,12 +3350,12 @@ def test_failed_focus_does_not_erase_prior_cycle_cursor(monkeypatch):
     h._on_hotkeys(libs, [1, 2, 1])
 
     assert activated == [0x3333]
-    assert h._last_cycled == "Carol"
+    assert h._last_group_cycled == {"all": "Carol"}
 
 
 def test_final_failed_focus_suppresses_prior_cycle_dispatch(monkeypatch):
     h, libs = _batch_hotkey_host()
-    h._registered = {1: ("cycle", 1), 2: ("focus", ("Ghost",))}
+    h._registered = {1: ("cycle_group", "all"), 2: ("focus", ("Ghost",))}
     activated = []
     monkeypatch.setattr(
         h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
@@ -3344,15 +3364,15 @@ def test_final_failed_focus_suppresses_prior_cycle_dispatch(monkeypatch):
     h._on_hotkeys(libs, [1, 2])
 
     assert activated == []
-    assert h._last_cycled == "Bravo"
+    assert h._last_group_cycled == {"all": "Bravo"}
 
 
 def test_later_focus_supersedes_cycle_before_final_relative_action(monkeypatch):
     h, libs = _batch_hotkey_host()
     h._registered = {
-        1: ("cycle", 1),
+        1: ("cycle_group", "all"),
         2: ("focus", ("Carol",)),
-        3: ("cycle", -1),
+        3: ("cycle_group_prev", "all"),
     }
     activated = []
     monkeypatch.setattr(
@@ -3362,14 +3382,17 @@ def test_later_focus_supersedes_cycle_before_final_relative_action(monkeypatch):
     h._on_hotkeys(libs, [1, 2, 3])
 
     assert activated == [0x2222]
-    assert h._last_cycled == "Bravo"
+    assert h._last_group_cycled == {"all": "Bravo"}
 
 
 def test_opposite_cycle_actions_that_return_to_foreground_do_not_activate(
     monkeypatch,
 ):
     h, libs = _batch_hotkey_host()
-    h._registered = {1: ("cycle", 1), 2: ("cycle", -1)}
+    h._registered = {
+        1: ("cycle_group", "all"),
+        2: ("cycle_group_prev", "all"),
+    }
     activated = []
     monkeypatch.setattr(
         h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
@@ -3378,7 +3401,7 @@ def test_opposite_cycle_actions_that_return_to_foreground_do_not_activate(
     h._on_hotkeys(libs, [1, 2])
 
     assert activated == []
-    assert h._last_cycled == "Alice"
+    assert h._last_group_cycled == {"all": "Alice"}
 
 
 # --- Group fold/history tests (Step 6) ---
@@ -3388,12 +3411,10 @@ def test_group_cycle_next_advances_within_group(monkeypatch):
     """Foreground is Alice (dps). DPS cycle should advance Alice→Bravo."""
     h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
     h._active_hotkeys = {
-        "group_by_character": {
-            "Alice": "dps",
-            "Bravo": "dps",
-            "Carol": "logi",
-            "Delta": "logi",
-        }
+        "groups": [
+            {"id": "dps", "name": "DPS", "members": ["Alice", "Bravo"]},
+            {"id": "logi", "name": "Logistics", "members": ["Carol", "Delta"]},
+        ]
     }
     h._registered = {1: ("cycle_group", "dps")}
     activated = []
@@ -3411,12 +3432,10 @@ def test_group_cycle_nonmember_foreground_starts_at_first_member(monkeypatch):
     """Foreground is Alice (dps), pressing logi cycle starts at first logi."""
     h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
     h._active_hotkeys = {
-        "group_by_character": {
-            "Alice": "dps",
-            "Bravo": "dps",
-            "Carol": "logi",
-            "Delta": "logi",
-        }
+        "groups": [
+            {"id": "dps", "name": "DPS", "members": ["Alice", "Bravo"]},
+            {"id": "logi", "name": "Logistics", "members": ["Carol", "Delta"]},
+        ]
     }
     h._registered = {1: ("cycle_group", "logi")}
     activated = []
@@ -3435,12 +3454,10 @@ def test_group_cycle_outside_eve_resumes_per_group_history(monkeypatch):
     h, _libs = _batch_hotkey_host()
     h._last_group_cycled = {"logi": "Carol"}
     h._active_hotkeys = {
-        "group_by_character": {
-            "Alice": "dps",
-            "Bravo": "dps",
-            "Carol": "logi",
-            "Delta": "logi",
-        }
+        "groups": [
+            {"id": "dps", "name": "DPS", "members": ["Alice", "Bravo"]},
+            {"id": "logi", "name": "Logistics", "members": ["Carol", "Delta"]},
+        ]
     }
     h._registered = {1: ("cycle_group", "logi")}
     libs = _FakeLibs(_FakeUser32(foreground=0xDEAD))  # outside EVE
@@ -3456,32 +3473,28 @@ def test_group_cycle_outside_eve_resumes_per_group_history(monkeypatch):
 
 
 def test_mixed_group_cycles_keep_independent_histories(monkeypatch):
-    """All, DPS, and Logistics histories update independently in one batch."""
+    """DPS and Logistics histories update independently in one batch."""
     h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
     h._active_hotkeys = {
-        "group_by_character": {
-            "Alice": "dps",
-            "Bravo": "dps",
-            "Carol": "logi",
-            "Delta": "logi",
-        }
+        "groups": [
+            {"id": "dps", "name": "DPS", "members": ["Alice", "Bravo"]},
+            {"id": "logi", "name": "Logistics", "members": ["Carol", "Delta"]},
+        ]
     }
     h._registered = {
         1: ("cycle_group", "dps"),
         2: ("cycle_group", "logi"),
-        3: ("cycle", 1),
     }
     activated = []
     monkeypatch.setattr(
         h, "_activate_client", lambda _libs, c: activated.append(c.hwnd)
     )
 
-    h._on_hotkeys(libs, [1, 2, 3])
+    h._on_hotkeys(libs, [1, 2])
 
     assert h._last_group_cycled == {"dps": "Bravo", "logi": "Carol"}
-    assert h._last_cycled == "Delta"
-    # Only the final resolved target (Delta) is activated; intermediates are not.
-    assert activated == [0x4444]  # Delta
+    # Only the final resolved target (Carol) is activated; intermediates are not.
+    assert activated == [0x3333]  # Carol
 
 
 def test_empty_group_logs_no_op_and_skips_dispatch(monkeypatch, caplog):
@@ -3489,7 +3502,8 @@ def test_empty_group_logs_no_op_and_skips_dispatch(monkeypatch, caplog):
     import logging
 
     h, libs = _batch_hotkey_host()
-    h._active_hotkeys = {"group_by_character": {}}  # nobody in "dps"
+    # 'empty' group exists but has no members.
+    h._active_hotkeys = {"groups": [{"id": "dps", "name": "DPS", "members": []}]}
     h._registered = {1: ("cycle_group", "dps")}
     activated = []
     monkeypatch.setattr(
@@ -3511,12 +3525,10 @@ def test_group_cycle_then_direct_focus_leaves_group_history_intact(monkeypatch):
     not rewrite the group's cycle history."""
     h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
     h._active_hotkeys = {
-        "group_by_character": {
-            "Alice": "dps",
-            "Bravo": "dps",
-            "Carol": "logi",
-            "Delta": "logi",
-        }
+        "groups": [
+            {"id": "dps", "name": "DPS", "members": ["Alice", "Bravo"]},
+            {"id": "logi", "name": "Logistics", "members": ["Carol", "Delta"]},
+        ]
     }
     # Batch: DPS cycle (Alice→Bravo), then focus Carol directly.
     h._registered = {
@@ -3541,9 +3553,7 @@ def test_group_cycle_cancels_to_foreground_without_activation(monkeypatch):
     """A single group cycle that resolves back to the foreground window
     must not activate (no-op cancellation)."""
     h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
-    h._active_hotkeys = {
-        "group_by_character": {"Alice": "dps"}  # only one dps member
-    }
+    h._active_hotkeys = {"groups": [{"id": "dps", "name": "DPS", "members": ["Alice"]}]}
     h._registered = {1: ("cycle_group", "dps")}
     activated = []
     monkeypatch.setattr(
@@ -3562,10 +3572,7 @@ def test_mixed_group_cycle_resolves_to_foreground_without_activation(monkeypatch
     must not activate (cancellation guard)."""
     h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
     h._active_hotkeys = {
-        "group_by_character": {
-            "Alice": "dps",
-            "Bravo": "dps",
-        }
+        "groups": [{"id": "dps", "name": "DPS", "members": ["Alice", "Bravo"]}]
     }
     # DPS cycle from Alice → Bravo, then focus Alice brings resolved_cursor
     # back to Alice.  But cycle_seen is True and the final target == foreground.
@@ -3644,7 +3651,7 @@ def test_capture_does_not_fall_back_to_an_older_registered_text(monkeypatch):
 
 def test_coalesced_hotkeys_emit_one_debug_summary(monkeypatch, caplog):
     h, libs = _batch_hotkey_host()
-    h._registered = {1: ("cycle", 1)}
+    h._registered = {1: ("cycle_group", "all")}
     monkeypatch.setattr(
         h, "_activate_client", lambda *_args: host.window_mod.ActivationResult.ACTIVATED
     )
@@ -3657,7 +3664,9 @@ def test_coalesced_hotkeys_emit_one_debug_summary(monkeypatch, caplog):
         for record in caplog.records
         if "coalesced preview hotkeys" in record.message.lower()
     ]
-    assert summaries == ["Coalesced preview hotkeys: 3, final ('cycle', 1) -> Delta"]
+    assert summaries == [
+        "Coalesced preview hotkeys: 3, final ('cycle_group', 'all') -> Delta"
+    ]
 
 
 def test_offline_focus_batch_does_not_add_a_target_none_diagnostic(caplog):
@@ -3673,21 +3682,19 @@ def test_offline_focus_batch_does_not_add_a_target_none_diagnostic(caplog):
 
 
 def test_empty_cycle_batch_does_not_add_a_target_none_diagnostic(monkeypatch, caplog):
+    """A group whose members are all offline is a logged no-op, and like its
+    sibling no-ops it must not also emit the (false) "target is not running"
+    diagnostic: cycling exists only through groups, and an empty walk is the
+    group's own honest explanation."""
     h, libs = _batch_hotkey_host()
-    h._registered = {1: ("cycle", 1)}
-    monkeypatch.setattr(h, "_cycle_keys", list)
+    h._active_hotkeys = {"groups": [{"id": "empty", "name": "E", "members": []}]}
+    h._registered = {1: ("cycle_group", "empty")}
 
     with caplog.at_level(logging.DEBUG, logger="wingman.preview.host"):
         h._on_hotkeys(libs, [1])
 
     messages = [record.message for record in caplog.records]
-    assert (
-        messages.count(
-            "Cycle keybind had nothing to visit: every running character "
-            "is opted out of previews"
-        )
-        == 1
-    )
+    assert messages.count("Group cycle keybind 'empty' had nothing to visit") == 1
     assert "Preview hotkey target None is not running" not in messages
 
 
@@ -3704,11 +3711,10 @@ def test_group_cycle_keys_use_applied_membership_and_skip_excluded():
         "Excluded": _FakeClient("Excluded", hwnd=3),
     }
     h._active_hotkeys = {
-        "group_by_character": {
-            "Alice": "dps",
-            "Bob": "logi",
-            "Excluded": "dps",
-        }
+        "groups": [
+            {"id": "dps", "name": "DPS", "members": ["Alice", "Excluded"]},
+            {"id": "logi", "name": "Logistics", "members": ["Bob"]},
+        ]
     }
     assert h._group_cycle_keys("dps") == ["Alice"]
 
@@ -3722,8 +3728,18 @@ def test_group_cycle_keys_reads_active_not_desired():
         "Bob": _FakeClient("Bob", hwnd=2),
     }
     # _active_hotkeys has old membership; _desired_hotkeys has new membership.
-    h._active_hotkeys = {"group_by_character": {"Alice": "dps", "Bob": "logi"}}
-    h._desired_hotkeys = {"group_by_character": {"Alice": "logi", "Bob": "dps"}}
+    h._active_hotkeys = {
+        "groups": [
+            {"id": "dps", "name": "DPS", "members": ["Alice"]},
+            {"id": "logi", "name": "Logistics", "members": ["Bob"]},
+        ]
+    }
+    h._desired_hotkeys = {
+        "groups": [
+            {"id": "dps", "name": "DPS", "members": ["Bob"]},
+            {"id": "logi", "name": "Logistics", "members": ["Alice"]},
+        ]
+    }
     # Should reflect _active_hotkeys, not _desired_hotkeys.
     assert h._group_cycle_keys("dps") == ["Alice"]
 
@@ -3743,8 +3759,6 @@ def test_apply_hotkeys_prunes_last_group_cycled_to_active_groups():
         libs,
         {
             "characters": {},
-            "cycle_next": "",
-            "cycle_prev": "",
             "groups": [
                 {"id": "dps", "name": "DPS", "cycle": "Ctrl+F3"},
             ],
@@ -3765,15 +3779,17 @@ def test_apply_hotkeys_installs_active_membership_table():
     libs = _FakeLibs(_FakeUser32())
     table = {
         "characters": {},
-        "cycle_next": "Ctrl+F1",
-        "cycle_prev": "Ctrl+F2",
         "groups": [
-            {"id": "dps", "name": "DPS", "cycle": "Ctrl+F3"},
+            {
+                "id": "dps",
+                "name": "DPS",
+                "cycle": "Ctrl+F3",
+                "members": ["Alice", "Bob"],
+            },
         ],
-        "group_by_character": {"Alice": "dps", "Bob": "dps"},
     }
     h._apply_hotkeys(libs, table)
-    assert h._active_hotkeys.get("group_by_character") == {"Alice": "dps", "Bob": "dps"}
+    assert h._active_hotkeys.get("groups") == table["groups"]
 
 
 def test_hotkey_focuses_the_named_character(monkeypatch):
@@ -3926,7 +3942,18 @@ def test_cycle_hotkey_anchors_on_the_foreground_client(monkeypatch):
     user32.GetForegroundWindow = lambda: 0x1111
     libs = _FakeLibs(user32)
     h._apply_hotkeys(
-        libs, {"characters": {}, "cycle_next": "Ctrl+Alt+Right", "cycle_prev": ""}
+        libs,
+        {
+            "characters": {},
+            "groups": [
+                {
+                    "id": "all",
+                    "name": "Everyone",
+                    "members": ["Alice", "Bravo"],
+                    "cycle": "Ctrl+Alt+Right",
+                },
+            ],
+        },
     )
 
     ident = next(iter(user32.registered))
@@ -5116,8 +5143,8 @@ def test_a_disabled_character_gets_no_hotkey_registration(monkeypatch):
 
 
 def test_a_disabled_character_is_skipped_by_the_cycle_keybinds(monkeypatch):
-    """Cycle walks the running clients; a character with no preview on
-    screen must not be a stop on that walk."""
+    """A cycle group's walk is its member list filtered to who is running;
+    a character with no preview on screen must not be a stop on that walk."""
     h = _config_sweep_host(monkeypatch, excluded=lambda: ["Bravo"])
     monkeypatch.setattr(
         host.discovery,
@@ -5128,16 +5155,21 @@ def test_a_disabled_character_is_skipped_by_the_cycle_keybinds(monkeypatch):
         host.PreviewWindow, "create", classmethod(lambda cls, *a, **k: None)
     )
     h._sweep(libs=None)
+    h._active_hotkeys = {
+        "groups": [
+            {"id": "all", "name": "Everyone", "members": ["Alice", "Bravo", "Charlie"]},
+        ]
+    }
 
-    assert h._cycle_keys() == ["Alice", "Charlie"]
+    assert h._group_cycle_keys("all") == ["Alice", "Charlie"]
 
 
-def test_a_cycle_with_every_character_opted_out_says_why(monkeypatch, caplog):
-    """The honest-logging rule this file already applies to its two sibling
-    no-ops. With every discovered character opted out, cycle.step returns
-    None and the switch is a correct no-op -- but it used to fall through
-    to the "target is not running" branch, which is the one thing that is
-    NOT true here: every target is running and was deliberately excluded.
+def test_a_cycle_group_with_every_member_opted_out_says_why(monkeypatch, caplog):
+    """The honest-logging rule this file already applies to its sibling
+    no-ops. With every group member opted out, the walk is empty and the
+    switch is a correct no-op -- it must not fall through to the
+    "target is not running" branch, which is the one thing that is NOT
+    true here: every member is running and was deliberately excluded.
     """
     import logging
 
@@ -5146,13 +5178,16 @@ def test_a_cycle_with_every_character_opted_out_says_why(monkeypatch, caplog):
         host.PreviewWindow, "create", classmethod(lambda cls, *a, **k: None)
     )
     h._sweep(libs=None)
-    h._registered[1] = ("cycle", 1)
+    h._active_hotkeys = {
+        "groups": [{"id": "solo", "name": "Solo", "members": ["Alice"]}]
+    }
+    h._registered[1] = ("cycle_group", "solo")
 
     with caplog.at_level(logging.DEBUG, logger="wingman.preview.host"):
         h._on_hotkey(_FakeLibs(_FakeUser32(foreground=0)), 1)
 
     assert "not running" not in caplog.text
-    assert "opted out" in caplog.text
+    assert "Group cycle keybind 'solo' had nothing to visit" in caplog.text
 
 
 @pytest.mark.parametrize("key", ["standard", "large", "extra_large"])
@@ -6336,7 +6371,12 @@ def test_cycle_during_pending_foreground_anchors_on_pending_target(monkeypatch):
         "_activate_client",
         lambda _libs, client: activated.append(client.stable_key),
     )
-    h._registered = {1: ("cycle", 1)}
+    h._active_hotkeys = {
+        "groups": [
+            {"id": "all", "name": "Everyone", "members": ["Alice", "Bravo", "Carol"]},
+        ]
+    }
+    h._registered = {1: ("cycle_group", "all")}
     h._on_hotkeys(_FakeLibs(user32), [1])
     assert activated == ["Carol"]
 
@@ -7035,11 +7075,10 @@ def test_empty_group_after_dps_cycle_preserves_dps_target(monkeypatch):
     remains Bravo (the DPS step result)."""
     h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
     h._active_hotkeys = {
-        "group_by_character": {
-            "Alice": "dps",
-            "Bravo": "dps",
-            # 'empty' group has no members
-        }
+        "groups": [
+            {"id": "dps", "name": "DPS", "members": ["Alice", "Bravo"]},
+            {"id": "empty", "name": "Empty", "members": []},
+        ]
     }
     h._registered = {
         1: ("cycle_group", "dps"),
@@ -7061,7 +7100,7 @@ def test_empty_group_after_direct_focus_preserves_focused_target(monkeypatch):
     """An empty named group following a direct-focus action must not cancel
     the focus result.  The final dispatch target remains Carol."""
     h, libs = _batch_hotkey_host()  # foreground = Alice (0x1111)
-    h._active_hotkeys = {"group_by_character": {}}  # 'empty' has no members
+    h._active_hotkeys = {"groups": [{"id": "empty", "name": "Empty", "members": []}]}
     h._registered = {
         1: ("focus", ("Carol",)),
         2: ("cycle_group", "empty"),

@@ -580,8 +580,8 @@ test('runtime unavailability is visible and never invents a working capture cont
 test('real preview capture disarms on leaving for Companions before its source chooser', async () => {
   const p = await page(null, true);
   p.WM.openSettingsSection('previews'); await turn();
-  p.window.onPreviewHotkeys({hotkeys: {characters: {}, cycle_next: '', cycle_prev: '', groups: [], group_by_character: {}},
-    characters: [], roster: [], registration: {}, bookmark_chords: {active: [], latent: []},
+  p.window.onPreviewHotkeys({hotkeys: {characters: {}, groups: []},
+    characters: [], roster: ['Alice'], registration: {}, bookmark_chords: {active: [], latent: []},
     enabled: true, locked: [], lock_default: false, never_minimize: [], excluded: [], sizes: {},
     client_sizes: {}, sizable: [], layout_sources: []});
   assert.deepEqual(p.errors, []);

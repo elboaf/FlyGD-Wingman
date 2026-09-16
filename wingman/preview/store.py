@@ -106,10 +106,10 @@ class LayoutStore:
         be reversed by logging in, because the whole point is that the
         client no longer produces a preview.
 
-        A third kind: a character mapped in hotkeys.group_by_character has
-        a persisted group assignment.  Without a row the assignment select
-        never renders, leaving the character silently locked into (or out
-        of) a named group with no UI to clear it.
+        A third kind: a character listed in a cycle group's members has a
+        persisted membership whose order the user arranged. Without a row
+        the member could not be removed or reordered -- silently stuck in
+        (or out of) a named group with no UI to change it.
 
         Crop and marker owners need the same protection, even when disabled:
         their saved configuration needs a row where it can be changed or removed.
@@ -119,7 +119,12 @@ class LayoutStore:
         return (
             set(hotkeys.get("characters") or {})
             | set(section.get("excluded") or [])
-            | set(hotkeys.get("group_by_character") or {})
+            | {
+                name
+                for group in hotkeys.get("groups") or []
+                if isinstance(group, dict)
+                for name in group.get("members") or []
+            }
             | set(section.get("crops") or {})
             | set(section.get("label_markers") or {})
         )
