@@ -6657,6 +6657,11 @@ class Api:
         doc = self._theme_document()
         if family not in themes.FAMILIES:
             return self._field_refused("Unknown colour family.")
+        if str(swatch) == "":
+            # The dropdown's "Theme default" row: clear the pick rather
+            # than set one, restoring the preset's own mapping for this
+            # family alone.
+            return self._write_theme(lambda d: d["families"].pop(family, None))
         if not themes._family_allows(themes.PRESETS[doc["preset"]], family, swatch):
             return self._field_refused("That colour is not offered for this family.")
         swatch = str(swatch).lower()

@@ -1951,11 +1951,12 @@
 
 // ---- Appearance card (theme picker) ------------------------------------
 // The customizer's contract lives in themes.py; this card only renders
-// what Python computed and sends picks back. Swatches reuse the fixed
-// palette pattern (see the preview selection ring above): radios built
-// from the payload, never <input type="color">, the hex shipped verbatim.
-// A family with no swatch checked means "the preset's own mapping" --
-// that state is real, so none is forced.
+// what Python computed and sends picks back. Each family is a custom
+// dropdown -- the native select cannot render a colour dot inside its
+// open list, and the open list is the point: the entries are the
+// palette's own names ("Magnum", "Bone", "Hot Magenta"), never hex codes.
+// A family showing "Theme default" is a real state: no pick made, the
+// preset's own mapping applies.
 (function () {
   var host = WM.el('theme-composer');
   var select = WM.el('theme-preset');
@@ -1963,18 +1964,59 @@
   var msg = WM.el('msg-theme');
   if (!host || !select || !customise || !msg) { return; }
 
-  function theme() { return WM.theme; }
+  var openMenu = null; // the one open dropdown, if any
 
   function say(text) {
     msg.textContent = text || '';
     msg.hidden = !text;
   }
 
-  // Repaint from WM.theme. data-built guards each family's radio set the
-  // way the preview palette guards its own: a repaint from onTheme must
-  // not rebuild under the pointer and drop focus mid-choose.
+  function closeMenus() {
+    var menus = host.querySelectorAll('.theme-select');
+    for (var i = 0; i < menus.length; i++) {
+      menus[i].removeAttribute('open');
+      menus[i].querySelector('.theme-menu').hidden = true;
+      menus[i].querySelector('button').setAttribute('aria-expanded', 'false');
+    }
+    openMenu = null;
+  }
+
+  function toggleMenu(control) {
+    var wasOpen = control.hasAttribute('open');
+    closeMenus();
+    if (!wasOpen) {
+      control.setAttribute('open', '');
+      control.querySelector('.theme-menu').hidden = false;
+      control.querySelector('button').setAttribute('aria-expanded', 'true');
+      openMenu = control;
+    }
+  }
+
+  function swatchName(t, hex) {
+    var swatches = t.swatches || [];
+    for (var i = 0; i < swatches.length; i++) {
+      if (swatches[i].hex.toLowerCase() === hex.toLowerCase()) {
+        return swatches[i].name;
+      }
+    }
+    return hex;
+  }
+
+  function dot(hex) {
+    var el = WM.make('span', 'dot');
+    el.style.setProperty('--swatch', hex);
+    return el;
+  }
+
+  function presetName(t) {
+    for (var i = 0; i < (t.presets || []).length; i++) {
+      if (t.presets[i].id === t.preset) { return t.presets[i].name; }
+    }
+    return 'the theme';
+  }
+
   function renderPicker() {
-    var t = theme();
+    var t = WM.theme;
     if (!t) { return; }
     var wanted = (t.presets || []).map(function (p) { return p.id; });
     if (select.getAttribute('data-built') !== wanted.join(',')) {
@@ -1991,70 +2033,87 @@
     renderComposer();
   }
 
+  // Menus are rebuilt only with the composer: a repaint closes whatever
+  // is open first, so nothing is ever rebuilt under the pointer mid-choose.
   function renderComposer() {
-    var t = theme();
-    var open = !host.hidden;
-    if (!t || !open) { host.textContent = ''; return; }
+    var t = WM.theme;
+    if (!t || host.hidden) { host.textContent = ''; return; }
+    closeMenus();
+    host.textContent = '';
     var labels = t.family_labels || {};
-    var families = Object.keys(labels);
-    families.forEach(function (family) {
-      var rowId = 'theme-fam-' + family;
-      var row = WM.el(rowId);
+    Object.keys(labels).forEach(function (family) {
       var legal = t.legal[family] || [];
-      var key = family + ':' + legal.join(',');
-      if (!row) {
-        row = WM.make('div', 'row');
-        row.id = rowId;
-        var label = WM.make('span', 'lab');
-        label.textContent = labels[family];
-        label.id = rowId + '-label';
-        var group = WM.make('div', 'swatches');
-        group.setAttribute('role', 'radiogroup');
-        group.setAttribute('aria-labelledby', label.id);
-        group.addEventListener('change', onPick);
-        row.appendChild(label);
-        row.appendChild(group);
-        host.appendChild(row);
-        row._group = group;
-        row._built = '';
-      }
-      var group = row._group;
-      if (row._built !== key) {
-        group.textContent = '';
-        legal.forEach(function (hex) {
-          var name = swatchName(t, hex);
-          var wrap = WM.make('label', 'swatch');
-          var input = document.createElement('input');
-          input.type = 'radio';
-          input.name = 'theme-' + family;
-          input.value = hex;
-          var dot = WM.make('span', 'dot');
-          dot.style.setProperty('--swatch', hex);
-          wrap.title = name === hex ? hex : name + ' (' + hex + ')';
-          input.setAttribute('aria-label', name);
-          wrap.appendChild(input);
-          wrap.appendChild(dot);
-          group.appendChild(wrap);
-        });
-        row._built = key;
-      }
       var picked = (t.families || {})[family] || '';
-      var boxes = group.querySelectorAll('input');
-      for (var i = 0; i < boxes.length; i++) {
-        boxes[i].checked = boxes[i].value === picked;
+
+      var row = WM.make('div', 'row');
+      var lab = WM.make('span', 'lab');
+      lab.textContent = labels[family];
+      row.appendChild(lab);
+
+      var control = WM.make('div', 'theme-select');
+      var button = WM.make('button');
+      button.type = 'button';
+      button.setAttribute('aria-haspopup', 'listbox');
+      button.setAttribute('aria-expanded', 'false');
+      if (picked) {
+        button.appendChild(dot(picked));
+        button.appendChild(WM.make('span', null, swatchName(t, picked)));
+      } else {
+        button.appendChild(WM.make('span', null,
+                                   'Theme default (' + presetName(t) + ')'));
       }
+      control.appendChild(button);
+
+      var menu = WM.make('ul', 'theme-menu');
+      menu.hidden = true;
+      menu.setAttribute('role', 'listbox');
+
+      var defaultItem = WM.make('li');
+      var defaultBtn = WM.make('button', 'theme-default-option');
+      defaultBtn.type = 'button';
+      defaultBtn.setAttribute('role', 'option');
+      defaultBtn.textContent = 'Theme default';
+      defaultBtn.addEventListener('click', function () {
+        pick(family, '');
+      });
+      defaultItem.appendChild(defaultBtn);
+      menu.appendChild(defaultItem);
+
+      legal.forEach(function (hex) {
+        var li = WM.make('li');
+        var item = WM.make('button');
+        item.type = 'button';
+        item.setAttribute('role', 'option');
+        item.appendChild(dot(hex));
+        item.appendChild(WM.make('span', null, swatchName(t, hex)));
+        item.addEventListener('click', function () {
+          pick(family, hex);
+        });
+        li.appendChild(item);
+        menu.appendChild(li);
+      });
+
+      button.addEventListener('click', function () { toggleMenu(control); });
+      control.appendChild(menu);
+      row.appendChild(control);
+      host.appendChild(row);
     });
+
     renderReset(t);
   }
 
-  function swatchName(t, hex) {
-    var swatches = t.swatches || [];
-    for (var i = 0; i < swatches.length; i++) {
-      if (swatches[i].hex.toLowerCase() === hex.toLowerCase()) {
-        return swatches[i].name;
+  function pick(family, hex) {
+    closeMenus();
+    WM.send('theme_set_family', family, hex).then(function (res) {
+      if (!res || !res.applied) {
+        // The onTheme push that repaints the control is exactly what did
+        // not happen, so say why and repaint from the last known state.
+        say((res && res.error) || 'Could not reach the app.');
+        renderPicker();
+      } else {
+        say('');
       }
-    }
-    return hex;
+    });
   }
 
   function renderReset(t) {
@@ -2079,33 +2138,6 @@
     host.appendChild(reset);
   }
 
-  function presetName(t) {
-    for (var i = 0; i < (t.presets || []).length; i++) {
-      if (t.presets[i].id === t.preset) { return t.presets[i].name; }
-    }
-    return 'the theme';
-  }
-
-  // One listener on the composer, like the preview palette's host
-  // listener: the radios are replaced on repaint, the host is not.
-  function onPick(ev) {
-    var input = ev.target;
-    if (!input || input.type !== 'radio') { return; }
-    var row = input.closest('.row');
-    var family = row ? row.id.replace('theme-fam-', '') : '';
-    if (!family) { return; }
-    WM.send('theme_set_family', family, input.value).then(function (res) {
-      if (!res || !res.applied) {
-        // Never took effect; the onTheme push that would have repainted
-        // the control is exactly what did not happen, so repaint by hand.
-        say((res && res.error) || 'Could not reach the app.');
-        renderPicker();
-      } else {
-        say('');
-      }
-    });
-  }
-
   select.addEventListener('change', function () {
     WM.send('theme_set_preset', select.value).then(function (res) {
       if (!res || !res.applied) {
@@ -2125,9 +2157,18 @@
     renderComposer();
   });
 
+  // Clicking elsewhere, or Escape, closes whichever menu is open. Bound on
+  // document because closing tracks the click's landing place, not focus.
+  document.addEventListener('click', function (ev) {
+    if (openMenu && !openMenu.contains(ev.target)) { closeMenus(); }
+  });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape') { closeMenus(); }
+  });
+
   // The push is the renderer of record -- app.js hands every payload here
-  // through WM.theme and the applier, so a pick made anywhere (including a
-  // future second window) repaints this card for free.
+  // through WM.theme and the applier, so a pick made anywhere repaints
+  // this card for free.
   document.addEventListener('wm:theme', renderPicker);
 }());
 }());

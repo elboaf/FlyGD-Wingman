@@ -2418,7 +2418,8 @@
   api.theme_state = function () {
     console.log('DEV api.theme_state()');
     return Promise.resolve({
-      presets: [{id: 'wingman-dark', name: 'Wingman Dark'}],
+      presets: [{id: 'wingman-dark', name: 'Wingman Dark'},
+              {id: 'zoolander', name: 'Zoolander'}],
       preset: 'wingman-dark',
       families: {},
       effective: {},
