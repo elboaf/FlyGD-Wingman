@@ -3162,6 +3162,7 @@ class PreviewHost:
             win32.WM_APP_RESIZE_ONE,
             win32.WM_APP_RESIZE_ALL,
             win32.WM_APP_RESET_LAYOUTS,
+            win32.WM_APP_RELOAD_LAYOUTS,
         ):
             if self._apply_primary(msg) and (self._stopping or self._eve_stopping):
                 self._begin_stop(libs)

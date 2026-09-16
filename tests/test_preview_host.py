@@ -7733,3 +7733,27 @@ def test_teardown_forgets_a_pending_roster(monkeypatch):
 
     assert h._pending_roster is None
     assert h._last_roster_generation == 0
+
+
+def test_every_primary_intent_message_is_pump_dispatched():
+    """A _post_primary_intent message the pump never routes is the worst
+    kind of bug, seen live with the first import-reload build: the wake is
+    silently dropped, the re-place never runs, and the unprocessed intent
+    holds _primary_pending open forever, so previews can neither stop nor
+    quit. Lexical on purpose: the dispatch tuple is a literal in the pump
+    loop, and an executable check cannot reach it without a real pump.
+    """
+    import re
+    from pathlib import Path
+
+    source = Path(host.__file__).read_text(encoding="utf-8")
+    posted = set(re.findall(r"_post_primary_intent\(win32\.(WM_APP_\w+)", source))
+    assert posted, "sanity: intent messages exist"
+    dispatch = re.search(r"if msg in \(\s*([^)]+?)\):", source, re.DOTALL)
+    assert dispatch is not None, "pump dispatch tuple not found"
+    for message in sorted(posted):
+        assert f"win32.{message}" in dispatch.group(1), (
+            f"{message} is posted as a primary intent but the pump loop "
+            "never routes it; the wake would be dropped and the intent "
+            "would strand the primary FIFO"
+        )
