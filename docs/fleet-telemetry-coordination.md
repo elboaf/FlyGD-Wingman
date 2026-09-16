@@ -1,18 +1,21 @@
 # Fleet telemetry remaining-work coordination
 
-Status: local-model core integrated and verified. All six shared-contract findings are addressed; independent re-review is READY. Canonical contracts/profile and remaining plans are tracked in docs. Foundation and dependent implementation remain to execute; no rollout is authorized.
+Status: local-model core and shared profile/name foundation integrated and verified. All six shared-contract findings are addressed; independent re-review is READY. Session 1 is authorized for remaining local-model work. Wire/schema, transport, automatic verification and presentation remain to implement; no rollout is authorized.
 
 ## Authority and bases
 
 - Approved behavior: [fleet-telemetry-v2-design.md](fleet-telemetry-v2-design.md), sections 2–6, with the user's subsequent approval to drop v1 shared-fleet compatibility. Consent-generation safety remains required.
 - Timing work is complete and merged: Wingman PR #246, merge `62e1645cf9f49f11ea9af83ffe4ad619a9de5bdf`. Do not amend or reimplement that PR.
-- Wingman integration base: `62e1645cf9f49f11ea9af83ffe4ad619a9de5bdf`.
-- authGD integration base: `a9bfb49cc0424c1d6156ec905ef94b94cb119e16`.
-- Wingman coordinator: `/mnt/c/dev/flygd-wingman/.worktrees/fleet-telemetry-coordination`, branch `coord/fleet-telemetry-v2`.
-- authGD coordinator: `/home/tng/workspace/authGD/.claude/worktrees/fleet-telemetry-coordination`, branch `coord/fleet-telemetry-v2`.
+- Core/contracts PR #248 is merged: `0fb54df362d1b10c17adee010a0998c016366059`. Its branch is preserved, not reused for new work.
+- Current Wingman integration base: `0fb54df362d1b10c17adee010a0998c016366059`.
+- Current authGD integration base: `123a4d2547e2a93fefd1044645fedff1ad581b8b`.
+- Wingman coordinator: `/mnt/c/dev/flygd-wingman/.worktrees/fleet-telemetry-coordination`, branch `coord/fleet-v2-implementation`.
+- authGD coordinator: `/home/tng/workspace/authGD/.claude/worktrees/fleet-telemetry-coordination`, branch `coord/fleet-v2-implementation`.
 
-Both integration worktrees start from fetched upstream main. Primary checkouts,
-other worktrees, and the old merged timing branch are left untouched.
+Both integration branches start from the pinned upstream bases above. Earlier
+planning/review evidence used Wingman `62e1645c` and authGD `a9bfb49c`; those are
+historical inspection bases, not current branch tips. Primary checkouts, Session 1
+worktrees and old merged branches are left untouched.
 
 ## Approved remaining scope
 
@@ -72,7 +75,7 @@ remain coordinator/user decisions after review.
 | --- | --- | --- | --- |
 | C — shared contract | Required combat/age contract, schema needs, rejection/cutover matrix | Both protocol/transport layers and authGD relay/schema | Reviewed contract READY: `cd2c7b2e-2623-4db`; all six findings addressed, required v2 boundary pinned |
 | A — automatic verification | Persistent consent/source lifecycle, current-client Off/Stop, worker/recovery and test ownership | authGD lifecycle/jobs/routes; Wingman control boundary | Reviewed automatic/control contract and six-slice plan; implementation awaits shared foundation |
-| M — client combat model | Local activity and independent EWAR attribution model, preserved Alert behavior, snapshot/projection interfaces | Wingman telemetry and consumers | Core Tasks 1/4 integrated and verified; names/carry/effects plan consumes reviewed profile after foundation |
+| M — client combat model | Local activity and independent EWAR attribution model, preserved Alert behavior, snapshot/projection interfaces | Wingman telemetry and consumers | Core Tasks 1/4 complete; profile foundation accepted and integrated; remaining names/carry/effects work authorized |
 | U — presentation/setup | UI/bridge ownership and minimal setup flow, empty/stale/update-required states and UI checks | Wingman Fleet Bar/settings and authGD setup pages | Initial proposal retained as evidence; its legacy-UI promises are superseded |
 
 These passes inspect and propose only. They do not independently implement new
@@ -231,8 +234,10 @@ The coordinator approves the narrow internal model handoff already proposed by M
 and consumed by C/U: frozen local deadlines and accepted IDs, with no transport
 mapping inside metrics. [Local core plan](fleet-combat-model-core-plan.md) authorizes
 only values/readers and row activity plus its lifecycle fencing.
-The shared Unicode/bounds contract is now reviewed; its foundation helpers still
-need implementation before independent effect production can consume them.
+The shared Unicode/bounds foundation is now implemented, reviewed and locally
+integrated in both repositories. See the [dependency checkpoint](fleet-telemetry-foundation-verification.md)
+for provenance, interface ruling, fresh verification and Phase B authorization.
+This does not complete wire DTO/codec or schema foundation work.
 
 Test-isolation inventory `5bcf9178-32f5-42d` found the shared default port 5433 is
 owned by another development container. Do not use or alter it blindly. Separate
@@ -265,7 +270,8 @@ The model worktree and `.superpowers/sdd/fleet-combat-model-core-plan/` evidence
 remain available. This core did not apply the six shared-contract findings; their
 newly authorized remediation is tracked separately in `findings-resolution-ledger.md`.
 
-Next: assign isolated foundation/schema work and execute the reviewed dependent
-lanes without recreating the completed model core. Real persistence/transaction,
+Next: Session 1 executes remaining local-model Tasks 2/3/5 on its existing branch;
+backend and transport lanes consume the accepted profile checkpoint. Assign remaining
+wire/schema ownership without recreating the completed model core or profile helpers. Real persistence/transaction,
 clock/suspend, large-response resource, browser and two-PC gates remain required;
 closed contracts are not proof that those implementations already exist.
