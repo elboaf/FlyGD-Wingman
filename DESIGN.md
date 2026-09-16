@@ -245,6 +245,23 @@ describing the change as "seven edits, all mechanical". If it is mechanical
 you are not deciding anything, which is the problem.
 
 
+## Appearance: one card, six family picks
+
+The theme picker lives in Settings › General — configuration by
+PRODUCT.md's own test, and the first Appearance control the app has had.
+Its safety argument is structural, so it is recorded here rather than
+enforced by review: `themes.py` derives every concrete token from ONE
+swatch per family while preserving each role's reference LIGHTNESS, and
+contrast is a function of luminance alone, so any combination the
+composer can produce holds the preset's measured ratios. The composer
+offers only swatches the preset's pool tags as compatible with the
+family; `--link` is not in any pool (its own note in style.css explains
+why it must stay blue), and severity tokens (`--training`, `--unmet`)
+are likewise fixed vocabulary. The native surface is painted from the
+stored theme before the first HTML frame (`window.py` resolves --bg the
+same way), which is what keeps a non-default theme from launching with a
+flash of the ground token.
+
 ## Controls
 
 **Checkboxes and radios must use the wrapper.** Nothing in `style.css`

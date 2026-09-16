@@ -62,7 +62,27 @@ MIN_HEIGHT = 625
 
 # --bg from the token table. This paints the NATIVE surface, before the
 # first frame of HTML exists; a mismatch here is a white flash on launch.
+# The theme picker can move --bg, so this is the FALLBACK ground token and
+# _native_background resolves the stored theme's own --bg per launch.
 BACKGROUND = "#0c0d10"
+
+
+def _native_background(api) -> str:
+    """The stored theme's --bg, for the surface painted before HTML exists.
+
+    Read from the already-loaded settings rather than the disk, and falling
+    back to the ground token on anything unexpected -- a broken theme
+    document must cost a default-looking launch, never a failed one.
+    """
+    try:
+        from .. import settings as _settings
+        from .. import themes as _themes
+
+        doc = _settings.validated_theme(api._state.settings.get("theme"))
+        return _themes.resolve(_themes.PRESETS[doc["preset"]], doc["families"])["--bg"]
+    except Exception:  # noqa: BLE001 - any theme trouble falls back to the ground token
+        return BACKGROUND
+
 
 # Pinned, never autodetected: a silent fallback to another backend would
 # mean a "passing" run that proves nothing about the shipped product.
@@ -213,7 +233,7 @@ def create(api, hidden: bool = False) -> "webview.Window":
         # marks its own title bar with `pywebview-drag-region`; that is
         # the whole drag surface, by design.
         easy_drag=False,
-        background_color=BACKGROUND,
+        background_color=_native_background(api),
         # Without this the floor is pywebview's default 200x100
         # (winforms.py:210), and now that the window can be resized a user
         # can drag it down to a size the layout cannot render at all.

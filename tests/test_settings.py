@@ -140,6 +140,9 @@ def test_defaults_are_the_documented_values():
             "enabled": False,
         },
         "wanderer": {"enabled": False, "base_url": "", "map_identifier": ""},
+        # Preset id plus the family picks the composer made against its
+        # pool; validated through themes.normalize on every read.
+        "theme": {"preset": "wingman-dark", "families": {}},
     }
 
 

@@ -2410,6 +2410,72 @@
   // correct under ?dev=1 and was wrong under Python. A double that is more
   // complete than the thing it doubles hides exactly the bug it should
   // have caught.
+  // The theme payload, with the Wingman Dark pool and an EMPTY effective
+  // map: the applier no-ops on empty, so dev still renders the shipped
+  // stylesheet rather than a JS-maintained copy of it. The composer
+  // swatches are the point -- they must be eyeballable under ?dev=1
+  // without Python, the way every other card's payload is fabricated here.
+  api.theme_state = function () {
+    console.log('DEV api.theme_state()');
+    return Promise.resolve({
+      presets: [{id: 'wingman-dark', name: 'Wingman Dark'}],
+      preset: 'wingman-dark',
+      families: {},
+      effective: {},
+      swatches: [
+        {name: 'Panel', hex: '#17151c', families: ['surface']},
+        {name: 'Card top', hex: '#191426', families: ['surface']},
+        {name: 'Hover', hex: '#27232e', families: ['surface']},
+        {name: 'Control', hex: '#211d28', families: ['surface']},
+        {name: 'Row', hex: '#1d1a24', families: ['surface']},
+        {name: 'Background', hex: '#0c0d10', families: ['base']},
+        {name: 'Sunken', hex: '#131117', families: ['base']},
+        {name: 'Field', hex: '#0c0a0f', families: ['base']},
+        {name: 'Ice', hex: '#e8eaed', families: ['text']},
+        {name: 'Bright', hex: '#c8cdd6', families: ['text']},
+        {name: 'Dim', hex: '#9aa2b1', families: ['text']},
+        {name: 'Label', hex: '#8b93a1', families: ['text']},
+        {name: 'Violet', hex: '#8430d9', families: ['accent']},
+        {name: 'Light violet', hex: '#ad5aff', families: ['accent']},
+        {name: 'Deep violet', hex: '#7a1fc8', families: ['accent']},
+        {name: 'Teal', hex: '#45c8d4', families: ['accent']},
+        {name: 'Gold', hex: '#d29922', families: ['accent', 'warning']},
+        {name: 'Red', hex: '#f85149', families: ['accent', 'danger']},
+        {name: 'Solid red', hex: '#d9291c', families: ['danger']},
+        {name: 'Green', hex: '#4ade80', families: ['success']}
+      ],
+      legal: {
+        surface: ['#17151c', '#191426', '#27232e', '#211d28', '#1d1a24'],
+        base: ['#0c0d10', '#131117', '#0c0a0f'],
+        text: ['#e8eaed', '#c8cdd6', '#9aa2b1', '#8b93a1'],
+        accent: ['#8430d9', '#ad5aff', '#7a1fc8', '#45c8d4', '#d29922', '#f85149'],
+        danger: ['#f85149', '#d9291c'],
+        success: ['#4ade80'],
+        warning: ['#d29922']
+      },
+      family_labels: {
+        surface: 'Panels & controls', base: 'App background', text: 'Text',
+        accent: 'Accent', danger: 'Danger', success: 'Success',
+        warning: 'Warning'
+      }
+    });
+  };
+
+  api.theme_set_preset = function (id) {
+    console.log('DEV api.theme_set_preset(', id, ')');
+    return Promise.resolve({applied: true, persisted: true, error: ''});
+  };
+
+  api.theme_set_family = function (family, hex) {
+    console.log('DEV api.theme_set_family(', family, hex, ')');
+    return Promise.resolve({applied: true, persisted: true, error: ''});
+  };
+
+  api.theme_reset = function () {
+    console.log('DEV api.theme_reset()');
+    return Promise.resolve({applied: true, persisted: true, error: ''});
+  };
+
   api.get_settings = function () {
     console.log('DEV api.get_settings()');
     return Promise.resolve(settingsPayload());

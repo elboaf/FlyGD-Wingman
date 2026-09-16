@@ -48,6 +48,7 @@ from .. import (
     library,
     obsconfig,
     paths,
+    themes,
     uploader,
 )
 from .. import settings as settings_mod
@@ -6590,6 +6591,94 @@ class Api:
         restart rather than silently pretending it will.
         """
         return self._write_setting("first_run_skipped", True)
+
+    # ---- theme picker ----------------------------------------------------
+    # The customizer's contract lives in themes.py; these facades only
+    # validate, persist and publish. The push name (onTheme) is mirrored to
+    # the floating sig bar window by _push like every other push, which is
+    # how the bars recolour without loading app.js.
+
+    def _theme_document(self) -> dict:
+        return settings_mod.validated_theme(self._state.settings.get("theme"))
+
+    def _theme_payload(self) -> dict:
+        doc = self._theme_document()
+        preset = themes.PRESETS[doc["preset"]]
+        return {
+            "presets": [
+                {"id": p["id"], "name": p["name"]} for p in themes.PRESETS.values()
+            ],
+            "preset": doc["preset"],
+            "families": doc["families"],
+            "effective": themes.resolve(preset, doc["families"]),
+            "swatches": preset["swatches"],
+            "legal": {
+                family: themes.legal_swatches(preset, family, doc["families"])
+                for family in themes.FAMILIES
+            },
+            "family_labels": themes.FAMILY_LABELS,
+        }
+
+    def _push_theme(self) -> None:
+        payload = self._theme_payload()
+        self._push("onTheme", payload)
+        # The fleet bar page is a third renderer of the same tokens. It has
+        # no app.js and a guarded delivery pipeline (FleetDelivery) for
+        # telemetry; a theme change is configuration, not telemetry, so it
+        # takes the sig bar's direct evaluate path rather than joining that
+        # pipeline.
+        bar = self._fleetbar_window
+        if bar is not None:
+            script = f"window.onTheme && window.onTheme({_page_payload(payload)})"
+            try:
+                bar.evaluate_js(script)
+            except Exception:
+                logger.debug("Fleet bar theme push failed", exc_info=True)
+
+    def theme_state(self) -> dict:
+        """Everything the picker renders, on request. One read for boot and
+        for re-rendering the composer after a preset switch, matching the
+        get_settings pattern: Python does not volunteer it at boot because
+        a push has no guaranteed listener yet."""
+        return self._theme_payload()
+
+    def theme_set_preset(self, preset_id: str) -> dict:
+        """Switch the shipped preset. Family picks are cleared with it:
+        they were chosen against the old pool, and carrying them to a new
+        pool would silently mean something else."""
+        if preset_id not in themes.PRESETS:
+            return self._field_refused("Unknown theme.")
+        return self._write_theme(lambda doc: doc.update(preset=preset_id, families={}))
+
+    def theme_set_family(self, family: str, swatch: str) -> dict:
+        """Point one element family at one pool swatch. themes.resolve
+        derives every concrete role from the pick; this only refuses picks
+        the preset does not offer."""
+        doc = self._theme_document()
+        if family not in themes.FAMILIES:
+            return self._field_refused("Unknown colour family.")
+        if not themes._family_allows(themes.PRESETS[doc["preset"]], family, swatch):
+            return self._field_refused("That colour is not offered for this family.")
+        swatch = str(swatch).lower()
+        return self._write_theme(lambda d: d["families"].update({family: swatch}))
+
+    def theme_reset(self) -> dict:
+        """Back to the preset's own mapping, all families at once."""
+        return self._write_theme(lambda doc: doc.update(families={}))
+
+    def _write_theme(self, mutate) -> dict:
+        try:
+            with settings_mod.update(self._state.settings) as stored:
+                doc = settings_mod.validated_theme(stored.get("theme"))
+                mutate(doc)
+                stored["theme"] = doc
+        except OSError:
+            logger.exception("Could not persist theme")
+            return self._field_refused("Could not save this to settings.")
+        payload = self._theme_payload()
+        payload.update(self._field_ok())
+        self._push_theme()
+        return payload
 
     def _push_auth(self, state: str, message: str | None = None) -> None:
         # Read live from settings rather than snapshotted: the channel is
