@@ -86,6 +86,9 @@ a = Analysis(
         # resolver reads _internal/assets/setup-presets, never wingman/assets.
         # The post-freeze inventory compares every collected byte to source.
         (str(ROOT / "wingman" / "assets" / "setup-presets"), "assets/setup-presets"),
+        # combatprofile resolves beside its module in both wheels and frozen
+        # builds. No host Unicode fallback can replace a missing profile.
+        (str(ROOT / "wingman" / "data" / "fleet-combat-v2-profile.json"), "wingman/data"),
     ],
     hiddenimports=[
         # pystray selects its backend implementation dynamically at
