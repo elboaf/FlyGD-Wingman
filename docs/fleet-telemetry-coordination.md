@@ -1,6 +1,6 @@
 # Fleet telemetry remaining-work coordination
 
-Status: local-model core integrated and verified. All six shared-contract findings are accepted; initial revision/proof passes are complete and shared state/interface reconciliation is running. Independent re-review still gates dependent implementation; no rollout is authorized.
+Status: local-model core integrated and verified. All six shared-contract findings are addressed; independent re-review is READY. Canonical contracts/profile and remaining plans are tracked in docs. Foundation and dependent implementation remain to execute; no rollout is authorized.
 
 ## Authority and bases
 
@@ -70,9 +70,9 @@ remain coordinator/user decisions after review.
 
 | Pass | Deliverable | Principal repository surface | Status |
 | --- | --- | --- | --- |
-| C — shared contract | Required combat/age contract, schema needs, rejection/cutover matrix | Both protocol/transport layers and authGD relay/schema | Simplified draft complete: `4198e20d-d47c-499`; required `/api/fleet/v2/*`, `protocol:2` proposed for review |
-| A — automatic verification | Persistent consent/source lifecycle, current-client Off/Stop, worker/recovery and test ownership | authGD lifecycle/jobs/routes; Wingman control boundary | Updated-client plan complete: `8ade9390-ecf1-40d`; six TDD slices ready for contract review |
-| M — client combat model | Local activity and independent EWAR attribution model, preserved Alert behavior, snapshot/projection interfaces | Wingman telemetry and consumers | Draft updated: wire-compatibility obligations removed; internal/Alert behavior retained |
+| C — shared contract | Required combat/age contract, schema needs, rejection/cutover matrix | Both protocol/transport layers and authGD relay/schema | Reviewed contract READY: `cd2c7b2e-2623-4db`; all six findings addressed, required v2 boundary pinned |
+| A — automatic verification | Persistent consent/source lifecycle, current-client Off/Stop, worker/recovery and test ownership | authGD lifecycle/jobs/routes; Wingman control boundary | Reviewed automatic/control contract and six-slice plan; implementation awaits shared foundation |
+| M — client combat model | Local activity and independent EWAR attribution model, preserved Alert behavior, snapshot/projection interfaces | Wingman telemetry and consumers | Core Tasks 1/4 integrated and verified; names/carry/effects plan consumes reviewed profile after foundation |
 | U — presentation/setup | UI/bridge ownership and minimal setup flow, empty/stale/update-required states and UI checks | Wingman Fleet Bar/settings and authGD setup pages | Initial proposal retained as evidence; its legacy-UI promises are superseded |
 
 These passes inspect and propose only. They do not independently implement new
@@ -99,7 +99,7 @@ compatibility or irreversible-data decisions are surfaced before implementation.
 - [x] Verify #246 merged and fetch both upstream bases.
 - [x] Create fresh coordinator integration worktrees.
 - [ ] Collect C/A/M/U proposals and resolve interface/file conflicts.
-- [ ] Independently review shared contracts and migration/consent boundaries.
+- [x] Independently review shared contracts and migration/consent boundaries (READY; six accepted findings addressed).
 - [ ] Write executable lane plans and allocate implementation worktrees.
 - [ ] Execute independent lanes in parallel with per-lane red/green and review.
 - [ ] Integrate and run combined protocol/lifecycle/UI gates.
@@ -136,11 +136,13 @@ Full proposal artifacts are in this plan's ignored workspace:
 `combat-contract-draft.md`, `model-plan-draft.md` and `automatic-plan-draft.md`
 now reflect the approved breaking cutover. Both revision agents completed; the
 independent review is complete (REVISE). The user has now explicitly accepted all
-six Important findings for correction; revisions and bounded proof checks are running. Its complete unedited report is
+six Important findings for correction. Revisions, bounded proofs and independent
+re-review are complete. Its original complete unedited report is
 `contract-review.md` in the same workspace.
 Original reports/probes remain historical discovery evidence. Their v1 support,
 legacy Stop promise, downgrade support and mixed-version success requirements are
-superseded by the updated master design. Drafts are not frozen interfaces.
+superseded by the updated master design. The canonical reviewed documents listed
+below, not earlier scratch drafts, now define the implementation handoff.
 
 Confirmed coordination constraints:
 
@@ -203,18 +205,34 @@ kept queued same-CAS Off valid across long disconnection. No invented source-ses
 column was added: inspection corrected that premise; existing source provenance
 plus the new explicit consent binding remain the contract.
 
-Single reconciliation owner `0dfed316-6713-4e4` now closes the exact combined state4
-journal/reserves and cross-annex names/outcomes, then the coordinator requests
-independent re-review. Remaining-model planning marks core Tasks1/4 complete and
-keeps names/effects gated on the shared profile. Accepted findings are not marked
-resolved merely because revised prose exists.
+Single reconciliation owner `0dfed316-6713-4e4` closed the combined state4 journal,
+reserves, cancel-after-On and cross-annex names/outcomes. Post-format proof reruns
+passed, including 780 migration checks and actual Python 3.11/Unicode 14 consumption
+of the frozen Unicode 16 profile. Independent reviewer `cd2c7b2e-2623-4db` returned
+**READY**, explicitly marking all six findings ADDRESSED, with no new Important or
+Critical defect. Its single Minor wording issue was corrected: increased
+non-snapshot response ceilings are intentional v2 changes, not existing behavior.
+
+Canonical implementation handoff:
+- [Common API](fleet-telemetry-v2-api-contract.md)
+- [Combat timing, limits and profile](fleet-telemetry-v2-contract.md)
+- [Automatic/control and pre-session interfaces](fleet-telemetry-v2-automatic-contract.md)
+- [Cutover and single state4 migration](fleet-telemetry-v2-cutover-contract.md)
+- [Remaining combat model plan](fleet-telemetry-combat-model-plan.md)
+- [Automatic implementation plan](fleet-telemetry-automatic-plan.md)
+- [Frozen profile](fleet-combat-v2-profile.json)
+- [Verbatim re-review](fleet-telemetry-v2-contract-review.md) and [evidence](fleet-telemetry-v2-contract-evidence.md)
+
+The profile and review are byte-identical to their reviewed artifacts. The review
+retains its original Markdown hard-break spaces intentionally. No deployment,
+production migration or runtime acceptance follows from contract readiness.
 
 The coordinator approves the narrow internal model handoff already proposed by M
 and consumed by C/U: frozen local deadlines and accepted IDs, with no transport
 mapping inside metrics. [Local core plan](fleet-combat-model-core-plan.md) authorizes
-only values/readers and row activity plus its lifecycle fencing. Named parsing,
-Unicode/bounds and independent effect production remain gated. This permits useful
-implementation without guessing the unresolved wire or server contracts.
+only values/readers and row activity plus its lifecycle fencing.
+The shared Unicode/bounds contract is now reviewed; its foundation helpers still
+need implementation before independent effect production can consume them.
 
 Test-isolation inventory `5bcf9178-32f5-42d` found the shared default port 5433 is
 owned by another development container. Do not use or alter it blindly. Separate
@@ -247,5 +265,7 @@ The model worktree and `.superpowers/sdd/fleet-combat-model-core-plan/` evidence
 remain available. This core did not apply the six shared-contract findings; their
 newly authorized remediation is tracked separately in `findings-resolution-ledger.md`.
 
-Do not let shared-contract checks block independent approved model work, but do
-not implement assumptions inside the six unresolved shared-contract findings.
+Next: assign isolated foundation/schema work and execute the reviewed dependent
+lanes without recreating the completed model core. Real persistence/transaction,
+clock/suspend, large-response resource, browser and two-PC gates remain required;
+closed contracts are not proof that those implementations already exist.

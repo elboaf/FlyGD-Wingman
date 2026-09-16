@@ -1,6 +1,8 @@
 # Fleet telemetry: reliable delivery, consistent combat rows, automatic setup
 
-Status: behavioral direction approved, including the breaking shared-fleet cutover below; detailed contract review remains pending.
+Status: behavioral direction approved, including the breaking shared-fleet cutover below. Detailed contract re-review is READY; all six accepted findings are addressed. Implementation, platform acceptance and deployment gates remain.
+
+The exact handoff is now recorded in the reviewed [combat contract](fleet-telemetry-v2-contract.md), [common API](fleet-telemetry-v2-api-contract.md), [automatic/control contract](fleet-telemetry-v2-automatic-contract.md) and [cutover/state4 contract](fleet-telemetry-v2-cutover-contract.md). See the [independent re-review](fleet-telemetry-v2-contract-review.md) and [contract evidence](fleet-telemetry-v2-contract-evidence.md). The discovery sections below remain the original evidence and behavioral rationale, not a claim of completed runtime implementation.
 
 Compatibility decision: the user explicitly permits v1 shared-fleet clients to
 stop working. The release requires updated clients; maintaining v1 telemetry,
