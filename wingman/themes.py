@@ -10,7 +10,7 @@ mapping; the composer lets the user pick ONE swatch per element family
 technique style.css recorded from the vermilion-to-purple retheme: each
 derived role keeps its REFERENCE LIGHTNESS and takes only hue and
 saturation from the chosen swatch. That is what makes the customizer safe
-without a per-pick contrast checker -- WCAG contrast is a function of
+without a per-pick contrast checker — WCAG contrast is a function of
 luminance alone, so preserving every role's lightness preserves every
 contrast ratio the preset was measured for, no matter which swatches the
 user combines. Compatibility is therefore declarative (which families a
@@ -45,7 +45,7 @@ FAMILY_LABELS = {
 # together if a family's reach ever changes.
 FAMILY_DESCRIPTIONS = {
     "surface": (
-        "Cards, buttons, fields, scrollbars and the row highlights -- "
+        "Cards, buttons, fields, scrollbars and the row highlights — "
         "most of the window's chrome."
     ),
     "base": (
@@ -53,7 +53,7 @@ FAMILY_DESCRIPTIONS = {
         "recessed bands and list rows."
     ),
     "text": (
-        "Every piece of text -- headings, body, labels and hints -- at "
+        "Every piece of text — headings, body, labels and hints — at "
         "the preset's brightness steps, whatever hue you choose."
     ),
     "accent": (
@@ -61,14 +61,14 @@ FAMILY_DESCRIPTIONS = {
         "one call-to-action colour."
     ),
     "danger": (
-        "Delete buttons and destructive hovers -- the colour that must "
+        "Delete buttons and destructive hovers — the colour that must "
         "never be mistaken for the accent."
     ),
     "success": (
         "Green status marks, like the Ready rungs on the Skills roster."
     ),
     "warning": (
-        "Amber status marks -- plan problems and the Fleet Bar's "
+        "Amber status marks — plan problems and the Fleet Bar's "
         "incoming-threat tint."
     ),
 }
@@ -77,7 +77,7 @@ FAMILY_DESCRIPTIONS = {
 # The reference role supplies the lightness that survives recolouring; the
 # key is what the page receives. Keeping the reference IN THE PRESET (not
 # hard-coded here) is what lets two presets shape the same family
-# differently -- Zoolander's navy ramp and Wingman's violet ramp do not
+# differently — Zoolander's navy ramp and Wingman's violet ramp do not
 # share stops.
 _SURFACE_ROLES = [
     ("--panel", "--panel"),
@@ -260,7 +260,7 @@ def legal_swatches(preset, family, picks):
 
     With lightness preserved by derivation, every allowed combination holds
     the preset's contrast, so legality here is purely the declarative
-    family tags -- the argument is in the module docstring.
+    family tags — the argument is in the module docstring.
     """
     return [entry["hex"] for entry in preset["swatches"] if family in entry["families"]]
 
@@ -268,7 +268,7 @@ def legal_swatches(preset, family, picks):
 def normalize(document):
     """Project a stored theme document onto what this module supports.
 
-    Returns (preset_id, picks). Anything undeclared -- an unknown preset,
+    Returns (preset_id, picks). Anything undeclared — an unknown preset,
     a family that no longer exists, a swatch the family may not drive --
     is dropped rather than trusted, the same way save() projects onto
     DEFAULTS keys.
