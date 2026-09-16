@@ -2415,6 +2415,220 @@
 // instead of a hand-typed copy that drifts. Presets iterate the same
 // table, so a new preset appears in dev by regenerating, not editing.
   var DEV_THEMES = {
+  "dodgeball": {
+    "roles": {
+      "--bg": "#0d0d0d",
+      "--panel": "#1a1a1a",
+      "--panel-border": "#262626",
+      "--field": "#050505",
+      "--field-border": "#2e2e2e",
+      "--text": "#f5f0e1",
+      "--text-dim": "#bcb4a4",
+      "--text-faint": "#a49f93",
+      "--text-label": "#ada698",
+      "--text-btn": "#d9d2c2",
+      "--brand": "#f4c430",
+      "--brand-deep": "#6b5210",
+      "--brand-text": "#f4c430",
+      "--acc-top": "#f4c430",
+      "--acc-bottom": "#d9a91e",
+      "--brand-edge": "#ffd966",
+      "--focus-ring": "#ffd966",
+      "--ok": "#2fb3a3",
+      "--warn": "#f4c430",
+      "--err": "#f0554e",
+      "--danger": "#f0554e",
+      "--danger-solid": "#a31d1d",
+      "--unmet": "#f0996b",
+      "--training": "#45c8d4",
+      "--link": "#7aa2f7",
+      "--card-top": "#202020",
+      "--sunken": "#0a0a0a",
+      "--titlebar-top": "#222222",
+      "--titlebar-bottom": "#141414",
+      "--titlebar-inset": "#303030",
+      "--statusbar-top": "#181818",
+      "--statusbar-bottom": "#101010",
+      "--wash-top": "#201826",
+      "--wash-bottom": "#141017",
+      "--hover": "#2e2e2e",
+      "--control": "#242424",
+      "--control-border": "#343434",
+      "--control-hover": "#383838",
+      "--control-edge": "#8f8a7e",
+      "--field-focus-border": "#3a3a3a",
+      "--scrollbar": "#2a2a2a",
+      "--scrollbar-hover": "#3a3a3a",
+      "--fleet-incoming-threat": "#d9a91e",
+      "--row-line": "#1e1e1e",
+      "--row-hover": "#1b1b1b",
+      "--row-active": "#222222",
+      "--row-ring": "#333333",
+      "--row-ring-focus": "#4a4a4a"
+    },
+    "swatches": [
+      {
+        "name": "Gym Wall",
+        "hex": "#1a1a1a",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Bruise",
+        "hex": "#4a2a5a",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Gym Floor",
+        "hex": "#c8642a",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Tape Black",
+        "hex": "#2b2b2b",
+        "families": [
+          "surface",
+          "base"
+        ]
+      },
+      {
+        "name": "Gym Wall Deep",
+        "hex": "#0d0d0d",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Court Line",
+        "hex": "#f5f0e1",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Court Line Dim",
+        "hex": "#b8b0a0",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Globo Gold",
+        "hex": "#f4c430",
+        "families": [
+          "text",
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Globo Gold Bright",
+        "hex": "#ffd966",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Dodgeball Pink",
+        "hex": "#e85a8a",
+        "families": [
+          "text",
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Average Joe Red",
+        "hex": "#d62828",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Average Joe Red Dark",
+        "hex": "#a31d1d",
+        "families": [
+          "danger"
+        ]
+      },
+      {
+        "name": "Globo Blue",
+        "hex": "#1e5faa",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Wrench Purple",
+        "hex": "#7b3fa0",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Sweat Teal",
+        "hex": "#2a9d8f",
+        "families": [
+          "accent",
+          "success"
+        ]
+      },
+      {
+        "name": "Trophy Bronze",
+        "hex": "#b87333",
+        "families": [
+          "accent"
+        ]
+      }
+    ],
+    "legal": {
+      "surface": [
+        "#1a1a1a",
+        "#4a2a5a",
+        "#c8642a",
+        "#2b2b2b"
+      ],
+      "base": [
+        "#2b2b2b",
+        "#0d0d0d"
+      ],
+      "text": [
+        "#f5f0e1",
+        "#b8b0a0",
+        "#f4c430",
+        "#e85a8a"
+      ],
+      "accent": [
+        "#f4c430",
+        "#ffd966",
+        "#e85a8a",
+        "#d62828",
+        "#1e5faa",
+        "#7b3fa0",
+        "#2a9d8f",
+        "#b87333"
+      ],
+      "danger": [
+        "#e85a8a",
+        "#d62828",
+        "#a31d1d"
+      ],
+      "success": [
+        "#2a9d8f"
+      ],
+      "warning": [
+        "#f4c430",
+        "#ffd966"
+      ]
+    }
+  },
   "tropic-thunder": {
     "roles": {
       "--bg": "#1a2410",
@@ -3056,7 +3270,7 @@
     }
   }
 };
-  var DEV_THEME_PRESETS = [{id: 'tropic-thunder', name: 'Tropic Thunder'}, {id: 'wingman-dark', name: 'Wingman Dark'}, {id: 'zoolander', name: 'Zoolander'}];
+  var DEV_THEME_PRESETS = [{id: 'dodgeball', name: 'Dodgeball'}, {id: 'tropic-thunder', name: 'Tropic Thunder'}, {id: 'wingman-dark', name: 'Wingman Dark'}, {id: 'zoolander', name: 'Zoolander'}];
   var DEV_THEME_LABELS = {"surface": "Panels & controls", "base": "App background", "text": "Text", "accent": "Accent", "danger": "Danger", "success": "Success", "warning": "Warning"};
   var DEV_THEME_DESCRIPTIONS = {"surface": "Cards, buttons, fields, scrollbars and the row highlights \u2014 most of the window's chrome.", "base": "The page behind everything: the app backdrop, text field wells, recessed bands and list rows.", "text": "Every piece of text \u2014 headings, body, labels and hints \u2014 at the preset's brightness steps, whatever hue you choose.", "accent": "The Upload button, focused fields, ticks and glows: the app's one call-to-action colour.", "danger": "Delete buttons and destructive hovers \u2014 the colour that must never be mistaken for the accent.", "success": "Green status marks, like the Ready rungs on the Skills roster.", "warning": "Amber status marks \u2014 plan problems and the Fleet Bar's incoming-threat tint."};
   var devTheme = { preset: 'wingman-dark', families: {} };

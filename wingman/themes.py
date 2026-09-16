@@ -357,6 +357,57 @@ WINGMAN_DARK_ROLES = {
     "--row-ring-focus": "#554e65",
 }
 
+DODGEBALL_ROLES = {
+    "--bg": "#0d0d0d",
+    "--panel": "#1a1a1a",
+    "--panel-border": "#262626",
+    "--field": "#050505",
+    "--field-border": "#2e2e2e",
+    "--text": "#f5f0e1",
+    "--text-dim": "#bcb4a4",
+    "--text-faint": "#a49f93",
+    "--text-label": "#ada698",
+    "--text-btn": "#d9d2c2",
+    "--brand": "#f4c430",
+    "--brand-deep": "#6b5210",
+    "--brand-text": "#f4c430",
+    "--acc-top": "#f4c430",
+    "--acc-bottom": "#d9a91e",
+    "--brand-edge": "#ffd966",
+    "--focus-ring": "#ffd966",
+    "--ok": "#2fb3a3",
+    "--warn": "#f4c430",
+    "--err": "#f0554e",
+    "--danger": "#f0554e",
+    "--danger-solid": "#a31d1d",
+    "--unmet": "#f0996b",
+    "--training": "#45c8d4",
+    "--link": "#7aa2f7",
+    "--card-top": "#202020",
+    "--sunken": "#0a0a0a",
+    "--titlebar-top": "#222222",
+    "--titlebar-bottom": "#141414",
+    "--titlebar-inset": "#303030",
+    "--statusbar-top": "#181818",
+    "--statusbar-bottom": "#101010",
+    "--wash-top": "#201826",
+    "--wash-bottom": "#141017",
+    "--hover": "#2e2e2e",
+    "--control": "#242424",
+    "--control-border": "#343434",
+    "--control-hover": "#383838",
+    "--control-edge": "#8f8a7e",
+    "--field-focus-border": "#3a3a3a",
+    "--scrollbar": "#2a2a2a",
+    "--scrollbar-hover": "#3a3a3a",
+    "--fleet-incoming-threat": "#d9a91e",
+    "--row-line": "#1e1e1e",
+    "--row-hover": "#1b1b1b",
+    "--row-active": "#222222",
+    "--row-ring": "#333333",
+    "--row-ring-focus": "#4a4a4a",
+}
+
 TROPIC_THUNDER_ROLES = {
     "--bg": "#1a2410",
     "--panel": "#2e2719",
@@ -460,6 +511,36 @@ ZOOLANDER_ROLES = {
 }
 
 PRESETS = {
+    "dodgeball": _preset(
+        "dodgeball",
+        "Dodgeball",
+        DODGEBALL_ROLES,
+        [
+            # Gym-wall greys take the surface slots; Bruise and Gym Floor
+            # let a user tint the whole gym purple or wood-orange at dark
+            # reference lightness. Gold takes the accent slot by default --
+            # the template casts red as BOTH primary and danger, and this
+            # app cannot have Upload and Delete in one colour.
+            ("Gym Wall", "#1a1a1a", ["surface"]),
+            ("Bruise", "#4a2a5a", ["surface"]),
+            ("Gym Floor", "#c8642a", ["surface"]),
+            ("Tape Black", "#2b2b2b", ["surface", "base"]),
+            ("Gym Wall Deep", "#0d0d0d", ["base"]),
+            ("Court Line", "#f5f0e1", ["text"]),
+            ("Court Line Dim", "#b8b0a0", ["text"]),
+            ("Globo Gold", "#f4c430", ["text", "accent", "warning"]),
+            ("Globo Gold Bright", "#ffd966", ["accent", "warning"]),
+            ("Dodgeball Pink", "#e85a8a", ["text", "accent", "danger"]),
+            ("Average Joe Red", "#d62828", ["accent", "danger"]),
+            ("Average Joe Red Dark", "#a31d1d", ["danger"]),
+            ("Globo Blue", "#1e5faa", ["accent"]),
+            ("Wrench Purple", "#7b3fa0", ["accent"]),
+            ("Sweat Teal", "#2a9d8f", ["accent", "success"]),
+            ("Trophy Bronze", "#b87333", ["accent"]),
+        ],
+        "#0d0d0d",
+        "#ffffff",
+    ),
     "tropic-thunder": _preset(
         "tropic-thunder",
         "Tropic Thunder",
