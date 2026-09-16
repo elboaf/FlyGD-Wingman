@@ -2415,6 +2415,208 @@
 // instead of a hand-typed copy that drifts. Presets iterate the same
 // table, so a new preset appears in dev by regenerating, not editing.
   var DEV_THEMES = {
+  "purple-cobras": {
+    "roles": {
+      "--bg": "#050208",
+      "--panel": "#1a0d24",
+      "--panel-border": "#2a1838",
+      "--field": "#030105",
+      "--field-border": "#2e1a45",
+      "--text": "#f0f0f5",
+      "--text-dim": "#b8b8c4",
+      "--text-faint": "#90909e",
+      "--text-label": "#9c9caa",
+      "--text-btn": "#d5d5de",
+      "--brand": "#6b2fb5",
+      "--brand-deep": "#2e1148",
+      "--brand-text": "#9d55e8",
+      "--acc-top": "#6b2fb5",
+      "--acc-bottom": "#55229a",
+      "--brand-edge": "#8a45cf",
+      "--focus-ring": "#8a45cf",
+      "--ok": "#7cff3d",
+      "--warn": "#f5c518",
+      "--err": "#f0474e",
+      "--danger": "#f0474e",
+      "--danger-solid": "#a51820",
+      "--unmet": "#d87ba8",
+      "--training": "#45c8d4",
+      "--link": "#7aa2f7",
+      "--card-top": "#241436",
+      "--sunken": "#0b0512",
+      "--titlebar-top": "#261538",
+      "--titlebar-bottom": "#150a1e",
+      "--titlebar-inset": "#33204a",
+      "--statusbar-top": "#1d1029",
+      "--statusbar-bottom": "#120a1a",
+      "--wash-top": "#221038",
+      "--wash-bottom": "#150a20",
+      "--hover": "#2e1a45",
+      "--control": "#241436",
+      "--control-border": "#352048",
+      "--control-hover": "#2e1a45",
+      "--control-edge": "#8f8fa0",
+      "--field-focus-border": "#3a2554",
+      "--scrollbar": "#271636",
+      "--scrollbar-hover": "#35214a",
+      "--fleet-incoming-threat": "#d4b62a",
+      "--row-line": "#200f30",
+      "--row-hover": "#1c0d2a",
+      "--row-active": "#241238",
+      "--row-ring": "#382252",
+      "--row-ring-focus": "#4e3270"
+    },
+    "swatches": [
+      {
+        "name": "Cobra Purple",
+        "hex": "#4b1e7a",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Scale Dark",
+        "hex": "#1a0d24",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Blood Purple",
+        "hex": "#8b1e5c",
+        "families": [
+          "surface",
+          "danger"
+        ]
+      },
+      {
+        "name": "Cobra Deep",
+        "hex": "#1f0a35",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Scale Black",
+        "hex": "#0d0610",
+        "families": [
+          "base",
+          "surface"
+        ]
+      },
+      {
+        "name": "Scale Black Deep",
+        "hex": "#050208",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Venom White",
+        "hex": "#f0f0f5",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Fang Silver",
+        "hex": "#c4c4d0",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Court Line",
+        "hex": "#e8e0d0",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Venom Green",
+        "hex": "#7cff3d",
+        "families": [
+          "text",
+          "accent",
+          "success"
+        ]
+      },
+      {
+        "name": "Venom Dark",
+        "hex": "#4fb821",
+        "families": [
+          "success"
+        ]
+      },
+      {
+        "name": "Cobra Gold",
+        "hex": "#f5c518",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Cobra Gold Bright",
+        "hex": "#ffe04a",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Cobra Purple Bright",
+        "hex": "#6b2fb5",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Cobra Eye Red",
+        "hex": "#e8232a",
+        "families": [
+          "danger"
+        ]
+      }
+    ],
+    "legal": {
+      "surface": [
+        "#4b1e7a",
+        "#1a0d24",
+        "#8b1e5c",
+        "#0d0610"
+      ],
+      "base": [
+        "#1f0a35",
+        "#0d0610",
+        "#050208"
+      ],
+      "text": [
+        "#f0f0f5",
+        "#c4c4d0",
+        "#e8e0d0",
+        "#7cff3d"
+      ],
+      "accent": [
+        "#7cff3d",
+        "#f5c518",
+        "#ffe04a",
+        "#6b2fb5"
+      ],
+      "danger": [
+        "#8b1e5c",
+        "#e8232a"
+      ],
+      "success": [
+        "#7cff3d",
+        "#4fb821"
+      ],
+      "warning": [
+        "#f5c518",
+        "#ffe04a"
+      ]
+    }
+  },
   "merica": {
     "roles": {
       "--bg": "#050f22",
@@ -3898,7 +4100,7 @@
     }
   }
 };
-  var DEV_THEME_PRESETS = [{id: 'merica', name: 'Merica'}, {id: 'idiocracy', name: 'Idiocracy'}, {id: 'ron-burgundy', name: 'Ron Burgundy'}, {id: 'dodgeball', name: 'Dodgeball'}, {id: 'tropic-thunder', name: 'Tropic Thunder'}, {id: 'wingman-dark', name: 'Wingman Dark'}, {id: 'zoolander', name: 'Zoolander'}];
+  var DEV_THEME_PRESETS = [{id: 'purple-cobras', name: 'Purple Cobras'}, {id: 'merica', name: 'Merica'}, {id: 'idiocracy', name: 'Idiocracy'}, {id: 'ron-burgundy', name: 'Ron Burgundy'}, {id: 'dodgeball', name: 'Dodgeball'}, {id: 'tropic-thunder', name: 'Tropic Thunder'}, {id: 'wingman-dark', name: 'Wingman Dark'}, {id: 'zoolander', name: 'Zoolander'}];
   var DEV_THEME_LABELS = {"surface": "Panels & controls", "base": "App background", "text": "Text", "accent": "Accent", "danger": "Danger", "success": "Success", "warning": "Warning"};
   var DEV_THEME_DESCRIPTIONS = {"surface": "Cards, buttons, fields, scrollbars and the row highlights \u2014 most of the window's chrome.", "base": "The page behind everything: the app backdrop, text field wells, recessed bands and list rows.", "text": "Every piece of text \u2014 headings, body, labels and hints \u2014 at the preset's brightness steps, whatever hue you choose.", "accent": "The Upload button, focused fields, ticks and glows: the app's one call-to-action colour.", "danger": "Delete buttons and destructive hovers \u2014 the colour that must never be mistaken for the accent.", "success": "Green status marks, like the Ready rungs on the Skills roster.", "warning": "Amber status marks \u2014 plan problems and the Fleet Bar's incoming-threat tint."};
   var devTheme = { preset: 'wingman-dark', families: {} };

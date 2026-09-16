@@ -357,6 +357,57 @@ WINGMAN_DARK_ROLES = {
     "--row-ring-focus": "#554e65",
 }
 
+PURPLE_COBRAS_ROLES = {
+    "--bg": "#050208",
+    "--panel": "#1a0d24",
+    "--panel-border": "#2a1838",
+    "--field": "#030105",
+    "--field-border": "#2e1a45",
+    "--text": "#f0f0f5",
+    "--text-dim": "#b8b8c4",
+    "--text-faint": "#90909e",
+    "--text-label": "#9c9caa",
+    "--text-btn": "#d5d5de",
+    "--brand": "#6b2fb5",
+    "--brand-deep": "#2e1148",
+    "--brand-text": "#9d55e8",
+    "--acc-top": "#6b2fb5",
+    "--acc-bottom": "#55229a",
+    "--brand-edge": "#8a45cf",
+    "--focus-ring": "#8a45cf",
+    "--ok": "#7cff3d",
+    "--warn": "#f5c518",
+    "--err": "#f0474e",
+    "--danger": "#f0474e",
+    "--danger-solid": "#a51820",
+    "--unmet": "#d87ba8",
+    "--training": "#45c8d4",
+    "--link": "#7aa2f7",
+    "--card-top": "#241436",
+    "--sunken": "#0b0512",
+    "--titlebar-top": "#261538",
+    "--titlebar-bottom": "#150a1e",
+    "--titlebar-inset": "#33204a",
+    "--statusbar-top": "#1d1029",
+    "--statusbar-bottom": "#120a1a",
+    "--wash-top": "#221038",
+    "--wash-bottom": "#150a20",
+    "--hover": "#2e1a45",
+    "--control": "#241436",
+    "--control-border": "#352048",
+    "--control-hover": "#2e1a45",
+    "--control-edge": "#8f8fa0",
+    "--field-focus-border": "#3a2554",
+    "--scrollbar": "#271636",
+    "--scrollbar-hover": "#35214a",
+    "--fleet-incoming-threat": "#d4b62a",
+    "--row-line": "#200f30",
+    "--row-hover": "#1c0d2a",
+    "--row-active": "#241238",
+    "--row-ring": "#382252",
+    "--row-ring-focus": "#4e3270",
+}
+
 MERICA_ROLES = {
     "--bg": "#050f22",
     "--panel": "#0a1e3f",
@@ -664,6 +715,35 @@ ZOOLANDER_ROLES = {
 }
 
 PRESETS = {
+    "purple-cobras": _preset(
+        "purple-cobras",
+        "Purple Cobras",
+        PURPLE_COBRAS_ROLES,
+        [
+            # Scale-black and purple den surfaces; Blood Purple lets the
+            # whole den go magenta. The template's primary (Cobra Purple
+            # Bright) and danger (Cobra Eye Red) are already distinct, so
+            # the accent slot takes the faithful purple -- no collision
+            # rule needed for once.
+            ("Cobra Purple", "#4b1e7a", ["surface"]),
+            ("Scale Dark", "#1a0d24", ["surface"]),
+            ("Blood Purple", "#8b1e5c", ["surface", "danger"]),
+            ("Cobra Deep", "#1f0a35", ["base"]),
+            ("Scale Black", "#0d0610", ["base", "surface"]),
+            ("Scale Black Deep", "#050208", ["base"]),
+            ("Venom White", "#f0f0f5", ["text"]),
+            ("Fang Silver", "#c4c4d0", ["text"]),
+            ("Court Line", "#e8e0d0", ["text"]),
+            ("Venom Green", "#7cff3d", ["text", "accent", "success"]),
+            ("Venom Dark", "#4fb821", ["success"]),
+            ("Cobra Gold", "#f5c518", ["accent", "warning"]),
+            ("Cobra Gold Bright", "#ffe04a", ["accent", "warning"]),
+            ("Cobra Purple Bright", "#6b2fb5", ["accent"]),
+            ("Cobra Eye Red", "#e8232a", ["danger"]),
+        ],
+        "#050208",
+        "#f0f0f5",
+    ),
     "merica": _preset(
         "merica",
         "Merica",
