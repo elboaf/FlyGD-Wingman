@@ -1,6 +1,6 @@
 # Fleet telemetry remaining-work coordination
 
-Status: shared contract review requires revision; an isolated local-model core slice is approved for implementation. No server/protocol implementation or rollout is authorized yet.
+Status: isolated local-model core implemented, reviewed, fully tested and integrated locally. Shared contract review still requires six user-accepted revisions before server/protocol implementation; no rollout is authorized.
 
 ## Authority and bases
 
@@ -211,9 +211,17 @@ Logs and exact commands are in `baseline-report.md` and sibling baseline artifac
 Local core worktree: `/mnt/c/dev/flygd-wingman/.worktrees/fleet-combat-model`, branch
 `feat/fleet-combat-model`, based on `4db10294`. Task 1 is committed as `10271167`
 and independently spec/quality approved with no findings (35 new cases; 185 focused
-passes). Task 2 row-activity/lifetime production is running under
-`7abdd9d7-5f2b-4ec`. This partial core is not the completed model or a release.
-Its task ledger lives in that worktree's `.superpowers/sdd/fleet-combat-model-core-plan/`.
+passes). Task 2 is `3571bd0e`, independently approved. Four-role polish and final
+core review found no issues. Full verification passed **13,466 tests, 13 expected
+Windows-only skips**, plus Ruff/Cargo/JS smoke. No Node/codec coverage was skipped.
+
+Core commits were cherry-picked into this local coordinator branch as `0d3cac89`
+and `e85d7dff`. All non-document contents match the fully tested source; a fresh
+coordinator focused run passed 317 tests and Ruff. See
+[core verification](fleet-combat-model-core-verification.md). This is not the
+completed model, UI integration or a release. No push/main merge occurred.
+The model worktree and `.superpowers/sdd/fleet-combat-model-core-plan/` evidence
+remain available; the six shared-contract findings remain unapplied.
 
 Do not let shared-contract checks block independent approved model work, but do
 not implement assumptions inside the six unresolved shared-contract findings.
