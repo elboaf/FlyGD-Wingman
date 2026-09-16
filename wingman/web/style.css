@@ -2302,6 +2302,7 @@ button.btn:disabled,
 #characters-roster {
   display: flex; flex: 1; min-height: 0; flex-direction: column;
   gap: 0; overflow-y: auto; scrollbar-gutter: stable;
+  overscroll-behavior-y: contain;
 }
 #characters-roster:has(> #characters-empty:not([hidden])) {
   justify-content: center;
@@ -2330,6 +2331,8 @@ button.btn:disabled,
   min-height: 28px;
   font-size: var(--fs-muted); color: var(--text-dim);
   background: var(--panel);
+  /* Seal fractional scrollport edges without changing header/row geometry. */
+  box-shadow: 0 -1px var(--panel);
   border-bottom: 1px solid var(--panel-border);
 }
 .characters-head > span:last-child,
@@ -2467,7 +2470,7 @@ button.btn:disabled,
   background: var(--panel);
   /* Each span is a separate grid item. Paint across the following gap so
      row text cannot flash between the cells while the pane scrolls. */
-  box-shadow: 10px 0 var(--panel);
+  box-shadow: 10px 0 var(--panel), 0 -1px var(--panel);
 }
 /* Five labels occupy six tracks. Cover the trailing flexible space too:
    full-width warnings otherwise show through beyond the last cell's shadow. */
@@ -2544,6 +2547,7 @@ button.btn:disabled,
   top: var(--preview-bind-head-height);
   z-index: 1;
   background: var(--panel);
+  box-shadow: 0 -1px var(--panel);
 }
 /* The opening rule wants less air than a named group: there is no word
    under it to separate from, only the header row. */
@@ -4162,6 +4166,21 @@ button.btn:disabled,
   background: var(--panel); padding: 0 22px;
 }
 .settings-subpage[hidden] { display: none; }
+#section-previews .settings-subpage { overscroll-behavior-y: contain; }
+/* Retain local identity, not the whole form. The enable switch and its refusal
+   scroll together; pinning only the switch would hide failed-save feedback. */
+.scroll-context {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--panel); box-shadow: 0 -1px var(--panel);
+  padding: 8px 0 10px;
+}
+.scroll-context > h2 {
+  font-size: 15px; font-weight: 620; line-height: 20px;
+  color: var(--text); margin: 0;
+}
+/* The retained heading occupies 38px. Leave breathing room when keyboard
+   focus or scrollIntoView reveals a field at the 840px floor. */
+#settings-previews-wanderer { scroll-padding-top: 48px; }
 /* Cards retain their control/feedback ownership but not a second visual box. */
 .settings-subpage > .card {
   border: 0; box-shadow: none; background: transparent; border-radius: 0;
@@ -5485,7 +5504,11 @@ button.btn.danger:disabled {
 
 /* Import and its complete review share the workspace scroller, so a long
    warning list cannot squeeze the fitting list out of the 840x625 floor. */
-.fit-workspace-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.fit-workspace-scroll {
+  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain;
+  /* The retained row is 36px; keep revealed editor controls below it. */
+  scroll-padding-top: 44px;
+}
 .fit-list { width: 100%; }
 #fittings-import-open { margin-bottom: 8px; }
 .fit-import-panel {
@@ -5511,6 +5534,12 @@ button.btn.danger:disabled {
 }
 .fit-row.open { background: var(--row-hover); border-left-color: var(--row-ring); }
 .fit-row-top { display: flex; align-items: center; gap: 8px; padding: 6px 10px; }
+/* Reuse the actual row identity and controls. Sticky releases at this fitting's
+   boundary, rather than leaving a detached title over the next fitting. */
+.fit-row.open > .fit-row-top {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--panel); box-shadow: 0 -1px var(--panel);
+}
 /* .check is a <label>; giving it its own class alongside keeps the
    selection box out of the row's flex growth without a second wrapper
    element. */
@@ -5607,7 +5636,7 @@ button.btn.danger:disabled {
 #fittings-copy-dialog { width: min(680px, 92vw); }
 #fittings-copy-body {
   display: flex; flex-direction: column; gap: 10px; max-height: 55vh;
-  overflow-y: auto;
+  overflow-y: auto; overscroll-behavior-y: contain;
 }
 .fit-copy-targets { display: flex; flex-direction: column; gap: 7px; }
 .fit-copy-target {
@@ -5636,6 +5665,7 @@ button.btn.danger:disabled {
 .fit-copy-recovery {
   position: sticky; top: 0; z-index: 1; flex: none;
   padding: 6px 0; background: var(--panel);
+  box-shadow: 0 -1px var(--panel);
   border-bottom: 1px solid var(--field-border);
 }
 .fit-copy-recovery > .fit-copy-guidance + .fit-copy-guidance { margin-top: 6px; }

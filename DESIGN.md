@@ -803,8 +803,12 @@ roving tabindex. Left/Right wrap; Home/End select the first/last tab. A tab chan
 moves focus out of the hidden panel, cancels Preview keybind capture and pending
 detail-focus restoration, and masks a revealed webhook when leaving Combat logs.
 It must not reset a draft or submit a field. The section header and preview master
-switch stay outside the subpage scroller; only the character table and Offline
-heading stick inside it, without the old scroll-jump navigation offset.
+switch stay outside the subpage scroller. Inside it, the character table and
+Offline heading retain their stack, without the old scroll-jump navigation
+offset. Wanderer's compact Map connection heading also stays visible while its
+form scrolls; the enable switch stays with its refusal message in normal flow.
+Expanded Fittings rows retain their existing identity above the detail and
+release at that fitting's boundary. Keyboard reveal clears these local headers.
 
 Windows uses native disclosures: Appearance and Placement start open; Size and
 shape and When you switch away start closed. Each exception list stays with its
