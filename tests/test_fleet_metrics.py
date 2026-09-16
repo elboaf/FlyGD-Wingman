@@ -7,16 +7,21 @@ current instant, mutated between calls) and a deterministic monotonic clock
 """
 
 import datetime
+import json
+from dataclasses import replace
+from pathlib import Path
 from uuid import UUID
 
 import pytest
 
+from wingman.combatprofile import LIMITS
 from wingman.telemetry.combat import combat_row_visible, read_combat
 from wingman.telemetry.metrics import NO_LOG, TACKLE_TAG, FleetMetrics
 from wingman.telemetry.model import (
     ClientSessionId,
     CombatActivity,
     CombatFact,
+    EffectObservation,
     RosterClient,
     RosterSnapshot,
     SourceId,
@@ -102,6 +107,7 @@ def _ewar(
     amount=None,
     source_generation=1,
     source_id=None,
+    observed_name=None,
 ):
     return CombatFact(
         character=character,
@@ -110,6 +116,7 @@ def _ewar(
         occurred_at=occurred_at,
         kind=kind,
         amount=amount,
+        observed_name=observed_name,
     )
 
 
@@ -749,7 +756,7 @@ class TestSpecificEwarAndActivity:
         mono_box[0] = 130.0
         assert _row(metrics.snapshot(5, HEALTH), "Alice").ewar == ()
 
-    def test_outgoing_damage_refreshes_observed_ewar_activity(self):
+    def test_outgoing_damage_does_not_refresh_observed_ewar(self):
         metrics, utc_box, mono_box = self._bound(_metrics(mono=100.0))
         metrics.consume(_env(3, _ewar("Alice", "incoming_scram", NOW)))
 
@@ -757,10 +764,12 @@ class TestSpecificEwarAndActivity:
         mono_box[0] = 120.0
         metrics.consume(_env(4, _damage("Alice", 100, utc_box[0])))
 
-        mono_box[0] = 149.999
-        assert _row(metrics.snapshot(5, HEALTH), "Alice").ewar == ("SCRAM",)
-        mono_box[0] = 150.0
-        assert _row(metrics.snapshot(6, HEALTH), "Alice").ewar == ()
+        mono_box[0] = 130.0
+        row = _row(metrics.snapshot(5, HEALTH), "Alice")
+        assert row.ewar == ()
+        assert row.combat.expires_at_mono == 150.0
+        assert combat_row_visible(row, now_mono=149.999)
+        assert not combat_row_visible(row, now_mono=150.0)
 
     def test_incoming_damage_does_not_refresh_observed_ewar(self):
         metrics, utc_box, mono_box = self._bound(_metrics(mono=100.0))
@@ -773,9 +782,7 @@ class TestSpecificEwarAndActivity:
         )
 
         mono_box[0] = 130.0
-        # Had incoming damage refreshed activity like outgoing does, the
-        # SCRAM tag observed at mono 100 would still be visible here (its
-        # deadline would have moved to 150). It must not.
+        # Damage in either direction must not extend the SCRAM deadline to 150.
         assert _row(metrics.snapshot(5, HEALTH), "Alice").ewar == ()
 
     def test_delayed_ewar_uses_event_time_not_ingestion_time(self):
@@ -807,7 +814,11 @@ class TestSpecificEwarAndActivity:
 
         assert _row(metrics.snapshot(5, HEALTH), "Alice").dps == 0
         mono_box[0] = 134.999
-        assert _row(metrics.snapshot(6, HEALTH), "Alice").ewar == ("POINT",)
+        row = _row(metrics.snapshot(6, HEALTH), "Alice")
+        assert row.ewar == ()
+        assert row.combat.expires_at_mono == 135.0
+        assert combat_row_visible(row, now_mono=134.999)
+        assert not combat_row_visible(row, now_mono=135.0)
 
     def test_delayed_fact_does_not_shorten_newer_combat_activity(self):
         metrics, utc_box, mono_box = self._bound(_metrics(mono=100.0))
@@ -827,11 +838,13 @@ class TestSpecificEwarAndActivity:
             )
         )
 
-        mono_box[0] = 149.999
-        assert _row(metrics.snapshot(6, HEALTH), "Alice").ewar == (
-            "SCRAM",
-            "NEUT",
-        )
+        mono_box[0] = 130.0
+        assert _row(metrics.snapshot(6, HEALTH), "Alice").ewar == ("NEUT",)
+        mono_box[0] = 135.0
+        row = _row(metrics.snapshot(7, HEALTH), "Alice")
+        assert row.ewar == ()
+        assert row.combat.expires_at_mono == 150.0
+        assert combat_row_visible(row, now_mono=149.999)
 
     def test_new_combat_after_unobserved_expiry_does_not_resurrect_old_ewar(self):
         metrics, utc_box, mono_box = self._bound(_metrics(mono=100.0))
@@ -946,7 +959,7 @@ class TestRowActivity:
     @pytest.mark.parametrize(
         "age, deadline", [(15, 115.0), (-3, 130.0), (-3600, 130.0)]
     )
-    def test_accepted_ewar_qualifies_without_producing_effect_observations(
+    def test_accepted_ewar_produces_independent_effect_observations(
         self, kind, tag, age, deadline
     ):
         metrics, _, _ = self._bound()
@@ -958,7 +971,9 @@ class TestRowActivity:
         assert row.combat is not None
         assert row.combat.expires_at_mono == deadline
         assert row.combat.observation_id[1] == 3
-        assert row.combat.observations == ()
+        assert row.combat.observations == (
+            EffectObservation(tag, deadline, row.combat.observation_id),
+        )
         assert combat_row_visible(row, now_mono=deadline - 0.001)
         assert not combat_row_visible(row, now_mono=deadline)
 
@@ -1059,19 +1074,20 @@ class TestRowActivity:
         )  # Already accepted sequence.
         metrics.consume(_env(8, _damage("Alice", 0, utc[0])))  # Out of order.
         unchanged = metrics.snapshot(10, HEALTH)
-        assert _row(unchanged, "Alice").combat == alice
+        effects = (EffectObservation("SCRAM", 130.0, (alice.observation_id[0], 8)),)
+        assert _row(unchanged, "Alice").combat == replace(alice, observations=effects)
         assert _row(unchanged, "bob").combat == bob
         metrics.consume(_env(11, _damage("Alice", 0, utc[0])))
         after = metrics.snapshot(12, HEALTH)
         assert _row(after, "Alice").combat == CombatActivity(
-            140.0, (alice.observation_id[0], 11)
+            140.0, (alice.observation_id[0], 11), effects
         )
         assert _row(after, "bob").combat == bob
         assert not combat_row_visible(_row(after, "bob"), now_mono=125.0)
         assert combat_row_visible(_row(after, "Alice"), now_mono=125.0)
 
     @pytest.mark.parametrize("age", [0, 15])
-    def test_incoming_row_activity_does_not_extend_legacy_ewar(self, age):
+    def test_incoming_row_activity_does_not_extend_effects(self, age):
         metrics, utc, mono = self._bound()
         metrics.consume(_env(3, _tackle("Alice", NOW)))
         utc[0] = NOW + datetime.timedelta(seconds=20)
@@ -1095,9 +1111,10 @@ class TestRowActivity:
         assert row.combat.expires_at_mono == (150.0 if age == 0 else 135.0)
         assert combat_row_visible(row, now_mono=130.0)
 
-    def test_unchanged_roster_and_active_rebind_preserve_lifetime(self):
+    @pytest.mark.parametrize("kind", ["outgoing_damage", "incoming_scram"])
+    def test_unchanged_roster_and_active_rebind_preserve_lifetime(self, kind):
         metrics, utc, mono = self._bound()
-        metrics.consume(_env(3, _damage("Alice", 100, NOW)))
+        metrics.consume(_env(3, _damage("Alice", 100, NOW, kind=kind)))
         original = _row(metrics.snapshot(4, HEALTH), "Alice").combat
         assert original is not None
         metrics.consume(_env(5, _roster(_session("Alice"))))
@@ -1105,13 +1122,23 @@ class TestRowActivity:
         metrics.consume(_env(5, _lifecycle("Alice", active=False)))
         utc[0] = NOW + datetime.timedelta(seconds=1)
         mono[0] = 101.0
-        metrics.consume(_env(6, _damage("Alice", 100, utc[0])))
+        metrics.consume(_env(6, _damage("Alice", 100, utc[0], kind=kind)))
         row = _row(metrics.snapshot(7, HEALTH), "Alice")
         assert row.combat == original
-        assert row.dps == 10
-        metrics.consume(_env(8, _damage("Alice", 0, utc[0])))
+        assert row.dps == (10 if kind == "outgoing_damage" else 0)
+        if kind == "incoming_scram":
+            assert original.observations == (
+                EffectObservation("SCRAM", 130.0, original.observation_id),
+            )
+        metrics.consume(_env(8, _damage("Alice", 0, utc[0], kind=kind)))
+        new_id = (original.observation_id[0], 8)
+        effects = (
+            (EffectObservation("SCRAM", 131.0, new_id),)
+            if kind == "incoming_scram"
+            else ()
+        )
         assert _row(metrics.snapshot(9, HEALTH), "Alice").combat == CombatActivity(
-            131.0, (original.observation_id[0], 8)
+            131.0, new_id, effects
         )
 
     @pytest.mark.parametrize(
@@ -1127,11 +1154,16 @@ class TestRowActivity:
             "reset",
         ],
     )
-    def test_invalidation_clears_activity_and_fences_stale_facts(self, change):
+    @pytest.mark.parametrize("kind", ["outgoing_damage", "incoming_scram"])
+    def test_invalidation_clears_activity_and_fences_stale_facts(self, change, kind):
         metrics, _, _ = self._bound()
-        metrics.consume(_env(3, _damage("Alice", 100, NOW)))
+        metrics.consume(_env(3, _damage("Alice", 100, NOW, kind=kind)))
         original = _row(metrics.snapshot(4, HEALTH), "Alice").combat
         assert original is not None
+        if kind == "incoming_scram":
+            assert original.observations == (
+                EffectObservation("SCRAM", 130.0, original.observation_id),
+            )
         generation, source_id = 1, _source_id()
         if change == "retire":
             metrics.consume(_env(10, _lifecycle("Alice", active=False)))
@@ -1161,7 +1193,7 @@ class TestRowActivity:
         assert cleared.combat == CombatActivity()
         assert not combat_row_visible(cleared, now_mono=100.0)
         # A queued old fact is either unbound, wrong-source or behind the bind.
-        metrics.consume(_env(9, _damage("Alice", 999, NOW)))
+        metrics.consume(_env(9, _damage("Alice", 999, NOW, kind=kind)))
         metrics.consume(
             _env(12, _lifecycle("Alice", generation=generation, source_id=source_id))
         )
@@ -1169,10 +1201,18 @@ class TestRowActivity:
             _env(
                 11,
                 _damage(
-                    "Alice", 999, NOW, source_generation=generation, source_id=source_id
+                    "Alice",
+                    999,
+                    NOW,
+                    source_generation=generation,
+                    source_id=source_id,
+                    kind=kind,
                 ),
             )
         )
+        if change in ("generation", "source"):
+            # Even a new envelope sequence cannot authorize an old source identity.
+            metrics.consume(_env(13, _damage("Alice", 999, NOW, kind=kind)))
         rebound = _row(metrics.snapshot(13, HEALTH), "Alice")
         assert rebound.combat == CombatActivity()
         assert (rebound.dps, rebound.incoming_dps, rebound.ewar) == (0, 0, ())
@@ -1180,7 +1220,12 @@ class TestRowActivity:
             _env(
                 14,
                 _damage(
-                    "Alice", 0, NOW, source_generation=generation, source_id=source_id
+                    "Alice",
+                    0,
+                    NOW,
+                    source_generation=generation,
+                    source_id=source_id,
+                    kind=kind,
                 ),
             )
         )
@@ -1189,23 +1234,36 @@ class TestRowActivity:
         assert new.expires_at_mono == 130.0
         assert new.observation_id[0] != original.observation_id[0]
         assert new.observation_id[1] == 14
+        if kind == "incoming_scram":
+            assert new.observations == (
+                EffectObservation("SCRAM", 130.0, new.observation_id),
+            )
+        assert original.expires_at_mono == 130.0  # Cached evidence stays detached.
 
-    def test_full_reset_cannot_reuse_id_even_with_same_source_and_sequence(self):
+    @pytest.mark.parametrize("kind", ["outgoing_damage", "incoming_scram"])
+    def test_full_reset_cannot_reuse_id_even_with_same_source_and_sequence(self, kind):
         metrics, _, _ = self._bound()
-        metrics.consume(_env(3, _damage("Alice", 0, NOW)))
+        metrics.consume(_env(3, _damage("Alice", 0, NOW, kind=kind)))
         original = _row(metrics.snapshot(4, HEALTH), "Alice").combat
         metrics.reset()
         metrics.consume(
-            _env(3, _damage("Alice", 999, NOW))
+            _env(3, _damage("Alice", 999, NOW, kind=kind))
         )  # No roster: drop, never queue.
         metrics.consume(_env(1, _roster(_session("Alice"))))
         metrics.consume(_env(2, _lifecycle("Alice")))
         assert _row(metrics.snapshot(3, HEALTH), "Alice").combat == CombatActivity()
-        metrics.consume(_env(3, _damage("Alice", 0, NOW)))
+        metrics.consume(_env(3, _damage("Alice", 0, NOW, kind=kind)))
         new = _row(metrics.snapshot(4, HEALTH), "Alice").combat
         assert original is not None and new is not None
         assert new.observation_id[1] == original.observation_id[1] == 3
         assert new.observation_id[0] != original.observation_id[0]
+        if kind == "incoming_scram":
+            assert original.observations == (
+                EffectObservation("SCRAM", 130.0, original.observation_id),
+            )
+            assert new.observations == (
+                EffectObservation("SCRAM", 130.0, new.observation_id),
+            )
 
     def test_snapshot_samples_once_and_readers_never_rewrite_measurement_time(self):
         ticks = iter([123.0, 124.0, 125.0])
@@ -1224,6 +1282,382 @@ class TestRowActivity:
         empty = metrics.snapshot(5, HEALTH)
         assert empty.rows == ()
         assert empty.sampled_at_mono == 125.0
+
+
+# ---------------------------------------------------------------------------
+# Independent effect retention
+# ---------------------------------------------------------------------------
+
+
+_NAME_VECTORS = {
+    vector["id"]: vector
+    for vector in json.loads(
+        (Path(__file__).parent / "fixtures" / "fleet-combat-v2.json").read_text(
+            encoding="utf-8"
+        )
+    )["names"]
+}
+
+
+def _advance(utc, mono, seconds):
+    utc[0] = NOW + datetime.timedelta(seconds=seconds)
+    mono[0] = float(seconds)
+    return utc[0]
+
+
+def _observe(metrics, sequence, kind, name, occurred_at=NOW, **kwargs):
+    metrics.consume(
+        _env(
+            sequence,
+            _ewar(
+                "Alice",
+                f"incoming_{kind.lower()}",
+                occurred_at,
+                observed_name=name,
+                **kwargs,
+            ),
+        )
+    )
+
+
+def _effects(metrics):
+    row = _row(metrics.snapshot(1000, HEALTH), "Alice")
+    assert row.combat is not None
+    effects = row.combat.observations
+    assert all(e.expires_at_mono <= row.combat.expires_at_mono for e in effects)
+    by_slot = {(e.kind, e.name): e for e in effects}
+    assert len(by_slot) == len(effects)
+    assert tuple(dict.fromkeys(e.kind for e in effects)) == row.ewar
+    return by_slot
+
+
+class TestEffectRetention:
+    def _bound(self):
+        metrics, utc, mono = _metrics()
+        metrics.consume(_env(1, _roster(_session("Alice"))))
+        metrics.consume(_env(2, _lifecycle("Alice")))
+        return metrics, utc, mono
+
+    @pytest.mark.parametrize("direction", ["outgoing_damage", "incoming_damage"])
+    def test_named_scrams_and_damage_expire_at_30_40_50(self, direction):
+        metrics, utc, mono = self._bound()
+        _observe(metrics, 3, "SCRAM", "A")
+        _observe(metrics, 4, "SCRAM", "B", _advance(utc, mono, 10))
+        before = _effects(metrics)
+        assert set(before) == {("SCRAM", "A"), ("SCRAM", "B")}
+        token = before["SCRAM", "A"].observation_id[0]
+        assert before == {
+            ("SCRAM", "A"): EffectObservation("SCRAM", 30.0, (token, 3), "A"),
+            ("SCRAM", "B"): EffectObservation("SCRAM", 40.0, (token, 4), "B"),
+        }
+        metrics.consume(
+            _env(5, _damage("Alice", 0, _advance(utc, mono, 20), kind=direction))
+        )
+        assert _effects(metrics) == before
+        cached = metrics.snapshot(6, HEALTH)
+        row = _row(cached, "Alice")
+        assert row.combat == CombatActivity(50.0, (token, 5), tuple(before.values()))
+        for seconds, expected in (
+            (29.999, before),
+            (30, {("SCRAM", "B"): before["SCRAM", "B"]}),
+            (40, {}),
+            (50, {}),
+        ):
+            _advance(utc, mono, seconds)
+            assert _effects(metrics) == expected
+            assert read_combat(row, now_mono=seconds).observations == tuple(
+                expected.values()
+            )
+            assert combat_row_visible(row, now_mono=seconds) is (seconds < 50)
+        assert cached.sampled_at_mono == 20.0
+        assert row.combat.observations == tuple(before.values())
+
+    def test_same_name_point_scram_and_zero_neut_are_independent(self):
+        metrics, utc, mono = self._bound()
+        _observe(metrics, 3, "POINT", "A")
+        _observe(metrics, 4, "SCRAM", "A", _advance(utc, mono, 5))
+        _observe(metrics, 5, "NEUT", "A", _advance(utc, mono, 10), amount=0)
+        before = _effects(metrics)
+        assert [(e.kind, e.name, e.expires_at_mono) for e in before.values()] == [
+            ("SCRAM", "A", 35.0),
+            ("POINT", "A", 30.0),
+            ("NEUT", None, 40.0),
+        ]
+        _observe(metrics, 6, "NEUT", "B", _advance(utc, mono, 15), amount=0)
+        after = _effects(metrics)
+        assert after["SCRAM", "A"] == before["SCRAM", "A"]
+        assert after["POINT", "A"] == before["POINT", "A"]
+        assert after["NEUT", None] == EffectObservation(
+            "NEUT", 45.0, (before["NEUT", None].observation_id[0], 6)
+        )
+        for seconds, slots in (
+            (30, {("SCRAM", "A"), ("NEUT", None)}),
+            (35, {("NEUT", None)}),
+            (45, set()),
+        ):
+            _advance(utc, mono, seconds)
+            assert set(_effects(metrics)) == slots
+
+    @pytest.mark.parametrize("kind", ["POINT", "SCRAM"])
+    def test_unknown_does_not_gain_lifetime_from_new_named_aggressor(self, kind):
+        metrics, utc, mono = self._bound()
+        _observe(metrics, 3, kind, None)
+        _observe(metrics, 4, kind, "B", _advance(utc, mono, 10))
+        before = _effects(metrics)
+        assert set(before) == {(kind, None), (kind, "B")}
+        assert before[kind, None].expires_at_mono == 30.0
+        assert before[kind, "B"].expires_at_mono == 40.0
+        _advance(utc, mono, 30)
+        assert _effects(metrics) == {(kind, "B"): before[kind, "B"]}
+        _advance(utc, mono, 40)
+        assert _effects(metrics) == {}
+
+    def test_separate_named_caps_and_overflow_coalesce_without_eviction(self):
+        metrics, utc, mono = self._bound()
+        sequence = 2
+        for kind in ("POINT", "SCRAM"):
+            for i in range(LIMITS["named_per_tackle"]):
+                sequence += 1
+                _observe(metrics, sequence, kind, f"Pilot {i}")
+        _observe(metrics, sequence + 1, "NEUT", "Ignored", amount=0)
+        for i, kind in enumerate(("POINT", "SCRAM"), start=2):
+            _observe(metrics, sequence + i, kind, "Overflow", _advance(utc, mono, 5))
+        before = _effects(metrics)
+        assert len(before) == LIMITS["observations_per_row"] == 19
+        assert (
+            sum(e.name is not None for e in before.values()) == LIMITS["named_per_row"]
+        )
+        assert list(dict.fromkeys(e.kind for e in before.values())) == list(
+            LIMITS["effect_order"]
+        )
+        for kind in ("POINT", "SCRAM"):
+            assert {e.name for e in before.values() if e.kind == kind} == {
+                *(f"Pilot {i}" for i in range(LIMITS["named_per_tackle"])),
+                None,
+            }
+        sequence += 5
+        _observe(metrics, sequence, "SCRAM", "PILOT 0", _advance(utc, mono, 10))
+        refreshed = _effects(metrics)
+        assert refreshed["SCRAM", "Pilot 0"].expires_at_mono == 40.0
+        assert refreshed["SCRAM", "Pilot 0"].observation_id[1] == sequence
+        assert {k: v for k, v in refreshed.items() if k != ("SCRAM", "Pilot 0")} == {
+            k: v for k, v in before.items() if k != ("SCRAM", "Pilot 0")
+        }
+        _observe(
+            metrics, sequence + 1, "SCRAM", "Another overflow", _advance(utc, mono, 15)
+        )
+        overflow = _effects(metrics)
+        assert overflow["SCRAM", None].expires_at_mono == 45.0
+        assert {k: v for k, v in overflow.items() if k != ("SCRAM", None)} == {
+            k: v for k, v in refreshed.items() if k != ("SCRAM", None)
+        }
+        _observe(metrics, sequence + 2, "SCRAM", None, _advance(utc, mono, 20))
+        unknown = _effects(metrics)
+        assert len(unknown) == LIMITS["observations_per_row"]
+        assert unknown["SCRAM", None].expires_at_mono == 50.0
+        assert {k: v for k, v in unknown.items() if k != ("SCRAM", None)} == {
+            k: v for k, v in overflow.items() if k != ("SCRAM", None)
+        }
+        metrics.consume(
+            _env(sequence + 3, _damage("Alice", 0, _advance(utc, mono, 25)))
+        )
+        assert _effects(metrics) == unknown
+        _advance(utc, mono, 35)
+        assert set(_effects(metrics)) == {("SCRAM", "Pilot 0"), ("SCRAM", None)}
+        _advance(utc, mono, 40)
+        assert set(_effects(metrics)) == {("SCRAM", None)}
+        _advance(utc, mono, 50)
+        assert _effects(metrics) == {}
+
+    @pytest.mark.parametrize("kind", ["POINT", "SCRAM"])
+    def test_expired_names_free_slots_before_admission_without_snapshot(self, kind):
+        metrics, utc, mono = self._bound()
+        for i in range(LIMITS["named_per_tackle"]):
+            _observe(metrics, 3 + i, kind, f"Pilot {i}")
+        sequence = 3 + LIMITS["named_per_tackle"]
+        _observe(metrics, sequence, kind, "Overflow", _advance(utc, mono, 10))
+        before = _effects(metrics)
+        assert len(before) == LIMITS["observations_per_tackle"]
+        _observe(metrics, sequence + 1, kind, "New", _advance(utc, mono, 30))
+        effects = _effects(metrics)
+        assert set(effects) == {(kind, None), (kind, "New")}
+        assert effects[kind, None] == before[kind, None]
+        assert effects[kind, "New"].expires_at_mono == 60.0
+
+    @pytest.mark.parametrize(
+        "vector_id",
+        [
+            "scratch-trim-nfc",
+            "scratch-nbsp",
+            "scratch-hangul-lvt",
+            "scratch-internal-double-space",
+            "scratch-sharp-s",
+            "scratch-sigma",
+            "scratch-64-supplementary",
+            "raw-256-nfc-shrink",
+            "unicode16-cyrillic-fold",
+            "scratch-empty",
+            "scratch-markup",
+            "scratch-newline",
+            "scratch-zwj",
+            "scratch-surrogate",
+            "scratch-private-use",
+            "scratch-unassigned",
+            "scratch-65-supplementary",
+            "scratch-raw-cap",
+        ],
+    )
+    def test_shared_name_vectors_normalize_before_key_or_keep_unnamed_effect(
+        self, vector_id
+    ):
+        metrics, utc, mono = self._bound()
+        vector = _NAME_VECTORS[vector_id]
+        _observe(metrics, 3, "POINT", vector["input"])
+        effects = _effects(metrics)
+        slot = ("POINT", vector["normalized"])
+        assert set(effects) == {slot}
+        original = effects[slot]
+        assert original.expires_at_mono == 30.0
+        # Canonical folded spelling must refresh the normalized bucket, not add
+        # a second name (or turn the original noncanonical input into null).
+        _observe(metrics, 4, "POINT", vector["normalized_key"], _advance(utc, mono, 1))
+        assert _effects(metrics) == {
+            slot: EffectObservation(
+                "POINT", 31.0, (original.observation_id[0], 4), vector["normalized"]
+            )
+        }
+
+    def test_first_spelling_lives_until_expiry_then_next_spelling_is_admitted(self):
+        metrics, utc, mono = self._bound()
+        first = _NAME_VECTORS["scratch-sharp-s"]["input"]
+        second = _NAME_VECTORS["scratch-sharp-s-equivalent"]["input"]
+        _observe(metrics, 3, "SCRAM", first)
+        _observe(metrics, 4, "SCRAM", second, _advance(utc, mono, 5))
+        effects = _effects(metrics)
+        assert set(effects) == {("SCRAM", "Straße")}
+        assert effects["SCRAM", "Straße"].expires_at_mono == 35.0
+        _observe(metrics, 5, "SCRAM", second, _advance(utc, mono, 35))
+        assert set(_effects(metrics)) == {("SCRAM", "STRASSE")}
+
+    @pytest.mark.parametrize(
+        "vector_id",
+        ["fold-expands-past-display-scalars", "fold-final-key-over256-bytes"],
+    )
+    def test_expanded_keys_remain_named_distinct_and_refreshable(self, vector_id):
+        metrics, utc, mono = self._bound()
+        vector = _NAME_VECTORS[vector_id]
+        name = vector["input"]
+        # A difference beyond the display-sized key prefix must not collide.
+        other = name[:-1] + "A"
+        _observe(metrics, 3, "SCRAM", name)
+        _observe(metrics, 4, "SCRAM", other)
+        effects = _effects(metrics)
+        assert set(effects) == {("SCRAM", name), ("SCRAM", other)}
+        _observe(metrics, 5, "SCRAM", name, _advance(utc, mono, 5))
+        refreshed = _effects(metrics)
+        assert set(refreshed) == set(effects)
+        assert refreshed["SCRAM", other] == effects["SCRAM", other]
+        assert refreshed["SCRAM", name].expires_at_mono == 35.0
+        assert refreshed["SCRAM", name].observation_id[1] == 5
+
+    @pytest.mark.parametrize("name", ["Pilot", None])
+    def test_delayed_equal_and_older_evidence_keep_ids_and_only_later_deadline_changes(
+        self, name
+    ):
+        metrics, utc, mono = self._bound()
+        _observe(metrics, 3, "SCRAM", name)
+        _observe(metrics, 4, "POINT", "Other")
+        before = _effects(metrics)
+        assert set(before) == {("SCRAM", name), ("POINT", "Other")}
+        _advance(utc, mono, 10)
+        _observe(metrics, 5, "SCRAM", name, NOW)  # Same deadline, later sequence.
+        _observe(metrics, 6, "SCRAM", name, NOW - datetime.timedelta(seconds=5))
+        assert _effects(metrics) == before
+        # Accepted older evidence consumed sequence 6; it cannot be reused to renew.
+        _observe(metrics, 6, "SCRAM", name, utc[0])
+        _observe(metrics, 5, "POINT", "Stale", utc[0])
+        assert _effects(metrics) == before
+        _observe(metrics, 7, "SCRAM", name, utc[0])
+        after = _effects(metrics)
+        assert after["POINT", "Other"] == before["POINT", "Other"]
+        assert after["SCRAM", name] == EffectObservation(
+            "SCRAM", 40.0, (before["SCRAM", name].observation_id[0], 7), name
+        )
+        row = _row(metrics.snapshot(8, HEALTH), "Alice")
+        assert row.combat.observation_id == after["SCRAM", name].observation_id
+        assert row.combat.expires_at_mono == 40.0
+
+    @pytest.mark.parametrize("age", [None, 30, 31])
+    def test_rejected_effect_timestamp_keeps_correction_sequence_available(self, age):
+        metrics, _, _ = self._bound()
+        occurred_at = None if age is None else NOW - datetime.timedelta(seconds=age)
+        _observe(metrics, 3, "SCRAM", "A", occurred_at)
+        assert _effects(metrics) == {}
+        _observe(metrics, 3, "SCRAM", "A")
+        effects = _effects(metrics)
+        assert set(effects) == {("SCRAM", "A")}
+        assert effects["SCRAM", "A"].observation_id[1] == 3
+        assert effects["SCRAM", "A"].expires_at_mono == 30.0
+
+    def test_snapshots_and_pure_reads_ignore_utc_jumps_for_effect_lifetime(self):
+        metrics, utc, mono = self._bound()
+        fact = _ewar("Alice", "incoming_scram", NOW, observed_name="A")
+        metrics.consume(_env(3, fact))
+        _observe(metrics, 4, "POINT", "B", _advance(utc, mono, 10))
+        before = _effects(metrics)
+        assert len(before) == 2
+        snapshot = metrics.snapshot(5, HEALTH)
+        row = _row(snapshot, "Alice")
+        for days in (100, -100):
+            utc[0] = NOW + datetime.timedelta(days=days)
+            mono[0] = 20.0
+            assert _effects(metrics) == before
+            assert _row(metrics.snapshot(6, HEALTH), "Alice").combat == row.combat
+            assert read_combat(row, now_mono=30).observations == (before["POINT", "B"],)
+        assert row.combat.observations == tuple(before.values())
+        mono[0] = 30.0
+        assert _effects(metrics) == {("POINT", "B"): before["POINT", "B"]}
+        assert snapshot.sampled_at_mono == 10.0
+
+    def test_ingestion_uses_one_utc_and_monotonic_sample_for_row_and_effect(self):
+        utc = iter([NOW, NOW + datetime.timedelta(days=1)])
+        mono = iter([100.0, 101.0])
+        metrics = FleetMetrics(_clock=lambda: next(mono), _utc_now=lambda: next(utc))
+        metrics.consume(_env(1, _roster(_session("Alice"))))
+        metrics.consume(_env(2, _lifecycle("Alice")))
+        _observe(metrics, 3, "SCRAM", "A")
+        snapshot = metrics.snapshot(4, HEALTH)
+        row = _row(snapshot, "Alice")
+        assert snapshot.sampled_at_mono == 101.0
+        assert row.combat.expires_at_mono == 130.0
+        assert row.combat.observations == (
+            EffectObservation("SCRAM", 130.0, row.combat.observation_id, "A"),
+        )
+
+    def test_two_owners_cannot_collide_and_quiet_full_roster_stays_available(self):
+        tokens = []
+        for _ in range(2):
+            metrics, utc, mono = self._bound()
+            metrics.consume(
+                _env(3, _roster(_session("Alice"), _session("bob"), _session("zulu")))
+            )
+            metrics.consume(_env(4, _lifecycle("bob")))
+            _observe(metrics, 5, "SCRAM", "A")
+            effect = _effects(metrics)
+            assert set(effect) == {("SCRAM", "A")}
+            tokens.append(effect["SCRAM", "A"].observation_id[0])
+            _advance(utc, mono, 30)
+            snapshot = metrics.snapshot(6, HEALTH)
+            assert [r.character for r in snapshot.rows] == ["Alice", "bob", "zulu"]
+            assert [(r.dps, r.incoming_dps) for r in snapshot.rows] == [
+                (0, 0),
+                (0, 0),
+                (None, None),
+            ]
+            assert all(r.combat.observations == () for r in snapshot.rows)
+            assert all(not combat_row_visible(r, now_mono=30) for r in snapshot.rows)
+            assert _row(snapshot, "zulu").log_status == NO_LOG
+        assert tokens[0] != tokens[1]
 
 
 # ---------------------------------------------------------------------------
