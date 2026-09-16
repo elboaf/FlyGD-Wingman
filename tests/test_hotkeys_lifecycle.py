@@ -10,6 +10,7 @@ from wingman import bookmarks, hotkeys
 class FakeProc:
     def __init__(self, pid=4321):
         self.pid = pid
+        self.handle = object()  # A real Popen exposes the process handle.
         self._alive = True
         self.terminated = False
         self.killed = False
@@ -47,7 +48,7 @@ def section(**over):
     return base
 
 
-def engine(tmp_path, spawner):
+def engine(tmp_path, spawner, job_factory=lambda: None):
     (tmp_path / "ahk.exe").write_text("")
     (tmp_path / "e.ahk").write_text("")
     return hotkeys.HotkeyEngine(
@@ -56,6 +57,7 @@ def engine(tmp_path, spawner):
         tmp_path,
         spawner=spawner,
         token_factory=lambda: "TOKEN123",
+        job_factory=job_factory,
     )
 
 
@@ -280,3 +282,75 @@ def test_a_vanished_process_is_not_escalated(tmp_path):
     eng.stop()
     assert spawner.proc.killed is False
     assert not (tmp_path / "eve_engine.pid").exists()
+
+
+class FakeJob:
+    def __init__(self):
+        self.assigned = None
+        self.closed = False
+
+    def assign(self, proc):
+        self.assigned = proc
+        return True
+
+    def close(self):
+        self.closed = True
+
+
+def test_start_assigns_the_engine_to_a_kill_on_close_job(tmp_path):
+    """The job is what kills the engine when this process dies by any means
+    the code does not get a say in -- the kernel closes our handle and the
+    job's KILL_ON_JOB_CLOSE limit does the rest."""
+    spawner = FakeSpawner()
+    job = FakeJob()
+    eng = engine(tmp_path, spawner, job_factory=lambda: job)
+    eng.apply(section())
+    eng.start()
+    assert job.assigned is spawner.proc.handle
+    assert not job.closed
+
+
+def test_stop_closes_the_job(tmp_path):
+    spawner = FakeSpawner()
+    job = FakeJob()
+    eng = engine(tmp_path, spawner, job_factory=lambda: job)
+    eng.apply(section())
+    eng.start()
+    eng.stop()
+    assert job.closed is True
+
+
+def test_a_failed_job_assignment_falls_back_to_stop_only(tmp_path):
+    """Nested-job denial or a bad handle must not fail the start; the
+    historical stop()-only cleanup is the fallback, not an error."""
+    spawner = FakeSpawner()
+
+    class Denied(FakeJob):
+        def assign(self, proc):
+            return False
+
+    job = Denied()
+    eng = engine(tmp_path, spawner, job_factory=lambda: job)
+    eng.apply(section())
+    assert eng.start() is True
+    assert eng.is_running() is True
+    assert job.closed is True
+    eng.stop()
+    assert spawner.proc.terminated is True
+
+
+def test_a_raising_job_factory_does_not_block_start(tmp_path):
+    spawner = FakeSpawner()
+
+    def boom():
+        raise OSError("no kernel32")
+
+    eng = engine(tmp_path, spawner, job_factory=boom)
+    eng.apply(section())
+    assert eng.start() is True
+    assert eng.is_running() is True
+
+
+def test_default_job_factory_is_inert_off_windows():
+    if hotkeys.sys.platform != "win32":
+        assert hotkeys._default_job() is None

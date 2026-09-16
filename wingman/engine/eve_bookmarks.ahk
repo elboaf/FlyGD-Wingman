@@ -31,6 +31,10 @@
 ; upstream rather than a local invention.
 ; ============================================================
 #Persistent
+; The engine is supervised by Wingman (which owns the one tray icon the
+; user sees); a second icon for a headless helper is clutter and invites
+; someone to Exit it out from under the app.
+#NoTrayIcon
 ; Force, explicitly: a duplicate spawn must replace the previous copy, not
 ; raise a prompt for a user who no longer has a GUI to answer it in.
 #SingleInstance Force

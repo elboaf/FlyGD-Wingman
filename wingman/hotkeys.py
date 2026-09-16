@@ -38,6 +38,111 @@ _MISSING = (
     "Reinstall FlyGD Wingman to restore it."
 )
 
+# KILL_ON_JOB_CLOSE: when the last handle to the job goes away -- which the
+# kernel does even for a terminated process -- every process in the job is
+# killed. This is the only cleanup that survives Wingman being hard-killed;
+# stop() and orphan recovery both require our code to run.
+_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+# JobObjectExtendedLimitInformation, winbase.h.
+_JobObjectExtendedLimitInformation = 9
+
+
+def _default_job():
+    """A kernel job object to bind the engine's life to ours, or None.
+
+    Wingman holds the job handle for the engine's whole lifetime: if this
+    process dies by any means -- clean exit, unhandled exception,
+    TerminateProcess, power loss -- the kernel closes the handle and Windows
+    kills the engine, ending the old arrangement where a crashed Wingman
+    left a live keyboard hook until the next launch (recover_orphan's
+    documented gap).
+
+    None is a deliberate fallback, not an error path: off Windows, or if any
+    kernel32 call fails, start() proceeds exactly as before stop()-only
+    cleanup rather than refusing to run the engine.
+    """
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    class _BasicLimitInfo(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_int64),
+            ("PerJobUserTimeLimit", ctypes.c_int64),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            # ULONG_PTR; c_size_t is the same width everywhere we build.
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class _IoCounters(ctypes.Structure):
+        _fields_ = [
+            (name, ctypes.c_uint64)
+            for name in (
+                "ReadOperationCount",
+                "WriteOperationCount",
+                "OtherOperationCount",
+                "ReadTransferCount",
+                "WriteTransferCount",
+                "OtherTransferCount",
+            )
+        ]
+
+    class _ExtendedLimitInfo(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", _BasicLimitInfo),
+            ("IoInfo", _IoCounters),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    try:
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.CreateJobObjectW(None, None)
+        if not handle:
+            return None
+        info = _ExtendedLimitInfo()
+        info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(
+            handle,
+            _JobObjectExtendedLimitInformation,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        ):
+            kernel32.CloseHandle(handle)
+            return None
+        return _KernelJob(kernel32, handle)
+    except Exception:
+        # A job is belt-and-braces on top of stop(); any failure here must
+        # not keep the bookmark engine from starting at all.
+        logger.warning(
+            "Engine job object unavailable; falling back to stop().", exc_info=True
+        )
+        return None
+
+
+class _KernelJob:
+    """The ctypes-bound job handle, narrowed to the two operations used."""
+
+    def __init__(self, kernel32, handle):
+        self._kernel32 = kernel32
+        self._handle = handle
+
+    def assign(self, proc):
+        """Put the child in the job. False is non-fatal (fall back)."""
+        return bool(self._kernel32.AssignProcessToJobObject(self._handle, proc))
+
+    def close(self):
+        self._kernel32.CloseHandle(self._handle)
+
+
 # Basename match, not a substring: a folder merely containing "autohotkey"
 # (e.g. AutoHotkeyBackup\notepad.exe) must not look like the engine.
 _ENGINE_IMAGE_NAME = "autohotkeyu64.exe"
@@ -88,14 +193,17 @@ class HotkeyEngine:
         *,
         spawner=subprocess.Popen,
         token_factory=lambda: uuid.uuid4().hex,
+        job_factory=_default_job,
     ):
         self._exe = exe
         self._script = Path(script) if script else None
         self._state_dir = Path(state_dir)
         self._spawner = spawner
         self._token_factory = token_factory
+        self._job_factory = job_factory
         self._proc = None
         self._token = None
+        self._job = None
         self.last_error: str | None = None
 
     # -- config ------------------------------------------------------
@@ -131,6 +239,25 @@ class HotkeyEngine:
             self._proc = None
             return False
 
+        # Bind the child's life to ours before anything else can fail:
+        # every path after this point that used to leave the engine running
+        # now at worst leaves it in a job the kernel empties when we die.
+        # A None or failed assignment falls back to the historical
+        # stop()-only cleanup, never blocks the start.
+        try:
+            self._job = self._job_factory()
+            if self._job is not None and not self._job.assign(self._proc.handle):
+                logger.warning("Could not assign the engine to its job object.")
+                self._job.close()
+                self._job = None
+        except (OSError, AttributeError):
+            # AttributeError covers spawner doubles without a real .handle
+            # (the test seam); a real Popen always has one.
+            logger.warning(
+                "Engine job object setup failed; falling back to stop().", exc_info=True
+            )
+            self._job = None
+
         try:
             atomicio.write_atomic(
                 self._pid_path(),
@@ -160,6 +287,7 @@ class HotkeyEngine:
         precisely the ambiguity orphan recovery then has to resolve.
         """
         proc, self._proc = self._proc, None
+        job, self._job = self._job, None
         try:
             if proc is None or proc.poll() is not None:
                 return
@@ -194,6 +322,14 @@ class HotkeyEngine:
             except OSError:
                 logger.exception("Could not wait on the engine process.")
         finally:
+            if job is not None:
+                try:
+                    job.close()
+                except OSError:
+                    # Closing a dead handle must not report a failed stop;
+                    # the kill-on-close still fired when the kernel tore
+                    # the handle down with us.
+                    logger.debug("Engine job handle already closed.")
             self._clear_pid_record()
 
     def is_running(self) -> bool:
@@ -252,9 +388,11 @@ class HotkeyEngine:
         we do not know the record is stale, so it is kept for the next
         start rather than thrown away.
 
-        Note this only ever runs at the next start. Neither this nor
-        #SingleInstance Force helps a user who closes Wingman and never
-        reopens it; clean shutdown is what covers the common case.
+        Note this only ever runs at the next start. The job object binds the
+        engine to this process -- a dead Wingman takes the engine with it --
+        so recovery is mainly a fallback for records left by sessions that
+        predate the job or where the job could not be created; clean
+        shutdown remains what covers the common case.
         """
         try:
             # atomicio.write_atomic writes UTF-8; say so on the way back
