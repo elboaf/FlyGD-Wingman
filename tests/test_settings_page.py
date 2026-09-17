@@ -217,10 +217,12 @@ def test_fleet_controls_have_their_own_section_without_preview_controls():
         assert f'id="{control}"' not in fleet
 
 
-def test_bookmarks_help_names_the_sig_toggle_without_stale_direction():
+def test_bookmarks_sig_help_explains_the_bar_without_repeating_toggle_paths():
     bookmarks = dict(_panes())["bookmarks"]
+    assert "Shows SIG / ROOT / NEXT above other windows." in bookmarks
+    assert "Drag the bar to reposition it." in bookmarks
     assert "right end" not in bookmarks
-    assert "Floating sig bar toggle in the status strip" in bookmarks
+    assert "toggle in the status strip" not in bookmarks
 
 
 def test_general_help_preserves_independent_companions():

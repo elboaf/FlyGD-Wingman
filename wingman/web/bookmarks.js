@@ -79,16 +79,12 @@
       // as off rather than left showing whatever the row said last: the
       // line is only ever news when it contradicts the switch, and it
       // cannot contradict anything we have not been told.
-      showEngineRow('off', '');
+      writeEngineState(el, 'off', '');
       return;
     }
-    var label = { off: 'Not running', stopped: 'Stopped',
-                  stale: 'Not responding',
-                  running: 'Running' }[engine.state] || '';
     // The reason matters more than the state: "Stopped" alone leaves the
     // user with no idea the engine is missing rather than merely idle.
-    writeEngineState(el, engine.state, engine.last_error, label);
-    showEngineRow(engine.state, engine.last_error);
+    writeEngineState(el, engine.state, engine.last_error);
   }
 
   // Both engine-state write sites go through this. They already drifted
@@ -97,34 +93,18 @@
   // it would leave the route's render red and the next poll tick plain.
   //
   // `stale` and `stopped` are failures; `off` is the user's own choice and
-  // is not. A last_error reddens whatever the state, for the same reason
-  // showEngineRow keeps the row for one: it is the record of what broke.
-  function writeEngineState(el, state, lastError, label) {
+  // is not. A last_error keeps the record of what broke even while Off.
+  function writeEngineState(el, state, lastError) {
     if (!el) return;
-    el.textContent = lastError ? label + ' \u2014 ' + lastError : label;
+    var label = {off: 'Not running', stopped: 'Stopped', stale: 'Not responding', running: 'Running'}[state] || '';
+    var text = lastError ? label + ' \u2014 ' + lastError : (state === 'off' ? '' : label);
+    // Keep the live owner mounted even in quiet Off, and do not reannounce
+    // identical poll text. Class updates remain independent of text changes.
+    if (el.textContent !== text) el.textContent = text;
     var bad = !!lastError || state === 'stopped' || state === 'stale';
     el.classList.toggle('err', bad);
-  }
-
-  // Walkthrough Settings 8. "Not running" directly under an UNTICKED
-  // `Register keybinds in EVE` is the same fact twice, the second time
-  // unlabelled and dim -- the engine is not running because the user
-  // switched it off, which the checkbox above already says. So the line is
-  // withheld in exactly that state and shown in every other, where it is
-  // genuinely news: "Not running" while the switch is ON means something
-  // failed.
-  //
-  // A last_error keeps the row whatever the state. An error carried on an
-  // `off` engine is the record of why it stopped, and hiding it would lose
-  // the one actionable thing the user was told.
-  //
-  // The ROW is hidden, not the span: .lab:empty collapses the label but
-  // the row keeps its 10px margin-bottom, so hiding only the text leaves a
-  // gap under the checkbox with nothing in it.
-  function showEngineRow(engineState, lastError) {
-    var row = WM.el('eve-engine-row');
-    if (!row) return;
-    row.hidden = engineState === 'off' && !lastError;
+    el.classList.toggle('pill', state === 'running' && !bad);
+    el.classList.toggle('ok', state === 'running' && !bad);
   }
 
   // Every EVE client titles its window "EVE - <character>", so a list of
@@ -500,11 +480,10 @@
     // Hidden entirely when off, so nothing changes for users who never
     // turn the feature on.
     host.hidden = (payload.state === 'off');
-    // The route's own engine line follows the same rule as after a save --
-    // see showEngineRow. Done BEFORE the early return, so an engine that
-    // goes off on a poll tick takes the line with it rather than leaving
-    // the last state it had on screen under an unticked box.
-    showEngineRow(payload.state, payload.last_error);
+    // Paint even Off before returning: an Off error populates this row and
+    // must not leave the previous Running text or treatment in it. Both
+    // update paths retain the full last_error in the same live status owner.
+    writeEngineState(WM.el('eve-engine-state'), payload.state, payload.last_error);
     if (payload.state === 'off') return;
 
     var live = payload.state === 'running';
@@ -524,15 +503,6 @@
         + 'Bookmarks'
       : '';
 
-    var label = { stopped: 'Stopped', stale: 'Not responding',
-                  running: 'Running' }[payload.state] || '';
-    var stateEl = WM.el('eve-engine-state');
-    // Must include last_error, and must match how the route renders it
-    // after a save. Otherwise ticking Enable with a missing engine shows
-    // "Stopped — the engine is missing…" and the next poll tick a second
-    // later overwrites it with a bare "Stopped", so the one actionable
-    // thing the user was told silently disappears.
-    writeEngineState(stateEl, payload.state, payload.last_error, label);
     host.classList.toggle('degraded', !live);
   });
 
