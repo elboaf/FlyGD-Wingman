@@ -388,6 +388,7 @@ class Api:
         skills=None,
         telemetry=None,
         fleet_sharing=None,
+        fleet_clock=time.monotonic,
         telemetry_factory=None,
         alerts_controller=None,
         authority=None,
@@ -434,7 +435,7 @@ class Api:
         self._fleet_activation = 0
         self._fleet_settings_dirty = False
         self._fleet_display_dirty = True
-        self._fleet_clock = time.monotonic
+        self._fleet_clock = fleet_clock
         self._remote_fleet = RemoteFleetStore()
         self._remote_display_signature = ()
         self._remote_context = None
@@ -447,7 +448,9 @@ class Api:
         self._catalogue_unsubscribe = None
         # Construction is inert. Main starts the owner before subscribing;
         # the dispatcher only folds state and sets its wakeup bit.
-        self._fleet_worker = FleetPresentationWorker(self._present_snapshots)
+        self._fleet_worker = FleetPresentationWorker(
+            self._present_snapshots, clock=self._fleet_clock
+        )
         # Bounded data handoff from Preview's pump/discovery/storage callbacks.
         # Detach under this lock; sample authority and touch pages only afterward.
         self._preview_presentation_lock = threading.Lock()
@@ -2577,14 +2580,21 @@ class Api:
             if row.character not in hidden
         ]
         if section.get("enabled"):
-            # The relay's dps is outgoing only. Incoming is unknown, not a
-            # measured zero or a local NO LOG condition.
+            # Keep unknown directional values distinct from measured zero.
+            # Observed names stay internal; only surviving kinds reach this page.
             rows.extend(
                 {
                     "character": row.character_name,
-                    "outgoing_dps": row.dps,
-                    "incoming_dps": None,
-                    "ewar": list(row.ewar),
+                    "outgoing_dps": row.outgoing_dps,
+                    "incoming_dps": row.incoming_dps,
+                    "ewar": list(
+                        dict.fromkeys(
+                            "SCRAM/POINT"
+                            if effect.kind in ("SCRAM", "POINT")
+                            else effect.kind
+                            for effect in row.effects
+                        )
+                    ),
                     "log_status": None,
                     "remote": True,
                     "state": row.state,
@@ -2605,14 +2615,15 @@ class Api:
 
     def _refresh_remote_fleet_locked(self, now=None):
         rows = self._remote_fleet.current(self._fleet_clock() if now is None else now)
-        signature = tuple((row.character_id, row.state) for row in rows)
-        if signature != self._remote_display_signature:
-            self._remote_display_signature = signature
+        # Display rows contain semantics only: both directions and surviving
+        # effect/name observations, never receipt IDs or timing deadlines.
+        if rows != self._remote_display_signature:
+            self._remote_display_signature = rows
             self._next_fleet_revision_locked()
         return rows
 
-    def _fleet_payloads_locked(self) -> tuple[dict, dict]:
-        remote_rows = self._refresh_remote_fleet_locked()
+    def _fleet_payloads_locked(self, now=None) -> tuple[dict, dict]:
+        remote_rows = self._refresh_remote_fleet_locked(now)
         section = dict(self._state.settings.get("fleet_bar") or {})
         revision = self._fleet_presentation_revision
         return (
@@ -2865,7 +2876,8 @@ class Api:
             if self._fleetbar_quitting:
                 return None
             now = self._fleet_clock()
-            self._refresh_remote_fleet_locked(now)
+            settings_payload, display_payload = self._fleet_payloads_locked(now)
+            settings_changed = self._fleet_settings_dirty
             # Schedule from the SAME sample as the state/revision. A later
             # sample could cross stale and incorrectly wait until expiry.
             deadline = self._remote_fleet.next_transition(now)
@@ -2886,9 +2898,6 @@ class Api:
             # telemetry. Preserve a wakeup even when this was the only job.
             self._queue_fleet_presentation()
             return None
-        with self._fleet_presentation_lock:
-            settings_payload, display_payload = self._fleet_payloads_locked()
-            settings_changed = self._fleet_settings_dirty
         if settings_changed:
             self._fleet_state_push("onFleetBarState", settings_payload, delivery)
         self._push_fleet_snapshot(display_payload, delivery)
@@ -2960,15 +2969,11 @@ class Api:
             if not self._admit_remote_event_locked(event, "remote"):
                 return
             now = self._fleet_clock()
-            before = self._remote_fleet.current(now)
             if event.kind == "clear":
                 self._remote_fleet.clear()
             else:
-                self._remote_fleet.replace(
-                    event.rows, event.receipt_monotonic, event.request_elapsed
-                )
-            if before != self._remote_fleet.current(now):
-                self._next_fleet_revision_locked()
+                self._remote_fleet.replace(event.payload)
+            self._refresh_remote_fleet_locked(now)
             # Equal metrics with a new publication still move the deadline.
             self._fleet_worker.notify()
 
@@ -4181,6 +4186,11 @@ class Api:
         with self._sharing_delivery_lock:
             status = self._sharing_status or SharingStatus("stopped")
             payload = asdict(status)
+            # The immutable commands are internal confirmation/recovery authority,
+            # not part of the existing page's safe source-status projection.
+            for key in ("pending_sources", "source_results"):
+                for source in payload[key]:
+                    source.pop("command", None)
             payload.update(
                 available=self._fleet_sharing is not None and not self._sharing_closed,
                 enabled=self._sharing_enabled,
@@ -4609,7 +4619,7 @@ class Api:
             ):
                 # Coordinator registration only changes its subscriber list;
                 # delivery is asynchronous, never an immediate callback.
-                self._sharing_unsubscribe = telemetry.subscribe_fleet(
+                self._sharing_unsubscribe = telemetry.subscribe_admitted_fleet(
                     self._fleet_sharing.submit
                 )
             self._eve_runtime_active += 1
@@ -4648,8 +4658,12 @@ class Api:
         """Reject new reconciliation before subscriptions or windows are removed."""
         with self._eve_runtime_lock:
             self._eve_runtime_closed = True
-            self._alerts_controller.close_runtime()
             telemetry = self._telemetry
+        # Coordinator close takes its lifecycle lock. Factory installation is
+        # already fenced; never hold Api locks while waiting for that owner.
+        if telemetry is not None:
+            telemetry.close_source_admission()
+        self._alerts_controller.close_runtime()
         self._close_preview_presentation()
         self._preview_layouts.close_admission()
         self._wanderer.close_admission()

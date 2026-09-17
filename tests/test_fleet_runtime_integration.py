@@ -1,18 +1,75 @@
 """Rebase boundary: one local presentation owner and one network owner."""
 
 import threading
+from types import SimpleNamespace
 
 import pytest
 
 from tests.test_api_fleetsharing import setup
+from tests.test_client_discovery import ALICE
 from tests.test_fleet_bar import PAGE_A, FakeTelemetry, FleetWindow
 from tests.test_fleet_bar import (
     _headless_fleet_window_helpers as _headless_fleet_window_helpers,
 )
-from tests.test_telemetry_coordinator import _harness, _roster, _session
+from tests.test_telemetry_gamelogs import NOW, OUTGOING_DAMAGE_LINE, _log
 from wingman import settings
-from wingman.telemetry.coordinator import _noop_thread_factory
-from wingman.telemetry.model import FleetRow
+from wingman.telemetry.admission import _SourceAuthority
+from wingman.telemetry.clients import ClientDiscovery
+from wingman.telemetry.coordinator import TelemetryCoordinator, _noop_thread_factory
+from wingman.telemetry.gamelogs import GameLogStream
+from wingman.telemetry.metrics import FleetMetrics
+
+
+def _harness(tmp_path, *, fleet, sharing):
+    """Actual producers and metrics; only OS enumeration and threads are inert."""
+    mono = [1000.0]
+
+    def clock():
+        return mono[0]
+
+    authority = _SourceAuthority()
+    discovery = ClientDiscovery(
+        _enumerate_clients=lambda: [ALICE],
+        _thread_factory=_noop_thread_factory,
+        _source_admission=authority,
+    )
+    stream = GameLogStream(
+        _clock=clock,
+        _utc_now=lambda: NOW,
+        _thread_factory=_noop_thread_factory,
+        _source_admission=authority,
+    )
+    metrics = FleetMetrics(_clock=clock, _utc_now=lambda: NOW)
+
+    def wait_reset(event, timeout):
+        coordinator.dispatch_once(0)
+        return event.wait(0)
+
+    coordinator = TelemetryCoordinator(
+        preview_enabled=lambda: False,
+        fleet_enabled=lambda: fleet,
+        sharing_enabled=lambda: sharing,
+        alerts_enabled=lambda: False,
+        gamelogs_folder=lambda: tmp_path,
+        discovery=discovery,
+        stream=stream,
+        metrics=metrics,
+        _clock=clock,
+        _source_admission=authority,
+        _thread_factory=_noop_thread_factory,
+        _wait_reset=wait_reset,
+    )
+    return SimpleNamespace(
+        coordinator=coordinator,
+        discovery=discovery,
+        stream=stream,
+        metrics=metrics,
+        mono=mono,
+        clock=clock,
+        folder=tmp_path,
+        path=None,
+        pump=lambda: coordinator.dispatch_once(0),
+    )
 
 
 def _failed_fleet_startup(tmp_path):
@@ -44,10 +101,55 @@ def _failed_fleet_startup(tmp_path):
 
 
 def _complete_frame(harness, dps=10):
-    harness.metrics.rows = (FleetRow("Alice", dps),)
-    harness.discovery.publish(_roster(_session("Alice")))
+    # A genuine source retirement/new log replaces old observations; no fake
+    # row or current-ticket wrapper can certify this composition path.
+    if harness.path is not None:
+        harness.path.unlink()
+        harness.stream.scan_once(NOW)
+        harness.pump()
+    harness.discovery.scan_once()
+    harness.stream.scan_once(NOW)
+    harness.pump()
+    harness.path = _log(
+        harness.folder,
+        "Alice",
+        OUTGOING_DAMAGE_LINE.replace("299", str(dps * 10)).replace(
+            "11:30:00", "12:00:00"
+        ),
+        stem=f"combat-{dps}",
+    )
+    harness.stream.scan_once(NOW)
     harness.pump()
     return harness.coordinator.snapshot()
+
+
+@pytest.mark.parametrize("fleet,sharing", [(True, False), (False, True), (True, True)])
+def test_real_producer_modes_keep_local_and_admitted_consumers_distinct(
+    tmp_path, fleet, sharing
+):
+    harness = _harness(tmp_path, fleet=fleet, sharing=sharing)
+    api, worker, *_rest = setup(
+        tmp_path, enabled=sharing, telemetry=harness.coordinator
+    )
+    api._state.settings["fleet_bar"]["enabled"] = fleet
+    api._fleet_worker._thread_factory = _noop_thread_factory
+    try:
+        api._start_fleet_telemetry_if_enabled()
+        frame = _complete_frame(harness)
+        assert worker._latest.is_current()
+        assert worker._latest.snapshot.rows[0].dps == 10
+        if fleet:
+            assert worker._latest.snapshot is frame
+            assert api._fleet_snapshot is frame
+        else:
+            # The local cache deliberately hides rows while Fleet is Off;
+            # sharing receives its original ticket, never that empty fallback.
+            assert frame.rows == () and frame.stream_health.state == "disabled"
+            assert api._fleet_snapshot is None
+        assert harness.coordinator._subscribers == [api._receive_fleet_snapshot]
+        assert harness.coordinator._admitted_subscribers == [worker.submit]
+    finally:
+        api.shutdown_previews()
 
 
 @pytest.mark.parametrize("action", ["sharing", "preview", "alerts", "folder"])
@@ -80,16 +182,18 @@ def test_non_fleet_recovery_admits_completed_frame_to_both_owners(
             completed.append(_complete_frame(harness))
         frame = completed[0]
         assert frame.activation_generation == 1 and frame.rows[0].dps == 10
-        assert worker._latest[0] is frame
+        assert worker._latest.snapshot is frame
+        assert worker._latest.is_current()
         assert api._fleet_snapshot is frame
         api._fleet_worker.iterate_once()
         payload = api.fleet_bar_snapshot(PAGE_A)
         assert payload["rows"][0]["character"] == "Alice"
         assert payload["rows"][0]["outgoing_dps"] == 10
-        assert payload["rows"][0]["incoming_dps"] is None
+        assert payload["rows"][0]["incoming_dps"] == 0
         assert any("onFleetSnapshot" in call for call in api._fleetbar_window.calls)
         assert settings.load()["fleet_bar"]["seen"] == ["Alice"]
-        assert telemetry._subscribers == [api._receive_fleet_snapshot, worker.submit]
+        assert telemetry._subscribers == [api._receive_fleet_snapshot]
+        assert telemetry._admitted_subscribers == [worker.submit]
 
         # An ordinary non-Fleet reconciliation must not clear a live frame,
         # bump its admission/revision, or replace either subscription owner.
@@ -100,7 +204,8 @@ def test_non_fleet_recovery_admits_completed_frame_to_both_owners(
         assert api._fleet_snapshot is frame
         assert api._fleet_activation == activation
         assert api._fleet_presentation_revision == revision
-        assert telemetry._subscribers == [api._receive_fleet_snapshot, worker.submit]
+        assert telemetry._subscribers == [api._receive_fleet_snapshot]
+        assert telemetry._admitted_subscribers == [worker.submit]
     finally:
         api.shutdown_previews()
     assert telemetry._subscribers == []
@@ -144,7 +249,9 @@ def test_held_non_fleet_recovery_cannot_supersede_fleet_lifecycle(
     runner.start()
     try:
         assert entered.wait(2)
-        assert worker._latest[0] is old_frame[0]
+        source = worker._latest
+        assert source.snapshot is old_frame[0]
+        assert source.is_current()
         assert api._fleet_snapshot is None
         if superseding == "close":
             # Main closes runtime admission before subscriber/native teardown.
@@ -175,6 +282,7 @@ def test_held_non_fleet_recovery_cannot_supersede_fleet_lifecycle(
         assert api._fleet_activation == activation
         assert api._fleet_presentation_revision == revision
         if superseding in ("close", "shutdown"):
+            assert not source.is_current()
             api._receive_fleet_snapshot(old_frame[0])
             assert api._fleet_snapshot is None
     finally:
@@ -244,6 +352,7 @@ def test_reconcile_preserves_each_subscription_and_local_start_order(tmp_path, l
     api, worker, *_rest = setup(tmp_path, telemetry=None if lazy else telemetry)
     created, subscriptions = [], []
     subscribe = telemetry.subscribe_fleet
+    subscribe_admitted = telemetry.subscribe_admitted_fleet
 
     def factory():
         created.append(True)
@@ -259,6 +368,12 @@ def test_reconcile_preserves_each_subscription_and_local_start_order(tmp_path, l
 
     api._telemetry_factory = factory
     telemetry.subscribe_fleet = track
+
+    def track_admitted(callback):
+        subscriptions.append(callback)
+        return subscribe_admitted(callback)
+
+    telemetry.subscribe_admitted_fleet = track_admitted
     try:
         if not lazy:
             assert api._start_fleet_presentation()
@@ -288,14 +403,132 @@ def test_local_start_failure_does_not_subscribe_but_sharing_still_works(tmp_path
     owner._thread_factory = fail
     try:
         api._reconcile_eve_runtime()
-        assert telemetry.subscribers == [worker.submit]
+        assert telemetry.subscribers == []
+        assert telemetry.admitted_subscribers == [worker.submit]
         owner._thread_factory = spawn
         api._reconcile_eve_runtime()
         assert api._fleet_worker is owner
-        assert telemetry.subscribers.count(worker.submit) == 1
+        assert telemetry.admitted_subscribers.count(worker.submit) == 1
         assert telemetry.subscribers.count(api._receive_fleet_snapshot) == 1
     finally:
         api.shutdown_previews()
+
+
+def test_runtime_uses_distinct_admitted_subscription_and_closes_before_detach(tmp_path):
+    telemetry = FakeTelemetry()
+    api, worker, *_rest = setup(tmp_path, telemetry=telemetry)
+    api._reconcile_eve_runtime()
+    try:
+        assert telemetry.subscribers == [api._receive_fleet_snapshot]
+        assert telemetry.admitted_subscribers == [worker.submit]
+        assert worker._latest is None  # No raw cache fallback.
+        api._close_eve_runtime()
+        assert telemetry.source_closed
+        assert telemetry.subscribers and telemetry.admitted_subscribers
+    finally:
+        api.shutdown_previews()
+    assert not telemetry.subscribers and not telemetry.admitted_subscribers
+
+
+def test_source_close_wait_never_holds_api_runtime_or_presentation_locks(tmp_path):
+    telemetry = FakeTelemetry()
+    api, _worker, *_rest = setup(tmp_path, telemetry=telemetry)
+    acquired = threading.Event()
+    probes = []
+
+    def close():
+        def probe():
+            with api._eve_runtime_lock, api._fleet_presentation_lock:
+                acquired.set()
+
+        thread = threading.Thread(target=probe)
+        probes.append(thread)
+        thread.start()
+        assert acquired.wait(2), "source lifecycle wait holds Api locks"
+        telemetry.source_closed = True
+
+    telemetry.close_source_admission = close
+    try:
+        api._close_eve_runtime()
+    finally:
+        telemetry.close_source_admission = lambda: None
+        for thread in probes:
+            thread.join(3)
+        api.shutdown_previews()
+
+
+def test_final_close_serializes_late_inert_factory_without_reopening(tmp_path):
+    telemetry = FakeTelemetry()
+    api, _worker, *_rest = setup(tmp_path)
+    entered, release, closing, closed = (threading.Event() for _ in range(4))
+    builds = []
+
+    def factory():
+        builds.append(True)
+        entered.set()
+        assert release.wait(5)
+        return telemetry
+
+    api._telemetry_factory = factory
+
+    def close():
+        closing.set()
+        api._close_eve_runtime()
+        closed.set()
+
+    reconcile = threading.Thread(target=api._reconcile_eve_runtime)
+    closer = threading.Thread(target=close)
+    reconcile.start()
+    try:
+        assert entered.wait(2)
+        closer.start()
+        assert closing.wait(2)
+        assert not closed.wait(0.05)
+        release.set()
+        reconcile.join(3)
+        closer.join(3)
+        assert closed.is_set() and telemetry.source_closed
+        assert api._telemetry is telemetry
+        assert api._reconcile_eve_runtime() is None
+        assert builds == [True]
+    finally:
+        release.set()
+        reconcile.join(3)
+        if closer.ident:
+            closer.join(3)
+        api.shutdown_previews()
+    assert not reconcile.is_alive() and not closer.is_alive()
+
+
+def test_pending_command_status_never_projects_internal_commands(tmp_path):
+    from dataclasses import replace
+
+    from tests.test_fleetsharing_worker import NOW, UUID
+    from wingman.fleetsharing.protocol import SourceStart
+    from wingman.fleetsharing.worker import PendingSourceStatus
+
+    api, worker, *_rest = setup(tmp_path)
+    command = SourceStart(UUID, 1, UUID, NOW)
+    pending = PendingSourceStatus(UUID, "start", 1, "saved", command)
+    api._receive_fleet_sharing_status(
+        replace(
+            worker.status(),
+            order=1,
+            pending_sources=(pending,),
+            source_results=(pending,),
+        )
+    )
+    payload = api.fleet_sharing_state()
+    for key in ("pending_sources", "source_results"):
+        assert payload[key] == (
+            {
+                "source_id": UUID,
+                "operation": "start",
+                "character_id": 1,
+                "stage": "saved",
+            },
+        )
+    api.shutdown_previews()
 
 
 def test_reconcile_effect_does_not_hold_runtime_lock(tmp_path):
@@ -394,14 +627,13 @@ def test_blocked_local_presentation_leaves_network_handoff_and_off_live(
     off = threading.Thread(target=lambda: api.fleet_sharing_set_enabled(False))
     try:
         api._reconcile_fleet_generation(transition=True)
-        harness.metrics.rows = (FleetRow("Alice", 10),)
-        harness.discovery.publish(_roster(_session("Alice")))
-        harness.pump()
+        _complete_frame(harness)
         assert entered.wait(2)
-        assert worker._latest[0].rows[0].dps == 10
-        harness.metrics.rows = (FleetRow("Alice", 20),)
-        harness.pump()
-        assert worker._latest[0].rows[0].dps == 20
+        assert worker._latest.snapshot.rows[0].dps == 10
+        assert worker._latest.is_current()
+        _complete_frame(harness, dps=20)
+        assert worker._latest.snapshot.rows[0].dps == 20
+        assert worker._latest.is_current()
         assert api.fleet_sharing_watch(True)["queued"]
         assert worker._watch
         api.close()

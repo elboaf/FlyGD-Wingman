@@ -47,7 +47,18 @@ def test_build_fleet_sharing_worker_is_platform_neutral_and_starts_stopped(
     from wingman.fleetsharing.worker import FleetSharingWorker
 
     state = AppState(recording_dir=None, settings={"fleet_sharing": {"enabled": True}})
-    worker = main_mod.build_fleet_sharing_worker(state)
+    from wingman.fleetsharing.timing import TimingContext
+
+    def clock():
+        return 1000.0
+
+    context = TimingContext(
+        clock=clock, db_continuity_token=object(), elapsed_lifetime_token=object()
+    )
+    worker = main_mod.build_fleet_sharing_worker(state, timing_context=context)
+    assert worker is not None
+    assert worker._timing_context is context
+    assert worker._clock is clock
 
     assert isinstance(worker, FleetSharingWorker)
     worker.iterate_once()
@@ -55,6 +66,27 @@ def test_build_fleet_sharing_worker_is_platform_neutral_and_starts_stopped(
     assert worker.status().metadata.loaded
     assert worker.status().metadata.binding is None
     assert worker.status().participation is None
+
+
+def test_build_telemetry_connects_actual_producers_in_one_elapsed_domain(monkeypatch):
+    from wingman.telemetry.admission import _SourceAuthority
+
+    monkeypatch.setattr(main_mod.sys, "platform", "win32")
+
+    def clock():
+        return 1000.0
+
+    state = AppState(recording_dir=None, settings=settings.load())
+    runtime = main_mod.build_telemetry(state, None, None, clock=clock)
+    assert runtime is not None
+    authority = runtime._source_admission
+    assert isinstance(authority, _SourceAuthority)
+    assert runtime._discovery._source_admission is authority
+    assert runtime._stream._source_admission is authority
+    assert runtime._admission_connected
+    assert runtime._clock is runtime._stream._clock is runtime._metrics._clock is clock
+    runtime.close_source_admission()
+    assert runtime.stop()
 
 
 def test_main_retains_the_single_sharing_owner_for_disabled_startup():

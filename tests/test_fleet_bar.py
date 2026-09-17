@@ -173,6 +173,8 @@ class FakeTelemetry:
     def __init__(self):
         self.reconciled = 0
         self.subscribers = []
+        self.admitted_subscribers = []
+        self.source_closed = False
         self.generation = 0
         self.latest = FleetSnapshot(
             rows=(),
@@ -188,6 +190,14 @@ class FakeTelemetry:
     def subscribe_fleet(self, callback):
         self.subscribers.append(callback)
         return lambda: self.subscribers.remove(callback)
+
+    def subscribe_admitted_fleet(self, callback):
+        # Registration spy only: raw local fixtures never certify publication.
+        self.admitted_subscribers.append(callback)
+        return lambda: self.admitted_subscribers.remove(callback)
+
+    def close_source_admission(self):
+        self.source_closed = True
 
     def requested_fleet_generation(self):
         return self.generation
@@ -1304,7 +1314,7 @@ def test_main_wires_subscription_restore_and_shutdown_destruction():
 
     runtime = inspect.getsource(Api._reconcile_eve_runtime)
     presentation = inspect.getsource(Api._start_fleet_presentation)
-    assert "telemetry.subscribe_fleet" in runtime
+    assert "telemetry.subscribe_admitted_fleet" in runtime
     assert "self._fleet_sharing.submit" in runtime
     assert "self._telemetry.subscribe_fleet" in presentation
     assert "self._receive_fleet_snapshot" in presentation

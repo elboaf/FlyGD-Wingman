@@ -22,6 +22,8 @@ class FakeTelemetry:
         self.subscribers = []
         self.stopped = 0
         self.custom_closed = False
+        self.source_closed = False
+        self.admitted_subscribers = []
         self._health = health or StreamHealth(state="stopped")
         self._characters = tuple(characters)
 
@@ -34,6 +36,13 @@ class FakeTelemetry:
 
     def stop(self):
         self.stopped += 1
+
+    def subscribe_admitted_fleet(self, callback):
+        self.admitted_subscribers.append(callback)
+        return lambda: self.admitted_subscribers.remove(callback)
+
+    def close_source_admission(self):
+        self.source_closed = True
 
     def close_custom_admission(self):
         self.custom_closed = True
