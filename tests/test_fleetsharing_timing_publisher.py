@@ -1,7 +1,7 @@
 """Original-source preparation; fake tickets certify no producer wiring."""
 
 from dataclasses import FrozenInstanceError, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from fractions import Fraction
 from math import inf, nan, nextafter
 from types import MappingProxyType
@@ -796,6 +796,163 @@ def test_real_metrics_sample_rebind_and_ticket_rotation_do_not_reidentify_eviden
     )
     with pytest.raises(FrozenInstanceError):
         second.source = ticket
+
+
+def bound_real_metrics(clock, utc):
+    metrics = FleetMetrics(_clock=lambda: clock[0], _utc_now=lambda: utc[0])
+    session = ClientSessionId(1, 2, "Alice", 1)
+    metrics.consume(
+        TelemetryEnvelope(
+            1, RosterSnapshot(1, (RosterClient(1, 2, "EVE - Alice", "Alice", session),))
+        )
+    )
+    source_id = SourceId("local-only-log", utc[0])
+    metrics.consume(
+        TelemetryEnvelope(2, SourceLifecycle("Alice", 1, source_id, True, True))
+    )
+    return metrics, source_id
+
+
+@pytest.mark.parametrize("kind", ["incoming_damage", "incoming_scram"])
+@pytest.mark.parametrize(
+    "m, delay_us",
+    [
+        pytest.param(0.1, 0, id="fractional-same-tick"),
+        pytest.param(0.2, 0, id="downward-same-tick"),
+        pytest.param(nextafter(2.0, -inf), 0, id="below-32-same-tick"),
+        pytest.param(2.0, 0, id="at-32-same-tick"),
+        pytest.param(nextafter(2.0, inf), 0, id="above-32-same-tick"),
+        pytest.param(0.0, 200_000, id="delayed-duration-up"),
+        pytest.param(0.1, 123_457, id="delayed-microseconds"),
+    ],
+)
+def test_real_metrics_fractional_deadlines_stage_and_retry_without_restamping(
+    kind, m, delay_us
+):
+    ctx, clock = context(m)
+    anchor(ctx, a=m, r=m)
+    utc = [datetime(2026, 1, 1, tzinfo=UTC)]
+    metrics, source_id = bound_real_metrics(clock, utc)
+    metrics.consume(
+        TelemetryEnvelope(
+            3,
+            CombatFact(
+                "Alice",
+                1,
+                source_id,
+                utc[0] - timedelta(microseconds=delay_us),
+                kind,
+                100 if kind == "incoming_damage" else None,
+            ),
+        )
+    )
+    snapshot = metrics.snapshot(4, StreamHealth("active"))
+    ticket = FakePublicationSource(snapshot)
+    first = stage(ctx, ticket)
+    assert first is not None
+    row = snapshot.rows[0]
+    assert first.snapshot is snapshot
+    assert first.sampled_at_mono == snapshot.sampled_at_mono == m
+    assert first.rows[0].incoming_dps == (10 if kind == "incoming_damage" else 0)
+    assert first.rows[0].outgoing_dps == 0
+    seconds, micros = divmod(30_000_000 - delay_us, 1_000_000)
+    exact = Fraction(m) + seconds + Fraction(micros, 1_000_000)
+    deadline = row.combat.expires_at_mono
+    assert Fraction(deadline) <= exact < Fraction(nextafter(deadline, inf))
+    assert row.combat.observation_id[1] == 3
+    assert first.pins[0].evidence.coordinate == Fraction(m)
+    assert first.pins[1].evidence.coordinate == Fraction(deadline) - 30
+    assert first.pins[1].evidence.horizon == Fraction(deadline)
+    if kind == "incoming_scram":
+        assert row.combat.observations == (
+            EffectObservation("SCRAM", deadline, row.combat.observation_id),
+        )
+        assert first.rows[0].effects == (
+            Effect("SCRAM", (Observation(None, first.rows[0].activity_age_ms),)),
+        )
+        assert first.pins[2].evidence.coordinate == first.pins[1].evidence.coordinate
+        assert first.pins[2].evidence.horizon == first.pins[1].evidence.horizon
+    assert ticket.admit_start(lambda: ctx._validate_publication(first)) is True
+
+    # The earliest representable retry at least 500ms later — m + .5 can
+    # round below the exact cadence boundary (notably .1 -> .6).
+    retry_at = Fraction(m) + Fraction(1, 2)
+    clock[0] = float(retry_at)
+    if Fraction(clock[0]) < retry_at:
+        clock[0] = nextafter(clock[0], inf)
+    second = stage(ctx, ticket)
+    assert second is not None
+    assert second.snapshot is snapshot
+    assert second.snapshot.rows[0] is row
+    assert second.sampled_at_mono == m
+    assert second.sampled_at_ms == first.sampled_at_ms
+    assert second.rows == first.rows
+    assert all(a is b for a, b in zip(first.pins, second.pins, strict=True))
+    assert ticket.admit_start(lambda: ctx._validate_publication(second)) is True
+
+
+def test_real_metrics_eight_fractional_samples_with_fresh_damage_and_ewar_stage():
+    ctx, clock = context(0.125)
+    anchor(ctx, a=0.125, r=0.125)
+    mono = [0.1]
+    start = datetime(2026, 1, 1, tzinfo=UTC)
+    utc = [start]
+    metrics, source_id = bound_real_metrics(mono, utc)
+    results = []
+    for index in range(8):
+        mono[0] = 0.1 + index / 2
+        utc[0] = start + timedelta(milliseconds=500 * index)
+        damage_sequence = 3 + 3 * index
+        for sequence, kind in (
+            (damage_sequence, "incoming_damage"),
+            (damage_sequence + 1, "incoming_scram"),
+        ):
+            metrics.consume(
+                TelemetryEnvelope(
+                    sequence,
+                    CombatFact(
+                        "Alice",
+                        1,
+                        source_id,
+                        utc[0],
+                        kind,
+                        100 if kind == "incoming_damage" else None,
+                    ),
+                )
+            )
+        snapshot = metrics.snapshot(damage_sequence + 2, StreamHealth("active"))
+        # Exact 500ms staging cadence, about 25ms after each measurement;
+        # do not conflate the producer bug with .1 -> .6 cadence rounding.
+        clock[0] = 0.125 + index / 2
+        ticket = FakePublicationSource(snapshot)
+        results.append((ticket, stage(ctx, ticket)))
+    assert [t.snapshot.sampled_at_mono for t, p in results if p is None] == []
+    token = results[0][0].snapshot.rows[0].combat.observation_id[0]
+    previous_deadline = -inf
+    for index, (ticket, prepared) in enumerate(results):
+        row = ticket.snapshot.rows[0]
+        m = 0.1 + index / 2
+        deadline = row.combat.expires_at_mono
+        assert prepared.snapshot is ticket.snapshot
+        assert prepared.sampled_at_mono == m
+        assert prepared.rows[0].incoming_dps == 10 * (index + 1)
+        assert row.combat.observation_id == (token, 3 + 3 * index)
+        assert row.combat.observations == (
+            EffectObservation("SCRAM", deadline, (token, 4 + 3 * index)),
+        )
+        assert previous_deadline < deadline
+        assert (
+            Fraction(deadline) <= Fraction(m) + 30 < Fraction(nextafter(deadline, inf))
+        )
+        previous_deadline = deadline
+    ticket, last = results[-1]
+    clock[0] += 0.5
+    retried = stage(ctx, ticket)
+    assert retried is not None
+    assert retried.snapshot is last.snapshot
+    assert retried.sampled_at_mono == 3.6
+    assert (retried.sampled_at_ms, retried.rows) == (last.sampled_at_ms, last.rows)
+    assert all(a is b for a, b in zip(last.pins, retried.pins, strict=True))
 
 
 @pytest.mark.parametrize("member", ["row", "effect"])

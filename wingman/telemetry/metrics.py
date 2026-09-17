@@ -147,6 +147,8 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_UP, Decimal
+from fractions import Fraction
+from math import inf, nextafter
 from uuid import UUID, uuid4
 
 from wingman.combatprofile import LIMITS, normalize_observed_name, observed_name_key
@@ -219,6 +221,19 @@ def _round_half_up(total: int) -> int:
     return int(
         (Decimal(total) / _DPS_DIVISOR).quantize(_ROUND_UNIT, rounding=ROUND_HALF_UP)
     )
+
+
+def _conservative_deadline(mono: float, remaining: datetime.timedelta) -> float:
+    # Preserve timedelta microseconds before the single float rounding. Rounding
+    # the duration first can lose precision even if the addition itself is exact.
+    micros = (
+        remaining.days * 86400 + remaining.seconds
+    ) * 1_000_000 + remaining.microseconds
+    exact = Fraction(mono) + Fraction(micros, 1_000_000)
+    candidate = float(exact)
+    # Never put the reconstructed event after its measurement. nextafter uses
+    # the actual predecessor spacing, including at binary exponent boundaries.
+    return nextafter(candidate, -inf) if candidate > exact else candidate
 
 
 @dataclass
@@ -478,7 +493,7 @@ class FleetMetrics:
                 name = None
 
         remaining = fact.occurred_at + ROW_ACTIVITY_WINDOW - now
-        candidate = mono + min(remaining, ROW_ACTIVITY_WINDOW).total_seconds()
+        candidate = _conservative_deadline(mono, min(remaining, ROW_ACTIVITY_WINDOW))
         previous = state.effects.get(slot)
         if previous is None or candidate > previous.expires_at_mono:
             state.effects[slot] = EffectObservation(
@@ -502,7 +517,7 @@ class FleetMetrics:
         remaining = occurred_at + ROW_ACTIVITY_WINDOW - now
         if remaining <= datetime.timedelta(0):
             return False
-        candidate = mono + min(remaining, ROW_ACTIVITY_WINDOW).total_seconds()
+        candidate = _conservative_deadline(mono, min(remaining, ROW_ACTIVITY_WINDOW))
         previous = state.combat.expires_at_mono
         if previous is None or candidate > previous:
             state.combat = CombatActivity(candidate, (state.lifetime_token, sequence))

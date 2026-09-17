@@ -9,6 +9,8 @@ current instant, mutated between calls) and a deterministic monotonic clock
 import datetime
 import json
 from dataclasses import replace
+from fractions import Fraction
+from math import inf, nextafter
 from pathlib import Path
 from uuid import UUID
 
@@ -931,7 +933,7 @@ class TestRowActivity:
 
     @pytest.mark.parametrize("kind", ["incoming_damage", "outgoing_damage"])
     @pytest.mark.parametrize(
-        "age, deadline", [(10, 120.0), (15, 115.0), (29.999, 100.001)]
+        "age, deadline", [(10, 120.0), (15, 115.0), (29.999, 100.00099999999999)]
     )
     def test_delayed_damage_has_only_event_time_remainder(self, kind, age, deadline):
         metrics, _, _ = self._bound()
@@ -1282,6 +1284,88 @@ class TestRowActivity:
         empty = metrics.snapshot(5, HEALTH)
         assert empty.rows == ()
         assert empty.sampled_at_mono == 125.0
+
+
+# ---------------------------------------------------------------------------
+# Conservative producer deadlines — exercise ingestion, not a helper oracle.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "kind", ["outgoing_damage", "incoming_damage", "incoming_scram"]
+)
+@pytest.mark.parametrize(
+    "mono, remaining_us, deadline",
+    [
+        pytest.param(0.1, 30_000_000, 30.099999999999998, id="addition-up"),
+        pytest.param(0.2, 30_000_000, 30.2, id="addition-down"),
+        pytest.param(0.5, 30_000_000, 30.5, id="exact"),
+        pytest.param(0.0, 29_800_000, 29.799999999999997, id="duration-up"),
+        pytest.param(0.0, 29_900_000, 29.9, id="duration-down"),
+        pytest.param(0.1, 29_876_543, 29.976543, id="delayed-microseconds"),
+        pytest.param(100.0, 1_000, 100.00099999999999, id="last-millisecond"),
+        pytest.param(0.0, 1, 0.000001, id="last-microsecond"),
+        pytest.param(
+            nextafter(2.0, -inf), 30_000_000, 31.999999999999996, id="below-32"
+        ),
+        pytest.param(2.0, 30_000_000, 32.0, id="at-32"),
+        pytest.param(nextafter(2.0, inf), 30_000_000, 32.0, id="above-32"),
+        pytest.param(
+            nextafter(34.0, -inf), 30_000_000, 63.99999999999999, id="below-64"
+        ),
+        pytest.param(34.0, 30_000_000, 64.0, id="at-64"),
+        pytest.param(nextafter(34.0, inf), 30_000_000, 64.0, id="above-64"),
+        pytest.param(
+            nextafter(2.1, -inf),
+            29_900_000,
+            31.999999999999996,
+            id="delayed-below-32",
+        ),
+        pytest.param(2.1, 29_900_000, 32.0, id="delayed-above-32"),
+        pytest.param(
+            -29.0, 29_100_000, 0.09999999999999999, id="duration-cancellation"
+        ),
+    ],
+)
+def test_producer_deadline_is_greatest_float_not_after_exact_lifetime(
+    kind, mono, remaining_us, deadline
+):
+    metrics, _, mono_box = _metrics(mono=mono)
+    metrics.consume(_env(1, _roster(_session("Alice"))))
+    metrics.consume(_env(2, _lifecycle("Alice")))
+    remaining = datetime.timedelta(microseconds=remaining_us)
+    occurred_at = NOW - datetime.timedelta(seconds=30) + remaining
+    fact = (
+        _tackle("Alice", occurred_at)
+        if kind == "incoming_scram"
+        else _damage("Alice", 100, occurred_at, kind=kind)
+    )
+    metrics.consume(_env(3, fact))
+    snapshot = metrics.snapshot(4, HEALTH)
+    row = _row(snapshot, "Alice")
+    assert snapshot.metric_error is None
+    assert snapshot.sampled_at_mono == mono
+    assert row.combat.expires_at_mono == deadline
+    assert row.combat.observation_id[1] == 3
+    # Independent integer timedelta decomposition: total_seconds() is itself
+    # rounded and cannot certify that the original lifetime was not extended.
+    seconds, subsecond = divmod(remaining, datetime.timedelta(seconds=1))
+    exact = Fraction(mono) + seconds + Fraction(subsecond.microseconds, 1_000_000)
+    assert Fraction(deadline) <= exact < Fraction(nextafter(deadline, inf))
+    if kind == "incoming_scram":
+        assert row.combat.observations == (
+            EffectObservation("SCRAM", deadline, row.combat.observation_id),
+        )
+    else:
+        assert row.combat.observations == ()
+    assert combat_row_visible(row, now_mono=nextafter(deadline, -inf))
+    assert not combat_row_visible(row, now_mono=deadline)
+    mono_box[0] = deadline
+    expired = _row(metrics.snapshot(5, HEALTH), "Alice")
+    assert expired.combat.expires_at_mono == deadline
+    assert expired.combat.observation_id == row.combat.observation_id
+    assert expired.combat.observations == ()
+    assert expired.ewar == ()
 
 
 # ---------------------------------------------------------------------------
