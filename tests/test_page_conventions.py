@@ -1350,7 +1350,7 @@ def test_enabled_subordinate_actions_have_readable_resting_contrast():
     giving every enabled subordinate action, including compact Preview row
     actions, a readable resting state.
     """
-    linkbtn = re.search(r"\.linkbtn\s*\{([^}]*)\}", CSS)
+    linkbtn = re.search(r"^\.linkbtn\s*\{([^}]*)\}", CSS, re.MULTILINE)
     assert linkbtn, "the shared .linkbtn treatment is missing"
     assert "color: var(--text-dim)" in linkbtn.group(1)
     assert "color: var(--text-faint)" not in linkbtn.group(1)
@@ -2898,7 +2898,7 @@ def test_clear_is_not_drawn_where_it_could_only_refuse():
     # Right-aligning inside the cell pins Edit... to one edge and turns a
     # missing Clear into an empty slot. That is one declaration, and
     # deleting it left the whole suite green until a review looked for it.
-    acts = re.search(r"\.rowacts\s*\{([^}]*)\}", CSS)
+    acts = re.search(r"^\.rowacts\s*\{([^}]*)\}", CSS, re.MULTILINE)
     assert acts, "`.rowacts` has no rule -- Clear and Edit... share its cell"
     assert "justify-content: flex-end" in acts.group(1), (
         "`.rowacts` no longer right-aligns its contents, so Edit... sits at "

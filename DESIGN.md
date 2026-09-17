@@ -377,7 +377,7 @@ that test from B1's reasoning — the reasoning is recorded here precisely
 so the conclusion is not re-derived from it.
 
 Round 6 widened Previews' column from a flat `150px` to
-`minmax(150px, 260px)` and the ban is unaffected, which is the point worth
+`minmax(150px, 260px)` and the ban was unaffected, which is the point worth
 recording: B1 forbids a track sized *by the roster*, not a track that
 varies with the WINDOW. Both ends are lengths, so the column still cannot
 move between sessions with whoever is logged in — it simply stops
@@ -386,6 +386,11 @@ beside it. `_preview_binds_cell_tracks` in `test_page_conventions.py`
 checks the rule rather than the spelling, and rejects `max-content`
 anywhere in the track including inside a `minmax()`, which the regex it
 replaced could not see.
+
+The current Preview table uses `minmax(200px, 260px)`. Step 4's rendered floor
+check found the intervening 210px minimum needed 596px in a 592px pane; 200px
+removes overflow without shrinking action hit areas. The 260px ceiling brings
+controls closer on wider panes. Clear/Edit keep their shared, right-aligned cell.
 
 **Open, not decided — the two stacked treatments are 1px apart.**
 `.settings .row > .lab` is `--fs-body` (13px) with a 4px `row-gap`;
@@ -764,6 +769,11 @@ static help. Keep current readiness near its owning switch or heading, with
 recovery beside it; enabled settings alone do not establish live operation.
 Move the existing status node rather than creating a second live-region owner.
 Expected Off or Waiting states are not errors merely because work is inactive.
+Bookmarks puts its existing engine status beside Register keybinds in EVE;
+only Running gets a pill. Both getter/save and push paths retain full error text
+in that same polite live region, including an Off error. Quiet Off leaves that
+owner exposed but empty; unchanged polls do not rewrite live text. Registration blockers
+remain separate facts: a running engine does not prove keys are registered.
 Fleet eligibility stays beside sharing status, outside its roster disclosure;
 settled history hides obsolete Stop controls but retains their keyed identity if
 pending work makes an attempt current again. Advanced alert Flashes and Speed
@@ -786,6 +796,18 @@ replace keybind state or increment its push counter. Preserve drafts, scroll,
 capture, owned focus and detached screenshot/live state. Older payloads without
 geometry still identify the source without invented coordinates. This is read
 evidence, not a guarantee that a user cannot move the source before pressing Copy.
+
+Preview Copy alone opts into hiding a redundant selected-detail line when the
+complete caption fits the closed selector. Truncated, clipped, unmeasurable and
+legacy/null-geometry source details stay readable. Other compact choosers retain
+their full-detail default. Observed placement in Configure uses that same current
+geometry source, not Size defaults; geometry/actions and crop occupy a full-width
+local grid, stacking at the floor without creating another scroll owner.
+
+Bookmark overlap warnings show “Conflicts with a Bookmark keybind” and the
+underlined Open Bookmarks action. Their same description node retains the full
+owner/chord/consequence/recovery for accessibility. This warning treatment does
+not replace local conflict precedence or genuine registration-error information.
 
 
 ## Routes and sections
@@ -822,7 +844,15 @@ release at that fitting's boundary. Keyboard reveal clears these local headers.
 
 Windows uses native disclosures: Appearance and Placement start open; Size and
 shape and When you switch away start closed. Each exception list stays with its
-controlling preference. The tabs and flat subpage treatment are scoped to these
+controlling preference. Related control units use two columns above 960px and
+stack below; helpers stay beneath their owning controls, not at the far edge.
+Cycle-group headings retain local identity within their panel boundary, after
+the character table's separate opaque header/Offline stack. The group manager
+never sticks; bounded name tracks keep Rename/Delete and member actions nearby.
+Forward/Back share a row above 960px and stack below, preserving DOM tab order.
+All group controls clear the measured local heading when focused, including
+unconflicted binds and member actions. Pointer-down targets do not move before
+activation; full heading height is reserved even while it releases at the panel end. The tabs and flat subpage treatment are scoped to these
 two sections; other Settings screens keep their existing layout.
 
 `WM.route` switches destinations; `WM.section` switches groups inside

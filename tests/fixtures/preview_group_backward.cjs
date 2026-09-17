@@ -147,6 +147,31 @@ function settle(p, applied = true) {
     assert.equal((await api.set_preview_cycle_group_prev_bind(g.id, '')).hotkeys.groups.at(-1).cycle_prev, '');
     while (timers.length) timers.shift()();
     assert.ok(published.length);
+  } else if (scenario === 'focus-clearance') {
+    window.WM.openSettingsSection('previews', 'characters'); push(payload());
+    const panel = gpanel('g'), pane = document.getElementById('settings-previews-characters');
+    const head = panel.querySelector('.cycle-group-head');
+    const rect = (top, height) => ({top, bottom: top + height, left: 0, right: 600, width: 600, height});
+    pane.getBoundingClientRect = () => rect(100, 400); pane.scrollTop = 300;
+    head.getBoundingClientRect = () => rect(100, 63);
+    for (const control of [gbind('g', 'Forward'), gaction('g', 'Forward', 'Clear'),
+        panel.querySelector('.cycle-member-row').querySelectorAll('button').at(-1),
+        panel.querySelector('.cycle-add-select')]) {
+      document.activeElement = document.body; pane.scrollTop = 300;
+      const matches = control.matches.bind(control);
+      control.matches = selector => selector === ':active' ? false : matches(selector);
+      control.getBoundingClientRect = () => rect(405 - pane.scrollTop, 28);
+      control.focus();
+      assert.ok(control.getBoundingClientRect().top >= 167, 'ordinary control clears its measured local heading');
+      assert.equal(document.activeElement, control);
+    }
+    const control = gbind('g', 'Forward');
+    document.activeElement = document.body; pane.scrollTop = 300;
+    const matches = control.matches.bind(control);
+    control.matches = selector => selector === ':active' || matches(selector);
+    control.focus();
+    assert.equal(pane.scrollTop, 300, 'pointer-down does not move its target before activation');
+    assert.equal(writes.length, 0);
   } else if (scenario === 'focus-draft') {
     window.WM.openSettingsSection('previews', 'characters');
     getters.shift()(payload()); await tick();
@@ -342,7 +367,26 @@ function settle(p, applied = true) {
     assert.equal(gaction('g:prev', 'Back', 'Clear'), undefined);
     assert.ok(gaction('g:prev', 'Back', 'Edit…'));
     assert.equal(document.querySelector('[data-preview-configure="Alice"]').parentNode.children.length, 5);
-    const p = payload(); p.hotkeys.groups = []; push(p);
+    assert.equal(document.querySelector('#preview-binds .bind-head').children.length, 5, 'header and unconditional collapsed cells agree');
+    const manager = document.querySelector('.preview-group-manager');
+    assert.equal(manager.tagName, 'DETAILS');
+    assert.ok(!manager.classList.contains('bind-group'), 'manager must not borrow a sticky group-heading role');
+    const p = payload();
+    const longName = 'A cycle group name that must remain readable when its track is bounded';
+    p.hotkeys.groups[0].name = longName;
+    push(p);
+    const groupName = document.querySelector('.group-manage-name');
+    assert.equal(groupName.textContent, longName);
+    assert.equal(groupName.title, longName, 'bounded group-management identity keeps its full name available');
+    assert.deepEqual(groupName.parentNode.children.map(node => node.textContent), [longName, 'Rename…', 'Delete'], 'manager actions retain DOM keyboard order beside the name');
+    const panel = gpanel('g');
+    assert.equal(panel.firstChild.className, 'cycle-group-head', 'sticky context belongs to the existing panel only');
+    assert.equal(panel.querySelector('.cycle-group-head').parentNode, panel);
+    assert.deepEqual(panel.querySelector('.cycle-group-chords').children.map(node => node.querySelector('.lab').title), ['Forward', 'Back']);
+    const member = panel.querySelector('.cycle-member-row');
+    assert.deepEqual(member.children.map(node => node.textContent), ['Alice', '↑', '↓', 'Remove']);
+    for (const button of member.querySelectorAll('button')) assert.match(button.getAttribute('aria-label'), /Alice in A cycle group/);
+    p.hotkeys.groups = []; push(p);
     assert.equal(document.querySelectorAll('#preview-binds .bindbtn').length, 2, 'groups come and go; every known character keeps its row');
   } else if (scenario === 'conflicts') {
     const p = payload(); const chord = 'Ctrl+F3';

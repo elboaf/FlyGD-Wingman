@@ -733,6 +733,7 @@
              between it and the switch would have put the gate ~800px below
              the fold. -->
         <h2>EVE-focused keybinds</h2>
+        <div class="bookmark-runtime">
         <div class="row">
           <!-- The .check/.box pattern is not decoration: .check input is
                opacity:0 and the styled .box is the visible control. A bare
@@ -742,13 +743,11 @@
             Register keybinds in EVE
           </label>
         </div>
-        <!-- `hidden` is the resting state, not a bug. bookmarks.js shows
-             this row only where the line is news -- see showEngineRow.
-             Without it the markup's own "Not running" is on screen from
-             first paint until the first payload lands, under an unticked
-             switch that already said so. -->
-        <div class="row" id="eve-engine-row" hidden><span class="lab"></span>
-          <span class="hint operational-status" id="eve-engine-state">Not running</span></div>
+        <!-- Quiet Off is empty, not hidden: the same live owner must already
+             be exposed when a failed start supplies its recovery text. -->
+        <div class="row" id="eve-engine-row"><span class="lab"></span>
+          <span class="hint operational-status" id="eve-engine-state" role="status" aria-live="polite"></span></div>
+        </div>
         <div class="row" id="eve-blockers-row" hidden><span class="lab"></span>
           <span class="hint" id="eve-blockers"></span></div>
         <!-- No `Import from an existing helper...` button. It held the only
@@ -777,15 +776,16 @@
       </section>
 
       <section class="card">
-        <h2>EVE windows</h2>
+        <header class="card-heading">
+          <h2>EVE windows</h2>
+          <button class="btn" id="eve-refresh-windows" aria-label="Refresh EVE windows">Refresh</button>
+        </header>
         <!-- The second sentence is C9's half of the fix and is load-bearing,
              not padding: bookmarks.js marks only the exception now, and this
              is what stops "no mark" being something the reader has to infer.
              See the comment on that branch for what it replaced. -->
-        <p class="hint">Keybinds only fire while a selected window is
-          active. All listed windows are running unless marked otherwise.</p>
-        <div class="row"><span class="lab"></span>
-          <button class="btn" id="eve-refresh-windows">Refresh</button></div>
+        <p class="hint">Keybinds fire only in the selected active EVE window.
+          Listed windows are running unless marked otherwise.</p>
         <div id="eve-windows"></div>
       </section>
 
@@ -794,10 +794,7 @@
         <!-- A third card in the Bookmarks section, because the bar is the
              same engine's readout: it renders what the keybinds' status
              line pushes, so a reader looking for it looks here first. -->
-        <p class="hint">A small always-on-top copy of the SIG / ROOT / NEXT
-          readout that floats over other windows. Drag it anywhere on
-          screen; it remembers where you left it. Show or hide it with the
-          checkbox below, or use the Floating sig bar toggle in the status strip.</p>
+        <p class="hint">Shows SIG / ROOT / NEXT above other windows. Drag the bar to reposition it.</p>
         <div class="row">
           <label class="check">
             <input type="checkbox" id="sigbar-enabled"><span class="box"></span>
@@ -895,6 +892,8 @@
       <section class="card" id="preview-window-options">
         <details class="settings-disclosure" id="preview-group-appearance" open>
           <summary>Appearance</summary>
+        <div class="preview-option-grid">
+        <div class="preview-option-unit">
         <div class="row">
           <label class="check">
             <input type="checkbox" id="preview-show-labels"><span class="box"></span>
@@ -920,6 +919,8 @@
           </select>
         </div>
         <p class="field-msg" id="preview-label-size-status" hidden></p>
+        </div>
+        <div class="preview-option-unit">
         <div class="row">
           <label class="lab" for="preview-opacity">Opacity</label>
           <!-- PERCENT, not the DWM alpha byte. Round 5's C2: this control
@@ -947,6 +948,8 @@
             and label stay at full strength.</span></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-opacity-status"></span></div>
+        </div>
+        </div>
 
         </details>
         <details class="settings-disclosure" id="preview-group-placement" open>
@@ -971,6 +974,8 @@
           <p class="hint" id="preview-layout-reopen" hidden></p>
           <p class="hint" id="preview-layout-status" role="status" aria-live="polite" tabindex="-1">Loading saved layouts…</p>
         </div>
+        <div class="preview-option-grid">
+        <div class="preview-option-unit">
         <div class="row">
           <label class="check">
             <input type="checkbox" id="restore-preview-positions"><span class="box"></span>
@@ -985,6 +990,8 @@
             each preview in a default stack instead. Positions are still
             remembered while this is off, so turning it back on restores
             what you last had.</span></div>
+        </div>
+        <div class="preview-option-unit">
         <div class="row"><label class="check">
             <input type="checkbox" id="preview-snap"><span class="box"></span>
             Snap previews to each other and the screen edges
@@ -1014,6 +1021,8 @@
           <div class="pv-exc-list" id="preview-lock-exceptions-list"
                role="group" aria-labelledby="preview-lock-exceptions-summary"></div>
         </details>
+        </div>
+        </div>
 
         </details>
         <details class="settings-disclosure" id="preview-group-size">
@@ -1029,6 +1038,8 @@
           <span class="hint" id="preview-lock-aspect-status">Off lets the
             resize handle move each edge freely, stretching the
             picture.</span></div>
+        <div class="preview-option-grid">
+        <div class="preview-option-unit">
         <div class="row">
           <label class="lab" for="preview-default-size">Default preview
             size</label>
@@ -1050,6 +1061,8 @@
           <button class="btn" id="btn-preview-apply-size">Apply saved size to all open previews</button>
           <span class="hint">Replaces custom sizes on open Wingman previews, not EVE windows.</span>
           <span class="hint" id="preview-apply-size-status"></span></div>
+        </div>
+        <div class="preview-option-unit">
         <div class="row">
           <!-- The ring a selected preview wears. #rrggbb in and out; the
                page never unpacks the string, Python owns the format.
@@ -1076,6 +1089,8 @@
                aria-labelledby="preview-selection-color-label"></div>
           <span class="hint" id="preview-selection-color-status">The ring
             on the preview you last clicked.</span></div>
+        </div>
+        </div>
 
         </details>
         <!-- The one group that reaches through the mirror to the REAL EVE
@@ -2835,19 +2850,11 @@
       <button class="winbtn" id="btn-fleetbar" title="Fleet Bar"
               aria-label="Fleet Bar"
               aria-pressed="false">DPS</button>
-      <!-- Toggles the floating sig bar (ui/sigbar.py + sigbar.html). A
-           .winbtn, not a .btn: it is chrome that lives beside chrome, and
-           the 44px square keeps the strip's height unchanged. `.active`
-           styling is shared with .winbtn.gear.active's treatment -- see
-           style.css, which colours the glyph and not the fill, so the
-           accent stays the strip's scarcity.
-
-           Directly left of the EVE segment, with a ">" between the sig
-           glyph and that segment's SIG readout: the arrow says what the
-           toggle is FOR -- it floats the very segment it points at --
-           which a bare medallion beside three labels never could. -->
+      <!-- SIG names what floats instead of resembling resize decoration.
+           It remains 44×32px chrome beside the readout, with the same
+           push-owned active treatment; the native bar itself is unchanged. -->
       <button class="winbtn" id="btn-sigbar" title="Floating sig bar"
-              aria-pressed="false">&#8982;&#8250;</button>
+              aria-label="Floating sig bar" aria-pressed="false">SIG</button>
       <span class="evestat" id="evestat" hidden>
         <span class="evelabel">SIG</span><span id="eve-sig">—</span>
         <span class="evelabel">ROOT</span><span id="eve-root">—</span>

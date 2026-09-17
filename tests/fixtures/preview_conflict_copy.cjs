@@ -42,6 +42,18 @@ function message(owner) {
   calls.length = 0;
   // Bookmark overlap is configuration evidence, not proof of hook/runtime state.
   render({characters: {Alice: gesture}}, {bookmark_chords: {active: [gesture], latent: []}});
+  const bookmarkWarning = warning('character:Alice');
+  const fullBookmark = bookmarkWarning.querySelector('.status-announcement');
+  assert.ok(fullBookmark, 'compact Bookmark overlap retains full accessible owner/consequence in the same description');
+  assert.match(fullBookmark.textContent, /^Alice: Ctrl\+Alt\+1 conflicts with a configured EVE bookmark keybind/);
+  assert.match(fullBookmark.textContent, /bookmark may take this keybind in its selected EVE windows/);
+  assert.match(fullBookmark.textContent, /Edit or clear.*use different keys/);
+  assert.equal(fullBookmark.getAttribute('aria-hidden'), null, 'the full meaning remains accessible');
+  assert.equal(bookmarkWarning.children.filter(node => node !== fullBookmark).map(node => node.textContent).join(''),
+    'Conflicts with a Bookmark keybind. Open Bookmarks', 'visible summary stays compact with a real recovery button');
+  assert.equal(bookmarkWarning.getAttribute('role'), null, 'a description does not gain a second live-region owner');
+  assert.ok(bookmarkWarning.classList.contains('preview-bookmark-conflict'));
+  assert.ok(bookmarkWarning.parentNode.querySelector('.bindbtn').classList.contains('bookmark-overlap'));
   assert.match(message('character:Alice'), /configured EVE bookmark keybind/);
   assert.match(message('character:Alice'), /bookmark may take this keybind in its selected EVE windows/);
   assert.match(message('character:Alice'), /use different keys/);
@@ -56,6 +68,9 @@ function message(owner) {
     assert.match(message(owner), /Character focus takes priority; this keybind will not cycle/);
   }
   assert.match(message('group:g1'), /conflicts with Alice, Bravo/);
+  assert.equal(warning('group:g1').querySelector('.status-announcement'), null, 'real local conflicts retain full visible prose');
+  assert.ok(!warning('group:g1').classList.contains('preview-bookmark-conflict'));
+  assert.ok(!warning('group:g1').parentNode.querySelector('.bindbtn').classList.contains('bookmark-overlap'));
   render({characters: {Bravo: gesture},
     groups: [{id: 'g1', name: 'Fleet', cycle: gesture}]});
   assert.match(message('group:g1'), /Character focus takes priority; this keybind will not cycle/,
@@ -85,6 +100,9 @@ function message(owner) {
   assert.equal(warning('character:Alice'), null);
   render({characters: {Alice: gesture}}, {registration: {[gesture]: false}, bookmark_chords: {active: [gesture], latent: []}});
   assert.match(warning('character:Alice').textContent, /already owned by another application/);
+  assert.equal(warning('character:Alice').querySelector('.status-announcement'), null);
+  assert.ok(!warning('character:Alice').classList.contains('preview-bookmark-conflict'));
+  assert.ok(!warning('character:Alice').parentNode.querySelector('.bindbtn').classList.contains('bookmark-overlap'));
   assert.doesNotMatch(warning('character:Alice').textContent, /bookmark will not fire/);
   render({characters: {Alice: gesture}});
   assert.equal(warning('character:Alice'), null, 'resolved conflict retires the warning');

@@ -15,6 +15,55 @@ dev checks are separate evidence, not installed Windows/WebView2 acceptance.
 
 Run on Windows against a real install before each release.
 
+## Screenshot UX step 4 — installed Windows acceptance NOT RUN
+
+Bookmarks/Previews use bounded synthetic Chromium checks at 1015×633 and 840×625.
+These do not establish installed WebView2, native keybind/geometry/crop behavior
+or screen-reader speech. Repeat at 100/125/150/200% Windows scaling; native/live
+checks require separate authorization. Do not launch EVE, native previews or a
+picker merely to stage these screenshots.
+
+- [ ] Running sits beside Register keybinds in EVE as a text-bearing pill. Off is
+      quiet; stopped/stale/unavailable errors retain their full recovery text in
+      the same live status owner. Running with no binds/windows still shows its
+      registration blockers. An Off/error push never leaves Running visible.
+      Quiet Off leaves the live owner exposed but empty; identical status polls
+      must not repeatedly announce unchanged text.
+- [ ] The status-strip SIG toggle remains 44×32px beside the readout and DPS,
+      with its tooltip, accessible name, push-owned pressed/active state and
+      existing toggle behavior. EVE windows Refresh belongs to that card's header;
+      remembered absent windows remain marked not running with their identity intact.
+- [ ] Windows disclosures keep their defaults. Appearance/Placement and size
+      controls use related columns when wide and stack at the floor. Each helper
+      and refusal remains beside its control; lock/minimize exceptions retain
+      their ownership. Tab changes retain drafts, disclosures and scroll.
+- [ ] Character headers, Offline boundaries and cycle-group context stay opaque
+      at fractional scroll edges. Group context releases at its own panel end;
+      the manager never sticks. Long names keep a deliberate bounded track and
+      full accessible identity; Clear/Edit/Configure and reorder/remove stay usable.
+- [ ] Forward/Back share a row when wide, stack at the floor, and preserve keyboard
+      order. Unconflicted binds, Clear, member Remove and Add-member controls also
+      clear wrapped sticky headings when focused, without moving pointer-down
+      targets. Group drafts/focus/selection survive applicable refreshes. Tab/section/
+      route leave disarms capture; late capture/dialog answers cannot save a key
+      or steal focus after a newer interaction.
+- [ ] Bookmark overlap is a concise warning with visibly actionable Open Bookmarks.
+      The full owner, chord, consequence and recovery remain accessible from the
+      owning keybind. Local conflicts and real registration failures retain their
+      distinct meaning; latent overlap is not a destructive error.
+- [ ] Configure gives geometry/crop the detail width. Observed placement comes from
+      current geometry, never Size defaults or a queue ACK. Unknown stays unknown.
+      Saved crop controls remain usable under their existing prerequisites; long
+      status text and Size/Copy do not collide or cause horizontal overflow.
+- [ ] Copy's target/source identity remains explicit. Only a fully readable complete
+      selected geometry loses the repeated detail. Long/clipped captions and legacy
+      sources keep full detail; resizing or changing selection restores it when
+      needed. Copy/Cancel, Tab/Shift+Tab trap, Escape/scrim, queued focus restoration,
+      stale-answer revocation and current-geometry revision fencing remain intact.
+- [ ] Separate native acceptance confirms named layouts remain explicit snapshots,
+      Size ACKs never override observation, and real EVE clients are never moved
+      or resized by Wingman. Browser fixtures do not close this gate.
+
 ## Screenshot UX step 3 — installed Windows acceptance NOT RUN
 
 Companions/Wanderer have synthetic Chromium checks at 1015×633 and 840×625,

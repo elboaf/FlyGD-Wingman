@@ -217,11 +217,13 @@
   }
 
   function paintGeometry() {
-    // Geometry changes only action availability. Keep ordinary editors, native
-    // selects and dialog invokers attached — no focus lease crosses this paint.
+    // Geometry updates observation text and action availability in place. Keep
+    // editors, native selects and dialog invokers attached across this paint.
     if (capturing) { pendingRender = true; return; }
     paintRosterAvailability(rows());
     var detail = document.getElementById(detailId(openDetailName));
+    var observation = detail && detail.querySelector('.preview-geometry-observation');
+    if (observation) observation.textContent = geometryObservation(openDetailName);
     var actions = detail && detail.querySelector('.geometry-actions');
     if (!actions) return;
     var size = actions.querySelector('[data-preview-detail-control="size"]');
@@ -646,8 +648,17 @@
       });
     }
     if (!text) { return null; }
-    var conflict = WM.make('div', 'preview-bind-conflict', text);
-    if (bookmarkRepair) { conflict.appendChild(bookmarkRepair); }
+    var conflict = WM.make('div', 'preview-bind-conflict');
+    if (bookmarkRepair) {
+      conflict.classList.add('preview-bookmark-conflict');
+      // Keep the full owner, key, consequence and recovery in this same
+      // description; only the visible Bookmark-overlap branch is compact.
+      conflict.appendChild(WM.make('span', 'status-announcement', text));
+      var summary = WM.make('span', '', 'Conflicts with a Bookmark keybind. ');
+      summary.setAttribute('aria-hidden', 'true');
+      conflict.appendChild(summary);
+      conflict.appendChild(bookmarkRepair);
+    } else { conflict.textContent = text; }
     return conflict;
   }
 
@@ -693,6 +704,14 @@
       var bounds = group.getBoundingClientRect();
       top = Math.max(top, Math.min(bounds.bottom, top + bounds.height));
     }
+    // Cycle headings belong to their own panel, outside the character table.
+    // Measure that local heading rather than borrowing the table's offset.
+    var panel = conflict.closest('.cycle-group-panel');
+    var cycleHead = panel && panel.querySelector('.cycle-group-head');
+    if (cycleHead) {
+      var bounds = cycleHead.getBoundingClientRect();
+      top = Math.max(top, Math.min(bounds.bottom, port.top + bounds.height));
+    }
     // Reserve the measured sticky stack even when this scroll will pin it for
     // the first time. Leave a small focus-ring gutter, subject to the end clamp.
     top += 4;
@@ -718,7 +737,7 @@
     var lab = WM.make('span', 'lab');
     // The name in a span of its own, not as `.lab`'s own text. The cell is
     // a flex row (style.css) so that the name can ellipsize inside its
-    // bounded 210px-to-320px track while any name that outgrows it
+    // bounded name track while any name that outgrows it
     // ellipsizes. Appended to `lab`, NOT to `row`: an extra child on
     // the row would be an extra grid cell, and the cell-count guard reads
     // appends lexically, so it could not see one that appears on offline
@@ -794,6 +813,9 @@
         || shadow === 'active') { button.classList.add('clash'); }
     else if (clash === 'unknown') { button.classList.add('unknown'); }
     else if (shadow === 'latent') { button.classList.add('dim'); }
+    if (conflict && conflict.classList.contains('preview-bookmark-conflict')) {
+      button.classList.add('bookmark-overlap');
+    }
     if (clash === 'refused') {
       button.title = 'Another application already owns this keybind.';
     } else if (clash === 'duplicate') {
@@ -1003,12 +1025,27 @@
     identification.appendChild(markerStatus);
     detail.appendChild(identification);
 
+    var geometryGrid = WM.make('div', 'preview-geometry-grid');
     var geometry = WM.make('div', 'preview-detail-field');
-    geometry.appendChild(WM.make('span', 'preview-detail-label', 'Saved geometry'));
+    geometry.appendChild(WM.make('span', 'preview-detail-label', 'Size and position'));
+    geometry.appendChild(WM.make('span', 'hint operational-status preview-geometry-observation',
+                                 geometryObservation(characterName)));
     geometry.appendChild(makeGeometryActions(characterName, off));
-    detail.appendChild(geometry);
-    detail.appendChild(makeCropField(characterName));
+    geometryGrid.appendChild(geometry);
+    geometryGrid.appendChild(makeCropField(characterName));
+    detail.appendChild(geometryGrid);
     return detail;
+  }
+
+  function geometryObservation(name) {
+    // Size-dialog defaults are a separate authority. A missing observation
+    // is unknown placement, not the configured size or another source's rect.
+    var source = (state.layout_sources || []).filter(function (entry) {
+      return entry && entry.name === name;
+    })[0];
+    var geometry = source && source.geometry;
+    return geometry ? 'Observed placement: ' + geometry.w + ' × ' + geometry.h
+      + ' px at (' + geometry.x + ', ' + geometry.y + ')' : 'No observed placement.';
   }
 
   function ownValue(map, name) {
@@ -1611,14 +1648,16 @@
           label += ' \u00b7 ' + geometry.w + ' \u00d7 ' + geometry.h
             + ' px at (' + geometry.x + ', ' + geometry.y + ')';
         }
-        groups[group].options.push({value: source.name, label: label});
+        groups[group].options.push({value: source.name, label: label, keepDetail: !geometry});
       });
       groups = groups.filter(function (group) { return group.options.length; });
-      // Compact captions keep the native popup bounded; the existing chooser
-      // exposes the full selected label below it, including long coordinates.
+      // Only repeat geometry when its full caption cannot be read in the closed
+      // select. Keep name-only legacy detail conservatively, without guessing
+      // why that source has no geometry or whether Copy will be available.
       WM.choose('Copy preview geometry',
                 'Copy size and position to "' + name + '".',
-                groups, 'Copy', 'Copy from', {compact: true}).then(function (source) {
+                groups, 'Copy', 'Copy from',
+                {compact: true, omitRedundantDetail: true}).then(function (source) {
         // Revoke chooser admission, not settlement of a Copy already sent.
         if (screenshotLive || interaction !== detailInteraction || attempt !== copyAttempt) { return; }
         if (source === null) {
@@ -2379,6 +2418,23 @@
     head.appendChild(WM.make('span', 'cycle-group-count',
                              count === 1 ? '1 member' : count + ' members'));
     panel.appendChild(head);
+    // Native focus scrolling does not know that this local sticky heading
+    // covers an otherwise-visible control. Include nonconflicting binds and
+    // member actions, without moving a pressed pointer target before click.
+    panel.addEventListener('focusin', function (event) {
+      var control = event.target;
+      var pane = WM.el('settings-previews-characters');
+      if (pane.hidden || WM.current_route !== 'settings' || WM.current_section !== 'previews'
+          || !/^(BUTTON|INPUT|SELECT)$/.test(control.tagName) || control.matches(':active')
+          || !control.getClientRects().length) return;
+      var port = pane.getBoundingClientRect();
+      var heading = head.getBoundingClientRect();
+      var bounds = control.getBoundingClientRect();
+      // Reserve the full height: revealing a last member can repin a heading
+      // that was already releasing at the panel end. Include border/rounding.
+      var top = port.top + heading.height + 6;
+      if (bounds.top < top) pane.scrollTop -= top - bounds.top;
+    });
 
     // The group's own forward/back chords, rendered with the same bind-row
     // machinery as the table above -- capture, Edit…, Clear, clash
@@ -3032,6 +3088,7 @@
     groups().forEach(function (group) {
       var gRow = WM.make('div', 'group-manage-row');
       var gName = WM.make('span', 'group-manage-name', group.name);
+      gName.title = group.name;
       var renBtn = WM.make('button', 'btn group-rename-btn', 'Rename…');
       var delBtn = WM.make('button', 'btn danger group-delete-btn', 'Delete');
       renBtn.setAttribute('data-group-control', 'rename');

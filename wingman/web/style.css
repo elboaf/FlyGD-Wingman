@@ -609,6 +609,7 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
    divider is --text-label now and the rank is carried by size alone --
    which is the dimension that cannot invert when a token moves
    underneath it. See .bind-group-name's own note. */
+.card > .card-heading > h2,
 .card > h2 {
   font-size: var(--fs-body); letter-spacing: .14em; text-transform: uppercase;
   color: var(--text-label); margin-bottom: 12px; font-weight: 600;
@@ -627,10 +628,16 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
    whose type is small, uppercase and widely tracked, and deleting it would
    restyle five screens to settle an argument about colour. It now reads as
    punctuation rather than as a claim, which is what a heading is. */
+.card > .card-heading > h2::before,
 .card > h2::before {
   content: ""; width: 3px; height: 12px; border-radius: 2px; flex: none;
   background: var(--field-border);
 }
+
+.card-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 12px; }
+.card-heading[hidden] { display: none; }
+.card > .card-heading > h2 { margin-bottom: 0; min-width: 0; }
+.card-heading > .btn { margin-left: auto; }
 
 .row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .row:last-child { margin-bottom: 0; }
@@ -1633,30 +1640,49 @@ button.btn:disabled,
    ellipsis-in-a-bounded-track name treatment and small fixed buttons --
    the same vocabulary as #preview-binds, because this is the same kind of
    list, just ordered and editable in place. */
-.cycle-group-panel { margin: 0 0 16px 0; }
+.cycle-group-panel { margin: 0 0 16px 0; min-width: 0; }
 .cycle-group-head {
   display: flex; align-items: baseline; gap: 8px; margin: 4px 0 6px 0;
+  padding: 4px 0;
 }
-.cycle-group-name { color: var(--text); font-size: var(--fs-body); }
-.cycle-group-count { color: var(--text-dim); font-size: var(--fs-muted); }
+.cycle-group-head[hidden] { display: none; }
+/* The existing panel is the sticky boundary, not a new scroller or selection.
+   Cycle groups sit after the character table, so its 22px offset does not apply. */
+.cycle-group-panel > .cycle-group-head {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--panel); box-shadow: 0 -1px var(--panel);
+}
+.cycle-group-name { min-width: 0; overflow-wrap: anywhere; color: var(--text); font-size: var(--fs-body); }
+.cycle-group-count { flex: none; color: var(--text-dim); font-size: var(--fs-muted); }
 .cycle-member-row { align-items: center; }
-.cycle-member-row .cycle-order-name { flex: 1 1 auto; }
+.cycle-member-row .cycle-order-name { flex: 0 1 200px; }
 .cycle-member-btn { flex: 0 0 auto; }
 .cycle-add-row { margin-top: 6px; }
-.cycle-add-row .cycle-add-select { flex: 1 1 auto; min-width: 0; }
+.cycle-group-panel .cycle-add-row > select.field.cycle-add-select { flex: 0 1 200px; min-width: 0; }
 
-/* The chord rows inside a group panel reuse makeRow, so they must opt out
-   of the settings-row stacked-label treatment (`width: 100%` on .lab) that
-   would push the chord button to its own line: name left, chord button
-   right, conflict text wrapping below like it does in the bind table. */
-.cycle-group-chords { margin: 2px 0 8px 0; }
-.cycle-group-chords .row { flex-wrap: wrap; row-gap: 4px; }
-.cycle-group-chords .row > .lab {
-  width: auto; flex: 1 1 auto; min-width: 0; align-self: center;
+/* Each direction keeps its own warning and controls in DOM order. Two
+   adjacent blocks fit wide panes; at the floor they stack, without shrinking
+   hit areas or spreading the direction label away from its keybind. */
+.cycle-group-chords {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start; gap: 12px; margin: 2px 0 8px 0;
 }
-.cycle-group-chords .row > .bindbtn { flex: 0 0 auto; }
-.cycle-group-chords .row > :where(.preview-bind-conflict) { flex: 1 0 100%; }
+.cycle-group-chords[hidden] { display: none; }
+.cycle-group-chords .row { flex-wrap: wrap; gap: 4px 6px; min-width: 0; margin: 0; }
+/* Outrank the later shared Settings label stack without changing other rows. */
+.cycle-group-panel .cycle-group-chords .row > .lab {
+  width: auto; flex: 0 0 54px; min-width: 0; align-self: center;
+}
+.cycle-group-chords .row > .bindbtn {
+  flex: 0 0 150px; max-width: 150px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cycle-group-chords .row > .rowacts { flex: none; }
+.cycle-group-chords .row > :where(.preview-bind-conflict) { flex: 1 0 100%; overflow-wrap: anywhere; }
 .cycle-group-chords .row > span:empty { display: none; }
+@media (max-width: 960px) {
+  .cycle-group-chords { grid-template-columns: minmax(0, 1fr); }
+}
 
 /* Prose that TEACHES rather than prose that warns, folded away.
 
@@ -2581,15 +2607,15 @@ button.btn:disabled,
      THE NAME TRACK IS NOT CONTENT-SIZED, and that is the whole reason
      this list may have an inline name at all. `max-content` over
      character names is round 3's B1: the track follows whoever is logged
-     in, so the bind button moves between sessions. `minmax(210px, 320px)`
+     in, so the bind button moves between sessions. `minmax(200px, 260px)`
      keeps the stability B1 bought -- both ends are lengths, so the track
      never consults the roster -- while dropping the cross-list half of
      its rule. Bookmarks still stacks, because "Convert EvE-Scout
      Bookmarks" is 189.6px and genuinely needs its own line.
 
-     The 210px floor and 320px ceiling reclaim enough collapsed-row space
-     for names without returning to content-sized tracks. Names wider than
-     the resolved track still ellipsize and still carry a `title`.
+     A 200px floor clears the measured 596px content demand in the 592px
+     floor pane; the 260px ceiling packs wide rows without content sizing. Names
+     wider than the resolved track still ellipsize and still carry a `title`.
      test_each_keybind_list_declares_a_deliberate_first_track holds both
      halves of that.
 
@@ -2608,7 +2634,7 @@ button.btn:disabled,
      not the scan line. Change the number of per-row children and this number
      changes with it -- test_page_conventions.py derives the expected count
      from makeRow's unconditional appends rather than trusting this comment. */
-  grid-template-columns: minmax(210px, 320px) repeat(4, max-content) minmax(0, 1fr);
+  grid-template-columns: minmax(200px, 260px) repeat(4, max-content) minmax(0, 1fr);
 }
 
 /* The scrollbar gutter leaves 591px at the 839px floor. Controls and the
@@ -2752,7 +2778,7 @@ button.btn:disabled,
 
 /* This one no longer merely restates the override above. While B1
    collapsed the column unconditionally, this block said the same thing
-   twice; the name sits in a bounded 210px-to-320px track now, so below
+   twice; the name sits in a bounded 200px-to-260px track now, so below
    720px this is what would actually hand it the whole line back instead of ellipsizing it in
    a track a narrow card cannot afford. WOULD, not does -- the CSS floor
    is 840x625 at every scaling (see the note at #eve-binds), so 720px is
@@ -2785,7 +2811,9 @@ button.btn:disabled,
 }
 .preview-detail-field {
   display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+  min-width: 0; max-width: 100%;
 }
+.preview-character-detail[hidden], .preview-detail-field[hidden] { display: none; }
 .preview-detail-label {
   font-size: var(--fs-muted); color: var(--text-dim);
 }
@@ -2797,14 +2825,29 @@ button.btn:disabled,
   max-width: 32ch; font-size: var(--fs-muted); color: var(--err);
 }
 .preview-marker-status:empty { display: none; }
-.preview-character-detail .geometry-actions { min-height: 28px; }
+/* Observation/actions and crop form one full-width geometry area. In-place
+   paintGeometry/paintCrops still own their original descendants. */
+.preview-geometry-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  flex-basis: 100%; width: 100%; min-width: 0; gap: 8px 16px;
+}
+.preview-geometry-grid[hidden] { display: none; }
+.preview-geometry-observation { margin: 0; overflow-wrap: anywhere; }
+.preview-character-detail .geometry-actions {
+  min-height: 28px; max-width: 100%; width: 100%; flex-wrap: wrap;
+}
+.preview-character-detail .geometry-actions > .size-none { flex-basis: 100%; max-width: 100%; }
+@media (max-width: 960px) {
+  .preview-geometry-grid { grid-template-columns: minmax(0, 1fr); }
+}
 .preview-configure { justify-self: start; }
 
 /* Crop stays inside the one disclosure. Its status gets a wrapping line,
    not a content-sized track that widens every character row. */
 .preview-crop-field { flex: 1 1 280px; min-width: 0; max-width: 100%; }
 .preview-crop-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.preview-crop-actions .check[hidden], .preview-crop-actions .btn[hidden] { display: none; }
+.preview-crop-actions[hidden], .preview-crop-actions .check[hidden],
+.preview-crop-actions .btn[hidden] { display: none; }
 .preview-crop-status { max-width: 65ch; margin-top: 0; overflow-wrap: anywhere; }
 
 /* Lead the owning row, before its controls and any optional detail. More
@@ -2815,6 +2858,14 @@ button.btn:disabled,
   padding-top: 8px;
   color: var(--danger); font-size: var(--fs-muted);
 }
+/* Configured Bookmark overlap is a warning, not registration refusal. Keep
+   capture's independent border and the shared disabled treatment intact. */
+.preview-bind-conflict.preview-bookmark-conflict { color: var(--warn); }
+.preview-bookmark-conflict > .linkbtn { color: var(--text-btn); text-decoration: underline; text-underline-offset: 3px; }
+#preview-binds .bindbtn.bookmark-overlap:not(:disabled),
+.cycle-group-chords .bindbtn.bookmark-overlap:not(:disabled) { color: var(--warn); }
+#preview-binds .bindbtn.bookmark-overlap:not(:disabled):not(.capturing),
+.cycle-group-chords .bindbtn.bookmark-overlap:not(:disabled):not(.capturing) { border-color: var(--warn); }
 
 /* Group manager disclosure block. Spans the full grid width. Uses
    <details> rather than .bind-group: the bind-group rule at
@@ -2907,11 +2958,14 @@ button.btn:disabled,
 .group-add-row {
   display: flex; align-items: center; gap: 6px;
 }
-.group-add-name { flex: 1 1 auto; min-width: 0; }
+.preview-group-manager .group-add-row > .group-add-name { flex: 0 1 200px; min-width: 0; }
 .group-manage-row {
   display: flex; align-items: center; gap: 6px;
 }
-.group-manage-name { flex: 1 1 auto; min-width: 0; font-size: var(--fs-muted); }
+/* Bounded, non-growing names keep lifecycle actions beside their owner.
+   Wrap long group names rather than imposing a minimum on the whole pane. */
+.group-manage-name { flex: 0 1 200px; min-width: 0; overflow-wrap: anywhere; font-size: var(--fs-muted); }
+.group-manage-row > .btn { flex: none; }
 
 /* A latent bookmark collision (previews.js's bookmarkClash) marks the
    chord without the warning colour .clash uses -- nothing is being taken
@@ -4252,6 +4306,27 @@ button.btn:disabled,
 .webhook-identity > .operational-status { margin: 0; min-width: 0; }
 /* Backup is a pair of ordinary actions, not the Uploader's full-width CTA. */
 .settings-backup-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+/* Pair the Bookmark engine with its preference without duplicating status;
+   full errors get their own line rather than squeezing the enable control. */
+.bookmark-runtime { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-bottom: 12px; }
+.bookmark-runtime[hidden] { display: none; }
+.bookmark-runtime > .row { margin: 0; min-width: 0; max-width: 100%; }
+.bookmark-runtime > .row:has(.err) { flex-basis: 100%; }
+
+/* Related preferences share space, but every consequence stays below its own
+   control. These units add no cards or scroll owners, and stack at the floor. */
+#preview-window-options .preview-option-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 24px;
+}
+#preview-window-options .preview-option-grid[hidden] { display: none; }
+#preview-window-options .preview-option-unit { min-width: 0; }
+#preview-window-options .row > .hint { flex-basis: 100%; min-width: 0; overflow-wrap: anywhere; }
+#preview-window-options .row:has(> .check) > .hint { flex-basis: calc(100% - 24px); }
+#preview-window-options .row > .btn { max-width: 100%; white-space: normal; }
+#preview-window-options .pv-exc { max-width: 100%; }
+@media (max-width: 960px) {
+  #preview-window-options .preview-option-grid { grid-template-columns: minmax(0, 1fr); }
+}
 .settings-disclosure {
   border-bottom: 1px solid var(--field-border); padding-bottom: 17px; margin-bottom: 17px;
 }
