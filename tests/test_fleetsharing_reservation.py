@@ -1,28 +1,21 @@
-"""Owner reserves response growth before accepting more durable control bytes."""
+"""State4 owner reservations — exact replacement, response/save and restart barriers.
+
+No sub-256 byte deferral exists under state4. Tests retain the original owner
+barriers with full-count journals, real atomic failures and current closed DTOs.
+"""
 
 import json
-from dataclasses import fields, replace
+from dataclasses import replace
 
 import pytest
 
-from tests.fleetsharing_capacity_helpers import (
-    fixture_bytes,
-    maximal_state,
-    source_id,
-    start_boundary,
-)
-from tests.test_fleetsharing_capacity import DiskStore
-from tests.test_fleetsharing_utf8 import (
-    admitted_upgrade,
-    approval_url,
-    legacy_save,
-    legacy_upgrade,
-)
+from tests.fleetsharing_capacity_helpers import maximal_state, source_id
+from tests.fleetsharing_worker_control_helpers import ControlRelay
+from tests.test_fleetsharing_capacity import DiskStore, full_sources
+from tests.test_fleetsharing_utf8 import approval_url, upgrade_state
 from tests.test_fleetsharing_worker import (
     DATE,
     DEVICE,
-    EXPIRY,
-    KEY,
     PAIRED_STATE,
     TOKEN,
     UUID,
@@ -30,547 +23,172 @@ from tests.test_fleetsharing_worker import (
     _worker,
     drive,
 )
+from tests.test_fleetsharing_worker_state4 import file_rig
 from wingman.fleetsharing import protocol as p
 from wingman.fleetsharing import state as s
 
 
-def disk_legacy(tmp_path, original):
-    path = tmp_path / "legacy.json"
-    legacy_save(path, original)
-    store = DiskStore.__new__(DiskStore)
-    store.path, store.saved, store.rejected = path, [], []
-    assert store.load() == original
-    return store
-
-
-def retain_originals(original, store, client, replaced=()):
-    pending = {c.source_id: c for c in store.load().pending_source_commands}
-    for command in original.pending_source_commands:
-        if command.source_id not in replaced:
-            assert (
-                pending.get(command.source_id) == command
-                or client.source_intents.get(command.source_id) == command
-            )
-    assert all(saved.identity == original.identity for saved in store.saved)
-    assert all(
-        c in original.pending_source_commands
-        for c in client.controls
-        if isinstance(c, p.StartSource)
-    )
-
-
-def assert_tail_originals(original, state, store, client):
-    # A retained UUID with a rewritten payload is not preservation, even if an
-    # earlier attempt of that UUID was acknowledged by the relay.
-    pending = {c.source_id: c for c in state.pending_source_commands}
-    assert all(c in original.pending_source_commands for c in pending.values())
-    for command in original.pending_source_commands:
-        if command.source_id in pending:
-            assert pending[command.source_id] == command
-        else:
-            assert client.source_intents.get(command.source_id) == command
-    assert state.identity == original.identity
-    assert all(saved.identity == original.identity for saved in store.saved)
-    assert all(
-        c in original.pending_source_commands
-        for c in client.controls
-        if isinstance(c, p.StartSource)
-    )
-    assert not store.rejected and not client.cadence_refusals
-
-
-def drive_control_tail(
-    worker, mono, turns, original, store, client, completed, *, fetch_sources=False
-):
-    # The old total turn count is a failure budget, not a per-phase allowance.
-    # Completion callbacks assert disk immediately at the first cheap candidate:
-    # another turn must not repair a missing write and hide an early publication.
-    attempts, acknowledgements, errors = [], [], []
-    fetches = 0
-    control, fetch = client.control_source, client.fetch_sources
-
-    def observe_control(**args):
-        attempts.append(args["command"])
-        result = control(**args)
-        acknowledgements.append((args["command"], result))
-        return result
-
-    def observe_fetch(**args):
-        nonlocal fetches
-        result = fetch(**args)
-        fetches += 1  # Failed attempts do not constitute resumption.
-        return result
-
-    def observe_status(status):
-        # Capacity deferral is the fixture's premise, not a relay refusal.
-        if status.state == "refused" or (
-            status.state == "error" and status.detail != "source_queue_full"
-        ):
-            errors.append((status.state, status.detail))
-
-    client.control_source, client.fetch_sources = observe_control, observe_fetch
-    unsubscribe = worker.subscribe_status(observe_status)
-    prior = None
-    resumed = fetched = False
-    try:
-        for _ in range(turns):
-            drive(worker, mono, 1)
-            assert not errors
-            if prior is None:
-                state = completed()
-                if state is None:
-                    continue
-                assert_tail_originals(original, state, store, client)
-                # Deliberately exclude pre-existing acknowledgements. The Stop
-                # replacement fixture already has one before its stale read.
-                candidates = [
-                    c
-                    for c in original.pending_source_commands
-                    if c in state.pending_source_commands
-                    and client.source_intents.get(c.source_id) != c
-                ]
-                assert candidates, "no unacknowledged original Start at transition"
-                prior = candidates[0]
-                attempt_floor = len(attempts)
-                ack_floor = len(acknowledgements)
-                fetch_floor = fetches
-                continue
-            if not resumed and client.source_intents.get(prior.source_id) == prior:
-                assert prior in attempts[attempt_floor:], "original Start not resumed"
-                replies = [v for c, v in acknowledgements[ack_floor:] if c == prior]
-                assert replies, "original Start lacks a NEW successful acknowledgement"
-                assert all(v.source_id == prior.source_id for v in replies)
-                assert all(v.state == "active" for v in replies)
-                state = store.load()
-                assert all(
-                    c.source_id != prior.source_id
-                    for c in state.pending_source_commands
-                ), "resumed Start retirement was not persisted"
-                assert_tail_originals(original, state, store, client)
-                resumed = True
-            fetched = fetches > fetch_floor
-            if resumed and (not fetch_sources or fetched):
-                break
-        assert prior is not None, "target did not complete within original turn budget"
-        assert resumed, "original Start did not resume within original turn budget"
-        assert not fetch_sources or fetched, "no NEW successful post-transition fetch"
-        return prior
-    finally:
-        unsubscribe()
-        client.control_source, client.fetch_sources = control, fetch
-
-
 @pytest.mark.parametrize("bound", [False, True])
-def test_legacy_batch_reserves_generation_growth_and_recreates_after_deferred_save(
+def test_batch_reserves_pairing_response_growth_and_restarts_after_save_failure(
     tmp_path, monkeypatch, bound
 ):
-    # Unbound: the first response must fit without a retry or restart. Bound:
-    # maximum-width observations must survive deferred I/O and both owner restarts.
-    original = replace(legacy_upgrade(), identity=maximal_state().identity)
-    store = disk_legacy(tmp_path, original)
-    assert store.path.stat().st_size <= 65536
-    mono = [1000.0]
-    client = FakeRelayClient(device=DEVICE)
-    begin = client.begin_pairing
-    responses = []
-
-    def long_url(**kwargs):
-        response = replace(begin(**kwargs), approval_url=approval_url())
-        responses.append(response)
-        return response
-
-    client.begin_pairing = long_url
-    worker = _worker(
-        client, store=store, clock=lambda: mono[0], sharing_enabled=lambda: False
-    )
-    publications, journals, callback_errors = [], [], []
-
-    def observe_url(status):
-        # Capture first exposure, not completion's intermediate metadata push
-        # after it clears the pairing journal but before it clears the old URL.
-        if status.approval_url is not None and not publications:
-            try:
-                publications.append((status.approval_url, store.load().pending_pairing))
-            except Exception as error:  # noqa: BLE001 - assert in the test, outside subscriber swallowing
-                callback_errors.append(error)
-
-    unsubscribe = worker.subscribe_status(observe_url)
-    call = client._call
-
-    def journal_before_send(operation, args, apply):
-        if "revision" in args:
-            try:
-                journals.append((operation, args, store.load()))
-            except Exception as error:  # noqa: BLE001 - assert in the test, outside owner swallowing
-                callback_errors.append(error)
-        return call(operation, args, apply)
-
-    client._call = journal_before_send
-    restarted = None
-    try:
-        worker.resume_pending()
-        worker.iterate_once()
-        assert not client.calls  # Loading still owes the startup bootstrap deadline.
-        binding = worker.status().metadata.binding if bound else None
-        if bound:
-            assert binding is not None
-        generation = p.INT4_MAX - 1 if bound else 1
-        targets = tuple(
-            source_id(i)
-            for i in range(len(original.pending_source_commands), p.MAX_SOURCE_INTENTS)
-        )
-        for target in targets:
-            client.source_views[target] = p.SourceView(
-                target, generation, 1, "active", None, None
-            )
-            assert worker.request_source_stop(target, binding=binding)
-        off = worker.request_participation(False)
-        worker.iterate_once()
-        queued = dict(worker._commands)
-        assert queued and all(c.kind == "source" for c in queued.values())
-        assert worker.status().local_inhibited
-        assert store.load().pending_participation.intent_id == off
-        assert not worker.status().source_results
-        assert not client.calls
-        summaries = {
-            item.source_id: item.stage for item in worker.status().pending_sources
-        }
-        for command in queued.values():
-            assert summaries[command.payload.source_id] == "queued"
-            assert command.payload == p.StopSource(command.payload.source_id, 0)
-        assert set(targets) <= {
-            c.source_id for c in store.load().pending_source_commands
-        } | {c.payload.source_id for c in queued.values()}
-        retain_originals(original, store, client)
-        if bound:
-            assert worker.stop() and worker.start()
-            assert worker._commands == queued, (
-                "same-owner restart discarded deferred controls"
-            )
-            before = store.path.read_bytes()
-            calls = len(client.calls)
-            with monkeypatch.context() as patch:
-
-                def fail(*args):
-                    raise OSError("controlled atomic failure")
-
-                patch.setattr(s.atomicio, "write_atomic", fail)
-                drive(worker, mono, 3)
-                assert store.path.read_bytes() == before
-                assert worker._commands == queued
-                assert worker.status().detail == "persistence_failed"
-                # A response was received, but a failed save must not expose it
-                # or authorize completion/device/control sends.
-                assert len(responses) == 1
-                assert all(call[0] == "begin_pairing" for call in client.calls[calls:])
-                assert store.load().pending_pairing.pairing_id is None
-                assert not publications, (
-                    "approval URL published before durable response"
-                )
-                assert worker.status().approval_url is None
-        else:
-            # Stop AT the first successful response, before any later turn can
-            # retry admission or complete pairing and erase its durable evidence.
-            for _ in range(4):
-                drive(worker, mono, 1)
-                if responses:
-                    break
-            assert len(responses) == 1
-            response = responses[0]
-            admitted = store.load()
-            assert admitted.pending_pairing == s.PendingPairing(
-                "upgrade",
-                response.pairing_id,
-                response.approval_url,
-                response.expires_at,
-            ), "first pairing response was not saved"
-            assert store.saved[-1] == admitted
-            assert (
-                worker.status().approval_url == response.approval_url == approval_url()
-            )
-            assert not callback_errors
-            assert publications == [(approval_url(), admitted.pending_pairing)], (
-                "approval URL published before durable response"
-            )
-            assert store.path.stat().st_size <= 65536
-            assert [item[0] for item in client.calls] == ["begin_pairing"]
-            assert not client.controls and not client.participation_calls
-            assert admitted.pending_participation.intent_id == off
-            assert worker.status().local_inhibited
-        for _ in range(20):
-            drive(worker, mono, 1)
-            if not worker._commands:
-                break
-        assert not worker._commands
-        assert any(
-            saved.pending_pairing
-            and saved.pending_pairing.approval_url == approval_url()
-            for saved in store.saved
-        )
-        assert publications and not callback_errors
-        assert all(
-            pairing is not None and pairing.approval_url == url
-            for url, pairing in publications
-        ), "approval URL published before durable response"
-        assert store.load().pending_participation.intent_id == off
-        active = worker
-        if bound:
-            assert worker.stop()
-            restarted = _worker(
-                client,
-                store=store,
-                clock=lambda: mono[0],
-                sharing_enabled=lambda: False,
-            )
-            restarted.resume_pending()
-            active = restarted
-        drive(active, mono, len(targets) + 40)
-        assert not client.device.participation.enabled
-        assert all(client.source_views[target].state == "ended" for target in targets)
-        assert all(
-            c.expected_generation == generation
-            for c in client.controls
-            if isinstance(c, p.StopSource)
-        )
-        # These snapshots came from the real loader BEFORE signed sends. Assert
-        # here: an assertion in _call would be swallowed by the owner's fail-close.
-        assert not callback_errors
-        assert {"control_source", "set_participation"} <= {j[0] for j in journals}
-        for operation, args, saved in journals:
-            assert saved.last_revision == args["revision"]
-            if operation == "control_source":
-                assert args["command"] in saved.pending_source_commands
-            if operation == "set_participation":
-                assert saved.pending_participation.intent_id == off
-                assert saved.pending_participation.attempted
-                assert (
-                    saved.pending_participation.expected_generation
-                    == args["expected_generation"]
-                )
-        if not bound:
-            assert len(responses) == len(client.pair_keys) == 1
-        assert not store.rejected and not client.cadence_refusals
-        retain_originals(original, store, client)
-    finally:
-        unsubscribe()
-        assert worker.stop()
-        if restarted is not None:
-            assert restarted.stop()
-
-
-def dense_store(tmp_path, *, participation=None, recovery=False):
-    # Independent byte preparation; the actual writer still proves both sides
-    # of the boundary before each distinct owner lifecycle starts.
     original = replace(
-        PAIRED_STATE,
+        upgrade_state(),
+        pending_source_commands=full_sources(),
         identity=maximal_state().identity,
-        pending_participation=participation,
-        device_id=DEVICE.device_id,
-        session_expires_at=DEVICE.session_expires_at,
-        feature_enabled=DEVICE.feature_enabled,
-        approved_capabilities=DEVICE.approved_capabilities,
-        session_approved_capabilities=DEVICE.session_approved_capabilities,
-        acknowledged_capabilities=DEVICE.acknowledged_capabilities,
-        observed_participation=DEVICE.participation,
     )
-    if recovery:
-        original = replace(
-            s.replace_session(original, None),
-            pending_recovery=s.PendingRecovery(
-                TOKEN, DATE, p.RecoveryChallenge(UUID, TOKEN, TOKEN, EXPIRY)
-            ),
+    worker, _, store, mono = file_rig(tmp_path, original)
+    relay = ControlRelay(worker, store)
+    relay.approval_url = approval_url()
+    exposures, reached = [], []
+    worker.subscribe_status(
+        lambda value: (
+            exposures.append((value.approval_url, s.load(store.path).pending_pairing))
+            if value.approval_url
+            else None
         )
-    original, candidate = start_boundary(original)
-    store = DiskStore(tmp_path / "dense.json", original)
-    before = fixture_bytes(original)
-    assert store.path.read_bytes() == before
-    assert store.load() == original
-    assert len(candidate.pending_source_commands) <= p.MAX_SOURCE_INTENTS
-    with pytest.raises(s.CapacityError, match="size limit"):
-        store.save(candidate)
-    assert store.path.read_bytes() == before
-    assert store.load() == original
-    # Only the preparation refusal is expected. Keep every later owner failure
-    # visible to the lifecycle assertions below.
-    assert store.rejected == [candidate]
-    store.rejected.clear()
-    return store, original
+    )
+    write = s.atomicio.write_atomic
+
+    def save(path, text):
+        raw = json.loads(text)
+        if (
+            bound
+            and raw["pending_pairing"]
+            and raw["pending_pairing"]["approval_url"]
+            and not reached
+        ):
+            reached.append(True)
+            raise OSError("response write unavailable")
+        write(path, text)
+
+    monkeypatch.setattr(s.atomicio, "write_atomic", save)
+    worker.resume_pending()
+    for _ in range(8):
+        drive(worker, mono, 1)
+        if reached or exposures:
+            break
+    if bound:
+        assert reached == [True]
+        assert not exposures and s.load(store.path) == original
+        assert worker.stop()
+        worker = _worker(
+            FakeRelayClient(device=DEVICE),
+            store=store,
+            timing_context=worker._timing_context,
+            utc_clock=worker._utc_clock,
+            sharing_enabled=lambda: False,
+        )
+        relay.worker = worker
+        from wingman.fleetsharing.client import FleetRelayClient
+
+        worker._client_factory = lambda origin: FleetRelayClient(
+            origin, transport=relay.transport
+        )
+        worker.subscribe_status(
+            lambda value: (
+                exposures.append(
+                    (value.approval_url, s.load(store.path).pending_pairing)
+                )
+                if value.approval_url
+                else None
+            )
+        )
+        worker.resume_pending()
+        drive(worker, mono, 6)
+    assert exposures and all(
+        url == pending.approval_url == approval_url() for url, pending in exposures
+    )
+    saved = s.load(store.path)
+    assert saved.identity == original.identity
+    assert saved.pending_source_commands == original.pending_source_commands
+    assert saved.pending_pairing.approval_url == approval_url()
+    assert all(value.identity == original.identity for value in store.saves)
 
 
 @pytest.mark.parametrize("old_on", [False, True])
 @pytest.mark.parametrize("recovery", [False, True])
-def test_deferred_off_allows_bootstrap_and_prior_sources_not_old_participation(
+def test_full_count_off_bootstrap_preserves_prior_sources_and_old_choice(
     tmp_path, old_on, recovery
 ):
-    # Allowing deferred metadata reads without suppressing their old intent
-    # effects would acknowledge On or uninhibit before the new Off is durable.
-    old = s.PendingParticipation(UUID, True, 0, True) if old_on else None
-    store, original = dense_store(tmp_path, participation=old, recovery=recovery)
-    mono = [1000.0]
-    client = FakeRelayClient(device=replace(DEVICE, acknowledged_capabilities=()))
-    if recovery:
-        from wingman.fleetsharing import crypto
-
-        client.admissions[(crypto.public_key_spki(KEY), TOKEN)] = (
-            DATE,
-            original.pending_recovery.challenge,
-        )
-    worker = _worker(
-        client, store=store, clock=lambda: mono[0], sharing_enabled=lambda: False
+    pending = s.PendingParticipation(UUID, True, 0, True) if old_on else None
+    original = replace(
+        PAIRED_STATE,
+        pending_source_commands=full_sources(),
+        pending_participation=pending,
     )
-    statuses = []
-    unsubscribe = worker.subscribe_status(statuses.append)
-    try:
-        off = worker.request_participation(False)
-        worker.iterate_once()
-        assert worker._commands["participation"].payload.intent_id == off
-        assert store.load().pending_participation == old
-        assert worker.status().participation == "queued"
-        assert worker.status().local_inhibited
-
-        def completed():
-            if worker.status().participation != "acknowledged":
-                return None
-            state = store.load()
-            assert worker.status().participation_intent_id == off
-            assert not worker._commands
-            assert state.pending_participation is None
-            assert state.observed_participation == client.device.participation
-            assert not state.observed_participation.enabled
-            assert worker.status().local_inhibited
-            assert all(status.local_inhibited for status in statuses)
-            assert all(not enabled for enabled, _ in client.participation_calls)
-            assert any(c[0] == "acknowledge_capabilities" for c in client.calls)
-            if recovery:
-                assert client.recoveries == 1 and not client.pair_keys
-                assert state.pending_recovery is None
-            return state
-
-        resumed = drive_control_tail(
-            worker, mono, 40, original, store, client, completed
+    if recovery:
+        original = replace(
+            s.replace_session(original, None),
+            pending_recovery=s.PendingRecovery(TOKEN, DATE),
         )
-        assert resumed in original.pending_source_commands
-        assert client.source_intents.get(resumed.source_id) == resumed
-        assert resumed not in store.load().pending_source_commands
-        assert not client.device.participation.enabled
-        assert store.load().pending_participation is None
-        assert not worker._commands
-        assert all(status.local_inhibited for status in statuses)
-        assert all(not enabled for enabled, _ in client.participation_calls)
-        assert any(c[0] == "acknowledge_capabilities" for c in client.calls)
-        if recovery:
-            assert client.recoveries == 1
-            assert not client.pair_keys
-            assert store.load().pending_recovery is None
-        assert not store.rejected and not client.cadence_refusals
-        retain_originals(original, store, client)
-    finally:
-        unsubscribe()
-        assert worker.stop()
+    worker, _, store, mono = file_rig(tmp_path, original)
+    relay = ControlRelay(worker, store)
+    worker.resume_pending()
+    drive(worker, mono, 6)
+    retained = s.load(store.path).pending_participation
+    action = worker.request_participation(
+        False,
+        expected_generation=1,
+        binding=worker.status().metadata.binding,
+        supersedes=retained,
+    )
+    assert action
+    drive(worker, mono, 12)
+    saved = s.load(store.path)
+    assert (
+        saved.pending_participation is None and not relay.device.participation.enabled
+    )
+    assert saved.pending_source_commands == original.pending_source_commands
+    assert saved.identity == original.identity
+    requests = [
+        (request, state)
+        for request, state in relay.calls
+        if request.full_url.endswith("/participation")
+    ]
+    assert len(requests) == 1 and json.loads(requests[0][0].data)["enabled"] is False
+    assert requests[0][1].pending_participation.intent_id == action
+    if recovery:
+        begins = [
+            (request, state)
+            for request, state in relay.calls
+            if request.full_url.endswith("/recovery-challenges")
+        ]
+        assert begins and all(
+            state.pending_recovery.request_id == TOKEN
+            and state.pending_recovery.issued_at == DATE
+            for request, state in begins
+        )
+        completions = [
+            state
+            for request, state in relay.calls
+            if "/recovery-challenges/" in request.full_url
+        ]
+        assert (
+            len(completions) == 1
+            and completions[0].pending_recovery.completion_attempted
+        )
+        assert saved.pending_recovery is None
 
 
 @pytest.mark.parametrize("pairing", [False, True])
 def test_control_reserve_dominates_current_mutable_fields_without_unused_slots(
     tmp_path, pairing
 ):
-    maximum = maximal_state()
-    original = replace(legacy_upgrade(), identity=maximum.identity)
-    if not pairing:
-        original = replace(original, pending_pairing=None)
-    else:
-        # Independent full-count witness: even true UTF-8 cannot save all 256
-        # commands plus the response. Reservation must defer some Stops, not
-        # merely pick a more compact encoding or silently lose the old journal.
-        response = replace(
-            original,
-            pending_source_commands=(
-                *original.pending_source_commands,
-                *(
-                    p.StopSource(source_id(i), 0)
-                    for i in range(len(original.pending_source_commands), 256)
-                ),
-            ),
-            pending_pairing=admitted_upgrade().pending_pairing,
-            pending_participation=s.PendingParticipation(UUID, False),
-        )
-        assert len(response.pending_source_commands) == 256
-        data = json.dumps(
-            s._to_dict(response),
-            ensure_ascii=False,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
-        assert s._parse_v3(p.decode_json(data)) == response
-        assert len(data) > 65536
-        path = tmp_path / "overflow.json"
-        legacy_save(path, original)
-        before = path.read_bytes()
-        assert len(before) <= 65536
-        with pytest.raises(s.CapacityError, match="size limit"):
-            s.save(path, response)
-        assert path.read_bytes() == before
-        assert s.load(path) == original
-    # Existing legacy work is not new admission: its immutable Start payloads
-    # must not be charged AGAIN as every unused future Stop slot.
-    with pytest.raises(s.CapacityError):
-        s.check_admission_capacity(original)
-    s.check_control_capacity(original)
-    admitted = original
-    for i in range(len(original.pending_source_commands), p.MAX_SOURCE_INTENTS):
-        candidate = replace(
-            admitted,
-            pending_source_commands=(
-                *admitted.pending_source_commands,
-                p.StopSource(source_id(i), 0),
-            ),
-        )
-        try:
-            s.check_control_capacity(candidate)
-        except s.CapacityError:
-            break
-        admitted = candidate
-    assert len(admitted.pending_source_commands) > len(original.pending_source_commands)
-    if pairing:
-        assert len(admitted.pending_source_commands) < p.MAX_SOURCE_INTENTS
-    # Independent legal maximum metadata fixture, not an envelope used as its
-    # own oracle. Pin model shapes so field/type growth requires bound review.
-    assert {f.name for f in fields(p.StartSource)} == {
-        "source_id",
-        "character_id",
-        "character_link_epoch",
-        "intent_created_at",
-        "expected_generation",
-    }
-    assert {f.name for f in fields(p.StopSource)} == {
-        "source_id",
-        "expected_generation",
-    }
-    future = replace(
-        maximum,
-        identity=admitted.identity,
-        relay_origin=admitted.relay_origin,
-        pending_source_commands=tuple(
-            replace(c, expected_generation=p.INT4_MAX - 1)
-            if isinstance(c, p.StopSource)
-            else c
-            for c in admitted.pending_source_commands
-        ),
-        pending_pairing=replace(maximum.pending_pairing, approval_url=approval_url())
-        if pairing
-        else None,
+    maximum = maximal_state(stops=True)
+    candidate = maximum if pairing else replace(maximum, pending_pairing=None)
+    s.check_admission_capacity(candidate)
+    s.check_control_capacity(candidate)
+    path = tmp_path / "maximum.json"
+    s.save(path, candidate)
+    assert s.load(path) == candidate
+    assert len(candidate.pending_source_commands) == p.MAX_SOURCE_INTENTS
+    assert all(
+        len(s._compact_utf8(p.source_command_body(command)).encode())
+        <= s.MAX_SOURCE_COMMAND_BYTES
+        for command in candidate.pending_source_commands
     )
-    raw = s._to_dict(future)
-    assert set(raw) == {"version", *(f.name for f in fields(s.SharingState))}
-    assert s._parse_v3(p.decode_json(s._compact_utf8(raw).encode())) == future
-    envelope = s._mutable_envelope(admitted)
-    for name, value in raw.items():
-        assert len(s._compact_utf8({name: value}).encode()) <= len(
-            s._compact_utf8({name: envelope[name]}).encode()
-        ), f"control reserve undercharges {name}"
-    path = tmp_path / "future.json"
-    s.save(path, future)
     assert path.stat().st_size <= s.MAX_STATE_FILE_BYTES
-    assert s.load(path) == future
 
 
 @pytest.mark.parametrize(
@@ -579,139 +197,384 @@ def test_control_reserve_dominates_current_mutable_fields_without_unused_slots(
 )
 def test_control_url_reserve_uses_validated_scalar_width(character):
     prefix = PAIRED_STATE.relay_origin + "/"
-    value = prefix + character * (2048 - len(prefix))
+    url = prefix + character * (2048 - len(prefix))
     candidate = replace(
-        PAIRED_STATE,
-        pending_pairing=s.PendingPairing("upgrade", "p" * 128, value, DATE),
+        PAIRED_STATE, pending_pairing=s.PendingPairing("upgrade", UUID, url, DATE)
     )
-    raw = s._to_dict(candidate)
     if character in ("\ud800", "\udfff", "\x00", "\x1f"):
-        # Six-byte escapes are encoder-compatible but not valid URL input; a
-        # validator relaxation must revisit the four-byte reservation proof.
         with pytest.raises(ValueError):
-            s._parse_v3(p.decode_json(json.dumps(raw).encode()))
+            s.check_admission_capacity(candidate)
     else:
-        assert s._parse_v3(p.decode_json(s._compact_utf8(raw).encode())) == candidate
-        assert len(s._compact_utf8({"url": value}).encode()) <= len(
-            s._compact_utf8({"url": "𝄞" * 2048}).encode()
+        s.check_admission_capacity(candidate)
+        assert (
+            s._parse_v4(p.decode_json(s._compact_utf8(s._to_dict(candidate)).encode()))
+            == candidate
         )
 
 
 @pytest.mark.parametrize("boundary", ["selection", "reply", "save"])
-def test_replacement_of_deferred_off_invalidates_old_device_effects(tmp_path, boundary):
-    store, original = dense_store(tmp_path)
-    mono = [1000.0]
-    client = FakeRelayClient(device=DEVICE)
-    worker = _worker(
-        client, store=store, clock=lambda: mono[0], sharing_enabled=lambda: False
+def test_replacement_of_off_invalidates_old_device_effects(
+    tmp_path, monkeypatch, boundary
+):
+    worker, _, store, mono = file_rig(
+        tmp_path,
+        replace(PAIRED_STATE, pending_source_commands=full_sources()),
+        enabled=True,
     )
-    replacements = []
+    relay = ControlRelay(worker, store)
+    drive(worker, mono, 4)
+    assert worker.request_participation(
+        False, expected_generation=1, binding=worker.status().metadata.binding
+    )
+    replacements, witnessed, reply_snapshots = [], [], []
+    if boundary == "reply":
+        assert s.load(store.path).observed_participation == p.Participation(True, 1)
+        relay.device = replace(DEVICE, participation=p.Participation(False, 2))
 
     def replace_choice():
-        replacements.append(worker.request_participation(True))
+        witnessed.append(True)
+        replacements.append(
+            worker.request_participation(
+                True,
+                expected_generation=1,
+                binding=worker.status().metadata.binding,
+                supersedes=worker._state.pending_participation,
+            )
+        )
 
-    if boundary == "reply":
-        client.device = replace(DEVICE, participation=p.Participation(False, 2))
     if boundary == "selection":
         choose = worker._scheduler.choose
 
-        def choose_then_replace(work, now):
+        def selected(work, now):
             chosen = choose(work, now)
-            if chosen and not replacements:
-                assert chosen.operation == "fetch_device"
+            if chosen and chosen.operation == "fetch_device" and not witnessed:
                 replace_choice()
             return chosen
 
-        worker._scheduler.choose = choose_then_replace
+        monkeypatch.setattr(worker._scheduler, "choose", selected)
     elif boundary == "reply":
-        fetch = client.fetch_device
 
-        def fetch_then_replace(**args):
-            result = fetch(**args)
-            if not replacements:
+        def reply(request, saved):
+            if request.full_url.endswith("/device") and not witnessed:
+                reply_snapshots.append((saved, store.path.read_bytes(), relay.device))
                 replace_choice()
-            return result
 
-        client.fetch_device = fetch_then_replace
+        relay.after = reply
     else:
-        save = worker._save_state
+        write = s.atomicio.write_atomic
 
-        def save_then_replace(candidate):
-            save(candidate)
-            if client.calls and not replacements:
+        def save(path, text):
+            write(path, text)
+            if (
+                relay.calls[-1][0].full_url.endswith("/device")
+                and json.loads(text)["pending_participation"]
+                and not witnessed
+            ):
                 replace_choice()
 
-        worker._save_state = save_then_replace
-    try:
-        worker.request_participation(False)
-        worker.iterate_once()
-        assert len(replacements) == 1
-        assert worker.status().participation_intent_id == replacements[0]
-        assert worker.status().participation == "queued"
-        assert worker.status().local_inhibited
-        assert not client.participation_calls
-        assert worker._commands["participation"].payload.intent_id == replacements[0]
-        if boundary == "selection":
-            assert not client.calls
-        else:
-            assert [c[0] for c in client.calls] == ["fetch_device"]
-        if boundary == "reply":
-            assert store.load().observed_participation == DEVICE.participation
-            client.device = DEVICE
-
-        def completed():
-            if worker.status().participation != "acknowledged":
-                return None
-            state = store.load()
-            assert worker.status().participation_intent_id == replacements[0]
-            assert not worker._commands
-            assert state.pending_participation is None
-            assert state.observed_participation == DEVICE.participation
-            assert client.device.participation == DEVICE.participation
-            assert not worker.status().local_inhibited
-            assert not client.participation_calls  # No obsolete Off CAS.
-            return state
-
-        resumed = drive_control_tail(
-            worker, mono, 40, original, store, client, completed
+        monkeypatch.setattr(s.atomicio, "write_atomic", save)
+    for _ in range(6):
+        drive(worker, mono, 1)
+        if witnessed:
+            break
+    assert witnessed == [True] and replacements[0]
+    if boundary == "reply":
+        # Check before any later owner turn can repair an admitted stale response.
+        before_reply, before_bytes, stale_device = reply_snapshots[0]
+        assert stale_device.participation == p.Participation(False, 2)
+        assert before_reply.observed_participation == p.Participation(True, 1)
+        assert s.load(store.path) == before_reply, (
+            "stale Device reply changed saved state"
         )
-        assert resumed in original.pending_source_commands
-        assert client.source_intents.get(resumed.source_id) == resumed
-        assert resumed not in store.load().pending_source_commands
-        assert not worker._commands
-        assert worker.status().participation_intent_id == replacements[0]
-        assert worker.status().participation == "acknowledged"
-        assert not client.participation_calls  # Already On, not an obsolete Off CAS.
-    finally:
-        assert worker.stop()
+        assert store.path.read_bytes() == before_bytes
+        assert worker._state == before_reply
+        old_off = before_reply.pending_participation
+        assert old_off and not old_off.enabled and old_off.expected_generation == 1
+        queued_on = worker._commands["participation"]
+        assert queued_on.supersedes == old_off
+        assert queued_on.payload.intent_id == replacements[0]
+        assert queued_on.payload.enabled and queued_on.payload.expected_generation == 1
+    assert worker.status().participation == "queued"
+    assert worker.status().participation_intent_id == replacements[0]
+    drive(worker, mono, 12)
+    if boundary == "reply":
+        # Only a subsequent current GET may install Off/gen2. It does not rebase
+        # the queued On/CAS1; progress needs a new explicit whole confirmation.
+        current = s.load(store.path)
+        assert current.observed_participation == p.Participation(False, 2)
+        assert current.pending_participation == queued_on.payload
+        assert worker.status().participation == "needs_confirmation"
+        confirmed = worker.confirm_participation(
+            replacements[0],
+            expected_generation=2,
+            binding=worker.status().metadata.binding,
+        )
+        assert confirmed and confirmed != replacements[0]
+        confirmed_on = worker._commands["participation"]
+        assert confirmed_on.supersedes == queued_on.payload
+        assert confirmed_on.payload == s.PendingParticipation(confirmed, True, 2)
+        drive(worker, mono, 12)
+    saved = s.load(store.path)
+    assert saved.pending_source_commands == full_sources()
+    assert saved.pending_participation is None and relay.device.participation.enabled
+    puts = [
+        (json.loads(request.data), state.pending_participation)
+        for request, state in relay.calls
+        if request.full_url.endswith("/participation")
+    ]
+    assert all(body["enabled"] for body, _ in puts)
+    if boundary == "reply":
+        assert len(puts) == 1
+        body, attempted = puts[0]
+        assert body == {"protocol": 2, "enabled": True, "expected_generation": 2}
+        assert attempted == replace(confirmed_on.payload, attempted=True)
+        assert saved.observed_participation == p.Participation(True, 3)
+
+
+def test_stale_device_reply_guard_kills_in_memory_fence_mutant(tmp_path, monkeypatch):
+    from wingman.fleetsharing.worker import FleetSharingWorker
+
+    check = FleetSharingWorker._check_locked
+
+    def admit_stale_device(self, fence, *, work=None):
+        # Remove only Device's queued-choice/generation fence, not identity/session.
+        if work is not None and work.operation == "fetch_device":
+            work = replace(work, operation="fetch_receipt")
+        return check(self, fence, work=work)
+
+    monkeypatch.setattr(FleetSharingWorker, "_check_locked", admit_stale_device)
+    with pytest.raises(AssertionError, match="stale Device reply changed saved state"):
+        test_replacement_of_off_invalidates_old_device_effects(
+            tmp_path, monkeypatch, boundary="reply"
+        )
+
+
+@pytest.mark.parametrize("boundary", ["selection", "reply", "save"])
+def test_replacement_of_stop_fences_source_observation_without_cas_rebase(
+    tmp_path, monkeypatch, boundary
+):
+    sources = full_sources()
+    worker, _, store, mono = file_rig(
+        tmp_path, replace(PAIRED_STATE, pending_source_commands=sources), enabled=True
+    )
+    relay = ControlRelay(worker, store)
+    drive(worker, mono, 4)
+    target = sources[0].source_id
+    assert worker.request_source_stop(
+        target, expected_generation=0, expected_automatic=None, supersedes=sources[0]
+    )
+    reached = []
+
+    def replace_stop():
+        reached.append(None)
+        old = next(
+            c for c in worker._state.pending_source_commands if c.source_id == target
+        )
+        reached[0] = worker.request_source_stop(
+            target, expected_generation=17, expected_automatic=None, supersedes=old
+        )
+
+    if boundary == "selection":
+        choose = worker._scheduler.choose
+
+        def selected(work, now):
+            chosen = choose(work, now)
+            if chosen and chosen.operation == "fetch_receipt" and not reached:
+                replace_stop()
+            return chosen
+
+        monkeypatch.setattr(worker._scheduler, "choose", selected)
+    elif boundary == "reply":
+
+        def reply(request, saved):
+            if "/receipts/" in request.full_url and not reached:
+                replace_stop()
+
+        relay.after = reply
+    else:
+        write = s.atomicio.write_atomic
+
+        def save(path, text):
+            write(path, text)
+            raw = json.loads(text)
+            if (
+                any(
+                    isinstance(c, p.SourceStop)
+                    for c in worker._state.pending_source_commands
+                )
+                and any(
+                    c["operation"] == "stop" for c in raw["pending_source_commands"]
+                )
+                and not reached
+            ):
+                replace_stop()
+
+        monkeypatch.setattr(s.atomicio, "write_atomic", save)
+    for _ in range(8):
+        drive(worker, mono, 1)
+        if reached:
+            break
+    assert reached == [True]
+    drive(worker, mono, 12)
+    pending = s.load(store.path).pending_source_commands
+    replacement = next(c for c in pending if c.source_id == target)
+    assert replacement.expected_generation == 17
+    assert tuple(c for c in pending if c.source_id != target) == sources[1:]
+    assert not relay.receipts
+    puts = [
+        p.parse_source_command(json.loads(request.data))
+        for request, _ in relay.calls
+        if request.method == "PUT" and request.full_url.endswith("/sources")
+    ]
+    assert puts and all(command == replacement for command in puts)
+
+
+def test_hot_worker_submission_inside_pairing_save_preserves_reserved_batch(tmp_path):
+    original = replace(PAIRED_STATE, pending_source_commands=full_sources())
+    worker, _, store, mono = file_rig(tmp_path, original, enabled=True)
+    relay = ControlRelay(worker, store)
+    relay.approved = True
+    drive(worker, mono, 4)
+    save = worker._save_state
+    submissions = []
+
+    def saving(candidate):
+        save(candidate)
+        if candidate.pending_pairing and not submissions:
+            submissions.append(True)
+            old = candidate.pending_source_commands[0]
+            submissions.append(
+                worker.request_source_stop(
+                    old.source_id,
+                    expected_generation=0,
+                    expected_automatic=None,
+                    supersedes=old,
+                    binding=worker.status().metadata.binding,
+                )
+            )
+            submissions.append(worker.request_participation(False))
+
+    worker._save_state = saving
+    assert worker.request_pairing(mode="upgrade")
+    worker.iterate_once()
+    assert len(submissions) == 3 and all(submissions)
+    assert worker.status().participation == "queued"
+    drive(worker, mono, 6)
+    pending = s.load(store.path).pending_participation
+    assert pending and not pending.enabled
+    assert worker.confirm_participation(
+        pending.intent_id,
+        expected_generation=1,
+        binding=worker.status().metadata.binding,
+    )
+    drive(worker, mono, 12)
+    saved = s.load(store.path)
+    assert (
+        saved.pending_participation is None and not relay.device.participation.enabled
+    )
+    assert saved.pending_source_commands == original.pending_source_commands[1:]
+    assert len(relay.receipts) == 1 and saved.identity == original.identity
+
+
+@pytest.mark.parametrize("transition", ["participation", "source", "pairing"])
+def test_retained_original_start_resumes_after_full_count_terminal_transition(
+    tmp_path, transition
+):
+    # The old drive_control_tail barrier was stronger than preserving UUIDs:
+    # an original, still-live Start must really resume after the target completes.
+    sources = full_sources()
+    original_start = p.SourceStart(sources[-1].source_id, 1, UUID, DATE)
+    original = replace(
+        PAIRED_STATE, pending_source_commands=(*sources[:-1], original_start)
+    )
+    worker, _, store, mono = file_rig(tmp_path, original, enabled=True)
+    relay = ControlRelay(worker, store)
+    blocked = [True]
+
+    def before(request, saved):
+        if (
+            request.method == "PUT"
+            and request.full_url.endswith("/sources")
+            and json.loads(request.data)["operation"] == "start"
+            and blocked[0]
+        ):
+            raise OSError("original Start held until terminal transition completes")
+
+    relay.before = before
+    drive(worker, mono, 4)
+    assert original_start in s.load(store.path).pending_source_commands
+    if transition == "participation":
+        assert worker.request_participation(
+            False, expected_generation=1, binding=worker.status().metadata.binding
+        )
+    elif transition == "source":
+        assert worker.request_source_stop(
+            sources[0].source_id,
+            expected_generation=0,
+            expected_automatic=None,
+            supersedes=sources[0],
+        )
+    else:
+        relay.approved = True
+        relay.approval_url = approval_url()
+        assert worker.request_pairing(mode="upgrade")
+    for _ in range(20):
+        drive(worker, mono, 1)
+        saved = s.load(store.path)
+        done = (
+            (
+                not relay.device.participation.enabled
+                and saved.pending_participation is None
+            )
+            if transition == "participation"
+            else (
+                bool(relay.receipts)
+                if transition == "source"
+                else (
+                    saved.session_id != original.session_id
+                    and saved.pending_pairing is None
+                )
+            )
+        )
+        if done:
+            break
+    assert done and original_start in saved.pending_source_commands
+    assert original_start.source_id not in relay.starts
+    blocked[0] = False
+    floor = len(relay.calls)
+    drive(worker, mono, 20)
+    assert relay.starts[original_start.source_id] == original_start
+    saved = s.load(store.path)
+    assert original_start not in saved.pending_source_commands
+    expected = sources[1:-1] if transition == "source" else sources[:-1]
+    assert saved.pending_source_commands == expected
+    resumed = [
+        p.parse_source_command(json.loads(request.data))
+        for request, _ in relay.calls[floor:]
+        if request.method == "PUT" and request.full_url.endswith("/sources")
+    ]
+    assert original_start in resumed
+    assert all(command == original_start for command in resumed)
+    assert all(state.identity == original.identity for state in store.saves)
 
 
 def test_hot_api_submission_inside_pairing_save_preserves_reserved_batch(tmp_path):
-    # Real Api membership/binding checks can see the old source cache inside a
-    # successful pairing save. Safety comes from reservation, not cache absence.
+    # Coordinator-owned composition remains visible: B proves the owner above,
+    # never invents missing Api provenance/confirmation in production.
     from tests.test_api import FakeWindow, make_state
     from tests.test_api_fleetsharing import Timers
     from wingman import settings
     from wingman.ui.api import Api
 
-    original = replace(PAIRED_STATE, identity=maximal_state().identity)
-    for command in legacy_upgrade().pending_source_commands:
-        candidate = replace(
-            original,
-            pending_source_commands=(*original.pending_source_commands, command),
-        )
-        try:
-            s.check_admission_capacity(candidate)
-        except s.CapacityError:
-            break
-        original = candidate
-    assert original.pending_source_commands
-    store = disk_legacy(tmp_path, original)
+    original = replace(
+        PAIRED_STATE, pending_source_commands=upgrade_state().pending_source_commands
+    )
+    store = DiskStore(tmp_path / "api.json", original)
     mono = [1000.0]
     client = FakeRelayClient(device=DEVICE)
     begin = client.begin_pairing
-    client.begin_pairing = lambda **kw: replace(
-        begin(**kw), approval_url=approval_url()
+    client.begin_pairing = lambda **kwargs: replace(
+        begin(**kwargs), approval_url=approval_url()
     )
     worker = _worker(
         client, store=store, clock=lambda: mono[0], sharing_enabled=lambda: False
@@ -722,47 +585,46 @@ def test_hot_api_submission_inside_pairing_save_preserves_reserved_batch(tmp_pat
     api = Api(app, fleet_sharing=worker, timer=timers)
     api._window = FakeWindow()
     try:
-        targets = tuple(
-            source_id(i)
-            for i in range(len(original.pending_source_commands), p.MAX_SOURCE_INTENTS)
-        )
+        targets = tuple(source_id(i) for i in range(200, p.MAX_SOURCE_INTENTS))
         for target in targets:
             client.source_views[target] = p.SourceView(
-                target, 1, 1, "active", None, None
+                target, 1, 1, "active", None, None, None
             )
         assert api.fleet_sharing_watch(True)["queued"]
-        for _ in range(20):
+        for _ in range(40):
             drive(worker, mono, 1)
             if api.fleet_sharing_state()["sources"] is not None:
                 break
-        assert api.fleet_sharing_state()["sources"] is not None
         binding = api.fleet_sharing_state()["metadata"]["binding"]
+        assert api.fleet_sharing_state()["sources"] is not None
         old_status = worker.status()
-        injected, submissions, callback_errors = [], [], []
+        submissions, errors, reached = [], [], []
         save = worker._save_state
 
-        def save_then_submit(candidate):
+        def saving(candidate):
             save(candidate)
-            if candidate.pending_pairing and not injected:
-                injected.append(True)
+            if candidate.pending_pairing and not reached:
+                reached.append(True)
                 try:
                     for target in targets[:-1]:
                         submissions.append(
                             api.fleet_sharing_stop_source(target, binding)
                         )
                     submissions.append(api.fleet_sharing_set_enabled(False))
-                except Exception as error:  # noqa: BLE001 - assert outside the owner's save-failure swallowing
-                    callback_errors.append(error)
+                except Exception as error:  # noqa: BLE001 - assert outside owner callback swallowing
+                    errors.append(error)
 
-        worker._save_state = save_then_submit
+        worker._save_state = saving
         pairing = api.fleet_sharing_pair("upgrade")
         assert pairing["queued"]
         worker.iterate_once()
-        assert not callback_errors
-        assert len(submissions) == len(targets)
-        assert all(result["queued"] for result in submissions)
+        assert reached == [True]
+        assert not errors
+        assert len(submissions) == len(targets) and all(
+            v["queued"] for v in submissions
+        )
         off = submissions[-1]["intent_id"]
-        assert injected and store.load().pending_pairing
+        assert store.load().pending_pairing
         assert api.fleet_sharing_state()["sources"] is not None
         assert worker.stop() and worker.start()
         drive(worker, mono, 2)
@@ -771,150 +633,43 @@ def test_hot_api_submission_inside_pairing_save_preserves_reserved_batch(tmp_pat
         assert api.fleet_sharing_state()["sources"] is None
         assert not api.fleet_sharing_stop_source(targets[-1], binding)["queued"]
         assert store.load().pending_pairing.approval_url == approval_url()
-
-        def completed():
-            if not (
+        for _ in range(len(targets) + 55):
+            drive(worker, mono, 1)
+            if (
                 all(client.source_views[t].state == "ended" for t in targets[:-1])
                 and not client.device.participation.enabled
                 and worker.status().pairing == "acknowledged"
             ):
-                return None
-            state = store.load()
-            status = worker.status()
-            assert not callback_errors
-            assert not worker._commands
-            assert state.pending_pairing is None and state.pending_recovery is None
-            assert state.session_id == client.active_session != original.session_id
-            assert status.pairing_action_id == pairing["action_id"]
-            assert status.approval_url is None
-            assert status.participation_intent_id == off
-            assert status.participation == "acknowledged" and status.local_inhibited
-            assert state.pending_participation is None
-            assert state.observed_participation == client.device.participation
-            assert client.source_views[targets[-1]].state == "active"
-            assert not any(
-                isinstance(c, p.StopSource) for c in state.pending_source_commands
-            )
-            return state
-
-        resumed = drive_control_tail(
-            worker,
-            mono,
-            len(targets) + 55,
-            original,
-            store,
-            client,
-            completed,
-            fetch_sources=True,
+                break
+        state, status = store.load(), worker.status()
+        assert not errors and not worker._commands
+        assert state.pending_pairing is None and state.pending_recovery is None
+        assert state.session_id == client.active_session != original.session_id
+        assert (
+            status.pairing_action_id == pairing["action_id"]
+            and status.approval_url is None
         )
-        assert resumed in original.pending_source_commands
-        assert client.source_intents.get(resumed.source_id) == resumed
-        assert resumed not in store.load().pending_source_commands
-        assert all(client.source_views[t].state == "ended" for t in targets[:-1])
+        assert (
+            status.participation_intent_id == off
+            and status.participation == "acknowledged"
+        )
+        assert status.local_inhibited and state.pending_participation is None
+        assert state.observed_participation == client.device.participation
         assert client.source_views[targets[-1]].state == "active"
-        assert not client.device.participation.enabled
-        assert not store.rejected and not client.cadence_refusals
-        retain_originals(original, store, client)
+        assert all(client.source_views[t].state == "ended" for t in targets[:-1])
+        assert not any(
+            isinstance(c, p.StopSource) for c in state.pending_source_commands
+        )
+        pending = set(state.pending_source_commands)
+        assert all(
+            c in pending or client.source_intents.get(c.source_id) == c
+            for c in original.pending_source_commands
+        )
+        assert all(saved.identity == original.identity for saved in store.saved)
+        assert client.cadence_refusals == 0
     finally:
         assert api.shutdown_fleet_sharing()
         assert worker.stop()
-        assert not timers.pending
-        assert all(not subs for subs in worker._subscribers.values())
-
-
-@pytest.mark.parametrize("boundary", ["selection", "reply", "save"])
-def test_replacement_of_deferred_stop_fences_source_observation(tmp_path, boundary):
-    # A known deferred Stop permits reconciliation, but a same-UUID replacement
-    # at any boundary must not inherit that permission or retire old work.
-    original = replace(
-        PAIRED_STATE,
-        pending_source_commands=legacy_upgrade().pending_source_commands
-        + tuple(
-            p.StartSource(source_id(i), 1, UUID, DATE)
-            for i in range(200, p.MAX_SOURCE_INTENTS)
-        ),
-    )
-    store = DiskStore(tmp_path / "full-count.json", original)
-    mono = [1000.0]
-    client = FakeRelayClient(device=DEVICE)
-    worker = _worker(
-        client, store=store, clock=lambda: mono[0], sharing_enabled=lambda: False
-    )
-    target = source_id(p.MAX_SOURCE_INTENTS)
-    acknowledged = original.pending_source_commands[0]
-    client.source_views[acknowledged.source_id] = p.SourceView(
-        acknowledged.source_id, 1, 1, "active", None, None
-    )
-    client.source_intents[acknowledged.source_id] = acknowledged
-    replaced = []
-
-    def replace_stop():
-        replaced.append(True)
-        assert worker.request_source_stop(target, expected_generation=17)
-
-    if boundary == "selection":
-        choose = worker._scheduler.choose
-
-        def choose_then_replace(work, now):
-            chosen = choose(work, now)
-            if chosen and chosen.operation == "fetch_sources" and not replaced:
-                replace_stop()
-            return chosen
-
-        worker._scheduler.choose = choose_then_replace
-    elif boundary == "reply":
-        fetch = client.fetch_sources
-
-        def fetch_then_replace(**args):
-            result = fetch(**args)
-            if not replaced:
-                replace_stop()
-            return result
-
-        client.fetch_sources = fetch_then_replace
-    else:
-        save = worker._save_state
-
-        def save_then_replace(candidate):
-            save(candidate)
-            if client.calls and client.calls[-1][0] == "fetch_sources" and not replaced:
-                replace_stop()
-
-        worker._save_state = save_then_replace
-    try:
-        assert worker.request_source_stop(target)
-        for _ in range(10):
-            drive(worker, mono, 1)
-            if replaced:
-                break
-        assert replaced
-        assert worker._commands["source:" + target].payload == p.StopSource(target, 17)
-        assert worker.status().source_control == "queued"
-        assert worker.status().sources is None
-        assert store.load().pending_source_commands == (
-            original.pending_source_commands[1:]
-            if boundary == "save"
-            else original.pending_source_commands
+        assert not timers.pending and all(
+            not subs for subs in worker._subscribers.values()
         )
-
-        def completed():
-            view = client.source_views.get(target)
-            if view is None or view.state != "ended":
-                return None
-            state = store.load()
-            assert not worker._commands
-            assert all(c.source_id != target for c in state.pending_source_commands)
-            assert worker.status().source_control == "acknowledged"
-            return state
-
-        resumed = drive_control_tail(
-            worker, mono, 30, original, store, client, completed
-        )
-        assert resumed in original.pending_source_commands
-        assert client.source_intents.get(resumed.source_id) == resumed
-        assert resumed not in store.load().pending_source_commands
-        assert client.source_views[target].state == "ended"
-        assert not store.rejected and not client.cadence_refusals
-        retain_originals(original, store, client)
-    finally:
-        assert worker.stop()

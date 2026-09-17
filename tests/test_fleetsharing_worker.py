@@ -70,6 +70,9 @@ OPERATION_BUCKETS = {
     "set_participation": "read",
     "fetch_sources": "read",
     "control_source": "read",
+    "fetch_automatic": "read",
+    "control_automatic": "read",
+    "fetch_receipt": "read",
     "fetch_catalogue": "read",
     "fetch_eligibility": "read",
     "read_snapshot": "read",
@@ -131,6 +134,8 @@ class FakeRelayClient:
         self.controls = []
         self.participation_calls = []
         self.source_views = {}
+        self.receipts = {}
+        self.automatic_consent = p.Consent(0, 0, False, None, None, None, None)
         self.remote = p.parse_snapshot(
             {
                 "protocol": 2,
@@ -238,6 +243,18 @@ class FakeRelayClient:
         ):
             raise FleetRelayError(401, "unauthorized", "session")
         if operation in ("fetch_device", "fetch_catalogue", "renew_session"):
+            return
+        terminal = (
+            operation in ("fetch_automatic", "fetch_receipt")
+            or (operation == "control_automatic" and not args["command"].enabled)
+            or (
+                operation == "control_source"
+                and isinstance(args["command"], p.StopSource)
+            )
+        )
+        if terminal:
+            if p.SHARED_CAPABILITY not in self.device.approved_capabilities:
+                raise FleetRelayError(403, "capability_required", "durable approval")
             return
         shared = operation in ("publish_snapshot", "read_snapshot", "fetch_eligibility")
         if not self.device.feature_enabled:
@@ -382,6 +399,92 @@ class FakeRelayClient:
             ),
         )
 
+    def _automatic_status(self):
+        consent = self.automatic_consent
+        return p.AutomaticStatus(
+            consent,
+            "none" if consent.generation == 0 else "this_device",
+            "waiting_for_grant" if consent.enabled else "off",
+            "none",
+            None,
+            (),
+        )
+
+    def fetch_automatic(self, **args):
+        return self._call(
+            "fetch_automatic", args, lambda: p.AutomaticGet(self._automatic_status())
+        )
+
+    def fetch_receipt(self, **args):
+        def apply():
+            receipt = self.receipts.get(args["request_id"])
+            if receipt is None or self.utc() >= datetime.fromisoformat(
+                receipt.expires_at
+            ):
+                raise FleetRelayError(404, "receipt_not_found", "not retained")
+            return p.ReceiptGet(receipt, self._automatic_status())
+
+        return self._call("fetch_receipt", args, apply)
+
+    def control_automatic(self, **args):
+        command = args["command"]
+        p.automatic_command_body(command)
+
+        def apply():
+            receipt = self.receipts.get(command.request_id)
+            if receipt is not None:
+                if receipt.command != command:
+                    raise FleetRelayError(409, "request_id_conflict", "binding")
+                return p.AutomaticResult(
+                    command.request_id, "replayed", receipt, self._automatic_status()
+                )
+            current = self.automatic_consent
+            if (command.expected_generation, command.expected_revision) != (
+                current.generation,
+                current.revision,
+            ):
+                raise FleetRelayError(409, "conflict", "CAS")
+            age = (
+                self.utc() - datetime.fromisoformat(command.intent_created_at)
+            ).total_seconds()
+            if age < 0 or (command.enabled and age >= 60):
+                raise FleetRelayError(400, "invalid_intent", "freshness")
+            if not command.enabled and not current.enabled:
+                return p.AutomaticResult(
+                    command.request_id, "already_off", None, self._automatic_status()
+                )
+            if command.enabled:
+                current = p.Consent(
+                    current.generation + 1,
+                    current.revision + 1,
+                    True,
+                    self.device.device_id,
+                    _date(self.utc()),
+                    None,
+                    None,
+                )
+            else:
+                current = replace(
+                    current,
+                    revision=current.revision + 1,
+                    enabled=False,
+                    disabled_at=_date(self.utc()),
+                    closed_reason="explicit_off",
+                )
+            self.automatic_consent = current
+            receipt = p.AutomaticReceipt(
+                command,
+                _date(self.utc()),
+                _date(self.utc() + timedelta(hours=24)),
+                current,
+            )
+            self.receipts[command.request_id] = receipt
+            return p.AutomaticResult(
+                command.request_id, "applied", receipt, self._automatic_status()
+            )
+
+        return self._call("control_automatic", args, apply)
+
     def control_source(self, **args):
         command = args["command"]
 
@@ -456,6 +559,7 @@ class FakeRelayClient:
                 effect,
                 consent,
             )
+            self.receipts[command.request_id] = receipt
             return p.SourceStopResult(
                 command.request_id, "applied", receipt, current, effect, status
             )
@@ -772,6 +876,12 @@ def test_settings_true_never_manufactures_on_and_new_on_reads_then_binds():
     intent = worker.request_participation(True)
     before = len(client.calls)
     drive(worker, mono, 10, _snapshot(42))
+    assert store.load().pending_participation == s.PendingParticipation(intent, True)
+    assert not client.participation_calls
+    intent = worker.confirm_participation(
+        intent, expected_generation=8, binding=worker.status().metadata.binding
+    )
+    drive(worker, mono, 6)
     calls = [k for k, _, _ in client.calls[before:]]
     assert calls.index("fetch_device") < calls.index("set_participation")
     assert client.participation_calls == [(True, 8)]
@@ -809,28 +919,36 @@ def test_unbound_on_json_restart_requires_confirmation(tmp_path):
     drive(worker, mono, 10)
     assert not client.participation_calls
     assert worker.status().detail == "needs_fresh_intent"
-    worker.request_participation(True)
+    worker.confirm_participation(
+        UUID, expected_generation=6, binding=worker.status().metadata.binding
+    )
     drive(worker, mono, 10)
     assert client.participation_calls == [(True, 6)]
 
 
 def test_participation_response_loss_reconciles_without_duplicate_cas():
     worker, client, store, mono = rig()
-    worker.request_participation(False)
+    drive(worker, mono, 1)
+    worker.request_participation(
+        False, expected_generation=1, binding=worker.status().metadata.binding
+    )
     client.loss.add("set_participation")
     drive(worker, mono, 20)
     assert client.participation_calls == [(False, 1)]
     assert store.load().pending_participation is None
-    assert worker.status().participation == "acknowledged"
+    assert worker.status().participation == "observed_choice"
 
 
 def test_start_then_stop_before_ack_fences_same_uuid_generation_zero():
     worker, client, store, mono = rig(enabled=False)
     source_id = worker.request_source_start(1, UUID)
     assert source_id and not store.saves and not client.calls
-    assert worker.request_source_stop(source_id)
+    assert worker.request_source_stop(
+        source_id, expected_generation=0, expected_automatic=None
+    )
+    stop = worker._commands["source:" + source_id].payload
     drive(worker, mono, 15)
-    assert client.controls == [p.StopSource(source_id, 0)]
+    assert client.controls == [stop]
     assert store.load().pending_source_commands == ()
     assert not client.publish_calls
 
@@ -842,10 +960,18 @@ def test_lost_start_stop_cas_reread_and_start_aba():
     drive(worker, mono, 8)
     start = client.controls[0]
     assert start.source_id == source_id and start.intent_created_at == DATE
-    assert len(client.controls) == 1
-    assert worker.request_source_stop(source_id, expected_generation=0)
+    assert len(client.controls) == 2 and client.controls == [start, start]
+    assert worker.request_source_stop(
+        source_id, expected_generation=0, expected_automatic=None
+    )
+    old_stop = worker._commands["source:" + source_id].payload
     new_id = worker.request_source_start(1, UUID)
-    client.loss.add("control_source")
+    drive(worker, mono, 12)
+    assert old_stop in store.load().pending_source_commands
+    assert old_stop.expected_generation == 0
+    assert worker.request_source_stop(
+        source_id, expected_generation=1, expected_automatic=None, supersedes=old_stop
+    )
     drive(worker, mono, 30)
     assert new_id != source_id
     assert client.source_views[source_id].state == "ended"
@@ -862,8 +988,7 @@ def test_expired_start_is_observed_not_retimestamped_or_replaced():
     worker.resume_pending()
     drive(worker, mono, 15)
     assert not client.controls
-    assert "fetch_sources" in [k for k, _, _ in client.calls]
-    assert store.load().pending_source_commands == ()
+    assert store.load().pending_source_commands == (start,)
 
 
 def test_source_watch_and_one_startup_probe_do_not_require_telemetry():
@@ -954,6 +1079,9 @@ def test_pairing_upgrade_same_key_keeps_stop_and_participation_journals():
     )
     assert worker.request_pairing(mode="upgrade")
     assert not store.saves and not client.calls
+    # B permits terminal work before browser completion. Keep this Stop genuinely
+    # unresolved so this A regression still proves authentication cannot erase it.
+    client.errors["fetch_receipt"] = FleetRelayError(503, "service_unavailable", "held")
     client.loss.add("complete_pairing")
     for _ in range(35):
         drive(worker, mono, 1)
@@ -1006,10 +1134,15 @@ def test_persistence_failure_never_installs_unsaved_state_or_sends_past_boundary
         store._state = replace(PAIRED_STATE, session_id=None)
     if boundary.startswith("pair"):
         worker.request_pairing(mode="upgrade")
-    if boundary.startswith("participation") or boundary == "intent":
+    if boundary.startswith("participation"):
+        drive(worker, mono, 1)
+        worker.request_participation(
+            False, expected_generation=1, binding=worker.status().metadata.binding
+        )
+    elif boundary == "intent":
         worker.request_participation(False)
     if boundary == "source_ack":
-        worker.request_source_stop(UUID)
+        worker.request_source_stop(UUID, expected_generation=0, expected_automatic=None)
 
     def fail(v):
         return {
@@ -1189,6 +1322,25 @@ def test_source_429_is_bounded_while_other_controls_and_periodic_work_continue()
     assert client.device.participation.enabled is False
 
 
+def test_source_backoff_and_confirmed_off_progress_without_publication_claim():
+    # B portion of the mixed source-429/PUB test: D still owes timed publication.
+    worker, client, _, mono = rig()
+    client.errors["control_source"] = FleetRelayError(429, "rate_limited", "capacity")
+    worker.request_source_start(1, UUID)
+    drive(worker, mono, 40)
+    attempts = [t for k, t, _ in client.calls if k == "control_source"]
+    assert 1 <= len(attempts) <= 6
+    assert all(b - a >= 1 for a, b in pairwise(attempts))
+    assert any(k == "fetch_device" for k, _, _ in client.calls)
+    assert worker.request_participation(
+        False, expected_generation=1, binding=worker.status().metadata.binding
+    )
+    drive(worker, mono, 10)
+    assert client.participation_calls == [(False, 1)]
+    assert not client.device.participation.enabled
+    assert client.cadence_refusals == 0
+
+
 @pytest.mark.parametrize("value", [None, "bad", NOW.replace(tzinfo=None)])
 def test_utc_failure_cannot_send_or_extend_expiry(value):
     worker, client, _, mono = rig()
@@ -1354,7 +1506,10 @@ def test_control_response_loss_reconciles_across_actual_json_restart(
     worker._load_state = lambda: s.load(path)
     worker._save_state = lambda state: s.save(path, state)
     if operation == "set_participation":
-        worker.request_participation(False)
+        drive(worker, mono, 2)
+        assert worker.request_participation(
+            False, expected_generation=1, binding=worker.status().metadata.binding
+        )
     elif operation == "control_source":
         source_id = worker.request_source_start(1, UUID)
     elif operation == "complete_pairing":
@@ -1377,7 +1532,7 @@ def test_control_response_loss_reconciles_across_actual_json_restart(
         assert client.participation_calls == [(False, 1)]
         assert s.load(path).pending_participation is None
     elif operation == "control_source":
-        assert client.controls == [p.StartSource(source_id, 1, UUID, DATE)]
+        assert client.controls == [p.StartSource(source_id, 1, UUID, DATE)] * 2
         assert not s.load(path).pending_source_commands
     else:
         assert s.load(path).pending_recovery is None and s.load(path).session_id
@@ -1391,7 +1546,7 @@ def test_json_pending_off_stop_resume_after_restart_without_settings_on(tmp_path
     original = replace(
         PAIRED_STATE,
         last_revision=13,
-        pending_participation=s.PendingParticipation(UUID, False),
+        pending_participation=s.PendingParticipation(UUID, False, 1),
         pending_source_commands=(p.StopSource(UUID, 0, UUID, DATE, None),),
     )
     s.save(path, original)
@@ -1564,7 +1719,13 @@ def test_real_thread_start_response_cannot_erase_new_stop():
         assert client.entered.wait(5)
         before = len(store.saves)
         started = time.monotonic()
-        worker.request_source_stop(source_id)
+        original = store.load().pending_source_commands[0]
+        assert worker.request_source_stop(
+            source_id,
+            expected_generation=1,
+            expected_automatic=None,
+            supersedes=original,
+        )
         assert time.monotonic() - started < 0.2
         client.release.set()
         deadline = time.monotonic() + 4
@@ -1583,7 +1744,10 @@ def test_real_thread_start_response_cannot_erase_new_stop():
             time.sleep(0.01)
         assert client.source_views[source_id].state == "ended"
         assert all(value.pending_source_commands for value in store.saves[before:-1])
-        assert client.controls[-1] == p.StopSource(source_id, 1)
+        assert isinstance(client.controls[-1], p.StopSource)
+        assert client.controls[-1].source_id == source_id
+        assert client.controls[-1].expected_generation == 1
+        assert client.controls[-1].expected_automatic is None
     finally:
         client.release.set()
         assert worker.stop(timeout=5)
@@ -1686,7 +1850,10 @@ def test_additional_persistence_boundaries_cannot_advance_unsaved_state(boundary
             and state.session_expires_at == client.device.session_expires_at
         )
     elif boundary == "participation_ack":
-        worker.request_participation(False)
+        drive(worker, mono, 2)
+        assert worker.request_participation(
+            False, expected_generation=1, binding=worker.status().metadata.binding
+        )
         store.fail = lambda state: (
             bool(client.participation_calls) and state.pending_participation is None
         )
@@ -1707,6 +1874,10 @@ def test_additional_persistence_boundaries_cannot_advance_unsaved_state(boundary
         assert not client.controls
     else:
         assert worker.status().state == "error"
+        if boundary == "participation_ack":
+            assert client.participation_calls == [(False, 1)]
+            assert store.load().pending_participation.attempted
+            assert worker.status().detail == "persistence_failed"
 
 
 def test_off_save_failure_inhibits_immediately_and_never_claims_ack():
@@ -1749,7 +1920,14 @@ def test_expired_unadmitted_start_does_not_claim_server_acknowledgement():
     worker.resume_pending()
     drive(worker, mono, 10)
     assert not client.controls and not client.source_views
-    assert worker.status().source_control == "expired"
+    assert worker._state.pending_source_commands == (start,)
+    assert worker.status().source_control != "acknowledged"
+    assert worker.request_dismiss_source(
+        start, binding=worker.status().metadata.binding
+    )
+    worker.iterate_once()
+    assert worker._state.pending_source_commands == ()
+    assert not client.controls
 
 
 @pytest.mark.parametrize("kind", ["participation", "source"])
@@ -1757,31 +1935,51 @@ def test_control_superseded_after_selection_is_fenced_before_dispatch(kind):
     worker, client, _, mono = rig(
         device=replace(DEVICE, participation=p.Participation(False, 2))
     )
+    drive(worker, mono, 4)
     if kind == "participation":
-        worker.request_participation(True)
+        assert worker.request_participation(
+            True, expected_generation=2, binding=worker.status().metadata.binding
+        )
     else:
         source_id = worker.request_source_start(1, UUID)
-    worker.iterate_once()  # bootstrap and bind the explicit intent
-    mono[0] += 0.5
     choose = worker._scheduler.choose
+    reached = []
 
     def supersede(work, now):
         chosen = choose(work, now)
-        if kind == "participation":
-            assert chosen.operation == "set_participation"
-            worker.request_participation(False)
-        else:
-            assert chosen.operation == "control_source"
-            worker.request_source_stop(source_id)
+        expected = "set_participation" if kind == "participation" else "control_source"
+        if chosen and chosen.operation == expected and not reached:
+            reached.append(chosen)
+            if kind == "participation":
+                worker.request_participation(
+                    False,
+                    expected_generation=2,
+                    binding=worker.status().metadata.binding,
+                    supersedes=worker._state.pending_participation,
+                )
+            else:
+                worker.request_source_stop(
+                    source_id,
+                    expected_generation=0,
+                    expected_automatic=None,
+                    supersedes=chosen.payload,
+                )
         return chosen
 
     worker._scheduler.choose = supersede
-    worker.iterate_once()
+    for _ in range(6):
+        drive(worker, mono, 1)
+        if reached:
+            break
+    assert len(reached) == 1, "intended selection barrier never reached"
     assert client.participation_calls == [] and client.controls == []
     worker._scheduler.choose = choose
     drive(worker, mono, 10)
     if kind == "source":
-        assert client.controls == [p.StopSource(source_id, 0)]
+        assert len(client.controls) == 1
+        assert isinstance(client.controls[0], p.StopSource)
+        assert client.controls[0].source_id == source_id
+        assert client.controls[0].expected_generation == 0
     else:
         assert not client.device.participation.enabled
 
@@ -1803,16 +2001,24 @@ def test_control_queued_from_status_callback_cannot_be_overwritten_by_old_active
     worker, client, _, mono = rig(
         device=replace(DEVICE, participation=p.Participation(False, 2))
     )
-    worker.request_participation(True)
+    drive(worker, mono, 4)
+    assert worker.request_participation(
+        True, expected_generation=2, binding=worker.status().metadata.binding
+    )
     submitted = []
 
     def callback(status):
         if status.participation == "acknowledged" and not submitted:
             submitted.append(True)
-            worker.request_participation(False)
+            worker.request_participation(
+                False, expected_generation=3, binding=status.metadata.binding
+            )
 
     worker.subscribe_status(callback)
-    drive(worker, mono, 2)
+    for _ in range(6):
+        drive(worker, mono, 1)
+        if submitted:
+            break
     assert submitted
     assert worker.status().participation == "queued"
     assert worker.status().local_inhibited

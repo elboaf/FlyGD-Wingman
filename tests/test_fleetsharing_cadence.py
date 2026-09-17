@@ -76,7 +76,7 @@ class TimedRelay(FakeRelayClient):
     def __init__(self, timeline, store, latency, publications):
         super().__init__(device=DEVICE)
         self.source_views[SOURCE_ID] = p.SourceView(
-            SOURCE_ID, 1, 1, "active", None, None
+            SOURCE_ID, 1, 1, "active", None, None, None
         )
         self.timeline = timeline
         self.store = store
@@ -472,7 +472,11 @@ def test_off_withdrawal_preempts_busy_metadata_and_then_stays_inert():
 
         def disable():
             enabled[0] = False
-            worker.request_participation(False)
+            worker.request_participation(
+                False,
+                expected_generation=worker.status().observed_participation.generation,
+                binding=worker.status().metadata.binding,
+            )
 
         timeline.at(off_at, disable)
 

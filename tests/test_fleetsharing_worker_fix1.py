@@ -48,7 +48,7 @@ def test_uncertain_initial_pairing_retains_same_key_retry_across_json_restart(
     assert worker.stop()
     replacement = _worker(
         client,
-        clock=lambda: mono[0],
+        timing_context=worker._timing_context,
         utc_clock=client.utc,
         sharing_enabled=lambda: False,
     )
@@ -69,7 +69,12 @@ def test_uncertain_initial_pairing_retains_same_key_retry_across_json_restart(
         drive(replacement, mono, 1)
         assert any(status.pairing == "rejected" for status in statuses)
         assert s.load(path).pending_pairing == candidate.pending_pairing
-        assert replacement.request_pairing(mode="initial")
+        pending = s.load(path)
+        assert replacement.request_pairing(
+            mode="initial",
+            binding=replacement.status().metadata.binding,
+            supersedes=(pending.pending_pairing, pending.pending_recovery),
+        )
         drive(replacement, mono, 24)
     assert s.load(path).session_id and s.load(path).identity == candidate.identity
     assert (
@@ -83,12 +88,24 @@ def test_uncertain_initial_pairing_retains_same_key_retry_across_json_restart(
 @pytest.mark.parametrize("transition", ["upgrade", "fresh", "rejected", "wrong_origin"])
 def test_queued_off_stop_survive_only_validated_same_identity_transition(transition):
     worker, client, store, mono = rig(enabled=False)
-    worker.request_source_stop(UUID)
-    worker.request_participation(False)
+    worker.set_source_watch(True)
+    drive(worker, mono, 6)
+    worker.set_source_watch(False)
+    assert worker.request_source_stop(
+        UUID, expected_generation=0, expected_automatic=None
+    )
+    assert worker.request_participation(
+        False, expected_generation=1, binding=worker.status().metadata.binding
+    )
     if transition == "fresh":
         worker._generate_private_key = lambda: bytes([1]) * 32
         worker._unwrap_private_key = lambda blob: bytes([1]) * 32
-        worker.request_pairing(mode="fresh", configured_origin="https://other.test")
+        worker.request_pairing(
+            mode="fresh",
+            configured_origin="https://other.test",
+            binding=worker.status().metadata.binding,
+            automatic_history=store.load().automatic,
+        )
     elif transition == "wrong_origin":
         worker.request_pairing(mode="upgrade", configured_origin="https://other.test")
     else:
@@ -98,7 +115,13 @@ def test_queued_off_stop_survive_only_validated_same_identity_transition(transit
         assert not client.controls and not client.participation_calls
         assert store.load().relay_origin == "https://other.test"
     else:
-        assert client.controls == [p.StopSource(UUID, 0)]
+        assert len(client.controls) == 1 and isinstance(
+            client.controls[0], p.StopSource
+        )
+        assert (
+            client.controls[0].source_id == UUID
+            and client.controls[0].expected_generation == 0
+        )
         assert client.participation_calls == [(False, 1)]
         assert store.load().identity == PAIRED_STATE.identity
         assert store.load().relay_origin == "https://relay.test"
@@ -134,13 +157,21 @@ def test_ingestion_snapshot_cannot_adopt_reentrant_replacement_generation(supers
             if superseded == "participation":
                 replacements.append(worker.request_participation(False))
             elif superseded == "source":
-                worker.request_source_stop(old)
+                replacements.append(
+                    worker.request_source_stop(
+                        old, expected_generation=0, expected_automatic=None
+                    )
+                )
             else:
                 worker.request_pairing(mode="upgrade")
 
     worker.subscribe_status(callback)
     worker.iterate_once()
     assert replacements
+    if superseded == "source":
+        assert replacements == [True, True], (
+            "source replacement callback did not finish"
+        )
     if superseded == "participation":
         assert all(
             not state.pending_participation
@@ -179,28 +210,39 @@ def test_stop_retires_near_cap_start_backoff_but_repeated_stop_keeps_own_floor()
     attempts = [t for op, t, _ in client.calls if op == "control_source"]
     assert len(attempts) == 6 and attempts[-1] - attempts[-2] == 16
     previous_deadline = attempts[-1] + 30
-    worker.request_source_stop(source_id)
+    assert worker.request_source_stop(
+        source_id,
+        expected_generation=0,
+        expected_automatic=None,
+        supersedes=store.load().pending_source_commands[0],
+    )
     worker.iterate_once()
-    assert client.calls[-1][0] == "fetch_sources"
+    assert client.calls[-1][0] == "fetch_receipt"
     observed_at = mono[0]
     mono[0] += 0.49
     worker.iterate_once()
-    assert client.calls[-1][0] == "fetch_sources"
+    assert client.calls[-1][0] == "fetch_receipt"
     mono[0] = observed_at + 0.5
-    worker.iterate_once()
+    for _ in range(4):
+        worker.iterate_once()
+        if client.calls[-1][0] == "control_source":
+            break
+        mono[0] += 0.5
     assert client.calls[-1][0] == "control_source"
-    assert client.calls[-1][1] == observed_at + 0.5 < previous_deadline
+    assert observed_at + 0.5 <= client.calls[-1][1] < previous_deadline
     stop_attempt = mono[0]
     # Repeated explicit Stop must not reset the same Stop's retry ownership.
     for _ in range(9):
         mono[0] += 0.1
-        worker.request_source_stop(source_id)
+        worker.request_source_stop(
+            source_id, expected_generation=0, expected_automatic=None
+        )
         worker.iterate_once()
     assert [t for op, t, _ in client.calls if op == "control_source"][
         -1
     ] == stop_attempt
     client.errors.clear()
-    drive(worker, mono, 10)
+    drive(worker, mono, 30)
     assert client.source_views[source_id].state == "ended"
     assert not store.load().pending_source_commands and client.cadence_refusals == 0
 
@@ -223,7 +265,15 @@ def test_retired_source_work_does_not_accumulate_retry_failure_or_service_histor
         if retirement == "expired":
             mono[0] += 61
         drive(worker, mono, 8)
+        if retirement == "expired":
+            pending = store.load().pending_source_commands
+            assert len(pending) == 1 and pending[0].source_id == source_id
+            assert worker.request_dismiss_source(
+                pending[0], binding=worker.status().metadata.binding
+            )
+            worker.iterate_once()
         assert not store.load().pending_source_commands
+        assert source_id not in worker._source_observe
         for metadata in (
             worker._scheduler.retry_at,
             worker._scheduler.failures,
@@ -297,6 +347,14 @@ def test_real_thread_ingestion_callback_off_is_queued_not_obsolete_on_persisted(
         saved.append(state)
 
     worker._save_state = save
+    worker.set_source_watch(True)
+    deadline = time.monotonic() + 5
+    while (
+        worker.status().observed_participation is None and time.monotonic() < deadline
+    ):
+        worker.iterate_once()
+        time.sleep(0.1)
+    assert worker.status().observed_participation == DEVICE.participation
     worker.request_source_start(1, UUID)
     old_on = worker.request_participation(True)
     callback_done = threading.Event()
@@ -308,7 +366,7 @@ def test_real_thread_ingestion_callback_off_is_queued_not_obsolete_on_persisted(
             callback_done.set()
             worker.request_participation(False)
             stages.append(worker.status().participation)
-            assert release.wait(5)
+            stages.append(release.wait(5))
 
     worker.subscribe_status(callback)
     assert worker.start()
@@ -316,13 +374,25 @@ def test_real_thread_ingestion_callback_off_is_queued_not_obsolete_on_persisted(
         assert callback_done.wait(5)
         release.set()
         deadline = time.monotonic() + 5
+        confirmed = None
+        while time.monotonic() < deadline and confirmed is None:
+            pending = worker.status().pending_participation
+            if pending is not None and not pending.enabled:
+                confirmed = worker.confirm_participation(
+                    pending.intent_id,
+                    expected_generation=1,
+                    binding=worker.status().metadata.binding,
+                )
+            time.sleep(0.01)
+        assert confirmed is not None
+        deadline = time.monotonic() + 5
         while (
             time.monotonic() < deadline
             and worker.status().participation != "acknowledged"
         ):
             time.sleep(0.01)
         assert not client.device.participation.enabled
-        assert stages == ["queued"]
+        assert stages == ["queued", True]
         assert all(
             not state.pending_participation
             or state.pending_participation.intent_id != old_on
@@ -354,12 +424,19 @@ def test_precommit_and_lost_control_responses_reconcile_same_intent_after_json_r
     worker._save_state = lambda state: s.save(path, state)
     worker.resume_pending()
     if operation == "set_participation":
-        worker.request_participation(False)
+        worker.set_source_watch(True)
+        drive(worker, mono, 4)
+        worker.set_source_watch(False)
+        assert worker.request_participation(
+            False, expected_generation=1, binding=worker.status().metadata.binding
+        )
     elif operation == "start":
         source_id = worker.request_source_start(1, UUID)
     elif operation == "stop":
         source_id = UUID
-        worker.request_source_stop(source_id)
+        worker.request_source_stop(
+            source_id, expected_generation=0, expected_automatic=None
+        )
     else:
         # Recovery is explicit pending activity, even while preference is Off.
         worker.set_source_watch(True)
@@ -378,7 +455,7 @@ def test_precommit_and_lost_control_responses_reconcile_same_intent_after_json_r
     assert worker.stop()
     replacement = _worker(
         client,
-        clock=lambda: mono[0],
+        timing_context=worker._timing_context,
         utc_clock=client.utc,
         sharing_enabled=lambda: False,
     )
@@ -394,7 +471,9 @@ def test_precommit_and_lost_control_responses_reconcile_same_intent_after_json_r
         assert client.participation_calls == [(False, 1)]
         assert restored.pending_participation is None
     elif operation in ("start", "stop"):
-        assert client.controls == [journal.pending_source_commands[0]]
+        assert client.controls == [journal.pending_source_commands[0]] * (
+            2 if operation == "start" and committed else 1
+        )
         assert client.controls[0].source_id == source_id
         assert not restored.pending_source_commands
         assert client.source_views[source_id].state == (
@@ -425,6 +504,13 @@ def test_retiring_older_source_preserves_active_command_backoff_and_bucket_floor
     retired_id = worker.request_source_start(1, UUID)
     client.loss.add("control_source")
     drive(worker, mono, 3)
+    retired = next(
+        c for c in store.load().pending_source_commands if c.source_id == retired_id
+    )
+    assert worker.request_dismiss_source(
+        retired, binding=worker.status().metadata.binding
+    )
+    worker.iterate_once()
     assert [c.source_id for c in store.load().pending_source_commands] == [active_id]
     assert worker._scheduler.retry_at[active_key] == deadline
     assert worker._scheduler.failures[active_key] == failures
@@ -458,8 +544,10 @@ def test_real_thread_queued_off_stop_before_upgrade_survive_held_source_read(tmp
     assert worker.start()
     try:
         assert client.entered.wait(5)
-        worker.request_source_stop(UUID)
-        worker.request_participation(False)
+        worker.request_source_stop(UUID, expected_generation=0, expected_automatic=None)
+        worker.request_participation(
+            False, expected_generation=1, binding=worker.status().metadata.binding
+        )
         worker.request_pairing(mode="upgrade")
         client.release.set()
         deadline = time.monotonic() + 8
@@ -470,7 +558,13 @@ def test_real_thread_queued_off_stop_before_upgrade_survive_held_source_read(tmp
             ):
                 break
             time.sleep(0.01)
-        assert client.controls == [p.StopSource(UUID, 0)]
+        assert len(client.controls) == 1 and isinstance(
+            client.controls[0], p.StopSource
+        )
+        assert (
+            client.controls[0].source_id == UUID
+            and client.controls[0].expected_generation == 0
+        )
         assert client.participation_calls == [(False, 1)]
         assert client.pair_keys == [crypto.public_key_spki(KEY)]
         assert (

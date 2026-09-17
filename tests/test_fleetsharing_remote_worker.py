@@ -41,12 +41,24 @@ def test_reentrant_off_captures_clear_before_newer_on_read():
     def on_status(status):
         if status.participation == "queued" and not reentered[0]:
             reentered[0] = True
-            worker.request_participation(True)
+            actions.append(
+                worker.request_participation(
+                    True,
+                    expected_generation=status.observed_participation.generation,
+                    binding=status.metadata.binding,
+                )
+            )
             drive(worker, mono, 20)
 
     reentered = [False]
+    actions = []
     worker.subscribe_status(on_status)
     worker.request_participation(False)
+    assert reentered == [True] and len(actions) == 1 and actions[0]
+    assert (
+        worker.status().pending_participation is None
+        and not worker.status().local_inhibited
+    )
     assert events and events[-1].kind == "replace"
 
 
