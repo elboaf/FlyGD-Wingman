@@ -7,29 +7,61 @@ from fractions import Fraction
 
 import pytest
 
-from tests.test_fleetsharing_worker import NOW, _date, _snapshot, drive, rig
-from wingman.fleetsharing.model import CatalogueCharacter, FleetCatalogue, PublishRow
-from wingman.telemetry.model import FleetRow, FleetSnapshot, StreamHealth
+from tests.fleetsharing_timing_helpers import FakePublicationSource
+from tests.test_fleetsharing_source_admission import publication_rig, ticket
+from tests.test_fleetsharing_worker import NOW, _date, _snapshot, _source, drive, rig
+from wingman.fleetsharing.model import CatalogueCharacter, FleetCatalogue
+from wingman.telemetry.model import (
+    EffectObservation,
+    FleetSnapshot,
+    StreamHealth,
+)
 
 
-def test_eligible_zero_dps_local_tackle_publishes_without_outside_damage():
-    worker, client, _store, mono = rig()
-    client.catalogue = FleetCatalogue(
-        9,
-        (
-            CatalogueCharacter(1, "Eligible"),
-            CatalogueCharacter(2, "Outside"),
+def test_eligible_zero_dps_local_tackle_publishes_without_outside_damage(tmp_path):
+    def configure(worker, client, mono):
+        client.catalogue = FleetCatalogue(
+            9,
+            (CatalogueCharacter(1, "Eligible"), CatalogueCharacter(2, "Outside")),
+        )
+
+    worker, client, mono = publication_rig(tmp_path, configure=configure)
+    now = mono[0]
+    eligible = _source(0, now, character="Eligible").snapshot.rows[0]
+    activity = replace(
+        eligible.combat,
+        observations=tuple(
+            EffectObservation(kind, now + 30, eligible.combat.observation_id)
+            for kind in ("SCRAM", "POINT")
         ),
     )
-    snapshot = FleetSnapshot(
-        (FleetRow("Eligible", 0, ("SCRAM", "POINT")), FleetRow("Outside", 1000)),
-        StreamHealth("active"),
+    source = FakePublicationSource(
+        FleetSnapshot(
+            (
+                replace(eligible, combat=activity),
+                _source(1000, now, character="Outside").snapshot.rows[0],
+            ),
+            StreamHealth("active"),
+            sampled_at_mono=now,
+        )
     )
-    drive(worker, mono, 20, snapshot)
-    assert client.publish_calls
+    drive(worker, mono, 6, source)
+    assert client.puts
     assert all(
-        rows == (PublishRow(1, 0, ("SCRAM/POINT",)),)
-        for _, rows in client.publish_calls
+        body["rows"]
+        == [
+            {
+                "character_id": 1,
+                "outgoing_dps": 0,
+                "incoming_dps": 0,
+                "activity_age_ms": 0,
+                "effects": [
+                    {"kind": kind, "observations": [{"name": None, "age_ms": 0}]}
+                    for kind in ("SCRAM", "POINT")
+                ],
+            }
+        ]
+        for body in client.puts
     )
 
 
@@ -123,29 +155,31 @@ def test_catalogue_result_cannot_be_relabelled_after_identity_transition(monkeyp
     assert not [e for e in events if e.catalogue is not None]
 
 
-def test_refused_whole_publication_refetches_both_and_rebuilds_latest(monkeypatch):
-    from wingman.fleetsharing.client import FleetRelayError
+def test_refused_whole_publication_refetches_both_and_rebuilds_latest(
+    monkeypatch, tmp_path
+):
+    worker, client, mono = publication_rig(tmp_path)
+    transport = client.relay._transport
 
-    worker, client, _store, mono = rig()
-    drive(worker, mono, 14)
-    calls = []
-    original = client.publish_snapshot
+    def publish(request, timeout=None):
+        first = not client.puts
+        client.put_error = (403, "forbidden") if first else None
+        result = transport(request, timeout)
+        if first:
+            mono[0] += 0.125  # Genuinely later measurement, not conflicting same-m DPS.
+            worker.submit(ticket(mono[0], outgoing=99))
+        return result
 
-    def publish(**args):
-        calls.append(args["rows"])
-        if len(calls) == 1:
-            worker.submit(_snapshot(99))
-            raise FleetRelayError(403, "forbidden", "ownership changed")
-        return original(**args)
-
-    monkeypatch.setattr(client, "publish_snapshot", publish)
+    monkeypatch.setattr(client.relay, "_transport", publish)
     before = len(client.calls)
-    worker.submit(_snapshot(10))
+    worker.submit(ticket(mono[0], outgoing=10))
     drive(worker, mono, 9)
-    assert calls[:2] == [(PublishRow(1, 10, ()),), (PublishRow(1, 99, ()),)]
+    assert [body["rows"][0]["outgoing_dps"] for body in client.puts[:2]] == [10, 99]
     operations = [op for op, _, _ in client.calls[before:]]
-    assert operations.index("fetch_catalogue") < operations.index("publish_snapshot")
-    assert operations.index("fetch_eligibility") < operations.index("publish_snapshot")
+    attempts = [i for i, op in enumerate(operations) if op == "publish_snapshot"]
+    assert len(attempts) >= 2
+    for operation in ("fetch_catalogue", "fetch_eligibility"):
+        assert attempts[0] < operations.index(operation) < attempts[1]
 
 
 @pytest.mark.parametrize(
@@ -172,58 +206,96 @@ def test_no_current_eligibility_never_falls_back_to_all_owned_ids(condition):
     assert not worker._publication()
 
 
-def _publication_case(expired_ids=(), amounts=(10, 20)):
-    worker, _client, _store, mono = rig()
-    drive(worker, mono, 14)
-    worker._catalogue = FleetCatalogue(
-        9, (CatalogueCharacter(1, "Alice"), CatalogueCharacter(2, "Bob"))
-    )
-    template = worker._eligibility.characters[0]
-    now = NOW + timedelta(seconds=mono[0] - 1000)
-    worker._eligibility = replace(
-        worker._eligibility,
-        characters=tuple(
-            replace(
-                template,
-                character_id=cid,
-                expires_at=_date(
-                    now + timedelta(seconds=0 if cid in expired_ids else 10)
+def _publication_case(tmp_path, expired_ids=(), amounts=(10, 20)):
+    def configure(worker, client, mono):
+        client.catalogue = FleetCatalogue(
+            9, (CatalogueCharacter(1, "Alice"), CatalogueCharacter(2, "Bob"))
+        )
+        fetch = client.fetch_eligibility
+
+        def proof(**args):
+            result = fetch(**args)
+            return replace(
+                result,
+                characters=tuple(
+                    replace(
+                        result.characters[0],
+                        character_id=cid,
+                        expires_at=_date(
+                            NOW + timedelta(seconds=0 if cid in expired_ids else 60)
+                        ),
+                    )
+                    for cid in (1, 2)
                 ),
             )
-            for cid in (1, 2)
-        ),
+
+        client.fetch_eligibility = proof
+
+    worker, client, mono = publication_rig(tmp_path, configure=configure)
+    rows = tuple(
+        _source(dps, mono[0], character=name).snapshot.rows[0]
+        for name, dps in zip(("Alice", "Bob"), amounts, strict=True)
     )
     worker.submit(
-        FleetSnapshot(
-            (FleetRow("Alice", amounts[0]), FleetRow("Bob", amounts[1])),
-            StreamHealth("active"),
+        FakePublicationSource(
+            FleetSnapshot(
+                rows,
+                StreamHealth("active"),
+                sampled_at_mono=mono[0],
+            )
         )
     )
-    return worker
+    return worker, client, mono
 
 
 @pytest.mark.parametrize("expired_ids", [(1,), (1, 2)])
-def test_expired_active_permission_suspends_whole_replacement(expired_ids):
-    worker = _publication_case(expired_ids)
+def test_expired_active_permission_suspends_whole_replacement(expired_ids, tmp_path):
+    worker, client, mono = _publication_case(tmp_path, expired_ids)
+    drive(worker, mono, 3)
+    assert client.puts == []
     assert worker._publication() is None
 
 
-def test_expired_quiet_member_does_not_block_fresh_active_member():
-    worker = _publication_case((1,), amounts=(0, 20))
-    assert worker._publication() == (PublishRow(2, 20, ()),)
+def test_expired_quiet_member_does_not_block_fresh_active_member(tmp_path):
+    # Retained node: legacy zero-as-quiet premise was wrong. Zero with live
+    # combat is a submitted member, and its expired proof refuses the WHOLE batch.
+    worker, client, mono = _publication_case(tmp_path, (1,), amounts=(0, 20))
+    assert worker._publication() is None
+    drive(worker, mono, 3)
+    assert client.puts == []
 
 
-def test_real_inactivity_remains_an_empty_replacement():
-    worker = _publication_case((1, 2), amounts=(0, 0))
-    assert worker._publication() == ()
-
-
-def test_authoritative_not_verified_remains_an_empty_replacement():
-    worker = _publication_case()
-    worker._eligibility = replace(
-        worker._eligibility, state="not_verified", characters=()
+def test_real_inactivity_remains_an_empty_replacement(tmp_path):
+    worker, client, mono = _publication_case(tmp_path, amounts=(0, 0))
+    drive(worker, mono, 3)
+    assert client.puts and len(client.puts[0]["rows"]) == 2
+    rows = tuple(
+        _source(0, mono[0], character=name, inactive=True).snapshot.rows[0]
+        for name in ("Alice", "Bob")
     )
-    assert worker._publication() == ()
+    worker.submit(
+        FakePublicationSource(
+            FleetSnapshot(rows, StreamHealth("active"), sampled_at_mono=mono[0])
+        )
+    )
+    drive(worker, mono, 3)
+    assert client.puts[-1] == {"protocol": 2, "sampled_at_ms": 0, "rows": []}
+
+
+def test_authoritative_not_verified_remains_an_empty_replacement(tmp_path):
+    worker, client, mono = _publication_case(tmp_path)
+    drive(worker, mono, 3)
+    assert client.puts and len(client.puts[0]["rows"]) == 2
+    fetch = client.fetch_eligibility
+
+    def lost(**args):
+        return replace(fetch(**args), state="not_verified", characters=())
+
+    client.fetch_eligibility = lost
+    worker.submit(None)
+    drive(worker, mono, 8)
+    assert client.puts[-1] == {"protocol": 2, "sampled_at_ms": 0, "rows": []}
+    assert sum(not body["rows"] for body in client.puts) == 1
 
 
 @pytest.mark.parametrize("stream", ["remote", "catalogue"])

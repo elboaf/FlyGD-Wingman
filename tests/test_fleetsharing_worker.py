@@ -6,6 +6,8 @@ legacy unknown grants bootstrap, and Settings True is not an explicit On action.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import http.client
 import json
 import threading
@@ -13,22 +15,34 @@ import time
 import urllib.error
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
-from itertools import pairwise
+from itertools import count, pairwise
 from uuid import uuid4
 
 import pytest
+from cryptography.hazmat.primitives.serialization import load_der_public_key
 
+from tests.fleetsharing_timing_helpers import FakePublicationSource
 from wingman.fleetsharing import crypto
 from wingman.fleetsharing import protocol as p
 from wingman.fleetsharing import state as s
-from wingman.fleetsharing.client import FleetRelayError, PairingBegin, PairingComplete
-from wingman.fleetsharing.model import CatalogueCharacter, FleetCatalogue, PublishRow
+from wingman.fleetsharing.client import (
+    FleetRelayClient,
+    FleetRelayError,
+    PairingBegin,
+    PairingComplete,
+)
+from wingman.fleetsharing.model import CatalogueCharacter, FleetCatalogue
 from wingman.fleetsharing.timing import TimingContext
 from wingman.fleetsharing.worker import (
     FleetSharingWorker,
     _noop_thread_factory,
 )
-from wingman.telemetry.model import FleetRow, FleetSnapshot, StreamHealth
+from wingman.telemetry.model import (
+    CombatActivity,
+    FleetRow,
+    FleetSnapshot,
+    StreamHealth,
+)
 
 NOW = datetime(2026, 9, 7, 12, tzinfo=UTC)
 DATE = "2026-09-07T12:00:00.000Z"
@@ -52,6 +66,31 @@ DEVICE = p.parse_device(
         "server_time_ms": 1788782400000,
     }
 )
+COMBAT_DEVICE = replace(
+    DEVICE,
+    approved_capabilities=(*CAPS, p.COMBAT_CAPABILITY),
+    session_approved_capabilities=(*CAPS, p.COMBAT_CAPABILITY),
+    acknowledged_capabilities=(*CAPS, p.COMBAT_CAPABILITY),
+)
+_SOURCE_IDS = count(1)
+_SOURCE_LIFETIME = uuid4()
+
+
+def _source(dps, now, *, character="Alice", inactive=False):
+    activity = (
+        CombatActivity()
+        if inactive
+        else CombatActivity(now + 30, (_SOURCE_LIFETIME, next(_SOURCE_IDS)))
+    )
+    return FakePublicationSource(
+        FleetSnapshot(
+            (FleetRow(character, dps, incoming_dps=0, combat=activity),),
+            StreamHealth("active"),
+            sampled_at_mono=now,
+        )
+    )
+
+
 PAIRED_STATE = s.SharingState(
     identity=s.DeviceIdentity(
         "cHJvdGVjdGVk",
@@ -308,8 +347,15 @@ class FakeRelayClient:
 
     def acknowledge_capabilities(self, **args):
         def apply():
-            assert args["capabilities"] == CAPS
-            return self._update_session(args, acknowledged_capabilities=CAPS)
+            device = self._session_device(args)
+            approved = tuple(
+                cap
+                for cap in (*CAPS, p.COMBAT_CAPABILITY)
+                if cap in device.approved_capabilities
+                and cap in device.session_approved_capabilities
+            )
+            assert args["capabilities"] == approved
+            return self._update_session(args, acknowledged_capabilities=approved)
 
         return self._call("acknowledge_capabilities", args, apply)
 
@@ -733,6 +779,89 @@ class FakeRelayClient:
         return self._call("complete_pairing", {"before_send": before_send}, apply)
 
 
+class SignedPublicationRelay(FakeRelayClient):
+    """Real publication client; server holds/errors/cadence begin at HTTP only.
+
+    Metadata/CAS doubles remain useful, but no PUB argument reconstruction is a
+    publication witness. Every PUB here verifies actual immutable Request bytes,
+    Ed25519 signature and a freshly reloaded real state file before server work.
+    """
+
+    def __init__(self, *, store, **kwargs):
+        super().__init__(**kwargs)
+        self.store = store
+        self.signed_publications = []
+        self.published = []
+        self.relay = FleetRelayClient(
+            "https://relay.test", transport=self._publication_transport
+        )
+
+    def publish_snapshot(self, **args):
+        return self.relay.publish_snapshot(**args)
+
+    def _publication_transport(self, request, timeout=None):
+        from tests.test_fleetsharing_client import FakeTransport, _headers_of
+
+        assert request.method == "PUT"
+        assert request.full_url == "https://relay.test/api/fleet/v2/snapshot"
+        headers = _headers_of(request)
+        raw = request.data
+        assert isinstance(raw, bytes)
+        digest = hashlib.sha256(raw).hexdigest()
+        assert headers["x-fleet-body-sha256"] == digest
+        session = headers["x-fleet-session"]
+        revision = int(headers["x-fleet-revision"])
+        saved = s.load(self.store.path)
+        assert (saved.last_revision, saved.session_id) == (revision, session)
+        canonical = "\n".join(
+            (
+                "fleet-v1",
+                "PUT",
+                "/api/fleet/v2/snapshot",
+                session,
+                headers["x-fleet-issued-at"],
+                str(revision),
+                digest,
+            )
+        ).encode()
+        signature = headers["x-fleet-signature"]
+        load_der_public_key(crypto.public_key_spki(KEY)).verify(
+            base64.urlsafe_b64decode(signature + "=" * (-len(signature) % 4)), canonical
+        )
+        body = p.parse_combat_put(json.loads(raw))
+        record = {
+            "request": request,
+            "revision": saved.last_revision,
+            "started": self.clock(),
+        }
+        self.signed_publications.append(record)
+        args = {
+            "session_id": session,
+            "private_key": KEY,
+            "revision": revision,
+            "rows": body.rows,
+        }
+
+        def apply():
+            self.publish_calls.append((revision, body.rows))
+            self.published.append((record["started"], body))
+            if not body.rows:
+                self.withdrawal_completed = True
+
+        try:
+            self._call("publish_snapshot", args, apply)
+        except FleetRelayError as exc:
+            if exc.status is None:
+                raise urllib.error.URLError("test transport lost response") from exc
+            return FakeTransport({"protocol": 2, "error": exc.code}, exc.status)(
+                request, timeout
+            )
+        finally:
+            record["completed"] = self.clock()
+            assert request.data is raw, "signed request bytes changed at HTTP"
+        return FakeTransport({"protocol": 2})(request, timeout)
+
+
 class _InMemoryStateStore:
     def __init__(self, state):
         self._state = state
@@ -791,7 +920,7 @@ def _worker(
 def drive(worker, mono, turns=20, snapshot=None):
     for _ in range(turns):
         if snapshot:
-            worker.submit(snapshot)
+            worker.submit(snapshot(mono[0]) if callable(snapshot) else snapshot)
         worker.iterate_once()
         mono[0] += 0.5
 
@@ -810,19 +939,39 @@ def rig(*, state=PAIRED_STATE, enabled=True, device=DEVICE):
     return worker, client, store, mono
 
 
-def test_simultaneous_periodic_controls_completion_cadence_and_withdrawal():
+def signed_rig(tmp_path):
+    from tests.test_fleetsharing_worker_state4 import FileStore
+
+    mono = [1000.0]
+    store = FileStore(tmp_path / "signed-publication.json")
+    store.save(PAIRED_STATE)
+    client = SignedPublicationRelay(store=store, device=COMBAT_DEVICE)
+    worker = _worker(
+        client,
+        store=store,
+        clock=lambda: mono[0],
+        utc_clock=lambda: NOW + timedelta(seconds=mono[0] - 1000),
+    )
+    return worker, client, store, mono
+
+
+def test_simultaneous_periodic_controls_completion_cadence_and_withdrawal(tmp_path):
     from wingman.fleetsharing.scheduling import OPERATIONS
 
     assert dict(OPERATIONS) == OPERATION_BUCKETS
-    worker, client, store, mono = rig()
+    worker, client, store, mono = signed_rig(tmp_path)
     client.latency = lambda: mono.__setitem__(0, mono[0] + 0.2)
-    drive(worker, mono, snapshot=_snapshot(42))
-    assert client.publish_calls[-1][1] == (PublishRow(1, 42, ()),)
+    drive(worker, mono, snapshot=lambda now: _source(42, now))
+    assert client.publish_calls[-1][1] == (p.CombatRow(1, 42, 0, 0, ()),)
     mono[0] += 1800 - 65
     for _ in range(10):
         worker.request_source_start(1, UUID)
-        drive(worker, mono, 1, _snapshot(43))
-    worker.request_participation(False)
+        drive(worker, mono, 1, lambda now: _source(43, now))
+    worker.request_participation(
+        False,
+        expected_generation=client.device.participation.generation,
+        binding=worker.status().metadata.binding,
+    )
     drive(worker, mono, 20)
     read_times = [t for kind, t, _rev in client.calls if kind in READ_OPERATIONS]
     assert all(b - a >= 0.5 for a, b in pairwise(read_times))
@@ -852,17 +1001,17 @@ def test_iterate_seam_enforces_completion_deadlines_without_thread_sleep():
     assert client.cadence_refusals == 0
 
 
-def test_injected_read_429_does_not_stall_publication_or_rejuvenate_remote():
-    worker, client, _, mono = rig()
+def test_injected_read_429_does_not_stall_publication_or_rejuvenate_remote(tmp_path):
+    worker, client, _, mono = signed_rig(tmp_path)
     events = []
     worker.subscribe_remote(events.append)
-    drive(worker, mono, snapshot=_snapshot(42))
+    drive(worker, mono, snapshot=lambda now: _source(42, now))
     replacements = [e for e in events if e.kind == "replace"]
     assert replacements
     old = replacements[-1]
     client.errors["read_snapshot"] = FleetRelayError(429, "rate_limited", "injected")
     before = len(client.publish_calls)
-    drive(worker, mono, 10, _snapshot(43))
+    drive(worker, mono, 10, lambda now: _source(43, now))
     assert len(client.publish_calls) > before
     assert [e for e in events if e.kind == "replace"][-1] is old
     assert client.cadence_refusals == 0
@@ -1333,18 +1482,22 @@ def test_fairness_control_burst_serves_each_overdue_periodic_class_within_slots(
     assert client.cadence_refusals == 0
 
 
-def test_source_429_is_bounded_while_other_controls_and_periodic_work_continue():
-    worker, client, _, mono = rig()
+def test_source_429_is_bounded_while_other_controls_and_periodic_work_continue(
+    tmp_path,
+):
+    worker, client, _, mono = signed_rig(tmp_path)
     client.errors["control_source"] = FleetRelayError(429, "rate_limited", "capacity")
     worker.request_source_start(1, UUID)
-    drive(worker, mono, 40, _snapshot(42))
+    drive(worker, mono, 40, lambda now: _source(42, now))
     attempts = [t for k, t, _ in client.calls if k == "control_source"]
     assert len(attempts) <= 6
     assert all(b - a >= 1 for a, b in pairwise(attempts))
     assert client.publish_calls and any(
         k == "read_snapshot" for k, _, _ in client.calls
     )
-    worker.request_participation(False)
+    worker.request_participation(
+        False, expected_generation=1, binding=worker.status().metadata.binding
+    )
     drive(worker, mono, 10)
     assert client.device.participation.enabled is False
 
@@ -1416,24 +1569,36 @@ def test_successful_empty_remote_replaces_and_failed_read_does_not_emit():
     assert len(events) == before
 
 
-def test_projection_coalesces_heartbeats_omission_and_stale_drop():
-    worker, client, _, mono = rig()
-    drive(worker, mono, 8, _snapshot(42))
+def test_projection_coalesces_heartbeats_omission_and_stale_drop(tmp_path):
+    worker, client, _, mono = signed_rig(tmp_path)
+    drive(worker, mono, 8, lambda now: _source(42, now))
     before = len(client.publish_calls)
-    worker.submit(_snapshot(20))
-    worker.submit(_snapshot(30))
+    worker.submit(_source(20, mono[0]))
+    latest = _source(30, mono[0])
+    worker.submit(latest)
     drive(worker, mono, 2)
-    assert client.publish_calls[-1][1] == (PublishRow(1, 30, ()),)
+    assert client.publish_calls[-1][1] == (p.CombatRow(1, 30, 0, 0, ()),)
     assert len(client.publish_calls) == before + 1
-    drive(worker, mono, 5, _snapshot(30))
+    drive(
+        worker,
+        mono,
+        5,
+        lambda now: FakePublicationSource(
+            replace(latest.snapshot, sampled_at_mono=now)
+        ),
+    )
     assert len(client.publish_calls) > before + 1
-    worker.submit(_snapshot(30, character="Nobody"))
+    before = len(client.publish_calls)
+    worker.submit(_source(30, mono[0], character="Nobody"))
+    drive(worker, mono, 2)
+    assert len(client.publish_calls) == before  # Uncertain ownership is not empty.
+    worker.submit(_source(0, mono[0], inactive=True))
     drive(worker, mono, 2)
     assert client.publish_calls[-1][1] == ()
     before = len(client.publish_calls)
-    drive(worker, mono, 12, _snapshot(30, character="Nobody"))
+    drive(worker, mono, 12, lambda now: _source(0, now, inactive=True))
     assert len(client.publish_calls) == before
-    worker.submit(_snapshot(99))
+    worker.submit(_source(99, mono[0]))
     mono[0] += 6
     drive(worker, mono, 4)
     assert len(client.publish_calls) == before
@@ -1613,33 +1778,63 @@ def test_preserved_lifecycle_is_idempotent_non_daemon_named_and_bounded():
     assert worker.stop() and worker.stop()
 
 
-def test_preserved_real_thread_mailbox_publishes_latest_after_held_publication():
-    client = FakeRelayClient(device=DEVICE)
+def test_preserved_real_thread_mailbox_publishes_latest_after_held_publication(
+    tmp_path,
+):
+    _, client, store, _ = signed_rig(tmp_path)
     client.hold = "publish_snapshot"
-    worker = _worker(client, clock=time.monotonic, thread_factory=threading.Thread)
-    worker.submit(_snapshot(10))
+    start = time.monotonic()
+    worker = _worker(
+        client,
+        store=store,
+        clock=time.monotonic,
+        thread_factory=threading.Thread,
+        utc_clock=lambda: NOW + timedelta(seconds=time.monotonic() - start),
+    )
+    worker.submit(_source(10, time.monotonic()))
     assert worker.start()
     try:
         assert client.entered.wait(5)
         started = time.monotonic()
-        worker.submit(_snapshot(20))
-        worker.submit(_snapshot(30))
+        worker.submit(_source(20, time.monotonic()))
+        worker.submit(_source(30, time.monotonic()))
         assert time.monotonic() - started < 0.2
+        assert len(client.signed_publications) == 1
+        assert (
+            json.loads(client.signed_publications[0]["request"].data)["rows"][0][
+                "outgoing_dps"
+            ]
+            == 10
+        )
+        assert (
+            s.load(store.path).last_revision
+            == client.signed_publications[0]["revision"]
+        )
         client.release.set()
         deadline = time.monotonic() + 4
         while time.monotonic() < deadline and len(client.publish_calls) < 2:
             time.sleep(0.01)
-        assert [rows[0].dps for _, rows in client.publish_calls[:2]] == [10, 30]
+        assert [rows[0].outgoing_dps for _, rows in client.publish_calls[:2]] == [
+            10,
+            30,
+        ]
     finally:
         client.release.set()
         assert worker.stop(timeout=5)
 
 
-def test_preserved_real_thread_submit_flood_cannot_shorten_publish_retry():
-    client = FakeRelayClient(device=DEVICE)
+def test_preserved_real_thread_submit_flood_cannot_shorten_publish_retry(tmp_path):
+    _, client, store, _ = signed_rig(tmp_path)
     client.errors["publish_snapshot"] = FleetRelayError(500, "server_error", "down")
-    worker = _worker(client, clock=time.monotonic, thread_factory=threading.Thread)
-    worker.submit(_snapshot(10))
+    start = time.monotonic()
+    worker = _worker(
+        client,
+        store=store,
+        clock=time.monotonic,
+        thread_factory=threading.Thread,
+        utc_clock=lambda: NOW + timedelta(seconds=time.monotonic() - start),
+    )
+    worker.submit(_source(10, time.monotonic()))
     assert worker.start()
     try:
         deadline = time.monotonic() + 5
@@ -1652,16 +1847,21 @@ def test_preserved_real_thread_submit_flood_cannot_shorten_publish_retry():
         client.errors.clear()
         until = time.monotonic() + 0.4
         while time.monotonic() < until:
-            worker.submit(_snapshot(11))
+            worker.submit(_source(11, time.monotonic()))
             time.sleep(0.01)
         assert len([t for k, t, _ in client.calls if k == "publish_snapshot"]) == 1
         deadline = time.monotonic() + 4
         while time.monotonic() < deadline and not client.publish_calls:
-            worker.submit(_snapshot(11))
+            worker.submit(_source(11, time.monotonic()))
             time.sleep(0.01)
         attempts = [t for k, t, _ in client.calls if k == "publish_snapshot"]
         assert len(attempts) == 2 and attempts[1] - attempts[0] >= 1
-        assert client.publish_calls[-1][1] == (PublishRow(1, 11, ()),)
+        assert len(client.signed_publications) == 2
+        assert (
+            client.signed_publications[1]["started"]
+            >= client.signed_publications[0]["completed"] + 1
+        )
+        assert client.publish_calls[-1][1] == (p.CombatRow(1, 11, 0, 0, ()),)
     finally:
         assert worker.stop(timeout=5)
 
@@ -1709,10 +1909,12 @@ def test_preserved_settings_predicate_exception_fails_closed_without_loading():
     assert not client.calls and not store.loads
 
 
-def test_preserved_stale_mailbox_does_not_withdraw_a_previous_nonempty_publish():
-    worker, client, _, mono = rig()
-    drive(worker, mono, 10, _snapshot(42))
-    assert client.publish_calls[-1][1] == (PublishRow(1, 42, ()),)
+def test_preserved_stale_mailbox_does_not_withdraw_a_previous_nonempty_publish(
+    tmp_path,
+):
+    worker, client, _, mono = signed_rig(tmp_path)
+    drive(worker, mono, 10, lambda now: _source(42, now))
+    assert client.publish_calls[-1][1] == (p.CombatRow(1, 42, 0, 0, ()),)
     before = len(client.publish_calls)
     mono[0] += 6
     drive(worker, mono, 6)

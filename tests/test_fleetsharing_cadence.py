@@ -1,19 +1,22 @@
 """Virtual waits drive the REAL owner loop, not ideal-time iterate_once calls.
 
-The relay is the existing completion-cadence/CAS fake. Publisher and receiver
-run independently against one immutable publication trace; no receiver request
-changes publication timing. Only Event waiting, monotonic time and HTTP latency
-are virtual. No thread sleeps, sockets, provider state or wall-clock deadlines.
+Publisher PUTs use the real signed client and a file journal; metadata/CAS use
+the existing time-enforcing server double. Publisher and receiver run independently
+against the actual immutable Request-byte trace; receiver requests cannot change
+publication timing. Event waits, monotonic time and HTTP latency are virtual.
+No thread sleeps, sockets, provider state or wall-clock deadlines.
 """
 
 import heapq
 import json
 import math
+import tempfile
 import threading
 from dataclasses import asdict, dataclass, replace
 from datetime import timedelta
 from fractions import Fraction
 from itertools import pairwise
+from pathlib import Path
 from typing import ClassVar
 from uuid import UUID
 
@@ -24,19 +27,38 @@ from test_fleetsharing_worker import (
     NOW,
     OPERATION_BUCKETS,
     PAIRED_STATE,
-    FakeRelayClient,
+    SignedPublicationRelay,
     _date,
-    _InMemoryStateStore,
-    _snapshot,
     _worker,
 )
 from test_fleetsharing_worker import UUID as SOURCE_ID
 
+from tests.fleetsharing_timing_helpers import FakePublicationSource
 from tests.test_fleetsharing_client import Response, framing_headers, request_binding
 from tests.test_fleetsharing_worker_state4 import FileStore
 from wingman.fleetsharing import protocol as p
 from wingman.fleetsharing.client import FleetRelayClient, FleetRelayError
+from wingman.telemetry.model import (
+    CombatActivity,
+    FleetRow,
+    FleetSnapshot,
+    StreamHealth,
+)
 from wingman.ui.remotefleet import RemoteFleetStore
+
+
+def cadence_source(now, dps=0):
+    # Healthy zero/zero through a genuine 30s combat hold. A new event every
+    # twenty seconds keeps the long scenario active without renewing old IDs.
+    event = 1000 + math.floor((now - 1000) / 20) * 20 if dps == 0 else now
+    activity = CombatActivity(event + 30, (UUID(int=900), int((event - 999) * 1000)))
+    return FakePublicationSource(
+        FleetSnapshot(
+            (FleetRow("Alice", dps, incoming_dps=0, combat=activity),),
+            StreamHealth("active"),
+            sampled_at_mono=now,
+        )
+    )
 
 
 class VirtualWait:
@@ -78,9 +100,9 @@ class VirtualWait:
         return self.signalled
 
 
-class TimedRelay(FakeRelayClient):
+class TimedRelay(SignedPublicationRelay):
     def __init__(self, timeline, store, latency, publications):
-        super().__init__(device=DEVICE)
+        super().__init__(device=DEVICE, store=store)
         self.source_views[SOURCE_ID] = p.SourceView(
             SOURCE_ID, 1, 1, "active", None, None, None
         )
@@ -99,29 +121,6 @@ class TimedRelay(FakeRelayClient):
                 args["session_id"],
             ), "attempt must be saved before I/O"
         return super()._call(operation, args, apply)
-
-    def publish_snapshot(self, **args):
-        # The fake applies the publication before waiting for its response.
-        # Server age begins there, NOT at response/owner completion.
-        published = self.timeline.now
-        result = super().publish_snapshot(**args)
-        self.published.append(
-            (
-                published,
-                p.parse_combat_put(
-                    json.loads(
-                        json.dumps(
-                            {
-                                "protocol": 2,
-                                "sampled_at_ms": args["sampled_at_ms"],
-                                "rows": [asdict(row) for row in args["rows"]],
-                            }
-                        )
-                    )
-                ),
-            )
-        )
-        return result
 
     def read_snapshot(self, **args):
         # Sample before full response latency, as the real server may do. A
@@ -179,8 +178,18 @@ def run_owner(
     telemetry_until=None,
 ):
     timeline = VirtualWait(1000 + phase, 1000 + duration)
-    store = _InMemoryStateStore(PAIRED_STATE)
+    directory = tempfile.TemporaryDirectory(prefix="wingman-signed-cadence-")
+    store = FileStore(Path(directory.name) / "sharing.json")
+    store.save(PAIRED_STATE)
     client = TimedRelay(timeline, store, latency, publications)
+    if publisher:
+        rights = (p.SHARED_CAPABILITY, p.COMBAT_CAPABILITY)
+        client.device = replace(
+            client.device,
+            approved_capabilities=rights,
+            session_approved_capabilities=rights,
+            acknowledged_capabilities=rights,
+        )
     worker = _worker(
         client,
         store=store,
@@ -205,9 +214,13 @@ def run_owner(
 
     worker.subscribe_remote(receive)
     if publisher:
-        # Sparse, unchanged local metrics from the coordinator's 1s idle cadence.
+        # Test-only original measurements at the modeled 1s cadence, not a
+        # production coordinator wrapper or raw-snapshot authority fallback.
         for second in range(duration if telemetry_until is None else telemetry_until):
-            timeline.at(1000 + phase + second, lambda: worker.submit(_snapshot(42)))
+            timeline.at(
+                1000 + phase + second,
+                lambda: worker.submit(cadence_source(timeline.now)),
+            )
     for tick in range(duration * 20):
         when = 1000 + tick / 20
         if when >= timeline.now:
@@ -229,6 +242,7 @@ def run_owner(
         worker._run(timeline.stop)
     finally:
         assert worker.stop()
+        directory.cleanup()
     assert client.cadence_refusals == 0
     assert worker.status().detail is None
     for bucket in ("read", "publication"):
@@ -283,7 +297,9 @@ def renewed_source_proof(
             for second in range(60):
                 timeline.at(
                     1000 + second,
-                    lambda n=second: worker.submit(_snapshot(10 + n % 5)),
+                    lambda n=second: worker.submit(
+                        cadence_source(timeline.now, 10 + n % 5)
+                    ),
                 )
 
     return configure
@@ -344,6 +360,29 @@ def test_source_phase_and_small_clock_skew_do_not_withdraw(period, phase, skew):
     assert timeline.end - times[-1] < 10.0
 
 
+def test_publisher_trace_crosses_real_signed_client(monkeypatch):
+    reached = []
+    original = FleetRelayClient.publish_snapshot
+
+    def observe(self, **args):
+        result = original(self, **args)
+        reached.append(True)
+        return result
+
+    monkeypatch.setattr(FleetRelayClient, "publish_snapshot", observe)
+    client, _, _, _ = run_owner(publisher=True, duration=8)
+    assert reached, "publisher trace never crossed real FleetRelayClient signing/HTTP"
+    assert len(reached) == len(client.published) == len(client.signed_publications)
+    assert [
+        p.parse_combat_put(json.loads(r["request"].data))
+        for r in client.signed_publications
+    ] == [body for _, body in client.published]
+    assert all(
+        r["revision"] == int(r["request"].get_header("X-fleet-revision"))
+        for r in client.signed_publications
+    )
+
+
 def test_due_independent_bucket_does_not_wait_for_post_operation_poll():
     client, _, _, _ = run_owner(publisher=True, duration=8)
     first_publish = next(
@@ -395,7 +434,9 @@ def test_healthy_sparse_publication_stays_live_in_quiet_receiver(
         latency=latency,
     )
     assert publisher.publish_calls and receiver.calls and samples
-    assert_healthy_recovery(assert_exact_trace(receiver, samples, events))
+    assert_mixed_trace_bounds(
+        publisher, receiver, samples, events, phase=phase, latency=latency, watch=watch
+    )
 
 
 def simultaneous_metadata(worker, client, timeline):
@@ -426,7 +467,9 @@ def test_source_watch_and_simultaneous_metadata_renewal_do_not_starve_read(
     )
     for client in (publisher, receiver):
         assert_scenario_fairness(client, watch=True)
-    assert_healthy_recovery(assert_exact_trace(receiver, samples, events))
+    assert_mixed_trace_bounds(
+        publisher, receiver, samples, events, phase=phase, latency=latency, watch=True
+    )
 
 
 @pytest.mark.parametrize("latency, expected", [(3.2, ("stale",)), (11, ())])
@@ -502,8 +545,8 @@ class ExternalPublication:
 def actual_publication_trace(published):
     """Receiver input from actual PUT bytes, never a legacy PublishRow adapter.
 
-    These three legacy mixed scenarios publish one Alice row with no effects.
-    They stay RED until D supplies genuine source-admitted CombatPut values.
+    The mixed scenarios publish one Alice row with no effects. Their trace is
+    captured by SignedPublicationRelay at real HTTP, not rebuilt from method args.
     """
     assert published
     trace = []
@@ -921,6 +964,88 @@ def healthy_bounds(*, phase, latency):
         due + 3 * (floor + ell) + ell,
         3 - 1 - Fraction(2, 5) - ell - q,
         Fraction(1, 20) + 2 * q,
+    )
+
+
+def assert_mixed_trace_bounds(
+    publisher, receiver, samples, events, *, phase, latency, watch, end=1120
+):
+    """Original local releases + two independent serialized lanes, no backoff.
+
+    A ready heartbeat can be overtaken by one read only: its completion closes
+    the read bucket for500ms, leaving the independent PUT ready immediately.
+    Hence consecutive PUT starts differ by at most P=1+2L (heartbeat1, previous
+    PUT responseL, crossing readL). Each selects the newest one-second m.
+
+    Publisher GETs may additionally wait for a PUT crossing each of the four
+    read starts in the C theorem: own Gp=G+4L. L<=120ms fits inside each500ms
+    completion floor; no second PUT can cross that same read opportunity.
+    Renewal/urgent proof cannot recur within Gp (600s and7-L respectively).
+    This is explicitly not the receiver-only theorem silently applied to PUT.
+
+    Latest available PUT started less than P ago; m is less than1s older.
+    Publisher anchor mapping loses L+200ms, receiver projection200ms and its
+    return loses another L. Therefore every useful receipt has LIVE hold
+    H=3-P-1-2L-400ms. Millisecond floors and the fake UTC microsecond/float
+    representation have independently bounded loss below, not an observed fit.
+    Receiver has no local PUT, so its original C service G still applies and
+    every stale episode recovers within G-H using a newer original measurement.
+    """
+    q = _CLOCK_ROUNDING
+    ell = Fraction(latency) + q
+    floor = Fraction(1, 2) + q
+    receiver_bounds = healthy_bounds(phase=phase, latency=latency)
+    pub_gap = 1 + q + 2 * ell
+    # Publisher fixture's int(utc.timestamp()*1000), mapper's floor, and
+    # receiver DB floor: three1ms quantizations; UTC timedelta rounds to1us,
+    # timestamp float in[2**30,2**31) has ULP2**-22 seconds.
+    quantization = Fraction(3, 1000) + Fraction(1, 1000000) + Fraction(1, 2**22) + 4 * q
+    live_hold = 3 - pub_gap - 1 - 2 * ell - Fraction(2, 5) - quantization
+    assert live_hold > 0
+    # Device authentication, then at most one preferred snapshot per initial
+    # metadata class (catalogue/eligibility + sources/automatic when watching).
+    metadata = 2 + 2 * watch
+    first_put = Fraction(1000) + ell + 2 * metadata * (floor + ell)
+    starts = [Fraction(t) for t, body in publisher.published if body.rows and t <= end]
+    assert_snapshot_service(
+        starts,
+        bounds=HealthyBounds(first_put, pub_gap, live_hold, receiver_bounds.grid),
+        end=end,
+    )
+    own_gets = [
+        r
+        for (op, _, _), (_, r) in zip(publisher.calls, publisher.completed, strict=True)
+        if op == "read_snapshot"
+    ]
+    assert_snapshot_service(
+        own_gets,
+        bounds=replace(
+            healthy_bounds(phase=0, latency=latency), gap=receiver_bounds.gap + 4 * ell
+        ),
+        end=end,
+    )
+    classified = assert_exact_trace(receiver, samples, events)
+    expected = exact_trace_oracle(receiver)
+    installed = []
+    bounds = replace(
+        receiver_bounds,
+        first_receipt=first_put + ell + receiver_bounds.gap,
+        live_hold=live_hold,
+    )
+    for count, (op, _, r, _, code, _) in enumerate(receiver.raw, 1):
+        if op != "read_snapshot" or r > end:
+            continue
+        assert code == 200
+        want = expected[count]
+        if want is None:
+            assert not installed and r < bounds.first_receipt, (
+                "mixed publication disappeared"
+            )
+        else:
+            installed.append((Fraction(r), want[0], want[1]))
+    assert_snapshot_service([r for r, _, _ in installed], bounds=bounds, end=end)
+    return assert_stale_recovery(
+        installed, bounds=bounds, end=end, classified=classified
     )
 
 
@@ -1351,9 +1476,11 @@ def test_eligibility_coverage_requires_strict_uninterrupted_scenario_end(
 
 
 @pytest.mark.parametrize("with_effects", [False, True])
-def test_timed_relay_captures_valid_combat_rows_at_json_boundary(with_effects):
-    # Fixture proof only: call the relay with already-valid CombatRows. This does
-    # not certify the worker's still-missing D source-admitted publication path.
+def test_timed_relay_captures_valid_combat_rows_at_json_boundary(
+    with_effects, tmp_path
+):
+    # Fixture proof only: already-valid CombatRows through the signed boundary.
+    # Worker source association is proved by the separate original-source tests.
     effects = (
         (
             p.Effect(
@@ -1369,13 +1496,15 @@ def test_timed_relay_captures_valid_combat_rows_at_json_boundary(with_effects):
         p.CombatRow(2, 0, None, 500, ()),
     )
     timeline = VirtualWait(1000, 1010)
-    store = _InMemoryStateStore(replace(PAIRED_STATE, last_revision=1))
+    store = FileStore(tmp_path / "timed-relay.json")
+    store.save(replace(PAIRED_STATE, last_revision=1))
     relay = TimedRelay(timeline, store, 0.2, ())
     relay.clock = lambda: timeline.now
     relay.publish_snapshot(
         private_key=KEY,
         session_id=PAIRED_STATE.session_id,
         revision=1,
+        now=NOW,
         sampled_at_ms=DEVICE.server_time_ms - 200,
         rows=rows,
     )
@@ -1421,7 +1550,7 @@ def test_timed_relay_captures_valid_combat_rows_at_json_boundary(with_effects):
 
 
 def test_external_put_trace_preserves_original_origins_and_nullable_values(tmp_path):
-    # External wire fixture only — no claim that the local worker can PUT yet.
+    # External wire fixture only; local source admission is proved separately.
     body = p.parse_combat_put(
         {
             "protocol": 2,
@@ -1539,7 +1668,16 @@ def test_stale_input_makes_no_more_publication_attempts():
 
 def test_empty_mailbox_withdraws_once_without_heartbeat_busy_loop():
     def empty(worker, client, timeline):
-        timeline.at(1020, lambda: worker.submit(replace(_snapshot(0), rows=())))
+        timeline.at(
+            1020,
+            lambda: worker.submit(
+                FakePublicationSource(
+                    FleetSnapshot(
+                        (), StreamHealth("active"), sampled_at_mono=timeline.now
+                    )
+                )
+            ),
+        )
 
     client, _, timeline, _ = run_owner(
         publisher=True, duration=40, telemetry_until=20, configure=empty

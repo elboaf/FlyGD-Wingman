@@ -22,7 +22,8 @@ import threading
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from math import isfinite
+from fractions import Fraction
+from math import inf, isfinite, nextafter
 from typing import Literal, get_args
 from uuid import uuid4
 
@@ -32,7 +33,7 @@ from . import protocol as p
 from . import state as s
 from .client import FleetRelayClient, FleetRelayError
 from .config import resolve_relay_origin
-from .model import FleetCatalogue, PublishRow, TimedSnapshot, TimingFenceReason
+from .model import FleetCatalogue, PublicationSource, TimedSnapshot, TimingFenceReason
 from .scheduling import OPERATIONS, SIGNED_INTERVAL_S, Work
 from .timing import TimingContext, _ClockContradiction, _TimingLoss
 
@@ -50,6 +51,7 @@ MAX_SNAPSHOT_AGE_S = 5.0
 # even on healthy low-latency links. Leave room for read service and full RTT.
 HEARTBEAT_INTERVAL_S = 1.0
 CAPABILITIES = (p.SHARED_CAPABILITY,)
+COMBAT_CAPABILITIES = (*CAPABILITIES, p.COMBAT_CAPABILITY)
 # Only these classifications may reach status. Never render an exception body.
 ERROR_CODES = frozenset(
     (
@@ -175,6 +177,34 @@ class _Fence:
     timing: int = field(compare=False)
 
 
+@dataclass(frozen=True)
+class _EligibilityProof:
+    response: p.Eligibility
+    fence: _Fence
+    deadlines: tuple[tuple[int, Fraction], ...]
+
+
+@dataclass(frozen=True)
+class _PublicationSelection:
+    source: PublicationSource | None
+    snapshot: FleetSnapshot | None
+    catalogue: FleetCatalogue
+    eligibility: p.Eligibility
+    proof: _EligibilityProof
+    eligible_character_ids: frozenset[int]
+    member_deadlines: tuple[Fraction, ...]
+    session_deadline: Fraction
+    semantic: tuple
+    withdrawal_reason: Literal["inactive", "source_eligibility_lost"] | None = None
+
+
+@dataclass(frozen=True)
+class _OffWithdrawal:
+    session_deadline: Fraction
+    auth: tuple | None
+    reason: Literal["explicit_off"] = "explicit_off"
+
+
 class _Obsolete(Exception):
     pass
 
@@ -236,7 +266,7 @@ class FleetSharingWorker:
         self._status_lock = threading.Lock()
         self._lifecycle_lock = threading.Lock()
         self._iteration_lock = threading.Lock()
-        self._latest: tuple[FleetSnapshot, float] | None = None
+        self._latest: PublicationSource | None = None
         self._pending = threading.Event()
         self._commands: dict[str, _Command] = {}
         self._deferred_commands: dict[str, _Command] = {}
@@ -297,14 +327,15 @@ class FleetSharingWorker:
         self._withdraw_needed = False
         self._catalogue: FleetCatalogue | None = None
         self._eligibility: p.Eligibility | None = None
+        self._eligibility_proof: _EligibilityProof | None = None
         self._sources: p.Sources | None = None
         self._due = dict.fromkeys(
             ("device", "catalogue", "eligibility", "read", "sources", "automatic"), 0.0
         )
         self._expiry_binding = None
         self._renew_at = 0.0
-        self._expires_at = 0.0
-        self._last_published: tuple[PublishRow, ...] = ()
+        self._expires_at = Fraction(0)
+        self._last_published: tuple = ()
         self._last_publish_at = 0.0
         self._pause_binding = None
         self._pause_until = 0.0
@@ -398,9 +429,9 @@ class FleetSharingWorker:
         elif event is not None:
             self._notify("remote", event)
 
-    def submit(self, snapshot: FleetSnapshot) -> None:
+    def submit(self, source: PublicationSource) -> None:
         with self._lock:
-            self._latest = (snapshot, self._clock())
+            self._latest = source
         self._pending.set()
 
     def _queue(
@@ -1071,20 +1102,21 @@ class FleetSharingWorker:
         with self._lock:
             if fence is not None and self._fence_locked() != fence:
                 raise _Obsolete
-            with self._status_lock:
-                status = replace(
-                    self._status,
-                    **changes,
-                    pending_sources=self._pending_sources_locked(
-                        changes.get("metadata")
-                    ),
-                )
-                changed = self._status != status
-                if changed:
-                    status = replace(status, order=self._status.order + 1)
-                self._status = status
-        if changed:
+            status = self._update_status_locked(**changes)
+        if status is not None:
             self._notify("status", status)
+
+    def _update_status_locked(self, **changes):
+        with self._status_lock:
+            status = replace(
+                self._status,
+                **changes,
+                pending_sources=self._pending_sources_locked(changes.get("metadata")),
+            )
+            if self._status == status:
+                return None
+            self._status = replace(status, order=self._status.order + 1)
+            return self._status
 
     def _remote_event_locked(self, payload, kind):
         self._presentation_order += 1
@@ -1113,17 +1145,20 @@ class FleetSharingWorker:
                     fence.session,
                 ):
                     raise _Obsolete
-            self._catalogue = catalogue
-            self._presentation_order += 1
-            self._catalogue_order = self._presentation_order
-            event = CatalogueEvent(
-                catalogue,
-                self._status.metadata.binding,
-                self._epoch,
-                self._identity_epoch,
-                self._catalogue_order,
-            )
+            event = self._set_catalogue_locked(catalogue)
         self._notify("catalogue", event)
+
+    def _set_catalogue_locked(self, catalogue):
+        self._catalogue = catalogue
+        self._presentation_order += 1
+        self._catalogue_order = self._presentation_order
+        return CatalogueEvent(
+            catalogue,
+            self._status.metadata.binding,
+            self._epoch,
+            self._identity_epoch,
+            self._catalogue_order,
+        )
 
     def start(self) -> bool:
         with self._lifecycle_lock:
@@ -1240,7 +1275,7 @@ class FleetSharingWorker:
             raise _Obsolete
         current = self._fence_locked()
         if current.automatic != fence.automatic and (
-            work is None or work.operation == "control_automatic"
+            work is None or work.operation in ("control_automatic", "publish_snapshot")
         ):
             raise _Obsolete
         if work is not None:
@@ -1310,7 +1345,8 @@ class FleetSharingWorker:
         ):
             raise _Obsolete
         if current.source != fence.source and (
-            work is None or work.operation in ("fetch_sources", "control_source")
+            work is None
+            or work.operation in ("fetch_sources", "control_source", "publish_snapshot")
         ):
             raise _Obsolete
 
@@ -1336,6 +1372,13 @@ class FleetSharingWorker:
     def _reset_session(self):
         # Only a typed negative from this live attempt permits another poll.
         self._pairing_pollable = None
+        with self._lock:
+            notifications = self._reset_session_locked()
+        for kind, event in notifications:
+            if event is not None:
+                self._notify(kind, event)
+
+    def _reset_session_locked(self):
         self._control_auth = None
         self._control_db_fact = None
         self._automatic_observation = None
@@ -1346,16 +1389,17 @@ class FleetSharingWorker:
             c.source_id for c in self._state.pending_source_commands
         )
         self._eligibility = self._sources = None
-        self._clear_remote()
-        self._set_catalogue(None)
+        remote = self._remote_event_locked(None, "clear")
+        catalogue = self._set_catalogue_locked(None)
         self._expiry_binding = None
         self._last_published = ()
         self._due = dict.fromkeys(self._due, 0.0)
-        self._update_status(
+        status = self._update_status_locked(
             sources=None,
             eligibility=None,
             observed_participation=self._state.observed_participation,
         )
+        return (("remote", remote), ("catalogue", catalogue), ("status", status))
 
     def _archived_choice(self, state=None):
         archive = (state or self._state).cutover
@@ -1984,12 +2028,23 @@ class FleetSharingWorker:
             self._update_status(state="error", detail="local_failure")
             return BASE_BACKOFF_S, False
 
+    @staticmethod
+    def _elapsed_expiry(text, elapsed, utc):
+        delta = datetime.fromisoformat(text) - utc
+        return Fraction(elapsed) + Fraction(
+            (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds,
+            1000000,
+        )
+
     def _expiry(self):
         binding = (self._state.session_id, self._state.session_expires_at)
         if binding != self._expiry_binding:
-            remaining = self._remaining(binding[1])
-            self._expires_at = self._clock() + max(0, remaining)
-            self._renew_at = self._clock() + max(
+            elapsed = self._clock()
+            self._expires_at = self._elapsed_expiry(
+                binding[1], elapsed, self._utc_now()
+            )
+            remaining = self._expires_at - Fraction(elapsed)
+            self._renew_at = elapsed + max(
                 0, min(SESSION_RENEWAL_INTERVAL_S, remaining - 60)
             )
             self._expiry_binding = binding
@@ -2127,8 +2182,22 @@ class FleetSharingWorker:
         if p.SHARED_CAPABILITY not in (state.acknowledged_capabilities or ()):
             return (*terminal, Work("acknowledge_capabilities", "ack", priority=1))
         work = list(terminal)
+        if any(
+            capability not in (state.acknowledged_capabilities or ())
+            for capability in self._acknowledge_rights()
+        ):
+            # Combat acknowledgement is publication disclosure, not permission
+            # to receive. Its retry must not strand already-authorized shared GETs.
+            work.append(Work("acknowledge_capabilities", "ack", priority=1))
         if self._withdraw_needed:
-            work.append(Work("publish_snapshot", "withdraw", priority=0, payload=()))
+            work.append(
+                Work(
+                    "publish_snapshot",
+                    "withdraw",
+                    priority=0,
+                    payload=_OffWithdrawal(self._expires_at, self._control_auth),
+                )
+            )
         if self._clock() >= self._renew_at:
             work.append(Work("renew_session", "renew", due=self._renew_at, priority=1))
         intent = state.pending_participation
@@ -2206,18 +2275,27 @@ class FleetSharingWorker:
                     Work("read_snapshot", "read", due=self._due["read"], periodic=True),
                 )
             )
-            rows = self._publication()
-            if rows is not None and (rows != self._last_published or rows):
+            publication = self._publication()
+            if publication is not None:
+                stage_floor = self._timing_context._next_stage_at or 0
+                stage_due = float(stage_floor)
+                if stage_due < stage_floor:
+                    # Scheduler uses float deadlines. Round UP, never convert an
+                    # exact retained floor into a sub-ULP zero-delay busy loop.
+                    stage_due = nextafter(stage_due, inf)
                 work.append(
                     Work(
                         "publish_snapshot",
                         "publication",
-                        due=self._last_publish_at + HEARTBEAT_INTERVAL_S
-                        if rows == self._last_published
-                        else 0,
+                        due=max(
+                            stage_due,
+                            self._last_publish_at + HEARTBEAT_INTERVAL_S
+                            if publication.semantic == self._last_published
+                            else 0,
+                        ),
                         periodic=True,
-                        payload=rows,
-                        priority=0 if not rows else 2,
+                        payload=publication,
+                        priority=0 if publication.withdrawal_reason else 2,
                     )
                 )
         return tuple(work)
@@ -2640,34 +2718,193 @@ class FleetSharingWorker:
             {self._source_work_key(c) for c in self._state.pending_source_commands},
         )
 
-    def _publication(self):
-        if self._catalogue is None or self._eligibility is None:
-            return None
-        with self._lock:
-            latest = self._latest
-            if latest and self._clock() - latest[1] > MAX_SNAPSHOT_AGE_S:
-                self._latest = latest = None
-        if latest is None:
-            return None
-        if (
-            self._eligibility.state != "ready"
-            or self._eligibility.participation_generation
-            != getattr(self._state.observed_participation, "generation", None)
-        ):
-            return ()
-        entries = {c.character_id: c for c in self._eligibility.characters}
-        rows = projection.project_snapshot(
-            latest[0],
-            self._catalogue,
-            eligible_character_ids=frozenset(entries),
+    def _acknowledge_rights(self):
+        return tuple(
+            capability
+            for capability in COMBAT_CAPABILITIES
+            if capability in (self._state.approved_capabilities or ())
+            and capability in (self._state.session_approved_capabilities or ())
         )
-        # An atomic subset would withdraw active members whose cached proof
-        # merely needs refresh. The relay still enforces current authority.
-        if any(
-            self._remaining(entries[row.character_id].expires_at) <= 0 for row in rows
+
+    def _combat_disclosure(self, required=COMBAT_CAPABILITIES):
+        state = self._state
+        return all(
+            capability in (rights or ())
+            for rights in (
+                state.approved_capabilities,
+                state.session_approved_capabilities,
+                state.acknowledged_capabilities,
+            )
+            for capability in required
+        )
+
+    def _publication(self):
+        proof = self._eligibility_proof
+        if (
+            proof is None
+            or proof.response is not self._eligibility
+            or not self._combat_disclosure(CAPABILITIES)
+            or self._catalogue is None
+            or self._eligibility is None
         ):
             return None
-        return rows
+        try:
+            with self._lock:
+                self._check_locked(
+                    proof.fence, work=Work("publish_snapshot", "publication")
+                )
+                source = self._latest
+        except _Obsolete:
+            return None
+        if self._eligibility.participation_generation != getattr(
+            self._state.observed_participation, "generation", None
+        ):
+            return None
+        if self._eligibility.state == "not_verified":
+            if not self._last_published:
+                return None
+            return _PublicationSelection(
+                None,
+                None,
+                self._catalogue,
+                self._eligibility,
+                proof,
+                frozenset(),
+                (),
+                self._expires_at,
+                (),
+                "source_eligibility_lost",
+            )
+        try:
+            current = getattr(source, "is_current", None)
+            if not callable(current) or current() is not True:
+                return None
+            snapshot = source.snapshot
+        except Exception:  # noqa: BLE001 — unavailable producer advice must not suppress independent receiving or control; final leaf exceptions are not handled here.
+            return None
+        now = self._clock()
+        m = snapshot.sampled_at_mono
+        if (
+            m is None
+            or not isfinite(m)
+            or not isfinite(now)
+            or not 0 <= Fraction(now) - Fraction(m) < MAX_SNAPSHOT_AGE_S
+            or snapshot.metric_error is not None
+            or self._eligibility.state != "ready"
+        ):
+            return None
+        entries = {c.character_id: c for c in self._eligibility.characters}
+        eligible = frozenset(entries)
+        owned = frozenset(c.character_id for c in self._catalogue.characters)
+        resolved = tuple(
+            projection._resolved_combat_rows(snapshot, self._catalogue, owned)
+        )
+        # Missing ownership or unavailable/legacy metrics cannot silently erase a
+        # member of the previous atomic publication, even beside healthy rows.
+        if len(resolved) != len(snapshot.rows) or any(
+            row.combat is None or (row.dps is None and row.incoming_dps is None)
+            for _, row in resolved
+        ):
+            return None
+        try:
+            for _, row in resolved:
+                p._dps(row.dps)
+                p._dps(row.incoming_dps)
+        except ValueError:
+            return None
+        projected = projection.project_combat_snapshot(
+            snapshot,
+            self._catalogue,
+            eligible_character_ids=owned,
+            now_mono=now,
+        )
+        # Validate the complete local temporal handoff BEFORE permission filtering;
+        # an invalid ineligible member is not evidence of whole-source inactivity.
+        if projected is None:
+            return None
+        rows = tuple(row for row in projected if row.character_id in eligible)
+        reason = None
+        if not rows:
+            if not self._last_published:
+                return None
+            reason = (
+                "inactive"
+                if not resolved or any(cid in eligible for cid, _ in resolved)
+                else "source_eligibility_lost"
+            )
+        elif not self._combat_disclosure():
+            return None
+        deadlines = dict(proof.deadlines)
+        members = tuple(deadlines[cid] for cid, _ in resolved if cid in eligible)
+        if any(deadline <= now for deadline in members):
+            return None
+        return _PublicationSelection(
+            source,
+            snapshot,
+            self._catalogue,
+            self._eligibility,
+            proof,
+            eligible,
+            # The minimum proves every selected member while keeping final leaf
+            # work constant even for a large inactive local roster.
+            (min(members),) if members else (),
+            self._expires_at,
+            tuple(
+                (r.character_id, r.row.dps, r.row.incoming_dps, r.row.combat)
+                for r in rows
+            ),
+            reason,
+        )
+
+    def _validate_publication_permission_locked(self, selected, fence, work, now):
+        self._check_locked(fence, work=work)
+        self._check_locked(selected.proof.fence, work=work)
+        part = self._state.observed_participation
+        if (
+            self._inhibit
+            or not self._state.feature_enabled
+            or not self._combat_disclosure(
+                CAPABILITIES if selected.withdrawal_reason else COMBAT_CAPABILITIES
+            )
+            or not self._timing_open_locked(fence)
+            or self._state.pending_participation is not None
+            or part is None
+            or not part.enabled
+            or part.generation != selected.eligibility.participation_generation
+            or selected.catalogue is not self._catalogue
+            or selected.eligibility is not self._eligibility
+            or selected.proof is not self._eligibility_proof
+            or now >= selected.session_deadline
+            or now >= self._expires_at
+            or any(now >= deadline for deadline in selected.member_deadlines)
+        ):
+            raise _Obsolete
+
+    def _validate_off_withdrawal_locked(self, fence, work, now):
+        # The original Off intent/session fences and deadline survive the HTTP
+        # wait. No local sample, membership proof or timing prerequisite applies.
+        self._check_locked(fence, work=work)
+        if (
+            not isinstance(work.payload, _OffWithdrawal)
+            or not self._withdraw_needed
+            or not self._control_auth_current_locked()
+            or self._control_auth != work.payload.auth
+            or not self._combat_disclosure(CAPABILITIES)
+            or not isfinite(now)
+            or now >= work.payload.session_deadline
+            or now >= self._expires_at
+        ):
+            raise _Obsolete
+
+    def _check_publication_completion(self, selected, fence, work, receipt):
+        if selected is None:
+            with self._lock:
+                self._validate_off_withdrawal_locked(fence, work, receipt)
+            return
+        if selected.source is not None and selected.source.is_current() is not True:
+            raise _Obsolete
+        with self._lock:
+            self._validate_publication_permission_locked(selected, fence, work, receipt)
 
     def _recovery_work(self):
         pending = self._state.pending_recovery
@@ -2690,13 +2927,73 @@ class FleetSharingWorker:
 
     def _execute(self, work, fence):
         self._check(fence, work=work)
+        prepared = None
+        selected = (
+            work.payload
+            if (work.operation == "publish_snapshot" and work.key != "withdraw")
+            else None
+        )
+        if selected is not None and selected.withdrawal_reason is None:
+            prepared = self._timing_context._stage_publication(
+                selected.source,
+                selected.catalogue,
+                eligible_character_ids=selected.eligible_character_ids,
+            )
+            if prepared is None or prepared.snapshot is not selected.snapshot:
+                raise _Obsolete
+        elif selected is not None and selected.source is not None:
+            # One selected-lane check, not a planning scan or a second pin owner.
+            # An empty projection alone does not prove immutable source evidence.
+            if (
+                self._timing_context._checked_publication_sample(
+                    selected.snapshot,
+                    selected.catalogue,
+                    frozenset(c.character_id for c in selected.catalogue.characters),
+                    Fraction(self._clock()),
+                )
+                is None
+            ):
+                raise _Obsolete
         started = receipt = None
         failed = False
         first_automatic_attempt = False
+        timing_refusal = None
+
+        def validate_publication():
+            nonlocal started, timing_refusal
+            self._check_locked(fence, work=work)
+            if prepared is not None:
+                try:
+                    start = self._timing_context._validate_publication(prepared)
+                except ValueError as exc:
+                    timing_refusal = exc
+                    raise
+            else:
+                start = self._clock()
+                if not isfinite(start) or (
+                    selected.source is not None
+                    and not 0
+                    <= Fraction(start) - Fraction(selected.snapshot.sampled_at_mono)
+                    < MAX_SNAPSHOT_AGE_S
+                ):
+                    raise _Obsolete
+            self._validate_publication_permission_locked(selected, fence, work, start)
+            started = start
 
         def before_send():
             nonlocal started
             with self._lock:
+                if selected is not None:
+                    if selected.source is None:
+                        validate_publication()
+                    elif selected.source.admit_start(validate_publication) is not True:
+                        raise _Obsolete
+                    return
+                if work.key == "withdraw":
+                    start = self._clock()
+                    self._validate_off_withdrawal_locked(fence, work, start)
+                    started = start
+                    return
                 self._check_locked(fence, work=work)
                 if (
                     work.operation in ("read_snapshot", "publish_snapshot")
@@ -2784,7 +3081,8 @@ class FleetSharingWorker:
                     "now": self._utc_now(),
                 }
                 if operation == "publish_snapshot":
-                    args["rows"] = work.payload
+                    args["sampled_at_ms"] = prepared.sampled_at_ms if prepared else 0
+                    args["rows"] = prepared.rows if prepared else ()
                 elif operation == "set_participation":
                     args.update(
                         enabled=work.payload.enabled,
@@ -2799,7 +3097,7 @@ class FleetSharingWorker:
                 elif operation == "fetch_receipt":
                     args["request_id"] = work.payload.request_id
                 elif operation == "acknowledge_capabilities":
-                    args["capabilities"] = CAPABILITIES
+                    args["capabilities"] = self._acknowledge_rights()
             elif operation == "begin_recovery":
                 pending = self._state.pending_recovery
                 args = dict(
@@ -2866,13 +3164,21 @@ class FleetSharingWorker:
                 if operation == "control_automatic"
                 else work,
             )
+            if operation == "publish_snapshot":
+                self._check_publication_completion(selected, fence, work, receipt)
             self._accept(work, result, fence, started, receipt)
+        except ValueError as exc:
+            if exc is timing_refusal:
+                raise _Obsolete from None
+            raise
         except FleetRelayError as exc:
             receipt = self._clock()
             failed = True
             if started is None:
                 raise _Obsolete from None
             self._check(fence, work=work)
+            if work.operation == "publish_snapshot":
+                self._check_publication_completion(selected, fence, work, receipt)
             if first_automatic_attempt and exc.code in (
                 "bad_request",
                 "invalid_intent",
@@ -2897,6 +3203,8 @@ class FleetSharingWorker:
                 )
                 self._automatic_probe = True
                 self._update_status(automatic_stage="rejected")
+            elif work.operation == "publish_snapshot":
+                self._relay_error(work, exc, fence, receipt=receipt)
             else:
                 self._relay_error(work, exc, fence)
         finally:
@@ -2933,14 +3241,41 @@ class FleetSharingWorker:
             self._set_catalogue(result, fence=fence)
             self._due["catalogue"] = self._clock() + CATALOGUE_REFRESH_INTERVAL_S
         elif operation == "fetch_eligibility":
-            self._eligibility = result
+            # Capture elapsed BEFORE UTC. Time spent in the external clock cannot
+            # extend the proof. Convert once, never on planning or under a leaf.
+            elapsed = Fraction(self._clock())
+            utc = self._utc_now()
+            deadlines = []
+            for entry in result.characters:
+                deadlines.append(
+                    (
+                        entry.character_id,
+                        self._elapsed_expiry(entry.expires_at, elapsed, utc),
+                    )
+                )
+            with self._lock:
+                self._check_locked(fence, work=work)
+                self._eligibility = result
+                self._eligibility_proof = _EligibilityProof(
+                    result, fence, tuple(deadlines)
+                )
             self._due["eligibility"] = self._clock() + ELIGIBILITY_REFRESH_INTERVAL_S
             self._update_status(eligibility=result)
         elif operation == "publish_snapshot":
-            self._last_published = work.payload
-            self._last_publish_at = self._clock()
-            if work.key == "withdraw":
-                self._withdraw_needed = False
+            with self._lock:
+                self._check_locked(fence, work=work)
+                if work.key == "withdraw":
+                    self._validate_off_withdrawal_locked(fence, work, receipt)
+                else:
+                    self._validate_publication_permission_locked(
+                        work.payload, fence, work, receipt
+                    )
+                self._last_published = (
+                    () if work.key == "withdraw" else work.payload.semantic
+                )
+                self._last_publish_at = receipt
+                if work.key == "withdraw":
+                    self._withdraw_needed = False
         elif operation == "read_snapshot":
             self._due["read"] = self._clock() + 1.0
             if not self._timing_context._finish_snapshot_get(started_at=started):
@@ -3293,10 +3628,39 @@ class FleetSharingWorker:
                 else result.result,
             )
 
-    def _relay_error(self, work, exc, fence):
+    def _relay_error(self, work, exc, fence, *, receipt=None):
         code = exc.code if exc.code in ERROR_CODES else "server_error"
-        self._update_status(state="error", detail=code)
         operation = work.operation
+        if operation == "publish_snapshot":
+            # The preliminary completion check precedes this install. Queue and
+            # lifecycle admission can run in between, so validate and mutate in
+            # ONE submission-lock section; captured notifications run afterward.
+            catalogue = None
+            with self._lock:
+                if work.key == "withdraw":
+                    self._validate_off_withdrawal_locked(fence, work, receipt)
+                else:
+                    self._validate_publication_permission_locked(
+                        work.payload, fence, work, receipt
+                    )
+                status = self._update_status_locked(state="error", detail=code)
+                if exc.status != 401 and exc.code in (
+                    "forbidden",
+                    "capability_required",
+                    "feature_disabled",
+                ):
+                    self._needs_device = True
+                    self._eligibility = None
+                    catalogue = self._set_catalogue_locked(None)
+                    self._due["catalogue"] = self._due["eligibility"] = 0
+            if status is not None:
+                self._notify("status", status)
+            if catalogue is not None:
+                self._notify("catalogue", catalogue)
+            if exc.status != 401:
+                return
+        else:
+            self._update_status(state="error", detail=code)
         if operation == "complete_pairing":
             if exc.status == 409 and exc.code == "not_completable":
                 # This live typed negative proves only this poll did not mint a
@@ -3317,9 +3681,24 @@ class FleetSharingWorker:
         if exc.status == 401 and OPERATIONS[operation] != "bootstrap":
             # The final attempted revision is evidence even when it got a 401.
             # The exhaustion gate recovers without another signed use or reset.
+            reset_fence = fence
             if self._state.last_revision < p.INT4_MAX:
-                self._persist(s.replace_session(self._state, None), fence, work=work)
-            self._reset_session()
+                candidate = s.replace_session(self._state, None)
+                self._persist(candidate, fence, work=work)
+                reset_fence = replace(fence, session=candidate.session_id)
+            if operation == "publish_snapshot":
+                # Durable loss stays outside the lock and retains _persist's
+                # post-save fence. A replacement AFTER it returns must also
+                # prevent the old completion from resetting current caches.
+                with self._lock:
+                    self._check_locked(reset_fence, work=work)
+                    self._pairing_pollable = None
+                    notifications = self._reset_session_locked()
+                for kind, event in notifications:
+                    if event is not None:
+                        self._notify(kind, event)
+            else:
+                self._reset_session()
         elif operation == "set_participation":
             self._part_observe = self._needs_device = True
         elif operation == "control_source":

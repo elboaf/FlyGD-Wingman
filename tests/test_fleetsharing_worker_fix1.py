@@ -283,21 +283,25 @@ def test_retired_source_work_does_not_accumulate_retry_failure_or_service_histor
     assert client.cadence_refusals == 0
 
 
-def test_forbidden_publication_invalidates_catalogue_and_refetches_before_retry():
-    worker, client, _, mono = rig()
-    drive(worker, mono, 10, _snapshot(42))
-    client.errors["publish_snapshot"] = FleetRelayError(
-        403, "forbidden", "authority changed"
-    )
-    worker.submit(_snapshot(43))
+def test_forbidden_publication_invalidates_catalogue_and_refetches_before_retry(
+    tmp_path,
+):
+    from tests.test_fleetsharing_source_admission import publication_rig, ticket
+
+    worker, client, mono = publication_rig(tmp_path)
+    worker.submit(ticket(mono[0], outgoing=42))
+    drive(worker, mono, 3)
+    assert client.puts
+    client.put_error = (403, "forbidden")
+    worker.submit(ticket(mono[0], outgoing=43))
     for _ in range(8):
         drive(worker, mono, 1)
         if worker.status().detail == "forbidden":
             break
     assert worker._catalogue is None
     before = len(client.calls)
-    client.errors.clear()
-    drive(worker, mono, 12, _snapshot(44))
+    client.put_error = None
+    drive(worker, mono, 12, lambda now: ticket(now, outgoing=44))
     operations = [op for op, _, _ in client.calls[before:]]
     assert "fetch_catalogue" in operations
     assert operations.index("fetch_catalogue") < operations.index("publish_snapshot")

@@ -424,46 +424,11 @@ class TimingContext:
         )
         if not selected or len(selected) > LIMITS["put_rows"]:
             return None
-        # A changed deadline cannot disguise an immutable conflict as expiry.
-        # Projection has validated times; check original members, including those
-        # genuinely pruned from this attempt, against every still-protected key.
-        for character_id, row in _resolved_combat_rows(
-            snapshot, catalogue, eligible_character_ids
-        ):
-            activity = row.combat
-            if activity is None or activity.observation_id is None:
-                continue
-            original = [
-                _event(
-                    character_id,
-                    "row",
-                    activity.observation_id,
-                    activity.expires_at_mono,
-                )
-            ]
-            original.extend(
-                _event(
-                    character_id, (o.kind, o.name), o.observation_id, o.expires_at_mono
-                )
-                for o in activity.observations
-            )
-            for event in original:
-                previous = self._publisher.associations.get(event.key)
-                if (
-                    previous is not None
-                    and previous.evidence.horizon > now
-                    and previous.evidence != event
-                ):
-                    return None
-        signature = tuple(
-            (r.character, r.dps, r.incoming_dps, r.combat) for r in snapshot.rows
+        sample = self._checked_publication_sample(
+            snapshot, catalogue, eligible_character_ids, now
         )
-        sample = _Evidence(
-            (snapshot.activation_generation, m),
-            m,
-            m + Fraction(LIMITS["transport_ms"], 1000),
-            signature,
-        )
+        if sample is None:
+            return None
         evidence = [sample]
         row_evidence = []
         for selected_row in selected:
@@ -544,7 +509,64 @@ class TimingContext:
         self._publisher = _PublisherState(MappingProxyType(associations))
         return prepared
 
-    def _validate_publication(self, prepared: _PreparedPublication) -> None:
+    def _checked_publication_sample(
+        self, snapshot, catalogue, eligible_character_ids, now
+    ) -> _Evidence | None:
+        """Existing immutable conflicts, without staging, pins or history scans.
+
+        Projection must have validated times first. Selected source withdrawals
+        also call this across ALL owned members: neither expiry nor permission
+        filtering can disguise a changed still-protected event as inactivity.
+        This check needs no anchor; control-derived withdrawals do not call it.
+        """
+        for character_id, row in _resolved_combat_rows(
+            snapshot, catalogue, eligible_character_ids
+        ):
+            activity = row.combat
+            if activity is None or activity.observation_id is None:
+                continue
+            original = [
+                _event(
+                    character_id,
+                    "row",
+                    activity.observation_id,
+                    activity.expires_at_mono,
+                )
+            ]
+            original.extend(
+                _event(
+                    character_id, (o.kind, o.name), o.observation_id, o.expires_at_mono
+                )
+                for o in activity.observations
+            )
+            for event in original:
+                previous = self._publisher.associations.get(event.key)
+                if (
+                    previous is not None
+                    and previous.evidence.horizon > now
+                    and previous.evidence != event
+                ):
+                    return None
+        m = Fraction(snapshot.sampled_at_mono)
+        signature = tuple(
+            (r.character, r.dps, r.incoming_dps, r.combat) for r in snapshot.rows
+        )
+        sample = _Evidence(
+            (snapshot.activation_generation, m),
+            m,
+            m + Fraction(LIMITS["transport_ms"], 1000),
+            signature,
+        )
+        previous = self._publisher.associations.get(sample.key)
+        if (
+            previous is not None
+            and previous.evidence.horizon > now
+            and previous.evidence != sample
+        ):
+            return None
+        return sample
+
+    def _validate_publication(self, prepared: _PreparedPublication) -> float:
         """Bounded final timing gate, safe UNDER PublicationSource's leaf lock.
 
         The caller owns worker/session/identity/consent checks and invokes this
@@ -595,6 +617,9 @@ class TimingContext:
             )
         ):
             raise ValueError("Publication timing is no longer admissible.")
+        # The worker uses this same post-leaf-wait sample for permission expiry
+        # and actual start; a pre-lock sample or a second clock would disagree.
+        return stamp
 
     def _publisher_lost_continuity(self, *, cutoff: float) -> None:
         """Signed-lane loss handling ONLY with trustworthy elapsed continuity.
