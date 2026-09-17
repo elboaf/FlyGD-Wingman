@@ -119,7 +119,7 @@ function assertContent() {
     assert.equal(WM.el('wanderer-url').value, 'https://wanderer.example/home-chain');
     assert.equal(WM.el('wanderer-token').value, '');
     assert.equal(WM.el('wanderer-url-draft').textContent, '');
-    assert.match(WM.el('wanderer-health').textContent, /Connected to Wanderer/);
+    assert.equal(WM.el('wanderer-health-label').textContent, 'Connected · Names available for 2 of 3 previews');
     assert.match(WM.el('wanderer-coverage').textContent, /2 of 3/);
     if (data.key === 'settings-wanderer-narrow') {
       assert.equal(scrolls.at(-1).element.id, 'wanderer-health',
@@ -332,7 +332,7 @@ function mutations() {
     console.log('PASS current screenshot ' + data.scenario); return;
   }
   if (data.scenario.startsWith('wanderer-fence-')) {
-    assert.equal(WM.el('wanderer-health').textContent, 'Connected to Wanderer.');
+    assert.equal(WM.el('wanderer-health-label').textContent, 'Connected · Names available for 2 of 3 previews');
     const buffered = data.scenario.endsWith('buffered');
     calls.length = 0; staging = true;
     if (buffered) run(data.prepare);
@@ -348,8 +348,8 @@ function mutations() {
     assert.equal(WM.el('wanderer-health').textContent, 'Connecting…');
     assert.equal(WM.el('wanderer-coverage').textContent, '');
     window.onWandererState({...rebound, generation: 8, available: 1});
-    assert.equal(WM.el('wanderer-health').textContent, 'Connected to Wanderer.');
-    assert.match(WM.el('wanderer-coverage').textContent, /^1 of 3/);
+    assert.equal(WM.el('wanderer-health-label').textContent, 'Connected · Names available for 1 of 3 previews');
+    assert.match(WM.el('wanderer-coverage').textContent, /^2 of 3 tracked/);
     assert.equal(calls.length, 0);
     console.log('PASS current screenshot ' + data.scenario); return;
   }

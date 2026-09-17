@@ -194,6 +194,115 @@ async function page(payload = state(), integrated = false) {
   return p;
 }
 
+function companionAccents(p) {
+  const buttons = p.document.querySelectorAll('button').filter(node => node.id.startsWith('companion-'));
+  return buttons.filter(node => node.classList.contains('acc') && !node.hidden
+    && (!(node.id === 'companion-add-source' || node.id === 'companion-add-cancel') || !p.el('companion-add-form').hidden))
+    .map(node => node.id);
+}
+
+for (const rows of [[], [row()]]) {
+  test((rows.length ? 'list' : 'empty') + ' transfers its sole accent to Choose source and restores it on cancel and reset', async () => {
+    const p = await page(state(1, rows));
+    assert.deepEqual(companionAccents(p), ['companion-add']);
+    await p.click('companion-add');
+    assert.equal(p.el('companion-add-form').hidden, false);
+    assert.equal(p.document.activeElement, p.el('companion-add-label'));
+    assert.deepEqual(companionAccents(p), ['companion-add-source']);
+    await p.click('companion-add-cancel');
+    assert.deepEqual(companionAccents(p), ['companion-add']);
+    await p.click('companion-add'); await p.leave(); await p.enter();
+    await p.reply('companion_previews_state', state(2, rows));
+    assert.equal(p.el('companion-add-form').hidden, true);
+    assert.deepEqual(companionAccents(p), ['companion-add']);
+  });
+}
+
+test('source chooser has no competing Companion accent and cancellation preserves the form', async () => {
+  const p = await page(state(), true);
+  await p.startAdd();
+  assert.deepEqual(companionAccents(p), [], 'source enumeration must not leave an accented disabled action behind the chooser');
+  await p.reply('companion_previews_sources', receipt(1, {sources, revision: 1}));
+  assert.equal(p.el('overlay').hidden, false);
+  assert.deepEqual(companionAccents(p), []);
+  await p.click('dlg-cancel');
+  assert.equal(p.el('companion-add-form').hidden, false);
+  assert.equal(p.el('companion-add-label').value, 'Notes');
+  assert.deepEqual(companionAccents(p), ['companion-add-source']);
+});
+
+test('reselection removes the list accent while the accepted chooser owns attention', async () => {
+  const p = await page(state(1, [row({status: 'waiting'})]), true);
+  await p.fire(p.field('source'), 'click');
+  await p.reply('companion_previews_sources', receipt(1, {sources, revision: 1}));
+  assert.equal(p.el('overlay').hidden, false);
+  assert.deepEqual(companionAccents(p), []);
+  await p.click('dlg-cancel');
+  assert.deepEqual(companionAccents(p), ['companion-add']);
+  assert.equal(p.calls.filter(call => call.method === 'companion_preview_select').length, 0,
+    'cancel never admits native selection');
+});
+
+test('successful add restores the sole list accent after the acknowledged operation', async () => {
+  const p = await page(); await p.startAdd();
+  await p.reply('companion_previews_sources', receipt(1, {sources, revision: 1}));
+  await p.choose('opaque-one');
+  await p.reply('companion_preview_select', receipt(2, {pending: true}));
+  await p.push(state(2, [row({label: 'Notes'})], {2: receipt(2, {id})}));
+  assert.equal(p.el('companion-add-form').hidden, true);
+  assert.deepEqual(companionAccents(p), ['companion-add']);
+});
+
+test('Live and Waiting use text-bearing ok and idle pills beside identity, with Enabled immediately below', async () => {
+  const p = await page(state(1, [row({status: 'live'})], {}, {enabled: true}));
+  const status = p.field('status'), header = status.parentNode, owner = header.parentNode;
+  assert.equal(header.classList.contains('scroll-context'), true);
+  assert.equal(header.querySelector('.companion-name'), p.field('name'));
+  assert.equal(header.contains(p.field('enabled')), false, 'only identity and essential state stick');
+  assert.equal(header.querySelector('.companion-source'), null, 'source title does not stick');
+  assert.equal(header.querySelector('input'), null, 'editor does not stick');
+  const enabledGroup = p.field('enabled').parentNode.parentNode;
+  assert.equal(owner.children[owner.children.indexOf(header) + 1], enabledGroup);
+  assert.equal(enabledGroup.contains(p.field('enabled-status')), true, 'Enabled owns its refusal in normal flow');
+  assert.equal(p.field('enabled').getAttribute('aria-describedby'), p.field('enabled-status').id);
+  for (const [revision, value, label, token] of [[2, 'live', 'Live', 'ok'], [3, 'waiting', 'Waiting for source', 'idle']]) {
+    await p.push(state(revision, [row({status: value})], {}, {enabled: true}));
+    assert.equal(p.field('status'), status);
+    assert.equal(status.querySelector('.companion-status-label').textContent, label);
+    assert.equal(status.classList.contains('pill'), true);
+    assert.equal(status.classList.contains(token), true);
+    assert.equal(status.classList.contains('warn'), false);
+    assert.equal(status.classList.contains('err'), false);
+    assert.equal(status.querySelector('.led').getAttribute('aria-hidden'), 'true');
+  }
+});
+
+test('inactive, ambiguous, changing and failed states stay plain, with full recovery outside the pinned header', async () => {
+  const p = await page(state(1, [row()], {}, {enabled: true}));
+  const transitions = [
+    [{status: 'off'}, 'Off', ''],
+    [{status: 'disabled'}, 'Disabled', ''],
+    [{status: 'needs-selection'}, 'Selection needed', /multiple.*reselect/i],
+    [{status: 'source-unavailable'}, 'Source unavailable', /reselect/i],
+    [{status: 'stopping'}, 'Stopping…', ''],
+    [{status: 'live', pending_operation_id: 19}, 'Change in progress…', ''],
+    [{status: 'waiting', error: 'Authoritative refusal. '.repeat(80)}, 'Error', /Authoritative refusal/]
+  ];
+  for (const [index, [changes, text, guidance]] of transitions.entries()) {
+    await p.push(state(index + 2, [row(changes)], {}, {enabled: true}));
+    const status = p.field('status'), feedback = p.field('feedback');
+    assert.ok(feedback, 'row recovery has its own normal-flow feedback');
+    assert.equal(status.querySelector('.companion-status-label').textContent, text);
+    assert.equal(status.classList.contains('pill'), false);
+    assert.equal(status.parentNode.contains(feedback), false, 'long errors never enlarge retained context');
+    assert.equal(status.getAttribute('aria-describedby'), null, 'detail is live content, not a second description');
+    assert.equal(p.field('source').getAttribute('aria-describedby'), feedback.id);
+    if (guidance) assert.match(feedback.textContent, guidance); else assert.equal(feedback.textContent, '');
+    if (changes.error) assert.equal(feedback.textContent, changes.error, 'no truncation of authoritative operation errors');
+    assert.equal(feedback.classList.contains('err'), !!changes.error);
+  }
+});
+
 test('nothing commits before hydration, configuration remains live with master off', async () => {
   const p = await page(null);
   assert.equal(p.el('companion-enabled').disabled, true);
@@ -344,14 +453,44 @@ test('accepted native selection survives navigation and reentry hydrates its rec
   assert.equal(p.calls.length, 0, 'navigation never cancels server operation');
 });
 
+test('region refusal and changing row errors retain full live content without moving focus', async () => {
+  const p = await page(state(1, [row({mode: 'region', generation: 7})]));
+  const status = p.field('status'), region = p.field('region');
+  region.focus(); await p.fire(region, 'click');
+  const reason = 'Source identity could not be verified. Reselect source to retry.';
+  await p.reply('companion_preview_reselect_region', receipt(1, {applied: false, error: reason, revision: 1}), [id, 7]);
+  assert.ok(status.textContent.includes(reason), 'full refusal remains inside the original live region');
+  assert.equal(p.document.activeElement, region);
+  assert.equal(status.querySelector('.companion-status-label').textContent, 'Error');
+  assert.equal(status.querySelector('.companion-status-label').getAttribute('aria-hidden'), 'true');
+  assert.equal(status.querySelector('.status-announcement').textContent, reason);
+  assert.equal(p.calls.length, 0);
+  // A local operation refusal intentionally remains authoritative until a new
+  // action. Exercise independent asynchronous row errors on a fresh owner.
+  const pushed = await page(state(1, [row({status: 'live'})]));
+  const live = pushed.field('status'), input = pushed.field('label'); input.focus();
+  for (const [index, error] of ['First source failure.', 'A different source failure.'].entries()) {
+    await pushed.push(state(index + 2, [row({error})]));
+    assert.ok(live.textContent.includes(error));
+    assert.equal(pushed.document.activeElement, input);
+  }
+  await pushed.push(state(4, [row({status: 'live'})]));
+  assert.equal(live.textContent, 'Live');
+  assert.equal(live.querySelector('.status-announcement').textContent, '');
+  assert.equal(live.querySelector('.companion-status-label').getAttribute('aria-hidden'), 'false');
+  assert.equal(pushed.calls.length, 0);
+});
+
 test('waiting source explains open or reselect without hiding recovery or real errors', async () => {
   const p = await page(state(1, [row({status: 'waiting'})], {}, {enabled: true}));
-  assert.match(p.field('status').textContent, /Waiting for source.*open.*window.*reselect/i);
+  assert.equal(p.field('status').querySelector('.companion-status-label').textContent, 'Waiting for source');
+  assert.match(p.field('feedback').textContent, /open.*window.*reselect/i);
   assert.equal(p.field('source').disabled, false);
   assert.doesNotMatch(p.field('status').className, /err/);
   assert.equal(p.calls.length, 0, 'waiting must not start discovery or change a binding');
   await p.push(state(2, [row({status: 'waiting', error: 'Source identity could not be verified.'})], {}, {enabled: true}));
-  assert.equal(p.field('status').textContent, 'Source identity could not be verified.');
+  assert.equal(p.field('status').querySelector('.companion-status-label').textContent, 'Error');
+  assert.equal(p.field('feedback').textContent, 'Source identity could not be verified.');
 });
 
 test('availability preserves its one existing live-region owner through status transitions', async () => {
@@ -367,9 +506,9 @@ test('availability preserves its one existing live-region owner through status t
   p.field('label').focus();
   await p.edit('label', 'Local draft');
   const transitions = [
-    [{status: 'waiting'}, /Waiting for source.*open.*reselect/i, false],
+    [{status: 'waiting'}, /^Waiting for source$/, false],
     [{status: 'live', pending_operation_id: 19}, /Change in progress/, false],
-    [{status: 'waiting', error: 'Source identity could not be verified.'}, /Source identity/, true],
+    [{status: 'waiting', error: 'Source identity could not be verified.'}, /^Error$/, true],
     [{status: 'live'}, /^Live$/, false],
     [{status: 'future-status'}, /^future-status$/, false]
   ];
@@ -377,9 +516,11 @@ test('availability preserves its one existing live-region owner through status t
     const operations = changes.pending_operation_id ? {19: receipt(19, {id, pending: true, revision: index + 2})} : {};
     await p.push(state(index + 2, [row(changes)], operations, {enabled: true}));
     assert.equal(p.field('status'), status, 'status stays in the same row');
-    assert.match(status.textContent, text);
+    assert.match(status.querySelector('.companion-status-label').textContent, text);
     assert.equal(status.classList.contains('companion-availability'), true);
-    assert.equal(status.classList.contains('field-msg'), error);
+    assert.equal(status.classList.contains('field-msg'), false, 'full error treatment belongs to normal-flow feedback');
+    assert.equal(p.field('feedback').classList.contains('field-msg'), error);
+    if (error) assert.equal(p.field('feedback').textContent, changes.error);
     assert.equal(status.classList.contains('err'), error);
     assert.equal(status.classList.contains('hint'), false);
     assert.equal(status.getAttribute('role'), 'status');
@@ -432,12 +573,26 @@ test('Apply names follow visible field and acknowledged companion labels without
   assert.equal(p.calls.length, 0, 'naming does not add writes');
 });
 
-test('typing and focus survive new snapshots, with no blur commit', async () => {
+test('keyed editors retain drafts, expanded details and focus through health pushes without blur commits', async () => {
   const p = await page(state(1, [row()]));
-  p.field('label').focus(); await p.edit('label', 'Draft');
+  const input = p.field('label'), details = input.parentNode.parentNode;
+  const header = p.field('status').parentNode;
+  assert.equal(details.tagName, 'DETAILS');
+  assert.equal(details.children[0].tagName, 'SUMMARY', 'native keyboard disclosure stays intact');
+  details.open = true;
+  input.focus(); await p.edit('label', 'Draft'); await p.edit('title_hint', 'Local title');
+  const mode = details.querySelectorAll('input').find(x => x.value === 'region');
+  mode.checked = true; await p.fire(mode, 'change');
   await p.push(state(2, [row({status: 'waiting'})]));
-  assert.equal(p.field('label').value, 'Draft'); assert.equal(p.document.activeElement, p.field('label'));
-  await p.fire(p.field('label'), 'blur'); assert.equal(p.calls.length, 0);
+  assert.equal(p.field('label'), input);
+  assert.equal(p.field('status').parentNode, header);
+  assert.equal(input.parentNode.parentNode, details); assert.equal(details.open, true);
+  assert.equal(input.value, 'Draft'); assert.equal(p.field('title_hint').value, 'Local title');
+  assert.equal(mode.checked, true); assert.equal(p.document.activeElement, input);
+  details.open = false;
+  await p.push(state(3, [row({status: 'live'})]));
+  assert.equal(details.open, false, 'health cannot reopen a dismissed editor');
+  await p.fire(input, 'blur'); assert.equal(p.calls.length, 0);
 });
 
 test('row edits serialize, use acknowledged generation, and never submit another field draft', async () => {
@@ -475,9 +630,11 @@ test('remove names the definition, preserves source, and reset/region use curren
   const p = await page(state(1, [row({mode: 'region', generation: 7})]));
   await p.fire(p.field('region'), 'click');
   await p.reply('companion_preview_reselect_region', receipt(1, {applied: false, error: 'Source closed', revision: 1}), [id, 7]);
-  assert.match(p.field('status').textContent, /Source closed/); assert.equal(p.field('label').value, 'Mapper');
+  assert.equal(p.field('status').querySelector('.companion-status-label').textContent, 'Error');
+  assert.match(p.field('status').textContent, /Source closed/);
+  assert.match(p.field('feedback').textContent, /Source closed/); assert.equal(p.field('label').value, 'Mapper');
   assert.equal(p.field('status').classList.contains('companion-availability'), true);
-  assert.equal(p.field('status').classList.contains('field-msg'), true);
+  assert.equal(p.field('feedback').classList.contains('field-msg'), true);
   assert.equal(p.field('status').classList.contains('err'), true);
   await p.fire(p.field('reset'), 'click');
   await p.reply('companion_preview_reset_geometry', receipt(2, {revision: 1}), [id, 7]);
@@ -667,6 +824,10 @@ test('enabled control submits the row generation and rolls back only its own ref
   await p.reply('companion_preview_set_enabled', receipt(1, {applied: false, persisted: false, error: 'Refused', revision: 1}),
     [id, false, 1]);
   assert.equal(p.field('enabled').checked, true); assert.equal(p.field('label').value, 'Draft');
+  assert.ok(p.field('enabled-status'), 'Enabled refusal has an accessible identity');
+  assert.equal(p.field('enabled-status').textContent, 'Refused');
+  assert.equal(p.field('enabled').parentNode.parentNode.contains(p.field('enabled-status')), true);
+  assert.equal(p.field('status').parentNode.contains(p.field('enabled-status')), false);
 });
 
 test('direct success awaits acknowledged state before dispatching a queued edit', async () => {

@@ -627,9 +627,9 @@
           <p class="hint" id="companion-off-note">Companion previews are off. You can still add and configure them.</p>
           <p class="hint" id="companion-master-status" role="status"></p>
         </div>
-        <p class="hint">Keep a non-EVE window or a selected region in view. Independent of your EVE previews.</p>
+        <p class="hint">Mirror a whole non-EVE window or selected region. Independent of EVE previews.</p>
         <div class="companion-toolbar">
-          <button class="btn" type="button" id="companion-add" disabled>Add companion…</button>
+          <button class="btn acc" type="button" id="companion-add" disabled>Add companion…</button>
           <span class="hint" id="companion-count"></span>
         </div>
         <div class="companion-add-form" id="companion-add-form" hidden>
@@ -653,10 +653,10 @@
         </div>
         <p class="hint" id="companion-status" role="status"></p>
         <div id="companion-list" class="companion-list"></div>
-        <p class="hint" id="companion-empty">No companions yet. Add a mapper, notes, or another non-EVE window.</p>
-        <details class="hint-more">
+        <p class="hint" id="companion-empty">No companions yet.</p>
+        <details class="hint-more companion-help">
           <summary>How companions behave</summary>
-          <p class="hint">Click a preview to switch to its source. Left-drag to move; right-drag to resize. Positions are remembered. A closed source waits to return; multiple matches need you to select one. Minimized or protected windows may not provide a live image.</p>
+          <p class="hint">Closed sources wait to return; multiple matches require explicit selection. Moving or resizing changes only Wingman’s preview, never the source window. Minimized or protected sources may not provide a live image.</p>
         </details>
       </section>
     </div>
@@ -1177,28 +1177,28 @@
       <section class="card" id="wanderer-settings" aria-labelledby="wanderer-heading">
         <header class="scroll-context">
           <h2 id="wanderer-heading">Map connection</h2>
+          <p class="operational-status" id="wanderer-health" role="status" aria-live="polite"><span id="wanderer-health-label">Loading Wanderer settings…</span><span class="status-announcement" id="wanderer-health-detail"></span></p>
         </header>
         <div class="row"><label class="check">
           <input type="checkbox" id="wanderer-enabled" disabled aria-describedby="wanderer-enabled-error"><span class="box"></span>
           Show Wanderer system names below character labels
         </label></div>
         <p class="field-msg" id="wanderer-enabled-error" hidden></p>
-        <p class="operational-status" id="wanderer-health" role="status" aria-live="polite">Loading Wanderer settings…</p>
-        <p class="operational-status" id="wanderer-coverage"></p>
-        <p class="hint">Uses map-local names for your current named previews. Character labels must be shown.</p>
+        <p class="hint" id="wanderer-coverage"></p>
+        <p class="hint">Map-local names; requires character labels.</p>
         <div class="row">
           <label class="lab" for="wanderer-url">Map URL</label>
           <input class="field" id="wanderer-url" type="url" disabled spellcheck="false" autocomplete="off" placeholder="https://wanderer.ltd/your-map" aria-describedby="wanderer-url-help wanderer-url-draft wanderer-connection-error">
         </div>
-        <p class="hint" id="wanderer-url-help">Open your map in Wanderer and paste the address from your browser, not its settings or character-list page.</p>
+        <p class="hint" id="wanderer-url-help">Paste the map page address, not a settings or character-list URL.</p>
         <p class="hint" id="wanderer-url-draft"></p>
         <div class="row">
           <label class="lab" for="wanderer-token">Map API token</label>
           <span class="hint" id="wanderer-credential">No token stored for the saved map URL.</span>
           <input class="field" id="wanderer-token" type="password" disabled spellcheck="false" autocomplete="new-password" aria-describedby="wanderer-token-draft wanderer-connection-error wanderer-credential">
         </div>
-        <p class="hint" id="wanderer-token-draft">Stored only on this PC, protected by Windows. Leave blank to reuse the token for the same saved map URL.</p>
-        <p class="hint" id="wanderer-save-note">Test connection saves the map URL and token, then checks access. It does not turn names on.</p>
+        <p class="hint" id="wanderer-token-draft">Windows-protected on this PC. Blank reuses the token only for the same saved map URL.</p>
+        <p class="hint" id="wanderer-save-note">Test connection saves the map URL and token; it does not turn names on.</p>
         <p class="field-msg" id="wanderer-connection-error" hidden></p>
         <div class="row">
           <button class="btn" id="wanderer-test" type="button" disabled aria-describedby="wanderer-save-note wanderer-connection-error wanderer-test-status wanderer-test-error">Test connection</button>
