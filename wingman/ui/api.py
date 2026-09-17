@@ -2361,13 +2361,20 @@ class Api:
 
         if not (self._state.settings.get("sig_bar") or {}).get("enabled"):
             return
+        # Read the foreground title BEFORE the lock. focused_eve_title is a
+        # cross-process native read that a not-pumping foreground window
+        # can park indefinitely; holding the lifecycle lock through it
+        # wedged Quit at destroy_windows' lock acquisition -- reproduced
+        # 2026-09-16, GUI-only session, quit via tray. The lock still
+        # serializes the decision itself; a stale read only delays a
+        # reveal/hide by one tick.
+        allowed = self._sig_bar_focus_allows()
         with self._sigbar_lifecycle_lock:
             if self._sigbar_quitting:
                 return
             bar = self._sigbar_window
             if not sigbar.is_alive(bar):
                 return
-            allowed = self._sig_bar_focus_allows()
             if allowed and not sigbar.is_visible(bar):
                 sigbar.reveal_bar(bar)
             elif not allowed and sigbar.is_visible(bar):

@@ -407,6 +407,40 @@ def test_gate_leaves_a_disabled_bar_hidden(api, monkeypatch):
     assert api._sigbar_window.hidden is True
 
 
+def test_gate_does_not_hold_the_lifecycle_lock_across_the_focus_read(api, monkeypatch):
+    """Regression for the 2026-09-16 exit wedge: the tick held the sig-bar
+    lifecycle lock while reading the foreground title, a cross-process
+    native read a not-pumping window can park forever, and Quit blocked
+    at destroy_windows' lock acquisition. Another thread must be able to
+    take the lock while the read is in flight."""
+    import threading
+
+    from wingman import evewindows
+
+    _scoped(api, monkeypatch, None)  # arms the gate's window map
+    probe_result = []
+
+    def focus_read():
+        def probe():
+            acquired = api._sigbar_lifecycle_lock.acquire(timeout=5)
+            if acquired:
+                api._sigbar_lifecycle_lock.release()
+            probe_result.append(acquired)
+
+        thread = threading.Thread(target=probe, daemon=True)
+        thread.start()
+        thread.join(10)
+        return "EVE - Alice"
+
+    monkeypatch.setattr(evewindows, "focused_eve_title", focus_read)
+    # Flip the setting directly rather than through toggle_sig_bar: the
+    # toggle itself runs the gate while holding the lifecycle lock, which
+    # would run this probe under the very boundary under test.
+    settings.update_section(api._state.settings, "sig_bar", {"enabled": True})
+    api._apply_sig_bar_focus_gate()
+    assert probe_result == [True]
+
+
 def test_toggle_on_applies_the_gate_immediately(api, monkeypatch):
     """Enabling while a non-allowed client holds the foreground must not
     flash the bar for one cadence before hiding it."""
