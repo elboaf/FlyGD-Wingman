@@ -3,6 +3,9 @@
 import inspect
 import sys
 import textwrap
+from dataclasses import replace
+from fractions import Fraction
+from itertools import pairwise
 from pathlib import Path
 from types import FunctionType, ModuleType
 
@@ -207,6 +210,61 @@ def test_known_scenario_classes_detect_even_never_serviced_operations(
         cadence.test_current_receiver_matches_exact_freshness_without_local_publication(
             tmp_path, phase=0.5, watch=True, latency=0.08
         )
+
+
+@pytest.mark.parametrize("bound", ["snapshot service", "stale recovery"])
+def test_healthy_bounds_reject_throttled_but_recovering_snapshots(tmp_path, bound):
+    def throttle(worker, relay, timeline):
+        original = worker._work
+
+        def throttled(enabled):
+            choices = original(enabled)
+            if not 1040 <= timeline.now < 1090:
+                return choices
+            last = next(
+                a for op, a, _ in reversed(relay.calls) if op == "read_snapshot"
+            )
+            # Retain every class and the real chooser/completion/client path.
+            # A five-second floor is the adversary, NOT an acceptance bound.
+            return tuple(
+                replace(w, due=max(w.due, last + 5))
+                if w.operation == "read_snapshot"
+                else w
+                for w in choices
+            )
+
+        worker._work = throttled
+        cadence.simultaneous_metadata(worker, relay, timeline)
+
+    relay, samples, timeline, events = cadence.run_trace_owner(
+        tmp_path, phase=0.5, watch=True, latency=0.08, configure=throttle
+    )
+    cadence.assert_scenario_fairness(relay, watch=True)
+    classified = cadence.assert_exact_trace(relay, samples, events)
+    recoveries = cadence.assert_healthy_recovery(classified)
+    assert len([t for t in recoveries if 1040 <= t < 1090]) >= 2
+    starts = [Fraction(a) for op, a, _ in relay.calls if op == "read_snapshot"]
+    assert sum(b - a >= 5 for a, b in pairwise(starts)) >= 2
+    assert {
+        "read_snapshot",
+        "fetch_sources",
+        "fetch_automatic",
+        "fetch_eligibility",
+    } <= {op for op, a, _ in relay.calls if 1040 <= a < 1090}, (
+        "recurring classes stopped during throttle"
+    )
+    # Both assertions independently discriminate; service does not mask recovery.
+    bounds = cadence.healthy_bounds(phase=0.5, latency=0.08)
+    installed = cadence.healthy_installations(relay, end=timeline.end)
+    with pytest.raises(AssertionError, match=bound):
+        if bound == "snapshot service":
+            cadence.assert_snapshot_service(
+                [r for r, _, _ in installed], bounds=bounds, end=timeline.end
+            )
+        else:
+            cadence.assert_stale_recovery(
+                installed, bounds=bounds, end=timeline.end, classified=classified
+            )
 
 
 def test_expiry_coverage_detects_refresh_stopping_after_three_successes(

@@ -859,7 +859,7 @@ def assert_scenario_fairness(relay, *, watch, due=1030):
 def test_current_receiver_matches_exact_freshness_without_local_publication(
     tmp_path, phase, watch, latency
 ):
-    relay, samples, _, events = run_trace_owner(
+    relay, samples, timeline, events = run_trace_owner(
         tmp_path,
         phase=phase,
         watch=watch,
@@ -869,8 +869,299 @@ def test_current_receiver_matches_exact_freshness_without_local_publication(
     assert_scenario_fairness(relay, watch=watch)
     classified = assert_exact_trace(relay, samples, events)
     recoveries = assert_healthy_recovery(classified)
+    assert_healthy_trace_bounds(
+        relay, classified, phase=phase, latency=latency, end=timeline.end
+    )
     if watch and (latency, phase) in ((0.08, 0.5), (0.12, 0.9)):
         assert recoveries, "expected stale-to-live callback transition not witnessed"
+
+
+# Independent healthy-scenario theorem (not a measured-gap or class-count bound):
+# - No local PUT/control stream, pending automatic probe/receipt, backoff or sample
+#   delay. Watch adds ordinary sources/automatic metadata, not critical work.
+# - Startup requires only device, then a 500ms floor and snapshot (caps are ACKed).
+# - Next snapshot is due r+1. One read can cross that due instant and hold its
+#   completion floor. Then only one renewal and one urgent eligibility refresh
+#   can overtake: ordinary metadata loses to a due snapshot with no controls.
+#   Renewal re-arms 600s away (injected bursts 30s apart); proof refresh grants
+#   10s from sample, so urgency cannot return for 7-L seconds. Both exceed G<3s.
+#   Hence G = 1 + 3*(0.5+L) + L, independent of watch/class population.
+# - External S = floor(a)-0.2; every covering interval subtracts another 0.2.
+#   Thus mapped S > a-1-0.4, and at receipt r it holds LIVE for H=1.6-L.
+#   Every receipt is LIVE; a stale episode starts at mapped S+3 and recovers
+#   within R=G-H, with genuinely newer original S, not a restamped receipt.
+# - Binary64 clocks stay in [1000,2048). q is half an ULP at 2048, covering each
+#   local addition across 1024. Latency/floor/due use separate ceilings. Nearby
+#   deadline subtraction is exact (Sterbenz), so waiting adds no poll-grid delay.
+#   int(1000*(a-1000)) can round upward by <q seconds; allow that once in H.
+#   Display ticks can lag a receipt by 1/20+2q, never extend its deadline.
+# Delayed/error/bad-interval, slow proof and legacy local-PUT cases have different
+# assumptions and keep their own exact oracles; this theorem does not cover them.
+_CLOCK_ROUNDING = Fraction(1, 2**42)
+
+
+@dataclass(frozen=True)
+class HealthyBounds:
+    first_receipt: Fraction
+    gap: Fraction
+    live_hold: Fraction
+    grid: Fraction
+
+    @property
+    def recovery(self):
+        return self.gap - self.live_hold
+
+
+def healthy_bounds(*, phase, latency):
+    assert 0 <= phase < 1 and latency in (0.025, 0.08, 0.12)
+    q = _CLOCK_ROUNDING
+    ell, floor, due = Fraction(latency) + q, Fraction(1, 2) + q, 1 + q
+    return HealthyBounds(
+        Fraction(1000 + phase) + 2 * ell + floor,
+        due + 3 * (floor + ell) + ell,
+        3 - 1 - Fraction(2, 5) - ell - q,
+        Fraction(1, 20) + 2 * q,
+    )
+
+
+def assert_snapshot_service(receipts, *, bounds, end):
+    end = Fraction(end)
+    receipts = [Fraction(r) for r in receipts if r <= end]
+    if not receipts:
+        assert end < bounds.first_receipt, "snapshot service startup deadline missed"
+        return
+    assert receipts[0] <= bounds.first_receipt, (
+        "snapshot service startup deadline missed"
+    )
+    for a, b in pairwise(receipts):
+        assert b <= a + bounds.gap, (
+            "snapshot service gap deadline missed",
+            a,
+            b,
+            bounds.gap,
+        )
+    # A receipt at its deadline counts, but an unmet deadline at end fails.
+    # Discard post-end receipts BEFORE inspecting the final open interval.
+    assert end < receipts[-1] + bounds.gap, "snapshot service end deadline missed"
+
+
+@dataclass(frozen=True)
+class StaleEpisode:
+    start: Fraction
+    original_sample_ms: int
+    recovered_at: Fraction | None
+    newer_sample_ms: int | None
+    observed_live_at: Fraction | None
+
+
+def assert_stale_recovery(installed, *, bounds, end, classified=None):
+    end = Fraction(end)
+    installed = [
+        (Fraction(r), origin, Fraction(mapped))
+        for r, origin, mapped in installed
+        if r <= end
+    ]
+    episodes = []
+    for i, (receipt, origin, mapped) in enumerate(installed):
+        assert receipt < mapped + 3, "healthy snapshot receipt is not LIVE"
+        assert mapped + 3 - receipt >= bounds.live_hold, (
+            "healthy LIVE-hold lower bound missed"
+        )
+        start = mapped + 3
+        successor = installed[i + 1] if i + 1 < len(installed) else None
+        if start > end or (successor is not None and start >= successor[0]):
+            continue
+        # Enumerate actual payload lifetimes, including sub-grid episodes. A
+        # first stale display tick alone would miss episodes shorter than 50ms.
+        deadline = start + bounds.recovery
+        recovered, newer, observed = None, None, None
+        if successor is None:
+            assert end < deadline, (
+                "stale recovery end deadline missed",
+                start,
+                end,
+                deadline,
+            )
+        else:
+            recovered, newer, _ = successor
+            assert recovered <= deadline, (
+                "stale recovery deadline missed",
+                start,
+                recovered,
+                deadline,
+            )
+            assert newer > origin, "stale recovery without newer original measurement"
+            if classified is not None:
+                # VirtualWait drains a tick exactly at r before HTTP read()
+                # returns/publishes. The first strictly later tick observes it.
+                after = next(
+                    (
+                        (Fraction(t), state, s)
+                        for t, state, s in classified
+                        if recovered < t <= end
+                    ),
+                    None,
+                )
+                if after is not None:
+                    observed, state, sample = after
+                    assert observed <= recovered + bounds.grid, (
+                        "recovery observation missed sample grid"
+                    )
+                    assert state == ("live",) and sample == newer, (
+                        "recovery observation not newer LIVE"
+                    )
+                else:
+                    # A valid receipt near end need not have a subsequent tick.
+                    assert end <= recovered + bounds.grid, (
+                        "recovery observation missing before end"
+                    )
+        episodes.append(StaleEpisode(start, origin, recovered, newer, observed))
+    return episodes
+
+
+def healthy_installations(relay, *, end, latency=0.08):
+    expected = exact_trace_oracle(relay)
+    installed = []
+    for count, (op, a, r, sampled, code, _) in enumerate(relay.raw, 1):
+        assert 1000 <= a <= r < 2048, "outside derived binary clock range"
+        assert abs(Fraction(r) - Fraction(a) - Fraction(latency)) <= _CLOCK_ROUNDING, (
+            "outside constant-latency healthy scenario"
+        )
+        if op == "read_snapshot":
+            assert code == 200 and sampled == a, "not a healthy GET scenario"
+            if r <= end:
+                want = expected[count]
+                assert want is not None, "healthy snapshot missing original measurement"
+                installed.append((Fraction(r), want[0], want[1]))
+    return installed
+
+
+def assert_healthy_trace_bounds(relay, classified, *, phase, latency, end):
+    bounds = healthy_bounds(phase=phase, latency=latency)
+    installed = healthy_installations(relay, end=end, latency=latency)
+    assert_snapshot_service([r for r, _, _ in installed], bounds=bounds, end=end)
+    return assert_stale_recovery(
+        installed, bounds=bounds, end=end, classified=classified
+    )
+
+
+@pytest.mark.parametrize(
+    "receipts,end,error",
+    [
+        ([2, 5, 8], 10, None),
+        ([2, 5, 8], 8, None),
+        ([], 1, None),
+        ([], 2, "startup"),
+        ([3], 4, "startup"),
+        ([2, 5 + Fraction(1, 2**60)], 6, "gap"),
+        ([2, 5], 8, "end"),
+        ([2, 5, 9], 8, "end"),
+        ([2, 5, 100], 7, None),
+    ],
+    ids=[
+        "covered",
+        "receipt-at-end",
+        "startup-not-due",
+        "missing-at-startup",
+        "late-startup",
+        "exact-gap-exceeded",
+        "missing-at-end",
+        "post-end-cannot-cover",
+        "post-end-irrelevant",
+    ],
+)
+def test_snapshot_service_exact_deadlines_include_startup_and_tail(
+    receipts, end, error
+):
+    # Literal schedule: first receipt due2, next at most3s later. No worker
+    # output or scenario duration supplies the expected deadline.
+    bounds = HealthyBounds(Fraction(2), Fraction(3), Fraction(1), Fraction(1, 20))
+    if error is None:
+        assert_snapshot_service(receipts, bounds=bounds, end=end)
+    else:
+        with pytest.raises(AssertionError, match=f"snapshot service {error}"):
+            assert_snapshot_service(receipts, bounds=bounds, end=end)
+
+
+@pytest.mark.parametrize(
+    "successor,end,error",
+    [
+        ((5, 11, 4), 6, None),
+        ((5, 11, 4), 5, None),
+        ((5 + Fraction(1, 2**60), 11, 4), 6, "stale recovery deadline"),
+        ((5, 10, 4), 6, "without newer original"),
+        ((3, 11, 2), 4, None),
+        ((Fraction(301, 100), 11, 2), 4, None),
+        (None, 4, None),
+        (None, 5, "stale recovery end deadline"),
+        ((6, 11, 5), 5, "stale recovery end deadline"),
+        ((6, 11, 5), 4, None),
+    ],
+    ids=[
+        "deadline-equality",
+        "recovery-at-end",
+        "exact-deadline-exceeded",
+        "restamped-origin",
+        "no-stale-interval",
+        "sub-grid-stale-interval",
+        "right-censored",
+        "censored-deadline-at-end",
+        "post-end-cannot-recover",
+        "post-end-irrelevant",
+    ],
+)
+def test_stale_episode_exact_deadlines_and_new_origins(successor, end, error):
+    bounds = HealthyBounds(Fraction(2), Fraction(3), Fraction(1), Fraction(1, 20))
+    # Receipt1 installs coordinate0: actual staleness starts3, not the next
+    # display tick. Recovery is due5 (gap3 minus minimum LIVE hold1).
+    installed = [(1, 10, Fraction(0))] + ([successor] if successor else [])
+    if error is not None:
+        with pytest.raises(AssertionError, match=error):
+            assert_stale_recovery(installed, bounds=bounds, end=end)
+    else:
+        episodes = assert_stale_recovery(installed, bounds=bounds, end=end)
+        if successor is not None and successor[0] == 3:
+            assert episodes == []
+        else:
+            recovered = successor is not None and successor[0] <= end
+            assert episodes == [
+                StaleEpisode(
+                    Fraction(3),
+                    10,
+                    Fraction(successor[0]) if recovered else None,
+                    successor[1] if recovered else None,
+                    None,
+                )
+            ]
+
+
+@pytest.mark.parametrize("late", [False, True])
+def test_recovery_observation_grid_does_not_extend_receipt_deadline(late):
+    bounds = HealthyBounds(Fraction(2), Fraction(3), Fraction(1), Fraction(1, 20))
+    observed = Fraction(101, 20) + (Fraction(1, 2**60) if late else 0)
+    kwargs = {
+        "bounds": bounds,
+        "end": 6,
+        "classified": [(5, ("stale",), 10), (observed, ("live",), 11)],
+    }
+    installed = [(1, 10, Fraction(0)), (5, 11, Fraction(4))]
+    if late:
+        with pytest.raises(AssertionError, match="missed sample grid"):
+            assert_stale_recovery(installed, **kwargs)
+    else:
+        assert assert_stale_recovery(installed, **kwargs) == [
+            StaleEpisode(Fraction(3), 10, Fraction(5), 11, observed)
+        ]
+
+
+def test_recovery_bound_rejects_115_second_stale_episode_accepted_by_old_helper():
+    classified = [(0, ("live",), 10), (1, ("stale",), 10), (116, ("live",), 11)]
+    assert assert_healthy_recovery(classified) == [116]
+    bounds = HealthyBounds(Fraction(2), Fraction(3), Fraction(1), Fraction(1, 20))
+    with pytest.raises(AssertionError, match="stale recovery deadline missed"):
+        assert_stale_recovery(
+            [(0, 10, Fraction(-2)), (116, 11, Fraction(115))], bounds=bounds, end=117
+        )
 
 
 def assert_healthy_recovery(classified):
@@ -1184,12 +1475,15 @@ def test_repeated_metadata_bursts_service_every_known_eligible_class(tmp_path):
 
             timeline.at(due, ready)
 
-    relay, samples, _, events = run_trace_owner(
+    relay, samples, timeline, events = run_trace_owner(
         tmp_path, watch=True, configure=repeated
     )
     for due in (1030, 1060, 1090):
         assert_scenario_fairness(relay, watch=True, due=due)
-    assert_exact_trace(relay, samples, events)
+    classified = assert_exact_trace(relay, samples, events)
+    assert_healthy_trace_bounds(
+        relay, classified, phase=0, latency=0.08, end=timeline.end
+    )
 
 
 def test_off_withdrawal_preempts_busy_metadata_and_then_stays_inert():
