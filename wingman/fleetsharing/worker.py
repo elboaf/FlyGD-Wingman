@@ -22,7 +22,8 @@ import threading
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from math import isfinite
+from typing import Literal, get_args
 from uuid import uuid4
 
 from ..telemetry.model import FleetSnapshot
@@ -31,9 +32,9 @@ from . import protocol as p
 from . import state as s
 from .client import FleetRelayClient, FleetRelayError
 from .config import resolve_relay_origin
-from .model import FleetCatalogue, PublishRow
+from .model import FleetCatalogue, PublishRow, TimedSnapshot, TimingFenceReason
 from .scheduling import OPERATIONS, SIGNED_INTERVAL_S, Work
-from .timing import TimingContext
+from .timing import TimingContext, _ClockContradiction, _TimingLoss
 
 logger = logging.getLogger(__name__)
 BASE_BACKOFF_S = 1.0
@@ -133,9 +134,7 @@ class SharingStatus:
 
 @dataclass(frozen=True)
 class RemoteEvent:
-    rows: tuple[p.ObservedRemoteRow, ...]
-    receipt_monotonic: float
-    request_elapsed: float
+    payload: TimedSnapshot | None
     lifecycle_epoch: int
     identity_epoch: int
     kind: Literal["replace", "clear"]
@@ -171,6 +170,9 @@ class _Fence:
     participation: int
     source: tuple[tuple[str, int], ...]
     automatic: int
+    # Independent from control admission: a timing loss must not obsolete an
+    # otherwise authorized Off/Stop/receipt or identity/control observation.
+    timing: int = field(compare=False)
 
 
 class _Obsolete(Exception):
@@ -280,9 +282,9 @@ class FleetSharingWorker:
         self._authenticated_device = None
         self._control_auth = None
         self._control_db_fact = None
-        # C must close this under the submission lock on every timing-loss signal.
-        # This fact never installs an anchor or reopens the retained context.
-        self._control_time_fenced = False
+        # Public loss closes this under the submission lock, independently of
+        # terminal auth. The DB fact never anchors or reopens retained timing.
+        self._control_time_fenced = timing_context._timing_loss is not None
         self._client = None
         self._client_origin = None
         self._scheduler = timing_context._scheduler
@@ -306,6 +308,95 @@ class FleetSharingWorker:
         self._last_publish_at = 0.0
         self._pause_binding = None
         self._pause_until = 0.0
+
+    def fence_timing(self, reason: TimingFenceReason) -> None:
+        """Permanently close this retained lifetime; never a reset/recovery API."""
+        if reason not in get_args(TimingFenceReason):
+            raise ValueError("Unknown timing loss reason.")
+        with self._lock:
+            clear = self._fence_timing_locked(reason)
+        self._pending.set()
+        if clear is not None:
+            self._notify("remote", clear)
+
+    def _fence_timing_locked(self, reason):
+        context = self._timing_context
+        self._control_time_fenced = True
+        if context._timing_loss is not None:
+            return None
+        cutoff = None
+        if reason in ("clock_inconsistent", "db_continuity_lost"):
+            try:
+                stamp = self._clock()
+                if isfinite(stamp):
+                    cutoff = stamp
+            except Exception:  # noqa: BLE001 — optional context-clock failure cannot block permanent closure.
+                # No comparable F; never log or expose private exception details.
+                cutoff = None
+        context._timing_loss = _TimingLoss(reason, cutoff)
+        context._timing_generation += 1
+        return self._remote_event_locked(None, "clear")
+
+    def _apply_timing_loss(self):
+        """Only the signed lane mutates histories; use the signal's fixed F."""
+        context = self._timing_context
+        with self._lock:
+            notice = context._timing_loss
+            if notice is None or context._loss_applied:
+                return
+            context._loss_applied = True
+        if notice.reason == "clock_inconsistent":
+            context._inconsistent = True
+        if notice.cutoff is not None:
+            context._publisher_lost_continuity(cutoff=notice.cutoff)
+        # Untrustworthy elapsed has no comparable F. Keep old pins behind the
+        # permanent fence; a full client/model restart is the only fresh lifetime.
+        context._receiver_lost_history()
+        self._update_status(state="refused", detail=notice.reason)
+
+    def _timing_open_locked(self, fence):
+        context = self._timing_context
+        return (
+            context._timing_loss is None
+            and not context._inconsistent
+            and fence.timing == context._timing_generation
+            and self._control_auth_current_locked()
+            and self._timing_scope_current_locked()
+        )
+
+    def _timing_scope_current_locked(self):
+        context = self._timing_context
+        scope = context._authenticated_scope
+        return bool(
+            scope is not None
+            and self._control_auth is not None
+            and scope[:2] == self._control_auth[3:]
+            and scope[2] is context._db_continuity_token
+            and scope[3] is context._elapsed_lifetime_token
+        )
+
+    def _accept_timing_candidate(self, candidate, fence, work, *, remote=False):
+        clear = event = None
+        with self._lock:
+            self._check_locked(fence, work=work)
+            if not self._timing_open_locked(fence):
+                return
+            if isinstance(candidate, _ClockContradiction):
+                if candidate.base is self._timing_context._state:
+                    clear = self._fence_timing_locked(candidate.reason)
+                    self._timing_context._inconsistent = True
+            elif (
+                candidate is not None
+                and self._timing_context._commit_diagnostic(candidate)
+                and remote
+            ):
+                event = self._remote_event_locked(
+                    candidate.state.receiver.payload, "replace"
+                )
+        if clear is not None:
+            self._notify("remote", clear)
+        elif event is not None:
+            self._notify("remote", event)
 
     def submit(self, snapshot: FleetSnapshot) -> None:
         with self._lock:
@@ -459,7 +550,7 @@ class FleetSharingWorker:
             )
             self._commands[key] = command
             clear = (
-                self._remote_event_locked((), self._clock(), 0, "clear")
+                self._remote_event_locked(None, "clear")
                 if kind == "pairing"
                 or (kind == "participation" and not payload.enabled)
                 else None
@@ -961,7 +1052,10 @@ class FleetSharingWorker:
                         or (
                             kind == "remote"
                             and value.kind == "replace"
-                            and self._inhibit
+                            and (
+                                self._inhibit
+                                or self._timing_context._timing_loss is not None
+                            )
                         )
                     )
                 if obsolete:
@@ -992,13 +1086,11 @@ class FleetSharingWorker:
         if changed:
             self._notify("status", status)
 
-    def _remote_event_locked(self, rows, receipt, elapsed, kind):
+    def _remote_event_locked(self, payload, kind):
         self._presentation_order += 1
         self._remote_order = self._presentation_order
         return RemoteEvent(
-            rows,
-            receipt,
-            elapsed,
+            payload,
             self._epoch,
             self._identity_epoch,
             kind,
@@ -1008,7 +1100,7 @@ class FleetSharingWorker:
 
     def _clear_remote(self):
         with self._lock:
-            event = self._remote_event_locked((), self._clock(), 0, "clear")
+            event = self._remote_event_locked(None, "clear")
         self._notify("remote", event)
 
     def _set_catalogue(self, catalogue, *, fence=None):
@@ -1066,7 +1158,7 @@ class FleetSharingWorker:
             self._stop_event.set()
             with self._lock:
                 self._epoch += 1
-                clear = self._remote_event_locked((), self._clock(), 0, "clear")
+                clear = self._remote_event_locked(None, "clear")
             self._pending.set()
         self._notify("remote", clear)
         if worker is None:
@@ -1132,6 +1224,7 @@ class FleetSharingWorker:
             self._participation_generation,
             tuple(sorted(self._source_generations.items())),
             self._automatic_generation,
+            self._timing_context._timing_generation,
         )
 
     def _fence(self):
@@ -1809,6 +1902,7 @@ class FleetSharingWorker:
 
     def _iterate(self):
         try:
+            self._apply_timing_loss()
             now = self._clock()
             if now < self._local_retry_at:
                 return IDLE_POLL_S, False
@@ -1908,6 +2002,7 @@ class FleetSharingWorker:
             return ()
         with self._lock:
             watching, inhibited = self._watch, self._inhibit
+            timing_allowed = self._timing_open_locked(self._fence_locked())
             queued_participation = "participation" in self._commands
         pending = (
             state.pending_participation
@@ -2091,6 +2186,7 @@ class FleetSharingWorker:
         if (
             enabled
             and not inhibited
+            and timing_allowed
             and state.observed_participation
             and state.observed_participation.enabled
             and intent is None
@@ -2138,6 +2234,16 @@ class FleetSharingWorker:
                 self._status.metadata.binding,
                 device_id.lower(),
             )
+            context = self._timing_context
+            if context._authenticated_scope is None:
+                context._authenticated_scope = (
+                    self._control_auth[3],
+                    device_id.lower(),
+                    context._db_continuity_token,
+                    context._elapsed_lifetime_token,
+                )
+            # A different authenticated binding never reidentifies old timing.
+            # Terminal auth still belongs to B; no new model/domain is invented.
 
     def _control_auth_current_locked(self):
         state = self._state
@@ -2595,7 +2701,7 @@ class FleetSharingWorker:
                 if (
                     work.operation in ("read_snapshot", "publish_snapshot")
                     and work.key != "withdraw"
-                    and self._inhibit
+                    and (self._inhibit or not self._timing_open_locked(fence))
                 ):
                     raise _Obsolete
                 if work.operation in (
@@ -2621,6 +2727,12 @@ class FleetSharingWorker:
                     ):
                         raise _Obsolete
                 started = self._clock()
+                if (
+                    work.operation == "read_snapshot"
+                    and not self._timing_context._start_snapshot_get(started_at=started)
+                ):
+                    started = None
+                    raise _Obsolete
 
         try:
             state = self._state
@@ -2789,6 +2901,8 @@ class FleetSharingWorker:
                 self._relay_error(work, exc, fence)
         finally:
             if started is not None:
+                if work.operation == "read_snapshot":
+                    self._timing_context._finish_snapshot_get(started_at=started)
                 self._scheduler.completed(
                     work,
                     receipt if receipt is not None else self._clock(),
@@ -2798,11 +2912,18 @@ class FleetSharingWorker:
                 # Completion may retire a journal (or be obsolete). Do not keep
                 # historical UUID backoff, or resurrect it after reconciliation.
                 self._prune_source_work()
+            self._apply_timing_loss()
 
     def _accept(self, work, result, fence, started, receipt):
         operation = work.operation
         if operation in ("fetch_device", "acknowledge_capabilities"):
             self._accept_device(result, fence, work)
+            candidate = self._timing_context._evaluate_diagnostic(
+                started_at=started,
+                received_at=receipt,
+                server_time_ms=result.server_time_ms,
+            )
+            self._accept_timing_candidate(candidate, fence, work)
         elif operation == "renew_session":
             self._persist(
                 replace(self._state, session_expires_at=result), fence, work=work
@@ -2822,13 +2943,12 @@ class FleetSharingWorker:
                 self._withdraw_needed = False
         elif operation == "read_snapshot":
             self._due["read"] = self._clock() + 1.0
-            with self._lock:
-                if self._fence_locked() != fence:
-                    raise _Obsolete
-                event = self._remote_event_locked(
-                    result, receipt, max(0, receipt - started), "replace"
-                )
-            self._notify("remote", event)
+            if not self._timing_context._finish_snapshot_get(started_at=started):
+                return
+            candidate = self._timing_context._evaluate_snapshot(
+                result, started_at=started, received_at=receipt
+            )
+            self._accept_timing_candidate(candidate, fence, work, remote=True)
         elif operation == "set_participation":
             self._persist(
                 replace(
@@ -2904,6 +3024,11 @@ class FleetSharingWorker:
             self._update_status(pairing="acknowledged", approval_url=None)
         fence = replace(fence, session=self._state.session_id)
         self._check(fence, work=work)
+        with self._lock:
+            timing_scope_mismatch = (
+                self._control_auth_current_locked()
+                and not self._timing_scope_current_locked()
+            )
         if (
             self._state.cutover is not None
             and self._state.pending_participation is None
@@ -2931,6 +3056,12 @@ class FleetSharingWorker:
                 pairing="unresolved_approval",
                 approval_url=None,
             )
+        elif self._timing_context._timing_loss is not None:
+            self._update_status(
+                state="refused", detail=self._timing_context._timing_loss.reason
+            )
+        elif timing_scope_mismatch:
+            self._update_status(state="refused", detail="timing_scope_mismatch")
         elif not self._needs_fresh_intent and self._state.auth_pause is None:
             self._update_status(state="active", detail=None)
 

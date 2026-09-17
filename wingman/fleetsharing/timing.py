@@ -22,6 +22,7 @@ from .model import (
     TimedObservation,
     TimedRemoteRow,
     TimedSnapshot,
+    TimingFenceReason,
 )
 from .projection import _resolved_combat_rows, project_combat_snapshot
 from .protocol import (
@@ -38,6 +39,12 @@ _DIAGNOSTIC_WINDOW_MS = (
     LIMITS["anchor_lifetime_ms"] + LIMITS["activity_ms"] + LIMITS["request_elapsed_ms"]
 )
 _DIAGNOSTIC_CAPACITY = _DIAGNOSTIC_WINDOW_MS // LIMITS["signed_interval_ms"] + 1
+
+
+@dataclass(frozen=True)
+class _TimingLoss:
+    reason: TimingFenceReason
+    cutoff: float | None
 
 
 @dataclass(frozen=True)
@@ -86,6 +93,12 @@ class _TimingState:
 class _TimingCandidate:
     base: _TimingState
     state: _TimingState
+
+
+@dataclass(frozen=True)
+class _ClockContradiction:
+    base: _TimingState
+    reason: TimingFenceReason = "clock_inconsistent"
 
 
 @dataclass(frozen=True)
@@ -177,9 +190,10 @@ def _combat_rows(
 class TimingContext:
     """Retain across same-domain consumers; all mutation is signed-lane-owned.
 
-    No internal lock, thread, timer, authentication or operational recovery is
-    provided here. The owner fences identity/generations before calling these
-    private methods and must serialize candidate/commit with those checks.
+    No internal lock, thread, timer or operational recovery is provided here.
+    The retained bounded loss latch/generation is signalled under the worker's
+    state lock. Histories/pins and loss application remain signed-lane-owned;
+    a thread restart cannot turn a closed context into a new timing lifetime.
     """
 
     def __init__(
@@ -194,6 +208,12 @@ class TimingContext:
         self._elapsed_lifetime_token = elapsed_lifetime_token
         self._state = _TimingState()
         self._inconsistent = False
+        # Bound once by a current authenticated DeviceState/recovery, never by
+        # construction or persisted expected identity. Session is NOT this scope.
+        self._authenticated_scope: tuple[str, str, object, object] | None = None
+        self._timing_loss: _TimingLoss | None = None
+        self._timing_generation = 0
+        self._loss_applied = False
         # Later workers borrow this existing scheduler, never a second read
         # bucket. All actual completions, even failed/obsolete ones, consume it.
         self._scheduler = Scheduler()
@@ -229,19 +249,39 @@ class TimingContext:
         authority checks and the existing pointer commit remain caller-owned.
         A recovery candidate may commit evidence without producing a payload.
         """
+        if not self._finish_snapshot_get(started_at=started_at):
+            return None
+        return self._primitive_candidate(
+            self._evaluate_snapshot(
+                snapshot, started_at=started_at, received_at=received_at
+            )
+        )
+
+    def _finish_snapshot_get(self, *, started_at: float) -> bool:
+        """Consume only this lane attempt's marker, even for failed/obsolete HTTP."""
         if (
             not isfinite(started_at)
             or Fraction(started_at) != self._snapshot_started_at
         ):
-            return None
+            return False
         self._snapshot_started_at = None
-        diagnostic = self._diagnostic_candidate(
+        return True
+
+    def _evaluate_snapshot(
+        self, snapshot: CombatSnapshot, *, started_at: float, received_at: float
+    ) -> _TimingCandidate | _ClockContradiction | None:
+        """Pure evaluation AFTER the lane consumed its actual-start marker.
+
+        No authority, history, start marker or contradiction latch is mutated.
+        The runtime commits only under its final original-auth/generation fence.
+        """
+        diagnostic = self._evaluate_diagnostic(
             started_at=started_at,
             received_at=received_at,
             server_time_ms=snapshot.server_time_ms,
         )
-        if diagnostic is None:
-            return None
+        if not isinstance(diagnostic, _TimingCandidate):
+            return diagnostic
         # The diagnostic's separate last-DB baseline includes every accepted
         # snapshot (and device anchor), so it also enforces R >= last receiver R.
         offset = (
@@ -586,6 +626,25 @@ class TimingContext:
         closed codec first. Only proven order/intersection contradictions latch;
         ineligible nonfinite/slow responses and overflow leave state untouched.
         """
+        return self._primitive_candidate(
+            self._evaluate_diagnostic(
+                started_at=started_at,
+                received_at=received_at,
+                server_time_ms=server_time_ms,
+            )
+        )
+
+    def _primitive_candidate(self, result):
+        # Preserve S1/S3 primitive wrappers; runtime uses detached evaluation and
+        # owns the final authority check before applying a contradiction.
+        if isinstance(result, _ClockContradiction):
+            self._inconsistent = True
+            return None
+        return result
+
+    def _evaluate_diagnostic(
+        self, *, started_at: float, received_at: float, server_time_ms: int
+    ) -> _TimingCandidate | _ClockContradiction | None:
         if self._inconsistent or not (isfinite(started_at) and isfinite(received_at)):
             return None
         # Convert each supplied binary ratio before subtraction, without flooring.
@@ -596,16 +655,16 @@ class TimingContext:
             # an automatic contradiction. Its actual-attempt slot stays spent.
             return None
         state = self._state
+        if r < a or (state.last_received_at is not None and a < state.last_received_at):
+            # A regressed local clock cannot supply a comparable cutoff F.
+            # Keep that evidence in the detached result until the worker's final
+            # authority check; an obsolete reply must not diagnose this lifetime.
+            return _ClockContradiction(state, "elapsed_reset")
         if (
-            r < a
-            or (state.last_received_at is not None and a < state.last_received_at)
-            or (
-                state.last_server_time_ms is not None
-                and server_time_ms < state.last_server_time_ms
-            )
+            state.last_server_time_ms is not None
+            and server_time_ms < state.last_server_time_ms
         ):
-            self._inconsistent = True
-            return None
+            return _ClockContradiction(state)
         exchange = _Exchange(a, r, server_time_ms)
         # Prune only in the detached candidate, using old request STARTS. Idle
         # records stay bounded without a timer; refusal cannot remove protection.
@@ -626,8 +685,7 @@ class TimingContext:
             for e in exchanges
         )
         if lo > hi:
-            self._inconsistent = True
-            return None
+            return _ClockContradiction(state)
         return _TimingCandidate(
             state,
             replace(

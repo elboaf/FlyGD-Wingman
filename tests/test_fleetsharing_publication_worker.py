@@ -1,9 +1,12 @@
 """Actual owner + signed snapshot client + JSON journal; only relay I/O is fake."""
 
+import json
+from dataclasses import asdict, replace
+from uuid import uuid4
+
 import pytest
-from test_fleetsharing_client import FakeTransport, _headers_of
-from test_fleetsharing_publication import OBSERVED as PARSER_ROW
-from test_fleetsharing_publication import Response
+from test_fleetsharing_client import FakeTransport, Response, _headers_of
+from test_fleetsharing_timing_receiver import wire_row
 from test_fleetsharing_worker import (
     DEVICE,
     NOW,
@@ -16,9 +19,9 @@ from test_fleetsharing_worker import (
 from wingman.fleetsharing import protocol as p
 from wingman.fleetsharing import state as s
 from wingman.fleetsharing.client import FleetRelayClient
+from wingman.fleetsharing.timing import TimingContext
 
 PUBLICATION = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-OBSERVED = {**PARSER_ROW, "publication_id": PUBLICATION}
 
 
 class SnapshotClient(FakeRelayClient):
@@ -37,26 +40,66 @@ class SnapshotClient(FakeRelayClient):
         assert s.load(self.path).last_revision == int(headers["x-fleet-revision"])
         assert s.load(self.path).session_id == headers["x-fleet-session"]
         self.wire.append(headers)
-        canned = FakeTransport({"protocol": 1, "rows": [OBSERVED]}, publication=True)
-        admitted = canned(request, timeout)
+        # An independent scripted relay publisher issues genuinely new evidence
+        # and UUIDs. UTC signing is frozen; the fixture DB clock still advances.
+        payload = {
+            "protocol": 2,
+            "server_time_ms": DEVICE.server_time_ms + int((self.clock() - 1000) * 1000),
+            "rows": [
+                wire_row(
+                    character_id=42,
+                    character_name="Alice",
+                    outgoing_dps=0,
+                    publication_id=str(uuid4()),
+                )
+            ],
+        }
+        admitted = FakeTransport(payload)(request, timeout)
         if self.saved_response is None:
             self.saved_response = admitted.headers
         headers = self.saved_response if self.mode == "replay" else admitted.headers
-        payload = {"protocol": 1, "rows": [OBSERVED]}
         if self.mode == "stripped":
-            del headers["x-fleet-snapshot-format"]
+            del headers["X-Fleet-Request-Binding"]
         elif self.mode == "malformed":
-            payload["rows"][0] = {**OBSERVED, "publication_id": None}
+            payload["rows"][0]["publication_id"] = None
         elif self.mode == "lost":
             self.mode = "fresh"
             raise OSError("synthetic lost reply")
-        response = Response(payload, headers)
+        response = Response(json.dumps(payload).encode(), headers)
         self.responses.append(response)
         return response
 
-    def read_snapshot(self, **args):
+    def fetch_device(self, **args):
         return self._call(
-            "read_snapshot", args, lambda: self.relay.read_snapshot(**args)
+            "fetch_device",
+            args,
+            lambda: p.parse_device(
+                json.loads(
+                    json.dumps(
+                        {
+                            "protocol": 2,
+                            **asdict(self._session_device(args)),
+                            "server_time_ms": DEVICE.server_time_ms
+                            + int((self.clock() - 1000) * 1000),
+                        }
+                    )
+                )
+            ),
+        )
+
+    def acknowledge_capabilities(self, **args):
+        return replace(
+            super().acknowledge_capabilities(**args),
+            server_time_ms=DEVICE.server_time_ms + int((self.clock() - 1000) * 1000),
+        )
+
+    def read_snapshot(self, **args):
+        # Only the real client's hook admits the attempt, AFTER signing. The
+        # outer cadence/auth fixture must not run that hook a second time.
+        return self._call(
+            "read_snapshot",
+            {**args, "before_send": None},
+            lambda: self.relay.read_snapshot(**args),
         )
 
 
@@ -65,9 +108,14 @@ def setup(tmp_path):
     s.save(path, PAIRED_STATE)
     client = SnapshotClient(path)
     mono = [1000.0]
+    context = TimingContext(
+        clock=lambda: mono[0],
+        db_continuity_token=object(),
+        elapsed_lifetime_token=object(),
+    )
 
     def owner():
-        worker = _worker(client, clock=lambda: mono[0], utc_clock=lambda: NOW)
+        worker = _worker(client, timing_context=context, utc_clock=lambda: NOW)
         worker._load_state = lambda: s.load(path)
         worker._save_state = lambda state: s.save(path, state)
         return worker
@@ -82,9 +130,15 @@ def test_frozen_wall_clock_attempt_journal_survives_lost_snapshot_and_restart(tm
     worker.subscribe_remote(events.append)
     drive(worker, mono, 14)
     replaced = [e for e in events if e.kind == "replace"]
-    assert replaced and replaced[-1].rows == (
-        p.ObservedRemoteRow(42, "Alice", 0, (), "live", 0, PUBLICATION),
-    )
+    assert replaced and len(replaced[-1].payload.rows) == 1
+    row = replaced[-1].payload.rows[0]
+    assert (
+        row.character_id,
+        row.character_name,
+        row.outgoing_dps,
+        row.incoming_dps,
+    ) == (42, "Alice", 0, 0)
+    context = worker._timing_context
     client.mode = "lost"
     before = len(client.wire)
     for _ in range(20):
@@ -97,6 +151,7 @@ def test_frozen_wall_clock_attempt_journal_survives_lost_snapshot_and_restart(tm
     assert [e for e in events if e.kind == "replace"][-1] is replaced[-1]
     assert worker.stop()
     replacement = owner()
+    assert replacement._timing_context is context
     try:
         client.mode = "replay"
         events = []

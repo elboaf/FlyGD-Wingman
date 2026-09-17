@@ -3,6 +3,7 @@
 import threading
 from dataclasses import replace
 from datetime import timedelta
+from fractions import Fraction
 
 import pytest
 
@@ -88,11 +89,17 @@ def test_remote_receipt_and_full_request_elapsed_are_captured_once():
     drive(worker, mono, 14)
     events = []
     worker.subscribe_remote(events.append)
+    context = worker._timing_context
+    before = len(context._state.exchanges)
     client.latency = lambda: mono.__setitem__(0, mono[0] + 2.5)
     drive(worker, mono, 12)
     observed = [e for e in events if e.kind == "replace"]
     assert observed
-    assert all(e.request_elapsed == 2.5 for e in observed)
+    admitted = context._state.exchanges[before:]
+    assert len(admitted) == len(observed)
+    assert all(e.received_at - e.started_at == Fraction(5, 2) for e in admitted)
+    assert all(e.payload is not None for e in observed)
+    assert observed[-1].payload is context._state.receiver.payload
     assert all(e.binding for e in observed)
     assert [e.order for e in observed] == sorted({e.order for e in observed})
 
@@ -224,12 +231,12 @@ def test_callback_barrier_cannot_deliver_retired_clear_or_catalogue(stream):
     worker, _client, _store, mono = rig()
     drive(worker, mono, 14)
     entered, release = threading.Event(), threading.Event()
-    seen = []
+    seen, waited = [], []
 
     def block(event):
         if not entered.is_set():
             entered.set()
-            assert release.wait(5)
+            waited.append(release.wait(5))
 
     subscribe = (
         worker.subscribe_remote if stream == "remote" else worker.subscribe_catalogue
@@ -248,7 +255,7 @@ def test_callback_barrier_cannot_deliver_retired_clear_or_catalogue(stream):
         worker.request_pairing(mode="upgrade")
         release.set()
         thread.join(5)
-        assert not thread.is_alive()
+        assert not thread.is_alive() and waited == [True]
         assert all(e.identity_epoch == worker._identity_epoch for e in seen)
     finally:
         release.set()

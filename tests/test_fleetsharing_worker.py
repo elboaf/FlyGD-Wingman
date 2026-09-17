@@ -213,6 +213,7 @@ class FakeRelayClient:
             session_expires_at=view.session_expires_at,
             session_approved_capabilities=view.session_approved_capabilities,
             acknowledged_capabilities=view.acknowledged_capabilities,
+            server_time_ms=int(self.utc().timestamp() * 1000),
         )
 
     def _install_session(self, session_id, private_key, device, *, retire=False):
@@ -381,13 +382,32 @@ class FakeRelayClient:
         return self._call("fetch_eligibility", args, apply)
 
     def read_snapshot(self, **args):
-        return self._call(
-            "read_snapshot",
-            args,
-            lambda: p.parse_snapshot(
-                json.loads(json.dumps({"protocol": 2, **asdict(self.remote)}))
-            ),
-        )
+        def apply():
+            # One fixed publication's origins age at the current DB sample; never
+            # restamp old rows as new evidence just to satisfy runtime timing.
+            wire = json.loads(json.dumps({"protocol": 2, **asdict(self.remote)}))
+            now = int(self.utc().timestamp() * 1000)
+            elapsed = now - wire["server_time_ms"]
+            wire["server_time_ms"] = now
+            rows = []
+            for row in wire["rows"]:
+                row["age_ms"] += elapsed
+                row["activity_age_ms"] += elapsed
+                if row["age_ms"] >= 10000 or row["activity_age_ms"] >= 30000:
+                    continue
+                row["state"] = "live" if row["age_ms"] < 3000 else "stale"
+                for effect in row["effects"]:
+                    for observation in effect["observations"]:
+                        observation["age_ms"] += elapsed
+                    effect["observations"] = [
+                        o for o in effect["observations"] if o["age_ms"] < 30000
+                    ]
+                row["effects"] = [e for e in row["effects"] if e["observations"]]
+                rows.append(row)
+            wire["rows"] = rows
+            return p.parse_snapshot(wire)
+
+        return self._call("read_snapshot", args, apply)
 
     def fetch_sources(self, **args):
         return self._call(
@@ -1209,15 +1229,22 @@ def test_status_exposes_observed_participation_and_off_clears_eligibility_immedi
 
 
 def test_remote_replacement_clear_and_unsubscribe_are_immutable():
-    worker, client, _, mono = rig()
+    worker, _client, _, mono = rig()
     events, statuses = [], []
     unsubscribe = worker.subscribe_remote(events.append)
     unstatus = worker.subscribe_status(statuses.append)
     drive(worker, mono, 10)
-    assert events[-1].rows == client.remote
-    assert events[-1].request_elapsed >= 0 and events[-1].receipt_monotonic <= mono[0]
+    from fractions import Fraction
+
+    payload = events[-1].payload
+    assert payload is worker._timing_context._state.receiver.payload
+    assert payload.rows[0].character_name == "Bob"
+    assert (payload.rows[0].outgoing_dps, payload.rows[0].incoming_dps) == (20, None)
+    assert payload.rows[0].sampled_at_mono == Fraction(4997, 5)
+    protected = worker._timing_context._state.receiver.records
     worker.request_participation(False)
-    assert events[-1].kind == "clear" and events[-1].rows == ()
+    assert events[-1].kind == "clear" and events[-1].payload is None
+    assert worker._timing_context._state.receiver.records is protected
     assert worker.status().participation == "queued"
     unsubscribe()
     unstatus()
@@ -1380,9 +1407,9 @@ def test_successful_empty_remote_replaces_and_failed_read_does_not_emit():
     events = []
     worker.subscribe_remote(events.append)
     drive(worker, mono, 10)
-    client.remote = ()
+    client.remote = replace(client.remote, rows=())
     drive(worker, mono, 6)
-    assert events[-1].kind == "replace" and events[-1].rows == ()
+    assert events[-1].kind == "replace" and events[-1].payload.rows == ()
     before = len(events)
     client.errors["read_snapshot"] = FleetRelayError(None, "transport_error", "lost")
     drive(worker, mono, 6)

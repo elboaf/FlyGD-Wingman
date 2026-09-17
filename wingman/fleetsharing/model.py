@@ -17,6 +17,13 @@ from typing import Literal, Protocol
 
 from ..telemetry.model import EffectObservation, FleetRow, FleetSnapshot
 
+TimingFenceReason = Literal[
+    "clock_inconsistent",
+    "db_continuity_lost",
+    "elapsed_continuity_lost",
+    "elapsed_reset",
+]
+
 
 class PublicationSource(Protocol):
     @property
