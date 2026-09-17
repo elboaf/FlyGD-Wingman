@@ -17,6 +17,621 @@ from wingman.telemetry.metrics import FleetMetrics
 from wingman.telemetry.model import CombatFact
 
 
+@pytest.mark.parametrize("named", [False, True])
+def test_threaded_startup_waits_for_actual_cut_before_producer_operations(
+    tmp_path, monkeypatch, named
+):
+    authority = _SourceAuthority()
+    entered, release, first_roster, first_poll, admitted = (Event() for _ in range(5))
+    reset_done = Event()
+    observations = []
+    metrics = FleetMetrics(_utc_now=lambda: NOW)
+    reset = metrics.reset
+
+    def held_reset():
+        entered.set()
+        assert release.wait(5)
+        reset()
+
+    def enumerate_clients():
+        observations.append(("roster", reset_done.is_set()))
+        first_roster.set()
+        return [ALICE] if named else []
+
+    discovery = ClientDiscovery(
+        _enumerate_clients=enumerate_clients, _source_admission=authority
+    )
+    stream = GameLogStream(_utc_now=lambda: NOW, _source_admission=authority)
+    begin = stream._begin_operation_locked
+
+    def begin_poll(*args):
+        observations.append(("stream", reset_done.is_set()))
+        first_poll.set()
+        begin(*args)
+
+    applied = authority._reset_applied
+
+    def completed(boundary):
+        result = applied(boundary)
+        if result:
+            reset_done.set()
+        return result
+
+    monkeypatch.setattr(metrics, "reset", held_reset)
+    monkeypatch.setattr(authority, "_reset_applied", completed)
+    monkeypatch.setattr(stream, "_begin_operation_locked", begin_poll)
+    coordinator = TelemetryCoordinator(
+        preview_enabled=lambda: False,
+        fleet_enabled=lambda: True,
+        alerts_enabled=lambda: False,
+        gamelogs_folder=lambda: tmp_path,
+        discovery=discovery,
+        stream=stream,
+        metrics=metrics,
+        _source_admission=authority,
+    )
+    restatements = []
+    stream._subscribe_admission(
+        lambda batch, proof: (
+            restatements.append(batch)
+            if proof is not None and proof.reset is not None
+            else None
+        )
+    )
+    coordinator.subscribe_admitted_fleet(
+        lambda ticket: admitted.set() if ticket.is_current() else None
+    )
+    reconciler = Thread(target=coordinator.reconcile)
+    reconciler.start()
+    try:
+        assert entered.wait(5)
+        # Checking state alone could miss a thread which has not run. Waiting for
+        # either operation detects the old implementation's actual early starts.
+        started_early = first_roster.wait(0.1) or first_poll.wait(0.1)
+        assert not started_early
+        assert not discovery._started and not stream._started
+        release.set()
+        reconciler.join(5)
+        assert not reconciler.is_alive()
+        assert first_roster.wait(5) and first_poll.wait(5)
+        assert admitted.wait(5)  # Empty sources still require a genuine restatement.
+        assert all(after_cut for _, after_cut in observations)
+        assert restatements
+        if not named:
+            assert restatements[0].events == ()
+        assert authority._poison_reason is None
+    finally:
+        release.set()
+        reconciler.join(5)
+        assert coordinator.stop()
+
+
+def _threaded_runtime(tmp_path, *, preview=False, alerts=False, **kwargs):
+    authority = _SourceAuthority()
+    enumerated, polled, admitted = Event(), Event(), Event()
+
+    def enumerate_clients():
+        enumerated.set()
+        return [ALICE]
+
+    discovery = ClientDiscovery(
+        _enumerate_clients=enumerate_clients, _source_admission=authority
+    )
+    stream = GameLogStream(_utc_now=lambda: NOW, _source_admission=authority)
+    begin = stream._begin_operation_locked
+
+    def observe_poll(*args):
+        polled.set()
+        begin(*args)
+
+    stream._begin_operation_locked = observe_poll
+    metrics = FleetMetrics(_utc_now=lambda: NOW)
+    enabled = [True]
+    folder = [tmp_path]
+    coordinator = TelemetryCoordinator(
+        preview_enabled=lambda: preview,
+        fleet_enabled=lambda: enabled[0],
+        alerts_enabled=lambda: alerts,
+        gamelogs_folder=lambda: folder[0],
+        discovery=discovery,
+        stream=stream,
+        metrics=metrics,
+        _source_admission=authority,
+        **kwargs,
+    )
+    tickets = []
+
+    def receive(ticket):
+        tickets.append(ticket)
+        if ticket.is_current():
+            admitted.set()
+
+    coordinator.subscribe_admitted_fleet(receive)
+    return SimpleNamespace(
+        authority=authority,
+        discovery=discovery,
+        stream=stream,
+        metrics=metrics,
+        coordinator=coordinator,
+        enumerated=enumerated,
+        polled=polled,
+        admitted=admitted,
+        tickets=tickets,
+        enabled=enabled,
+        folder=folder,
+    )
+
+
+def test_threaded_reset_timeout_retains_original_owner_and_retries_same_cut(
+    tmp_path, monkeypatch
+):
+    r = _threaded_runtime(tmp_path, _wait_reset=lambda event, timeout: event.wait(0.05))
+    entered, release = Event(), Event()
+    reset = r.metrics.reset
+    resets = []
+
+    def hold_reset():
+        resets.append(True)
+        entered.set()
+        assert release.wait(5)
+        reset()
+
+    monkeypatch.setattr(r.metrics, "reset", hold_reset)
+    try:
+        r.coordinator.reconcile()
+        assert entered.is_set()
+        assert not r.enumerated.is_set() and not r.polled.is_set()
+        owner = r.coordinator._worker
+        completion = r.coordinator._reset_completion
+        assert owner.is_alive() and not completion.done.is_set()
+        release.set()
+        assert completion.done.wait(5)
+        assert not r.enumerated.is_set() and not r.polled.is_set()
+        r.coordinator.reconcile()
+        assert r.coordinator._worker is owner
+        assert r.coordinator._reset_completion is completion
+        assert r.enumerated.wait(5) and r.polled.wait(5) and r.admitted.wait(5)
+        assert resets == [True]
+        assert r.authority._poison_reason is None
+    finally:
+        release.set()
+        assert r.coordinator.stop()
+
+
+@pytest.mark.parametrize("action", ["close", "stop"])
+def test_stop_or_close_cancels_wait_and_cannot_install_late_producers(
+    tmp_path, monkeypatch, action
+):
+    waiting, entered, release = Event(), Event(), Event()
+
+    def wait_reset(event, timeout):
+        waiting.set()
+        return event.wait(timeout)
+
+    r = _threaded_runtime(tmp_path, _wait_reset=wait_reset)
+    reset = r.metrics.reset
+
+    def hold_reset():
+        entered.set()
+        assert release.wait(5)
+        reset()
+
+    monkeypatch.setattr(r.metrics, "reset", hold_reset)
+    reconciler = Thread(target=r.coordinator.reconcile)
+    reconciler.start()
+    try:
+        assert entered.wait(5) and waiting.wait(5)
+        old_completion = r.coordinator._reset_completion
+        old_owner = r.coordinator._worker
+        if action == "close":
+            r.coordinator.close_source_admission()
+        else:
+            assert r.coordinator.stop(timeout=0) is False
+        reconciler.join(5)
+        assert not reconciler.is_alive()
+        assert old_completion.done.is_set()
+        assert not r.enumerated.is_set() and not r.polled.is_set()
+        r.coordinator.reconcile()
+        assert r.coordinator._worker is old_owner
+        assert not r.enumerated.is_set() and not r.polled.is_set()
+        release.set()
+        if action == "stop":
+            old_owner.join(5)
+            assert not old_owner.is_alive()
+            assert r.coordinator.stop()
+            r.coordinator.reconcile()
+            assert r.coordinator._worker is not old_owner
+            assert r.coordinator._reset_completion is not old_completion
+            assert r.admitted.wait(5)
+            assert r.authority._poison_reason is None
+        else:
+            r.coordinator.reconcile()
+            assert not r.enumerated.is_set() and not r.polled.is_set()
+            assert r.tickets == []
+    finally:
+        release.set()
+        reconciler.join(5)
+        assert r.coordinator.stop()
+
+
+@pytest.mark.parametrize("unrelated", [False, True])
+def test_failed_startup_reset_never_certifies_but_preserves_unrelated_consumers(
+    tmp_path, monkeypatch, unrelated
+):
+    from tests.test_telemetry_coordinator import FakePolicy, FakePreviewHost
+    from tests.test_telemetry_gamelogs import DAMAGE_LINE
+
+    preview, policy = FakePreviewHost(), FakePolicy()
+    r = _threaded_runtime(
+        tmp_path,
+        preview=unrelated,
+        alerts=unrelated,
+        preview_host=preview,
+        alert_policy=policy,
+    )
+    completed = Event()
+
+    def fail_reset():
+        raise ValueError("original startup reset failed")
+
+    r.coordinator.subscribe_fleet(lambda snapshot: completed.set())
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(r.metrics, "reset", fail_reset)
+            r.coordinator.reconcile()
+            completion = r.coordinator._reset_completion
+            assert completion.done.is_set() and not completion.succeeded
+            assert r.authority._poison_reason == "metrics reset failed"
+            if unrelated:
+                assert r.enumerated.wait(5) and r.polled.wait(5)
+                assert completed.wait(5)
+                assert preview.rosters
+                r.stream.scan_once(NOW)
+                _log(tmp_path, "Alice", DAMAGE_LINE)
+                handled = Event()
+                handle = policy.handle
+
+                def receive(*args, **kwargs):
+                    handle(*args, **kwargs)
+                    handled.set()
+
+                patch.setattr(policy, "handle", receive)
+                r.stream.scan_once(NOW)
+                assert handled.wait(5)
+                assert policy.calls[-1][0][0].event == "combat"
+            else:
+                assert not r.enumerated.is_set() and not r.polled.is_set()
+            assert r.tickets == []
+        # A new real activation, not an implicit retry of the failed reset.
+        r.enabled[0] = False
+        r.coordinator.reconcile()
+        r.enabled[0] = True
+        r.coordinator.reconcile()
+        assert r.admitted.wait(5)
+    finally:
+        assert r.coordinator.stop()
+
+
+def test_threaded_preview_alert_only_startup_never_waits_for_metrics(tmp_path):
+    def forbidden_wait(*args):
+        pytest.fail("Preview/Alerts must not wait for a metrics reset")
+
+    r = _threaded_runtime(
+        tmp_path, preview=True, alerts=True, _wait_reset=forbidden_wait
+    )
+    r.enabled[0] = False
+    try:
+        r.coordinator.reconcile()
+        assert r.enumerated.wait(5) and r.polled.wait(5)
+        assert r.tickets == []
+    finally:
+        assert r.coordinator.stop()
+
+
+def test_threaded_ordinary_restart_gets_fresh_cut_and_admission(tmp_path):
+    r = _threaded_runtime(tmp_path)
+    try:
+        r.coordinator.reconcile()
+        assert r.admitted.wait(5)
+        ticket = r.tickets[-1]
+        owner = r.coordinator._worker
+        completion = r.coordinator._reset_completion
+        assert r.coordinator.stop()
+        assert not ticket.is_current() and not owner.is_alive()
+        r.admitted.clear()
+        r.coordinator.reconcile()
+        assert r.admitted.wait(5)
+        assert r.coordinator._worker is not owner
+        assert r.coordinator._reset_completion is not completion
+        assert r.tickets[-1].is_current()
+        assert r.authority._poison_reason is None
+    finally:
+        assert r.coordinator.stop()
+
+
+def test_initial_event_signal_without_dispatcher_cut_cannot_start_producers(tmp_path):
+    def signal_only(event, timeout):
+        event.set()
+        return True
+
+    r = _threaded_runtime(
+        tmp_path, _thread_factory=_noop_thread_factory, _wait_reset=signal_only
+    )
+    try:
+        r.coordinator.reconcile()
+        completion = r.coordinator._reset_completion
+        assert completion.done.is_set() and completion.owner is None
+        assert not r.discovery._started and not r.stream._started
+        assert r.tickets == []
+        # Only executing the original queued reset can supply owner/success.
+        r.coordinator.dispatch_once(0)
+        assert completion.succeeded
+        r.coordinator.reconcile()
+        assert r.enumerated.wait(5) and r.polled.wait(5)
+        r.coordinator.dispatch_once(0)
+        assert r.admitted.is_set()
+    finally:
+        assert r.coordinator.stop()
+
+
+def test_cut_completion_does_not_wait_for_priming_or_ready_ticket(
+    tmp_path, monkeypatch
+):
+    r = _threaded_runtime(tmp_path)
+    entered, release = Event(), Event()
+    snapshot = r.discovery._snapshot_admission
+
+    def hold_priming():
+        entered.set()
+        assert release.wait(5)
+        return snapshot()
+
+    monkeypatch.setattr(r.discovery, "_snapshot_admission", hold_priming)
+    reconciler = Thread(target=r.coordinator.reconcile)
+    reconciler.start()
+    try:
+        assert entered.wait(5)
+        reconciler.join(5)
+        assert not reconciler.is_alive()
+        assert r.coordinator._reset_completion.succeeded
+        assert r.enumerated.wait(5) and r.polled.wait(5)
+        assert not r.admitted.is_set()
+        release.set()
+        assert r.admitted.wait(5)
+    finally:
+        release.set()
+        reconciler.join(5)
+        assert r.coordinator.stop()
+
+
+def test_restarted_dispatcher_cannot_use_previous_completed_reset(
+    tmp_path, monkeypatch
+):
+    r = _threaded_runtime(tmp_path)
+    entered, release = Event(), Event()
+    try:
+        r.coordinator.reconcile()
+        assert r.admitted.wait(5)
+        previous = r.coordinator._reset_completion
+        assert previous.done.is_set() and previous.succeeded
+        assert r.coordinator.stop()
+        r.enumerated.clear()
+        r.polled.clear()
+        r.admitted.clear()
+        reset = r.metrics.reset
+
+        def hold_reset():
+            entered.set()
+            assert release.wait(5)
+            reset()
+
+        monkeypatch.setattr(r.metrics, "reset", hold_reset)
+        reconciler = Thread(target=r.coordinator.reconcile)
+        reconciler.start()
+        try:
+            assert entered.wait(5)
+            assert r.coordinator._reset_completion is not previous
+            previous.done.set()
+            assert not r.enumerated.wait(0.1) and not r.polled.is_set()
+        finally:
+            release.set()
+            reconciler.join(5)
+        assert not reconciler.is_alive()
+        assert r.admitted.wait(5)
+        assert r.authority._poison_reason is None
+    finally:
+        release.set()
+        assert r.coordinator.stop()
+
+
+def test_new_activation_cannot_use_old_completion_on_same_dispatcher(
+    tmp_path, monkeypatch
+):
+    r = _threaded_runtime(tmp_path, preview=True, alerts=False)
+    disabled, entered, release = Event(), Event(), Event()
+    try:
+        r.coordinator.reconcile()
+        assert r.admitted.wait(5)
+        previous = r.coordinator._reset_completion
+        owner = r.coordinator._worker
+        reset = r.metrics.reset
+
+        def disabled_reset():
+            reset()
+            disabled.set()
+
+        monkeypatch.setattr(r.metrics, "reset", disabled_reset)
+        r.enabled[0] = False
+        r.coordinator.reconcile()
+        assert disabled.wait(5)
+        assert not r.stream._started
+        assert r.coordinator._worker is owner
+        r.admitted.clear()
+
+        def hold_reset():
+            entered.set()
+            assert release.wait(5)
+            reset()
+
+        monkeypatch.setattr(r.metrics, "reset", hold_reset)
+        r.enabled[0] = True
+        reconciler = Thread(target=r.coordinator.reconcile)
+        reconciler.start()
+        try:
+            assert entered.wait(5)
+            current = r.coordinator._reset_completion
+            assert current is not previous
+            assert current.generation != previous.generation
+            assert previous.owner is r.coordinator._stop_event
+            previous.done.set()
+            assert not r.stream._started
+            assert not current.done.is_set()
+        finally:
+            release.set()
+            reconciler.join(5)
+        assert not reconciler.is_alive()
+        assert r.admitted.wait(5)
+    finally:
+        release.set()
+        assert r.coordinator.stop()
+
+
+def test_folder_replacement_starts_only_after_original_folder_reset_cut(
+    tmp_path, monkeypatch
+):
+    r = _threaded_runtime(tmp_path)
+    entered, release, new_operation, cut = Event(), Event(), Event(), Event()
+    next_folder = tmp_path / "next"
+    next_folder.mkdir()
+    try:
+        r.coordinator.reconcile()
+        assert r.admitted.wait(5)
+        r.admitted.clear()
+        reset = r.metrics.reset
+        begin = r.stream._begin_operation_locked
+        applied = r.authority._reset_applied
+        observations = []
+
+        def hold_reset():
+            entered.set()
+            assert release.wait(5)
+            reset()
+
+        def completed(boundary):
+            result = applied(boundary)
+            if result:
+                cut.set()
+            return result
+
+        def observe(*args):
+            if r.stream._folder == next_folder:
+                observations.append(cut.is_set())
+                new_operation.set()
+            begin(*args)
+
+        monkeypatch.setattr(r.metrics, "reset", hold_reset)
+        monkeypatch.setattr(r.authority, "_reset_applied", completed)
+        monkeypatch.setattr(r.stream, "_begin_operation_locked", observe)
+        r.folder[0] = next_folder
+        reconciler = Thread(target=r.coordinator.reconcile)
+        reconciler.start()
+        try:
+            assert entered.wait(5)
+            assert not new_operation.wait(0.1)
+        finally:
+            release.set()
+            reconciler.join(5)
+        assert not reconciler.is_alive()
+        assert new_operation.wait(5) and r.admitted.wait(5)
+        assert observations and all(observations)
+        assert r.authority._poison_reason is None
+    finally:
+        release.set()
+        assert r.coordinator.stop()
+
+
+def test_threaded_kept_alive_fact_crossing_reset_still_poisons(tmp_path, monkeypatch):
+    from wingman.telemetry.model import SourceLifecycle
+
+    r = _threaded_runtime(tmp_path, preview=True, alerts=True)
+    source_applied = Event()
+    consume = r.metrics.consume
+
+    def observe_source(envelope):
+        consume(envelope)
+        if isinstance(envelope.payload, SourceLifecycle) and envelope.payload.active:
+            source_applied.set()
+
+    monkeypatch.setattr(r.metrics, "consume", observe_source)
+    try:
+        r.coordinator.reconcile()
+        assert r.admitted.wait(5)
+        path = _log(tmp_path, "Alice", OUTGOING_DAMAGE_LINE)
+        r.stream.scan_once(NOW)
+        assert source_applied.wait(5)
+        held = []
+        callback = r.coordinator._on_admitted_stream
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                r.coordinator, "_on_admitted_stream", lambda *args: held.append(args)
+            )
+            with path.open("a", encoding="utf-8") as output:
+                output.write(OUTGOING_DAMAGE_LINE)
+            r.stream.scan_once(NOW)
+        assert len(held) == 1 and all(
+            isinstance(event, CombatFact) for event in held[0][0].events
+        )
+        stream_owner = r.stream._worker
+        lifetime = held[0][1].operation.lifetime
+        fresh = Event()
+        generation = [None]
+
+        def receive(ticket):
+            if (
+                ticket.snapshot.activation_generation == generation[0]
+                and ticket.is_current()
+            ):
+                fresh.set()
+
+        r.coordinator.subscribe_admitted_fleet(receive)
+        r.enabled[0] = False
+        r.coordinator.reconcile()
+        r.enabled[0] = True
+        generation[0] = r.coordinator.reconcile()
+        if r.tickets[-1].snapshot.activation_generation == generation[0]:
+            fresh.set()
+        assert fresh.wait(5)
+        assert r.stream._worker is stream_owner
+        assert r.stream._admission_receipt.lifetime is lifetime
+        current = r.tickets[-1]
+        consumed, published = Event(), Event()
+
+        def observe_fact(envelope):
+            consume(envelope)
+            if envelope.payload is held[0][0].events[0]:
+                consumed.set()
+
+        monkeypatch.setattr(r.metrics, "consume", observe_fact)
+        r.coordinator.subscribe_fleet(
+            lambda snapshot: published.set() if consumed.is_set() else None
+        )
+        callback(*held[0])
+        assert published.wait(5)
+        assert consumed.is_set()
+        assert not current.is_current()
+        assert r.authority._poison_reason == "obsolete source operation applied"
+        r.coordinator.reconcile()
+        assert not current.is_current()
+        r.admitted.clear()
+        r.enabled[0] = False
+        r.coordinator.reconcile()
+        r.enabled[0] = True
+        r.coordinator.reconcile()
+        assert r.admitted.wait(5)
+    finally:
+        assert r.coordinator.stop()
+
+
 @pytest.fixture
 def real_runtime(tmp_path):
     mono = [1000.0]
@@ -39,6 +654,11 @@ def real_runtime(tmp_path):
         _source_admission=authority,
     )
     metrics = FleetMetrics(_clock=clock, _utc_now=lambda: NOW)
+
+    def drive_reset(event, timeout):
+        coordinator.dispatch_once(0)
+        return event.wait(0)
+
     coordinator = TelemetryCoordinator(
         preview_enabled=lambda: True,
         fleet_enabled=lambda: enabled[0],
@@ -51,13 +671,13 @@ def real_runtime(tmp_path):
         _thread_factory=_noop_thread_factory,
         _clock=clock,
         _source_admission=authority,
+        _wait_reset=drive_reset,
     )
     tickets = []
     coordinator.subscribe_admitted_fleet(tickets.append)
     coordinator.reconcile()
-    # Drive startup reset before producing evidence, as the immediate dispatcher
-    # can in production. Reset-overlapping evidence is covered separately.
-    coordinator.dispatch_once(0)
+    # Reconcile's injected waiter drives the real reset on the existing manual
+    # dispatcher seam. Scans may now run immediately after reconcile returns.
     discovery.scan_once()
     stream.scan_once(NOW)
     coordinator.dispatch_once(0)
@@ -682,19 +1302,11 @@ def test_failed_finalization_retains_dead_owner_and_refuses_replacement(
     assert r.coordinator.stop()
 
 
-def test_startup_cut_blocks_prequeued_evidence_without_automatic_reset(
+def test_startup_handshake_cuts_before_scans_without_extra_reset(
     real_runtime, monkeypatch
 ):
     r = real_runtime
     assert r.coordinator.stop()
-    r.coordinator.reconcile()
-    # Match the supplied fixture's ordering: scans finish before the dispatcher
-    # applies activation reset. Their original operations are inside its cut.
-    r.discovery.scan_once()
-    r.stream.scan_once(NOW)
-    r.coordinator.dispatch_once(0)
-    assert r.authority._poison_reason == "obsolete source operation applied"
-    assert not r.tickets[-1].is_current()
     resets = []
     reset = r.metrics.reset
 
@@ -702,15 +1314,18 @@ def test_startup_cut_blocks_prequeued_evidence_without_automatic_reset(
         resets.append(True)
         reset()
 
-    with monkeypatch.context() as patch:
-        patch.setattr(r.metrics, "reset", count_reset)
-        r.discovery.scan_once()
-        r.stream.scan_once(NOW)
-        r.coordinator.dispatch_once(0)
-    assert resets == []
-    assert not r.tickets[-1].is_current()
-    _reset(r)
+    monkeypatch.setattr(r.metrics, "reset", count_reset)
+    r.coordinator.reconcile()
+    assert resets == [True]
+    r.discovery.scan_once()
+    r.stream.scan_once(NOW)
+    r.coordinator.dispatch_once(0)
+    assert r.authority._poison_reason is None
     assert r.tickets[-1].is_current()
+    r.discovery.scan_once()
+    r.stream.scan_once(NOW)
+    r.coordinator.dispatch_once(0)
+    assert resets == [True]
 
 
 def test_stop_revokes_before_unsubscribe_and_final_close_never_reopens(

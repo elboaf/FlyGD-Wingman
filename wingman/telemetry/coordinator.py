@@ -139,12 +139,24 @@ _FLEET_REFRESH = object()
 _ALERT_RESET = object()
 _CUSTOM_DRAIN = object()
 _CUSTOM_SOURCE_RESET = object()
+_SOURCE_READY = object()
 CUSTOM_PENDING_MAX = MAX_FILES * MAX_CUSTOM_RULES
+
+
+@dataclasses.dataclass
+class _ResetCompletion:
+    """One original queued reset, never a ready-ticket or reseed signal."""
+
+    generation: int
+    done: threading.Event = dataclasses.field(default_factory=threading.Event)
+    owner: threading.Event | None = None
+    succeeded: bool = False
 
 
 class _Associated(NamedTuple):
     payload: object
     delivery: _Delivery | None
+    completion: _ResetCompletion | None = None
 
 
 class _FleetMode(NamedTuple):
@@ -222,6 +234,7 @@ class TelemetryCoordinator:
         _queue_factory: Callable[[], queue.Queue] = queue.Queue,
         _clock: Callable[[], float] = time.monotonic,
         _source_admission: _SourceAuthority | None = None,
+        _wait_reset: Callable[[threading.Event, float], bool] = threading.Event.wait,
     ) -> None:
         self._preview_enabled = preview_enabled
         self._fleet_enabled = fleet_enabled
@@ -237,6 +250,12 @@ class TelemetryCoordinator:
         self._clock = _clock
 
         self._source_admission = _source_admission
+        self._wait_reset = _wait_reset
+        self._reset_completion: _ResetCompletion | None = None
+        self._dispatch_owner: threading.Event | None = None
+        self._startup_serial = 0
+        self._stop_requests = 0
+        self._source_closed = False
         self._admission_connected = _source_admission is not None and all(
             getattr(producer, "_source_admission", None) is _source_admission
             and callable(getattr(producer, "_subscribe_admission", None))
@@ -289,8 +308,9 @@ class TelemetryCoordinator:
         # Serialises whole reconcile()/stop() passes against each other.
         # Without it, a tray-thread stop() and a UI-thread reconcile() can
         # interleave their start and stop halves and leave a service
-        # running with nobody subscribed to it.  Never held while the
-        # dispatcher is consuming, so a consumer cannot deadlock on it.
+        # running with nobody subscribed to it. The dispatcher never acquires
+        # this lock: reset-cut signals precede priming/subscriber callbacks, and
+        # stop may own it while joining the dispatcher.
         self._reconcile_lock = threading.Lock()
 
         self._lifecycle_lock = threading.Lock()
@@ -391,6 +411,10 @@ class TelemetryCoordinator:
         exactly once, however often this is called in between.
         """
         with self._reconcile_lock:
+            with self._lock:
+                if self._source_closed or self._stop_requests:
+                    return self._fleet_requested_generation
+                start_serial = self._startup_serial
             # Read every live setting inside the same pass lock as the state
             # changes it decides. Reading before the lock lets stop() finish
             # between those two phases, after which this pass could restart
@@ -438,8 +462,26 @@ class TelemetryCoordinator:
                 if not started:
                     return fleet_generation
 
-            self._reconcile_discovery(want_discovery)
-            self._reconcile_stream(folder)
+            with self._lock:
+                starting = (want_discovery and not self._discovery_started) or (
+                    folder is not None
+                    and (folder != self._stream_folder or self._stream_unsub is None)
+                )
+            if self._admission_connected and want_metrics and starting:
+                outcome = self._await_reset(start_serial)
+                if outcome in ("pending", "closed"):
+                    return fleet_generation
+                if outcome == "failed":
+                    # Metrics failure cannot withhold unrelated Preview/Alerts.
+                    # Their legacy inputs remain usable, never certified.
+                    want_discovery = preview_enabled
+                    folder = folder if preview_enabled and alerts_enabled else None
+            self._reconcile_discovery(want_discovery, start_serial=start_serial)
+            self._reconcile_stream(
+                folder,
+                start_serial=start_serial,
+                allow_failed_reset=preview_enabled and alerts_enabled,
+            )
             self._request_alert_mode(preview_enabled and alerts_enabled)
 
             if not needs_dispatcher:
@@ -448,6 +490,56 @@ class TelemetryCoordinator:
                 # all-off startup solely to stop it again.
                 self._stop_dispatcher()
             return fleet_generation
+
+    def _can_start_locked(self, serial: int | None) -> bool:
+        return (
+            not self._source_closed
+            and not self._stop_requests
+            and serial == self._startup_serial
+        )
+
+    def _await_reset(self, serial: int) -> str:
+        """Wait only for the cut, outside lifecycle/state/authority locks.
+
+        The injected waiter may drive dispatch_once for a no-worker test. It
+        must execute the real queued reset, never manufacture a completion.
+        """
+        with self._lock:
+            completion = self._reset_completion
+            owner = self._stop_event
+        if completion is None:
+            return "pending"
+        self._wait_reset(completion.done, PUBLISH_INTERVAL_S)
+        with self._lock:
+            if (
+                not self._can_start_locked(serial)
+                or completion is not self._reset_completion
+                or completion.generation != self._fleet_requested_generation
+                or owner is not self._stop_event
+                or owner.is_set()
+            ):
+                return "closed"
+            if not completion.done.is_set() or completion.owner is not owner:
+                return "pending"
+            return "ready" if completion.succeeded else "failed"
+
+    def _signal_reset(
+        self, completion: _ResetCompletion | None, succeeded: bool
+    ) -> None:
+        if completion is None:
+            return
+        with self._lock:
+            if (
+                completion is self._reset_completion
+                and completion.generation == self._fleet_requested_generation
+                and not self._source_closed
+                and not self._stop_requests
+                and self._dispatch_owner is not None
+                and not self._dispatch_owner.is_set()
+            ):
+                completion.owner = self._dispatch_owner
+                completion.succeeded = succeeded
+            completion.done.set()
 
     @staticmethod
     def _completed(result) -> bool:
@@ -462,8 +554,16 @@ class TelemetryCoordinator:
     def _remaining_timeout(self, deadline: float) -> float:
         return max(0.0, deadline - self._clock())
 
-    def _reconcile_discovery(self, wanted: bool, deadline: float | None = None) -> None:
+    def _reconcile_discovery(
+        self,
+        wanted: bool,
+        deadline: float | None = None,
+        *,
+        start_serial: int | None = None,
+    ) -> None:
         with self._lock:
+            if start_serial is None:
+                start_serial = self._startup_serial
             started = self._discovery_started
             unsub = self._discovery_unsub
 
@@ -489,24 +589,35 @@ class TelemetryCoordinator:
             started = False
 
         if wanted and not started:
-            # Subscribe BEFORE start: the first scan is immediate. Publish
-            # the marker only after start accepts this generation.
-            unsub = (
-                self._discovery._subscribe_admission(self._on_admitted_roster)
-                if self._admission_connected
-                else self._discovery.subscribe(self._on_roster)
-            )
-            if not self._completed(self._discovery.start()):
-                unsub()
-                return
-            with self._lock:
-                self._discovery_started = True
-                self._discovery_unsub = unsub
+            # Serialize final admission/install with close and stop's cutoff.
+            # No wait for reset or worker join occurs under this lock.
+            with self._lifecycle_lock:
+                with self._lock:
+                    if not self._can_start_locked(start_serial):
+                        return
+                unsub = (
+                    self._discovery._subscribe_admission(self._on_admitted_roster)
+                    if self._admission_connected
+                    else self._discovery.subscribe(self._on_roster)
+                )
+                if not self._completed(self._discovery.start()):
+                    unsub()
+                    return
+                with self._lock:
+                    self._discovery_started = True
+                    self._discovery_unsub = unsub
 
     def _reconcile_stream(
-        self, folder: Path | None, deadline: float | None = None
+        self,
+        folder: Path | None,
+        deadline: float | None = None,
+        *,
+        start_serial: int | None = None,
+        allow_failed_reset: bool = False,
     ) -> None:
         with self._lock:
+            if start_serial is None:
+                start_serial = self._startup_serial
             current = self._stream_folder
             unsub = self._stream_unsub
         refresh_consumers = False
@@ -534,28 +645,45 @@ class TelemetryCoordinator:
             current = None
             refresh_consumers = True
 
+        if refresh_consumers and self._admission_connected:
+            # The original folder reset must cut BEFORE its replacement starts.
+            self._queue_stream_refreshes(refresh_delivery)
+            refresh_consumers = False
+            if folder is not None and self._wants_metrics():
+                outcome = self._await_reset(start_serial)
+                if outcome != "ready" and not (
+                    outcome == "failed" and allow_failed_reset
+                ):
+                    return
+
         if folder is not None and current is None:
-            epoch = self._advance_custom_delivery(open_admission=True)
-            unsub = (
-                self._stream._subscribe_admission(
-                    lambda batch, delivery: self._on_admitted_stream(
-                        batch, delivery, epoch
+            with self._lifecycle_lock:
+                with self._lock:
+                    if not self._can_start_locked(start_serial):
+                        return
+                epoch = self._advance_custom_delivery(open_admission=True)
+                unsub = (
+                    self._stream._subscribe_admission(
+                        lambda batch, delivery: self._on_admitted_stream(
+                            batch, delivery, epoch
+                        )
+                    )
+                    if self._admission_connected
+                    else self._stream.subscribe_batches(
+                        lambda batch: self._on_stream_batch(batch, epoch)
                     )
                 )
-                if self._admission_connected
-                else self._stream.subscribe_batches(
-                    lambda batch: self._on_stream_batch(batch, epoch)
-                )
-            )
-            if not self._completed(self._stream.start(folder)):
-                self._advance_custom_delivery(open_admission=False)
-                unsub()
-                if refresh_consumers:
-                    self._queue_stream_refreshes(refresh_delivery)
-                return
-            with self._lock:
-                self._stream_folder = folder
-                self._stream_unsub = unsub
+                if not self._completed(self._stream.start(folder)):
+                    self._advance_custom_delivery(open_admission=False)
+                    unsub()
+                    if refresh_consumers:
+                        self._queue_stream_refreshes(refresh_delivery)
+                    return
+                with self._lock:
+                    self._stream_folder = folder
+                    self._stream_unsub = unsub
+                if self._admission_connected:
+                    self._queue.put(_SOURCE_READY)
 
         if refresh_consumers:
             self._queue_stream_refreshes(refresh_delivery)
@@ -584,8 +712,30 @@ class TelemetryCoordinator:
         return _Delivery(operation, receipt)
 
     def _queue_control(self, payload, delivery: _Delivery | None) -> None:
+        completion = None
+        if self._admission_connected:
+            with self._lock:
+                if self._reset_completion is not None:
+                    self._reset_completion.done.set()
+                if (
+                    (
+                        payload is _FLEET_REFRESH
+                        or (isinstance(payload, _FleetMode) and payload.enabled)
+                    )
+                    and not self._source_closed
+                    and not self._stop_requests
+                ):
+                    generation = (
+                        payload.generation
+                        if isinstance(payload, _FleetMode)
+                        else self._fleet_requested_generation
+                    )
+                    completion = _ResetCompletion(generation)
+                self._reset_completion = completion
         self._queue.put(
-            _Associated(payload, delivery) if self._source_admission else payload
+            _Associated(payload, delivery, completion)
+            if self._source_admission
+            else payload
         )
 
     def _request_fleet_mode(self, enabled: bool) -> int:
@@ -666,8 +816,13 @@ class TelemetryCoordinator:
 
     def close_source_admission(self) -> None:
         """Irreversible, independent of ordinary stop/restart and custom admission."""
-        if self._source_admission is not None:
-            self._source_admission._close()
+        with self._lifecycle_lock, self._lock:
+            self._source_closed = True
+            if self._source_admission is not None:
+                self._source_admission._close()
+            if self._reset_completion is not None:
+                self._reset_completion.done.set()
+                self._reset_completion = None
 
     def stream_health(self) -> StreamHealth:
         """Current shared reader health for the existing Alerts card."""
@@ -741,9 +896,12 @@ class TelemetryCoordinator:
     def _on_admitted_stream(
         self, batch: StreamBatch, delivery: _Delivery | None, delivery_epoch: int
     ) -> None:
-        self._on_stream_batch(
-            batch, delivery_epoch, _associated=_Associated(batch, delivery)
+        associated = (
+            _Associated(batch, delivery)
+            if batch.events or (delivery is not None and delivery.reset is not None)
+            else None
         )
+        self._on_stream_batch(batch, delivery_epoch, _associated=associated)
 
     def _on_stream_batch(
         self,
@@ -901,6 +1059,9 @@ class TelemetryCoordinator:
         self._fleet_roster_generation = None
         self._fleet_has_complete_roster = False
         with self._lock:
+            if self._reset_completion is not None:
+                self._reset_completion.done.set()
+                self._reset_completion = None
             self._end_control_locked()
             self._fleet_requested = False
             self._alerts_requested = False
@@ -943,32 +1104,43 @@ class TelemetryCoordinator:
         observable rather than pretending teardown completed.
         """
         deadline = self._clock() + max(0.0, timeout)
-        with self._reconcile_lock:
+        # Cancel a waiting reconcile before taking its pass lock. The dispatcher
+        # never acquires that lock; stop may subsequently hold it while joining.
+        with self._lifecycle_lock, self._lock:
+            self._startup_serial += 1
+            self._stop_requests += 1
+            if self._reset_completion is not None:
+                self._reset_completion.done.set()
+                self._reset_completion = None
+            receipt = self._control_receipt
+            if receipt is not None:
+                self._source_admission._stop("control", receipt.lifetime)
+        try:
+            with self._reconcile_lock:
+                self._advance_custom_delivery(open_admission=False)
+                services_stopped = False
+                for _ in range(2):
+                    self._reconcile_discovery(False, deadline=deadline)
+                    self._reconcile_stream(None, deadline=deadline)
+                    with self._lock:
+                        services_stopped = (
+                            not self._discovery_started and self._stream_folder is None
+                        )
+                    if services_stopped:
+                        break
+                self._stop_dispatcher(self._remaining_timeout(deadline))
+                with self._lifecycle_lock:
+                    dispatcher_stopped = self._worker is None
+                completed = services_stopped and dispatcher_stopped
+                if completed:
+                    with self._lock:
+                        self._end_control_locked()
+                if not completed:
+                    logger.error("EVE telemetry workers did not stop cleanly")
+                return completed
+        finally:
             with self._lock:
-                receipt = self._control_receipt
-                if receipt is not None:
-                    self._source_admission._stop("control", receipt.lifetime)
-            self._advance_custom_delivery(open_admission=False)
-            services_stopped = False
-            for _ in range(2):
-                self._reconcile_discovery(False, deadline=deadline)
-                self._reconcile_stream(None, deadline=deadline)
-                with self._lock:
-                    services_stopped = (
-                        not self._discovery_started and self._stream_folder is None
-                    )
-                if services_stopped:
-                    break
-            self._stop_dispatcher(self._remaining_timeout(deadline))
-            with self._lifecycle_lock:
-                dispatcher_stopped = self._worker is None
-            completed = services_stopped and dispatcher_stopped
-            if completed:
-                with self._lock:
-                    self._end_control_locked()
-            if not completed:
-                logger.error("EVE telemetry workers did not stop cleanly")
-            return completed
+                self._stop_requests -= 1
 
     def dispatch_once(self, timeout: float = PUBLISH_INTERVAL_S) -> None:
         """Drive one iteration synchronously when no worker is alive.
@@ -1000,6 +1172,7 @@ class TelemetryCoordinator:
         ``_publish``. A sound played and a preview ring lit AFTER
         ``stop()`` had returned, against previews already torn down.
         """
+        self._dispatch_owner = stop_event
         try:
             item = self._queue.get(timeout=timeout)
         except queue.Empty:
@@ -1050,13 +1223,19 @@ class TelemetryCoordinator:
         self._publish()
 
     def _process(
-        self, payload, alerts: list[AlertEvent], control: _Delivery | None = None
+        self,
+        payload,
+        alerts: list[AlertEvent],
+        control: _Delivery | None = None,
+        completion: _ResetCompletion | None = None,
     ) -> bool:
         """Stamp one payload and fan it out. Return actual successful application."""
         if isinstance(payload, _Associated):
-            value, delivery = payload
+            value, delivery = payload.payload, payload.delivery
             if isinstance(value, _FleetMode) or value is _FLEET_REFRESH:
-                self._process(value, alerts, control=delivery)
+                self._process(
+                    value, alerts, control=delivery, completion=payload.completion
+                )
                 return False
             if isinstance(value, StreamBatch):
                 complete = True
@@ -1077,11 +1256,18 @@ class TelemetryCoordinator:
                 self._republish_sources(value)
             return False
         if isinstance(payload, _FleetMode):
-            self._apply_fleet_mode(payload, control)
+            self._apply_fleet_mode(payload, control, completion)
             return False
         if payload is _FLEET_REFRESH:
             if self._fleet_active:
-                self._reset_fleet_state(prime=True, control=control)
+                self._reset_fleet_state(
+                    prime=True, control=control, completion=completion
+                )
+            else:
+                self._signal_reset(completion, False)
+            return False
+        if payload is _SOURCE_READY:
+            self._request_source_reseed()
             return False
         if payload is _ALERT_RESET:
             alerts.clear()
@@ -1202,16 +1388,22 @@ class TelemetryCoordinator:
             logger.exception("Alert policy raised while resetting cooldowns")
 
     def _apply_fleet_mode(
-        self, mode: _FleetMode, control: _Delivery | None = None
+        self,
+        mode: _FleetMode,
+        control: _Delivery | None = None,
+        completion: _ResetCompletion | None = None,
     ) -> None:
         """Reset Fleet state and prime a newly enabled current roster."""
         if mode.enabled == self._fleet_active:
             if mode.enabled:
                 self._fleet_active_generation = mode.generation
+            self._signal_reset(completion, False)
             return
         self._fleet_active = mode.enabled
         self._fleet_active_generation = mode.generation if mode.enabled else 0
-        self._reset_fleet_state(prime=mode.enabled, control=control)
+        self._reset_fleet_state(
+            prime=mode.enabled, control=control, completion=completion
+        )
 
     def _reset_metrics(self) -> bool:
         authority = self._source_admission
@@ -1227,14 +1419,20 @@ class TelemetryCoordinator:
             self._poison_source("metrics reset failed")
             return False
         if self._reseed_boundary is not None:
-            authority._reset_applied(self._reseed_boundary)
+            return authority._reset_applied(self._reseed_boundary)
         return True
 
     def _reset_fleet_state(
-        self, *, prime: bool, control: _Delivery | None = None
+        self,
+        *,
+        prime: bool,
+        control: _Delivery | None = None,
+        completion: _ResetCompletion | None = None,
     ) -> None:
         """Clear old bindings; optionally seed from current discovery."""
-        if not self._reset_metrics():
+        succeeded = self._reset_metrics()
+        self._signal_reset(completion, succeeded)
+        if not succeeded:
             return
         boundary = self._reseed_boundary
         if boundary is not None and control is not None:
@@ -1311,19 +1509,7 @@ class TelemetryCoordinator:
         self._sessions = current
         if not running:
             return
-        boundary = self._reseed_boundary
-        if (
-            self._admission_connected
-            and boundary is not None
-            and self._reseed_roster
-            and not self._reseed_sources_requested
-        ):
-            self._reseed_sources_requested = True
-            try:
-                self._stream._restate_admission(tuple(current), boundary)
-            except Exception:
-                logger.exception("Could not restate current log sources")
-                self._poison_source("source restatement failed")
+        if self._request_source_reseed():
             return
         for character in new:
             try:
@@ -1331,6 +1517,26 @@ class TelemetryCoordinator:
             except Exception:
                 logger.exception("Could not request the log source for %s", character)
                 self._poison_source("source republication failed")
+
+    def _request_source_reseed(self) -> bool:
+        boundary = self._reseed_boundary
+        with self._lock:
+            running = self._stream_folder is not None
+        if not (
+            self._admission_connected
+            and running
+            and boundary is not None
+            and self._reseed_roster
+            and not self._reseed_sources_requested
+        ):
+            return False
+        self._reseed_sources_requested = True
+        try:
+            self._stream._restate_admission(tuple(self._sessions), boundary)
+        except Exception:
+            logger.exception("Could not restate current log sources")
+            self._poison_source("source restatement failed")
+        return True
 
     def _dispatch_alerts(
         self, alerts: list[AlertEvent], custom_matches: tuple[CustomMatch, ...] = ()
