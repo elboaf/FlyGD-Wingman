@@ -15,6 +15,40 @@ dev checks are separate evidence, not installed Windows/WebView2 acceptance.
 
 Run on Windows against a real install before each release.
 
+## Screenshot UX step 2 — installed Windows acceptance NOT RUN
+
+Uploading/General has bounded synthetic Chromium checks at 1015×633 and
+840×625, not installed WebView2 acceptance. Run at 100/125/150/200% scaling;
+record build, checkout and scaling. No live webhook was used in automated tests.
+
+- [ ] YouTube keeps all account/default content. Account action stays beside
+      its status; Privacy and Category read as peers. Enter still commits
+      Category; changing tabs preserves drafts and scroll.
+- [ ] Recording folder heading and notification choices fit at both sizes.
+      Longer errors still scroll normally. Changing folders retains existing
+      recordings in the list, unticked and not announced as new.
+- [ ] FightRecorder local load shows only Installed/Not installed; no install
+      action or release claim. Explicit digest match shows Installed · tag ·
+      Up to date. A mismatch shows release version unavailable, Latest: tag,
+      and Update; absence offers Install only after a successful check.
+      Failed checks (including an unreadable DLL or missing release checksum)
+      preserve presence and hide the offer. Declined UAC or a failed install
+      remains visible even if the subsequent local refresh fails or OBS disappears.
+- [ ] With an authorized disposable webhook, explicit Enter save identifies
+      and caches the **webhook name**, not its channel. An unavailable lookup
+      still saves a valid URL and warns that its name could not be identified.
+      Existing nameless webhooks offer Identify webhook. Hydration, route/tab
+      entry and Show do not contact Discord. Lookup/persistence failures never
+      attach an old name to a replacement URL or claim an unsaved name is saved.
+      A delayed settings refresh after an acknowledged Save, Identify or Remove
+      must not restore the old identity, URL, or control availability.
+- [ ] Show remains masked by default and remasks on leaving Combat logs.
+      Remove confirms with the cached name when known, clears URL and name,
+      and never reveals a token. Tab/Shift+Tab focus and status announcements
+      remain usable with long names/errors and pending lookup replies.
+- [ ] General Export/Import are content-width buttons; export/import review,
+      the Uploader's action width, and upload/update admission are unchanged.
+
 ## Clarity follow-up — installed Windows acceptance NOT RUN (2026-09-14)
 
 Source-worktree evidence (2026-09-14–15): the full main-window capture and
@@ -347,8 +381,8 @@ synthetic presentation checks separate from authorized live operations.
       prove actual bookmark-engine liveness or physical key delivery. Open
       Bookmarks follows the normal section route and disarms Preview capture.
 - [ ] Webhook Enter-to-save guidance is visible before editing; blur never
-      commits. Unknown FightRecorder update status leaves Install latest
-      available but neutral. General groups Startup distinctly, Fleet help
+      commits. Unknown FightRecorder update status hides Install/Update
+      until an explicit successful check. General groups Startup distinctly, Fleet help
       preserves local/sharing scope and visible error feedback, and bookmark
       reset names its full scope. Check long text without shrinking the type.
 
@@ -828,18 +862,17 @@ somewhere stale and nothing on that screen is worth reviewing.
 - [ ] Recording folder is pre-filled from OBS config without being asked
 - [ ] **The FightRecorder card reports locally and only checks the
       network when asked.** Settings, the card under Recording folder.
-      On load the status line reads from disk only — "Up to date.",
-      "Not installed.", or "OBS Studio was not detected." — and no
-      GitHub request has fired. Press **Check for updates**: the line
-      gains a release tag and an update verdict ("An update is
-      available (v1.1.2)." / "Up to date."). With the machine offline,
-      the check reports that it could not reach GitHub instead of
-      clearing the installed/not-installed state. **Install** /
-      **Update** appears only when there is something to install; on a
-      Program Files OBS it raises one UAC prompt, and declining it
-      produces a status-line error, never a crash. After a successful
-      update the line names the new release and OBS's plugin directory
-      holds the new DLL (verify the bytes changed if the release did).
+      On load the status line reads from disk only — Installed or
+      Not installed — without a release tag or Install/Update offer.
+      OBS absence has separate feedback. Press **Check for updates**:
+      only a matching release digest identifies the installed tag as
+      Up to date. A mismatch reports release version unavailable and
+      Latest: tag with Update; absence offers Install. An offline check
+      reports failure without clearing local presence or offering install.
+      On a Program Files OBS, installation raises one UAC prompt; declining
+      it leaves an error visible through the following local-only refresh.
+      After success, verify the new DLL bytes; check explicitly again to
+      establish release identity. Never use embedded DLL version metadata.
 - [ ] With OBS absent, the in-app first-run folder screen appears instead of
       a bare OS dialog — see the LOAD-BEARING first-run item under
       Settings > Folder dialogs for the full check.
@@ -1500,12 +1533,13 @@ lifecycle checks are separate evidence, not native acceptance.
       reopen the dialog and confirm it is masked again. The webhook is a
       credential — anyone holding it can post to the channel.
 - [ ] **Pasting into the masked webhook field still works.** Copy a webhook
-      URL, paste into the masked field, confirm the line beneath resolves to
-      `discord.com/api/webhooks/{id}…` (the id, never the token).
+      URL, paste into the masked field and press Enter. Confirm the line
+      becomes `Webhook: <name>` or `Webhook saved · name unavailable` with
+      a saved-but-unidentified warning. The name is not a channel identity.
 - [ ] **An invalid webhook says what is wrong.** Type `http://discord.com/api/webhooks/1/2`
-      (http, not https). Expected: the line beneath reads "Webhook URL must
-      use https.", not "not configured". Clear the field entirely and
-      confirm it returns to "not configured".
+      (http, not https) and press Enter. Expected: inline validation explains
+      the refusal, while the saved identity remains unchanged. Clearing the
+      field alone never removes the saved webhook.
 - [ ] **Click Connect Google Account while the account state is still
       resolving.** On a cold app start, open Settings and click Connect
       immediately, while the label still reads "Checking…". Expected: the
@@ -1765,15 +1799,13 @@ behavior that only shows up at size.
       behaviour: with no Cancel button and no pre-edit copy anywhere on the
       page, a stray edit used to destroy a credential with no way back.
 - [ ] **Remove clears it.** Press **Remove** next to the field. Expected:
-      the webhook is cleared and the status line says not configured.
-      Removal is an explicit action now, never a side effect.
-- [ ] **The webhook summary label tracks what you type.** In Settings, with
-      a webhook already configured, paste a *different* valid webhook URL
-      over it. Expected: the summary line underneath updates immediately to
-      the new webhook's id — it must not keep describing the previous one.
-      Type something invalid and it reads "not configured"; clear the field
-      and it reads "not configured" too. At no point does the label show the
-      token portion of the URL.
+      confirmation precedes removal of both URL and cached name. The status
+      says No Discord webhook saved. Removal is never a side effect.
+- [ ] **The webhook summary describes saved state, not a draft.** Paste a
+      different valid URL and press Enter. The accepted reply names only the
+      new webhook, or reports its name unavailable; it never retains the old
+      name. Invalid/empty submissions leave the previous saved identity intact.
+      At no point does the status or error show the URL/token.
 - [ ] **Gamelogs folder not found.** Rename your `Gamelogs` folder (or run
       from an account with no EVE install) with no `gamelogs_dir` set in
       Settings, then press **Upload**. Expected:

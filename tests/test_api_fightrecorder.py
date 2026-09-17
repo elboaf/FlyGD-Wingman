@@ -48,14 +48,19 @@ def fake_fr(monkeypatch):
     return install
 
 
-def test_status_is_local_until_asked(tmp_path, fake_fr):
+@pytest.mark.parametrize("installed", [None, r"C:\obs\obs-fightrecorder.dll"])
+def test_status_is_local_until_asked(tmp_path, fake_fr, installed):
     """Opening Settings must not touch the network: no check, no
     latest_release call, and up_to_date stays None (an absence, which
     the page renders as no verdict, not as a lie)."""
     api = make_api(tmp_path)
-    fake_fr()
+
+    def forbidden():
+        pytest.fail("Local status must not fetch a release")
+
+    fake_fr(dll_path=lambda: installed, latest_release=forbidden)
     res = api.fightrecorder_status()
-    assert res["installed"] is True
+    assert res["installed"] is (installed is not None)
     assert res["up_to_date"] is None
     assert res["latest_tag"] == ""
 
@@ -85,6 +90,36 @@ def test_status_reports_an_offline_check_without_losing_the_local_half(
     res = api.fightrecorder_status(check=True)
     assert res["installed"] is True  # the local half survives
     assert "GitHub" in res["error"]
+
+
+@pytest.mark.parametrize("installed", [None, r"C:\obs\obs-fightrecorder.dll"])
+def test_check_without_asset_digest_fails_without_losing_local_presence(
+    tmp_path, fake_fr, installed
+):
+    api = make_api(tmp_path)
+    fake_fr(
+        dll_path=lambda: installed,
+        latest_release=lambda: {"tag": "v1.2.5", "url": "https://x", "digest": ""},
+    )
+    res = api.fightrecorder_status(check=True)
+    assert res["installed"] is (installed is not None)
+    assert res["up_to_date"] is None
+    assert res["error"], "A tag without a digest cannot offer a verified installation"
+
+
+def test_status_digest_read_failure_preserves_presence_without_release_claim(
+    tmp_path, fake_fr
+):
+    api = make_api(tmp_path)
+
+    def unreadable(path):
+        raise OSError("file locked")
+
+    fake_fr(sha256_file=unreadable)
+    res = api.fightrecorder_status(check=True)
+    assert res["installed"] is True
+    assert res["up_to_date"] is None
+    assert res["error"]
 
 
 def test_status_without_obs_reports_not_detected(tmp_path, fake_fr):

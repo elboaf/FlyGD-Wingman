@@ -16,9 +16,8 @@
   // _folder_note in ui/api.py -- because it depends on the folder chosen.
   // Not "data loss": the recordings are still listed, they simply arrive
   // unticked and unannounced.
-  var FOLDER_COST = 'Changing the recording folder starts watching it. '
-                  + 'Recordings already there won\u2019t be announced, and '
-                  + 'arrive unticked in the list.';
+  var FOLDER_COST = 'Watch this folder. Existing recordings stay listed, '
+                  + 'unticked and not announced as new.';
 
   // The gamelogs folder's own cost, and it is a DIFFERENT one -- which is
   // why round 5's E2 was a defect rather than a wording problem. The two
@@ -40,6 +39,7 @@
   var TARGET_NOUN = { recording: 'recording', gamelogs: 'gamelogs' };
 
   var current = {};    // hydrated values, advanced by accepted field writes
+  var webhookRevision = 0;
   var detected = {};   // detected-folder suggestions from the same payload
 
   // ---- Update status (About card) --------------------------------------
@@ -255,12 +255,14 @@
     var request = ++state.request;
     var edit = ++state.edit;
     state.pending += 1;
+    if (key === 'discord_webhook') { updateWebhookIdentify(); }
     var message = (messageGeneration[slot] || 0) + 1;
     messageGeneration[slot] = message;
     state.tail = state.tail.then(function () {
       return WM.send.apply(null, args);
     }).then(function (res) {
       state.pending -= 1;
+      if (key === 'discord_webhook') { updateWebhookIdentify(); }
       var unchanged = state.request === request && state.edit === edit;
       var ownsMessage = unchanged && messageGeneration[slot] === message;
       // WM.send resolves to null on bridge failure (app.js). Refusal
@@ -292,7 +294,7 @@
         return;
       }
       // Folder notes report the real rebind cost, not an unsaved warning.
-      sayCommit(slot, res.note || '');
+      sayCommit(slot, res.warning || res.note || '', res.warning ? 'warn' : '');
     });
   }
 
@@ -331,6 +333,10 @@
   function render(payload) {
     var s = payload.settings || {};
     var d = payload.detected || {};
+    // A settings read can finish after the webhook queue drains. Its pair
+    // must not undo a newer receipt, while unrelated imported fields still render.
+    var acceptWebhook = !pending('discord_webhook')
+      && (payload.webhook_revision || 0) >= webhookRevision;
     var values = {
       privacy: s.privacy || 'unlisted', category: s.category || '20',
       notify_mode: s.notify_mode || 'toast', show_eve_tools: s.show_eve_tools !== false,
@@ -342,6 +348,7 @@
     // A document received during a write may predate it. Keep that
     // field's baseline and draft; its own acknowledgement settles both.
     Object.keys(values).forEach(function (key) {
+      if (key === 'discord_webhook' && !acceptWebhook) { return; }
       if (!pending(key)) { current[key] = values[key]; }
     });
     detected = d;
@@ -378,14 +385,7 @@
     // The input holds the REAL value and the browser draws the mask, so
     // the mask can never be written back over the stored webhook — the
     // failure mode a hand-rolled bullet string invites.
-    setField('f-webhook', current.discord_webhook);
-    // webhook_status() is a pure Python function with its own test and is
-    // the only description of what is stored; discord.describe omits the
-    // token by construction. TOP-LEVEL key, and never reconstructed here.
-    if (!pending('discord_webhook')) {
-      WM.el('webhook-status').textContent = payload.webhook_status
-        || (current.discord_webhook ? '' : 'not configured');
-    }
+    if (acceptWebhook) { setField('f-webhook', current.discord_webhook); }
     // X1 / Settings 14. Show reveals nothing and Remove removes nothing
     // when there is no webhook stored, and both rendered at full strength.
     // The app already KNOWS neither can act from the state it is holding,
@@ -396,8 +396,9 @@
     // The FIELD stays live -- it is the only route back out of the state
     // that disabled these two, which the helper's own comment forbids
     // closing off.
-    if (!pending('discord_webhook')) {
-      renderWebhook(payload.webhook_status, !!current.discord_webhook);
+    if (acceptWebhook) {
+      renderWebhook(payload.webhook_status, !!current.discord_webhook,
+                    s.discord_webhook_name || '', payload.webhook_revision);
     }
     // Round 3, B11 and R4's finding 1. This slot used to explain what
     // Detect READS, which is the least valuable thing on the card and was
@@ -616,6 +617,24 @@
   // ---- webhook mask ---------------------------------------------------
   var webhook = WM.el('f-webhook');
   var showBtn = WM.el('btn-webhook-show');
+  var webhookName = '';
+
+  function updateWebhookIdentify() {
+    var available = !!current.discord_webhook && !webhookName;
+    WM.el('btn-webhook-identify').hidden = !available;
+    WM.setEnabled('btn-webhook-identify', available && !pending('discord_webhook'));
+  }
+
+  WM.el('btn-webhook-identify').addEventListener('click', function () {
+    if (!hydrated || !current.discord_webhook || webhookName || pending('discord_webhook')) { return; }
+    // Share the URL's queue: a later Save/Remove cannot be overtaken by
+    // identity metadata, and the masked input keeps any unsubmitted draft.
+    commit('msg-discord', ['identify_discord_webhook'],
+           'discord_webhook', current.discord_webhook, null,
+           function (res, value) {
+             renderWebhook(res.webhook_status, !!value, res.webhook_name || '', res.webhook_revision);
+           });
+  });
 
   showBtn.addEventListener('click', function () {
     var revealed = webhook.type === 'text';
@@ -640,7 +659,7 @@
            'discord_webhook', webhook.value.trim(),
            function () { webhook.value = current.discord_webhook; },
            function (res, value) {
-             renderWebhook(res.webhook_status, !!value);
+             renderWebhook(res.webhook_status, !!value, res.webhook_name || '', res.webhook_revision);
            });
   });
 
@@ -666,13 +685,8 @@
   // A confirm that says "the webhook" on a screen showing a row of dots
   // asks the user to approve something they still cannot identify.
   WM.el('btn-webhook-remove').addEventListener('click', function () {
-    // webhook_status() renders a PARSE ERROR for a stored value it cannot
-    // read, not only a description, so the line is interpolated as a name
-    // only when it is one. Dropping to "this webhook" loses nothing the
-    // dots on screen were telling the user anyway.
-    var status = WM.el('webhook-status');
-    var line = (status && status.textContent) || '';
-    var which = (line.indexOf('/api/webhooks/') !== -1) ? line : 'this webhook';
+    // This is a webhook name, never a claim about the destination channel.
+    var which = webhookName ? 'Webhook: ' + webhookName : 'this webhook';
     WM.confirm('Remove webhook',
                'Combat logs stop being posted to ' + which + ' — and '
              + 'Wingman cannot get the URL back. You would create a new '
@@ -683,7 +697,7 @@
         commit('msg-discord', ['clear_discord_webhook'], 'discord_webhook', '', null,
                function (res, value, unchanged) {
                  if (unchanged) { webhook.value = value; }
-                 renderWebhook(res.webhook_status, false);
+                 renderWebhook(res.webhook_status, false, '', res.webhook_revision);
                });
       });
   });
@@ -693,11 +707,14 @@
   // than one of them doing half of it. `status` is Python's
   // copy.webhook_status and is never reconstructed here; a caller with
   // nothing to say passes undefined and the line is left alone.
-  function renderWebhook(status, configured) {
+  function renderWebhook(status, configured, name, revision) {
+    webhookRevision = Math.max(webhookRevision, revision || 0);
+    webhookName = name || '';
     if (status !== undefined) {
       WM.el('webhook-status').textContent = status
-        || (configured ? '' : 'not configured');
+        || (configured ? 'Webhook saved · name unavailable' : 'No Discord webhook saved');
     }
+    updateWebhookIdentify();
     // X1 / Settings 14. Show reveals nothing and Remove removes nothing
     // when there is no webhook stored, and both rendered at full strength.
     // The app already KNOWS neither can act from the state it is holding,
@@ -1793,37 +1810,32 @@
     var checkBtn = WM.el('btn-fr-check');
     var updateBtn = WM.el('btn-fr-update');
     var msg = WM.el('msg-fightrecorder');
-    if (!status || !checkBtn || !updateBtn || !msg) { return; }
+    var latest = WM.el('fr-latest');
+    if (!status || !checkBtn || !updateBtn || !msg || !latest) { return; }
+    var local = null;
 
-    function paint(res) {
-      var text;
-      var canInstall = false;
-      if (!res) {
-        text = 'Could not read the plugin state.';
-      } else if (res.error) {
-        text = res.error;
-      } else if (!res.detected) {
-        text = 'OBS Studio was not detected.';
-      } else if (!res.installed) {
-        text = 'Not installed.';
-        canInstall = true;
-      } else if (res.up_to_date === true) {
-        text = 'Up to date.';
-      } else if (res.up_to_date === false) {
-        text = 'An update is available' +
-               (res.latest_tag ? ' (' + res.latest_tag + ')' : '') + '.';
-        canInstall = true;
-      } else {
-        text = 'Installed — update status unknown.' +
-               (res.latest_tag ? ' Latest release: ' + res.latest_tag + '.' : ' Check for updates.');
-        canInstall = true;
+    function paint(res, checked, preserveError) {
+      if (res) { local = res; }
+      var text = local ? (local.installed ? 'Installed' : 'Not installed')
+                       : 'Plugin state unavailable';
+      var verified = !!(checked && res && !res.error && res.latest_tag);
+      var currentRelease = verified && res.installed && res.up_to_date === true;
+      if (currentRelease) {
+        text += ' · ' + res.latest_tag + ' · Up to date';
+      } else if (verified && res.installed) {
+        text += ' · release version unavailable';
       }
       status.textContent = text;
+      latest.textContent = verified && !currentRelease ? 'Latest: ' + res.latest_tag : '';
+      latest.hidden = !latest.textContent;
+      var canInstall = verified && res.detected && (!res.installed || res.up_to_date === false);
       updateBtn.hidden = !canInstall;
-      // Unknown currency still permits recovery, but does not recommend installation.
-      updateBtn.classList.toggle('acc', canInstall && (!res.installed || res.up_to_date === false));
-      updateBtn.textContent = res && res.installed
-        ? (res.up_to_date === false ? 'Update' : 'Install latest') : 'Install';
+      updateBtn.classList.toggle('acc', !!canInstall);
+      updateBtn.textContent = local && local.installed ? 'Update' : 'Install';
+      if (preserveError) { return; }
+      if (!res) { sayError('Could not read the plugin state.'); }
+      else if (res.error) { sayError(res.error); }
+      else if (!res.detected) { sayError('OBS Studio was not detected.'); }
     }
 
     function sayError(text) {
@@ -1834,14 +1846,15 @@
     function busy(on) {
       WM.setEnabled('btn-fr-check', !on);
       WM.setEnabled('btn-fr-update', !on);
-      if (on) { msg.hidden = true; }
     }
 
-    function refresh(live) {
+    function refresh(live, preserveError) {
       busy(true);
+      updateBtn.hidden = true;
+      if (live) { msg.hidden = true; }
       WM.send('fightrecorder_status', !!live).then(function (res) {
         busy(false);
-        paint(res);
+        paint(res, live, preserveError);
       });
     }
 
@@ -1849,14 +1862,15 @@
 
     updateBtn.addEventListener('click', function () {
       busy(true);
+      msg.hidden = true;
       status.textContent = 'Downloading and installing…';
       WM.send('update_fightrecorder').then(function (res) {
         busy(false);
-        if (!res) { sayError('Could not reach the installer.'); return; }
-        if (!res.ok) { sayError(res.error || 'The update did not happen.'); }
-        else { status.textContent = 'Updated to ' + res.tag + '.'; }
-        // The local half re-runs so the buttons match what is on disk.
-        refresh(false);
+        if (!res) { sayError('Could not reach the installer.'); }
+        else if (!res.ok) { sayError(res.error || 'The update did not happen.'); }
+        // The local half re-runs so presence matches disk, without clearing
+        // an installer failure or claiming a version from a local-only read.
+        refresh(false, !res || !res.ok);
       });
     });
 

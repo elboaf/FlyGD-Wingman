@@ -17,7 +17,7 @@ import pytest
 
 from tests import fakes
 from tests.test_api_settings import settings_api
-from wingman import discord, paths
+from wingman import paths
 from wingman.ui import api as api_mod
 
 # ---- shape ------------------------------------------------------------
@@ -191,7 +191,8 @@ def test_setting_a_webhook_returns_the_new_summary_line(monkeypatch, tmp_path):
     result = api.set_discord_webhook(url)
 
     assert result["applied"] is True
-    assert result["webhook_status"] == discord.describe(discord.parse_webhook(url)[0])
+    assert result["webhook_status"] == "Webhook saved · name unavailable"
+    assert result["webhook_name"] == ""
 
 
 def test_clearing_a_webhook_returns_the_not_configured_line(monkeypatch, tmp_path):
@@ -205,7 +206,7 @@ def test_clearing_a_webhook_returns_the_not_configured_line(monkeypatch, tmp_pat
         },
     )
 
-    assert api.clear_discord_webhook()["webhook_status"] == "not configured"
+    assert api.clear_discord_webhook()["webhook_status"] == "No Discord webhook saved"
 
 
 def test_a_refused_webhook_does_not_restate_the_summary(monkeypatch, tmp_path):

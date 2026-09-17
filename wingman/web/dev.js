@@ -447,7 +447,7 @@
   // exercise. There is no Save button to exercise any more; each of these
   // is a commit on its own.
   ['set_privacy', 'set_notify_mode', 'set_category',
-   'set_discord_webhook', 'clear_discord_webhook',
+   'set_discord_webhook', 'clear_discord_webhook', 'identify_discord_webhook',
    'set_alert_enabled', 'set_alert_pve_filter', 'set_alert_persist',
    'set_alert_volume',
    // M3. Same three-key shape, and it belongs in this list rather than the
@@ -492,16 +492,18 @@
    'apply_preview_default_size'
   ].forEach(function (name) {
     api[name] = function (value) {
-      console.log('DEV api.' + name + '(', value, ')');
+      console.log('DEV api.' + name + '(', name.indexOf('discord_webhook') !== -1 ? '[webhook]' : value, ')');
       var res = {applied: true, persisted: true, error: null};
-      // The two webhook endpoints carry the new summary line back on their
+      // The webhook endpoints carry the new summary line back on their
       // own return, because nothing repaints the Settings route after page
       // load. A double without it leaves the harness showing the stale
       // line this fixes -- which is the bug, not the fix.
-      if (name === 'set_discord_webhook') {
-        res.webhook_status = 'discord.com/api/webhooks/1…';
+      if (name === 'set_discord_webhook' || name === 'identify_discord_webhook') {
+        res.webhook_status = 'Webhook: Fleet recordings';
+        res.webhook_name = 'Fleet recordings';
       } else if (name === 'clear_discord_webhook') {
-        res.webhook_status = 'not configured';
+        res.webhook_status = 'No Discord webhook saved';
+        res.webhook_name = '';
       }
       return Promise.resolve(res);
     };
@@ -2174,6 +2176,7 @@
           recording_dir: 'D:\\Videos',
           gamelogs_dir: 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs',
           discord_webhook: 'https://discord.com/api/webhooks/1/tok',
+          discord_webhook_name: 'Fleet recordings',
           channel_id: 'UC123', channel_title: 'FlyGD',
           // Was entirely absent before the Alerts card: _settings_payload
           // ships preview.alerts for free (a shallow dict(cfg)), so this
@@ -2235,15 +2238,10 @@
           // contract allows this bar to stay live with previews off.
           fleet_bar: fleetBarState()
         }, patch || {}),
-      // discord.describe()'s shape for the fake webhook stored above, not
-      // a prose invention: it is host/api/webhooks/<id>… by construction,
-      // and settings.js reads that shape to tell a description apart from
-      // a parse error before naming the webhook in the Remove confirm. A
-      // fixture in a different shape made that branch untestable by hand
-      // -- the dialog said "this webhook" in the harness and named it in
-      // the app. tests/test_settings_page.py holds the two in step.
+      // Cached webhook display metadata, not the destination channel.
+      // Keep the fixture in step with ui/copy.py's local-only summary.
       webhook_status: statusLine === undefined
-        ? 'discord.com/api/webhooks/1…' : statusLine,
+        ? 'Webhook: Fleet recordings' : statusLine,
       detected: { recording: 'D:\\Videos',
                   gamelogs: 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs' },
       destination: 'Uploads go to FlyGD \u00b7 unlisted',

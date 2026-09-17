@@ -4199,6 +4199,24 @@ button.btn:disabled,
 }
 .settings-subpage > .card > h2::before { display: none; }
 .settings-subpage .hint, .settings-subpage .field-msg { max-width: 72ch; }
+/* These are peers within upload defaults, not two full-width sections. */
+.upload-defaults {
+  display: grid; grid-template-columns: 150px minmax(180px, 1fr);
+  gap: 20px; max-width: 480px; align-items: start;
+}
+/* Keep the folder context visible with the notification choices without
+   changing the tab's scroll owner or discarding retained scroll. */
+#settings-uploading-recording > .card + .card {
+  padding-top: 14px; margin-top: 14px;
+}
+#settings-uploading-recording > .card > h2 { margin-bottom: 10px; }
+.webhook-identity {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px;
+  margin-top: 12px;
+}
+.webhook-identity > .operational-status { margin: 0; min-width: 0; }
+/* Backup is a pair of ordinary actions, not the Uploader's full-width CTA. */
+.settings-backup-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .settings-disclosure {
   border-bottom: 1px solid var(--field-border); padding-bottom: 17px; margin-bottom: 17px;
 }

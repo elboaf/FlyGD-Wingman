@@ -29,9 +29,12 @@ MAX_BYTES = 4 * 1024 * 1024
 # they are learned from the last upload's videos.insert response and are a
 # property of the connected Google account, so exporting them would only
 # make the recipient's Settings card describe a channel they are not signed
-# into. All three are dropped on export and dropped again on import, so a
-# hand-edited entry in a shared file can never reach the live document.
-EXCLUDED_KEYS = frozenset({"discord_webhook", "channel_id", "channel_title"})
+# into. The webhook name is likewise bound to the local credential. These
+# keys are dropped on export and again on import, so a hand-edited entry in
+# a shared file cannot rename the recipient's webhook or account.
+EXCLUDED_KEYS = frozenset(
+    {"discord_webhook", "discord_webhook_name", "channel_id", "channel_title"}
+)
 
 
 class SettingsShareError(ValueError):

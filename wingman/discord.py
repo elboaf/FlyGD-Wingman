@@ -7,8 +7,10 @@ Nothing here may ever surface one in full.
 """
 
 import contextlib
+import json
 import logging
 import mimetypes
+import re
 import traceback
 import urllib.error
 import urllib.request
@@ -61,7 +63,7 @@ def parse_webhook(raw: str | None) -> tuple[Webhook | None, str]:
     if parsed.scheme != "https":
         return None, "Webhook URL must use https."
     if parsed.hostname is None or parsed.hostname.lower() not in _ALLOWED_HOSTS:
-        return None, f"'{parsed.hostname}' is not a Discord webhook host."
+        return None, "That is not a Discord webhook host."
     parts = [p for p in parsed.path.split("/") if p]
     if len(parts) < 4 or parts[0] != "api" or parts[1] != "webhooks":
         return None, (
@@ -197,6 +199,57 @@ _opener = urllib.request.build_opener(_NoRedirectHandler)
 
 def _default_transport(request, timeout=None):
     return _opener.open(request, timeout=timeout)
+
+
+def safe_webhook_name(webhook: Webhook | None, name: object) -> str:
+    """Untrusted metadata must not turn a masked credential into an identity."""
+    if webhook is None or not isinstance(name, str) or not 1 <= len(name) <= 80:
+        return ""
+    if not name.isprintable() or not name.strip():
+        return ""
+    # Unlike log redaction, even a short token must not become UI copy. Reject
+    # echoes rather than displaying a partly redacted credential as a name.
+    if webhook.token in name or "://" in name or "api/webhooks/" in name:
+        return ""
+    return name.strip()
+
+
+def identify_webhook(webhook: Webhook, *, transport=None) -> str:
+    """One bounded, no-redirect GET; return only a safe webhook name or "".
+
+    The POST parser deliberately accepts legacy URL shapes. Metadata must not
+    inherit userinfo, ports, query strings or extra path segments, nor let an
+    encoded separator/dot segment redirect a token to a different API path.
+    """
+    parsed, _ = parse_webhook(webhook.url)
+    if (
+        parsed is None
+        or not re.fullmatch(r"[0-9]{1,20}", parsed.webhook_id)
+        or not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", parsed.token)
+        or urlparse(webhook.url).params
+    ):
+        return ""
+    url = f"https://{parsed.host}/api/webhooks/{parsed.webhook_id}/{parsed.token}"
+    request = urllib.request.Request(
+        url, headers={"User-agent": _USER_AGENT}, method="GET"
+    )
+    try:
+        with (transport or _default_transport)(request, timeout=5) as response:
+            if response.status != 200:
+                return ""
+            body = response.read(16 * 1024 + 1)
+        if len(body) > 16 * 1024:
+            return ""
+        document = json.loads(body.decode("utf-8"))
+        if not isinstance(document, dict) or document.get("id") != parsed.webhook_id:
+            return ""
+        return safe_webhook_name(parsed, document.get("name"))
+    except urllib.error.HTTPError as error:
+        # HTTPError owns a response too; never read its potentially echoed body.
+        error.close()
+        return ""
+    except Exception:  # noqa: BLE001 - external metadata failures are optional; never echo transport errors or bodies
+        return ""
 
 
 @dataclass(frozen=True)

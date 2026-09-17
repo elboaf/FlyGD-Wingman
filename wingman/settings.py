@@ -13,7 +13,7 @@ import weakref
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from . import atomicio, bookmarks, paths
+from . import atomicio, bookmarks, discord, paths
 from .alerts import custom as alert_custom
 from .alerts import patterns as alert_patterns
 from .alerts import state as alert_state
@@ -384,6 +384,8 @@ DEFAULTS = {
     # onto DEFAULTS keys, so anything undeclared is dropped on every write.
     "recording_dir": None,
     "discord_webhook": "",
+    # Credential-bound local metadata; never included in shared settings.
+    "discord_webhook_name": "",
     "gamelogs_dir": None,
     # The YouTube channel the last successful upload actually landed on,
     # learned from the videos.insert response rather than looked up: the
@@ -954,6 +956,7 @@ def _normalize(data: dict) -> dict:
         "category",
         "recording_dir",
         "discord_webhook",
+        "discord_webhook_name",
         "gamelogs_dir",
         "channel_id",
         "channel_title",
@@ -980,6 +983,10 @@ def _normalize(data: dict) -> dict:
         data["recording_dir"] = None
     if not isinstance(data["discord_webhook"], str):
         data["discord_webhook"] = ""
+    webhook, _ = discord.parse_webhook(data["discord_webhook"])
+    data["discord_webhook_name"] = discord.safe_webhook_name(
+        webhook, data["discord_webhook_name"]
+    )
     if data["gamelogs_dir"] is not None and not isinstance(data["gamelogs_dir"], str):
         data["gamelogs_dir"] = None
     # Both reach a Label, so a non-string from a hand-edited file would be

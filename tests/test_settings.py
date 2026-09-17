@@ -14,6 +14,7 @@ def test_defaults_are_the_documented_values():
         "notify_mode": "toast",
         "recording_dir": None,
         "discord_webhook": "",
+        "discord_webhook_name": "",
         "gamelogs_dir": None,
         "channel_id": "",
         "channel_title": "",
@@ -170,6 +171,41 @@ def test_non_string_channel_identity_is_discarded(tmp_path, bad):
     loaded = settings.load(p)
     assert loaded["channel_title"] == ""
     assert loaded["channel_id"] == ""
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("Fleet logs", "Fleet logs"),
+        (42, ""),
+        ("x" * 81, ""),
+        ("secret-token", ""),
+        ("Fleet\nlogs", ""),
+    ],
+)
+def test_webhook_name_is_local_validated_metadata(tmp_path, name, expected):
+    p = tmp_path / "settings.json"
+    settings.save(
+        {
+            **settings.DEFAULTS,
+            "discord_webhook": "https://discord.com/api/webhooks/123/secret-token",
+            "discord_webhook_name": name,
+        },
+        p,
+    )
+    assert settings.load(p)["discord_webhook_name"] == expected
+
+
+def test_name_defaults_for_old_installs_and_is_cleared_without_webhook(tmp_path):
+    p = tmp_path / "settings.json"
+    p.write_text(
+        json.dumps({"discord_webhook": "https://discord.com/api/webhooks/123/tok"})
+    )
+    assert settings.load(p)["discord_webhook_name"] == ""
+    p.write_text(
+        json.dumps({"discord_webhook": "", "discord_webhook_name": "Old webhook"})
+    )
+    assert settings.load(p)["discord_webhook_name"] == ""
 
 
 def test_discord_webhook_roundtrips(tmp_path):

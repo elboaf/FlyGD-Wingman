@@ -66,7 +66,13 @@ def test_settings_subpages_own_the_existing_controls_and_accessible_tabs():
         "uploading": {
             "youtube": ("f-privacy", "f-category", "btn-auth"),
             "recording": ("f-recdir", "detect-note", "msg-notify"),
-            "combatlogs": ("f-webhook", "btn-webhook-show", "btn-webhook-remove"),
+            "combatlogs": (
+                "f-webhook",
+                "btn-webhook-show",
+                "btn-webhook-remove",
+                "webhook-status",
+                "btn-webhook-identify",
+            ),
         },
     }
     for section, pages in expected.items():
@@ -416,29 +422,19 @@ def test_the_dev_harness_quotes_copy_pys_inert_notes_verbatim():
         )
 
 
-def test_the_remove_confirm_recognises_a_real_webhook_description():
-    """Round 3, B12. The Remove dialog names WHICH webhook, because the
-    field is masked and cannot -- but webhook_status() returns a PARSE
-    ERROR for a stored value it cannot read, and interpolating that into
-    "Combat logs stop being posted to ..." produces nonsense. settings.js
-    tells the two apart by the one thing discord.describe() guarantees.
+def test_webhook_identity_is_accessible_and_identify_is_subordinate():
+    """The masked URL cannot provide identity; its status and explicit lookup can.
 
-    Asserted rather than trusted, because that guard is a Python format
-    typed into JavaScript: if describe() ever stops rendering the path,
-    the confirm degrades silently to "this webhook" with nothing failing.
+    Remove's identity/no-secret behavior runs in test_settings_runtime.js,
+    rather than depending on the obsolete host/path summary shape.
     """
-    from wingman import discord as discord_mod
-
-    described = discord_mod.describe(
-        discord_mod.parse_webhook("https://discord.com/api/webhooks/1/tok")[0]
-    )
-    settings_js = (WEB / "settings.js").read_text(encoding="utf-8")
-    guard = re.search(r"line\.indexOf\('([^']+)'\)", settings_js)
-    assert guard, "settings.js no longer guards the Remove confirm's name"
-    assert guard.group(1) in described, (
-        f"settings.js looks for {guard.group(1)!r}, which discord.describe() "
-        f"does not put in {described!r}"
-    )
+    nodes = SettingsMarkup().nodes
+    status, _ = nodes["webhook-status"]
+    action, _ = nodes["btn-webhook-identify"]
+    assert status["role"] == "status"
+    assert "operational-status" in status["class"].split()
+    assert "linkbtn" in action["class"].split()
+    assert "hidden" in action, "no lookup action until a saved URL is hydrated"
 
 
 def test_the_dev_harness_shows_the_webhook_line_the_app_shows():
@@ -449,14 +445,16 @@ def test_the_dev_harness_shows_the_webhook_line_the_app_shows():
     naming branch untestable by hand: the harness said "this webhook"
     while the app named it.
     """
-    from wingman import discord as discord_mod
+    from wingman.ui import copy as copy_mod
 
     dev_js = (WEB / "dev.js").read_text(encoding="utf-8")
     stored = re.search(r"discord_webhook: '([^']+)'", dev_js)
+    name = re.search(r"discord_webhook_name: '([^']+)'", dev_js)
     assert stored, "dev.js no longer stores a fake webhook"
+    assert name, "dev.js must exercise the cached webhook identity"
     fixture = re.search(r"\? '([^']*)' : statusLine", dev_js)
     assert fixture, "dev.js no longer defaults webhook_status"
-    expected = discord_mod.describe(discord_mod.parse_webhook(stored.group(1))[0])
+    expected = copy_mod.webhook_status(stored.group(1), name.group(1))
     assert fixture.group(1) == expected, (
         f"dev.js renders {fixture.group(1)!r} where the app renders {expected!r}"
     )
