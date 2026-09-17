@@ -2876,7 +2876,7 @@ class Api:
             if self._fleetbar_quitting:
                 return None
             now = self._fleet_clock()
-            settings_payload, display_payload = self._fleet_payloads_locked(now)
+            _, display_payload = self._fleet_payloads_locked(now)
             settings_changed = self._fleet_settings_dirty
             # Schedule from the SAME sample as the state/revision. A later
             # sample could cross stale and incorrectly wait until expiry.
@@ -2893,11 +2893,19 @@ class Api:
             write = self._fleet_roster.take()
         if write is not None:
             self._remember_fleet_roster(write)
-        if not self._fleet_delivery_current(delivery):
-            # Target changes (notably sig-bar creation) need not publish any
-            # telemetry. Preserve a wakeup even when this was the only job.
-            self._queue_fleet_presentation()
-            return None
+        with self._fleet_presentation_lock:
+            if not self._fleet_delivery_current_locked(delivery):
+                # A blocked save or target change retires this capture; do not
+                # silently reproject the display under its old delivery revision.
+                if not self._fleetbar_quitting:
+                    self._fleet_worker.notify()
+                return None
+            # Persisting/acknowledging the roster can evict a capped offline name
+            # without changing the display revision. Settings must use that new
+            # authority, while display and deadline retain their original sample.
+            settings_payload = self._fleet_settings_payload_locked(
+                dict(self._state.settings.get("fleet_bar") or {}), delivery.revision
+            )
         if settings_changed:
             self._fleet_state_push("onFleetBarState", settings_payload, delivery)
         self._push_fleet_snapshot(display_payload, delivery)
