@@ -805,8 +805,18 @@ detail-focus restoration, and masks a revealed webhook when leaving Combat logs.
 It must not reset a draft or submit a field. The section header and preview master
 switch stay outside the subpage scroller. Inside it, the character table and
 Offline heading retain their stack, without the old scroll-jump navigation
-offset. Wanderer's compact Map connection heading also stays visible while its
-form scrolls; the enable switch stays with its refusal message in normal flow.
+offset. Wanderer's compact Map connection heading and name-availability status
+stay visible while its form scrolls; the enable switch stays with its refusal
+message in normal flow. Availability counts fresh projected names, not proof
+that labels are visibly painted. Long recovery and Test outcomes stay with the
+connection controls, outside the retained context visually. Both compact status
+owners retain full detail as visually hidden content in their original live
+regions; moving visual feedback must not reduce an announcement to just “Error”.
+Expanded Companion rows retain their existing name and operational status on the
+Settings scroller, releasing at that row's boundary. Enabled stays nearby with
+its refusal; source details and full operation errors remain in normal flow.
+Only Live and Waiting for source use pills. Add owns the accent until its form
+opens, when Choose source takes it; both yield while source selection is active.
 Expanded Fittings rows retain their existing identity above the detail and
 release at that fitting's boundary. Keyboard reveal clears these local headers.
 

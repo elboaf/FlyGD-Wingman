@@ -1140,7 +1140,7 @@ def _gap_verify_script(screen: Screen) -> str | None:
         body = """
 var pane = WM.el('settings-previews-wanderer');
 var note = WM.el('wanderer-save-note'), test = WM.el('wanderer-test'), remove = WM.el('wanderer-remove');
-check(text(note, 'Test connection saves the map URL and token, then checks access. It does not turn names on.')
+check(text(note, 'Test connection saves the map URL and token; it does not turn names on.')
   && text(test, 'Test connection') && !test.disabled
   && text(remove, 'Remove connection') && !remove.disabled
   && WM.el('wanderer-token').type === 'password' && WM.el('wanderer-token').value === ''
@@ -1452,7 +1452,7 @@ def _current_screen_verify_script(screen: Screen) -> str:
             f"WM.el('wanderer-url').value !== {json.dumps(state['base_url'] + '/' + state['map_identifier'])}",
             "WM.el('wanderer-token').value !== ''",
             "WM.el('wanderer-test').disabled",
-            "WM.el('wanderer-health').textContent !== 'Connected to Wanderer.'",
+            "WM.el('wanderer-health-label').textContent !== 'Connected · Names available for 2 of 3 previews'",
             "WM.el('wanderer-coverage').textContent.indexOf('2 of 3') !== 0",
         ]
     elif screen.section == "fleet":

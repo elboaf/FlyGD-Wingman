@@ -54,7 +54,7 @@
     });
     el('token').value = '';
     if (!acknowledged) {
-      el('health').textContent = 'Loading Wanderer settings…';
+      paintHealth('Loading Wanderer settings…');
       el('coverage').textContent = ''; el('credential').textContent = '';
     }
     paint();
@@ -96,29 +96,39 @@
     return true;
   }
 
-  function connectionText(p) {
-    if (acknowledged.persistence_error) return 'Saved connection could not be restored — names stopped. Restart Wingman and re-enter the connection.';
-    if (!acknowledged.enabled) return 'Off — connection settings remain editable.';
-    if (acknowledged.credential_error) return 'Token unreadable — enter it again or remove the connection.';
+  // Keep the pinned headline bounded; recovery and server detail scroll with
+  // the connection controls. A successful explicit Test is a separate outcome.
+  function paintHealth(text, detail) {
+    el('health-label').textContent = text;
+    el('health-detail').textContent = detail ? ' — ' + detail : '';
+  }
+  function connectionPresentation(p) {
+    if (acknowledged.persistence_error) return ['Names stopped', 'Saved connection could not be restored. Restart Wingman and re-enter it.'];
+    if (!acknowledged.enabled) return ['Off', 'Connection settings remain editable.'];
+    if (acknowledged.credential_error) return ['Token unreadable', 'Enter the token again or remove the connection.'];
     if (!acknowledged.base_url || !acknowledged.map_identifier || !acknowledged.credential_present) {
-      return 'Setup needed — enter the map URL and token, then test the connection.';
+      return ['Setup needed', 'Enter the map URL and token, then test the connection.'];
     }
-    if (!p || p.revision < acknowledged.revision) return 'Connecting…';
-    if (!p.previews_enabled || !p.host_available) return 'Waiting for previews — enable them to show names.';
+    if (!p || p.revision < acknowledged.revision) return ['Connecting…', ''];
+    if (p.status === 'stopped') return ['Stopped', p.status_text || ''];
+    if (p.status === 'worker_failed') return ['Unavailable', p.status_text || ''];
+    if (!p.previews_enabled) return ['Waiting for previews', 'Enable EVE previews to show names.'];
+    if (!p.host_available) return ['Waiting for previews', 'The preview runtime is unavailable.'];
     if (p.status === 'error') {
       switch (p.error_code) {
-        case 'invalid_token': return 'Token rejected — replace it, then test again.';
-        case 'wrong_map': return 'Wrong map — this token belongs to another map.';
-        case 'disabled': return 'API disabled — enable it on the Wanderer server.';
-        default: return (p.paused ? 'Connection paused — ' : 'Retrying — ') + p.status_text;
+        case 'invalid_token': return ['Token rejected', 'Replace the token, then test again.'];
+        case 'wrong_map': return ['Wrong map', 'This token belongs to another map.'];
+        case 'disabled': return ['API disabled', 'Enable the API on the Wanderer server.'];
+        default: return [p.paused ? 'Connection paused' : 'Retrying', p.status_text || ''];
       }
     }
-    if (p.status === 'connecting') return 'Connecting…';
-    if (p.status === 'stale') return 'Stale — waiting for fresh location confirmations.';
-    if (p.status === 'connected') {
-      return p.previewed && !p.matched ? 'Connected — No tracked characters among your previews.' : 'Connected to Wanderer.';
-    }
-    return p.status_text && p.status !== 'off' ? p.status_text : 'Connecting…';
+    var text = p.status === 'connected' ? 'Connected' : p.status === 'stale' ? 'Stale' : 'Connecting…';
+    // Current-session projection only: available excludes expired names.
+    text += ' · ' + (p.previewed ? 'Names available for ' + p.available + ' of ' + p.previewed + ' previews' : 'No named previews open');
+    var detail = p.previewed && (p.matched < p.previewed || p.stale)
+      ? p.matched + ' of ' + p.previewed + ' tracked' + (p.stale ? ' · ' + p.stale + ' expired' : '') + '.' : '';
+    if (p.status === 'stale') detail += (detail ? ' ' : '') + 'Waiting for fresh location confirmations.';
+    return [text, detail];
   }
 
   function paint() {
@@ -135,7 +145,7 @@
       slot.className = 'field-msg err';
       slot.hidden = !fields[name].error;
     });
-    el('token-draft').textContent = 'Stored only on this PC, protected by Windows. Leave blank to reuse the token for the same saved map URL.';
+    el('token-draft').textContent = 'Windows-protected on this PC. Blank reuses the token only for the same saved map URL.';
     var currentHealth = health && acknowledged && health.revision === acknowledged.revision ? health : null;
     var testing = testWaiting || (currentHealth && (currentHealth.test_pending || currentHealth.test_in_flight));
     el('test').disabled = !hydrated || confirming || !!connectionBusy() || !!testing;
@@ -150,22 +160,18 @@
     el('credential').textContent = acknowledged.credential_error ? 'Stored token could not be read.'
       : acknowledged.credential_present ? 'Token stored for the saved map URL.'
         : 'No token stored for the saved map URL. Remove connection also clears any token saved for an earlier connection.';
-    el('health').textContent = connectionText(currentHealth);
-    // These are WorkerState's current-session projection counts, never a map
-    // roster or persisted recent-character list. Expired names are not available.
-    el('coverage').textContent = !currentHealth ? '' : !currentHealth.previewed ? 'No named previews open.'
-      : currentHealth.available + ' of ' + currentHealth.previewed + ' previews have a fresh system name — '
-        + currentHealth.matched + ' of ' + currentHealth.previewed + ' tracked'
-        + (currentHealth.stale ? ', ' + currentHealth.stale + ' stale' : '') + '.';
+    var presentation = connectionPresentation(currentHealth);
+    paintHealth(presentation[0], presentation[1]);
+    el('coverage').textContent = presentation[1];
     // Counts suggest checks, not a diagnosis or a refresh deadline. Keep error
     // recovery primary when the connection is paused, off or unavailable.
     if (acknowledged.enabled && !acknowledged.persistence_error && currentHealth && currentHealth.automatic_ready
         && (currentHealth.status === 'connected' || currentHealth.status === 'stale')) {
       if (currentHealth.matched < currentHealth.previewed) {
-        el('coverage').textContent += ' Check that missing characters are tracked on this map.';
+        el('coverage').textContent += ' Check which characters are tracked on this map.';
       }
       if (currentHealth.available < currentHealth.matched) {
-        el('coverage').textContent += ' Check location sharing for tracked characters in Wanderer.';
+        el('coverage').textContent += ' Check location sharing in Wanderer.';
       }
     }
   }
@@ -369,7 +375,7 @@
         hydrated = true;
       }
       paint();
-      if (!acknowledged) el('health').textContent = 'Could not load Wanderer settings — reopen Previews to retry.';
+      if (!acknowledged) paintHealth('Could not load Wanderer settings', 'Reopen Previews to retry.');
     });
   });
   paint();

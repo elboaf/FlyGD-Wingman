@@ -2643,17 +2643,49 @@ button.btn:disabled,
 .companion-list { display: flex; flex-direction: column; }
 .companion-list[hidden] { display: none; }
 .companion-row { padding: 14px 0; border-top: 1px solid var(--field-border); min-width: 0; }
-.companion-summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 14px; align-items: center; }
+/* This row is the sticky containing block, not a new scroll owner. Only an
+   expanded row retains its compact identity, then releases at its own edge. */
+.companion-summary.scroll-context {
+  position: static; display: flex; align-items: center; gap: 12px;
+  height: 44px; padding: 8px 0 10px;
+}
+.companion-row:has(> .companion-detail[open]) > .companion-summary { position: sticky; }
 .companion-summary[hidden] { display: none; }
-.companion-summary > .hint { grid-column: 1 / -1; }
-/* Capture mode is row metadata, not helper text for the preceding checkbox. */
-#companion-list .companion-summary > .hint { margin-left: 0; }
-.companion-identity { min-width: 0; }
+/* 18px text + the pill's 8px padding/border + 18px header padding = 44px.
+   Keyboard reveal needs another 10px; the existing Settings pane still scrolls. */
+.settings-pane:has(> #section-companions.active) { scroll-padding-top: 54px; }
 .companion-name, .companion-source { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .companion-name[hidden], .companion-source[hidden] { display: none; }
-.companion-name { font-weight: 600; }
+.companion-name { font-weight: 600; min-width: 0; line-height: 18px; }
+.companion-availability { flex: none; line-height: 18px; white-space: nowrap; }
+.companion-summary > .companion-availability { margin: 0; }
+.companion-availability.err { color: var(--err); }
+.companion-availability .led[hidden] { display: none; }
+.companion-enabled-group { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.companion-enabled-group[hidden] { display: none; }
+.companion-enabled-group > .check { margin: 0; }
+.companion-enabled-group > .hint { flex-basis: 100%; overflow-wrap: anywhere; }
+.companion-row > .companion-feedback { display: block; margin: 6px 0 0; max-width: 72ch; overflow-wrap: anywhere; }
+.companion-row > .companion-feedback[hidden], .companion-row > .companion-feedback:empty { display: none; }
+.companion-mode { display: block; }
+.companion-mode[hidden] { display: none; }
 .companion-detail { margin-top: 8px; }
-.companion-detail > summary { color: var(--text-btn); cursor: pointer; width: fit-content; }
+.companion-detail > summary, .companion-help > summary {
+  display: flex; align-items: center; gap: 8px; width: fit-content;
+  color: var(--text-btn); cursor: pointer; list-style: none;
+}
+.companion-detail > summary[hidden], .companion-help > summary[hidden] { display: none; }
+.companion-detail > summary::-webkit-details-marker, .companion-help > summary::-webkit-details-marker { display: none; }
+/* Replace the native marker, never add a second arrow beside it. Details keeps
+   its native keyboard/disclosure behavior; only the marker's shape changes. */
+.companion-detail > summary::before, .companion-help > summary::before {
+  content: ""; width: 6px; height: 6px; flex: none;
+  border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(-45deg);
+}
+.companion-detail[open] > summary::before, .companion-help[open] > summary::before { transform: rotate(45deg); }
+.companion-detail > summary:focus-visible, .companion-help > summary:focus-visible {
+  outline: 2px solid var(--focus-ring); outline-offset: 3px;
+}
 .companion-detail[open] > summary { margin-bottom: 12px; }
 .companion-detail > .row { margin: 10px 0; }
 .companion-detail .field, .companion-add-form .field { min-width: 0; flex: 1 1 200px; }
@@ -4178,9 +4210,12 @@ button.btn:disabled,
   font-size: 15px; font-weight: 620; line-height: 20px;
   color: var(--text); margin: 0;
 }
-/* The retained heading occupies 38px. Leave breathing room when keyboard
-   focus or scrollIntoView reveals a field at the 840px floor. */
-#settings-previews-wanderer { scroll-padding-top: 48px; }
+/* The two-line heading/status occupies 62px at the supported floor. Keep
+   keyboard reveal below it; long recovery text stays outside this context. */
+#wanderer-settings .scroll-context > .operational-status {
+  margin: 4px 0 0; line-height: 20px; font-weight: 600; color: var(--text);
+}
+#settings-previews-wanderer { scroll-padding-top: 72px; }
 /* Cards retain their control/feedback ownership but not a second visual box. */
 .settings-subpage > .card {
   border: 0; box-shadow: none; background: transparent; border-radius: 0;
@@ -4329,6 +4364,12 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .settings .sub-hint {
   color: var(--text-faint); font-size: var(--fs-muted);
   margin: 6px 0 0; max-width: 72ch;
+}
+/* Compact retained headlines must not shorten their existing live-region
+   content. Keep full recovery accessible without adding height or an owner. */
+.status-announcement {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap;
 }
 /* Current readiness is information to scan, not an explanatory footnote.
    Keep status nodes mounted even when empty so live updates are announced. */

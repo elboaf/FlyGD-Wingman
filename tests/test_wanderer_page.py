@@ -17,12 +17,17 @@ def test_wanderer_retains_compact_identity_without_pinning_the_whole_form():
     )
     assert context, "Wanderer needs a bounded local context at the scroll edge"
     assert 'id="wanderer-heading"' in context.group(1)
-    # A pinned editable switch must not leave its refusal scrolled offscreen.
-    for field in ("enabled", "health", "coverage", "url", "token", "enabled-error"):
+    assert 'id="wanderer-health"' in context.group(1)
+    # Heading and authoritative status stay; editable controls and long feedback
+    # must not consume the scrollport or separate the switch from its refusal.
+    for field in ("enabled", "coverage", "url", "token", "enabled-error"):
         assert f'id="wanderer-{field}"' not in context.group(1)
     assert html.count('id="wanderer-health"') == 1
+    health = re.search(r'<p[^>]*id="wanderer-health"[^>]*>(.*?)</p>', html, re.DOTALL)
+    assert health and 'id="wanderer-health-label"' in health[1]
+    assert 'class="status-announcement" id="wanderer-health-detail"' in health[1]
     css = (WEB / "style.css").read_text(encoding="utf-8")
-    rule = re.search(r"\.scroll-context\s*\{([^}]*)\}", css)
+    rule = re.search(r"^\.scroll-context\s*\{([^}]*)\}", css, re.MULTILINE)
     assert rule and "position: sticky" in rule.group(1)
     assert "background: var(--panel)" in rule.group(1)
     assert "top: 0" in rule.group(1)
@@ -30,7 +35,14 @@ def test_wanderer_retains_compact_identity_without_pinning_the_whole_form():
     clearance = (
         re.search(r"scroll-padding-top:\s*(\d+)px", pane.group(1)) if pane else None
     )
-    assert clearance and int(clearance.group(1)) >= 38 + 4
+    assert clearance and int(clearance.group(1)) >= 62 + 4
+    announcement = re.search(r"\.status-announcement\s*\{([^}]*)\}", css)
+    assert announcement and "position: absolute" in announcement[1]
+    assert "clip-path: inset(50%)" in announcement[1]
+    assert (
+        "display: none" not in announcement[1]
+        and "visibility: hidden" not in announcement[1]
+    )
 
 
 def test_wanderer_runtime():
@@ -191,10 +203,11 @@ def test_wanderer_card_is_in_previews_with_accessible_safe_controls():
         previews,
     )
     assert re.search(r'id="wanderer-health"[^>]*role="status"', previews)
+    assert re.search(r'<p class="operational-status" id="wanderer-health"', previews)
+    assert re.search(r'<p class="hint" id="wanderer-coverage"', previews), (
+        "Only the combined health/coverage headline is authoritative; recovery is subordinate"
+    )
     for state in ("health", "coverage"):
-        assert re.search(
-            rf'<p class="operational-status" id="wanderer-{state}"', previews
-        ), "Both connection and coverage are operational information, not static help"
         assert previews.index(f'id="wanderer-{state}"') < previews.index(
             'id="wanderer-url"'
         )

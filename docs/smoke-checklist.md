@@ -15,6 +15,41 @@ dev checks are separate evidence, not installed Windows/WebView2 acceptance.
 
 Run on Windows against a real install before each release.
 
+## Screenshot UX step 3 — installed Windows acceptance NOT RUN
+
+Companions/Wanderer have synthetic Chromium checks at 1015×633 and 840×625,
+not installed WebView2 acceptance. Repeat at 100/125/150/200% Windows scaling.
+Use presentation fixtures only for captures; do not contact live Wanderer or
+select native source windows just to populate these screens.
+
+- [ ] Empty/list Companions gives Add modest primary prominence. Open Add:
+      Choose source is the sole accent; Cancel and successful completion restore
+      Add. Source enumeration/selection leaves no competing accent behind the
+      unchanged compact chooser. Native disclosure chevrons respond to Enter/Space.
+- [ ] Live and Waiting for source are readable without color. Enabled is close
+      to name/status with its own refusal. Off, Disabled, selection-needed,
+      stopping and failures stay distinct; Waiting does not claim a closed source.
+- [ ] Expanded rows retain name/status only and release at their own boundary.
+      Long errors remain fully readable outside the header. Health pushes retain
+      draft inputs, current focus/selection and open details. Tab/Shift+Tab clears
+      the header; Enable and its refusal always scroll together. With a screen
+      reader focused on Reselect region, a refusal announces its full reason,
+      not only Error; later row errors likewise remain in the same live owner.
+- [ ] Wanderer reads Connected · Names available for 2 of 3 previews (not proof
+      of visible label pixels). Full/partial/expired availability, Off, waiting,
+      stopped/unavailable and connection failures remain truthful. Explicit Test
+      success while Off does not change the authoritative Off headline.
+- [ ] Map connection and its concise status remain pinned. Enable/refusal, long
+      recovery and Test outcomes stay in normal flow; controls can be focused
+      and read below the header at the floor. Tab changes preserve drafts/scroll;
+      older health/replies never overwrite newer URL/token edits.
+- [ ] Test still saves the submitted URL/token binding; blank token reuses only
+      the same normalized saved binding. Remove confirms and clears credentials,
+      not the enable preference. Neither visit nor presentation triggers network.
+- [ ] With authorized real sources separately from screenshot staging, confirm
+      capture, crop, activation and geometry behavior is unchanged: only Wingman's
+      preview moves/resizes, never the source window. These native checks remain open.
+
 ## Screenshot UX step 2 — installed Windows acceptance NOT RUN
 
 Uploading/General has bounded synthetic Chromium checks at 1015×633 and
