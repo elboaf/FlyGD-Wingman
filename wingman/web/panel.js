@@ -400,10 +400,26 @@
     if (ids.length === 1) clipShow(ids[0]);
     else clipHide();
   });
-  // Leaving the route must not leave the file playing in a hidden panel.
-  document.addEventListener('wm:route', function () {
-    if (clip.video && !clip.degraded) clip.video.pause();
+  // Leaving the Uploader route must not leave the file open behind a
+  // hidden panel: a live media element keeps fetching through clipserve,
+  // and an open handle is exactly what makes the recording impossible to
+  // delete. wm:route also fires on ENTRY, so coming back re-arms the
+  // editor for the still-single selection -- nothing else re-fires
+  // wm:selection on a route change.
+  document.addEventListener('wm:route', function (ev) {
+    if (ev.detail === 'main') {
+      var ids = WM.list.selectedIds();
+      if (ids.length === 1) clipShow(ids[0]);
+    } else if (!WM.el('clip-editor').hidden) {
+      clipHide();
+    }
     clip.playingSel = false;
+  });
+
+  // Delete (button and context menu) clears the editor first so the media
+  // element stops fetching before Python unlinks the recording.
+  document.addEventListener('wm:clip-release', function () {
+    if (!WM.el('clip-editor').hidden) clipHide();
   });
 
   WM.el('btn-retry').addEventListener('click', function () {

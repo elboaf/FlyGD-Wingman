@@ -1383,6 +1383,8 @@ button.btn:disabled,
   cursor: pointer;
 }
 .ctxmenu button:hover:not(:disabled) { background: var(--hover); }
+.ctxmenu button.danger { color: var(--danger); }
+.ctxmenu button.danger:hover:not(:disabled) { background: var(--hover); }
 /* The menu holds two object classes now -- the recording on disk (Play,
    Rename) and the video it became (Copy link, Open in browser) -- and
    until the first pair arrived it read entirely as the second. A 1px rule

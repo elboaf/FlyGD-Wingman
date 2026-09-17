@@ -6,8 +6,11 @@ editor's media comes from this server. What the tests pin: Range support
 served, unknown tokens 404), and loopback-only binding.
 """
 
+import os
 import urllib.error
 import urllib.request
+
+import pytest
 
 from wingman import clipserve
 
@@ -67,6 +70,30 @@ def test_a_fresh_ask_mints_a_fresh_token(tmp_path):
     one = clipserve.url_for(src)
     two = clipserve.url_for(src)
     assert one != two  # revocation is the default: old links stop mattering
+
+
+def test_open_shared_reads_the_whole_file(tmp_path):
+    src = tmp_path / "fight.mkv"
+    src.write_bytes(b"0123456789abcdef")
+    with clipserve._open_shared(src) as f:
+        assert f.read() == b"0123456789abcdef"
+
+
+@pytest.mark.skipif(
+    os.name != "nt", reason="delete-while-open is a Windows sharing rule"
+)
+def test_a_live_reader_does_not_block_deletion(tmp_path):
+    """The reason _open_shared exists: Python's open() shares read/write on
+    Windows but not delete, so a mid-scrub Range fetch made unlink() fail
+    with WinError 32. With FILE_SHARE_DELETE the delete wins and the
+    reader drains the unlinked file to EOF."""
+    src = tmp_path / "fight.mkv"
+    src.write_bytes(b"0123456789abcdef")
+    with clipserve._open_shared(src) as f:
+        f.seek(4)
+        src.unlink()  # plain open() here raises PermissionError
+        assert f.read(6) == b"456789"
+        assert f.read() == b"abcdef"
 
 
 def teardown_module(module):

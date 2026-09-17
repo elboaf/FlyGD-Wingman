@@ -417,6 +417,7 @@
   var ctxOpen = WM.el('ctx-open');
   var ctxPlay = WM.el('ctx-play');
   var ctxRename = WM.el('ctx-rename');
+  var ctxDelete = WM.el('ctx-delete');
 
   function hideMenu() { menu.hidden = true; ctxId = null; }
 
@@ -513,6 +514,20 @@
     hideMenu();
     if (row) promptRename(id, row.name);
   });
+
+  // Delete acts on the RIGHT-CLICKED recording, not the selection -- the
+  // same scope as Play and Rename above. Python owns the confirmation and
+  // reports failures on the strip. The editor is released first: its media
+  // element keeps fetching the file through clipserve, and that handle is
+  // exactly what makes the unlink fail.
+  ctxDelete.addEventListener('click', function () {
+    var id = ctxId;
+    hideMenu();
+    if (id) {
+      document.dispatchEvent(new CustomEvent('wm:clip-release'));
+      WM.send('delete_selected', [id]);
+    }
+  });
   document.addEventListener('mousedown', function (ev) {
     if (!menu.hidden && !menu.contains(ev.target)) hideMenu();
   });
@@ -567,7 +582,11 @@
   // Sends unconditionally, like the rest of this footer: "select at least
   // one video" is composed in Python (Api.delete_selected) and a page-side
   // early return would swallow it.
+  // The clip editor may be previewing one of the selected files; releasing
+  // it here (not in panel.js's own delete path) means the media element has
+  // stopped fetching before Python even starts the confirm round-trip.
   WM.el('btn-delete').addEventListener('click', function () {
+    document.dispatchEvent(new CustomEvent('wm:clip-release'));
     WM.send('delete_selected', WM.list.selectedIds());
   });
 

@@ -639,6 +639,7 @@ def test_the_row_menu_separates_the_file_from_the_video():
     assert re.findall(r'id="(ctx-[a-z]+)"', menu) == [
         "ctx-play",
         "ctx-rename",
+        "ctx-delete",
         "ctx-copy",
         "ctx-open",
     ]
@@ -701,6 +702,43 @@ def test_deleting_files_lives_with_the_files():
     assert 'id="btn-delete"' in foot
     assert "WM.send('delete_selected'" in LIST_JS
     assert "WM.send('delete_selected'" not in PANEL_JS
+
+
+def test_context_delete_acts_on_the_right_clicked_row_and_releases_the_editor():
+    """Delete in the row menu has the same scope as Play and Rename -- the
+    recording under the cursor, not the selection -- and clears the clip
+    editor first: its media element keeps fetching the file through
+    clipserve, and that open handle is exactly what makes the unlink fail
+    (WinError 32). The confirm stays Python-side."""
+    handler = LIST_JS[LIST_JS.index("ctxDelete.addEventListener") :]
+    handler = handler[: handler.index("});")]
+    assert "document.dispatchEvent(new CustomEvent('wm:clip-release'))" in handler
+    assert "WM.send('delete_selected', [id])" in handler
+    assert "wm:clip-release" in PANEL_JS
+    release = PANEL_JS[PANEL_JS.index("'wm:clip-release'") :]
+    release = release[: release.index("});")]
+    assert "clipHide()" in release
+
+
+def test_the_footer_delete_button_releases_the_editor_too():
+    """The button path deletes the selection, which can include the row the
+    editor is previewing; the release must happen before the send so the
+    media element has stopped fetching before Python unlinks."""
+    handler = LIST_JS[LIST_JS.index("WM.el('btn-delete').addEventListener") :]
+    handler = handler[: handler.index("});")]
+    release = handler.index("wm:clip-release")
+    assert release < handler.index("WM.send('delete_selected'")
+
+
+def test_leaving_the_uploader_route_closes_the_clip_editor():
+    """wm:route fires on entry too, and returning to a single selection
+    must re-arm the editor -- nothing else re-fires wm:selection on a
+    route change, so a bare clipHide on every event would leave it dark
+    forever after one visit to Settings."""
+    handler = PANEL_JS[PANEL_JS.index("document.addEventListener('wm:route'") :]
+    handler = handler[: handler.index("});")]
+    assert "clipHide()" in handler
+    assert "clipShow(" in handler
 
 
 def test_the_sort_arrow_has_a_reserved_slot_on_every_header():
