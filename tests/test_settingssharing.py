@@ -54,6 +54,20 @@ def test_export_carries_every_default_key_except_the_webhook():
     assert "discord_webhook" not in exported
 
 
+def test_webhook_identity_never_travels_to_another_credential():
+    config = live_settings()
+    config.update(
+        discord_webhook="https://discord.com/api/webhooks/123/token",
+        discord_webhook_name="Private webhook",
+    )
+    document = export_document(config)
+    assert "discord_webhook_name" not in document["settings"]
+    document["settings"]["discord_webhook_name"] = "Smuggled name"
+    assert "discord_webhook_name" not in parse_text(json.dumps(document))
+    apply_document({"discord_webhook_name": "Smuggled name"}, config)
+    assert config["discord_webhook_name"] == "Private webhook"
+
+
 def test_export_text_round_trips_through_parse():
     config = live_settings()
     config["privacy"] = "public"

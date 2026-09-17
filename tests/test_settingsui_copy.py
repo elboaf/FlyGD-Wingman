@@ -7,6 +7,8 @@ that can be tested without standing one up.
 
 import datetime
 
+import pytest
+
 from wingman.ui import copy as copy_mod
 
 # --- EVE selective-copy confirmation --------------------------------------
@@ -45,8 +47,8 @@ def test_plain_copy_confirmation_output_is_unchanged_when_groups_are_unspecified
 
 
 def test_empty_webhook_reads_as_not_configured():
-    assert copy_mod.webhook_status("") == "not configured"
-    assert copy_mod.webhook_status("   ") == "not configured"
+    assert copy_mod.webhook_status("") == "No Discord webhook saved"
+    assert copy_mod.webhook_status("   ") == "No Discord webhook saved"
 
 
 def test_valid_webhook_is_described_without_its_token():
@@ -54,8 +56,8 @@ def test_valid_webhook_is_described_without_its_token():
     webhook is stored. It must never carry the token."""
     url = "https://discord.com/api/webhooks/1538615213203656754/s3cr3t-token"
     shown = copy_mod.webhook_status(url)
-    assert "1538615213203656754" in shown
-    assert "s3cr3t-token" not in shown
+    assert shown == "Webhook saved · name unavailable"
+    assert copy_mod.webhook_status(url, "Fleet logs") == "Webhook: Fleet logs"
 
 
 def test_an_invalid_webhook_says_what_is_wrong_instead_of_not_configured():
@@ -66,9 +68,18 @@ def test_an_invalid_webhook_says_what_is_wrong_instead_of_not_configured():
     assert "https" in shown.lower()
 
 
-def test_a_non_discord_host_is_named_in_the_error():
-    shown = copy_mod.webhook_status("https://evil.example.com/api/webhooks/1/2")
-    assert "evil.example.com" in shown
+def test_a_non_discord_host_is_not_echoed_in_the_error():
+    shown = copy_mod.webhook_status(
+        "https://secret-token.evil.example.com/api/webhooks/1/2"
+    )
+    assert "host" in shown.lower()
+    assert "secret-token" not in shown
+
+
+@pytest.mark.parametrize("name", ["s3cr3t-token", "x" * 81, 42, "Fleet\nlogs"])
+def test_unsafe_saved_names_cannot_reach_the_identity_line(name):
+    url = "https://discord.com/api/webhooks/1234567890/s3cr3t-token"
+    assert copy_mod.webhook_status(url, name) == "Webhook saved · name unavailable"
 
 
 # library.format_date compares against a naive LOCAL clock

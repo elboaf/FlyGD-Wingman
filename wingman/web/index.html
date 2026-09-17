@@ -462,7 +462,6 @@
         <div class="row">
           <span class="lab">Status</span>
           <span class="pill idle" id="auth-pill"><span class="led"></span><span id="auth-text">Checking&hellip;</span></span>
-          <span style="flex:1"></span>
           <button class="btn" id="btn-auth">Sign in with Google</button>
         </div>
         <p class="hint">
@@ -478,6 +477,7 @@
 
       <section class="card">
         <h2>Upload defaults</h2>
+        <div class="upload-defaults">
         <div class="row">
           <label class="lab" for="f-privacy">Privacy</label>
           <!-- The value attributes are YouTube's API strings and are what
@@ -495,6 +495,7 @@
           <label class="lab" for="f-category">YouTube category ID</label>
           <input class="field" id="f-category" type="text" inputmode="numeric"
                  spellcheck="false" aria-describedby="category-draft msg-uploads">
+        </div>
         </div>
         <p class="field-msg" id="category-draft" hidden></p>
         <!-- Settings 13. The maintainer settled the control half: this
@@ -536,9 +537,7 @@
              it drifted, so the two are asserted equal in
              tests/test_settings_page.py rather than trusted. -->
         <p class="sub-hint" id="detect-note">
-          Changing the recording folder starts watching it. Recordings
-          already there won’t be announced, and arrive unticked in the
-          list.
+          Watch this folder. Existing recordings stay listed, unticked and not announced as new.
         </p>
       </section>
 
@@ -574,12 +573,12 @@
                network. -->
           <p class="operational-status" id="fr-status" role="status">Checking installed plugin&hellip;</p>
         </div>
+        <p class="sub-hint" id="fr-latest" hidden></p>
         <div class="row">
           <span class="lab"></span>
           <button class="btn" id="btn-fr-check">Check for updates</button>
-          <!-- Hidden until a check (or the local load) says there is
-               something to install: an Install button beside "not
-               installed" is fine, beside "up to date" is noise. -->
+          <!-- Only an explicit successful check offers Install/Update.
+               Local presence alone never establishes a release identity. -->
           <button class="btn acc" id="btn-fr-update" hidden>Install</button>
         </div>
         <p class="field-msg" id="msg-fightrecorder" hidden></p>
@@ -610,7 +609,10 @@
           <button class="btn danger" id="btn-webhook-remove">Remove</button>
         </div>
         <p class="hint" id="webhook-save-note">Press Enter to save changes. Remove clears the saved webhook.</p>
-        <p class="sub-hint" id="webhook-status">not configured</p>
+        <div class="webhook-identity">
+          <p class="operational-status" id="webhook-status" role="status">No Discord webhook saved</p>
+          <button class="linkbtn" id="btn-webhook-identify" hidden>Identify webhook</button>
+        </div>
         <p class="field-msg" id="msg-discord" hidden></p>
       </section>
 
@@ -1809,7 +1811,7 @@
           share. Importing replaces the settings the file carries; your
           Discord webhook is never exported or imported.
         </p>
-        <div class="actions">
+        <div class="settings-backup-actions">
           <button class="btn" id="btn-settings-export">Export settings&hellip;</button>
           <button class="btn" id="btn-settings-import">Import settings&hellip;</button>
         </div>
