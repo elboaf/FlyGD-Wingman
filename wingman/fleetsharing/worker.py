@@ -19,7 +19,6 @@ import logging
 import random
 import secrets
 import threading
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -33,7 +32,8 @@ from . import state as s
 from .client import FleetRelayClient, FleetRelayError
 from .config import resolve_relay_origin
 from .model import FleetCatalogue, PublishRow
-from .scheduling import OPERATIONS, SIGNED_INTERVAL_S, Scheduler, Work
+from .scheduling import OPERATIONS, SIGNED_INTERVAL_S, Work
+from .timing import TimingContext
 
 logger = logging.getLogger(__name__)
 BASE_BACKOFF_S = 1.0
@@ -62,6 +62,7 @@ ERROR_CODES = frozenset(
         "bad_request",
         "bad_headers",
         "not_found",
+        "not_completable",
         "invalid_intent",
         "capability_required",
         "fleet_read_required",
@@ -167,6 +168,10 @@ class _PersistenceFailed(Exception):
     pass
 
 
+class _LoadFailed(Exception):
+    pass
+
+
 def _noop_thread_factory(*, target, args, name, daemon):
     class _NoopThread:
         def __init__(self):
@@ -184,23 +189,19 @@ def _noop_thread_factory(*, target, args, name, daemon):
     return _NoopThread()
 
 
-def _no_op_save_state(_state):
-    """Compatibility seam; production must supply the atomic file writer."""
-
-
 class FleetSharingWorker:
     def __init__(
         self,
         *,
         load_state: Callable[[], s.SharingState],
+        timing_context: TimingContext,
         client_factory=FleetRelayClient,
         unwrap_private_key=s.unwrap_private_key,
         sharing_enabled=lambda: True,
-        save_state=_no_op_save_state,
+        save_state: Callable[[s.SharingState], None],
         wrap_private_key=s.wrap_private_key,
         _generate_private_key=crypto.generate_private_key,
         _thread_factory=threading.Thread,
-        _clock=time.monotonic,
         _utc_clock=lambda: datetime.now(UTC),
         _jitter=random.random,
     ):
@@ -212,7 +213,8 @@ class FleetSharingWorker:
         self._generate_private_key = _generate_private_key
         self._sharing_enabled = sharing_enabled
         self._thread_factory = _thread_factory
-        self._clock = _clock
+        self._timing_context = timing_context
+        self._clock = timing_context._clock
         self._utc_clock = _utc_clock
         self._jitter = _jitter
         self._lock = threading.Lock()
@@ -242,6 +244,8 @@ class FleetSharingWorker:
         self._status = SharingStatus("stopped")
         self._durable_sources: tuple[PendingSourceStatus, ...] = ()
         self._pairing_action_id = None
+        self._pairing_pollable = None
+        self._parked_pairing = None
         self._subscribers: dict[str, dict[object, Callable]] = {
             "status": {},
             "remote": {},
@@ -253,9 +257,12 @@ class FleetSharingWorker:
 
         # Owner-only state, never reconstructed from a stale pass-local copy.
         self._state: s.SharingState | None = None
+        self._quarantined = False
+        self._identity_mismatch = False
+        self._authenticated_device = None
         self._client = None
         self._client_origin = None
-        self._scheduler = Scheduler()
+        self._scheduler = timing_context._scheduler
         self._local_retry_at = 0.0
         self._needs_device = True
         self._resume_metadata = False
@@ -363,7 +370,12 @@ class FleetSharingWorker:
         return command
 
     def request_pairing(
-        self, *, mode="initial", configured_origin=None, action_id=None
+        self,
+        *,
+        mode="initial",
+        configured_origin=None,
+        action_id=None,
+        requested_capabilities=CAPABILITIES,
     ) -> bool:
         """Queue initial/retry, same-key upgrade, or explicitly authorized fresh setup.
 
@@ -375,13 +387,16 @@ class FleetSharingWorker:
             configured_origin is not None and not isinstance(configured_origin, str)
         ):
             return False
-        if action_id is not None:
-            try:
+        try:
+            capabilities = p.capabilities(list(requested_capabilities))
+            if action_id is not None:
                 p.uuid(action_id)
-            except ValueError:
-                return False
+        except (ValueError, TypeError):
+            return False
         return (
-            self._queue("pairing", "pairing", (mode, configured_origin, action_id))
+            self._queue(
+                "pairing", "pairing", (mode, configured_origin, action_id, capabilities)
+            )
             is not None
         )
 
@@ -738,11 +753,16 @@ class FleetSharingWorker:
             return self._fence_locked()
 
     def _check(self, fence, *, work=None):
-        current = self._fence()
+        with self._lock:
+            self._check_locked(fence, work=work)
+
+    def _check_locked(self, fence, *, work=None):
+        if self._identity_mismatch:
+            raise _Obsolete
+        current = self._fence_locked()
         if work is not None:
-            with self._lock:
-                queued = tuple(self._commands.values())
-                deferred = tuple(self._deferred_commands.values())
+            queued = tuple(self._commands.values())
+            deferred = tuple(self._deferred_commands.values())
             if any(
                 command.kind == "pairing"
                 or (
@@ -831,6 +851,8 @@ class FleetSharingWorker:
         self._check(replace(fence, session=candidate.session_id), work=work)
 
     def _reset_session(self):
+        # Only a typed negative from this live attempt permits another poll.
+        self._pairing_pollable = None
         self._needs_device = True
         self._part_observe = True
         self._source_observe.update(
@@ -848,10 +870,54 @@ class FleetSharingWorker:
             observed_participation=self._state.observed_participation,
         )
 
+    def _archived_choice(self, state=None):
+        archive = (state or self._state).cutover
+        if archive is None:
+            return None
+        if any(
+            item.selector == "participation" and item.status == "fenced"
+            for item in archive.outcomes
+        ):
+            return archive.original["pending_participation"]
+        return None
+
+    @staticmethod
+    def _settle_archive(state, *, participation=None, recovered=False):
+        archive = state.cutover
+        if archive is None:
+            return state
+        choice = archive.original.get("pending_participation")
+        outcomes = []
+        for item in archive.outcomes:
+            status = item.status
+            if recovered and status in ("fenced", "expired_unproven"):
+                if item.selector == "session":
+                    status = "superseded_session"
+                elif item.selector in ("pairing", "recovery"):
+                    status = "recovered_identity"
+            if (
+                item.selector == "participation"
+                and status == "fenced"
+                and participation is not None
+                and choice is not None
+                and participation.enabled == choice["enabled"]
+            ):
+                status = "observed_choice"
+            outcomes.append(s.CutoverOutcome(item.selector, status))
+        return replace(state, cutover=replace(archive, outcomes=tuple(outcomes)))
+
     def _load(self):
         if self._state is not None:
             return
-        self._state = self._load_state()
+        if self._quarantined:
+            raise s.QuarantineError
+        try:
+            self._state = self._load_state()
+        except s.QuarantineError:
+            self._quarantined = True
+            raise
+        except OSError:
+            raise _LoadFailed from None
         self._project_saved()
         # The previous process may have just completed an attempt. Its monotonic
         # clock cannot be persisted, so pay one conservative bucket interval on
@@ -862,6 +928,16 @@ class FleetSharingWorker:
                 self._scheduler.deadlines["read"] = self._clock() + 0.5
                 self._scheduler.deadlines["publication"] = self._clock() + 0.5
         self._reset_session()
+        if self._state.cutover is not None:
+            self._resume_metadata = any(
+                item.status == "fenced" for item in self._state.cutover.outcomes
+            )
+        if self._archived_choice() is not None:
+            with self._lock:
+                self._inhibit = True
+            self._update_status(
+                local_inhibited=True, participation="needs_confirmation"
+            )
         pending = self._state.pending_participation
         if pending is not None:
             self._withdraw_needed = not pending.enabled
@@ -916,7 +992,7 @@ class FleetSharingWorker:
         self._update_status()
 
     def _ingest_pairing(self, command, fence):
-        mode, configured, action_id = command.payload
+        mode, configured, action_id, capabilities = command.payload
         state = self._state
         changed_origin = False
         try:
@@ -936,11 +1012,40 @@ class FleetSharingWorker:
             "device_revoked",
             "device_key_conflict",
         )
+        if mode == "fresh" and (
+            state.cutover is not None
+            or state.pending_participation is not None
+            or state.pending_source_commands
+            or state.pending_pairing is not None
+            or state.pending_recovery is not None
+            or state.automatic != s.AutomaticState()
+        ):
+            self._update_status(
+                fence=fence,
+                state="refused",
+                detail="unresolved_history",
+                pairing="rejected",
+            )
+            return
         if mode == "fresh" and not (terminal or changed_origin):
             self._update_status(
                 fence=fence,
                 state="refused",
                 detail="fresh_key_not_authorized",
+                pairing="rejected",
+            )
+            return
+        if mode != "fresh" and (
+            state.pending_recovery is not None
+            or (
+                state.pending_pairing is not None
+                and state.pending_pairing.completion_attempted
+            )
+        ):
+            self._update_status(
+                fence=fence,
+                state="refused",
+                detail="unresolved_history",
                 pairing="rejected",
             )
             return
@@ -973,12 +1078,16 @@ class FleetSharingWorker:
             candidate = s.SharingState(
                 identity=identity,
                 relay_origin=origin,
-                pending_pairing=s.PendingPairing(mode),
+                pending_pairing=s.PendingPairing(
+                    mode, requested_capabilities=capabilities
+                ),
             )
         else:
             candidate = replace(
-                s.replace_session(state, None),
-                pending_pairing=s.PendingPairing(mode),
+                state,
+                pending_pairing=s.PendingPairing(
+                    mode, requested_capabilities=capabilities
+                ),
                 pending_recovery=None,
                 auth_pause=None,
             )
@@ -992,9 +1101,16 @@ class FleetSharingWorker:
                 pairing="rejected",
             )
             return
-        self._persist(candidate, fence)
-        self._reset_session()
-        self._pairing_action_id = action_id
+        try:
+            self._persist(candidate, fence)
+        finally:
+            if self._state is candidate:
+                # The write may commit before a new submission fences projection.
+                # Finish this admission, not a second attempt against its own journal.
+                self._pairing_action_id = action_id
+                self._parked_pairing = None
+                self._drop_command("pairing", command)
+                self._reset_session()
         self._update_status(
             fence=replace(fence, session=self._state.session_id),
             state="connecting",
@@ -1097,7 +1213,10 @@ class FleetSharingWorker:
             pending = self._state and (
                 self._state.pending_participation
                 or self._state.pending_source_commands
-                or self._state.pending_pairing
+                or (
+                    self._state.pending_pairing is not None
+                    and self._state.pending_pairing != self._parked_pairing
+                )
                 or self._state.pending_recovery
             )
             if not (
@@ -1143,9 +1262,16 @@ class FleetSharingWorker:
         except _Obsolete:
             # Persisted uncertainty is intentionally left for the next owner turn.
             return IDLE_POLL_S, True
+        except s.QuarantineError:
+            self._update_status(state="refused", detail="state_quarantined")
+            return INERT_POLL_S, False
         except s.CapacityError:
             self._update_status(state="error", detail="source_queue_full")
             return IDLE_POLL_S, False
+        except _LoadFailed:
+            self._local_retry_at = self._clock() + BASE_BACKOFF_S
+            self._update_status(state="error", detail="state_load_failed")
+            return BASE_BACKOFF_S, False
         except _PersistenceFailed:
             self._local_retry_at = self._clock() + BASE_BACKOFF_S
             self._update_status(state="error", detail="persistence_failed")
@@ -1166,6 +1292,8 @@ class FleetSharingWorker:
             self._expiry_binding = binding
 
     def _work(self, enabled):
+        if self._identity_mismatch:
+            return ()
         state = self._state
         if state.identity is None or state.relay_origin is None:
             return ()
@@ -1175,7 +1303,10 @@ class FleetSharingWorker:
         pending = (
             state.pending_participation
             or state.pending_source_commands
-            or state.pending_pairing
+            or (
+                state.pending_pairing is not None
+                and state.pending_pairing != self._parked_pairing
+            )
             or state.pending_recovery
         )
         if not (
@@ -1190,7 +1321,8 @@ class FleetSharingWorker:
         if state.auth_pause:
             pause = state.auth_pause
             if pause.retry_not_before is None:
-                self._update_status(state="refused", detail="needs_fresh_key")
+                if self.status().pairing != "rejected":
+                    self._update_status(state="refused", detail="needs_fresh_key")
                 return ()
             if pause != self._pause_binding:
                 self._pause_binding = pause
@@ -1203,8 +1335,8 @@ class FleetSharingWorker:
             self._persist(replace(state, auth_pause=None), fence)
             state = self._state
         pairing = state.pending_pairing
-        if pairing:
-            if pairing.completion_attempted:
+        if pairing and pairing != self._parked_pairing:
+            if pairing.completion_attempted and pairing != self._pairing_pollable:
                 # A lost response may mean either registration or no commit at
                 # all. Keep initial provenance for an explicit SAME-key retry;
                 # a generic recovery 401 proves neither revocation nor consent.
@@ -1220,7 +1352,11 @@ class FleetSharingWorker:
                 )
                 return ()
             return (Work("complete_pairing", "pairing", priority=1),)
-        if state.pending_recovery or not state.session_id:
+        if (
+            state.pending_recovery
+            or not state.session_id
+            or state.last_revision >= p.INT4_MAX
+        ):
             return self._recovery_work()
         if state.session_expires_at is not None:
             self._expiry()
@@ -1407,7 +1543,9 @@ class FleetSharingWorker:
                 if pending.challenge
                 else not -60 < self._remaining(pending.issued_at) <= 60
             )
-            if expired:
+            if expired or pending.completion_attempted:
+                # Completion is one-use even when acceptance/save failed. Replace
+                # the bounded journal, never clear its attempt flag on this binding.
                 pending = None
         if pending is None:
             pending = s.PendingRecovery(secrets.token_urlsafe(32), self._utc_text())
@@ -1417,7 +1555,21 @@ class FleetSharingWorker:
 
     def _execute(self, work, fence):
         self._check(fence, work=work)
-        sent = failed = False
+        started = receipt = None
+        failed = False
+
+        def before_send():
+            nonlocal started
+            with self._lock:
+                self._check_locked(fence, work=work)
+                if (
+                    work.operation in ("read_snapshot", "publish_snapshot")
+                    and work.key != "withdraw"
+                    and self._inhibit
+                ):
+                    raise _Obsolete
+                started = self._clock()
+
         try:
             state = self._state
             origin = resolve_relay_origin(paired_origin=state.relay_origin)
@@ -1473,6 +1625,17 @@ class FleetSharingWorker:
                     issued_at=pending.issued_at,
                 )
             elif operation == "complete_recovery":
+                self._persist(
+                    replace(
+                        self._state,
+                        pending_recovery=replace(
+                            self._state.pending_recovery,
+                            completion_attempted=True,
+                        ),
+                    ),
+                    fence,
+                    work=work,
+                )
                 args = dict(
                     private_key=private_key,
                     challenge=self._state.pending_recovery.challenge,
@@ -1482,10 +1645,11 @@ class FleetSharingWorker:
                     public_key_spki=base64.b64decode(
                         state.identity.public_key_spki_b64
                     ),
-                    requested_capabilities=CAPABILITIES,
+                    requested_capabilities=state.pending_pairing.requested_capabilities,
                 )
             elif operation == "complete_pairing":
                 pairing = self._state.pending_pairing
+                self._pairing_pollable = None
                 self._persist(
                     replace(
                         self._state,
@@ -1508,21 +1672,25 @@ class FleetSharingWorker:
                     inhibited = self._inhibit
                 if inhibited or not self._enabled():
                     raise _Obsolete
-            sent = True
-            started = self._clock()
-            result = getattr(self._client, operation)(**args)
+            result = getattr(self._client, operation)(**args, before_send=before_send)
             receipt = self._clock()
+            if started is None:
+                # A client that never admitted transport cannot acknowledge work.
+                raise _Obsolete
             self._check(fence, work=work)
             self._accept(work, result, fence, started, receipt)
         except FleetRelayError as exc:
+            receipt = self._clock()
             failed = True
+            if started is None:
+                raise _Obsolete from None
             self._check(fence, work=work)
             self._relay_error(work, exc, fence)
         finally:
-            if sent:
+            if started is not None:
                 self._scheduler.completed(
                     work,
-                    self._clock(),
+                    receipt if receipt is not None else self._clock(),
                     failed=failed,
                     jitter=self._jitter() if failed else 0,
                 )
@@ -1614,11 +1782,56 @@ class FleetSharingWorker:
             self._reset_session()
             self._resume_metadata = True
             self._update_status(pairing="acknowledged", approval_url=None)
-        self._check(replace(fence, session=self._state.session_id), work=work)
-        if not self._needs_fresh_intent and self._state.auth_pause is None:
+        fence = replace(fence, session=self._state.session_id)
+        self._check(fence, work=work)
+        if (
+            self._state.cutover is not None
+            and self._state.pending_participation is None
+            and self.status().participation == "needs_confirmation"
+            and any(
+                item.selector == "participation" and item.status == "observed_choice"
+                for item in self._state.cutover.outcomes
+            )
+        ):
+            self._update_status(fence=fence, participation="observed_choice")
+        if self._archived_choice() is not None:
+            self._update_status(
+                state="refused",
+                detail="unresolved_previous_choice",
+                local_inhibited=True,
+            )
+        elif (
+            self._state.pending_pairing is not None
+            and self._state.pending_pairing == self._parked_pairing
+        ):
+            self._update_status(
+                fence=fence,
+                state="refused",
+                detail="unresolved_approval",
+                pairing="unresolved_approval",
+                approval_url=None,
+            )
+        elif not self._needs_fresh_intent and self._state.auth_pause is None:
             self._update_status(state="active", detail=None)
 
+    def _check_device_identity(self, device_id, fence, work):
+        with self._lock:
+            self._check_locked(fence, work=work)
+            expected = self._state.device_id
+            if expected is not None and expected.lower() != device_id.lower():
+                self._identity_mismatch = True
+                self._inhibit = True
+                self._authenticated_device = None
+            else:
+                return
+        self._clear_remote()
+        self._update_status(
+            state="refused", detail="identity_mismatch", local_inhibited=True
+        )
+        raise _Obsolete
+
     def _accept_device(self, device, fence, work):
+        self._check_device_identity(device.device_id, fence, work)
         candidate = replace(
             self._state,
             device_id=device.device_id,
@@ -1629,6 +1842,7 @@ class FleetSharingWorker:
             acknowledged_capabilities=device.acknowledged_capabilities,
             observed_participation=device.participation,
         )
+        candidate = self._settle_archive(candidate, participation=device.participation)
         with self._lock:
             queued_participation = "participation" in self._commands
         intent = candidate.pending_participation
@@ -1660,6 +1874,7 @@ class FleetSharingWorker:
                     ),
                 )
         self._persist(candidate, fence, work=work)
+        self._authenticated_device = device.device_id
         self._needs_device = False
         self._part_observe = queued_participation
         self._resume_metadata = False
@@ -1675,7 +1890,12 @@ class FleetSharingWorker:
             )
         elif acknowledged:
             self._participation_ack(device.participation.enabled)
-        elif intent is None and device.participation.enabled:
+        elif (
+            intent is None
+            and device.participation.enabled
+            and self._archived_choice() is None
+            and self._state.pending_pairing is None
+        ):
             with self._lock:
                 self._inhibit = False
             self._update_status(local_inhibited=False)
@@ -1685,8 +1905,9 @@ class FleetSharingWorker:
         self._update_status(observed_participation=device.participation)
 
     def _participation_ack(self, enabled):
+        inhibited = not enabled or self._archived_choice() is not None
         with self._lock:
-            self._inhibit = not enabled
+            self._inhibit = inhibited
         self._fresh_on = None
         self._needs_fresh_intent = self._part_observe = False
         self._eligibility = None
@@ -1695,7 +1916,7 @@ class FleetSharingWorker:
             self._clear_remote()
         self._update_status(
             participation="acknowledged",
-            local_inhibited=not enabled,
+            local_inhibited=inhibited,
             eligibility=None,
             observed_participation=self._state.observed_participation,
         )
@@ -1790,7 +2011,16 @@ class FleetSharingWorker:
 
     def _accept_recovery(self, result, fence, work):
         if result.result == "reconnected":
+            self._check_device_identity(result.device_id, fence, work)
             pairing = self._state.pending_pairing
+            unfulfilled = (
+                pairing
+                if pairing
+                and not set(pairing.requested_capabilities).issubset(
+                    result.approved_capabilities
+                )
+                else None
+            )
             candidate = replace(
                 s.replace_session(
                     self._state, result.session_id, expires_at=result.session_expires_at
@@ -1800,15 +2030,22 @@ class FleetSharingWorker:
                 observed_participation=result.participation,
                 pending_recovery=None,
                 auth_pause=None,
-                pending_pairing=None,
+                pending_pairing=unfulfilled,
+            )
+            candidate = self._settle_archive(
+                candidate, participation=result.participation, recovered=True
             )
             self._persist(candidate, fence, work=work)
             self._reset_session()
+            self._authenticated_device = result.device_id
+            # Recovery proves actual D, not completion of the requested upgrade.
+            # Park only that immutable pairing; other work keeps its own admission.
+            self._parked_pairing = unfulfilled
             if pairing is not None:
                 self._resume_metadata = True
                 self._update_status(
                     fence=replace(fence, session=self._state.session_id),
-                    pairing="acknowledged",
+                    pairing="unresolved_approval" if unfulfilled else "acknowledged",
                     approval_url=None,
                 )
         else:
@@ -1844,15 +2081,11 @@ class FleetSharingWorker:
         self._update_status(state="error", detail=code)
         operation = work.operation
         if operation == "complete_pairing":
-            if exc.status == 409:
-                # Unapproved/expired/consumed is coarse conflict, NOT proof of
-                # revocation. Polling remains bounded by the bootstrap scheduler.
-                pairing = replace(
-                    self._state.pending_pairing, completion_attempted=False
-                )
-                self._persist(
-                    replace(self._state, pending_pairing=pairing), fence, work=work
-                )
+            if exc.status == 409 and exc.code == "not_completable":
+                # This live typed negative proves only this poll did not mint a
+                # session. Keep durable uncertainty; never carry knowledge across
+                # restart, response loss, or a replacement pairing binding.
+                self._pairing_pollable = self._state.pending_pairing
             return
         if (
             operation == "begin_recovery"
@@ -1862,12 +2095,13 @@ class FleetSharingWorker:
         ):
             self._update_status(pairing="needs_retry", approval_url=None)
         if operation == "complete_recovery":
-            # One-use completion might already have committed. A fresh challenge
-            # with this registered key is the only safe way to learn a new session.
-            self._persist(replace(self._state, pending_recovery=None), fence, work=work)
+            # Retain attempted evidence until a fresh initiation is durably saved.
             return
         if exc.status == 401 and OPERATIONS[operation] != "bootstrap":
-            self._persist(s.replace_session(self._state, None), fence, work=work)
+            # The final attempted revision is evidence even when it got a 401.
+            # The exhaustion gate recovers without another signed use or reset.
+            if self._state.last_revision < p.INT4_MAX:
+                self._persist(s.replace_session(self._state, None), fence, work=work)
             self._reset_session()
         elif operation == "set_participation":
             self._part_observe = self._needs_device = True

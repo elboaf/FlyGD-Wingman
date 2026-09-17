@@ -7,10 +7,11 @@ legacy unknown grants bootstrap, and Settings True is not an explicit On action.
 from __future__ import annotations
 
 import http.client
+import json
 import threading
 import time
 import urllib.error
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from uuid import uuid4
@@ -22,6 +23,7 @@ from wingman.fleetsharing import protocol as p
 from wingman.fleetsharing import state as s
 from wingman.fleetsharing.client import FleetRelayError, PairingBegin, PairingComplete
 from wingman.fleetsharing.model import CatalogueCharacter, FleetCatalogue, PublishRow
+from wingman.fleetsharing.timing import TimingContext
 from wingman.fleetsharing.worker import (
     FleetSharingWorker,
     _noop_thread_factory,
@@ -35,14 +37,28 @@ UUID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 TOKEN = "A" * 43
 CAPS = (p.SHARED_CAPABILITY,)
 KEY = bytes(32)
-DEVICE = p.DeviceState(UUID, EXPIRY, True, CAPS, CAPS, CAPS, p.Participation(True, 1))
+SESSION = TOKEN
+PAIRED_SESSION = "B" * 42 + "A"
+DEVICE = p.parse_device(
+    {
+        "protocol": 2,
+        "device_id": UUID,
+        "session_expires_at": EXPIRY,
+        "feature_enabled": True,
+        "approved_capabilities": list(CAPS),
+        "session_approved_capabilities": list(CAPS),
+        "acknowledged_capabilities": list(CAPS),
+        "participation": {"enabled": True, "generation": 1},
+        "server_time_ms": 1788782400000,
+    }
+)
 PAIRED_STATE = s.SharingState(
     identity=s.DeviceIdentity(
         "cHJvdGVjdGVk",
         crypto.canonical_device_public_key_b64(crypto.public_key_spki(KEY)),
     ),
     relay_origin="https://relay.test",
-    session_id="session-1",
+    session_id=SESSION,
 )
 CATALOGUE = FleetCatalogue(1, (CatalogueCharacter(1, "Alice"),))
 STREAM_HEALTH = StreamHealth(state="active")
@@ -90,8 +106,8 @@ class FakeRelayClient:
         self.device = device
         self.catalogue = catalogue
         self.registered_keys = {crypto.public_key_spki(KEY)} if registered else set()
-        self.valid_sessions = {"session-1": KEY} if registered else {}
-        self.active_session = "session-1" if registered else None
+        self.valid_sessions = {SESSION: KEY} if registered else {}
+        self.active_session = SESSION if registered else None
         self.session_views = {}
         self.precommit_loss = set()
         self.admissions = {}
@@ -115,7 +131,25 @@ class FakeRelayClient:
         self.controls = []
         self.participation_calls = []
         self.source_views = {}
-        self.remote = (p.ObservedRemoteRow(2, "Bob", 20, (), "live", 400, UUID),)
+        self.remote = p.parse_snapshot(
+            {
+                "protocol": 2,
+                "server_time_ms": DEVICE.server_time_ms,
+                "rows": [
+                    {
+                        "character_id": 2,
+                        "character_name": "Bob",
+                        "outgoing_dps": 20,
+                        "incoming_dps": None,
+                        "activity_age_ms": 400,
+                        "effects": [],
+                        "state": "live",
+                        "age_ms": 400,
+                        "publication_id": UUID,
+                    }
+                ],
+            }
+        )
         self.withdrawal_completed = False
         self.challenge = None
         self.recovery_result = "reconnected"
@@ -126,6 +160,9 @@ class FakeRelayClient:
         self.release = threading.Event()
 
     def _call(self, operation, args, apply):
+        hook = args.get("before_send")
+        if hook is not None:
+            hook()
         bucket = OPERATION_BUCKETS[operation]
         now = self.clock()
         revision = args.get("revision")
@@ -232,7 +269,24 @@ class FakeRelayClient:
             raise FleetRelayError(403, "forbidden", "participation")
 
     def fetch_device(self, **args):
-        return self._call("fetch_device", args, lambda: self._session_device(args))
+        return self._call(
+            "fetch_device",
+            args,
+            lambda: p.parse_device(
+                {
+                    "protocol": 2,
+                    **asdict(self._session_device(args)),
+                    "approved_capabilities": list(self.device.approved_capabilities),
+                    "session_approved_capabilities": list(
+                        self._session_device(args).session_approved_capabilities
+                    ),
+                    "acknowledged_capabilities": list(
+                        self._session_device(args).acknowledged_capabilities
+                    ),
+                    "server_time_ms": int(self.utc().timestamp() * 1000),
+                }
+            ),
+        )
 
     def acknowledge_capabilities(self, **args):
         def apply():
@@ -256,20 +310,35 @@ class FakeRelayClient:
         return self._call("set_participation", args, apply)
 
     def fetch_catalogue(self, **args):
-        self.fetch_calls.append(args["revision"])
-        return self._call("fetch_catalogue", args, lambda: self.catalogue)
+        def apply():
+            self.fetch_calls.append(args["revision"])
+            return self.catalogue
+
+        return self._call("fetch_catalogue", args, apply)
 
     def renew_session(self, **args):
-        self.renew_calls.append(args["revision"])
-
         def apply():
+            self.renew_calls.append(args["revision"])
             expiry = _date(self.utc() + timedelta(minutes=30))
             self._update_session(args, session_expires_at=expiry)
             return expiry
 
         return self._call("renew_session", args, apply)
 
-    def publish_snapshot(self, **args):
+    def publish_snapshot(self, *, sampled_at_ms, **args):
+        # No protocol-1 success shim: the worker must supply real API2 payloads.
+        p.parse_combat_put(
+            json.loads(
+                json.dumps(
+                    {
+                        "protocol": 2,
+                        "sampled_at_ms": sampled_at_ms,
+                        "rows": [asdict(row) for row in args["rows"]],
+                    }
+                )
+            )
+        )
+
         def apply():
             self.publish_calls.append((args["revision"], args["rows"]))
             if not args["rows"]:
@@ -295,7 +364,13 @@ class FakeRelayClient:
         return self._call("fetch_eligibility", args, apply)
 
     def read_snapshot(self, **args):
-        return self._call("read_snapshot", args, lambda: self.remote)
+        return self._call(
+            "read_snapshot",
+            args,
+            lambda: p.parse_snapshot(
+                json.loads(json.dumps({"protocol": 2, **asdict(self.remote)}))
+            ),
+        )
 
     def fetch_sources(self, **args):
         return self._call(
@@ -327,12 +402,18 @@ class FakeRelayClient:
                         or self.source_intents.get(command.source_id) != command
                     ):
                         raise FleetRelayError(409, "conflict", "start")
-                    return current
+                    return p.SourceStartResult(current)
                 self.source_intents[command.source_id] = command
                 # Provider activation is an explicit fixture simplification;
                 # production initially returns pending, with the same CAS identity.
                 current = p.SourceView(
-                    command.source_id, 1, command.character_id, "active", None, None
+                    command.source_id,
+                    1,
+                    command.character_id,
+                    "active",
+                    None,
+                    None,
+                    None,
                 )
             else:
                 if (
@@ -340,7 +421,16 @@ class FakeRelayClient:
                 ) != command.expected_generation:
                     raise FleetRelayError(409, "conflict", "stop")
                 if current and current.state == "ended":
-                    return current
+                    consent = p.Consent(0, 0, False, None, None, None, None)
+                    status = p.AutomaticStatus(consent, "none", "off", "none", None, ())
+                    return p.SourceStopResult(
+                        command.request_id,
+                        "already_stopped",
+                        None,
+                        current,
+                        "manual_only",
+                        status,
+                    )
                 current = p.SourceView(
                     command.source_id,
                     (current.generation if current else 0) + 1,
@@ -348,9 +438,27 @@ class FakeRelayClient:
                     "ended",
                     "stopped",
                     None,
+                    None,
                 )
             self.source_views[command.source_id] = current
-            return current
+            if isinstance(command, p.StartSource):
+                return p.SourceStartResult(current)
+            consent = p.Consent(0, 0, False, None, None, None, None)
+            status = p.AutomaticStatus(consent, "none", "off", "none", None, ())
+            effect = (
+                "manual_only" if command.expected_generation else "unknown_cancelled"
+            )
+            receipt = p.SourceStopReceipt(
+                command,
+                _date(self.utc()),
+                _date(self.utc() + timedelta(hours=24)),
+                current,
+                effect,
+                consent,
+            )
+            return p.SourceStopResult(
+                command.request_id, "applied", receipt, current, effect, status
+            )
 
         return self._call("control_source", args, apply)
 
@@ -426,7 +534,7 @@ class FakeRelayClient:
             self._install_session(session_id, args["private_key"], device, retire=True)
             return p.RecoveryResult(
                 "reconnected",
-                UUID,
+                self.device.device_id,
                 session_id,
                 self.device.session_expires_at,
                 self.device.approved_capabilities,
@@ -440,11 +548,7 @@ class FakeRelayClient:
             if args.get("requested_capabilities") and not self.device.feature_enabled:
                 raise FleetRelayError(503, "feature_disabled", "pairing")
             self.pair_keys.append(public_key_spki)
-            pairing_id = (
-                "pair-id"
-                if len(self.pair_keys) == 1
-                else "pair-id-" + str(len(self.pair_keys))
-            )
+            pairing_id = str(uuid4())
             admission = PairingBegin(
                 pairing_id,
                 "https://relay.test/approve",
@@ -460,7 +564,7 @@ class FakeRelayClient:
 
         return self._call("begin_pairing", args, apply)
 
-    def complete_pairing(self, pairing_id, challenge, private_key):
+    def complete_pairing(self, pairing_id, challenge, private_key, *, before_send=None):
         def apply():
             binding = self.pairings.get(pairing_id)
             if (
@@ -468,7 +572,9 @@ class FakeRelayClient:
                 or binding[2]
                 or self.utc() >= datetime.fromisoformat(binding[1])
             ):
-                raise FleetRelayError(409, "conflict", "pairing consumed/expired")
+                raise FleetRelayError(
+                    409, "not_completable", "pairing consumed/expired"
+                )
             key = crypto.public_key_spki(private_key)
             if key != binding[0] or challenge != crypto.pairing_challenge_preimage(
                 pairing_id
@@ -476,15 +582,14 @@ class FakeRelayClient:
                 raise FleetRelayError(401, "unauthorized", "pairing proof")
             if binding[3] and not self.device.feature_enabled:
                 raise FleetRelayError(503, "feature_disabled", "pairing")
+            granted = set(binding[3])
+            if key in self.registered_keys:
+                granted.update(self.device.approved_capabilities)
+            # API2 capability order is shared then combat, not lexical sorting.
             grants = tuple(
-                sorted(
-                    set(binding[3])
-                    | (
-                        set(self.device.approved_capabilities)
-                        if key in self.registered_keys
-                        else set()
-                    )
-                )
+                cap
+                for cap in (p.SHARED_CAPABILITY, p.COMBAT_CAPABILITY)
+                if cap in granted
             )
             device = replace(
                 self.device,
@@ -498,10 +603,10 @@ class FakeRelayClient:
             )
             self.registered_keys.add(key)
             self.pairings[pairing_id] = (key, binding[1], True, binding[3])
-            self._install_session("paired-session", private_key, device)
-            return PairingComplete("paired-session", self.catalogue)
+            self._install_session(PAIRED_SESSION, private_key, device)
+            return PairingComplete(PAIRED_SESSION, self.catalogue)
 
-        return self._call("complete_pairing", {}, apply)
+        return self._call("complete_pairing", {"before_send": before_send}, apply)
 
 
 class _InMemoryStateStore:
@@ -518,6 +623,7 @@ class _InMemoryStateStore:
     def save(self, state):
         if self.fail(state):
             raise OSError("disk full")
+        s.check_control_capacity(state)
         self.saves.append(state)
         self._state = state
 
@@ -532,8 +638,14 @@ def _worker(
     thread_factory=_noop_thread_factory,
     sharing_enabled=lambda: True,
     save_state=None,
+    timing_context=None,
 ):
-    mono = clock or (lambda: 1000.0)
+    timing_context = timing_context or TimingContext(
+        clock=clock or (lambda: 1000.0),
+        db_continuity_token=object(),
+        elapsed_lifetime_token=object(),
+    )
+    mono = timing_context._clock
     client.clock = mono
     client.utc = utc_clock or (lambda: NOW)
     store = store or _InMemoryStateStore(state)
@@ -546,7 +658,7 @@ def _worker(
         _generate_private_key=lambda: KEY,
         sharing_enabled=sharing_enabled,
         _thread_factory=thread_factory,
-        _clock=mono,
+        timing_context=timing_context,
         _utc_clock=client.utc,
         _jitter=lambda: 0,
     )
@@ -780,7 +892,10 @@ def test_generic401_and_one_use_response_loss_recover_same_key_without_browser(l
     drive(worker, mono, 35, _snapshot(42))
     assert client.recoveries >= 1 and store.load().pending_recovery is None
     assert store.load().identity == PAIRED_STATE.identity
-    assert not client.pair_keys and client.publish_calls
+    assert not client.pair_keys
+    assert worker.status().metadata.has_session
+    assert worker.status().metadata.device_id == UUID
+    # Publication is the separate D checkpoint, not authentication evidence.
     if lost == "complete_recovery":
         assert client.recoveries == 2
     assert client.cadence_refusals == 0
@@ -804,7 +919,10 @@ def test_proven_auth_pause_survives_json_restart(tmp_path, result, floor):
     path = tmp_path / "state.json"
     s.save(path, state)
     other = _worker(
-        client, state=s.load(path), clock=lambda: mono[0], utc_clock=client.utc
+        client,
+        state=s.load(path),
+        timing_context=worker._timing_context,
+        utc_clock=client.utc,
     )
     before = len(client.calls)
     if floor is None:
@@ -830,18 +948,23 @@ def test_pairing_upgrade_same_key_keeps_stop_and_participation_journals():
     worker, client, store, mono = rig(
         state=replace(
             PAIRED_STATE,
-            pending_source_commands=(p.StopSource(UUID, 0),),
+            pending_source_commands=(p.StopSource(UUID, 0, UUID, DATE, None),),
             pending_participation=s.PendingParticipation(UUID, False),
         )
     )
     assert worker.request_pairing(mode="upgrade")
     assert not store.saves and not client.calls
     client.loss.add("complete_pairing")
-    drive(worker, mono, 35)
+    for _ in range(35):
+        drive(worker, mono, 1)
+        if client.recoveries:
+            break
     assert client.pair_keys == [crypto.public_key_spki(KEY)]
-    assert store.load().pending_source_commands == ()
-    assert client.source_views[UUID].state == "ended"
-    assert client.device.participation.enabled is False
+    assert store.load().pending_source_commands == (
+        p.StopSource(UUID, 0, UUID, DATE, None),
+    )
+    assert store.load().pending_participation == s.PendingParticipation(UUID, False)
+    # Terminal/source settlement belongs to B; authentication never erases them.
     assert client.recoveries and store.load().identity == PAIRED_STATE.identity
     assert any(
         v.pending_pairing and v.pending_pairing.approval_url for v in store.saves
@@ -854,7 +977,7 @@ def test_initial_pairing_saves_candidate_and_admission_before_exposure():
     assert not store.saves and not client.calls
     drive(worker, mono, 12)
     assert store.saves[0].identity and store.saves[0].pending_pairing
-    assert store.load().session_id == "paired-session"
+    assert store.load().session_id == PAIRED_SESSION
     assert store.load().device_id == UUID
 
 
@@ -911,7 +1034,16 @@ def test_persistence_failure_never_installs_unsaved_state_or_sends_past_boundary
 
     store.fail = fail
     drive(worker, mono, 12)
-    assert worker.status().state == "error"
+    if boundary == "session":
+        # One-use retirement may be followed by a new initiation. That progress
+        # is not an unsaved session, regardless of the final turn's status.
+        assert store.load().session_id is None
+        assert any(
+            v.pending_recovery and v.pending_recovery.completion_attempted
+            for v in store.saves
+        )
+    else:
+        assert worker.status().state == "error"
     assert worker._state == store._state
     kinds = [k for k, _, _ in client.calls]
     forbidden = {
@@ -1015,7 +1147,7 @@ def test_http_error_cleanup_cannot_reach_worker_unexpected_traceback(
     # Device bootstrap admits endpoint-local service_unavailable; catalogue's
     # older coarse status fallback was server_error. Cleanup must preserve both.
     assert worker.status().detail == (
-        "server_error" if read_fails else "service_unavailable"
+        "transport_error" if read_fails else "service_unavailable"
     )
     assert stream.close_attempts == 1 and stream.read_amounts == [65537]
     assert stream.private_context not in caplog.text
@@ -1140,11 +1272,11 @@ def test_no_key_load_or_periodic_io_when_dormant_even_after_startup_probe():
     assert store.loads == 1 and not store.saves and not client.calls
 
 
-def test_fresh_setup_is_explicit_and_discards_old_identity_commands():
+def test_fresh_setup_refuses_to_discard_old_identity_commands():
     pending = s.PendingParticipation(UUID, True, 1)
     original = replace(
         PAIRED_STATE,
-        pending_source_commands=(p.StopSource(UUID, 0),),
+        pending_source_commands=(p.StopSource(UUID, 0, UUID, DATE, None),),
         pending_participation=pending,
         auth_pause=s.AuthPause("device_revoked"),
     )
@@ -1154,11 +1286,11 @@ def test_fresh_setup_is_explicit_and_discards_old_identity_commands():
     assert not client.calls
     worker.request_pairing(mode="fresh", configured_origin="https://relay.test")
     drive(worker, mono, 10)
-    assert client.pair_keys and not client.controls and not client.participation_calls
     assert (
-        not store.load().pending_source_commands
-        and store.load().pending_participation is None
+        not client.pair_keys and not client.controls and not client.participation_calls
     )
+    assert store.load() == original
+    assert worker.status().detail == "unresolved_history"
 
 
 def test_unpaired_control_rejection_remains_visible_without_network_or_key():
@@ -1234,7 +1366,9 @@ def test_control_response_loss_reconciles_across_actual_json_restart(
             break
     assert operation not in client.loss
     assert worker.stop()
-    replacement = _worker(client, clock=lambda: mono[0], utc_clock=client.utc)
+    replacement = _worker(
+        client, timing_context=worker._timing_context, utc_clock=client.utc
+    )
     replacement._load_state = lambda: s.load(path)
     replacement._save_state = lambda state: s.save(path, state)
     replacement.resume_pending()
@@ -1258,7 +1392,7 @@ def test_json_pending_off_stop_resume_after_restart_without_settings_on(tmp_path
         PAIRED_STATE,
         last_revision=13,
         pending_participation=s.PendingParticipation(UUID, False),
-        pending_source_commands=(p.StopSource(UUID, 0),),
+        pending_source_commands=(p.StopSource(UUID, 0, UUID, DATE, None),),
     )
     s.save(path, original)
     worker, client, _, mono = rig(enabled=False)
@@ -1558,7 +1692,7 @@ def test_additional_persistence_boundaries_cannot_advance_unsaved_state(boundary
         )
     elif boundary == "pair_session":
         worker.request_pairing(mode="upgrade")
-        store.fail = lambda state: state.session_id == "paired-session"
+        store.fail = lambda state: state.session_id == PAIRED_SESSION
     else:
         store._state = replace(PAIRED_STATE, session_id=None)
         client.recovery_result = "device_revoked"
@@ -1566,7 +1700,7 @@ def test_additional_persistence_boundaries_cannot_advance_unsaved_state(boundary
     drive(worker, mono, 10)
     assert worker._state == store.load()
     if boundary == "pair_session":
-        assert all(session != "paired-session" for session in client.sessions)
+        assert all(session != PAIRED_SESSION for session in client.sessions)
     elif boundary == "auth_pause":
         assert store.load().auth_pause is None
     elif boundary == "source_journal":
@@ -1593,7 +1727,9 @@ def test_off_save_failure_inhibits_immediately_and_never_claims_ack():
 
 def test_pairing_completion_conflict_polls_bounded_and_never_marks_revoked():
     worker, client, store, mono = rig(state=s.EMPTY, enabled=False)
-    client.errors["complete_pairing"] = FleetRelayError(409, "conflict", "not approved")
+    client.errors["complete_pairing"] = FleetRelayError(
+        409, "not_completable", "not approved"
+    )
     worker.request_pairing(configured_origin="https://relay.test")
     drive(worker, mono, 20)
     calls = [t for k, t, _ in client.calls if k == "complete_pairing"]
@@ -1602,7 +1738,7 @@ def test_pairing_completion_conflict_polls_bounded_and_never_marks_revoked():
     assert worker.status().approval_url == "https://relay.test/approve"
     client.errors.clear()
     drive(worker, mono, 40)
-    assert store.load().session_id == "paired-session"
+    assert store.load().session_id == PAIRED_SESSION
 
 
 def test_expired_unadmitted_start_does_not_claim_server_acknowledgement():
