@@ -4833,6 +4833,14 @@
     var pool = DEV_THEMES[devTheme.preset];
     return {
       presets: DEV_THEME_PRESETS,
+      // Same derivation as api._theme_payload: brand, danger, warn, ok
+      // from each preset's own default role table, never hand-typed.
+      preset_strips: DEV_THEME_PRESETS.reduce(function (strips, p) {
+        var roles = (DEV_THEMES[p.id] || {}).roles || {};
+        strips[p.id] = ['--brand', '--danger', '--warn', '--ok'].map(
+          function (role) { return roles[role]; });
+        return strips;
+      }, {}),
       preset: devTheme.preset,
       families: JSON.parse(JSON.stringify(devTheme.families)),
       effective: {},

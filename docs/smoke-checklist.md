@@ -15,6 +15,35 @@ dev checks are separate evidence, not installed Windows/WebView2 acceptance.
 
 Run on Windows against a real install before each release.
 
+## Theme picker hardening — Windows acceptance NOT RUN (2026-09-17)
+
+The picker card changed shape: the preset control is now the same custom
+dropdown as the families (native `<select>` gone), preset switches confirm
+before destroying family picks, and the listboxes have a keyboard contract.
+
+- [ ] **Preset picker shows colour.** The Theme dropdown's open list shows
+      each preset's name beside a four-dot identity strip; the strip colours
+      match what each preset actually paints (they are derived in
+      `themes.preset_strip`, but eyes confirm the derivation picked roles
+      that read as that preset). The closed trigger reads the current
+      preset's name.
+- [ ] **Confirm gate.** With at least one family pick made (composer may
+      stay collapsed), choosing a different preset raises a destructive
+      confirm naming the preset and the pick count. Decline changes
+      nothing and the trigger still reads the old preset; Accept switches
+      and the message line receipts ("Switched to …; N colour picks
+      cleared."). With no picks, no confirm appears.
+- [ ] **Keyboard contract.** Tab reaches each dropdown's trigger; Arrow
+      Down opens onto the selected row; Arrow Up/Down move (wrapping),
+      Home/End jump; Enter activates; Escape closes and puts focus back on
+      the trigger; the picked row announces as selected (screen reader or
+      accessibility inspector).
+- [ ] **Refusal and failure copy.** A refused pick still shows api.py's
+      specific message; only a genuine bridge failure shows the new
+      "The app did not accept that change…" wording.
+- [ ] **Customise colours…** carries the ellipsis while collapsed and
+      reads "Hide colours" while expanded.
+
 ## Clarity follow-up — installed Windows acceptance NOT RUN (2026-09-14)
 
 Source-worktree evidence (2026-09-14–15): the full main-window capture and

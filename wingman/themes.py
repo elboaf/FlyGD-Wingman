@@ -262,6 +262,18 @@ def legal_swatches(preset, family, picks):
     return [entry["hex"] for entry in preset["swatches"] if family in entry["families"]]
 
 
+# The four dots that identify a preset at a glance in the picker's open
+# list. Derived from the preset's own default mapping — never hand-typed —
+# so a preset edit reflows its strip the same way it reflows the window.
+_STRIP_ROLES = ["--brand", "--danger", "--warn", "--ok"]
+
+
+def preset_strip(preset):
+    """Identity colours for the preset picker's preview strip."""
+    roles = resolve(preset, {})
+    return [roles[role] for role in _STRIP_ROLES]
+
+
 def normalize(document):
     """Project a stored theme document onto what this module supports.
 

@@ -1951,20 +1951,30 @@
 
 // ---- Appearance card (theme picker) ------------------------------------
 // The customizer's contract lives in themes.py; this card only renders
-// what Python computed and sends picks back. Each family is a custom
-// dropdown -- the native select cannot render a colour dot inside its
-// open list, and the open list is the point: the entries are the
-// palette's own names ("Magnum", "Bone", "Hot Magenta"), never hex codes.
+// what Python computed and sends picks back. Every chooser on this card --
+// the preset and the seven families -- is the same custom dropdown,
+// because the native select cannot render colour inside its open list and
+// the open list is the point: the entries are the palette's own names
+// ("Magnum", "Bone", "Hot Magenta"), never hex codes. Preset rows also
+// carry their identity strip (themes.preset_strip), so picking a preset is
+// recognition, not recall of eleven names.
 // A family showing "Theme default" is a real state: no pick made, the
 // preset's own mapping applies.
 (function () {
   var host = WM.el('theme-composer');
-  var select = WM.el('theme-preset');
+  var presetHost = WM.el('theme-preset');
   var customise = WM.el('btn-theme-customise');
   var msg = WM.el('msg-theme');
-  if (!host || !select || !customise || !msg) { return; }
+  if (!host || !presetHost || !customise || !msg) { return; }
 
   var openMenu = null; // the one open dropdown, if any
+
+  // Every validation refusal carries api.py's own message, so reaching
+  // this fallback means the reply never carried a verdict -- a genuine
+  // bridge failure, not the control's and not the user's. In a local tray
+  // app there is no network to blame; naming restart is the honest action.
+  var UNREACHED = 'The app did not accept that change. Try again; if it ' +
+                  'repeats, restart Wingman.';
 
   function say(text) {
     msg.textContent = text || '';
@@ -1972,12 +1982,10 @@
   }
 
   function closeMenus() {
-    var menus = host.querySelectorAll('.theme-select');
-    for (var i = 0; i < menus.length; i++) {
-      menus[i].removeAttribute('open');
-      menus[i].querySelector('.theme-menu').hidden = true;
-      menus[i].querySelector('button').setAttribute('aria-expanded', 'false');
-    }
+    if (!openMenu) { return; }
+    openMenu.removeAttribute('open');
+    openMenu.querySelector('.theme-menu').hidden = true;
+    openMenu.querySelector('button').setAttribute('aria-expanded', 'false');
     openMenu = null;
   }
 
@@ -1990,6 +1998,94 @@
       control.querySelector('button').setAttribute('aria-expanded', 'true');
       openMenu = control;
     }
+  }
+
+  // The one dropdown builder for the whole card. items: [{selected, build,
+  // onPick}]; labelledby names the row's visible label so seven controls
+  // never announce as identical anonymous buttons. The listbox contract is
+  // the one DESIGN.md holds tab lists to: roving focus with arrows, Home
+  // and End, aria-selected, and Escape handing focus back to the trigger.
+  function buildDropdown(opts) {
+    var control = WM.make('div', 'theme-select');
+    var button = WM.make('button');
+    button.type = 'button';
+    button.setAttribute('aria-haspopup', 'listbox');
+    button.setAttribute('aria-expanded', 'false');
+    // Accessible name is label + current value: the label alone would make
+    // every family trigger announce the same word over a different state.
+    button.setAttribute('aria-labelledby',
+                        opts.labelledby + ' ' + opts.valueId);
+    opts.buildTrigger(button);
+    control.appendChild(button);
+
+    var menu = WM.make('ul', 'theme-menu');
+    menu.hidden = true;
+    menu.setAttribute('role', 'listbox');
+    menu.setAttribute('aria-labelledby', opts.labelledby);
+    var optionButtons = [];
+    opts.items.forEach(function (item) {
+      var li = WM.make('li');
+      var itemBtn = WM.make('button');
+      itemBtn.type = 'button';
+      itemBtn.setAttribute('role', 'option');
+      itemBtn.setAttribute('tabindex', '-1');
+      itemBtn.setAttribute('aria-selected', item.selected ? 'true' : 'false');
+      item.build(itemBtn);
+      itemBtn.addEventListener('click', function () { item.onPick(); });
+      li.appendChild(itemBtn);
+      menu.appendChild(li);
+      optionButtons.push(itemBtn);
+    });
+
+    function focusOption(i) {
+      var count = optionButtons.length;
+      if (!count) { return; }
+      optionButtons[(i + count) % count].focus();
+    }
+    function selectedIndex() {
+      for (var i = 0; i < opts.items.length; i++) {
+        if (opts.items[i].selected) { return i; }
+      }
+      return 0;
+    }
+
+    button.addEventListener('click', function () { toggleMenu(control); });
+    // Arrow from the closed trigger opens onto the selected row -- the
+    // entry path a native select gives for free, restored here.
+    button.addEventListener('keydown', function (ev) {
+      if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+        ev.preventDefault();
+        toggleMenu(control);
+        if (openMenu === control) {
+          focusOption(selectedIndex() + (ev.key === 'ArrowDown' ? 0 : -1));
+        }
+      }
+    });
+    menu.addEventListener('keydown', function (ev) {
+      var current = optionButtons.indexOf(document.activeElement);
+      if (ev.key === 'ArrowDown') {
+        ev.preventDefault();
+        focusOption(current + 1);
+      } else if (ev.key === 'ArrowUp') {
+        ev.preventDefault();
+        focusOption(current - 1);
+      } else if (ev.key === 'Home') {
+        ev.preventDefault();
+        focusOption(0);
+      } else if (ev.key === 'End') {
+        ev.preventDefault();
+        focusOption(optionButtons.length - 1);
+      } else if (ev.key === 'Escape') {
+        ev.preventDefault();
+        closeMenus();
+        button.focus(); // a menu that eats Escape strands focus mid-card
+      } else if (ev.key === 'Tab') {
+        closeMenus(); // no preventDefault: focus keeps moving on
+      }
+    });
+
+    control.appendChild(menu);
+    return control;
   }
 
   function swatchName(t, hex) {
@@ -2008,6 +2104,15 @@
     return el;
   }
 
+  // A preset's identity colours in miniature, straight from the payload's
+  // derived preset_strips -- the same dots at every size, so the strip can
+  // never drift from what the preset actually paints.
+  function strip(hexes) {
+    var stripEl = WM.make('span', 'theme-strip');
+    (hexes || []).forEach(function (hex) { stripEl.appendChild(dot(hex)); });
+    return stripEl;
+  }
+
   function presetName(t) {
     for (var i = 0; i < (t.presets || []).length; i++) {
       if (t.presets[i].id === t.preset) { return t.presets[i].name; }
@@ -2015,22 +2120,61 @@
     return 'the theme';
   }
 
-  function renderPicker() {
-    var t = WM.theme;
-    if (!t) { return; }
-    var wanted = (t.presets || []).map(function (p) { return p.id; });
-    if (select.getAttribute('data-built') !== wanted.join(',')) {
-      select.textContent = '';
-      (t.presets || []).forEach(function (p) {
-        var opt = document.createElement('option');
-        opt.value = p.id;
-        opt.textContent = p.name;
-        select.appendChild(opt);
-      });
-      select.setAttribute('data-built', wanted.join(','));
-    }
-    select.value = t.preset;
-    renderComposer();
+  function renderPreset(t) {
+    presetHost.textContent = '';
+    var control = buildDropdown({
+      labelledby: 'lab-theme-preset',
+      valueId: 'theme-value-preset',
+      buildTrigger: function (button) {
+        var value = WM.make('span');
+        value.id = 'theme-value-preset';
+        value.textContent = presetName(t);
+        button.appendChild(value);
+      },
+      items: (t.presets || []).map(function (p) {
+        return {
+          selected: p.id === t.preset,
+          build: function (itemBtn) {
+            itemBtn.appendChild(strip((t.preset_strips || {})[p.id]));
+            itemBtn.appendChild(WM.make('span', null, p.name));
+          },
+          onPick: function () { choosePreset(t, p); }
+        };
+      })
+    });
+    presetHost.appendChild(control);
+  }
+
+  // Switching presets clears family picks by design -- picks chosen
+  // against one pool must not silently carry to another -- so the page
+  // confirms before throwing work away and reports what was cleared
+  // after. The composer is usually collapsed at this moment, which is
+  // exactly why the receipt cannot be skipped.
+  function choosePreset(t, p) {
+    var dropped = Object.keys(t.families || {}).length;
+    if (!dropped || p.id === t.preset) { return sendPreset(p, 0); }
+    WM.confirm('Switch theme',
+               'Switching to ' + p.name + ' clears your ' + dropped +
+               ' saved colour pick' + (dropped === 1 ? '' : 's') +
+               '. Switch anyway?',
+               {destructive: true}).then(function (ok) {
+      if (ok) { sendPreset(p, dropped); }
+      else { renderPicker(); } // put the closed trigger back on the old preset
+    });
+  }
+
+  function sendPreset(p, dropped) {
+    closeMenus();
+    WM.send('theme_set_preset', p.id).then(function (res) {
+      if (!res || !res.applied) {
+        say((res && res.error) || UNREACHED);
+        renderPicker();
+      } else {
+        say(dropped ? 'Switched to ' + p.name + '; ' + dropped +
+                      ' colour pick' + (dropped === 1 ? '' : 's') + ' cleared.'
+                    : '');
+      }
+    });
   }
 
   // Menus are rebuilt only with the composer: a repaint closes whatever
@@ -2047,54 +2191,42 @@
 
       var row = WM.make('div', 'row');
       var lab = WM.make('span', 'lab');
+      lab.id = 'theme-label-' + family;
       lab.textContent = labels[family];
       row.appendChild(lab);
 
-      var control = WM.make('div', 'theme-select');
-      var button = WM.make('button');
-      button.type = 'button';
-      button.setAttribute('aria-haspopup', 'listbox');
-      button.setAttribute('aria-expanded', 'false');
-      if (picked) {
-        button.appendChild(dot(picked));
-        button.appendChild(WM.make('span', null, swatchName(t, picked)));
-      } else {
-        button.appendChild(WM.make('span', null,
-                                   'Theme default (' + presetName(t) + ')'));
-      }
-      control.appendChild(button);
-
-      var menu = WM.make('ul', 'theme-menu');
-      menu.hidden = true;
-      menu.setAttribute('role', 'listbox');
-
-      var defaultItem = WM.make('li');
-      var defaultBtn = WM.make('button', 'theme-default-option');
-      defaultBtn.type = 'button';
-      defaultBtn.setAttribute('role', 'option');
-      defaultBtn.textContent = 'Theme default';
-      defaultBtn.addEventListener('click', function () {
-        pick(family, '');
+      var control = buildDropdown({
+        labelledby: lab.id,
+        valueId: 'theme-value-' + family,
+        buildTrigger: function (button) {
+          var value = WM.make('span');
+          value.id = 'theme-value-' + family;
+          if (picked) {
+            button.appendChild(dot(picked));
+            value.textContent = swatchName(t, picked);
+          } else {
+            value.textContent = 'Theme default (' + presetName(t) + ')';
+          }
+          button.appendChild(value);
+        },
+        items: [{
+          selected: !picked,
+          build: function (itemBtn) {
+            itemBtn.className = 'theme-default-option';
+            itemBtn.textContent = 'Theme default';
+          },
+          onPick: function () { pick(family, ''); }
+        }].concat(legal.map(function (hex) {
+          return {
+            selected: hex.toLowerCase() === String(picked).toLowerCase(),
+            build: function (itemBtn) {
+              itemBtn.appendChild(dot(hex));
+              itemBtn.appendChild(WM.make('span', null, swatchName(t, hex)));
+            },
+            onPick: function () { pick(family, hex); }
+          };
+        }))
       });
-      defaultItem.appendChild(defaultBtn);
-      menu.appendChild(defaultItem);
-
-      legal.forEach(function (hex) {
-        var li = WM.make('li');
-        var item = WM.make('button');
-        item.type = 'button';
-        item.setAttribute('role', 'option');
-        item.appendChild(dot(hex));
-        item.appendChild(WM.make('span', null, swatchName(t, hex)));
-        item.addEventListener('click', function () {
-          pick(family, hex);
-        });
-        li.appendChild(item);
-        menu.appendChild(li);
-      });
-
-      button.addEventListener('click', function () { toggleMenu(control); });
-      control.appendChild(menu);
       row.appendChild(control);
       if (t.family_descriptions && t.family_descriptions[family]) {
         var hint = WM.make('p', 'hint theme-family-hint',
@@ -2113,7 +2245,7 @@
       if (!res || !res.applied) {
         // The onTheme push that repaints the control is exactly what did
         // not happen, so say why and repaint from the last known state.
-        say((res && res.error) || 'Could not reach the app.');
+        say((res && res.error) || UNREACHED);
         renderPicker();
       } else {
         say('');
@@ -2136,39 +2268,43 @@
     reset.addEventListener('click', function () {
       WM.send('theme_reset').then(function (res) {
         if (!res || !res.applied) {
-          say((res && res.error) || 'Could not reach the app.');
+          say((res && res.error) || UNREACHED);
         }
       });
     });
     host.appendChild(reset);
   }
 
-  select.addEventListener('change', function () {
-    WM.send('theme_set_preset', select.value).then(function (res) {
-      if (!res || !res.applied) {
-        say((res && res.error) || 'Could not reach the app.');
-        renderPicker();
-      } else {
-        say('');
-      }
-    });
-  });
+  function renderPicker() {
+    var t = WM.theme;
+    if (!t) { return; }
+    closeMenus();
+    renderPreset(t);
+    renderComposer();
+  }
 
   customise.addEventListener('click', function () {
     var open = host.hidden;
     host.hidden = !open;
     customise.setAttribute('aria-expanded', String(open));
-    customise.textContent = open ? 'Hide colours' : 'Customise colours';
+    customise.textContent = open ? 'Hide colours' : 'Customise colours…';
     renderComposer();
   });
 
-  // Clicking elsewhere, or Escape, closes whichever menu is open. Bound on
-  // document because closing tracks the click's landing place, not focus.
+  // Clicking elsewhere closes whichever menu is open. Bound on document
+  // because closing tracks the click's landing place, not focus.
   document.addEventListener('click', function (ev) {
     if (openMenu && !openMenu.contains(ev.target)) { closeMenus(); }
   });
   document.addEventListener('keydown', function (ev) {
-    if (ev.key === 'Escape') { closeMenus(); }
+    // The open menu's own keydown handles Escape with focus in the list;
+    // this catches Escape landed anywhere else on the page while a menu
+    // is up, and hands focus back to the trigger like the menu path does.
+    if (ev.key === 'Escape' && openMenu) {
+      var trigger = openMenu.querySelector('button');
+      closeMenus();
+      trigger.focus();
+    }
   });
 
   // The push is the renderer of record -- app.js hands every payload here
