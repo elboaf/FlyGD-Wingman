@@ -15,6 +15,56 @@ dev checks are separate evidence, not installed Windows/WebView2 acceptance.
 
 Run on Windows against a real install before each release.
 
+## Screenshot UX step 5 — installed Windows acceptance NOT RUN
+
+Fleet telemetry and Alerts use bounded synthetic Chromium checks at 1015×633 and
+840×625. These are presentation evidence only: no live authGD, ESI, gamelog source,
+EVE client, Fleet Bar or alert delivery is established. Repeat installed WebView2
+checks at 100/125/150/200% scaling; native/live-service checks need separate approval.
+
+- [ ] Fleet overview precedes Local display and External sharing. All four facts
+      start Unknown, never invented Off or zero. Fleet Bar On/Off and local sharing
+      On/Off are independent; preference drafts do not overwrite accepted overview
+      facts. Local settings remain display-only; hidden characters can be restored
+      offline, and Reset width restores the saved 500px preference.
+- [ ] Setup saved/awaiting approval is not Paired merely because a binding exists.
+      authGD participation is labelled last observed On/Off or unknown. Applied
+      local Off, last-observed server On, pending intent and a save failure can
+      coexist without implying transmission. Full state remains in the original
+      consent live region without repeating it visually in the subsection.
+- [ ] Connection Refresh belongs to pairing/source state, not a new local-roster
+      read. Destination, actionable reasons, consent warnings and eligibility stay
+      visible with their owning controls. Privacy appears once: sparse current
+      telemetry, never raw logs or history. Pair/Grant/Start never enable sharing.
+- [ ] Current verification precedes new-attempt controls. Pending/local work has
+      its own labelled worklist; an in-flight Start with no UUID stays named local
+      feedback. Previous attempts is quieter history. Stop stays attached to the
+      correct attempt, retains focus on movement, and disappears only for settled
+      history. Pending work can revive the same keyed history row/control.
+- [ ] Stopped/failed-only reasons and the next action remain outside collapsed
+      history. No UUID or array ordering implies latest. Unknown reads preserve
+      same-binding last-known labels without enabling mutations; a new binding
+      discards them. Empty new-boss selection never contradicts an existing source.
+- [ ] At both sizes, check long reasons, Running/Offline/unknown local groups,
+      native disclosures, Tab/Shift+Tab, retained focus/scroll and no horizontal
+      overflow. Heading hierarchy uses words, not color alone or side stripes.
+- [ ] Alerts Off has one standing operational sentence and leaves checked event,
+      sound and behavior preferences editable. Waiting for Previews/folder is
+      not an error. Reader failure retains its specific reason and never stale
+      Watching names. A running reader with names says Watching plus those names;
+      with no names it says Watching gamelogs. Names are monitored log sources,
+      not the running-client roster. Partial/complete/X-of-Y/all/missing-character
+      claims are deliberately deferred; no backend roster join belongs here.
+- [ ] Health, write outcomes, event Test, volume, collision, Advanced field and
+      Custom status owners remain mounted under their existing lifecycle. Equal
+      polls do not reannounce unchanged text or clear another owner's refusal.
+      No-events configuration considers custom rules; custom matcher degradation
+      remains separate from reader state.
+- [ ] Advanced Flashes/Speed retain independent ordered writes, refusal messages,
+      newer drafts and hydration fences. Confirm timed/Test/foreground vs persistent
+      behavior still reads accurately. Custom Alerts empty state/editor and Gamelog
+      folder Browse/Detect/Enter commits are unchanged. No blur commits added.
+
 ## Screenshot UX step 4 — installed Windows acceptance NOT RUN
 
 Bookmarks/Previews use bounded synthetic Chromium checks at 1015×633 and 840×625.
@@ -6362,19 +6412,18 @@ behaviour a lexical guard cannot reach.
       message into one (a failed write): the row must appear, and vanish
       again when the message clears. `:empty` drives it, so nothing has to
       remember to clear a `hidden` attribute.
-- [ ] **A raised-only note costs no line either, and this reaches three
-      sections.** The same rule collapses a row whose hint is `[hidden]`
-      rather than empty, so it also governs `#preview-binds-off`,
-      `#alerts-previews-off`, `#alerts-no-folder`, `#alerts-depends` and
-      Bookmarks' `#eve-blockers`. Walk Bookmarks, Previews and Alerts with
-      each of those notes both raised and clear. Expected: no row ever
+- [ ] **A raised-only note costs no line either.** The same rule collapses
+      a row whose hint is `[hidden]` rather than empty, including
+      `#preview-binds-off` and Bookmarks' `#eve-blockers`. Walk those notes
+      both raised and clear. Alerts now folds prerequisites into its mounted
+      health owner instead of three separate raised-only banners. Expected: no row ever
       shows blank, and no note ever fails to appear. The `hidden` case is
       the one the first draft of this rule missed — the row stayed a
       0-height flex item and still spent its 10px gap.
 - [ ] **A live region keeps its line.** Settings > Alerts. `#alerts-health`
       and `#alerts-status` are `role="status"` and are deliberately NOT
       collapsed: a live region that is `display: none` when its text lands
-      may never be announced. Expected: the `Watching gamelogs — …` line
+      may never be announced. Expected: the `Watching …` line
       renders in place, and with a screen reader on, a change to it is
       spoken.
 - [ ] **The roster card is as wide as its table and no wider.** Settings >

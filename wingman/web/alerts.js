@@ -17,33 +17,14 @@
 
   var pveBox = WM.el('alert-pve-filter');
   var persistBox = WM.el('alert-persist');
-  var offBanner = WM.el('alerts-previews-off');
-  var folderBanner = WM.el('alerts-no-folder');
   var healthLine = WM.el('alerts-health');
   var status = WM.el('alerts-status');
-  var depends = WM.el('alerts-depends');
+  var eventsNote = WM.el('alerts-events-note');
   var collision = WM.el('alerts-collision');
 
-  // Everything below the master switch is a preference that CAN be
-  // recorded for later, so none of it is disabled -- that is S3's rule,
-  // applied one card up by settings.js's restore-preview-positions block
-  // and stated there: "Previews controls stay live, because recording a
-  // preference for later is an action that can be carried out."
-  //
-  // What was wrong here was not the controls being live. It was that
-  // twelve of them sit under a switch that turns them all off, with the
-  // only contradicting line -- "Not watching gamelogs." -- ABOVE them in
-  // the faintest text on the card. So the row says so instead, and only
-  // while it is true.
-  //
-  // That sentence used to add "rendered as its peers", which round 5's A4
-  // has since made only half true: the PvE filter and Keep-pulsing moved
-  // below the event table into .alert-mods, because they modify that table
-  // rather than sit beside the switch. They are still under the switch, so
-  // this line still has to cover them -- "below" is what it says, and
-  // .alert-mods is below.
-  var DEPENDS = 'Alerts are off, so nothing below is watching yet — these '
-              + 'apply when you turn them on.';
+  // The labelled preference group stays editable even while Alerts are Off.
+  // Operational health and write receipts have separate, mounted owners:
+  // polling prerequisites must never erase an unsuccessful settings change.
 
   // Ids only. The display names used to be carried here as well, for
   // messages that named their event ("Combat colour is set for this
@@ -119,9 +100,8 @@
   // Every write below goes through this. The text slots in this card
   // are role="status" live regions now, and replacing a text node
   // re-announces it even when the string is identical -- render() sets the
-  // health line unconditionally on section entry and on every
-  // wm:preview-enabled-changed, so an unguarded write would read "Not
-  // watching gamelogs." aloud again on each one.
+  // health line on section entry and on every wm:preview-enabled-changed,
+  // so an unguarded write would announce the same operational state again.
   //
   // The four .field-msg slots in the other Settings cards have the same
   // gap and are deliberately NOT changed here: they are live regions
@@ -133,12 +113,6 @@
   }
 
   function say(text) { setText(status, text); }
-
-  function showDepends(enabled) {
-    if (!depends) { return; }
-    setText(depends, enabled ? '' : DEPENDS);
-    depends.hidden = enabled;
-  }
 
   function eventRow(id) {
     return {
@@ -588,8 +562,8 @@
         if (res && res.error) { sayRow(row, res.error, 'warn'); return; }
         // A successful Test with the master switch off is the one way
         // this card can actively mislead: a ring pulses, a sound plays,
-        // and nothing is watching gamelogs. The DEPENDS line says so
-        // permanently; this says it at the moment it would be believed.
+        // and nothing is watching gamelogs. Operational health says so;
+        // this says it at the moment it would be believed.
         if (!enabledBox.checked) {
           sayRow(row, 'That is what the alert looks like. Alerts are still '
             + 'off, so nothing is watching gamelogs yet.', 'warn');
@@ -1076,50 +1050,10 @@
     });
   }
 
-  // The health line and the characters are ALWAYS one sentence, on
-  // purpose: a list rendered on its own keeps reading "watching Alice,
-  // Bob" after the shared reader has failed, which is a healthy-looking
-  // card sitting above a feature that stopped alerting.
-  //
-  // NAMES, not a count. "5 characters online" is the number you already
-  // assumed when you started five clients; the fact you actually need is
-  // WHICH one is missing when it says four, and get_alert_state already
-  // ships the list (api.py's `characters`) for the card to throw away.
-  // Sorted so the same five clients render in the same order every time
-  // and a gap is something you can spot rather than re-read.
-  //
-  // Capped, because this is one line in a card and a fleet is not five
-  // accounts. The overflow keeps counting, since past the cap the number
-  // is the only thing left that is useful.
-  var HEALTH_NAMES_MAX = 6;
-
-  // Round 5, A1. `running` is only two thirds of the answer, and the line
-  // shipped four rounds saying it was all of it.
-  //
-  // Api.get_alert_state gates `running` on three things -- previews on,
-  // master switch on, a healthy shared reader with a real folder -- so
-  // `running: true` proves all three. It proves nothing at all about the
-  // event table, which service.py's _handle consults separately and which
-  // drops every event whose spec is not `enabled`. Untick all three rows
-  // and shared telemetry genuinely is reading gamelogs and has thirteen
-  // characters, and cannot raise an alert for any of them: the card
-  // rendered "Watching gamelogs — Aiga Otsolen, ... and 7 more" over a
-  // feature that was switched off. That is the exact shape PRODUCT.md
-  // names as this line's reason to exist ("an alert you configured and
-  // cannot tell is running is the failure mode, not a missed pulse"), and
-  // the sibling instance at the Test-while-off note below is why the
-  // class is worth naming rather than patching.
-  //
-  // Counted off the payload's OWN events dict, not the EVENTS list above:
-  // this is the same table _handle reads, so the answer stays true for
-  // whatever settings.json holds rather than for the three ids this file
-  // happens to render.
-  //
-  // Deliberately NOT extended to the PvE filter. It suppresses only
-  // likely-NPC sources on two of the three events (patterns.py's
-  // FILTERED_EVENTS), so there is no setting of it that makes alerting
-  // impossible -- a clause claiming otherwise would be this same bug with
-  // the sign flipped.
+  // Configuration is distinct from reader health. Consult the payload's
+  // events, not just this page's built-in row IDs, and include custom rules
+  // before claiming nothing can alert. The PvE filter is not an Off state:
+  // it suppresses only likely-NPC sources on combat and warp scramble.
   function anyEventEnabled(alerts) {
     var events = (alerts && alerts.events) || {};
     for (var id in events) {
@@ -1130,59 +1064,36 @@
   }
 
   function healthText(state) {
-    if (!state.running) {
-      return state.last_error
-        ? 'Not watching gamelogs — ' + state.last_error
-        : 'Not watching gamelogs.';
+    if (!state) { return 'Could not reach the app. Alert health is unknown.'; }
+    // The checkbox is pending intent, not operational authority. Missing
+    // preference information must not turn an unknown read into Off.
+    if (!state.alerts || typeof state.alerts.enabled !== 'boolean') {
+      return 'Alert health is unknown.';
     }
-    var customs = (state.alerts && state.alerts.custom_rules) || [];
-    var customEnabled = customs.some(function (rule) { return rule.enabled; });
-    if (!anyEventEnabled(state.alerts) && !customEnabled) {
-      // Ahead of the character list on purpose, and instead of it: with no
-      // event enabled it does not matter which clients are online, and
-      // naming thirteen of them beside "nothing can alert" would be the
-      // healthy-looking card again in a different sentence.
-      return 'Watching gamelogs, but no events are switched on below — '
-        + 'nothing can alert yet.';
-    }
+    if (!state.alerts.enabled) { return 'Off'; }
+    if (!state.previews_enabled) { return 'Waiting for Previews — enable in Settings › Previews.'; }
+    // A retained reader error is not current failure while its folder is absent.
+    if (!state.gamelogs_folder) { return 'Waiting for a valid gamelog folder — set it below.'; }
+    if (state.last_error) { return 'Not watching: ' + state.last_error; }
+    if (!state.running) { return 'Not watching: the gamelog reader is unavailable.'; }
+    // These are monitored log-source names, not an online/expected roster.
+    // Keep every name with its current reader state, so a failure cannot
+    // leave a stale healthy list and an empty list cannot invent zero clients.
     var characters = (state.characters || []).slice().sort();
-    if (!characters.length) {
-      // Running with nothing to read is a real and reachable state: the
-      // folder is set and the thread is alive, but no client is logged
-      // in yet. "0 characters online" read as a fault.
-      return 'Watching gamelogs — no characters online yet.';
-    }
-    var shown = characters.slice(0, HEALTH_NAMES_MAX);
-    var rest = characters.length - shown.length;
-    return 'Watching gamelogs — ' + shown.join(', ')
-      + (rest ? ' and ' + rest + ' more' : '') + '.';
+    return characters.length ? 'Watching ' + characters.join(', ') : 'Watching gamelogs';
   }
 
-  // Three states, and a card that silently shows nothing is the failure
-  // mode this feature exists to avoid:
-  //   1. Previews off -- alerts cannot draw, so say that plainly.
-  //   2. No Gamelogs folder -- the important one, since without it
-  //      alerts silently do nothing, indistinguishable from nothing
-  //      happening in game.
-  //   3. Otherwise, the health line above (running + the characters).
-  //
-  // read(controls) uses false on the status poll below: re-applying the stored
-  // spec to the checkboxes, swatches and selects every two seconds would
-  // fight a click whose write is still in flight, snapping the control
-  // back to the old value for one frame. The poll is about what the app
-  // is DOING; the controls belong to whoever last touched them.
+  // Polling updates only presentation, never preferences or write receipts.
   function render(state) {
-    if (offBanner) {
-      offBanner.hidden = !!state.previews_enabled;
-    }
-    if (folderBanner) {
-      folderBanner.hidden = !!state.gamelogs_folder;
-    }
     setText(healthLine, healthText(state));
-    // Read from get_alert_state's own `enabled`, not the checkbox: the box
-    // is what the user just clicked, and a refused or bridge-failed write
-    // reverts it. This must describe what the app is actually doing.
-    showDepends(!!(state.alerts && state.alerts.enabled));
+    var failed = !state || (state.alerts && state.alerts.enabled && state.previews_enabled
+      && state.gamelogs_folder && (state.last_error || !state.running));
+    healthLine.className = 'hint' + (failed ? ' err' : '');
+    var alerts = state && state.alerts;
+    var customs = (alerts && alerts.custom_rules) || [];
+    var noEvents = state && state.running && alerts && alerts.enabled
+      && !anyEventEnabled(alerts) && !customs.some(function (rule) { return rule.enabled; });
+    setText(eventsNote, noEvents ? 'No events are switched on — nothing can alert yet.' : '');
   }
 
   function read(controls) {
@@ -1195,8 +1106,7 @@
       // hydration cannot replace newer health or a newer controls response.
       if (serial >= builtinRenderedSerial) {
         builtinRenderedSerial = serial;
-        if (state) { render(state); }
-        else { setText(healthLine, 'Could not reach the app. Alert health is unknown.'); }
+        render(state);
       }
       if (!controls || serial < builtinHydratedSerial) { return; }
       builtinHydratedSerial = serial;
@@ -1253,7 +1163,6 @@
     var s = (ev.detail || {}).settings || {};
     var alerts = (s.preview && s.preview.alerts) || {};
     enabledBox.checked = !!alerts.enabled;
-    showDepends(!!alerts.enabled);
     // Absent means on, matching restore-preview-positions's precedent in
     // previews.js: an upgrading user's file predates the key.
     pveBox.checked = alerts.pve_filter !== false;

@@ -1294,28 +1294,41 @@
     </div>
 
     <div class="settings" id="section-fleet">
-      <section class="card" id="preview-fleet-options">
-        <h2>Fleet Bar</h2>
-        <div class="row">
-          <label class="check">
-            <input type="checkbox" id="fleetbar-enabled"><span class="box"></span>
-            Show Fleet Bar
-          </label>
+      <section class="card" id="fleet-overview" aria-labelledby="fleet-overview-heading">
+        <h2 id="fleet-overview-heading">Fleet overview</h2>
+        <!-- Each existing module paints only its own accepted facts. These
+             summaries are not new live regions or evidence of delivery. -->
+        <dl class="fleet-overview-facts">
+          <div><dt>Fleet Bar</dt><dd id="fleet-overview-local">Unknown</dd></div>
+          <div><dt>Sharing from this PC</dt><dd id="fleet-overview-sharing">Unknown</dd></div>
+          <div><dt>authGD</dt><dd id="fleet-overview-auth">Unknown</dd></div>
+          <div><dt>Verification / eligibility</dt><dd id="fleet-overview-verification">Unknown</dd></div>
+        </dl>
+      </section>
+      <section class="card fleet-subsection" id="preview-fleet-options">
+        <h2>Local display</h2>
+        <div class="fleet-local-control">
+          <div class="row">
+            <label class="check">
+              <input type="checkbox" id="fleetbar-enabled"><span class="box"></span>
+              Show Fleet Bar
+            </label>
+            <span class="operational-status" id="fleetbar-state">Unknown</span>
+          </div>
+          <p class="field-msg" id="fleetbar-enabled-status" role="status"></p>
         </div>
-        <p class="hint">An always-on-top view of your clients' combat activity, independent of previews and alerts.</p>
-        <p class="hint">Local display only. Hiding the bar does not turn sharing Off or Stop verification.</p>
-        <p class="field-msg" id="fleetbar-enabled-status" role="status"></p>
+        <p class="hint" id="fleetbar-character-scope">Local display choices do not change collection, sharing or verification.</p>
         <div class="row">
-          <button class="btn" id="fleetbar-reset">Reset Fleet Bar width</button>
-          <span class="hint">Puts Fleet Bar back to its default 500px content width.</span></div>
+          <button class="btn" id="fleetbar-reset">Reset width</button>
+          <span class="hint">Restores the saved 500px content width.</span></div>
         <details class="fleet-characters">
           <summary>How Fleet Bar works</summary>
-          <p class="hint">One row per running, logged-in EVE client shows outgoing and incoming DPS over the last 10 seconds, plus scram, point and neut activity. A client without an active gamelog says NO LOG, not a guessed zero.</p>
-          <p class="hint">Drag Fleet Bar by its header. If edge resize is available, use the left or right edge. Wingman remembers width and position.</p>
+          <p class="hint">Shows recent DPS and scram, point and neut activity. Without an active gamelog, a client shows NO LOG, never a guessed zero.</p>
+          <p class="hint">Drag the header to move Fleet Bar; use its left or right edge when resize is available. Width and position are remembered.</p>
+          <p class="hint">Hidden characters stay collected and can be restored here while offline.</p>
         </details>
         <details class="fleet-characters" id="fleetbar-characters">
           <summary>Show local characters in Fleet Bar</summary>
-          <p class="hint" id="fleetbar-character-scope">Local display only. These choices do not change collection or sharing.</p>
           <div class="fleet-character-list" id="fleetbar-character-list"></div>
           <p class="hint fleet-character-empty" id="fleetbar-characters-empty">
             Characters appear here after Wingman sees them running.
@@ -1324,14 +1337,8 @@
         </details>
       </section>
 
-      <section class="card" id="fleet-sharing">
-        <h2>Fleet sharing</h2>
-        <p class="hint" id="sharing-connection" role="status">Reading connection state…</p>
-        <p class="field-msg" id="sharing-browser-error" role="status"></p>
-        <div class="row">
-          <button class="btn" id="sharing-connect" disabled>Connect…</button>
-          <button class="btn" id="sharing-refresh" disabled>Refresh</button>
-        </div>
+      <section class="card fleet-subsection" id="fleet-sharing">
+        <h2>External sharing</h2>
         <div class="row">
           <label class="check">
             <input type="checkbox" id="sharing-enabled" disabled aria-describedby="sharing-scope"><span class="box"></span>
@@ -1339,20 +1346,38 @@
           </label>
           <button class="btn" id="sharing-confirm-on" hidden>Confirm sharing On</button>
         </div>
-        <p class="hint" id="sharing-scope">Shares current DPS and scram / point state with eligible authGD Members in the same verified fleet, never raw logs or history.</p>
+        <p class="hint" id="sharing-scope">Shares sparse current DPS and scram / point state with eligible authGD Members in the same verified fleet, never raw logs or history.</p>
         <p class="field-msg" id="sharing-preference" role="status"></p>
-        <p class="hint" id="sharing-consent" role="status"></p>
+        <p class="hint" id="sharing-consent" role="status"><span class="status-announcement" id="sharing-consent-announcement"></span><span id="sharing-consent-label"></span></p>
         <p class="operational-status" id="sharing-eligibility" role="status"></p>
+        <div class="sharing-connection-group">
+          <header class="card-heading">
+            <h3>Connection</h3>
+            <button class="btn" id="sharing-refresh" aria-label="Refresh sharing connection and verification" disabled>Refresh</button>
+          </header>
+          <p class="hint" id="sharing-connection" role="status">Reading connection state…</p>
+          <p class="field-msg" id="sharing-browser-error" role="status"></p>
+          <button class="btn" id="sharing-connect" disabled>Connect…</button>
+        </div>
+        <div id="sharing-current">
+          <h3>Current verification</h3>
+          <p class="hint" id="sharing-source-status">Verification state is not known yet.</p>
+          <div class="sharing-sources" id="sharing-sources"></div>
+        </div>
+        <!-- This result owner remains exposed even without pending rows. A
+             Start call has no source UUID until its bridge reply arrives. -->
         <p class="field-msg" id="sharing-action" role="status"></p>
-        <h3>Current and pending verification</h3>
-        <p class="hint" id="sharing-source-status">Verification state is not known yet.</p>
-        <div class="sharing-sources" id="sharing-sources"></div>
+        <div id="sharing-pending" hidden>
+          <h3>Pending / local operation</h3>
+          <div class="sharing-sources" id="sharing-pending-sources"></div>
+        </div>
         <details id="sharing-history" class="fleet-characters" hidden>
           <summary id="sharing-history-summary">Previous attempts (0)</summary>
           <div id="sharing-history-sources" class="sharing-sources"></div>
         </details>
-        <h3>Start verification</h3>
-        <p class="hint">Start checks that the selected character is your boss. One boss authorization covers eligible account-linked alts automatically.</p>
+        <div class="sharing-new-attempt">
+        <h3>Start a new verification</h3>
+        <p class="hint">Verify your fleet boss to cover eligible account-linked alts.</p>
         <div class="row">
           <label class="lab" for="sharing-boss">Owned boss for a new attempt</label>
           <select class="field" id="sharing-boss" disabled><option value="">Waiting for owned characters</option></select>
@@ -1362,12 +1387,12 @@
           <button class="btn" id="sharing-grant" disabled>Grant Fleet Read…</button>
           <button class="btn" id="sharing-start" disabled>Start verification</button>
         </div>
+        </div>
         <details id="sharing-eligible" class="fleet-characters">
           <summary>Sharing details and eligible characters</summary>
           <p class="hint">Pairing, Fleet Read and Start do not turn telemetry sharing on.</p>
-          <p class="hint">Other participants and alts need no Fleet Read. Start can remain pending or paused
-            until authGD verifies the boss. Verification controls work with sharing and local displays off;
-            closing this view never stops verification.</p>
+          <p class="hint">One boss authorization covers eligible account-linked alts; other participants and alts need no Fleet Read. The selector starts a new attempt, not a list of alts to share.</p>
+          <p class="hint">Verification may stay pending or paused until authGD verifies the boss. These controls work with sharing and Fleet Bar Off; closing this view never stops verification.</p>
           <ul class="sharing-list" id="sharing-eligible-list"></ul>
         </details>
       </section>
@@ -1377,67 +1402,23 @@
 
       <section class="card">
         <h2>Gamelog alerts</h2>
-        <div class="row"><span class="lab"></span>
-          <!-- Round 5, A3. This used to end "when combat starts, your warp
-               is scrambled, or you decloak" -- the three rows of the event
-               table, restated ~400px above the table. The enumeration was
-               the only part a reader could get from the table itself, and
-               it is the part that has to be re-edited every time the table
-               changes. What is left is the mechanism, which the table does
-               NOT state: that the trigger is the gamelog and that the
-               preview pulsed is the client the event happened in. -->
-          <span class="hint">Gamelog-driven alerts pulse a client's preview
-            when one of the events below fires in it &mdash; useful for a
-            client that is not the one you are looking at.</span></div>
-        <div class="row"><span class="lab"></span>
-          <!-- Round 3, R4's finding 3. Opened "Previews are off, so"
-               like the two sentences above it, in a view where the
-               unticked switch says it as well. Rendered only while it is
-               true, so the state clause was the one part carrying nothing
-               new; what is left is the consequence and the way out, which
-               is the shape ui/copy.py's INERT_NOTES keeps.
-
-               "The switch is in the card above" until round 5's D1, which
-               was true while this card was the third in Previews and false
-               the moment it was not. The way out is half of what this
-               sentence is FOR, so it has to name the surface it now
-               actually lives on. Same "Settings > X" form the previews
-               card uses for Bookmarks, which is the convention even from
-               inside Settings. -->
-          <span class="hint" id="alerts-previews-off" hidden>
-            Alerts pulse a preview, so they need previews switched on. The
-            switch is under Settings &rsaquo; Previews.</span></div>
-        <div class="row"><span class="lab"></span>
-          <!-- Was "set it under Settings > Folders", which named a section
-               D2 dissolved. It points one card down now rather than across
-               the rail, and that is the whole of what D2 bought here: the
-               folder this feature cannot run without used to be three rail
-               entries away from the card reporting it missing. -->
-          <span class="hint" id="alerts-no-folder" hidden>
-            Your EVE Gamelogs folder is not set. Alerts cannot run without
-            it &mdash; set it in the card below.</span></div>
+        <p class="hint">Gamelog events pulse the affected client's preview,
+          so you can notice a client you are not looking at.</p>
         <div class="row">
-                    <label class="check">
-            <input type="checkbox" id="alert-enabled"><span class="box"></span>
+          <label class="check">
+            <input type="checkbox" id="alert-enabled" aria-describedby="alerts-health alerts-status"><span class="box"></span>
             Watch gamelogs and raise alerts
           </label>
         </div>
+        <!-- Prerequisites and monitored names share one operational owner.
+             Write receipts stay separate and mounted, including when empty. -->
         <div class="row"><span class="lab"></span>
-          <!-- Never the character count alone: get_alert_state's `running`
-               flag renders in the same sentence, so a failed shared reader
-               cannot keep reading as a healthy "watching N characters". -->
-          <span class="hint" id="alerts-health" role="status"></span></div>
+          <span class="hint" id="alerts-health" role="status">Checking alert health…</span></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="alerts-status" role="status"></span></div>
-        <!-- The consequence of the switch above for the twelve controls
-             below, in the same voice as settings.js's DEPENDS one card up
-             and only while it is true. #alerts-health states the STATE
-             ("Not watching gamelogs."); this states what that means for
-             everything under it, which is what was missing: a dependent
-             option rendered as a peer of the switch it depends on, with
-             nothing saying so. -->
-        <div class="row"><span class="lab"></span>
-          <span class="hint" id="alerts-depends" hidden></span></div>
+        <div id="alerts-preferences" role="group" aria-labelledby="alerts-preferences-lead">
+        <h3 id="alerts-preferences-lead">Preferences used when Alerts are on</h3>
+        <p class="field-msg warn" id="alerts-events-note" role="status"></p>
         <!-- One grid over all three rows, with the rows themselves
              display:contents -- the same technique #preview-binds uses,
              and for the same reason. Three independent flex rows put each
@@ -1550,12 +1531,11 @@
              They are below the table now and one checkbox in, so their
              subject is the thing immediately above them.
              role="group" + aria-labelledby, because indentation is not
-             available to a screen reader and the lead-in line is the only
-             thing that says what "these" are. -->
+             available to a screen reader; the group label also names its
+             shared behavior and volume controls. -->
         <div class="alert-mods" role="group" aria-labelledby="alert-mods-lead">
         <div class="row"><span class="lab"></span>
-          <span class="hint" id="alert-mods-lead">These change how the
-            events above behave.</span></div>
+          <span class="hint" id="alert-mods-lead">Behavior and volume</span></div>
         <div class="row">
           <!-- Names BOTH events it governs. patterns.py's FILTERED_EVENTS
                is {combat, warp_scramble}; decloak is excluded there
@@ -1627,9 +1607,9 @@
              feedback slot here, beside the field that produced it. -->
         <details id="alert-advanced">
           <summary>Advanced pulse behavior</summary>
-          <p class="hint" id="alert-pulse-help">Flashes sets the count for timed alerts,
-            including Test and the client you are looking at. With Keep pulsing on,
-            other clients pulse until you select their preview. Speed applies to both.</p>
+          <p class="hint" id="alert-pulse-lead">Set how many times each alert flashes and how quickly it pulses.</p>
+          <p class="hint" id="alert-pulse-help">Flashes sets the timed count, including Test and the foreground client.
+            With Keep pulsing on, other clients pulse until you select their preview. Speed applies to both.</p>
           <!-- Task 6. Three independent flex rows put Flashes/Speed at
                whatever x the row's OWN name pushed them to ("Combat" and
                "Decloak" sat close together, "Warp scramble" -- the longest
@@ -1700,6 +1680,7 @@
           </div>
           </div>
         </details>
+        </div>
       </section>
 
       <section class="card" id="custom-alerts">
