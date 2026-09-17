@@ -194,5 +194,7 @@ def test_preset_strip_is_derived_from_the_default_mapping():
     for preset in themes.PRESETS.values():
         strip = themes.preset_strip(preset)
         assert len(strip) == len(themes._STRIP_ROLES)
-        assert strip == [themes.resolve(preset, {})[role] for role in themes._STRIP_ROLES]
+        assert strip == [
+            themes.resolve(preset, {})[role] for role in themes._STRIP_ROLES
+        ]
         assert all(color.startswith("#") for color in strip)
