@@ -2898,10 +2898,39 @@ button.btn:disabled,
    removing the flex layout that applies while the panel is open. */
 .preview-group-manager:not([open]) > .group-manager-body { display: none; }
 
-/* Sharing and local display are separate cards in Fleet telemetry. */
+/* One overview, then independent configuration subsections. Scope the flat
+   surfaces here rather than changing cards in other Settings sections. */
+#section-fleet .fleet-subsection { background: var(--panel); border: 0; border-top: 1px solid var(--field-border); border-radius: 0; }
+#section-fleet h2::before { display: none; }
+#section-fleet .fleet-subsection > h2 { color: var(--text); }
+.fleet-overview-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 24px; margin: 0; }
+.fleet-overview-facts > div { min-width: 0; }
+.fleet-overview-facts dt { color: var(--text-dim); font-size: var(--fs-muted); margin-bottom: 3px; }
+.fleet-overview-facts dd { margin: 0; overflow-wrap: anywhere; }
+#fleet-overview-verification { font-weight: 600; }
+#section-fleet .fleet-local-control > .row { margin-bottom: 0; }
+#fleetbar-state { margin: 0; }
+#section-fleet .fleet-subsection > .hint { margin: 8px 0; }
 #fleet-sharing { overflow-wrap: anywhere; }
-#fleet-sharing > h3 { margin: 16px 0 8px; font-size: var(--fs-body); color: var(--text-dim); }
+#fleet-sharing h3 { margin: 16px 0 8px; font-size: var(--fs-body); color: var(--text); }
 #fleet-sharing > p { margin: 8px 0; }
+#fleet-sharing .card-heading { margin: 0; }
+#fleet-sharing .card-heading > h3 { margin: 0; }
+.sharing-connection-group { margin-top: 16px; }
+.sharing-connection-group > p { margin: 8px 0; }
+.sharing-new-attempt { margin-top: 16px; padding-top: 4px; border-top: 1px solid var(--field-border); }
+#sharing-history { margin-top: 10px; }
+#sharing-history-sources { padding: 0 12px; background: var(--field); border-radius: 6px; }
+#sharing-history-sources .sharing-source-text { color: var(--text-dim); font-size: var(--fs-muted); }
+#sharing-pending { margin-top: 12px; }
+#sharing-pending h3 { color: var(--text-dim); }
+#sharing-pending-sources .sharing-source { padding: 10px 0; }
+@media (max-width: 960px) {
+  .fleet-overview-facts { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .fleet-overview-facts > div { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 12px; }
+  .fleet-overview-facts dt { margin: 0; }
+}
+
 #fleet-sharing [hidden] { display: none; }
 #sharing-boss { flex: 1 1 100%; min-width: 0; width: 100%; max-width: 100%; }
 #sharing-eligible { margin-top: 12px; }
@@ -2912,6 +2941,10 @@ button.btn:disabled,
 .sharing-source[hidden] { display: none; }
 .sharing-source-text { flex: 1; min-width: 0; }
 .sharing-source > .btn { flex: none; }
+@media (max-width: 960px) {
+  #fleet-sharing .sharing-source { flex-wrap: wrap; gap: 6px; }
+  #fleet-sharing .sharing-source-text { flex-basis: 100%; }
+}
 
 /* Fleet visibility stays in one native disclosure outside the toggle row.
    The renderer moves keyed rows between the groups instead of replacing this
@@ -3235,10 +3268,20 @@ button.btn:disabled,
    #eve-bind-warning's precedent below. */
 #es-warning { color: var(--warn); }
 
-/* Same reasoning as #es-warning: a missing Gamelogs folder is the
-   important one of the Alerts card's three states -- without it alerts
-   silently do nothing, which reads as nothing happening in game. */
-#alerts-no-folder { color: var(--warn); }
+/* One operational line leads the master switch's editable preferences.
+   Long monitored names and reader/write errors wrap, never truncate. */
+#alerts-health { color: var(--text); font-size: var(--fs-body); font-weight: 600; }
+#alerts-health.err { color: var(--err); }
+#alerts-health, #alerts-status, #alerts-events-note { overflow-wrap: anywhere; }
+#alerts-status { color: var(--warn); }
+#alerts-preferences {
+  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--field-border);
+  min-width: 0;
+}
+#alerts-preferences-lead {
+  margin: 0; color: var(--text-dim); font-size: var(--fs-body); font-weight: 600;
+}
+#alert-pulse-lead { color: var(--text-dim); }
 
 /* The alert colour, as a small fixed palette rather than a colour input.
    <input type="color"> opened the native Win32 ChooseColor dialog -- the
@@ -3339,10 +3382,9 @@ button.btn:disabled,
   justify-content: start;
   gap: 10px; align-items: center;
 }
-/* The event table is a different rhythm from the three single checkboxes
-   above it -- a packed grid under three loose rows -- and at .row's 10px
-   it read as three more checkboxes in the same list. */
-.alert-events { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--field-border); }
+/* The preference group's heading supplies separation from the master;
+   the event table belongs directly beneath that heading. */
+.alert-events { margin-top: 12px; }
 .alert-head { display: contents; }
 /* The same [hidden] trap .alert-row carries below, and for the same
    reason: display:contents beats the UA stylesheet's [hidden] outright,

@@ -723,7 +723,7 @@ user is standing on.**
 **A precondition is stated once, by the control that owns it — not by
 every control it governs.** A master switch that gates a block of settings
 gets ONE line saying what the block is waiting for, and the block is drawn
-as subordinate to it: `alerts.js`'s `DEPENDS` for the twelve controls under
+as subordinate to it: Alerts' labelled preferences region under
 `#alert-enabled`, and `#preview-depends` for the nine under
 `#preview-enabled` (`.pv-master` in `style.css` is the rule under the
 switch that says so structurally).
@@ -870,15 +870,30 @@ so the Settings gear can show availability before General opens. It does not
 run inside `get_settings()`, block hydration, poll, download, or push before
 readiness; General reads the cached state and offers an explicit retry.
 
-**Fleet telemetry is configuration, not a destination.** Its section separates
-local Fleet Bar display controls from shared connection, participation and roster
-verification. Section entry/exit changes only view watching, never sharing or
-source intent. Deep links and remembered sections obey the EVE-tools gate and
-use the same section notifications as the rail.
+**Fleet telemetry is configuration, not a destination.** Its compact overview
+precedes Local display and External sharing. Each existing module paints only its
+own accepted facts: local display preference, sharing preference/inhibition,
+setup and last-observed authGD participation, and verification/eligibility.
+Unknown is not Off, and a saved binding is not completed pairing: browser approval
+can still be pending after its key is saved. No summary claims actual transmission
+or native visibility. The original consent live region retains local/server facts
+as visually hidden text; only their repeated standing sentence leaves visual flow.
+Eligibility and actionable connection/recovery details remain beside sharing controls,
+outside the eligible-character disclosure. Refresh belongs to the Connection header;
+it does not add a local-roster read. Opaque, flat subsections keep shell artwork out
+from behind operational text without making every fact another pill or card.
 
-Account sources keep current and locally pending attempts visible. Only settled
-ended records enter the native Previous attempts disclosure; its count comes
-from rendered history and its open state survives updates. Failed or stopped-only
+Section entry/exit changes only view watching, never sharing or source intent.
+Deep links and remembered sections obey the EVE-tools gate and use the same
+section notifications as the rail.
+
+Account sources keep Current verification and Pending / local operation in
+separate worklists above the new-attempt controls. All three lists share the
+existing keyed row reconciliation; moving to Pending must retain its Stop control
+and keyboard focus. A Start without a returned UUID stays character-specific
+feedback in the original exposed action region. Only settled ended records enter
+the quieter native Previous attempts disclosure; its count comes from rendered
+history and its open state survives updates. Failed or stopped-only
 setups still show reported reasons and a next action outside collapsed history.
 There is no reliable terminal chronology: UUIDs and array order cannot identify
 a latest attempt. Retained same-connection observations are labelled last-known
@@ -893,6 +908,24 @@ bind, off-screen. The capture handler `preventDefault()`s every key
 including Tab — an escaped capture inside Settings would swallow a folder
 path or a webhook mid-type.
 
+
+## Alerts operational hierarchy
+
+The original mounted `alerts-health` owns the one standing operational sentence;
+`alerts-status` still owns independent master/modifier write outcomes. Event Test,
+volume, collision, pulse-field and custom-alert messages retain their own owners.
+Health reads cannot erase those receipts. Preferences remain readable and editable
+while Off inside “Preferences used when Alerts are on”, never visually disabled.
+The no-events warning is configuration, not a second reader state; it accounts for
+custom rules as well as built-ins. Advanced keeps a concise lead plus the distinction
+between timed/Test/foreground pulses and persistent pulses on other clients.
+
+Alerts reports Off, prerequisite waiting, Watching with the reported monitored names,
+Watching gamelogs when a running reader has no names, or Not watching with its error.
+These names identify selected log sources, **not the running-client roster**. Explicit
+partial/complete coverage is unavailable and deliberately deferred: no X-of-Y, “all”
+or “missing” character claims, and no backend or cross-subsystem roster join in this
+presentation program. Custom-matcher degradation remains a separate fact.
 
 ## Words
 

@@ -131,7 +131,8 @@ function page() {
   const ids = [
     'btn-fleetbar', 'fleetbar-enabled', 'fleetbar-reset',
     'fleetbar-enabled-status', 'fleetbar-character-list',
-    'fleetbar-characters-empty', 'fleetbar-characters-status', 'section-fleet'
+    'fleetbar-characters-empty', 'fleetbar-characters-status', 'section-fleet',
+    'fleet-overview-local', 'fleetbar-state'
   ];
   const document = {
     activeElement: null, body: null, listeners: {},
@@ -227,6 +228,25 @@ function page() {
 
 const toggleWarning = 'Applied for this session only. Your saved choice may return after restart.';
 const resetWarning = 'The Fleet Bar width changed, but it will not survive restart.';
+
+test('local overview reports accepted display preference, never a draft or invented Off', async () => {
+  const p = page();
+  assert.equal(p.el('fleet-overview-local').textContent, 'Unknown');
+  await p.reply('fleet_bar_settings', null);
+  assert.equal(p.el('fleet-overview-local').textContent, 'Unknown');
+  await p.push(state(false, 2));
+  assert.equal(p.el('fleet-overview-local').textContent, 'Off');
+  assert.equal(p.el('fleetbar-state').textContent, 'Off');
+  await p.toggle(true);
+  assert.equal(p.el('fleet-overview-local').textContent, 'Off', 'unacknowledged checkbox is not applied preference');
+  await p.reply('toggle_fleet_bar', {applied: true, persisted: true, state: state(true, 3)});
+  assert.equal(p.el('fleet-overview-local').textContent, 'On');
+  await p.push(state(false, 1));
+  assert.equal(p.el('fleet-overview-local').textContent, 'On', 'older observation cannot undo local summary');
+  await p.push(state(false, 4));
+  assert.equal(p.el('fleet-overview-local').textContent, 'Off', 'focused checkbox draft does not own overview');
+  assert.deepEqual(p.calls, [], 'summary adds no reads');
+});
 
 test('controls stay disarmed before boot hydration without entering Fleet Settings', async () => {
   const p = page();

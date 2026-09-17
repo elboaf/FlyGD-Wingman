@@ -167,6 +167,146 @@ function page() {
   return api;
 }
 
+function assertMounted(node) {
+  for (let current = node; current; current = current.parentNode) {
+    assert.equal(current.hidden, false, node.id + ' has no hidden ancestor');
+    assert.ok(current.tagName !== 'DETAILS' || current.open, node.id + ' is not in a closed disclosure');
+  }
+}
+
+test('built-in status leads a labelled editable preference group, never a duplicate Off banner', () => {
+  const p = page(), health = p.el('alerts-health'), receipt = p.el('alerts-status');
+  const prefs = p.el('alerts-preferences');
+  assert.equal(prefs.getAttribute('role'), 'group');
+  assert.equal(p.el(prefs.getAttribute('aria-labelledby')).textContent.trim(), 'Preferences used when Alerts are on');
+  assert.equal(prefs.contains(p.el('alert-enabled')), false);
+  for (const node of [health, receipt]) {
+    assert.equal(node.getAttribute('role'), 'status');
+    assertMounted(node);
+    assert.equal(prefs.contains(node), false);
+  }
+  assert.match(health.textContent, /checking|unknown/i);
+  assert.doesNotMatch(health.textContent, /\boff\b|not watching/i);
+  assert.equal(receipt.textContent, '');
+  for (const id of ['alerts-previews-off', 'alerts-no-folder', 'alerts-depends']) {
+    assert.equal(p.document.getElementById(id), null, 'prerequisites belong to the single operational owner');
+  }
+  const card = prefs.parentNode;
+  assert.ok(card.contains(p.el('alert-enabled')) && card.contains(health));
+  assert.ok(card.children.indexOf(health.parentNode) < card.children.indexOf(prefs));
+  for (const id of ['alert-pve-filter', 'alert-persist', 'alert-volume', 'alert-advanced', 'alerts-collision']) {
+    assert.ok(prefs.contains(p.el(id)), id + ' belongs to the subordinate preferences');
+  }
+  for (const event of ['combat', 'warp_scramble', 'decloak']) {
+    for (const field of ['enabled', 'colors', 'sound', 'flashes', 'speed', 'test']) {
+      assert.ok(prefs.contains(p.el('alert-event-' + event + '-' + field)));
+    }
+  }
+});
+
+for (const [name, payload, expected] of [
+  ['Off', builtinState({running: false, previews_enabled: false, gamelogs_folder: null}, {enabled: false}), 'Off'],
+  ['Previews prerequisite', builtinState({running: false, previews_enabled: false}), 'Waiting for Previews — enable in Settings › Previews.'],
+  ['folder prerequisite', builtinState({running: false, gamelogs_folder: null}), 'Waiting for a valid gamelog folder — set it below.'],
+  ['folder prerequisite with retained error', builtinState({running: false, gamelogs_folder: null, last_error: 'Retained reader failure'}), 'Waiting for a valid gamelog folder — set it below.'],
+  ['Off with missing folder and retained error', builtinState({running: false, gamelogs_folder: null, last_error: 'Retained reader failure'}, {enabled: false}), 'Off'],
+  ['monitored names', builtinState({characters: ['Bob', 'Alice']}), 'Watching Alice, Bob'],
+  ['no monitored names', builtinState({characters: []}), 'Watching gamelogs'],
+  ['reader error with retained names', builtinState({running: false, last_error: 'Cannot read E:\\EVE\\logs: access denied'}), 'Not watching: Cannot read E:\\EVE\\logs: access denied'],
+  ['stopped runtime', builtinState({running: false}), 'Not watching: the gamelog reader is unavailable.'],
+  ['unknown missing preference', builtinState({}, {enabled: undefined}), 'Alert health is unknown.']
+]) {
+  test('built-in operational status uses only current payload facts: ' + name, async () => {
+    const p = page(), owner = p.el('alerts-health'); p.enter();
+    await p.reply('get_alert_state', payload);
+    assert.equal(p.el('alerts-health'), owner);
+    assert.equal(owner.textContent, expected);
+    assertMounted(owner);
+    assert.doesNotMatch(owner.textContent, /partial|complete|\d+\s+of\s+\d+|online|missing characters/i);
+    const blocked = name === 'reader error with retained names' || name === 'stopped runtime';
+    assert.equal(owner.className.split(/\s+/).includes('err'), blocked);
+  });
+}
+
+test('health lists every monitored name as text without an invented roster or truncated count', async () => {
+  const p = page(); p.enter();
+  const names = ['Zed', 'Yara', 'Xena', 'Will', 'Vera', 'Uma', 'Tom', '<Alice>'];
+  await p.reply('get_alert_state', builtinState({characters: names}));
+  assert.equal(p.el('alerts-health').textContent, 'Watching <Alice>, Tom, Uma, Vera, Will, Xena, Yara, Zed');
+  assert.equal(p.el('alerts-health').children.length, 0, 'names are text, never markup');
+  assert.deepEqual(names, ['Zed', 'Yara', 'Xena', 'Will', 'Vera', 'Uma', 'Tom', '<Alice>'], 'presentation does not mutate the payload');
+  assert.ok(p.calls.every(call => call.method === 'get_custom_alert_state'), 'no roster join or extra reads');
+});
+
+test('health transitions retain one mounted owner and never erase independent refusals', async () => {
+  const p = page(); p.enter(); await p.reply('get_alert_state', builtinState());
+  p.toggle('alert-enabled', false);
+  await p.reply('set_alert_enabled', {applied: false, persisted: false, error: 'Master refused'});
+  p.choose('alert-volume', '42');
+  await p.reply('set_alert_volume', {applied: false, persisted: false, error: 'Volume refused'});
+  const health = p.el('alerts-health'), receipt = p.el('alerts-status');
+  for (const payload of [builtinState({running: false}, {enabled: false}),
+    builtinState({running: false, gamelogs_folder: null, last_error: 'Retained reader failure'}),
+    builtinState({running: false, gamelogs_folder: null}), builtinState({characters: []}),
+    builtinState({running: false, last_error: 'Reader stopped'}), null, builtinState({characters: ['Bob']})]) {
+    p.tick(); await p.reply('get_alert_state', payload);
+    assert.equal(p.el('alerts-health'), health); assertMounted(health);
+    assert.equal(p.el('alerts-status'), receipt); assertMounted(receipt);
+    assert.equal(receipt.textContent, 'Master refused');
+    assert.equal(p.el('alert-volume-status').textContent, 'Volume refused');
+    if (!payload) {
+      assert.match(health.textContent, /unknown/i);
+      assert.doesNotMatch(health.textContent, /\boff\b|Alice|Bob|watching/i);
+    }
+  }
+  assert.equal(health.textContent, 'Watching Bob');
+  assert.equal(health.className.split(/\s+/).includes('err'), false);
+});
+
+test('Off preferences remain checked, editable and event Tests keep their own association', async () => {
+  const p = page(), payload = builtinState({running: false}, {enabled: false,
+    pve_filter: true, persist_until_selected: true});
+  p.document.dispatchEvent({type: 'wm:settings', detail: {settings: {preview: {alerts: payload.alerts}}}});
+  p.enter(); await p.reply('get_alert_state', payload);
+  assert.equal(p.el('alerts-health').textContent, 'Off');
+  const prefs = p.el('alerts-preferences');
+  assertMounted(prefs);
+  for (const id of ['alert-pve-filter', 'alert-persist', 'alert-event-combat-enabled']) {
+    assert.equal(p.el(id).checked, true);
+  }
+  function editable(node) {
+    assert.equal(node.disabled, false, node.id + ' stays enabled while Alerts are Off');
+    assert.notEqual(node.getAttribute('aria-disabled'), 'true');
+    node.children.forEach(editable);
+  }
+  editable(prefs);
+  p.toggle('alert-pve-filter', false);
+  await p.reply('set_alert_pve_filter', {applied: true, persisted: true});
+  p.edit('alert-volume', '52'); p.fire('alert-volume', 'change');
+  await p.reply('set_alert_volume', {applied: true, persisted: true});
+  assert.equal(p.el('alert-volume-value').textContent, '52%');
+  for (const event of ['combat', 'warp_scramble', 'decloak']) {
+    p.fire('alert-event-' + event + '-test', 'click');
+    assert.deepEqual(pending(p, 'test_alert')[0].args, [event]);
+    await p.reply('test_alert', {applied: true, persisted: false, error: null});
+    assert.match(p.el('alert-event-' + event + '-msg').textContent, /still off/);
+  }
+  assert.equal(p.el('alerts-health').textContent, 'Off', 'Tests do not arm the watcher');
+});
+
+test('no-event configuration has a distinct mounted warning, not a watcher or custom coverage claim', async () => {
+  const p = page(); p.enter();
+  await p.reply('get_alert_state', builtinState({}, {events: {}}));
+  const note = p.el('alerts-events-note');
+  assert.equal(note.getAttribute('role'), 'status'); assertMounted(note);
+  assert.ok(p.el('alerts-preferences').contains(note));
+  assert.equal(p.el('alerts-health').textContent, 'Watching Alice');
+  assert.match(note.textContent, /no events.*nothing can alert/i);
+  p.tick(); await p.reply('get_alert_state', builtinState({}, {events: {}, custom_rules: [rule('r1', {enabled: true})]}));
+  assert.equal(note.textContent, ''); assertMounted(note);
+  assert.equal(p.el('alerts-health').textContent, 'Watching Alice');
+});
+
 test('add waits for authority and renders only its acknowledgement', async () => {
   const p = page(); p.enter(); p.fire('custom-alert-add', 'click');
   assert.equal(p.calls.filter(c => c.method === 'add_custom_alert').length, 0);
@@ -433,6 +573,7 @@ test('overall health does not claim nothing can alert for custom-only configurat
   await p.reply('get_alert_state', {running: true, characters: ['Alice'], previews_enabled: true,
     gamelogs_folder: 'logs', alerts: {enabled: true, events: {combat: {enabled: false}}, custom_rules: [rule('r1', {enabled: true})]}});
   assert.doesNotMatch(p.el('alerts-health').textContent, /nothing can alert/);
+  assert.equal(p.el('alerts-events-note').textContent, '');
 });
 
 test('a health poll overtaking entry hydration cannot strand Add or repaint newer health', async () => {
@@ -635,9 +776,8 @@ for (const health of ['stopped', 'unreachable']) {
     assert.equal(p.el('alert-event-combat-colors').querySelector('input:checked').value, '#ff4d4d');
     assert.equal(p.el('alerts-health').textContent, latestHealth);
     if (health === 'stopped') {
-      assert.equal(p.el('alerts-previews-off').hidden, false);
-      assert.equal(p.el('alerts-no-folder').hidden, false);
-      assert.equal(p.el('alerts-depends').hidden, false);
+      assert.equal(p.el('alerts-health').textContent, 'Off', 'newer acknowledged Off beats old healthy hydration');
+      assertMounted(p.el('alerts-health'));
     }
     assert.ok(p.calls.every(call => call.method.startsWith('get_')), 'hydration must not write');
   });
@@ -734,7 +874,8 @@ test('overall no-events note survives only when both custom and built-in sets ar
   const p = await loaded([]);
   await p.reply('get_alert_state', {running: true, characters: ['Alice'], previews_enabled: true,
     gamelogs_folder: 'logs', alerts: {enabled: true, events: {}, custom_rules: []}});
-  assert.match(p.el('alerts-health').textContent, /nothing can alert/);
+  assert.match(p.el('alerts-events-note').textContent, /nothing can alert/);
+  assert.equal(p.el('alerts-health').textContent, 'Watching Alice');
   p.tick(); p.tick(); await p.reply('get_alert_state', null, 1);
   await p.reply('get_alert_state', {running: true, alerts: {events: {combat: {enabled: true}}}});
   assert.match(p.el('alerts-health').textContent, /reach/);
