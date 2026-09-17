@@ -1735,8 +1735,12 @@
       <section class="card">
         <h2>Appearance</h2>
         <div class="row">
-          <label class="lab" for="theme-preset">Theme</label>
-          <select class="field" id="theme-preset"></select>
+          <!-- The custom dropdown, not a native select: the open list is
+               the point — each preset row carries its identity colour
+               strip (themes.preset_strip), and a name without its colours
+               is a guess. Built by settings.js like the family controls. -->
+          <span class="lab" id="lab-theme-preset">Theme</span>
+          <div id="theme-preset"></div>
         </div>
         <p class="hint">
           Customise re-points element families at colours from the theme's
@@ -1745,7 +1749,7 @@
         </p>
         <div class="actions">
           <button class="btn" id="btn-theme-customise" aria-expanded="false"
-                  aria-controls="theme-composer">Customise colours</button>
+                  aria-controls="theme-composer">Customise colours…</button>
         </div>
         <div id="theme-composer" hidden></div>
         <p class="field-msg" id="msg-theme" hidden></p>

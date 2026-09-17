@@ -6615,6 +6615,12 @@ class Api:
             "presets": [
                 {"id": p["id"], "name": p["name"]} for p in themes.PRESETS.values()
             ],
+            # One identity strip per preset, so the picker's open list
+            # shows what each preset looks like instead of asking the
+            # user to remember eleven names. Derived, not stored.
+            "preset_strips": {
+                p["id"]: themes.preset_strip(p) for p in themes.PRESETS.values()
+            },
             "preset": doc["preset"],
             "families": doc["families"],
             "effective": themes.resolve(preset, doc["families"]),

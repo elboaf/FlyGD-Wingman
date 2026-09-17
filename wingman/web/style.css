@@ -3241,6 +3241,11 @@ button.btn:disabled,
 /* The theme-default row: a family with no pick wears the preset's own
    mapping, which is a real state worth naming in the list. */
 .theme-menu li button.theme-default-option { color: var(--text-dim); font-style: italic; }
+/* A preset row's identity colours (themes.preset_strip, derived): four
+   small dots so a preset is recognised at a glance instead of recalled
+   by name. Smaller than a pick dot because four of them sit in a row. */
+.theme-strip { display: inline-flex; gap: 3px; flex: none; }
+.theme-strip .dot { width: 10px; height: 10px; }
 /* The what-does-this-change hint under each family dropdown. Full
    flex-basis so it stacks below the control instead of squeezing
    beside it in the wrapping row. */

@@ -185,3 +185,16 @@ def test_every_preset_ships_a_pool_for_every_family(preset_id):
         assert themes.legal_swatches(preset, family, {}), (
             f"{preset_id}: family {family} has an empty pool"
         )
+
+
+def test_preset_strip_is_derived_from_the_default_mapping():
+    """The picker's identity strip must never be a hand-kept copy: it is
+    four roles read straight out of each preset's own default mapping, so
+    a preset edit reflows its strip without a second place to change."""
+    for preset in themes.PRESETS.values():
+        strip = themes.preset_strip(preset)
+        assert len(strip) == len(themes._STRIP_ROLES)
+        assert strip == [
+            themes.resolve(preset, {})[role] for role in themes._STRIP_ROLES
+        ]
+        assert all(color.startswith("#") for color in strip)
