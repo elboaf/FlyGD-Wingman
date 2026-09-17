@@ -503,12 +503,12 @@ def test_final_close_serializes_late_inert_factory_without_reopening(tmp_path):
 def test_pending_command_status_never_projects_internal_commands(tmp_path):
     from dataclasses import replace
 
-    from tests.test_fleetsharing_worker import NOW, UUID
+    from tests.test_fleetsharing_worker import DATE, UUID
     from wingman.fleetsharing.protocol import SourceStart
     from wingman.fleetsharing.worker import PendingSourceStatus
 
     api, worker, *_rest = setup(tmp_path)
-    command = SourceStart(UUID, 1, UUID, NOW)
+    command = SourceStart(UUID, 1, UUID, DATE)
     pending = PendingSourceStatus(UUID, "start", 1, "saved", command)
     api._receive_fleet_sharing_status(
         replace(
