@@ -732,10 +732,12 @@ def test_reentrant_submission_can_turn_on_back_off_without_deadlock(
     assert not settings.load()["fleet_sharing"]["enabled"]
     assert worker.status().local_inhibited
     if telemetry is not None:
-        assert telemetry.subscribers == [api._receive_fleet_snapshot, worker.submit]
+        assert telemetry.subscribers == [api._receive_fleet_snapshot]
+        assert telemetry.admitted_subscribers == [worker.submit]
     api.shutdown_previews()
     if telemetry is not None:
         assert telemetry.subscribers == []
+        assert telemetry.admitted_subscribers == []
 
 
 def test_expired_start_is_correlated_to_exact_uuid_not_aggregate_status(tmp_path):
@@ -878,8 +880,13 @@ def test_lazy_runtime_sharing_subscribes_once_off_to_on_and_detaches_before_stop
         metrics=FleetMetrics(),
         _thread_factory=_noop_thread_factory,
     )
-    subscriptions, events = [], []
-    subscribe = coordinator.subscribe_fleet
+    subscriptions, events, local_subscriptions = [], [], []
+    subscribe = coordinator.subscribe_admitted_fleet
+    local_subscribe = coordinator.subscribe_fleet
+
+    def track_local(callback):
+        local_subscriptions.append(callback)
+        return local_subscribe(callback)
 
     def track(callback):
         subscriptions.append(callback)
@@ -891,11 +898,13 @@ def test_lazy_runtime_sharing_subscribes_once_off_to_on_and_detaches_before_stop
 
         return detach
 
-    coordinator.subscribe_fleet = track
+    coordinator.subscribe_admitted_fleet = track
+    coordinator.subscribe_fleet = track_local
     api._telemetry_factory = lambda: coordinator
     api._reconcile_eve_runtime()
     api._reconcile_eve_runtime()
-    assert subscriptions.count(worker.submit) == 1
+    assert subscriptions == [worker.submit]
+    assert local_subscriptions == [api._receive_fleet_snapshot]
     assert discovery.starts == 0
     result = api.fleet_sharing_set_enabled(True)
     assert result["applied"] and discovery.starts == 1

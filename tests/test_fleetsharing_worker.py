@@ -1983,73 +1983,50 @@ def test_real_thread_start_response_cannot_erase_new_stop():
 
 
 def test_coordinator_cadence_and_local_metrics_continue_while_publish_is_held(tmp_path):
-    from wingman.telemetry.coordinator import TelemetryCoordinator
-    from wingman.telemetry.model import RosterSnapshot
+    from tests.test_fleetsharing_worker_state4 import FileStore
+    from tests.test_telemetry_gamelogs import NOW as LOG_NOW
+    from tests.test_telemetry_gamelogs import OUTGOING_DAMAGE_LINE, _log
+    from tests.test_telemetry_source_admission import _threaded_runtime
 
-    class Discovery:
-        def subscribe(self, callback):
-            return lambda: None
-
-        def start(self):
-            return True
-
-        def stop(self, timeout=5):
-            return True
-
-        def request_scan(self):
-            pass
-
-        def snapshot(self):
-            return RosterSnapshot(generation=1, clients=())
-
-    class Stream:
-        def subscribe_batches(self, callback):
-            return lambda: None
-
-        def start(self, folder):
-            return True
-
-        def stop(self, timeout=3):
-            return True
-
-        def health(self):
-            return STREAM_HEALTH
-
-    class Metrics:
-        def reset(self):
-            pass
-
-        def consume(self, envelope):
-            pass
-
-        def snapshot(self, sequence, health):
-            return _snapshot(24)
-
-    client = FakeRelayClient(device=DEVICE)
+    # Keep the real autonomous dispatcher/publisher cadence witness, but replace
+    # uncertified producer doubles with C23's actual reset-cut/producer startup.
+    runtime = _threaded_runtime(tmp_path)
+    coordinator = runtime.coordinator
+    store = FileStore(tmp_path / "cadence-sharing.json")
+    store.save(PAIRED_STATE)
+    client = SignedPublicationRelay(store=store, device=COMBAT_DEVICE)
     client.hold = "publish_snapshot"
-    worker = _worker(client, clock=time.monotonic, thread_factory=threading.Thread)
-    coordinator = TelemetryCoordinator(
-        preview_enabled=lambda: False,
-        fleet_enabled=lambda: False,
-        alerts_enabled=lambda: False,
-        sharing_enabled=lambda: True,
-        gamelogs_folder=lambda: tmp_path,
-        discovery=Discovery(),
-        stream=Stream(),
-        metrics=Metrics(),
+    start = time.monotonic()
+    worker = _worker(
+        client,
+        store=store,
+        clock=time.monotonic,
+        utc_clock=lambda: NOW + timedelta(seconds=time.monotonic() - start),
+        thread_factory=threading.Thread,
     )
     snapshots = []
-    coordinator.subscribe_fleet(snapshots.append)
-    coordinator.subscribe_fleet(worker.submit)
+    progressed = threading.Event()
+
+    def receive(snapshot):
+        snapshots.append(snapshot)
+        if client.entered.is_set():
+            progressed.set()
+
+    coordinator.subscribe_fleet(receive)
+    coordinator.subscribe_admitted_fleet(worker.submit)
     worker.start()
     try:
         coordinator.reconcile()
+        assert runtime.admitted.wait(5)
+        _log(tmp_path, "Alice", OUTGOING_DAMAGE_LINE.replace("11:30:00", "12:00:00"))
+        runtime.stream.scan_once(LOG_NOW)
         assert client.entered.wait(5)
         before = len(snapshots)
-        deadline = time.monotonic() + 3
-        while time.monotonic() < deadline and len(snapshots) <= before:
-            time.sleep(0.02)
+        progressed.clear()
+        assert progressed.wait(3), "autonomous dispatcher stalled behind HTTP"
         assert len(snapshots) > before
+        assert snapshots[-1].rows[0].dps == 30
+        assert client.signed_publications
     finally:
         client.release.set()
         assert worker.stop(timeout=5)

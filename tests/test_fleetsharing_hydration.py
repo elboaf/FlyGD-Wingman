@@ -95,13 +95,36 @@ def test_sharing_watch_runtime(tmp_path, scenario):
         older = live_api.fleet_sharing_state()
         rejected = None
         if scenario == "rejected-admission":
-            _store._state = replace(
-                _store._state,
-                pending_source_commands=maximal_state().pending_source_commands[:200],
-            )
+            from wingman.fleetsharing.protocol import MAX_SOURCE_INTENTS
+
+            commands = maximal_state().pending_source_commands
+            assert len(commands) == MAX_SOURCE_INTENTS
+            _store._state = replace(_store._state, pending_source_commands=commands)
+            saved = _store.load()
             rejected = worker.request_source_start(1, UUID)
+            assert (
+                rejected is not None
+            )  # UUID admission is asynchronous, not a save ACK.
+            assert _store.load() is saved
+            assert not _store.saves
         worker.set_source_watch(True)
         drive(worker, mono, 12)
+        if scenario == "rejected-admission":
+            result = next(
+                item
+                for item in worker.status().source_results
+                if item.source_id == rejected
+            )
+            assert result.stage == "rejected"
+            assert all(
+                command.source_id != rejected
+                for command in _store.load().pending_source_commands
+            )
+            assert all(
+                command.source_id != rejected
+                for state in _store.saves
+                for command in state.pending_source_commands
+            )
         page = SharingPageTree()
         page.feed((WEB / "index.html").read_text(encoding="utf-8"))
         fixture = tmp_path / "sharing-page.json"
