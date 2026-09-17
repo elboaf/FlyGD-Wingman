@@ -66,6 +66,25 @@ def test_delta_ack_cannot_skip_unapplied_predecessor(lane):
     assert authority._capture() is not None
 
 
+@pytest.mark.parametrize("lane", ["stream", "control"])
+def test_reset_bound_full_restatement_supersedes_failed_predecessor(lane):
+    from wingman.telemetry.admission import _Delivery
+
+    authority, receipts = _ready()
+    authority._reserve(lane, receipts[lane].lifetime)
+    current = authority._reserve(lane, receipts[lane].lifetime)
+    authority._poison("failed delta")
+    boundary = authority._reset_started()
+    _reseed(authority, receipts, boundary)
+    operation = authority._operation(lane, current.lifetime)
+    authority._record_application(operation)
+    authority._applied(current)
+    assert authority._reseeded(boundary) is False
+    assert authority._restated(boundary, _Delivery(operation, current)) is True
+    assert authority._reseeded(boundary) is True
+    assert _ticket(authority).is_current()
+
+
 def test_roster_full_snapshot_can_supersede_unapplied_predecessor():
     authority, receipts = _ready()
     first = authority._reserve("roster", receipts["roster"].lifetime)

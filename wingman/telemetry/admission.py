@@ -50,6 +50,17 @@ class _ResetBoundary:
     poison_serial: int
 
 
+@dataclass(frozen=True, slots=True)
+class _Delivery:
+    """A complete semantic batch's original pre-work association."""
+
+    operation: _Operation
+    receipt: _Receipt
+    reset: _ResetBoundary | None = None
+    # Facts/rebinds retain provenance but do not complete a preceding mutation.
+    invalidates: bool = False
+
+
 @dataclass(slots=True)
 class _LaneState:
     lifetime: object | None = None
@@ -270,6 +281,43 @@ class _SourceAuthority:
             for state in self._lanes.values():
                 state.reset_cut = state.started
                 state.provenance = None
+            return True
+
+    def _restated(self, boundary: _ResetBoundary, delivery: _Delivery) -> bool:
+        """ACK a successful FULL restatement belonging to this actual reset.
+
+        Unlike a delta ACK this may supersede a failed predecessor. The caller
+        must have applied every sibling, then reported original provenance.
+        A later reservation may already be pending: ACK only this restatement's
+        frontier, then require the subsequent deltas normally. No lifetime or
+        reset cut changes, and later poison defeats recovery.
+        """
+        with self._lock:
+            receipt, operation = delivery.receipt, delivery.operation
+            state = self._lanes[receipt.lane]
+            cut = state.reset_cut
+            if (
+                self._closed
+                or boundary is not self._pending_reset
+                or boundary is not self._applied_reset
+                or boundary.poison_serial != self._poison_serial
+                or state.requested is None
+                or receipt.authority is not self._identity
+                or receipt.lifetime is not state.lifetime
+                or not state.applied <= receipt.order <= state.requested.order
+                or not state.running
+                or operation.authority is not self._identity
+                or operation.lane != receipt.lane
+                or operation.lifetime is not state.lifetime
+                or operation != state.provenance
+                or (
+                    cut is not None
+                    and cut.lifetime is operation.lifetime
+                    and operation.order <= cut.order
+                )
+            ):
+                return False
+            state.applied = receipt.order
             return True
 
     def _reseeded(self, boundary: _ResetBoundary) -> bool:
