@@ -364,6 +364,47 @@ def test_delete_reports_failures_without_aborting_batch(tmp_path):
     assert not c.exists()
 
 
+def test_delete_retries_a_reader_letting_go(tmp_path, monkeypatch):
+    """A delete can race a reader that is just letting go -- the clip
+    editor's last Range fetch, a just-closed player -- and Windows reports
+    that instant as a sharing violation. The retry turns the race into a
+    deletion instead of a '1 failed.' on the strip."""
+    target = _touch(tmp_path / "busy.mkv")
+    real_unlink = Path.unlink
+    state = {"tries": 0}
+
+    def flaky(self, *args, **kwargs):
+        if self == target and state["tries"] == 0:
+            state["tries"] += 1
+            raise PermissionError(32, "The process cannot access the file")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", flaky)
+    monkeypatch.setattr(library.time, "sleep", lambda _s: None)
+    deleted, failures = library.delete([target])
+    assert deleted == 1 and failures == []
+    assert not target.exists()
+
+
+def test_delete_reports_a_file_that_stays_locked(tmp_path, monkeypatch):
+    """A reader that never lets go is a real failure; the retry must end
+    and the batch semantics still hold."""
+    locked = _touch(tmp_path / "locked.mkv")
+    other = _touch(tmp_path / "other.mkv")
+    real_unlink = Path.unlink
+
+    def always_busy(self, *args, **kwargs):
+        if self != locked:
+            return real_unlink(self, *args, **kwargs)
+        raise PermissionError(32, "The process cannot access the file")
+
+    monkeypatch.setattr(Path, "unlink", always_busy)
+    monkeypatch.setattr(library.time, "sleep", lambda _s: None)
+    deleted, failures = library.delete([locked, other])
+    assert deleted == 1
+    assert len(failures) == 1 and failures[0][0] == locked
+
+
 def test_discover_skips_files_deleted_after_iterdir(tmp_path, monkeypatch):
     """Race condition: file gone by stat() time must be skipped, not crash discover()."""
     _touch(tmp_path / "old.mkv", mtime=1000)

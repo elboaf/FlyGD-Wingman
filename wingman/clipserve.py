@@ -16,7 +16,11 @@ whole point: scrubbing in a <video> is a series of Range fetches, and a
 server that cannot answer 206 leaves the seek bar dead.
 """
 
+import ctypes
+import ctypes.wintypes
 import logging
+import msvcrt
+import os
 import re
 import threading
 import uuid
@@ -35,6 +39,47 @@ _files: dict[str, Path] = {}
 _files_lock = threading.Lock()
 
 _CHUNK = 256 * 1024
+
+# Python's open() shares read/write on Windows but not delete, so any
+# in-flight Range fetch made the recording impossible to delete until the
+# stream ended (WinError 32). Opening with FILE_SHARE_DELETE lets unlink()
+# succeed under a live reader: the handle keeps serving the unlinked file
+# harmlessly until EOF. Bound lazily -- this module must import on Linux.
+if os.name == "nt":
+    _GENERIC_READ = 0x80000000
+    _OPEN_EXISTING = 3
+    _FILE_SHARE_READWRITEDELETE = 0x1 | 0x2 | 0x4
+    _INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+    _CreateFileW = ctypes.windll.kernel32.CreateFileW
+    _CreateFileW.restype = ctypes.wintypes.HANDLE
+    _CreateFileW.argtypes = [
+        ctypes.wintypes.LPCWSTR,
+        ctypes.wintypes.DWORD,
+        ctypes.wintypes.DWORD,
+        ctypes.wintypes.LPVOID,
+        ctypes.wintypes.DWORD,
+        ctypes.wintypes.DWORD,
+        ctypes.wintypes.HANDLE,
+    ]
+
+
+def _open_shared(path: Path):
+    """Open `path` for reading in a way that permits concurrent deletion."""
+    if os.name != "nt":
+        return path.open("rb")
+    handle = _CreateFileW(
+        str(path),
+        _GENERIC_READ,
+        _FILE_SHARE_READWRITEDELETE,
+        None,
+        _OPEN_EXISTING,
+        0,
+        None,
+    )
+    if handle == _INVALID_HANDLE_VALUE:
+        raise OSError(ctypes.GetLastError(), f"CreateFileW failed: {path}")
+    fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    return os.fdopen(fd, "rb")
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -81,7 +126,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if not send_body:
             return
-        with path.open("rb") as f:
+        with _open_shared(path) as f:
             f.seek(start)
             remaining = length
             while remaining > 0:
