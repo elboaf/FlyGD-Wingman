@@ -1070,6 +1070,506 @@ def test_publication_401_durable_loss_cannot_reset_after_replacement(
     assert worker._scheduler.retry_at[work.key] == mono[0] + 1
 
 
+class CompletionInstallBarrier:
+    """Pause the executing thread immediately before an actual lock acquisition."""
+
+    def __init__(self, monkeypatch, worker):
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.owner = None
+        self.hits = []
+        self.lock = worker._lock
+        monkeypatch.setattr(worker, "_lock", self)
+
+    def arm(self):
+        self.owner = threading.get_ident()
+
+    def __enter__(self):
+        if self.owner == threading.get_ident():
+            self.owner = None
+            self.hits.append(threading.get_ident())
+            self.entered.set()
+            assert self.release.wait(5), "completion installation not released"
+        self.lock.acquire()
+        return self
+
+    def __exit__(self, *args):
+        self.lock.release()
+
+
+def completion_thread(worker, work, fence):
+    errors = []
+
+    def execute():
+        try:
+            with worker._iteration_lock:
+                worker._execute(work, fence)
+        except BaseException as exc:  # noqa: BLE001 — thread/pytest failures belong to the asserting owner, not a swallowed subscriber callback.
+            errors.append(exc)
+
+    thread = threading.Thread(target=execute)
+    thread.start()
+    return thread, errors
+
+
+def source_completion_case(tmp_path, kind):
+    worker, client, mono, work, fence = error_install_case(tmp_path, "publication")
+    if kind == "inactive":
+        source = FakePublicationSource(
+            FleetSnapshot((), StreamHealth("active"), sampled_at_mono=mono[0])
+        )
+        work, fence = selected_publication(worker, mono, source)
+        assert work.payload.withdrawal_reason == "inactive"
+    return worker, client, mono, work, fence
+
+
+@pytest.mark.parametrize("kind", ["publication", "inactive"])
+@pytest.mark.parametrize(
+    "error", [None, (403, "forbidden"), (503, "service_unavailable")]
+)
+@pytest.mark.parametrize("revoke", [False, True])
+def test_original_source_guards_actual_completion_install(
+    tmp_path, monkeypatch, kind, error, revoke
+):
+    # Advisory-only validation or guarding the newer mailbox permits obsolete
+    # ACK/error effects after the original source has independently revoked.
+    worker, client, mono, work, fence = source_completion_case(tmp_path, kind)
+    source = work.payload.source
+    worker._update_status(state="error", detail="server_error")
+    client.put_error = error
+    previous, last_at = worker._last_published, worker._last_publish_at
+    catalogue, eligibility = worker._catalogue, worker._eligibility
+    proof, needs_device = worker._eligibility_proof, worker._needs_device
+    due, withdraw = dict(worker._due), worker._withdraw_needed
+    revision = s.load(client.path).last_revision
+    statuses, catalogues, checks, responses = [], [], [], []
+    completion, transport = (
+        worker._check_publication_completion,
+        client.relay._transport,
+    )
+    barrier = CompletionInstallBarrier(monkeypatch, worker)
+
+    def prechecked(*args, **kwargs):
+        result = completion(*args, **kwargs)
+        checks.append(mono[0])
+        barrier.arm()
+        return result
+
+    def closed(*args, **kwargs):
+        response = transport(*args, **kwargs)
+        responses.append(response)
+        mono[0] += 0.125
+        return response
+
+    monkeypatch.setattr(worker, "_check_publication_completion", prechecked)
+    monkeypatch.setattr(client.relay, "_transport", closed)
+    worker.subscribe_status(statuses.append)
+    worker.subscribe_catalogue(catalogues.append)
+    thread, errors = completion_thread(worker, work, fence)
+    try:
+        assert barrier.entered.wait(5), "post-precheck installation never acquired"
+        receipt = mono[0]
+        assert checks == [receipt] and responses[-1].closed
+        assert len(client.puts) == 2
+        assert bool(client.puts[-1]["rows"]) == (kind == "publication")
+        assert s.load(client.path).last_revision == revision + 1
+        pins, floor = (
+            worker._timing_context._publisher,
+            worker._timing_context._next_stage_at,
+        )
+        status, current_fence = worker.status(), worker._fence()
+        # Mailbox delivery alone changes no authority of the retained selection.
+        fresh = ticket(mono[0], outgoing=99)
+        worker.submit(fresh)
+        if revoke:
+            source.revoke()
+        assert worker._fence() == current_fence == fence
+        statuses.clear()
+        catalogues.clear()
+        mono[0] += 0.25
+    finally:
+        barrier.release.set()
+        thread.join(5)
+    assert not thread.is_alive() and barrier.hits == [thread.ident]
+    if revoke:
+        assert (
+            worker._last_published is previous and worker._last_publish_at == last_at
+        ), "obsolete source acknowledged publication"
+        assert worker.status() == status, "obsolete source installed error/status"
+        assert worker._catalogue is catalogue and worker._eligibility is eligibility
+        assert (
+            worker._eligibility_proof is proof and worker._needs_device == needs_device
+        )
+        assert worker._due == due and not statuses and not catalogues
+        assert len(errors) == 1 and isinstance(errors[0], _Obsolete), errors
+    else:
+        assert errors == []
+        if error is None:
+            assert worker._last_published == (
+                () if kind == "inactive" else work.payload.semantic
+            )
+            assert worker._last_publish_at == receipt
+            assert worker.status().state == "active" and worker.status().detail is None
+            assert statuses[-1] == worker.status(), (
+                "current success lost its error-clear notification"
+            )
+        else:
+            assert (
+                worker._last_published is previous
+                and worker._last_publish_at == last_at
+            )
+            assert (
+                worker.status().state == "error" and worker.status().detail == error[1]
+            )
+            assert statuses[-1] == worker.status()
+            if error[0] == 403:
+                assert worker._catalogue is None and worker._eligibility is None
+                assert catalogues[-1].catalogue is None
+                assert worker._needs_device
+                assert worker._due["catalogue"] == worker._due["eligibility"] == 0
+            else:
+                assert (
+                    worker._catalogue is catalogue
+                    and worker._eligibility is eligibility
+                )
+    assert worker._withdraw_needed == withdraw
+    assert worker._latest is fresh and len(client.puts) == 2
+    assert s.load(client.path).last_revision == revision + 1
+    assert worker._scheduler.deadlines["publication"] == receipt + 0.5
+    if error is not None:
+        assert worker._scheduler.retry_at[work.key] == receipt + 1
+        assert worker._scheduler.failures[work.key] == 1
+    else:
+        assert work.key not in worker._scheduler.failures
+    assert worker._timing_context._publisher is pins
+    assert worker._timing_context._next_stage_at == floor
+
+
+@pytest.mark.parametrize("kind", ["publication", "off", "off_refused"])
+@pytest.mark.parametrize("replace_intent", [False, True])
+def test_publication_success_status_install_keeps_original_intent(
+    tmp_path, monkeypatch, kind, replace_intent
+):
+    worker, client, mono, work, fence = error_install_case(
+        tmp_path, "off" if kind == "off_refused" else kind
+    )
+    # Off is already source-less/timing-closed. Clear its presentation only so
+    # the old generic active tail is distinguishable; timing stays unavailable.
+    if kind == "off":
+        worker._timing_context._timing_loss = None
+        worker._timing_context._inconsistent = True
+    worker._update_status(state="error", detail="server_error")
+    revision = s.load(client.path).last_revision
+    barrier = CompletionInstallBarrier(monkeypatch, worker)
+    checks, statuses = [], []
+    completion = worker._check_publication_completion
+
+    def prechecked(*args, **kwargs):
+        result = completion(*args, **kwargs)
+        checks.append(mono[0])
+        return result
+
+    # Baseline's actual status-install worker acquisition is in _update_status;
+    # the corrected combined ACK/status path acquires in _accept_publication.
+    # Both observe AFTER preliminary completion and before the mutation lock.
+    update = worker._update_status
+
+    def status_install(**changes):
+        if checks and changes.get("state") in ("active", "refused"):
+            barrier.arm()
+        return update(**changes)
+
+    monkeypatch.setattr(worker, "_update_status", status_install)
+    if hasattr(worker, "_accept_publication"):
+        accept = worker._accept_publication
+
+        def combined_install(*args, **kwargs):
+            if checks:
+                barrier.arm()
+            return accept(*args, **kwargs)
+
+        monkeypatch.setattr(worker, "_accept_publication", combined_install)
+    monkeypatch.setattr(worker, "_check_publication_completion", prechecked)
+    worker.subscribe_status(statuses.append)
+    thread, errors = completion_thread(worker, work, fence)
+    try:
+        assert barrier.entered.wait(5), "actual success-status installation not reached"
+        assert checks == [mono[0]] and len(client.puts) == 2
+        if replace_intent:
+            assert worker.request_participation(
+                True, expected_generation=1, binding=worker.status().metadata.binding
+            )
+        status = worker.status()
+        statuses.clear()
+    finally:
+        barrier.release.set()
+        thread.join(5)
+    assert not thread.is_alive() and barrier.hits == [thread.ident]
+    if replace_intent:
+        assert worker.status() == status, (
+            "old success overwrote replacement intent status"
+        )
+        assert not statuses, "obsolete success notification escaped"
+        assert len(errors) == 1 and isinstance(errors[0], _Obsolete), errors
+    else:
+        assert errors == []
+        assert worker.status().state == (
+            "refused" if kind == "off_refused" else "active"
+        )
+        assert worker.status().detail == (
+            "db_continuity_lost" if kind == "off_refused" else None
+        )
+        assert statuses[-1] == worker.status()
+        assert worker._last_publish_at == mono[0]
+        assert worker._last_published == (
+            () if kind != "publication" else work.payload.semantic
+        )
+        assert not worker._withdraw_needed
+    assert s.load(client.path).last_revision == revision + 1
+    assert worker._scheduler.deadlines["publication"] == mono[0] + 0.5
+
+
+@pytest.mark.parametrize("kind", ["publication", "inactive"])
+@pytest.mark.parametrize("boundary", ["during_save", "reset_acquisition"])
+@pytest.mark.parametrize("revoke", [False, True])
+def test_original_source_guards_post_save_401_reset(
+    tmp_path, monkeypatch, kind, boundary, revoke
+):
+    worker, client, mono, work, fence = source_completion_case(tmp_path, kind)
+    source = work.payload.source
+    client.put_error = (401, "unauthorized")
+    previous, last_at = worker._last_published, worker._last_publish_at
+    catalogue, eligibility = worker._catalogue, worker._eligibility
+    auth, needs_device = worker._control_auth, worker._needs_device
+    due, withdraw = dict(worker._due), worker._withdraw_needed
+    revision = s.load(client.path).last_revision
+    barrier = CompletionInstallBarrier(monkeypatch, worker)
+    save, persist = worker._save_state, worker._persist
+    saves, statuses, catalogues, persisted = [], [], [], []
+
+    def saved(candidate):
+        save(candidate)
+        saves.append(candidate)
+        if candidate.session_id is None and boundary == "during_save":
+            barrier.entered.set()
+            assert barrier.release.wait(5), "durable save not released"
+
+    def after_persist(candidate, *args, **kwargs):
+        result = persist(candidate, *args, **kwargs)
+        if candidate.session_id is None:
+            persisted.append(candidate)
+            if boundary == "reset_acquisition":
+                barrier.arm()
+        return result
+
+    monkeypatch.setattr(worker, "_save_state", saved)
+    monkeypatch.setattr(worker, "_persist", after_persist)
+    worker.subscribe_status(statuses.append)
+    worker.subscribe_catalogue(catalogues.append)
+    thread, errors = completion_thread(worker, work, fence)
+    try:
+        assert barrier.entered.wait(5), "real 401 did not reach post-save boundary"
+        assert len(client.puts) == 2 and saves[0].last_revision == revision + 1
+        assert s.load(client.path) == saves[-1] and saves[-1].session_id is None
+        assert saves[-1].last_revision == 0  # Existing replace_session semantics.
+        current_fence, status = worker._fence(), worker.status()
+        if boundary == "reset_acquisition":
+            assert persisted == [saves[-1]]
+        if revoke:
+            source.revoke()
+        assert worker._fence() == current_fence
+        pins, floor = (
+            worker._timing_context._publisher,
+            worker._timing_context._next_stage_at,
+        )
+        statuses.clear()
+        catalogues.clear()
+    finally:
+        barrier.release.set()
+        thread.join(5)
+    assert not thread.is_alive()
+    if boundary == "reset_acquisition":
+        assert barrier.hits == [thread.ident]
+    if revoke:
+        assert worker._catalogue is catalogue, (
+            "obsolete source reset catalogue after durable 401 save"
+        )
+        assert worker._eligibility is eligibility and worker._control_auth == auth
+        assert worker._needs_device == needs_device and worker._due == due
+        assert worker._last_published is previous and not catalogues
+        assert len(errors) == 1 and isinstance(errors[0], _Obsolete), errors
+        # The during-save projection legitimately publishes has_session=False;
+        # no later cache/status reset or rollback of that saved candidate is allowed.
+        assert all(not event.metadata.has_session for event in statuses)
+        assert worker.status().eligibility == status.eligibility
+    else:
+        assert errors == []
+        assert worker._catalogue is None and worker._eligibility is None
+        assert worker._control_auth is None and worker._needs_device
+        assert not worker._last_published and catalogues[-1].catalogue is None
+    assert worker._state == s.load(client.path) == saves[-1]
+    assert not worker.status().metadata.has_session
+    assert worker._last_publish_at == last_at and worker._withdraw_needed == withdraw
+    assert worker._scheduler.deadlines["publication"] == mono[0] + 0.5
+    assert worker._scheduler.retry_at[work.key] == mono[0] + 1
+    assert worker._timing_context._publisher is pins
+    assert worker._timing_context._next_stage_at == floor
+
+
+@pytest.mark.parametrize("kind", ["publication", "inactive", "off"])
+@pytest.mark.parametrize(
+    "error",
+    [None, (403, "forbidden"), (401, "unauthorized"), (503, "service_unavailable")],
+)
+def test_completion_leaf_lock_order_and_nonconsuming_costs(
+    tmp_path, monkeypatch, kind, error
+):
+    if kind == "off":
+        worker, client, mono, work, fence = error_install_case(tmp_path, kind)
+    else:
+        worker, client, mono, work, fence = source_completion_case(tmp_path, kind)
+    client.put_error = error
+    worker._update_status(state="error", detail="server_error")
+    source = None if kind == "off" else work.payload.source
+    in_leaf = [False]
+    leaf_locks, reentries, external, stages, starts, completed = [], [], [], [], [], []
+
+    class WitnessLock:
+        def __init__(self, lock, name):
+            self.lock, self.name = lock, name
+
+        def __enter__(self):
+            if in_leaf[0]:
+                reentries.append(self.name)
+                raise RuntimeError("worker lock reacquired inside source leaf")
+            self.lock.acquire()
+            return self
+
+        def __exit__(self, *args):
+            self.lock.release()
+
+        def locked(self):
+            return self.lock.locked()
+
+    monkeypatch.setattr(worker, "_lock", WitnessLock(worker._lock, "worker"))
+    monkeypatch.setattr(
+        worker, "_status_lock", WitnessLock(worker._status_lock, "status")
+    )
+
+    def outside(name, callback):
+        def observed(*args, **kwargs):
+            locks = (
+                worker._lock.locked(),
+                worker._status_lock.locked(),
+                bool(source and source._lock.locked()),
+            )
+            external.append((name, in_leaf[0], locks))
+            if in_leaf[0]:
+                raise RuntimeError("external work entered source leaf")
+            return callback(*args, **kwargs)
+
+        return observed
+
+    if source is not None:
+        admit = source.admit_start
+
+        def guarded(validate):
+            leaf_locks.append((worker._lock.locked(), worker._status_lock.locked()))
+
+            def bounded():
+                in_leaf[0] = True
+                try:
+                    validate()
+                finally:
+                    in_leaf[0] = False
+
+            return admit(bounded)
+
+        monkeypatch.setattr(source, "admit_start", guarded)
+        monkeypatch.setattr(
+            source, "is_current", outside("source advice", source.is_current)
+        )
+        snapshot = FakePublicationSource.snapshot.fget
+        monkeypatch.setattr(
+            FakePublicationSource, "snapshot", property(outside("snapshot", snapshot))
+        )
+    for name in ("_save_state", "_notify", "_utc_clock", "_sharing_enabled"):
+        monkeypatch.setattr(worker, name, outside(name, getattr(worker, name)))
+    monkeypatch.setattr(crypto, "sign_request", outside("sign", crypto.sign_request))
+    transport = client.relay._transport
+
+    def completed_http(*args, **kwargs):
+        response = transport(*args, **kwargs)
+        mono[0] += 0.125
+        return response
+
+    monkeypatch.setattr(client.relay, "_transport", outside("HTTP", completed_http))
+    timing = worker._timing_context
+    stage, start, complete = (
+        timing._stage_publication,
+        timing._validate_publication,
+        worker._scheduler.completed,
+    )
+
+    def staged(*args, **kwargs):
+        result = stage(*args, **kwargs)
+        stages.append((timing._publisher, timing._next_stage_at))
+        return result
+
+    def started(*args, **kwargs):
+        result = start(*args, **kwargs)
+        starts.append(result)
+        return result
+
+    def charged(*args, **kwargs):
+        completed.append((args, kwargs))
+        return complete(*args, **kwargs)
+
+    monkeypatch.setattr(timing, "_stage_publication", staged)
+    monkeypatch.setattr(timing, "_validate_publication", started)
+    monkeypatch.setattr(worker._scheduler, "completed", charged)
+    revision = s.load(client.path).last_revision
+    before = mono[0]
+    thread, errors = completion_thread(worker, work, fence)
+    thread.join(5)
+    assert not thread.is_alive(), "completion reacquired a non-reentrant lock"
+    assert reentries == [] and errors == []
+    assert leaf_locks == (
+        []
+        if kind == "off"
+        else [(True, False)] + [(True, True)] * (2 if error and error[0] == 401 else 1)
+    )
+    assert all(not under_leaf for _, under_leaf, _ in external)
+    assert all(
+        not any(locks)
+        for name, _, locks in external
+        if name in ("_save_state", "_notify", "HTTP", "sign")
+    ), "I/O or notification ran under a completion lock"
+    assert sum(name == "HTTP" for name, _, _ in external) == 1
+    assert sum(name == "sign" for name, _, _ in external) == 1
+    assert len(client.puts) == 2
+    assert len(stages) == len(starts) == (kind == "publication")
+    if kind == "publication":
+        assert starts == [before], "completion recaptured actual request start"
+        assert (timing._publisher, timing._next_stage_at) == stages[0]
+    assert len(completed) == 1 and completed[0][0] == (work, before + 0.125)
+    assert worker._scheduler.deadlines["publication"] == before + 0.625
+    if error:
+        assert worker._scheduler.retry_at[work.key] == before + 1.125
+        assert worker.status().state == "error" and worker.status().detail == error[1]
+    else:
+        assert worker.status().state == ("refused" if kind == "off" else "active")
+        assert worker.status().detail == (
+            "db_continuity_lost" if kind == "off" else None
+        )
+    assert sum(name == "_save_state" for name, _, _ in external) == (
+        2 if error and error[0] == 401 else 1
+    )
+    assert s.load(client.path).last_revision == (
+        0 if error and error[0] == 401 else revision + 1
+    )
+
+
 def test_failed_combat_ack_does_not_gate_already_authorized_shared_read():
     from tests.test_fleetsharing_worker import COMBAT_DEVICE, rig
     from wingman.fleetsharing.client import FleetRelayError

@@ -1108,15 +1108,22 @@ class FleetSharingWorker:
 
     def _update_status_locked(self, **changes):
         with self._status_lock:
-            status = replace(
-                self._status,
-                **changes,
-                pending_sources=self._pending_sources_locked(changes.get("metadata")),
-            )
-            if self._status == status:
-                return None
-            self._status = replace(status, order=self._status.order + 1)
-            return self._status
+            status = self._status_candidate_locked(**changes)
+            if status is not None:
+                self._status = status
+            return status
+
+    def _status_candidate_locked(self, **changes):
+        # Caller holds worker AND status locks. Publication completion prepares
+        # the detached value before entering the producer's non-reentrant leaf.
+        status = replace(
+            self._status,
+            **changes,
+            pending_sources=self._pending_sources_locked(changes.get("metadata")),
+        )
+        if self._status == status:
+            return None
+        return replace(status, order=self._status.order + 1)
 
     def _remote_event_locked(self, payload, kind):
         self._presentation_order += 1
@@ -1379,6 +1386,15 @@ class FleetSharingWorker:
                 self._notify(kind, event)
 
     def _reset_session_locked(self):
+        notifications = self._reset_session_caches_locked()
+        status = self._update_status_locked(
+            sources=None,
+            eligibility=None,
+            observed_participation=self._state.observed_participation,
+        )
+        return (*notifications, ("status", status))
+
+    def _reset_session_caches_locked(self):
         self._control_auth = None
         self._control_db_fact = None
         self._automatic_observation = None
@@ -1394,12 +1410,7 @@ class FleetSharingWorker:
         self._expiry_binding = None
         self._last_published = ()
         self._due = dict.fromkeys(self._due, 0.0)
-        status = self._update_status_locked(
-            sources=None,
-            eligibility=None,
-            observed_participation=self._state.observed_participation,
-        )
-        return (("remote", remote), ("catalogue", catalogue), ("status", status))
+        return (("remote", remote), ("catalogue", catalogue))
 
     def _archived_choice(self, state=None):
         archive = (state or self._state).cutover
@@ -2906,6 +2917,144 @@ class FleetSharingWorker:
         with self._lock:
             self._validate_publication_permission_locked(selected, fence, work, receipt)
 
+    @staticmethod
+    def _with_publication_source_locked(work, install):
+        # This is the ORIGINAL non-consuming leaf, not another HTTP admission.
+        # Every needed worker/status lock is already held; install is bounded,
+        # with no lock acquisition, I/O, source reentry or notification inside.
+        source = None if work.key == "withdraw" else work.payload.source
+        if source is None:
+            install()
+        elif source.admit_start(install) is not True:
+            raise _Obsolete
+
+    def _validate_publication_completion_locked(self, work, fence, receipt):
+        if work.key == "withdraw":
+            self._validate_off_withdrawal_locked(fence, work, receipt)
+        else:
+            self._validate_publication_permission_locked(
+                work.payload, fence, work, receipt
+            )
+
+    def _publication_success_status_locked(self):
+        # Same presentation precedence as the common success tail, but its
+        # candidate and ACK must install together under publication authority.
+        changes = {}
+        if (
+            self._state.cutover is not None
+            and self._state.pending_participation is None
+            and self._status.participation == "needs_confirmation"
+            and any(
+                item.selector == "participation" and item.status == "observed_choice"
+                for item in self._state.cutover.outcomes
+            )
+        ):
+            changes["participation"] = "observed_choice"
+        if self._archived_choice() is not None:
+            changes.update(
+                state="refused",
+                detail="unresolved_previous_choice",
+                local_inhibited=True,
+            )
+        elif (
+            self._state.pending_pairing is not None
+            and self._state.pending_pairing == self._parked_pairing
+        ):
+            changes.update(
+                state="refused",
+                detail="unresolved_approval",
+                pairing="unresolved_approval",
+                approval_url=None,
+            )
+        elif self._timing_context._timing_loss is not None:
+            changes.update(
+                state="refused", detail=self._timing_context._timing_loss.reason
+            )
+        elif (
+            self._control_auth_current_locked()
+            and not self._timing_scope_current_locked()
+        ):
+            changes.update(state="refused", detail="timing_scope_mismatch")
+        elif not self._needs_fresh_intent and self._state.auth_pause is None:
+            changes.update(state="active", detail=None)
+        return self._status_candidate_locked(**changes) if changes else None
+
+    def _accept_publication(self, work, fence, receipt):
+        with self._lock, self._status_lock:
+            status = self._publication_success_status_locked()
+
+            def install():
+                self._validate_publication_completion_locked(work, fence, receipt)
+                self._last_published = (
+                    () if work.key == "withdraw" else work.payload.semantic
+                )
+                self._last_publish_at = receipt
+                if work.key == "withdraw":
+                    self._withdraw_needed = False
+                if status is not None:
+                    self._status = status
+
+            self._with_publication_source_locked(work, install)
+        if status is not None:
+            self._notify("status", status)
+
+    def _reset_publication_session(
+        self, work, fence, reset_fence, receipt, candidate, auth
+    ):
+        with self._lock, self._status_lock:
+            status = self._status_candidate_locked(
+                sources=None,
+                eligibility=None,
+                observed_participation=self._state.observed_participation,
+            )
+            notifications = ()
+
+            def install():
+                nonlocal notifications
+                # The admitted save is irreversible. Only its exact result state
+                # and original generations/auth may authorize this later reset.
+                # Session rights were deliberately cleared by that saved value;
+                # never treat an arbitrary session=None as completion authority.
+                self._check_locked(reset_fence, work=work)
+                if (
+                    self._state is not candidate
+                    or self._control_auth != auth
+                    or not isfinite(receipt)
+                    or receipt >= work.payload.session_deadline
+                    or receipt >= self._expires_at
+                ):
+                    raise _Obsolete
+                if work.key == "withdraw":
+                    if not self._withdraw_needed or auth != work.payload.auth:
+                        raise _Obsolete
+                else:
+                    selected = work.payload
+                    context = self._timing_context
+                    if (
+                        self._inhibit
+                        or context._timing_loss is not None
+                        or context._inconsistent
+                        or context._timing_generation != fence.timing
+                        or not self._timing_scope_current_locked()
+                        or selected.catalogue is not self._catalogue
+                        or selected.eligibility is not self._eligibility
+                        or selected.proof is not self._eligibility_proof
+                        or any(
+                            receipt >= deadline
+                            for deadline in selected.member_deadlines
+                        )
+                    ):
+                        raise _Obsolete
+                self._pairing_pollable = None
+                notifications = self._reset_session_caches_locked()
+                if status is not None:
+                    self._status = status
+
+            self._with_publication_source_locked(work, install)
+        for kind, event in (*notifications, ("status", status)):
+            if event is not None:
+                self._notify(kind, event)
+
     def _recovery_work(self):
         pending = self._state.pending_recovery
         fence = self._fence()
@@ -3262,20 +3411,8 @@ class FleetSharingWorker:
             self._due["eligibility"] = self._clock() + ELIGIBILITY_REFRESH_INTERVAL_S
             self._update_status(eligibility=result)
         elif operation == "publish_snapshot":
-            with self._lock:
-                self._check_locked(fence, work=work)
-                if work.key == "withdraw":
-                    self._validate_off_withdrawal_locked(fence, work, receipt)
-                else:
-                    self._validate_publication_permission_locked(
-                        work.payload, fence, work, receipt
-                    )
-                self._last_published = (
-                    () if work.key == "withdraw" else work.payload.semantic
-                )
-                self._last_publish_at = receipt
-                if work.key == "withdraw":
-                    self._withdraw_needed = False
+            self._accept_publication(work, fence, receipt)
+            return  # Publication status must not escape into the unfenced tail.
         elif operation == "read_snapshot":
             self._due["read"] = self._clock() + 1.0
             if not self._timing_context._finish_snapshot_get(started_at=started):
@@ -3632,27 +3769,27 @@ class FleetSharingWorker:
         code = exc.code if exc.code in ERROR_CODES else "server_error"
         operation = work.operation
         if operation == "publish_snapshot":
-            # The preliminary completion check precedes this install. Queue and
-            # lifecycle admission can run in between, so validate and mutate in
-            # ONE submission-lock section; captured notifications run afterward.
             catalogue = None
-            with self._lock:
-                if work.key == "withdraw":
-                    self._validate_off_withdrawal_locked(fence, work, receipt)
-                else:
-                    self._validate_publication_permission_locked(
-                        work.payload, fence, work, receipt
-                    )
-                status = self._update_status_locked(state="error", detail=code)
-                if exc.status != 401 and exc.code in (
-                    "forbidden",
-                    "capability_required",
-                    "feature_disabled",
-                ):
-                    self._needs_device = True
-                    self._eligibility = None
-                    catalogue = self._set_catalogue_locked(None)
-                    self._due["catalogue"] = self._due["eligibility"] = 0
+            with self._lock, self._status_lock:
+                status = self._status_candidate_locked(state="error", detail=code)
+                auth = self._control_auth
+
+                def install():
+                    nonlocal catalogue
+                    self._validate_publication_completion_locked(work, fence, receipt)
+                    if status is not None:
+                        self._status = status
+                    if exc.status != 401 and exc.code in (
+                        "forbidden",
+                        "capability_required",
+                        "feature_disabled",
+                    ):
+                        self._needs_device = True
+                        self._eligibility = None
+                        catalogue = self._set_catalogue_locked(None)
+                        self._due["catalogue"] = self._due["eligibility"] = 0
+
+                self._with_publication_source_locked(work, install)
             if status is not None:
                 self._notify("status", status)
             if catalogue is not None:
@@ -3682,21 +3819,15 @@ class FleetSharingWorker:
             # The final attempted revision is evidence even when it got a 401.
             # The exhaustion gate recovers without another signed use or reset.
             reset_fence = fence
+            candidate = self._state
             if self._state.last_revision < p.INT4_MAX:
                 candidate = s.replace_session(self._state, None)
                 self._persist(candidate, fence, work=work)
                 reset_fence = replace(fence, session=candidate.session_id)
             if operation == "publish_snapshot":
-                # Durable loss stays outside the lock and retains _persist's
-                # post-save fence. A replacement AFTER it returns must also
-                # prevent the old completion from resetting current caches.
-                with self._lock:
-                    self._check_locked(reset_fence, work=work)
-                    self._pairing_pollable = None
-                    notifications = self._reset_session_locked()
-                for kind, event in notifications:
-                    if event is not None:
-                        self._notify(kind, event)
+                self._reset_publication_session(
+                    work, fence, reset_fence, receipt, candidate, auth
+                )
             else:
                 self._reset_session()
         elif operation == "set_participation":
