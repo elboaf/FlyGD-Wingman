@@ -393,13 +393,13 @@
         + (pending && pending.cancellation_pending ? ' Off will follow only the receipt for this pending On.' : ''));
     var legacy = setupControl && setupControl.cutover || [];
     var unresolvedLegacy = legacy.filter(function (item) { return item.status === 'fenced'; }).length;
-    WM.el('sharing-legacy-history').hidden = !legacy.length;
+    WM.el('sharing-legacy-history').hidden = !(setupControl && setupControl.legacy_archive);
     text('sharing-legacy-summary', legacy.length + ' saved setup records; ' + unresolvedLegacy + ' unresolved.');
     WM.el('sharing-legacy-dismiss').hidden = !unresolvedLegacy;
     WM.el('sharing-legacy-remove').hidden = !!unresolvedLegacy;
     WM.el('sharing-legacy-dismiss').disabled = !state.available;
     WM.el('sharing-legacy-remove').disabled = !state.available;
-    text('sharing-setup-history', setupControl && (setupControl.source_requests || setupControl.participation_pending || setupControl.automatic_pending || setupControl.cutover.length)
+    text('sharing-setup-history', setupControl && (setupControl.source_requests || setupControl.participation_pending || setupControl.automatic_pending || setupControl.legacy_archive)
       ? 'Saved requests remain. Resolve or explicitly acknowledge them before Fresh setup; they are not server cancellations.' : '');
   }
   function setupAction(method, operation, control, title, message, extra) {

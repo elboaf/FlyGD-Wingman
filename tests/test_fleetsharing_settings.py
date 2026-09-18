@@ -57,6 +57,7 @@ def test_explicit_true_round_trips_through_load_and_save_without_touching_fleet_
         "x": None,
         "y": None,
         "preferred_content_width": 500,
+        "hide_inactive": False,
         "seen": [],
         "hidden": [],
     }
@@ -98,6 +99,7 @@ def test_enabling_sharing_does_not_affect_fleet_bar_settings(tmp_path):
         "x": 5,
         "y": 9,
         "preferred_content_width": 500,
+        "hide_inactive": False,
         "seen": [],
         "hidden": [],
     }
@@ -115,6 +117,7 @@ def test_enabling_fleet_bar_does_not_affect_fleet_sharing_settings(tmp_path):
         "x": 1,
         "y": 2,
         "preferred_content_width": 500,
+        "hide_inactive": False,
         "seen": [],
         "hidden": [],
     }

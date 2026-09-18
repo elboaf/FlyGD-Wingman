@@ -312,6 +312,7 @@
     sharing.setup_controls = sharingSetupControls();
     return JSON.parse(JSON.stringify(sharing));
   }
+  var sharingLegacyPresent = ['legacy', 'empty-legacy'].indexOf(devSearch.get('sharing-history')) !== -1;
   var sharingLegacy = devSearch.get('sharing-history') === 'legacy' ? [{selector: 'session', status: 'fenced'}] : [];
   function sharingSetupControls() {
     var approved = sharing.metadata.approved_capabilities || [];
@@ -322,7 +323,7 @@
       setup:{binding:sharing.metadata.binding,configured_origin:sharing.configured_origin,combat_approved:approved.indexOf('combat-v2') !== -1,
         history:String(sharingAutoRevision),pairing_pending:false,recovery_pending:false,
         automatic_enabled:sharing.automatic.enabled,automatic_pending:false,participation_pending:false,
-        source_requests:sharing.pending_sources.length,cutover:sharingLegacy}};
+        source_requests:sharing.pending_sources.length,legacy_archive:sharingLegacyPresent,cutover:sharingLegacy}};
   }
   api.fleet_sharing_automatic = function (operation, observation) {
     sharingCalls.push(['automatic', operation, observation]);
@@ -343,10 +344,11 @@
       return Promise.resolve({queued:false,error:'Connection history changed. Refresh and review again.'});
     }
     if (operation === 'dismiss_legacy' || operation === 'remove_legacy') {
-      if (!sharingLegacy.length) return Promise.resolve({queued:false,error:'No saved legacy history.'});
+      if (!sharingLegacyPresent) return Promise.resolve({queued:false,error:'No saved legacy history.'});
       if (operation === 'remove_legacy' && sharingLegacy.some(function (item) { return item.status === 'fenced'; })) {
         return Promise.resolve({queued:false,error:'Dismiss unresolved requests first.'});
       }
+      if (operation === 'remove_legacy') sharingLegacyPresent = false;
       sharingLegacy = operation === 'remove_legacy' ? [] : sharingLegacy.map(function (item) {
         return {selector:item.selector,status:'dismissed'};
       });

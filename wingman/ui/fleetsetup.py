@@ -75,6 +75,7 @@ def controls(status, *, configured_origin=None):
                     else None,
                     "sources": [asdict(item) for item in status.pending_sources],
                     "cutover": [asdict(item) for item in status.cutover_outcomes],
+                    "legacy_archive": status.cutover_present,
                 }
             ),
             "pairing_pending": pairing is not None or status.pairing == "queued",
@@ -90,6 +91,7 @@ def controls(status, *, configured_origin=None):
             "participation_pending": status.pending_participation is not None
             or status.participation == "queued",
             "source_requests": len(status.pending_sources),
+            "legacy_archive": status.cutover_present,
             "cutover": [asdict(item) for item in status.cutover_outcomes],
         },
     }

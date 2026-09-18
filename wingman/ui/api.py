@@ -4525,7 +4525,10 @@ class Api:
                 )
             elif action == "cancel":
                 request_id = (
-                    pending.command.request_id
+                    status.automatic_request_id
+                    if status.automatic_stage == "queued"
+                    and status.automatic_choice is True
+                    else pending.command.request_id
                     if pending
                     else status.automatic_request_id
                 )
@@ -4607,7 +4610,7 @@ class Api:
                 or observation["pairing_pending"]
                 or status.pending_participation
                 or status.pending_sources
-                or status.cutover_outcomes
+                or status.cutover_present
                 or status.pending_pairing
                 or status.pending_recovery
                 or status.automatic.pending
@@ -4618,9 +4621,12 @@ class Api:
                 }
             action_id = str(uuid.uuid4())
             self._begin_sharing_browser(action_id)
+            pairing = status.pending_pairing
             mode = (
                 "fresh"
                 if action == "fresh"
+                else "initial"
+                if pairing and pairing.mode in ("initial", "fresh")
                 else "upgrade"
                 if status.metadata.binding
                 else "initial"
@@ -4628,6 +4634,8 @@ class Api:
             capabilities = (
                 COMBAT_CAPABILITIES
                 if action == "combat" or observation["combat_approved"]
+                else pairing.requested_capabilities
+                if pairing and pairing.requested_capabilities
                 else CAPABILITIES
             )
             accepted = self._fleet_sharing.request_pairing(

@@ -102,6 +102,8 @@ def test_missing_worker_watch_returns_unavailable_without_startup(
         "control-setup-automatic",
         "control-setup-stale",
         "control-setup-route",
+        "control-setup-off-overtakes",
+        "control-legacy-empty",
         "control-preference-feedback-pushes",
         "control-preference-feedback-retry",
         "control-preference-feedback-off",

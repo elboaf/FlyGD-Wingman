@@ -132,6 +132,7 @@ class SharingStatus:
     automatic_request_id: str | None = None
     automatic_choice: bool | None = None
     cutover_outcomes: tuple[s.CutoverOutcome, ...] = ()
+    cutover_present: bool = False
     pending_participation: s.PendingParticipation | None = None
     pending_pairing: s.PendingPairing | None = None
     pending_recovery: s.PendingRecovery | None = None
@@ -450,6 +451,26 @@ class FleetSharingWorker:
         with self._lock:
             if binding is not None and binding != self._status.metadata.binding:
                 return None
+            if kind == "pairing" and payload[0] == "fresh":
+                # Fresh reserves an identity epoch here. Recheck before that
+                # reservation: an Off admitted after the page's read must not
+                # be erased by a new binding before the owner can persist it.
+                state = self._state
+                if any(
+                    c.kind != "automatic_status" for c in self._commands.values()
+                ) or (
+                    state is not None
+                    and (
+                        state.pending_participation is not None
+                        or state.pending_source_commands
+                        or state.pending_pairing is not None
+                        or state.pending_recovery is not None
+                        or state.cutover is not None
+                        or state.automatic != (automatic_history or s.AutomaticState())
+                        or state.automatic.pending is not None
+                    )
+                ):
+                    return None
             if kind == "cancel_automatic":
                 queued = self._commands.get(key)
                 if (
@@ -469,6 +490,18 @@ class FleetSharingWorker:
                         return _Command(
                             self._sequence, kind, payload, self._identity_epoch, binding
                         )
+                queued_on = self._commands.get("automatic")
+                if (
+                    queued_on is not None
+                    and queued_on.kind == "automatic"
+                    and queued_on.payload.request_id == payload[0]
+                ):
+                    # Cancel this displayed, not-yet-durable proposal before
+                    # ingestion can replace an older journal. The generation
+                    # below also fences a save already admitted by the owner;
+                    # its committed On is then cancelled through the usual path.
+                    self._commands.pop("automatic")
+                    self._deferred_commands.pop("automatic", None)
             if kind == "dismiss_source" and (
                 self._state is None
                 or payload not in self._state.pending_source_commands
@@ -800,13 +833,13 @@ class FleetSharingWorker:
             pending = self._state.automatic.pending if self._state else None
             queued_on = self._commands.get("automatic")
             original = (
-                pending.command
+                queued_on.payload
+                if queued_on is not None
+                and queued_on.kind == "automatic"
+                and queued_on.payload.request_id == request_id
+                else pending.command
                 if pending is not None
-                else (
-                    queued_on.payload
-                    if queued_on is not None and queued_on.kind == "automatic"
-                    else None
-                )
+                else None
             )
             if (
                 binding is None
@@ -816,7 +849,11 @@ class FleetSharingWorker:
                 or original.request_id != request_id
             ):
                 return None
-            if pending is not None and pending.cancel_after_on is not None:
+            if (
+                pending is not None
+                and pending.command.request_id == request_id
+                and pending.cancel_after_on is not None
+            ):
                 if "remove_cancel" not in self._commands:
                     return pending.cancel_after_on.request_id
                 cancel = pending.cancel_after_on
@@ -1033,6 +1070,7 @@ class FleetSharingWorker:
             metadata=metadata,
             automatic=state.automatic,
             cutover_outcomes=state.cutover.outcomes if state.cutover else (),
+            cutover_present=state.cutover is not None,
             pending_participation=state.pending_participation,
             pending_pairing=state.pending_pairing,
             pending_recovery=state.pending_recovery,

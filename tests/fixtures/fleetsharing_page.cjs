@@ -573,7 +573,23 @@ async function run() {
   assert.match(ids['sharing-connection'].textContent, /Reading/);
   attemptMutations(); await turn(); assert.equal(mutationCount(), 0);
   const first = watches()[0];
-  if (scenario.startsWith('control-setup-')) {
+  if (scenario === 'control-legacy-empty') {
+    const live = clone(input.live);
+    live.setup_controls.setup.legacy_archive = true;
+    live.setup_controls.setup.cutover = [];
+    first.resolve({state: live}); await turn();
+    assert.equal(ids['sharing-legacy-history'].hidden, false);
+    assert.equal(ids['sharing-legacy-dismiss'].hidden, true);
+    assert.equal(ids['sharing-legacy-remove'].hidden, false);
+    ids['sharing-legacy-remove'].dispatchEvent({type:'click'}); await turn();
+    assert.equal(confirmations.length, 1);
+    confirmations[0].resolve(true); await turn();
+    const call = calls.find(c => c.method === 'fleet_sharing_setup');
+    assert.equal(call.args.length, 2);
+    assert.equal(call.args[0], 'remove_legacy');
+    assert.deepEqual(clone(call.args[1]), live.setup_controls.setup);
+    call.resolve({queued:true,state:input.live}); await turn();
+  } else if (scenario.startsWith('control-setup-')) {
     first.resolve({state: input.live}); await turn();
     const original = clone(input.live.setup_controls);
     const combat = scenario === 'control-setup-combat';
@@ -582,6 +598,17 @@ async function run() {
     await turn();
     assert.equal(confirmations.length, 1, 'setup action explicitly confirms');
     assert.equal(mutationCount(), 0, 'no authorization before confirmation');
+    if (scenario === 'control-setup-off-overtakes') {
+      ids['sharing-automatic'].checked = false;
+      ids['sharing-automatic'].dispatchEvent({type:'change'}); await turn();
+      const off = calls.find(c => c.method === 'fleet_sharing_automatic');
+      assert.equal(off.args[0], 'off');
+      off.resolve({queued:true,state:input.live}); await turn();
+      confirmations[0].resolve(true); await turn();
+      assert.equal(calls.filter(c => c.method === 'fleet_sharing_automatic').length, 1);
+      console.log('PASS ' + scenario);
+      return;
+    }
     if (scenario.endsWith('-route')) await leave();
     if (scenario.endsWith('-stale')) {
       const newer = clone(input.live);

@@ -5,9 +5,11 @@ from dataclasses import replace
 
 import pytest
 
+from tests.test_api_fleetsharing import await_approval, setup
 from tests.test_fleetsharing_control_authority import ready
-from tests.test_fleetsharing_worker import drive
+from tests.test_fleetsharing_worker import DATE, PAIRED_STATE, UUID, drive
 from wingman.fleetsharing import protocol as p
+from wingman.fleetsharing import state as s
 
 
 def shown(api, kind):
@@ -110,6 +112,30 @@ def test_legacy_history_requires_displayed_dismissal_then_explicit_removal(tmp_p
     api.shutdown_fleet_sharing()
 
 
+def test_empty_legacy_archive_is_visible_and_explicitly_removable(tmp_path):
+    import json
+    from dataclasses import asdict
+
+    from tests.fleetsharing_state4_helpers import LEGACY_V1
+
+    raw = {
+        **LEGACY_V1,
+        "identity": asdict(PAIRED_STATE.identity),
+        "relay_origin": PAIRED_STATE.relay_origin,
+        "session_id": None,
+        "last_revision": 0,
+    }
+    path = tmp_path / "legacy.json"
+    path.write_text(json.dumps(raw), encoding="utf8")
+    api, worker, _, store, mono, _ = ready(tmp_path, state=s.load(path))
+    view = shown(api, "setup")
+    assert view["legacy_archive"] and view["cutover"] == []
+    assert api.fleet_sharing_setup("remove_legacy", view)["queued"]
+    drive(worker, mono, 8)
+    assert store.load().cutover is None
+    api.shutdown_fleet_sharing()
+
+
 def test_fresh_observation_binds_displayed_configured_server(tmp_path, monkeypatch):
     api, worker, _, _, _, _ = ready(tmp_path)
     old = shown(api, "setup")
@@ -119,6 +145,108 @@ def test_fresh_observation_binds_displayed_configured_server(tmp_path, monkeypat
     )
     assert not api.fleet_sharing_setup("fresh", old, True)["queued"]
     assert not worker._commands
+    api.shutdown_fleet_sharing()
+
+
+@pytest.mark.parametrize("ingest_off", [False, True])
+def test_fresh_admission_cannot_overtake_an_intervening_automatic_off(
+    tmp_path, monkeypatch, ingest_off
+):
+    api, worker, client, store, mono, _ = ready(tmp_path)
+    assert api.fleet_sharing_automatic("on", shown(api, "automatic"))["queued"]
+    drive(worker, mono, 12)
+    assert client.automatic_consent.enabled
+    original = worker.request_pairing
+
+    def concurrent_off(**kwargs):
+        assert api.fleet_sharing_automatic("off", shown(api, "automatic"))["queued"]
+        if ingest_off:
+            worker.iterate_once()
+        return original(**kwargs)
+
+    monkeypatch.setattr(worker, "request_pairing", concurrent_off)
+    monkeypatch.setattr(
+        "wingman.fleetsharing.config.resolve_relay_origin",
+        lambda **_: "https://other.test",
+    )
+    assert not api.fleet_sharing_setup("fresh", shown(api, "setup"), True)["queued"]
+    drive(worker, mono, 16)
+    assert store.load().relay_origin == PAIRED_STATE.relay_origin
+    assert not client.automatic_consent.enabled
+    api.shutdown_fleet_sharing()
+
+
+def test_cancel_queued_on_replacement_keeps_older_unresolved_journal(tmp_path):
+    old = s.PendingAutomatic(p.AutomaticCommand(UUID, DATE, False, 1, 1))
+    consent = p.Consent(2, 2, True, UUID, DATE, None, None)
+    state = replace(
+        PAIRED_STATE, device_id=UUID, automatic=s.AutomaticState(consent, old)
+    )
+    api, worker, client, store, mono, _ = setup(tmp_path, state=state)
+    client.automatic_consent = consent
+    api.fleet_sharing_watch(True)
+    drive(worker, mono, 12)
+    assert api.fleet_sharing_automatic("on", shown(api, "automatic"))["queued"]
+    replacement = worker._commands["automatic"].payload.request_id
+    assert api.fleet_sharing_automatic("cancel", shown(api, "automatic"))["queued"]
+    drive(worker, mono, 16)
+    assert client.automatic_consent == consent
+    assert store.load().automatic.pending.command == old.command
+    assert all(
+        c.payload.request_id != replacement
+        for c in worker._commands.values()
+        if c.kind == "automatic"
+    )
+    api.shutdown_fleet_sharing()
+
+
+@pytest.mark.parametrize("after_write", [False, True])
+def test_cancelling_queued_on_crossing_its_save_never_sends_on(
+    tmp_path, monkeypatch, after_write
+):
+    api, worker, client, store, mono, _ = ready(tmp_path)
+    assert api.fleet_sharing_automatic("on", shown(api, "automatic"))["queued"]
+    request_id = worker._commands["automatic"].payload.request_id
+    original = worker._save_state
+    fired = []
+
+    def save(candidate):
+        pending = candidate.automatic.pending
+        trigger = not fired and pending and pending.command.request_id == request_id
+        if after_write:
+            original(candidate)
+        if trigger:
+            fired.append(True)
+            assert api.fleet_sharing_automatic("cancel", shown(api, "automatic"))[
+                "queued"
+            ]
+        if not after_write:
+            original(candidate)
+
+    monkeypatch.setattr(worker, "_save_state", save)
+    drive(worker, mono, 20)
+    assert fired
+    assert store.load().automatic.pending is None
+    assert not client.automatic_consent.enabled
+    api.shutdown_fleet_sharing()
+
+
+def test_retry_preserves_unregistered_pairing_mode_and_requested_combat(tmp_path):
+    api, worker, client, store, mono, _ = setup(tmp_path, state=s.EMPTY)
+    api.fleet_sharing_watch(True)
+    drive(worker, mono, 4)
+    assert api.fleet_sharing_setup("combat", shown(api, "setup"))["queued"]
+    action_id = worker.status().pairing_action_id
+    await_approval(worker, store, mono, action_id)
+    assert store.load().pending_pairing.mode == "initial"
+    client.precommit_loss.add("complete_pairing")
+    assert api.fleet_sharing_setup("retry", shown(api, "setup"))["queued"]
+    queued = worker._commands["pairing"].payload
+    assert queued[0] == "initial"
+    assert p.COMBAT_CAPABILITY in queued[3]
+    drive(worker, mono, 30)
+    assert worker.status().pairing == "needs_retry"
+    assert store.load().pending_pairing.mode == "initial"
     api.shutdown_fleet_sharing()
 
 

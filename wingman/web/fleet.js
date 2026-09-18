@@ -307,7 +307,9 @@
       filterPending = true; hideInactive.disabled = true; writesInFlight += 1;
       function finish(res) {
         filterPending = false; writesInFlight -= 1;
-        fieldResult(res);
+        if (!fieldResult(res) && (!res || !res.error)) {
+          setStatusMessage('Could not save the activity filter.');
+        }
         if (lastState) render(lastState);
         hideInactive.disabled = false;
       }
