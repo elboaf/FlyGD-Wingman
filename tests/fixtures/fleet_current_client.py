@@ -11,7 +11,7 @@ import ssl
 import sys
 import time
 import urllib.request
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -83,8 +83,7 @@ def build(config, root, index, origin, ca):
         _thread_factory=_noop_thread_factory,
     )
     authority = _SourceAuthority()
-    client = replace(
-        ALICE,
+    client = ALICE._replace(
         character=config["name"],
         title="EVE - " + config["name"],
         stable_key=config["name"],
