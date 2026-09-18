@@ -15,6 +15,52 @@ dev checks are separate evidence, not installed Windows/WebView2 acceptance.
 
 Run on Windows against a real install before each release.
 
+## Screenshot UX step 6 — installed Windows acceptance NOT RUN
+
+Character access and Profiles use bounded synthetic Chromium checks at 1015×633
+and 840×625. Staged character data does not prove authorization. Profiles fixtures
+do not prove account identification, filesystem access, codec, copy, backup,
+restore, delete or persistence. None of those live operations were performed.
+Repeat installed WebView2 checks at 100/125/150/200% scaling with separate approval
+for native, authorization and filesystem operations.
+
+- [ ] Character / Skills / Fittings / Actions headers align with their cells.
+      Ready, Access needed and Access expired remain complete words at the floor;
+      both capability columns and the row action remain visible. The authentication
+      date is absent from the table, not the payload or date filter. Ready and
+      legacy Authorized searches, including multiword name/status/date queries,
+      still work. Long names truncate with full accessible identity and title.
+- [ ] With 50 characters, scroll through fractional positions: the header remains
+      opaque and no row fragments bleed through its top edge. Open the last visible
+      row's menu; it stays above the status strip and inside the viewport. Escape
+      returns focus; Tab/Shift+Tab follows row order. Scroll/resize dismisses stale
+      placement, restoring only owned menu focus without a scroll jump.
+- [ ] Waiting still leaves Authenticate unavailable and Cancel available, with the
+      same browser instructions. EVE chooses the character. Failed reads retain
+      the prior roster/filter; partial cleanup remains visible after the row leaves
+      and is never presented as complete success. Confirm announcements with AT.
+- [ ] Profiles base and account identification remain substantially unchanged.
+      Copy settings stays with source, profile/server, scope and target count in
+      one action bar. At the floor the summary wraps above the action and its EVE
+      advisory. No second live summary or target-list scroller is introduced.
+- [ ] Character/account scope, source/profile/server changes, filter, Select shown
+      and Clear selection retain their semantics. The count matches selected,
+      shown, non-source targets; clearing a filter restores hidden selections.
+      Zero targets disables Copy. EVE-open is still an advisory, not a new block;
+      missing codec remains an explicit whole-file warning. Long identities do not
+      cause horizontal scrolling inside the work pane or separate action from context.
+- [ ] Backup ellipsis announces its own target and backup time, with native
+      expanded/collapsed semantics. Restore remains neutral. Delete remains inside
+      the disclosure and destructive. Check a nonfinal DOM row at the viewport
+      bottom: the popup opens upward and stays within the route. Escape restores
+      the summary; Tab/Shift+Tab remains native. Scroll/resize never strands focus
+      in hidden Delete or takes focus from an outside control. Rows still scroll
+      fully clear of the status bar; no additional footer workaround was added.
+- [ ] With separately authorized disposable files, verify existing Copy/Restore
+      confirmations and backup-before-write behavior, per-target failures, and
+      Delete confirmation. These filesystem/native checks remain open; Node or
+      Chromium doubles are not evidence of successful writes or recovery.
+
 ## Screenshot UX step 5 — installed Windows acceptance NOT RUN
 
 Fleet telemetry and Alerts use bounded synthetic Chromium checks at 1015×633 and

@@ -927,6 +927,40 @@ partial/complete coverage is unavailable and deliberately deferred: no X-of-Y, �
 or “missing” character claims, and no backend or cross-subsystem roster join in this
 presentation program. Custom-matcher degradation remains a separate fact.
 
+## Character access and Profiles row actions
+
+Character access presents four aligned columns: Character, Skills, Fittings and
+Actions. Ready is the visible label for the existing authorized capability; Access
+needed and Access expired remain separate facts. The authentication timestamp is
+not a displayed column, but stays in the model and existing date searches. Both
+Ready and legacy Authorized name/status/date searches remain supported. Header and
+row tracks share padding; status and action centers align without compressing the
+complete access phrases. Long names retain their full text and title.
+
+The Character roster retains its internal scroller and opaque sticky header. Its
+existing fixed menu clears the actual status strip rather than a guessed height.
+Tab rejoins native traversal from the owning row; scroll or resize dismisses stale
+geometry and returns only owned menu focus without scrolling or taking outside focus.
+Authorization waiting, cancellation, read-failure retention and partial-cleanup
+announcements are independent of these presentation changes.
+
+Profiles retains one work scroller and its nonshrinking, normal-flow copy bar.
+The existing selected-target count and source share a wrapping summary line, with
+profile/server and scope context beneath; Copy settings follows that summary, with
+the EVE advisory beside the action. At the floor the action row follows the summary.
+The count still means selected, shown, non-source targets, exactly what Copy uses;
+hidden selections remain retained. No second live summary is introduced. Long server
+identities wrap within the existing folder row rather than widening the scroller.
+
+Backup row actions reuse native details/summary, not a second ARIA menu system.
+The visible ellipsis has a row-specific accessible identity and timestamp; native
+expanded state and Tab behavior remain intact. Delete stays inside the disclosure,
+Restore stays neutral, and both retain their existing worker confirmations. A
+measured route/status-strip boundary chooses the popup side for any visible row,
+not only the final DOM row. Escape returns focus; geometry dismissal returns it
+only if that disclosure still owns it, without undoing scroll or stealing focus.
+Backup ordering, filtering, retention and filesystem behavior are unchanged.
+
 ## Words
 
 One name per concept, across every screen.
