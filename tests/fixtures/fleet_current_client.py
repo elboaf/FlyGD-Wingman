@@ -15,6 +15,7 @@ import urllib.request
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
+from queue import Empty, SimpleQueue
 
 import pytest
 from cryptography.hazmat.primitives.serialization import (
@@ -48,6 +49,23 @@ from wingman.telemetry.gamelogs import GameLogStream
 from wingman.telemetry.metrics import FleetMetrics
 from wingman.ui import chrome
 from wingman.ui.api import Api
+
+
+class CapturedWindow(FakeWindow):
+    def __init__(self):
+        super().__init__()
+        self.messages = SimpleQueue()
+
+    def evaluate_js(self, script):
+        self.messages.put(script)
+
+    def take(self):
+        messages = []
+        while True:
+            try:
+                messages.append(self.messages.get_nowait())
+            except Empty:
+                return messages
 
 
 class RecordedTiming(TimingContext):
@@ -148,7 +166,7 @@ def build(config, root, index, origin, ca):
         timer=timers,
         fleet_clock=clock,
     )
-    api._window = FakeWindow()
+    api._window = CapturedWindow()
     api._sharing_page_ready = True  # The owned browser replaces the native WebView.
     api._fleetbar_window = FleetWindow(width=500, height=90)
     api._fleetbar_page_id = f"{index + 1:064x}"
@@ -160,6 +178,7 @@ def build(config, root, index, origin, ca):
     opened = []
     api._open_sharing_browser = lambda url: opened.append(url) or True
     api.fleet_sharing_watch(True)
+    api._start_fleet_presentation()
     return dict(
         api=api,
         worker=worker,
@@ -183,7 +202,6 @@ def pump(devices, seconds):
             d["coordinator"].dispatch_once(0)
             d["worker"].iterate_once()
             d["timers"].drain()
-            d["api"]._fleet_worker.iterate_once()
         time.sleep(0.025)
 
 
@@ -265,7 +283,7 @@ def main():
                 json.dumps(
                     {
                         "result": result,
-                        "pushes": [list(d["api"]._window.evaluated) for d in devices],
+                        "pushes": [d["api"]._window.take() for d in devices],
                         "bars": [
                             d["api"].fleet_bar_snapshot(d["api"]._fleetbar_page_id)
                             for d in devices
@@ -297,11 +315,10 @@ def main():
                 ),
                 flush=True,
             )
-            for d in devices:
-                d["api"]._window.evaluated.clear()
     finally:
         for d in devices:
             d["api"].shutdown_fleet_sharing()
+            assert d["api"].shutdown_fleet_presentation(timeout=2)
             d["coordinator"].stop()
 
 
