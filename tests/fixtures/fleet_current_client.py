@@ -33,9 +33,9 @@ from tests.test_fleetsharing_worker_state4 import FileStore
 from tests.test_telemetry_gamelogs import (
     DAMAGE_LINE,
     OUTGOING_DAMAGE_LINE,
-    SCRAMBLE_LINE,
     _log,
 )
+from tests.test_telemetry_parsing import _fixture_line, _tackle_with_name
 from wingman import settings
 from wingman.fleetsharing import crypto
 from wingman.fleetsharing import state as s
@@ -258,9 +258,14 @@ def main():
                     d["config"]["name"],
                     text
                     + incoming
-                    + SCRAMBLE_LINE.replace("2026.08.25 11:30:05", stamp).format(
-                        target=d["config"]["name"]
-                    ),
+                    + f"[ {stamp} ]"
+                    + _tackle_with_name("Carol Vex")[1].split("]", 1)[1]
+                    + "\n"
+                    + f"[ {stamp} ]"
+                    + _fixture_line("incoming_neut.txt", "energy neutralized")[1].split(
+                        "]", 1
+                    )[1]
+                    + "\n",
                     stem=str(time.monotonic_ns()),
                     session=stamp,
                 )
@@ -318,7 +323,7 @@ def main():
     finally:
         for d in devices:
             d["api"].shutdown_fleet_sharing()
-            assert d["api"].shutdown_fleet_presentation(timeout=2)
+            assert d["api"]._stop_fleet_presentation(timeout=2)
             d["coordinator"].stop()
 
 
