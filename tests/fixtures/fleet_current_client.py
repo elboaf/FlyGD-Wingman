@@ -7,6 +7,7 @@ OS enumeration, browser opening and DPAPI are the explicit platform seams.
 import base64
 import json
 import os
+import secrets
 import socket
 import ssl
 import sys
@@ -169,7 +170,7 @@ def build(config, root, index, origin, ca):
     api._window = CapturedWindow()
     api._sharing_page_ready = True  # The owned browser replaces the native WebView.
     api._fleetbar_window = FleetWindow(width=500, height=90)
-    api._fleetbar_page_id = f"{index + 1:064x}"
+    api._fleetbar_page_id = secrets.token_hex(32)
     api._fleetbar_ready = True
     api._fleetbar_resize_insets = chrome.ResizeInsets(0, 0, 0, 0)
     api._fleetbar_applied_x = api._fleetbar_applied_y = 0
@@ -214,7 +215,15 @@ def main():
         for i, c in enumerate(config["devices"])
     ]
     try:
-        print(json.dumps({"ready": True}), flush=True)
+        print(
+            json.dumps(
+                {
+                    "ready": True,
+                    "page_ids": [d["api"]._fleetbar_page_id for d in devices],
+                }
+            ),
+            flush=True,
+        )
         for line in sys.stdin:
             command = json.loads(line)
             action = command["action"]
