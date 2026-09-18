@@ -2210,9 +2210,41 @@ class Api:
                 )
         if not enabled and self._fleet_sharing is not None:
             sharing = self.fleet_sharing_state()
+            with self._sharing_delivery_lock:
+                authority = self._sharing_status
             metadata = sharing["metadata"]
             if (
                 sharing["enabled"]
+                or (
+                    authority is not None
+                    and (
+                        authority.pending_participation is not None
+                        or any(
+                            item.status in ("fenced", "expired_unproven")
+                            for item in authority.cutover_outcomes
+                        )
+                        or authority.automatic.pending is not None
+                        or (
+                            authority.automatic.observed_consent is not None
+                            and authority.automatic.observed_consent.enabled
+                        )
+                        or authority.automatic_stage
+                        in (
+                            "queued",
+                            "persisted",
+                            "needs_confirmation",
+                            "awaiting_expiry_proof",
+                        )
+                        or (
+                            authority.metadata.binding
+                            and authority.automatic_status is None
+                        )
+                        or (
+                            authority.automatic_status is not None
+                            and authority.automatic_status.consent.enabled
+                        )
+                    )
+                )
                 or not metadata["loaded"]
                 or sharing["pending_sources"]
                 or (
@@ -2230,7 +2262,8 @@ class Api:
             ):
                 return self._field_refused(
                     "Keep EVE tools visible while fleet sharing or roster sources need attention. "
-                    "Open Settings > Fleet telemetry to turn sharing Off, Stop sources, or refresh unknown source state."
+                    "Open Settings > Fleet telemetry to turn sharing Off, Stop sources, or refresh unknown state. "
+                    "Local sharing Off does not disable automatic verification consent."
                 )
         return self._write_setting("show_eve_tools", enabled)
 
@@ -4187,18 +4220,135 @@ class Api:
             logger.warning("Fleet sharing browser could not open")
             return False
 
+    @staticmethod
+    def _sharing_controls(status):
+        from ..fleetsharing import protocol as p
+
+        observed = status.observed_participation
+        participation = {
+            "binding": status.metadata.binding,
+            "observed": asdict(observed) if observed is not None else None,
+            "participation_intent_id": status.participation_intent_id,
+            "participation_order": status.participation_order,
+            "pending": asdict(status.pending_participation)
+            if status.pending_participation is not None
+            else None,
+        }
+        sources = (
+            {row.source_id.lower(): row for row in status.sources.sources}
+            if status.sources
+            else {}
+        )
+        pending = {row.source_id.lower(): row.command for row in status.pending_sources}
+        controls = []
+        for source_id in dict.fromkeys((*sources, *pending)):
+            source, command = sources.get(source_id), pending.get(source_id)
+            stop = isinstance(command, p.SourceStop)
+            automatic = (
+                command.expected_automatic
+                if stop
+                else source.automatic
+                if source
+                else None
+            )
+            # Only an original unresolved Start may cancel an unknown source.
+            if source is None and not isinstance(
+                command, (p.SourceStart, p.SourceStop)
+            ):
+                continue
+            controls.append(
+                {
+                    "source_id": source_id,
+                    "binding": status.metadata.binding,
+                    "observed": asdict(source) if source is not None else None,
+                    "pending": {
+                        "operation": "stop" if stop else "start",
+                        "intent_id": command.request_id if stop else command.source_id,
+                    }
+                    if command is not None
+                    else None,
+                    "expected_generation": command.expected_generation
+                    if stop
+                    else source.generation
+                    if source
+                    else 0,
+                    "expected_automatic": asdict(automatic)
+                    if automatic is not None
+                    else None,
+                }
+            )
+        return {"participation": participation, "sources": controls}
+
+    @staticmethod
+    def _sharing_control_matches(value, expected):
+        # Equality alone accepts True as generation 1. Closed recursive shape
+        # and native types also reject missing/extra fields before admission.
+        if type(value) is not type(expected):
+            return False
+        if isinstance(expected, dict):
+            return value.keys() == expected.keys() and all(
+                Api._sharing_control_matches(value[key], item)
+                for key, item in expected.items()
+            )
+        return value == expected
+
     def fleet_sharing_state(self) -> dict:
         from ..fleetsharing.config import resolve_relay_origin
         from ..fleetsharing.worker import SharingStatus
 
         with self._sharing_delivery_lock:
             status = self._sharing_status or SharingStatus("stopped")
-            payload = asdict(status)
-            # The immutable commands are internal confirmation/recovery authority,
-            # not part of the existing page's safe source-status projection.
-            for key in ("pending_sources", "source_results"):
-                for source in payload[key]:
-                    source.pop("command", None)
+            # Explicit projection: new private status fields must never silently
+            # become bridge fields (commands, receipt bodies and saved history).
+            payload = {
+                name: getattr(status, name)
+                for name in (
+                    "state",
+                    "detail",
+                    "participation",
+                    "participation_intent_id",
+                    "participation_order",
+                    "source_control",
+                    "pairing",
+                    "local_inhibited",
+                    "order",
+                    "pairing_action_id",
+                    "automatic_stage",
+                )
+            }
+            for name in (
+                "metadata",
+                "sources",
+                "eligibility",
+                "observed_participation",
+            ):
+                value = getattr(status, name)
+                payload[name] = asdict(value) if value is not None else None
+            for name in ("pending_sources", "source_results"):
+                payload[name] = tuple(
+                    {
+                        key: getattr(row, key)
+                        for key in ("source_id", "operation", "character_id", "stage")
+                    }
+                    for row in getattr(status, name)
+                )
+            automatic = status.automatic
+            payload["automatic"] = {
+                "enabled": automatic.observed_consent.enabled
+                if automatic.observed_consent
+                else None,
+                "pending": automatic.pending is not None,
+                "cancellation_pending": bool(
+                    automatic.pending and automatic.pending.cancel_after_on
+                ),
+                "outcome": automatic.last_result.outcome
+                if automatic.last_result
+                else None,
+                "readiness": status.automatic_status.readiness
+                if status.automatic_status
+                else None,
+            }
+            payload["controls"] = self._sharing_controls(status)
             payload.update(
                 available=self._fleet_sharing is not None and not self._sharing_closed,
                 enabled=self._sharing_enabled,
@@ -4210,12 +4360,12 @@ class Api:
                 telemetry_available=self._sharing_telemetry_available,
                 configured_origin=resolve_relay_origin(),
             )
-            # The persisted URL is only for a current explicit browser action.
-            payload.pop("approval_url", None)
             if payload != self._sharing_presentation:
                 self._sharing_presentation_order += 1
                 self._sharing_presentation = payload
-            return dict(payload, presentation_order=self._sharing_presentation_order)
+            return copy.deepcopy(
+                dict(payload, presentation_order=self._sharing_presentation_order)
+            )
 
     def fleet_sharing_watch(self, enabled) -> dict:
         if type(enabled) is not bool:
@@ -4306,15 +4456,44 @@ class Api:
             "state": self.fleet_sharing_state(),
         }
 
-    def fleet_sharing_set_enabled(self, enabled) -> dict:
+    def fleet_sharing_set_enabled(self, enabled, observation=None) -> dict:
         if type(enabled) is not bool:
             return self._field_refused("Choose On or Off.")
         with self._sharing_submission() as available:
             if not available:
                 return self._field_refused("Fleet sharing is unavailable.")
-            # Always explicit, even if the stored value already agrees. Off
-            # reaches the worker's inhibit latch BEFORE any preference I/O.
-            intent = self._fleet_sharing.request_participation(enabled)
+            with self._sharing_delivery_lock:
+                status = self._sharing_status
+            expected = (
+                self._sharing_controls(status)["participation"] if status else None
+            )
+            matched = expected is not None and self._sharing_control_matches(
+                observation, expected
+            )
+            if (
+                enabled
+                and not matched
+                and (
+                    observation is not None
+                    or (status and status.observed_participation is not None)
+                )
+            ):
+                return self._field_refused(
+                    "The sharing choice changed. Refresh and confirm On again."
+                )
+            intent = None
+            if matched:
+                observed = observation["observed"]
+                intent = self._fleet_sharing.request_participation(
+                    enabled,
+                    expected_generation=observed["generation"] if observed else None,
+                    binding=observation["binding"],
+                    supersedes=status.pending_participation,
+                )
+            if not matched or (not enabled and intent is None):
+                # Bound validation precedes the worker inhibit latch. Off must
+                # still inhibit locally, without acknowledging unseen history.
+                intent = self._fleet_sharing.request_participation(enabled)
         if intent is None:
             return self._field_refused("The sharing choice could not be queued.")
         self._start_fleet_sharing()
@@ -4405,7 +4584,7 @@ class Api:
             "state": self.fleet_sharing_state(),
         }
 
-    def fleet_sharing_stop_source(self, source_id, binding) -> dict:
+    def fleet_sharing_stop_source(self, source_id, binding, observation=None) -> dict:
         from ..fleetsharing import protocol
 
         try:
@@ -4413,26 +4592,50 @@ class Api:
         except ValueError:
             return {"queued": False, "error": "Choose a source from this account."}
         with self._sharing_submission() as available:
-            state = self.fleet_sharing_state()
-            sources = (state["sources"] or {}).get("sources", ())
-            source = next(
-                (row for row in sources if row["source_id"].lower() == source_id), None
-            )
-            pending = any(
-                row["source_id"].lower() == source_id
-                for row in state["pending_sources"]
+            with self._sharing_delivery_lock:
+                status = self._sharing_status
+            expected = (
+                next(
+                    (
+                        row
+                        for row in self._sharing_controls(status)["sources"]
+                        if row["source_id"] == source_id
+                    ),
+                    None,
+                )
+                if status
+                else None
             )
             if (
                 not available
                 or not binding
-                or binding != state["metadata"]["binding"]
-                or not (source or pending)
+                or expected is None
+                or binding != expected["binding"]
+                or not self._sharing_control_matches(observation, expected)
             ):
                 return {"queued": False, "error": "Refresh the owned source list."}
+            original = next(
+                (
+                    row.command
+                    for row in status.pending_sources
+                    if row.source_id.lower() == source_id
+                ),
+                None,
+            )
+            automatic = observation["expected_automatic"]
             accepted = self._fleet_sharing.request_source_stop(
                 source_id,
-                expected_generation=source["generation"] if source else 0,
-                binding=binding,
+                expected_generation=observation["expected_generation"],
+                expected_automatic=protocol.AutomaticBinding(
+                    automatic["consent_generation"]
+                )
+                if automatic is not None
+                else None,
+                binding=observation["binding"],
+                # None deliberately selects the worker's original Stop reuse.
+                supersedes=original
+                if isinstance(original, protocol.SourceStart)
+                else None,
             )
         self._start_fleet_sharing()
         return {

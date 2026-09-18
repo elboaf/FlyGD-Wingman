@@ -12,6 +12,8 @@
   var actionAttempt = 0;
   var actionsInFlight = 0;
   var bindingGeneration = 0;
+  var interactionGeneration = 0;
+  var participationControl = null;
   var sourceRequests = [];
   var actionMessage = '';
   // Last-known labels/observations are presentation only, never a roster or
@@ -101,6 +103,14 @@
     if (node.textContent !== next) node.textContent = next;
   }
   function binding() { return state && state.metadata.binding; }
+  function detached(value) { return value ? JSON.parse(JSON.stringify(value)) : null; }
+  function interactionOwner() {
+    var generation = interactionGeneration, bound = bindingGeneration, capture = screenshotEpoch;
+    return function () {
+      return visible() && !screenshotFixture && generation === interactionGeneration
+        && bound === bindingGeneration && capture === screenshotEpoch;
+    };
+  }
   function selected() {
     return ((state && state.sources && state.sources.characters) || []).filter(function (row) {
       return String(row.character_id) === boss.value;
@@ -217,8 +227,13 @@
         row.appendChild(WM.make('div', 'sharing-source-text'));
         var stop = WM.make('button', 'btn', 'Stop verification');
         stop.addEventListener('click', function () {
-          if (!hydrated || stop.disabled) return;
-          action('fleet_sharing_stop_source', id, binding());
+          if (screenshotFixture || !hydrated || stop.disabled || !visible()) return;
+          var observation = detached(stop._sharingControl);
+          if (!observation) return;
+          var owns = interactionOwner();
+          WM.confirm('Stop verification', 'Stop this verification? A saved Start may already have reached authGD. Stop remains unconfirmed until acknowledged.').then(function (ok) {
+            if (ok && owns()) action('fleet_sharing_stop_source', id, observation.binding, observation);
+          });
         });
         row.appendChild(stop);
       }
@@ -229,21 +244,24 @@
       var label = nameFor(characterId);
       if (label === 'Unknown character') label = 'Verification ' + id.slice(0, 8);
       var description = label + ' · ' + (localResult && !pending
-        ? result.stage === 'rejected' ? 'Start not saved. Too many pending verification requests. Wait, then Start again explicitly.' : 'Start expired. Start again explicitly.'
+        ? result.stage === 'rejected' ? 'Start not saved. Too many pending verification requests. Wait, then Start again explicitly.' : 'Start outcome unconfirmed.'
         : observed ? observed.state : 'Not yet observed');
       if (observed && (!localResult || pending)) {
         if (observed.reason) description += ' — ' + observed.reason.replace(/_/g, ' ');
         if (sourceUnknown()) description += ' · Last known';
       }
       if (pending) description += ' · ' + (pending.operation === 'stop' ? 'Stop' : 'Start')
-        + (pending.stage === 'queued' ? ' queued locally' : ' saved, awaiting authGD');
+        + (pending.stage === 'queued' ? ' queued locally' : pending.operation === 'start' ? ' saved; outcome unconfirmed.' : ' saved, awaiting authGD');
       if (request) description += ' · Stop request in progress…';
       row.firstChild.textContent = description;
       row.firstChild.title = 'Verification ' + id + ' — ' + description;
       // A page request, like worker-pending work, does not itself disable Stop.
       // Disabling on click would blur the control before settlement can move
       // its focus to history. Only current source/pending evidence authorizes it.
-      row.lastChild.disabled = !hydrated || !state.available || readFailed
+      row.lastChild._sharingControl = detached(((state.controls && state.controls.sources) || []).filter(function (control) {
+        return sourceKey(control.source_id) === id;
+      })[0]);
+      row.lastChild.disabled = !hydrated || !state.available || readFailed || !row.lastChild._sharingControl
         || (!pending && (sourceUnknown() || !observed || !!localResult || ended));
       // Retain the keyed control for pending work that can return this row
       // to the current list, but do not show an obsolete action in history.
@@ -336,6 +354,7 @@
     if (!state || !visible()) return;
     hydrated = true;
     var meta = state.metadata;
+    participationControl = detached(state.controls && state.controls.participation);
     enabled.checked = preferencePending ? preferenceWanted : state.enabled;
     enabled.disabled = !state.available; // never disable Off behind queued On
     WM.el('sharing-refresh').disabled = !state.available;
@@ -421,21 +440,37 @@
   }
   function preference(value) {
     if (screenshotFixture || !hydrated) return;
+    if (!visible()) return;
+    var observation = detached(participationControl);
+    if (value && !observation) {
+      enabled.checked = state.enabled;
+      text('sharing-preference', 'Refresh and confirm On again.');
+      return;
+    }
     var attempt = ++preferenceAttempt;
+    var owns = interactionOwner();
     preferencePending = true;
     preferenceWanted = value;
     // Paint the user's local request immediately so an in-flight On always
     // leaves a reachable Off. An older reply cannot revert a newer choice.
     enabled.checked = value;
-    WM.send('fleet_sharing_set_enabled', value).then(function (result) {
+    function submit() {
+      return WM.send('fleet_sharing_set_enabled', value, observation).then(function (result) {
+        if (attempt !== preferenceAttempt) return;
+        preferencePending = false;
+        if (result && result.state) {
+          if (!render(result.state)) paint();
+        } else {
+          if (!result || !result.applied) enabled.checked = state.enabled;
+          text('sharing-preference', !result ? 'Could not apply the sharing choice.' : result.error || '');
+        }
+      });
+    }
+    if (!value) { submit(); return; } // Off never waits behind a dialog.
+    WM.confirm('Share fleet telemetry', 'Turn sharing On for the displayed account and participation choice? This does not enable automatic verification.').then(function (ok) {
       if (attempt !== preferenceAttempt) return;
-      preferencePending = false;
-      if (result && result.state) {
-        if (!render(result.state)) paint();
-      } else {
-        if (!result || !result.applied) enabled.checked = state.enabled;
-        text('sharing-preference', !result ? 'Could not apply the sharing choice.' : result.error || '');
-      }
+      if (ok && owns()) submit();
+      else { preferencePending = false; paint(); }
     });
   }
   enabled.addEventListener('change', function () { preference(enabled.checked); });
@@ -458,9 +493,9 @@
     if (screenshotFixture || !hydrated) return;
     if (pairingMode !== 'fresh') { action('fleet_sharing_pair', pairingMode); return; }
     var originText = changeOrigin ? 'Switches to ' + state.configured_origin + '. ' : '';
-    var owner = screenshotEpoch;
+    var owns = interactionOwner(), requestedOrigin = changeOrigin;
     WM.confirm('Fresh fleet setup', originText + 'Creates a new device key. Old identity-bound pending actions will not carry over. Continue?').then(function (ok) {
-      if (ok && owner === screenshotEpoch) action('fleet_sharing_pair', 'fresh', changeOrigin);
+      if (ok && owns()) action('fleet_sharing_pair', 'fresh', requestedOrigin);
     });
   });
   function watch() {
@@ -468,6 +503,7 @@
     var owner = screenshotEpoch;
     var current = ++watchGeneration;
     var open = visible();
+    if (!open) interactionGeneration += 1;
     var requestedState;
     paint();
     // Serialize enter/leave so a slow bridge enter cannot overtake its leave.

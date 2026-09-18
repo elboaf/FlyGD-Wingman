@@ -270,7 +270,8 @@
           operation: kind === 'history-pending-stop' ? 'stop' : 'start', character_id: 1, stage: 'persisted'}];
       }
     }
-    if (kind === 'expired' || kind === 'rejected') sharing.source_results = [{source_id: sharingUUID, operation: 'start', character_id: 1, stage: kind}];
+    if (kind === 'rejected') sharing.source_results = [{source_id: sharingUUID, operation: 'start', character_id: 1, stage: kind}];
+    if (kind === 'expired') sharing.pending_sources = [{source_id: sharingUUID, operation: 'start', character_id: 1, stage: 'persisted'}];
     if (kind === 'unknown') sharing.pending_sources = [{source_id: sharingUUID, operation: 'start', character_id: 1, stage: 'persisted'}];
     if (kind === 'save-failed' || kind === 'on-pending') {
       sharing.enabled = true; sharing.participation = 'queued';
@@ -282,10 +283,31 @@
           source_id: sharingUUID, source_generation: 3, authority_generation: 1,
           expires_at: '2026-09-07T12:30:00.000Z'};})};
     }
-    if (window.onFleetSharingState) window.onFleetSharingState(sharing);
-    return sharing;
+    sharing.controls = sharingControls();
+    if (window.onFleetSharingState) window.onFleetSharingState(sharingCopy());
+    return sharingCopy();
   }
-  function sharingCopy() { return JSON.parse(JSON.stringify(sharing)); }
+  function sharingControls() {
+    var rows = Object.create(null);
+    ((sharing.sources && sharing.sources.sources) || []).forEach(function (row) {
+      if (row.automatic === undefined) row.automatic = null;
+      rows[row.source_id.toLowerCase()] = {source_id: row.source_id.toLowerCase(), binding: sharing.metadata.binding,
+        observed: row, pending: null, expected_generation: row.generation, expected_automatic: row.automatic};
+    });
+    sharing.pending_sources.forEach(function (pending) {
+      var id = pending.source_id.toLowerCase(), row = rows[id];
+      if (!row) row = rows[id] = {source_id: id, binding: sharing.metadata.binding, observed: null,
+        pending: null, expected_generation: 0, expected_automatic: null};
+      row.pending = {operation: pending.operation, intent_id: pending.operation === 'start' ? pending.source_id : 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'};
+    });
+    return {participation: {binding: sharing.metadata.binding, observed: sharing.observed_participation,
+      participation_intent_id: sharing.participation_intent_id, participation_order: sharing.participation_order, pending: null},
+      sources: Object.keys(rows).map(function (id) { return rows[id]; })};
+  }
+  function sharingCopy() {
+    sharing.controls = sharingControls();
+    return JSON.parse(JSON.stringify(sharing));
+  }
   api.fleet_sharing_state = function () {return Promise.resolve(sharingCopy());};
   api.fleet_sharing_watch = function (open) {
     sharingCalls.push(['watch', open]);
@@ -299,8 +321,13 @@
     });
     return Promise.resolve({queued: true, state: captured});
   };
-  api.fleet_sharing_set_enabled = function (value) {
-    sharingCalls.push(['enabled', value]);
+  api.fleet_sharing_set_enabled = function (value, observation) {
+    sharingCalls.push(['enabled', value, observation]);
+    if (typeof value !== 'boolean' || (value && JSON.stringify(observation) !== JSON.stringify(sharingControls().participation))) {
+      return Promise.resolve({applied: false, persisted: false, queued: false, error: 'Refresh and confirm On again.'});
+    }
+    sharing.participation_order += 1;
+    sharing.participation_intent_id = sharingUUID;
     sharing.local_inhibited = true;
     sharing.participation = 'queued'; sharing.preference_order += 1;
     sharing.order = ++sharingOrder;
@@ -345,8 +372,12 @@
     window.onFleetSharingState(sharingCopy());
     return sharingActionResult({queued: true, source_id: sharingUUID, state: sharingCopy()});
   };
-  api.fleet_sharing_stop_source = function (id, binding) {
-    sharingCalls.push(['stop', id, binding]);
+  api.fleet_sharing_stop_source = function (id, binding, observation) {
+    sharingCalls.push(['stop', id, binding, observation]);
+    var expected = sharingControls().sources.filter(function (row) { return row.source_id === id.toLowerCase(); })[0];
+    if (!expected || binding !== expected.binding || JSON.stringify(observation) !== JSON.stringify(expected)) {
+      return Promise.resolve({queued: false, error: 'Refresh the owned source list.'});
+    }
     sharing.pending_sources = [{source_id: id, operation: 'stop', character_id: null, stage: 'queued'}];
     sharing.order = ++sharingOrder;
     sharing.presentation_order = ++sharingPresentationOrder;

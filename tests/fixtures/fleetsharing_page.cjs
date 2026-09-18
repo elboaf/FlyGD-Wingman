@@ -46,6 +46,7 @@ class Element {
   get textContent() { return (this.text || '') + this.children.map(c => c.textContent).join(''); }
   setAttribute(key, value) { this.attrs[key] = String(value); }
   getAttribute(key) { return this.attrs[key] ?? null; }
+  removeAttribute(key) { delete this.attrs[key]; }
   get classList() { return {toggle: (key, on) => {
     const classes = this.className.split(/\s+/).filter(c => c && c !== key);
     if (on) classes.push(key); this.className = classes.join(' ');
@@ -86,6 +87,9 @@ const runtime = vm.createContext({window, document, Promise, console: {error: (.
   CustomEvent: class {constructor(type, options) { this.type = type; this.detail = options.detail; }}});
 vm.runInContext(fs.readFileSync(web + '/app.js', 'utf8'), runtime);
 const WM = runtime.WM = window.WM;
+const confirmations = [];
+WM.confirm = (...args) => scenario.startsWith('control-')
+  ? new Promise(resolve => confirmations.push({args, resolve})) : Promise.resolve(true);
 vm.runInContext(fs.readFileSync(web + '/fleetsharing.js', 'utf8'), runtime);
 const turn = () => new Promise(resolve => setImmediate(resolve));
 const watches = () => calls.filter(c => c.method === 'fleet_sharing_watch');
@@ -107,15 +111,28 @@ const C = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 let order = input.live.presentation_order;
 const clone = value => JSON.parse(JSON.stringify(value));
 function source(id, state = 'ended', reason = 'pending_expired', character_id = 1) {
-  return {source_id: id, generation: 1, character_id, state, reason, pending_expires_at: null};
+  return {source_id: id, generation: 1, character_id, state, reason, pending_expires_at: null, automatic: null};
 }
 function pending(id, operation, stage = 'queued') {
   return {source_id: id, operation, stage, character_id: operation === 'start' ? 1 : null};
 }
 function payload(rows = [], changes = {}) {
-  return {...clone(input.live), presentation_order: ++order,
+  const value = {...clone(input.live), presentation_order: ++order,
     sources: {characters: clone(input.live.sources.characters), sources: rows},
     pending_sources: [], source_results: [], ...changes};
+  const observed = value.sources ? value.sources.sources : [];
+  value.controls = {
+    participation: {binding: value.metadata.binding, observed: value.observed_participation,
+      participation_intent_id: value.participation_intent_id, participation_order: value.participation_order, pending: null},
+    sources: [...new Set([...observed.map(row => row.source_id.toLowerCase()), ...value.pending_sources.map(row => row.source_id.toLowerCase())])].map(id => {
+      const row = observed.find(row => row.source_id.toLowerCase() === id) || null;
+      const item = value.pending_sources.find(row => row.source_id.toLowerCase() === id);
+      return {source_id: id, binding: value.metadata.binding, observed: row,
+        pending: item ? {operation: item.operation, intent_id: item.operation === 'stop' ? C : id} : null,
+        expected_generation: row ? row.generation : 0, expected_automatic: row ? row.automatic : null};
+    })
+  };
+  return value;
 }
 function push(value) { window.onFleetSharingState(value); }
 const currentRows = () => ids['sharing-sources'].children;
@@ -228,7 +245,9 @@ async function historyScenario(first) {
     assert.match(unknown.firstChild.title, /Verification.*cccccccc-cccc-4ccc-8ccc-cccccccccccc/);
     unknown.lastChild.dispatchEvent({type: 'click'}); await turn();
     const request = calls.find(call => call.method === 'fleet_sharing_stop_source');
-    assert.deepEqual(request.args, [C, input.live.metadata.binding], 'visible terminology cannot rename the wire method or ID');
+    assert.equal(request.args[0], C, 'visible terminology cannot rename the wire method or ID');
+    assert.equal(request.args[1], input.live.metadata.binding);
+    assert.equal(request.args[2].pending.operation, 'stop');
     request.resolve({queued: true, state: payload([source(C, 'ended', 'stopped')])}); await turn();
     counts(0, 1);
     assert.equal(historyRows()[0], unknown);
@@ -273,12 +292,12 @@ async function historyScenario(first) {
     for (const operation of ['start', 'stop']) {
       for (const stage of ['queued', 'persisted']) {
         push(payload([source(A.toUpperCase())], {pending_sources: [pending(A, operation, stage)],
-          source_results: [pending(A.toUpperCase(), 'start', 'expired')]}));
+          source_results: [pending(A.toUpperCase(), 'start', 'rejected')]}));
         counts(1, 0);
         assert.equal(currentRows()[0].getAttribute('data-source'), A);
         assert.equal(currentRows()[0].lastChild.hidden, false, 'pending work keeps its Stop control');
         assert.match(currentRows()[0].textContent, operation === 'start' ? /Start/ : /Stop/);
-        assert.match(currentRows()[0].textContent, stage === 'queued' ? /queued locally/ : /saved, awaiting authGD/);
+        assert.match(currentRows()[0].textContent, stage === 'queued' ? /queued locally/ : operation === 'start' ? /Start saved; outcome unconfirmed/ : /saved, awaiting authGD/);
       }
     }
     const row = currentRows()[0];
@@ -292,14 +311,15 @@ async function historyScenario(first) {
     assert.equal(stop.hidden, false);
     assert.equal(stop.disabled, false);
   } else if (scenario === 'local-results') {
-    push(payload([], {source_results: [pending(A, 'start', 'rejected'), pending(B, 'start', 'expired')]}));
+    push(payload([], {source_results: [pending(A, 'start', 'rejected')], pending_sources: [pending(B, 'start', 'persisted')]}));
     counts(2, 0);
     assert.match(currentRows()[0].textContent, /Start not saved.*Start.*again/i);
-    assert.match(currentRows()[1].textContent, /Start expired.*Start again explicitly/);
-    assert.ok(currentRows().every(row => row.lastChild.disabled));
-    push(payload([source(A.toUpperCase())], {source_results: [pending(A, 'start', 'expired')]}));
+    assert.match(currentRows()[1].textContent, /Start saved; outcome unconfirmed/);
+    assert.equal(currentRows()[0].lastChild.disabled, true);
+    assert.equal(currentRows()[1].lastChild.disabled, false);
+    push(payload([source(A.toUpperCase())], {source_results: [pending(A, 'start', 'rejected')]}));
     counts(0, 1); assert.equal(historyRows()[0].getAttribute('data-source'), A);
-    push(payload([source(A.toUpperCase(), 'active', null)], {source_results: [pending(A, 'start', 'expired')]}));
+    push(payload([source(A.toUpperCase(), 'active', null)], {source_results: [pending(A, 'start', 'rejected')]}));
     counts(1, 0); assert.equal(currentRows()[0].lastChild.disabled, false, 'an observed active source supersedes its old local result');
   } else if (scenario === 'retained-unknown') {
     push(payload([source(A)])); history.open = true; const row = historyRows()[0];
@@ -438,10 +458,10 @@ async function historyScenario(first) {
     assert.equal(document.activeElement, ids['sharing-boss'], 'unfocused settlement never steals focus');
   } else if (scenario === 'retained-local-result') {
     push(payload([source(A)])); const row = historyRows()[0];
-    push(payload([], {sources: null, source_results: [pending(A.toUpperCase(), 'start', 'expired')]}));
+    push(payload([], {sources: null, pending_sources: [pending(A.toUpperCase(), 'start', 'persisted')]}));
     counts(1, 0);
     assert.ok(currentRows()[0] === row, 'a local result reuses the retained observation row');
-    assert.match(row.textContent, /Start expired.*Start again explicitly/);
+    assert.match(row.textContent, /Start saved; outcome unconfirmed/);
     assert.match(status(), /Current verification state unknown/);
     push(payload([source(A)])); counts(0, 1);
   } else if (scenario === 'concurrent-stop-replies') {
@@ -552,7 +572,67 @@ async function run() {
   assert.match(ids['sharing-connection'].textContent, /Reading/);
   attemptMutations(); await turn(); assert.equal(mutationCount(), 0);
   const first = watches()[0];
-  if (scenario === 'leave' || scenario === 'reenter') {
+  if (scenario === 'dev-control-authority') {
+    first.resolve({state: input.live}); await turn();
+    delete window.pywebview;
+    window.location = {search: '?dev=1&sharing=expired', hash: ''};
+    window.setTimeout = () => 0; window.setInterval = () => 0;
+    document.querySelector = () => null; document.readyState = 'loading';
+    runtime.URLSearchParams = URLSearchParams; runtime.navigator = {};
+    runtime.Event = class { constructor(type) { this.type = type; } };
+    runtime.setTimeout = window.setTimeout; runtime.setInterval = window.setInterval;
+    vm.runInContext(fs.readFileSync(web + '/dev.js', 'utf8'), runtime);
+    const dev = window.pywebview.api;
+    window.DEV.fleetSharing('expired');
+    const state = await dev.fleet_sharing_state();
+    assert.ok(state.controls && state.controls.participation, 'dev uses current displayed-control contract');
+    assert.equal(state.source_results.length, 0);
+    assert.equal(state.pending_sources[0].stage, 'persisted');
+    assert.match(currentRows()[0].textContent, /Start saved; outcome unconfirmed/);
+    assert.doesNotMatch(JSON.stringify(state), /intent_created_at|command|receipt|cancel_after_on/);
+    assert.equal((await dev.fleet_sharing_set_enabled(true, {})).applied, false);
+    assert.equal((await dev.fleet_sharing_stop_source(A, state.metadata.binding, {})).queued, false);
+    assert.equal((await dev.fleet_sharing_set_enabled(false, {})).applied, true);
+  } else if (scenario.startsWith('control-')) {
+    const initial = payload([source(A, 'active', null)]);
+    first.resolve({state: initial}); await turn();
+    const isOn = scenario.includes('-on-') || scenario === 'control-dialog-off';
+    const shown = clone(isOn ? initial.controls.participation : initial.controls.sources[0]);
+    if (scenario === 'control-missing-authority') {
+      const missing = payload([source(A, 'active', null)]); delete missing.controls; push(missing);
+      currentRows()[0].lastChild.dispatchEvent({type: 'click'});
+      ids['sharing-enabled'].checked = true; ids['sharing-enabled'].dispatchEvent({type: 'change'});
+      await turn(); assert.equal(mutationCount(), 0); assert.equal(confirmations.length, 0);
+      ids['sharing-enabled'].checked = false; ids['sharing-enabled'].dispatchEvent({type: 'change'});
+      await turn(); assert.equal(calls.at(-1).method, 'fleet_sharing_set_enabled'); assert.equal(calls.at(-1).args[0], false);
+    } else {
+      if (isOn) { ids['sharing-enabled'].checked = true; ids['sharing-enabled'].dispatchEvent({type: 'change'}); }
+      else currentRows()[0].lastChild.dispatchEvent({type: 'click'});
+      await turn(); assert.equal(confirmations.length, 1); assert.equal(mutationCount(), 0);
+      const changed = payload([source(A, 'active', null)]);
+      if (scenario.endsWith('generation')) {
+        if (isOn) changed.controls.participation.observed.generation += 1;
+        else changed.controls.sources[0].expected_generation += 1;
+      } else if (scenario.endsWith('automatic')) changed.controls.sources[0].expected_automatic = {consent_generation: 9};
+      else if (scenario.endsWith('pending')) changed.controls.sources[0].pending = {operation: 'stop', intent_id: B};
+      else if (scenario.endsWith('queued')) { changed.controls.participation.participation_intent_id = B; changed.controls.participation.participation_order += 1; }
+      else if (scenario.endsWith('binding')) changed.metadata.binding = 'replacement';
+      if (scenario.endsWith('route')) { await leave(); await enterAgain({state: changed}); }
+      else if (scenario.endsWith('screenshot')) {
+        const fixture = payload([source(A), source(B)]); fixture.sources.characters.push({...fixture.sources.characters[0], character_id: 2});
+        WM.fleetSharingScreenshot({kind: 'fleet-sharing-screenshot-v1', state: fixture}); WM.fleetSharingScreenshot(null);
+      } else if (scenario.endsWith('off')) {
+        ids['sharing-enabled'].checked = false; ids['sharing-enabled'].dispatchEvent({type: 'change'}); await turn();
+        assert.equal(calls.at(-1).args[0], false);
+      } else push(changed);
+      confirmations[0].resolve(true); await turn();
+      if (scenario.startsWith('control-capture-')) {
+        const call = calls.filter(call => call.method !== 'fleet_sharing_watch').at(-1);
+        assert.ok(call, 'current interaction submits its original authority for adapter validation');
+        assert.deepEqual(clone(call.args[isOn ? 1 : 2]), shown, 'dialog cannot substitute later control authority');
+      } else assert.equal(mutationCount(), scenario.endsWith('off') ? 1 : 0, 'revoked dialog cannot submit');
+    }
+  } else if (scenario === 'leave' || scenario === 'reenter') {
     WM.route('main');
     if (scenario === 'reenter') WM.openSettingsSection('fleet');
     await turn(); assert.equal(watches().length, 1, 'leave stays serialized');

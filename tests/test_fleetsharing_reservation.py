@@ -562,7 +562,7 @@ def test_hot_api_submission_inside_pairing_save_preserves_reserved_batch(tmp_pat
     # Coordinator-owned composition remains visible: B proves the owner above,
     # never invents missing Api provenance/confirmation in production.
     from tests.test_api import FakeWindow, make_state
-    from tests.test_api_fleetsharing import Timers
+    from tests.test_api_fleetsharing import Timers, displayed_source
     from wingman import settings
     from wingman.ui.api import Api
 
@@ -598,6 +598,8 @@ def test_hot_api_submission_inside_pairing_save_preserves_reserved_batch(tmp_pat
         binding = api.fleet_sharing_state()["metadata"]["binding"]
         assert api.fleet_sharing_state()["sources"] is not None
         old_status = worker.status()
+        controls = {target: displayed_source(api, target) for target in targets}
+        participation = api.fleet_sharing_state()["controls"]["participation"]
         submissions, errors, reached = [], [], []
         save = worker._save_state
 
@@ -608,9 +610,13 @@ def test_hot_api_submission_inside_pairing_save_preserves_reserved_batch(tmp_pat
                 try:
                     for target in targets[:-1]:
                         submissions.append(
-                            api.fleet_sharing_stop_source(target, binding)
+                            api.fleet_sharing_stop_source(
+                                target, binding, controls[target]
+                            )
                         )
-                    submissions.append(api.fleet_sharing_set_enabled(False))
+                    submissions.append(
+                        api.fleet_sharing_set_enabled(False, participation)
+                    )
                 except Exception as error:  # noqa: BLE001 - assert outside owner callback swallowing
                     errors.append(error)
 
@@ -625,22 +631,51 @@ def test_hot_api_submission_inside_pairing_save_preserves_reserved_batch(tmp_pat
         )
         off = submissions[-1]["intent_id"]
         assert store.load().pending_pairing
-        assert api.fleet_sharing_state()["sources"] is not None
+        # The admitted Off/Stop batch can invalidate source evidence before
+        # restart; no retained roster is authority for the unsubmitted last row.
         assert worker.stop() and worker.start()
         drive(worker, mono, 2)
         assert api.fleet_sharing_state()["sources"] is None
         api._receive_fleet_sharing_status(old_status)
         assert api.fleet_sharing_state()["sources"] is None
-        assert not api.fleet_sharing_stop_source(targets[-1], binding)["queued"]
+        assert not api.fleet_sharing_stop_source(
+            targets[-1], binding, controls[targets[-1]]
+        )["queued"]
+        for _ in range(4 * len(targets) + 40):
+            pending_pairing = store.load().pending_pairing
+            assert pending_pairing is not None
+            assert worker.status().pairing_action_id == pairing["action_id"]
+            if pending_pairing.approval_url:
+                break
+            drive(worker, mono, 1)
         assert store.load().pending_pairing.approval_url == approval_url()
         for _ in range(len(targets) + 55):
             drive(worker, mono, 1)
             if (
                 all(client.source_views[t].state == "ended" for t in targets[:-1])
-                and not client.device.participation.enabled
                 and worker.status().pairing == "acknowledged"
             ):
                 break
+        # Upgrade made the original displayed binding unauthenticated at the
+        # hot callback. Off inhibited locally but could not invent a server CAS.
+        pending_off = store.load().pending_participation
+        assert pending_off.intent_id == off and pending_off.expected_generation is None
+        assert worker.status().participation == "needs_confirmation"
+        for _ in range(20):
+            if api.fleet_sharing_state()["sources"] is not None:
+                break
+            drive(worker, mono, 1)
+        assert api.fleet_sharing_state()["sources"] is not None
+        confirmation = api.fleet_sharing_state()["controls"]["participation"]
+        assert confirmation["observed"] is not None
+        confirmed = api.fleet_sharing_set_enabled(False, confirmation)
+        assert confirmed["queued"] and confirmed["intent_id"] != off
+        assert (
+            worker._commands["participation"].payload.expected_generation
+            == confirmation["observed"]["generation"]
+        )
+        off = confirmed["intent_id"]
+        drive(worker, mono, 12)
         state, status = store.load(), worker.status()
         assert not errors and not worker._commands
         assert state.pending_pairing is None and state.pending_recovery is None

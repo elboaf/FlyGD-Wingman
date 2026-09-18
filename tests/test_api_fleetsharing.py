@@ -46,12 +46,60 @@ class Timers:
 
 def setup(tmp_path, *, state=PAIRED_STATE, enabled=False, telemetry=None):
     worker, client, store, mono = rig(state=state, enabled=enabled)
+    begin = client.begin_pairing
+
+    def begin_at_selected_origin(**kwargs):
+        return replace(
+            begin(**kwargs), approval_url=store.load().relay_origin + "/approve"
+        )
+
+    client.begin_pairing = begin_at_selected_origin
     timers = Timers()
     app = make_state(tmp_path, **settings.load())
     app.settings["fleet_sharing"]["enabled"] = enabled
     api = Api(app, fleet_sharing=worker, telemetry=telemetry, timer=timers)
     api._window = FakeWindow()
     return api, worker, client, store, mono, timers
+
+
+def displayed_source(api, source_id):
+    return next(
+        row
+        for row in api.fleet_sharing_state()["controls"]["sources"]
+        if row["source_id"].lower() == source_id.lower()
+    )
+
+
+def await_approval(worker, store, mono, action_id):
+    for _ in range(12):
+        status = worker.status()
+        assert status.pairing_action_id == action_id
+        assert status.pairing in ("queued", "persisted", "awaiting_approval")
+        if status.pairing == "awaiting_approval":
+            assert store.load().pending_pairing.approval_url == status.approval_url
+            return
+        drive(worker, mono, 1)
+    pytest.fail("explicit pairing did not reach saved approval")
+
+
+def change_fixture_binding(worker, store, mono, origin):
+    # Test-only explicit acknowledgement of settled state4 history. The page
+    # has no history-disposition workflow; production must not infer this ack.
+    for _ in range(40):
+        if store.load().pending_pairing is None:
+            break
+        drive(worker, mono, 1)
+    assert store.load().pending_pairing is None
+    status = worker.status()
+    old = status.metadata.binding
+    assert worker.request_pairing(
+        mode="fresh",
+        configured_origin=origin,
+        binding=old,
+        automatic_history=status.automatic,
+    )
+    drive(worker, mono, 1)
+    assert worker.status().metadata.binding != old
 
 
 def test_startup_probe_and_source_watch_never_write_preference_or_consent(tmp_path):
@@ -230,9 +278,9 @@ def test_owner_projection_restores_pending_uuid_and_never_exposes_keys_or_sessio
         "intent_created_at",
     ]:
         assert secret not in text
-    assert api.fleet_sharing_stop_source(source_id, payload["metadata"]["binding"])[
-        "queued"
-    ]
+    assert api.fleet_sharing_stop_source(
+        source_id, payload["metadata"]["binding"], displayed_source(api, source_id)
+    )["queued"]
     assert worker.status().pending_sources[0].operation == "stop"
     api.shutdown_fleet_sharing()
 
@@ -244,7 +292,12 @@ def test_saved_new_binding_never_exposes_previous_owned_roster():
     old = worker.status().metadata.binding
     seen = []
     worker.subscribe_status(seen.append)
-    worker.request_pairing(mode="fresh", configured_origin="https://new-relay.test")
+    assert worker.request_pairing(
+        mode="fresh",
+        configured_origin="https://new-relay.test",
+        binding=old,
+        automatic_history=worker.status().automatic,
+    )
     drive(worker, mono, 1)
     changed = [status for status in seen if status.metadata.binding != old]
     assert changed
@@ -269,13 +322,17 @@ def test_bound_source_queued_after_pairing_keeps_saved_identity_at_ingestion(
     worker.request_pairing(
         mode="upgrade" if transition == "upgrade" else "fresh",
         configured_origin="https://new-relay.test" if transition == "fresh" else None,
+        binding=old,
+        automatic_history=worker.status().automatic if transition == "fresh" else None,
     )
     if operation == "start":
         source_id = worker.request_source_start(1, UUID, binding=old)
         assert source_id
     else:
         source_id = UUID
-        assert worker.request_source_stop(source_id, binding=old)
+        assert worker.request_source_stop(
+            source_id, expected_generation=1, expected_automatic=None, binding=old
+        )
     drive(worker, mono, 1)
     if transition == "fresh":
         changed = [status for status in seen if status.metadata.binding != old]
@@ -286,8 +343,20 @@ def test_bound_source_queued_after_pairing_keeps_saved_identity_at_ingestion(
         assert not store.load().pending_source_commands
         current = worker.status().metadata.binding
         new_id = worker.request_source_start(1, UUID, binding=current)
-        drive(worker, mono, 1)
-        assert any(c.source_id == new_id for c in store.load().pending_source_commands)
+        assert new_id
+        for _ in range(12):
+            drive(worker, mono, 1)
+            if any(
+                c.source_id == new_id
+                for saved in store.saves
+                for c in saved.pending_source_commands
+            ):
+                break
+        assert any(
+            c.source_id == new_id
+            for saved in store.saves
+            for c in saved.pending_source_commands
+        )
     else:
         assert worker.status().metadata.binding == old
         assert any(
@@ -452,13 +521,14 @@ def test_blocked_page_delivery_keeps_one_coalesced_callback_not_parallel_timers(
 def test_pairing_browser_is_current_explicit_persisted_action_once(
     tmp_path, monkeypatch
 ):
-    api, worker, _client, store, _mono, timers = setup(tmp_path, state=s.EMPTY)
+    api, worker, _client, store, mono, timers = setup(tmp_path, state=s.EMPTY)
     opened = []
     monkeypatch.setattr("wingman.ui.api.webbrowser.open", opened.append)
     worker.resume_pending()
     worker.iterate_once()
-    assert api.fleet_sharing_pair()["queued"]
-    worker.iterate_once()
+    action = api.fleet_sharing_pair()
+    assert action["queued"]
+    await_approval(worker, store, mono, action["action_id"])
     assert worker.status().pairing == "awaiting_approval"
     assert store.load().pending_pairing.approval_url
     assert opened == []
@@ -483,7 +553,7 @@ def test_browser_launch_failure_is_visible_and_only_new_explicit_action_retries(
     failure,
     kind,
 ):
-    api, worker, client, _store, mono, timers = setup(
+    api, worker, client, store, mono, timers = setup(
         tmp_path,
         state=s.EMPTY if kind == "pair" else PAIRED_STATE,
     )
@@ -509,7 +579,10 @@ def test_browser_launch_failure_is_visible_and_only_new_explicit_action_retries(
         )
 
     first = request()
-    drive(worker, mono, 1)
+    if kind == "pair":
+        await_approval(worker, store, mono, first["action_id"])
+    else:
+        drive(worker, mono, 1)
     timers.drain()
     payload = api.fleet_sharing_state()
     assert payload["browser_error"]
@@ -522,14 +595,19 @@ def test_browser_launch_failure_is_visible_and_only_new_explicit_action_retries(
     assert len(opened) == 1
     second = request()
     assert second["action_id"] != first["action_id"]
-    drive(worker, mono, 3)
+    if kind == "pair":
+        await_approval(worker, store, mono, second["action_id"])
+    else:
+        drive(worker, mono, 3)
     timers.drain()
     assert len(opened) == 2
     assert api.fleet_sharing_state()["browser_error"] is None
     if kind == "pair":
-        assert list(client.pairings) == ["pair-id", "pair-id-2"], (
+        admissions = list(client.pairings)
+        assert len(admissions) == 2 and admissions[0] != admissions[1], (
             "retry must obtain a new admission"
         )
+        assert all(p.uuid(admission) == admission for admission in admissions)
     api.shutdown_fleet_sharing()
 
 
@@ -625,7 +703,7 @@ def test_old_browser_failure_cannot_overwrite_new_action_or_binding(
     replacement,
     kind,
 ):
-    api, worker, _client, _store, mono, timers = setup(
+    api, worker, _client, store, mono, timers = setup(
         tmp_path,
         state=s.EMPTY if kind == "pair" else PAIRED_STATE,
     )
@@ -643,8 +721,8 @@ def test_old_browser_failure_cannot_overwrite_new_action_or_binding(
 
     def request():
         if kind == "pair":
-            api.fleet_sharing_pair()
-            drive(worker, mono, 1)
+            action = api.fleet_sharing_pair()
+            await_approval(worker, store, mono, action["action_id"])
         else:
             api.fleet_sharing_grant_fleet_read(1, binding)
 
@@ -656,10 +734,7 @@ def test_old_browser_failure_cannot_overwrite_new_action_or_binding(
         if replacement == "action":
             request()
         else:
-            worker.request_pairing(
-                mode="fresh", configured_origin="https://other-relay.test"
-            )
-            drive(worker, mono, 1)
+            change_fixture_binding(worker, store, mono, "https://other-relay.test")
     finally:
         release.set()
         runner.join(3)
@@ -748,14 +823,21 @@ def test_expired_start_is_correlated_to_exact_uuid_not_aggregate_status(tmp_path
             p.StartSource(old, 1, UUID, "2026-09-07T11:50:00.000Z"),
         ),
     )
-    api, worker, _client, _store, mono, _timers = setup(tmp_path, state=state)
+    api, worker, client, store, mono, _timers = setup(tmp_path, state=state)
     api.fleet_sharing_watch(True)
     drive(worker, mono, 12)
     payload = api.fleet_sharing_state()
-    assert payload["source_results"] == (
-        {"source_id": old, "operation": "start", "character_id": 1, "stage": "expired"},
+    assert payload["source_results"] == ()
+    assert payload["pending_sources"] == (
+        {
+            "source_id": old,
+            "operation": "start",
+            "character_id": 1,
+            "stage": "persisted",
+        },
     )
-    assert payload["pending_sources"] == ()
+    assert store.load().pending_source_commands == state.pending_source_commands
+    assert not client.controls
     api.shutdown_fleet_sharing()
 
 
@@ -770,7 +852,16 @@ def test_one_source_ack_never_acknowledges_another_pending_uuid(tmp_path):
     payload = api.fleet_sharing_state()
     assert payload["source_control"] == "acknowledged"
     assert [row["source_id"] for row in payload["pending_sources"]] == [second]
-    assert any(row["source_id"] == first for row in payload["sources"]["sources"])
+    assert payload["sources"] is None, (
+        "ACK invalidates roster evidence until a subsequent read"
+    )
+    assert first not in [c.source_id for c in worker._state.pending_source_commands]
+    assert second in [c.source_id for c in worker._state.pending_source_commands]
+    drive(worker, mono, 12)
+    assert any(
+        row["source_id"] == first
+        for row in api.fleet_sharing_state()["sources"]["sources"]
+    )
     api.shutdown_fleet_sharing()
 
 
@@ -804,9 +895,9 @@ def test_pending_source_from_actual_json_is_stoppable_through_new_api(tmp_path):
     worker.iterate_once()
     payload = api.fleet_sharing_state()
     assert payload["pending_sources"][0]["source_id"] == source_id
-    assert api.fleet_sharing_stop_source(source_id, payload["metadata"]["binding"])[
-        "queued"
-    ]
+    assert api.fleet_sharing_stop_source(
+        source_id, payload["metadata"]["binding"], displayed_source(api, source_id)
+    )["queued"]
     worker.iterate_once()
     assert isinstance(s.load(file).pending_source_commands[0], p.StopSource)
     api.shutdown_fleet_sharing()
@@ -930,7 +1021,7 @@ def test_enable_rejects_non_boolean_without_queue_or_settings_write(tmp_path, va
 def test_owned_grant_uses_exact_paired_origin_and_rejects_stale_binding(
     tmp_path, monkeypatch
 ):
-    api, worker, client, _store, mono, timers = setup(tmp_path)
+    api, worker, client, store, mono, timers = setup(tmp_path)
     api.fleet_sharing_watch(True)
     drive(worker, mono, 12)
     binding = api.fleet_sharing_state()["metadata"]["binding"]
@@ -943,8 +1034,7 @@ def test_owned_grant_uses_exact_paired_origin_and_rejects_stale_binding(
         assert not api.fleet_sharing_grant_fleet_read(character, token)["queued"]
     assert not client.controls and not client.participation_calls
     assert api.fleet_sharing_grant_fleet_read(1, binding)["queued"]
-    worker.request_pairing(mode="fresh", configured_origin="https://other-relay.test")
-    drive(worker, mono, 1)
+    change_fixture_binding(worker, store, mono, "https://other-relay.test")
     timers.drain()
     assert opened == ["https://relay.test/auth/eve/fleet-read?character=1"]
     api.shutdown_fleet_sharing()
