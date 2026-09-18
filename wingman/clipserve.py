@@ -19,7 +19,6 @@ server that cannot answer 206 leaves the seek bar dead.
 import ctypes
 import ctypes.wintypes
 import logging
-import msvcrt
 import os
 import re
 import threading
@@ -46,6 +45,8 @@ _CHUNK = 256 * 1024
 # succeed under a live reader: the handle keeps serving the unlinked file
 # harmlessly until EOF. Bound lazily -- this module must import on Linux.
 if os.name == "nt":
+    import msvcrt  # Windows-only; must not break the Linux import
+
     _GENERIC_READ = 0x80000000
     _OPEN_EXISTING = 3
     _FILE_SHARE_READWRITEDELETE = 0x1 | 0x2 | 0x4
