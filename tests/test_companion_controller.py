@@ -715,3 +715,15 @@ def test_reload_of_a_malformed_section_is_refused_without_state_change(h):
     assert refused["pending"] is False and refused["error"]
     after = h.controller.state()
     assert [r["id"] for r in after["rows"]] == [r["id"] for r in before["rows"]]
+
+
+def test_show_on_focus_edit_persists_without_native_commands(h):
+    """#258 follow-up: the tick is a pure definition edit -- persisted and
+    republished, but no rebinding, because no live window changes."""
+    row, _ = commit(h)
+    h.commands.clear()
+    result = h.controller.set_show_on_focus(row["id"], False, row["generation"])
+    assert h.receipt(result)["persisted"]
+    assert h.data["companion_previews"]["definitions"][0]["show_on_focus"] is False
+    assert not any(c.kind == "prepare" for c in h.commands)
+    assert h.controller.state()["rows"][0]["show_on_focus"] is False

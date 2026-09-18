@@ -489,6 +489,17 @@ class CompanionFamily:
             )
         self.scan()
 
+    def show_on_focus_sources(self) -> tuple:
+        """Source hwnds of live companions that spare the wall from the
+        hide-on-lost-focus mask. Read on the pump, where live is mutated;
+        retiring windows are on their way out and never nominate a source.
+        """
+        return tuple(
+            live.binding.hwnd
+            for live in self.live.values()
+            if not live.retiring and live.spec.definition.show_on_focus
+        )
+
     def apply_lost_focus_hidden(self, hidden, active, foreground):
         """The host's hide-on-lost-focus decision, applied to live windows.
 

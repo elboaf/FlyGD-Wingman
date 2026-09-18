@@ -4808,7 +4808,19 @@ class Api:
         return True
 
     def companion_previews_state(self) -> dict:
-        return self._companions.state()
+        return self._companion_state_for_page(self._companions.state())
+
+    def _companion_state_for_page(self, state: dict) -> dict:
+        # The hide-on-lost-focus setting owns whether the per-companion
+        # "show previews when active" checkboxes mean anything (#258
+        # follow-up); the companions page has no other route to it, so the
+        # bridge injects the committed value rather than the controller
+        # learning a preview setting. Snapshots are freshly built per call,
+        # so in-place injection keeps the receipt-identity contract.
+        state["hide_on_lost_focus"] = bool(
+            self._preview_config.get("hide_on_lost_focus", False)
+        )
+        return state
 
     def companion_previews_sources(self) -> dict:
         return self._companions.sources()
@@ -4846,6 +4858,13 @@ class Api:
     ) -> dict:
         return self._companions.set_enabled(id, enabled, expected_generation)
 
+    def companion_preview_set_show_on_focus(
+        self, id: str, show_on_focus: bool, expected_generation: int
+    ) -> dict:
+        return self._companions.set_show_on_focus(
+            id, show_on_focus, expected_generation
+        )
+
     def companion_preview_edit(
         self,
         id: str,
@@ -4870,7 +4889,7 @@ class Api:
         if self._preview_publication_open():
             self._push(
                 "onCompanionPreviews",
-                state,
+                self._companion_state_for_page(state),
                 delivery_allowed=self._preview_publication_open,
             )
 

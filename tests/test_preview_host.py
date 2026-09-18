@@ -4931,7 +4931,8 @@ def test_companion_family_rides_the_same_visibility_sweep(monkeypatch):
     )
     seen = []
     h._companion_family = SimpleNamespace(
-        apply_lost_focus_hidden=lambda *args: seen.append(args)
+        show_on_focus_sources=lambda: (),
+        apply_lost_focus_hidden=lambda *args: seen.append(args),
     )
     assert all(w.hidden for w in h._windows.values())
 
@@ -4940,6 +4941,22 @@ def test_companion_family_rides_the_same_visibility_sweep(monkeypatch):
 
     assert seen == [(False, False, 0x1000)]
     assert live["enabled"]
+
+
+def test_ticked_companion_source_keeps_previews_up(monkeypatch):
+    """#258 follow-up: a foreground that is a ticked companion's source
+    window counts as workspace, like an EVE client foreground."""
+    h, made, _libs, _live = _visibility_host(
+        monkeypatch, enabled=True, foreground=0xABCD, pids={0xABCD: 9999}
+    )
+    assert all(w.hidden for w in made.values())
+    h._companion_family = SimpleNamespace(
+        show_on_focus_sources=lambda: (0xABCD,),
+        apply_lost_focus_hidden=lambda *args: None,
+    )
+    h._foreground = 0xABCD
+    h._sweep(_OwnershipLibs(_OwnershipUser32({0xABCD: 9999}), our_pid=4242))
+    assert not any(w.hidden for w in made.values())
 
 
 def test_unticking_the_setting_restores_previews_on_the_restyle(monkeypatch):

@@ -439,3 +439,23 @@ def test_lost_focus_leaves_retiring_windows_alone(family):
     native.apply_lost_focus_hidden(True, False, 0)
 
     assert calls == []
+
+
+def test_show_on_focus_sources_respects_the_tick_and_skips_retiring(family):
+    """#258 follow-up: only ticked, still-live companions nominate their
+    source window to spare the wall from the lost-focus mask."""
+    from dataclasses import replace as dc_replace
+
+    native, _, _, _, _, _ = family
+    native.reconcile((spec(),), 2)
+    assert native.show_on_focus_sources() == (BINDING.hwnd,)
+    native.live[DEFINITION.id].spec = dc_replace(
+        native.live[DEFINITION.id].spec,
+        definition=dc_replace(DEFINITION, show_on_focus=False),
+    )
+    assert native.show_on_focus_sources() == ()
+    native.live[DEFINITION.id].spec = dc_replace(
+        native.live[DEFINITION.id].spec, definition=DEFINITION
+    )
+    native.live[DEFINITION.id].retiring = True
+    assert native.show_on_focus_sources() == ()

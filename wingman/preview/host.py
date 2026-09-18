@@ -3747,11 +3747,20 @@ class PreviewHost:
         if not foreground and libs is not None:
             foreground = libs.user32.GetForegroundWindow()
         enabled = self._hiding_on_lost_focus()
+        # Pump-owned like this sweep, so the live read needs no lock. A
+        # source whose companion opted out stays off the list and keeps
+        # hiding the wall.
+        companion_sources = (
+            self._companion_family.show_on_focus_sources()
+            if self._companion_family is not None
+            else ()
+        )
         hidden = visibility.should_hide(
             enabled=enabled,
             foreground=foreground,
             client_hwnds=[c.hwnd for c in self._clients.values()],
             foreground_is_ours=(enabled and self._foreground_is_ours(libs, foreground)),
+            companion_sources=companion_sources,
         )
         return hidden, self._hiding_active_preview(), foreground
 

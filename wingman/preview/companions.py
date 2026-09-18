@@ -65,6 +65,11 @@ class CompanionDefinition:
     source: SourceDescriptor
     window: Rect
     region: CompanionRegion | None
+    # #258 follow-up: when this companion's source window holds the
+    # foreground, the hide-on-lost-focus mask still spares the wall unless
+    # the user unticks this. Default on: a source you focused deliberately
+    # reads as the multiboxing workspace, like an EVE client foreground.
+    show_on_focus: bool = True
 
 
 @dataclass(frozen=True)
@@ -241,6 +246,7 @@ def validate_definitions(raw: object) -> tuple[CompanionDefinition, ...]:
                 or type(item["version"]) is not int
                 or item["version"] != 1
                 or type(item["enabled"]) is not bool
+                or type(item.get("show_on_focus", True)) is not bool
             ):
                 continue
             label = bounded_text(item["label"], LABEL_MAX_CHARS, "Label")
@@ -261,6 +267,7 @@ def validate_definitions(raw: object) -> tuple[CompanionDefinition, ...]:
                     source,
                     window,
                     region,
+                    item.get("show_on_focus", True),
                 )
             )
         except (KeyError, TypeError, ValueError, ArithmeticError):
@@ -291,6 +298,7 @@ def serialize_definitions(definitions: tuple[CompanionDefinition, ...]) -> list[
             "mode": definition.mode,
             "source": asdict(definition.source),
             "window": definition.window._asdict(),
+            "show_on_focus": definition.show_on_focus,
         }
         if definition.mode == "region":
             value["region"] = asdict(definition.region)

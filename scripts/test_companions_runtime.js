@@ -85,7 +85,7 @@ class Element {
 }
 const id = '00000000000040008000000000000001', otherId = '00000000000040008000000000000002';
 function row(changes = {}) {
-  return Object.assign({version: 1, id, label: 'Mapper', enabled: true, mode: 'whole',
+  return Object.assign({version: 1, id, label: 'Mapper', enabled: true, show_on_focus: true, mode: 'whole',
     source: {executable_path: 'c:\\mapper.exe', executable_name: 'mapper.exe', window_class: 'Mapper',
       title_hint: 'Map', title_mode: 'exact', last_title: 'Map'},
     window: {x: 10, y: 20, w: 320, h: 210}, generation: 1, binding_revision: 1,
@@ -667,6 +667,20 @@ test('enabled control submits the row generation and rolls back only its own ref
   await p.reply('companion_preview_set_enabled', receipt(1, {applied: false, persisted: false, error: 'Refused', revision: 1}),
     [id, false, 1]);
   assert.equal(p.field('enabled').checked, true); assert.equal(p.field('label').value, 'Draft');
+});
+
+test('show-on-focus checkbox gates on the lost-focus setting and commits its own tick', async () => {
+  const p = await page(state(1, [row()], {}, {hide_on_lost_focus: true}));
+  assert.equal(p.field('show-on-focus').parentNode.hidden, false);
+  p.field('show-on-focus').checked = false; await p.fire(p.field('show-on-focus'), 'change');
+  await p.reply('companion_preview_set_show_on_focus', receipt(1, {id}),
+    [id, false, 1]);
+  await p.reply('companion_previews_state', state(2, [row({show_on_focus: false, generation: 2})],
+    {1: receipt(1, {id})}));
+  assert.equal(p.field('show-on-focus').checked, false);
+
+  const q = await page(state(1, [row()]));
+  assert.equal(q.field('show-on-focus').parentNode.hidden, true);
 });
 
 test('direct success awaits acknowledged state before dispatching a queued edit', async () => {
