@@ -94,6 +94,33 @@ def test_companion_capture_does_not_take_over_a_live_dialog(tmp_path):
     run_current_page(tmp_path, "settings-companions-source-narrow", "live-dialog")
 
 
+def test_sharing_screenshot_fixture_uses_current_control_projection():
+    from wingman.fleetsharing.protocol import (
+        Participation,
+        SourceCharacter,
+        Sources,
+        SourceView,
+    )
+    from wingman.fleetsharing.worker import SharingMetadata, SharingStatus
+    from wingman.ui.api import Api
+
+    state = shoot.load_dev_tool_screenshot_fixture()["fleet"]["sharing"]["state"]
+    status = SharingStatus(
+        "active",
+        metadata=SharingMetadata(binding=state["metadata"]["binding"]),
+        sources=Sources(
+            tuple(SourceView(**row) for row in state["sources"]["sources"]),
+            tuple(SourceCharacter(**row) for row in state["sources"]["characters"]),
+        ),
+        observed_participation=Participation(**state["observed_participation"]),
+        participation_intent_id=state["participation_intent_id"],
+        participation_order=state["participation_order"],
+    )
+    # A screenshot may double a live read in the cleanup tests, but cannot
+    # acquire mutation authority merely because Refresh returned successfully.
+    assert state["controls"] == Api._sharing_controls(status)
+
+
 @pytest.mark.parametrize("evidence", ["cached", "same", "newer"])
 def test_sharing_cleanup_preserves_failed_refresh_authority(tmp_path, evidence):
     run_current_page(tmp_path, "settings-fleet-sharing", "sharing-read-" + evidence)

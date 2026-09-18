@@ -3519,11 +3519,23 @@
           {"character_id": 1, "character_name": "Aiga Otsolen", "character_link_epoch": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "has_fleet_read": true, "token_usable": true},
           {"character_id": 2, "character_name": "Ariadne", "character_link_epoch": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "has_fleet_read": false, "token_usable": true}
         ], "sources": [
-          {"source_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "character_id": 1, "state": "active", "reason": null},
-          {"source_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "character_id": 2, "state": "ended", "reason": "boss_changed"}
+          {"source_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "generation": 3, "character_id": 1, "state": "active", "reason": null, "pending_expires_at": null, "automatic": null},
+          {"source_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "generation": 2, "character_id": 2, "state": "ended", "reason": "boss_changed", "pending_expires_at": null, "automatic": null}
         ]},
         "eligibility": {"state": "ready", "participation_generation": 1, "characters": [{"character_id": 1}, {"character_id": 2}]},
-        "observed_participation": {"enabled": true, "generation": 1}
+        "observed_participation": {"enabled": true, "generation": 1},
+        "controls": {
+          "participation": {"binding": "screenshot-only-binding", "observed": {"enabled": true, "generation": 1},
+            "participation_intent_id": null, "participation_order": 0, "pending": null},
+          "sources": [
+            {"source_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "binding": "screenshot-only-binding",
+              "observed": {"source_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "generation": 3, "character_id": 1, "state": "active", "reason": null, "pending_expires_at": null, "automatic": null},
+              "pending": null, "expected_generation": 3, "expected_automatic": null},
+            {"source_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "binding": "screenshot-only-binding",
+              "observed": {"source_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "generation": 2, "character_id": 2, "state": "ended", "reason": "boss_changed", "pending_expires_at": null, "automatic": null},
+              "pending": null, "expected_generation": 2, "expected_automatic": null}
+          ]
+        }
       }}
     },
     "formations": {
