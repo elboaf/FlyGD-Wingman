@@ -180,6 +180,9 @@ def build(config, root, index, origin, ca):
     api._open_sharing_browser = lambda url: opened.append(url) or True
     api.fleet_sharing_watch(True)
     api._start_fleet_presentation()
+    # Same startup entry used by start_previews_if_enabled; no user toggle is
+    # required to restore persisted Fleet/sharing demand after process restart.
+    api._start_fleet_telemetry_if_enabled()
     return dict(
         api=api,
         worker=worker,
