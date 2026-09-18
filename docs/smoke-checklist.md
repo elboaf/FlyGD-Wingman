@@ -3092,8 +3092,28 @@ for the synthetic render pass.
       Fresh setup asks about new-key/old-pending-intent consequences and is
       admitted only after worker proof or an explicit configured-origin change,
       and only when retained control/automatic history permits it. Fresh setup
-      must not implicitly acknowledge that history; its disposition UI remains
-      a separate, unfinished workflow.
+      must not implicitly acknowledge that history. Review/dismiss unresolved
+      records explicitly, then separately remove the legacy archive. Even an
+      archive with zero unresolved records remains visible and removable.
+- [ ] **Combat disclosure is explicit.** “Approve combat sharing…” requests the
+      combat capability on the saved connection without changing this PC's
+      participation or account automatic consent. Retrying an unregistered key
+      preserves initial pairing and the requested capabilities; a lost completion
+      still offers Retry, rather than waiting indefinitely for an impossible upgrade.
+- [ ] **Account automatic consent is independent.** Confirm automatic boss
+      verification On, leave/reopen Settings, and restart the app. Account consent
+      remains observed On without silently enabling this PC. Off/cancel stays
+      reachable; a late answer to an older On dialog cannot reverse a newer Off.
+      Cancel a queued replacement before its save: the older unresolved journal
+      remains. Repeat during its save: that On must never be sent; cancellation
+      follows the actual durable result without claiming that server consent is Off.
+- [ ] **Fresh setup cannot overtake another choice.** Open Fresh setup, then
+      admit an Off before Fresh reaches the worker. Fresh must refuse against
+      its original command-sequence witness, leaving the Off to finish. Repeat
+      when the Off has already reached durable storage.
+- [ ] **Clock loss remains a real stop.** A relay-clock inconsistency explains
+      that sharing is paused and a full restart is required once the server is
+      stable. Refresh, re-pair and worker restart must not clear that fence.
 - [ ] Use an owned boss with missing Fleet Read. The browser goes only to the
       paired origin's `/auth/eve/fleet-read?character=<owned-id>`. A different
       browser account asks for the correct account, never replacement keys.
@@ -3890,6 +3910,17 @@ cursors, DPI, focus, activation, no-activate restoration, mixed-monitor
 clamping, frozen packaging, or screen readers. Keep those items UNVERIFIED
 until they are actually run on Windows.
 
+- [ ] **Activity filtering never changes collection.** Enable “Only show
+      characters active in the last 30 seconds”. A measured zero still counts;
+      a missing metric is not zero. Quiet rows disappear at their deadline but
+      remain in the complete character list, including visibility preferences.
+      Disable the filter and confirm the same roster reappears. Restart to check
+      persistence. A failed bridge write restores the checkbox and explains why.
+- [ ] **Tackle names and effects expire independently.** Hover a named tackle
+      indicator and inspect its accessible label. Only confidently attributed,
+      unexpired source names appear. Let one name expire while unnamed tackle
+      remains, and let NEUT expire separately. Unrelated damage, refreshes, and
+      redraws must not renew these observations.
 - [ ] **Browser-only CSS measurements stay separate from native acceptance.**
       Run `node scripts/measure_fleetbar_layout.js --chrome /usr/bin/google-chrome`.
       Expected: PASS at 420, 500, and 720 content widths for shell width,
