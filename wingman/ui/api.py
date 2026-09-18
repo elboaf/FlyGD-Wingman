@@ -4602,7 +4602,10 @@ class Api:
                     "state": self.fleet_sharing_state(),
                 }
             if action == "fresh" and (
-                status.pending_participation
+                observation["automatic_pending"]
+                or observation["participation_pending"]
+                or observation["pairing_pending"]
+                or status.pending_participation
                 or status.pending_sources
                 or status.cutover_outcomes
                 or status.pending_pairing

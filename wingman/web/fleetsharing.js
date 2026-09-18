@@ -96,7 +96,11 @@
     forbidden: 'authGD refused this operation. Check account eligibility and connection.',
     capability_required: 'This connection needs sharing approval.',
     conflict: 'Waiting for authGD to reconcile the current action.',
-    unresolved_history: 'Saved requests need your review before setup can continue.'
+    unresolved_history: 'Saved requests need your review before setup can continue.',
+    clock_inconsistent: 'The relay clock changed unexpectedly. Sharing is paused. Restart Wingman once the server clock is stable.',
+    elapsed_reset: 'Elapsed time could not be trusted. Sharing is paused; restart Wingman.',
+    elapsed_continuity_lost: 'Elapsed time continuity was lost. Sharing is paused; restart Wingman.',
+    db_continuity_lost: 'The relay database changed. Sharing is paused; restart Wingman after the server is stable.'
   };
 
   function visible() {

@@ -3,6 +3,8 @@
 import copy
 from dataclasses import replace
 
+import pytest
+
 from tests.test_fleetsharing_control_authority import ready
 from tests.test_fleetsharing_worker import drive
 from wingman.fleetsharing import protocol as p
@@ -49,6 +51,21 @@ def test_combat_approval_requests_combat_rights_without_enabling_either_consent(
     assert set(command.payload[3]) == {p.SHARED_CAPABILITY, p.COMBAT_CAPABILITY}
     assert not api._state.settings["fleet_sharing"]["enabled"]
     assert "automatic" not in worker._commands
+    api.shutdown_fleet_sharing()
+
+
+@pytest.mark.parametrize("choice", ["automatic", "participation"])
+def test_fresh_setup_cannot_discard_a_choice_queued_since_render(tmp_path, choice):
+    api, worker, _, _, _, _ = ready(tmp_path)
+    before = shown(api, "setup")
+    if choice == "automatic":
+        assert api.fleet_sharing_automatic("on", shown(api, "automatic"))["queued"]
+    else:
+        observation = api.fleet_sharing_state()["controls"]["participation"]
+        assert api.fleet_sharing_set_enabled(True, observation)["queued"]
+    assert not api.fleet_sharing_setup("fresh", before, True)["queued"]
+    assert not api.fleet_sharing_setup("fresh", shown(api, "setup"), True)["queued"]
+    assert "pairing" not in worker._commands
     api.shutdown_fleet_sharing()
 
 
