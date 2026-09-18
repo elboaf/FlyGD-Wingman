@@ -13,6 +13,9 @@ const importReplies = require('./formations_import_replies.json');
 
 async function runScenario(request) {
 const scenario = request.scenario;
+const nativeFocus = /^(import|save|balance|add|disable)-focus-/.test(scenario);
+const deferDisableBlur = !!(request.payload && request.payload.defer_disable_blur);
+let document;
 const started = performance.now();
 const unhandledRejections = [];
 const onUnhandledRejection = error => unhandledRejections.push(error);
@@ -42,7 +45,21 @@ class Element {
   insertBefore(node, reference) {
     this.children.splice(this.children.indexOf(reference), 0, node); node.parentNode = this; return node;
   }
-  set textContent(text) { this.children = []; this.text = String(text); }
+  set textContent(text) {
+    if (nativeFocus && document && descendants(this).includes(document.activeElement)) {
+      document.activeElement = document.body;
+    }
+    this.children.forEach(child => { child.parentNode = null; });
+    this.children = []; this.text = String(text);
+  }
+  set hidden(value) {
+    this._hidden = value;
+    if (nativeFocus && document && value
+        && (document.activeElement === this || descendants(this).includes(document.activeElement))) {
+      document.activeElement = document.body;
+    }
+  }
+  get hidden() { return this._hidden; }
   get textContent() { return (this.text || '') + this.children.map(x => x.textContent).join(''); }
   setAttribute(key, value) { this.attrs[key] = String(value); }
   getAttribute(key) { return this.attrs[key] ?? null; }
@@ -51,15 +68,25 @@ class Element {
       ? element.className.split(' ').includes(selector.slice(1))
       : element.tagName.toLowerCase() === selector) || null;
   }
-  getBoundingClientRect() { return this.rect || {width: 300, height: 200}; }
+  getBoundingClientRect() {
+    for (let node = this; node; node = node.parentNode) {
+      if (node.hidden) return {width: 0, height: 0};
+    }
+    return this.rect || {width: 300, height: 200};
+  }
   addEventListener(name, callback) { (this.listeners[name] ||= []).push(callback); }
   dispatchEvent(event) {
     event.target ||= this;
     event.preventDefault ||= () => {};
     (this.listeners[event.type] || []).forEach(callback => callback(event));
+    if (event.bubbles && this.parentNode) this.parentNode.dispatchEvent(event);
   }
-  click() { if (!this.disabled) this.dispatchEvent({type: 'click'}); }
-  focus() { document.activeElement = this; }
+  click() { if (!this.disabled) this.dispatchEvent({type: 'click', bubbles: true}); }
+  focus(options) {
+    this.focusOptions = options;
+    document.activeElement = this;
+    this.dispatchEvent({type: 'focusin', bubbles: true});
+  }
 }
 const ids = {};
 function build(node) {
@@ -69,7 +96,24 @@ function build(node) {
   node.children.forEach(child => element.appendChild(build(child)));
   return element;
 }
-const document = build(page);
+document = build(page);
+document.body = descendants(document).find(element => element.tagName === 'BODY');
+if (nativeFocus) {
+  document.activeElement = document.body;
+  const disclosure = ids['fm-import-source'];
+  let open = 'open' in disclosure.attrs;
+  Object.defineProperty(disclosure, 'open', {
+    get: () => open,
+    set: value => {
+      open = value;
+      // Closing native details blurs an inner field, but not its summary.
+      if (!open && document.activeElement !== disclosure.querySelector('summary')
+          && descendants(disclosure).includes(document.activeElement)) {
+        document.activeElement = document.body;
+      }
+    }
+  });
+}
 document.readyState = 'complete';
 document.createElement = tag => new Element(tag);
 document.createElementNS = (ns, tag) => new Element(tag);
@@ -110,9 +154,18 @@ const WM = {
     if (text !== undefined) element.textContent = text;
     return element;
   },
-  setEnabled: (id, enabled) => { WM.el(id).disabled = !enabled; },
+  setEnabled: (id, enabled) => {
+    const control = WM.el(id);
+    control.disabled = !enabled;
+    // Native disabling can blur immediately or leave the disabled invoker
+    // active until layout. Exercise both timings only in focus regressions.
+    if (nativeFocus && !deferDisableBlur && !enabled && document.activeElement === control) {
+      document.activeElement = document.body;
+    }
+  },
   route: route => {
     WM.current_route = route;
+    if (nativeFocus) WM.el('route-formations').hidden = route !== 'formations';
     document.dispatchEvent({type: 'wm:route', detail: route});
   },
   send: (method, ...args) => {
@@ -228,9 +281,9 @@ async function copyScenario() {
       assertShareCount(0); assert.equal(WM.el('fm-copy').disabled, true); return;
     }
     rowButtons()[0].click(); rename('Edited <pair>');
-    const x = WM.el('fm-probes').children.find(e => e.getAttribute('aria-label') === 'Probe 1 West km');
+    const x = probeField(1);
     x.value = '12.5'; x.dispatchEvent({type: 'input'}); x.dispatchEvent({type: 'change'});
-    const range = WM.el('fm-probes').children.find(e => e.getAttribute('aria-label') === 'Probe 1 range');
+    const range = probeField(1, 'range');
     range.value = '0.5'; range.dispatchEvent({type: 'change'});
     assert.equal(shareBoxes()[0].getAttribute('aria-label'), 'Select Edited <pair> for sharing');
     rowButtons()[2].click(); click('fm-copy');
@@ -248,7 +301,7 @@ async function copyScenario() {
   }
   selectShare(0); assertShareCount(1);
   assert.equal(WM.el('fm-copy').disabled, false);
-  assert.equal(WM.el('fm-dirty').textContent, '', 'sharing selection is not an account edit');
+  assert.equal(WM.el('fm-dirty').textContent, 'No changes', 'sharing selection is not an account edit');
   if (scenario === 'copy-busy-recovery') {
     rename('Draft'); click('fm-save'); assert.equal(WM.el('fm-copy').disabled, true);
     const error = "This account's settings changed. Nothing was saved. Your edits are still here.";
@@ -586,7 +639,7 @@ async function pasteScenario() {
   }
   if (scenario === 'paste-new-target-conflict') rename('INCOMING');
   if (scenario === 'paste-route-during-add') importRename(0, 'Renamed before Add');
-  click('fm-import-add'); const pending = validations.at(-1);
+  WM.el('fm-import-add').focus(); click('fm-import-add'); const pending = validations.at(-1);
   assert.ok(pending, 'explicit Add must revalidate');
   assert.equal(pending.args.length, 2); assert.equal(saves.length, 0);
   const expectedItems = items.map(f => ({id: null, ...plain(f)}));
@@ -696,22 +749,21 @@ async function deleteScenario() {
     if (scenario === 'delete-after-reopen') {
       reads.at(-1).resolve(data); await tick();
       assert.deepEqual(rowButtons().map(e => e.textContent), ['Original', 'Other']);
-      assert.equal(WM.el('fm-dirty').textContent, '');
+      assert.equal(WM.el('fm-dirty').textContent, 'No changes');
     } else assert.equal(WM.current_route, 'evesettings');
     return;
   }
-  assert.equal(WM.el('fm-dirty').textContent, '');
+  assert.equal(WM.el('fm-dirty').textContent, 'No changes');
   assert.match(WM.el('fm-save-status').textContent, /Nothing was deleted.*Delete again/);
   if (scenario === 'delete-selection-changed') {
     assert.equal(WM.el('fm-name').value, 'Other'); assertShareCount(2);
   } else {
     assert.equal(WM.el('fm-name').value, 'Original'); assertShareCount(0);
-    const x = WM.el('fm-probes').children.find(e => e.getAttribute('aria-label') === 'Probe 1 West km');
-    assert.equal(x.value, '9');
+    assert.equal(probeField(1).value, '9');
   }
   // Retrying Delete is live; No is harmless, Yes removes only the now-named row.
   click('fm-delete'); confirms.at(-1).resolve(false); await tick();
-  assert.equal(rowButtons().length, 2); assert.equal(WM.el('fm-dirty').textContent, '');
+  assert.equal(rowButtons().length, 2); assert.equal(WM.el('fm-dirty').textContent, 'No changes');
   click('fm-delete'); confirms.at(-1).resolve(true); await tick();
   const expected = scenario === 'delete-selection-changed' ? 'Original' : 'Other';
   assert.deepEqual(rowButtons().map(e => e.textContent), [expected]);
@@ -762,7 +814,7 @@ async function previewScenario() {
     assert.equal(svgNodes(svg, 'fm-probe').length, 4);
   } else if (scenario === 'preview-empty-scale') {
     assertExternalKey(svg, ['1 km', '2 km', '3 km']);
-    WM.el('fm-probes').children.find(e => e.textContent === 'Remove').click();
+    probeRows()[0].querySelector('button').click();
     assert.equal(svgNodes(svg, 'fm-ring').length, 0);
     assert.equal(ringLabels(svg).length, 0, 'removing the last probe must clear the previous scale');
     assert.equal(svgNodes(svg, 'fm-ship').length, 1);
@@ -797,14 +849,432 @@ async function previewScenario() {
     svg.rect = {width: 300, height: 200}; window.dispatchEvent({type: 'resize'});
     assert.equal(svg.getAttribute('viewBox'), '0 0 300 200');
     assert.notDeepEqual(positions(), released);
-    assert.equal(WM.el('fm-dirty').textContent, '', 'rotation and resize are not document edits');
+    assert.equal(WM.el('fm-dirty').textContent, 'No changes', 'rotation and resize are not document edits');
     rename('Rotated'); click('fm-save'); assertSave(saves[0], A, 'Rotated');
   } else assert.fail('Unknown preview scenario: ' + scenario);
   if (scenario !== 'preview-rotation') assert.equal(saves.length, 0);
 }
+function probeRows() {
+  return descendants(WM.el('fm-probes')).filter(e => e.getAttribute('role') === 'group');
+}
+function probeField(number, axis = 'West km') {
+  return descendants(WM.el('fm-probes')).find(e => e.getAttribute('aria-label') === 'Probe ' + number + ' ' + axis);
+}
+function assertProbeSelection(number) {
+  const rows = probeRows();
+  const selected = rows.filter(e => e.className.split(' ').includes('selected'));
+  assert.equal(selected.length, number ? 1 : 0, 'one explicit selection, never an initial/hover selection');
+  if (number) {
+    assert.equal(selected[0], rows[number - 1], 'selection stays with its original probe number');
+    assert.match(selected[0].getAttribute('aria-label'), new RegExp('Probe ' + number + '.*selected', 'i'));
+  }
+  rows.forEach((row, i) => {
+    assert.equal(row.getAttribute('aria-selected'), null, 'groups must not claim grid/listbox selection semantics');
+    if (i !== number - 1) assert.doesNotMatch(row.getAttribute('aria-label'), /selected/i);
+  });
+  const markers = descendants(WM.el('fm-preview')).filter(e =>
+    (e.getAttribute('class') || '').split(' ').includes('fm-probe'));
+  const selectedMarkers = markers.filter(e => (e.getAttribute('class') || '').split(' ').includes('selected'));
+  assert.equal(selectedMarkers.length, number ? 1 : 0);
+  if (number) {
+    assert.equal(selectedMarkers[0].getAttribute('data-probe-index'), String(number - 1));
+    const label = descendants(WM.el('fm-preview')).find(e => e.tagName === 'TEXT'
+      && (e.getAttribute('class') || '').split(' ').includes('selected'));
+    assert.equal(label.textContent, String(number), 'number is original index, not depth-sort position');
+    assert.match(WM.el('fm-preview').getAttribute('aria-label'), new RegExp('Probe ' + number + ' selected'));
+  } else assert.doesNotMatch(WM.el('fm-preview').getAttribute('aria-label'), /selected/i);
+}
+async function probeSelectionScenario() {
+  const data = reply();
+  data.formations[0].probes = [4000, -4000, 3000, -3000, 2000, -2000, 1000, -1000]
+    .map(z => ({x: 0, y: 0, z, range: 149597870700}));
+  data.formations.push({id: 8, name: 'Other', probes: [{x: 0, y: 0, z: 0, range: 149597870700}]});
+  WM.openFormations(accounts, 'choice-A'); reads.at(-1).resolve(data); await tick();
+  assertProbeSelection(null);
+  const field = probeField(3), before = plain(descendants(WM.el('fm-preview')).filter(e =>
+    e.getAttribute('class') === 'fm-probe').map(e => [e.getAttribute('cx'), e.getAttribute('cy')]));
+  field.dispatchEvent({type: 'mouseover', bubbles: true}); assertProbeSelection(null);
+  field.focus(); assertProbeSelection(3);
+  assert.equal(document.activeElement, field, 'selection must not rebuild or refocus the field');
+  assert.equal(WM.el('fm-save').disabled, true, 'selection is not a draft edit');
+  if (scenario === 'probe-selection-association') {
+    const markers = descendants(WM.el('fm-preview')).filter(e =>
+      (e.getAttribute('class') || '').split(' ').includes('fm-probe'));
+    assert.deepEqual(markers.map(e => Number(e.getAttribute('data-probe-index')) + 1), [2, 4, 6, 8, 7, 5, 3, 1]);
+    assert.deepEqual(markers.map(e => [e.getAttribute('cx'), e.getAttribute('cy')]), before,
+      'selection cannot alter projected geometry');
+    WM.el('fm-name').focus(); assertProbeSelection(3);
+    probeRows()[5].dispatchEvent({type: 'pointerdown', bubbles: true}); assertProbeSelection(6);
+    probeField(2, 'range').focus(); assertProbeSelection(2);
+    WM.el('fm-preview').dispatchEvent({type: 'mousedown', clientX: 0, clientY: 0});
+    window.dispatchEvent({type: 'mousemove', clientX: 60, clientY: 30});
+    window.dispatchEvent({type: 'mouseup'}); assertProbeSelection(2);
+    markers.forEach(marker => assert.deepEqual(Object.keys(marker.listeners), [], 'markers only reflect row selection'));
+  } else if (scenario === 'probe-selection-lifetime') {
+    rename('Renamed'); selectShare(0); rowButtons()[0].click(); assertProbeSelection(3);
+    WM.el('fm-all-range').value = '4'; WM.el('fm-all-range').dispatchEvent({type: 'change'});
+    assertProbeSelection(3);
+    rowButtons()[1].click(); assertProbeSelection(null);
+    rowButtons()[0].click(); assertProbeSelection(null);
+    probeField(3).focus(); assertProbeSelection(3);
+    click('fm-reload'); confirms.at(-1).resolve(true); await tick();
+    reads.at(-1).resolve(data); await tick(); assertProbeSelection(null);
+    probeField(3).focus(); WM.route('evesettings'); assertProbeSelection(null);
+  } else if (scenario === 'probe-selection-removal') {
+    // Direct invocation omits pointer/focus selection so the identity guard must
+    // also handle a removal before the selected index, never drifting to its successor.
+    probeRows()[0].querySelector('button').dispatchEvent({type: 'click'});
+    assertProbeSelection(null);
+    probeField(3).focus(); probeRows()[2].querySelector('button').click(); assertProbeSelection(null);
+    probeField(2).focus(); probeRows()[5].querySelector('button').dispatchEvent({type: 'click'});
+    assertProbeSelection(2);
+    click('fm-delete'); confirms.at(-1).resolve(true); await tick(); assertProbeSelection(null);
+  } else if (scenario === 'probe-selection-import-boundary') {
+    const rawField = probeField(3); rawField.value = ''; rawField.dispatchEvent({type: 'input'});
+    selectShare(0); click('fm-paste'); assertProbeSelection(null);
+    inputText(artifact()); click('fm-import-review');
+    parses.at(-1).resolve({ok: true, formations: [shared(), shared('Second')], conflicts: []}); await tick();
+    importButtons()[1].click(); window.dispatchEvent({type: 'resize'});
+    assert.equal(descendants(WM.el('fm-import-preview')).filter(e =>
+      (e.getAttribute('class') || '').split(' ').includes('selected')).length, 0);
+    click('fm-import-cancel'); assertProbeSelection(null);
+    assert.equal(probeField(3), rawField); assert.equal(rawField.value, '');
+    assert.equal(document.activeElement, WM.el('fm-paste')); assertShareCount(1);
+    probeField(3).focus(); assertProbeSelection(3);
+    WM.openFormations(accounts, 'choice-A'); assertProbeSelection(null);
+  } else assert.fail('Unknown selection scenario');
+  assert.equal(saves.length, 0); assert.equal(validations.length, 0);
+}
+async function readinessScenario() {
+  if (scenario === 'readiness-save') {
+    assert.equal(WM.el('fm-save').disabled, true);
+    assert.match(WM.el('fm-dirty').textContent, /No changes/);
+    click('fm-reload'); assert.equal(WM.el('fm-dirty').textContent, 'Loading…');
+    reads.at(-1).resolve(reply()); await tick();
+    rename('Draft'); click('fm-save'); assert.equal(WM.el('fm-dirty').textContent, 'Saving…');
+    const fullError = 'The account changed. Nothing was saved. Reload and try again.';
+    complete(saves[0], {ok: false, error: fullError});
+    rename(''); assert.equal(WM.el('fm-dirty').textContent, 'Unnamed formation: needs a name');
+    assert.equal(WM.el('fm-save').disabled, true);
+    assert.equal(WM.el('fm-save-status').textContent, fullError, 'readiness cannot erase operation recovery');
+    rename('Valid'); click('fm-add'); rename('Valid');
+    assert.equal(WM.el('fm-dirty').textContent, 'Valid: name used twice');
+    assert.equal(WM.el('fm-save').disabled, true);
+    const data = reply(''); WM.openFormations(accounts, 'choice-A'); reads.at(-1).resolve(data); await tick();
+    rename('Needs baseline'); assert.equal(WM.el('fm-save').disabled, true);
+    assert.match(WM.el('fm-dirty').textContent, /Load.*first/i);
+    WM.el('fm-save').dispatchEvent({type: 'click'}); assert.equal(saves.length, 1, 'missing baseline blocks the handler too');
+    assert.equal(WM.el('fm-dirty').getAttribute('role'), null, 'no new live owner');
+  } else {
+    const data = reply(); data.formations[0].probes[0].x = 0;
+    WM.openFormations(accounts, 'choice-A'); reads.at(-1).resolve(data); await tick();
+    assert.equal(WM.el('fm-balance').disabled, true);
+    assert.equal(WM.el('fm-balance-note').textContent, 'Launches as drawn.');
+    assert.doesNotMatch(WM.el('fm-balance-note').className, /err/);
+    probeField(1).value = '2'; probeField(1).dispatchEvent({type: 'change'});
+    assert.equal(WM.el('fm-balance').disabled, false);
+    assert.match(WM.el('fm-balance-note').textContent, /Launch shifts every probe by 2 km/);
+    click('fm-balance'); assert.equal(WM.el('fm-balance').disabled, true);
+    assert.equal(probeField(2).value, '-2', 'existing counterweight math is unchanged');
+    while (descendants(WM.el('fm-probes')).some(e => e.tagName === 'BUTTON')) {
+      descendants(WM.el('fm-probes')).find(e => e.tagName === 'BUTTON').click();
+    }
+    assert.equal(WM.el('fm-balance').disabled, true);
+    assert.match(WM.el('fm-balance-note').textContent, /Add a probe/i);
+    assert.equal(WM.el('fm-dirty').textContent, 'Original: needs a probe');
+    data.formations = []; WM.openFormations(accounts, 'choice-A'); reads.at(-1).resolve(data); await tick();
+    assert.equal(WM.el('fm-balance').disabled, true);
+    assert.match(WM.el('fm-balance-note').textContent, /Select.*formation/i);
+  }
+}
+async function importStageScenario() {
+  if (scenario === 'import-stage-destination') {
+    rename('Local draft'); switchTo('choice-B');
+    // The unacknowledged selector is not the document owner; import can open
+    // while the discard confirmation is unresolved, without changing accounts.
+    click('fm-paste');
+    assert.match(WM.el('fm-import-commit').textContent, /Account A/, 'Add must identify the acknowledged account');
+    assert.doesNotMatch(WM.el('fm-import-account-context').textContent, /Account B|resolved-A/);
+    confirms.at(-1).resolve(false); await tick();
+    assert.match(WM.el('fm-import-account-context').textContent, /Account A/); return;
+  }
+  click('fm-paste'); inputText(artifact([shared('Original')]));
+  assert.equal(WM.el('fm-import-review').hidden, false);
+  click('fm-import-review'); parses.at(-1).resolve({ok: true, formations: [shared('Original')], conflicts: [0]}); await tick();
+  assert.equal(WM.el('fm-import-review').hidden, true, 'completed Review cannot compete with Add');
+  assert.equal(WM.el('fm-import-source').tagName, 'DETAILS');
+  assert.equal(WM.el('fm-import-source').open, false, 'successful Review subordinates retained raw source');
+  assert.equal(WM.el('fm-import-source').querySelector('summary').textContent, 'Source text');
+  assert.equal(WM.el('fm-import-candidates').hidden, false);
+  assert.equal(svgNodes(WM.el('fm-import-preview'), 'fm-probe').length, 1,
+    'successful Review must reveal the candidate before measuring/drawing its diagram');
+  assert.match(WM.el('fm-import-candidates').textContent, /Review names and formation previews/);
+  const raw = WM.el('fm-import-text').value, field = importNames()[0];
+  assert.equal(field.getAttribute('aria-invalid'), 'true'); assert.equal(WM.el('fm-import-add').disabled, true);
+  importRename(0, '<Corrected>'); window.dispatchEvent({type: 'resize'}); selectShare(0);
+  WM.el('fm-import-source').open = true;
+  assert.equal(WM.el('fm-import-text').value, raw);
+  assert.equal(importNames()[0], field); assert.equal(field.value, '<Corrected>');
+  assert.equal(field.getAttribute('aria-invalid'), 'false');
+  WM.el('fm-import-review').dispatchEvent({type: 'click'}); assert.equal(parses.length, 1);
+  inputText(raw); assert.equal(importNames()[0], field, 'unchanged source cannot reset corrections');
+  assert.equal(WM.el('fm-import-review').hidden, true);
+  assert.match(WM.el('fm-import-account-context').textContent, /Account A/);
+  assert.equal(WM.el('fm-import-save-note').parentNode, WM.el('fm-import-commit'), 'draft/save boundary stays by Add');
+  click('fm-import-add'); assert.equal(validations.length, 1); assert.equal(saves.length, 0);
+  assert.deepEqual(plain(validations[0].args), [[{id: null, ...shared('<Corrected>')}], ['Original']]);
+  validations[0].resolve({ok: true, formations: [shared('<Corrected>')], conflicts: []}); await tick();
+  assert.equal(WM.el('fm-name').value, '<Corrected>'); assert.equal(saves.length, 0);
+  click('fm-paste'); inputText('{bad'); click('fm-import-review');
+  parses.at(-1).resolve({ok: false, error: 'Invalid source. Check the shared text.'}); await tick();
+  assert.equal(WM.el('fm-import-source').open, true);
+  assert.equal(WM.el('fm-import-review').hidden, false); assert.equal(WM.el('fm-import-review').disabled, false);
+  inputText(artifact()); click('fm-import-review');
+  parses.at(-1).resolve({ok: true, formations: [shared()], conflicts: []}); await tick();
+  WM.el('fm-import-source').open = true; inputText('Changed actual source');
+  assert.equal(WM.el('fm-import-review').hidden, false); assert.equal(WM.el('fm-import-candidates').hidden, true);
+  assert.equal(importNames().length, 0); assert.equal(WM.el('fm-import-add').disabled, true);
+  assert.equal(saves.length, 0);
+}
+async function importFocusScenario() {
+  click('fm-paste'); inputText(artifact());
+  const reviewButton = WM.el('fm-import-review'), source = WM.el('fm-import-text');
+  // Review can also be reached after the native Source disclosure was closed.
+  WM.el('fm-import-source').open = false;
+  reviewButton.focus(); click('fm-import-review');
+  assert.equal(reviewButton.disabled, true);
+  assert.equal(document.activeElement.id || document.activeElement.tagName, source.id,
+    'disabling the keyboard-owned Review must not strand focus on BODY');
+  assert.equal(WM.el('fm-import-source').open, true, 'pending source focus must be reachable');
+  assert.equal(source.focusOptions.preventScroll, true, 'the synchronous fallback must not jump the work scroller');
+  if (scenario === 'import-focus-moved') WM.el('fm-import-cancel').focus();
+  if (scenario === 'import-focus-overlay') {
+    WM.el('overlay').hidden = false; WM.el('dlg-ok').focus();
+  }
+  if (scenario === 'import-focus-source-change') inputText('A newer source draft');
+  parses.at(-1).resolve(scenario === 'import-focus-failure'
+    ? {ok: false, error: 'Invalid shared text. Correct it and Review again.'}
+    : {ok: true, formations: [shared()], conflicts: []});
+  await tick();
+  const expected = scenario === 'import-focus-moved' ? WM.el('fm-import-cancel')
+    : scenario === 'import-focus-overlay' ? WM.el('dlg-ok')
+    : scenario === 'import-focus-failure' || scenario === 'import-focus-source-change' ? source
+    : WM.el('fm-import-candidates-heading');
+  assert.equal(document.activeElement.id, expected.id, 'completion must respect the current focus/source owner');
+  if (scenario === 'import-focus-failure') {
+    assert.equal(reviewButton.disabled, false); assert.equal(WM.el('fm-import-source').open, true);
+    reviewButton.focus(); click('fm-import-review'); parses.at(-1).reject(new Error('Disconnected')); await tick();
+    assert.equal(document.activeElement, source); assert.equal(reviewButton.disabled, false);
+  }
+  if (scenario === 'import-focus-source-change') {
+    assert.equal(source.value, 'A newer source draft'); assert.equal(importNames().length, 0);
+    assert.equal(reviewButton.disabled, false);
+  }
+  assert.equal(validations.length, 0); assert.equal(saves.length, 0);
+}
+function assertFocus(target, message = 'focus must remain with its current owner') {
+  const label = node => node.id || node.tagName;
+  assert.ok(document.activeElement === target,
+    message + ': expected ' + label(target) + ', got ' + label(document.activeElement));
+}
+function assertHandoff(id) {
+  const target = WM.el(id);
+  assertFocus(target, 'self-disabling action must hand off focus synchronously');
+  assert.equal(target.getAttribute('tabindex'), '-1', 'existing status/note must be programmatically focusable');
+  assert.equal(target.focusOptions.preventScroll, true, 'handoff must not jump the work scroller');
+}
+async function prepareAddFocus() {
+  click('fm-paste'); inputText(artifact([shared(), shared('Second')])); click('fm-import-review');
+  parses.at(-1).resolve({ok: true, formations: [shared(), shared('Second')], conflicts: []});
+  await tick();
+}
+function acceptAdd(pending = validations.at(-1)) {
+  pending.resolve({ok: true, formations: plain(pending.args[0]), conflicts: []});
+}
+async function saveFocusScenario() {
+  rename('Saved draft'); WM.el('fm-save').focus(); click('fm-save');
+  const pending = saves.at(-1), status = WM.el('fm-save-status');
+  assertHandoff(status.id); assertBusy(); assertSave(pending, A, 'Saved draft');
+  if (scenario === 'save-focus-refusal') {
+    pending.resolve(false); await tick();
+    assertFocus(status); assert.match(status.textContent, /could not be started.*edits are still here/);
+    assertEditable('Saved draft'); return;
+  }
+  if (scenario === 'save-focus-failure') {
+    complete(pending, {ok: false, error: 'Changed on disk. Reload or keep your draft.'});
+    assertFocus(status); assert.equal(status.textContent, 'Changed on disk. Reload or keep your draft.');
+    assertEditable('Saved draft'); return;
+  }
+  if (scenario === 'save-focus-route') {
+    WM.route('evesettings'); WM.el('es-formations-open').focus();
+    complete(pending); pending.resolve(false); await tick();
+    assertFocus(WM.el('es-formations-open')); assert.equal(reads.length, 1); return;
+  }
+  if (scenario === 'save-focus-superseded') {
+    complete(pending, {ok: false});
+    WM.el('fm-save').focus(); click('fm-save'); assertHandoff(status.id);
+    const next = saves.at(-1);
+    pending.resolve(false); complete(pending); await tick();
+    assertBusy(); assertFocus(status); assert.equal(reads.length, 1);
+    complete(next, {ok: false, error: 'Current save failure'});
+    assertFocus(status); assert.equal(status.textContent, 'Current save failure'); return;
+  }
+  let expected = status;
+  if (scenario === 'save-focus-newer-control') { expected = WM.el('fm-back'); expected.focus(); }
+  if (scenario === 'save-focus-overlay') {
+    WM.el('overlay').hidden = false; expected = WM.el('dlg-ok'); expected.focus();
+  }
+  const rawInput = scenario === 'save-focus-input-before' || scenario === 'save-focus-input-reread';
+  let field;
+  function typeRaw() {
+    field = probeField(1); field.focus(); field.value = '-'; field.dispatchEvent({type: 'input'});
+    expected = field;
+  }
+  if (scenario === 'save-focus-input-before') typeRaw();
+  complete(pending);
+  if (scenario === 'save-focus-input-reread') typeRaw();
+  if (scenario !== 'save-focus-input-before') { reads.at(-1).resolve(reply(B, 'Saved draft')); await tick(); }
+  pending.resolve(false); await tick();
+  assertFocus(expected, 'save receipt and reread never reclaim newer focus');
+  if (rawInput) {
+    assert.ok(probeField(1) === field, 'save must preserve raw input identity');
+    assert.equal(field.value, '-'); assert.equal(WM.el('fm-save').disabled, false);
+  } else assert.equal(WM.el('fm-save').disabled, true);
+  assert.match(status.textContent, /saved/);
+}
+async function balanceFocusScenario() {
+  if (scenario === 'balance-focus-selected') probeField(1).focus();
+  const field = probeField(1);
+  WM.el('fm-balance').focus(); click('fm-balance');
+  assertHandoff('fm-balance-note');
+  assert.equal(WM.el('fm-balance').disabled, true);
+  assert.equal(WM.el('fm-balance-note').textContent, 'Launches as drawn.');
+  assert.ok(probeField(1) !== field, 'Balance really rebuilds the probe controls');
+  assert.equal(probeRows().length, 2); assert.equal(probeField(2).value, '-2');
+  assertProbeSelection(scenario === 'balance-focus-selected' ? 1 : null);
+  assert.equal(saves.length, 0); assert.equal(validations.length, 0);
+}
+async function addFocusScenario() {
+  await prepareAddFocus();
+  WM.el('fm-import-add').focus(); click('fm-import-add');
+  const pending = validations.at(-1), status = WM.el('fm-import-status');
+  assertHandoff(status.id); assert.match(status.textContent, /Checking/);
+  assert.equal(WM.el('fm-import-add').disabled, true);
+  if (['add-focus-refusal', 'add-focus-rejection', 'add-focus-conflict'].includes(scenario)) {
+    if (scenario === 'add-focus-rejection') pending.reject(new Error('Offline'));
+    else pending.resolve(scenario === 'add-focus-conflict'
+      ? {ok: true, formations: plain(pending.args[0]), conflicts: [0]}
+      : {ok: false, error: 'Invalid formation. Correct the name and try again.'});
+    await tick(); assertFocus(status); assertReview(true); assert.equal(rowButtons().length, 1);
+    assert.match(status.textContent, /try|Try|Resolve/);
+    importNames()[0].focus(); importRename(0, 'Corrected');
+    WM.el('fm-import-add').focus(); click('fm-import-add'); assertHandoff(status.id);
+    acceptAdd(); await tick(); assertFocus(rowButtons()[1]); return;
+  }
+  if (scenario === 'add-focus-superseded') {
+    importNames()[0].focus(); importRename(0, 'Newer name');
+    WM.el('fm-import-add').focus(); click('fm-import-add'); assertHandoff(status.id);
+    acceptAdd(pending); await tick();
+    assertReview(true); assert.equal(rowButtons().length, 1); assertFocus(status);
+    acceptAdd(); await tick(); assertFocus(rowButtons()[1]);
+    assert.equal(WM.el('fm-name').value, 'Newer name'); return;
+  }
+  let expected = null, stale = false;
+  if (scenario === 'add-focus-newer-control') { expected = WM.el('fm-back'); expected.focus(); }
+  if (scenario === 'add-focus-blurred') { WM.el('fm-back').focus(); document.activeElement = document.body; expected = document.body; }
+  if (scenario === 'add-focus-overlay') {
+    WM.el('overlay').hidden = false; expected = WM.el('dlg-ok'); expected.focus();
+  }
+  if (scenario === 'add-focus-candidate') {
+    importButtons()[1].click();
+    assert.equal(importButtons()[1].getAttribute('aria-pressed'), 'true');
+    expected = document.body; // Closing the old review blurs its status, but must not retarget it.
+  }
+  if (scenario === 'add-focus-formation') {
+    // Formation navigation is not an edit and must not change Add's operation semantics.
+    click('fm-import-cancel'); click('fm-add');
+    await prepareAddFocus();
+    WM.el('fm-import-add').focus(); click('fm-import-add');
+    const current = validations.at(-1);
+    rowButtons()[0].click();
+    acceptAdd(pending); acceptAdd(current); await tick();
+    assert.equal(rowButtons().length, 4); assertFocus(document.body);
+    assert.equal(WM.el('fm-name').value, 'Incoming'); return;
+  }
+  if (scenario === 'add-focus-source-change') {
+    WM.el('fm-import-source').open = true; expected = WM.el('fm-import-text'); expected.focus();
+    inputText('New source'); stale = true;
+  }
+  if (scenario === 'add-focus-name-change') {
+    expected = importNames()[0]; expected.focus(); importRename(0, 'Newer name'); stale = true;
+  }
+  if (scenario === 'add-focus-route') {
+    WM.route('evesettings'); expected = WM.el('es-formations-open'); expected.focus(); stale = true;
+  }
+  if (scenario === 'add-focus-reopen') {
+    WM.openFormations(accounts, 'choice-A'); reads.at(-1).resolve(reply(C, 'New owner')); await tick();
+    expected = WM.el('fm-name'); expected.focus(); stale = true;
+  }
+  if (scenario === 'add-focus-cancel') {
+    click('fm-import-cancel'); expected = WM.el('fm-paste'); stale = true;
+  }
+  if (scenario === 'add-focus-paint-moved') {
+    const render = WM.setEnabled;
+    WM.setEnabled = (id, enabled) => {
+      render(id, enabled);
+      if (id === 'fm-import-add' && WM.el('fm-import-commit').hidden) {
+        WM.setEnabled = render; WM.el('fm-back').focus();
+      }
+    };
+    expected = WM.el('fm-back');
+  }
+  acceptAdd(pending); await tick();
+  assertFocus(expected || rowButtons()[1], 'Add completion must not steal newer focus or ownership');
+  assert.equal(rowButtons().length, stale ? 1 : 3, 'focus guards cannot change Add operation semantics');
+  assert.equal(saves.length, 0);
+  if (!expected) assert.notEqual(rowButtons()[1].focusOptions?.preventScroll, true,
+    'accepted Add must retain native reveal of the new row; only pending-status handoffs suppress scrolling');
+}
+async function disableFocusScenario() {
+  const [, , action, owner] = scenario.split('-');
+  const controls = {save: 'fm-save', balance: 'fm-balance', add: 'fm-import-add'};
+  if (owner === 'formation') click('fm-add');
+  if (action === 'add') await prepareAddFocus();
+  else if (action === 'save') rename('Draft');
+  const control = controls[action], original = WM.setEnabled;
+  let expected = document.body;
+  WM.setEnabled = (id, enabled) => {
+    original(id, enabled);
+    if (id !== control || enabled) return;
+    WM.setEnabled = original;
+    if (owner === 'control') { expected = WM.el('fm-back'); expected.focus(); }
+    if (owner === 'overlay') WM.el('overlay').hidden = false;
+    if (owner === 'route') WM.route('evesettings');
+    if (owner === 'reopen') WM.openFormations(accounts, 'choice-A');
+    if (owner === 'formation') rowButtons()[0].click();
+    if (owner === 'candidate') importButtons()[1].click();
+    if (owner === 'hidden') WM.el(action === 'add' ? 'fm-import-commit'
+      : action === 'save' ? 'fm-commit' : 'fm-editor-work').hidden = true;
+  };
+  if (owner === 'unowned') { expected = WM.el('fm-back'); expected.focus(); }
+  else WM.el(control).focus();
+  click(control);
+  // Model the later native blur after checking the synchronous handler. A newer
+  // focused owner must survive; a still-disabled invoker would fall to BODY.
+  if (deferDisableBlur && document.activeElement.disabled) document.activeElement = document.body;
+  assertFocus(expected, 'a synchronous disable event may revoke the old focus owner');
+}
 async function main() {
   await open();
-  if (scenario.startsWith('preview-')) await previewScenario();
+  if (scenario.startsWith('save-focus-')) await saveFocusScenario();
+  else if (scenario.startsWith('balance-focus-')) await balanceFocusScenario();
+  else if (scenario.startsWith('add-focus-')) await addFocusScenario();
+  else if (scenario.startsWith('disable-focus-')) await disableFocusScenario();
+  else if (scenario.startsWith('import-focus-')) await importFocusScenario();
+  else if (scenario.startsWith('probe-selection-')) await probeSelectionScenario();
+  else if (scenario.startsWith('readiness-')) await readinessScenario();
+  else if (scenario.startsWith('import-stage-')) await importStageScenario();
+  else if (scenario.startsWith('preview-')) await previewScenario();
   else if (scenario.startsWith('delete-')) await deleteScenario();
   else if (scenario.startsWith('paste-')) await pasteScenario();
   else if (scenario.startsWith('copy-')) await copyScenario();
@@ -840,7 +1310,7 @@ async function main() {
     reads.at(-1).resolve(reply(C, 'Newer'));
     await tick();
     assert.equal(WM.el('fm-save').disabled, true);
-    assert.equal(WM.el('fm-dirty').textContent, '');
+    assert.equal(WM.el('fm-dirty').textContent, 'No changes');
   } else if (scenario === 'ignored-read-keeps-baseline') {
     rename('Submitted'); click('fm-save'); complete(saves[0]);
     assert.equal(reads.length, 2);
@@ -936,8 +1406,7 @@ async function main() {
     // Find the live control each time: asserting on a detached old input would
     // miss exactly the renderPane/renderProbes replacement this test guards.
     const control = () => field === 'name' ? WM.el('fm-name')
-      : WM.el('fm-probes').children.find(element =>
-        element.getAttribute('aria-label') === 'Probe 1 ' + labels[field] + ' km');
+      : probeField(1, labels[field] + ' km');
     function type(value) {
       control().focus();
       control().value = value;
@@ -979,7 +1448,7 @@ async function main() {
     const committed = reply(C, expectedName);
     if (field !== 'name') committed.formations[0].probes[0][field] = 12500;
     reads.at(-1).resolve(committed); await tick();
-    assert.equal(WM.el('fm-dirty').textContent, '');
+    assert.equal(WM.el('fm-dirty').textContent, 'No changes');
 
     // Explicit Reload is the intentional replacement route for a raw draft.
     type(raw); click('fm-reload'); const readCount = reads.length;
@@ -990,7 +1459,7 @@ async function main() {
     click('fm-reload'); confirms.at(-1).resolve(true); await tick();
     reads.at(-1).resolve(reply(C, 'Reloaded')); await tick();
     assert.equal(control().value, field === 'name' ? 'Reloaded' : (field === 'x' ? '2' : '0'));
-    assert.equal(WM.el('fm-dirty').textContent, '');
+    assert.equal(WM.el('fm-dirty').textContent, 'No changes');
     assert.equal(saves.length, beforeSave + 1, 'Reload must not write');
   } else if (scenario === 'back-dirty') {
     rename('Draft'); click('fm-back'); assert.equal(confirms.length, 1);

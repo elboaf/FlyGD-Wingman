@@ -83,6 +83,10 @@
   /* Distance rings and height tethers carry information, unlike a panel edge.
      Reuse a readable neutral: 4.99:1 against the formation plot's --sunken. */
   --formation-guide: var(--text-faint);
+  --formation-selection-ink: var(--text);
+  --formation-label-ink: var(--text-faint);
+  --formation-label-halo: var(--sunken);
+  --formation-preview-surface: var(--sunken);
   /* A fourth text step, between --text-dim and --text-faint, and it is
      not a rounding error: it is the colour of the two uppercase tracked
      section labels (.card > h2 and .rail-head), which sit above
@@ -425,6 +429,15 @@
   --scrollbar-w: 10px;
   --row-pad: 10px;
   --titlebar-h: 44px;
+}
+
+/* Only the probe association cues opt into these system colours. Components
+   still consume semantic roles; the rest of the palette is unchanged. */
+@media (forced-colors: active) {
+  :root {
+    --formation-forced-ink: CanvasText;
+    --formation-forced-surface: Canvas;
+  }
 }
 
 /* The wash lives on html and the base --bg layer must stay UNDER it in the
@@ -4826,6 +4839,33 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 #setup-work #setup-catalog-origin { margin: 0 0 8px; }
 #setup-import .field:disabled { color: var(--text-faint); opacity: .5; }
 #setup-summary:focus, #setup-status:focus { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+/* Import stages retain their fields, but a compact review must not leave a
+   fragment of the recipient form above its heading after focus/scroll. Export
+   keeps its accepted sizing and hierarchy; these overrides are import-only. */
+#setup-import { gap: 8px; }
+#setup-import .us-heading h1 { font-size: 20px; line-height: 1.25; }
+#setup-import #setup-source-summary {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: center;
+}
+#setup-import #setup-source-summary > .row { grid-column: 2; grid-row: 1; }
+#setup-import #setup-source-name { margin: 0; }
+#setup-import #setup-catalog-origin { grid-column: 1 / -1; margin: 0; }
+#setup-import #setup-source-section { margin-bottom: 12px; }
+#setup-import #setup-summary { margin: 8px 0; padding: 12px; background: var(--panel); }
+#setup-import #setup-commit { display: flex; gap: 12px; align-items: flex-start; }
+#setup-import #setup-commit > .row { flex: none; }
+#setup-import #setup-commit-context { flex: 1; min-width: 0; grid-template-columns: 76px minmax(0, 1fr); gap: 4px 10px; }
+#setup-import #setup-commit-context p { margin: 0; overflow-wrap: anywhere; }
+#setup-import #setup-commit-context .hint { margin-top: 4px; }
+#setup-import #setup-destination { font-weight: 600; }
+#setup-import #setup-safety { margin: 8px 0 0; overflow-wrap: anywhere; }
+#setup-import #setup-source-summary[hidden], #setup-import #setup-recipient[hidden],
+#setup-import #setup-commit-context[hidden], #setup-import #setup-review[hidden],
+#setup-import #setup-create[hidden], #setup-import #setup-cancel-note[hidden] { display: none; }
+@media (max-width: 840px) {
+  #setup-import #setup-commit { flex-wrap: wrap; gap: 8px; }
+  #setup-import #setup-commit-context { flex-basis: 100%; }
+}
 
 /* ================== probe formation editor ==========================
    A sub-screen of Profiles on its own route id (index.html, app.js).
@@ -4904,7 +4944,24 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .fm-work[hidden], #fm-editor-work[hidden], #fm-import-work[hidden],
 #fm-commit[hidden], #fm-import-commit[hidden] { display: none; }
 #fm-commit, #fm-import-commit { flex: none; flex-wrap: wrap; row-gap: 4px; }
-#fm-import-heading { margin: 0; font-size: var(--fs-body); color: var(--text); }
+#fm-import-heading, #fm-import-candidates-heading {
+  margin: 0; font-size: var(--fs-body); color: var(--text);
+}
+#fm-import-source { flex: none; min-width: 0; }
+#fm-import-source > summary { cursor: pointer; color: var(--text-dim); }
+#fm-import-source > summary:focus-visible, #fm-import-candidates-heading:focus-visible,
+#fm-save-status:focus-visible, #fm-balance-note:focus-visible, #fm-import-status:focus-visible {
+  outline: 2px solid var(--focus-ring); outline-offset: -2px;
+}
+#fm-import-source > .lab { display: block; margin: 8px 0 4px; }
+#fm-import-candidates {
+  display: flex; flex-direction: column; gap: 10px; flex: 1; min-width: 0;
+}
+#fm-import-candidates[hidden], #fm-import-review[hidden] { display: none; }
+#fm-import-account-context, #fm-import-save-note {
+  flex-basis: 100%; margin: 0; overflow-wrap: anywhere;
+}
+#fm-import-account-context { color: var(--text-dim); }
 #fm-import-text { flex: none; width: 100%; resize: vertical; min-height: 80px; }
 #fm-import-list { flex: none; display: flex; flex-direction: column; gap: 10px; }
 .fm-import-row { display: flex; flex-wrap: wrap; gap: 4px 8px; min-width: 0; }
@@ -4916,6 +4973,11 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 /* Keep the live region present before its text arrives, and wrap file errors
    rather than letting a long path widen the editor at the viewport floor. */
 #fm-save-status { min-height: 1.4em; overflow-wrap: anywhere; }
+#fm-editor-work > .row { flex-wrap: wrap; }
+#fm-name { flex: 1; min-width: 0; }
+#fm-balance-note { color: var(--text-dim); }
+#fm-dirty { overflow-wrap: anywhere; }
+#fm-dirty:not(.err) { color: var(--text-dim); }
 
 /* The three coordinate tracks are capped, not elastic. `1fr` handed them
    every spare pixel, which is the same thing the recording list's
@@ -4923,10 +4985,23 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
    times wider than the widest number it can hold reads as misalignment,
    not as spacing. 64px is what a five-digit value needs. */
 .fm-grid {
-  display: grid;
-  grid-template-columns: 2ch repeat(3, minmax(64px, 130px)) 96px auto;
+  --fm-probe-columns: 2ch repeat(3, minmax(64px, 130px)) 96px 58px;
+  display: grid; grid-template-columns: var(--fm-probe-columns);
   gap: 4px 8px; align-items: center; justify-content: start;
+  margin: 2px 3px;
 }
+.fm-probe-row {
+  display: grid; grid-column: 1 / -1; grid-template-columns: var(--fm-probe-columns);
+  gap: 8px; align-items: center; min-width: 0;
+}
+/* A dashed row outline is selection; the solid focus ring still belongs to
+   the actual field/button. Neither relies on the tinted background. */
+.fm-probe-row.selected {
+  outline: 1px dashed var(--formation-selection-ink); outline-offset: 2px;
+  background: var(--row-active);
+}
+.fm-probe-row.selected > .fm-idx { font-weight: 700; color: var(--text); }
+.fm-probe-row > .field { min-width: 0; width: 100%; }
 /* NO .14em tracking here, and that is a decision rather than an omission:
    test_page_conventions.py pins the uppercase-tracked group to exactly
    four selectors, each with a stated rank. These name the six tracks of
@@ -4954,7 +5029,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 #fm-preview, #fm-import-preview {
   flex: 0 1 auto; min-height: 150px; height: 100%;
   width: auto; max-width: calc(100% - 110px - 16px); aspect-ratio: 1;
-  background: var(--sunken); border: 1px solid var(--panel-border);
+  background: var(--formation-preview-surface); border: 1px solid var(--panel-border);
   border-radius: var(--radius); cursor: grab; touch-action: none;
   overflow: hidden;
 }
@@ -4972,7 +5047,20 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
    CSS pixel here. A fixed square viewBox would have scaled this type down
    to about 5px at the 840x625 floor. */
 .fm-probe-label {
-  fill: var(--text-faint); font-size: var(--fs-label);
+  fill: var(--formation-label-ink); font-size: var(--fs-label);
+  paint-order: stroke; stroke: var(--formation-label-halo); stroke-width: 3px;
+}
+.fm-probe-label.selected { fill: var(--formation-selection-ink); font-weight: 700; }
+.fm-probe-selection-ring { fill: none; stroke: var(--formation-selection-ink); stroke-width: 1.5; }
+@media (forced-colors: active) {
+  .fm-probe-row.selected { outline-color: var(--formation-forced-ink); }
+  .fm-probe-selection-ring { stroke: var(--formation-forced-ink); }
+  .fm-probe-label, .fm-probe-label.selected {
+    fill: var(--formation-forced-ink); stroke: var(--formation-forced-surface);
+  }
+  #route-formations #fm-preview, #route-formations #fm-import-preview {
+    background: var(--formation-forced-surface);
+  }
 }
 .fm-tether {
   stroke: var(--formation-guide); stroke-width: 1; stroke-dasharray: 2 3;

@@ -15,6 +15,74 @@ dev checks are separate evidence, not installed Windows/WebView2 acceptance.
 
 Run on Windows against a real install before each release.
 
+## Screenshot UX step 7 — installed Windows acceptance NOT RUN
+
+Formations and Setup import use synthetic presentation checks at 1015×633 and
+840×625. Fixtures do not prove formation editing, balancing, probe operations,
+clipboard access, parsing, profile creation, filesystem writes or persistence.
+Repeat installed WebView2 checks at 100/125/150/200% scaling. Real Save, Create,
+import/export and disposable-filesystem verification require separate approval.
+Setup sharing and the step-6 Profiles base/copy/backup/identity surfaces are not
+redesigned by this slice.
+
+- [ ] Resting Formations has no selected probe. Focus or interact with each of
+      probes 1–4, then all eight: the owning row and original numbered marker
+      remain associated despite SVG depth order. The dashed row outline and marker
+      ring/bold number remain distinguishable without color. Keyboard focus has
+      its own solid ring; moving focus to a toolbar control retains selection.
+      Hover alone selects nothing; dragging the diagram still only rotates it.
+- [ ] Repaint or resize the same draft: selection remains on the same probe.
+      Switching formation, removing/replacing the selected probe, entering or
+      cancelling import, changing candidate, replacing the account document or
+      leaving clears it. Removing an earlier probe must not select the next probe
+      accidentally. Selection alone never dirties a draft, saves or crosses the bridge.
+- [ ] Screen readers identify numbered row groups and the selected diagram probe,
+      without a fake selectable-grid role or extra live announcement. Check actual
+      AT speech, forced colors, marker-label clearance, long formation/account
+      names and input focus at the floor. These native checks remain open.
+- [ ] Save explains clean/loading/saving/missing-revision or the existing invalid
+      formation reason. Balance distinguishes no formation/probes from already
+      balanced; Launches as drawn stays readable and neutral. Closing EVE remains
+      standing Save guidance, never a fabricated disabled-state reason. Preserve
+      complete save failures and warnings under their original live owner.
+- [ ] Formation Source offers explicit Review. Successful Review shows names and
+      previews, with source retained behind its disclosure and no competing parse
+      Review. Preview selects a candidate diagram only. Name conflicts remain next
+      to their inputs; corrections remain after source disclosure/resize/unrelated
+      updates. Actual source edits invalidate review and re-enable explicit Review;
+      failed parsing stays retryable. Account/local-draft destination and later Save
+      boundary remain beside Add. Do not perform real Add/Save during render checks.
+- [ ] Setup source entry gives Review priority. Walk native YAML requiring a
+      ship-label decision, retain the labels, then authorize Review: the correction
+      and its instruction collapse with the entire entry, not as a stale fragment.
+      Edit restores the eligible checked policy and retained source without
+      invalidating authorization; actual source edits retire the old choice.
+      Valid review collapses the entire entry form, not a fragment behind the title. Review new profile is the current
+      stage, recipient/base/new destination sit by Create, and non-overwrite/Cancel
+      safety remains visible. Edit/Change reveals retained input; opening alone
+      does not invalidate a valid review, but actual input does. A summary needing
+      corrections must not hide those controls or authorize Create.
+- [ ] Setup Review and Formation Save/Balance/Add keep owned keyboard focus when
+      disabling, both with immediate and deferred browser blur. Check pending,
+      success, refusal, conflict and retry; useful mounted outcome/note owners
+      retain focus without scroll jumps. Move focus to another control or dialog,
+      change route/candidate/formation, or supersede a request: old replies must
+      not claim focus. Forced-color row/marker cues still use forced-mode root tokens.
+- [ ] Tab/Shift+Tab reaches Edit, source controls, Cancel and Create without hidden
+      focus or scroll jumps. Review/operation completion respects an open dialog's
+      focus. Before Create, Cancel creates nothing; after it is sent, Back does not
+      cancel publication. Leaving clears the private draft, but a late receipt must
+      report only its own outcome without stealing a newer route/draft/focus.
+- [ ] At both sizes, work scrollers and normal-flow action areas retain ownership;
+      no horizontal overflow, obscured selection or clipped prior-stage fragments.
+      Accepted Share setup still names the same source/snapshot, offers Copy setup
+      and Save file, and retains its non-destructive wording and fixture staging.
+- [ ] Separately authorize real controller/codec/filesystem acceptance: validate
+      corrected-name Add versus later Save, backup/recovery and EVE-closed refusals;
+      Review remains read-only and Create makes a new profile without overwriting
+      existing profiles. Browser fixtures and mocked bridge results prove none of
+      these native outcomes.
+
 ## Screenshot UX step 6 — installed Windows acceptance NOT RUN
 
 Character access and Profiles use bounded synthetic Chromium checks at 1015×633

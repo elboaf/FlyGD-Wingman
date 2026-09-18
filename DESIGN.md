@@ -961,6 +961,56 @@ not only the final DOM row. Escape returns focus; geometry dismissal returns it
 only if that disclosure still owns it, without undoing scroll or stealing focus.
 Backup ordering, filtering, retention and filesystem behavior are unchanged.
 
+## Formation and setup import stages
+
+Probe selection is transient page state, not formation data or EVE's selected
+formation ID. No probe is initially selected. Row/field interaction selects its
+original ordinal, which still labels the depth-sorted diagram marker. A dashed
+row boundary and outlined, bold-numbered marker distinguish selection from the
+field's solid keyboard focus ring. Rows are labelled groups, not an ARIA grid;
+the diagram remains a noninteractive image and keeps its rotation behavior.
+Selection survives ordinary repaint, but never moves to a replacement probe or
+another formation, import candidate, account document or route lifetime.
+
+Save and Balance explain their actual local disabled predicates. Clean drafts,
+loading, saving and missing read revisions are not errors. Existing validation
+and operation errors retain their complete text and original status owners.
+Launches as drawn is neutral guidance beside Balance; closing every EVE client
+is a standing Save prerequisite, not inferred live readiness. Save, Balance and
+Add hand self-disabling keyboard focus to their mounted outcome/note owner without
+scrolling, whether the browser blurs immediately or at its next rendering update.
+Only still-owned completion focus may advance to the added formation; a newer
+control, candidate, formation, route or dialog takes precedence. Selected-probe
+system colors are decided by narrow forced-mode tokens at `:root`, never component literals.
+
+Formation import separates source parsing (Review), candidate diagram selection
+(Preview), local draft addition (Add formations), and the later explicit Save.
+Successful Review subordinates retained source text and removes the competing
+parse action. Actual source edits invalidate that review; merely reopening source
+does not discard corrected names. Candidate conflicts remain associated with
+name fields, and Add validates the corrected candidates rather than reparsing
+unchanged source. Its destination names the acknowledged account's local draft,
+never a profile identity the editor does not receive.
+
+Setup import keeps source entry and completed review visually distinct. A valid
+review collapses the retained source/recipient controls, including an eligible
+ship-label correction and its instruction. Edit reveals the retained policy only
+for the source that required it, without changing review validity until actual
+input changes. Review hands self-disabling focus to the existing status while
+pending and advances to reviewed context only while focus is still owned.
+A summary without an accepted
+review ID is not authorization and must keep corrections reachable. The final
+action context names the proposed new profile and recipient character/account/base.
+Non-overwrite and cancellation safety remain visible, with the original complete
+review announcement retained in its existing live owner. After Create is sent,
+Back is not cancellation; its detached receipt still owns completion. Source and
+review stay private to the existing route lifetime. Setup sharing is independent
+and retains its accepted presentation and snapshot semantics.
+
+Both tools retain their existing work scrollers and normal-flow action siblings.
+Responsive wrapping must not turn previous-stage fields into clipped fragments,
+strand hidden focus, or cover controls with a second fixed or sticky surface.
+
 ## Words
 
 One name per concept, across every screen.

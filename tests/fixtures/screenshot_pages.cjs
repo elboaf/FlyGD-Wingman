@@ -36,6 +36,23 @@ const moduleName = data.key.startsWith('fittings-') ? 'fittings'
   : data.key === 'profiles-copy-scope' ? 'evesettings'
   : data.key.startsWith('settings-characters') ? 'characters'
   : crop ? 'previews' : data.key.includes('formations') ? 'formations' : 'uisetup';
+// Model native bubbling focusin for this capture's real row-selection handler.
+// Keep this local: other page harnesses retain their own DOM mechanics.
+if (moduleName === 'formations') {
+  const setAttribute = Element.prototype.setAttribute;
+  Element.prototype.setAttribute = function (name, value) {
+    setAttribute.call(this, name, value);
+    if (name === 'class') this.className = String(value);
+  };
+  const focus = Element.prototype.focus;
+  Element.prototype.focus = function () {
+    const changed = document.activeElement !== this;
+    focus.call(this);
+    if (changed) for (let node = this; node; node = node.parentNode) {
+      node.dispatchEvent({type: 'focusin', target: this});
+    }
+  };
+}
 run(fs.readFileSync(web + '/' + moduleName + '.js', 'utf8'));
 const tick = () => new Promise(resolve => setTimeout(resolve, 10));
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return {promise, resolve}; };
@@ -725,6 +742,24 @@ async function fidelityRegression() {
     if (crop) WM.settingsTab('previews', 'wanderer');
     run(data.stage); await tick();
     run(data.verify);
+    if (data.key === 'profiles-formations') {
+      assert.equal(document.activeElement?.getAttribute('aria-label'), 'Probe 2 West km',
+        'the selected-probe capture must explicitly focus a numbered probe, not add a production default');
+      assert.equal(WM.el('fm-probes').querySelector('.selected').getAttribute('data-probe-index'), '1');
+      const marker = WM.el('fm-preview').querySelector('.fm-probe.selected');
+      assert.equal(marker.getAttribute('data-probe-index'), '1');
+      marker.setAttribute('data-probe-index', '0');
+      assert.throws(() => run(data.verify), /Screenshot content did not settle/, 'a mismatched selected marker is not capture-ready');
+      marker.setAttribute('data-probe-index', '1');
+    } else if (data.key === 'profiles-formations-import') {
+      WM.el('fm-import-review').hidden = false;
+      assert.throws(() => run(data.verify), /Screenshot content did not settle/, 'completed review must not compete with parse Review');
+      WM.el('fm-import-review').hidden = true;
+    } else if (data.key === 'profiles-setup-import') {
+      WM.el('setup-recipient').hidden = false;
+      assert.throws(() => run(data.verify), /Screenshot content did not settle/, 'review capture must not retain entry-form fragments');
+      WM.el('setup-recipient').hidden = true;
+    }
     if (crop) {
       const panel = WM.el('settings-previews-characters');
       assert.equal(panel.hidden, false, 'crop staging must select Characters before framing');
