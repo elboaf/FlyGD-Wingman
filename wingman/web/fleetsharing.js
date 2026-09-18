@@ -387,6 +387,14 @@
       : (explanations[readiness] || (observed.enabled ? 'On for your account.' : 'Off for your account.'))
         + (pending || (auto && auto.stage === 'queued') ? ' A saved or queued choice is not yet confirmed.' : '')
         + (pending && pending.cancellation_pending ? ' Off will follow only the receipt for this pending On.' : ''));
+    var legacy = setupControl && setupControl.cutover || [];
+    var unresolvedLegacy = legacy.filter(function (item) { return item.status === 'fenced'; }).length;
+    WM.el('sharing-legacy-history').hidden = !legacy.length;
+    text('sharing-legacy-summary', legacy.length + ' saved setup records; ' + unresolvedLegacy + ' unresolved.');
+    WM.el('sharing-legacy-dismiss').hidden = !unresolvedLegacy;
+    WM.el('sharing-legacy-remove').hidden = !!unresolvedLegacy;
+    WM.el('sharing-legacy-dismiss').disabled = !state.available;
+    WM.el('sharing-legacy-remove').disabled = !state.available;
     text('sharing-setup-history', setupControl && (setupControl.source_requests || setupControl.participation_pending || setupControl.automatic_pending || setupControl.cutover.length)
       ? 'Saved requests remain. Resolve or explicitly acknowledge them before Fresh setup; they are not server cancellations.' : '');
   }
@@ -568,6 +576,14 @@
   WM.el('sharing-automatic').addEventListener('change', function () { if (!WM.el('sharing-automatic').disabled) automaticChoice(WM.el('sharing-automatic').checked); });
   WM.el('sharing-automatic-confirm').addEventListener('click', function () { automaticChoice(true); });
   WM.el('sharing-automatic-cancel').addEventListener('click', function () { if (!WM.el('sharing-automatic-cancel').disabled) automaticChoice(false); });
+  WM.el('sharing-legacy-dismiss').addEventListener('click', function () {
+    setupAction('fleet_sharing_setup', 'dismiss_legacy', setupControl, 'Dismiss saved requests?',
+      'Acknowledge the displayed unresolved records from the older client. Their server outcomes remain unknown. This does not turn sharing or verification Off.');
+  });
+  WM.el('sharing-legacy-remove').addEventListener('click', function () {
+    setupAction('fleet_sharing_setup', 'remove_legacy', setupControl, 'Remove dismissed history?',
+      'Remove the displayed legacy archive from this PC. This cannot be undone and does not cancel server actions.');
+  });
   WM.el('sharing-automatic-dismiss').addEventListener('click', function () {
     setupAction('fleet_sharing_automatic', 'dismiss', automaticControl, 'Acknowledge unresolved request',
       'Remove this local automatic request only after the worker can safely retire it? This does not turn server consent Off. An attempted On waits for authenticated expiry proof.');

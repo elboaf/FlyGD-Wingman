@@ -1286,6 +1286,12 @@
         <p class="hint">An always-on-top view of your clients' combat activity, independent of previews and alerts.</p>
         <p class="hint">Local display only. Hiding the bar does not turn sharing Off or Stop verification.</p>
         <p class="field-msg" id="fleetbar-enabled-status" role="status"></p>
+        <div class="setting-row">
+          <label class="check"><input type="checkbox" id="fleetbar-hide-inactive" disabled><span class="box"></span>
+            Only show characters active in the last 30 seconds
+          </label>
+        </div>
+        <p class="hint">This filters the display only. Quiet characters stay in your character list and continue to be monitored.</p>
         <div class="row">
           <button class="btn" id="fleetbar-reset">Reset Fleet Bar width</button>
           <span class="hint">Puts Fleet Bar back to its default 500px content width.</span></div>
@@ -1339,6 +1345,15 @@
           <button class="btn" id="sharing-automatic-dismiss" hidden>Acknowledge unresolved automatic request…</button>
         </div>
         <p class="hint" id="sharing-setup-history" role="status"></p>
+        <details id="sharing-legacy-history" class="fleet-characters" hidden>
+          <summary>Saved setup history</summary>
+          <p class="hint" id="sharing-legacy-summary"></p>
+          <p class="hint">Requests saved by an older version cannot be replayed. Dismissing an unresolved request acknowledges that its outcome is unknown; it does not cancel an action on authGD.</p>
+          <div class="row">
+            <button class="btn" id="sharing-legacy-dismiss">Dismiss saved requests…</button>
+            <button class="btn" id="sharing-legacy-remove" hidden>Remove dismissed history…</button>
+          </div>
+        </details>
         <h3>Current and pending verification</h3>
         <p class="hint" id="sharing-source-status">Verification state is not known yet.</p>
         <div class="sharing-sources" id="sharing-sources"></div>

@@ -130,6 +130,7 @@ def test_defaults_are_the_documented_values():
             "x": None,
             "y": None,
             "preferred_content_width": 500,
+            "hide_inactive": False,
             "seen": [],
             "hidden": [],
         },
@@ -260,6 +261,7 @@ def test_save_then_load_roundtrips(tmp_path):
         "x": -320,
         "y": 48,
         "preferred_content_width": 500,
+        "hide_inactive": False,
         "seen": [],
         "hidden": [],
     }

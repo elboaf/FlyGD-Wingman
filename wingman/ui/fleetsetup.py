@@ -14,7 +14,7 @@ def _fingerprint(value):
     return hashlib.sha256(raw.encode("ascii")).hexdigest()
 
 
-def controls(status):
+def controls(status, *, configured_origin=None):
     automatic = status.automatic
     pending = automatic.pending
     observed = status.automatic_status
@@ -51,6 +51,7 @@ def controls(status):
         "automatic": automatic_view,
         "setup": {
             "binding": status.metadata.binding,
+            "configured_origin": configured_origin,
             "combat_approved": COMBAT_CAPABILITY
             in (status.metadata.approved_capabilities or ()),
             "history": _fingerprint(

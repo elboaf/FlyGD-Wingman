@@ -746,10 +746,14 @@ def test_effect_and_name_expiry_retire_captured_delivery_on_existing_owner(tmp_p
         api._sigbar_window,
         api._fleetbar_window,
     )
-    mono[0] = 101.0  # A expires, unknown SCRAM remains: no new name UI.
+    mono[0] = 101.0  # A expires independently; unknown SCRAM remains.
     api._fleet_worker.iterate_once()
     third = api.fleet_bar_snapshot(PAGE_A)
-    assert third["rows"] == second["rows"]
+    assert second["rows"][0]["ewar_sources"] == ["SCRAM: A"]
+    assert "ewar_sources" not in third["rows"][0]
+    assert third["rows"] == [
+        {k: v for k, v in row.items() if k != "ewar_sources"} for row in second["rows"]
+    ]
     assert third["revision"] > second["revision"] > first["revision"]
     assert not api._fleet_delivery_current(captured)
     mono[0] = 102.0

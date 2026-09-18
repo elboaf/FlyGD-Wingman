@@ -72,6 +72,39 @@ def test_queued_automatic_on_can_be_cancelled_before_its_first_save(tmp_path):
     api.shutdown_fleet_sharing()
 
 
+def test_legacy_history_requires_displayed_dismissal_then_explicit_removal(tmp_path):
+    from tests.test_fleetsharing_worker_state4 import FileStore, legacy_file
+
+    legacy = FileStore(tmp_path / "legacy.json")
+    original = legacy_file(legacy)
+    api, worker, _, store, mono, _ = ready(tmp_path, state=legacy.load())
+    captured = shown(api, "setup")
+    assert not api.fleet_sharing_setup("fresh", captured, True)["queued"]
+    assert api.fleet_sharing_setup("dismiss_legacy", captured)["queued"]
+    drive(worker, mono, 8)
+    saved = store.load()
+    assert saved.cutover.original == original
+    assert all(item.status != "fenced" for item in saved.cutover.outcomes)
+    assert not api.fleet_sharing_setup("remove_legacy", captured)["queued"]
+    assert api.fleet_sharing_setup("remove_legacy", shown(api, "setup"))["queued"]
+    drive(worker, mono, 8)
+    assert store.load().cutover is None
+    assert store.load().identity == saved.identity
+    api.shutdown_fleet_sharing()
+
+
+def test_fresh_observation_binds_displayed_configured_server(tmp_path, monkeypatch):
+    api, worker, _, _, _, _ = ready(tmp_path)
+    old = shown(api, "setup")
+    monkeypatch.setattr(
+        "wingman.fleetsharing.config.resolve_relay_origin",
+        lambda **_: "https://other.test",
+    )
+    assert not api.fleet_sharing_setup("fresh", old, True)["queued"]
+    assert not worker._commands
+    api.shutdown_fleet_sharing()
+
+
 def test_setup_observation_rejects_history_changed_since_render(tmp_path):
     api, worker, _, _, _, _ = ready(tmp_path)
     original = shown(api, "setup")

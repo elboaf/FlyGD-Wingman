@@ -59,6 +59,21 @@ _L_COUNT, _V_COUNT, _T_COUNT = 19, 21, 28
 _N_COUNT = _V_COUNT * _T_COUNT
 _S_COUNT = _L_COUNT * _N_COUNT
 
+# If none of these scalars occur, there is no decomposition, reordering, or
+# composition to perform. Include class-zero composition tails and algorithmic
+# Hangul too — checking combining classes alone would miss both. Derived only
+# from the frozen profile, never host Unicode tables or cached observations.
+_nfc_work = frozenset(
+    (
+        *_decomposition,
+        *_combining_class,
+        *(second for _, second in _composition),
+        *range(_S_BASE, _S_BASE + _S_COUNT),
+        *range(_V_BASE, _V_BASE + _V_COUNT),
+        *range(_T_BASE + 1, _T_BASE + _T_COUNT),
+    )
+)
+
 
 def _forbidden(cp: int) -> bool:
     index = bisect_right(_forbidden_starts, cp) - 1
@@ -103,6 +118,9 @@ def _compose(first: int, second: int) -> int | None:
 
 
 def _nfc(codepoints: Iterable[int]) -> str:
+    codepoints = tuple(codepoints)
+    if _nfc_work.isdisjoint(codepoints):
+        return "".join(map(chr, codepoints))
     decomposed: list[int] = []
     for cp in codepoints:
         _decompose(cp, decomposed)

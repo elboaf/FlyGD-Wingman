@@ -312,16 +312,17 @@
     sharing.setup_controls = sharingSetupControls();
     return JSON.parse(JSON.stringify(sharing));
   }
+  var sharingLegacy = devSearch.get('sharing-history') === 'legacy' ? [{selector: 'session', status: 'fenced'}] : [];
   function sharingSetupControls() {
     var approved = sharing.metadata.approved_capabilities || [];
     return {automatic: {binding:sharing.metadata.binding,
       observed:sharing.metadata.binding ? {generation:sharingAutoGeneration,revision:sharingAutoRevision,
         enabled:sharing.automatic.enabled,approver:sharingAutoGeneration ? 'this_device' : 'none'} : null,
       pending:null,stage:sharing.automatic_stage,choice:null,request:'dev-only',history:String(sharingAutoRevision)},
-      setup:{binding:sharing.metadata.binding,combat_approved:approved.indexOf('combat-v2') !== -1,
+      setup:{binding:sharing.metadata.binding,configured_origin:sharing.configured_origin,combat_approved:approved.indexOf('combat-v2') !== -1,
         history:String(sharingAutoRevision),pairing_pending:false,recovery_pending:false,
         automatic_enabled:sharing.automatic.enabled,automatic_pending:false,participation_pending:false,
-        source_requests:sharing.pending_sources.length,cutover:[]}};
+        source_requests:sharing.pending_sources.length,cutover:sharingLegacy}};
   }
   api.fleet_sharing_automatic = function (operation, observation) {
     sharingCalls.push(['automatic', operation, observation]);
@@ -340,6 +341,18 @@
     sharingCalls.push(['setup', operation, observation]);
     if (JSON.stringify(observation) !== JSON.stringify(sharingSetupControls().setup)) {
       return Promise.resolve({queued:false,error:'Connection history changed. Refresh and review again.'});
+    }
+    if (operation === 'dismiss_legacy' || operation === 'remove_legacy') {
+      if (!sharingLegacy.length) return Promise.resolve({queued:false,error:'No saved legacy history.'});
+      if (operation === 'remove_legacy' && sharingLegacy.some(function (item) { return item.status === 'fenced'; })) {
+        return Promise.resolve({queued:false,error:'Dismiss unresolved requests first.'});
+      }
+      sharingLegacy = operation === 'remove_legacy' ? [] : sharingLegacy.map(function (item) {
+        return {selector:item.selector,status:'dismissed'};
+      });
+      sharing.presentation_order = ++sharingPresentationOrder;
+      window.onFleetSharingState(sharingCopy());
+      return Promise.resolve({queued:true,state:sharingCopy()});
     }
     if (operation === 'combat') {
       sharing.metadata.approved_capabilities = ['shared-source-v1','combat-v2'];
@@ -454,6 +467,7 @@
   function fleetBarState() {
     return {
       enabled: fleetBar.enabled,
+      hide_inactive: !!fleetBar.hide_inactive,
       x: fleetBar.x,
       y: fleetBar.y,
       seen: fleetBar.seen.slice(),
@@ -2430,6 +2444,12 @@
     return Promise.resolve(fleetBarReadFails ? null : fleetBarState());
   };
 
+  api.fleet_bar_set_hide_inactive = function (enabled) {
+    fleetBar.hide_inactive = !!enabled; fleetBar.revision += 1;
+    if (window.onFleetBarState) window.onFleetBarState(fleetBarState());
+    return Promise.resolve({applied:true,persisted:true,error:null,state:fleetBarState()});
+
+  };
   api.toggle_fleet_bar = function (enabled) {
     console.log('DEV api.toggle_fleet_bar(', enabled, ')');
     if (fleetBar.enabled !== !!enabled) {

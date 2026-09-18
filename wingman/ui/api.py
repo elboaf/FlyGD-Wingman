@@ -438,6 +438,7 @@ class Api:
         self._fleet_clock = fleet_clock
         self._remote_fleet = RemoteFleetStore()
         self._remote_display_signature = ()
+        self._local_combat_signature = ()
         self._remote_context = None
         self._remote_context_order = -1
         self._remote_order = -1
@@ -2581,6 +2582,7 @@ class Api:
             "y": section.get("y"),
             "preferred_content_width": section.get("preferred_content_width"),
             "resize_enabled": self._fleetbar_resize_enabled,
+            "hide_inactive": bool(section.get("hide_inactive")),
             "seen": list(section.get("seen") or ()),
             "hidden": list(section.get("hidden") or ()),
             "revision": revision,
@@ -2589,8 +2591,12 @@ class Api:
         return payload
 
     def _fleet_display_payload_locked(
-        self, snapshot, section: dict, revision: int, remote_rows
+        self, snapshot, section: dict, revision: int, remote_rows, now=None
     ) -> dict:
+        from ..telemetry.combat import combat_row_visible
+        from .fleetcombat import labels, local_effects
+
+        now = self._fleet_clock() if now is None else now
         local_rows = () if snapshot is None else snapshot.rows
         ids = (
             verified_character_ids(self._fleet_catalogue)
@@ -2601,20 +2607,30 @@ class Api:
         # is still authoritative; an unverified name is not an identity match.
         local_ids = {ids.get(row.character.strip().casefold()) for row in local_rows}
         hidden = set(section.get("hidden") or ())
-        rows = [
-            {
-                "character": row.character,
-                "outgoing_dps": row.dps,
-                "incoming_dps": row.incoming_dps,
-                "ewar": list(row.ewar),
-                "log_status": row.log_status,
-            }
-            for row in local_rows
-            if row.character not in hidden
-        ]
+        rows = []
+        inactive = 0
+        for row in local_rows:
+            if row.character in hidden:
+                continue
+            if section.get("hide_inactive") and not combat_row_visible(
+                row, now_mono=now
+            ):
+                inactive += 1
+                continue
+            ewar, names = local_effects(row, now)
+            rows.append(
+                {
+                    "character": row.character,
+                    "outgoing_dps": row.dps,
+                    "incoming_dps": row.incoming_dps,
+                    "ewar": ewar,
+                    "log_status": row.log_status,
+                    **names,
+                }
+            )
         if section.get("enabled"):
-            # Keep unknown directional values distinct from measured zero.
-            # Observed names stay internal; only surviving kinds reach this page.
+            # Keep unknown directional values distinct from measured zero;
+            # only independently unexpired observations reach the tooltip.
             rows.extend(
                 {
                     "character": row.character_name,
@@ -2628,6 +2644,11 @@ class Api:
                             for effect in row.effects
                         )
                     ),
+                    **labels(
+                        (effect.kind, name)
+                        for effect in row.effects
+                        for name in effect.observations
+                    )[1],
                     "log_status": None,
                     "remote": True,
                     "state": row.state,
@@ -2638,6 +2659,7 @@ class Api:
         return {
             "rows": rows,
             "running_count": len(local_rows),
+            **({"inactive_filtered": inactive} if section.get("hide_inactive") else {}),
             "revision": revision,
             "stream_health": {
                 "state": snapshot.stream_health.state if snapshot else "stopped",
@@ -2647,7 +2669,18 @@ class Api:
         }
 
     def _refresh_remote_fleet_locked(self, now=None):
-        rows = self._remote_fleet.current(self._fleet_clock() if now is None else now)
+        from .fleetcombat import signature
+
+        now = self._fleet_clock() if now is None else now
+        local = signature(
+            self._fleet_snapshot.rows if self._fleet_snapshot else (),
+            now,
+            bool(self._state.settings.get("fleet_bar", {}).get("hide_inactive")),
+        )
+        if local != self._local_combat_signature:
+            self._local_combat_signature = local
+            self._next_fleet_revision_locked()
+        rows = self._remote_fleet.current(now)
         # Display rows contain semantics only: both directions and surviving
         # effect/name observations, never receipt IDs or timing deadlines.
         if rows != self._remote_display_signature:
@@ -2656,13 +2689,14 @@ class Api:
         return rows
 
     def _fleet_payloads_locked(self, now=None) -> tuple[dict, dict]:
+        now = self._fleet_clock() if now is None else now
         remote_rows = self._refresh_remote_fleet_locked(now)
         section = dict(self._state.settings.get("fleet_bar") or {})
         revision = self._fleet_presentation_revision
         return (
             self._fleet_settings_payload_locked(section, revision),
             self._fleet_display_payload_locked(
-                self._fleet_snapshot, section, revision, remote_rows
+                self._fleet_snapshot, section, revision, remote_rows, now
             ),
         )
 
@@ -2914,6 +2948,14 @@ class Api:
             # Schedule from the SAME sample as the state/revision. A later
             # sample could cross stale and incorrectly wait until expiry.
             deadline = self._remote_fleet.next_transition(now)
+            from ..telemetry.combat import next_combat_transition
+
+            local_deadline = next_combat_transition(
+                self._fleet_snapshot.rows if self._fleet_snapshot else (), now_mono=now
+            )
+            deadline = min(
+                (v for v in (deadline, local_deadline) if v is not None), default=None
+            )
             if not self._fleet_display_dirty and not self._fleet_settings_dirty:
                 return deadline
             delivery = FleetDelivery(
@@ -3085,6 +3127,24 @@ class Api:
         if not stopped:
             logger.warning("Fleet presentation worker is still stopping")
         return stopped
+
+    def fleet_bar_set_hide_inactive(self, enabled) -> dict:
+        if type(enabled) is not bool:
+            return self._fleet_visibility_result(
+                False, "Choose whether to hide inactive characters."
+            )
+        try:
+            settings_mod.update_section(
+                self._state.settings, "fleet_bar", {"hide_inactive": enabled}
+            )
+        except OSError:
+            return self._fleet_visibility_result(
+                False, "Could not save the activity filter."
+            )
+        with self._fleet_presentation_lock:
+            self._next_fleet_revision_locked()
+        self._push_fleet_bar_state()
+        return self._fleet_visibility_result(True, None)
 
     def set_fleet_bar_character_visible(self, name, visible) -> dict:
         """Persist one exact character visibility choice without touching Preview."""
@@ -4351,7 +4411,9 @@ class Api:
             payload["controls"] = self._sharing_controls(status)
             from .fleetsetup import controls as setup_controls
 
-            payload["setup_controls"] = setup_controls(status)
+            payload["setup_controls"] = setup_controls(
+                status, configured_origin=resolve_relay_origin()
+            )
             payload.update(
                 available=self._fleet_sharing is not None and not self._sharing_closed,
                 enabled=self._sharing_enabled,
@@ -4497,7 +4559,8 @@ class Api:
         from .fleetsetup import controls
 
         if (
-            action not in ("combat", "fresh", "retry")
+            action
+            not in ("combat", "fresh", "retry", "dismiss_legacy", "remove_legacy")
             or type(use_configured_origin) is not bool
         ):
             return {"queued": False, "error": "Choose a setup action."}
@@ -4508,12 +4571,35 @@ class Api:
                 not available
                 or status is None
                 or not self._sharing_control_matches(
-                    observation, controls(status)["setup"]
+                    observation,
+                    controls(status, configured_origin=resolve_relay_origin())["setup"],
                 )
             ):
                 return {
                     "queued": False,
                     "error": "Connection history changed. Refresh and review it again.",
+                }
+            if action in ("dismiss_legacy", "remove_legacy"):
+                if action == "dismiss_legacy":
+                    results = [
+                        self._fleet_sharing.request_dismiss_cutover(
+                            item.selector, binding=observation["binding"]
+                        )
+                        for item in status.cutover_outcomes
+                        if item.status == "fenced"
+                    ]
+                    accepted = bool(results) and all(results)
+                else:
+                    accepted = self._fleet_sharing.request_remove_cutover(
+                        status.cutover_outcomes, binding=observation["binding"]
+                    )
+                self._start_fleet_sharing()
+                return {
+                    "queued": accepted,
+                    "error": None
+                    if accepted
+                    else "History changed. Refresh and review it again.",
+                    "state": self.fleet_sharing_state(),
                 }
             if action == "fresh" and (
                 status.pending_participation
