@@ -407,7 +407,10 @@
   // editor for the still-single selection -- nothing else re-fires
   // wm:selection on a route change.
   document.addEventListener('wm:route', function (ev) {
-    if (ev.detail === 'main') {
+    // WM.list is undefined in focused Node harnesses that load this module
+    // without the list route's stub (fittings screenshots dispatch
+    // wm:route); in the app list.js always loads first.
+    if (ev.detail === 'main' && WM.list) {
       var ids = WM.list.selectedIds();
       if (ids.length === 1) clipShow(ids[0]);
     } else if (!WM.el('clip-editor').hidden) {
