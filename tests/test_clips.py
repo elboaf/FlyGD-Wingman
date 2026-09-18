@@ -61,6 +61,79 @@ def test_keyframes_empty_on_failure(tmp_path):
     assert clips.keyframes(src, "ffprobe", runner=_raise) == []
 
 
+class _FakeProc:
+    def __init__(self, out="", returncode=0, fail_communicate=False):
+        self._out = out
+        self.returncode = returncode
+        self._fail_communicate = fail_communicate
+        self.killed = False
+        self.kill_count = 0
+
+    def communicate(self, timeout=None):
+        if self._fail_communicate:
+            raise subprocess.TimeoutExpired(cmd="ffprobe", timeout=timeout)
+        return self._out, ""
+
+    def poll(self):
+        return self.returncode if self.killed else None
+
+    def kill(self):
+        self.kill_count += 1
+        self.killed = True
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+
+def _spawn(proc):
+    def _spawner(cmd, **kw):
+        return proc
+
+    return _spawner
+
+
+def test_start_keyframes_finishes_with_parsed_keys(tmp_path):
+    src = tmp_path / "a.mkv"
+    src.write_bytes(b"x")
+    proc = _FakeProc(out="0.0\n2.5\n")
+    probe = clips.start_keyframes(src, "ffprobe", spawner=_spawn(proc))
+    assert probe is not None
+    assert probe.finish() == [0.0, 2.5]
+    assert not proc.killed
+
+
+def test_a_timed_out_probe_is_killed_and_answers_empty(tmp_path):
+    """The reason the probe is cancellable: a 60-second decode holding the
+    recording open must end the moment the caller stops waiting, not keep
+    the file locked behind the timeout."""
+    src = tmp_path / "a.mkv"
+    src.write_bytes(b"x")
+    proc = _FakeProc(fail_communicate=True)
+    probe = clips.start_keyframes(src, "ffprobe", spawner=_spawn(proc))
+    assert probe.finish(timeout=0.01) == []
+    assert proc.killed
+
+
+def test_kill_is_idempotent_and_tolerates_a_dead_process(tmp_path):
+    src = tmp_path / "a.mkv"
+    src.write_bytes(b"x")
+    proc = _FakeProc()
+    probe = clips.start_keyframes(src, "ffprobe", spawner=_spawn(proc))
+    probe.kill()
+    probe.kill()
+    assert proc.kill_count == 1
+
+
+def test_start_keyframes_returns_none_when_ffprobe_is_missing(tmp_path):
+    src = tmp_path / "a.mkv"
+    src.write_bytes(b"x")
+
+    def _raise(cmd, **kw):
+        raise FileNotFoundError("ffprobe")
+
+    assert clips.start_keyframes(src, "ffprobe", spawner=_raise) is None
+
+
 def test_snap_start_never_moves_the_marker_later():
     """The one direction that matters: a clip may begin EARLY (the cut
     opens on the keyframe that owns the marker's GOP), never after the

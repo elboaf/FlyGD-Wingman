@@ -30,6 +30,92 @@ class ClipError(RuntimeError):
     """ffmpeg failed to produce the clip."""
 
 
+def _keyframes_cmd(path: Path, ffprobe_bin: str) -> list[str]:
+    return [
+        ffprobe_bin,
+        "-v",
+        "error",
+        "-skip_frame",
+        "nokey",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "frame=pts_time",
+        "-of",
+        "csv=p=0",
+        str(path),
+    ]
+
+
+def _parse_keys(stdout: str) -> list[float]:
+    keys = []
+    for line in stdout.splitlines():
+        try:
+            keys.append(float(line.strip()))
+        except ValueError:
+            continue
+    return sorted(set(keys))
+
+
+class KeyframeProbe:
+    """One live ffprobe keyframe walk that its owner can stop.
+
+    `keyframes()` suits a caller already willing to wait out the decode,
+    but the probe can run a full 60 seconds on a long recording while
+    holding the file open, and a delete of the same recording must not
+    lose that race. The clip editor's controller therefore holds the live
+    process and kills it before any delete of the covered path.
+    """
+
+    def __init__(self, proc, path: Path):
+        self._proc = proc
+        self.path = path
+
+    def finish(self, timeout: float = _PROBE_TIMEOUT_S) -> list[float]:
+        """Wait out the probe and return its keyframes ([] on any failure)."""
+        try:
+            out, _ = self._proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            logger.warning("Keyframe probe timed out for %s", self.path)
+            self.kill()
+            return []
+        except (OSError, ValueError):
+            # A concurrent kill() can close the pipes under communicate().
+            return []
+        if self._proc.returncode != 0:
+            return []
+        return _parse_keys(out)
+
+    def kill(self, timeout: float = 5.0) -> None:
+        """Stop the probe and release its file handle. Idempotent."""
+        try:
+            if self._proc.poll() is None:
+                self._proc.kill()
+            self._proc.wait(timeout=timeout)
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            logger.warning(
+                "Keyframe probe stop failed for %s", self.path, exc_info=True
+            )
+
+
+def start_keyframes(
+    path: Path, ffprobe_bin: str, spawner=subprocess.Popen
+) -> "KeyframeProbe | None":
+    """Spawn the keyframe walk without waiting for it. None on spawn failure."""
+    try:
+        proc = spawner(
+            _keyframes_cmd(path, ffprobe_bin),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            **_NO_WINDOW_KWARGS,
+        )
+    except OSError:
+        logger.warning("Keyframe probe could not start for %s", path, exc_info=True)
+        return None
+    return KeyframeProbe(proc, path)
+
+
 def keyframes(path: Path, ffprobe_bin: str, runner=subprocess.run) -> list[float]:
     """Keyframe timestamps of the first video stream, in seconds.
 
@@ -42,20 +128,7 @@ def keyframes(path: Path, ffprobe_bin: str, runner=subprocess.run) -> list[float
     """
     try:
         result = runner(
-            [
-                ffprobe_bin,
-                "-v",
-                "error",
-                "-skip_frame",
-                "nokey",
-                "-select_streams",
-                "v:0",
-                "-show_entries",
-                "frame=pts_time",
-                "-of",
-                "csv=p=0",
-                str(path),
-            ],
+            _keyframes_cmd(path, ffprobe_bin),
             capture_output=True,
             text=True,
             timeout=_PROBE_TIMEOUT_S,
@@ -66,13 +139,7 @@ def keyframes(path: Path, ffprobe_bin: str, runner=subprocess.run) -> list[float
         return []
     if result.returncode != 0:
         return []
-    keys = []
-    for line in result.stdout.splitlines():
-        try:
-            keys.append(float(line.strip()))
-        except ValueError:
-            continue
-    return sorted(set(keys))
+    return _parse_keys(result.stdout)
 
 
 def snap_start(start: float, keys: list[float], duration: float) -> float:

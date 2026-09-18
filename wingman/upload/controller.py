@@ -354,6 +354,11 @@ class UploaderController:
         # different question. Nothing here uploads.
         self._stitch_thread: threading.Thread | None = None
         self._clip_thread: threading.Thread | None = None
+        # Live clip-editor keyframe probes. Each is a spawned ffprobe that
+        # can run the full decode timeout while holding the recording
+        # open; deletes of covered paths must be able to stop them.
+        self._probe_lock = threading.Lock()
+        self._probes: list = []
         # The standalone combat-log post, and Play. Separate handles rather
         # than one "work" slot because each answers a different question:
         # busy() (an upload, which a list rebuild would damage and Quit
@@ -571,6 +576,10 @@ class UploaderController:
             confirm_label=f"Delete {len(infos)} {'file' if len(infos) == 1 else 'files'}",
         ):
             return
+        # Stop any keyframe probe reading these files first -- a probe can
+        # hold a recording open for the whole decode timeout, and the
+        # delete would lose that race.
+        self._kill_probes_for({i.path for i in infos})
         deleted, failures = library.delete([i.path for i in infos])
         # Forget only what actually went. A file that failed to delete still
         # exists, and dropping its seen-entry would make the watcher
@@ -1336,11 +1345,46 @@ class UploaderController:
         An empty list means "no usable keys known" -- the page then falls
         back to a plain timeline and ffmpeg's own seek finds a cut point,
         which is exactly clips.keyframes' contract.
+
+        The probe is spawned, not run to completion inline, and kept on
+        _probes until it answers: on a long recording the decode can run
+        the full 60-second timeout while ffprobe holds the file open, and
+        a delete of that same recording (this controller's own
+        _delete_worker) stops the probe first -- the previously silent
+        "preview is open, delete does nothing" failure.
         """
         info = self._rows.resolve(row_id)
         if info is None or not info.path.exists():
             return {"keys": []}
-        return {"keys": clips.keyframes(info.path, self._state.ffprobe_bin)}
+        probe = clips.start_keyframes(info.path, self._state.ffprobe_bin)
+        if probe is None:
+            return {"keys": []}
+        with self._probe_lock:
+            self._probes.append(probe)
+        try:
+            return {"keys": probe.finish()}
+        finally:
+            with self._probe_lock:
+                if probe in self._probes:
+                    self._probes.remove(probe)
+
+    def _kill_probes_for(self, paths: set[Path]) -> None:
+        """Stop any live keyframe probe reading one of `paths`.
+
+        ffprobe opens without delete-sharing, so a delete racing a probe
+        loses for as long as the decode runs -- up to the full 60s
+        timeout. Kills happen outside the lock: a probe's bridge thread
+        is parked in communicate() and only needs the process to die. The
+        probe leaves the registry here rather than in clip_keyframes'
+        finally -- the parked bridge call wakes to an answer it no longer
+        owns, and its finally's remove is a no-op on a missing entry.
+        """
+        with self._probe_lock:
+            doomed = [p for p in self._probes if p.path in paths]
+            for probe in doomed:
+                self._probes.remove(probe)
+        for probe in doomed:
+            probe.kill()
 
     def cut_clip(self, row_id: str, start, end) -> None:
         """Cut [start, end] out of one recording with a keyframe copy.

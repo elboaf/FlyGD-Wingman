@@ -97,6 +97,51 @@ def test_only_files_that_actually_went_are_forgotten_by_the_watcher(
     }
 
 
+class _FakeProbe:
+    def __init__(self, path):
+        self.path = path
+        self.kill_calls = 0
+
+    def kill(self, timeout=5.0):
+        self.kill_calls += 1
+
+
+def test_delete_stops_a_live_keyframe_probe_on_the_same_file(tmp_path):
+    """Selecting a recording starts an ffprobe that can run the full 60s
+    decode timeout while holding the file open without delete-sharing;
+    without this kill, deleting the previewed file lost that race and the
+    delete silently reported one failure."""
+    api, _window, rows = api_with(tmp_path)
+    api._confirm = fakes.Answers(answer=True)
+    probe = _FakeProbe(rows["r0"].path)
+    other = _FakeProbe(rows["r1"].path)
+    api._uploader._probes.extend([probe, other])
+
+    api.delete_selected(["r0"])
+    join_delete(api)
+
+    assert probe.kill_calls == 1
+    assert other.kill_calls == 0
+    assert not (tmp_path / "a.mkv").exists()
+    # The killed probe is gone from the registry; the untouched one stays.
+    assert api._uploader._probes == [other]
+
+
+def test_declining_a_delete_leaves_the_probe_running(tmp_path):
+    """The kill is part of the delete, not of the confirm: a user who backs
+    out keeps their preview's keyframe snapping."""
+    api, _window, rows = api_with(tmp_path)
+    api._confirm = fakes.Answers(answer=False)
+    probe = _FakeProbe(rows["r0"].path)
+    api._uploader._probes.append(probe)
+
+    api.delete_selected(["r0"])
+    join_delete(api)
+
+    assert probe.kill_calls == 0
+    assert (tmp_path / "a.mkv").exists()
+
+
 def test_copy_returns_the_link_and_reports_it(tmp_path):
     """The name is historical: what a row offers to copy or open is the
     YouTube link it earned, which is why both are inert before an upload."""
