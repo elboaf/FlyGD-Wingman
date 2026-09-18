@@ -423,10 +423,9 @@
       action('fleet_sharing_automatic', cancel ? 'cancel' : 'off', detached(automaticControl));
       return;
     }
-    setupAction('fleet_sharing_automatic', cancel ? 'cancel' : value ? 'on' : 'off', automaticControl,
-      value ? 'Automatic boss verification' : 'Turn automatic verification Off',
-      value ? 'Allow authGD to find and verify your owned fleet boss across restarts and future fleets? This affects your account, not just this PC. It does not turn telemetry sharing On.'
-        : 'Stop automatic verification for your account. A pending On will be cancelled using its own receipt; local sharing preference stays unchanged.');
+    setupAction('fleet_sharing_automatic', 'on', automaticControl,
+      'Automatic boss verification',
+      'Allow authGD to find and verify your owned fleet boss across restarts and future fleets? This affects your account, not just this PC. It does not turn telemetry sharing On.');
   }
   function paint() {
     if (!state || !visible()) return;
