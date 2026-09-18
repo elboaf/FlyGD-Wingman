@@ -127,7 +127,15 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         if not send_body:
             return
-        with _open_shared(path) as f:
+        try:
+            f = _open_shared(path)
+        except FileNotFoundError:
+            # A delete can land between the is_file() check above and this
+            # open -- deletion under a live preview is now the expected
+            # path, so the losing fetch is a plain 404, not a traceback.
+            self.send_error(404)
+            return
+        with f:
             f.seek(start)
             remaining = length
             while remaining > 0:
