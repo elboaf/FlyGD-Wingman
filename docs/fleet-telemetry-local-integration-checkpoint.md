@@ -1,5 +1,12 @@
 # Local fleet integration checkpoint — partial acceptance
 
+> Historical checkpoint at `9135cb25`. The subsequently approved control
+> continuation resolves all 17 recorded failures; its fresh full suite passes
+> 16,236 tests with 13 Windows-only skips. See
+> [the controls checkpoint](fleet-telemetry-controls-checkpoint.md) for current
+> acceptance and remaining UI/platform/cutover limits. The evidence below is
+> preserved as the original partial checkpoint, not a current failure count.
+
 ## Scope and lineage
 
 Branch: `integrate/fleet-v2-runtime`, linked worktree

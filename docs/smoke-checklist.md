@@ -3090,7 +3090,10 @@ for the synthetic render pass.
 - [ ] Connect/upgrade opens only this explicit action's saved approval URL,
       once. Restart, hydration, expiry, and generic 401 recovery open no browser.
       Fresh setup asks about new-key/old-pending-intent consequences and is
-      admitted only after worker proof or an explicit configured-origin change.
+      admitted only after worker proof or an explicit configured-origin change,
+      and only when retained control/automatic history permits it. Fresh setup
+      must not implicitly acknowledge that history; its disposition UI remains
+      a separate, unfinished workflow.
 - [ ] Use an owned boss with missing Fleet Read. The browser goes only to the
       paired origin's `/auth/eve/fleet-read?character=<owned-id>`. A different
       browser account asks for the correct account, never replacement keys.
@@ -3105,7 +3108,9 @@ for the synthetic render pass.
 - [ ] Check empty, 256-character, unavailable, feature-disabled, paused, revoked,
       ended and unknown-source states. Eligible IDs are distinct from the boss
       selector. Unknown pending UUIDs remain stoppable; one source's response
-      never acknowledges another. An expired unobserved Start names its UUID.
+      never acknowledges another. An expired unobserved Start retains its UUID
+      and says “Start saved; outcome unconfirmed”, without replay or a fabricated
+      terminal-success result.
       A capacity-refused Start (`DEV.fleetSharing('rejected')` in the isolated
       harness) says “Start not saved”, not expired or saved; its UUID remains
       visible and its Stop is disabled. Existing pending sources stay stoppable.
@@ -3113,12 +3118,25 @@ for the synthetic render pass.
       Watch refresh preserves selector selection and Stop focus. A queued On
       leaves Off reachable even while preference saving is held. A failed save
       leaves the actual session choice visible with a restart-risk warning.
+- [ ] On and Stop confirm the state displayed when clicked. While a dialog is
+      open, deliver a changed participation/source generation, automatic binding
+      or pending intent. Confirming must submit the original observation and
+      visibly refuse stale authority, never substitute the newer values. A
+      refused On explanation survives identical and newer unrelated pushes;
+      an explicit retry replaces it. Neither action enables automatic consent.
+- [ ] Leave the section, change binding or enter screenshot staging while an
+      On/Stop dialog is open. Its late answer must not submit. A newer Off
+      inhibits immediately and cannot be overwritten by an old On reply. A
+      repeated pending Stop retains the original request UUID, time and CAS.
 - [ ] Sharing On reconciles local telemetry without restarting Wingman. Restart
       recovers pending Off/Stop with the same IDs even while the preference is
       Off. Quit closes delivery/watch, detaches subscribers, then bounded-stops
       sharing before telemetry; a still-stopping worker is not replaced.
 - [ ] Hiding EVE tools refuses while sharing, pending actions, live sources or
-      unknown bound source state need controls. Enabling EVE tools stays usable.
+      unknown bound source state need controls. Pending/enabled/unknown automatic
+      authority and unresolved cutover/participation also keep controls visible;
+      inert settled history alone does not. Local sharing Off does not disable
+      automatic verification consent. Enabling EVE tools stays usable.
 - [ ] **Real installed-window scaling remains required:** repeat at the actual
       840×625 / 839×621 CSS floors on Windows at 100/125/150/200%, without CSS
       zoom. The Task 8 artifact records Chrome plus an isolated pywebview 6.2.1
@@ -3156,7 +3174,8 @@ Record browser evidence separately from installed Windows/WebView2 acceptance.
       disclosure, not an empty heading.
 - [ ] `DEV.fleetSharing('history-only')`: reported expiry and an explicit next
       action remain visible outside history. `ended` says stopped, not untouched
-      setup; `expired`/`rejected` retain local Start failure guidance. No label
+      setup; `expired` retains unconfirmed Start history, while `rejected` says
+      the Start was not saved. No label
       claims to identify the latest attempt by UUID or array order.
 - [ ] `history-pending-start` and `history-pending-stop` keep the pending command
       visible despite its ended observation, including mixed-case source IDs.
