@@ -96,6 +96,9 @@
   // Review geometry remains canonical meters, separate from the draft. Attempts
   // never reset: editing text/names, cancelling, or leaving invalidates replies.
   var importReview = null, importAttempt = 0;
+  // Page-only association, never a draft edit. The object guard prevents a
+  // removal before this index from silently selecting its successor.
+  var selectedProbe = null;
   var yaw = 0.6, pitch = 0.4, dragging = false, lastX = 0, lastY = 0;
 
   function probe(x, y, z) { return { x: x, y: y, z: z, range: 32 }; }
@@ -145,6 +148,26 @@
   function round3(v) { return Math.round(v * 1000) / 1000; }
   function markDirty() { state.dirty = true; revision += 1; paintCommit(); }
 
+  function selectedProbeIndex() {
+    var f = current();
+    if (selectedProbe && (importReview || selectedProbe.formation !== f
+        || !f || f.probes[selectedProbe.index] !== selectedProbe.probe)) {
+      selectedProbe = null;
+    }
+    return selectedProbe ? selectedProbe.index : -1;
+  }
+
+  function paintProbeSelection() {
+    var index = selectedProbeIndex();
+    Array.prototype.forEach.call(WM.el('fm-probes').children, function (row) {
+      var value = row.getAttribute('data-probe-index');
+      if (value === null) { return; }
+      var i = Number(value), selected = i === index;
+      row.className = 'fm-probe-row' + (selected ? ' selected' : '');
+      row.setAttribute('aria-label', 'Probe ' + (i + 1) + (selected ? ', selected' : ''));
+    });
+  }
+
   function centroid(f) {
     var c = { x: 0, y: 0, z: 0 }, n = f.probes.length, i;
     if (!n) { return c; }
@@ -168,6 +191,8 @@
   function balance() {
     var f = current(), full, rest, s = { x: 0, y: 0, z: 0 }, i, cw;
     if (!f || !f.probes.length || balanced(f)) { return; }
+    var balanceHadFocus = document.activeElement === WM.el('fm-balance');
+    var generation = loadGeneration;
     full = f.probes.length >= MAX_PROBES;
     rest = full ? f.probes.slice(0, -1) : f.probes;
     for (i = 0; i < rest.length; i++) {
@@ -177,6 +202,15 @@
            range: rest[0].range };
     if (full) { f.probes[f.probes.length - 1] = cw; } else { f.probes.push(cw); }
     markDirty(); renderProbes(); renderPreview();
+    // Balance rebuilds the rows and disables its button. The static note keeps
+    // keyboard focus local without selecting a different probe as a side effect.
+    if (balanceHadFocus && (document.activeElement === document.body
+        || (document.activeElement === WM.el('fm-balance') && WM.el('fm-balance').disabled))
+        && WM.current_route === 'formations' && generation === loadGeneration
+        && current() === f && !importReview && !WM.el('fm-editor-work').hidden
+        && WM.el('overlay').hidden) {
+      WM.el('fm-balance-note').focus({ preventScroll: true });
+    }
   }
 
   /* ---- meter boundary, ordinary reads / sharing / save ---- */
@@ -364,11 +398,21 @@
       id: pageSession + ':' + loadGeneration + ':' + (++saveSequence),
       path: state.path, generation: loadGeneration, revision: revision
     };
+    var saveHadFocus = document.activeElement === WM.el('fm-save'), formation = current();
     pendingSave = request;
     state.busy = true;
     savingAt = request.revision;
     saveStatus('');
     paintCommit();
+    // Disabling may blur now or at layout. Recover while this invoker still
+    // owns focus, never from a later receipt/reread over a newer edit or dialog.
+    if (saveHadFocus && (document.activeElement === document.body
+        || (document.activeElement === WM.el('fm-save') && WM.el('fm-save').disabled))
+        && pendingSave === request && request.generation === loadGeneration
+        && state.path === request.path && current() === formation && WM.current_route === 'formations'
+        && !importReview && !WM.el('fm-commit').hidden && WM.el('overlay').hidden) {
+      WM.el('fm-save-status').focus({ preventScroll: true });
+    }
     WM.send('eve_settings_save_formations', request.path,
             state.formations.map(toMeters), state.contentRevision,
             request.id).then(function (accepted) {
@@ -462,6 +506,8 @@
 
   function paintImportButtons() {
     var review = importReview;
+    WM.el('fm-import-review').hidden = !!review && review.reviewed;
+    WM.el('fm-import-candidates').hidden = !review || !review.reviewed;
     WM.setEnabled('fm-import-review', !!review && !review.pending && !review.reviewed
       && !!review.text.trim() && !importTextProblem(review.text));
     WM.setEnabled('fm-import-add', !!review && !review.pending
@@ -473,6 +519,9 @@
     importAttempt += 1;
     importReview = { text: '', candidates: [], selected: 0, conflicts: [], reviewed: false,
       path: state.path, generation: loadGeneration, request: null, pending: '' };
+    selectedProbe = null;
+    renderPreview();
+    WM.el('fm-import-source').open = true;
     WM.el('fm-import-text').value = '';
     WM.el('fm-import-list').textContent = '';
     WM.el('fm-editor-work').hidden = true;
@@ -487,6 +536,7 @@
   function closeImportReview(restoreInvokerFocus) {
     importAttempt += 1;
     importReview = null;
+    selectedProbe = null;
     WM.el('fm-import-text').value = '';
     WM.el('fm-import-list').textContent = '';
     renderImportPreview();
@@ -578,24 +628,43 @@
     // validates those names; reparsing unchanged input would discard edits.
     if (!review || review.pending || review.reviewed || !review.text.trim() || importTextProblem(review.text)) { return; }
     var request = { attempt: ++importAttempt, revision: revision };
+    var reviewHadFocus = document.activeElement === WM.el('fm-import-review');
     review.request = request;
     review.pending = 'review'; review.candidates = []; review.conflicts = [];
     renderImportList(); paintImportButtons(); setImportStatus('Reviewing formations…', false);
+    // Chromium blurs a focused button as soon as pending disables it. Keep
+    // that focus in the source now, not as a promise-time claim over newer focus.
+    if (reviewHadFocus && document.activeElement === document.body && WM.el('overlay').hidden) {
+      WM.el('fm-import-source').open = true;
+      WM.el('fm-import-text').focus({ preventScroll: true });
+    }
     var pending = screenshotFixture ? Promise.resolve(JSON.parse(JSON.stringify(screenshotFixture.import_reply)))
       : WM.send('eve_settings_parse_formations', review.text, existingNames());
     pending.then(function (reply) {
       if (!importReplyIsCurrent(review, request)) { return; }
+      var focusBeforePaint = document.activeElement;
       review.pending = '';
       if (!reply || !reply.ok) {
         setImportStatus((reply && reply.error) || 'Could not review formations.', true);
       } else {
         review.reviewed = true;
         review.candidates = reply.formations; review.conflicts = reply.conflicts; review.selected = 0;
+        WM.el('fm-import-source').open = false;
+        // The SVG measures its own box; reveal this stage before drawing it.
+        paintImportButtons();
         renderImportList();
         setImportStatus(reply.conflicts.length ? 'Resolve the marked names before adding.'
           : 'Review the names and previews, then Add formations to your draft.', !!reply.conflicts.length);
       }
       paintImportButtons();
+      // Closing details also blurs its field. Use only the owner observed in
+      // this callback, and yield if painting moved focus to another control.
+      if (review.reviewed && (focusBeforePaint === WM.el('fm-import-review')
+          || focusBeforePaint === WM.el('fm-import-text'))
+          && (document.activeElement === focusBeforePaint || document.activeElement === document.body)
+          && WM.el('overlay').hidden) {
+        WM.el('fm-import-candidates-heading').focus();
+      }
     }, function () {
       if (!importReplyIsCurrent(review, request)) { return; }
       review.pending = ''; setImportStatus('Could not review formations. Try Review again.', true);
@@ -608,6 +677,8 @@
     var review = importReview;
     if (!review || review.pending || !review.candidates.length || review.conflicts.length) { return; }
     var request = { attempt: ++importAttempt, revision: revision };
+    var addHadFocus = document.activeElement === WM.el('fm-import-add');
+    var formation = current(), candidate = review.candidates[review.selected];
     review.request = request;
     // Deep snapshot: later name edits must not alter an in-flight request.
     var items = review.candidates.map(function (f) {
@@ -616,6 +687,15 @@
       }) };
     });
     review.pending = 'add'; paintImportButtons(); setImportStatus('Checking formations…', false);
+    if (addHadFocus && (document.activeElement === document.body
+        || (document.activeElement === WM.el('fm-import-add') && WM.el('fm-import-add').disabled))
+        && importReview === review && review.request === request && importAttempt === request.attempt
+        && request.revision === revision && review.generation === loadGeneration
+        && review.path === state.path && WM.current_route === 'formations'
+        && current() === formation && review.candidates[review.selected] === candidate
+        && !WM.el('fm-import-commit').hidden && WM.el('overlay').hidden) {
+      WM.el('fm-import-status').focus({ preventScroll: true });
+    }
     WM.send('eve_settings_validate_formation_import', items, existingNames()).then(function (reply) {
       if (!importReplyIsCurrent(review, request) || review.pending !== 'add') { return; }
       review.pending = '';
@@ -630,12 +710,22 @@
       // happen here; the existing explicit Save path alone owns those effects.
       var firstAdded = state.formations.length;
       var additions = reply.formations.map(fromSharedMeters);
+      // The request authorizes Add, not focus. Only the current local owner at
+      // completion may follow it out of the closing review; newer navigation wins.
+      var focusBeforePaint = document.activeElement;
+      var focusAdded = current() === formation && review.candidates[review.selected] === candidate
+        && (focusBeforePaint === WM.el('fm-import-add') || focusBeforePaint === WM.el('fm-import-status'));
       state.formations = state.formations.concat(additions);
       state.selected = firstAdded;
       markDirty();
       closeImportReview(false);
       renderAll();
-      WM.el('fm-list').children[firstAdded].querySelector('.fm-item').focus();
+      if (focusAdded && WM.current_route === 'formations' && review.generation === loadGeneration
+          && current() === additions[0] && !importReview && !WM.el('fm-editor-work').hidden
+          && (document.activeElement === focusBeforePaint || document.activeElement === document.body)
+          && WM.el('overlay').hidden) {
+        WM.el('fm-list').children[firstAdded].querySelector('.fm-item').focus();
+      }
     }, function () {
       if (!importReplyIsCurrent(review, request)) { return; }
       review.pending = ''; setImportStatus('Could not validate formations. Try Add again.', true);
@@ -796,7 +886,18 @@
       grid.appendChild(WM.make('div', 'fm-head', h));
     });
     f.probes.forEach(function (p, i) {
-      grid.appendChild(WM.make('div', 'fm-idx', String(i + 1)));
+      var row = WM.make('div', 'fm-probe-row');
+      row.setAttribute('role', 'group');
+      row.setAttribute('data-probe-index', String(i));
+      function selectProbe() {
+        if (importReview || current() !== f || f.probes[i] !== p) { return; }
+        selectedProbe = { formation: f, index: i, probe: p };
+        renderPreview();
+      }
+      row.addEventListener('focusin', selectProbe);
+      row.addEventListener('pointerdown', selectProbe);
+      row.addEventListener('click', selectProbe);
+      row.appendChild(WM.make('div', 'fm-idx', String(i + 1)));
       ['x', 'y', 'z'].forEach(function (axis) {
         var input = document.createElement('input');
         input.type = 'number';
@@ -829,9 +930,9 @@
             input.value = String(p[axis]);
           }
         });
-        grid.appendChild(input);
+        row.appendChild(input);
       });
-      grid.appendChild(rangeSelect(p.range, function (r) {
+      row.appendChild(rangeSelect(p.range, function (r) {
         p.range = r;
         markDirty();
       }, 'Probe ' + (i + 1) + ' range'));
@@ -843,8 +944,10 @@
         renderPane();
         renderPreview();
       });
-      grid.appendChild(rm);
+      row.appendChild(rm);
+      grid.appendChild(row);
     });
+    paintProbeSelection();
     // An ACTION, not a value: the first option is a placeholder so the
     // control never states a range the formation does not have, and it
     // returns to the placeholder after applying one.
@@ -876,7 +979,7 @@
       ? (balanced(f)
           ? 'Launches as drawn.'
           : 'Launch shifts every probe by ' + formatKm(shift(f)) + '.')
-      : '';
+      : (f ? 'Add a probe to balance.' : 'Select or create a formation to balance.');
     WM.setEnabled('fm-balance', !!(f && f.probes.length && !balanced(f)));
   }
 
@@ -926,10 +1029,14 @@
   var MARGIN = 26;
 
   function renderPreview() {
-    renderFormationPreview(WM.el('fm-preview'), current());
+    paintProbeSelection();
+    var index = selectedProbeIndex();
+    WM.el('fm-preview').setAttribute('aria-label', 'Formation preview'
+      + (index === -1 ? '' : ' — Probe ' + (index + 1) + ' selected'));
+    renderFormationPreview(WM.el('fm-preview'), current(), index);
   }
 
-  function renderFormationPreview(svg, f) {
+  function renderFormationPreview(svg, f, selectedIndex) {
     var rect = svg.getBoundingClientRect();
     var w = Math.round(rect.width), h = Math.round(rect.height);
     var cx = w / 2, cy = h / 2;
@@ -988,9 +1095,15 @@
     items.forEach(function (it) {
       svg.appendChild(el('line', { x1: it.bx, y1: it.by, x2: it.x, y2: it.y,
                                    'class': 'fm-tether' }));
+      var selected = it.idx === selectedIndex;
+      if (selected) {
+        svg.appendChild(el('circle', { cx: it.x, cy: it.y, r: 8,
+          'class': 'fm-probe-selection-ring' }));
+      }
       svg.appendChild(el('circle', { cx: it.x, cy: it.y, r: 5,
-                                     'class': 'fm-probe' }));
-      var t = el('text', { x: it.x + 7, y: it.y - 7, 'class': 'fm-probe-label' });
+        'data-probe-index': it.idx, 'class': 'fm-probe' + (selected ? ' selected' : '') }));
+      var t = el('text', { x: it.x + 11, y: it.y - 10,
+        'class': 'fm-probe-label' + (selected ? ' selected' : '') });
       t.textContent = String(it.idx + 1);
       svg.appendChild(t);
     });
@@ -1062,14 +1175,16 @@
     var account = accountChoices.filter(function (choice) {
       return choice.path === selectedAccountPath;
     })[0];
-    WM.el('fm-account-context').textContent = account && state.path
-      ? 'Account: ' + account.name : '';
+    var accountContext = account && state.path ? 'Account: ' + account.name : '';
+    WM.el('fm-account-context').textContent = accountContext;
+    WM.el('fm-import-account-context').textContent = accountContext;
     var why = state.busy ? '' : problem();
     WM.setEnabled('fm-save', !importReview && state.dirty && !state.busy && !!state.contentRevision && !why);
     WM.setEnabled('fm-reload', !!state.path && !state.busy);
     WM.el('fm-dirty').textContent = state.busy
       ? (pendingSave ? 'Saving…' : 'Loading…')
-      : (why || (state.dirty ? 'Unsaved changes' : ''));
+      : (why || (!state.contentRevision ? 'Load formations first.'
+        : (state.dirty ? 'Unsaved changes' : 'No changes')));
     // .hint is the faintest tone the sheet has, which is right for
     // `Unsaved changes` and wrong for the one line explaining why the
     // button beside it is dead -- the same inversion the bookmark

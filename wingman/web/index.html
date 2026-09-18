@@ -2279,15 +2279,15 @@
         <h1>Import setup</h1>
       </div>
       <div id="setup-work">
-        <p class="hint">Create a new profile from a local base. Your existing profiles stay unchanged. Close every EVE client before Review and Create.</p>
-        <section class="setup-section" aria-labelledby="setup-source-heading">
+        <p class="hint">Close every EVE client before Review and Create.</p>
+        <section class="setup-section" id="setup-source-section" aria-labelledby="setup-source-heading">
           <h2 id="setup-source-heading">Setup source</h2>
           <div id="setup-source-summary" hidden>
             <p id="setup-source-name"></p>
             <p class="hint" id="setup-catalog-origin" hidden></p>
             <div class="row">
-              <button class="btn" id="setup-source-change" type="button" aria-controls="setup-source-choices" aria-expanded="false">Change source</button>
-              <button class="btn" id="setup-source-edit" type="button" aria-controls="setup-editor" aria-expanded="false">Edit text</button>
+              <button class="btn" id="setup-source-change" type="button" aria-controls="setup-source-choices setup-recipient" aria-expanded="false">Change source</button>
+              <button class="btn" id="setup-source-edit" type="button" aria-controls="setup-editor setup-recipient" aria-expanded="false">Edit text</button>
             </div>
           </div>
           <div id="setup-source-choices">
@@ -2315,7 +2315,7 @@
             <button class="btn" id="setup-editor-close" type="button">Done editing</button>
           </div>
         </section>
-        <section class="setup-section" aria-labelledby="setup-recipient-heading">
+        <section class="setup-section" id="setup-recipient" aria-labelledby="setup-recipient-heading">
           <h2 id="setup-recipient-heading">Local base and recipient</h2>
           <p class="hint" id="setup-base-help">The base profile supplies your display preferences and settings not included in the setup.</p>
           <div class="us-pickers setup-pickers">
@@ -2340,21 +2340,14 @@
             </div>
           </div>
           <p class="hint" id="setup-pair-status" role="status" aria-live="polite"></p>
+          <div id="setup-label-choice" hidden>
+            <p class="hint">This YAML cannot reproduce the ordered ship-label sequence. Use a Wingman preset for complete labels, or explicitly retain yours.</p>
+            <label class="check"><input id="setup-keep-labels" type="checkbox"><span class="box"></span>Keep my ship labels</label>
+          </div>
         </section>
-        <div id="setup-label-choice" hidden>
-          <p class="hint">This YAML cannot reproduce the ordered ship-label sequence. Use a Wingman preset for complete labels, or explicitly retain yours.</p>
-          <label class="check"><input id="setup-keep-labels" type="checkbox"><span class="box"></span>Keep my ship labels</label>
-        </div>
         <section id="setup-summary" aria-labelledby="setup-summary-heading" tabindex="-1" hidden>
           <h2 id="setup-summary-heading">Review new profile</h2>
           <dl class="us-review">
-            <dt>Create</dt>
-            <dd><p id="setup-destination"></p></dd>
-            <dt>For</dt>
-            <dd>
-              <p id="setup-target"></p>
-              <p class="hint" id="setup-account-notice">Account-level changes also affect other characters of this account if they later use the new profile.</p>
-            </dd>
             <dt>Changes</dt>
             <dd><p id="setup-type"></p></dd>
             <dt>Keeps</dt>
@@ -2378,10 +2371,22 @@
         </details>
       </div>
       <div id="setup-actions">
-        <div class="row">
-          <button class="btn" id="setup-review" type="button" disabled>Review</button>
-          <button class="btn" id="setup-create" type="button" disabled>Create profile</button>
+        <div id="setup-commit">
+          <dl class="us-review" id="setup-commit-context" hidden>
+            <dt>New profile</dt>
+            <dd><p id="setup-destination"></p></dd>
+            <dt>For</dt>
+            <dd>
+              <p id="setup-target"></p>
+              <p class="hint" id="setup-account-notice">Account-level changes also affect other characters of this account if they later use the new profile.</p>
+            </dd>
+          </dl>
+          <div class="row">
+            <button class="btn" id="setup-review" type="button" disabled>Review</button>
+            <button class="btn" id="setup-create" type="button" disabled hidden>Create profile</button>
+          </div>
         </div>
+        <p class="hint" id="setup-safety">Existing profiles will not be overwritten. <span id="setup-cancel-note">Cancel creates nothing.</span></p>
         <p class="hint" id="setup-status" role="status" aria-live="polite" tabindex="-1"></p>
       </div>
     </div>
@@ -2436,8 +2441,8 @@
         <div class="row">
           <button class="btn" id="fm-add-probe" type="button">Add probe</button>
           <select id="fm-all-range" class="field" aria-label="Set every range"></select>
-          <button class="btn" id="fm-balance" type="button">Balance</button>
-          <span class="hint" id="fm-balance-note"></span>
+          <button class="btn" id="fm-balance" type="button" aria-describedby="fm-balance-note">Balance</button>
+          <span class="hint" id="fm-balance-note" tabindex="-1"></span>
         </div>
         <!-- The first SVG in the app. Every stroke and fill comes from a
              :root token through a class, never from a presentation
@@ -2452,27 +2457,34 @@
       </div>
       <section class="fm-work" id="fm-import-work" aria-labelledby="fm-import-heading" hidden>
         <h2 id="fm-import-heading">Paste formations</h2>
-        <p class="hint" id="fm-import-save-note">Add formations changes only your draft. Nothing is saved until Save formations.</p>
-        <label class="lab" for="fm-import-text">Shared formation text</label>
-        <textarea class="field" id="fm-import-text" rows="4"
-                  aria-describedby="fm-import-save-note fm-import-status"></textarea>
-        <div id="fm-import-list"></div>
-        <svg id="fm-import-preview" viewBox="0 0 100 100"
-             role="img" aria-label="Imported formation preview"></svg>
+        <details id="fm-import-source" open>
+          <summary>Source text</summary>
+          <label class="lab" for="fm-import-text">Shared formation text</label>
+          <textarea class="field" id="fm-import-text" rows="4"
+                    aria-describedby="fm-import-save-note fm-import-status"></textarea>
+        </details>
+        <section id="fm-import-candidates" aria-labelledby="fm-import-candidates-heading" hidden>
+          <h3 id="fm-import-candidates-heading" tabindex="-1">Review names and formation previews</h3>
+          <div id="fm-import-list"></div>
+          <svg id="fm-import-preview" viewBox="0 0 100 100"
+               role="img" aria-label="Imported formation preview"></svg>
+        </section>
       </section>
       <div class="row" id="fm-import-commit" hidden>
+        <span id="fm-import-account-context"></span>
         <button class="btn" id="fm-import-review" type="button">Review</button>
         <button class="btn" id="fm-import-add" type="button" disabled>Add formations</button>
         <button class="btn" id="fm-import-cancel" type="button">Cancel</button>
-        <span class="hint" id="fm-import-status" role="status"></span>
+        <p class="hint" id="fm-import-save-note">Add formations changes only your draft. Nothing is saved until Save formations.</p>
+        <span class="hint" id="fm-import-status" role="status" tabindex="-1"></span>
       </div>
       <div class="row" id="fm-commit">
-        <button class="btn acc" id="fm-save" type="button">Save formations</button>
+        <button class="btn acc" id="fm-save" type="button" aria-describedby="fm-dirty">Save formations</button>
         <button class="btn" id="fm-reload" type="button">Reload</button>
         <span class="hint" id="fm-dirty"></span>
         <span class="hint fm-save-note" id="fm-account-context"></span>
         <span class="hint fm-save-note">Edits change only your draft until Save formations. Saving needs every EVE client closed.</span>
-        <span class="hint fm-save-note" id="fm-save-status" role="status" aria-live="polite"></span>
+        <span class="hint fm-save-note" id="fm-save-status" role="status" aria-live="polite" tabindex="-1"></span>
       </div>
     </div>
   </div>

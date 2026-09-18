@@ -233,7 +233,7 @@ if (scenario === 'forwarded-completion') {
   vm.runInNewContext(fs.readFileSync(owner, 'utf8'), {WM, document, window: {}, console, Promise});
   document.readyState = 'complete';
 }
-if (scenario.startsWith('catalog-dialog-') || scenario.startsWith('setup-dialog-')) {
+if (scenario.startsWith('catalog-dialog-') || scenario.startsWith('setup-dialog-') || scenario === 'review-focus-overlay') {
   const panel = require('node:path').join(require('node:path').dirname(productionModule), 'panel.js');
   vm.runInNewContext(fs.readFileSync(panel, 'utf8'), {
     window: {WM, getComputedStyle: node => {
@@ -245,7 +245,13 @@ if (scenario.startsWith('catalog-dialog-') || scenario.startsWith('setup-dialog-
   });
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
-const click = id => WM.el(id).click();
+const click = id => {
+  const node = WM.el(id);
+  // Review activations model an actual pointer/keyboard invoker, not a DOM
+  // .click() with focus left behind on an unrelated field from fixture setup.
+  if (id === 'setup-review' && !node.disabled && node.getClientRects().length && WM.el('overlay').hidden) node.focus();
+  node.click();
+};
 function change(id, value) { WM.el(id).value = value; WM.el(id).dispatchEvent({type: 'change'}); }
 const status = () => WM.el('us-status').textContent;
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -1081,7 +1087,298 @@ async function importUxMain() {
   assert.equal(WM.el('setup-create').disabled, false, 'picker cancellation preserves review authority');
   assert.equal(document.activeElement.id, 'setup-catalog-open');
 }
+async function labelEntryMain() {
+  await importOpen();
+  const visible = id => WM.el(id).getClientRects().length > 0;
+  const choice = WM.el('setup-label-choice'), checkbox = WM.el('setup-keep-labels');
+  const warning = choice.querySelector('p');
+  if (scenario === 'stage-label-entry-portable') {
+    await reviewed(); click('setup-source-edit');
+    assert.equal(visible('setup-name'), true);
+    assert.equal(visible('setup-keep-labels'), false, 'Edit must not invent a label choice for a portable source');
+    assert.equal(warning.getClientRects().length, 0);
+    return;
+  }
+  const native = python('native');
+  input('setup-text', native.text); click('setup-review');
+  reviews.at(-1).resolve({...offer('', native), ok: false, needs_label_choice: true,
+    error: 'Choose Keep my ship labels explicitly for this YAML.', error_code: 'label_choice_required'});
+  await tick();
+  assert.equal(visible('setup-keep-labels'), true);
+  assert.ok(warning.getClientRects().length, 'current label correction includes its explanation');
+  assert.equal(document.activeElement, checkbox);
+  assert.match(importStatus(), /Choose Keep my ship labels/);
+  checkbox.checked = true; change('setup-keep-labels', '');
+  click('setup-review');
+  assert.deepEqual(plain(reviews.at(-1).args), [native.text, 'profile-A', 'account-A', 'char-A', 'Imported', true]);
+  if (scenario === 'stage-label-entry-refused') {
+    reviews.at(-1).resolve({...offer('', native), ok: false, error: 'Cannot confirm that EVE is closed.'});
+    await tick();
+    assert.equal(visible('setup-keep-labels'), true);
+    assert.ok(warning.getClientRects().length);
+    assert.equal(checkbox.checked, true);
+    assert.match(importStatus(), /Cannot confirm that EVE is closed/);
+    assert.equal(visible('setup-status'), true, 'operational refusals keep their live owner');
+    assert.equal(WM.el('setup-create').disabled, true);
+    return;
+  }
+  reviews.at(-1).resolve(offer('labels-authorized', native)); await tick();
+  assert.equal(visible('setup-text'), false); assert.equal(visible('setup-name'), false);
+  assert.equal(visible('setup-keep-labels'), false, 'authorized review collapses the complete entry, including label policy');
+  assert.equal(warning.getClientRects().length, 0, 'entry-only label instruction collapses with its control');
+  assert.equal(visible('setup-warnings'), true, 'review warnings keep their independent owner');
+  assert.equal(WM.el('setup-warnings').textContent, [...new Set(native.warnings)].join(' '));
+  assert.match(WM.el('setup-retention').textContent, /ship labels.*retained/i);
+  assert.equal(checkbox.checked, true); assert.equal(WM.el('setup-text').value, native.text);
+  assert.equal(WM.el('setup-create').disabled, false);
+  const counts = [reviews.length, discards.length, creates.length];
+  click('setup-source-edit');
+  assert.equal(visible('setup-keep-labels'), true); assert.ok(warning.getClientRects().length);
+  assert.equal(WM.el('setup-keep-labels'), checkbox); assert.equal(checkbox.checked, true);
+  assert.equal(WM.el('setup-text').value, native.text);
+  assert.equal(WM.el('setup-create').disabled, false, 'opening Edit retains review authority');
+  assert.deepEqual([reviews.length, discards.length, creates.length], counts);
+  click('setup-editor-close');
+  assert.equal(visible('setup-keep-labels'), false); assert.equal(checkbox.checked, true);
+  click('setup-source-edit');
+  if (scenario === 'stage-label-entry-edit-policy') {
+    checkbox.focus(); checkbox.checked = false; change('setup-keep-labels', '');
+    assert.equal(visible('setup-keep-labels'), true);
+    assert.ok(warning.getClientRects().length);
+  } else if (scenario === 'stage-label-entry-edit-text') {
+    input('setup-text', native.text + '\n ');
+    assert.equal(visible('setup-keep-labels'), false, 'changed source retires the previous label eligibility');
+    assert.equal(checkbox.checked, false, 'actual input keeps the original policy-reset semantics');
+    assert.equal(WM.el('setup-text').value, native.text + '\n ');
+  } else return;
+  assert.equal(WM.el('setup-create').disabled, true);
+  assert.equal(visible('setup-review'), true); assert.equal(visible('setup-create'), false);
+  assert.equal(WM.el('setup-summary').hidden, true);
+  assert.deepEqual(plain(discards.at(-1).args), ['labels-authorized']);
+  assert.equal(creates.length, 0);
+}
+
+async function reviewFocusMain() {
+  await importOpen();
+  if (scenario === 'review-focus-labels' || scenario === 'review-focus-newer-labels') input('setup-text', python('native').text);
+  document.body = document.querySelector('body');
+  const button = WM.el('setup-review');
+  let disabled = button.disabled;
+  // Scoped Chromium boundary: disabling the active Review synchronously blurs
+  // to BODY. No production focus/review state is synthesized by this setter.
+  Object.defineProperty(button, 'disabled', {
+    get() { return disabled; },
+    set(value) {
+      disabled = value;
+      if (value && document.activeElement === button) {
+        document.activeElement = document.body;
+        if (scenario === 'review-focus-disable-redirect') WM.el('setup-back').focus();
+      }
+    }
+  });
+  click('setup-review');
+  const pending = reviews.at(-1);
+  assert.equal(button.disabled, true);
+  if (scenario === 'review-focus-pending') {
+    assert.equal(document.activeElement.id, 'setup-status', 'disabled Review hands focus to its mounted pending outcome owner');
+    assert.match(importStatus(), /Reviewing/);
+    assert.ok(document.activeElement.getClientRects().length); return;
+  }
+  let question;
+  if (scenario === 'review-focus-overlay') question = WM.confirm('Unrelated decision', 'Continue?', {destructive: true});
+  if (scenario === 'review-focus-newer-control' || scenario === 'review-focus-newer-labels') WM.el('setup-back').focus();
+  if (scenario === 'review-focus-newer-body') document.activeElement = document.body;
+  if (scenario === 'review-focus-source-edit-stale' || scenario === 'review-focus-newer-review-stale') {
+    click('setup-source-edit'); input('setup-text', exported.text + '\n ');
+    if (scenario === 'review-focus-newer-review-stale') {
+      click('setup-review'); reviews.at(-1).resolve(offer('newer-focus')); await tick();
+      WM.el('setup-source-change').focus();
+    }
+  }
+  if (scenario === 'review-focus-route-stale') { click('setup-back'); WM.el('es-setup-import').focus(); }
+  const focused = document.activeElement, before = importStatus();
+  scrollCalls.length = 0;
+  if (scenario === 'review-focus-rejected') pending.reject(new Error('Transport refused'));
+  else if (scenario === 'review-focus-refused') pending.resolve({ok: false, error: 'Cannot confirm that EVE is closed.'});
+  else if (scenario === 'review-focus-labels' || scenario === 'review-focus-newer-labels') {
+    pending.resolve({...offer('', python('native')), ok: false, needs_label_choice: true,
+      error: 'Choose Keep my ship labels explicitly for this YAML.', error_code: 'label_choice_required'});
+  } else pending.resolve(offer('focus-review'));
+  await tick();
+  if (scenario === 'review-focus-success') {
+    assert.equal(document.activeElement.id, 'setup-summary', 'authorized Review advances still-owned focus into review context');
+    assert.deepEqual(plain(scrollCalls), [{id: 'setup-summary', options: {block: 'start'}}]);
+    assert.equal(WM.el('setup-create').disabled, false);
+  } else if (scenario === 'review-focus-labels') {
+    assert.equal(document.activeElement.id, 'setup-keep-labels');
+    assert.deepEqual(plain(scrollCalls), [{id: 'setup-label-choice', options: {block: 'center'}}]);
+  } else if (scenario === 'review-focus-refused' || scenario === 'review-focus-rejected') {
+    assert.equal(document.activeElement.id, 'setup-status', 'refused Review keeps a useful visible outcome owner');
+    assert.ok(document.activeElement.getClientRects().length);
+    assert.match(importStatus(), scenario === 'review-focus-refused' ? /Cannot confirm that EVE is closed/ : /Could not review/);
+    assert.equal(button.disabled, false); assert.equal(WM.el('setup-create').disabled, true);
+    assert.deepEqual(scrollCalls, []);
+  } else {
+    assert.equal(document.activeElement.id, focused.id, 'late Review must not claim newer control, BODY, dialog, draft or route focus');
+    assert.deepEqual(scrollCalls, [], 'late Review must not scroll newer context');
+    if (scenario.endsWith('-stale')) {
+      assert.equal(importStatus(), before);
+      assert.deepEqual(plain(discards.at(-1).args), ['focus-review']);
+      assert.equal(WM.el('setup-create').disabled, scenario !== 'review-focus-newer-review-stale');
+    }
+  }
+  if (question) {
+    click('dlg-cancel'); assert.equal(await question, false); await tick();
+    assert.equal(document.activeElement.id, 'setup-status', 'dialog returns to the mounted pending Review owner');
+  }
+  assert.equal(creates.length, 0);
+}
+
+// Stage regressions exercise the real retained controls. Hiding only the text
+// editor, treating a summary as authorization, or dropping the receipt boundary
+// must fail here; geometry remains the parent's separate browser check.
+async function importStageMain() {
+  await importOpen();
+  const fields = ['setup-text', 'setup-name', 'setup-base', 'setup-character', 'setup-account'];
+  const nodes = fields.map(id => WM.el(id));
+  const values = nodes.map(node => node.value);
+  const visible = id => WM.el(id).getClientRects().length > 0;
+  const assertEntry = shown => fields.forEach(id => assert.equal(visible(id), shown, id + ' entry visibility'));
+  const assertRetained = () => {
+    fields.forEach((id, index) => assert.equal(WM.el(id), nodes[index], 'stage changes retain ' + id));
+    assert.deepEqual(nodes.map(node => node.value), values, 'stage changes retain source and recipient values');
+  };
+  const assertPrimary = id => {
+    const primaries = WM.el('setup-import').querySelectorAll('button').filter(node =>
+      node.getClientRects().length && node.className.split(/\s+/).includes('acc'));
+    assert.deepEqual(primaries.map(node => node.id), [id]);
+  };
+  if (scenario === 'stage-source-review-edit-cancel') {
+    assertEntry(true);
+    assert.equal(visible('setup-create'), false, 'source entry has Review, not a premature Create action');
+    assertPrimary('setup-review');
+  }
+  if (scenario === 'stage-summary-without-authority' || scenario === 'stage-label-correction') {
+    const labels = scenario === 'stage-label-correction';
+    const fixture = labels ? python('native') : exported;
+    click('setup-review');
+    reviews.at(-1).resolve({...offer('', fixture), ok: !labels, needs_label_choice: labels,
+      error: labels ? 'Choose Keep my ship labels explicitly for this YAML.' : ''});
+    await tick();
+    assertEntry(true);
+    assert.equal(WM.el('setup-summary').hidden, false, 'a refused review can still explain its parsed summary');
+    assert.doesNotMatch(WM.el('setup-source-heading').textContent, /reviewed/i);
+    assert.match(WM.el('setup-summary-heading').textContent, /attention/i);
+    assert.equal(visible('setup-review'), true); assertPrimary('setup-review');
+    assert.equal(visible('setup-create'), false); assert.equal(WM.el('setup-create').disabled, true);
+    assert.equal(creates.length, 0);
+    if (labels) {
+      assert.equal(visible('setup-keep-labels'), true);
+      assert.equal(document.activeElement.id, 'setup-keep-labels');
+      WM.el('setup-keep-labels').checked = true; change('setup-keep-labels', '');
+    }
+    await reviewed('corrected');
+    assertEntry(false); assert.equal(visible('setup-review'), false); assertPrimary('setup-create');
+    if (labels) assert.match(WM.el('setup-retention').textContent, /ship labels.*retained/i);
+    return;
+  }
+  WM.el('setup-review').focus(); scrollCalls.length = 0;
+  await reviewed();
+  assertEntry(false);
+  assertRetained();
+  assert.equal(visible('setup-review'), false, 'unchanged authorized input has no competing Review action');
+  assertPrimary('setup-create');
+  assert.match(WM.el('setup-source-heading').textContent, /reviewed source/i);
+  assert.match(WM.el('setup-summary-heading').textContent, /review new profile/i);
+  assert.equal(document.activeElement.id, 'setup-summary');
+  assert.deepEqual(plain(scrollCalls), [{id: 'setup-summary', options: {block: 'start'}}]);
+  for (const id of ['setup-destination', 'setup-target', 'setup-account-notice']) {
+    assert.equal(WM.el('setup-actions').contains(WM.el(id)), true, id + ' stays with Create outside the work scroller');
+    assert.equal(visible(id), true);
+  }
+  assert.match(WM.el('setup-destination').textContent, /Imported/);
+  assert.equal(importStatus(), 'Review ready. Create profile makes a new copy; Cancel creates nothing.',
+    'the original live owner must retain the complete safety announcement');
+  const announcement = WM.el('setup-status').querySelector('.status-announcement');
+  assert.ok(announcement, 'the visually repeated safety text stays accessible in the original live owner');
+  assert.equal(announcement.hidden, false);
+  assert.equal(announcement.getAttribute('aria-hidden'), null);
+  assert.equal(announcement.getAttribute('role'), null, 'do not introduce another live region');
+  assert.equal(WM.el('setup-target').textContent, 'Pilote é 𐐀 <img> · Account <A> · Base A');
+  assert.match(availableText(WM.el('setup-actions')), /Existing profiles will not be overwritten/);
+  assert.match(availableText(WM.el('setup-actions')), /Cancel creates nothing/);
+  const callCounts = [reviews.length, contexts.length, reads.length, clipboardReads.length, creates.length];
+  if (scenario === 'stage-create-safety' || scenario === 'stage-create-refusal-focus') {
+    if (scenario === 'stage-create-refusal-focus') {
+      // A real browser blurs disabled controls before a delayed starter reply.
+      document.body = document.querySelector('body');
+      const create = WM.el('setup-create');
+      let disabled = create.disabled;
+      Object.defineProperty(create, 'disabled', {
+        get() { return disabled; },
+        set(value) {
+          disabled = value;
+          if (value && document.activeElement === create) document.activeElement = document.body;
+        }
+      });
+    }
+    WM.el('setup-create').focus(); click('setup-create');
+    if (scenario === 'stage-create-refusal-focus') {
+      assert.equal(document.activeElement.id, 'setup-status', 'disabled Create hands focus to its pending outcome owner');
+    }
+    assertEntry(false); assert.equal(visible('setup-review'), false);
+    assert.doesNotMatch(availableText(WM.el('setup-import')), /Cancel creates nothing/);
+    assert.match(importStatus(), /Leaving does not cancel creation/);
+    assert.match(WM.el('setup-back').textContent, /Back/);
+    if (scenario === 'stage-create-refusal-focus') {
+      creates.at(-1).resolve({accepted: false, error: 'Busy'}); await tick();
+      assert.equal(visible('setup-name'), true); assertPrimary('setup-review');
+      assert.equal(visible('setup-create'), false);
+      assert.ok(document.activeElement.getClientRects().length, 'refusal never leaves focus on a now-hidden Create');
+      assert.equal(document.activeElement.id, 'setup-status', 'refusal retains the visible recovery message owner');
+      assert.match(importStatus(), /Busy/);
+    } else {
+      creates.at(-1).resolve({accepted: true}); await tick();
+      WM.uiSetupDone(completion(creates.at(-1).args));
+      assert.doesNotMatch(availableText(WM.el('setup-import')), /Cancel creates nothing/);
+      assert.match(importStatus(), /created/); assert.equal(document.activeElement.id, 'setup-status');
+    }
+    return;
+  }
+  if (scenario === 'stage-source-choice-retains-review') {
+    click('setup-source-change');
+    assert.equal(visible('setup-name'), true); assert.equal(visible('setup-base'), true);
+    assert.equal(visible('setup-catalog-open'), true);
+    assert.equal(document.activeElement.id, 'setup-catalog-open');
+    assert.equal(visible('setup-review'), false); assertPrimary('setup-create');
+    click('setup-source-cancel'); assertEntry(false); assertRetained();
+    assert.equal(document.activeElement.id, 'setup-source-change');
+  } else {
+    click('setup-source-edit'); assertEntry(true); assertRetained();
+    assert.equal(document.activeElement, nodes[0]);
+    assert.equal(WM.el('setup-create').disabled, false, 'opening Edit is not an edit');
+    assert.equal(visible('setup-review'), false); assertPrimary('setup-create');
+    click('setup-editor-close'); assertEntry(false); assertRetained();
+    assert.equal(document.activeElement.id, 'setup-source-edit');
+  }
+  assert.deepEqual([reviews.length, contexts.length, reads.length, clipboardReads.length, creates.length], callCounts,
+    'showing or closing retained entry does not read, review or create');
+  click('setup-source-edit'); input('setup-text', exported.text + '\n ');
+  assertEntry(true); assert.equal(document.activeElement, nodes[0]);
+  assert.equal(WM.el('setup-summary').hidden, true); assert.equal(visible('setup-target'), false);
+  assert.equal(visible('setup-review'), true); assert.equal(visible('setup-create'), false); assertPrimary('setup-review');
+  assert.deepEqual(plain(discards.at(-1).args), ['r1']);
+  await reviewed('edited'); assertEntry(false);
+  assert.equal(WM.el('setup-text'), nodes[0]); assert.equal(nodes[0].value, exported.text + '\n ');
+  click('setup-back');
+  assert.equal(WM.current_route, 'evesettings'); assert.equal(document.activeElement.id, 'es-setup-import');
+  assert.equal(creates.length, 0); assert.equal(WM.el('setup-text').value, '');
+  assert.deepEqual(plain(discards.at(-1).args), ['edited']);
+}
 async function importMain() {
+  if (scenario.startsWith('stage-label-entry-')) { await labelEntryMain(); return; }
+  if (scenario.startsWith('review-focus-')) { await reviewFocusMain(); return; }
+  if (scenario.startsWith('stage-')) { await importStageMain(); return; }
   if (scenario.startsWith('ux-')) { await importUxMain(); return; }
   if (scenario.startsWith('catalog-')) { await catalogMain(); return; }
   if (scenario.startsWith('profiles-workbench-')) { await profilesWorkbenchMain(); return; }
@@ -1103,11 +1400,12 @@ async function importMain() {
     assert.deepEqual([document.activeElement.id, plain(scrollCalls)], ['dlg-cancel', []],
       'attached completion settles its receipt without stealing modal focus or scrolling');
     document.activeElement.click(); assert.equal(await question, false); await tick();
-    assert.equal(WM.el('overlay').hidden, true); assert.equal(document.activeElement.id, 'setup-back');
+    assert.equal(WM.el('overlay').hidden, true);
+    assert.equal(document.activeElement.id, 'setup-status', 'dialog restores its still-visible pending outcome owner');
     assert.ok(document.activeElement.getClientRects().length > 0);
     const before = importStatus(); assert.equal(WM.uiSetupDone(completion(pending.args)), false);
     assert.equal(importStatus(), before, 'completion ownership is still retired exactly once');
-    document.activeElement.click(); assert.equal(WM.current_route, 'evesettings');
+    click('setup-back'); assert.equal(WM.current_route, 'evesettings');
   } else if (scenario === 'context-does-not-select') {
     assert.equal(WM.el('setup-base').value, 'profile-A'); click('setup-back');
     assert.equal(WM.current_route, 'evesettings'); assert.equal(document.activeElement.id, 'es-setup-import');
@@ -1231,7 +1529,8 @@ async function importMain() {
     await reviewed();
     if (scenario === 'portable-review-hierarchy') {
       const labels = WM.el('setup-summary').querySelectorAll('dt').map(el => el.textContent.trim());
-      assert.deepEqual(labels, ['Create', 'For', 'Changes', 'Keeps']);
+      assert.deepEqual(labels, ['Changes', 'Keeps']);
+      assert.deepEqual(WM.el('setup-actions').querySelectorAll('dt').map(el => el.textContent.trim()), ['New profile', 'For']);
       for (const id of ['setup-destination', 'setup-target', 'setup-type', 'setup-retention', 'setup-warnings']) {
         assert.equal(disclosureOf(WM.el(id)), null, id + ' is part of the visible decision');
       }

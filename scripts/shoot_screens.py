@@ -1364,17 +1364,24 @@ def new_screen_verify_script(screen: Screen) -> str | None:
         name = json.dumps(fixture["formations"]["snapshot"]["formations"][0]["name"])
         condition = (
             f"WM.el('fm-name').value !== {name} || !WM.el('fm-preview').children.length"
+            " || !WM.el('fm-probes').querySelector('.fm-probe-row.selected[data-probe-index=\"1\"]')"
+            " || !WM.el('fm-preview').querySelector('.fm-probe.selected[data-probe-index=\"1\"]')"
         )
     elif screen.key == "profiles-formations-import":
         condition = (
             "WM.el('fm-import-work').hidden || !WM.el('fm-import-list').children.length"
             " || WM.el('fm-import-status').textContent.indexOf('Resolve the marked names') === -1"
-            " || !WM.el('fm-import-add').disabled"
+            " || !WM.el('fm-import-add').disabled || !WM.el('fm-import-review').hidden"
+            " || WM.el('fm-import-candidates').hidden || WM.el('fm-import-source').open"
         )
     elif screen.key == "profiles-setup-share":
         condition = "WM.el('us-summary').hidden || WM.el('us-copy').disabled || !WM.el('us-counts').textContent"
     elif screen.key == "profiles-setup-import":
-        condition = "WM.el('setup-summary').hidden || WM.el('setup-create').disabled || !WM.el('setup-target').textContent"
+        condition = (
+            "WM.el('setup-summary').hidden || WM.el('setup-create').disabled || !WM.el('setup-target').textContent"
+            " || WM.el('setup-create').hidden || !WM.el('setup-review').hidden"
+            " || !WM.el('setup-editor').hidden || !WM.el('setup-recipient').hidden"
+        )
     else:
         owner = fixture["crop"]["owner"]
         selector = json.dumps(
@@ -1517,7 +1524,11 @@ def _current_screen_verify_script(screen: Screen) -> str:
 def _new_screen_setup_script(screen: Screen) -> str:
     fixture = load_dev_tool_screenshot_fixture()
     if screen.key == "profiles-formations":
-        body = "WM.el('fm-editor-work').scrollTop = 0;"
+        # Selection is page-local interaction, never a default in production.
+        body = (
+            "document.querySelector('[aria-label=\"Probe 2 West km\"]').focus();\n"
+            "WM.el('fm-editor-work').scrollTop = 0;"
+        )
     elif screen.key == "profiles-formations-import":
         imported = fixture["formations"]["import_reply"]["formations"]
         text = json.dumps(

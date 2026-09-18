@@ -3,6 +3,7 @@
 import json
 import os
 import random
+import re
 import shutil
 import sys
 from contextlib import contextmanager
@@ -35,6 +36,48 @@ def test_authored_import_reply_matches_real_facade(exchange: str):
     assert args == case["args"], "pure endpoints must not mutate the request"
 
 
+def test_operation_focus_owners_use_the_shared_focus_token():
+    css = (WEB / "style.css").read_text()
+    for owner in ["fm-save-status", "fm-balance-note", "fm-import-status"]:
+        rule = re.search(r"#" + owner + r":focus-visible[^{}]*\{([^{}]*)\}", css)
+        assert rule and "var(--focus-ring)" in rule[1], owner
+
+
+def test_forced_probe_colours_are_decided_by_root_tokens():
+    # Extend the sheet's existing hex/channel guard to the system-colour path
+    # that selected probes use. Components consume roles, including in HC mode.
+    css = re.sub(r"/\*.*?\*/", "", (WEB / "style.css").read_text(), flags=re.DOTALL)
+    components = re.sub(r":root\s*\{[^{}]*\}", "", css)
+    assert not re.search(r"\bCanvas(?:Text)?\b", components), (
+        "forced colours must be tokens at :root, not component decisions"
+    )
+    forced = re.search(
+        r"@media\s*\(forced-colors:\s*active\)\s*\{\s*:root\s*\{([^{}]*)\}",
+        css,
+    )
+    assert forced, "forced-colour token overrides must stay at token authority"
+    tokens = dict(re.findall(r"(--[\w-]+):\s*(Canvas(?:Text)?)\s*;", forced[1]))
+    mode_rules = "\n".join(
+        re.findall(
+            r"@media\s*\(forced-colors:\s*active\)\s*\{(.*?)\n\}",
+            css,
+            flags=re.DOTALL,
+        )
+    )
+    for selector, prop, expected in [
+        (".fm-probe-row.selected", "outline-color", "CanvasText"),
+        (".fm-probe-selection-ring", "stroke", "CanvasText"),
+        (".fm-probe-label", "fill", "CanvasText"),
+        (".fm-probe-label", "stroke", "Canvas"),
+        (".fm-probe-label.selected", "fill", "CanvasText"),
+        ("#fm-import-preview", "background", "Canvas"),
+    ]:
+        block = re.search(re.escape(selector) + r"[^{}]*\{([^{}]*)\}", mode_rules)
+        assert block, selector
+        value = re.search(prop + r":\s*[^;]*var\((--[\w-]+)\)", block[1])
+        assert value and tokens.get(value[1]) == expected, (selector, prop)
+
+
 SCENARIOS = [
     "ignored-read-keeps-baseline",
     "old-completion-ignored",
@@ -43,6 +86,54 @@ SCENARIOS = [
     "failed-switch",
     "account-context",
     "creation-preset-order",
+    "probe-selection-association",
+    "probe-selection-lifetime",
+    "probe-selection-removal",
+    "probe-selection-import-boundary",
+    "readiness-save",
+    "readiness-balance",
+    "import-stage-boundary",
+    "import-stage-destination",
+    "import-focus-success",
+    "import-focus-failure",
+    "import-focus-moved",
+    "import-focus-overlay",
+    "import-focus-source-change",
+    "save-focus-success",
+    "save-focus-refusal",
+    "save-focus-failure",
+    "save-focus-route",
+    "save-focus-superseded",
+    "save-focus-newer-control",
+    "save-focus-overlay",
+    "save-focus-input-before",
+    "save-focus-input-reread",
+    "balance-focus-success",
+    "balance-focus-selected",
+    "add-focus-success",
+    "add-focus-refusal",
+    "add-focus-rejection",
+    "add-focus-conflict",
+    "add-focus-superseded",
+    "add-focus-newer-control",
+    "add-focus-blurred",
+    "add-focus-overlay",
+    "add-focus-candidate",
+    "add-focus-formation",
+    "add-focus-source-change",
+    "add-focus-name-change",
+    "add-focus-route",
+    "add-focus-reopen",
+    "add-focus-cancel",
+    "add-focus-paint-moved",
+    *[
+        f"disable-focus-{action}-{owner}"
+        for action in ("save", "balance", "add")
+        for owner in ("control", "overlay", "route", "reopen", "hidden", "unowned")
+    ],
+    "disable-focus-save-formation",
+    "disable-focus-add-formation",
+    "disable-focus-add-candidate",
     "preview-key-separation",
     "preview-origin-scale",
     "preview-fractional-scale",
@@ -306,6 +397,26 @@ def test_formations_worker_order_isolation(formations_worker: NodeScenarioWorker
 @pytest.mark.parametrize("scenario", SCENARIOS)
 def test_formation_editor_runtime(formations_worker: NodeScenarioWorker, scenario: str):
     result = formations_worker.request(scenario, {"env": {}}, timeout=60.0)
+    assert result["output"] == f"PASS {scenario}"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        scenario
+        for scenario in SCENARIOS
+        if scenario.startswith(
+            ("save-focus-", "balance-focus-", "add-focus-", "disable-focus-")
+        )
+    ],
+)
+def test_formation_focus_before_deferred_native_blur(
+    formations_worker: NodeScenarioWorker, scenario: str
+):
+    result = formations_worker.request(
+        scenario, {"env": {}, "defer_disable_blur": True}, timeout=60.0
+    )
     assert result["output"] == f"PASS {scenario}"
 
 
