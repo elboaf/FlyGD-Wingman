@@ -234,7 +234,7 @@ def main():
                         ],
                         "local": [
                             [
-                                (r.character, r.outgoing_dps, r.incoming_dps)
+                                (r.character, r.dps, r.incoming_dps)
                                 for r in d["worker"]._latest.snapshot.rows
                             ]
                             if d["worker"]._latest
