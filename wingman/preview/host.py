@@ -3792,6 +3792,13 @@ class PreviewHost:
         self._previews_hidden = hidden
         if self._crop_controller is not None:
             self._crop_controller.set_hidden(hidden)
+        # Companions ride the same decision on the same sweep. Skipping the
+        # epoch guard above would show them during EVE-off drain; skipping
+        # this forward is how #258's companion stayed up over every window
+        # while its EVE previews hid.
+        family = self._companion_family
+        if family is not None:
+            family.apply_lost_focus_hidden(hidden, active, foreground)
 
     def characters(self) -> list:
         """Named characters currently discovered, sorted. Safe from any

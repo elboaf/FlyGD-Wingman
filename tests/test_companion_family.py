@@ -386,3 +386,56 @@ def test_discard_picker_acknowledges_once_after_synchronous_cleanup(family):
     )
     native.command(CompanionCommand("discard", TOKEN, None))
     assert [event.kind for event in events] == ["closed"]
+
+
+def _live_companion(native, windows):
+    native.reconcile((spec(),), 2)
+    assert len(windows) == 1 and not windows[0].hidden
+    return windows[0]
+
+
+def test_lost_focus_hides_and_restores_live_companions(family):
+    """#258: the companion must follow the same hide-on-lost-focus decision
+    its EVE previews already obeyed, in both directions."""
+    native, _, windows, _, _, _ = family
+    window = _live_companion(native, windows)
+
+    native.apply_lost_focus_hidden(True, False, 0)
+    assert window.hidden
+    native.apply_lost_focus_hidden(False, False, 0)
+    assert not window.hidden
+
+
+def test_hide_active_hides_a_companion_over_its_own_source_only(family):
+    native, _, windows, _, _, _ = family
+    window = _live_companion(native, windows)
+
+    native.apply_lost_focus_hidden(False, True, 999)
+    assert not window.hidden
+    native.apply_lost_focus_hidden(False, True, BINDING.hwnd)
+    assert window.hidden
+    native.apply_lost_focus_hidden(False, True, 999)
+    assert not window.hidden
+
+
+def test_lost_focus_unhide_requires_live_authority(family):
+    native, _, windows, _, authority, _ = family
+    window = _live_companion(native, windows)
+    native.apply_lost_focus_hidden(True, False, 0)
+    assert window.hidden
+
+    authority["live"] = False
+    native.apply_lost_focus_hidden(False, False, 0)
+    assert window.hidden
+
+
+def test_lost_focus_leaves_retiring_windows_alone(family):
+    native, _, windows, _, _, _ = family
+    _live_companion(native, windows)
+    calls = []
+    windows[0].set_hidden = lambda *args, **kwargs: calls.append(args)
+    native.live[DEFINITION.id].retiring = True
+
+    native.apply_lost_focus_hidden(True, False, 0)
+
+    assert calls == []

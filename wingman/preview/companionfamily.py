@@ -9,7 +9,7 @@ import ntpath
 from dataclasses import dataclass
 from uuid import uuid4
 
-from . import geometry, win32
+from . import geometry, visibility, win32
 from .companions import (
     MAX_ENABLED,
     CompanionEvent,
@@ -488,6 +488,34 @@ class CompanionFamily:
                 self._revisions.get(identity, 0), spec.binding_revision
             )
         self.scan()
+
+    def apply_lost_focus_hidden(self, hidden, active, foreground):
+        """The host's hide-on-lost-focus decision, applied to live windows.
+
+        Companion windows never heard this decision before #258: only the
+        bind/promote flows touched their visibility, so an enabled companion
+        stayed on screen over every other window while its EVE previews hid.
+        The split is the same one visibility.py draws for EVE previews -- the
+        host observes the foreground and reads the settings, the family owns
+        its windows, and the whether lives in the pure module. The authority
+        callback matches _bind/_promote because an un-hide is a promotion of
+        a live window just as much as a first show is.
+        """
+        for identity, live in tuple(self.live.items()):
+            if live.retiring:
+                continue
+            token = self._token(live.spec)
+            live.window.set_hidden(
+                visibility.should_hide_source(
+                    global_hidden=hidden,
+                    hide_active=active,
+                    foreground=foreground,
+                    source_hwnd=live.binding.hwnd if active else 0,
+                ),
+                authorized=lambda lv=live, t=token, i=identity: (
+                    self.live.get(i) is lv and self._authorized(t, promotion=True)
+                ),
+            )
 
     def scan(self):
         self._clean_retired()

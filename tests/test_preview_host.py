@@ -4922,6 +4922,26 @@ def test_previews_come_back_when_a_client_takes_the_foreground_again(monkeypatch
     assert not any(w.hidden for w in made.values())
 
 
+def test_companion_family_rides_the_same_visibility_sweep(monkeypatch):
+    """#258: the forward itself, not just the family-side decision -- a
+    companion whose family never hears the sweep stays up over every
+    window while its EVE previews hide."""
+    h, _made, _libs, live = _visibility_host(
+        monkeypatch, enabled=True, foreground=0xDEAD, pids={0xDEAD: 9999}
+    )
+    seen = []
+    h._companion_family = SimpleNamespace(
+        apply_lost_focus_hidden=lambda *args: seen.append(args)
+    )
+    assert all(w.hidden for w in h._windows.values())
+
+    h._foreground = 0x1000
+    h._sweep(_OwnershipLibs(_OwnershipUser32({0x1000: 9999}), our_pid=4242))
+
+    assert seen == [(False, False, 0x1000)]
+    assert live["enabled"]
+
+
 def test_unticking_the_setting_restores_previews_on_the_restyle(monkeypatch):
     """api.py's set_preview_hide_on_lost_focus writes the key and calls
     restyle(). If restyle did not re-run the visibility pass, a user who
