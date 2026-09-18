@@ -594,6 +594,7 @@ async function run() {
     else {
       const call = calls.find(c => c.method === (combat ? 'fleet_sharing_setup' : 'fleet_sharing_automatic'));
       assert.ok(call, 'real bridge action exists');
+      assert.equal(call.args.length, 2, 'omitted optional args must not cross the bridge as null');
       assert.equal(call.args[0], combat ? 'combat' : 'on');
       assert.deepEqual(clone(call.args[1]), combat ? original.setup : original.automatic);
       call.resolve({queued:false,error:'Refresh and confirm again.'}); await turn();

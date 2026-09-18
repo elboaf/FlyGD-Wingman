@@ -403,8 +403,11 @@
     var observation = detached(control), owns = interactionOwner();
     var automaticOwner = method === 'fleet_sharing_automatic' ? ++automaticAttempt : null;
     WM.confirm(title, message).then(function (ok) {
-      if (ok && owns() && (automaticOwner === null || automaticOwner === automaticAttempt)) action(method, operation, observation, extra);
-      else paint();
+      if (ok && owns() && (automaticOwner === null || automaticOwner === automaticAttempt)) {
+        // An omitted JS argument becomes null on the Python bridge, not a default.
+        if (typeof extra === 'undefined') action(method, operation, observation);
+        else action(method, operation, observation, extra);
+      } else paint();
     });
   }
   function automaticChoice(value) {
