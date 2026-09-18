@@ -693,7 +693,7 @@
         </div>
         <p class="hint" id="characters-live" role="status" aria-live="polite"></p>
         <div id="characters-roster" role="table" aria-label="Character roster"
-             aria-colcount="5">
+             aria-colcount="4">
           <div class="empty" id="characters-empty" role="row">
             <span role="cell">No characters yet.</span>
           </div>
@@ -2062,14 +2062,16 @@
            paint the action, hazard, backup promise and completion in place. -->
         <div id="es-commit-context" class="es-commit-context">
           <div class="row" id="es-commit">
-            <button id="es-copy" class="btn acc" disabled>Copy to 0 characters</button>
             <span class="es-commit-info">
-              <span id="es-copy-count" class="es-count">Nothing selected</span>
-              <span id="es-copy-source" class="es-copy-source"></span>
+              <span class="es-commit-summary-line">
+                <span id="es-copy-count" class="es-count">Nothing selected</span>
+                <span id="es-copy-source" class="es-copy-source"></span>
+              </span>
               <span id="es-copy-profile" class="es-copy-source"></span>
               <span id="es-copy-scope-commit" class="es-copy-source" hidden></span>
             </span>
             <span id="es-eve-state-commit" class="pill">EVE closed</span>
+            <button id="es-copy" class="btn acc" disabled>Copy settings</button>
           </div>
           <p id="es-copy-backup-note" class="hint"></p>
           <div id="es-copy-followup" class="es-copy-followup" hidden>
