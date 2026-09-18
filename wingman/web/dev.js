@@ -320,7 +320,7 @@
       observed:sharing.metadata.binding ? {generation:sharingAutoGeneration,revision:sharingAutoRevision,
         enabled:sharing.automatic.enabled,approver:sharingAutoGeneration ? 'this_device' : 'none'} : null,
       pending:null,stage:sharing.automatic_stage,choice:null,request:'dev-only',history:String(sharingAutoRevision)},
-      setup:{binding:sharing.metadata.binding,configured_origin:sharing.configured_origin,combat_approved:approved.indexOf('combat-v2') !== -1,
+      setup:{binding:sharing.metadata.binding,configured_origin:sharing.configured_origin,queue_sequence:sharingPresentationOrder,combat_approved:approved.indexOf('combat-v2') !== -1,
         history:String(sharingAutoRevision),pairing_pending:false,recovery_pending:false,
         automatic_enabled:sharing.automatic.enabled,automatic_pending:false,participation_pending:false,
         source_requests:sharing.pending_sources.length,legacy_archive:sharingLegacyPresent,cutover:sharingLegacy}};

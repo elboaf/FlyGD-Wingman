@@ -4652,6 +4652,9 @@ class Api:
                 and (status.pending_pairing or status.pending_recovery)
                 else None,
                 automatic_history=status.automatic if action == "fresh" else None,
+                expected_sequence=observation["queue_sequence"]
+                if action == "fresh"
+                else None,
             )
             with self._sharing_delivery_lock:
                 if (

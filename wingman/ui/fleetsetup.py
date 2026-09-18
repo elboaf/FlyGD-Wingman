@@ -52,6 +52,7 @@ def controls(status, *, configured_origin=None):
         "setup": {
             "binding": status.metadata.binding,
             "configured_origin": configured_origin,
+            "queue_sequence": status.command_sequence,
             "combat_approved": COMBAT_CAPABILITY
             in (status.metadata.approved_capabilities or ()),
             "history": _fingerprint(

@@ -133,6 +133,7 @@ class SharingStatus:
     automatic_choice: bool | None = None
     cutover_outcomes: tuple[s.CutoverOutcome, ...] = ()
     cutover_present: bool = False
+    command_sequence: int = 0
     pending_participation: s.PendingParticipation | None = None
     pending_pairing: s.PendingPairing | None = None
     pending_recovery: s.PendingRecovery | None = None
@@ -447,30 +448,16 @@ class FleetSharingWorker:
         binding=None,
         supersedes=None,
         automatic_history=None,
+        expected_sequence=None,
     ):
         with self._lock:
+            # Compare before reserving an identity epoch. The displayed setup
+            # cannot erase an intervening Off, even if it has already been saved
+            # and disappeared from the queue since the bridge's status read.
+            if expected_sequence is not None and expected_sequence != self._sequence:
+                return None
             if binding is not None and binding != self._status.metadata.binding:
                 return None
-            if kind == "pairing" and payload[0] == "fresh":
-                # Fresh reserves an identity epoch here. Recheck before that
-                # reservation: an Off admitted after the page's read must not
-                # be erased by a new binding before the owner can persist it.
-                state = self._state
-                if any(
-                    c.kind != "automatic_status" for c in self._commands.values()
-                ) or (
-                    state is not None
-                    and (
-                        state.pending_participation is not None
-                        or state.pending_source_commands
-                        or state.pending_pairing is not None
-                        or state.pending_recovery is not None
-                        or state.cutover is not None
-                        or state.automatic != (automatic_history or s.AutomaticState())
-                        or state.automatic.pending is not None
-                    )
-                ):
-                    return None
             if kind == "cancel_automatic":
                 queued = self._commands.get(key)
                 if (
@@ -634,6 +621,7 @@ class FleetSharingWorker:
                     self._status,
                     **changes,
                     order=self._status.order + 1,
+                    command_sequence=self._sequence,
                     pending_sources=self._pending_sources_locked(),
                 )
         self._pending.set()
@@ -652,6 +640,7 @@ class FleetSharingWorker:
         binding=None,
         supersedes=None,
         automatic_history=None,
+        expected_sequence=None,
     ) -> bool:
         """Queue initial/retry, same-key upgrade, or explicitly authorized fresh setup.
 
@@ -664,6 +653,8 @@ class FleetSharingWorker:
         ):
             return False
         try:
+            if expected_sequence is not None:
+                p.integer(expected_sequence)
             capabilities = p.capabilities(list(requested_capabilities))
             if action_id is not None:
                 p.uuid(action_id)
@@ -713,6 +704,7 @@ class FleetSharingWorker:
                 binding=binding,
                 supersedes=supersedes,
                 automatic_history=automatic_history,
+                expected_sequence=expected_sequence,
             )
             is not None
         )
