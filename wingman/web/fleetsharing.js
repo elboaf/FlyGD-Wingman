@@ -15,6 +15,7 @@
   var bindingGeneration = 0;
   var interactionGeneration = 0;
   var participationControl = null;
+  var automaticControl = null, setupControl = null, automaticAttempt = 0;
   var sourceRequests = [];
   var actionMessage = '';
   // Last-known labels/observations are presentation only, never a roster or
@@ -94,7 +95,8 @@
     update_required: 'This server requires a supported Wingman build.',
     forbidden: 'authGD refused this operation. Check account eligibility and connection.',
     capability_required: 'This connection needs sharing approval.',
-    conflict: 'Waiting for authGD to reconcile the current action.'
+    conflict: 'Waiting for authGD to reconcile the current action.',
+    unresolved_history: 'Saved requests need your review before setup can continue.'
   };
 
   function visible() {
@@ -357,6 +359,60 @@
     paint();
     return true;
   }
+  function paintSetup() {
+    var controls = state.setup_controls || {};
+    automaticControl = detached(controls.automatic);
+    setupControl = detached(controls.setup);
+    var combat = setupControl && setupControl.combat_approved;
+    WM.el('sharing-combat').hidden = combat;
+    WM.el('sharing-combat').disabled = !state.available || !state.metadata.loaded || !setupControl;
+    var auto = automaticControl, observed = auto && auto.observed, pending = auto && auto.pending;
+    WM.el('sharing-automatic').checked = !!(auto && auto.choice !== null ? auto.choice : observed && observed.enabled);
+    var pendingOn = !!(pending && pending.enabled) || !!(auto && auto.stage === 'queued' && auto.choice === true);
+    WM.el('sharing-automatic').disabled = !state.available || !auto || (!observed && !pendingOn)
+      || (readFailed && !(observed && observed.enabled) && !pendingOn);
+    WM.el('sharing-automatic-cancel').hidden = !pendingOn;
+    WM.el('sharing-automatic-cancel').disabled = !state.available || !!(pending && pending.cancellation_pending);
+    WM.el('sharing-automatic-dismiss').hidden = !pending;
+    WM.el('sharing-automatic-dismiss').disabled = !state.available;
+    WM.el('sharing-automatic-confirm').hidden = !(auto && auto.stage === 'needs_confirmation');
+    WM.el('sharing-automatic-confirm').disabled = !observed || !state.available;
+    var readiness = state.automatic && state.automatic.readiness;
+    var explanations = {off:'Off for your account.', waiting_for_grant:'On; grant Fleet Read to an owned boss below.',
+      authorization_required:'On; renew Fleet Read for an owned boss below.', waiting_for_fleet:'On; waiting for an owned character to lead a fleet.',
+      verifying:'On; checking your fleet boss.', reconnecting:'On; reconnecting to your fleet.', ready:'On; a fleet is verified.',
+      global_disabled:'Unavailable while fleet sharing is disabled on authGD.', member_required:'Restore authGD Member access.',
+      capacity_limited:'Waiting for verification capacity.'};
+    text('sharing-automatic-status', !observed ? 'Automatic verification has not been observed. Refresh after connecting.'
+      : (explanations[readiness] || (observed.enabled ? 'On for your account.' : 'Off for your account.'))
+        + (pending || (auto && auto.stage === 'queued') ? ' A saved or queued choice is not yet confirmed.' : '')
+        + (pending && pending.cancellation_pending ? ' Off will follow only the receipt for this pending On.' : ''));
+    text('sharing-setup-history', setupControl && (setupControl.source_requests || setupControl.participation_pending || setupControl.automatic_pending || setupControl.cutover.length)
+      ? 'Saved requests remain. Resolve or explicitly acknowledge them before Fresh setup; they are not server cancellations.' : '');
+  }
+  function setupAction(method, operation, control, title, message, extra) {
+    if (screenshotFixture || !hydrated || !visible() || !control) return;
+    var observation = detached(control), owns = interactionOwner();
+    var automaticOwner = method === 'fleet_sharing_automatic' ? ++automaticAttempt : null;
+    WM.confirm(title, message).then(function (ok) {
+      if (ok && owns() && (automaticOwner === null || automaticOwner === automaticAttempt)) action(method, operation, observation, extra);
+      else paint();
+    });
+  }
+  function automaticChoice(value) {
+    if (screenshotFixture || !hydrated || !visible() || !automaticControl) return;
+    var pending = automaticControl.pending;
+    var cancel = !value && ((pending && pending.enabled) || (automaticControl.stage === 'queued' && automaticControl.choice === true));
+    if (!value) {
+      automaticAttempt += 1; // A later Off cancels an unanswered On dialog too.
+      action('fleet_sharing_automatic', cancel ? 'cancel' : 'off', detached(automaticControl));
+      return;
+    }
+    setupAction('fleet_sharing_automatic', cancel ? 'cancel' : value ? 'on' : 'off', automaticControl,
+      value ? 'Automatic boss verification' : 'Turn automatic verification Off',
+      value ? 'Allow authGD to find and verify your owned fleet boss across restarts and future fleets? This affects your account, not just this PC. It does not turn telemetry sharing On.'
+        : 'Stop automatic verification for your account. A pending On will be cancelled using its own receipt; local sharing preference stays unchanged.');
+  }
   function paint() {
     if (!state || !visible()) return;
     hydrated = true;
@@ -403,6 +459,7 @@
     text('sharing-consent', consent);
     paintCharacters();
     paintSources();
+    paintSetup();
     paintAction();
     if (!state.available) unavailable();
   }
@@ -443,6 +500,7 @@
       var accepted = method === 'fleet_sharing_start_source' ? 'Start requested.'
         : method === 'fleet_sharing_stop_source' ? 'Stop requested.'
         : method === 'fleet_sharing_grant_fleet_read' ? 'Fleet Read browser requested. Use the paired account, then Refresh.'
+        : method === 'fleet_sharing_automatic' ? 'Automatic verification request queued; server outcome is not yet confirmed.'
         : 'Setup requested.';
       actionMessage = result && result.queued ? accepted
         : (result && result.error) || 'The action could not be queued. Refresh and retry.';
@@ -502,14 +560,30 @@
     var character = selected();
     if (character && !grant.disabled) action('fleet_sharing_grant_fleet_read', character.character_id, binding());
   });
+  WM.el('sharing-combat').addEventListener('click', function () {
+    if (WM.el('sharing-combat').disabled) return;
+    setupAction('fleet_sharing_setup', 'combat', setupControl, 'Approve combat sharing',
+      'Open authGD to approve current incoming/outgoing DPS, incoming NEUT and tackle observations, including observed tackle names? No raw logs or history are shared. This does not enable this PC or automatic verification.');
+  });
+  WM.el('sharing-automatic').addEventListener('change', function () { if (!WM.el('sharing-automatic').disabled) automaticChoice(WM.el('sharing-automatic').checked); });
+  WM.el('sharing-automatic-confirm').addEventListener('click', function () { automaticChoice(true); });
+  WM.el('sharing-automatic-cancel').addEventListener('click', function () { if (!WM.el('sharing-automatic-cancel').disabled) automaticChoice(false); });
+  WM.el('sharing-automatic-dismiss').addEventListener('click', function () {
+    setupAction('fleet_sharing_automatic', 'dismiss', automaticControl, 'Acknowledge unresolved request',
+      'Remove this local automatic request only after the worker can safely retire it? This does not turn server consent Off. An attempted On waits for authenticated expiry proof.');
+  });
   connect.addEventListener('click', function () {
     if (screenshotFixture || !hydrated) return;
-    if (pairingMode !== 'fresh') { action('fleet_sharing_pair', pairingMode); return; }
+    if (pairingMode !== 'fresh') {
+      if (setupControl && (setupControl.pairing_pending || setupControl.recovery_pending)) {
+        setupAction('fleet_sharing_setup', 'retry', setupControl, 'Retry connection',
+          'Acknowledge the displayed incomplete connection attempt and retry with this device key? No sharing or automatic consent is enabled.');
+      } else action('fleet_sharing_pair', pairingMode);
+      return;
+    }
     var originText = changeOrigin ? 'Switches to ' + state.configured_origin + '. ' : '';
-    var owns = interactionOwner(), requestedOrigin = changeOrigin;
-    WM.confirm('Fresh fleet setup', originText + 'Creates a new device key. Old identity-bound pending actions will not carry over. Continue?').then(function (ok) {
-      if (ok && owns()) action('fleet_sharing_pair', 'fresh', requestedOrigin);
-    });
+    setupAction('fleet_sharing_setup', 'fresh', setupControl, 'Fresh fleet setup',
+      originText + 'Creates a new device key and acknowledges the displayed settled automatic-verification history. Unresolved requests must be handled first. This does not turn consent Off on the old server. Continue?', changeOrigin);
   });
   function watch() {
     if (screenshotFixture) { paint(); return; }

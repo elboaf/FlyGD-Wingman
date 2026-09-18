@@ -4349,6 +4349,9 @@ class Api:
                 else None,
             }
             payload["controls"] = self._sharing_controls(status)
+            from .fleetsetup import controls as setup_controls
+
+            payload["setup_controls"] = setup_controls(status)
             payload.update(
                 available=self._fleet_sharing is not None and not self._sharing_closed,
                 enabled=self._sharing_enabled,
@@ -4418,6 +4421,158 @@ class Api:
             self._apply_sharing_watch()
         if visible:
             self._schedule_fleet_sharing_push()
+
+    def fleet_sharing_automatic(self, action, observation=None) -> dict:
+        from .fleetsetup import controls
+
+        if action not in ("on", "off", "cancel", "dismiss", "remove_cancel"):
+            return {
+                "queued": False,
+                "error": "Choose an automatic verification action.",
+            }
+        with self._sharing_submission() as available:
+            with self._sharing_delivery_lock:
+                status = self._sharing_status
+            if (
+                not available
+                or status is None
+                or not self._sharing_control_matches(
+                    observation, controls(status)["automatic"]
+                )
+                or not observation["binding"]
+            ):
+                return {
+                    "queued": False,
+                    "error": "Automatic verification changed. Refresh and confirm again.",
+                }
+            pending = status.automatic.pending
+            binding = observation["binding"]
+            if action in ("on", "off"):
+                observed = observation["observed"]
+                if observed is None:
+                    return {
+                        "queued": False,
+                        "error": "Refresh automatic verification before changing consent.",
+                    }
+                accepted = self._fleet_sharing.request_automatic(
+                    action == "on",
+                    expected_generation=observed["generation"],
+                    expected_revision=observed["revision"],
+                    binding=binding,
+                    supersedes=pending,
+                )
+            elif action == "cancel":
+                request_id = (
+                    pending.command.request_id
+                    if pending
+                    else status.automatic_request_id
+                )
+                accepted = self._fleet_sharing.request_cancel_automatic_on(
+                    request_id, binding=binding
+                )
+            elif pending is None:
+                accepted = False
+            elif action == "dismiss":
+                accepted = self._fleet_sharing.request_dismiss_automatic(
+                    pending, binding=binding
+                )
+            else:
+                accepted = self._fleet_sharing.request_remove_automatic_cancel(
+                    pending, binding=binding
+                )
+        self._start_fleet_sharing()
+        return {
+            "queued": bool(accepted),
+            "error": None
+            if accepted
+            else "The automatic action could not be queued. Refresh and retry.",
+            "state": self.fleet_sharing_state(),
+        }
+
+    def fleet_sharing_setup(
+        self, action, observation=None, use_configured_origin=False
+    ) -> dict:
+        from ..fleetsharing.config import resolve_relay_origin
+        from ..fleetsharing.worker import CAPABILITIES, COMBAT_CAPABILITIES
+        from .fleetsetup import controls
+
+        if (
+            action not in ("combat", "fresh", "retry")
+            or type(use_configured_origin) is not bool
+        ):
+            return {"queued": False, "error": "Choose a setup action."}
+        with self._sharing_submission() as available:
+            with self._sharing_delivery_lock:
+                status = self._sharing_status
+            if (
+                not available
+                or status is None
+                or not self._sharing_control_matches(
+                    observation, controls(status)["setup"]
+                )
+            ):
+                return {
+                    "queued": False,
+                    "error": "Connection history changed. Refresh and review it again.",
+                }
+            if action == "fresh" and (
+                status.pending_participation
+                or status.pending_sources
+                or status.cutover_outcomes
+                or status.pending_pairing
+                or status.pending_recovery
+                or status.automatic.pending
+            ):
+                return {
+                    "queued": False,
+                    "error": "Resolve the displayed pending requests before Fresh setup.",
+                }
+            action_id = str(uuid.uuid4())
+            self._begin_sharing_browser(action_id)
+            mode = (
+                "fresh"
+                if action == "fresh"
+                else "upgrade"
+                if status.metadata.binding
+                else "initial"
+            )
+            capabilities = (
+                COMBAT_CAPABILITIES
+                if action == "combat" or observation["combat_approved"]
+                else CAPABILITIES
+            )
+            accepted = self._fleet_sharing.request_pairing(
+                mode=mode,
+                action_id=action_id,
+                binding=observation["binding"],
+                configured_origin=resolve_relay_origin()
+                if use_configured_origin or not status.metadata.binding
+                else None,
+                requested_capabilities=capabilities,
+                supersedes=(status.pending_pairing, status.pending_recovery)
+                if action != "fresh"
+                and status.metadata.binding
+                and (status.pending_pairing or status.pending_recovery)
+                else None,
+                automatic_history=status.automatic if action == "fresh" else None,
+            )
+            with self._sharing_delivery_lock:
+                if (
+                    accepted
+                    and self._sharing_browser_action == action_id
+                    and self._sharing_status is not None
+                    and self._sharing_status.pairing_action_id == action_id
+                ):
+                    self._sharing_pair_action = action_id
+        self._start_fleet_sharing()
+        self._schedule_fleet_sharing_push()
+        return {
+            "queued": bool(accepted),
+            "error": None
+            if accepted
+            else "Setup could not be queued. Refresh and retry.",
+            "state": self.fleet_sharing_state(),
+        }
 
     def fleet_sharing_pair(self, mode="initial", use_configured_origin=False) -> dict:
         if (

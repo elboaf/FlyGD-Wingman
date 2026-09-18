@@ -130,8 +130,11 @@ class SharingStatus:
     automatic_status: p.AutomaticStatus | None = None
     automatic_stage: str | None = None
     automatic_request_id: str | None = None
+    automatic_choice: bool | None = None
     cutover_outcomes: tuple[s.CutoverOutcome, ...] = ()
     pending_participation: s.PendingParticipation | None = None
+    pending_pairing: s.PendingPairing | None = None
+    pending_recovery: s.PendingRecovery | None = None
 
 
 @dataclass(frozen=True)
@@ -548,6 +551,11 @@ class FleetSharingWorker:
                 self._automatic_generation += 1
                 changes = dict(
                     automatic_stage="queued",
+                    automatic_choice=payload.enabled
+                    if kind == "automatic"
+                    else False
+                    if kind == "cancel_automatic"
+                    else None,
                     automatic_request_id=(
                         payload.request_id
                         if kind == "automatic"
@@ -790,15 +798,25 @@ class FleetSharingWorker:
             return None
         with self._lock:
             pending = self._state.automatic.pending if self._state else None
+            queued_on = self._commands.get("automatic")
+            original = (
+                pending.command
+                if pending is not None
+                else (
+                    queued_on.payload
+                    if queued_on is not None and queued_on.kind == "automatic"
+                    else None
+                )
+            )
             if (
                 binding is None
                 or binding != self._status.metadata.binding
-                or pending is None
-                or not pending.command.enabled
-                or pending.command.request_id != request_id
+                or original is None
+                or not original.enabled
+                or original.request_id != request_id
             ):
                 return None
-            if pending.cancel_after_on is not None:
+            if pending is not None and pending.cancel_after_on is not None:
                 if "remove_cancel" not in self._commands:
                     return pending.cancel_after_on.request_id
                 cancel = pending.cancel_after_on
@@ -1009,12 +1027,15 @@ class FleetSharingWorker:
                 automatic_status=None,
                 automatic_stage=None,
                 automatic_request_id=None,
+                automatic_choice=None,
             )
         self._update_status(
             metadata=metadata,
             automatic=state.automatic,
             cutover_outcomes=state.cutover.outcomes if state.cutover else (),
             pending_participation=state.pending_participation,
+            pending_pairing=state.pending_pairing,
+            pending_recovery=state.pending_recovery,
             **changes,
         )
 

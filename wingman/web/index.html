@@ -1311,6 +1311,7 @@
         <p class="field-msg" id="sharing-browser-error" role="status"></p>
         <div class="row">
           <button class="btn" id="sharing-connect" disabled>Connect…</button>
+          <button class="btn" id="sharing-combat" disabled>Approve combat sharing…</button>
           <button class="btn" id="sharing-refresh" disabled>Refresh</button>
         </div>
         <div class="row">
@@ -1320,11 +1321,24 @@
           </label>
           <button class="btn" id="sharing-confirm-on" hidden>Confirm sharing On</button>
         </div>
-        <p class="hint" id="sharing-scope">Shares current DPS and scram / point state with eligible authGD Members in the same verified fleet, never raw logs or history.</p>
+        <p class="hint" id="sharing-scope">Shares current incoming/outgoing DPS and incoming scram, point and neutralization observations with eligible authGD Members in the same verified fleet, never raw logs or history. Combat details need separate browser approval.</p>
         <p class="field-msg" id="sharing-preference" role="status"></p>
         <p class="hint" id="sharing-consent" role="status"></p>
         <p class="operational-status" id="sharing-eligibility" role="status"></p>
         <p class="field-msg" id="sharing-action" role="status"></p>
+        <h3>Automatic boss verification</h3>
+        <label class="check">
+          <input type="checkbox" id="sharing-automatic" disabled aria-describedby="sharing-automatic-scope"><span class="box"></span>
+          Automatically verify my fleet boss
+        </label>
+        <p class="hint" id="sharing-automatic-scope">Applies to your authGD account across restarts and future fleets. Uses Fleet Read from your owned characters. This does not turn this PC's sharing On.</p>
+        <p class="operational-status" id="sharing-automatic-status" role="status">Automatic verification has not been observed.</p>
+        <div class="row">
+          <button class="btn" id="sharing-automatic-confirm" hidden>Confirm automatic On…</button>
+          <button class="btn" id="sharing-automatic-cancel" hidden>Cancel pending automatic On</button>
+          <button class="btn" id="sharing-automatic-dismiss" hidden>Acknowledge unresolved automatic request…</button>
+        </div>
+        <p class="hint" id="sharing-setup-history" role="status"></p>
         <h3>Current and pending verification</h3>
         <p class="hint" id="sharing-source-status">Verification state is not known yet.</p>
         <div class="sharing-sources" id="sharing-sources"></div>

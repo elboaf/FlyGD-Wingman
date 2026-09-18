@@ -77,7 +77,7 @@ document.createElement = tag => new Element(tag);
 const window = new Element('window');
 const calls = [];
 const api = {};
-for (const method of ['fleet_sharing_watch', 'fleet_sharing_set_enabled', 'fleet_sharing_pair', 'fleet_sharing_start_source', 'fleet_sharing_stop_source', 'fleet_sharing_grant_fleet_read']) {
+for (const method of ['fleet_sharing_watch', 'fleet_sharing_set_enabled', 'fleet_sharing_pair', 'fleet_sharing_start_source', 'fleet_sharing_stop_source', 'fleet_sharing_grant_fleet_read', 'fleet_sharing_setup', 'fleet_sharing_automatic']) {
   api[method] = (...args) => new Promise((resolve, reject) => calls.push({method, args, resolve, reject}));
 }
 for (const method of ['list_rows', 'get_settings', 'update_status']) api[method] = () => Promise.resolve(null);
@@ -200,7 +200,7 @@ async function historyScenario(first) {
     assert.match(localScope.textContent, /not.*collection.*sharing/i);
     const sharedScope = ids[ids['sharing-enabled'].getAttribute('aria-describedby')];
     assert.ok(sharedScope, 'sharing switch describes its transmission scope');
-    assert.match(sharedScope.textContent, /current DPS.*scram.*point/i);
+    assert.match(sharedScope.textContent, /current incoming\/outgoing DPS.*scram.*point.*neutralization/i);
     assert.match(sharedScope.textContent, /eligible.*same.*fleet/i);
     assert.match(sharedScope.textContent, /never raw logs or history/i);
     for (let node = sharedScope; node; node = node.parentNode) {
@@ -216,7 +216,8 @@ async function historyScenario(first) {
     assert.ok(order.indexOf(ids['sharing-sources']) < order.indexOf(ids['sharing-boss']),
       'current/pending verification precedes selection for a new attempt');
     const headings = order.filter(node => node.tagName === 'H3');
-    assert.match(headings[0].textContent, /current.*pending.*verification/i);
+    assert.match(headings[0].textContent, /automatic.*boss.*verification/i);
+    assert.match(headings[1].textContent, /current.*pending.*verification/i);
     const label = order.find(node => node.getAttribute('for') === 'sharing-boss');
     assert.match(label.textContent, /boss.*new attempt/i);
     assert.match(ids['sharing-grant-status'].textContent, /Choose.*boss/i);
@@ -572,7 +573,34 @@ async function run() {
   assert.match(ids['sharing-connection'].textContent, /Reading/);
   attemptMutations(); await turn(); assert.equal(mutationCount(), 0);
   const first = watches()[0];
-  if (scenario === 'dev-control-authority') {
+  if (scenario.startsWith('control-setup-')) {
+    first.resolve({state: input.live}); await turn();
+    const original = clone(input.live.setup_controls);
+    const combat = scenario === 'control-setup-combat';
+    if (combat) ids['sharing-combat'].dispatchEvent({type:'click'});
+    else { ids['sharing-automatic'].checked = true; ids['sharing-automatic'].dispatchEvent({type:'change'}); }
+    await turn();
+    assert.equal(confirmations.length, 1, 'setup action explicitly confirms');
+    assert.equal(mutationCount(), 0, 'no authorization before confirmation');
+    if (scenario.endsWith('-route')) await leave();
+    if (scenario.endsWith('-stale')) {
+      const newer = clone(input.live);
+      newer.presentation_order += 1;
+      newer.setup_controls.automatic.observed.revision += 1;
+      push(newer);
+    }
+    confirmations[0].resolve(true); await turn();
+    if (scenario.endsWith('-route')) assert.equal(mutationCount(), 0);
+    else {
+      const call = calls.find(c => c.method === (combat ? 'fleet_sharing_setup' : 'fleet_sharing_automatic'));
+      assert.ok(call, 'real bridge action exists');
+      assert.equal(call.args[0], combat ? 'combat' : 'on');
+      assert.deepEqual(clone(call.args[1]), combat ? original.setup : original.automatic);
+      call.resolve({queued:false,error:'Refresh and confirm again.'}); await turn();
+      assert.match(ids['sharing-action'].textContent, /Refresh/);
+      assert.equal(calls.filter(c => c.method === 'fleet_sharing_set_enabled').length, 0);
+    }
+  } else if (scenario === 'dev-control-authority') {
     first.resolve({state: input.live}); await turn();
     delete window.pywebview;
     window.location = {search: '?dev=1&sharing=expired', hash: ''};

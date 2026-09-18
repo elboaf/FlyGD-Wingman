@@ -204,6 +204,7 @@
   var sharingHoldPreference = false;
   var sharingPreferenceReplies = [];
   var sharingUUID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  var sharingAutoGeneration = 0, sharingAutoRevision = 0;
   function sharingScenario(kind) {
     var paired = kind !== 'unpaired';
     var characters = [];
@@ -218,6 +219,8 @@
       participation: null, participation_intent_id: null, participation_order: 0,
       source_control: null, pairing: null,
       local_inhibited: true, pending_sources: [], source_results: [], pairing_action_id: null,
+      automatic: {enabled:false,pending:false,cancellation_pending:false,outcome:null,readiness:'off'},
+      automatic_stage: null,
       order: ++sharingOrder, presentation_order: ++sharingPresentationOrder, preference_order: 0, preference_error: null,
       available: kind !== 'unavailable', enabled: false,
       telemetry_available: kind !== 'unavailable', runtime_error: null,
@@ -306,8 +309,48 @@
   }
   function sharingCopy() {
     sharing.controls = sharingControls();
+    sharing.setup_controls = sharingSetupControls();
     return JSON.parse(JSON.stringify(sharing));
   }
+  function sharingSetupControls() {
+    var approved = sharing.metadata.approved_capabilities || [];
+    return {automatic: {binding:sharing.metadata.binding,
+      observed:sharing.metadata.binding ? {generation:sharingAutoGeneration,revision:sharingAutoRevision,
+        enabled:sharing.automatic.enabled,approver:sharingAutoGeneration ? 'this_device' : 'none'} : null,
+      pending:null,stage:sharing.automatic_stage,choice:null,request:'dev-only',history:String(sharingAutoRevision)},
+      setup:{binding:sharing.metadata.binding,combat_approved:approved.indexOf('combat-v2') !== -1,
+        history:String(sharingAutoRevision),pairing_pending:false,recovery_pending:false,
+        automatic_enabled:sharing.automatic.enabled,automatic_pending:false,participation_pending:false,
+        source_requests:sharing.pending_sources.length,cutover:[]}};
+  }
+  api.fleet_sharing_automatic = function (operation, observation) {
+    sharingCalls.push(['automatic', operation, observation]);
+    if (['on','off'].indexOf(operation) === -1 || JSON.stringify(observation) !== JSON.stringify(sharingSetupControls().automatic)) {
+      return Promise.resolve({queued:false,error:'Automatic verification changed. Refresh and confirm again.'});
+    }
+    sharing.automatic.enabled = operation === 'on';
+    sharingAutoRevision += 1; if (operation === 'on') sharingAutoGeneration += 1;
+    sharing.automatic.readiness = operation === 'on' ? 'waiting_for_fleet' : 'off';
+    sharing.automatic_stage = 'acknowledged';
+    sharing.presentation_order = ++sharingPresentationOrder;
+    window.onFleetSharingState(sharingCopy());
+    return Promise.resolve({queued:true,state:sharingCopy()});
+  };
+  api.fleet_sharing_setup = function (operation, observation) {
+    sharingCalls.push(['setup', operation, observation]);
+    if (JSON.stringify(observation) !== JSON.stringify(sharingSetupControls().setup)) {
+      return Promise.resolve({queued:false,error:'Connection history changed. Refresh and review again.'});
+    }
+    if (operation === 'combat') {
+      sharing.metadata.approved_capabilities = ['shared-source-v1','combat-v2'];
+      sharing.metadata.session_approved_capabilities = sharing.metadata.approved_capabilities.slice();
+      sharing.metadata.acknowledged_capabilities = sharing.metadata.approved_capabilities.slice();
+      sharing.presentation_order = ++sharingPresentationOrder;
+      window.onFleetSharingState(sharingCopy());
+      return Promise.resolve({queued:true,state:sharingCopy()});
+    }
+    return api.fleet_sharing_pair(operation === 'fresh' ? 'fresh' : 'upgrade');
+  };
   api.fleet_sharing_state = function () {return Promise.resolve(sharingCopy());};
   api.fleet_sharing_watch = function (open) {
     sharingCalls.push(['watch', open]);
