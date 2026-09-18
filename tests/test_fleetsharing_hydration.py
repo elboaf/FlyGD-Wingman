@@ -98,6 +98,11 @@ def test_missing_worker_watch_returns_unavailable_without_startup(
         "control-dialog-on-binding",
         "control-missing-authority",
         "dev-control-authority",
+        "control-preference-feedback-pushes",
+        "control-preference-feedback-retry",
+        "control-preference-feedback-off",
+        "control-preference-feedback-binding",
+        "control-preference-feedback-screenshot",
     ],
 )
 def test_sharing_watch_runtime(tmp_path, scenario):
@@ -138,6 +143,25 @@ def test_sharing_watch_runtime(tmp_path, scenario):
                 for state in _store.saves
                 for command in state.pending_source_commands
             )
+        preference_case = None
+        if scenario.startswith("control-preference-feedback-"):
+            initial = live_api.fleet_sharing_state()
+            worker.request_participation(False)
+            changed = live_api.fleet_sharing_state()
+            refusal = live_api.fleet_sharing_set_enabled(
+                True, initial["controls"]["participation"]
+            )
+            assert not refusal["applied"] and refusal["error"]
+            assert not live_api._state.settings["fleet_sharing"]["enabled"]
+            assert (
+                changed["controls"]["participation"]
+                != initial["controls"]["participation"]
+            )
+            preference_case = {
+                "initial": initial,
+                "changed": changed,
+                "refusal": refusal,
+            }
         page = SharingPageTree()
         page.feed((WEB / "index.html").read_text(encoding="utf-8"))
         fixture = tmp_path / "sharing-page.json"
@@ -149,6 +173,7 @@ def test_sharing_watch_runtime(tmp_path, scenario):
                     "live": live_api.fleet_sharing_state(),
                     "older": older,
                     "rejected": rejected,
+                    "preference_case": preference_case,
                 }
             ),
             encoding="utf-8",

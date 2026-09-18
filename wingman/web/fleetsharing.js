@@ -9,6 +9,7 @@
   var watchGeneration = 0;
   var watchChain = Promise.resolve();
   var preferenceAttempt = 0;
+  var preferenceMessage = ''; // This attempt's refusal is not a worker-status field.
   var actionAttempt = 0;
   var actionsInFlight = 0;
   var bindingGeneration = 0;
@@ -47,7 +48,8 @@
     }
     if (!payload && !screenshotFixture) return;
     var live = screenshotFixture ? screenshotLive : {state: state, boss: desiredBoss,
-      sources: knownSources, characters: knownCharacters, message: actionMessage, readFailed: readFailed};
+      sources: knownSources, characters: knownCharacters, message: actionMessage,
+      preferenceMessage: preferenceMessage, readFailed: readFailed};
     screenshotEpoch += 1; watchGeneration += 1; actionAttempt += 1; bindingGeneration += 1;
     screenshotFixture = payload ? JSON.parse(JSON.stringify(payload)) : null;
     screenshotLive = payload ? live : null;
@@ -56,6 +58,7 @@
     state = payload ? null : live.state; hydrated = false;
     knownSources = payload ? [] : live.sources; knownCharacters = payload ? [] : live.characters;
     desiredBoss = payload ? '' : live.boss; actionMessage = payload ? '' : live.message;
+    preferenceMessage = payload ? '' : live.preferenceMessage;
     readFailed = payload ? false : live.readFailed;
     sources.textContent = ''; historySources.textContent = ''; boss.removeAttribute('data-roster');
     history.open = false; WM.el('sharing-eligible').open = false;
@@ -312,6 +315,7 @@
         }
         if (screenshotLive.state && payload.metadata.binding !== screenshotLive.state.metadata.binding) {
           screenshotLive.boss = ''; screenshotLive.sources = []; screenshotLive.characters = [];
+          screenshotLive.preferenceMessage = '';
         }
         screenshotLive.state = payload;
       }
@@ -325,6 +329,9 @@
       desiredBoss = '';
       actionAttempt += 1;
       bindingGeneration += 1;
+      preferenceAttempt += 1;
+      preferencePending = false;
+      preferenceMessage = '';
       sourceRequests = [];
       actionMessage = '';
       knownSources = [];
@@ -382,7 +389,11 @@
     connect.disabled = !state.available || !meta.loaded || (!retryBrowser && ['queued', 'persisted', 'awaiting_approval'].indexOf(state.pairing) !== -1);
     WM.el('sharing-confirm-on').hidden = !(state.enabled && (state.local_inhibited || state.participation === 'needs_confirmation'));
     WM.el('sharing-confirm-on').disabled = !state.available;
-    text('sharing-preference', state.preference_error);
+    var preferenceFeedback = preferenceMessage;
+    if (state.preference_error && state.preference_error !== preferenceMessage) {
+      preferenceFeedback += (preferenceFeedback ? ' ' : '') + state.preference_error;
+    }
+    text('sharing-preference', preferenceFeedback);
     var observed = state.observed_participation;
     var consent = 'This PC: ' + (state.enabled ? 'On' : 'Off')
       + (state.enabled && state.local_inhibited ? ', transmission paused.' : '.')
@@ -442,28 +453,30 @@
     if (screenshotFixture || !hydrated) return;
     if (!visible()) return;
     var observation = detached(participationControl);
+    var attempt = ++preferenceAttempt;
+    var generation = bindingGeneration;
+    preferenceMessage = '';
     if (value && !observation) {
-      enabled.checked = state.enabled;
-      text('sharing-preference', 'Refresh and confirm On again.');
+      preferencePending = false;
+      preferenceMessage = 'Refresh and confirm On again.';
+      paint();
       return;
     }
-    var attempt = ++preferenceAttempt;
     var owns = interactionOwner();
     preferencePending = true;
     preferenceWanted = value;
     // Paint the user's local request immediately so an in-flight On always
     // leaves a reachable Off. An older reply cannot revert a newer choice.
     enabled.checked = value;
+    text('sharing-preference', state.preference_error);
     function submit() {
       return WM.send('fleet_sharing_set_enabled', value, observation).then(function (result) {
-        if (attempt !== preferenceAttempt) return;
+        if (attempt !== preferenceAttempt || generation !== bindingGeneration) return;
         preferencePending = false;
+        preferenceMessage = !result ? 'Could not apply the sharing choice.' : result.error || '';
         if (result && result.state) {
           if (!render(result.state)) paint();
-        } else {
-          if (!result || !result.applied) enabled.checked = state.enabled;
-          text('sharing-preference', !result ? 'Could not apply the sharing choice.' : result.error || '');
-        }
+        } else paint();
       });
     }
     if (!value) { submit(); return; } // Off never waits behind a dialog.

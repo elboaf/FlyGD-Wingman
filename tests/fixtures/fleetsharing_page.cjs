@@ -593,6 +593,67 @@ async function run() {
     assert.equal((await dev.fleet_sharing_set_enabled(true, {})).applied, false);
     assert.equal((await dev.fleet_sharing_stop_source(A, state.metadata.binding, {})).queued, false);
     assert.equal((await dev.fleet_sharing_set_enabled(false, {})).applied, true);
+  } else if (scenario.startsWith('control-preference-feedback-')) {
+    const {initial, changed, refusal} = input.preference_case;
+    order = Math.max(order, changed.presentation_order);
+    first.resolve({state: initial}); await turn();
+    const warning = () => ids['sharing-preference'].textContent;
+    const preferences = () => calls.filter(call => call.method === 'fleet_sharing_set_enabled');
+    const choose = value => {
+      ids['sharing-enabled'].checked = value;
+      ids['sharing-enabled'].dispatchEvent({type: 'change'});
+    };
+    choose(true); await turn();
+    assert.equal(confirmations.length, 1); assert.equal(preferences().length, 0);
+    push(changed);
+    confirmations[0].resolve(true); await turn();
+    const old = preferences()[0];
+    assert.deepEqual(clone(old.args), [true, initial.controls.participation], 'delayed On sends original displayed DTO');
+    if (scenario.endsWith('-off') || scenario.endsWith('-binding')) {
+      if (scenario.endsWith('-off')) {
+        choose(false); await turn();
+        const off = preferences()[1]; assert.equal(off.args[0], false);
+        off.resolve({applied: true, persisted: true, state: payload([], {enabled: false})}); await turn();
+      } else push(payload([], {metadata: {...initial.metadata, binding: 'replacement'}, enabled: false}));
+      assert.equal(ids['sharing-enabled'].checked, false, 'new owner retains local Off truth');
+      old.resolve(refusal); await turn();
+      assert.equal(warning(), '', 'obsolete refusal cannot enter newer preference/binding feedback');
+      assert.equal(ids['sharing-enabled'].checked, false);
+    } else {
+      old.resolve(refusal); await turn();
+      assert.equal(warning(), refusal.error);
+      assert.equal(ids['sharing-enabled'].checked, false);
+      assert.equal(ids['sharing-enabled'].disabled, false, 'Off remains reachable');
+      if (scenario.endsWith('-pushes') || scenario.endsWith('-retry')) {
+        push(clone(changed)); assert.equal(warning(), refusal.error, 'identical status cannot erase local refusal');
+        push(payload([], {detail: 'service_unavailable'}));
+        assert.equal(warning(), refusal.error, 'new unrelated status cannot erase local refusal');
+        assert.equal(ids['sharing-enabled'].checked, false);
+        chooseBoss(); assert.equal(warning(), refusal.error, 'local repaint cannot erase refusal');
+        push(payload([], {preference_error: 'Independent preference save failed.'}));
+        assert.ok(warning().includes(refusal.error) && warning().includes('Independent preference save failed.'),
+          'local feedback must not conceal independent persistence failure');
+        await leave(); await enterAgain({state: payload()});
+        assert.equal(warning(), refusal.error, 'navigation does not replace the explicit preference attempt');
+      }
+      if (scenario.endsWith('-retry')) {
+        choose(true); await turn(); assert.equal(warning(), '', 'explicit retry replaces previous local feedback');
+        confirmations[1].resolve(true); await turn();
+        preferences()[1].resolve({applied: true, persisted: true, state: payload([], {enabled: true})}); await turn();
+        push(payload([], {enabled: true}));
+        assert.equal(warning(), ''); assert.equal(ids['sharing-enabled'].checked, true);
+      } else if (scenario.endsWith('-screenshot')) {
+        const fixture = payload([source(A), source(B)], {preference_error: 'Fixture preference warning.'});
+        fixture.sources.characters.push({...fixture.sources.characters[0], character_id: 2});
+        const stage = () => WM.fleetSharingScreenshot({kind: 'fleet-sharing-screenshot-v1', state: fixture});
+        stage(); assert.equal(warning(), 'Fixture preference warning.', 'live refusal cannot leak into fixture');
+        push(payload()); assert.equal(warning(), 'Fixture preference warning.');
+        WM.fleetSharingScreenshot(null); assert.equal(warning(), refusal.error, 'restore retains live refusal');
+        stage(); push(payload([], {metadata: {...initial.metadata, binding: 'replacement'}}));
+        WM.fleetSharingScreenshot(null);
+        assert.equal(warning(), '', 'live binding change during staging revokes old feedback');
+      }
+    }
   } else if (scenario.startsWith('control-')) {
     const initial = payload([source(A, 'active', null)]);
     first.resolve({state: initial}); await turn();
