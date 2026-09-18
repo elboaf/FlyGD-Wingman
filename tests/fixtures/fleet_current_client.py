@@ -86,7 +86,6 @@ def build(config, root, index, origin, ca):
         store.save(initial)
     app = make_state(folder, **settings.load())
     app.settings["fleet_bar"]["enabled"] = True
-    app.settings["eve"]["enabled"] = True
     app.settings["gamelogs_dir"] = str(logs)
     clock = time.monotonic
     context = RecordedTiming(
