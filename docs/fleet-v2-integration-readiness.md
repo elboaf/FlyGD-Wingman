@@ -86,6 +86,39 @@ is not an installed/frozen build or a substitute for the real-backend journey.
 The original partial checkpoints retain their historical failures and acceptance
 scope; do not read those old counts as the current suite result.
 
+## Published-review corrections
+
+Ordinary Stop still retries the exact original request. A separate **Replace
+pending Stop…** confirmation acknowledges a durable expired/conflicted Stop and
+uses the displayed live source's original generation/binding. It refuses stale
+observations and cannot replace a request that is only queued; that would lose
+the queued request's link to its durable predecessor. Unknown/ended sources do
+not authorize a new replacement. No automatic consent is enabled by this action.
+
+Historical approval-URL text validation is now frozen to Unicode 14 rather than
+following the host Python Unicode tables. The generator requires Unicode 14;
+exhaustive equivalence covers all 1,114,112 code points. Combat-v2's immutable
+Unicode 16 profile and shared fixtures are unchanged.
+
+Post-polish desktop verification: **16,280 passed, 13 Windows-only skips,
+970.61s**, with no Node/native-codec skips. Ruff check/format (510 files), all-page
+JS smoke and the Cargo regression pass. Windows Python 3.12 additionally passed
+**70 migration/recovery tests**. A fresh actual WebView2 **153.0.4234.32** process
+exercised the new confirmation through the real page/Api/worker against an
+offline peer, settled the expired/conflicted Stop, retained the no-overflow
+840×625 outer-window check, and stopped sharing/presentation before teardown.
+The same native/live/installed limitations above still apply.
+
+The companion correction exposes own-account browser automatic Off without
+revocation, retains original request identity across response loss/refresh and
+binds actions to the rendered account. Maintenance failures are isolated by row
+and phase without new owners or cadence. Its ordinary browser suite passed
+**451 tests** and the complete maintained integration profile passed **25 tests**
+with zero retries/skips. The latter now verifies API2 source/combat traffic and
+actual rejection of pinned pre-v2 clients, not obsolete v1 success. See the
+companion's current verification document for its separately recorded regular
+suite results; none of these checks replaces the opt-in current-client journey.
+
 ## Still separate from draft-PR readiness
 
 - A complete current-client restart → future fleet → automatic Off journey on

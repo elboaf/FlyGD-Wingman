@@ -4840,6 +4840,16 @@ class Api:
         }
 
     def fleet_sharing_stop_source(self, source_id, binding, observation=None) -> dict:
+        return self._sharing_stop_source(
+            source_id, binding, observation, replace_stop=False
+        )
+
+    def fleet_sharing_replace_stop(self, source_id, binding, observation=None) -> dict:
+        return self._sharing_stop_source(
+            source_id, binding, observation, replace_stop=True
+        )
+
+    def _sharing_stop_source(self, source_id, binding, observation, *, replace_stop):
         from ..fleetsharing import protocol
 
         try:
@@ -4869,18 +4879,38 @@ class Api:
                 or not self._sharing_control_matches(observation, expected)
             ):
                 return {"queued": False, "error": "Refresh the owned source list."}
-            original = next(
+            pending = next(
                 (
-                    row.command
+                    row
                     for row in status.pending_sources
                     if row.source_id.lower() == source_id
                 ),
                 None,
             )
-            automatic = observation["expected_automatic"]
+            original = pending.command if pending is not None else None
+            if replace_stop:
+                observed = observation["observed"]
+                if (
+                    not isinstance(original, protocol.SourceStop)
+                    or pending.stage != "persisted"
+                    or observed is None
+                    or observed["state"] == "ended"
+                ):
+                    return {
+                        "queued": False,
+                        "error": "Refresh the pending Stop and current source.",
+                    }
+                # Only a durable predecessor may be acknowledged. Replacing a
+                # queued replacement would drop its link to the durable journal.
+                # Ordinary Stop still retries its original identity.
+                generation = observed["generation"]
+                automatic = observed["automatic"]
+            else:
+                generation = observation["expected_generation"]
+                automatic = observation["expected_automatic"]
             accepted = self._fleet_sharing.request_source_stop(
                 source_id,
-                expected_generation=observation["expected_generation"],
+                expected_generation=generation,
                 expected_automatic=protocol.AutomaticBinding(
                     automatic["consent_generation"]
                 )
@@ -4889,7 +4919,7 @@ class Api:
                 binding=observation["binding"],
                 # None deliberately selects the worker's original Stop reuse.
                 supersedes=original
-                if isinstance(original, protocol.SourceStart)
+                if replace_stop or isinstance(original, protocol.SourceStart)
                 else None,
             )
         self._start_fleet_sharing()

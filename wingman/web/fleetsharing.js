@@ -244,6 +244,18 @@
             if (ok && owns()) action('fleet_sharing_stop_source', id, observation.binding, observation);
           });
         });
+        var replaceStop = WM.make('button', 'btn', 'Replace pending Stop…');
+        replaceStop.addEventListener('click', function () {
+          if (screenshotFixture || !hydrated || replaceStop.disabled || replaceStop.hidden || !visible()) return;
+          var observation = detached(stop._sharingControl);
+          if (!observation || !observation.pending || observation.pending.operation !== 'stop' || !observation.observed) return;
+          var owns = interactionOwner();
+          WM.confirm('Replace pending Stop', 'The earlier Stop outcome may be unknown. Acknowledge that request and submit a new Stop for the displayed source? This does not prove the earlier Stop failed, and does not turn verification on.').then(function (ok) {
+            if (ok && owns()) action('fleet_sharing_replace_stop', id, observation.binding, observation);
+          });
+        });
+        row._replaceStop = replaceStop;
+        row.appendChild(replaceStop);
         row.appendChild(stop);
       }
       delete existing[id];
@@ -275,6 +287,12 @@
       // Retain the keyed control for pending work that can return this row
       // to the current list, but do not show an obsolete action in history.
       row.lastChild.hidden = ended;
+      var recovery = row.lastChild._sharingControl;
+      row._replaceStop.hidden = !(pending && pending.stage === 'persisted'
+        && recovery && recovery.pending && recovery.pending.operation === 'stop'
+        && recovery.observed && recovery.observed.state !== 'ended' && !sourceUnknown());
+      row._replaceStop.disabled = row.lastChild.disabled;
+      row._replaceStop.setAttribute('aria-label', 'Replace pending Stop — ' + label + ' (' + id + ')');
       row.lastChild.setAttribute('aria-label', 'Stop verification — ' + label + ' (' + id + ')');
       var index = ended ? 1 : 0;
       var container = ended ? historySources : sources;
@@ -484,12 +502,13 @@
     var requestedBinding = binding();
     var generation = bindingGeneration;
     actionMessage = '';
-    var sourceAction = method === 'fleet_sharing_start_source' || method === 'fleet_sharing_stop_source';
+    var stopping = method === 'fleet_sharing_stop_source' || method === 'fleet_sharing_replace_stop';
+    var sourceAction = method === 'fleet_sharing_start_source' || stopping;
     if (sourceAction) {
       // Start has no UUID until Python returns one. Keep character feedback,
       // not a fabricated source row. A Stop already identifies its keyed row.
       sourceRequests.push({attempt: attempt,
-        source_id: method === 'fleet_sharing_stop_source' ? sourceKey(args[1]) : null,
+        source_id: stopping ? sourceKey(args[1]) : null,
         character_id: method === 'fleet_sharing_start_source' ? args[1] : null,
         name: method === 'fleet_sharing_start_source' ? nameFor(args[1]) : ''});
     }
@@ -512,7 +531,7 @@
       // Historical acceptance, not an ongoing waiting claim. Exact queued /
       // saved / server stages belong to the corresponding source row below.
       var accepted = method === 'fleet_sharing_start_source' ? 'Start requested.'
-        : method === 'fleet_sharing_stop_source' ? 'Stop requested.'
+        : stopping ? 'Stop requested.'
         : method === 'fleet_sharing_grant_fleet_read' ? 'Fleet Read browser requested. Use the paired account, then Refresh.'
         : method === 'fleet_sharing_automatic' ? 'Automatic verification request queued; server outcome is not yet confirmed.'
         : 'Setup requested.';

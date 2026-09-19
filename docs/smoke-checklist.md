@@ -3148,6 +3148,13 @@ for the synthetic render pass.
       On/Stop dialog is open. Its late answer must not submit. A newer Off
       inhibits immediately and cannot be overwritten by an old On reply. A
       repeated pending Stop retains the original request UUID, time and CAS.
+- [ ] With an expired/conflicted durable Stop and a currently observed live
+      source, **Replace pending Stop…** explicitly acknowledges the old request
+      and confirms replacement against the displayed source generation/binding.
+      An old or section-left confirmation must refuse. The replacement control
+      is unavailable while the new Stop is only queued; ordinary Stop remains
+      available and retries that exact request. A replacement must not silently
+      refresh an unknown/ended source or turn automatic verification On.
 - [ ] Sharing On reconciles local telemetry without restarting Wingman. Restart
       recovers pending Off/Stop with the same IDs even while the preference is
       Off. Quit closes delivery/watch, detaches subscribers, then bounded-stops

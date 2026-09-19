@@ -1,5 +1,10 @@
 # Fleet telemetry remaining-work coordination
 
+**Historical coordination checkpoint.** The status and worktree bases below
+record the foundation/model handover, not today's delivery state. The integrated
+runtime and current verification/release limits are recorded in
+[fleet-v2-integration-readiness.md](fleet-v2-integration-readiness.md).
+
 Status: shared profile/name foundation and complete local combat model integrated and verified. All six shared-contract findings are addressed; independent re-review is READY. Session 1's foundation/model assignment is complete. Wire/schema, transport, automatic verification and presentation remain to implement; no rollout is authorized.
 
 ## Authority and bases

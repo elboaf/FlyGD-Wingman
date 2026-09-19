@@ -77,7 +77,7 @@ document.createElement = tag => new Element(tag);
 const window = new Element('window');
 const calls = [];
 const api = {};
-for (const method of ['fleet_sharing_watch', 'fleet_sharing_set_enabled', 'fleet_sharing_pair', 'fleet_sharing_start_source', 'fleet_sharing_stop_source', 'fleet_sharing_grant_fleet_read', 'fleet_sharing_setup', 'fleet_sharing_automatic']) {
+for (const method of ['fleet_sharing_watch', 'fleet_sharing_set_enabled', 'fleet_sharing_pair', 'fleet_sharing_start_source', 'fleet_sharing_stop_source', 'fleet_sharing_replace_stop', 'fleet_sharing_grant_fleet_read', 'fleet_sharing_setup', 'fleet_sharing_automatic']) {
   api[method] = (...args) => new Promise((resolve, reject) => calls.push({method, args, resolve, reject}));
 }
 for (const method of ['list_rows', 'get_settings', 'update_status']) api[method] = () => Promise.resolve(null);
@@ -88,7 +88,7 @@ const runtime = vm.createContext({window, document, Promise, console: {error: (.
 vm.runInContext(fs.readFileSync(web + '/app.js', 'utf8'), runtime);
 const WM = runtime.WM = window.WM;
 const confirmations = [];
-WM.confirm = (...args) => scenario.startsWith('control-')
+WM.confirm = (...args) => (scenario.startsWith('control-') || scenario.startsWith('replace-stop-'))
   ? new Promise(resolve => confirmations.push({args, resolve})) : Promise.resolve(true);
 vm.runInContext(fs.readFileSync(web + '/fleetsharing.js', 'utf8'), runtime);
 const turn = () => new Promise(resolve => setImmediate(resolve));
@@ -710,6 +710,36 @@ async function run() {
         assert.equal(warning(), '', 'live binding change during staging revokes old feedback');
       }
     }
+  } else if (scenario.startsWith('replace-stop-')) {
+    first.resolve({state: input.live}); await turn();
+    const initial = payload([source(A, 'active', null)], {pending_sources: [pending(A, 'stop', 'persisted')]});
+    initial.controls.sources[0].expected_generation = 0;
+    push(initial);
+    const row = currentRows()[0];
+    const replacement = row.children.find(el => /Replace pending Stop/.test(el.textContent));
+    assert.ok(replacement, 'explicit replacement must be reachable beside ordinary Stop');
+    assert.equal(replacement.hidden, false);
+    replacement.dispatchEvent({type: 'click'}); await turn();
+    assert.equal(confirmations.length, 1); assert.equal(mutationCount(), 0);
+    if (scenario === 'replace-stop-route') await leave();
+    else {
+      const newer = clone(initial); newer.presentation_order = ++order;
+      newer.controls.sources[0].observed.generation = 2; push(newer);
+    }
+    confirmations[0].resolve(true); await turn();
+    const replacements = calls.filter(c => c.method === 'fleet_sharing_replace_stop');
+    assert.equal(replacements.length, scenario === 'replace-stop-route' ? 0 : 1);
+    if (replacements.length) {
+      assert.deepEqual(JSON.parse(JSON.stringify(replacements[0].args)), [A, initial.metadata.binding, initial.controls.sources[0]]);
+      push(payload([source(A, 'active', null)], {pending_sources: [pending(A, 'stop', 'queued')]}));
+      assert.equal(replacement.hidden, true, 'a queued replacement cannot itself be replaced');
+      assert.equal(row.lastChild.disabled, false, 'ordinary Stop remains available');
+      replacement.dispatchEvent({type: 'click'}); await turn();
+      assert.equal(confirmations.length, 1);
+    }
+    if (scenario === 'replace-stop-route') await enterAgain({state: payload([source(A, 'active', null)])});
+    else push(payload([source(A, 'active', null)]));
+    assert.equal(replacement.hidden, true, 'no replacement without original pending Stop');
   } else if (scenario.startsWith('control-')) {
     const initial = payload([source(A, 'active', null)]);
     first.resolve({state: initial}); await turn();

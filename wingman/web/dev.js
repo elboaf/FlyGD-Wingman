@@ -442,6 +442,14 @@
     window.onFleetSharingState(sharingCopy());
     return sharingActionResult({queued: true, source_id: id, state: sharingCopy()});
   };
+  api.fleet_sharing_replace_stop = function (id, binding, observation) {
+    var pending = sharing.pending_sources.filter(function (row) { return row.source_id.toLowerCase() === id.toLowerCase(); })[0];
+    if (!pending || pending.stage !== 'persisted' || !observation || !observation.pending || observation.pending.operation !== 'stop'
+        || !observation.observed || observation.observed.state === 'ended') {
+      return Promise.resolve({queued: false, error: 'Refresh the pending Stop and current source.'});
+    }
+    return api.fleet_sharing_stop_source(id, binding, observation);
+  };
   api.fleet_sharing_grant_fleet_read = function (character, binding) {
     sharingCalls.push(['grant', character, binding]);
     return Promise.resolve({queued: true, error: null});
