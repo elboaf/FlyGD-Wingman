@@ -58,6 +58,17 @@ SW_RESTORE = 9
 HWND_MESSAGE = -3
 HWND_TOPMOST = -1
 
+# --- DWM -----------------------------------------------------------------
+# DwmGetWindowAttribute(DWMWA_CLOAKED) reports WHY a window is composited
+# off. Only the shell variant matters to us: it is how a virtual-desktop
+# switch manifests on a window that stays "visible" by every other read
+# (#264 -- previews followed the switch because nothing else distinguishes
+# them). DWM_CLOAKED_APP is application-managed (UWP suspend) and must not
+# read as "on another desktop".
+DWMWA_CLOAKED = 14
+DWM_CLOAKED_APP = 1
+DWM_CLOAKED_SHELL = 2
+
 # --- Messages -----------------------------------------------------------
 WM_DESTROY = 0x0002
 WM_MOVE = 0x0003
