@@ -271,6 +271,13 @@ class CompanionWindow:
         self.move(rect, notify=True)
 
     def _on_message(self, msg, wparam, lparam):
+        if msg == win32.WM_MOUSEACTIVATE:
+            # WS_EX_NOACTIVATE proved not to be honored for this popup in
+            # the field: a click took the foreground for a moment, and the
+            # activation dance that raised the source raced it (ring-debug
+            # log, #261). A companion click is a gesture on an overlay;
+            # focus belongs to whatever the activation raises, never us.
+            return win32.MA_NOACTIVATE
         if msg in (win32.WM_CAPTURECHANGED, win32.WM_CANCELMODE):
             self._cancel_gesture(release=msg != win32.WM_CAPTURECHANGED)
             return 0

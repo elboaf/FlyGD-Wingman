@@ -1105,6 +1105,12 @@ class PreviewWindow:
                 self._on_gesture_end(lease)
 
     def _on_message(self, msg, wparam, lparam):
+        if msg == win32.WM_MOUSEACTIVATE:
+            # Same as the companion windows (#261): WS_EX_NOACTIVATE alone
+            # did not stop a click from taking the foreground for a moment.
+            # A preview click is a gesture; the activation that follows is
+            # ours, pointed at the client, and must not race our own window.
+            return win32.MA_NOACTIVATE
         if self._is_authorized is not None and not self._is_authorized():
             if msg in (win32.WM_LBUTTONDOWN, win32.WM_RBUTTONDOWN, win32.WM_MOUSEMOVE):
                 return 0

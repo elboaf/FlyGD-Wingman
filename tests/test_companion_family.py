@@ -473,21 +473,26 @@ def test_show_on_focus_sources_respects_the_tick_and_skips_retiring(family):
     assert native.show_on_focus_sources() == ()
 
 
-def test_lost_focus_marks_only_the_source_foreground_companion_active(family):
-    """#258 polish: the ring rides the visibility sweep -- active exactly
-    while this companion's source window holds the foreground, and never
-    while the window itself is hidden by the hide-active clause."""
+def test_ring_latch_moves_only_for_real_observations(family):
+    """#261 ring-debug evidence: the foreground is full of churn that is
+    not the user moving -- wingman's own windows among them. The latch
+    follows only EVE foregrounds (handing the ring back) and live
+    companion source foregrounds; everything else keeps it.
+    """
     native, _, windows, _, _, _ = family
-    window = _live_companion(native, windows)
+    _live_companion(native, windows)
 
-    native.apply_lost_focus_hidden(False, False, 999)
-    assert not window.active
-    native.apply_lost_focus_hidden(False, False, BINDING.hwnd)
-    assert window.active
-    native.apply_lost_focus_hidden(False, True, BINDING.hwnd)
-    assert window.hidden and not window.active
-    native.apply_lost_focus_hidden(False, False, 0)
-    assert not window.active
+    native.observe_ring_foreground(999, eve_focus=False, ours=False)
+    assert not native.ring_latched()
+    native.observe_ring_foreground(BINDING.hwnd, eve_focus=False, ours=False)
+    assert native.ring_latched()
+    # our own window, or an unknown foreground: the latch holds
+    native.observe_ring_foreground(12345, eve_focus=False, ours=True)
+    native.observe_ring_foreground(0, eve_focus=False, ours=False)
+    assert native.ring_latched()
+    # an EVE client takes it back
+    native.observe_ring_foreground(12345, eve_focus=True, ours=False)
+    assert not native.ring_latched()
 
 
 def test_ring_colour_is_reread_from_the_seam_per_sweep(family):
@@ -500,31 +505,32 @@ def test_ring_colour_is_reread_from_the_seam_per_sweep(family):
     assert window.selection_color == "#abcdef"
 
 
-def test_ring_latches_through_an_unknown_foreground(family):
-    """#258 polish follow-up: a foreground of 0 -- secure desktop, a window
-    being destroyed, a transient mid-activation read -- must not clear the
-    ring, because nothing restores it until an unrelated foreground change
-    happens by. Only another real window moves it."""
+def test_ring_paints_only_the_latch_owner_and_only_when_visible(family):
+    """apply_lost_focus_hidden no longer decides the ring -- it paints the
+    latch. The hide-active clause still suppresses the painted ring while
+    the mirroring companion is itself hidden.
+    """
     native, _, windows, _, _, _ = family
     window = _live_companion(native, windows)
 
-    native.apply_lost_focus_hidden(False, False, BINDING.hwnd)
+    native.observe_ring_foreground(BINDING.hwnd, eve_focus=False, ours=False)
+    native.apply_lost_focus_hidden(False, False, 999)
     assert window.active
-    native.apply_lost_focus_hidden(False, False, 0)
-    assert window.active
+    native.apply_lost_focus_hidden(False, True, BINDING.hwnd)
+    assert window.hidden and not window.active
+    native.observe_ring_foreground(12345, eve_focus=True, ours=False)
     native.apply_lost_focus_hidden(False, False, 999)
     assert not window.active
 
 
-def test_ring_active_reports_live_source_and_skips_retiring(family):
+def test_ring_latch_dies_with_its_window(family):
     native, _, windows, _, _, _ = family
     _live_companion(native, windows)
 
-    assert native.ring_active(BINDING.hwnd)
-    assert not native.ring_active(999)
-    assert not native.ring_active(0)
-    native.live[DEFINITION.id].retiring = True
-    assert not native.ring_active(BINDING.hwnd)
+    native.observe_ring_foreground(BINDING.hwnd, eve_focus=False, ours=False)
+    assert native.ring_latched()
+    native._close_live(DEFINITION.id)
+    assert not native.ring_latched()
 
 
 def test_pending_activation_converges_without_refiring_a_foreground_source(family):

@@ -4932,7 +4932,8 @@ def test_companion_family_rides_the_same_visibility_sweep(monkeypatch):
     seen = []
     h._companion_family = SimpleNamespace(
         show_on_focus_sources=lambda: (),
-        ring_active=lambda foreground: False,
+        observe_ring_foreground=lambda *args, **kwargs: None,
+        ring_latched=lambda: False,
         apply_lost_focus_hidden=lambda *args: seen.append(args),
     )
     assert all(w.hidden for w in h._windows.values())
@@ -4950,10 +4951,12 @@ def test_ticked_companion_source_keeps_previews_up(monkeypatch):
     h, made, _libs, _live = _visibility_host(
         monkeypatch, enabled=True, foreground=0xABCD, pids={0xABCD: 9999}
     )
+    foreground_active = {"fg": 0}
     assert all(w.hidden for w in made.values())
     h._companion_family = SimpleNamespace(
         show_on_focus_sources=lambda: (0xABCD,),
-        ring_active=lambda foreground: foreground == 0xABCD,
+        observe_ring_foreground=lambda *args, **kwargs: None,
+        ring_latched=lambda: foreground_active["fg"] == 0xABCD,
         apply_lost_focus_hidden=lambda *args: None,
     )
     h._foreground = 0xABCD
@@ -7808,13 +7811,18 @@ def test_companion_ring_and_eve_ring_are_mutually_exclusive(monkeypatch):
     )
     assert [w.selected for w in made.values()] == [True, False]
 
+    latched = {"on": False}
     h._companion_family = SimpleNamespace(
         show_on_focus_sources=lambda: (),
-        ring_active=lambda foreground: foreground == 0xABCD,
+        observe_ring_foreground=lambda foreground, *, eve_focus, ours: latched.update(
+            on=not eve_focus and not ours and foreground == 0xABCD
+        ),
+        ring_latched=lambda: latched["on"],
         apply_lost_focus_hidden=lambda *args: None,
     )
     h._foreground = 0xABCD
     h._sweep(_OwnershipLibs(_OwnershipUser32({0xABCD: 9999}), our_pid=4242))
+    assert latched["on"]
     assert not any(w.selected for w in made.values())
     assert h._selected_key == "Alice"  # sticky underneath the suppression
 

@@ -90,6 +90,9 @@ class CompanionFamily:
         self._failed_sources = {}
         self._sequence = itertools.count(1)
         self._activation = None
+        # Which companion (definition id) currently owns the shared ring,
+        # or None when the EVE selection does. See observe_ring_foreground.
+        self._ring_identity = None
         self._closed = False
 
     @property
@@ -159,6 +162,10 @@ class CompanionFamily:
         live.retiring = True
         if self._activation and self._activation[0] is live:
             self._activation = None
+        if self._ring_identity == identity:
+            # The latch must not outlive its window: a closed companion
+            # takes the shared ring with it rather than pinning it.
+            self._ring_identity = None
         live.window.set_hidden(True)
         if not live.window.close():
             self._errors[identity] = ("stopping", "Companion cleanup is still pending")
@@ -505,20 +512,38 @@ class CompanionFamily:
             if not live.retiring and live.spec.definition.show_on_focus
         )
 
-    def ring_active(self, foreground) -> bool:
-        """Whether any live companion's source window holds the foreground.
+    def observe_ring_foreground(self, foreground, *, eve_focus, ours):
+        """Fold one foreground observation into the sticky ring latch.
 
-        The exclusivity query for the EVE previews' ring (#258 polish
-        follow-up): the wall carries ONE "where the user is" ring, so while
-        a companion claims the foreground the EVE selection's ring yields.
-        Read on the pump; retiring windows never claim it.
+        The wall carries ONE "where the user is" ring, shared between the
+        EVE selection and the companions (#258 polish follow-up), and it is
+        STICKY for the same reason the EVE selection's ring is: this
+        environment is full of foreground churn that is not the user
+        moving -- wingman's own windows among them, which periodically take
+        the foreground from the sig bar's update path. Following the raw
+        foreground made the companion ring flicker off on every such
+        theft. So:
+
+        - an EVE client foreground hands the ring to the EVE selection
+          (latch cleared; the EVE ring lights again);
+        - a live companion's source foreground latches that companion;
+        - anything else -- unknown (0), transient, or one of OUR OWN
+          windows -- changes nothing. A closed companion's latch dies with
+          its window (see _close_live).
         """
-        if not foreground:
-            return False
-        return any(
-            not live.retiring and live.binding.hwnd == foreground
-            for live in self.live.values()
-        )
+        if not foreground or ours:
+            return
+        if eve_focus:
+            self._ring_identity = None
+            return
+        for live in self.live.values():
+            if not live.retiring and live.binding.hwnd == foreground:
+                self._ring_identity = live.spec.definition.id
+                return
+
+    def ring_latched(self) -> bool:
+        """Whether the shared ring currently belongs to a companion."""
+        return self._ring_identity is not None
 
     def apply_lost_focus_hidden(self, hidden, active, foreground):
         """The host's hide-on-lost-focus decision, applied to live windows.
@@ -532,18 +557,11 @@ class CompanionFamily:
         callback matches _bind/_promote because an un-hide is a promotion of
         a live window just as much as a first show is.
 
-        The same foreground observation also drives the ring (#258 polish):
-        a companion is "active" exactly while its source window holds the
-        foreground and it is not itself hidden by the hide-active clause,
-        mirroring which preview the user is working in. An unknown
-        foreground (0 -- secure desktop, a window being destroyed, or a
-        transient mid-activation read) LATCHES the ring rather than
-        clearing it: only another real window taking the foreground moves
-        it. The activation no-op in _activate removed the churn that made
-        transient reads observable, but a sweep racing any activation can
-        still sample 0, and clearing then left the ring dark until some
-        unrelated foreground change happened to restore it. The colour is
-        re-read here so a recolour applies without reopening windows.
+        The ring itself is latched by observe_ring_foreground earlier in the
+        same sweep; this half only paints it -- a companion is ringed when
+        it owns the latch and is not itself hidden by the hide-active
+        clause. The colour is re-read here so a recolour applies without
+        reopening windows.
         """
         color = self._ring_color()
         for identity, live in tuple(self.live.items()):
@@ -558,10 +576,7 @@ class CompanionFamily:
                 foreground=foreground,
                 source_hwnd=live.binding.hwnd if active else 0,
             )
-            if foreground == live.binding.hwnd:
-                live.window.set_active(not hidden)
-            elif foreground:
-                live.window.set_active(False)
+            live.window.set_active(self._ring_identity == identity and not hidden)
             live.window.set_hidden(
                 hidden,
                 authorized=lambda lv=live, t=token, i=identity: (

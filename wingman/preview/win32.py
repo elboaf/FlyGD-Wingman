@@ -98,6 +98,11 @@ WM_CANCELMODE = 0x001F
 WM_CAPTURECHANGED = 0x0215
 WM_TIMER = 0x0113
 WM_MOUSEMOVE = 0x0200
+WM_MOUSEACTIVATE = 0x0021
+# WM_MOUSEACTIVATE return: do not activate the clicked window. WS_EX_NOACTIVATE
+# alone proved not to be honored for these popup windows in the field -- the
+# click still took the foreground for a moment (ring-debug log, #261).
+MA_NOACTIVATE = 3
 WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
 WM_RBUTTONDOWN = 0x0204

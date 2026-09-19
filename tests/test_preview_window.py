@@ -2150,3 +2150,18 @@ def test_two_line_cache_repaints_when_ellipsis_changes_but_dimensions_do_not(
     assert before.size == w._label_img.size == (100, 47)
     assert before.getpixel((0, 0)) == (6, 4, 0, 255)
     assert w._label_img.getpixel((0, 0)) == (8, 4, 0, 255)
+
+
+def test_a_click_never_activates_the_preview_window_itself(monkeypatch):
+    """#261 ring-debug evidence, EVE-preview half: WS_EX_NOACTIVATE alone
+    did not stop a click from putting the PREVIEW in the foreground for a
+    moment, racing the client activation that follows. A preview click is
+    a gesture on an overlay; the WndProc refuses mouse-activation."""
+    monkeypatch.setattr(window, "activate", lambda libs, hwnd: True)
+    activated = []
+    w, _libs = _window_for_gestures(locked=False, on_activate=activated.append)
+
+    assert w._on_message(window.win32.WM_MOUSEACTIVATE, 0, 0) == (
+        window.win32.MA_NOACTIVATE
+    )
+    assert activated == []

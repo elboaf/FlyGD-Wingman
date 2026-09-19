@@ -3736,8 +3736,20 @@ class PreviewHost:
             # be handed straight back to whatever reappeared under the same
             # name.
             self._selected_key = None
+        if self._companion_family is not None:
+            # Fold this sweep's foreground into the sticky ring latch BEFORE
+            # painting: a companion that owns the latch suppresses the EVE
+            # selection's ring, and an EVE foreground hands the ring back.
+            # Our own windows count as no observation at all -- the sig bar
+            # takes the foreground as a side effect of its update path, and
+            # that is not the user moving (#261 ring-debug evidence).
+            self._companion_family.observe_ring_foreground(
+                foreground,
+                eve_focus=focus is not None,
+                ours=self._foreground_is_ours(libs, foreground),
+            )
         companion_ring = (
-            self._companion_family.ring_active(foreground)
+            self._companion_family.ring_latched()
             if self._companion_family is not None
             else False
         )

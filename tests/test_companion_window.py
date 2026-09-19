@@ -260,3 +260,15 @@ def test_ring_colour_arrives_at_creation_and_live_through_the_family_seam(make):
     window.set_active(True)  # recolour participates in the cache key
     assert _edge(native.pushed[-1][1]) == (0, 255, 0, 255)
     window.close()
+
+
+def test_a_click_never_activates_the_companion_window_itself(make):
+    """#261 ring-debug evidence: WS_EX_NOACTIVATE alone did not stop a
+    click from taking the foreground for a moment, and that spurious
+    activation raced the source activation that followed. The WndProc
+    refuses mouse-activation outright."""
+    create, _native, _, _ = make
+    window = create()
+    window.set_hidden(False)
+    assert window._on_message(win32.WM_MOUSEACTIVATE, 0, 0) == win32.MA_NOACTIVATE
+    window.close()
