@@ -645,6 +645,61 @@ def _attach_resize(
     return insets
 
 
+GWL_STYLE = -16
+WS_MINIMIZEBOX = 0x00020000
+
+
+def enable_taskbar_minimize(window) -> bool:
+    """Let a click on the taskbar button minimize the frameless window.
+
+    FormBorderStyle.None strips WS_MINIMIZEBOX along with the rest of the
+    frame, and without that style Windows treats a taskbar-button click as
+    activation only -- the raised window never minimizes (#257). Adding the
+    style back restores the native minimize/restore toggle: no WM_SYSCOMMAND
+    handling of our own is needed, because DefWindowProc already does the
+    right thing once the style says the window is minimizable. It changes no
+    non-client geometry, so unlike WS_THICKFRAME (see the KNOWN LIMITATION
+    above) it cannot drag half-snap or caption artifacts in with it.
+
+    Same never-fatal contract as _attach_resize: the behaviour users have
+    today is "the button does nothing", and an exception here would take
+    the launch with it.
+    """
+    if sys.platform != "win32":
+        return False
+
+    native = getattr(window, "native", None)
+    if native is None:
+        logger.warning("No native window; taskbar minimize not enabled.")
+        return False
+
+    try:
+        hwnd = native.Handle.ToInt64()
+        user32 = ctypes.windll.user32
+        from ctypes import wintypes
+
+        handle = wintypes.HWND(hwnd)
+        applied = []
+
+        def _patch():
+            style = user32.GetWindowLongW(handle, GWL_STYLE)
+            if not user32.SetWindowLongW(handle, GWL_STYLE, style | WS_MINIMIZEBOX):
+                raise OSError("SetWindowLongW failed")
+            applied.append(True)
+
+        # A style write can dispatch WM_STYLECHANGED synchronously, which
+        # means message-pump work -- the same cross-thread hazard as the
+        # Padding assignment in _apply_inset, so the same UI-thread rule
+        # applies.
+        _on_ui_thread(native, _patch)
+        return bool(applied)
+    except Exception:
+        logger.warning(
+            "Could not set WS_MINIMIZEBOX; taskbar click stays inert.", exc_info=True
+        )
+        return False
+
+
 def enable_resize(window, pad: int = INSET) -> bool:
     """Give *window* a native resize border. True if it took."""
     return _attach_resize(window, pad=pad, edges=ALL_EDGES) is not None
