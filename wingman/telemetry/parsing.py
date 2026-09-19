@@ -5,6 +5,8 @@ from __future__ import annotations
 import datetime
 import re
 
+from wingman.combatprofile import normalize_observed_name
+
 from .model import ParsedFact, ParsedLine
 
 UTC = datetime.UTC
@@ -94,6 +96,48 @@ _INCOMING_NEUT_RE = re.compile(
     r"<b>(?P<source>.+?)</b>",
     re.IGNORECASE,
 )
+
+
+# Only the separated pilot/ticker/hull shape in player_scramble.txt proves a
+# label boundary. Bare bold sources (including real unresolved players) do not.
+# The single space before '[' belongs to that separator; all other candidate
+# whitespace reaches raw validation unchanged. Extra brackets/markup are
+# ambiguous, not something to strip away to manufacture a plausible name.
+# Anchor the action and its source preposition too: the permissive Alert source
+# search can skip malformed outer markup and find a clean fragment inside a name.
+# Timestamp text may be malformed, but cannot swallow markup or another frame.
+# Also consume the complete target through the line end. A "to" lookahead can
+# accept an injected name prefix, even before a complete fake named target that
+# passes the legacy victim gate at its first ticker. With no extra markup in
+# source/target text, this is the same sole target that legacy admission reads.
+# Targets use player_scramble's "you!", npc_scramble's decorated pilot/ticker/hull,
+# or the plain named rendering covered by the stream's named-victim regression.
+# Permit one line ending: the stream splits on LF and can leave Windows' CR.
+_OBSERVED_NAME_RE = re.compile(
+    r"\A(?:\[[^\[\]<>\r\n]*\] )?\(combat\) <color=0xffffffff><b>"
+    r"Warp (?:scramble attempt|disruption (?:attempt|zone))</b> "
+    r"<color=0x77ffffff><font size=10>from</font> "
+    r"<color=0xffffffff><b><color=0xffffffff><fontsize=12>"
+    r"(?P<name>[^<>\[\]]*) \[[^<>\[\]\s]+(?: [^<>\[\]\s]+)*\]</color>"
+    r"<color=0xfff0f000> [^<>\s]+(?: [^<>\s]+)*</color>"
+    r"<color=0xffffffff></b> <color=0x77ffffff><font size=10>to <b>"
+    r"<color=0xffffffff></font>"
+    r"(?:you!|"
+    r"<color=0xffffffff><fontsize=12>[^<>\[\]\s]+(?: [^<>\[\]\s]+)* "
+    r"\[[^<>\[\]\s]+(?: [^<>\[\]\s]+)*\]</color>"
+    r"<color=0xfff0f000> [^<>\[\]\s]+(?: [^<>\[\]\s]+)*</color><color=0xffffffff>|"
+    r"[^<>\[\]\s]+(?: [^<>\[\]\s]+)* \[[^<>\[\]\s]+(?: [^<>\[\]\s]+)*\] "
+    r"[^<>\[\]\s]+(?: [^<>\[\]\s]+)*)"
+    r"(?:\r?\n|\r)?\Z",
+    re.IGNORECASE,
+)
+
+
+def _extract_observed_name(line: str) -> str | None:
+    match = _OBSERVED_NAME_RE.match(line)
+    if match is None:
+        return None
+    return normalize_observed_name(match.group("name"))
 
 
 def strip_markup(text: str) -> str:
@@ -241,6 +285,7 @@ def parse_line(line: str, character: str) -> ParsedLine:
                             ),
                             source=_extract_source(line),
                             target=target,
+                            observed_name=_extract_observed_name(line),
                         )
                     )
             elif _is_outgoing_damage(lower):

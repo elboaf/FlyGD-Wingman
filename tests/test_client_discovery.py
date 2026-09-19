@@ -66,6 +66,101 @@ def _sessions(snapshot: RosterSnapshot):
 # ---------------------------------------------------------------------------
 
 
+def test_changed_scan_reserves_before_installing_session_state(monkeypatch):
+    from wingman.telemetry.admission import _SourceAuthority
+
+    authority = _SourceAuthority()
+    disco = _discovery(
+        _enumerate_clients=_result_seq([ALICE], [GENERIC]),
+        _source_admission=authority,
+    )
+    disco.scan_once()
+    old_snapshot = disco._latest
+    old_sessions = dict(disco._sessions)
+    reserve = authority._reserve
+    seen = []
+
+    def before_mutation(lane, lifetime):
+        receipt = reserve(lane, lifetime)
+        assert disco._latest is old_snapshot
+        assert disco._sessions == old_sessions
+        seen.append(receipt)
+        return receipt
+
+    monkeypatch.setattr(authority, "_reserve", before_mutation)
+    disco.scan_once()
+    assert len(seen) == 1
+    assert disco._latest.clients[0].session is None
+
+
+def test_dead_timed_out_owner_can_restart_with_new_source_lifetime():
+    from wingman.telemetry.admission import _SourceAuthority
+
+    class Worker:
+        alive = True
+
+        def start(self):
+            pass
+
+        def join(self, timeout=None):
+            pass
+
+        def is_alive(self):
+            return self.alive
+
+    authority = _SourceAuthority()
+    worker = Worker()
+    disco = _discovery(
+        _enumerate_clients=lambda: [ALICE],
+        _source_admission=authority,
+        _thread_factory=lambda **kwargs: worker,
+    )
+    assert disco.start()
+    disco.scan_once()
+    old = disco._latest_admission
+    assert disco.stop(0) is False
+    assert disco.start() is False
+    worker.alive = False
+    assert disco.start()
+    disco.scan_once()
+    assert disco._latest_admission.operation.lifetime is not old.operation.lifetime
+    assert disco.stop()
+
+
+def test_enumeration_keeps_original_lifetime_across_stop_restart(monkeypatch):
+    from wingman.telemetry.admission import _SourceAuthority
+
+    authority = _SourceAuthority()
+    disco = _discovery(_enumerate_clients=lambda: [ALICE], _source_admission=authority)
+    assert disco.start()
+    disco.scan_once()
+    old = disco._latest_admission
+    entered, release = threading.Event(), threading.Event()
+
+    def enumerate_clients():
+        entered.set()
+        assert release.wait(5)
+        return [GENERIC]
+
+    monkeypatch.setattr(disco, "_enumerate_clients", enumerate_clients)
+    delivered = []
+    disco._subscribe_admission(lambda payload, proof: delivered.append(proof))
+    scanner = threading.Thread(target=disco.scan_once)
+    scanner.start()
+    try:
+        assert entered.wait(5)
+        assert disco.stop()
+        assert disco.start()
+    finally:
+        release.set()
+        scanner.join(5)
+    assert not scanner.is_alive()
+    assert delivered[0] is not None
+    assert delivered[0].operation.lifetime is old.operation.lifetime
+    assert disco._snapshot_admission()[1] is None
+    assert disco.stop()
+
+
 class TestStableSessions:
     def test_each_successful_scan_maintains_process_image_cache(self, monkeypatch):
         flushed = []

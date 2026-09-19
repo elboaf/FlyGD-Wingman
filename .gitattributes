@@ -2,3 +2,9 @@
 wingman/assets/setup-presets/*.json -text
 # Licence notices retain upstream CRLF and Markdown trailing spaces verbatim.
 wingman/assets/setup-presets/*.txt -text -whitespace
+
+# Frozen combat authority, installed profile and shared vectors are hash-bound.
+docs/fleet-combat-v2-profile.json -text
+wingman/data/fleet-combat-v2-profile.json -text
+tests/fixtures/fleet-combat-v2.json -text
+tests/fixtures/fleet-api-v2.json -text

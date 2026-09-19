@@ -5,6 +5,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -686,11 +687,14 @@ def build_alert_policy(state, host, alerts_controller=None):
         return None
 
 
-def build_telemetry(state, host, alert_policy, alerts_controller=None):
+def build_telemetry(
+    state, host, alert_policy, alerts_controller=None, *, clock=time.monotonic
+):
     """Shared EVE discovery/gamelog runtime, or None off Windows."""
     if sys.platform != "win32":
         return None
     try:
+        from .telemetry.admission import _SourceAuthority
         from .telemetry.clients import ClientDiscovery
         from .telemetry.coordinator import TelemetryCoordinator
         from .telemetry.gamelogs import GameLogStream
@@ -707,6 +711,7 @@ def build_telemetry(state, host, alert_policy, alerts_controller=None):
             configured = state.settings.get("gamelogs_dir")
             return Path(configured) if configured else combatlog.find_gamelogs_dir()
 
+        source_admission = _SourceAuthority()
         return TelemetryCoordinator(
             # settings.update temporarily mutates the live document. The host
             # transitions only after a successful master save; keep delivering
@@ -724,9 +729,15 @@ def build_telemetry(state, host, alert_policy, alerts_controller=None):
                 state.settings.get("fleet_sharing", {}).get("enabled")
             ),
             gamelogs_folder=gamelogs_folder,
-            discovery=ClientDiscovery(),
-            stream=GameLogStream(custom_snapshot=custom_snapshot),
-            metrics=FleetMetrics(),
+            discovery=ClientDiscovery(_source_admission=source_admission),
+            stream=GameLogStream(
+                custom_snapshot=custom_snapshot,
+                _clock=clock,
+                _source_admission=source_admission,
+            ),
+            metrics=FleetMetrics(_clock=clock),
+            _clock=clock,
+            _source_admission=source_admission,
             preview_host=host,
             alert_policy=alert_policy,
             custom_snapshot=custom_snapshot,
@@ -736,7 +747,7 @@ def build_telemetry(state, host, alert_policy, alerts_controller=None):
         return None
 
 
-def build_fleet_sharing_worker(state):
+def build_fleet_sharing_worker(state, *, timing_context):
     """Cheap, platform-neutral sole sharing-state owner, retained by Api.
 
     Api starts one resume_pending probe even Off: a durable Stop/Off must not
@@ -759,6 +770,7 @@ def build_fleet_sharing_worker(state):
             ),
             client_factory=FleetRelayClient,
             sharing_enabled=sharing_enabled,
+            timing_context=timing_context,
         )
     except Exception:
         logger.exception("Fleet sharing worker unavailable")
@@ -1024,8 +1036,20 @@ def main() -> int:
     alerts_controller = build_alerts_controller(state, preview_host, api_box)
     api_box["alerts"] = alerts_controller
     alert_policy = build_alert_policy(state, preview_host, alerts_controller)
-    telemetry = build_telemetry(state, preview_host, alert_policy, alerts_controller)
-    sharing_worker = build_fleet_sharing_worker(state)
+    from .fleetsharing.timing import TimingContext
+
+    # One process lifetime, including lazy telemetry retries and worker restarts.
+    # Identity of this clock is wiring evidence, not suspend-clock certification.
+    fleet_clock = time.monotonic
+    timing_context = TimingContext(
+        clock=fleet_clock,
+        db_continuity_token=object(),
+        elapsed_lifetime_token=object(),
+    )
+    telemetry = build_telemetry(
+        state, preview_host, alert_policy, alerts_controller, clock=fleet_clock
+    )
+    sharing_worker = build_fleet_sharing_worker(state, timing_context=timing_context)
     api = api_mod.Api(
         state,
         preview_host=preview_host,
@@ -1035,9 +1059,10 @@ def main() -> int:
         companion_controller=companion_controller,
         telemetry=telemetry,
         fleet_sharing=sharing_worker,
+        fleet_clock=fleet_clock,
         alerts_controller=alerts_controller,
         telemetry_factory=lambda: build_telemetry(
-            state, preview_host, alert_policy, alerts_controller
+            state, preview_host, alert_policy, alerts_controller, clock=fleet_clock
         ),
     )
     api_box["api"] = api

@@ -95,7 +95,7 @@ def startup(monkeypatch, tmp_path):
 
     monkeypatch.setattr(main_mod, "build_preview_host", unavailable_preview)
     monkeypatch.setattr(main_mod, "build_alert_policy", lambda *_args: None)
-    monkeypatch.setattr(main_mod, "build_telemetry", lambda *_args: None)
+    monkeypatch.setattr(main_mod, "build_telemetry", lambda *_args, **_kwargs: None)
 
     def fake_build_tray(on_open, on_quit):
         captured["on_open"] = on_open
@@ -255,6 +255,7 @@ def test_fleet_closes_detaches_and_stops_before_native_destruction(
         order.append(owner + "_subscribe")
 
         def detach():
+            assert telemetry.source_closed
             assert api._fleet_expected_generation is None
             assert api._fleetbar_quitting
             assert api._fleetbar_page_id is None
@@ -266,7 +267,10 @@ def test_fleet_closes_detaches_and_stops_before_native_destruction(
         return detach
 
     telemetry.subscribe_fleet = subscribe
-    monkeypatch.setattr(main_mod, "build_telemetry", lambda *_args: telemetry)
+    telemetry.subscribe_admitted_fleet = subscribe
+    monkeypatch.setattr(
+        main_mod, "build_telemetry", lambda *_args, **_kwargs: telemetry
+    )
     real_stop = FleetPresentationWorker.stop
 
     def stop(worker, timeout=1.0):

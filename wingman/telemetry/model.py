@@ -57,6 +57,7 @@ class ParsedFact:
     amount: int | None = None
     source: str = ""
     target: str = ""
+    observed_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -77,6 +78,7 @@ class CombatFact:
     kind: str
     amount: int | None = None
     source: str = ""
+    observed_name: str | None = None
 
 
 @dataclass(frozen=True)

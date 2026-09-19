@@ -204,6 +204,7 @@
   var sharingHoldPreference = false;
   var sharingPreferenceReplies = [];
   var sharingUUID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  var sharingAutoGeneration = 0, sharingAutoRevision = 0;
   function sharingScenario(kind) {
     var paired = kind !== 'unpaired';
     var characters = [];
@@ -218,6 +219,8 @@
       participation: null, participation_intent_id: null, participation_order: 0,
       source_control: null, pairing: null,
       local_inhibited: true, pending_sources: [], source_results: [], pairing_action_id: null,
+      automatic: {enabled:false,pending:false,cancellation_pending:false,outcome:null,readiness:'off'},
+      automatic_stage: null,
       order: ++sharingOrder, presentation_order: ++sharingPresentationOrder, preference_order: 0, preference_error: null,
       available: kind !== 'unavailable', enabled: false,
       telemetry_available: kind !== 'unavailable', runtime_error: null,
@@ -270,7 +273,8 @@
           operation: kind === 'history-pending-stop' ? 'stop' : 'start', character_id: 1, stage: 'persisted'}];
       }
     }
-    if (kind === 'expired' || kind === 'rejected') sharing.source_results = [{source_id: sharingUUID, operation: 'start', character_id: 1, stage: kind}];
+    if (kind === 'rejected') sharing.source_results = [{source_id: sharingUUID, operation: 'start', character_id: 1, stage: kind}];
+    if (kind === 'expired') sharing.pending_sources = [{source_id: sharingUUID, operation: 'start', character_id: 1, stage: 'persisted'}];
     if (kind === 'unknown') sharing.pending_sources = [{source_id: sharingUUID, operation: 'start', character_id: 1, stage: 'persisted'}];
     if (kind === 'save-failed' || kind === 'on-pending') {
       sharing.enabled = true; sharing.participation = 'queued';
@@ -282,10 +286,86 @@
           source_id: sharingUUID, source_generation: 3, authority_generation: 1,
           expires_at: '2026-09-07T12:30:00.000Z'};})};
     }
-    if (window.onFleetSharingState) window.onFleetSharingState(sharing);
-    return sharing;
+    sharing.controls = sharingControls();
+    if (window.onFleetSharingState) window.onFleetSharingState(sharingCopy());
+    return sharingCopy();
   }
-  function sharingCopy() { return JSON.parse(JSON.stringify(sharing)); }
+  function sharingControls() {
+    var rows = Object.create(null);
+    ((sharing.sources && sharing.sources.sources) || []).forEach(function (row) {
+      if (row.automatic === undefined) row.automatic = null;
+      rows[row.source_id.toLowerCase()] = {source_id: row.source_id.toLowerCase(), binding: sharing.metadata.binding,
+        observed: row, pending: null, expected_generation: row.generation, expected_automatic: row.automatic};
+    });
+    sharing.pending_sources.forEach(function (pending) {
+      var id = pending.source_id.toLowerCase(), row = rows[id];
+      if (!row) row = rows[id] = {source_id: id, binding: sharing.metadata.binding, observed: null,
+        pending: null, expected_generation: 0, expected_automatic: null};
+      row.pending = {operation: pending.operation, intent_id: pending.operation === 'start' ? pending.source_id : 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'};
+    });
+    return {participation: {binding: sharing.metadata.binding, observed: sharing.observed_participation,
+      participation_intent_id: sharing.participation_intent_id, participation_order: sharing.participation_order, pending: null},
+      sources: Object.keys(rows).map(function (id) { return rows[id]; })};
+  }
+  function sharingCopy() {
+    sharing.controls = sharingControls();
+    sharing.setup_controls = sharingSetupControls();
+    return JSON.parse(JSON.stringify(sharing));
+  }
+  var sharingLegacyPresent = ['legacy', 'empty-legacy'].indexOf(devSearch.get('sharing-history')) !== -1;
+  var sharingLegacy = devSearch.get('sharing-history') === 'legacy' ? [{selector: 'session', status: 'fenced'}] : [];
+  function sharingSetupControls() {
+    var approved = sharing.metadata.approved_capabilities || [];
+    return {automatic: {binding:sharing.metadata.binding,
+      observed:sharing.metadata.binding ? {generation:sharingAutoGeneration,revision:sharingAutoRevision,
+        enabled:sharing.automatic.enabled,approver:sharingAutoGeneration ? 'this_device' : 'none'} : null,
+      pending:null,stage:sharing.automatic_stage,choice:null,request:'dev-only',history:String(sharingAutoRevision)},
+      setup:{binding:sharing.metadata.binding,configured_origin:sharing.configured_origin,queue_sequence:sharingPresentationOrder,combat_approved:approved.indexOf('combat-v2') !== -1,
+        history:String(sharingAutoRevision),pairing_pending:false,recovery_pending:false,
+        automatic_enabled:sharing.automatic.enabled,automatic_pending:false,participation_pending:false,
+        source_requests:sharing.pending_sources.length,legacy_archive:sharingLegacyPresent,cutover:sharingLegacy}};
+  }
+  api.fleet_sharing_automatic = function (operation, observation) {
+    sharingCalls.push(['automatic', operation, observation]);
+    if (['on','off'].indexOf(operation) === -1 || JSON.stringify(observation) !== JSON.stringify(sharingSetupControls().automatic)) {
+      return Promise.resolve({queued:false,error:'Automatic verification changed. Refresh and confirm again.'});
+    }
+    sharing.automatic.enabled = operation === 'on';
+    sharingAutoRevision += 1; if (operation === 'on') sharingAutoGeneration += 1;
+    sharing.automatic.readiness = operation === 'on' ? 'waiting_for_fleet' : 'off';
+    sharing.automatic_stage = 'acknowledged';
+    sharing.presentation_order = ++sharingPresentationOrder;
+    window.onFleetSharingState(sharingCopy());
+    return Promise.resolve({queued:true,state:sharingCopy()});
+  };
+  api.fleet_sharing_setup = function (operation, observation) {
+    sharingCalls.push(['setup', operation, observation]);
+    if (JSON.stringify(observation) !== JSON.stringify(sharingSetupControls().setup)) {
+      return Promise.resolve({queued:false,error:'Connection history changed. Refresh and review again.'});
+    }
+    if (operation === 'dismiss_legacy' || operation === 'remove_legacy') {
+      if (!sharingLegacyPresent) return Promise.resolve({queued:false,error:'No saved legacy history.'});
+      if (operation === 'remove_legacy' && sharingLegacy.some(function (item) { return item.status === 'fenced'; })) {
+        return Promise.resolve({queued:false,error:'Dismiss unresolved requests first.'});
+      }
+      if (operation === 'remove_legacy') sharingLegacyPresent = false;
+      sharingLegacy = operation === 'remove_legacy' ? [] : sharingLegacy.map(function (item) {
+        return {selector:item.selector,status:'dismissed'};
+      });
+      sharing.presentation_order = ++sharingPresentationOrder;
+      window.onFleetSharingState(sharingCopy());
+      return Promise.resolve({queued:true,state:sharingCopy()});
+    }
+    if (operation === 'combat') {
+      sharing.metadata.approved_capabilities = ['shared-source-v1','combat-v2'];
+      sharing.metadata.session_approved_capabilities = sharing.metadata.approved_capabilities.slice();
+      sharing.metadata.acknowledged_capabilities = sharing.metadata.approved_capabilities.slice();
+      sharing.presentation_order = ++sharingPresentationOrder;
+      window.onFleetSharingState(sharingCopy());
+      return Promise.resolve({queued:true,state:sharingCopy()});
+    }
+    return api.fleet_sharing_pair(operation === 'fresh' ? 'fresh' : 'upgrade');
+  };
   api.fleet_sharing_state = function () {return Promise.resolve(sharingCopy());};
   api.fleet_sharing_watch = function (open) {
     sharingCalls.push(['watch', open]);
@@ -299,8 +379,13 @@
     });
     return Promise.resolve({queued: true, state: captured});
   };
-  api.fleet_sharing_set_enabled = function (value) {
-    sharingCalls.push(['enabled', value]);
+  api.fleet_sharing_set_enabled = function (value, observation) {
+    sharingCalls.push(['enabled', value, observation]);
+    if (typeof value !== 'boolean' || (value && JSON.stringify(observation) !== JSON.stringify(sharingControls().participation))) {
+      return Promise.resolve({applied: false, persisted: false, queued: false, error: 'Refresh and confirm On again.'});
+    }
+    sharing.participation_order += 1;
+    sharing.participation_intent_id = sharingUUID;
     sharing.local_inhibited = true;
     sharing.participation = 'queued'; sharing.preference_order += 1;
     sharing.order = ++sharingOrder;
@@ -345,13 +430,25 @@
     window.onFleetSharingState(sharingCopy());
     return sharingActionResult({queued: true, source_id: sharingUUID, state: sharingCopy()});
   };
-  api.fleet_sharing_stop_source = function (id, binding) {
-    sharingCalls.push(['stop', id, binding]);
+  api.fleet_sharing_stop_source = function (id, binding, observation) {
+    sharingCalls.push(['stop', id, binding, observation]);
+    var expected = sharingControls().sources.filter(function (row) { return row.source_id === id.toLowerCase(); })[0];
+    if (!expected || binding !== expected.binding || JSON.stringify(observation) !== JSON.stringify(expected)) {
+      return Promise.resolve({queued: false, error: 'Refresh the owned source list.'});
+    }
     sharing.pending_sources = [{source_id: id, operation: 'stop', character_id: null, stage: 'queued'}];
     sharing.order = ++sharingOrder;
     sharing.presentation_order = ++sharingPresentationOrder;
     window.onFleetSharingState(sharingCopy());
     return sharingActionResult({queued: true, source_id: id, state: sharingCopy()});
+  };
+  api.fleet_sharing_replace_stop = function (id, binding, observation) {
+    var pending = sharing.pending_sources.filter(function (row) { return row.source_id.toLowerCase() === id.toLowerCase(); })[0];
+    if (!pending || pending.stage !== 'persisted' || !observation || !observation.pending || observation.pending.operation !== 'stop'
+        || !observation.observed || observation.observed.state === 'ended') {
+      return Promise.resolve({queued: false, error: 'Refresh the pending Stop and current source.'});
+    }
+    return api.fleet_sharing_stop_source(id, binding, observation);
   };
   api.fleet_sharing_grant_fleet_read = function (character, binding) {
     sharingCalls.push(['grant', character, binding]);
@@ -380,6 +477,7 @@
   function fleetBarState() {
     return {
       enabled: fleetBar.enabled,
+      hide_inactive: !!fleetBar.hide_inactive,
       x: fleetBar.x,
       y: fleetBar.y,
       seen: fleetBar.seen.slice(),
@@ -2356,6 +2454,12 @@
     return Promise.resolve(fleetBarReadFails ? null : fleetBarState());
   };
 
+  api.fleet_bar_set_hide_inactive = function (enabled) {
+    fleetBar.hide_inactive = !!enabled; fleetBar.revision += 1;
+    if (window.onFleetBarState) window.onFleetBarState(fleetBarState());
+    return Promise.resolve({applied:true,persisted:true,error:null,state:fleetBarState()});
+
+  };
   api.toggle_fleet_bar = function (enabled) {
     console.log('DEV api.toggle_fleet_bar(', enabled, ')');
     if (fleetBar.enabled !== !!enabled) {
@@ -5970,11 +6074,23 @@
           {"character_id": 1, "character_name": "Aiga Otsolen", "character_link_epoch": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "has_fleet_read": true, "token_usable": true},
           {"character_id": 2, "character_name": "Ariadne", "character_link_epoch": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "has_fleet_read": false, "token_usable": true}
         ], "sources": [
-          {"source_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "character_id": 1, "state": "active", "reason": null},
-          {"source_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "character_id": 2, "state": "ended", "reason": "boss_changed"}
+          {"source_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "generation": 3, "character_id": 1, "state": "active", "reason": null, "pending_expires_at": null, "automatic": null},
+          {"source_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "generation": 2, "character_id": 2, "state": "ended", "reason": "boss_changed", "pending_expires_at": null, "automatic": null}
         ]},
         "eligibility": {"state": "ready", "participation_generation": 1, "characters": [{"character_id": 1}, {"character_id": 2}]},
-        "observed_participation": {"enabled": true, "generation": 1}
+        "observed_participation": {"enabled": true, "generation": 1},
+        "controls": {
+          "participation": {"binding": "screenshot-only-binding", "observed": {"enabled": true, "generation": 1},
+            "participation_intent_id": null, "participation_order": 0, "pending": null},
+          "sources": [
+            {"source_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "binding": "screenshot-only-binding",
+              "observed": {"source_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "generation": 3, "character_id": 1, "state": "active", "reason": null, "pending_expires_at": null, "automatic": null},
+              "pending": null, "expected_generation": 3, "expected_automatic": null},
+            {"source_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "binding": "screenshot-only-binding",
+              "observed": {"source_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "generation": 2, "character_id": 2, "state": "ended", "reason": "boss_changed", "pending_expires_at": null, "automatic": null},
+              "pending": null, "expected_generation": 2, "expected_automatic": null}
+          ]
+        }
       }}
     },
     "formations": {

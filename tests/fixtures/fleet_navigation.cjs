@@ -52,5 +52,19 @@ const turn = () => new Promise(resolve => setImmediate(resolve));
       'navigation may release capture, never save a bind or opt into a feature: ' + JSON.stringify(calls));
     if (section === 'previews') assert.deepEqual(calls, [['set_bind_capture', false, 1]]);
   }
+  const filter = document.getElementById('fleetbar-hide-inactive');
+  for (const reply of [null, {}]) {
+    WM.send = (method, value) => {
+      assert.equal(method, 'fleet_bar_set_hide_inactive');
+      assert.equal(value, true);
+      return Promise.resolve(reply);
+    };
+    filter.checked = true; filter.dispatchEvent({type:'change'});
+    await turn();
+    assert.match(document.getElementById('fleetbar-enabled-status').textContent, /Could not save the activity filter/);
+    assert.equal(filter.checked, false, 'failed filter restores authoritative preference');
+    assert.equal(filter.disabled, false, 'retry remains available');
+  }
   console.log('PASS Fleet navigation releases both capture owners without mutations');
+  console.log('PASS activity-filter bridge failure feedback');
 })().catch(error => { console.error(error); process.exitCode = 1; });

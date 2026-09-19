@@ -1,106 +1,104 @@
-"""Bounded, process-local remote presentation. Api's presentation lock owns this.
+"""Payload-only remote presentation, owned by Api's presentation lock.
 
-Only the current response carries payloads. Timing survives clears until the
-honest relay's retention horizon: display expiry can be earlier after a long
-request and is NOT permission to forget a conservative age estimate.
+TimingContext projects once on the signed lane. Clears and redraws cannot write
+receiver history; the existing presentation worker remains the sole expiry owner.
 """
 
 from dataclasses import dataclass
-from math import ceil
+from fractions import Fraction
+from itertools import chain
+from math import inf, nextafter
 from typing import Literal
 
-from ..fleetsharing.protocol import MAX_REMOTE_ROWS, ObservedRemoteRow
-from ..fleetsharing.scheduling import SIGNED_INTERVAL_S
+from ..combatprofile import LIMITS
+from ..fleetsharing.model import TimedRemoteRow, TimedSnapshot
 
-STALE_AFTER_S = 3.0
-EXPIRE_AFTER_S = 10.0
-MAX_TIMING_ENTRIES = (ceil(EXPIRE_AFTER_S / SIGNED_INTERVAL_S) + 1) * MAX_REMOTE_ROWS
+STALE_AFTER_S = Fraction(LIMITS["stale_ms"], 1000)
+EXPIRE_AFTER_S = Fraction(LIMITS["transport_ms"], 1000)
 
 
 @dataclass(frozen=True)
-class _Timing:
-    origin: float
-    first_receipt: float
+class RemoteDisplayEffect:
+    kind: Literal["SCRAM", "POINT", "NEUT"]
+    observations: tuple[str | None, ...]
 
 
 @dataclass(frozen=True)
 class RemoteDisplayRow:
     character_id: int
     character_name: str
-    dps: int
-    ewar: tuple[str, ...]
+    outgoing_dps: int | None
+    incoming_dps: int | None
+    effects: tuple[RemoteDisplayEffect, ...]
     state: Literal["live", "stale"]
 
 
 class RemoteFleetStore:
     def __init__(self) -> None:
-        self._timing: dict[str, _Timing] = {}
-        self._rows: tuple[ObservedRemoteRow, ...] = ()
+        self._rows: tuple[TimedRemoteRow, ...] = ()
 
-    def _prune(self, now: float) -> None:
-        self._timing = {
-            key: timing
-            for key, timing in self._timing.items()
-            if now < timing.first_receipt + EXPIRE_AFTER_S
-        }
-        self._rows = tuple(
-            row
-            for row in self._rows
-            if row.publication_id in self._timing
-            and now - self._timing[row.publication_id].origin < EXPIRE_AFTER_S
-        )
-
-    def replace(
-        self, rows: tuple[ObservedRemoteRow, ...], receipt: float, elapsed: float
-    ) -> bool:
-        self._prune(receipt)
-        new_ids = {row.publication_id for row in rows} - self._timing.keys()
-        if len(self._timing) + len(new_ids) > MAX_TIMING_ENTRIES:
-            # A broken internal cadence/cap invariant cannot evict protected IDs
-            # or authorize a partly accepted response. Leave the old set intact.
-            return False
-        for row in rows:
-            candidate = receipt - (row.age_ms / 1000 + elapsed)
-            previous = self._timing.get(row.publication_id)
-            self._timing[row.publication_id] = _Timing(
-                min(previous.origin, candidate) if previous else candidate,
-                previous.first_receipt if previous else receipt,
-            )
-        self._rows = rows
-        self._prune(receipt)
-        return True
+    def replace(self, snapshot: TimedSnapshot) -> None:
+        self._rows = tuple(sorted(snapshot.rows, key=lambda row: row.character_id))
 
     def clear(self) -> None:
-        """Withdraw visible payloads, never their freshness protection."""
+        """Withdraw payload only; there is no timing authority here to clear."""
         self._rows = ()
 
-    def current(self, now: float) -> tuple[RemoteDisplayRow, ...]:
-        self._prune(now)
+    def current(self, now: float | Fraction) -> tuple[RemoteDisplayRow, ...]:
+        now = Fraction(now)
         return tuple(
             RemoteDisplayRow(
                 row.character_id,
                 row.character_name,
-                row.dps,
-                row.ewar,
-                "stale"
-                if now - self._timing[row.publication_id].origin >= STALE_AFTER_S
-                else "live",
+                row.outgoing_dps,
+                row.incoming_dps,
+                tuple(
+                    RemoteDisplayEffect(effect.kind, observations)
+                    for effect in row.effects
+                    if (
+                        observations := tuple(
+                            o.name
+                            for o in effect.observations
+                            if now < o.expires_at_mono
+                        )
+                    )
+                ),
+                "stale" if now >= row.sampled_at_mono + STALE_AFTER_S else "live",
             )
-            for row in sorted(self._rows, key=lambda row: row.character_id)
+            for row in self._rows
+            if now
+            < min(row.activity_expires_at_mono, row.sampled_at_mono + EXPIRE_AFTER_S)
         )
 
-    def next_transition(self, now: float) -> float | None:
-        self._prune(now)
-        return min(
+    def next_transition(self, now: float | Fraction) -> float | None:
+        now = Fraction(now)
+        deadline = min(
             (
-                timing.origin
-                + (
-                    STALE_AFTER_S
-                    if now - timing.origin < STALE_AFTER_S
-                    else EXPIRE_AFTER_S
-                )
+                transition
                 for row in self._rows
-                for timing in (self._timing[row.publication_id],)
+                if now
+                < (
+                    end := min(
+                        row.activity_expires_at_mono,
+                        row.sampled_at_mono + EXPIRE_AFTER_S,
+                    )
+                )
+                for transition in chain(
+                    (end, row.sampled_at_mono + STALE_AFTER_S),
+                    (
+                        o.expires_at_mono
+                        for effect in row.effects
+                        for o in effect.observations
+                    ),
+                )
+                if transition > now
             ),
             default=None,
         )
+        if deadline is None:
+            return None
+        # Event.wait's advisory wakeup is a float, not timing evidence. Round UP
+        # if nearest rounded below the exact boundary; otherwise a waking owner
+        # could classify too early and miss (or spin before) this transition.
+        wake = float(deadline)
+        return nextafter(wake, inf) if Fraction(wake) < deadline else wake

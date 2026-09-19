@@ -16,8 +16,7 @@ def source_id(index):
 
 
 def maximal_state(*, stops=False):
-    # DNS: 253 chars, labels <=63, plus longest port; session's legacy bound is
-    # 128, not the modern 43-character token. Astral letters cost 12 JSON bytes.
+    # State4 active fields, not a legacy document disguised as current work.
     origin = "https://" + ".".join(["a" * 63] * 3 + ["a" * 61]) + ":65535"
     url = origin + "/" + "\U00010000" * (2048 - len(origin) - 1)
     identity = replace(
@@ -28,7 +27,7 @@ def maximal_state(*, stops=False):
         PAIRED_STATE,
         identity=identity,
         relay_origin=origin,
-        session_id="s" * 128,
+        session_id=TOKEN,
         last_revision=p.INT4_MAX,
         device_id=source_id(0),
         session_expires_at=DATE,
@@ -40,13 +39,21 @@ def maximal_state(*, stops=False):
         pending_recovery=s.PendingRecovery(
             TOKEN, DATE, p.RecoveryChallenge(source_id(0), TOKEN, TOKEN, DATE)
         ),
-        pending_pairing=s.PendingPairing("initial", "p" * 128, url, DATE, False),
+        pending_pairing=s.PendingPairing(
+            "initial", source_id(0), url, DATE, False, (p.SHARED_CAPABILITY,)
+        ),
         pending_participation=s.PendingParticipation(
             source_id(0), False, p.INT4_MAX - 1, False
         ),
         auth_pause=s.AuthPause("account_ineligible", DATE),
         pending_source_commands=tuple(
-            p.StopSource(source_id(i), p.INT4_MAX - 1)
+            p.StopSource(
+                source_id(i),
+                p.INT4_MAX - 1,
+                source_id(i),
+                DATE,
+                p.AutomaticBinding(p.JS_SAFE_MAX),
+            )
             if stops
             else p.StartSource(source_id(i), p.JS_SAFE_MAX, source_id(0), DATE)
             for i in range(p.MAX_SOURCE_INTENTS)
@@ -109,6 +116,7 @@ def fixture_bytes(state, *, indented=False):
             "request_id": recovery.request_id,
             "issued_at": recovery.issued_at,
             "challenge": challenge_document,
+            "completion_attempted": recovery.completion_attempted,
         }
     )
     # Check the keys actually emitted, including nested non-default metadata.
@@ -126,6 +134,7 @@ def fixture_bytes(state, *, indented=False):
     for command in state.pending_source_commands:
         assert type(command) is p.StartSource, "fixture supports only Start commands"
         document = {
+            "protocol": 2,
             "operation": "start",
             "source_id": command.source_id,
             "character_id": command.character_id,
@@ -133,10 +142,13 @@ def fixture_bytes(state, *, indented=False):
             "intent_created_at": command.intent_created_at,
             "expected_generation": command.expected_generation,
         }
-        assert {f.name for f in fields(command)} == set(document) - {"operation"}
+        assert {f.name for f in fields(command)} == set(document) - {
+            "operation",
+            "protocol",
+        }
         commands.append(document)
     raw = {
-        "version": 3,
+        "version": 4,
         "identity": identity,
         "relay_origin": state.relay_origin,
         "session_id": state.session_id,
@@ -153,6 +165,8 @@ def fixture_bytes(state, *, indented=False):
         "pending_pairing": None,
         "pending_participation": participation,
         "auth_pause": None,
+        "cutover": None,
+        "automatic": {"observed_consent": None, "pending": None, "last_result": None},
     }
     assert set(raw) == {"version", *(f.name for f in fields(s.SharingState))}
     encoding = {"indent": 2} if indented else {"separators": (",", ":")}

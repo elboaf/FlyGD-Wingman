@@ -15,6 +15,7 @@ from test_fleetsharing_worker import (
     DEVICE,
     KEY,
     NOW,
+    SESSION,
     TOKEN,
     UUID,
     FakeRelayClient,
@@ -23,25 +24,31 @@ from test_fleetsharing_worker import (
 from wingman.fleetsharing import crypto
 from wingman.fleetsharing import protocol as p
 from wingman.fleetsharing.client import FleetRelayError
-from wingman.fleetsharing.model import PublishRow
 
 
 def signed(client, operation, **extra):
     client.clock = lambda: 1000 + 2 * len(client.completed)
     return getattr(client, operation)(
-        session_id="session-1",
+        session_id=SESSION,
         private_key=KEY,
         revision=len(client.calls) + 1,
         **extra,
     )
 
 
+def stop(source_id, generation):
+    return p.SourceStop(source_id, generation, str(uuid4()), DATE, None)
+
+
 def arguments(operation):
     return {
         "acknowledge_capabilities": {"capabilities": CAPS},
         "set_participation": {"enabled": False, "expected_generation": 1},
-        "control_source": {"command": p.StopSource(UUID, 0)},
-        "publish_snapshot": {"rows": (PublishRow(1, 1, ()),)},
+        "control_source": {"command": p.StartSource(UUID, 1, UUID, DATE)},
+        "publish_snapshot": {
+            "sampled_at_ms": DEVICE.server_time_ms,
+            "rows": (p.CombatRow(1, 1, None, 0, ()),),
+        },
     }.get(operation, {})
 
 
@@ -140,9 +147,9 @@ def test_fake_participation_off_allows_controls_eligibility_and_empty_withdrawal
     )
     assert signed(client, "fetch_eligibility").state == "participation_off"
     assert (
-        signed(client, "control_source", command=p.StopSource(UUID, 0)).state == "ended"
+        signed(client, "control_source", command=stop(UUID, 0)).source.state == "ended"
     )
-    signed(client, "publish_snapshot", rows=())
+    signed(client, "publish_snapshot", sampled_at_ms=0, rows=())
     for operation in ("publish_snapshot", "read_snapshot"):
         with pytest.raises(FleetRelayError) as caught:
             signed(client, operation, **arguments(operation))
@@ -205,13 +212,15 @@ def test_fake_matching_start_is_idempotent_changed_ended_and_stale_cas_refuse():
         )
     assert caught.value.code == "conflict"
     with pytest.raises(FleetRelayError):
-        signed(client, "control_source", command=p.StopSource(UUID, 0))
-    ended = signed(client, "control_source", command=p.StopSource(UUID, 1))
-    assert signed(client, "control_source", command=p.StopSource(UUID, 2)) == ended
+        signed(client, "control_source", command=stop(UUID, 0))
+    ended = signed(client, "control_source", command=stop(UUID, 1))
+    repeated = signed(client, "control_source", command=stop(UUID, 2))
+    assert repeated.source == ended.source and repeated.result == "already_stopped"
+    assert repeated.receipt is None
     with pytest.raises(FleetRelayError):
         signed(client, "control_source", command=start)
     other_id = str(uuid4())
-    signed(client, "control_source", command=p.StopSource(other_id, 0))
+    signed(client, "control_source", command=stop(other_id, 0))
     with pytest.raises(FleetRelayError):
         signed(client, "control_source", command=replace(start, source_id=other_id))
     client.utc = lambda: NOW + timedelta(seconds=60)
@@ -339,7 +348,7 @@ def test_fake_precommit_loss_is_distinct_from_committed_response_loss(
         command = (
             p.StartSource(UUID, 1, UUID, DATE)
             if operation == "start"
-            else p.StopSource(UUID, 0)
+            else stop(UUID, 0)
         )
         return signed(client, "control_source", command=command)
 

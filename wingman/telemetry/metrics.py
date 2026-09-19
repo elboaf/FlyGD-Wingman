@@ -84,8 +84,8 @@ sampled once per fact:
 
 * older than ten seconds (``occurred_at <= now - 10s``) does not enter the
   DPS deque. If it remains inside the 30-second combat-activity window, it
-  can still keep the row active and already-observed EWAR visible without
-  replaying old damage.
+  can still keep the row active without replaying old damage or renewing
+  independently observed EWAR.
 * more than two seconds in the future is dropped AND recorded as
   ``FleetSnapshot.metric_error`` -- one-second log-timestamp precision and
   polling boundaries do not explain a two-second-plus skew. Up to two
@@ -104,38 +104,39 @@ Incoming DPS
 same fixed 10-second window, same half-up rounding, same two-second future
 clamp and ``metric_error`` policy, same per-fact timestamp/sequence guards
 -- but in a wholly separate deque (``_CharacterState.incoming_damage``),
-exposed as ``FleetRow.incoming_dps``. The one deliberate asymmetry: an
-accepted outgoing-damage fact refreshes the 30-second observed-EWAR
-activity deadline (see below); an accepted incoming-damage fact never does.
-This legacy EWAR boundary is preserved separately from row activity: incoming
-hits inside the 30-second row window qualify even when too old to enter DPS.
+exposed as ``FleetRow.incoming_dps``. Both directions qualify for row activity
+inside the 30-second window even when too old to enter DPS. Neither direction
+renews an incoming effect.
 
 Incoming EWAR activity
 ----------------------
 Verified tackle lines preserve whether EVE reported a warp scramble or warp
 disruption attempt, and verified incoming capacitor-neutralization lines add
 a separate ``NEUT`` tag. EVE does not provide a reliable incoming-effect-ended
-line, so observed EWAR stays visible while that character remains active in
-combat. Each accepted scram, point, neut, or outgoing-damage fact refreshes a
-30-second character activity deadline from event time. All observed EWAR tags
-clear together when that deadline expires.
+line, so each incoming observation has its own event-time deadline, at most
+30 seconds away. POINT/SCRAM retain bounded named buckets, keyed by the shared
+profile's normalized full casefold. The first safe spelling stays while a key
+lives. Each kind has one unnamed bucket for unknown/overflow evidence; NEUT
+always uses that bucket. Existing names are not evicted for a new aggressor,
+and expired observations free capacity before admission.
 
-A non-positive event-time remainder is ignored. A positive remainder is capped
-at 30 seconds and converted to a monotonic deadline, so delayed reads cannot
-grant a fresh full window. An older delayed fact may add its tag but cannot
-shorten a later activity deadline. Session/source changes clear the tags
-immediately.
+Only a strictly later deadline replaces a bucket's immutable value and accepted
+ID. Damage or evidence assigned to another bucket never renews it. Non-positive
+event-time remainders are ignored; future EWAR is capped, not rejected like damage.
+Snapshots prune independently and derive summary tags from the surviving effects.
+Session/source changes clear all observations immediately.
 
 Row activity
 ------------
 Accepted damage in either direction (including literal zero) and incoming EWAR
 keep a row active for 30 seconds from event time, independently of DPS rounding
-and the legacy EWAR hold above. A strictly later deadline records the accepted
-fact's sequence with an opaque source/session lifetime token. Equal or older
+and the independent effect deadlines above. A strictly later deadline records the
+accepted fact's sequence with an opaque source/session lifetime token. Equal or older
 deadlines keep the prior ID, including after expiry. Invalidation clears this
 evidence and rotates the token; unchanged active rebinds retain it. Snapshots
 export the actual monotonic measurement time, never a reader's later clock.
-Effect observations and names are not produced in this intermediate slice.
+The mutable state keeps row authority separate from effects; snapshots compose
+both into detached immutable values, so later damage cannot drop live effects.
 """
 
 from __future__ import annotations
@@ -144,14 +145,19 @@ import datetime
 import time
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import ROUND_HALF_UP, Decimal
+from fractions import Fraction
+from math import inf, nextafter
 from uuid import UUID, uuid4
+
+from wingman.combatprofile import LIMITS, normalize_observed_name, observed_name_key
 
 from .model import (
     ClientSessionId,
     CombatActivity,
     CombatFact,
+    EffectObservation,
     FleetRow,
     FleetSnapshot,
     RosterSnapshot,
@@ -167,10 +173,8 @@ UTC = datetime.UTC
 DPS_WINDOW = datetime.timedelta(seconds=10)
 # Tolerates one-second log-timestamp precision and polling boundaries.
 FUTURE_CLAMP = datetime.timedelta(seconds=2)
-# EVE reports effect attempts but no reliable incoming-effect-ended event.
-EWAR_ACTIVITY_WINDOW = datetime.timedelta(seconds=30)
-# Row visibility is independent of legacy EWAR hold and ten-second DPS.
-ROW_ACTIVITY_WINDOW = datetime.timedelta(seconds=30)
+# One shared horizon; row and individual effects retain independent deadlines.
+ROW_ACTIVITY_WINDOW = datetime.timedelta(milliseconds=LIMITS["activity_ms"])
 
 NO_LOG = "NO LOG"
 SCRAM_TAG = "SCRAM"
@@ -183,7 +187,7 @@ _EWAR_TAGS = {
     "incoming_point": POINT_TAG,
     "incoming_neut": NEUT_TAG,
 }
-_EWAR_ORDER = (SCRAM_TAG, POINT_TAG, NEUT_TAG)
+_EWAR_ORDER = LIMITS["effect_order"]
 
 _ROUND_UNIT = Decimal(1)
 _DPS_DIVISOR = Decimal(10)
@@ -219,6 +223,19 @@ def _round_half_up(total: int) -> int:
     )
 
 
+def _conservative_deadline(mono: float, remaining: datetime.timedelta) -> float:
+    # Preserve timedelta microseconds before the single float rounding. Rounding
+    # the duration first can lose precision even if the addition itself is exact.
+    micros = (
+        remaining.days * 86400 + remaining.seconds
+    ) * 1_000_000 + remaining.microseconds
+    exact = Fraction(mono) + Fraction(micros, 1_000_000)
+    candidate = float(exact)
+    # Never put the reconstructed event after its measurement. nextafter uses
+    # the actual predecessor spacing, including at binary exponent boundaries.
+    return nextafter(candidate, -inf) if candidate > exact else candidate
+
+
 @dataclass
 class _CharacterState:
     """Mutable per-character join state. Never exposed outside this module."""
@@ -236,8 +253,9 @@ class _CharacterState:
     last_fact_sequence: int | None = None
     outgoing_damage: deque[tuple[datetime.datetime, int]] = field(default_factory=deque)
     incoming_damage: deque[tuple[datetime.datetime, int]] = field(default_factory=deque)
-    ewar: set[str] = field(default_factory=set)
-    activity_deadline: float | None = None
+    effects: dict[tuple[str, str | None], EffectObservation] = field(
+        default_factory=dict
+    )
     lifetime_token: UUID = field(default_factory=uuid4)
     combat: CombatActivity = field(default_factory=CombatActivity)
 
@@ -345,8 +363,7 @@ class FleetMetrics:
             state.last_fact_sequence = None
             state.outgoing_damage.clear()
             state.incoming_damage.clear()
-            state.ewar.clear()
-            state.activity_deadline = None
+            state.effects.clear()
             state.lifetime_token = uuid4()
             state.combat = CombatActivity()
             return
@@ -358,8 +375,7 @@ class FleetMetrics:
         if changed:
             state.outgoing_damage.clear()
             state.incoming_damage.clear()
-            state.ewar.clear()
-            state.activity_deadline = None
+            state.effects.clear()
             state.lifetime_token = uuid4()
             state.combat = CombatActivity()
         state.source_generation = lifecycle.generation
@@ -433,9 +449,7 @@ class FleetMetrics:
             occurred_at = now  # Tolerate log/poll precision.
 
         mono = self._clock()
-        if not incoming:
-            # Keep the legacy EWAR hold outgoing-only during this row-only slice.
-            self._refresh_activity(state, occurred_at, now=now, mono=mono)
+        self._prune_effects(state, mono)
         active = self._refresh_row_activity(
             state, sequence, occurred_at, now=now, mono=mono
         )
@@ -457,12 +471,37 @@ class FleetMetrics:
             return False
         now = self._utc_now()
         mono = self._clock()
-        if not self._refresh_activity(state, fact.occurred_at, now=now, mono=mono):
-            return False
-        self._refresh_row_activity(
+        self._prune_effects(state, mono)
+        if not self._refresh_row_activity(
             state, sequence, fact.occurred_at, now=now, mono=mono
-        )
-        state.ewar.add(_EWAR_TAGS[fact.kind])
+        ):
+            return False
+
+        kind = _EWAR_TAGS[fact.kind]
+        name = normalize_observed_name(fact.observed_name) if kind != NEUT_TAG else None
+        # Keys may expand past display limits; only canonical source names are
+        # validated, never the folded retention identity returned by the helper.
+        key = observed_name_key(name) if name is not None else None
+        slot = (kind, key)
+        if key is not None and slot not in state.effects:
+            named = sum(
+                effect_kind == kind and effect_key is not None
+                for effect_kind, effect_key in state.effects
+            )
+            if named >= LIMITS["named_per_tackle"]:
+                slot = (kind, None)
+                name = None
+
+        remaining = fact.occurred_at + ROW_ACTIVITY_WINDOW - now
+        candidate = _conservative_deadline(mono, min(remaining, ROW_ACTIVITY_WINDOW))
+        previous = state.effects.get(slot)
+        if previous is None or candidate > previous.expires_at_mono:
+            state.effects[slot] = EffectObservation(
+                kind,
+                candidate,
+                (state.lifetime_token, sequence),
+                previous.name if previous is not None else name,
+            )
         self._metric_error = None  # A later accepted metric fact clears it too.
         return True
 
@@ -478,35 +517,20 @@ class FleetMetrics:
         remaining = occurred_at + ROW_ACTIVITY_WINDOW - now
         if remaining <= datetime.timedelta(0):
             return False
-        candidate = mono + min(remaining, ROW_ACTIVITY_WINDOW).total_seconds()
+        candidate = _conservative_deadline(mono, min(remaining, ROW_ACTIVITY_WINDOW))
         previous = state.combat.expires_at_mono
         if previous is None or candidate > previous:
             state.combat = CombatActivity(candidate, (state.lifetime_token, sequence))
         return True
 
-    def _refresh_activity(
-        self,
-        state: _CharacterState,
-        occurred_at: datetime.datetime,
-        *,
-        now: datetime.datetime,
-        mono: float,
-    ) -> bool:
-        if state.activity_deadline is not None and mono >= state.activity_deadline:
-            # Expiry must be observed at ingestion too. Otherwise a new fight
-            # arriving between snapshots extends the old deadline and revives
-            # stale EWAR tags from the previous fight.
-            state.ewar.clear()
-            state.activity_deadline = None
-
-        remaining = occurred_at + EWAR_ACTIVITY_WINDOW - now
-        if remaining <= datetime.timedelta(0):
-            return False
-        remaining = min(remaining, EWAR_ACTIVITY_WINDOW)
-        candidate = mono + remaining.total_seconds()
-        if state.activity_deadline is None or candidate > state.activity_deadline:
-            state.activity_deadline = candidate
-        return True
+    @staticmethod
+    def _prune_effects(state: _CharacterState, mono: float) -> None:
+        # Ingestion must release expired named slots even without a snapshot.
+        state.effects = {
+            slot: effect
+            for slot, effect in state.effects.items()
+            if mono < effect.expires_at_mono
+        }
 
     # ------------------------------------------------------------------
     # Snapshot
@@ -547,10 +571,11 @@ class FleetMetrics:
                 sum(amount for _, amount in state.incoming_damage)
             )
 
-            if state.activity_deadline is not None and mono >= state.activity_deadline:
-                state.ewar.clear()
-                state.activity_deadline = None
-            ewar = tuple(tag for tag in _EWAR_ORDER if tag in state.ewar)
+            self._prune_effects(state, mono)
+            observations = tuple(
+                sorted(state.effects.values(), key=lambda e: _EWAR_ORDER.index(e.kind))
+            )
+            ewar = tuple(dict.fromkeys(effect.kind for effect in observations))
 
             rows.append(
                 FleetRow(
@@ -559,7 +584,7 @@ class FleetMetrics:
                     ewar=ewar,
                     log_status=None,
                     incoming_dps=incoming_dps,
-                    combat=state.combat,
+                    combat=replace(state.combat, observations=observations),
                 )
             )
 

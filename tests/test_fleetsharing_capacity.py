@@ -1,527 +1,574 @@
-"""Byte-bound admission through the real journal and serialized owner, offline."""
+"""State4 runtime capacity — terminal work never borrows or evicts history.
 
-import base64
-import threading
-import time
+The former state3 pretty/ASCII fallback and sub-256 byte-bound expectations are
+superseded by disjoint state4 reserves. These proofs retain the real writer,
+full-count admission, failed-write and callback authority boundaries.
+"""
+
+import json
 from dataclasses import replace
-from datetime import timedelta
 
 import pytest
 
-from tests.fleetsharing_capacity_helpers import (
-    compact_bytes,
-    fixture_bytes,
-    legacy_bytes,
-    maximal_state,
-    start_boundary,
-)
-from tests.test_fleetsharing_worker import (
-    DATE,
-    DEVICE,
-    NOW,
-    PAIRED_STATE,
-    UUID,
-    FakeRelayClient,
-    _worker,
-    drive,
-)
+from tests.fleetsharing_capacity_helpers import source_id
+from tests.test_fleetsharing_state4_capacity import maximal_document
+from tests.test_fleetsharing_worker import DATE, PAIRED_STATE, UUID, drive
+from tests.test_fleetsharing_worker_automatic import ON, automatic_rig
+from tests.test_fleetsharing_worker_state4 import FileStore, file_rig
 from wingman.fleetsharing import protocol as p
 from wingman.fleetsharing import state as s
 
 
-class DiskStore:
+class DiskStore(FileStore):
     def __init__(self, path, state):
-        self.path = path
-        self.saved = []
+        super().__init__(path)
+        self.saved = self.saves
         self.rejected = []
         s.save(path, state)
 
-    def load(self):
-        return s.load(self.path)
 
-    def save(self, state):
-        before = self.path.read_bytes()
-        try:
-            s.save(self.path, state)
-        except ValueError:
-            assert self.path.read_bytes() == before
-            self.rejected.append(state)
-            raise
-        self.saved.append(state)
-
-
-def test_byte_overflow_start_does_not_strand_off_and_another_durable_stop(tmp_path):
-    # Count-valid Starts are larger than Stops. Choose the boundary independently,
-    # then prove last-fit and next-refusal using the real complete-journal writer.
-    state = replace(
-        PAIRED_STATE,
-        identity=maximal_state().identity,
-        device_id=DEVICE.device_id,
-        session_expires_at=DEVICE.session_expires_at,
-        feature_enabled=True,
-        approved_capabilities=DEVICE.approved_capabilities,
-        session_approved_capabilities=DEVICE.session_approved_capabilities,
-        acknowledged_capabilities=DEVICE.acknowledged_capabilities,
-        observed_participation=DEVICE.participation,
-    )
-    state, candidate = start_boundary(state)
-    command = candidate.pending_source_commands[-1]
-    store = DiskStore(tmp_path / "fleet.json", state)
-    before = fixture_bytes(state)
-    assert store.path.read_bytes() == before
-    assert store.load() == state
-    assert len(candidate.pending_source_commands) <= p.MAX_SOURCE_INTENTS
-    with pytest.raises(s.CapacityError, match="size limit"):
-        store.save(candidate)
-    assert store.path.read_bytes() == before
-    assert store.load() == state
-    mono = [1000.0]
-    client = FakeRelayClient(device=DEVICE)
-    worker = _worker(
-        client,
-        store=store,
-        clock=lambda: mono[0],
-        utc_clock=lambda: NOW + timedelta(seconds=mono[0] - 1000),
-        sharing_enabled=lambda: False,
-    )
-    # The failing new source heads the queue, Off and a different saved source's
-    # Stop follow. Off must inhibit even before the first owner turn.
-    assert worker._queue_source(command)
-    off = worker.request_participation(False)
-    target = state.pending_source_commands[0].source_id
-    assert worker.request_source_stop(target)
-    assert worker.status().local_inhibited
-    worker.iterate_once()
-    assert candidate in store.rejected
-    drive(worker, mono, 40)
-    assert client.device.participation.enabled is False
-    assert client.source_views[target].state == "ended"
-    assert not any(c.source_id == command.source_id for c in client.controls)
-    assert store.load().pending_participation is None
-    assert off is not None
-    assert client.cadence_refusals == 0
-    assert any(
-        item.source_id == command.source_id and item.stage == "rejected"
-        for item in worker.status().source_results
+def full_sources():
+    return tuple(
+        p.SourceStart(source_id(i), p.JS_SAFE_MAX, UUID, "2026-09-07T11:58:00.000Z")
+        for i in range(256)
     )
 
 
-def test_full_saved_journal_can_reconcile_off_without_discarding_prior_starts(tmp_path):
-    state, _ = start_boundary(replace(PAIRED_STATE, last_revision=9), indented=True)
-    path = tmp_path / "full.json"
-    # A valid protected blob plus a valid ASCII origin can fill the last few
-    # bytes exactly. No source is invalid, expired or over the command count.
-    remaining = s.MAX_STATE_FILE_BYTES - len(fixture_bytes(state, indented=True))
-    blob_length = len(state.identity.protected_private_key_b64) + remaining // 4 * 4
-    state = replace(
-        state,
-        identity=replace(
-            state.identity,
-            protected_private_key_b64=base64.b64encode(
-                bytes(blob_length // 4 * 3)
-            ).decode(),
-        ),
-        relay_origin="https://relay" + "a" * (remaining % 4) + ".test",
-    )
-    before = fixture_bytes(state, indented=True)
-    path.write_bytes(before)
-    assert path.stat().st_size == 65536
-    assert s.load(path) == state
-    assert path.read_bytes() == before
-    assert len(state.pending_source_commands) < p.MAX_SOURCE_INTENTS
-    assert len(fixture_bytes(replace(state, last_revision=10), indented=True)) == 65537
-    # Loading never rewrites; the first real owner write must compact the file.
-    store = DiskStore.__new__(DiskStore)
-    store.path, store.saved, store.rejected = path, [], []
-
-    first_write = []
-
-    def save_and_capture_first_write(candidate):
-        store.save(candidate)
-        if len(store.saved) == 1:
-            first_write.append(path.read_bytes())
-
-    mono = [1000.0]
-    client = FakeRelayClient(device=DEVICE)
-    worker = _worker(
-        client,
-        store=store,
-        clock=lambda: mono[0],
-        utc_clock=lambda: NOW + timedelta(seconds=mono[0] - 1000),
-        sharing_enabled=lambda: False,
-        save_state=save_and_capture_first_write,
-    )
-    off = worker.request_participation(False)
-    assert worker.status().local_inhibited
-    drive(worker, mono, 20)
-    # Assert outside the save callback: the owner treats callback exceptions as
-    # retryable I/O failure, which could otherwise hide a failed assertion.
-    assert len(first_write) == 1
-    assert len(fixture_bytes(store.saved[0], indented=True)) > 65536
-    assert first_write[0] == fixture_bytes(store.saved[0])
-    assert len(first_write[0]) < 65536
-    assert client.device.participation.enabled is False
-    assert off is not None
-    assert all(c in state.pending_source_commands for c in client.controls)
-    remaining_ids = {c.source_id for c in store.load().pending_source_commands}
-    assert all(
-        c.source_id in remaining_ids or c.source_id in client.source_views
-        for c in state.pending_source_commands
-    )
-
-
-def test_compaction_keeps_all_legal_maximum_fields_and_256_stops(tmp_path):
-    state = maximal_state(stops=True)
-    assert len(state.identity.protected_private_key_b64) == 8192
-    assert len(state.pending_pairing.approval_url) == 2048
-    assert len(state.session_id) == 128
-    assert len(state.pending_source_commands) == 256
-    # Validate every field together, independently of the new capacity helper.
-    assert s._parse_v3(p.decode_json(compact_bytes(state))) == state
-    assert len(legacy_bytes(state)) > 65536
-    assert len(compact_bytes(state)) < 65536
-    path = tmp_path / "max-stops.json"
-    s.save(path, state)
-    assert s.load(path) == state
-    assert path.read_bytes() == compact_bytes(state)
-
-
-def test_compact_maximum_starts_still_refused_with_last_bytes_intact(tmp_path):
-    state = maximal_state()
-    assert s._parse_v3(p.decode_json(compact_bytes(state))) == state
-    assert len(compact_bytes(state)) > 65536
-    path = tmp_path / "max-starts.json"
-    s.save(path, PAIRED_STATE)
-    before = path.read_bytes()
-    with pytest.raises(ValueError, match="size limit"):
-        s.save(path, state)
-    assert path.read_bytes() == before
-
-
-def test_start_admission_reserves_all_metadata_and_unused_stop_slots(tmp_path):
-    # Current bytes alone fit, but accepting all these Starts leaves no room for
-    # later bounded metadata, recovery, Off or Stop. Refuse before saving/sending.
-    state = replace(
-        PAIRED_STATE,
-        pending_source_commands=tuple(
-            p.StartSource(c.source_id, 1, UUID, DATE)
-            for c in maximal_state().pending_source_commands[:200]
-        ),
-    )
-    assert len(compact_bytes(state)) < 65536
-    store = DiskStore(tmp_path / "admission.json", state)
-    mono = [1000.0]
-    client = FakeRelayClient(device=DEVICE)
-    worker = _worker(
-        client, store=store, clock=lambda: mono[0], sharing_enabled=lambda: False
-    )
-    new_id = worker.request_source_start(1, UUID)
-    worker.iterate_once()
-    assert any(
-        item.source_id == new_id and item.stage == "rejected"
-        for item in worker.status().source_results
-    )
-    assert all(c.source_id != new_id for c in store.load().pending_source_commands)
-    assert client.controls == []
-
-
-def test_transient_atomic_failure_retains_original_queued_and_durable_intents(
-    tmp_path, monkeypatch
-):
-    store = DiskStore(tmp_path / "transient.json", PAIRED_STATE)
-    mono = [1000.0]
-    client = FakeRelayClient(device=DEVICE)
-    worker = _worker(
-        client, store=store, clock=lambda: mono[0], sharing_enabled=lambda: False
-    )
-    start = worker.request_source_start(1, UUID)
-    off = worker.request_participation(False)
-    before = store.path.read_bytes()
-    with monkeypatch.context() as patch:
-
-        def fail(*args):
-            raise OSError("controlled disk failure")
-
-        patch.setattr(s.atomicio, "write_atomic", fail)
-        drive(worker, mono, 4)
-        assert store.path.read_bytes() == before
-        assert worker.status().detail == "persistence_failed"
-        assert worker.status().local_inhibited
-        assert worker.status().source_results == ()
-        assert worker._commands["participation"].payload.intent_id == off
-        assert worker._commands["source:" + start].payload.source_id == start
-        assert client.calls == []
-    drive(worker, mono, 20)
-    assert client.device.participation.enabled is False
-    assert client.source_views[start].state == "active"
-    assert any(c.source_id == start for c in client.controls)
-
-
-def test_headroom_dominates_all_mutable_bounds_and_256_stop_slots(tmp_path):
-    maximum = maximal_state()
-    # This assertion deliberately requires a new persisted field to acquire an
-    # explicit bound review, rather than silently reserving its default null.
-    assert set(s.SharingState.__dataclass_fields__) == {
-        "identity",
-        "relay_origin",
-        "session_id",
-        "last_revision",
-        "device_id",
-        "session_expires_at",
-        "feature_enabled",
-        "approved_capabilities",
-        "session_approved_capabilities",
-        "acknowledged_capabilities",
-        "observed_participation",
-        "pending_recovery",
-        "pending_source_commands",
-        "pending_pairing",
-        "pending_participation",
-        "auth_pause",
-    }
-    admitted = replace(maximum, pending_source_commands=())
-    s.check_admission_capacity(admitted)
-    for command in maximum.pending_source_commands:
-        candidate = replace(
-            admitted,
-            pending_source_commands=(*admitted.pending_source_commands, command),
-        )
-        try:
-            s.check_admission_capacity(candidate)
-        except s.CapacityError:
-            break
-        admitted = candidate
-    else:
-        pytest.fail("Maximum legal metadata and Starts must exhaust bytes before count")
-    # No magic admitted count: bound is measured from this identity and bytes.
-    existing = admitted.pending_source_commands
-    filled = replace(
-        admitted,
-        pending_source_commands=(
-            *existing,
-            *maximal_state(stops=True).pending_source_commands[len(existing) :],
-        ),
-    )
-    assert s._parse_v3(p.decode_json(compact_bytes(filled))) == filled
-    assert (
-        len(compact_bytes(filled))
-        <= len(s._compact(s._admission_envelope(admitted)).encode())
-        <= 65536
-    )
-    path = tmp_path / "reserved.json"
-    s.save(path, filled)
-    assert s.load(path) == filled
-    assert 0 < len(existing) < 256
-
-
-def test_full_count_stop_is_retained_until_prior_work_releases_slot_and_restart(
-    tmp_path,
-):
-    state = replace(
-        PAIRED_STATE,
-        pending_source_commands=tuple(
-            p.StartSource(c.source_id, 1, UUID, DATE)
-            for c in maximal_state().pending_source_commands
-        ),
-    )
-    store = DiskStore(tmp_path / "full-count.json", state)
-    mono = [1000.0]
-    client = FakeRelayClient(device=DEVICE)
-    worker = _worker(
-        client, store=store, clock=lambda: mono[0], sharing_enabled=lambda: False
-    )
-    target = UUID
-    assert worker.request_source_stop(target)
-    off = worker.request_participation(False)
-    worker.iterate_once()
-    assert worker._commands["source:" + target].payload.source_id == target
-    assert store.load().pending_participation.intent_id == off
-    for _ in range(20):
-        drive(worker, mono, 1)
-        if any(c.source_id == target for c in store.load().pending_source_commands):
-            break
-    else:
-        pytest.fail("Deferred Stop was dropped or prevented prior reconciliation")
-    # Recreate the real disk-backed owner after Stop is saved but before send.
-    restarted = _worker(
-        client, store=store, clock=lambda: mono[0], sharing_enabled=lambda: False
-    )
-    restarted.resume_pending()
-    drive(restarted, mono, 20)
-    assert client.source_views[target].state == "ended"
-    assert client.device.participation.enabled is False
-    assert client.cadence_refusals == 0
-
-
-def test_full_memory_queue_still_accepts_stop_for_existing_durable_source(tmp_path):
-    state = replace(
-        PAIRED_STATE, pending_source_commands=(p.StartSource(UUID, 1, UUID, DATE),)
-    )
-    store = DiskStore(tmp_path / "full-queue.json", state)
-    client = FakeRelayClient(device=DEVICE)
-    worker = _worker(client, store=store, sharing_enabled=lambda: False)
+@pytest.mark.parametrize("kind", ["start", "stop"])
+def test_full_count_refuses_only_new_unrelated_source(tmp_path, kind):
+    worker, client, store, _mono = file_rig(tmp_path)
+    sources = full_sources()
+    s.save(store.path, replace(s.load(store.path), pending_source_commands=sources))
     worker.resume_pending()
     worker.iterate_once()
-    starts = [worker.request_source_start(1, UUID) for _ in range(p.MAX_SOURCE_INTENTS)]
-    assert all(starts)
-    assert worker.request_source_stop(UUID)
-    assert all("source:" + source in worker._commands for source in starts)
-    worker.iterate_once()
-    assert any(
-        c.source_id == UUID and isinstance(c, p.StopSource)
-        for c in store.load().pending_source_commands
-    )
-    assert all(
-        any(c.source_id == source for c in store.load().pending_source_commands)
-        or any(
-            r.source_id == source and r.stage == "rejected"
-            for r in worker.status().source_results
+    if kind == "start":
+        target = worker.request_source_start(1, UUID)
+    else:
+        target = UUID
+        assert worker.request_source_stop(
+            target, expected_generation=0, expected_automatic=None
         )
-        for source in starts
+    worker.iterate_once()
+    assert s.load(store.path).pending_source_commands == sources
+    assert "source:" + target not in worker._commands
+    assert any(
+        v.source_id == target and v.stage == "rejected"
+        for v in worker.status().source_results
     )
+    assert not client.controls
 
 
-def test_real_thread_preserves_inflight_start_and_queued_off_stop_through_io_failure(
+def test_full_count_existing_slot_requires_ack_but_does_not_evict_neighbors(tmp_path):
+    worker, _client, store, _mono = file_rig(tmp_path)
+    sources = full_sources()
+    s.save(store.path, replace(s.load(store.path), pending_source_commands=sources))
+    worker.resume_pending()
+    worker.iterate_once()
+    old = sources[0]
+    assert worker.request_source_stop(
+        old.source_id,
+        expected_generation=7,
+        expected_automatic=p.AutomaticBinding(3),
+        supersedes=old,
+    )
+    worker.iterate_once()
+    saved = s.load(store.path).pending_source_commands
+    assert len(saved) == 256 and saved[:-1] == sources[1:]
+    assert isinstance(saved[-1], p.SourceStop)
+    assert saved[-1].expected_generation == 7 and saved[
+        -1
+    ].expected_automatic == p.AutomaticBinding(3)
+
+
+def test_full_memory_queue_preserves_existing_slot_and_refuses_unrelated_growth(
     tmp_path,
 ):
-    store = DiskStore(tmp_path / "inflight.json", PAIRED_STATE)
-    client = FakeRelayClient(device=DEVICE)
-    client.hold = "control_source"
-    fail_disk, failed = threading.Event(), threading.Event()
-
-    def save(state):
-        if fail_disk.is_set():
-            failed.set()
-            raise OSError("controlled atomic failure")
-        store.save(state)
-
-    worker = _worker(
-        client,
-        store=store,
-        clock=time.monotonic,
-        thread_factory=threading.Thread,
-        sharing_enabled=lambda: False,
-        save_state=save,
+    worker, _client, store, _mono = file_rig(tmp_path)
+    old = full_sources()[0]
+    s.save(store.path, replace(s.load(store.path), pending_source_commands=(old,)))
+    worker.resume_pending()
+    worker.iterate_once()
+    queued = [worker.request_source_start(1, UUID) for _ in range(256)]
+    assert all(queued)
+    assert worker.request_source_stop(
+        old.source_id, expected_generation=0, expected_automatic=None, supersedes=old
     )
-    source = worker.request_source_start(1, UUID)
-    assert worker.start()
-    try:
-        assert client.entered.wait(5)
-        before = store.path.read_bytes()
-        original = store.load().pending_source_commands[0]
-        assert original.source_id == source
-        fail_disk.set()
-        off = worker.request_participation(False)
-        assert worker.request_source_stop(source)
-        assert worker.status().local_inhibited
-        client.hold = None
-        client.release.set()
-        assert failed.wait(3)
-        assert store.path.read_bytes() == before
-        assert store.load().pending_source_commands == (original,)
-        assert worker._commands["participation"].payload.intent_id == off
-        assert isinstance(worker._commands["source:" + source].payload, p.StopSource)
-        fail_disk.clear()
-        worker._pending.set()
-        deadline = time.monotonic() + 8
-        while time.monotonic() < deadline:
-            saved = store.load()
-            if (
-                client.source_views.get(source)
-                and client.source_views[source].state == "ended"
-                and not client.device.participation.enabled
-                and not saved.pending_source_commands
-                and saved.pending_participation is None
-            ):
-                break
-            time.sleep(0.01)
-        else:
-            pytest.fail("Real owner did not finish retained safety controls")
-        assert client.source_intents[source] == original
-        assert client.cadence_refusals == 0
-    finally:
-        fail_disk.clear()
-        client.release.set()
-        assert worker.stop()
-
-
-def test_recovery_request_and_off_survive_restart_near_admission_capacity(tmp_path):
-    # Fill from actual byte headroom, not a guessed number of commands.
-    state = replace(PAIRED_STATE, identity=maximal_state().identity, session_id=None)
-    for command in maximal_state().pending_source_commands:
-        candidate = replace(
-            state, pending_source_commands=(*state.pending_source_commands, command)
-        )
-        try:
-            s.check_admission_capacity(candidate)
-        except s.CapacityError:
-            break
-        state = candidate
-    from tests.test_fleetsharing_worker import TOKEN
-
-    state = replace(state, pending_recovery=s.PendingRecovery(TOKEN, DATE))
-    store = DiskStore(tmp_path / "recovery.json", state)
-    mono = [1000.0]
-    client = FakeRelayClient(device=DEVICE)
-    client.loss.add("begin_recovery")
-    worker = _worker(
-        client, store=store, clock=lambda: mono[0], sharing_enabled=lambda: False
+    worker.iterate_once()
+    saved = s.load(store.path).pending_source_commands
+    assert len(saved) == 256
+    assert any(
+        isinstance(c, p.SourceStop) and c.source_id == old.source_id for c in saved
     )
-    off = worker.request_participation(False)
-    target = state.pending_source_commands[0].source_id
-    assert worker.request_source_stop(target)
-    drive(worker, mono, 3)
-    pending = store.load().pending_recovery
-    assert pending.request_id == TOKEN and pending.issued_at == DATE
-    assert pending.challenge is None
-    assert store.load().pending_participation.intent_id == off
-    restarted = _worker(
-        client, store=store, clock=lambda: mono[0], sharing_enabled=lambda: False
+    retained = {c.source_id for c in saved}
+    refused = {
+        v.source_id for v in worker.status().source_results if v.stage == "rejected"
+    }
+    assert set(queued) <= retained | refused
+
+
+@pytest.mark.parametrize("attempted", [False, True])
+def test_full_source_count_cannot_strand_automatic_off(tmp_path, attempted):
+    command = p.AutomaticCommand(UUID, DATE, False, 1, 1)
+    worker, store, mono, _, attempts, _ = automatic_rig(
+        tmp_path, s.PendingAutomatic(command, attempted), observed=ON
     )
-    restarted.resume_pending()
-    drive(restarted, mono, 40)
-    assert client.device.participation.enabled is False
-    assert client.source_views[target].state == "ended"
-    assert store.load().pending_recovery is None
-    assert store.load().pending_participation is None
-    assert len(client.admissions) == 1
-    assert next(iter(client.admissions))[1] == TOKEN
-    assert client.cadence_refusals == 0
+    sources = full_sources()
+    s.save(store.path, replace(s.load(store.path), pending_source_commands=sources))
+    drive(worker, mono, 10)
+    saved = s.load(store.path)
+    assert saved.pending_source_commands == sources
+    assert (
+        saved.automatic.pending is None
+        and saved.automatic.last_result.outcome == "receipt"
+    )
+    assert len(attempts) == 1 and attempts[0].automatic.pending.attempted
 
 
-def test_compact_candidate_io_failure_preserves_last_good_bytes(tmp_path, monkeypatch):
-    path = tmp_path / "compact-io.json"
-    s.save(path, PAIRED_STATE)
-    before = path.read_bytes()
-    candidate = maximal_state(stops=True)
-    reached = []
+def test_max_digits_full_archive_and_sources_keep_cancel_and_derived_off_capacity(
+    tmp_path,
+):
+    maximum = p.JS_SAFE_MAX
+    consent = p.Consent(maximum - 2, maximum - 2, True, UUID, DATE, None, None)
+    command = p.AutomaticCommand(UUID, DATE, True, maximum - 2, maximum - 2)
+    worker, store, mono, _, attempts, _ = automatic_rig(
+        tmp_path, s.PendingAutomatic(command), observed=consent
+    )
+    raw, _ = maximal_document()
+    raw["identity"]["public_key_spki_b64"] = PAIRED_STATE.identity.public_key_spki_b64
+    raw["cutover"]["original"]["identity"]["public_key_spki_b64"] = (
+        PAIRED_STATE.identity.public_key_spki_b64
+    )
+    maximal = s._parse_v4(raw)
+    original = maximal.cutover
+    source_commands = full_sources()
+    candidate = replace(
+        maximal,
+        last_revision=p.INT4_MAX - 5,
+        pending_pairing=None,
+        pending_recovery=None,
+        auth_pause=None,
+        pending_participation=None,
+        pending_source_commands=source_commands,
+        automatic=s.AutomaticState(consent, s.PendingAutomatic(command)),
+    )
+    s.save(store.path, candidate)
+    factory = worker._client_factory
+    cancellations = []
 
-    def fail(target, data):
-        assert len(data.encode()) < 65536
-        assert data == compact_bytes(candidate).decode()
-        reached.append(target)
-        raise OSError("controlled disk failure")
+    def client_factory(origin):
+        client = factory(origin)
+        transport = client._transport
+
+        def cancel_on_send(request, timeout):
+            if request.method == "PUT" and json.loads(request.data)["enabled"]:
+                cancellations.append(
+                    worker.request_cancel_automatic_on(
+                        UUID, binding=worker.status().metadata.binding
+                    )
+                )
+            return transport(request, timeout)
+
+        client._transport = cancel_on_send
+        return client
+
+    worker._client_factory = client_factory
+    drive(worker, mono, 12)
+    saved = s.load(store.path)
+    assert [v.automatic.pending.command.enabled for v in attempts] == [True, False]
+    assert (
+        saved.pending_source_commands == source_commands and saved.cutover == original
+    )
+    assert saved.automatic.pending is None
+    assert saved.automatic.last_result.receipt.result.revision == maximum
+    assert saved.automatic.last_result.pending.command.request_id == cancellations[0]
+    assert all(v.cutover == original for v in store.saves)
+    assert any(
+        v.automatic.pending
+        and not v.automatic.pending.command.enabled
+        and v.automatic.last_result.pending.cancel_after_on is not None
+        for v in store.saves
+    )
+    assert store.path.stat().st_size <= s.MAX_STATE_FILE_BYTES
+
+
+def test_atomic_failure_preserves_exact_queue_body_and_last_good_file(
+    tmp_path, monkeypatch
+):
+    worker, client, store, mono = file_rig(tmp_path)
+    target = worker.request_source_start(1, UUID)
+    command = worker._commands["source:" + target].payload
+    before = store.path.read_bytes()
+    write = s.atomicio.write_atomic
+
+    def fail(path, text):
+        raise OSError("controlled write failure")
 
     monkeypatch.setattr(s.atomicio, "write_atomic", fail)
-    with pytest.raises(OSError):
-        s.save(path, candidate)
-    assert reached == [path]
-    assert path.read_bytes() == before
-    assert s.load(path) == PAIRED_STATE
-
-
-def test_upgrade_admission_cannot_consume_future_pairing_response_headroom(tmp_path):
-    state = replace(
-        PAIRED_STATE,
-        pending_source_commands=maximal_state().pending_source_commands[:200],
-    )
-    store = DiskStore(tmp_path / "upgrade-capacity.json", state)
-    client = FakeRelayClient(device=DEVICE)
-    worker = _worker(client, store=store, sharing_enabled=lambda: False)
-    assert worker.request_pairing(mode="upgrade")
+    drive(worker, mono, 4)
+    assert store.path.read_bytes() == before
+    assert worker._commands["source:" + target].payload == command
+    assert not client.calls
+    monkeypatch.setattr(s.atomicio, "write_atomic", write)
     worker.iterate_once()
-    assert worker.status().pairing == "rejected"
-    assert store.load().pending_pairing is None
-    assert store.load().session_id == state.session_id
-    assert store.load().pending_source_commands == state.pending_source_commands
-    assert client.pair_keys == []
+    assert command in s.load(store.path).pending_source_commands
+
+
+def test_reentrant_new_source_during_admission_is_not_relabelled_as_old_ack(tmp_path):
+    worker, client, store, _mono = file_rig(tmp_path)
+    old = worker.request_source_start(1, UUID)
+    save = worker._save_state
+    newer = []
+
+    def save_and_queue(candidate):
+        save(candidate)
+        if not newer:
+            newer.append(worker.request_source_start(1, UUID))
+
+    worker._save_state = save_and_queue
+    worker.iterate_once()
+    assert newer[0] in {v.source_id for v in worker.status().pending_sources}
+    assert "source:" + newer[0] in worker._commands
+    assert {c.source_id for c in s.load(store.path).pending_source_commands} == {old}
+    assert not client.controls
+
+
+def test_full_capacity_restart_keeps_authentication_and_terminal_journals(tmp_path):
+    from tests.fleetsharing_worker_control_helpers import ControlRelay
+    from tests.test_fleetsharing_worker import DEVICE, TOKEN, FakeRelayClient, _worker
+    from wingman.fleetsharing.client import FleetRelayClient
+
+    sources = full_sources()
+    stop = p.SourceStop(sources[0].source_id, 0, UUID, DATE, None)
+    automatic = p.AutomaticCommand(
+        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", DATE, False, 1, 1
+    )
+    original = replace(
+        s.replace_session(PAIRED_STATE, None),
+        device_id=UUID,
+        pending_recovery=s.PendingRecovery(TOKEN, DATE),
+        pending_source_commands=(stop, *sources[1:]),
+        pending_participation=s.PendingParticipation(UUID, False, 1),
+        automatic=s.AutomaticState(ON, s.PendingAutomatic(automatic, True)),
+    )
+    worker, _, store, mono = file_rig(tmp_path, original)
+    relay = ControlRelay(worker, store)
+    relay.consent = ON
+    worker.resume_pending()
+    for _ in range(8):
+        drive(worker, mono, 1)
+        if s.load(store.path).pending_recovery.challenge:
+            break
+    saved = s.load(store.path)
+    assert (
+        saved.pending_recovery.challenge
+        and not saved.pending_recovery.completion_attempted
+    )
+    assert (
+        saved.pending_recovery.request_id == TOKEN
+        and saved.pending_recovery.issued_at == DATE
+    )
+    assert saved.pending_source_commands == original.pending_source_commands
+    assert worker.stop()
+    replacement = _worker(
+        FakeRelayClient(device=DEVICE),
+        store=store,
+        timing_context=worker._timing_context,
+        utc_clock=worker._utc_clock,
+        sharing_enabled=lambda: False,
+    )
+    relay.worker = replacement
+    replacement._client_factory = lambda origin: FleetRelayClient(
+        origin, transport=relay.transport
+    )
+    replacement.resume_pending()
+    unrelated = replacement.request_source_start(1, UUID)
+    drive(replacement, mono, 30)
+    final = s.load(store.path)
+    assert final.pending_recovery is None and final.session_id
+    assert final.pending_source_commands == sources[1:]
+    assert (
+        final.pending_participation is None and not relay.device.participation.enabled
+    )
+    assert (
+        final.automatic.pending is None and not final.automatic.observed_consent.enabled
+    )
+    assert stop.request_id in relay.receipts and automatic.request_id in relay.receipts
+    assert any(
+        v.source_id == unrelated and v.stage == "rejected"
+        for v in replacement.status().source_results
+    )
+    complete = [
+        (request, state)
+        for request, state in relay.calls
+        if "/recovery-challenges/" in request.full_url
+    ]
+    assert len(complete) == 1 and complete[0][1].pending_recovery.completion_attempted
+    assert complete[0][1].pending_recovery.request_id == TOKEN
+    assert all(state.identity == original.identity for _, state in relay.calls)
+
+
+@pytest.mark.parametrize("stop_target", ["same-source", "unrelated"])
+def test_real_thread_preserves_inflight_start_and_queued_off_stop_through_io_failure(
+    tmp_path, monkeypatch, stop_target
+):
+    import threading
+    import time
+
+    from tests.fleetsharing_worker_control_helpers import ControlRelay
+    from tests.test_fleetsharing_worker import DEVICE, NOW, FakeRelayClient, _worker
+
+    sources = full_sources()[:-1]
+    store = DiskStore(
+        tmp_path / "held.json", replace(PAIRED_STATE, pending_source_commands=sources)
+    )
+    worker = _worker(
+        FakeRelayClient(device=DEVICE),
+        store=store,
+        clock=time.monotonic,
+        utc_clock=lambda: NOW,
+        thread_factory=threading.Thread,
+        sharing_enabled=lambda: False,
+    )
+    relay = ControlRelay(worker, store)
+    entered, release, failed, allow_write, conflicted = (
+        threading.Event() for _ in range(5)
+    )
+    completions, failed_writes, failure_statuses = [], [], []
+    target = worker.request_source_start(1, UUID)
+
+    def before(request, saved):
+        if (
+            request.method == "PUT"
+            and request.full_url.endswith("/sources")
+            and json.loads(request.data)["operation"] == "start"
+            and not entered.is_set()
+        ):
+            entered.set()
+            completions.append(release.wait(5))
+
+    def status_changed(value):
+        if value.detail == "persistence_failed" and failed_writes:
+            # This witness runs only after the writer's OSError reached the owner.
+            failure_statuses.append(value)
+            failed.set()
+        if value.detail == "conflict":
+            conflicted.set()
+
+    relay.before = before
+    worker.subscribe_status(status_changed)
+    write = s.atomicio.write_atomic
+
+    def save(path, text):
+        candidate = json.loads(text)
+        if not allow_write.is_set() and (
+            candidate["pending_participation"]
+            or any(
+                c["operation"] == "stop" for c in candidate["pending_source_commands"]
+            )
+        ):
+            failed_writes.append(candidate)
+            raise OSError("queued terminal write failed after held Start")
+        write(path, text)
+
+    def wait_for(predicate):
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            if predicate():
+                return
+            time.sleep(0.02)
+        pytest.fail("terminal progress not externally witnessed")
+
+    monkeypatch.setattr(s.atomicio, "write_atomic", save)
+    assert worker.start()
+    try:
+        assert entered.wait(5)
+        before_bytes = store.path.read_bytes()
+        before_state = s.load(store.path)
+        start = next(
+            c for c in before_state.pending_source_commands if c.source_id == target
+        )
+        old = start if stop_target == "same-source" else sources[0]
+        off = worker.request_participation(
+            False, expected_generation=1, binding=worker.status().metadata.binding
+        )
+        assert off
+        assert worker.request_source_stop(
+            old.source_id,
+            expected_generation=0,
+            expected_automatic=None,
+            supersedes=old,
+            binding=worker.status().metadata.binding,
+        )
+        queued = dict(worker._commands)
+        stop_action = queued["source:" + old.source_id]
+        stop = stop_action.payload
+        assert stop_action.supersedes == old
+        assert stop.expected_generation == 0 and stop.expected_automatic is None
+        assert queued["participation"].payload == s.PendingParticipation(off, False, 1)
+        assert store.path.read_bytes() == before_bytes
+        release.set()
+        assert failed.wait(5) and completions == [True]
+        assert failed_writes and failure_statuses
+        assert worker.status().local_inhibited
+        assert store.path.read_bytes() == before_bytes, (
+            "failed write changed last good bytes"
+        )
+        assert s.load(store.path) == before_state
+        assert dict(worker._commands) == queued, "failed write changed queued intents"
+        assert before_state.pending_source_commands == (*sources, start)
+        assert before_state.pending_participation is None
+        assert relay.starts == {target: start}
+        assert not relay.receipts and relay.device.participation.enabled
+        allow_write.set()
+        worker._pending.set()
+        if stop_target == "same-source":
+            # The held Start committed remotely, so the original immutable CAS0
+            # must conflict. A fresh observed CAS1 requires a NEW whole-ack action.
+            assert worker.set_source_watch(True)
+            wait_for(
+                lambda: (
+                    conflicted.is_set()
+                    and worker.status().sources is not None
+                    and any(
+                        v.source_id == target for v in worker.status().sources.sources
+                    )
+                )
+            )
+            observed = next(
+                v for v in worker.status().sources.sources if v.source_id == target
+            )
+            assert observed.generation == 1 and observed.automatic is None
+            assert observed.state == "active"
+            assert stop in s.load(store.path).pending_source_commands
+            assert stop.request_id not in relay.receipts
+            original_puts = [
+                p.parse_source_command(json.loads(request.data))
+                for request, _ in relay.calls
+                if request.method == "PUT"
+                and request.full_url.endswith("/sources")
+                and json.loads(request.data)["operation"] == "stop"
+            ]
+            assert original_puts and all(command == stop for command in original_puts)
+            # Capture the explicit new action before the live owner ingests it.
+            with worker._iteration_lock:
+                assert worker.request_source_stop(
+                    target,
+                    expected_generation=observed.generation,
+                    expected_automatic=observed.automatic,
+                    supersedes=stop,
+                    binding=worker.status().metadata.binding,
+                )
+                replacement_action = worker._commands["source:" + target]
+                assert replacement_action.supersedes == stop
+                replacement = replacement_action.payload
+            assert replacement.request_id != stop.request_id
+            assert replacement.expected_generation == 1
+            assert replacement.expected_automatic is None
+            terminal = replacement
+        else:
+            terminal = stop
+
+        def settled():
+            saved = s.load(store.path)
+            return (
+                saved.pending_participation is None
+                and not relay.device.participation.enabled
+                and terminal.request_id in relay.receipts
+                and terminal not in saved.pending_source_commands
+            )
+
+        wait_for(settled)
+        saved = s.load(store.path)
+        assert saved.observed_participation == p.Participation(False, 2)
+        participation_puts = [
+            (json.loads(request.data), state.pending_participation)
+            for request, state in relay.calls
+            if request.full_url.endswith("/participation")
+        ]
+        assert participation_puts == [
+            (
+                {"protocol": 2, "enabled": False, "expected_generation": 1},
+                replace(queued["participation"].payload, attempted=True),
+            )
+        ]
+        stop_puts = [
+            p.parse_source_command(json.loads(request.data))
+            for request, _ in relay.calls
+            if request.method == "PUT"
+            and request.full_url.endswith("/sources")
+            and json.loads(request.data)["operation"] == "stop"
+        ]
+        assert terminal in stop_puts and all(c in (stop, terminal) for c in stop_puts)
+        assert len(relay.receipts) == 1
+        receipt = relay.receipts[terminal.request_id]
+        assert p.parse_source_command(receipt["command"]) == terminal
+        assert receipt["source"]["source_id"] == old.source_id
+        assert receipt["source"]["state"] == "ended"
+        assert relay.sources[old.source_id].state == "ended"
+        assert relay.starts == {target: start}
+        if stop_target == "same-source":
+            assert saved.pending_source_commands == sources
+            assert receipt["automatic_effect"] == "manual_only"
+            assert receipt["source"]["generation"] == 2
+            assert stop.request_id not in relay.receipts
+        else:
+            # Exact neighbor preservation; the independent Start may settle only
+            # through a separately witnessed replay of its exact original body.
+            remaining = tuple(c for c in saved.pending_source_commands if c != start)
+            assert remaining == sources[1:]
+            if start not in saved.pending_source_commands:
+                start_puts = [
+                    p.parse_source_command(json.loads(request.data))
+                    for request, _ in relay.calls
+                    if request.method == "PUT"
+                    and request.full_url.endswith("/sources")
+                    and json.loads(request.data)["operation"] == "start"
+                ]
+                assert len(start_puts) >= 2 and all(c == start for c in start_puts)
+        assert not worker._commands
+    finally:
+        release.set()
+        allow_write.set()
+        assert worker.stop(timeout=5)
+
+
+def test_failed_terminal_write_guard_kills_in_memory_queue_loss_mutant(
+    tmp_path, monkeypatch
+):
+    from wingman.fleetsharing import worker as owner
+
+    ingest = owner.FleetSharingWorker._ingest_control
+
+    def discard_failed_admission(self, command, fence):
+        try:
+            return ingest(self, command, fence)
+        except owner._PersistenceFailed:
+            if command.kind == "participation":
+                self._drop_command("participation", command)
+            raise
+
+    monkeypatch.setattr(
+        owner.FleetSharingWorker, "_ingest_control", discard_failed_admission
+    )
+    with pytest.raises(AssertionError, match="failed write changed queued intents"):
+        test_real_thread_preserves_inflight_start_and_queued_off_stop_through_io_failure(
+            tmp_path, monkeypatch, stop_target="same-source"
+        )
+
+
+def test_held_start_guard_kills_in_memory_source_fence_mutant(tmp_path, monkeypatch):
+    from wingman.fleetsharing.worker import FleetSharingWorker
+
+    check = FleetSharingWorker._check_locked
+
+    def admit_stale_source(self, fence, *, work=None):
+        # Remove only the same-source queued-command/generation response fence.
+        if work is not None and work.operation == "control_source":
+            work = replace(work, operation="fetch_receipt")
+        return check(self, fence, work=work)
+
+    monkeypatch.setattr(FleetSharingWorker, "_check_locked", admit_stale_source)
+    with pytest.raises(AssertionError, match="failed write changed last good bytes"):
+        test_real_thread_preserves_inflight_start_and_queued_off_stop_through_io_failure(
+            tmp_path, monkeypatch, stop_target="same-source"
+        )

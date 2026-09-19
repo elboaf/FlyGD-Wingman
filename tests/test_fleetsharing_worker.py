@@ -6,27 +6,43 @@ legacy unknown grants bootstrap, and Settings True is not an explicit On action.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import http.client
+import json
 import threading
 import time
 import urllib.error
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
-from itertools import pairwise
+from itertools import count, pairwise
 from uuid import uuid4
 
 import pytest
+from cryptography.hazmat.primitives.serialization import load_der_public_key
 
+from tests.fleetsharing_timing_helpers import FakePublicationSource
 from wingman.fleetsharing import crypto
 from wingman.fleetsharing import protocol as p
 from wingman.fleetsharing import state as s
-from wingman.fleetsharing.client import FleetRelayError, PairingBegin, PairingComplete
-from wingman.fleetsharing.model import CatalogueCharacter, FleetCatalogue, PublishRow
+from wingman.fleetsharing.client import (
+    FleetRelayClient,
+    FleetRelayError,
+    PairingBegin,
+    PairingComplete,
+)
+from wingman.fleetsharing.model import CatalogueCharacter, FleetCatalogue
+from wingman.fleetsharing.timing import TimingContext
 from wingman.fleetsharing.worker import (
     FleetSharingWorker,
     _noop_thread_factory,
 )
-from wingman.telemetry.model import FleetRow, FleetSnapshot, StreamHealth
+from wingman.telemetry.model import (
+    CombatActivity,
+    FleetRow,
+    FleetSnapshot,
+    StreamHealth,
+)
 
 NOW = datetime(2026, 9, 7, 12, tzinfo=UTC)
 DATE = "2026-09-07T12:00:00.000Z"
@@ -35,14 +51,53 @@ UUID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 TOKEN = "A" * 43
 CAPS = (p.SHARED_CAPABILITY,)
 KEY = bytes(32)
-DEVICE = p.DeviceState(UUID, EXPIRY, True, CAPS, CAPS, CAPS, p.Participation(True, 1))
+SESSION = TOKEN
+PAIRED_SESSION = "B" * 42 + "A"
+DEVICE = p.parse_device(
+    {
+        "protocol": 2,
+        "device_id": UUID,
+        "session_expires_at": EXPIRY,
+        "feature_enabled": True,
+        "approved_capabilities": list(CAPS),
+        "session_approved_capabilities": list(CAPS),
+        "acknowledged_capabilities": list(CAPS),
+        "participation": {"enabled": True, "generation": 1},
+        "server_time_ms": 1788782400000,
+    }
+)
+COMBAT_DEVICE = replace(
+    DEVICE,
+    approved_capabilities=(*CAPS, p.COMBAT_CAPABILITY),
+    session_approved_capabilities=(*CAPS, p.COMBAT_CAPABILITY),
+    acknowledged_capabilities=(*CAPS, p.COMBAT_CAPABILITY),
+)
+_SOURCE_IDS = count(1)
+_SOURCE_LIFETIME = uuid4()
+
+
+def _source(dps, now, *, character="Alice", inactive=False):
+    activity = (
+        CombatActivity()
+        if inactive
+        else CombatActivity(now + 30, (_SOURCE_LIFETIME, next(_SOURCE_IDS)))
+    )
+    return FakePublicationSource(
+        FleetSnapshot(
+            (FleetRow(character, dps, incoming_dps=0, combat=activity),),
+            StreamHealth("active"),
+            sampled_at_mono=now,
+        )
+    )
+
+
 PAIRED_STATE = s.SharingState(
     identity=s.DeviceIdentity(
         "cHJvdGVjdGVk",
         crypto.canonical_device_public_key_b64(crypto.public_key_spki(KEY)),
     ),
     relay_origin="https://relay.test",
-    session_id="session-1",
+    session_id=SESSION,
 )
 CATALOGUE = FleetCatalogue(1, (CatalogueCharacter(1, "Alice"),))
 STREAM_HEALTH = StreamHealth(state="active")
@@ -54,6 +109,9 @@ OPERATION_BUCKETS = {
     "set_participation": "read",
     "fetch_sources": "read",
     "control_source": "read",
+    "fetch_automatic": "read",
+    "control_automatic": "read",
+    "fetch_receipt": "read",
     "fetch_catalogue": "read",
     "fetch_eligibility": "read",
     "read_snapshot": "read",
@@ -90,8 +148,8 @@ class FakeRelayClient:
         self.device = device
         self.catalogue = catalogue
         self.registered_keys = {crypto.public_key_spki(KEY)} if registered else set()
-        self.valid_sessions = {"session-1": KEY} if registered else {}
-        self.active_session = "session-1" if registered else None
+        self.valid_sessions = {SESSION: KEY} if registered else {}
+        self.active_session = SESSION if registered else None
         self.session_views = {}
         self.precommit_loss = set()
         self.admissions = {}
@@ -115,7 +173,27 @@ class FakeRelayClient:
         self.controls = []
         self.participation_calls = []
         self.source_views = {}
-        self.remote = (p.ObservedRemoteRow(2, "Bob", 20, (), "live", 400, UUID),)
+        self.receipts = {}
+        self.automatic_consent = p.Consent(0, 0, False, None, None, None, None)
+        self.remote = p.parse_snapshot(
+            {
+                "protocol": 2,
+                "server_time_ms": DEVICE.server_time_ms,
+                "rows": [
+                    {
+                        "character_id": 2,
+                        "character_name": "Bob",
+                        "outgoing_dps": 20,
+                        "incoming_dps": None,
+                        "activity_age_ms": 400,
+                        "effects": [],
+                        "state": "live",
+                        "age_ms": 400,
+                        "publication_id": UUID,
+                    }
+                ],
+            }
+        )
         self.withdrawal_completed = False
         self.challenge = None
         self.recovery_result = "reconnected"
@@ -126,6 +204,9 @@ class FakeRelayClient:
         self.release = threading.Event()
 
     def _call(self, operation, args, apply):
+        hook = args.get("before_send")
+        if hook is not None:
+            hook()
         bucket = OPERATION_BUCKETS[operation]
         now = self.clock()
         revision = args.get("revision")
@@ -171,6 +252,7 @@ class FakeRelayClient:
             session_expires_at=view.session_expires_at,
             session_approved_capabilities=view.session_approved_capabilities,
             acknowledged_capabilities=view.acknowledged_capabilities,
+            server_time_ms=int(self.utc().timestamp() * 1000),
         )
 
     def _install_session(self, session_id, private_key, device, *, retire=False):
@@ -202,6 +284,18 @@ class FakeRelayClient:
             raise FleetRelayError(401, "unauthorized", "session")
         if operation in ("fetch_device", "fetch_catalogue", "renew_session"):
             return
+        terminal = (
+            operation in ("fetch_automatic", "fetch_receipt")
+            or (operation == "control_automatic" and not args["command"].enabled)
+            or (
+                operation == "control_source"
+                and isinstance(args["command"], p.StopSource)
+            )
+        )
+        if terminal:
+            if p.SHARED_CAPABILITY not in self.device.approved_capabilities:
+                raise FleetRelayError(403, "capability_required", "durable approval")
+            return
         shared = operation in ("publish_snapshot", "read_snapshot", "fetch_eligibility")
         if not self.device.feature_enabled:
             # A retains legacy snapshot endpoints while disabled. This fixture
@@ -232,12 +326,36 @@ class FakeRelayClient:
             raise FleetRelayError(403, "forbidden", "participation")
 
     def fetch_device(self, **args):
-        return self._call("fetch_device", args, lambda: self._session_device(args))
+        return self._call(
+            "fetch_device",
+            args,
+            lambda: p.parse_device(
+                {
+                    "protocol": 2,
+                    **asdict(self._session_device(args)),
+                    "approved_capabilities": list(self.device.approved_capabilities),
+                    "session_approved_capabilities": list(
+                        self._session_device(args).session_approved_capabilities
+                    ),
+                    "acknowledged_capabilities": list(
+                        self._session_device(args).acknowledged_capabilities
+                    ),
+                    "server_time_ms": int(self.utc().timestamp() * 1000),
+                }
+            ),
+        )
 
     def acknowledge_capabilities(self, **args):
         def apply():
-            assert args["capabilities"] == CAPS
-            return self._update_session(args, acknowledged_capabilities=CAPS)
+            device = self._session_device(args)
+            approved = tuple(
+                cap
+                for cap in (*CAPS, p.COMBAT_CAPABILITY)
+                if cap in device.approved_capabilities
+                and cap in device.session_approved_capabilities
+            )
+            assert args["capabilities"] == approved
+            return self._update_session(args, acknowledged_capabilities=approved)
 
         return self._call("acknowledge_capabilities", args, apply)
 
@@ -256,20 +374,35 @@ class FakeRelayClient:
         return self._call("set_participation", args, apply)
 
     def fetch_catalogue(self, **args):
-        self.fetch_calls.append(args["revision"])
-        return self._call("fetch_catalogue", args, lambda: self.catalogue)
+        def apply():
+            self.fetch_calls.append(args["revision"])
+            return self.catalogue
+
+        return self._call("fetch_catalogue", args, apply)
 
     def renew_session(self, **args):
-        self.renew_calls.append(args["revision"])
-
         def apply():
+            self.renew_calls.append(args["revision"])
             expiry = _date(self.utc() + timedelta(minutes=30))
             self._update_session(args, session_expires_at=expiry)
             return expiry
 
         return self._call("renew_session", args, apply)
 
-    def publish_snapshot(self, **args):
+    def publish_snapshot(self, *, sampled_at_ms, **args):
+        # No protocol-1 success shim: the worker must supply real API2 payloads.
+        p.parse_combat_put(
+            json.loads(
+                json.dumps(
+                    {
+                        "protocol": 2,
+                        "sampled_at_ms": sampled_at_ms,
+                        "rows": [asdict(row) for row in args["rows"]],
+                    }
+                )
+            )
+        )
+
         def apply():
             self.publish_calls.append((args["revision"], args["rows"]))
             if not args["rows"]:
@@ -295,7 +428,32 @@ class FakeRelayClient:
         return self._call("fetch_eligibility", args, apply)
 
     def read_snapshot(self, **args):
-        return self._call("read_snapshot", args, lambda: self.remote)
+        def apply():
+            # One fixed publication's origins age at the current DB sample; never
+            # restamp old rows as new evidence just to satisfy runtime timing.
+            wire = json.loads(json.dumps({"protocol": 2, **asdict(self.remote)}))
+            now = int(self.utc().timestamp() * 1000)
+            elapsed = now - wire["server_time_ms"]
+            wire["server_time_ms"] = now
+            rows = []
+            for row in wire["rows"]:
+                row["age_ms"] += elapsed
+                row["activity_age_ms"] += elapsed
+                if row["age_ms"] >= 10000 or row["activity_age_ms"] >= 30000:
+                    continue
+                row["state"] = "live" if row["age_ms"] < 3000 else "stale"
+                for effect in row["effects"]:
+                    for observation in effect["observations"]:
+                        observation["age_ms"] += elapsed
+                    effect["observations"] = [
+                        o for o in effect["observations"] if o["age_ms"] < 30000
+                    ]
+                row["effects"] = [e for e in row["effects"] if e["observations"]]
+                rows.append(row)
+            wire["rows"] = rows
+            return p.parse_snapshot(wire)
+
+        return self._call("read_snapshot", args, apply)
 
     def fetch_sources(self, **args):
         return self._call(
@@ -306,6 +464,92 @@ class FakeRelayClient:
                 (p.SourceCharacter(1, "Alice", UUID, True, True),),
             ),
         )
+
+    def _automatic_status(self):
+        consent = self.automatic_consent
+        return p.AutomaticStatus(
+            consent,
+            "none" if consent.generation == 0 else "this_device",
+            "waiting_for_grant" if consent.enabled else "off",
+            "none",
+            None,
+            (),
+        )
+
+    def fetch_automatic(self, **args):
+        return self._call(
+            "fetch_automatic", args, lambda: p.AutomaticGet(self._automatic_status())
+        )
+
+    def fetch_receipt(self, **args):
+        def apply():
+            receipt = self.receipts.get(args["request_id"])
+            if receipt is None or self.utc() >= datetime.fromisoformat(
+                receipt.expires_at
+            ):
+                raise FleetRelayError(404, "receipt_not_found", "not retained")
+            return p.ReceiptGet(receipt, self._automatic_status())
+
+        return self._call("fetch_receipt", args, apply)
+
+    def control_automatic(self, **args):
+        command = args["command"]
+        p.automatic_command_body(command)
+
+        def apply():
+            receipt = self.receipts.get(command.request_id)
+            if receipt is not None:
+                if receipt.command != command:
+                    raise FleetRelayError(409, "request_id_conflict", "binding")
+                return p.AutomaticResult(
+                    command.request_id, "replayed", receipt, self._automatic_status()
+                )
+            current = self.automatic_consent
+            if (command.expected_generation, command.expected_revision) != (
+                current.generation,
+                current.revision,
+            ):
+                raise FleetRelayError(409, "conflict", "CAS")
+            age = (
+                self.utc() - datetime.fromisoformat(command.intent_created_at)
+            ).total_seconds()
+            if age < 0 or (command.enabled and age >= 60):
+                raise FleetRelayError(400, "invalid_intent", "freshness")
+            if not command.enabled and not current.enabled:
+                return p.AutomaticResult(
+                    command.request_id, "already_off", None, self._automatic_status()
+                )
+            if command.enabled:
+                current = p.Consent(
+                    current.generation + 1,
+                    current.revision + 1,
+                    True,
+                    self.device.device_id,
+                    _date(self.utc()),
+                    None,
+                    None,
+                )
+            else:
+                current = replace(
+                    current,
+                    revision=current.revision + 1,
+                    enabled=False,
+                    disabled_at=_date(self.utc()),
+                    closed_reason="explicit_off",
+                )
+            self.automatic_consent = current
+            receipt = p.AutomaticReceipt(
+                command,
+                _date(self.utc()),
+                _date(self.utc() + timedelta(hours=24)),
+                current,
+            )
+            self.receipts[command.request_id] = receipt
+            return p.AutomaticResult(
+                command.request_id, "applied", receipt, self._automatic_status()
+            )
+
+        return self._call("control_automatic", args, apply)
 
     def control_source(self, **args):
         command = args["command"]
@@ -327,12 +571,18 @@ class FakeRelayClient:
                         or self.source_intents.get(command.source_id) != command
                     ):
                         raise FleetRelayError(409, "conflict", "start")
-                    return current
+                    return p.SourceStartResult(current)
                 self.source_intents[command.source_id] = command
                 # Provider activation is an explicit fixture simplification;
                 # production initially returns pending, with the same CAS identity.
                 current = p.SourceView(
-                    command.source_id, 1, command.character_id, "active", None, None
+                    command.source_id,
+                    1,
+                    command.character_id,
+                    "active",
+                    None,
+                    None,
+                    None,
                 )
             else:
                 if (
@@ -340,7 +590,16 @@ class FakeRelayClient:
                 ) != command.expected_generation:
                     raise FleetRelayError(409, "conflict", "stop")
                 if current and current.state == "ended":
-                    return current
+                    consent = p.Consent(0, 0, False, None, None, None, None)
+                    status = p.AutomaticStatus(consent, "none", "off", "none", None, ())
+                    return p.SourceStopResult(
+                        command.request_id,
+                        "already_stopped",
+                        None,
+                        current,
+                        "manual_only",
+                        status,
+                    )
                 current = p.SourceView(
                     command.source_id,
                     (current.generation if current else 0) + 1,
@@ -348,9 +607,28 @@ class FakeRelayClient:
                     "ended",
                     "stopped",
                     None,
+                    None,
                 )
             self.source_views[command.source_id] = current
-            return current
+            if isinstance(command, p.StartSource):
+                return p.SourceStartResult(current)
+            consent = p.Consent(0, 0, False, None, None, None, None)
+            status = p.AutomaticStatus(consent, "none", "off", "none", None, ())
+            effect = (
+                "manual_only" if command.expected_generation else "unknown_cancelled"
+            )
+            receipt = p.SourceStopReceipt(
+                command,
+                _date(self.utc()),
+                _date(self.utc() + timedelta(hours=24)),
+                current,
+                effect,
+                consent,
+            )
+            self.receipts[command.request_id] = receipt
+            return p.SourceStopResult(
+                command.request_id, "applied", receipt, current, effect, status
+            )
 
         return self._call("control_source", args, apply)
 
@@ -426,7 +704,7 @@ class FakeRelayClient:
             self._install_session(session_id, args["private_key"], device, retire=True)
             return p.RecoveryResult(
                 "reconnected",
-                UUID,
+                self.device.device_id,
                 session_id,
                 self.device.session_expires_at,
                 self.device.approved_capabilities,
@@ -440,11 +718,7 @@ class FakeRelayClient:
             if args.get("requested_capabilities") and not self.device.feature_enabled:
                 raise FleetRelayError(503, "feature_disabled", "pairing")
             self.pair_keys.append(public_key_spki)
-            pairing_id = (
-                "pair-id"
-                if len(self.pair_keys) == 1
-                else "pair-id-" + str(len(self.pair_keys))
-            )
+            pairing_id = str(uuid4())
             admission = PairingBegin(
                 pairing_id,
                 "https://relay.test/approve",
@@ -460,7 +734,7 @@ class FakeRelayClient:
 
         return self._call("begin_pairing", args, apply)
 
-    def complete_pairing(self, pairing_id, challenge, private_key):
+    def complete_pairing(self, pairing_id, challenge, private_key, *, before_send=None):
         def apply():
             binding = self.pairings.get(pairing_id)
             if (
@@ -468,7 +742,9 @@ class FakeRelayClient:
                 or binding[2]
                 or self.utc() >= datetime.fromisoformat(binding[1])
             ):
-                raise FleetRelayError(409, "conflict", "pairing consumed/expired")
+                raise FleetRelayError(
+                    409, "not_completable", "pairing consumed/expired"
+                )
             key = crypto.public_key_spki(private_key)
             if key != binding[0] or challenge != crypto.pairing_challenge_preimage(
                 pairing_id
@@ -476,15 +752,14 @@ class FakeRelayClient:
                 raise FleetRelayError(401, "unauthorized", "pairing proof")
             if binding[3] and not self.device.feature_enabled:
                 raise FleetRelayError(503, "feature_disabled", "pairing")
+            granted = set(binding[3])
+            if key in self.registered_keys:
+                granted.update(self.device.approved_capabilities)
+            # API2 capability order is shared then combat, not lexical sorting.
             grants = tuple(
-                sorted(
-                    set(binding[3])
-                    | (
-                        set(self.device.approved_capabilities)
-                        if key in self.registered_keys
-                        else set()
-                    )
-                )
+                cap
+                for cap in (p.SHARED_CAPABILITY, p.COMBAT_CAPABILITY)
+                if cap in granted
             )
             device = replace(
                 self.device,
@@ -498,10 +773,93 @@ class FakeRelayClient:
             )
             self.registered_keys.add(key)
             self.pairings[pairing_id] = (key, binding[1], True, binding[3])
-            self._install_session("paired-session", private_key, device)
-            return PairingComplete("paired-session", self.catalogue)
+            self._install_session(PAIRED_SESSION, private_key, device)
+            return PairingComplete(PAIRED_SESSION, self.catalogue)
 
-        return self._call("complete_pairing", {}, apply)
+        return self._call("complete_pairing", {"before_send": before_send}, apply)
+
+
+class SignedPublicationRelay(FakeRelayClient):
+    """Real publication client; server holds/errors/cadence begin at HTTP only.
+
+    Metadata/CAS doubles remain useful, but no PUB argument reconstruction is a
+    publication witness. Every PUB here verifies actual immutable Request bytes,
+    Ed25519 signature and a freshly reloaded real state file before server work.
+    """
+
+    def __init__(self, *, store, **kwargs):
+        super().__init__(**kwargs)
+        self.store = store
+        self.signed_publications = []
+        self.published = []
+        self.relay = FleetRelayClient(
+            "https://relay.test", transport=self._publication_transport
+        )
+
+    def publish_snapshot(self, **args):
+        return self.relay.publish_snapshot(**args)
+
+    def _publication_transport(self, request, timeout=None):
+        from tests.test_fleetsharing_client import FakeTransport, _headers_of
+
+        assert request.method == "PUT"
+        assert request.full_url == "https://relay.test/api/fleet/v2/snapshot"
+        headers = _headers_of(request)
+        raw = request.data
+        assert isinstance(raw, bytes)
+        digest = hashlib.sha256(raw).hexdigest()
+        assert headers["x-fleet-body-sha256"] == digest
+        session = headers["x-fleet-session"]
+        revision = int(headers["x-fleet-revision"])
+        saved = s.load(self.store.path)
+        assert (saved.last_revision, saved.session_id) == (revision, session)
+        canonical = "\n".join(
+            (
+                "fleet-v1",
+                "PUT",
+                "/api/fleet/v2/snapshot",
+                session,
+                headers["x-fleet-issued-at"],
+                str(revision),
+                digest,
+            )
+        ).encode()
+        signature = headers["x-fleet-signature"]
+        load_der_public_key(crypto.public_key_spki(KEY)).verify(
+            base64.urlsafe_b64decode(signature + "=" * (-len(signature) % 4)), canonical
+        )
+        body = p.parse_combat_put(json.loads(raw))
+        record = {
+            "request": request,
+            "revision": saved.last_revision,
+            "started": self.clock(),
+        }
+        self.signed_publications.append(record)
+        args = {
+            "session_id": session,
+            "private_key": KEY,
+            "revision": revision,
+            "rows": body.rows,
+        }
+
+        def apply():
+            self.publish_calls.append((revision, body.rows))
+            self.published.append((record["started"], body))
+            if not body.rows:
+                self.withdrawal_completed = True
+
+        try:
+            self._call("publish_snapshot", args, apply)
+        except FleetRelayError as exc:
+            if exc.status is None:
+                raise urllib.error.URLError("test transport lost response") from exc
+            return FakeTransport({"protocol": 2, "error": exc.code}, exc.status)(
+                request, timeout
+            )
+        finally:
+            record["completed"] = self.clock()
+            assert request.data is raw, "signed request bytes changed at HTTP"
+        return FakeTransport({"protocol": 2})(request, timeout)
 
 
 class _InMemoryStateStore:
@@ -518,6 +876,7 @@ class _InMemoryStateStore:
     def save(self, state):
         if self.fail(state):
             raise OSError("disk full")
+        s.check_control_capacity(state)
         self.saves.append(state)
         self._state = state
 
@@ -532,8 +891,14 @@ def _worker(
     thread_factory=_noop_thread_factory,
     sharing_enabled=lambda: True,
     save_state=None,
+    timing_context=None,
 ):
-    mono = clock or (lambda: 1000.0)
+    timing_context = timing_context or TimingContext(
+        clock=clock or (lambda: 1000.0),
+        db_continuity_token=object(),
+        elapsed_lifetime_token=object(),
+    )
+    mono = timing_context._clock
     client.clock = mono
     client.utc = utc_clock or (lambda: NOW)
     store = store or _InMemoryStateStore(state)
@@ -546,7 +911,7 @@ def _worker(
         _generate_private_key=lambda: KEY,
         sharing_enabled=sharing_enabled,
         _thread_factory=thread_factory,
-        _clock=mono,
+        timing_context=timing_context,
         _utc_clock=client.utc,
         _jitter=lambda: 0,
     )
@@ -555,7 +920,7 @@ def _worker(
 def drive(worker, mono, turns=20, snapshot=None):
     for _ in range(turns):
         if snapshot:
-            worker.submit(snapshot)
+            worker.submit(snapshot(mono[0]) if callable(snapshot) else snapshot)
         worker.iterate_once()
         mono[0] += 0.5
 
@@ -574,19 +939,39 @@ def rig(*, state=PAIRED_STATE, enabled=True, device=DEVICE):
     return worker, client, store, mono
 
 
-def test_simultaneous_periodic_controls_completion_cadence_and_withdrawal():
+def signed_rig(tmp_path):
+    from tests.test_fleetsharing_worker_state4 import FileStore
+
+    mono = [1000.0]
+    store = FileStore(tmp_path / "signed-publication.json")
+    store.save(PAIRED_STATE)
+    client = SignedPublicationRelay(store=store, device=COMBAT_DEVICE)
+    worker = _worker(
+        client,
+        store=store,
+        clock=lambda: mono[0],
+        utc_clock=lambda: NOW + timedelta(seconds=mono[0] - 1000),
+    )
+    return worker, client, store, mono
+
+
+def test_simultaneous_periodic_controls_completion_cadence_and_withdrawal(tmp_path):
     from wingman.fleetsharing.scheduling import OPERATIONS
 
     assert dict(OPERATIONS) == OPERATION_BUCKETS
-    worker, client, store, mono = rig()
+    worker, client, store, mono = signed_rig(tmp_path)
     client.latency = lambda: mono.__setitem__(0, mono[0] + 0.2)
-    drive(worker, mono, snapshot=_snapshot(42))
-    assert client.publish_calls[-1][1] == (PublishRow(1, 42, ()),)
+    drive(worker, mono, snapshot=lambda now: _source(42, now))
+    assert client.publish_calls[-1][1] == (p.CombatRow(1, 42, 0, 0, ()),)
     mono[0] += 1800 - 65
     for _ in range(10):
         worker.request_source_start(1, UUID)
-        drive(worker, mono, 1, _snapshot(43))
-    worker.request_participation(False)
+        drive(worker, mono, 1, lambda now: _source(43, now))
+    worker.request_participation(
+        False,
+        expected_generation=client.device.participation.generation,
+        binding=worker.status().metadata.binding,
+    )
     drive(worker, mono, 20)
     read_times = [t for kind, t, _rev in client.calls if kind in READ_OPERATIONS]
     assert all(b - a >= 0.5 for a, b in pairwise(read_times))
@@ -616,17 +1001,17 @@ def test_iterate_seam_enforces_completion_deadlines_without_thread_sleep():
     assert client.cadence_refusals == 0
 
 
-def test_injected_read_429_does_not_stall_publication_or_rejuvenate_remote():
-    worker, client, _, mono = rig()
+def test_injected_read_429_does_not_stall_publication_or_rejuvenate_remote(tmp_path):
+    worker, client, _, mono = signed_rig(tmp_path)
     events = []
     worker.subscribe_remote(events.append)
-    drive(worker, mono, snapshot=_snapshot(42))
+    drive(worker, mono, snapshot=lambda now: _source(42, now))
     replacements = [e for e in events if e.kind == "replace"]
     assert replacements
     old = replacements[-1]
     client.errors["read_snapshot"] = FleetRelayError(429, "rate_limited", "injected")
     before = len(client.publish_calls)
-    drive(worker, mono, 10, _snapshot(43))
+    drive(worker, mono, 10, lambda now: _source(43, now))
     assert len(client.publish_calls) > before
     assert [e for e in events if e.kind == "replace"][-1] is old
     assert client.cadence_refusals == 0
@@ -660,6 +1045,12 @@ def test_settings_true_never_manufactures_on_and_new_on_reads_then_binds():
     intent = worker.request_participation(True)
     before = len(client.calls)
     drive(worker, mono, 10, _snapshot(42))
+    assert store.load().pending_participation == s.PendingParticipation(intent, True)
+    assert not client.participation_calls
+    intent = worker.confirm_participation(
+        intent, expected_generation=8, binding=worker.status().metadata.binding
+    )
+    drive(worker, mono, 6)
     calls = [k for k, _, _ in client.calls[before:]]
     assert calls.index("fetch_device") < calls.index("set_participation")
     assert client.participation_calls == [(True, 8)]
@@ -697,28 +1088,36 @@ def test_unbound_on_json_restart_requires_confirmation(tmp_path):
     drive(worker, mono, 10)
     assert not client.participation_calls
     assert worker.status().detail == "needs_fresh_intent"
-    worker.request_participation(True)
+    worker.confirm_participation(
+        UUID, expected_generation=6, binding=worker.status().metadata.binding
+    )
     drive(worker, mono, 10)
     assert client.participation_calls == [(True, 6)]
 
 
 def test_participation_response_loss_reconciles_without_duplicate_cas():
     worker, client, store, mono = rig()
-    worker.request_participation(False)
+    drive(worker, mono, 1)
+    worker.request_participation(
+        False, expected_generation=1, binding=worker.status().metadata.binding
+    )
     client.loss.add("set_participation")
     drive(worker, mono, 20)
     assert client.participation_calls == [(False, 1)]
     assert store.load().pending_participation is None
-    assert worker.status().participation == "acknowledged"
+    assert worker.status().participation == "observed_choice"
 
 
 def test_start_then_stop_before_ack_fences_same_uuid_generation_zero():
     worker, client, store, mono = rig(enabled=False)
     source_id = worker.request_source_start(1, UUID)
     assert source_id and not store.saves and not client.calls
-    assert worker.request_source_stop(source_id)
+    assert worker.request_source_stop(
+        source_id, expected_generation=0, expected_automatic=None
+    )
+    stop = worker._commands["source:" + source_id].payload
     drive(worker, mono, 15)
-    assert client.controls == [p.StopSource(source_id, 0)]
+    assert client.controls == [stop]
     assert store.load().pending_source_commands == ()
     assert not client.publish_calls
 
@@ -730,10 +1129,18 @@ def test_lost_start_stop_cas_reread_and_start_aba():
     drive(worker, mono, 8)
     start = client.controls[0]
     assert start.source_id == source_id and start.intent_created_at == DATE
-    assert len(client.controls) == 1
-    assert worker.request_source_stop(source_id, expected_generation=0)
+    assert len(client.controls) == 2 and client.controls == [start, start]
+    assert worker.request_source_stop(
+        source_id, expected_generation=0, expected_automatic=None
+    )
+    old_stop = worker._commands["source:" + source_id].payload
     new_id = worker.request_source_start(1, UUID)
-    client.loss.add("control_source")
+    drive(worker, mono, 12)
+    assert old_stop in store.load().pending_source_commands
+    assert old_stop.expected_generation == 0
+    assert worker.request_source_stop(
+        source_id, expected_generation=1, expected_automatic=None, supersedes=old_stop
+    )
     drive(worker, mono, 30)
     assert new_id != source_id
     assert client.source_views[source_id].state == "ended"
@@ -750,8 +1157,7 @@ def test_expired_start_is_observed_not_retimestamped_or_replaced():
     worker.resume_pending()
     drive(worker, mono, 15)
     assert not client.controls
-    assert "fetch_sources" in [k for k, _, _ in client.calls]
-    assert store.load().pending_source_commands == ()
+    assert store.load().pending_source_commands == (start,)
 
 
 def test_source_watch_and_one_startup_probe_do_not_require_telemetry():
@@ -780,7 +1186,10 @@ def test_generic401_and_one_use_response_loss_recover_same_key_without_browser(l
     drive(worker, mono, 35, _snapshot(42))
     assert client.recoveries >= 1 and store.load().pending_recovery is None
     assert store.load().identity == PAIRED_STATE.identity
-    assert not client.pair_keys and client.publish_calls
+    assert not client.pair_keys
+    assert worker.status().metadata.has_session
+    assert worker.status().metadata.device_id == UUID
+    # Publication is the separate D checkpoint, not authentication evidence.
     if lost == "complete_recovery":
         assert client.recoveries == 2
     assert client.cadence_refusals == 0
@@ -804,7 +1213,10 @@ def test_proven_auth_pause_survives_json_restart(tmp_path, result, floor):
     path = tmp_path / "state.json"
     s.save(path, state)
     other = _worker(
-        client, state=s.load(path), clock=lambda: mono[0], utc_clock=client.utc
+        client,
+        state=s.load(path),
+        timing_context=worker._timing_context,
+        utc_clock=client.utc,
     )
     before = len(client.calls)
     if floor is None:
@@ -830,18 +1242,26 @@ def test_pairing_upgrade_same_key_keeps_stop_and_participation_journals():
     worker, client, store, mono = rig(
         state=replace(
             PAIRED_STATE,
-            pending_source_commands=(p.StopSource(UUID, 0),),
+            pending_source_commands=(p.StopSource(UUID, 0, UUID, DATE, None),),
             pending_participation=s.PendingParticipation(UUID, False),
         )
     )
     assert worker.request_pairing(mode="upgrade")
     assert not store.saves and not client.calls
+    # B permits terminal work before browser completion. Keep this Stop genuinely
+    # unresolved so this A regression still proves authentication cannot erase it.
+    client.errors["fetch_receipt"] = FleetRelayError(503, "service_unavailable", "held")
     client.loss.add("complete_pairing")
-    drive(worker, mono, 35)
+    for _ in range(35):
+        drive(worker, mono, 1)
+        if client.recoveries:
+            break
     assert client.pair_keys == [crypto.public_key_spki(KEY)]
-    assert store.load().pending_source_commands == ()
-    assert client.source_views[UUID].state == "ended"
-    assert client.device.participation.enabled is False
+    assert store.load().pending_source_commands == (
+        p.StopSource(UUID, 0, UUID, DATE, None),
+    )
+    assert store.load().pending_participation == s.PendingParticipation(UUID, False)
+    # Terminal/source settlement belongs to B; authentication never erases them.
     assert client.recoveries and store.load().identity == PAIRED_STATE.identity
     assert any(
         v.pending_pairing and v.pending_pairing.approval_url for v in store.saves
@@ -854,7 +1274,7 @@ def test_initial_pairing_saves_candidate_and_admission_before_exposure():
     assert not store.saves and not client.calls
     drive(worker, mono, 12)
     assert store.saves[0].identity and store.saves[0].pending_pairing
-    assert store.load().session_id == "paired-session"
+    assert store.load().session_id == PAIRED_SESSION
     assert store.load().device_id == UUID
 
 
@@ -883,10 +1303,15 @@ def test_persistence_failure_never_installs_unsaved_state_or_sends_past_boundary
         store._state = replace(PAIRED_STATE, session_id=None)
     if boundary.startswith("pair"):
         worker.request_pairing(mode="upgrade")
-    if boundary.startswith("participation") or boundary == "intent":
+    if boundary.startswith("participation"):
+        drive(worker, mono, 1)
+        worker.request_participation(
+            False, expected_generation=1, binding=worker.status().metadata.binding
+        )
+    elif boundary == "intent":
         worker.request_participation(False)
     if boundary == "source_ack":
-        worker.request_source_stop(UUID)
+        worker.request_source_stop(UUID, expected_generation=0, expected_automatic=None)
 
     def fail(v):
         return {
@@ -911,7 +1336,16 @@ def test_persistence_failure_never_installs_unsaved_state_or_sends_past_boundary
 
     store.fail = fail
     drive(worker, mono, 12)
-    assert worker.status().state == "error"
+    if boundary == "session":
+        # One-use retirement may be followed by a new initiation. That progress
+        # is not an unsaved session, regardless of the final turn's status.
+        assert store.load().session_id is None
+        assert any(
+            v.pending_recovery and v.pending_recovery.completion_attempted
+            for v in store.saves
+        )
+    else:
+        assert worker.status().state == "error"
     assert worker._state == store._state
     kinds = [k for k, _, _ in client.calls]
     forbidden = {
@@ -944,15 +1378,22 @@ def test_status_exposes_observed_participation_and_off_clears_eligibility_immedi
 
 
 def test_remote_replacement_clear_and_unsubscribe_are_immutable():
-    worker, client, _, mono = rig()
+    worker, _client, _, mono = rig()
     events, statuses = [], []
     unsubscribe = worker.subscribe_remote(events.append)
     unstatus = worker.subscribe_status(statuses.append)
     drive(worker, mono, 10)
-    assert events[-1].rows == client.remote
-    assert events[-1].request_elapsed >= 0 and events[-1].receipt_monotonic <= mono[0]
+    from fractions import Fraction
+
+    payload = events[-1].payload
+    assert payload is worker._timing_context._state.receiver.payload
+    assert payload.rows[0].character_name == "Bob"
+    assert (payload.rows[0].outgoing_dps, payload.rows[0].incoming_dps) == (20, None)
+    assert payload.rows[0].sampled_at_mono == Fraction(4997, 5)
+    protected = worker._timing_context._state.receiver.records
     worker.request_participation(False)
-    assert events[-1].kind == "clear" and events[-1].rows == ()
+    assert events[-1].kind == "clear" and events[-1].payload is None
+    assert worker._timing_context._state.receiver.records is protected
     assert worker.status().participation == "queued"
     unsubscribe()
     unstatus()
@@ -1015,7 +1456,7 @@ def test_http_error_cleanup_cannot_reach_worker_unexpected_traceback(
     # Device bootstrap admits endpoint-local service_unavailable; catalogue's
     # older coarse status fallback was server_error. Cleanup must preserve both.
     assert worker.status().detail == (
-        "server_error" if read_fails else "service_unavailable"
+        "transport_error" if read_fails else "service_unavailable"
     )
     assert stream.close_attempts == 1 and stream.read_amounts == [65537]
     assert stream.private_context not in caplog.text
@@ -1041,20 +1482,43 @@ def test_fairness_control_burst_serves_each_overdue_periodic_class_within_slots(
     assert client.cadence_refusals == 0
 
 
-def test_source_429_is_bounded_while_other_controls_and_periodic_work_continue():
-    worker, client, _, mono = rig()
+def test_source_429_is_bounded_while_other_controls_and_periodic_work_continue(
+    tmp_path,
+):
+    worker, client, _, mono = signed_rig(tmp_path)
     client.errors["control_source"] = FleetRelayError(429, "rate_limited", "capacity")
     worker.request_source_start(1, UUID)
-    drive(worker, mono, 40, _snapshot(42))
+    drive(worker, mono, 40, lambda now: _source(42, now))
     attempts = [t for k, t, _ in client.calls if k == "control_source"]
     assert len(attempts) <= 6
     assert all(b - a >= 1 for a, b in pairwise(attempts))
     assert client.publish_calls and any(
         k == "read_snapshot" for k, _, _ in client.calls
     )
-    worker.request_participation(False)
+    worker.request_participation(
+        False, expected_generation=1, binding=worker.status().metadata.binding
+    )
     drive(worker, mono, 10)
     assert client.device.participation.enabled is False
+
+
+def test_source_backoff_and_confirmed_off_progress_without_publication_claim():
+    # B portion of the mixed source-429/PUB test: D still owes timed publication.
+    worker, client, _, mono = rig()
+    client.errors["control_source"] = FleetRelayError(429, "rate_limited", "capacity")
+    worker.request_source_start(1, UUID)
+    drive(worker, mono, 40)
+    attempts = [t for k, t, _ in client.calls if k == "control_source"]
+    assert 1 <= len(attempts) <= 6
+    assert all(b - a >= 1 for a, b in pairwise(attempts))
+    assert any(k == "fetch_device" for k, _, _ in client.calls)
+    assert worker.request_participation(
+        False, expected_generation=1, binding=worker.status().metadata.binding
+    )
+    drive(worker, mono, 10)
+    assert client.participation_calls == [(False, 1)]
+    assert not client.device.participation.enabled
+    assert client.cadence_refusals == 0
 
 
 @pytest.mark.parametrize("value", [None, "bad", NOW.replace(tzinfo=None)])
@@ -1096,33 +1560,45 @@ def test_successful_empty_remote_replaces_and_failed_read_does_not_emit():
     events = []
     worker.subscribe_remote(events.append)
     drive(worker, mono, 10)
-    client.remote = ()
+    client.remote = replace(client.remote, rows=())
     drive(worker, mono, 6)
-    assert events[-1].kind == "replace" and events[-1].rows == ()
+    assert events[-1].kind == "replace" and events[-1].payload.rows == ()
     before = len(events)
     client.errors["read_snapshot"] = FleetRelayError(None, "transport_error", "lost")
     drive(worker, mono, 6)
     assert len(events) == before
 
 
-def test_projection_coalesces_heartbeats_omission_and_stale_drop():
-    worker, client, _, mono = rig()
-    drive(worker, mono, 8, _snapshot(42))
+def test_projection_coalesces_heartbeats_omission_and_stale_drop(tmp_path):
+    worker, client, _, mono = signed_rig(tmp_path)
+    drive(worker, mono, 8, lambda now: _source(42, now))
     before = len(client.publish_calls)
-    worker.submit(_snapshot(20))
-    worker.submit(_snapshot(30))
+    worker.submit(_source(20, mono[0]))
+    latest = _source(30, mono[0])
+    worker.submit(latest)
     drive(worker, mono, 2)
-    assert client.publish_calls[-1][1] == (PublishRow(1, 30, ()),)
+    assert client.publish_calls[-1][1] == (p.CombatRow(1, 30, 0, 0, ()),)
     assert len(client.publish_calls) == before + 1
-    drive(worker, mono, 5, _snapshot(30))
+    drive(
+        worker,
+        mono,
+        5,
+        lambda now: FakePublicationSource(
+            replace(latest.snapshot, sampled_at_mono=now)
+        ),
+    )
     assert len(client.publish_calls) > before + 1
-    worker.submit(_snapshot(30, character="Nobody"))
+    before = len(client.publish_calls)
+    worker.submit(_source(30, mono[0], character="Nobody"))
+    drive(worker, mono, 2)
+    assert len(client.publish_calls) == before  # Uncertain ownership is not empty.
+    worker.submit(_source(0, mono[0], inactive=True))
     drive(worker, mono, 2)
     assert client.publish_calls[-1][1] == ()
     before = len(client.publish_calls)
-    drive(worker, mono, 12, _snapshot(30, character="Nobody"))
+    drive(worker, mono, 12, lambda now: _source(0, now, inactive=True))
     assert len(client.publish_calls) == before
-    worker.submit(_snapshot(99))
+    worker.submit(_source(99, mono[0]))
     mono[0] += 6
     drive(worker, mono, 4)
     assert len(client.publish_calls) == before
@@ -1140,11 +1616,11 @@ def test_no_key_load_or_periodic_io_when_dormant_even_after_startup_probe():
     assert store.loads == 1 and not store.saves and not client.calls
 
 
-def test_fresh_setup_is_explicit_and_discards_old_identity_commands():
+def test_fresh_setup_refuses_to_discard_old_identity_commands():
     pending = s.PendingParticipation(UUID, True, 1)
     original = replace(
         PAIRED_STATE,
-        pending_source_commands=(p.StopSource(UUID, 0),),
+        pending_source_commands=(p.StopSource(UUID, 0, UUID, DATE, None),),
         pending_participation=pending,
         auth_pause=s.AuthPause("device_revoked"),
     )
@@ -1154,11 +1630,11 @@ def test_fresh_setup_is_explicit_and_discards_old_identity_commands():
     assert not client.calls
     worker.request_pairing(mode="fresh", configured_origin="https://relay.test")
     drive(worker, mono, 10)
-    assert client.pair_keys and not client.controls and not client.participation_calls
     assert (
-        not store.load().pending_source_commands
-        and store.load().pending_participation is None
+        not client.pair_keys and not client.controls and not client.participation_calls
     )
+    assert store.load() == original
+    assert worker.status().detail == "unresolved_history"
 
 
 def test_unpaired_control_rejection_remains_visible_without_network_or_key():
@@ -1222,7 +1698,10 @@ def test_control_response_loss_reconciles_across_actual_json_restart(
     worker._load_state = lambda: s.load(path)
     worker._save_state = lambda state: s.save(path, state)
     if operation == "set_participation":
-        worker.request_participation(False)
+        drive(worker, mono, 2)
+        assert worker.request_participation(
+            False, expected_generation=1, binding=worker.status().metadata.binding
+        )
     elif operation == "control_source":
         source_id = worker.request_source_start(1, UUID)
     elif operation == "complete_pairing":
@@ -1234,7 +1713,9 @@ def test_control_response_loss_reconciles_across_actual_json_restart(
             break
     assert operation not in client.loss
     assert worker.stop()
-    replacement = _worker(client, clock=lambda: mono[0], utc_clock=client.utc)
+    replacement = _worker(
+        client, timing_context=worker._timing_context, utc_clock=client.utc
+    )
     replacement._load_state = lambda: s.load(path)
     replacement._save_state = lambda state: s.save(path, state)
     replacement.resume_pending()
@@ -1243,7 +1724,7 @@ def test_control_response_loss_reconciles_across_actual_json_restart(
         assert client.participation_calls == [(False, 1)]
         assert s.load(path).pending_participation is None
     elif operation == "control_source":
-        assert client.controls == [p.StartSource(source_id, 1, UUID, DATE)]
+        assert client.controls == [p.StartSource(source_id, 1, UUID, DATE)] * 2
         assert not s.load(path).pending_source_commands
     else:
         assert s.load(path).pending_recovery is None and s.load(path).session_id
@@ -1257,8 +1738,8 @@ def test_json_pending_off_stop_resume_after_restart_without_settings_on(tmp_path
     original = replace(
         PAIRED_STATE,
         last_revision=13,
-        pending_participation=s.PendingParticipation(UUID, False),
-        pending_source_commands=(p.StopSource(UUID, 0),),
+        pending_participation=s.PendingParticipation(UUID, False, 1),
+        pending_source_commands=(p.StopSource(UUID, 0, UUID, DATE, None),),
     )
     s.save(path, original)
     worker, client, _, mono = rig(enabled=False)
@@ -1297,33 +1778,63 @@ def test_preserved_lifecycle_is_idempotent_non_daemon_named_and_bounded():
     assert worker.stop() and worker.stop()
 
 
-def test_preserved_real_thread_mailbox_publishes_latest_after_held_publication():
-    client = FakeRelayClient(device=DEVICE)
+def test_preserved_real_thread_mailbox_publishes_latest_after_held_publication(
+    tmp_path,
+):
+    _, client, store, _ = signed_rig(tmp_path)
     client.hold = "publish_snapshot"
-    worker = _worker(client, clock=time.monotonic, thread_factory=threading.Thread)
-    worker.submit(_snapshot(10))
+    start = time.monotonic()
+    worker = _worker(
+        client,
+        store=store,
+        clock=time.monotonic,
+        thread_factory=threading.Thread,
+        utc_clock=lambda: NOW + timedelta(seconds=time.monotonic() - start),
+    )
+    worker.submit(_source(10, time.monotonic()))
     assert worker.start()
     try:
         assert client.entered.wait(5)
         started = time.monotonic()
-        worker.submit(_snapshot(20))
-        worker.submit(_snapshot(30))
+        worker.submit(_source(20, time.monotonic()))
+        worker.submit(_source(30, time.monotonic()))
         assert time.monotonic() - started < 0.2
+        assert len(client.signed_publications) == 1
+        assert (
+            json.loads(client.signed_publications[0]["request"].data)["rows"][0][
+                "outgoing_dps"
+            ]
+            == 10
+        )
+        assert (
+            s.load(store.path).last_revision
+            == client.signed_publications[0]["revision"]
+        )
         client.release.set()
         deadline = time.monotonic() + 4
         while time.monotonic() < deadline and len(client.publish_calls) < 2:
             time.sleep(0.01)
-        assert [rows[0].dps for _, rows in client.publish_calls[:2]] == [10, 30]
+        assert [rows[0].outgoing_dps for _, rows in client.publish_calls[:2]] == [
+            10,
+            30,
+        ]
     finally:
         client.release.set()
         assert worker.stop(timeout=5)
 
 
-def test_preserved_real_thread_submit_flood_cannot_shorten_publish_retry():
-    client = FakeRelayClient(device=DEVICE)
+def test_preserved_real_thread_submit_flood_cannot_shorten_publish_retry(tmp_path):
+    _, client, store, _ = signed_rig(tmp_path)
     client.errors["publish_snapshot"] = FleetRelayError(500, "server_error", "down")
-    worker = _worker(client, clock=time.monotonic, thread_factory=threading.Thread)
-    worker.submit(_snapshot(10))
+    start = time.monotonic()
+    worker = _worker(
+        client,
+        store=store,
+        clock=time.monotonic,
+        thread_factory=threading.Thread,
+        utc_clock=lambda: NOW + timedelta(seconds=time.monotonic() - start),
+    )
+    worker.submit(_source(10, time.monotonic()))
     assert worker.start()
     try:
         deadline = time.monotonic() + 5
@@ -1336,16 +1847,21 @@ def test_preserved_real_thread_submit_flood_cannot_shorten_publish_retry():
         client.errors.clear()
         until = time.monotonic() + 0.4
         while time.monotonic() < until:
-            worker.submit(_snapshot(11))
+            worker.submit(_source(11, time.monotonic()))
             time.sleep(0.01)
         assert len([t for k, t, _ in client.calls if k == "publish_snapshot"]) == 1
         deadline = time.monotonic() + 4
         while time.monotonic() < deadline and not client.publish_calls:
-            worker.submit(_snapshot(11))
+            worker.submit(_source(11, time.monotonic()))
             time.sleep(0.01)
         attempts = [t for k, t, _ in client.calls if k == "publish_snapshot"]
         assert len(attempts) == 2 and attempts[1] - attempts[0] >= 1
-        assert client.publish_calls[-1][1] == (PublishRow(1, 11, ()),)
+        assert len(client.signed_publications) == 2
+        assert (
+            client.signed_publications[1]["started"]
+            >= client.signed_publications[0]["completed"] + 1
+        )
+        assert client.publish_calls[-1][1] == (p.CombatRow(1, 11, 0, 0, ()),)
     finally:
         assert worker.stop(timeout=5)
 
@@ -1393,10 +1909,12 @@ def test_preserved_settings_predicate_exception_fails_closed_without_loading():
     assert not client.calls and not store.loads
 
 
-def test_preserved_stale_mailbox_does_not_withdraw_a_previous_nonempty_publish():
-    worker, client, _, mono = rig()
-    drive(worker, mono, 10, _snapshot(42))
-    assert client.publish_calls[-1][1] == (PublishRow(1, 42, ()),)
+def test_preserved_stale_mailbox_does_not_withdraw_a_previous_nonempty_publish(
+    tmp_path,
+):
+    worker, client, _, mono = signed_rig(tmp_path)
+    drive(worker, mono, 10, lambda now: _source(42, now))
+    assert client.publish_calls[-1][1] == (p.CombatRow(1, 42, 0, 0, ()),)
     before = len(client.publish_calls)
     mono[0] += 6
     drive(worker, mono, 6)
@@ -1430,7 +1948,13 @@ def test_real_thread_start_response_cannot_erase_new_stop():
         assert client.entered.wait(5)
         before = len(store.saves)
         started = time.monotonic()
-        worker.request_source_stop(source_id)
+        original = store.load().pending_source_commands[0]
+        assert worker.request_source_stop(
+            source_id,
+            expected_generation=1,
+            expected_automatic=None,
+            supersedes=original,
+        )
         assert time.monotonic() - started < 0.2
         client.release.set()
         deadline = time.monotonic() + 4
@@ -1449,80 +1973,60 @@ def test_real_thread_start_response_cannot_erase_new_stop():
             time.sleep(0.01)
         assert client.source_views[source_id].state == "ended"
         assert all(value.pending_source_commands for value in store.saves[before:-1])
-        assert client.controls[-1] == p.StopSource(source_id, 1)
+        assert isinstance(client.controls[-1], p.StopSource)
+        assert client.controls[-1].source_id == source_id
+        assert client.controls[-1].expected_generation == 1
+        assert client.controls[-1].expected_automatic is None
     finally:
         client.release.set()
         assert worker.stop(timeout=5)
 
 
 def test_coordinator_cadence_and_local_metrics_continue_while_publish_is_held(tmp_path):
-    from wingman.telemetry.coordinator import TelemetryCoordinator
-    from wingman.telemetry.model import RosterSnapshot
+    from tests.test_fleetsharing_worker_state4 import FileStore
+    from tests.test_telemetry_gamelogs import NOW as LOG_NOW
+    from tests.test_telemetry_gamelogs import OUTGOING_DAMAGE_LINE, _log
+    from tests.test_telemetry_source_admission import _threaded_runtime
 
-    class Discovery:
-        def subscribe(self, callback):
-            return lambda: None
-
-        def start(self):
-            return True
-
-        def stop(self, timeout=5):
-            return True
-
-        def request_scan(self):
-            pass
-
-        def snapshot(self):
-            return RosterSnapshot(generation=1, clients=())
-
-    class Stream:
-        def subscribe_batches(self, callback):
-            return lambda: None
-
-        def start(self, folder):
-            return True
-
-        def stop(self, timeout=3):
-            return True
-
-        def health(self):
-            return STREAM_HEALTH
-
-    class Metrics:
-        def reset(self):
-            pass
-
-        def consume(self, envelope):
-            pass
-
-        def snapshot(self, sequence, health):
-            return _snapshot(24)
-
-    client = FakeRelayClient(device=DEVICE)
+    # Keep the real autonomous dispatcher/publisher cadence witness, but replace
+    # uncertified producer doubles with C23's actual reset-cut/producer startup.
+    runtime = _threaded_runtime(tmp_path)
+    coordinator = runtime.coordinator
+    store = FileStore(tmp_path / "cadence-sharing.json")
+    store.save(PAIRED_STATE)
+    client = SignedPublicationRelay(store=store, device=COMBAT_DEVICE)
     client.hold = "publish_snapshot"
-    worker = _worker(client, clock=time.monotonic, thread_factory=threading.Thread)
-    coordinator = TelemetryCoordinator(
-        preview_enabled=lambda: False,
-        fleet_enabled=lambda: False,
-        alerts_enabled=lambda: False,
-        sharing_enabled=lambda: True,
-        gamelogs_folder=lambda: tmp_path,
-        discovery=Discovery(),
-        stream=Stream(),
-        metrics=Metrics(),
+    start = time.monotonic()
+    worker = _worker(
+        client,
+        store=store,
+        clock=time.monotonic,
+        utc_clock=lambda: NOW + timedelta(seconds=time.monotonic() - start),
+        thread_factory=threading.Thread,
     )
     snapshots = []
-    coordinator.subscribe_fleet(snapshots.append)
-    coordinator.subscribe_fleet(worker.submit)
+    progressed = threading.Event()
+
+    def receive(snapshot):
+        snapshots.append(snapshot)
+        if client.entered.is_set():
+            progressed.set()
+
+    coordinator.subscribe_fleet(receive)
+    coordinator.subscribe_admitted_fleet(worker.submit)
     worker.start()
     try:
         coordinator.reconcile()
+        assert runtime.admitted.wait(5)
+        _log(tmp_path, "Alice", OUTGOING_DAMAGE_LINE.replace("11:30:00", "12:00:00"))
+        runtime.stream.scan_once(LOG_NOW)
         assert client.entered.wait(5)
         before = len(snapshots)
-        deadline = time.monotonic() + 3
-        while time.monotonic() < deadline and len(snapshots) <= before:
-            time.sleep(0.02)
+        progressed.clear()
+        assert progressed.wait(3), "autonomous dispatcher stalled behind HTTP"
         assert len(snapshots) > before
+        assert snapshots[-1].rows[0].dps == 30
+        assert client.signed_publications
     finally:
         client.release.set()
         assert worker.stop(timeout=5)
@@ -1552,13 +2056,16 @@ def test_additional_persistence_boundaries_cannot_advance_unsaved_state(boundary
             and state.session_expires_at == client.device.session_expires_at
         )
     elif boundary == "participation_ack":
-        worker.request_participation(False)
+        drive(worker, mono, 2)
+        assert worker.request_participation(
+            False, expected_generation=1, binding=worker.status().metadata.binding
+        )
         store.fail = lambda state: (
             bool(client.participation_calls) and state.pending_participation is None
         )
     elif boundary == "pair_session":
         worker.request_pairing(mode="upgrade")
-        store.fail = lambda state: state.session_id == "paired-session"
+        store.fail = lambda state: state.session_id == PAIRED_SESSION
     else:
         store._state = replace(PAIRED_STATE, session_id=None)
         client.recovery_result = "device_revoked"
@@ -1566,13 +2073,17 @@ def test_additional_persistence_boundaries_cannot_advance_unsaved_state(boundary
     drive(worker, mono, 10)
     assert worker._state == store.load()
     if boundary == "pair_session":
-        assert all(session != "paired-session" for session in client.sessions)
+        assert all(session != PAIRED_SESSION for session in client.sessions)
     elif boundary == "auth_pause":
         assert store.load().auth_pause is None
     elif boundary == "source_journal":
         assert not client.controls
     else:
         assert worker.status().state == "error"
+        if boundary == "participation_ack":
+            assert client.participation_calls == [(False, 1)]
+            assert store.load().pending_participation.attempted
+            assert worker.status().detail == "persistence_failed"
 
 
 def test_off_save_failure_inhibits_immediately_and_never_claims_ack():
@@ -1593,7 +2104,9 @@ def test_off_save_failure_inhibits_immediately_and_never_claims_ack():
 
 def test_pairing_completion_conflict_polls_bounded_and_never_marks_revoked():
     worker, client, store, mono = rig(state=s.EMPTY, enabled=False)
-    client.errors["complete_pairing"] = FleetRelayError(409, "conflict", "not approved")
+    client.errors["complete_pairing"] = FleetRelayError(
+        409, "not_completable", "not approved"
+    )
     worker.request_pairing(configured_origin="https://relay.test")
     drive(worker, mono, 20)
     calls = [t for k, t, _ in client.calls if k == "complete_pairing"]
@@ -1602,7 +2115,7 @@ def test_pairing_completion_conflict_polls_bounded_and_never_marks_revoked():
     assert worker.status().approval_url == "https://relay.test/approve"
     client.errors.clear()
     drive(worker, mono, 40)
-    assert store.load().session_id == "paired-session"
+    assert store.load().session_id == PAIRED_SESSION
 
 
 def test_expired_unadmitted_start_does_not_claim_server_acknowledgement():
@@ -1613,7 +2126,14 @@ def test_expired_unadmitted_start_does_not_claim_server_acknowledgement():
     worker.resume_pending()
     drive(worker, mono, 10)
     assert not client.controls and not client.source_views
-    assert worker.status().source_control == "expired"
+    assert worker._state.pending_source_commands == (start,)
+    assert worker.status().source_control != "acknowledged"
+    assert worker.request_dismiss_source(
+        start, binding=worker.status().metadata.binding
+    )
+    worker.iterate_once()
+    assert worker._state.pending_source_commands == ()
+    assert not client.controls
 
 
 @pytest.mark.parametrize("kind", ["participation", "source"])
@@ -1621,31 +2141,51 @@ def test_control_superseded_after_selection_is_fenced_before_dispatch(kind):
     worker, client, _, mono = rig(
         device=replace(DEVICE, participation=p.Participation(False, 2))
     )
+    drive(worker, mono, 4)
     if kind == "participation":
-        worker.request_participation(True)
+        assert worker.request_participation(
+            True, expected_generation=2, binding=worker.status().metadata.binding
+        )
     else:
         source_id = worker.request_source_start(1, UUID)
-    worker.iterate_once()  # bootstrap and bind the explicit intent
-    mono[0] += 0.5
     choose = worker._scheduler.choose
+    reached = []
 
     def supersede(work, now):
         chosen = choose(work, now)
-        if kind == "participation":
-            assert chosen.operation == "set_participation"
-            worker.request_participation(False)
-        else:
-            assert chosen.operation == "control_source"
-            worker.request_source_stop(source_id)
+        expected = "set_participation" if kind == "participation" else "control_source"
+        if chosen and chosen.operation == expected and not reached:
+            reached.append(chosen)
+            if kind == "participation":
+                worker.request_participation(
+                    False,
+                    expected_generation=2,
+                    binding=worker.status().metadata.binding,
+                    supersedes=worker._state.pending_participation,
+                )
+            else:
+                worker.request_source_stop(
+                    source_id,
+                    expected_generation=0,
+                    expected_automatic=None,
+                    supersedes=chosen.payload,
+                )
         return chosen
 
     worker._scheduler.choose = supersede
-    worker.iterate_once()
+    for _ in range(6):
+        drive(worker, mono, 1)
+        if reached:
+            break
+    assert len(reached) == 1, "intended selection barrier never reached"
     assert client.participation_calls == [] and client.controls == []
     worker._scheduler.choose = choose
     drive(worker, mono, 10)
     if kind == "source":
-        assert client.controls == [p.StopSource(source_id, 0)]
+        assert len(client.controls) == 1
+        assert isinstance(client.controls[0], p.StopSource)
+        assert client.controls[0].source_id == source_id
+        assert client.controls[0].expected_generation == 0
     else:
         assert not client.device.participation.enabled
 
@@ -1667,16 +2207,24 @@ def test_control_queued_from_status_callback_cannot_be_overwritten_by_old_active
     worker, client, _, mono = rig(
         device=replace(DEVICE, participation=p.Participation(False, 2))
     )
-    worker.request_participation(True)
+    drive(worker, mono, 4)
+    assert worker.request_participation(
+        True, expected_generation=2, binding=worker.status().metadata.binding
+    )
     submitted = []
 
     def callback(status):
         if status.participation == "acknowledged" and not submitted:
             submitted.append(True)
-            worker.request_participation(False)
+            worker.request_participation(
+                False, expected_generation=3, binding=status.metadata.binding
+            )
 
     worker.subscribe_status(callback)
-    drive(worker, mono, 2)
+    for _ in range(6):
+        drive(worker, mono, 1)
+        if submitted:
+            break
     assert submitted
     assert worker.status().participation == "queued"
     assert worker.status().local_inhibited

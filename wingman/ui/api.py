@@ -389,6 +389,7 @@ class Api:
         skills=None,
         telemetry=None,
         fleet_sharing=None,
+        fleet_clock=time.monotonic,
         telemetry_factory=None,
         alerts_controller=None,
         authority=None,
@@ -435,9 +436,10 @@ class Api:
         self._fleet_activation = 0
         self._fleet_settings_dirty = False
         self._fleet_display_dirty = True
-        self._fleet_clock = time.monotonic
+        self._fleet_clock = fleet_clock
         self._remote_fleet = RemoteFleetStore()
         self._remote_display_signature = ()
+        self._local_combat_signature = ()
         self._remote_context = None
         self._remote_context_order = -1
         self._remote_order = -1
@@ -448,7 +450,9 @@ class Api:
         self._catalogue_unsubscribe = None
         # Construction is inert. Main starts the owner before subscribing;
         # the dispatcher only folds state and sets its wakeup bit.
-        self._fleet_worker = FleetPresentationWorker(self._present_snapshots)
+        self._fleet_worker = FleetPresentationWorker(
+            self._present_snapshots, clock=self._fleet_clock
+        )
         # Bounded data handoff from Preview's pump/discovery/storage callbacks.
         # Detach under this lock; sample authority and touch pages only afterward.
         self._preview_presentation_lock = threading.Lock()
@@ -2208,9 +2212,41 @@ class Api:
                 )
         if not enabled and self._fleet_sharing is not None:
             sharing = self.fleet_sharing_state()
+            with self._sharing_delivery_lock:
+                authority = self._sharing_status
             metadata = sharing["metadata"]
             if (
                 sharing["enabled"]
+                or (
+                    authority is not None
+                    and (
+                        authority.pending_participation is not None
+                        or any(
+                            item.status in ("fenced", "expired_unproven")
+                            for item in authority.cutover_outcomes
+                        )
+                        or authority.automatic.pending is not None
+                        or (
+                            authority.automatic.observed_consent is not None
+                            and authority.automatic.observed_consent.enabled
+                        )
+                        or authority.automatic_stage
+                        in (
+                            "queued",
+                            "persisted",
+                            "needs_confirmation",
+                            "awaiting_expiry_proof",
+                        )
+                        or (
+                            authority.metadata.binding
+                            and authority.automatic_status is None
+                        )
+                        or (
+                            authority.automatic_status is not None
+                            and authority.automatic_status.consent.enabled
+                        )
+                    )
+                )
                 or not metadata["loaded"]
                 or sharing["pending_sources"]
                 or (
@@ -2228,7 +2264,8 @@ class Api:
             ):
                 return self._field_refused(
                     "Keep EVE tools visible while fleet sharing or roster sources need attention. "
-                    "Open Settings > Fleet telemetry to turn sharing Off, Stop sources, or refresh unknown source state."
+                    "Open Settings > Fleet telemetry to turn sharing Off, Stop sources, or refresh unknown state. "
+                    "Local sharing Off does not disable automatic verification consent."
                 )
         return self._write_setting("show_eve_tools", enabled)
 
@@ -2553,6 +2590,7 @@ class Api:
             "y": section.get("y"),
             "preferred_content_width": section.get("preferred_content_width"),
             "resize_enabled": self._fleetbar_resize_enabled,
+            "hide_inactive": bool(section.get("hide_inactive")),
             "seen": list(section.get("seen") or ()),
             "hidden": list(section.get("hidden") or ()),
             "revision": revision,
@@ -2561,8 +2599,12 @@ class Api:
         return payload
 
     def _fleet_display_payload_locked(
-        self, snapshot, section: dict, revision: int, remote_rows
+        self, snapshot, section: dict, revision: int, remote_rows, now=None
     ) -> dict:
+        from ..telemetry.combat import combat_row_visible
+        from .fleetcombat import labels, local_effects
+
+        now = self._fleet_clock() if now is None else now
         local_rows = () if snapshot is None else snapshot.rows
         ids = (
             verified_character_ids(self._fleet_catalogue)
@@ -2573,26 +2615,48 @@ class Api:
         # is still authoritative; an unverified name is not an identity match.
         local_ids = {ids.get(row.character.strip().casefold()) for row in local_rows}
         hidden = set(section.get("hidden") or ())
-        rows = [
-            {
-                "character": row.character,
-                "outgoing_dps": row.dps,
-                "incoming_dps": row.incoming_dps,
-                "ewar": list(row.ewar),
-                "log_status": row.log_status,
-            }
-            for row in local_rows
-            if row.character not in hidden
-        ]
+        rows = []
+        inactive = 0
+        for row in local_rows:
+            if row.character in hidden:
+                continue
+            if section.get("hide_inactive") and not combat_row_visible(
+                row, now_mono=now
+            ):
+                inactive += 1
+                continue
+            ewar, names = local_effects(row, now)
+            rows.append(
+                {
+                    "character": row.character,
+                    "outgoing_dps": row.dps,
+                    "incoming_dps": row.incoming_dps,
+                    "ewar": ewar,
+                    "log_status": row.log_status,
+                    **names,
+                }
+            )
         if section.get("enabled"):
-            # The relay's dps is outgoing only. Incoming is unknown, not a
-            # measured zero or a local NO LOG condition.
+            # Keep unknown directional values distinct from measured zero;
+            # only independently unexpired observations reach the tooltip.
             rows.extend(
                 {
                     "character": row.character_name,
-                    "outgoing_dps": row.dps,
-                    "incoming_dps": None,
-                    "ewar": list(row.ewar),
+                    "outgoing_dps": row.outgoing_dps,
+                    "incoming_dps": row.incoming_dps,
+                    "ewar": list(
+                        dict.fromkeys(
+                            "SCRAM/POINT"
+                            if effect.kind in ("SCRAM", "POINT")
+                            else effect.kind
+                            for effect in row.effects
+                        )
+                    ),
+                    **labels(
+                        (effect.kind, name)
+                        for effect in row.effects
+                        for name in effect.observations
+                    )[1],
                     "log_status": None,
                     "remote": True,
                     "state": row.state,
@@ -2603,6 +2667,7 @@ class Api:
         return {
             "rows": rows,
             "running_count": len(local_rows),
+            **({"inactive_filtered": inactive} if section.get("hide_inactive") else {}),
             "revision": revision,
             "stream_health": {
                 "state": snapshot.stream_health.state if snapshot else "stopped",
@@ -2612,21 +2677,34 @@ class Api:
         }
 
     def _refresh_remote_fleet_locked(self, now=None):
-        rows = self._remote_fleet.current(self._fleet_clock() if now is None else now)
-        signature = tuple((row.character_id, row.state) for row in rows)
-        if signature != self._remote_display_signature:
-            self._remote_display_signature = signature
+        from .fleetcombat import signature
+
+        now = self._fleet_clock() if now is None else now
+        local = signature(
+            self._fleet_snapshot.rows if self._fleet_snapshot else (),
+            now,
+            bool(self._state.settings.get("fleet_bar", {}).get("hide_inactive")),
+        )
+        if local != self._local_combat_signature:
+            self._local_combat_signature = local
+            self._next_fleet_revision_locked()
+        rows = self._remote_fleet.current(now)
+        # Display rows contain semantics only: both directions and surviving
+        # effect/name observations, never receipt IDs or timing deadlines.
+        if rows != self._remote_display_signature:
+            self._remote_display_signature = rows
             self._next_fleet_revision_locked()
         return rows
 
-    def _fleet_payloads_locked(self) -> tuple[dict, dict]:
-        remote_rows = self._refresh_remote_fleet_locked()
+    def _fleet_payloads_locked(self, now=None) -> tuple[dict, dict]:
+        now = self._fleet_clock() if now is None else now
+        remote_rows = self._refresh_remote_fleet_locked(now)
         section = dict(self._state.settings.get("fleet_bar") or {})
         revision = self._fleet_presentation_revision
         return (
             self._fleet_settings_payload_locked(section, revision),
             self._fleet_display_payload_locked(
-                self._fleet_snapshot, section, revision, remote_rows
+                self._fleet_snapshot, section, revision, remote_rows, now
             ),
         )
 
@@ -2873,10 +2951,19 @@ class Api:
             if self._fleetbar_quitting:
                 return None
             now = self._fleet_clock()
-            self._refresh_remote_fleet_locked(now)
+            _, display_payload = self._fleet_payloads_locked(now)
+            settings_changed = self._fleet_settings_dirty
             # Schedule from the SAME sample as the state/revision. A later
             # sample could cross stale and incorrectly wait until expiry.
             deadline = self._remote_fleet.next_transition(now)
+            from ..telemetry.combat import next_combat_transition
+
+            local_deadline = next_combat_transition(
+                self._fleet_snapshot.rows if self._fleet_snapshot else (), now_mono=now
+            )
+            deadline = min(
+                (v for v in (deadline, local_deadline) if v is not None), default=None
+            )
             if not self._fleet_display_dirty and not self._fleet_settings_dirty:
                 return deadline
             delivery = FleetDelivery(
@@ -2889,14 +2976,19 @@ class Api:
             write = self._fleet_roster.take()
         if write is not None:
             self._remember_fleet_roster(write)
-        if not self._fleet_delivery_current(delivery):
-            # Target changes (notably sig-bar creation) need not publish any
-            # telemetry. Preserve a wakeup even when this was the only job.
-            self._queue_fleet_presentation()
-            return None
         with self._fleet_presentation_lock:
-            settings_payload, display_payload = self._fleet_payloads_locked()
-            settings_changed = self._fleet_settings_dirty
+            if not self._fleet_delivery_current_locked(delivery):
+                # A blocked save or target change retires this capture; do not
+                # silently reproject the display under its old delivery revision.
+                if not self._fleetbar_quitting:
+                    self._fleet_worker.notify()
+                return None
+            # Persisting/acknowledging the roster can evict a capped offline name
+            # without changing the display revision. Settings must use that new
+            # authority, while display and deadline retain their original sample.
+            settings_payload = self._fleet_settings_payload_locked(
+                dict(self._state.settings.get("fleet_bar") or {}), delivery.revision
+            )
         if settings_changed:
             self._fleet_state_push("onFleetBarState", settings_payload, delivery)
         self._push_fleet_snapshot(display_payload, delivery)
@@ -2968,15 +3060,11 @@ class Api:
             if not self._admit_remote_event_locked(event, "remote"):
                 return
             now = self._fleet_clock()
-            before = self._remote_fleet.current(now)
             if event.kind == "clear":
                 self._remote_fleet.clear()
             else:
-                self._remote_fleet.replace(
-                    event.rows, event.receipt_monotonic, event.request_elapsed
-                )
-            if before != self._remote_fleet.current(now):
-                self._next_fleet_revision_locked()
+                self._remote_fleet.replace(event.payload)
+            self._refresh_remote_fleet_locked(now)
             # Equal metrics with a new publication still move the deadline.
             self._fleet_worker.notify()
 
@@ -3047,6 +3135,24 @@ class Api:
         if not stopped:
             logger.warning("Fleet presentation worker is still stopping")
         return stopped
+
+    def fleet_bar_set_hide_inactive(self, enabled) -> dict:
+        if type(enabled) is not bool:
+            return self._fleet_visibility_result(
+                False, "Choose whether to hide inactive characters."
+            )
+        try:
+            settings_mod.update_section(
+                self._state.settings, "fleet_bar", {"hide_inactive": enabled}
+            )
+        except OSError:
+            return self._fleet_visibility_result(
+                False, "Could not save the activity filter."
+            )
+        with self._fleet_presentation_lock:
+            self._next_fleet_revision_locked()
+        self._push_fleet_bar_state()
+        return self._fleet_visibility_result(True, None)
 
     def set_fleet_bar_character_visible(self, name, visible) -> dict:
         """Persist one exact character visibility choice without touching Preview."""
@@ -4182,13 +4288,140 @@ class Api:
             logger.warning("Fleet sharing browser could not open")
             return False
 
+    @staticmethod
+    def _sharing_controls(status):
+        from ..fleetsharing import protocol as p
+
+        observed = status.observed_participation
+        participation = {
+            "binding": status.metadata.binding,
+            "observed": asdict(observed) if observed is not None else None,
+            "participation_intent_id": status.participation_intent_id,
+            "participation_order": status.participation_order,
+            "pending": asdict(status.pending_participation)
+            if status.pending_participation is not None
+            else None,
+        }
+        sources = (
+            {row.source_id.lower(): row for row in status.sources.sources}
+            if status.sources
+            else {}
+        )
+        pending = {row.source_id.lower(): row.command for row in status.pending_sources}
+        controls = []
+        for source_id in dict.fromkeys((*sources, *pending)):
+            source, command = sources.get(source_id), pending.get(source_id)
+            stop = isinstance(command, p.SourceStop)
+            automatic = (
+                command.expected_automatic
+                if stop
+                else source.automatic
+                if source
+                else None
+            )
+            # Only an original unresolved Start may cancel an unknown source.
+            if source is None and not isinstance(
+                command, (p.SourceStart, p.SourceStop)
+            ):
+                continue
+            controls.append(
+                {
+                    "source_id": source_id,
+                    "binding": status.metadata.binding,
+                    "observed": asdict(source) if source is not None else None,
+                    "pending": {
+                        "operation": "stop" if stop else "start",
+                        "intent_id": command.request_id if stop else command.source_id,
+                    }
+                    if command is not None
+                    else None,
+                    "expected_generation": command.expected_generation
+                    if stop
+                    else source.generation
+                    if source
+                    else 0,
+                    "expected_automatic": asdict(automatic)
+                    if automatic is not None
+                    else None,
+                }
+            )
+        return {"participation": participation, "sources": controls}
+
+    @staticmethod
+    def _sharing_control_matches(value, expected):
+        # Equality alone accepts True as generation 1. Closed recursive shape
+        # and native types also reject missing/extra fields before admission.
+        if type(value) is not type(expected):
+            return False
+        if isinstance(expected, dict):
+            return value.keys() == expected.keys() and all(
+                Api._sharing_control_matches(value[key], item)
+                for key, item in expected.items()
+            )
+        return value == expected
+
     def fleet_sharing_state(self) -> dict:
         from ..fleetsharing.config import resolve_relay_origin
         from ..fleetsharing.worker import SharingStatus
 
         with self._sharing_delivery_lock:
             status = self._sharing_status or SharingStatus("stopped")
-            payload = asdict(status)
+            # Explicit projection: new private status fields must never silently
+            # become bridge fields (commands, receipt bodies and saved history).
+            payload = {
+                name: getattr(status, name)
+                for name in (
+                    "state",
+                    "detail",
+                    "participation",
+                    "participation_intent_id",
+                    "participation_order",
+                    "source_control",
+                    "pairing",
+                    "local_inhibited",
+                    "order",
+                    "pairing_action_id",
+                    "automatic_stage",
+                )
+            }
+            for name in (
+                "metadata",
+                "sources",
+                "eligibility",
+                "observed_participation",
+            ):
+                value = getattr(status, name)
+                payload[name] = asdict(value) if value is not None else None
+            for name in ("pending_sources", "source_results"):
+                payload[name] = tuple(
+                    {
+                        key: getattr(row, key)
+                        for key in ("source_id", "operation", "character_id", "stage")
+                    }
+                    for row in getattr(status, name)
+                )
+            automatic = status.automatic
+            payload["automatic"] = {
+                "enabled": automatic.observed_consent.enabled
+                if automatic.observed_consent
+                else None,
+                "pending": automatic.pending is not None,
+                "cancellation_pending": bool(
+                    automatic.pending and automatic.pending.cancel_after_on
+                ),
+                "outcome": automatic.last_result.outcome
+                if automatic.last_result
+                else None,
+                "readiness": status.automatic_status.readiness
+                if status.automatic_status
+                else None,
+            }
+            payload["controls"] = self._sharing_controls(status)
+            from .fleetsetup import controls as setup_controls
+
+            payload["setup_controls"] = setup_controls(
+                status, configured_origin=resolve_relay_origin()
+            )
             payload.update(
                 available=self._fleet_sharing is not None and not self._sharing_closed,
                 enabled=self._sharing_enabled,
@@ -4200,12 +4433,12 @@ class Api:
                 telemetry_available=self._sharing_telemetry_available,
                 configured_origin=resolve_relay_origin(),
             )
-            # The persisted URL is only for a current explicit browser action.
-            payload.pop("approval_url", None)
             if payload != self._sharing_presentation:
                 self._sharing_presentation_order += 1
                 self._sharing_presentation = payload
-            return dict(payload, presentation_order=self._sharing_presentation_order)
+            return copy.deepcopy(
+                dict(payload, presentation_order=self._sharing_presentation_order)
+            )
 
     def fleet_sharing_watch(self, enabled) -> dict:
         if type(enabled) is not bool:
@@ -4259,6 +4492,196 @@ class Api:
         if visible:
             self._schedule_fleet_sharing_push()
 
+    def fleet_sharing_automatic(self, action, observation=None) -> dict:
+        from .fleetsetup import controls
+
+        if action not in ("on", "off", "cancel", "dismiss", "remove_cancel"):
+            return {
+                "queued": False,
+                "error": "Choose an automatic verification action.",
+            }
+        with self._sharing_submission() as available:
+            with self._sharing_delivery_lock:
+                status = self._sharing_status
+            if (
+                not available
+                or status is None
+                or not self._sharing_control_matches(
+                    observation, controls(status)["automatic"]
+                )
+                or not observation["binding"]
+            ):
+                return {
+                    "queued": False,
+                    "error": "Automatic verification changed. Refresh and confirm again.",
+                }
+            pending = status.automatic.pending
+            binding = observation["binding"]
+            if action in ("on", "off"):
+                observed = observation["observed"]
+                if observed is None:
+                    return {
+                        "queued": False,
+                        "error": "Refresh automatic verification before changing consent.",
+                    }
+                accepted = self._fleet_sharing.request_automatic(
+                    action == "on",
+                    expected_generation=observed["generation"],
+                    expected_revision=observed["revision"],
+                    binding=binding,
+                    supersedes=pending,
+                )
+            elif action == "cancel":
+                request_id = (
+                    status.automatic_request_id
+                    if status.automatic_stage == "queued"
+                    and status.automatic_choice is True
+                    else pending.command.request_id
+                    if pending
+                    else status.automatic_request_id
+                )
+                accepted = self._fleet_sharing.request_cancel_automatic_on(
+                    request_id, binding=binding
+                )
+            elif pending is None:
+                accepted = False
+            elif action == "dismiss":
+                accepted = self._fleet_sharing.request_dismiss_automatic(
+                    pending, binding=binding
+                )
+            else:
+                accepted = self._fleet_sharing.request_remove_automatic_cancel(
+                    pending, binding=binding
+                )
+        self._start_fleet_sharing()
+        return {
+            "queued": bool(accepted),
+            "error": None
+            if accepted
+            else "The automatic action could not be queued. Refresh and retry.",
+            "state": self.fleet_sharing_state(),
+        }
+
+    def fleet_sharing_setup(
+        self, action, observation=None, use_configured_origin=False
+    ) -> dict:
+        from ..fleetsharing.config import resolve_relay_origin
+        from ..fleetsharing.worker import CAPABILITIES, COMBAT_CAPABILITIES
+        from .fleetsetup import controls
+
+        if (
+            action
+            not in ("combat", "fresh", "retry", "dismiss_legacy", "remove_legacy")
+            or type(use_configured_origin) is not bool
+        ):
+            return {"queued": False, "error": "Choose a setup action."}
+        with self._sharing_submission() as available:
+            with self._sharing_delivery_lock:
+                status = self._sharing_status
+            if (
+                not available
+                or status is None
+                or not self._sharing_control_matches(
+                    observation,
+                    controls(status, configured_origin=resolve_relay_origin())["setup"],
+                )
+            ):
+                return {
+                    "queued": False,
+                    "error": "Connection history changed. Refresh and review it again.",
+                }
+            if action in ("dismiss_legacy", "remove_legacy"):
+                if action == "dismiss_legacy":
+                    results = [
+                        self._fleet_sharing.request_dismiss_cutover(
+                            item.selector, binding=observation["binding"]
+                        )
+                        for item in status.cutover_outcomes
+                        if item.status == "fenced"
+                    ]
+                    accepted = bool(results) and all(results)
+                else:
+                    accepted = self._fleet_sharing.request_remove_cutover(
+                        status.cutover_outcomes, binding=observation["binding"]
+                    )
+                self._start_fleet_sharing()
+                return {
+                    "queued": accepted,
+                    "error": None
+                    if accepted
+                    else "History changed. Refresh and review it again.",
+                    "state": self.fleet_sharing_state(),
+                }
+            if action == "fresh" and (
+                observation["automatic_pending"]
+                or observation["participation_pending"]
+                or observation["pairing_pending"]
+                or status.pending_participation
+                or status.pending_sources
+                or status.cutover_present
+                or status.pending_pairing
+                or status.pending_recovery
+                or status.automatic.pending
+            ):
+                return {
+                    "queued": False,
+                    "error": "Resolve the displayed pending requests before Fresh setup.",
+                }
+            action_id = str(uuid.uuid4())
+            self._begin_sharing_browser(action_id)
+            pairing = status.pending_pairing
+            mode = (
+                "fresh"
+                if action == "fresh"
+                else "initial"
+                if pairing and pairing.mode in ("initial", "fresh")
+                else "upgrade"
+                if status.metadata.binding
+                else "initial"
+            )
+            capabilities = (
+                COMBAT_CAPABILITIES
+                if action == "combat" or observation["combat_approved"]
+                else pairing.requested_capabilities
+                if pairing and pairing.requested_capabilities
+                else CAPABILITIES
+            )
+            accepted = self._fleet_sharing.request_pairing(
+                mode=mode,
+                action_id=action_id,
+                binding=observation["binding"],
+                configured_origin=resolve_relay_origin()
+                if use_configured_origin or not status.metadata.binding
+                else None,
+                requested_capabilities=capabilities,
+                supersedes=(status.pending_pairing, status.pending_recovery)
+                if action != "fresh"
+                and status.metadata.binding
+                and (status.pending_pairing or status.pending_recovery)
+                else None,
+                automatic_history=status.automatic if action == "fresh" else None,
+                expected_sequence=observation["queue_sequence"]
+                if action == "fresh"
+                else None,
+            )
+            with self._sharing_delivery_lock:
+                if (
+                    accepted
+                    and self._sharing_browser_action == action_id
+                    and self._sharing_status is not None
+                    and self._sharing_status.pairing_action_id == action_id
+                ):
+                    self._sharing_pair_action = action_id
+        self._start_fleet_sharing()
+        self._schedule_fleet_sharing_push()
+        return {
+            "queued": bool(accepted),
+            "error": None
+            if accepted
+            else "Setup could not be queued. Refresh and retry.",
+            "state": self.fleet_sharing_state(),
+        }
+
     def fleet_sharing_pair(self, mode="initial", use_configured_origin=False) -> dict:
         if (
             mode not in ("initial", "upgrade", "fresh")
@@ -4296,15 +4719,44 @@ class Api:
             "state": self.fleet_sharing_state(),
         }
 
-    def fleet_sharing_set_enabled(self, enabled) -> dict:
+    def fleet_sharing_set_enabled(self, enabled, observation=None) -> dict:
         if type(enabled) is not bool:
             return self._field_refused("Choose On or Off.")
         with self._sharing_submission() as available:
             if not available:
                 return self._field_refused("Fleet sharing is unavailable.")
-            # Always explicit, even if the stored value already agrees. Off
-            # reaches the worker's inhibit latch BEFORE any preference I/O.
-            intent = self._fleet_sharing.request_participation(enabled)
+            with self._sharing_delivery_lock:
+                status = self._sharing_status
+            expected = (
+                self._sharing_controls(status)["participation"] if status else None
+            )
+            matched = expected is not None and self._sharing_control_matches(
+                observation, expected
+            )
+            if (
+                enabled
+                and not matched
+                and (
+                    observation is not None
+                    or (status and status.observed_participation is not None)
+                )
+            ):
+                return self._field_refused(
+                    "The sharing choice changed. Refresh and confirm On again."
+                )
+            intent = None
+            if matched:
+                observed = observation["observed"]
+                intent = self._fleet_sharing.request_participation(
+                    enabled,
+                    expected_generation=observed["generation"] if observed else None,
+                    binding=observation["binding"],
+                    supersedes=status.pending_participation,
+                )
+            if not matched or (not enabled and intent is None):
+                # Bound validation precedes the worker inhibit latch. Off must
+                # still inhibit locally, without acknowledging unseen history.
+                intent = self._fleet_sharing.request_participation(enabled)
         if intent is None:
             return self._field_refused("The sharing choice could not be queued.")
         self._start_fleet_sharing()
@@ -4395,7 +4847,17 @@ class Api:
             "state": self.fleet_sharing_state(),
         }
 
-    def fleet_sharing_stop_source(self, source_id, binding) -> dict:
+    def fleet_sharing_stop_source(self, source_id, binding, observation=None) -> dict:
+        return self._sharing_stop_source(
+            source_id, binding, observation, replace_stop=False
+        )
+
+    def fleet_sharing_replace_stop(self, source_id, binding, observation=None) -> dict:
+        return self._sharing_stop_source(
+            source_id, binding, observation, replace_stop=True
+        )
+
+    def _sharing_stop_source(self, source_id, binding, observation, *, replace_stop):
         from ..fleetsharing import protocol
 
         try:
@@ -4403,26 +4865,70 @@ class Api:
         except ValueError:
             return {"queued": False, "error": "Choose a source from this account."}
         with self._sharing_submission() as available:
-            state = self.fleet_sharing_state()
-            sources = (state["sources"] or {}).get("sources", ())
-            source = next(
-                (row for row in sources if row["source_id"].lower() == source_id), None
-            )
-            pending = any(
-                row["source_id"].lower() == source_id
-                for row in state["pending_sources"]
+            with self._sharing_delivery_lock:
+                status = self._sharing_status
+            expected = (
+                next(
+                    (
+                        row
+                        for row in self._sharing_controls(status)["sources"]
+                        if row["source_id"] == source_id
+                    ),
+                    None,
+                )
+                if status
+                else None
             )
             if (
                 not available
                 or not binding
-                or binding != state["metadata"]["binding"]
-                or not (source or pending)
+                or expected is None
+                or binding != expected["binding"]
+                or not self._sharing_control_matches(observation, expected)
             ):
                 return {"queued": False, "error": "Refresh the owned source list."}
+            pending = next(
+                (
+                    row
+                    for row in status.pending_sources
+                    if row.source_id.lower() == source_id
+                ),
+                None,
+            )
+            original = pending.command if pending is not None else None
+            if replace_stop:
+                observed = observation["observed"]
+                if (
+                    not isinstance(original, protocol.SourceStop)
+                    or pending.stage != "persisted"
+                    or observed is None
+                    or observed["state"] == "ended"
+                ):
+                    return {
+                        "queued": False,
+                        "error": "Refresh the pending Stop and current source.",
+                    }
+                # Only a durable predecessor may be acknowledged. Replacing a
+                # queued replacement would drop its link to the durable journal.
+                # Ordinary Stop still retries its original identity.
+                generation = observed["generation"]
+                automatic = observed["automatic"]
+            else:
+                generation = observation["expected_generation"]
+                automatic = observation["expected_automatic"]
             accepted = self._fleet_sharing.request_source_stop(
                 source_id,
-                expected_generation=source["generation"] if source else 0,
-                binding=binding,
+                expected_generation=generation,
+                expected_automatic=protocol.AutomaticBinding(
+                    automatic["consent_generation"]
+                )
+                if automatic is not None
+                else None,
+                binding=observation["binding"],
+                # None deliberately selects the worker's original Stop reuse.
+                supersedes=original
+                if replace_stop or isinstance(original, protocol.SourceStart)
+                else None,
             )
         self._start_fleet_sharing()
         return {
@@ -4617,7 +5123,7 @@ class Api:
             ):
                 # Coordinator registration only changes its subscriber list;
                 # delivery is asynchronous, never an immediate callback.
-                self._sharing_unsubscribe = telemetry.subscribe_fleet(
+                self._sharing_unsubscribe = telemetry.subscribe_admitted_fleet(
                     self._fleet_sharing.submit
                 )
             self._eve_runtime_active += 1
@@ -4656,8 +5162,12 @@ class Api:
         """Reject new reconciliation before subscriptions or windows are removed."""
         with self._eve_runtime_lock:
             self._eve_runtime_closed = True
-            self._alerts_controller.close_runtime()
             telemetry = self._telemetry
+        # Coordinator close takes its lifecycle lock. Factory installation is
+        # already fenced; never hold Api locks while waiting for that owner.
+        if telemetry is not None:
+            telemetry.close_source_admission()
+        self._alerts_controller.close_runtime()
         self._close_preview_presentation()
         self._preview_layouts.close_admission()
         self._wanderer.close_admission()

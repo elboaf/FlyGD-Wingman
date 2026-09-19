@@ -1,28 +1,22 @@
-"""Pure sparse projection from a local FleetSnapshot to wire-safe rows.
+"""Pure catalogue resolution and local FleetSnapshot projection.
 
-Ports the design's "Publication" rules
-(docs/superpowers/specs/2026-09-04-shared-fleet-telemetry-design.md) into
-one small, fully pure function: no I/O, no logging, no network. It takes
-today's completed local `FleetSnapshot` -- the same value the local Fleet
-Bar already renders -- and an authenticated `FleetCatalogue`, and returns
-only the rows that are both currently interesting and unambiguously
-resolvable to a catalogue character id.
-
-Nothing here is a Fleet Bar or coordinator concern: this module never
-touches `wingman.telemetry.coordinator`, never subscribes to anything, and
-never performs network I/O. A later task hands it a snapshot and a
-catalogue and does something with the result; this module only computes
-that result.
+Combat selection preserves original measurements/evidence for retained timing;
+legacy project_snapshot/PublishRow callers remain until the worker migration.
+Neither path performs I/O, logs names, subscribes or touches the coordinator.
 """
 
 from __future__ import annotations
 
-from ..telemetry.model import FleetSnapshot
-from .model import FleetCatalogue, PublishRow
+from collections.abc import Iterator
+from fractions import Fraction
+from math import isfinite
 
-# Local telemetry distinguishes scram and point; the wire deliberately does
-# not. Collapse all tackle observations to its one permitted value. Other
-# local observations (including NEUT) never become shared telemetry.
+from ..combatprofile import LIMITS
+from ..telemetry.model import FleetRow, FleetSnapshot
+from .model import CombatProjectionRow, FleetCatalogue, PublishRow
+
+# Legacy projection only: retain the old collapse for unmigrated callers.
+# The new combat path below preserves distinct SCRAM/POINT/NEUT observations.
 _LOCAL_TACKLE = frozenset({"SCRAM", "POINT", "SCRAM/POINT"})
 
 # authGD's own wire limits on a published batch (Task 3's
@@ -116,6 +110,80 @@ def project_snapshot(
         rows.append(PublishRow(character_id=character_id, dps=row.dps, ewar=ewar))
 
     return tuple(sorted(rows, key=lambda published: published.character_id))
+
+
+def _resolved_combat_rows(
+    snapshot: FleetSnapshot,
+    catalogue: FleetCatalogue,
+    eligible_character_ids: frozenset[int],
+) -> Iterator[tuple[int, FleetRow]]:
+    """Share complete resolution with timing's pre-prune immutable conflict check."""
+    names = verified_character_ids(catalogue)
+    for row in snapshot.rows:
+        character_id = names.get(_normalize(row.character))
+        if character_id is not None and character_id in eligible_character_ids:
+            yield character_id, row
+
+
+def project_combat_snapshot(
+    snapshot: FleetSnapshot,
+    catalogue: FleetCatalogue,
+    *,
+    eligible_character_ids: frozenset[int],
+    now_mono: float | Fraction,
+) -> tuple[CombatProjectionRow, ...] | None:
+    """Select original combat measurements, never recompute DPS or sample time.
+
+    None is an invalid temporal handoff; () is no locally visible eligible row.
+    Neither authorizes a withdrawal. Timing must still validate wire dimensions,
+    retained immutable associations, original sample age and source authority.
+    """
+    if (
+        not isfinite(now_mono)
+        or snapshot.sampled_at_mono is None
+        or not isfinite(snapshot.sampled_at_mono)
+    ):
+        return None
+    now = Fraction(now_mono)
+    m = Fraction(snapshot.sampled_at_mono)
+    lifetime = Fraction(LIMITS["activity_ms"], 1000)
+    selected = []
+    for character_id, row in _resolved_combat_rows(
+        snapshot, catalogue, eligible_character_ids
+    ):
+        activity = row.combat
+        if activity is None:
+            continue
+        if activity.expires_at_mono is None:
+            if activity.observation_id is not None or activity.observations:
+                return None
+            continue
+        if not isfinite(activity.expires_at_mono) or activity.observation_id is None:
+            return None
+        deadline = Fraction(activity.expires_at_mono)
+        if deadline - lifetime > m:
+            return None
+        # Validate the complete timing handoff BEFORE expiry pruning: NaN or an
+        # impossible member cannot turn a replacement into a plausible subset.
+        if any(
+            not isfinite(o.expires_at_mono) or Fraction(o.expires_at_mono) > deadline
+            for o in activity.observations
+        ):
+            return None
+        if deadline <= now or (row.dps is None and row.incoming_dps is None):
+            continue
+        selected.append(
+            CombatProjectionRow(
+                character_id,
+                row,
+                tuple(
+                    o
+                    for o in activity.observations
+                    if Fraction(o.expires_at_mono) > now
+                ),
+            )
+        )
+    return tuple(sorted(selected, key=lambda selected: selected.character_id))
 
 
 def validate_publish_batch(rows: tuple[PublishRow, ...]) -> tuple[PublishRow, ...]:

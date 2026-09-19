@@ -39,10 +39,12 @@ def enable_custom(api):
     return rule_id, draft
 
 
-def inert_runtime(monkeypatch, state, host, controller):
+def inert_runtime(monkeypatch, state, host, controller, *, clock=lambda: 0.0):
     """Real stream/coordinator; only worker creation and Win32 discovery are fake."""
     monkeypatch.setattr(main_mod.sys, "platform", "win32")
-    monkeypatch.setattr("wingman.telemetry.clients.ClientDiscovery", FakeDiscovery)
+    monkeypatch.setattr(
+        "wingman.telemetry.clients.ClientDiscovery", lambda **_kwargs: FakeDiscovery()
+    )
     monkeypatch.setattr(
         "wingman.telemetry.gamelogs.GameLogStream",
         lambda **kwargs: GameLogStream(**kwargs, _thread_factory=_noop_thread_factory),
@@ -54,7 +56,7 @@ def inert_runtime(monkeypatch, state, host, controller):
         ),
     )
     policy = BUILD_POLICY(state, host, controller)
-    runtime = BUILD_TELEMETRY(state, host, policy, controller)
+    runtime = BUILD_TELEMETRY(state, host, policy, controller, clock=clock)
     assert runtime is not None
     return runtime, policy
 
@@ -467,6 +469,7 @@ def test_main_composes_one_controller_before_any_start_and_lazy_reuses_it(
     box_seen, controllers, runtimes = [], [], []
     native_hosts = []
     attempts = []
+    clocks, contexts = [], []
     original_controller = main_mod.build_alerts_controller
 
     def make_host(state, box, *, layout_store, layout_admission):
@@ -504,10 +507,11 @@ def test_main_composes_one_controller_before_any_start_and_lazy_reuses_it(
         controllers.append(controller)
         return controller
 
-    def build_telemetry(state, host, policy, controller):
+    def build_telemetry(state, host, policy, controller, *, clock):
         attempts.append(controller)
+        clocks.append(clock)
         assert box_seen[0]["alerts"] is controller
-        runtime, _ = inert_runtime(monkeypatch, state, host, controller)
+        runtime, _ = inert_runtime(monkeypatch, state, host, controller, clock=clock)
         runtime._alert_policy = policy
         runtimes.append(runtime)
         start = runtime._stream.start
@@ -526,7 +530,11 @@ def test_main_composes_one_controller_before_any_start_and_lazy_reuses_it(
     monkeypatch.setattr(main_mod, "build_alerts_controller", build_controller)
     monkeypatch.setattr(main_mod, "build_alert_policy", BUILD_POLICY)
     monkeypatch.setattr(main_mod, "build_telemetry", build_telemetry)
-    monkeypatch.setattr(main_mod, "build_fleet_sharing_worker", lambda state: None)
+
+    def capture_context(state, *, timing_context):
+        contexts.append(timing_context)
+
+    monkeypatch.setattr(main_mod, "build_fleet_sharing_worker", capture_context)
     document = copy.deepcopy(settings.DEFAULTS)
     document["preview"] = settings.validated_preview(
         {"enabled": True, "alerts": {"enabled": True}}
@@ -539,7 +547,11 @@ def test_main_composes_one_controller_before_any_start_and_lazy_reuses_it(
         controller = controllers[0]
         assert api._alerts_controller is controller
         assert attempts == [controller] * (2 if lazy else 1)
+        assert len(contexts) == 1
+        assert all(clock is api._fleet_clock for clock in clocks)
+        assert contexts[0]._clock is api._fleet_clock is api._fleet_worker._clock
         runtime = runtimes[-1]
+        assert runtime._clock is api._fleet_clock
         assert api._telemetry is runtime
         assert not hasattr(controller, "_tailer")
         assert not hasattr(runtime._alert_policy, "_tailer")

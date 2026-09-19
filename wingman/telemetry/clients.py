@@ -75,6 +75,7 @@ import threading
 from collections.abc import Callable, Iterable
 
 from ..preview import discovery
+from .admission import _Delivery, _SourceAuthority
 from .model import ClientSessionId, RosterClient, RosterSnapshot
 
 logger = logging.getLogger(__name__)
@@ -158,11 +159,18 @@ class ClientDiscovery:
         _thread_factory: Callable[..., threading.Thread] = _real_thread_factory,
         _wait_fn: Callable[[threading.Event, float], None] | None = None,
         _enumerate_clients: Callable[[], ScanResult] = discovery.enumerate_clients,
+        _source_admission: _SourceAuthority | None = None,
     ) -> None:
         self._thread_factory = _thread_factory
         self._wait_fn = _wait_fn or (lambda ev, t: ev.wait(t))
         self._enumerate_clients = _enumerate_clients
 
+        self._source_admission = _source_admission
+        self._admission_receipt = (
+            _source_admission._begin("roster") if _source_admission else None
+        )
+        self._latest_admission: _Delivery | None = None
+        self._admission_subscribers: list[Callable] = []
         self._subscribers: list[Callable[[RosterSnapshot], None]] = []
         # (hwnd, pid, character) -> the generation it was first seen in.
         # Pruned the instant a tuple is absent from a scan that genuinely
@@ -203,6 +211,35 @@ class ClientDiscovery:
 
         return _unsub
 
+    def _subscribe_admission(self, callback: Callable) -> Callable[[], None]:
+        with self._lock:
+            self._admission_subscribers.append(callback)
+
+        def unsubscribe() -> None:
+            with self._lock:
+                if callback in self._admission_subscribers:
+                    self._admission_subscribers.remove(callback)
+
+        return unsubscribe
+
+    def _snapshot_admission(self) -> tuple[RosterSnapshot, _Delivery | None]:
+        """Full restatement, atomically sampled; never bless a retired cache."""
+        with self._lock:
+            receipt = self._admission_receipt
+            prior = self._latest_admission
+            delivery = None
+            if (
+                receipt is not None
+                and prior is not None
+                and (prior.operation.lifetime is receipt.lifetime)
+            ):
+                operation = self._source_admission._operation(
+                    "roster", receipt.lifetime
+                )
+                if operation is not None:
+                    delivery = _Delivery(operation, receipt)
+            return self._latest, delivery
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -220,6 +257,10 @@ class ClientDiscovery:
                     return True
                 if self._worker is not None and self._worker.is_alive():
                     return False
+                if self._worker is not None:
+                    self._stop_admission_locked(completed=True)
+                if self._source_admission and self._admission_receipt is None:
+                    self._admission_receipt = self._source_admission._begin("roster")
                 self._started = True
                 self._stop_event = threading.Event()
                 self._wake_event = threading.Event()
@@ -240,6 +281,7 @@ class ClientDiscovery:
                 with self._lock:
                     self._started = False
                     self._worker = None
+                    self._stop_admission_locked(completed=True)
                 return False
             return True
 
@@ -254,8 +296,11 @@ class ClientDiscovery:
                 worker = self._worker
                 stop_ev = self._stop_event
                 wake_ev = self._wake_event
+                self._stop_admission_locked(completed=False)
                 self._started = False
             if worker is None:
+                with self._lock:
+                    self._stop_admission_locked(completed=True)
                 return True
             stop_ev.set()
             wake_ev.set()  # unblock a pending wait immediately
@@ -264,7 +309,16 @@ class ClientDiscovery:
                 if worker.is_alive():
                     return False
                 self._worker = None
+                self._stop_admission_locked(completed=True)
             return True
+
+    def _stop_admission_locked(self, *, completed: bool) -> None:
+        receipt = self._admission_receipt
+        if receipt is not None:
+            self._source_admission._stop("roster", receipt.lifetime)
+            if completed:
+                self._source_admission._stopped("roster", receipt.lifetime)
+                self._admission_receipt = None
 
     def request_scan(self) -> None:
         """Wake the owned context for an immediate scan.
@@ -320,6 +374,13 @@ class ClientDiscovery:
         ``_normalize_scan_result``.
         """
         with self._scan_lock:
+            with self._lock:
+                receipt = self._admission_receipt
+                operation = (
+                    self._source_admission._operation("roster", receipt.lifetime)
+                    if receipt is not None
+                    else None
+                )
             try:
                 success, clients = _normalize_scan_result(self._enumerate_clients())
             except Exception:
@@ -338,15 +399,14 @@ class ClientDiscovery:
                 generation = self._next_generation
                 self._next_generation += 1
 
-                current_keys: set[_SessionKey] = set()
+                candidate: dict[_SessionKey, int] = {}
                 roster_clients = []
                 for client in clients:
                     session = None
                     if client.character is not None:
                         key = (client.hwnd, client.pid, client.character)
-                        current_keys.add(key)
                         first_seen = self._sessions.get(key, generation)
-                        self._sessions[key] = first_seen
+                        candidate[key] = first_seen
                         session = ClientSessionId(
                             hwnd=client.hwnd,
                             pid=client.pid,
@@ -367,18 +427,35 @@ class ClientDiscovery:
                 # be treated as a new session, never as continuity. Only
                 # reached on a successful scan -- a failed one returned
                 # above and left this map alone.
-                for key in list(self._sessions):
-                    if key not in current_keys:
-                        del self._sessions[key]
+                if candidate != self._sessions and operation is not None:
+                    reserved = self._source_admission._reserve(
+                        "roster", operation.lifetime
+                    )
+                    if reserved is not None:
+                        receipt = reserved
+                        self._admission_receipt = receipt
+                self._sessions = candidate
 
                 snapshot = RosterSnapshot(
                     generation=generation, clients=tuple(roster_clients)
                 )
+                delivery = (
+                    _Delivery(operation, receipt)
+                    if operation is not None and receipt is not None
+                    else None
+                )
                 self._latest = snapshot
+                self._latest_admission = delivery
                 subs = list(self._subscribers)
+                admitted = list(self._admission_subscribers)
 
         for callback in subs:
             try:
                 callback(snapshot)
             except Exception:
                 logger.exception("Subscriber raised during client discovery dispatch")
+        for callback in admitted:
+            try:
+                callback(snapshot, delivery)
+            except Exception:
+                logger.exception("Subscriber raised during admitted discovery dispatch")
