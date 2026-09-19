@@ -12,7 +12,6 @@ import base64
 import binascii
 import json
 import re
-import unicodedata
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -21,6 +20,7 @@ from .. import atomicio
 from ..eveauth import dpapi
 from . import crypto, protocol
 from .config import canonical_origin
+from .legacytext import valid_legacy_url_text
 
 STATE_VERSION = 4
 MAX_STATE_FILE_BYTES = 262144
@@ -479,10 +479,7 @@ def _validate_legacy_pairing(value: object, origin: str | None) -> None:
     if (
         not isinstance(url, str)
         or not 1 <= len(url) <= 2048
-        or any(
-            unicodedata.category(c).startswith("C") or c in "\u2028\u2029" for c in url
-        )
-        or any(c.isspace() for c in url)
+        or not valid_legacy_url_text(url)
         or "\\" in url
     ):
         raise ValueError("Invalid legacy approval URL.")

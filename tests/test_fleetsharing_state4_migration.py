@@ -271,6 +271,11 @@ def test_canonical_alias_binding_does_not_rewrite_original(tmp_path):
     "url,valid",
     [
         (ORIGIN + "/\U00010000", True),
+        (ORIGIN + "/\U0001fae0", True),  # Assigned in Unicode 14.
+        (ORIGIN + "/\U0001fae9", False),  # Assigned in Unicode 16.
+        (ORIGIN + "/\ue000", False),  # Private use, not historical text.
+        (ORIGIN + "/\u200d", False),  # Format control.
+        (ORIGIN + "/\u202f", False),  # Non-ASCII whitespace.
         (
             ORIGIN + "/\U0001fae8",
             False,
