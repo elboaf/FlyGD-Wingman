@@ -804,7 +804,11 @@ def test_the_installer_release_notes_page_is_wired():
         ROOT / ".github" / "actions" / "build-installer" / "action.yml"
     ).read_text(encoding="utf-8")
     assert "packaging/write_relnotes.py" in action
-    for workflow in ("build.yml", "release.yml"):
+    # autorelease.yml, not release.yml, is the workflow a version bump
+    # actually drives -- v5.10.0 shipped the fallback notes page because
+    # only build.yml/release.yml were taught fetch-depth 0. All three
+    # build-carrying workflows are pinned here.
+    for workflow in ("build.yml", "release.yml", "autorelease.yml"):
         text = (ROOT / ".github" / "workflows" / workflow).read_text(encoding="utf-8")
         assert "fetch-depth: 0" in text, (
             f"{workflow}: the release-notes page is derived from git "
