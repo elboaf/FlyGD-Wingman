@@ -350,9 +350,16 @@ def test_activation_rechecks_identity_and_only_restores_foregrounds_source(famil
     iconic[0] = False
     native.tick_activation()
     assert calls == [("restore", 10, 9), ("foreground", 10)]
-    catalog.rows = (replace(BINDING, process_created=43),)
+    # Already foreground: the whole sequence is a no-op. A redundant
+    # SetForegroundWindow perturbs focus into a transient that dropped
+    # the ring on the second click (#258 polish follow-up).
     windows[0].callbacks["on_activate"]()
-    assert len(calls) == 2
+    assert calls == [("restore", 10, 9), ("foreground", 10)]
+    assert not native.activation_pending
+    catalog.rows = (replace(BINDING, process_created=43),)
+    foreground[0] = 0  # back to unknown, so the click runs the sequence
+    windows[0].callbacks["on_activate"]()
+    assert len(calls) == 2  # re-verify fails before any foreground attempt
     assert events[-1].payload[0]["status"] == "source-unavailable"
 
 
@@ -491,3 +498,30 @@ def test_ring_colour_is_reread_from_the_seam_per_sweep(family):
     native.apply_lost_focus_hidden(False, False, 999)
 
     assert window.selection_color == "#abcdef"
+
+
+def test_ring_latches_through_an_unknown_foreground(family):
+    """#258 polish follow-up: a foreground of 0 -- secure desktop, a window
+    being destroyed, a transient mid-activation read -- must not clear the
+    ring, because nothing restores it until an unrelated foreground change
+    happens by. Only another real window moves it."""
+    native, _, windows, _, _, _ = family
+    window = _live_companion(native, windows)
+
+    native.apply_lost_focus_hidden(False, False, BINDING.hwnd)
+    assert window.active
+    native.apply_lost_focus_hidden(False, False, 0)
+    assert window.active
+    native.apply_lost_focus_hidden(False, False, 999)
+    assert not window.active
+
+
+def test_ring_active_reports_live_source_and_skips_retiring(family):
+    native, _, windows, _, _, _ = family
+    _live_companion(native, windows)
+
+    assert native.ring_active(BINDING.hwnd)
+    assert not native.ring_active(999)
+    assert not native.ring_active(0)
+    native.live[DEFINITION.id].retiring = True
+    assert not native.ring_active(BINDING.hwnd)

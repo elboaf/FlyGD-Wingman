@@ -505,6 +505,21 @@ class CompanionFamily:
             if not live.retiring and live.spec.definition.show_on_focus
         )
 
+    def ring_active(self, foreground) -> bool:
+        """Whether any live companion's source window holds the foreground.
+
+        The exclusivity query for the EVE previews' ring (#258 polish
+        follow-up): the wall carries ONE "where the user is" ring, so while
+        a companion claims the foreground the EVE selection's ring yields.
+        Read on the pump; retiring windows never claim it.
+        """
+        if not foreground:
+            return False
+        return any(
+            not live.retiring and live.binding.hwnd == foreground
+            for live in self.live.values()
+        )
+
     def apply_lost_focus_hidden(self, hidden, active, foreground):
         """The host's hide-on-lost-focus decision, applied to live windows.
 
@@ -520,7 +535,14 @@ class CompanionFamily:
         The same foreground observation also drives the ring (#258 polish):
         a companion is "active" exactly while its source window holds the
         foreground and it is not itself hidden by the hide-active clause,
-        mirroring which preview the user is working in. The colour is
+        mirroring which preview the user is working in. An unknown
+        foreground (0 -- secure desktop, a window being destroyed, or a
+        transient mid-activation read) LATCHES the ring rather than
+        clearing it: only another real window taking the foreground moves
+        it. The activation no-op in _activate removed the churn that made
+        transient reads observable, but a sweep racing any activation can
+        still sample 0, and clearing then left the ring dark until some
+        unrelated foreground change happened to restore it. The colour is
         re-read here so a recolour applies without reopening windows.
         """
         color = self._ring_color()
@@ -536,9 +558,10 @@ class CompanionFamily:
                 foreground=foreground,
                 source_hwnd=live.binding.hwnd if active else 0,
             )
-            live.window.set_active(
-                bool(foreground) and foreground == live.binding.hwnd and not hidden
-            )
+            if foreground == live.binding.hwnd:
+                live.window.set_active(not hidden)
+            elif foreground:
+                live.window.set_active(False)
             live.window.set_hidden(
                 hidden,
                 authorized=lambda lv=live, t=token, i=identity: (
@@ -796,6 +819,12 @@ class CompanionFamily:
             or live.window.failed
             or not self._authorized(self._token(live.spec), promotion=True)
         ):
+            return
+        # Already there: a redundant SetForegroundWindow on the foreground
+        # window perturbs focus enough to emit a foreground observation that
+        # is not the source, which dropped the ring -- and nothing restored
+        # it, because no real transition followed (#258 polish follow-up).
+        if self._libs.user32.GetForegroundWindow() == live.binding.hwnd:
             return
         self._activation = (live, 0)
         self.tick_activation()

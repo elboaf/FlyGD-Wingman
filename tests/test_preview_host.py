@@ -4830,7 +4830,7 @@ class _VisibilityWindow:
         self.show_labels = shown
 
     def set_selected(self, selected):
-        pass
+        self.selected = selected
 
     def set_focused(self, focused):
         pass
@@ -4932,6 +4932,7 @@ def test_companion_family_rides_the_same_visibility_sweep(monkeypatch):
     seen = []
     h._companion_family = SimpleNamespace(
         show_on_focus_sources=lambda: (),
+        ring_active=lambda foreground: False,
         apply_lost_focus_hidden=lambda *args: seen.append(args),
     )
     assert all(w.hidden for w in h._windows.values())
@@ -4952,6 +4953,7 @@ def test_ticked_companion_source_keeps_previews_up(monkeypatch):
     assert all(w.hidden for w in made.values())
     h._companion_family = SimpleNamespace(
         show_on_focus_sources=lambda: (0xABCD,),
+        ring_active=lambda foreground: foreground == 0xABCD,
         apply_lost_focus_hidden=lambda *args: None,
     )
     h._foreground = 0xABCD
@@ -7794,3 +7796,38 @@ def test_every_primary_intent_message_is_pump_dispatched():
             "never routes it; the wake would be dropped and the intent "
             "would strand the primary FIFO"
         )
+
+
+def test_companion_ring_and_eve_ring_are_mutually_exclusive(monkeypatch):
+    """#258 polish follow-up: the wall carries one "where the user is"
+    ring. While a companion's source holds the foreground the EVE
+    selection's ring yields -- but the sticky key survives underneath, so
+    the EVE ring returns the moment a client takes the foreground back."""
+    h, made, _libs, _live = _visibility_host(
+        monkeypatch, enabled=True, foreground=0x1000, pids={0x1000: 9999}
+    )
+    assert [w.selected for w in made.values()] == [True, False]
+
+    h._companion_family = SimpleNamespace(
+        show_on_focus_sources=lambda: (),
+        ring_active=lambda foreground: foreground == 0xABCD,
+        apply_lost_focus_hidden=lambda *args: None,
+    )
+    h._foreground = 0xABCD
+    h._sweep(_OwnershipLibs(_OwnershipUser32({0xABCD: 9999}), our_pid=4242))
+    assert not any(w.selected for w in made.values())
+    assert h._selected_key == "Alice"  # sticky underneath the suppression
+
+    h._foreground = 0x1000
+    h._sweep(_OwnershipLibs(_OwnershipUser32({0x1000: 9999}), our_pid=4242))
+    assert [w.selected for w in made.values()] == [True, False]
+
+
+def test_no_companion_family_means_no_eve_ring_suppression(monkeypatch):
+    """The family is optional; without one the selection sweep is exactly
+    what it always was."""
+    h, made, _libs, _live = _visibility_host(
+        monkeypatch, enabled=True, foreground=0x1000, pids={0x1000: 9999}
+    )
+    assert h._companion_family is None
+    assert [w.selected for w in made.values()] == [True, False]
