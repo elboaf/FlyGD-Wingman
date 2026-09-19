@@ -525,3 +525,42 @@ def test_ring_active_reports_live_source_and_skips_retiring(family):
     assert not native.ring_active(0)
     native.live[DEFINITION.id].retiring = True
     assert not native.ring_active(BINDING.hwnd)
+
+
+def test_pending_activation_converges_without_refiring_a_foreground_source(family):
+    """#258 polish follow-up, second click variant: a first click whose
+    SetForegroundWindow does not confirm synchronously leaves a pending
+    retry loop. If the transition completes on its own, the next tick must
+    recognise the source is already foreground and stop -- re-firing
+    SetForegroundWindow perturbed focus into a transient observation that
+    dropped the ring. And a second click mid-activation must not reset the
+    retry counter, because more retries are more churn, not progress."""
+    native, _, windows, _, _, _ = family
+    calls = []
+    fg = [0]
+    native._libs = SimpleNamespace(
+        user32=SimpleNamespace(
+            IsIconic=lambda hwnd: False,
+            SetForegroundWindow=lambda hwnd: (
+                calls.append(("foreground", hwnd)) or False
+            ),
+            GetForegroundWindow=lambda: fg[0],
+            GetWindowThreadProcessId=lambda hwnd, pid: 20,
+            AttachThreadInput=lambda s, t, v: calls.append(("attach", s, t, v)) or True,
+        ),
+        kernel32=SimpleNamespace(GetCurrentThreadId=lambda: 5),
+    )
+    native.reconcile((spec(),), 2)
+    windows[0].callbacks["on_activate"]()
+    assert native.activation_pending
+    assert calls.count(("foreground", 10)) == 2  # direct, then the attach dance
+
+    calls.clear()
+    windows[0].callbacks["on_activate"]()  # second click mid-activation
+    assert calls == []
+    assert native._activation[1] == 1  # attempts untouched
+
+    fg[0] = 10  # the transition completed on its own
+    native.tick_activation()
+    assert calls == []  # no refire
+    assert not native.activation_pending

@@ -826,6 +826,12 @@ class CompanionFamily:
         # it, because no real transition followed (#258 polish follow-up).
         if self._libs.user32.GetForegroundWindow() == live.binding.hwnd:
             return
+        if self._activation is not None and self._activation[0] is live:
+            # A click during a pending activation must not reset the retry
+            # counter: the pending loop is already converging, and a longer
+            # run of redundant SetForegroundWindows is exactly the churn
+            # that knocked the ring off in the first place.
+            return
         self._activation = (live, 0)
         self.tick_activation()
 
@@ -846,6 +852,15 @@ class CompanionFamily:
                 raise SourceUnavailable("Source window is unavailable")
             user, kernel = self._libs.user32, self._libs.kernel32
             hwnd = live.binding.hwnd
+            if user.GetForegroundWindow() == hwnd:
+                # The transition completed on its own between ticks. Retrying
+                # SetForegroundWindow on an already-foreground window is the
+                # focus churn that dropped the ring -- a pending activation
+                # must converge, never re-fire (#258 polish follow-up).
+                self._activation = None
+                self._errors.pop(live.spec.definition.id, None)
+                self._status()
+                return
             if user.IsIconic(hwnd):
                 if attempts == 0:
                     user.ShowWindowAsync(hwnd, win32.SW_RESTORE)
