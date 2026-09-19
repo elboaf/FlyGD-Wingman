@@ -130,6 +130,26 @@ def _punch_thumbnail_hole(d, w, h, border) -> None:
     )
 
 
+def border_color(value) -> tuple:
+    """The selection ring's RGBA, parsed from the #rrggbb setting.
+
+    Falls back to the shipped cyan rather than raising: the value arrives
+    from settings, which validated_preview has already screened, so an
+    unparsable string here means a settings file edited by hand -- and a
+    ring in the wrong colour beats a preview subsystem that died mid-drag.
+    Shared with the companion windows, which draw the same ring.
+    """
+    try:
+        return (
+            int(value[1:3], 16),
+            int(value[3:5], 16),
+            int(value[5:7], 16),
+            255,
+        )
+    except (TypeError, ValueError):
+        return (0, 200, 220, 255)
+
+
 def render(size, *, border_color, border=5, selected=False):
     """Render one preview's chrome.
 

@@ -752,6 +752,7 @@ class PreviewHost:
                     self._crop_controller is None
                     or self._crop_controller._temporary is None
                 ),
+                ring_color=self._selection_ring_color,
             )
 
     def _apply_companion_commands(self, libs):

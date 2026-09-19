@@ -74,6 +74,8 @@ class Window:
         self.binding, self.rect, self.source_rect = binding, rect, source
         self.callbacks = callbacks
         self.hidden = True
+        self.active = False
+        self.selection_color = "#00c8dc"
         self.failed = None
         self.hwnd = 100
         self.close_ok = True
@@ -88,6 +90,9 @@ class Window:
     def set_hidden(self, hidden, *, authorized=None):
         if hidden or authorized is None or authorized():
             self.hidden = hidden
+
+    def set_active(self, active):
+        self.active = active
 
     def move(self, rect):
         self.rect = rect
@@ -459,3 +464,30 @@ def test_show_on_focus_sources_respects_the_tick_and_skips_retiring(family):
     )
     native.live[DEFINITION.id].retiring = True
     assert native.show_on_focus_sources() == ()
+
+
+def test_lost_focus_marks_only_the_source_foreground_companion_active(family):
+    """#258 polish: the ring rides the visibility sweep -- active exactly
+    while this companion's source window holds the foreground, and never
+    while the window itself is hidden by the hide-active clause."""
+    native, _, windows, _, _, _ = family
+    window = _live_companion(native, windows)
+
+    native.apply_lost_focus_hidden(False, False, 999)
+    assert not window.active
+    native.apply_lost_focus_hidden(False, False, BINDING.hwnd)
+    assert window.active
+    native.apply_lost_focus_hidden(False, True, BINDING.hwnd)
+    assert window.hidden and not window.active
+    native.apply_lost_focus_hidden(False, False, 0)
+    assert not window.active
+
+
+def test_ring_colour_is_reread_from_the_seam_per_sweep(family):
+    native, _, windows, _, _, _ = family
+    window = _live_companion(native, windows)
+    native._ring_color = lambda: "#abcdef"
+
+    native.apply_lost_focus_hidden(False, False, 999)
+
+    assert window.selection_color == "#abcdef"

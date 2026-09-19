@@ -9,10 +9,10 @@ import ctypes
 import logging
 from ctypes import wintypes
 
-from . import win32
+from . import chrome, geometry, layered, win32
 from .layout import Rect
 from .thumbnail import Thumbnail
-from .window import CLICK_PX, coalesce_moves, drag_target, resize_result
+from .window import BORDER, CLICK_PX, coalesce_moves, drag_target, resize_result
 
 logger = logging.getLogger(__name__)
 COMPANION_CLASS = "WingmanCompanionPreview"
@@ -61,27 +61,57 @@ def _dispatch(hwnd, msg, wparam, lparam):
 
 
 class CompanionWindow:
-    def __init__(self, libs, binding, rect, source_rect, on_activate, on_geometry):
+    # Same shipped default as PreviewWindow and _preview_defaults; the
+    # family injects the live setting at creation and refreshes it per sweep.
+    selection_color = "#00c8dc"
+
+    def __init__(
+        self,
+        libs,
+        binding,
+        rect,
+        source_rect,
+        on_activate,
+        on_geometry,
+        selection_color=None,
+    ):
         self._libs = libs
         self.binding = binding
         self.rect = rect
         self.source_rect = source_rect
         self._on_activate = on_activate
         self._on_geometry = on_geometry
+        if selection_color is not None:
+            self.selection_color = selection_color
         self.hwnd = None
         self._thumb = None
         self.hidden = True
+        self.active = False
         self.failed = None
         self._mode = self._start = self._start_rect = None
+        self._chrome_cache_key = None
 
     @classmethod
-    def create(cls, libs, binding, rect, source_rect, *, on_activate, on_geometry):
-        self = cls(libs, binding, rect, source_rect, on_activate, on_geometry)
+    def create(
+        cls,
+        libs,
+        binding,
+        rect,
+        source_rect,
+        *,
+        on_activate,
+        on_geometry,
+        selection_color=None,
+    ):
+        self = cls(
+            libs, binding, rect, source_rect, on_activate, on_geometry, selection_color
+        )
         try:
             _ensure_class(libs)
             self.hwnd = (
                 libs.user32.CreateWindowExW(
-                    win32.WS_EX_TOOLWINDOW
+                    win32.WS_EX_LAYERED
+                    | win32.WS_EX_TOOLWINDOW
                     | win32.WS_EX_NOACTIVATE
                     | win32.WS_EX_TOPMOST,
                     COMPANION_CLASS,
@@ -109,11 +139,52 @@ class CompanionWindow:
             return None if self.close() else self
         return self
 
+    def _chrome_key(self):
+        return (self.rect.w, self.rect.h, self.active, self.selection_color)
+
+    def _redraw_chrome(self):
+        """Push the chrome bitmap under the thumbnail. Same arrangement as
+        PreviewWindow.redraw, minus the per-move force path: a companion
+        drag repaints through move() -> _update() anyway, and the cache key
+        makes the steady-state cost one tuple compare."""
+        if self.hwnd is None:
+            return
+        key = self._chrome_key()
+        if key == self._chrome_cache_key:
+            return
+        layered.push(
+            self._libs,
+            self.hwnd,
+            chrome.render(
+                (self.rect.w, self.rect.h),
+                border_color=chrome.border_color(self.selection_color),
+                border=BORDER,
+                selected=self.active,
+            ),
+            self.rect.x,
+            self.rect.y,
+        )
+        self._chrome_cache_key = key
+
+    def set_active(self, active: bool) -> None:
+        """Whether this companion's source window holds the foreground, and
+        so the ring shows. Presentation only: the family routes the sweep's
+        foreground observation, no authority involved. The ring rides the
+        same cadence as the EVE previews' -- one sweep, never per mouse-move."""
+        if active == self.active:
+            return
+        self.active = active
+        self._redraw_chrome()
+
     def _update(self):
         if self._thumb is None:
             return False
+        # Inset even while inactive: the unselected ring is the near-black
+        # interior fill (chrome.py), and a changing inset would resize the
+        # video every time the foreground moved.
+        self._redraw_chrome()
         hr = self._thumb.update(
-            Rect(0, 0, self.rect.w, self.rect.h),
+            geometry.thumbnail_rect(self.rect, BORDER),
             visible=not self.hidden,
             source_rect=self.source_rect,
         )

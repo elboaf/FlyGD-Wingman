@@ -62,6 +62,7 @@ class CompanionFamily:
         catalog=None,
         create_window=CompanionWindow.create,
         create_picker=RegionPicker.create,
+        ring_color=None,
     ):
         self._libs = libs
         self._controller = controller
@@ -69,6 +70,9 @@ class CompanionFamily:
         self._authorized = authorized
         self._temporary_available = temporary
         self._monitors = monitors
+        # Live ring-colour seam, same cadence as the host's selection_color;
+        # the shipped default keeps direct constructions (tests) honest.
+        self._ring_color = ring_color or (lambda: CompanionWindow.selection_color)
         self._catalog = (
             catalog
             if catalog is not None
@@ -306,6 +310,7 @@ class CompanionFamily:
             source,
             on_activate=lambda: None,
             on_geometry=lambda rect: None,
+            selection_color=self._ring_color(),
         )
         if candidate.window is None or candidate.window.failed:
             raise SourceUnavailable("Source window could not be captured")
@@ -511,18 +516,31 @@ class CompanionFamily:
         its windows, and the whether lives in the pure module. The authority
         callback matches _bind/_promote because an un-hide is a promotion of
         a live window just as much as a first show is.
+
+        The same foreground observation also drives the ring (#258 polish):
+        a companion is "active" exactly while its source window holds the
+        foreground and it is not itself hidden by the hide-active clause,
+        mirroring which preview the user is working in. The colour is
+        re-read here so a recolour applies without reopening windows.
         """
+        color = self._ring_color()
         for identity, live in tuple(self.live.items()):
             if live.retiring:
                 continue
             token = self._token(live.spec)
+            if live.window.selection_color != color:
+                live.window.selection_color = color
+            hidden = visibility.should_hide_source(
+                global_hidden=hidden,
+                hide_active=active,
+                foreground=foreground,
+                source_hwnd=live.binding.hwnd if active else 0,
+            )
+            live.window.set_active(
+                bool(foreground) and foreground == live.binding.hwnd and not hidden
+            )
             live.window.set_hidden(
-                visibility.should_hide_source(
-                    global_hidden=hidden,
-                    hide_active=active,
-                    foreground=foreground,
-                    source_hwnd=live.binding.hwnd if active else 0,
-                ),
+                hidden,
                 authorized=lambda lv=live, t=token, i=identity: (
                     self.live.get(i) is lv and self._authorized(t, promotion=True)
                 ),
@@ -663,7 +681,13 @@ class CompanionFamily:
             activate, moved = self._wire_window(live)
             rect = self._placement(spec.definition, fresh, source)
             window = self._create_window(
-                self._libs, fresh, rect, source, on_activate=activate, on_geometry=moved
+                self._libs,
+                fresh,
+                rect,
+                source,
+                on_activate=activate,
+                on_geometry=moved,
+                selection_color=self._ring_color(),
             )
             live.window = window
             verified = self._verify(fresh)

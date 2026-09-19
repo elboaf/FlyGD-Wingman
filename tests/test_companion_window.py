@@ -5,7 +5,9 @@ from types import SimpleNamespace
 import pytest
 
 from wingman.preview import win32
+from wingman.preview.chrome import border_color
 from wingman.preview.layout import Rect
+from wingman.preview.window import BORDER
 
 
 class WindowOS:
@@ -95,12 +97,20 @@ def make(monkeypatch):
 
     monkeypatch.setattr(companionwindow, "_ensure_class", lambda libs: None)
     native = WindowOS()
+    # The ring rides a real UpdateLayeredWindow; record the bitmaps instead.
+    pushed = []
+    monkeypatch.setattr(
+        companionwindow.layered,
+        "push",
+        lambda libs, hwnd, img, x, y: pushed.append((hwnd, img, x, y)) or True,
+    )
+    native.pushed = pushed
     binding = SourceBinding(
         10, 20, 42, r"c:\tools\browser.exe", "Browser", "Mapper", (1280, 720)
     )
     activated, geometry = [], []
 
-    def create(region=None):
+    def create(region=None, selection_color=None):
         return CompanionWindow.create(
             native.libs,
             binding,
@@ -108,6 +118,7 @@ def make(monkeypatch):
             region,
             on_activate=lambda: activated.append(True),
             on_geometry=geometry.append,
+            selection_color=selection_color,
         )
 
     return create, native, activated, geometry
@@ -186,7 +197,12 @@ def test_right_drag_resizes_each_axis_independently(make, region, delta, expecte
         assert window.source_rect == region
         assert window.binding.client_size == (1280, 720)
         props = native.props[-1]
-        assert (props.rcDestination.right, props.rcDestination.bottom) == expected_size
+        # The thumbnail sits inside the chrome inset, never edge to edge:
+        # the ring needs somewhere to draw without being overpainted.
+        assert (
+            props.rcDestination.right,
+            props.rcDestination.bottom,
+        ) == (expected_size[0] - BORDER, expected_size[1] - BORDER)
     finally:
         window.close()
 
@@ -199,4 +215,48 @@ def test_revocation_during_visible_update_never_shows_candidate(make):
     assert not any(
         call == ("show", 100, win32.SW_SHOWNOACTIVATE) for call in native.calls
     )
+    window.close()
+
+
+def _edge(img):
+    return img.getpixel((0, 0))
+
+
+def test_ring_draws_only_while_active_and_unchanged_sweeps_skip_the_push(make):
+    """The companion ring mirrors the EVE previews' chrome: same border
+    width, same colour source, drawn only while this companion's source
+    holds the foreground. Unchanged chrome never re-pushes a bitmap."""
+    create, native, _, _ = make
+    window = create()
+    window.set_hidden(False)
+    assert window.active is False
+    assert len(native.pushed) == 1  # initial chrome, ringless
+    assert _edge(native.pushed[0][1]) == (8, 10, 14, 255)
+
+    window.set_active(True)
+    assert len(native.pushed) == 2
+    assert _edge(native.pushed[1][1]) == border_color(window.selection_color)
+    window.set_active(True)  # idempotent sweeps are free
+    assert len(native.pushed) == 2
+
+    window.move(Rect(10, 10, 320, 180))  # geometry alone re-pushes nothing
+    assert len(native.pushed) == 2
+
+    window.set_active(False)
+    assert len(native.pushed) == 3
+    assert _edge(native.pushed[2][1]) == (8, 10, 14, 255)
+    window.close()
+
+
+def test_ring_colour_arrives_at_creation_and_live_through_the_family_seam(make):
+    create, native, _, _ = make
+    window = create(selection_color="#ff00ff")
+    assert window.selection_color == "#ff00ff"
+    assert window._chrome_cache_key == (320, 180, False, "#ff00ff")
+    window.set_active(True)
+    assert _edge(native.pushed[-1][1]) == border_color("#ff00ff")
+    window.selection_color = "#00ff00"
+    window.set_active(False)
+    window.set_active(True)  # recolour participates in the cache key
+    assert _edge(native.pushed[-1][1]) == (0, 255, 0, 255)
     window.close()

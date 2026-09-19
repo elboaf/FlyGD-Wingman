@@ -66,6 +66,8 @@ class RecoveryOS(WindowOS):
 @pytest.fixture
 def recovery(monkeypatch):
     monkeypatch.setattr(companionwindow, "_ensure_class", lambda libs: None)
+    # The ring chrome needs a real DC; these tests assert on ownership, not pixels.
+    monkeypatch.setattr(companionwindow.layered, "push", lambda *args: True)
     monkeypatch.setattr(win32, "enum_windows_proc_type", lambda: lambda fn: fn)
     os = RecoveryOS()
     source = SourceOS()

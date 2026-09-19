@@ -553,22 +553,11 @@ class PreviewWindow:
     def _border_color(self):
         """The selection ring's RGBA, parsed from the #rrggbb setting.
 
-        Called once per redraw, never per mouse-move. Falls back to the
-        shipped cyan rather than raising: the value arrives from
-        settings, which validated_preview has already screened, so an
-        unparsable string here means a settings file edited by hand --
-        and a ring in the wrong colour beats a preview subsystem that
-        died mid-drag.
+        Called once per redraw, never per mouse-move. Parsing and the
+        shipped-cyan fallback live in chrome.border_color, shared with the
+        companion windows' ring.
         """
-        try:
-            return (
-                int(self.selection_color[1:3], 16),
-                int(self.selection_color[3:5], 16),
-                int(self.selection_color[5:7], 16),
-                255,
-            )
-        except (TypeError, ValueError):
-            return (0, 200, 220, 255)
+        return chrome.border_color(self.selection_color)
 
     def redraw(self, force: bool = False) -> None:
         """Re-render the chrome bitmap and push it to the layered surface.
