@@ -32,7 +32,9 @@ source directory), the legacy `AppId` uninstall key in
 `packaging/installer.iss` (`RemovePredecessor()`), the legacy `.lnk` name in
 `installer.iss`'s `[InstallDelete]` and in `autostart.py`'s
 `_LEGACY_SHORTCUT_NAMES`, and the legacy name in `installer.iss`'s
-`AppMutex`.
+`installer.iss`'s `[Code]` mutex wait (`WaitForWingmanToClose()`, which
+replaced the `AppMutex` directive in #259 so the wizard waits out the
+updater's shutdown instead of popping a dialog).
 
 ## Commands
 
