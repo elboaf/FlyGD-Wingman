@@ -2531,7 +2531,9 @@ class Api:
             return
         for _ in range(12):
             try:
-                bar.resize(width, height)
+                # sigbar.resize_bar, not bar.resize: pywebview's resize
+                # takes the OS foreground on every call (issue #262).
+                sigbar.resize_bar(bar, width, height)
             except Exception:
                 # Before `shown`, resize can raise; the retry below is the
                 # whole reason this loop exists.

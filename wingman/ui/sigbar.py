@@ -186,6 +186,31 @@ def _apply_tool_style(bar) -> None:
     )
 
 
+def resize_bar(bar, width, height) -> None:
+    """Resize without activating the bar or moving it in the Z order.
+
+    pywebview's resize() is SetWindowPos(HWND_TOP, ..., SWP_SHOWWINDOW):
+    no SWP_NOZORDER, no SWP_NOACTIVATE -- so every fit raised the bar to
+    the top of the Z order AND made it the OS foreground window. The page
+    re-fits on every render, i.e. once per 3s poll, which is exactly the
+    focus steal of issue #262. The native call keeps pywebview's
+    scale-and-no-Invoke shape but adds the two flags. Non-win32 (tests)
+    and windows without a readable handle keep the pywebview call.
+    """
+    if sys.platform == "win32":
+        handle = _hwnd(bar)
+        if handle:
+            from wingman.ui import chrome
+
+            user32, _set_ptr, _wndproc, _mi, _mmi, wintypes = chrome._win32()
+            scale = chrome._scale_for(user32, handle) or 1.0
+            chrome.set_window_geometry(
+                user32, wintypes.HWND(handle), None, None, width, height, scale
+            )
+            return
+    bar.resize(width, height)
+
+
 def is_alive(bar) -> bool:
     """Whether the bar's window still exists as an OS window.
 

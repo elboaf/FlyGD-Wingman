@@ -59,6 +59,17 @@ WMSZ_LEFT, WMSZ_RIGHT = 1, 2
 GWLP_WNDPROC = -4
 MONITOR_DEFAULTTONEAREST = 2
 
+# SetWindowPos flags for set_window_geometry. The pair that matters is
+# NOZORDER|NOACTIVATE: pywebview's own resize()/move() pass only
+# SWP_SHOWWINDOW with an HWND_TOP insert-after, so every geometry change
+# raised the window to the top of the Z order AND made it the foreground
+# window -- the sig bar's per-poll focus steal (issue #262).
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+SWP_SHOWWINDOW = 0x0040
+
 # Grab thickness in LOGICAL pixels, scaled per window DPI at hit-test time.
 # BORDER must never exceed INSET -- beyond the inset the WebView2 child owns
 # the pixels and no hit-test arrives, so the extra reach would be dead.
@@ -303,6 +314,31 @@ def _scale_for(user32, hwnd):
         return (dpi / 96.0) if dpi else 1.0
     except OSError:
         return 1.0
+
+
+def set_window_geometry(user32, handle, x, y, width, height, scale) -> bool:
+    """One SetWindowPos applying logical-unit geometry without stealing
+    focus or Z-order position (issue #262).
+
+    pywebview's resize()/move() are the same call but with an HWND_TOP
+    insert-after and only SWP_SHOWWINDOW -- no NOZORDER, no NOACTIVATE --
+    so a bar that re-fits on every poll tick became the foreground window
+    once per tick, yanking focus from the client being flown. This keeps
+    the properties both bars rely on (direct call, no Invoke, so the
+    native-race comments on the callers hold) while adding the two flags.
+    Any of x/y/width/height may be None to leave that axis alone.
+    Returns whether SetWindowPos reported success.
+    """
+    flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW
+    if x is None and y is None:
+        flags |= SWP_NOMOVE
+    if width is None and height is None:
+        flags |= SWP_NOSIZE
+    px = int(x * scale) if x is not None else 0
+    py = int(y * scale) if y is not None else 0
+    pw = int(width * scale) if width is not None else 0
+    ph = int(height * scale) if height is not None else 0
+    return bool(user32.SetWindowPos(handle, None, px, py, pw, ph, flags))
 
 
 def _on_ui_thread(native, fn) -> None:
