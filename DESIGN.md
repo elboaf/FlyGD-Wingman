@@ -614,6 +614,27 @@ focus and text selection restored only when that editor still owns focus.
 A newer route, row or dialog must never have focus taken back by a refresh.
 Save remains explicit, and disclosure state is session-only.
 
+Retained metadata records distinguish their committed name/description from the
+values being edited. **Unsaved changes** means exact string inequality in either
+field, or a pending Save, not simply that a draft record exists. Reverting both
+fields is clean and disables Save; a pending submission remains dirty even if the
+user types back to the old baseline. A true acknowledgement advances the local
+committed high-water mark and exact submitted pair without replacing newer typing.
+A refusal leaves the baseline unchanged; its message can remain while reverted
+values are clean. Accepted reads and existing row/route fences cannot undo a newer
+acknowledgement or replace dirty, pending or refused values. This is page-local
+state, not a new backend revision or persisted library format. Native text controls
+may display saved line breaks differently (for example CRLF as LF in a textarea).
+An untouched field, or a return to its original rendered value, retains its exact
+original string; editing the other field must not silently rewrite it. New edits
+use the control's value. No normalization is added to the stored metadata.
+
+The metadata fields, neutral Save and existing outcome belong to one explicit-save
+group. Collections and Superseded by are a separate immediate group, with their
+own existing write endpoints and refusal refresh. Their changes never save or
+mark name/description dirty. Stable control identities preserve only currently
+owned immediate-control focus during refresh; a newer control or dialog wins.
+
 Fittings' neutral **Import from clipboard…** opens an inline EFT draft and
 attempts a read only when text, review and result are all absent. Reopening a
 retained draft or result preserves it; **Read clipboard** explicitly replaces
@@ -636,7 +657,28 @@ share that page-owned selection; existing filter/page/route pruning remains in
 force. Selection-only changes repaint checkboxes and the Copy count, never the
 metadata editor or a bridge read/write. Clearing from the focused helper returns
 focus locally to Select page without scrolling; programmatic changes never take
-focus from an editor. Copy selected remains the sole accent action.
+focus from an editor. Copy selected remains the sole accent action. Its existing
+selected count and subordinate helpers share one action area, without exposing
+preflight's target-character selection.
+
+Fittings keeps native checkboxes and expansion buttons, not an ARIA table around
+interactive detail content. The visual Fitting, Hull and Owner/status labels share
+tracks and insets with every row. The warning's complete Details… action stays
+beside ownership, outside the expansion button. Details retains a fitting-specific
+focus identity across rebuilds, falling back to that fitting's expansion button if
+the warning disappears. New controls, row actions, renders, routes and dialogs
+revoke the old continuation; a removed fitting has no fallback. Full fitting/hull/status text
+remains in accessible names or titles when visually truncated. At 960px and below,
+identity and status stack and the now-misleading visual header disappears; selection
+and expansion stay reachable. The actual expanded header remains opaque and sticky
+within its fitting, with measured focus clearance rather than a fixed row-height
+assumption. Native checkbox focus occupies the painted label's bounds.
+
+Wide fitting details put description, saved clipboard export and module groups
+before aliases, ownership and management in the DOM, drawn as two regions. The
+same order becomes one column at the floor. The existing workspace remains the
+only work scroller; sparse collections gain no filler. Clipboard export remains
+neutral and uses saved content, independent of metadata drafts.
 
 Formation import separates parsing source text from validating edited candidates.
 After successful Review, unchanged source cannot be parsed again and discard name

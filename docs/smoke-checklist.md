@@ -5762,6 +5762,60 @@ for these items.
       mouse and keyboard, Escape closes it, focus returns to the trigger, and
       no horizontal or outer-pane overflow appears.
 
+### Library presentation and metadata ownership
+
+These presentation checks do not prove ESI, clipboard or persisted library writes.
+Use controlled replies for failure/race cases; any real local-write checks need a
+separately approved disposable library.
+
+- [ ] At 1015×633, the visual Fitting, Hull and Owner/status headings align with
+      ordinary and cannot-copy rows. At 840×625, identity/status stack without a
+      misleading column header or horizontal overflow. The complete warning and
+      Details… action remain reachable. Check long fitting/hull/collection names,
+      including full accessible names/titles; sparse collections stay sparse.
+- [ ] Keyboard-activate Cannot copy · Details… while collapsed, then while open.
+      Keep focus on its rebuilt fitting-specific action through the detail reply,
+      without scrolling. If refreshed eligibility removes the warning, continue
+      on that fitting's expansion button, never another editor. Filtering/paging
+      it away, a newer row/control/render/route or a dialog must revoke the old
+      continuation. Already-open Details stays open; the row toggle still closes it.
+- [ ] Select page, Clear selection and Copy selected share one area. Copy is the
+      only accent and reports the current filtered page's selected count. Check
+      zero/one/many, filter/page pruning and refresh. Selection-only changes must
+      not rebuild an open editor, move its caret, lose drafts or scroll. Keyboard
+      Clear returns locally to Select page; programmatic changes never take focus.
+- [ ] Expand one-owner and multi-owner fittings. Above 960px, description/export/
+      modules appear before aliases/ownership/management in two regions; at the
+      floor they follow the same logical order in one column. Copy to clipboard
+      stays neutral and still exports saved content, not a name/description draft.
+- [ ] Metadata starts closed. Open/close without edits stays clean. Edit either
+      field to show Unsaved changes and enable neutral Save; revert both to clean
+      and disabled Save. Immediate collections/supersession stay outside the
+      Save group and do not dirty or save those fields.
+- [ ] While Save is pending, type back to the old baseline: still dirty, Save
+      disabled. A successful acknowledgement establishes exactly its submitted
+      pair, never overwrites newer typing, and clears the cue only if displayed
+      values now match. An older detail reply cannot regress that baseline.
+- [ ] Refuse/fail Save: retain text, baseline and the operation's error. Reverting
+      to committed values may be clean and disable Save while the error remains.
+      With controlled committed CRLF descriptions or names containing line breaks,
+      edit/revert stays clean and editing the other field preserves the untouched
+      exact string; native control rendering is not permission to normalize data.
+      Repeat across list refresh, refusal and an acknowledgement with newer typing
+      retained: rebuilding controls must not forget the committed raw pair.
+      Failed refreshes, filtered/off-page rows and route changes retain drafts
+      under their existing lifecycle. Check discard/deletion and later re-entry.
+- [ ] Refresh with focus/caret in the editor, an immediate control, another row,
+      search or a dialog. Restore only currently owned focus and selection, never
+      take it back from the newer surface. Collection refusal refresh also keeps
+      its control focused without saving the metadata draft.
+- [ ] Tab/Shift+Tab through row buttons, metadata, collections and supersession
+      with long content. The complete focus target clears the measured sticky
+      identity and bottom boundary, including checkbox paint and textarea borders.
+      Resize between widths while expanded. Forced colors retain checkbox,
+      expanded-row, dirty-text and keyboard-focus distinctions. Repeat with real
+      AT and Windows/WebView2 at 100/125/150/200%; browser doubles do not prove it.
+
 ### Library, import and curation
 
 - [ ] **A real Personal Fittings read imports atomically.** Put representative

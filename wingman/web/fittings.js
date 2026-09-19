@@ -40,8 +40,10 @@
   var locateOwner = null;
   var exportOwner = null;
   var selected = {};       // entry_id -> true, pruned to the rendered page
-  // Only edited IDs, never a second library: retained across page/filter changes,
-  // retired by acknowledgement, deliberate discard, or confirmed deletion.
+  var listRenderSequence = 0;
+  // Only edited IDs, never a second library. The committed pair stays with its
+  // draft/receipt owner across reads and off-page saves; equality is not disposal.
+  // Deliberate discard and confirmed deletion still retire the whole record.
   var metadataDrafts = {};
   var metadataEditors = Object.create(null); // open/closed per ID, independent of drafts; session-only
   var progress = null;     // last refresh onFittingsProgress payload
@@ -950,7 +952,26 @@
     return ids.map(function (id) { return byId[id] || id; }).join(', ');
   }
 
-  function renderList() {
+  var stickyHeaderObserver = window.ResizeObserver
+    ? new window.ResizeObserver(measureStickyClearance) : null;
+
+  function measureStickyClearance() {
+    var toggle = expandedId ? WM.el('fit-toggle-' + expandedId) : null;
+    var top = toggle && toggle.parentNode;
+    var scroller = WM.el('fittings-workspace-scroll');
+    if (top && top.getClientRects().length) {
+      scroller.style.setProperty('--fit-sticky-clearance',
+        (top.getBoundingClientRect().height + 8) + 'px');
+    } else scroller.style.removeProperty('--fit-sticky-clearance');
+  }
+
+  window.addEventListener('resize', measureStickyClearance);
+
+  function renderList(rowActionId) {
+    var renderToken = ++listRenderSequence;
+    var renderRequest = requestSequence;
+    var renderExpanded = expandedId;
+    if (stickyHeaderObserver) stickyHeaderObserver.disconnect();
     cancelExport(); // the row's controls are about to detach, even without a query
     var host = WM.el('fittings-list');
     var empty = WM.el('fittings-empty');
@@ -962,7 +983,12 @@
       metadataEditors[editorId] = editor.open;
     }
     var active = document.activeElement;
-    var focusId = (editor && editor.contains(active))
+    var immediate = host.querySelector('.fit-immediate');
+    var warningId = active && host.contains(active) && active.classList.contains('fit-deployability')
+      ? active.getAttribute('data-entry-id') : '';
+    var focusId = (warningId && (!rowActionId || rowActionId === warningId))
+      || (editor && editor.contains(active))
+      || (immediate && immediate.contains(active))
       || (active && active.classList.contains('fit-row-toggle') && host.contains(active))
       ? active.id : '';
     var start = focusId ? active.selectionStart : null;
@@ -971,8 +997,14 @@
     var scroller = WM.el('fittings-workspace-scroll');
     var scrollTop = scroller.scrollTop;
     host.textContent = '';
+    // Removing a focused node can synchronously hand control to a newer render
+    // or route. The retired owner must neither repaint nor reclaim its focus.
+    if (renderToken !== listRenderSequence || renderRequest !== requestSequence
+        || renderExpanded !== expandedId) return;
     var rows = STATE.rows || [];
+    WM.el('fittings-list-head').hidden = !rows.length;
     if (!rows.length) {
+      measureStickyClearance();
       empty.hidden = false;
       var filtered = !!(filters.search.trim() || filters.ship_type_id
                         || filters.collection_id !== 'all');
@@ -983,19 +1015,30 @@
     }
     empty.hidden = true;
     rows.forEach(function (row, index) { host.appendChild(rowNode(row, index)); });
-    // Emptying the list can clamp its parent to zero even without owned focus.
-    scroller.scrollTop = scrollTop;
-    if (focusId && WM.current_route === 'fittings' && !copyOverlayOpen
-        && WM.el('overlay').hidden) {
+    measureStickyClearance();
+    var expandedToggle = expandedId ? WM.el('fit-toggle-' + expandedId) : null;
+    if (stickyHeaderObserver && expandedToggle) stickyHeaderObserver.observe(expandedToggle.parentNode);
+    // Emptying the list can clamp its parent to zero, but a synchronous focus
+    // successor also owns any scroll it established during that handoff.
+    if (document.activeElement === active || document.activeElement === document.body) {
+      scroller.scrollTop = scrollTop;
+    }
+    if (focusId && renderToken === listRenderSequence && renderRequest === requestSequence
+        && renderExpanded === expandedId && WM.current_route === 'fittings' && !copyOverlayOpen
+        && WM.el('overlay').hidden
+        && (document.activeElement === active || document.activeElement === document.body)) {
       var replacement = WM.el(focusId);
-      // Discard disappears after acceptance; a pending Save may be disabled.
-      // Keep focus in that fitting's editor rather than on a retired control.
+      // Eligibility can remove Details; keep its continuation on the same row,
+      // never in another fitting's editor. Removed rows have no fallback.
+      // Discard/Save retain their existing editor-summary fallback.
       if (!replacement || replacement.disabled || !replacement.getClientRects().length) {
-        replacement = editor
+        replacement = warningId ? WM.el('fit-toggle-' + warningId) : editor
           ? WM.el('fit-metadata-summary-' + editor.getAttribute('data-entry-id')) : null;
       }
       if (replacement && replacement.getClientRects().length) {
         replacement.focus({ preventScroll: true });
+        if (renderToken !== listRenderSequence || renderRequest !== requestSequence
+            || renderExpanded !== expandedId || document.activeElement !== replacement) return;
         if (replacement.id === focusId && typeof start === 'number' && typeof end === 'number') {
           replacement.setSelectionRange(start, end, direction);
         }
@@ -1058,6 +1101,31 @@
   });
   WM.el('fittings-copy-selected').addEventListener('click', openCopyOverlay);
 
+  function metadataDirty(value) {
+    return !!value && (value.pending || value.name !== value.committedName
+      || value.description !== value.committedDescription);
+  }
+
+  function rowMetadata(row) {
+    var meta = [];
+    meta.push('On ' + row.presence_count
+             + (row.presence_count === 1 ? ' character' : ' characters'));
+    if (row.collection_ids.length) meta.push(collectionNames(row.collection_ids));
+    if (row.superseded_by) meta.push('Superseded');
+    if (metadataDirty(metadataDrafts[row.id])) meta.push('Unsaved changes');
+    return meta.join(' \u00b7 ');
+  }
+
+  function updateRowMetadata(id) {
+    var meta = WM.el('fit-meta-' + id);
+    var row = (STATE.rows || []).filter(function (item) { return item.id === id; })[0];
+    if (!meta || !row) return;
+    meta.textContent = rowMetadata(row);
+    meta.title = meta.textContent;
+    // A keystroke changes only the cue, never the live editor/caret or scroller.
+    measureStickyClearance();
+  }
+
   function rowNode(row, index) {
     var shipName = row.ship_name || ('Type ' + row.ship_type_id);
     var node = WM.make('div', 'fit-row');
@@ -1089,27 +1157,37 @@
     toggle.setAttribute('aria-expanded', expandedId === row.id ? 'true' : 'false');
     var chevron = WM.make('span', 'chev', expandedId === row.id ? '\u25be' : '\u25b8');
     chevron.setAttribute('aria-hidden', 'true');
-    toggle.appendChild(chevron);
-    toggle.appendChild(WM.make('span', 'fit-name', row.name));
-    toggle.appendChild(WM.make('span', 'fit-ship', shipName));
-    var meta = [];
-    meta.push('On ' + row.presence_count
-             + (row.presence_count === 1 ? ' character' : ' characters'));
-    if (row.collection_ids.length) meta.push(collectionNames(row.collection_ids));
-    if (row.superseded_by) meta.push('Superseded');
-    if (metadataDrafts[row.id]) meta.push('Unsaved changes');
-    toggle.appendChild(WM.make('span', 'fit-meta', meta.join(' \u00b7 ')));
+    var identity = WM.make('span', 'fit-identity');
+    identity.appendChild(chevron);
+    var name = WM.make('span', 'fit-name', row.name);
+    name.id = 'fit-row-name-' + row.id;
+    name.title = row.name;
+    identity.appendChild(name);
+    toggle.appendChild(identity);
+    var ship = WM.make('span', 'fit-ship', shipName);
+    ship.id = 'fit-row-ship-' + row.id;
+    ship.title = shipName;
+    toggle.appendChild(ship);
+    var status = WM.make('div', 'fit-row-status');
+    var meta = WM.make('span', 'fit-meta', rowMetadata(row));
+    meta.id = 'fit-meta-' + row.id;
+    meta.title = meta.textContent;
+    status.appendChild(meta);
+    toggle.setAttribute('aria-labelledby', name.id + ' ' + ship.id + ' ' + meta.id);
     toggle.addEventListener('click', function () { toggleRow(row.id); });
     top.appendChild(toggle);
     if (!row.deployable) {
       var why = WM.make('button', 'linkbtn fit-deployability', 'Cannot copy \u00b7 Details\u2026');
+      why.id = 'fit-deployability-' + row.id;
+      why.setAttribute('data-entry-id', row.id);
       why.setAttribute('aria-label', row.name + ': cannot copy. Show details.');
       why.setAttribute('aria-expanded', expandedId === row.id ? 'true' : 'false');
       why.addEventListener('click', function () {
         if (expandedId !== row.id) toggleRow(row.id);
       });
-      top.appendChild(why);
+      status.appendChild(why);
     }
+    top.appendChild(status);
 
     node.appendChild(top);
     if (expandedId === row.id) node.appendChild(detailNode(row));
@@ -1121,28 +1199,41 @@
     cancelExport();
     detailError = '';
     detailSeq += 1;
+    var requestOwner = detailSeq;
     if (expandedId === id) {
       expandedId = '';
       detail = null;
-      renderList();
+      renderList(id);
       return;
     }
     expandedId = id;
     detail = null;
-    renderList();
-    requestDetail(id);
+    renderList(id);
+    // Focus/removal handlers may have handed the view to a newer row or route.
+    if (requestOwner === detailSeq && expandedId === id && WM.current_route === 'fittings') {
+      requestDetail(id);
+    }
   }
 
   function requestDetail(id) {
     detailError = '';
     detailSeq += 1;
     var token = detailSeq;
+    var committedRevision = metadataDrafts[id] ? metadataDrafts[id].committedRevision : 0;
     var pending = screenshotFixture
       ? Promise.resolve(screenshotDetail(id)) : WM.send('fittings_detail', id);
     pending.then(function (payload) {
       // A plan-switch-style guard: the row may have collapsed, or another
       // row may have been opened, while this reply was in flight.
       if (token !== detailSeq || expandedId !== id || WM.current_route !== 'fittings') return;
+      var value = metadataDrafts[id];
+      // This is a local ACK high-water mark, not a revision invented for Python.
+      // Reads begun before acceptance cannot replace its pair, even if clean.
+      if (value && value.committedRevision > committedRevision) return;
+      if (payload && value && !metadataDirty(value) && !value.error) {
+        value.name = value.committedName = payload.name;
+        value.description = value.committedDescription = payload.description;
+      }
       detail = payload;
       detailError = payload ? ''
         : 'Fitting detail is unavailable or no longer exists. Close and reopen it, or use Show fitting again.';
@@ -1162,24 +1253,30 @@
       box.appendChild(WM.make('p', 'notice',
         'Not deployable: this fitting cannot be copied safely. Choose a different fitting to copy.'));
     }
+    var content = WM.make('div', 'fit-detail-content');
     if (detail.description) {
-      box.appendChild(WM.make('p', 'fit-description', detail.description));
+      content.appendChild(WM.make('p', 'fit-description', detail.description));
     }
-    box.appendChild(exportNode(detail));
-    box.appendChild(modulesNode(detail.items || []));
+    content.appendChild(exportNode(detail));
+    content.appendChild(modulesNode(detail.items || []));
+    box.appendChild(content);
+    var management = WM.make('div', 'fit-detail-management');
     // Compare with the visible row title, not an independently refreshed detail
     // or an unsaved metadata draft. Alias provenance remains untouched.
     var aliases = (detail.aliases || []).filter(function (alias) { return alias.name !== row.name; });
-    if (aliases.length) box.appendChild(aliasesNode(aliases));
-    box.appendChild(presencesNode(detail.presences || []));
-    box.appendChild(metadataDisclosureNode(detail));
+    if (aliases.length) management.appendChild(aliasesNode(aliases));
+    management.appendChild(presencesNode(detail.presences || []));
+    management.appendChild(metadataDisclosureNode(detail));
+    var immediate = WM.make('div', 'fit-immediate');
     var immediateNote = WM.make('p', 'hint fit-immediate-note',
       'Collections and Superseded by apply immediately.');
     immediateNote.id = 'fit-immediate-note-' + detail.id;
-    box.appendChild(immediateNote);
-    box.appendChild(collectionsNode(detail));
-    box.appendChild(supersessionNode(detail));
-    box.appendChild(deleteNode(detail));
+    immediate.appendChild(immediateNote);
+    immediate.appendChild(collectionsNode(detail));
+    immediate.appendChild(supersessionNode(detail));
+    immediate.appendChild(deleteNode(detail));
+    management.appendChild(immediate);
+    box.appendChild(management);
     return box;
   }
 
@@ -1261,7 +1358,7 @@
     disclosure.setAttribute('data-entry-id', current.id);
     // A retained draft is not permission to reopen an editor the user closed.
     disclosure.open = Object.prototype.hasOwnProperty.call(metadataEditors, current.id)
-      ? metadataEditors[current.id] : !!metadataDrafts[current.id];
+      ? metadataEditors[current.id] : metadataDirty(metadataDrafts[current.id]);
     var summary = WM.make('summary', '', 'Edit metadata\u2026');
     summary.id = 'fit-metadata-summary-' + current.id;
     disclosure.appendChild(summary);
@@ -1278,7 +1375,12 @@
     nameInput.type = 'text';
     nameInput.className = 'field';
     nameInput.id = 'fit-name-' + current.id;
-    nameInput.value = draft ? draft.name : current.name;
+    var committedName = draft ? draft.committedName : current.name;
+    nameInput.value = committedName;
+    var committedNameView = nameInput.value;
+    var initialName = draft ? draft.name : current.name;
+    nameInput.value = initialName;
+    var renderedName = nameInput.value;
     var nameLabel = WM.make('label', 'lab', 'Name');
     nameLabel.setAttribute('for', nameInput.id);
     nameRow.appendChild(nameLabel);
@@ -1289,7 +1391,12 @@
     var descInput = document.createElement('textarea');
     descInput.className = 'field fit-description-field';
     descInput.id = 'fit-desc-' + current.id;
-    descInput.value = draft ? draft.description : current.description;
+    var committedDescription = draft ? draft.committedDescription : current.description;
+    descInput.value = committedDescription;
+    var committedDescriptionView = descInput.value;
+    var initialDescription = draft ? draft.description : current.description;
+    descInput.value = initialDescription;
+    var renderedDescription = descInput.value;
     var descLabel = WM.make('label', 'lab', 'Description');
     descLabel.setAttribute('for', descInput.id);
     descRow.appendChild(descLabel);
@@ -1304,7 +1411,10 @@
     var save = WM.make('button', 'btn', 'Save');
     save.id = 'fit-metadata-save-' + current.id;
     save.setAttribute('aria-describedby', scope.id);
-    var status = WM.make('p', 'hint');
+    var status = WM.make('p', 'hint fit-metadata-status');
+    status.id = 'fit-metadata-status-' + current.id;
+    nameInput.setAttribute('aria-describedby', scope.id + ' ' + status.id);
+    descInput.setAttribute('aria-describedby', scope.id + ' ' + status.id);
     var discard = WM.make('button', 'btn danger', 'Discard changes');
     discard.id = 'fit-metadata-discard-' + current.id;
     function updateStatus() {
@@ -1318,21 +1428,33 @@
           summary.focus({ preventScroll: true });
         }
       }
-      save.disabled = !!(value && value.pending);
-      discard.hidden = !value;
+      var dirty = metadataDirty(value);
+      save.disabled = !dirty || !!(value && value.pending);
+      discard.hidden = !dirty && !(value && value.error);
       discard.disabled = !!(value && value.pending);
-      status.textContent = value ? 'Unsaved changes'
-        + (value.pending ? ' \u2014 saving\u2026' : value.error || '') : '';
+      status.textContent = (dirty ? 'Unsaved changes' : '')
+        + (value && value.pending ? ' \u2014 saving\u2026'
+          : value && value.error ? (dirty ? ' \u2014 ' : '') + value.error : '');
+      updateRowMetadata(current.id);
     }
     function captureDraft() {
+      // Native text controls can strip line breaks or display CRLF as LF. A
+      // visual revert retains the exact committed string, including after a
+      // rebuild with a newer draft. Preserve an untouched draft's raw string
+      // too; newly edited values still come from the control, not normalization.
+      var name = nameInput.value === committedNameView ? committedName
+        : nameInput.value === renderedName ? initialName : nameInput.value;
+      var description = descInput.value === committedDescriptionView ? committedDescription
+        : descInput.value === renderedDescription ? initialDescription : descInput.value;
       var value = metadataDrafts[current.id];
       if (!value) {
-        value = { name: nameInput.value, description: descInput.value,
-                  revision: 0, pending: false, error: '' };
+        value = { name: name, description: description,
+                  committedName: current.name, committedDescription: current.description,
+                  committedRevision: 0, revision: 0, pending: false, error: '' };
         metadataDrafts[current.id] = value;
       }
-      value.name = nameInput.value;
-      value.description = descInput.value;
+      value.name = name;
+      value.description = description;
       value.revision += 1;
       updateStatus();
       return value;
@@ -1341,7 +1463,7 @@
     descInput.addEventListener('input', captureDraft);
     save.addEventListener('click', function () {
       var value = metadataDrafts[current.id];
-      if (value && value.pending) return;
+      if (!metadataDirty(value) || value.pending) return;
       value = captureDraft();
       var revision = value.revision;
       var name = value.name;
@@ -1357,7 +1479,13 @@
           // WM.send converts a rejected bridge promise to null. A push or
           // matching text alone is not an acknowledgement of this submission.
           if (applied === true) {
-            if (value.revision === revision) delete metadataDrafts[current.id];
+            // Python persists these exact strings unchanged. Keep newer typing
+            // and the receipt identity even when it happens to equal this pair.
+            if (revision > value.committedRevision) {
+              value.committedName = name;
+              value.committedDescription = description;
+              value.committedRevision = revision;
+            }
             // Even a just-reopened row with no detail yet can have an older
             // read pending. It must not resurrect pre-save metadata.
             if (expandedId === current.id) detailSeq += 1;
@@ -1366,7 +1494,7 @@
               detail.description = description;
             }
           } else {
-            value.error = ' \u2014 save not confirmed. Your draft is kept; try Save again.';
+            value.error = 'save not confirmed. Your draft is kept; try Save again.';
           }
           renderList();
           requestState();
@@ -1412,6 +1540,7 @@
       label.appendChild(check);
       label.appendChild(WM.make('span', 'box'));
       label.appendChild(WM.make('span', '', collection.name));
+      check.id = 'fit-collection-' + current.id + '-' + collection.id;
       check.checked = current.collection_ids.indexOf(collection.id) !== -1;
       check.setAttribute('aria-describedby', 'fit-immediate-note-' + current.id);
       check.addEventListener('change', function () {
@@ -1429,6 +1558,7 @@
     label.id = 'fit-supersession-label-' + current.id;
     box.appendChild(label);
     var select = WM.make('select', 'field');
+    select.id = 'fit-supersession-' + current.id;
     select.setAttribute('aria-labelledby', label.id);
     select.setAttribute('aria-describedby', 'fit-immediate-note-' + current.id);
     var none = WM.make('option', '', 'Not superseded');

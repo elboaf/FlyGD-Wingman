@@ -53,6 +53,10 @@ if (moduleName === 'formations') {
     }
   };
 }
+if (moduleName === 'fittings') {
+  const style = document.getElementById('fittings-workspace-scroll').style;
+  style.removeProperty = function (name) { delete this[name]; };
+}
 run(fs.readFileSync(web + '/' + moduleName + '.js', 'utf8'));
 const tick = () => new Promise(resolve => setTimeout(resolve, 10));
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return {promise, resolve}; };
@@ -208,6 +212,10 @@ async function gapRegression() {
     else if (scenario === 'zero-area') zero = true;
     else if (scenario === 'wrong-name') el('fit-name-fit-rifter-solo').value = 'Wrong fitting';
     else if (scenario === 'wrong-description') el('fit-desc-fit-rifter-solo').value = 'Wrong description';
+    else if (scenario === 'clean-save-enabled') target.disabled = false;
+    else if (scenario === 'immediate-inside-metadata') {
+      document.querySelector('.fit-metadata').appendChild(document.querySelector('.fit-immediate'));
+    }
     else if (scenario === 'missing-rack') document.querySelector('.fit-rack').remove();
     else if (scenario === 'redundant-alias') document.querySelector('.fit-aliases').appendChild(
       WM.make('p', 'fit-alias-row', 'Rifter - Solo PvP'));

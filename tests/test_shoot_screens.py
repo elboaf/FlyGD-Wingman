@@ -263,6 +263,8 @@ def test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests(
         "wrong-description",
         "missing-rack",
         "redundant-alias",
+        "clean-save-enabled",
+        "immediate-inside-metadata",
     ],
 )
 def test_metadata_capture_waits_for_real_detail_without_creating_drafts(
