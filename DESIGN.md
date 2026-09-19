@@ -680,6 +680,43 @@ same order becomes one column at the floor. The existing workspace remains the
 only work scroller; sparse collections gain no filler. Clipboard export remains
 neutral and uses saved content, independent of metadata drafts.
 
+Fitting-copy context is descriptive, never write authority. Before review the
+heading describes current selected fittings and targets. Once a ticket is accepted,
+a detached snapshot retains its actual fitting IDs/count, ordered target IDs/names,
+ticket identity and hull labels through progress, terminal failures and session-only
+Last copy results. It never derives counts from opening hull keys, result rows or
+attempted additions. Another abandoned setup cannot supply an older result's context.
+A known fitting count without retained target identity uses the selection-only
+heading; absent operation facts use the phase-generic title, never invented identities.
+No context is persisted or added to backend payloads. Background selection pruning
+updates only setup's description and retires an obsolete rejected limit estimate;
+an accepted response still owns its submitted set. A rejected response
+must match the pending request's detached fitting-ID snapshot to current selection
+membership before showing its feedback; row reordering is not a membership change.
+Otherwise it asks for a fresh Review without estimating additions. Rejection-time
+roster refresh retains logical target focus, or the body if that target is removed
+or disabled, and yields to newer request/focus/scroll owners.
+
+The operation heading and compact summary sit together outside the existing copy
+body scroller; footer actions remain separate. Pair-local identity keeps fitting,
+hull and target with its outcome while rows scroll. A viewport resize reveals an
+obscured current body control without changing focus/caret; passive size observation
+never undoes deliberate scrolling. Full error and recovery guidance
+remains in the body, with verification advice before retry advice. The original
+copy status owns announcements; visible summaries and progress do not add live
+regions. A determinate bar counts fitting/character checks, including non-additions,
+not successful writes. Missing or zero totals never fabricate a percentage. The
+native bar uses existing theme tokens, with system-colour tokens retaining its value
+and track in forced colours.
+
+Rejected limit counts are requested additions, not an accepted ticket. Review copy
+stays available for an authoritative recheck; raw selection is never a limit gate.
+Review changes retains the existing alternate-name/Skip predicate. Choice edits
+invalidate old presentation estimates rather than calculating new classifications.
+The existing nonempty operation identifier lives in a quiet, keyboard-reachable
+Technical details disclosure, selectable as text without a new clipboard action.
+Copy selected remains the sole route-level accent; copy-dialog actions stay neutral.
+
 Formation import separates parsing source text from validating edited candidates.
 After successful Review, unchanged source cannot be parsed again and discard name
 corrections. Changing the pasted text enables Review; a failed parse stays

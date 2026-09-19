@@ -203,7 +203,8 @@ def _run_gap_capture(tmp_path, key, scenario):
         "page": tree.root,
         "texts": leaf_texts(tree.root),
         "key": key,
-        "gap": scenario,
+        "gap": scenario if key in GAP_CAPTURES else None,
+        "regression": scenario,
         "prepare": shoot.new_screen_prepare_script(screen),
         "stage": shoot.screen_setup_script(screen),
         "verify": shoot.new_screen_verify_script(screen),
@@ -226,7 +227,7 @@ def _run_gap_capture(tmp_path, key, scenario):
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "PASS screenshot gap" in result.stdout
+    assert "PASS screenshot " in result.stdout
 
 
 @pytest.mark.parametrize("key", GAP_CAPTURES)
@@ -292,13 +293,91 @@ def test_profiles_scope_capture_uses_actual_capability_without_overrides(
         ("fittings-copy-result-bottom-narrow", "wrong-summary"),
         ("fittings-copy-result-bottom-narrow", "missing-recovery"),
         ("fittings-copy-result-bottom-narrow", "hidden-recovery"),
-        ("fittings-copy-result-bottom-narrow", "clipped-recovery"),
+        ("fittings-copy-result-bottom-narrow", "clipped-summary"),
         ("fittings-copy-result-bottom-narrow", "reversed-recovery"),
+        ("fittings-copy-result-bottom-narrow", "hidden-technical"),
+        ("fittings-copy-result-bottom-narrow", "clipped-technical"),
     ],
 )
 def test_lower_copy_capture_rejects_unsettled_or_wrong_outcomes(
     tmp_path, key, scenario
 ):
+    _run_gap_capture(tmp_path, key, scenario)
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["fittings-copy-preflight-bottom-narrow", "fittings-copy-result-bottom-narrow"],
+)
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "hidden-summary",
+        "clipped-summary",
+        "covered-summary",
+        "wrong-summary",
+        "summary-in-body",
+        "wrong-title",
+        "clipped-title",
+        "hidden-footer",
+        "clipped-footer",
+    ],
+)
+def test_lower_copy_capture_requires_retained_context_and_footer(
+    tmp_path, key, scenario
+):
+    """A valid last row cannot disguise lost header context or footer controls."""
+    _run_gap_capture(tmp_path, key, scenario)
+
+
+def test_lower_result_capture_keeps_recovery_before_pairs_not_sticky(tmp_path):
+    _run_gap_capture(
+        tmp_path, "fittings-copy-result-bottom-narrow", "recovery-after-pairs"
+    )
+
+
+@pytest.mark.parametrize(
+    ("key", "scenario"),
+    [
+        (key, scenario)
+        for key in (
+            "fittings-copy-progress",
+            "fittings-copy-result",
+            "fittings-copy-limit",
+        )
+        for scenario in ("settled", "hidden-summary", "wrong-summary", "wrong-title")
+    ]
+    + [
+        ("fittings-copy-progress", scenario)
+        for scenario in (
+            "missing-progress",
+            "hidden-progress",
+            "wrong-progress-value",
+            "wrong-progress-max",
+            "wrong-progress-aria",
+            "wrong-progress-label",
+        )
+    ]
+    + [
+        ("fittings-copy-result", scenario)
+        for scenario in (
+            "missing-technical",
+            "open-technical",
+            "wrong-operation-id",
+            "wrong-technical-label",
+            "unfocusable-technical",
+            "live-operation-id",
+        )
+    ]
+    + [
+        ("fittings-copy-limit", "hidden-limit-summary"),
+        ("fittings-copy-limit", "wrong-limit-summary"),
+    ],
+)
+def test_copy_capture_rejects_stale_context_progress_and_technical_details(
+    tmp_path, key, scenario
+):
+    """The generated capture guard must reject independent semantic corruption."""
     _run_gap_capture(tmp_path, key, scenario)
 
 

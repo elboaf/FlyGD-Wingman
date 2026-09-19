@@ -5928,6 +5928,64 @@ separately approved disposable library.
 
 ### Explicit additive copy
 
+- [ ] **Synthetic presentation is not write acceptance.** At 1015x633 and
+      840x625 use only bounded bridge doubles for this pass, not real ESI,
+      clipboard, intents or user-library writes. Record Windows/WebView2 and
+      actual AT checks separately from Chromium geometry/runtime evidence.
+- [ ] **Headings retain the accepted operation, not the next setup.** Check one
+      fitting/character, plural fittings/targets and selection-only headings.
+      Prune a selected row before Review: setup's heading updates without rebuilding
+      target controls or retaining an obsolete cap estimate. Prune while Review is
+      pending: its accepted ticket still owns the originally submitted set, not the
+      later selection or opening hull-map count. Complete with an empty early failure,
+      open/abandon another setup, then reopen Last copy results: its own target
+      names/count and fitting count remain. Repeat off-route and with reversed
+      replies; known fitting count without target identity uses selection-only text,
+      and wholly missing retained facts use the phase-generic title, not result counts.
+- [ ] **Context and actions remain visible while pairs scroll.** The compact
+      operation heading/summary and applicable limit state stay opaque above the
+      single existing body scroller; Close/Review/Cancel stay below it. Scroll
+      preflight and results to the bottom. No content fragments bleed under the
+      heading, and Already present remains attached to its fitting/hull/target.
+      Full errors and verification-before-retry recovery remain readable in body.
+      Long names, targets and errors wrap without horizontal overflow. With a
+      conflict input/Skip focused, cross the row-stacking breakpoint both ways:
+      only an obscured current control is revealed, without losing caret/focus.
+      Passive size observations must not undo a deliberate wheel scroll.
+- [ ] **Rejected limits do not invent permission or block rechecking.** Eleven
+      ready fits on two targets show 22 ready additions requested and 2 over 20,
+      not 22 planned/attempted writes. Review copy remains enabled and Start
+      unavailable. Submit 22 fitting IDs, prune to one while Review is pending,
+      then return the old 22-addition rejection: neither its cap summary nor error
+      may reappear; current guidance asks for a fresh Review. Unchanged membership
+      (including reordered rows) retains the rejection. Older replies cannot replace
+      newer accepted tickets or setup guidance. Rejection refresh still updates
+      roster eligibility/names; focus returns to the same target, or the body when
+      removed/disabled, without overriding newer focus/scroll/request owners.
+      Unselected disabled roster characters do not inflate requested pair counts.
+      Editing targets invalidates the old estimate; only another
+      review classifies it. Alternate/Skip edits retain the existing Review changes
+      predicate, pair-specific associations, drafts and owned focus/caret. Skip's
+      accessible name includes its visible “Skip this pair” label and pair context.
+      Activate Review with both pointer and keyboard: before disabling, only its
+      focused owner hands off to the mounted body; late replies cannot reclaim focus.
+- [ ] **Progress counts checks, not writes.** Exercise 0 of M, middle, M of M,
+      zero/missing totals and stale-ticket pushes. Bar value/max and accessible
+      operation label agree with exact visible check counts; no fake percentage
+      when total is unknown. Current fitting-to-target text remains announced by
+      the existing status owner only. Cancel stays reachable while permitted,
+      Close stays unavailable while running, and completed copies remain after
+      cancellation. In forced colours the bar's value remains distinct from its
+      track (at least 3:1); no decorative animation is needed.
+- [ ] **Results and support details keep their owners.** Verify success, partial
+      failure, needs-verification, rate-limit exclusions and empty refusal, with
+      unchanged ordering/classification and specific recovery. Technical details
+      starts quiet, is keyboard operable and reveals only the existing selectable
+      Operation ID, never tokens/bodies or a new clipboard action. Tab/Shift+Tab
+      include it and the footer. Toggling it does not move focus; newer control,
+      dialog, route or operation prevents stale restoration. Opening/closing copy
+      must not rebuild the metadata editor or corrupt its draft/selection.
+
 - [ ] **Preflight names every classification and exact cost.** Build one batch
       containing Ready, Already present (equivalent content under any name),
       Name conflict (same casefolded/NFC name, different content), Unavailable
