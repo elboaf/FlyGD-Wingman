@@ -30,6 +30,12 @@ class Element extends EventTarget {
     this.disabled = false;
     this.open = false;
     this.text = '';
+    const properties = new Map();
+    this.style = {
+      setProperty: (name, value) => properties.set(name, value),
+      getPropertyValue: name => properties.get(name) || '',
+      removeProperty: name => properties.delete(name)
+    };
     this.classList = {
       contains: name => this.className.split(/\s+/).includes(name),
       toggle: (name, force) => {
@@ -43,6 +49,13 @@ class Element extends EventTarget {
       remove: name => this.classList.toggle(name, false)
     };
   }
+  set value(value) {
+    if (!this.ownerDocument?.nativeTextValues) { this._value = value; return; }
+    const text = String(value);
+    this._value = this.tagName === 'TEXTAREA' ? text.replace(/\r\n?/g, '\n')
+      : this.tagName === 'INPUT' && this.type === 'text' ? text.replace(/[\r\n]/g, '') : text;
+  }
+  get value() { return this._value; }
   set disabled(value) {
     this._disabled = !!value;
     // Chromium blurs a focused control as soon as it becomes disabled.
@@ -77,6 +90,7 @@ class Element extends EventTarget {
     return found;
   }
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+  getBoundingClientRect() { return { height: this.measuredHeight ?? 36 }; }
   getClientRects() {
     for (let node = this; node; node = node.parentNode) {
       if (node.hidden || (node.parentNode?.tagName === 'DETAILS'
@@ -84,7 +98,8 @@ class Element extends EventTarget {
     }
     return [{}];
   }
-  focus() {
+  focus(options) {
+    this.lastFocusOptions = options;
     if (!this.disabled && this.getClientRects().length) this.ownerDocument.activeElement = this;
   }
   blur() {
@@ -108,6 +123,7 @@ function tick(node) { node.checked = !node.checked; node.dispatchEvent({ type: '
 async function page(options = {}) {
   const nodes = new Map();
   const document = new EventTarget();
+  document.nativeTextValues = !!options.nativeTextValues;
   document.body = Object.assign(new Element('body'), { ownerDocument: document });
   document.activeElement = document.body;
   // Actual static IDs, plus a tree search for controls created by fittings.js.
@@ -154,6 +170,12 @@ async function page(options = {}) {
   const window = new EventTarget();
   window.pywebview = { api };
   window.getComputedStyle = () => ({ visibility: 'visible' });
+  const observers = [];
+  window.ResizeObserver = class {
+    constructor(callback) { this.callback = callback; this.targets = []; observers.push(this); }
+    observe(node) { this.targets.push(node); }
+    disconnect() { this.targets = []; }
+  };
   const timers = new Map();
   let timerId = 0;
   const reads = [], writes = [];
@@ -193,6 +215,10 @@ async function page(options = {}) {
     key: key => document.dispatchEvent({type: 'keydown', key, target: document.activeElement,
       preventDefault() { this.defaultPrevented = true; }}),
     focusEvent: node => { node.focus(); document.dispatchEvent({type: 'focusin', target: node}); },
+    resize: () => window.dispatchEvent({type: 'resize'}),
+    resizeObserved: node => observers.forEach(observer => {
+      if (observer.targets.includes(node)) observer.callback([{target: node}]);
+    }),
     throwBridge: method => { api[method] = () => { throw new Error('injected synchronous bridge refusal'); }; },
     reads, writes, confirmations, errors
   };
@@ -247,6 +273,80 @@ function assertDraft(p, name, description) {
   assert.equal(p.el('fit-desc-fit-1').value, description);
   assert.match(metadata(p).textContent, /Unsaved changes/);
   assert.equal(metadataDisclosure(p)?.open, true, 'a draft stays exposed after rerender');
+}
+
+async function nativeTextEditor(name, description) {
+  const p = await page({nativeTextValues: true});
+  await p.route('fittings');
+  const payload = state(); payload.rows[0].name = name;
+  await settle(p.last('fittings_state'), payload);
+  p.el('fittings-list').querySelector('.fit-row-toggle').click();
+  await flush();
+  await settle(p.last('fittings_detail'), detail('fit-1', name, description));
+  setMetadataOpen(p, true);
+  return p;
+}
+
+for (const [label, name, description] of [
+  ['CRLF description', 'Saved name', 'First\r\nSecond'],
+  ['line break in name', 'Saved\nname', 'Description']
+]) {
+  for (const field of ['name', 'desc']) {
+    test('native text values: edit/revert ' + field + ' with ' + label + ' is clean', async () => {
+      const p = await nativeTextEditor(name, description);
+      const control = p.el('fit-' + field + '-fit-1');
+      const initial = control.value;
+      input(control, 'Temporary');
+      input(control, initial);
+      assert.doesNotMatch(metadata(p).textContent, /Unsaved changes/);
+      assert.equal(button(metadata(p), 'Save').disabled, true);
+      assert.equal(p.calls('fittings_update_metadata').length, 0);
+    });
+  }
+  for (const phase of ['refresh', 'refused', 'ack-newer']) {
+    test('native text values: committed mapping survives ' + phase + ' for ' + label, async () => {
+      const p = await nativeTextEditor(name, description);
+      const field = label === 'CRLF description' ? 'desc' : 'name';
+      const other = field === 'desc' ? 'name' : 'desc';
+      const originalDisplay = p.el('fit-' + field + '-fit-1').value;
+      if (phase === 'ack-newer') {
+        input(p.el('fit-' + other + '-fit-1'), 'Other changed');
+        button(metadata(p), 'Save').click(); await flush();
+        input(p.el('fit-' + field + '-fit-1'), 'Temporary');
+        await settle(p.last('fittings_update_metadata'), true);
+      } else {
+        input(p.el('fit-' + field + '-fit-1'), 'Temporary');
+        if (phase === 'refused') {
+          button(metadata(p), 'Save').click(); await flush();
+          await settle(p.last('fittings_update_metadata'), false);
+        } else {
+          const payload = state(); payload.rows[0].name = name;
+          await repaint(p, payload, detail('fit-1', name, description));
+        }
+      }
+      input(p.el('fit-' + field + '-fit-1'), originalDisplay);
+      assert.doesNotMatch(metadata(p).textContent, /Unsaved changes/);
+      assert.equal(button(metadata(p), 'Save').disabled, true);
+      if (phase === 'refused') assert.match(metadata(p).textContent, /save not confirmed/);
+      input(p.el('fit-' + other + '-fit-1'), 'Another edit');
+      button(metadata(p), 'Save').click(); await flush();
+      assert.deepEqual(p.last('fittings_update_metadata').args,
+        ['fit-1', other === 'name' ? 'Another edit' : name,
+          other === 'desc' ? 'Another edit' : description]);
+    });
+  }
+  test('native text values: changing the other field preserves exact ' + label, async () => {
+    const p = await nativeTextEditor(name, description);
+    const field = label === 'CRLF description' ? 'name' : 'desc';
+    input(p.el('fit-' + field + '-fit-1'), 'Changed');
+    button(metadata(p), 'Save').click();
+    await flush();
+    assert.deepEqual(p.last('fittings_update_metadata').args,
+      ['fit-1', field === 'name' ? 'Changed' : name, field === 'desc' ? 'Changed' : description]);
+    await settle(p.last('fittings_update_metadata'), true);
+    assert.doesNotMatch(metadata(p).textContent, /Unsaved changes/);
+    assert.equal(button(metadata(p), 'Save').disabled, true);
+  });
 }
 
 function selectionBoxes(p) {
@@ -704,7 +804,7 @@ test('metadata Save and summary focus survive acknowledgement without collapsing
   assert.ok(p.focused() === metadataDisclosure(p).querySelector('summary'), 'summary remains owned while pending');
   await settle(pending, true);
   assert.ok(p.focused() === metadataDisclosure(p).querySelector('summary'), 'restore the current summary after acceptance');
-  assert.equal(button(metadata(p), 'Save').disabled, false);
+  assert.equal(button(metadata(p), 'Save').disabled, true, 'accepted unchanged values are clean');
   assert.equal(metadataDisclosure(p).open, true);
   const summary = metadataDisclosure(p).querySelector('summary');
   summary.focus();
@@ -974,6 +1074,461 @@ test('collapse/reopen during a save cannot let a pre-ack detail read undo accept
   await settle(p.last('fittings_detail'), detail('fit-1', 'Accepted'));
   assert.equal(p.el('fit-name-fit-1').value, 'Accepted');
   assert.doesNotMatch(metadata(p).textContent, /Unsaved changes/);
+});
+
+// Native subtree removal blurs its focused control before the replacement mounts.
+async function warningPage() {
+  const p = await page();
+  await p.route('fittings');
+  const payload = state(['fit-1', 'fit-2']);
+  payload.total = 200;
+  payload.rows.forEach(row => { row.deployable = false; });
+  await settle(p.last('fittings_state'), payload);
+  p.el('fittings-list').onChildrenCleared = () => {
+    const active = p.focused();
+    if (!active.ownerDocument.contains(active)) active.blur();
+  };
+  return p;
+}
+function warning(p, id = 'fit-1') {
+  return p.el('fit-toggle-' + id)?.parentNode.querySelector('.fit-deployability');
+}
+
+test('warning focus: keyboard-equivalent activation follows both rebuilt warning controls', async () => {
+  const p = await warningPage();
+  const original = warning(p);
+  original.focus(); original.click(); await flush();
+  const replacement = warning(p);
+  assert.notEqual(replacement, original);
+  assert.equal(p.focused(), replacement, 'rebuilding must not leave keyboard focus on BODY');
+  assert.equal(replacement.id, 'fit-deployability-fit-1');
+  assert.equal(replacement.getAttribute('aria-expanded'), 'true');
+  assert.equal(replacement.getAttribute('aria-label'), 'Sabre tackle: cannot copy. Show details.');
+  assert.equal(replacement.lastFocusOptions.preventScroll, true);
+  await settle(p.last('fittings_detail'), detail());
+  assert.equal(p.focused(), warning(p), 'detail receipt keeps the current warning owner');
+  const expanded = warning(p), calls = p.calls().length;
+  expanded.click(); await flush();
+  assert.equal(warning(p), expanded, 'already expanded Details remains an open-only action');
+  assert.equal(p.focused(), expanded);
+  assert.equal(p.calls().length, calls);
+});
+
+test('warning focus: disappearing eligibility action falls back to its own row, not the editor', async () => {
+  const p = await warningPage();
+  warning(p).focus(); warning(p).click(); await flush();
+  await settle(p.last('fittings_detail'), detail());
+  warning(p).focus();
+  await p.changed({reason: 'refresh'});
+  await settle(p.last('fittings_state'), state(['fit-1', 'fit-2']));
+  assert.equal(warning(p), null);
+  assert.equal(p.focused(), p.el('fit-toggle-fit-1'));
+  assert.equal(p.focused().lastFocusOptions.preventScroll, true);
+  await settle(p.last('fittings_detail'), detail());
+  assert.equal(p.focused(), p.el('fit-toggle-fit-1'));
+});
+
+for (const owner of ['control', 'dialog', 'route', 'row', 'filter', 'page']) {
+  test('warning focus: delayed detail yields to newer ' + owner, async () => {
+    const p = await warningPage();
+    warning(p).focus(); warning(p).click(); await flush();
+    const stale = p.last('fittings_detail');
+    if (owner === 'control') p.el('fittings-search').focus();
+    if (owner === 'dialog') { p.el('overlay').hidden = false; p.el('dlg-ok').focus(); }
+    if (owner === 'route') { await p.route('main'); p.el('nav-main').focus(); }
+    if (owner === 'row') {
+      p.el('fit-toggle-fit-2').focus(); p.el('fit-toggle-fit-2').click(); await flush();
+      await settle(p.last('fittings_detail'), detail('fit-2'));
+    }
+    if (owner === 'filter' || owner === 'page') {
+      warning(p).focus();
+      if (owner === 'filter') { input(p.el('fittings-search'), 'Other'); await p.timers(); }
+      else { p.el('fittings-page-next').click(); await flush(); }
+      const payload = state(['fit-2']); payload.rows[0].deployable = false;
+      payload.filters.search = owner === 'filter' ? 'Other' : '';
+      payload.page = owner === 'page' ? 2 : 1;
+      await settle(p.last('fittings_state'), payload);
+      assert.equal(p.el('fit-toggle-fit-1'), null);
+    }
+    const active = p.focused();
+    await settle(stale, detail());
+    assert.equal(p.focused(), active);
+  });
+}
+
+test('warning focus: programmatic expansion of another row revokes the old warning owner', async () => {
+  const p = await warningPage();
+  warning(p).focus();
+  p.el('fit-toggle-fit-2').click(); await flush();
+  assert.notEqual(p.focused(), warning(p));
+  await settle(p.last('fittings_detail'), detail('fit-2'));
+  assert.notEqual(p.focused(), warning(p));
+});
+
+for (const owner of ['control', 'dialog', 'route', 'render']) {
+  test('warning focus: synchronous removal yields to newer ' + owner, async () => {
+    const p = await warningPage();
+    const host = p.el('fittings-list'), nativeRemoval = host.onChildrenCleared;
+    const scroller = p.el('fittings-workspace-scroll');
+    scroller.scrollTop = 40;
+    const other = p.el('fit-toggle-fit-2');
+    host.onChildrenCleared = () => {
+      nativeRemoval(); host.onChildrenCleared = nativeRemoval;
+      if (owner === 'control') { p.el('fittings-search').focus(); scroller.scrollTop = 123; }
+      if (owner === 'dialog') { p.el('overlay').hidden = false; p.el('dlg-ok').focus(); }
+      if (owner === 'route') { p.route('main'); p.el('nav-main').focus(); }
+      if (owner === 'render') other.click();
+    };
+    warning(p).focus(); warning(p).click(); await flush();
+    assert.notEqual(p.focused(), warning(p));
+    if (owner === 'control') {
+      assert.equal(p.focused(), p.el('fittings-search'));
+      assert.equal(scroller.scrollTop, 123, 'new owner scroll survives the old repaint');
+    }
+    if (owner === 'dialog') assert.equal(p.focused(), p.el('dlg-ok'));
+    if (owner === 'route') assert.equal(p.focused(), p.el('nav-main'));
+    if (owner === 'render') {
+      assert.equal(host.querySelectorAll('.fit-row').length, 2, 'older render cannot append over its successor');
+      assert.equal(p.el('fit-toggle-fit-2').getAttribute('aria-expanded'), 'true');
+      assert.deepEqual(p.calls('fittings_detail').map(call => call.args[0]), ['fit-2'],
+        'the retired row action cannot invalidate the newer detail request');
+      await settle(p.last('fittings_detail'), detail('fit-2'));
+      assert.ok(p.el('fit-name-fit-2'), 'the newer row must finish loading');
+    }
+  });
+}
+
+test('warning focus: focus-event handoff keeps the newer owner and its scroll', async () => {
+  const p = await warningPage();
+  const doc = warning(p).ownerDocument, create = doc.createElement;
+  const scroller = p.el('fittings-workspace-scroll');
+  doc.createElement = tag => {
+    const node = create(tag), focus = node.focus;
+    node.focus = function (options) {
+      focus.call(this, options);
+      if (this.id === 'fit-deployability-fit-1' && options?.preventScroll) {
+        p.el('fittings-search').focus();
+        scroller.scrollTop = 123;
+      }
+    };
+    return node;
+  };
+  warning(p).focus(); warning(p).click(); await flush();
+  assert.equal(p.focused(), p.el('fittings-search'));
+  assert.equal(scroller.scrollTop, 123, 'old restore cannot overwrite a focus-event successor');
+});
+
+// Committed equality is distinct from retaining a draft/receipt owner.
+function assertMetadataDirty(p, dirty, pending = false) {
+  const status = metadata(p).querySelector('.fit-metadata-actions').querySelector('p');
+  assert.ok(status, 'metadata has its own ordinary outcome paragraph');
+  assert.equal(status.tagName, 'P');
+  assert.equal(status.getAttribute('role'), null);
+  assert.equal(status.getAttribute('aria-live'), null);
+  assert.equal(/Unsaved changes/.test(status.textContent), dirty);
+  assert.equal(/Unsaved changes/.test(p.el('fittings-list').querySelector('.fit-meta').textContent), dirty,
+    'row cue and editor must use the same equality/pending predicate');
+  assert.equal(button(metadata(p), 'Save').disabled, !dirty || pending);
+}
+
+test('metadata clean Save is disabled and handler-guarded before any edit', async () => {
+  const p = await editor();
+  const save = button(metadata(p), 'Save');
+  assert.equal(save.disabled, true, 'an unchanged fitting has nothing to save');
+  save.dispatchEvent({type: 'click'}); await flush();
+  assert.equal(p.calls('fittings_update_metadata').length, 0);
+  assertMetadataDirty(p, false);
+});
+
+test('metadata exact edit and revert updates both cues without replacing controls or selection', async () => {
+  const p = await editor();
+  const name = p.el('fit-name-fit-1'), description = p.el('fit-desc-fit-1');
+  const disclosure = metadataDisclosure(p), row = p.el('fittings-list').children[0];
+  const scroller = p.el('fittings-workspace-scroll');
+  name.focus(); name.setSelectionRange(2, 7, 'backward'); scroller.scrollTop = 91;
+  for (const [field, value, dirty] of [
+    [name, 'Sabre tackle ', true], [description, 'Saved description\n', true],
+    [name, 'Sabre tackle', true], [description, 'Saved description', false],
+    [description, '', true], [description, 'Saved description', false]
+  ]) {
+    input(field, value);
+    assertMetadataDirty(p, dirty);
+    const meta = row.querySelector('.fit-meta');
+    assert.equal(meta.title, meta.textContent, 'ellipsis keeps the complete current status in its title');
+    assert.equal(p.el('fittings-list').children[0] === row, true);
+    assert.equal(metadataDisclosure(p) === disclosure, true);
+    assert.equal(p.el('fit-name-fit-1') === name, true);
+    assert.equal(p.focused() === name, true);
+    assert.deepEqual([name.selectionStart, name.selectionEnd, name.selectionDirection], [2, 7, 'backward']);
+    assert.equal(scroller.scrollTop, 91);
+  }
+  button(metadata(p), 'Save').dispatchEvent({type: 'click'}); await flush();
+  assert.equal(p.calls('fittings_update_metadata').length, 0);
+});
+
+for (const failure of ['false', 'null', 'reject']) {
+  test(`metadata ${failure} never advances baseline; reverting becomes clean without erasing refusal`, async () => {
+    const p = await editor();
+    input(p.el('fit-name-fit-1'), 'Submitted');
+    button(metadata(p), 'Save').click(); await flush();
+    if (failure === 'reject') p.last('fittings_update_metadata').reject(new Error('injected'));
+    else p.last('fittings_update_metadata').resolve(failure === 'false' ? false : null);
+    await flush();
+    // Even matching readback is not the missing Boolean acknowledgement.
+    await settle(p.last('fittings_state'), state());
+    await settle(p.last('fittings_detail'), detail('fit-1', 'Submitted'));
+    assertMetadataDirty(p, true);
+    input(p.el('fit-name-fit-1'), 'Sabre tackle');
+    assertMetadataDirty(p, false);
+    assert.match(metadata(p).textContent, /save not confirmed/);
+    await repaint(p, state(), detail('fit-1', 'Submitted'));
+    assert.equal(p.el('fit-name-fit-1').value, 'Sabre tackle', 'refused display is not hydrated away');
+    assertMetadataDirty(p, false);
+    assert.match(metadata(p).textContent, /save not confirmed/);
+    button(metadata(p), 'Save').dispatchEvent({type: 'click'}); await flush();
+    assert.equal(p.calls('fittings_update_metadata').length, 1);
+    input(p.el('fit-name-fit-1'), 'Submitted');
+    assertMetadataDirty(p, true);
+    button(metadata(p), 'Save').click(); await flush();
+    assert.equal(p.calls('fittings_update_metadata').length, 2);
+    await settle(p.last('fittings_update_metadata'), true);
+    assertMetadataDirty(p, false);
+    assert.doesNotMatch(metadata(p).textContent, /save not confirmed/);
+  });
+}
+
+for (const newer of ['Sabre tackle', 'Submitted', 'Newer text']) {
+  test('metadata pending survives revert; ACK compares newer generation exactly: ' + newer, async () => {
+    const p = await editor();
+    input(p.el('fit-name-fit-1'), 'Submitted');
+    button(metadata(p), 'Save').click(); await flush();
+    const save = p.last('fittings_update_metadata');
+    input(p.el('fit-name-fit-1'), 'Intermediate');
+    input(p.el('fit-name-fit-1'), newer);
+    assertMetadataDirty(p, true, true);
+    button(metadata(p), 'Save').dispatchEvent({type: 'click'}); await flush();
+    assert.equal(p.calls('fittings_update_metadata').length, 1, 'pending receipt retains exclusive admission');
+    await repaint(p, state(), detail('fit-1', 'Submitted'));
+    assertMetadataDirty(p, true, true); // matching read cannot acknowledge the save
+    await settle(save, true);
+    assert.equal(p.el('fit-name-fit-1').value, newer);
+    assertMetadataDirty(p, newer !== 'Submitted');
+    input(p.el('fit-name-fit-1'), 'Submitted');
+    assertMetadataDirty(p, false, false);
+    input(p.el('fit-name-fit-1'), 'Second submitted');
+    button(metadata(p), 'Save').click(); await flush();
+    const second = p.last('fittings_update_metadata');
+    input(p.el('fit-name-fit-1'), 'Submitted');
+    assertMetadataDirty(p, true, true);
+    await settle(second, true);
+    assert.equal(p.el('fit-name-fit-1').value, 'Submitted');
+    assertMetadataDirty(p, true, false);
+    input(p.el('fit-name-fit-1'), 'Second submitted');
+    assertMetadataDirty(p, false, false);
+    assert.equal(p.calls('fittings_update_metadata').length, 2);
+  });
+}
+
+test('metadata true ACK preserves exact whitespace, newline and non-BMP submitted pair', async () => {
+  const p = await editor();
+  const name = '  Tacklé \u{1f680}  ', description = '  first\n\nsecond \u{1f680}\n';
+  input(p.el('fit-name-fit-1'), name); input(p.el('fit-desc-fit-1'), description);
+  button(metadata(p), 'Save').click(); await flush();
+  assert.deepEqual(p.last('fittings_update_metadata').args, ['fit-1', name, description]);
+  await settle(p.last('fittings_update_metadata'), true);
+  assert.equal(p.el('fit-name-fit-1').value, name);
+  assert.equal(p.el('fit-desc-fit-1').value, description);
+  assertMetadataDirty(p, false);
+  input(p.el('fit-name-fit-1'), name.trim()); assertMetadataDirty(p, true);
+  input(p.el('fit-name-fit-1'), name); assertMetadataDirty(p, false);
+  input(p.el('fit-desc-fit-1'), description.trim()); assertMetadataDirty(p, true);
+  input(p.el('fit-desc-fit-1'), description); assertMetadataDirty(p, false);
+  assert.equal(p.calls('fittings_update_metadata').length, 1);
+});
+
+test('metadata accepted clean detail becomes the next baseline, not the list row summary', async () => {
+  const p = await editor();
+  input(p.el('fit-name-fit-1'), 'Temporary'); input(p.el('fit-name-fit-1'), 'Sabre tackle');
+  await repaint(p, state(), detail('fit-1', 'Fresh detail', 'Fresh description'));
+  assert.equal(p.el('fit-name-fit-1').value, 'Fresh detail');
+  assert.equal(p.el('fit-desc-fit-1').value, 'Fresh description');
+  assertMetadataDirty(p, false);
+  input(p.el('fit-name-fit-1'), 'Sabre tackle'); assertMetadataDirty(p, true);
+  input(p.el('fit-name-fit-1'), 'Fresh detail'); assertMetadataDirty(p, false);
+  assert.equal(p.calls('fittings_update_metadata').length, 0);
+});
+
+test('metadata two accepted saves fence older detail and retain HWM through failed refresh', async () => {
+  const p = await editor();
+  input(p.el('fit-name-fit-1'), 'First'); button(metadata(p), 'Save').click(); await flush();
+  await settle(p.last('fittings_update_metadata'), true);
+  await settle(p.last('fittings_state'), state());
+  const preSecond = p.last('fittings_detail');
+  input(p.el('fit-name-fit-1'), 'Second'); button(metadata(p), 'Save').click(); await flush();
+  input(p.el('fit-name-fit-1'), 'Third');
+  await settle(p.last('fittings_update_metadata'), true);
+  await settle(preSecond, detail('fit-1', 'First'));
+  assert.equal(p.el('fit-name-fit-1').value, 'Third');
+  input(p.el('fit-name-fit-1'), 'Second'); assertMetadataDirty(p, false);
+  input(p.el('fit-name-fit-1'), 'Third');
+  await settle(p.last('fittings_state'), null);
+  assert.equal(p.el('fit-name-fit-1').value, 'Third');
+  // A null state reply clears `asked`; route re-entry explicitly retries it.
+  const failedState = p.last('fittings_state');
+  await p.route('main'); await p.route('fittings');
+  assert.notEqual(p.last('fittings_state'), failedState);
+  await settle(p.last('fittings_state'), state());
+  assert.notEqual(p.last('fittings_detail'), preSecond);
+  await settle(p.last('fittings_detail'), null);
+  // A failed detail read must not retire the draft or acknowledged pair.
+  p.el('fittings-list').querySelector('.fit-row-toggle').click();
+  p.el('fittings-list').querySelector('.fit-row-toggle').click(); await flush();
+  await settle(p.last('fittings_detail'), detail('fit-1', 'Second'));
+  assert.equal(p.el('fit-name-fit-1').value, 'Third');
+  assertMetadataDirty(p, true);
+  input(p.el('fit-name-fit-1'), 'Second'); assertMetadataDirty(p, false);
+  input(p.el('fit-name-fit-1'), 'First'); assertMetadataDirty(p, true);
+  input(p.el('fit-name-fit-1'), 'Second'); assertMetadataDirty(p, false);
+  assert.equal(p.calls('fittings_update_metadata').length, 2);
+});
+
+for (const applied of [true, false]) {
+  test('metadata off-row and hidden-route receipt preserves baseline: ' + applied, async () => {
+    const p = await editor();
+    input(p.el('fit-name-fit-1'), 'Submitted');
+    button(metadata(p), 'Save').click(); await flush();
+    const save = p.last('fittings_update_metadata');
+    input(p.el('fit-name-fit-1'), 'Newer');
+    input(p.el('fittings-search'), 'other'); await p.timers();
+    const filtered = state(['fit-2']); filtered.filters.search = 'other';
+    await settle(p.last('fittings_state'), filtered);
+    p.el('fittings-list').querySelector('.fit-row-toggle').click(); await flush();
+    await settle(p.last('fittings_detail'), detail('fit-2', 'Other'));
+    await p.route('main'); p.el('nav-main').focus();
+    await settle(save, applied);
+    assert.equal(p.focused() === p.el('nav-main'), true);
+    await p.route('fittings'); await settle(p.last('fittings_state'), filtered);
+    await settle(p.last('fittings_detail'), detail('fit-2', 'Other'));
+    p.el('fittings-filter-clear').click(); await flush();
+    await settle(p.last('fittings_state'), state(['fit-1', 'fit-2']));
+    p.el('fittings-list').querySelector('.fit-row-toggle').click(); await flush();
+    await settle(p.last('fittings_detail'), detail('fit-1', applied ? 'Submitted' : 'Sabre tackle'));
+    assert.equal(p.el('fit-name-fit-1').value, 'Newer');
+    input(p.el('fit-name-fit-1'), applied ? 'Submitted' : 'Sabre tackle');
+    assertMetadataDirty(p, false);
+    if (!applied) assert.match(metadata(p).textContent, /save not confirmed/);
+    assert.equal(p.calls('fittings_update_metadata').length, 1);
+  });
+}
+
+test('metadata discard uses last accepted pair and deleted receipt cannot taint replacement record', async () => {
+  const p = await editor();
+  input(p.el('fit-name-fit-1'), 'Accepted'); button(metadata(p), 'Save').click(); await flush();
+  await settle(p.last('fittings_update_metadata'), true);
+  input(p.el('fit-name-fit-1'), 'Discard this');
+  button(metadata(p), 'Discard changes').click(); await settle(p.confirmations.at(-1), true);
+  assert.equal(p.el('fit-name-fit-1').value, 'Accepted'); assertMetadataDirty(p, false);
+  input(p.el('fit-name-fit-1'), 'Deleted submission'); button(metadata(p), 'Save').click(); await flush();
+  const deletedSave = p.last('fittings_update_metadata');
+  await p.changed({reason: 'delete', entry_id: 'fit-1'});
+  await settle(p.last('fittings_state'), state([])); await settle(p.last('fittings_detail'), null);
+  await repaint(p, state(), detail('fit-1', 'Replacement'));
+  input(p.el('fit-name-fit-1'), 'Replacement draft');
+  await settle(deletedSave, true);
+  assert.equal(p.el('fit-name-fit-1').value, 'Replacement draft');
+  input(p.el('fit-name-fit-1'), 'Replacement'); assertMetadataDirty(p, false);
+  assert.equal(p.calls('fittings_update_metadata').length, 2);
+});
+
+test('fitting row tracks preserve complete accessible identity and independent warning action', async () => {
+  const p = await page(); await p.route('fittings');
+  const payload = state(['fit-1', 'fit-2']);
+  Object.assign(payload.rows[0], {name: 'Long fitting & <identity>', ship_name: 'Long hull identity',
+    presence_count: 2, collection_ids: ['doctrine'], superseded_by: 'fit-2', deployable: false});
+  await settle(p.last('fittings_state'), payload);
+  const row = p.el('fittings-list').children[0], top = row.querySelector('.fit-row-top');
+  const toggle = row.querySelector('.fit-row-toggle'), status = row.querySelector('.fit-row-status');
+  assert.ok(status, 'ownership and warning get their own sibling track');
+  assert.deepEqual(top.children.map(node => node.className), ['check fit-select', 'fit-row-toggle', 'fit-row-status']);
+  assert.equal(toggle.tagName, 'BUTTON'); assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(toggle.children[0].className, 'fit-identity');
+  assert.equal(toggle.children[0].querySelector('.chev').getAttribute('aria-hidden'), 'true');
+  assert.equal(toggle.children[0].querySelector('.fit-name').title, 'Long fitting & <identity>');
+  assert.equal(toggle.querySelector('.fit-ship').title, 'Long hull identity');
+  const labels = toggle.getAttribute('aria-labelledby').split(' ').map(id => p.el(id));
+  assert.deepEqual(labels.map(node => node.textContent), ['Long fitting & <identity>', 'Long hull identity',
+    'On 2 characters · Doctrine · Superseded']);
+  assert.equal(labels[2].parentNode === status, true);
+  assert.equal(labels[2].title, 'On 2 characters · Doctrine · Superseded');
+  const warning = status.querySelector('.fit-deployability');
+  assert.equal(warning.textContent, 'Cannot copy · Details…');
+  assert.equal(warning.getAttribute('aria-label'), 'Long fitting & <identity>: cannot copy. Show details.');
+  assert.equal(toggle.contains(warning), false, 'no nested interactive buttons');
+  warning.click(); await flush(); await settle(p.last('fittings_detail'), detail());
+  assert.equal(p.el('fit-toggle-fit-1').getAttribute('aria-expanded'), 'true');
+  assert.match(p.el('fittings-list').querySelector('.notice').textContent,
+    /Not deployable: this fitting cannot be copied safely\. Choose a different fitting to copy\./);
+  assert.equal(p.calls('fittings_preflight_copy').length, 0);
+});
+
+test('fitting detail groups keep reading content before management and separate immediate controls', async () => {
+  const p = await editor();
+  const payload = detail(); payload.aliases = [{name: 'Alternative', description: ''}];
+  await repaint(p, state(), payload);
+  const box = p.el('fittings-list').querySelector('.fit-detail');
+  assert.deepEqual(box.children.map(node => node.className), ['fit-detail-content', 'fit-detail-management']);
+  const [content, management] = box.children;
+  assert.deepEqual(content.children.map(node => node.className), ['fit-description', 'fit-clipboard-actions', 'fit-modules']);
+  assert.deepEqual(management.children.map(node => node.className),
+    ['fit-aliases', 'fit-presences', 'fit-metadata-disclosure', 'fit-immediate']);
+  assert.deepEqual(management.querySelector('.fit-immediate').children.map(node => node.className),
+    ['hint fit-immediate-note', 'fit-collections', 'fit-supersession', 'forget-row']);
+  const status = metadata(p).querySelector('.fit-metadata-status');
+  for (const id of ['fit-name-fit-1', 'fit-desc-fit-1']) {
+    assert.ok(p.el(id).getAttribute('aria-describedby').split(' ').includes(status.id));
+  }
+});
+
+for (const kind of ['membership', 'supersession']) {
+  for (const applied of [true, false]) {
+    test(`immediate ${kind} ${applied ? 'push' : 'refusal'} preserves owned focus and dirty metadata`, async () => {
+      const p = await editor(); await repaint(p, state(['fit-1', 'fit-2']));
+      input(p.el('fit-name-fit-1'), 'Unsubmitted');
+      const group = kind === 'membership' ? '.fit-collections' : '.fit-supersession';
+      const tag = kind === 'membership' ? 'input' : 'select';
+      let control = p.el('fittings-list').querySelector(group).querySelector(tag);
+      control.focus(); const id = control.id;
+      assert.ok(id, 'stable control identity is required for guarded focus restoration');
+      if (kind === 'membership') tick(control);
+      else { control.value = 'fit-2'; control.dispatchEvent({type: 'change'}); }
+      await flush(); await settle(p.last('fittings_set_' + kind), applied);
+      if (applied) await p.changed({reason: kind, entry_id: 'fit-1'});
+      await settle(p.last('fittings_state'), state(['fit-1', 'fit-2']));
+      assert.equal(p.focused() === p.el(id), true, 'state refresh preserves current owner');
+      await settle(p.last('fittings_detail'), detail());
+      assert.equal(p.focused() === p.el(id), true, 'detail refresh preserves current owner');
+      assert.equal(p.el('fit-name-fit-1').value, 'Unsubmitted'); assertMetadataDirty(p, true);
+      assert.equal(p.calls('fittings_update_metadata').length, 0);
+      p.el('fittings-search').focus(); await repaint(p, state(['fit-1', 'fit-2']));
+      assert.equal(p.focused() === p.el('fittings-search'), true, 'refresh cannot reclaim relinquished focus');
+    });
+  }
+}
+
+test('expanded fitting sticky clearance follows measured header height without moving focus or scroll', async () => {
+  const p = await editor();
+  const scroller = p.el('fittings-workspace-scroll');
+  const top = p.el('fittings-list').querySelector('.fit-row-top');
+  const name = p.el('fit-name-fit-1'); name.focus(); scroller.scrollTop = 109;
+  assert.equal(scroller.style.getPropertyValue('--fit-sticky-clearance'), '44px', 'render measures the header plus eight');
+  top.measuredHeight = 93.5; p.resize();
+  assert.equal(scroller.style.getPropertyValue('--fit-sticky-clearance'), '101.5px');
+  top.measuredHeight = 112; p.resizeObserved(top);
+  assert.equal(scroller.style.getPropertyValue('--fit-sticky-clearance'), '120px', 'font/wrapping changes update the same clearance');
+  assert.equal(p.focused() === name, true); assert.equal(scroller.scrollTop, 109);
+  p.el('fittings-list').querySelector('.fit-row-toggle').click();
+  top.measuredHeight = 300; p.resizeObserved(top);
+  assert.equal(scroller.style.getPropertyValue('--fit-sticky-clearance'), '', 'collapsed/detached header no longer owns clearance');
 });
 
 function preflight(ticket = 'ticket-1') {

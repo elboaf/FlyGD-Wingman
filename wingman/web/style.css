@@ -437,6 +437,8 @@
   :root {
     --formation-forced-ink: CanvasText;
     --formation-forced-surface: Canvas;
+    --fitting-forced-ink: CanvasText;
+    --fitting-forced-surface: Canvas;
   }
 }
 
@@ -5780,12 +5782,27 @@ button.btn.danger:disabled {
    fitting row (name/ship/meta instead of a character's readiness) and its
    expanded detail (rack-grouped modules instead of a requirement list). */
 
+#route-fittings {
+  --fit-identity-tracks: minmax(0, 1.25fr) minmax(0, .8fr);
+  --fit-row-tracks: 24px var(--fit-identity-tracks) minmax(160px, 1fr);
+  --fit-row-padding: 6px 10px;
+  --fit-row-gap: 8px;
+}
+.fit-selection-actions {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
+  padding-bottom: 8px;
+}
+/* These helpers act on the same selection the adjacent primary action uses. */
+.fit-selection-actions > .workspace-primary { margin-left: 4px; }
+
 /* Import and its complete review share the workspace scroller, so a long
    warning list cannot squeeze the fitting list out of the 840x625 floor. */
 .fit-workspace-scroll {
   flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain;
-  /* The retained row is 36px; keep revealed editor controls below it. */
-  scroll-padding-top: 44px;
+  /* Wrapped identity/status changes row height; the page measures its owner. */
+  scroll-padding-top: var(--fit-sticky-clearance, 44px);
+  /* Native textarea focus reveals its caret; also clear the control's border. */
+  scroll-padding-bottom: 16px;
 }
 .fit-list { width: 100%; }
 #fittings-import-open { margin-bottom: 8px; }
@@ -5811,44 +5828,68 @@ button.btn.danger:disabled {
   border-left: 2px solid transparent;
 }
 .fit-row.open { background: var(--row-hover); border-left-color: var(--row-ring); }
-.fit-row-top { display: flex; align-items: center; gap: 8px; padding: 6px 10px; }
+.fit-list-head, .fit-row-top {
+  display: grid; grid-template-columns: var(--fit-row-tracks);
+  align-items: center; gap: var(--fit-row-gap); padding: var(--fit-row-padding);
+}
+.fit-list-head {
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--row-line);
+  color: var(--text-faint); font-size: var(--fs-label);
+}
+.fit-list-head[hidden] { display: none; }
+/* Reserve the same chevron and gap as the identity button's first cell. */
+.fit-column-name { padding-left: 23px; }
 /* Reuse the actual row identity and controls. Sticky releases at this fitting's
    boundary, rather than leaving a detached title over the next fitting. */
 .fit-row.open > .fit-row-top {
   position: sticky; top: 0; z-index: 2;
   background: var(--panel); box-shadow: 0 -1px var(--panel);
 }
-/* .check is a <label>; giving it its own class alongside keeps the
-   selection box out of the row's flex growth without a second wrapper
-   element. */
-.fit-select { flex: none; }
+/* The native checkbox remains separate from the row's expansion button. */
+.fit-select { align-self: start; padding-top: 6px; }
+/* Native focus must reveal the painted checkbox, not a zero-size page anchor. */
+.fit-select, .fit-collections .check { position: relative; }
+.fit-select input, .fit-collections .check input { inset: 0; width: 100%; height: 100%; }
 .fit-row-toggle {
-  display: flex; align-items: center; gap: 9px; flex: 1; min-width: 0;
+  display: grid; grid-column: 2 / 4; grid-template-columns: var(--fit-identity-tracks);
+  align-items: center; gap: var(--fit-row-gap); min-width: 0;
   background: none; border: 0; padding: 4px 0;
   color: var(--text); font: inherit; font-size: var(--fs-body);
   cursor: pointer; text-align: left;
 }
 .fit-row-toggle:hover { color: var(--text); }
-.fit-row-toggle .chev { width: 14px; font-size: var(--fs-body); color: var(--text-dim); }
-.fit-name {
-  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap;
+.fit-row-toggle .chev {
+  flex: 0 0 14px; font-size: var(--fs-body); color: var(--text-dim);
 }
-.fit-ship { flex: none; color: var(--text-dim); font-size: var(--fs-muted); }
-.fit-meta {
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; text-align: right; color: var(--text-faint);
-  font-size: var(--fs-muted);
+.fit-identity { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.fit-name, .fit-ship, .fit-meta {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-
-/* A deployment blocker must survive a long name or collection list. */
+.fit-ship { color: var(--text-dim); font-size: var(--fs-muted); }
+.fit-meta { color: var(--text-faint); font-size: var(--fs-muted); }
+.fit-row-status { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+/* Warning and its action stay together, never stealing the ownership column. */
 .fit-deployability {
-  flex: none; white-space: nowrap; color: var(--warn); font-size: var(--fs-body);
+  align-self: flex-start; text-align: left; white-space: normal;
+  overflow-wrap: anywhere; color: var(--warn); font-size: var(--fs-muted);
 }
-
+.fit-row-toggle:focus-visible,
+.fit-metadata-disclosure > summary:focus-visible {
+  outline: 2px solid var(--focus-ring); outline-offset: 2px;
+}
 .fit-detail {
-  padding: 4px 10px 12px 29px;
-  display: flex; flex-direction: column; gap: 10px;
+  padding: 8px 10px 12px 29px;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px;
+}
+.fit-detail > .notice { grid-column: 1 / -1; }
+.fit-detail-content, .fit-detail-management {
+  display: flex; flex-direction: column; gap: 12px; min-width: 0;
+}
+.fit-detail-content, .fit-detail-management, .fit-immediate { overflow-wrap: anywhere; }
+.fit-immediate {
+  display: flex; flex-direction: column; gap: 12px; min-width: 0;
+  padding-top: 12px; border-top: 1px solid var(--field-border);
 }
 .fit-description { color: var(--text-dim); font-size: var(--fs-muted); }
 .fit-subhead {
@@ -5864,7 +5905,9 @@ button.btn.danger:disabled {
   display: flex; align-items: baseline; gap: 6px; padding-left: 8px;
   font-size: var(--fs-muted);
 }
+.fit-detail .fit-item-name { min-width: 0; overflow-wrap: anywhere; }
 .fit-item-qty { color: var(--text-faint); }
+.fit-detail .fit-item-qty { flex: none; }
 .fit-aliases, .fit-presences, .fit-collections, .fit-supersession,
 .fit-metadata {
   display: flex; flex-direction: column; gap: 4px;
@@ -5881,16 +5924,30 @@ button.btn.danger:disabled {
 .fit-metadata-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .fit-metadata-actions > .hint { margin: 0; }
 .fit-metadata-actions > .hint:empty { display: none; }
-.fit-immediate-note {
-  margin: 0; padding-top: 10px; border-top: 1px solid var(--field-border);
-}
+.fit-metadata-status { font-weight: 600; overflow-wrap: anywhere; }
+.fit-immediate-note { margin: 0; }
+.fit-metadata .field { min-width: 0; width: 100%; }
 .fit-alias-row, .fit-presence-row {
   font-size: var(--fs-muted); color: var(--text-dim);
 }
-.fit-presence-row { display: flex; align-items: baseline; gap: 8px; }
+.fit-presence-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.fit-presence-row > span { min-width: 0; overflow-wrap: anywhere; }
 .fit-presence-name { color: var(--text); }
 .fit-presence-meta { color: var(--text-faint); }
 .fit-description-field { min-height: 60px; resize: vertical; }
+
+@media (max-width: 960px) {
+  #route-fittings { --fit-row-tracks: 24px minmax(0, 1fr); }
+  .fit-list-head { display: none; }
+  .fit-row-toggle { grid-column: 2; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .fit-ship { padding-left: 23px; }
+  .fit-row-status { grid-column: 2; padding-left: 23px; margin-top: -4px; }
+  .fit-detail { grid-template-columns: minmax(0, 1fr); }
+}
+@media (forced-colors: active) {
+  .fit-row.open { outline: 1px solid var(--fitting-forced-ink); outline-offset: -1px; }
+  .fit-row.open > .fit-row-top { background: var(--fitting-forced-surface); }
+}
 
 .fit-pager {
   flex: none; display: flex; align-items: center; justify-content: center;

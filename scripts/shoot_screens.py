@@ -742,8 +742,8 @@ def _fittings_setup_script(key: str) -> str:
                 "present",
                 "btn.querySelector('.fit-name') "
                 "&& btn.querySelector('.fit-name').textContent === 'Fleet Doctrine Alpha' "
-                "&& btn.querySelector('.fit-meta') "
-                "&& btn.querySelector('.fit-meta').textContent.indexOf('On 1 character') === 0",
+                "&& btn.closest('.fit-row').querySelector('.fit-meta') "
+                "&& btn.closest('.fit-row').querySelector('.fit-meta').textContent.indexOf('On 1 character') === 0",
                 "Fleet Doctrine Alpha (already on Eryn)",
             )
             + _fit_check_row_js(
@@ -756,8 +756,8 @@ def _fittings_setup_script(key: str) -> str:
                 "conflict",
                 "btn.querySelector('.fit-name') "
                 "&& btn.querySelector('.fit-name').textContent === 'Fleet Doctrine Alpha' "
-                "&& btn.querySelector('.fit-meta') "
-                "&& btn.querySelector('.fit-meta').textContent.indexOf('On 0 characters') === 0",
+                "&& btn.closest('.fit-row').querySelector('.fit-meta') "
+                "&& btn.closest('.fit-row').querySelector('.fit-meta').textContent.indexOf('On 0 characters') === 0",
                 "Fleet Doctrine Alpha (unfiled source)",
             )
             + "  var copySelected = document.getElementById('fittings-copy-selected');\n"
@@ -1182,8 +1182,13 @@ var name = WM.el('fit-name-fit-rifter-solo'), description = WM.el('fit-desc-fit-
 var save = WM.el('fit-metadata-save-fit-rifter-solo'), discard = WM.el('fit-metadata-discard-fit-rifter-solo');
 check(editor && editor.tagName === 'DETAILS' && name && description
   && name.value === expected.name && description.value === expected.description
-  && text(save, 'Save') && !save.disabled && discard && discard.hidden
+  && text(save, 'Save') && save.disabled && discard && discard.hidden
   && WM.el('overlay').hidden && WM.el('fittings-copy-overlay').hidden);
+var management = editor.closest('.fit-detail-management');
+var immediate = management && management.querySelector('.fit-immediate');
+check(management && immediate && !editor.contains(immediate)
+  && immediate.querySelector('.fit-collections') && immediate.querySelector('.fit-supersession')
+  && text(immediate.querySelector('.fit-immediate-note'), 'Collections and Superseded by apply immediately.'));
 var summary = editor.querySelector('summary');
 var nameLabel = editor.querySelector('label[for="fit-name-fit-rifter-solo"]');
 var descriptionLabel = editor.querySelector('label[for="fit-desc-fit-rifter-solo"]');

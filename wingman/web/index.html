@@ -2683,7 +2683,6 @@
       <header class="skills-head">
         <h1 id="fittings-collection-name">All fittings</h1>
         <span class="skills-plan-count" id="fittings-collection-count"></span>
-        <button class="btn acc workspace-primary" id="fittings-copy-selected" disabled>Copy selected</button>
       </header>
 
       <div class="skills-notices" id="fittings-notices" hidden></div>
@@ -2698,9 +2697,10 @@
         <button class="linkbtn" id="fittings-filter-clear" hidden>Clear filters</button>
       </div>
 
-      <div class="skills-filterbar">
-        <button class="btn" id="fittings-select-page" disabled>Select page</button>
-        <button class="btn" id="fittings-clear-selection" disabled>Clear selection</button>
+      <div class="fit-selection-actions" role="group" aria-label="Fitting selection">
+        <button class="linkbtn" id="fittings-select-page" disabled>Select page</button>
+        <button class="linkbtn" id="fittings-clear-selection" disabled>Clear selection</button>
+        <button class="btn acc workspace-primary" id="fittings-copy-selected" disabled>Copy selected</button>
       </div>
 
       <div class="fit-workspace-scroll" id="fittings-workspace-scroll">
@@ -2722,6 +2722,9 @@
             <button class="btn" id="fittings-import-show" hidden>Show fitting</button>
           </div>
           <p class="field-msg" id="fittings-import-status" role="status"></p>
+        </div>
+        <div class="fit-list-head" id="fittings-list-head" aria-hidden="true" hidden>
+          <span></span><span class="fit-column-name">Fitting</span><span>Hull</span><span>Owner/status</span>
         </div>
         <div class="fit-list" id="fittings-list"></div>
         <div class="empty" id="fittings-empty" hidden></div>
