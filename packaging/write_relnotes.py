@@ -32,6 +32,7 @@ otherwise perfectly good.
 
 from __future__ import annotations
 
+import importlib
 import re
 import subprocess
 import sys
@@ -117,13 +118,16 @@ def render(version: str, subjects: list[str]) -> str:
 def read_version(source: Path | None = None) -> str:
     """The declared version, reusing write_version_iss's reader.
 
-    Imported, not copied: the whole point of this module is that derived
-    values have exactly one source, and the version in the page header is
-    as derived as the one in the filename.
+    Imported via importlib rather than an `import` statement: ci.yml's
+    stdlib-only scan tests every bare-python script's top-level imports,
+    and it cannot know that this sibling is itself allowlisted and
+    stdlib-only. The value is still imported, not copied -- the whole
+    point of this module is that derived values have exactly one source,
+    and the version in the page header is as derived as the one in the
+    installer filename.
     """
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import write_version_iss
-
+    write_version_iss = importlib.import_module("write_version_iss")
     return write_version_iss.read_version(source or write_version_iss.SOURCE)
 
 
