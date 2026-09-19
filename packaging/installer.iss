@@ -26,16 +26,17 @@
 ; %LOCALAPPDATA% state folder survives the predecessor's uninstall and is
 ; migrated by wingman/paths.py on first launch.
 AppId=FlyGD Wingman
-; Both mutex names are named so Inno refuses to install over EITHER version
-; while it is running: Global\OBSYouTubeUploader is 3.x's single-instance
-; mutex, Global\FlyGDWingman is 4.0's. Without this, Inno will happily
-; install over a running 3.x -- RemovePredecessor() then tries to uninstall
-; an app whose exe is locked, and the post-install "Launch" checkbox starts
-; 4.0 while 3.x is still resident. With it, Inno asks the user to close the
-; application first, which is the correct and standard behaviour. Keep both
-; names until no 3.x installs remain in the wild -- the same lifetime as
-; LEGACY_MUTEX_NAME in wingman/__main__.py.
-AppMutex=Global\OBSYouTubeUploader,Global\FlyGDWingman
+; The same two mutex names are checked in [Code]'s WaitForWingmanToClose()
+; below. They deliberately do NOT ride [Setup]'s AppMutex any more: AppMutex
+; can only pop a "close the application" dialog, and the updater's install
+; path launches Setup while Wingman is still tearing down -- seconds of
+; background joins after the window is gone -- so every scripted update
+; showed that dialog before the shutdown finished (issue #259). A wait
+; the user never has to answer is the correct behaviour for the update
+; path, and for a hand-launched install over a running app it degrades to
+; the old prompt only after waiting. Keep both names until no 3.x installs
+; remain in the wild -- the same lifetime as LEGACY_MUTEX_NAME in
+; wingman/__main__.py, whose process exit is what releases the 4.0 name.
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher=FlyGD
@@ -57,6 +58,17 @@ SolidCompression=yes
 PrivilegesRequired=lowest
 ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
+; The "what's new" page -- issue #260. Generated, not edited: see
+; packaging/write_relnotes.py. The file is gitignored like version.iss; a
+; missing file is an iscc compile error naming this line, which is the
+; intended failure -- run `python packaging/write_relnotes.py` first.
+InfoBeforeFile=relnotes.txt
+
+[Messages]
+; The stock label for this page is "Select the information to review before
+; continuing" -- generic to the point of saying nothing. Ours has exactly
+; one job, and saying it is free.
+InfoBeforeLabel=What's new in this version:
 
 [Tasks]
 Name: "startup"; Description: "Start automatically when I log in"; GroupDescription: "Startup"
@@ -137,6 +149,138 @@ Filename: "{app}\{#AppExe}"; Description: "Launch {#AppName}"; Flags: nowait pos
 Type: filesandordirs; Name: "{app}"
 
 [Code]
+{ ------------------------------------------------------------------------
+  Single-instance wait (replaces [Setup]'s AppMutex, issue #259).
+
+  The updater launches this installer and only THEN begins shutting Wingman
+  down, and shutdown is seconds of thread joins after the window is already
+  gone. AppMutex could only answer "is the app running?" with a dialog the
+  user must dismiss; users clicking through the wizard raced the teardown
+  and got a blocking error that resolved itself moments later. Here the
+  wizard simply waits, on the page Inno already shows as "Preparing to
+  install", and only escalates to a dialog after the wait budget is spent
+  -- which on any healthy machine never happens.
+
+  Both names must stay: Global\FlyGDWingman is 4.x's single-instance mutex
+  (LEGACY_MUTEX_NAME's twin in wingman/__main__.py, released by process
+  exit), Global\OBSYouTubeUploader is 3.x's, still held by installs that
+  predate the rename -- installing over a running 3.x would let
+  RemovePredecessor() try to uninstall an exe that is locked.
+  ------------------------------------------------------------------------ }
+const
+  MUTEX_WINGMAN = 'Global\FlyGDWingman';
+  MUTEX_LEGACY = 'Global\OBSYouTubeUploader';
+  { SYNCHRONIZE is the minimum access OpenMutexW needs in order to wait on
+    the object; requesting more (MUTEX_ALL_ACCESS) can be refused where
+    this succeeds. }
+  MUTEX_SYNCHRONIZE = $00100000;
+  WAIT_OBJECT_0 = 0;
+  WAIT_TIMEOUT = $00000102;
+
+function OpenMutexW(dwDesiredAccess: LongWord; bInheritHandle: Bool;
+  lpName: String): THandle;
+  external 'OpenMutexW@kernel32.dll stdcall';
+function WaitForSingleObject(hHandle: THandle; dwMilliseconds: LongWord): LongWord;
+  external 'WaitForSingleObject@kernel32.dll stdcall';
+function CloseHandle(hObject: THandle): Bool;
+  external 'CloseHandle@kernel32.dll stdcall';
+
+function MutexHeld(const Name: String): Boolean;
+var
+  Handle: THandle;
+begin
+  { The handle is a probe, not a possession: opened, waited on (or not),
+    and closed inside this function. An orphaned handle would keep nothing
+    alive -- mutexes die with their last owner, not their last opener --
+    but leaking it is still sloppy. }
+  Result := False;
+  Handle := OpenMutexW(MUTEX_SYNCHRONIZE, False, Name);
+  if Handle = 0 then
+    Exit;
+  try
+    { WAIT_OBJECT_0 means a release was observed -- impossible while the
+      app holds it for its lifetime -- so only WAIT_TIMEOUT means held. }
+    Result := WaitForSingleObject(Handle, 0) = WAIT_TIMEOUT;
+  finally
+    CloseHandle(Handle);
+  end;
+end;
+
+function WingmanRunning(): Boolean;
+begin
+  Result := MutexHeld(MUTEX_WINGMAN);
+  if not Result then
+    Result := MutexHeld(MUTEX_LEGACY);
+end;
+
+function WaitForWingmanToClose(): Boolean;
+var
+  Attempt: Integer;
+begin
+  { 240 x 250ms = 60s of silent waiting. The update path needs a few
+    seconds of teardown; a full minute covers a slow disk without ever
+    showing the user a question. During all of it the wizard sits on its
+    normal "Preparing to install" page, which is exactly what the page is
+    for. }
+  for Attempt := 1 to 240 do
+  begin
+    if not WingmanRunning() then
+    begin
+      Result := True;
+      Exit;
+    end;
+    Sleep(250);
+  end;
+
+  Log('Single-instance: still running after 60s of waiting.');
+  if WizardSilent() then
+  begin
+    { A silent install has nobody to ask. Wait it out -- ten minutes in
+      total -- and only then fail, because proceeding over a live app is
+      the corrupted-install outcome AppMutex existed to prevent. }
+    Log('Single-instance: silent install, waiting up to ten minutes total.');
+    for Attempt := 1 to 2160 do
+    begin
+      if not WingmanRunning() then
+      begin
+        Result := True;
+        Exit;
+      end;
+      Sleep(250);
+    end;
+    Result := False;
+    Exit;
+  end;
+
+  { Interactive after the budget: now the dialog earns its place, because
+    something is genuinely wrong -- the app has ignored a minute of grace.
+    Retry re-waits the full 60s so a user who closes the app last is not
+    re-prompted mid-second-wait. }
+  while WingmanRunning() do
+  begin
+    if MsgBox(
+        'FlyGD Wingman is still running.' + #13#10#13#10 +
+        'Close it (check the tray icon), then choose Retry to continue ' +
+        'installing.',
+        mbConfirmation, MB_RETRYCANCEL) = IDCANCEL then
+    begin
+      Log('Single-instance: user chose to cancel.');
+      Result := False;
+      Exit;
+    end;
+  end;
+  Result := True;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  if not WaitForWingmanToClose() then
+    Result :=
+      'FlyGD Wingman is still running. Close it and run this installer ' +
+      'again.';
+end;
+
 { ------------------------------------------------------------------------
   WebView2 Evergreen runtime.
 

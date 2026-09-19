@@ -548,6 +548,18 @@ runs:
       shell: pwsh
       run: python packaging/write_version_iss.py
 
+    - name: Generate the installer's release-notes page
+      # installer.iss's InfoBeforeFile includes packaging/relnotes.txt,
+      # generated from git history since the previous release tag. Like
+      # version.iss it is gitignored and written immediately before iscc.
+      # Requires full history AND tags at checkout (fetch-depth: 0 in the
+      # calling workflow) -- on a shallow checkout the script degrades to
+      # a fallback page rather than failing the build.
+      #
+      # Bare `python`, same as write_version_iss.py above.
+      shell: pwsh
+      run: python packaging/write_relnotes.py
+
     - name: Build installer
       shell: pwsh
       run: iscc packaging/installer.iss
