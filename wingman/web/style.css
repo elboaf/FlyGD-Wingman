@@ -1405,6 +1405,8 @@ button.btn:disabled,
   cursor: pointer;
 }
 .ctxmenu button:hover:not(:disabled) { background: var(--hover); }
+.ctxmenu button.danger { color: var(--danger); }
+.ctxmenu button.danger:hover:not(:disabled) { background: var(--hover); }
 /* The menu holds two object classes now -- the recording on disk (Play,
    Rename) and the video it became (Copy link, Open in browser) -- and
    until the first pair arrived it read entirely as the second. A 1px rule
@@ -3339,6 +3341,66 @@ button.btn:disabled,
 .swatch input:focus-visible + .dot {
   outline: 2px solid var(--focus-ring); outline-offset: 2px;
 }
+
+/* ---- theme family dropdowns -------------------------------------------
+   A custom control, because the native select cannot render a colour dot
+   inside its open list -- and the open list is the point: the names are
+   the palette's own ("Magnum", "Bone", "Hot Magenta"), and a name without
+   its colour is a guess. Built from the same tokens as every other
+   control: the closed state is .btn-shaped, the open menu is a .panel-
+   coloured card on --sunken rows with the swatch dot and its name. */
+.theme-select { position: relative; }
+.theme-select > button {
+  display: inline-flex; align-items: center; gap: 8px;
+  min-width: 180px; padding: 6px 10px;
+  background: var(--field); color: var(--text-btn);
+  border: 1px solid var(--field-border); border-radius: var(--radius-sm);
+  font: inherit; font-size: var(--fs-body); cursor: pointer;
+}
+.theme-select > button:hover { background: var(--control-hover); }
+.theme-select > button:focus-visible {
+  outline: 2px solid var(--focus-ring); outline-offset: 2px;
+}
+.theme-select > button::after {
+  content: ""; margin-left: auto; width: 7px; height: 7px;
+  border-right: 1px solid var(--text-faint);
+  border-bottom: 1px solid var(--text-faint);
+  transform: rotate(45deg) translateY(-2px);
+}
+.theme-select .dot {
+  width: 14px; height: 14px; border-radius: 4px; flex: none;
+  border: 1px solid var(--control-edge); background: var(--swatch);
+}
+.theme-select[open] > button { border-color: var(--field-focus-border); }
+.theme-menu {
+  position: absolute; z-index: 30; top: calc(100% + 4px); left: 0;
+  min-width: 200px; max-height: 260px; overflow-y: auto;
+  margin: 0; padding: 4px; list-style: none;
+  background: var(--panel); border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm); box-shadow: 0 6px 16px rgb(0 0 0 / 0.45);
+}
+.theme-menu li button {
+  display: flex; width: 100%; align-items: center; gap: 8px;
+  padding: 6px 8px; background: none; border: 0; border-radius: 4px;
+  color: var(--text-btn); font: inherit; font-size: var(--fs-body);
+  text-align: left; cursor: pointer;
+}
+.theme-menu li button:hover { background: var(--hover); color: var(--text); }
+.theme-menu li button:focus-visible {
+  outline: 2px solid var(--focus-ring); outline-offset: -2px;
+}
+/* The theme-default row: a family with no pick wears the preset's own
+   mapping, which is a real state worth naming in the list. */
+.theme-menu li button.theme-default-option { color: var(--text-dim); font-style: italic; }
+/* A preset row's identity colours (themes.preset_strip, derived): four
+   small dots so a preset is recognised at a glance instead of recalled
+   by name. Smaller than a pick dot because four of them sit in a row. */
+.theme-strip { display: inline-flex; gap: 3px; flex: none; }
+.theme-strip .dot { width: 10px; height: 10px; }
+/* The what-does-this-change hint under each family dropdown. Full
+   flex-basis so it stacks below the control instead of squeezing
+   beside it in the wrapping row. */
+.theme-family-hint { flex-basis: 100%; margin: 0; }
 
 /* Custom rules share the Settings card and its pane's one scrollbar.
    Rows are separators, not nested cards; only one inline editor is open.

@@ -186,6 +186,8 @@ async function page(options = {}) {
     });
   }
   api.list_rows = api.get_settings = api.update_status = () => null;
+  // Boot read: app.js asks once for the theme payload.
+  api.theme_state = () => null;
   const window = new EventTarget();
   window.pywebview = { api };
   window.getComputedStyle = () => ({ visibility: 'visible' });

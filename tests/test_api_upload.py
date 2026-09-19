@@ -1460,13 +1460,35 @@ def test_clip_keyframes_reads_the_file(monkeypatch, tmp_path):
     (tmp_path / "r1.mkv").write_bytes(b"x")
     seen = {}
 
-    def fake_keyframes(path, ffprobe_bin):
-        seen["path"] = path
-        return [0.0, 12.5]
+    class _Probe:
+        def finish(self, timeout=60):
+            return [0.0, 12.5]
 
-    monkeypatch.setattr("wingman.upload.controller.clips.keyframes", fake_keyframes)
+        def kill(self, timeout=5.0):
+            pass
+
+    def fake_start(path, ffprobe_bin):
+        seen["path"] = path
+        return _Probe()
+
+    monkeypatch.setattr("wingman.upload.controller.clips.start_keyframes", fake_start)
     assert api.clip_keyframes("r1") == {"keys": [0.0, 12.5]}
     assert seen["path"] == tmp_path / "r1.mkv"
+    # The probe leaves the registry once it has answered.
+    assert api._uploader._probes == []
+
+
+def test_a_failed_probe_spawn_answers_no_keys(monkeypatch, tmp_path):
+    """Missing ffprobe degrades to the plain timeline, like keyframes()
+    always did -- the editor never refuses on probe trouble."""
+    api, _window, _rows = api_with(tmp_path)
+    (tmp_path / "r1.mkv").write_bytes(b"x")
+
+    def fake_start(path, ffprobe_bin):
+        return None
+
+    monkeypatch.setattr("wingman.upload.controller.clips.start_keyframes", fake_start)
+    assert api.clip_keyframes("r1") == {"keys": []}
 
 
 def test_cut_clip_writes_the_clip_and_refreshes_the_list(monkeypatch, tmp_path):

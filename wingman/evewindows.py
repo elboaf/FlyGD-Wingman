@@ -169,19 +169,60 @@ def focused_eve_title():
         # mangles a 64-bit handle.
         user32.GetForegroundWindow.argtypes = []
         user32.GetForegroundWindow.restype = wintypes.HWND
-        user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
-        user32.GetWindowTextLengthW.restype = ctypes.c_int
-        user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
-        user32.GetWindowTextW.restype = ctypes.c_int
 
         hwnd = user32.GetForegroundWindow()
         if not hwnd:
             return None
-        length = user32.GetWindowTextLengthW(hwnd)
-        if length <= 0:
+        # SendMessageTimeout with WM_GETTEXTLENGTH/WM_GETTEXT, not
+        # GetWindowTextLengthW/GetWindowTextW: the GetWindowText family
+        # blocks for good when the target window belongs to a process that
+        # has stopped pumping (a background EVE client), and that park
+        # wedged Quit while the caller held the sig-bar lifecycle lock
+        # (reproduced 2026-09-16). ABORTIFHUNG bounds each read; any
+        # failure or timeout reads as None, the gate's conservative
+        # "not an EVE client" answer.
+        SMTO_ABORTIFHUNG = 0x0002
+        WM_GETTEXTLENGTH = 0x000E
+        WM_GETTEXT = 0x000D
+        TIMEOUT_MS = 1000
+        user32.SendMessageTimeoutW.argtypes = [
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            # c_void_p, not wintypes.LPARAM: lParam carries the WM_GETTEXT
+            # buffer on the second call, and a c_longlong argtype rejects
+            # the cast pointer.
+            ctypes.c_void_p,
+            wintypes.UINT,
+            wintypes.UINT,
+            ctypes.POINTER(ctypes.c_size_t),
+        ]
+        user32.SendMessageTimeoutW.restype = ctypes.c_ssize_t
+        needed = ctypes.c_size_t(0)
+        if (
+            not user32.SendMessageTimeoutW(
+                hwnd,
+                WM_GETTEXTLENGTH,
+                0,
+                0,
+                SMTO_ABORTIFHUNG,
+                TIMEOUT_MS,
+                ctypes.byref(needed),
+            )
+            or needed.value <= 0
+        ):
             return None
-        buffer = ctypes.create_unicode_buffer(length + 1)
-        user32.GetWindowTextW(hwnd, buffer, length + 1)
+        buffer = ctypes.create_unicode_buffer(needed.value + 1)
+        if not user32.SendMessageTimeoutW(
+            hwnd,
+            WM_GETTEXT,
+            needed.value + 1,
+            ctypes.cast(buffer, ctypes.c_void_p),
+            SMTO_ABORTIFHUNG,
+            TIMEOUT_MS,
+            ctypes.byref(ctypes.c_size_t(0)),
+        ):
+            return None
         title = buffer.value
         return title if bookmarks.is_engine_window_title(title) else None
     except Exception:

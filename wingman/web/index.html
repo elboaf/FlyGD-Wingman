@@ -380,6 +380,7 @@
   <div class="ctxmenu" id="ctxmenu" hidden>
     <button id="ctx-play">Play</button>
     <button id="ctx-rename">Rename&hellip;</button>
+    <button id="ctx-delete" class="danger">Delete&hellip;</button>
     <div class="ctxsep"></div>
     <button id="ctx-copy">Copy link</button>
     <button id="ctx-open">Open in browser</button>
@@ -1733,6 +1734,29 @@
     <div class="settings" id="section-general">
 
       <section class="card">
+        <h2>Appearance</h2>
+        <div class="row">
+          <!-- The custom dropdown, not a native select: the open list is
+               the point — each preset row carries its identity colour
+               strip (themes.preset_strip), and a name without its colours
+               is a guess. Built by settings.js like the family controls. -->
+          <span class="lab" id="lab-theme-preset">Theme</span>
+          <div id="theme-preset"></div>
+        </div>
+        <p class="hint">
+          Customise re-points element families at colours from the theme's
+          own palette. Each pick keeps the palette's measured lightness, so
+          every combination stays readable.
+        </p>
+        <div class="actions">
+          <button class="btn" id="btn-theme-customise" aria-expanded="false"
+                  aria-controls="theme-composer">Customise colours…</button>
+        </div>
+        <div id="theme-composer" hidden></div>
+        <p class="field-msg" id="msg-theme" hidden></p>
+      </section>
+
+      <section class="card">
         <h2>EVE Online tools</h2>
         <label class="check">
           <input type="checkbox" id="show-eve-tools"><span class="box"></span>
@@ -2909,6 +2933,7 @@
     </div>
   </div>
 
+  <script src="themeapply.js"></script>
   <script src="app.js"></script>
   <script src="characters.js"></script>
   <script src="bookmarks.js"></script>

@@ -79,7 +79,9 @@ const api = {};
 for (const method of ['fleet_sharing_watch', 'fleet_sharing_set_enabled', 'fleet_sharing_pair', 'fleet_sharing_start_source', 'fleet_sharing_stop_source', 'fleet_sharing_grant_fleet_read']) {
   api[method] = (...args) => new Promise((resolve, reject) => calls.push({method, args, resolve, reject}));
 }
-for (const method of ['list_rows', 'get_settings', 'update_status']) api[method] = () => Promise.resolve(null);
+// theme_state rides the same boot-read seam as the three below it:
+// app.js asks for it once at startup, and an unanswered read warns.
+for (const method of ['list_rows', 'get_settings', 'update_status', 'theme_state']) api[method] = () => Promise.resolve(null);
 window.pywebview = {api};
 const errors = [];
 const runtime = vm.createContext({window, document, Promise, console: {error: (...args) => errors.push(args), warn: (...args) => errors.push(args)},

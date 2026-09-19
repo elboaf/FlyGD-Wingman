@@ -245,6 +245,23 @@ describing the change as "seven edits, all mechanical". If it is mechanical
 you are not deciding anything, which is the problem.
 
 
+## Appearance: one card, family picks
+
+The theme picker lives in Settings › General — configuration by
+PRODUCT.md's own test, and the first Appearance control the app has had.
+`themes.FAMILIES` owns the available family list. `themes.py` derives roles
+from one permitted swatch per family while preserving reference HLS lightness.
+HLS lightness is not WCAG relative luminance, so pool membership alone does not
+guarantee contrast. The inherited custom-palette control-edge contrast gap remains
+open; actual token pairs still need measured coverage against the floors below.
+The composer offers only swatches the preset's pool tags as compatible with the
+family; `--link` is not in any pool (its own note in style.css explains
+why it must stay blue), and severity tokens (`--training`, `--unmet`)
+are likewise fixed vocabulary. The native surface is painted from the
+stored theme before the first HTML frame (`window.py` resolves --bg the
+same way), which is what keeps a non-default theme from launching with a
+flash of the ground token.
+
 ## Controls
 
 **Checkboxes and radios must use the wrapper.** Nothing in `style.css`

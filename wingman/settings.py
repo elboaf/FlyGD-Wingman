@@ -13,7 +13,7 @@ import weakref
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from . import atomicio, bookmarks, discord, paths
+from . import atomicio, bookmarks, discord, paths, themes
 from .alerts import custom as alert_custom
 from .alerts import patterns as alert_patterns
 from .alerts import state as alert_state
@@ -373,6 +373,21 @@ def validated_wanderer(raw) -> dict:
     return section
 
 
+def _theme_defaults() -> dict:
+    return {"preset": themes.DEFAULT_PRESET, "families": {}}
+
+
+def validated_theme(raw) -> dict:
+    """Project a stored theme document onto what the shipped presets support.
+
+    Delegated to themes.normalize so the acceptance rules live in the one
+    module that owns the swatch pools -- an unknown preset or a swatch a
+    family may not drive is dropped, never trusted.
+    """
+    preset_id, picks = themes.normalize(raw if isinstance(raw, dict) else {})
+    return {"preset": preset_id, "families": picks}
+
+
 DEFAULTS = {
     # unlisted, not private: a private upload nobody can watch defeats the
     # purpose of sharing a fight. This reverses an earlier decision that
@@ -450,6 +465,11 @@ DEFAULTS = {
     # Optional sharing is off by default and never implied by pairing.
     "fleet_sharing": _fleet_sharing_defaults(),
     "wanderer": validated_wanderer(None),
+    # Theme picker state: one shipped preset plus the family picks the
+    # composer made against its pool. Validated through themes.normalize
+    # (see validated_theme) so an edited file can only ever name swatches
+    # the preset actually offers.
+    "theme": _theme_defaults(),
 }
 
 VALID_PRIVACY = {"private", "unlisted", "public"}
@@ -467,6 +487,7 @@ def _fresh_defaults() -> dict:
     data["fleet_bar"] = _fleet_bar_defaults()
     data["fleet_sharing"] = _fleet_sharing_defaults()
     data["wanderer"] = validated_wanderer(None)
+    data["theme"] = _theme_defaults()
     return data
 
 

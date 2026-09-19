@@ -61,7 +61,7 @@
                  'onSigBarState', 'onFleetBarState', 'onUpdateStatus',
                  'onSkills', 'onSkillsProgress',
                  'onFittingsChanged', 'onFittingsProgress',
-                 'onFittingsScreenshotState', 'onFleetSharingState'];
+                 'onFittingsScreenshotState', 'onFleetSharingState', 'onTheme'];
 
   WM.handle = function (name, fn) {
     if (WM.HANDLERS.indexOf(name) === -1) {
@@ -412,6 +412,13 @@
     gear.setAttribute('aria-label', gear.title);
     document.dispatchEvent(new CustomEvent('wm:update-status', {detail: payload}));
   }
+  // Shell-level, not a route's: every page renders the same :root tokens,
+  // so the applier (themeapply.js, shared with the bar pages) is driven
+  // here and WM.theme is the latest payload for the Settings composer.
+  WM.handle('onTheme', function (payload) {
+    WM.theme = payload;
+    window.WingmanTheme.apply(payload);
+  });
   WM.handle('onUpdateStatus', renderUpdateBadge);
   WM.handle('onEveAuthorityChanged', function (payload) {
     document.dispatchEvent(new CustomEvent('wm:eve-authority',
@@ -447,6 +454,14 @@
     // Save from it wrote the blanks back.
     WM.send('get_settings').then(function (payload) {
       if (payload) window.onSettings(payload);
+    });
+    // Like every bridge read this is asynchronous, so a non-default
+    // theme swaps in after the stock one paints. The native frame already
+    // carries the right --bg (window.py reads the setting at startup),
+    // so the swap reads as the page finishing rather than as a flash of
+    // the wrong app.
+    WM.send('theme_state').then(function (payload) {
+      if (payload) window.onTheme(payload);
     });
     // Keep this cached read for dev mode, where Python never pushes, but do
     // not let its older snapshot repaint over an update push that won the

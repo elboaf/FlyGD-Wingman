@@ -944,6 +944,19 @@ def shutdown_engine(engine) -> None:
         logger.exception("Engine did not stop cleanly")
 
 
+def _teardown_step(name: str, stop) -> None:
+    """Run one shutdown step, keeping the rest of the teardown reachable.
+
+    The order of the teardown steps in main() is load-bearing, so a step
+    that raises must not prevent later steps -- each is made individually
+    defensive instead of one guard around the whole tail.
+    """
+    try:
+        stop()
+    except Exception:
+        logger.exception("%s did not stop cleanly", name)
+
+
 def main() -> int:
     set_dpi_awareness()
     handle = acquire_single_instance()
@@ -1245,30 +1258,36 @@ def main() -> int:
     # twenty-second readiness timeout -- an invisible window on every
     # launch, with the push dropped when that timeout raises. pywebview runs
     # this callback on its own thread once the GUI loop owns the main one.
-    window_mod.run(api._page_ready)  # Blocks until the window is destroyed.
-
-    # Also covers GUI exit paths that did not request destroy_windows().
-    api._close_eve_runtime()
-    api._stop_fleet_presentation()
-    api.shutdown_fleet_sharing()
-    icon.stop()
-    if scheduler is not None:
-        scheduler.stop()
-    shutdown_engine(engine)
-    # Close updater state before subsystem teardown. This suppresses late
-    # worker pushes and removes a ready file on ordinary Quit while retaining
-    # the persistent on-disk marker/file pair already handed to Setup.
-    api.shutdown_updates()
-    # Api owns sharing's watch, subscriptions and bounded stop; its preview
-    # teardown closes those before stopping the shared telemetry coordinator.
-    # Last, and unconditional: a preview thread that outlives the window
-    # still owns HWNDs, and Wingman leaves the tray but stays in Task
-    # Manager. A live loopback socket on the fixed redirect port would
-    # likewise make the next launch's sign-in fail to bind, and the
-    # redirect URI is registered with CCP so there is no fallback port to
-    # move to -- so both teardowns run here, unconditionally, in order.
-    api.shutdown_previews()
-    shutdown_eve_controllers(api)
+    try:
+        window_mod.run(api._page_ready)  # Blocks until the window is destroyed.
+    finally:
+        # The clean path below is also the crash path: an exception leaving
+        # run() used to skip every teardown and orphan the engine -- a
+        # global keyboard hook with no UI left able to disable it (the job
+        # object now backstops that for a *dead* process, but an exception
+        # path is still a live one, so stop() must run here). Each step is
+        # guarded separately; one failure cannot skip the rest.
+        _teardown_step("EVE runtime", api._close_eve_runtime)
+        _teardown_step("fleet presentation", api._stop_fleet_presentation)
+        _teardown_step("fleet sharing", api.shutdown_fleet_sharing)
+        _teardown_step("tray icon", icon.stop)
+        if scheduler is not None:
+            _teardown_step("scheduler", scheduler.stop)
+        shutdown_engine(engine)
+        # Close updater state before subsystem teardown. This suppresses late
+        # worker pushes and removes a ready file on ordinary Quit while retaining
+        # the persistent on-disk marker/file pair already handed to Setup.
+        _teardown_step("updater", api.shutdown_updates)
+        # Api owns sharing's watch, subscriptions and bounded stop; its preview
+        # teardown closes those before stopping the shared telemetry coordinator.
+        # Last, and unconditional: a preview thread that outlives the window
+        # still owns HWNDs, and Wingman leaves the tray but stays in Task
+        # Manager. A live loopback socket on the fixed redirect port would
+        # likewise make the next launch's sign-in fail to bind, and the
+        # redirect URI is registered with CCP so there is no fallback port to
+        # move to -- so both teardowns run here, unconditionally, in order.
+        _teardown_step("previews", lambda: api.shutdown_previews())
+        _teardown_step("EVE controllers", lambda: shutdown_eve_controllers(api))
     return 0
 
 

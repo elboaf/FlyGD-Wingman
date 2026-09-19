@@ -297,6 +297,35 @@ record build, checkout and scaling. No live webhook was used in automated tests.
 - [ ] General Export/Import are content-width buttons; export/import review,
       the Uploader's action width, and upload/update admission are unchanged.
 
+## Theme picker hardening — Windows acceptance NOT RUN (2026-09-17)
+
+The picker card changed shape: the preset control is now the same custom
+dropdown as the families (native `<select>` gone), preset switches confirm
+before destroying family picks, and the listboxes have a keyboard contract.
+
+- [ ] **Preset picker shows colour.** The Theme dropdown's open list shows
+      each preset's name beside a four-dot identity strip; the strip colours
+      match what each preset actually paints (they are derived in
+      `themes.preset_strip`, but eyes confirm the derivation picked roles
+      that read as that preset). The closed trigger reads the current
+      preset's name.
+- [ ] **Confirm gate.** With at least one family pick made (composer may
+      stay collapsed), choosing a different preset raises a destructive
+      confirm naming the preset and the pick count. Decline changes
+      nothing and the trigger still reads the old preset; Accept switches
+      and the message line receipts ("Switched to …; N colour picks
+      cleared."). With no picks, no confirm appears.
+- [ ] **Keyboard contract.** Tab reaches each dropdown's trigger; Arrow
+      Down opens onto the selected row; Arrow Up/Down move (wrapping),
+      Home/End jump; Enter activates; Escape closes and puts focus back on
+      the trigger; the picked row announces as selected (screen reader or
+      accessibility inspector).
+- [ ] **Refusal and failure copy.** A refused pick still shows api.py's
+      specific message; only a genuine bridge failure shows the new
+      "The app did not accept that change…" wording.
+- [ ] **Customise colours…** carries the ellipsis while collapsed and
+      reads "Hide colours" while expanded.
+
 ## Clarity follow-up — installed Windows acceptance NOT RUN (2026-09-14)
 
 Source-worktree evidence (2026-09-14–15): the full main-window capture and
@@ -1607,10 +1636,13 @@ somewhere stale and nothing on that screen is worth reviewing.
       plays (served from a loopback HTTP port -- WebView2 refuses direct
       file:// media); clicking or press-dragging the timeline scrubs the
       playhead and seeks; the playhead follows playback.
-- [ ] **Markers snap and read true.** Drag the in-handle: it snaps DOWN to
-      a keyframe (the readout shows the snapped time — what a cut will
-      actually take; stream copy cannot start mid-GOP, so a clip may begin
-      a few seconds early, never late). Handles may not cross. Set
+- [ ] **Markers snap and read true.** When keyframes are known, drag the
+      in-handle: it snaps DOWN to a keyframe (the readout shows the snapped
+      time — what a cut will actually take; stream copy cannot start mid-GOP,
+      so a clip may begin a few seconds early, never late). If the probe returns
+      no usable keyframes, the chosen start remains at the requested time,
+      clamped inside the recording, rather than pinned to zero. The cut still
+      uses FFmpeg's input-side keyframe seek. Handles may not cross. Set
       start / Set end take the playhead position. Play selection plays the
       marked range and stops at the out point.
 - [ ] **Cut clip lands a file.** Press Cut clip. Expected: the strip shows
@@ -1631,9 +1663,10 @@ somewhere stale and nothing on that screen is worth reviewing.
       `Stitch locally`. Expected: `Stitched into <stem> - stitched.mkv in
       the recording folder.`, one new row, originals untouched.
 - [ ] **Open folder opens the watched folder.** Press it in the list footer
-      with a folder configured: Explorer opens on that folder. This is the
-      only affordance on this screen that reaches the FILES — double-click
-      and both context-menu entries all act on the YouTube link.
+      with a folder configured: Explorer opens on that folder. Play, Rename
+      and Delete act on the recording on disk; double-click, Copy link and
+      Open in browser act on its uploaded YouTube link. The original two-item
+      context menu held only link actions; that is no longer the whole menu.
       Then the two refusals, which report on the status strip and must NOT
       raise a dialog: with no folder set, "No recording folder is set.
       Choose one in Settings."; with the configured folder renamed or

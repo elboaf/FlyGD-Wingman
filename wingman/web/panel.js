@@ -194,7 +194,14 @@
   // deliver as a start point. The cut may begin early -- that is the
   // keyframe trade the feature accepted -- and the READOUTS show the
   // snapped value so what you see is what gets cut.
+  // An empty key list (probe failed, no ffprobe, timeout) stands the
+  // position as given -- the same contract clips.py states -- because
+  // ffmpeg's own input-side seek still finds a keyframe; returning 0
+  // here would pin the start marker to the timeline origin forever.
   function clipSnapIn(t) {
+    if (clip.keys.length === 0) {
+      return Math.max(0, Math.min(t, clip.duration));
+    }
     var best = 0;
     for (var i = 0; i < clip.keys.length; i += 1) {
       if (clip.keys[i] <= t + 0.001) best = clip.keys[i];
@@ -393,10 +400,29 @@
     if (ids.length === 1) clipShow(ids[0]);
     else clipHide();
   });
-  // Leaving the route must not leave the file playing in a hidden panel.
-  document.addEventListener('wm:route', function () {
-    if (clip.video && !clip.degraded) clip.video.pause();
+  // Leaving the Uploader route must not leave the file open behind a
+  // hidden panel: a live media element keeps fetching through clipserve,
+  // and an open handle is exactly what makes the recording impossible to
+  // delete. wm:route also fires on ENTRY, so coming back re-arms the
+  // editor for the still-single selection -- nothing else re-fires
+  // wm:selection on a route change.
+  document.addEventListener('wm:route', function (ev) {
+    // WM.list is undefined in focused Node harnesses that load this module
+    // without the list route's stub (fittings screenshots dispatch
+    // wm:route); in the app list.js always loads first.
+    if (ev.detail === 'main' && WM.list) {
+      var ids = WM.list.selectedIds();
+      if (ids.length === 1) clipShow(ids[0]);
+    } else if (!WM.el('clip-editor').hidden) {
+      clipHide();
+    }
     clip.playingSel = false;
+  });
+
+  // Delete (button and context menu) clears the editor first so the media
+  // element stops fetching before Python unlinks the recording.
+  document.addEventListener('wm:clip-release', function () {
+    if (!WM.el('clip-editor').hidden) clipHide();
   });
 
   WM.el('btn-retry').addEventListener('click', function () {

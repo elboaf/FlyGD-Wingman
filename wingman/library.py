@@ -8,6 +8,7 @@ in the UI layer; this module deals only in data.
 import datetime
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -380,6 +381,27 @@ def rename_problem(stem: str) -> str | None:
     return None
 
 
+# A delete can race a reader that is just letting go -- the clip editor's
+# media element draining its last Range fetch, a player the user closed a
+# beat ago -- and Windows reports that instant as a sharing violation.
+# Retrying briefly turns the race into a deletion instead of a "1 failed."
+_LOCKED_RETRIES = 5
+_LOCKED_BACKOFF = 0.2
+
+
+def _unlink(path: Path) -> None:
+    for attempt in range(_LOCKED_RETRIES + 1):
+        try:
+            path.unlink()
+            return
+        except PermissionError:
+            # ERROR_SHARING_VIOLATION surfaces here; ENOENT must not be
+            # retried -- a vanished file is gone, not busy.
+            if attempt == _LOCKED_RETRIES:
+                raise
+            time.sleep(_LOCKED_BACKOFF)
+
+
 def delete(items: list[Path]) -> tuple[int, list[tuple[Path, str]]]:
     """Permanently delete *items*.
 
@@ -390,7 +412,7 @@ def delete(items: list[Path]) -> tuple[int, list[tuple[Path, str]]]:
     failures: list[tuple[Path, str]] = []
     for path in items:
         try:
-            path.unlink()
+            _unlink(path)
             deleted += 1
         except OSError as exc:
             failures.append((path, str(exc)))

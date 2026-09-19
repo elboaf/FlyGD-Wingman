@@ -2408,6 +2408,2484 @@
   // correct under ?dev=1 and was wrong under Python. A double that is more
   // complete than the thing it doubles hides exactly the bug it should
   // have caught.
+// Generated from wingman/themes.py (python side of this session):
+// the full preset tables, so dev exercises the REAL names and pools
+// instead of a hand-typed copy that drifts. Presets iterate the same
+// table, so a new preset appears in dev by regenerating, not editing.
+  var DEV_THEMES = {
+  "taco-bell": {
+    "roles": {
+      "--bg": "#050510",
+      "--panel": "#0a0a1f",
+      "--panel-border": "#151543",
+      "--field": "#030309",
+      "--field-border": "#1b1b53",
+      "--text": "#f6f5fa",
+      "--text-dim": "#c1b7db",
+      "--text-faint": "#a99bce",
+      "--text-label": "#b5a9d4",
+      "--text-btn": "#d7d0e8",
+      "--brand": "#ff1f8d",
+      "--brand-deep": "#750039",
+      "--brand-text": "#ff5aab",
+      "--acc-top": "#ff1f8d",
+      "--acc-bottom": "#e90072",
+      "--brand-edge": "#ff5aab",
+      "--focus-ring": "#ff5aab",
+      "--ok": "#71c53e",
+      "--warn": "#ffd900",
+      "--err": "#ec4e57",
+      "--danger": "#ec4e57",
+      "--danger-solid": "#b7131c",
+      "--unmet": "#f0a263",
+      "--training": "#45c8d4",
+      "--link": "#7aa2f7",
+      "--card-top": "#131339",
+      "--sunken": "#04040e",
+      "--titlebar-top": "#131339",
+      "--titlebar-bottom": "#0a0a20",
+      "--titlebar-inset": "#1e1e5c",
+      "--statusbar-top": "#0e0e2c",
+      "--statusbar-bottom": "#080818",
+      "--wash-top": "#0e0e2a",
+      "--wash-bottom": "#0e0e2c",
+      "--hover": "#1b1b55",
+      "--control": "#131339",
+      "--control-border": "#1f1f61",
+      "--control-hover": "#1b1b55",
+      "--control-edge": "#8d7abd",
+      "--field-focus-border": "#24246e",
+      "--scrollbar": "#161646",
+      "--scrollbar-hover": "#202064",
+      "--fleet-incoming-threat": "#d4b400",
+      "--row-line": "#0f0f31",
+      "--row-hover": "#0d0d28",
+      "--row-active": "#121238",
+      "--row-ring": "#1c1c56",
+      "--row-ring-focus": "#28287e",
+      "--on-accent": "#050510",
+      "--brand-rgb": "255 31 141",
+      "--wash-top-rgb": "14 14 42",
+      "--wash-bottom-rgb": "14 14 44",
+      "--fleet-threat-surface": "rgb(d4b400 / 0.12)"
+    },
+    "swatches": [
+      {
+        "name": "Midnight Blue",
+        "hex": "#0a0a1f",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Bell Purple",
+        "hex": "#702082",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Bell Bright",
+        "hex": "#9b2fa8",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Drive-Thru Cyan",
+        "hex": "#00e5ff",
+        "families": [
+          "surface",
+          "accent"
+        ]
+      },
+      {
+        "name": "Midnight Deep",
+        "hex": "#050510",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Bell Deep",
+        "hex": "#2e0a38",
+        "families": [
+          "base",
+          "surface"
+        ]
+      },
+      {
+        "name": "Neon White",
+        "hex": "#f5f0ff",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Neon White Dim",
+        "hex": "#c9c0e0",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Shell Tan",
+        "hex": "#e8c88a",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Fire Pink",
+        "hex": "#ff1f8f",
+        "families": [
+          "text",
+          "accent"
+        ]
+      },
+      {
+        "name": "Fire Pink Bright",
+        "hex": "#ff5aab",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Cheese Yellow",
+        "hex": "#ffd400",
+        "families": [
+          "text",
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Cheese Bright",
+        "hex": "#ffe44a",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Lava Orange",
+        "hex": "#ff6b1a",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Sauce Red",
+        "hex": "#e8242f",
+        "families": [
+          "danger"
+        ]
+      },
+      {
+        "name": "Lettuce Green",
+        "hex": "#5fa832",
+        "families": [
+          "success"
+        ]
+      }
+    ],
+    "legal": {
+      "surface": [
+        "#0a0a1f",
+        "#702082",
+        "#9b2fa8",
+        "#00e5ff",
+        "#2e0a38"
+      ],
+      "base": [
+        "#050510",
+        "#2e0a38"
+      ],
+      "text": [
+        "#f5f0ff",
+        "#c9c0e0",
+        "#e8c88a",
+        "#ff1f8f",
+        "#ffd400"
+      ],
+      "accent": [
+        "#00e5ff",
+        "#ff1f8f",
+        "#ff5aab",
+        "#ffd400",
+        "#ffe44a",
+        "#ff6b1a"
+      ],
+      "danger": [
+        "#ff6b1a",
+        "#e8242f"
+      ],
+      "success": [
+        "#5fa832"
+      ],
+      "warning": [
+        "#ffd400",
+        "#ffe44a"
+      ]
+    }
+  },
+  "carls-jr": {
+    "roles": {
+      "--bg": "#0a0a0a",
+      "--panel": "#1a1a1a",
+      "--panel-border": "#2e2e2e",
+      "--field": "#050505",
+      "--field-border": "#303030",
+      "--text": "#f0eeeb",
+      "--text-dim": "#c9c4b8",
+      "--text-faint": "#a09782",
+      "--text-label": "#aba390",
+      "--text-btn": "#d7d3ca",
+      "--brand": "#f7a800",
+      "--brand-deep": "#6b4900",
+      "--brand-text": "#ffbe33",
+      "--acc-top": "#f7a800",
+      "--acc-bottom": "#d18e00",
+      "--brand-edge": "#ffbe33",
+      "--focus-ring": "#ffbe33",
+      "--ok": "#71c53e",
+      "--warn": "#f7ac00",
+      "--err": "#ec4861",
+      "--danger": "#ec4861",
+      "--danger-solid": "#b7132c",
+      "--unmet": "#f0a263",
+      "--training": "#45c8d4",
+      "--link": "#7aa2f7",
+      "--card-top": "#202020",
+      "--sunken": "#0b0b0b",
+      "--titlebar-top": "#1f1f1f",
+      "--titlebar-bottom": "#121212",
+      "--titlebar-inset": "#303030",
+      "--statusbar-top": "#171717",
+      "--statusbar-bottom": "#0e0e0e",
+      "--wash-top": "#121212",
+      "--wash-bottom": "#121212",
+      "--hover": "#3a3a3a",
+      "--control": "#242424",
+      "--control-border": "#383838",
+      "--control-hover": "#303030",
+      "--control-edge": "#9e9580",
+      "--field-focus-border": "#3e3e3e",
+      "--scrollbar": "#2b2b2b",
+      "--scrollbar-hover": "#3b3b3b",
+      "--fleet-incoming-threat": "#d19100",
+      "--row-line": "#202020",
+      "--row-hover": "#1c1c1c",
+      "--row-active": "#232323",
+      "--row-ring": "#343434",
+      "--row-ring-focus": "#4b4b4b",
+      "--on-accent": "#0a0a0a",
+      "--brand-rgb": "247 168 0",
+      "--wash-top-rgb": "18 18 18",
+      "--wash-bottom-rgb": "18 18 18",
+      "--fleet-threat-surface": "rgb(d19100 / 0.12)"
+    },
+    "swatches": [
+      {
+        "name": "Char Black",
+        "hex": "#1a1a1a",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Char Gray",
+        "hex": "#2e2e2e",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Patty Brown",
+        "hex": "#6b3a1f",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Charbroil Red Dark",
+        "hex": "#b8122c",
+        "families": [
+          "surface",
+          "danger"
+        ]
+      },
+      {
+        "name": "Char Black Deep",
+        "hex": "#0a0a0a",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Cola Caramel",
+        "hex": "#3d1f0a",
+        "families": [
+          "base",
+          "surface"
+        ]
+      },
+      {
+        "name": "Diner White",
+        "hex": "#f5f0e6",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Diner White Dim",
+        "hex": "#c9c4b8",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Bun Tan",
+        "hex": "#e8c99b",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Milkshake Cream",
+        "hex": "#fff4dc",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Star Yellow",
+        "hex": "#f7a800",
+        "families": [
+          "text",
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Star Bright",
+        "hex": "#ffc133",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Cheese Orange",
+        "hex": "#ff8a1f",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Chrome Silver",
+        "hex": "#c8c8d0",
+        "families": [
+          "text",
+          "accent"
+        ]
+      },
+      {
+        "name": "Lettuce Green",
+        "hex": "#5fa832",
+        "families": [
+          "success"
+        ]
+      },
+      {
+        "name": "Charbroil Red",
+        "hex": "#e31837",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Charbroil Deep",
+        "hex": "#8a0d20",
+        "families": [
+          "danger"
+        ]
+      }
+    ],
+    "legal": {
+      "surface": [
+        "#1a1a1a",
+        "#2e2e2e",
+        "#6b3a1f",
+        "#b8122c",
+        "#3d1f0a"
+      ],
+      "base": [
+        "#0a0a0a",
+        "#3d1f0a"
+      ],
+      "text": [
+        "#f5f0e6",
+        "#c9c4b8",
+        "#e8c99b",
+        "#fff4dc",
+        "#f7a800",
+        "#c8c8d0"
+      ],
+      "accent": [
+        "#f7a800",
+        "#ffc133",
+        "#ff8a1f",
+        "#c8c8d0",
+        "#e31837"
+      ],
+      "danger": [
+        "#b8122c",
+        "#e31837",
+        "#8a0d20"
+      ],
+      "success": [
+        "#5fa832"
+      ],
+      "warning": [
+        "#f7a800",
+        "#ffc133",
+        "#ff8a1f"
+      ]
+    }
+  },
+  "brawndo": {
+    "roles": {
+      "--bg": "#050505",
+      "--panel": "#001528",
+      "--panel-border": "#002548",
+      "--field": "#030303",
+      "--field-border": "#002d58",
+      "--text": "#ffffff",
+      "--text-dim": "#fff59c",
+      "--text-faint": "#ffeb35",
+      "--text-label": "#ffee4f",
+      "--text-btn": "#fff8b5",
+      "--brand": "#39ff14",
+      "--brand-deep": "#127500",
+      "--brand-text": "#6dff52",
+      "--acc-top": "#39ff14",
+      "--acc-bottom": "#21d200",
+      "--brand-edge": "#6dff52",
+      "--focus-ring": "#6dff52",
+      "--ok": "#3dff14",
+      "--warn": "#fff000",
+      "--err": "#eb4a3f",
+      "--danger": "#eb4a3f",
+      "--danger-solid": "#b91d13",
+      "--unmet": "#f0975c",
+      "--training": "#45c8d4",
+      "--link": "#7aa2f7",
+      "--card-top": "#001a32",
+      "--sunken": "#040404",
+      "--titlebar-top": "#001c36",
+      "--titlebar-bottom": "#000f1e",
+      "--titlebar-inset": "#002a52",
+      "--statusbar-top": "#001528",
+      "--statusbar-bottom": "#0c0c0c",
+      "--wash-top": "#001020",
+      "--wash-bottom": "#0d0d0d",
+      "--hover": "#002b54",
+      "--control": "#00203e",
+      "--control-border": "#00305e",
+      "--control-hover": "#002950",
+      "--control-edge": "#ffea28",
+      "--field-focus-border": "#003a70",
+      "--scrollbar": "#002446",
+      "--scrollbar-hover": "#003464",
+      "--fleet-incoming-threat": "#d4c700",
+      "--row-line": "#181818",
+      "--row-hover": "#151515",
+      "--row-active": "#1b1b1b",
+      "--row-ring": "#002e5a",
+      "--row-ring-focus": "#004688",
+      "--on-accent": "#000000",
+      "--brand-rgb": "57 255 20",
+      "--wash-top-rgb": "0 16 32",
+      "--wash-bottom-rgb": "13 13 13",
+      "--fleet-threat-surface": "rgb(d4c700 / 0.12)"
+    },
+    "swatches": [
+      {
+        "name": "Metal Dark",
+        "hex": "#141414",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Flavor Purple",
+        "hex": "#7b2fbe",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Power Blue",
+        "hex": "#0055a5",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Can Aluminum Dark",
+        "hex": "#8a8a96",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Metal Black",
+        "hex": "#0a0a0a",
+        "families": [
+          "base",
+          "surface"
+        ]
+      },
+      {
+        "name": "Metal Deep",
+        "hex": "#050505",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Lightning White",
+        "hex": "#ffffff",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Lightning White Dim",
+        "hex": "#e0e0e8",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Can Aluminum",
+        "hex": "#c8c8d0",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Chrome Bright",
+        "hex": "#e8e8f0",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Brawndo Green",
+        "hex": "#39ff14",
+        "families": [
+          "text",
+          "accent",
+          "success"
+        ]
+      },
+      {
+        "name": "Green Bright",
+        "hex": "#5fff3d",
+        "families": [
+          "accent",
+          "success"
+        ]
+      },
+      {
+        "name": "Electrolyte Yellow",
+        "hex": "#ffe600",
+        "families": [
+          "text",
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Electrolyte Yellow Bright",
+        "hex": "#fff44a",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Electric Cyan",
+        "hex": "#00e5ff",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Flavor Purple Bright",
+        "hex": "#9b4fde",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Power Blue",
+        "hex": "#0055a5",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Caution Orange",
+        "hex": "#ff6b1a",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Thirst Mutilator Red",
+        "hex": "#e8291c",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Thirst Mutilator Red Dark",
+        "hex": "#b81e14",
+        "families": [
+          "danger"
+        ]
+      }
+    ],
+    "legal": {
+      "surface": [
+        "#141414",
+        "#7b2fbe",
+        "#0055a5",
+        "#8a8a96",
+        "#0a0a0a"
+      ],
+      "base": [
+        "#0a0a0a",
+        "#050505"
+      ],
+      "text": [
+        "#ffffff",
+        "#e0e0e8",
+        "#c8c8d0",
+        "#e8e8f0",
+        "#39ff14",
+        "#ffe600"
+      ],
+      "accent": [
+        "#39ff14",
+        "#5fff3d",
+        "#ffe600",
+        "#fff44a",
+        "#00e5ff",
+        "#9b4fde",
+        "#0055a5",
+        "#ff6b1a",
+        "#e8291c"
+      ],
+      "danger": [
+        "#ff6b1a",
+        "#e8291c",
+        "#b81e14"
+      ],
+      "success": [
+        "#39ff14",
+        "#5fff3d"
+      ],
+      "warning": [
+        "#ffe600",
+        "#fff44a"
+      ]
+    }
+  },
+  "purple-cobras": {
+    "roles": {
+      "--bg": "#060307",
+      "--panel": "#180a27",
+      "--panel-border": "#271040",
+      "--field": "#040204",
+      "--field-border": "#2f134c",
+      "--text": "#eeffe6",
+      "--text-dim": "#a7ff7d",
+      "--text-faint": "#73ff2f",
+      "--text-label": "#83ff47",
+      "--text-btn": "#ccffb4",
+      "--brand": "#4ae400",
+      "--brand-deep": "#1d5900",
+      "--brand-text": "#7dff3e",
+      "--acc-top": "#4ae400",
+      "--acc-bottom": "#3dbc00",
+      "--brand-edge": "#61ff15",
+      "--focus-ring": "#61ff15",
+      "--ok": "#84e15b",
+      "--warn": "#f5c518",
+      "--err": "#ec4b51",
+      "--danger": "#ec4b51",
+      "--danger-solid": "#ab1217",
+      "--unmet": "#d87ba8",
+      "--training": "#45c8d4",
+      "--link": "#7aa2f7",
+      "--card-top": "#250f3b",
+      "--sunken": "#0e0611",
+      "--titlebar-top": "#260f3e",
+      "--titlebar-bottom": "#140820",
+      "--titlebar-inset": "#341555",
+      "--statusbar-top": "#1c0b2e",
+      "--statusbar-bottom": "#150a1a",
+      "--wash-top": "#240e3a",
+      "--wash-bottom": "#190b1f",
+      "--hover": "#2f134c",
+      "--control": "#250f3b",
+      "--control-border": "#331553",
+      "--control-hover": "#2f134c",
+      "--control-edge": "#73ff30",
+      "--field-focus-border": "#3c1861",
+      "--scrollbar": "#260f3d",
+      "--scrollbar-hover": "#351556",
+      "--fleet-incoming-threat": "#f3c10b",
+      "--row-line": "#25112e",
+      "--row-hover": "#210f28",
+      "--row-active": "#2c1436",
+      "--row-ring": "#39175d",
+      "--row-ring-focus": "#502082",
+      "--on-accent": "#050208",
+      "--brand-rgb": "74 228 0",
+      "--wash-top-rgb": "36 14 58",
+      "--wash-bottom-rgb": "25 11 31",
+      "--fleet-threat-surface": "rgb(f3c10b / 0.12)"
+    },
+    "swatches": [
+      {
+        "name": "Cobra Purple",
+        "hex": "#4b1e7a",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Scale Dark",
+        "hex": "#1a0d24",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Blood Purple",
+        "hex": "#8b1e5c",
+        "families": [
+          "surface",
+          "danger"
+        ]
+      },
+      {
+        "name": "Cobra Deep",
+        "hex": "#1f0a35",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Scale Black",
+        "hex": "#0d0610",
+        "families": [
+          "base",
+          "surface"
+        ]
+      },
+      {
+        "name": "Scale Black Deep",
+        "hex": "#050208",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Venom White",
+        "hex": "#f0f0f5",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Fang Silver",
+        "hex": "#c4c4d0",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Court Line",
+        "hex": "#e8e0d0",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Venom Green",
+        "hex": "#7cff3d",
+        "families": [
+          "text",
+          "accent",
+          "success"
+        ]
+      },
+      {
+        "name": "Venom Dark",
+        "hex": "#4fb821",
+        "families": [
+          "success"
+        ]
+      },
+      {
+        "name": "Cobra Gold",
+        "hex": "#f5c518",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Cobra Gold Bright",
+        "hex": "#ffe04a",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Cobra Purple Bright",
+        "hex": "#6b2fb5",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Cobra Eye Red",
+        "hex": "#e8232a",
+        "families": [
+          "danger"
+        ]
+      }
+    ],
+    "legal": {
+      "surface": [
+        "#4b1e7a",
+        "#1a0d24",
+        "#8b1e5c",
+        "#0d0610"
+      ],
+      "base": [
+        "#1f0a35",
+        "#0d0610",
+        "#050208"
+      ],
+      "text": [
+        "#f0f0f5",
+        "#c4c4d0",
+        "#e8e0d0",
+        "#7cff3d"
+      ],
+      "accent": [
+        "#7cff3d",
+        "#f5c518",
+        "#ffe04a",
+        "#6b2fb5"
+      ],
+      "danger": [
+        "#8b1e5c",
+        "#e8232a"
+      ],
+      "success": [
+        "#7cff3d",
+        "#4fb821"
+      ],
+      "warning": [
+        "#f5c518",
+        "#ffe04a"
+      ]
+    }
+  },
+  "merica": {
+    "roles": {
+      "--bg": "#050f22",
+      "--panel": "#3d0c12",
+      "--panel-border": "#4f0f17",
+      "--field": "#020710",
+      "--field-border": "#61121c",
+      "--text": "#ffffff",
+      "--text-dim": "#cecece",
+      "--text-faint": "#a6a6a6",
+      "--text-label": "#aeaeae",
+      "--text-btn": "#d9d9d9",
+      "--brand": "#8c8c8c",
+      "--brand-deep": "#3e3e3e",
+      "--brand-text": "#9b9b9b",
+      "--acc-top": "#8c8c8c",
+      "--acc-bottom": "#737373",
+      "--brand-edge": "#a8a8a8",
+      "--focus-ring": "#a8a8a8",
+      "--ok": "#69ad46",
+      "--warn": "#ffd23f",
+      "--err": "#dd4d5f",
+      "--danger": "#dd4d5f",
+      "--danger-solid": "#8b1a28",
+      "--unmet": "#e08a5a",
+      "--training": "#45c8d4",
+      "--link": "#7aa2f7",
+      "--card-top": "#480d15",
+      "--sunken": "#040b18",
+      "--titlebar-top": "#4c0e16",
+      "--titlebar-bottom": "#28080c",
+      "--titlebar-inset": "#5e111b",
+      "--statusbar-top": "#3d0b11",
+      "--statusbar-bottom": "#050f21",
+      "--wash-top": "#530f18",
+      "--wash-bottom": "#071633",
+      "--hover": "#5e121b",
+      "--control": "#480d15",
+      "--control-border": "#6a141f",
+      "--control-hover": "#62121c",
+      "--control-edge": "#9a9a9a",
+      "--field-focus-border": "#781622",
+      "--scrollbar": "#5f121b",
+      "--scrollbar-hover": "#761622",
+      "--fleet-incoming-threat": "#ffc919",
+      "--row-line": "#0a1f47",
+      "--row-hover": "#091b3e",
+      "--row-active": "#0c234e",
+      "--row-ring": "#68141e",
+      "--row-ring-focus": "#8a1a28",
+      "--on-accent": "#ffffff",
+      "--brand-rgb": "140 140 140",
+      "--wash-top-rgb": "83 15 24",
+      "--wash-bottom-rgb": "7 22 51",
+      "--fleet-threat-surface": "rgb(ffc919 / 0.12)"
+    },
+    "swatches": [
+      {
+        "name": "Navy",
+        "hex": "#0a1e3f",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Old Glory Blue Dark",
+        "hex": "#2a2950",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Liberty Teal",
+        "hex": "#1f6f6b",
+        "families": [
+          "surface",
+          "accent"
+        ]
+      },
+      {
+        "name": "Field Green",
+        "hex": "#2d4a1e",
+        "families": [
+          "surface",
+          "success"
+        ]
+      },
+      {
+        "name": "Asphalt",
+        "hex": "#1a1a1e",
+        "families": [
+          "surface",
+          "base"
+        ]
+      },
+      {
+        "name": "Navy Deep",
+        "hex": "#050f22",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Asphalt Deep",
+        "hex": "#0a0a0d",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Star White",
+        "hex": "#ffffff",
+        "families": [
+          "text",
+          "accent"
+        ]
+      },
+      {
+        "name": "Star White Dim",
+        "hex": "#e8e8ec",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Eagle Gold",
+        "hex": "#c5a253",
+        "families": [
+          "text",
+          "accent"
+        ]
+      },
+      {
+        "name": "Eagle Gold Bright",
+        "hex": "#e0bc70",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Old Glory Red",
+        "hex": "#b22234",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Old Glory Red Dark",
+        "hex": "#8b1a28",
+        "families": [
+          "surface",
+          "danger"
+        ]
+      },
+      {
+        "name": "Caution Yellow",
+        "hex": "#ffd23f",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      }
+    ],
+    "legal": {
+      "surface": [
+        "#0a1e3f",
+        "#2a2950",
+        "#1f6f6b",
+        "#2d4a1e",
+        "#1a1a1e",
+        "#8b1a28"
+      ],
+      "base": [
+        "#1a1a1e",
+        "#050f22",
+        "#0a0a0d"
+      ],
+      "text": [
+        "#ffffff",
+        "#e8e8ec",
+        "#c5a253"
+      ],
+      "accent": [
+        "#1f6f6b",
+        "#ffffff",
+        "#c5a253",
+        "#e0bc70",
+        "#b22234",
+        "#ffd23f"
+      ],
+      "danger": [
+        "#b22234",
+        "#8b1a28"
+      ],
+      "success": [
+        "#2d4a1e"
+      ],
+      "warning": [
+        "#ffd23f"
+      ]
+    }
+  },
+  "idiocracy": {
+    "roles": {
+      "--bg": "#0a0a0a",
+      "--panel": "#141414",
+      "--panel-border": "#262626",
+      "--field": "#050505",
+      "--field-border": "#2a2a2a",
+      "--text": "#f5f5f5",
+      "--text-dim": "#b8b8b8",
+      "--text-faint": "#8f8f8f",
+      "--text-label": "#9c9c9c",
+      "--text-btn": "#d9d9d9",
+      "--brand": "#e9362a",
+      "--brand-deep": "#6a110b",
+      "--brand-text": "#ef6b62",
+      "--acc-top": "#e9362a",
+      "--acc-bottom": "#bf1e13",
+      "--brand-edge": "#ef6b62",
+      "--focus-ring": "#ef6b62",
+      "--ok": "#26f200",
+      "--warn": "#ffe600",
+      "--err": "#ff2ba5",
+      "--danger": "#ff2ba5",
+      "--danger-solid": "#cc0075",
+      "--unmet": "#f0975c",
+      "--training": "#45c8d4",
+      "--link": "#7aa2f7",
+      "--card-top": "#1a1a1a",
+      "--sunken": "#060606",
+      "--titlebar-top": "#1c1c1c",
+      "--titlebar-bottom": "#101010",
+      "--titlebar-inset": "#2a2a2a",
+      "--statusbar-top": "#151515",
+      "--statusbar-bottom": "#0d0d0d",
+      "--wash-top": "#111111",
+      "--wash-bottom": "#0e0e0e",
+      "--hover": "#2a2a2a",
+      "--control": "#1f1f1f",
+      "--control-border": "#303030",
+      "--control-hover": "#282828",
+      "--control-edge": "#8f8f8f",
+      "--field-focus-border": "#383838",
+      "--scrollbar": "#242424",
+      "--scrollbar-hover": "#333333",
+      "--fleet-incoming-threat": "#d4bf00",
+      "--row-line": "#181818",
+      "--row-hover": "#151515",
+      "--row-active": "#1b1b1b",
+      "--row-ring": "#2e2e2e",
+      "--row-ring-focus": "#454545",
+      "--on-accent": "#ffffff",
+      "--brand-rgb": "233 54 42",
+      "--wash-top-rgb": "17 17 17",
+      "--wash-bottom-rgb": "14 14 14",
+      "--fleet-threat-surface": "rgb(d4bf00 / 0.12)"
+    },
+    "swatches": [
+      {
+        "name": "CRT Dark",
+        "hex": "#141414",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Starbucks Mocha",
+        "hex": "#6b4226",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Jacked Purple",
+        "hex": "#7b2fbe",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Costco Blue",
+        "hex": "#0055a5",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "CRT Black",
+        "hex": "#0a0a0a",
+        "families": [
+          "base",
+          "surface"
+        ]
+      },
+      {
+        "name": "TV Static",
+        "hex": "#f5f5f5",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "TV Static Dim",
+        "hex": "#b8b8b8",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Starbucks Cream",
+        "hex": "#e8d5b7",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Brawndo Green",
+        "hex": "#39ff14",
+        "families": [
+          "text",
+          "accent",
+          "success"
+        ]
+      },
+      {
+        "name": "Mountain Dew",
+        "hex": "#ccff00",
+        "families": [
+          "text",
+          "accent",
+          "success"
+        ]
+      },
+      {
+        "name": "Electrolyte Yellow",
+        "hex": "#ffe600",
+        "families": [
+          "accent",
+          "warning",
+          "text"
+        ]
+      },
+      {
+        "name": "Nacho Cheese",
+        "hex": "#f5a623",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Carl's Jr Star",
+        "hex": "#f7941d",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Gatorade Orange",
+        "hex": "#ff6b1a",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "MTV Pink",
+        "hex": "#ff1fa0",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Costco Red",
+        "hex": "#e8291c",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Fudd Burgundy",
+        "hex": "#8b1e1e",
+        "families": [
+          "danger"
+        ]
+      }
+    ],
+    "legal": {
+      "surface": [
+        "#141414",
+        "#6b4226",
+        "#7b2fbe",
+        "#0055a5",
+        "#0a0a0a"
+      ],
+      "base": [
+        "#0a0a0a"
+      ],
+      "text": [
+        "#f5f5f5",
+        "#b8b8b8",
+        "#e8d5b7",
+        "#39ff14",
+        "#ccff00",
+        "#ffe600"
+      ],
+      "accent": [
+        "#39ff14",
+        "#ccff00",
+        "#ffe600",
+        "#f5a623",
+        "#f7941d",
+        "#ff6b1a",
+        "#ff1fa0",
+        "#e8291c"
+      ],
+      "danger": [
+        "#ff1fa0",
+        "#e8291c",
+        "#8b1e1e"
+      ],
+      "success": [
+        "#39ff14",
+        "#ccff00"
+      ],
+      "warning": [
+        "#ffe600",
+        "#f5a623",
+        "#f7941d"
+      ]
+    }
+  },
+  "ron-burgundy": {
+    "roles": {
+      "--bg": "#1d100a",
+      "--panel": "#3b1f0f",
+      "--panel-border": "#4b2713",
+      "--field": "#0a0503",
+      "--field-border": "#4e2914",
+      "--text": "#ebe7dd",
+      "--text-dim": "#c4b89c",
+      "--text-faint": "#a8976e",
+      "--text-label": "#b1a17b",
+      "--text-btn": "#dad3c1",
+      "--brand": "#d4881f",
+      "--brand-deep": "#5d3c0e",
+      "--brand-text": "#e39e3f",
+      "--acc-top": "#d4881f",
+      "--acc-bottom": "#b5741b",
+      "--brand-edge": "#e4a144",
+      "--focus-ring": "#e4a144",
+      "--ok": "#72ab8d",
+      "--warn": "#c9a227",
+      "--err": "#e34560",
+      "--danger": "#e34560",
+      "--danger-solid": "#9c182e",
+      "--unmet": "#d89060",
+      "--training": "#45c8d4",
+      "--link": "#7aa2f7",
+      "--card-top": "#442411",
+      "--sunken": "#140a06",
+      "--titlebar-top": "#452411",
+      "--titlebar-bottom": "#29150a",
+      "--titlebar-inset": "#5d3118",
+      "--statusbar-top": "#2f190c",
+      "--statusbar-bottom": "#1a0e09",
+      "--wash-top": "#341b0d",
+      "--wash-bottom": "#20110a",
+      "--hover": "#522b15",
+      "--control": "#412210",
+      "--control-border": "#5c3118",
+      "--control-hover": "#522b15",
+      "--control-edge": "#a49166",
+      "--field-focus-border": "#5c3017",
+      "--scrollbar": "#422311",
+      "--scrollbar-hover": "#5a2f17",
+      "--fleet-incoming-threat": "#c9a227",
+      "--row-line": "#331b11",
+      "--row-hover": "#2d180f",
+      "--row-active": "#391e13",
+      "--row-ring": "#562d16",
+      "--row-ring-focus": "#7a401f",
+      "--on-accent": "#1f0f08",
+      "--brand-rgb": "212 136 31",
+      "--wash-top-rgb": "52 27 13",
+      "--wash-bottom-rgb": "32 17 10",
+      "--fleet-threat-surface": "rgb(c9a227 / 0.12)"
+    },
+    "swatches": [
+      {
+        "name": "Mahogany",
+        "hex": "#3b1f0f",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Wood Panel",
+        "hex": "#4a2a14",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Walnut",
+        "hex": "#5c3418",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Broadcast Blue",
+        "hex": "#1e3a8a",
+        "families": [
+          "surface",
+          "accent"
+        ]
+      },
+      {
+        "name": "Velvet Green",
+        "hex": "#2f4f3e",
+        "families": [
+          "surface",
+          "success"
+        ]
+      },
+      {
+        "name": "Mahogany Deep",
+        "hex": "#1f0f08",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Studio Black",
+        "hex": "#0f0805",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Newsprint",
+        "hex": "#f0e8d8",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Newsprint Dim",
+        "hex": "#c4b89c",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Tan",
+        "hex": "#c9a876",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Scotch Amber",
+        "hex": "#d4881f",
+        "families": [
+          "text",
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Gold Mic",
+        "hex": "#c9a227",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Cravat Burgundy",
+        "hex": "#8b1e3f",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Cravat Burgundy Dark",
+        "hex": "#5f1329",
+        "families": [
+          "danger"
+        ]
+      },
+      {
+        "name": "Sex Panther Red",
+        "hex": "#c41e3a",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      }
+    ],
+    "legal": {
+      "surface": [
+        "#3b1f0f",
+        "#4a2a14",
+        "#5c3418",
+        "#1e3a8a",
+        "#2f4f3e"
+      ],
+      "base": [
+        "#1f0f08",
+        "#0f0805"
+      ],
+      "text": [
+        "#f0e8d8",
+        "#c4b89c",
+        "#c9a876",
+        "#d4881f"
+      ],
+      "accent": [
+        "#1e3a8a",
+        "#d4881f",
+        "#c9a227",
+        "#8b1e3f",
+        "#c41e3a"
+      ],
+      "danger": [
+        "#8b1e3f",
+        "#5f1329",
+        "#c41e3a"
+      ],
+      "success": [
+        "#2f4f3e"
+      ],
+      "warning": [
+        "#d4881f",
+        "#c9a227"
+      ]
+    }
+  },
+  "dodgeball": {
+    "roles": {
+      "--bg": "#0d0d0d",
+      "--panel": "#1a1a1a",
+      "--panel-border": "#262626",
+      "--field": "#050505",
+      "--field-border": "#2e2e2e",
+      "--text": "#fdf4d9",
+      "--text-dim": "#f7d469",
+      "--text-faint": "#f5c942",
+      "--text-label": "#f6cd4f",
+      "--text-btn": "#fae4a1",
+      "--brand": "#dd4747",
+      "--brand-deep": "#681313",
+      "--brand-text": "#dd4747",
+      "--acc-top": "#dd4747",
+      "--acc-bottom": "#d02727",
+      "--brand-edge": "#e77e7e",
+      "--focus-ring": "#e77e7e",
+      "--ok": "#30b2a2",
+      "--warn": "#ffc925",
+      "--err": "#e85688",
+      "--danger": "#e85688",
+      "--danger-solid": "#a91749",
+      "--unmet": "#f0996b",
+      "--training": "#45c8d4",
+      "--link": "#7aa2f7",
+      "--card-top": "#202020",
+      "--sunken": "#0a0a0a",
+      "--titlebar-top": "#222222",
+      "--titlebar-bottom": "#141414",
+      "--titlebar-inset": "#303030",
+      "--statusbar-top": "#181818",
+      "--statusbar-bottom": "#101010",
+      "--wash-top": "#1f1f1f",
+      "--wash-bottom": "#141414",
+      "--hover": "#2e2e2e",
+      "--control": "#242424",
+      "--control-border": "#343434",
+      "--control-hover": "#383838",
+      "--control-edge": "#f3be1a",
+      "--field-focus-border": "#3a3a3a",
+      "--scrollbar": "#2a2a2a",
+      "--scrollbar-hover": "#3a3a3a",
+      "--fleet-incoming-threat": "#f7ba00",
+      "--row-line": "#1e1e1e",
+      "--row-hover": "#1b1b1b",
+      "--row-active": "#222222",
+      "--row-ring": "#333333",
+      "--row-ring-focus": "#4a4a4a",
+      "--on-accent": "#ffffff",
+      "--brand-rgb": "221 71 71",
+      "--wash-top-rgb": "31 31 31",
+      "--wash-bottom-rgb": "20 20 20",
+      "--fleet-threat-surface": "rgb(f7ba00 / 0.12)"
+    },
+    "swatches": [
+      {
+        "name": "Gym Wall",
+        "hex": "#1a1a1a",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Bruise",
+        "hex": "#4a2a5a",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Gym Floor",
+        "hex": "#c8642a",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Tape Black",
+        "hex": "#2b2b2b",
+        "families": [
+          "surface",
+          "base"
+        ]
+      },
+      {
+        "name": "Gym Wall Deep",
+        "hex": "#0d0d0d",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Court Line",
+        "hex": "#f5f0e1",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Court Line Dim",
+        "hex": "#b8b0a0",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Globo Gold",
+        "hex": "#f4c430",
+        "families": [
+          "text",
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Globo Gold Bright",
+        "hex": "#ffd966",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Dodgeball Pink",
+        "hex": "#e85a8a",
+        "families": [
+          "text",
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Average Joe Red",
+        "hex": "#d62828",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Average Joe Red Dark",
+        "hex": "#a31d1d",
+        "families": [
+          "danger"
+        ]
+      },
+      {
+        "name": "Globo Blue",
+        "hex": "#1e5faa",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Wrench Purple",
+        "hex": "#7b3fa0",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Sweat Teal",
+        "hex": "#2a9d8f",
+        "families": [
+          "accent",
+          "success"
+        ]
+      },
+      {
+        "name": "Trophy Bronze",
+        "hex": "#b87333",
+        "families": [
+          "accent"
+        ]
+      }
+    ],
+    "legal": {
+      "surface": [
+        "#1a1a1a",
+        "#4a2a5a",
+        "#c8642a",
+        "#2b2b2b"
+      ],
+      "base": [
+        "#2b2b2b",
+        "#0d0d0d"
+      ],
+      "text": [
+        "#f5f0e1",
+        "#b8b0a0",
+        "#f4c430",
+        "#e85a8a"
+      ],
+      "accent": [
+        "#f4c430",
+        "#ffd966",
+        "#e85a8a",
+        "#d62828",
+        "#1e5faa",
+        "#7b3fa0",
+        "#2a9d8f",
+        "#b87333"
+      ],
+      "danger": [
+        "#e85a8a",
+        "#d62828",
+        "#a31d1d"
+      ],
+      "success": [
+        "#2a9d8f"
+      ],
+      "warning": [
+        "#f4c430",
+        "#ffd966"
+      ]
+    }
+  },
+  "tropic-thunder": {
+    "roles": {
+      "--bg": "#1a2410",
+      "--panel": "#2e2719",
+      "--panel-border": "#3d3423",
+      "--field": "#141b0c",
+      "--field-border": "#3d3826",
+      "--text": "#d9d2c1",
+      "--text-dim": "#aba596",
+      "--text-faint": "#97907a",
+      "--text-label": "#9d9681",
+      "--text-btn": "#c6bfae",
+      "--brand": "#ff6b1a",
+      "--brand-deep": "#6b2a08",
+      "--brand-text": "#ff8b47",
+      "--acc-top": "#ff6b1a",
+      "--acc-bottom": "#e85d04",
+      "--brand-edge": "#ff9557",
+      "--focus-ring": "#ffab63",
+      "--ok": "#96a94e",
+      "--warn": "#ffd23f",
+      "--err": "#e05246",
+      "--danger": "#e05246",
+      "--danger-solid": "#8b1e1e",
+      "--unmet": "#e09a6a",
+      "--training": "#45c8d4",
+      "--link": "#7aa2f7",
+      "--card-top": "#342c1d",
+      "--sunken": "#171c0e",
+      "--titlebar-top": "#37301f",
+      "--titlebar-bottom": "#201b12",
+      "--titlebar-inset": "#463d28",
+      "--statusbar-top": "#241f14",
+      "--statusbar-bottom": "#171308",
+      "--wash-top": "#2d2a16",
+      "--wash-bottom": "#1c1a0e",
+      "--hover": "#3a3222",
+      "--control": "#332c1e",
+      "--control-border": "#46402c",
+      "--control-hover": "#413a28",
+      "--control-edge": "#9a8f72",
+      "--field-focus-border": "#4a4330",
+      "--scrollbar": "#38311f",
+      "--scrollbar-hover": "#48402a",
+      "--fleet-incoming-threat": "#c9a93c",
+      "--row-line": "#262015",
+      "--row-hover": "#221d13",
+      "--row-active": "#2a2417",
+      "--row-ring": "#3f3826",
+      "--row-ring-focus": "#574e36"
+    },
+    "swatches": [
+      {
+        "name": "River Mud",
+        "hex": "#5c4a2e",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "River Mud Dark",
+        "hex": "#2e2719",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "River Mud Light",
+        "hex": "#3d3423",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Jungle Rot",
+        "hex": "#2d4a1e",
+        "families": [
+          "surface",
+          "base"
+        ]
+      },
+      {
+        "name": "Flare-lit mud",
+        "hex": "#38301f",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Jungle Rot Deep",
+        "hex": "#1a2410",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Blackface Blunder",
+        "hex": "#1a1613",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Sunken green",
+        "hex": "#141b0c",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Dog Tag",
+        "hex": "#d9d2c1",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Elephant Grass",
+        "hex": "#7a8b3c",
+        "families": [
+          "text",
+          "success"
+        ]
+      },
+      {
+        "name": "Napalm Dawn",
+        "hex": "#ff6b1a",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Agent Orange",
+        "hex": "#e85d04",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Flare Gun",
+        "hex": "#ffd23f",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Hollywood Teal",
+        "hex": "#1f6f6b",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Blood Diamond",
+        "hex": "#8b1e1e",
+        "families": [
+          "danger"
+        ]
+      }
+    ],
+    "legal": {
+      "surface": [
+        "#5c4a2e",
+        "#2e2719",
+        "#3d3423",
+        "#2d4a1e",
+        "#38301f"
+      ],
+      "base": [
+        "#2d4a1e",
+        "#1a2410",
+        "#1a1613",
+        "#141b0c"
+      ],
+      "text": [
+        "#d9d2c1",
+        "#7a8b3c"
+      ],
+      "accent": [
+        "#ff6b1a",
+        "#e85d04",
+        "#ffd23f",
+        "#1f6f6b"
+      ],
+      "danger": [
+        "#8b1e1e"
+      ],
+      "success": [
+        "#7a8b3c"
+      ],
+      "warning": [
+        "#ffd23f"
+      ]
+    }
+  },
+  "wingman-dark": {
+    "roles": {
+      "--bg": "#0c0d10",
+      "--panel": "#17151c",
+      "--panel-border": "#231f2a",
+      "--field": "#0c0a0f",
+      "--field-border": "#282430",
+      "--text": "#e8eaed",
+      "--text-dim": "#9aa2b1",
+      "--text-faint": "#7d8492",
+      "--text-label": "#8b93a1",
+      "--text-btn": "#c8cdd6",
+      "--brand": "#8430d9",
+      "--brand-deep": "#4a0083",
+      "--brand-text": "#ad5aff",
+      "--acc-top": "#9438e8",
+      "--acc-bottom": "#7a1fc8",
+      "--brand-edge": "#a95cf0",
+      "--focus-ring": "#c99cff",
+      "--ok": "#4ade80",
+      "--warn": "#d29922",
+      "--err": "#f85149",
+      "--danger": "#f85149",
+      "--danger-solid": "#d9291c",
+      "--unmet": "#ff9668",
+      "--training": "#45c8d4",
+      "--link": "#7aa2f7",
+      "--card-top": "#191426",
+      "--sunken": "#131117",
+      "--titlebar-top": "#1b1528",
+      "--titlebar-bottom": "#121016",
+      "--titlebar-inset": "#292530",
+      "--statusbar-top": "#14101c",
+      "--statusbar-bottom": "#0f0c14",
+      "--wash-top": "#1d1030",
+      "--wash-bottom": "#170f26",
+      "--hover": "#27232e",
+      "--control": "#211d28",
+      "--control-border": "#302c39",
+      "--control-hover": "#2a2634",
+      "--control-edge": "#787181",
+      "--field-focus-border": "#433c52",
+      "--scrollbar": "#2c2835",
+      "--scrollbar-hover": "#3b3548",
+      "--fleet-incoming-threat": "#be9550",
+      "--row-line": "#1d1a24",
+      "--row-hover": "#1b1822",
+      "--row-active": "#1f1b27",
+      "--row-ring": "#383244",
+      "--row-ring-focus": "#554e65"
+    },
+    "swatches": [
+      {
+        "name": "Panel",
+        "hex": "#17151c",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Card top",
+        "hex": "#191426",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Hover",
+        "hex": "#27232e",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Control",
+        "hex": "#211d28",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Row",
+        "hex": "#1d1a24",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Background",
+        "hex": "#0c0d10",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Sunken",
+        "hex": "#131117",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Field",
+        "hex": "#0c0a0f",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Ice",
+        "hex": "#e8eaed",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Bright",
+        "hex": "#c8cdd6",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Dim",
+        "hex": "#9aa2b1",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Label",
+        "hex": "#8b93a1",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Violet",
+        "hex": "#8430d9",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Light violet",
+        "hex": "#ad5aff",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Deep violet",
+        "hex": "#7a1fc8",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Teal",
+        "hex": "#45c8d4",
+        "families": [
+          "accent"
+        ]
+      },
+      {
+        "name": "Gold",
+        "hex": "#d29922",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Red",
+        "hex": "#f85149",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Solid red",
+        "hex": "#d9291c",
+        "families": [
+          "danger"
+        ]
+      },
+      {
+        "name": "Green",
+        "hex": "#4ade80",
+        "families": [
+          "success"
+        ]
+      }
+    ],
+    "legal": {
+      "surface": [
+        "#17151c",
+        "#191426",
+        "#27232e",
+        "#211d28",
+        "#1d1a24"
+      ],
+      "base": [
+        "#0c0d10",
+        "#131117",
+        "#0c0a0f"
+      ],
+      "text": [
+        "#e8eaed",
+        "#c8cdd6",
+        "#9aa2b1",
+        "#8b93a1"
+      ],
+      "accent": [
+        "#8430d9",
+        "#ad5aff",
+        "#7a1fc8",
+        "#45c8d4",
+        "#d29922",
+        "#f85149"
+      ],
+      "danger": [
+        "#f85149",
+        "#d9291c"
+      ],
+      "success": [
+        "#4ade80"
+      ],
+      "warning": [
+        "#d29922"
+      ]
+    }
+  },
+  "zoolander": {
+    "roles": {
+      "--bg": "#08080f",
+      "--panel": "#0d0d1a",
+      "--panel-border": "#1c1c34",
+      "--field": "#06060e",
+      "--field-border": "#282848",
+      "--text": "#e8edf2",
+      "--text-dim": "#a8b2bd",
+      "--text-faint": "#7e8899",
+      "--text-label": "#8a94a6",
+      "--text-btn": "#c9d1dc",
+      "--brand": "#7cb342",
+      "--brand-deep": "#3e5c1f",
+      "--brand-text": "#8fc654",
+      "--acc-top": "#7cb342",
+      "--acc-bottom": "#639532",
+      "--brand-edge": "#97cc5d",
+      "--focus-ring": "#97cc5d",
+      "--ok": "#8bc34a",
+      "--warn": "#d4a843",
+      "--err": "#e91e8c",
+      "--danger": "#e91e8c",
+      "--danger-solid": "#c0156f",
+      "--unmet": "#c67b4a",
+      "--training": "#45c8d4",
+      "--link": "#7aa2f7",
+      "--card-top": "#16162e",
+      "--sunken": "#0a0a16",
+      "--titlebar-top": "#14142e",
+      "--titlebar-bottom": "#0c0c1c",
+      "--titlebar-inset": "#26264a",
+      "--statusbar-top": "#0f0f24",
+      "--statusbar-bottom": "#0a0a18",
+      "--wash-top": "#16163a",
+      "--wash-bottom": "#10102e",
+      "--hover": "#1f1f40",
+      "--control": "#1a1a38",
+      "--control-border": "#2c2c52",
+      "--control-hover": "#242448",
+      "--control-edge": "#7e88a8",
+      "--field-focus-border": "#34345e",
+      "--scrollbar": "#232348",
+      "--scrollbar-hover": "#30305a",
+      "--fleet-incoming-threat": "#d4a843",
+      "--row-line": "#1a1a34",
+      "--row-hover": "#16162c",
+      "--row-active": "#1c1c38",
+      "--row-ring": "#30305a",
+      "--row-ring-focus": "#484878"
+    },
+    "swatches": [
+      {
+        "name": "Magnum",
+        "hex": "#1a1a2e",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Steel blue",
+        "hex": "#2c3e5c",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Cobalt",
+        "hex": "#3d5a80",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Surface hover",
+        "hex": "#2a2a4a",
+        "families": [
+          "surface"
+        ]
+      },
+      {
+        "name": "Magnum deep",
+        "hex": "#0d0d1a",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Gasoline fight",
+        "hex": "#08080f",
+        "families": [
+          "base"
+        ]
+      },
+      {
+        "name": "Derelicte",
+        "hex": "#2a1a1a",
+        "families": [
+          "surface",
+          "base"
+        ]
+      },
+      {
+        "name": "Ice",
+        "hex": "#e8edf2",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Bone",
+        "hex": "#f5f0e8",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Silver",
+        "hex": "#a8b2bd",
+        "families": [
+          "text"
+        ]
+      },
+      {
+        "name": "Lime",
+        "hex": "#7cb342",
+        "families": [
+          "accent",
+          "success"
+        ]
+      },
+      {
+        "name": "Gold",
+        "hex": "#d4a843",
+        "families": [
+          "accent",
+          "warning"
+        ]
+      },
+      {
+        "name": "Coral",
+        "hex": "#e8574a",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Orange mocha",
+        "hex": "#c67b4a",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Hot magenta",
+        "hex": "#e91e8c",
+        "families": [
+          "accent",
+          "danger"
+        ]
+      },
+      {
+        "name": "Gasoline",
+        "hex": "#6b3fa0",
+        "families": [
+          "accent"
+        ]
+      }
+    ],
+    "legal": {
+      "surface": [
+        "#1a1a2e",
+        "#2c3e5c",
+        "#3d5a80",
+        "#2a2a4a",
+        "#2a1a1a"
+      ],
+      "base": [
+        "#0d0d1a",
+        "#08080f",
+        "#2a1a1a"
+      ],
+      "text": [
+        "#e8edf2",
+        "#f5f0e8",
+        "#a8b2bd"
+      ],
+      "accent": [
+        "#7cb342",
+        "#d4a843",
+        "#e8574a",
+        "#c67b4a",
+        "#e91e8c",
+        "#6b3fa0"
+      ],
+      "danger": [
+        "#e8574a",
+        "#c67b4a",
+        "#e91e8c"
+      ],
+      "success": [
+        "#7cb342"
+      ],
+      "warning": [
+        "#d4a843"
+      ]
+    }
+  }
+};
+  var DEV_THEME_PRESETS = [{id: 'taco-bell', name: 'Taco Bell'}, {id: 'carls-jr', name: "Carl's Jr"}, {id: 'brawndo', name: 'Brawndo: Thirst Mutilator'}, {id: 'purple-cobras', name: 'Purple Cobras'}, {id: 'merica', name: 'Merica'}, {id: 'idiocracy', name: 'Idiocracy'}, {id: 'ron-burgundy', name: 'Ron Burgundy'}, {id: 'dodgeball', name: 'Dodgeball'}, {id: 'tropic-thunder', name: 'Tropic Thunder'}, {id: 'wingman-dark', name: 'Wingman Dark'}, {id: 'zoolander', name: 'Zoolander'}];
+  var DEV_THEME_LABELS = {"surface": "Panels & controls", "base": "App background", "text": "Text", "accent": "Accent", "danger": "Danger", "success": "Success", "warning": "Warning"};
+  var DEV_THEME_DESCRIPTIONS = {"surface": "Cards, buttons, fields, scrollbars and the row highlights \u2014 most of the window's chrome.", "base": "The page behind everything: the app backdrop, text field wells, recessed bands and list rows.", "text": "Every piece of text \u2014 headings, body, labels and hints \u2014 at the preset's brightness steps, whatever hue you choose.", "accent": "The Upload button, focused fields, ticks and glows: the app's one call-to-action colour.", "danger": "Delete buttons and destructive hovers \u2014 the colour that must never be mistaken for the accent.", "success": "Green status marks, like the Ready rungs on the Skills roster.", "warning": "Amber status marks \u2014 plan problems and the Fleet Bar's incoming-threat tint."};
+  var devTheme = { preset: 'wingman-dark', families: {} };
+
+  function devThemePayload() {
+    var pool = DEV_THEMES[devTheme.preset];
+    return {
+      presets: DEV_THEME_PRESETS,
+      // Same derivation as api._theme_payload: brand, danger, warn, ok
+      // from each preset's own default role table, never hand-typed.
+      preset_strips: DEV_THEME_PRESETS.reduce(function (strips, p) {
+        var roles = (DEV_THEMES[p.id] || {}).roles || {};
+        strips[p.id] = ['--brand', '--danger', '--warn', '--ok'].map(
+          function (role) { return roles[role]; });
+        return strips;
+      }, {}),
+      preset: devTheme.preset,
+      families: JSON.parse(JSON.stringify(devTheme.families)),
+      effective: {},
+      swatches: pool.swatches,
+      legal: pool.legal,
+      family_labels: DEV_THEME_LABELS,
+      family_descriptions: DEV_THEME_DESCRIPTIONS
+    };
+  }
+
+  function devThemePush() {
+    var payload = devThemePayload();
+    if (window.onTheme) window.onTheme(payload);
+  }
+
+  api.theme_state = function () {
+    console.log('DEV api.theme_state()');
+    return Promise.resolve(devThemePayload());
+  };
+
+  api.theme_set_preset = function (id) {
+    console.log('DEV api.theme_set_preset(', id, ')');
+    if (DEV_THEMES[id]) {
+      devTheme.preset = id;
+      devTheme.families = {};
+      // Python pushes onTheme after every accepted write; dev mirrors that
+      // so the composer and the closed dropdowns repaint the same way.
+      devThemePush();
+    }
+    return Promise.resolve({applied: true, persisted: true, error: ''});
+  };
+
+  api.theme_set_family = function (family, hex) {
+    console.log('DEV api.theme_set_family(', family, hex, ')');
+    if (hex) { devTheme.families[family] = hex; }
+    else { delete devTheme.families[family]; }
+    devThemePush();
+    return Promise.resolve({applied: true, persisted: true, error: ''});
+  };
+
+  api.theme_reset = function () {
+    console.log('DEV api.theme_reset()');
+    devTheme.families = {};
+    devThemePush();
+    return Promise.resolve({applied: true, persisted: true, error: ''});
+  };
+
   api.get_settings = function () {
     console.log('DEV api.get_settings()');
     return Promise.resolve(settingsPayload());
