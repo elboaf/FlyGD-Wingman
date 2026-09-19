@@ -120,6 +120,26 @@ def test_the_window_has_a_resize_border_attached_once_it_is_shown(fake_webview):
     assert len(fake_webview["shown_handlers"]) == 1
 
 
+def test_the_taskbar_minimize_patch_rides_the_shown_hook(fake_webview, monkeypatch):
+    """#257: frameless strips WS_MINIMIZEBOX, so a taskbar-button click on
+    the raised window only activated it. The style patch needs the same
+    native handle the resize border does, so it rides the same shown hook --
+    if it drifts to a path that runs before the form exists, the feature is
+    silently gone."""
+    patched = []
+    monkeypatch.setattr(window_mod.chrome, "enable_resize", lambda window: True)
+    monkeypatch.setattr(
+        window_mod.chrome,
+        "enable_taskbar_minimize",
+        lambda window: patched.append(window) or True,
+    )
+
+    window_mod.create(_bare_api())
+    fake_webview["shown_handlers"][0]()
+
+    assert patched == [fake_webview["window"]]
+
+
 def test_the_window_declares_the_size_its_layout_can_survive(fake_webview):
     """Asserts the exact tuple, not merely that the kwarg was passed.
 
