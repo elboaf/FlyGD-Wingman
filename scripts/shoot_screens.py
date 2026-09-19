@@ -984,6 +984,34 @@ def new_screen_cleanup_script(screen: Screen) -> str | None:
     return leave + f"WM.{method}(null);"
 
 
+def _copy_result_summary(results: list[dict]) -> str:
+    """Expected outcome counts shared by top and lower fixture captures."""
+    counts = {
+        status: sum(row["status"] == status for row in results)
+        for status in ("success", "present", "unknown", "failed")
+    }
+    counts["other"] = len(results) - sum(counts.values())
+    return (
+        " · ".join(
+            f"{counts[status]} {label}"
+            for status, label in (
+                (
+                    "unknown",
+                    "needs verification"
+                    if counts["unknown"] == 1
+                    else "need verification",
+                ),
+                ("failed", "failed"),
+                ("other", "not copied"),
+                ("success", "copied"),
+                ("present", "already present"),
+            )
+            if counts[status]
+        )
+        or "No copy results."
+    )
+
+
 def _fidelity_verify_script(screen: Screen) -> str | None:
     key = screen.key
     prefix = ""
@@ -1043,15 +1071,22 @@ def _fidelity_verify_script(screen: Screen) -> str | None:
             # Layout visibility cannot prove a topmost question is not covering it.
             " || !WM.el('overlay').hidden"
             " || !WM.el('fittings-copy-start').hidden"
+            " || !visible(WM.el('fittings-copy-summary'))"
+            " || WM.el('fittings-copy-body').contains(WM.el('fittings-copy-summary'))"
         )
         if key == "fittings-copy-limit":
             pairs = fixture["limit_preflight"]["pairs"]
             selected = len({pair["entry_id"] for pair in pairs})
             targets = len({pair["character_id"] for pair in pairs})
+            requested = sum(pair["status"] == "ready" for pair in pairs)
+            limit = fixture["max_copy_writes"]
+            limit_summary = f"{requested} additions requested · limit {limit} ({requested - limit} over)"
             condition += (
-                " || WM.el('fittings-copy-title').textContent !== 'Copy fittings'"
+                f" || WM.el('fittings-copy-title').textContent !== 'Copy {selected} fittings to {targets} characters'"
                 f" || WM.el('fittings-copy-status').textContent !== {json.dumps(fixture['limit_preflight']['error'])}"
-                f" || WM.el('fittings-copy-body').textContent.indexOf('{selected} selected.') !== 0"
+                " || WM.el('fittings-copy-summary').textContent !== 'Choose target characters.'"
+                " || !visible(WM.el('fittings-copy-limit-summary'))"
+                f" || WM.el('fittings-copy-limit-summary').textContent !== {json.dumps(limit_summary)}"
                 f" || document.querySelectorAll('.fit-copy-target input:checked').length !== {targets}"
                 " || !visible(WM.el('fittings-copy-review')) || WM.el('fittings-copy-review').disabled"
                 " || !WM.el('fittings-copy-cancel').hidden || WM.el('fittings-copy-close').disabled"
@@ -1071,15 +1106,42 @@ def _fidelity_verify_script(screen: Screen) -> str | None:
                 entry = next(
                     row for row in fixture["entries"] if row["id"] == pair["entry_id"]
                 )
-                identity = f"{pair['fitting_name']} ({entry['ship_name']}) → {pair['character_name']}:"
+                identity = (
+                    f"{completed} of {len(results)} fitting/character {checks} complete · "
+                    f"{pair['fitting_name']} ({entry['ship_name']}) → {pair['character_name']}:"
+                )
+                prefix += "var bar = WM.el('fittings-copy-progress');\n"
                 condition += (
+                    " || !bar || bar.tagName !== 'PROGRESS' || !visible(bar)"
+                    f" || bar.value !== {completed} || bar.max !== {len(results)}"
+                    " || bar.getAttribute('aria-valuemin') !== '0'"
+                    f" || bar.getAttribute('aria-valuenow') !== '{completed}'"
+                    f" || bar.getAttribute('aria-valuemax') !== '{len(results)}'"
+                    " || bar.getAttribute('aria-labelledby') !== 'fittings-copy-title'"
                     " || !visible(WM.el('fittings-copy-cancel')) || WM.el('fittings-copy-cancel').disabled"
                     " || !WM.el('fittings-copy-close').disabled"
-                    f" || WM.el('fittings-copy-body').textContent !== '{completed} of {len(results)} fitting/character {checks} complete'"
+                    f" || WM.el('fittings-copy-summary').textContent !== '{completed} of {len(results)} fitting/character {checks} complete'"
                     f" || WM.el('fittings-copy-status').textContent.indexOf({json.dumps(identity)}) !== 0"
                 )
             else:
+                summary = json.dumps(_copy_result_summary(results))
+                operation_id = json.dumps(
+                    "Operation ID: " + fixture["copy_result"]["operation_id"]
+                )
+                prefix += (
+                    "var technical = WM.el('fittings-copy-technical');\n"
+                    "var disclosure = technical && technical.querySelector('summary');\n"
+                    "var operation = WM.el('fittings-copy-operation-id');\n"
+                )
                 condition += (
+                    f" || WM.el('fittings-copy-summary').textContent !== {summary}"
+                    f" || WM.el('fittings-copy-status').textContent !== {summary}"
+                    " || !technical || technical.tagName !== 'DETAILS' || technical.open"
+                    " || !WM.el('fittings-copy-body').contains(technical)"
+                    " || !disclosure || disclosure.textContent !== 'Technical details'"
+                    " || disclosure.getAttribute('tabindex') !== '0'"
+                    " || !operation || operation.tagName !== 'P' || !technical.contains(operation)"
+                    f" || operation.textContent !== {operation_id}"
                     " || !WM.el('fittings-copy-cancel').hidden || WM.el('fittings-copy-close').disabled"
                     f" || document.querySelectorAll('.fit-copy-pair').length !== {len(results)}"
                     f" || WM.el('fittings-copy-body').textContent.indexOf('{fixture['copy_result']['write_count']} additions attempted') === -1"
@@ -1213,7 +1275,7 @@ var pane = WM.el('fittings-copy-body'), note = WM.el('fittings-copy-resolution-n
 var review = WM.el('fittings-copy-review');
 var pairs = pane.querySelectorAll('.fit-copy-pair');
 check(WM.current_route === 'fittings' && visible(WM.el('fittings-copy-overlay')) && WM.el('overlay').hidden
-  && text(WM.el('fittings-copy-title'), 'Copy fittings')
+  && text(WM.el('fittings-copy-title'), 'Copy 3 fittings to Eryn Voss')
   && pairs.length === expected.pairs.length && pairs.length > 0
   && text(note, 'Enter an alternate name or select Skip for each conflict before reviewing changes.')
   && text(review, 'Review changes') && !review.hidden && review.disabled
@@ -1229,11 +1291,17 @@ check(expected.pairs.every(function (pair, index) {
 }));
 check(text(WM.el('fittings-copy-unavailable-note'),
   'Close this review to change the selected fittings or target characters, then review again.'));
-var summary = pane.querySelector('.fit-copy-summary');
-check(summary && visible(summary.nextSibling)
-  && text(summary.nextSibling, 'Copies only add fittings; existing fittings are kept.'));
+var summary = WM.el('fittings-copy-summary');
+var counts = expected.counts;
+check(text(summary, expected.write_count + ' additions planned · ' + counts.present + ' already present · '
+  + counts.conflict + ' conflict · ' + counts.unavailable + ' unavailable') && !pane.contains(summary));
+check(visible(pane.firstElementChild)
+  && text(pane.firstElementChild, 'Copies only add fittings; existing fittings are kept.'));
 note.scrollIntoView({block: 'end', behavior: 'instant'});
-check(exposed(note, pane) && exposed(review, WM.el('fittings-copy-dialog')));
+var dialog = WM.el('fittings-copy-dialog');
+check(exposed(note, pane) && [review, WM.el('fittings-copy-close'), summary, WM.el('fittings-copy-title')].every(function (node) {
+  return exposed(node, dialog);
+}));
 """
         )
     elif key == "fittings-copy-result-bottom-narrow":
@@ -1245,30 +1313,7 @@ check(exposed(note, pane) && exposed(review, WM.el('fittings-copy-dialog')));
         pair = fixture["copy_result"]["results"][-1]
         entry = next(row for row in fixture["entries"] if row["id"] == pair["entry_id"])
         results = fixture["copy_result"]["results"]
-        counts = {
-            status: sum(row["status"] == status for row in results)
-            for status in ("success", "present", "unknown", "failed")
-        }
-        counts["other"] = len(results) - sum(counts.values())
-        summary = (
-            " · ".join(
-                f"{counts[status]} {label}"
-                for status, label in (
-                    (
-                        "unknown",
-                        "needs verification"
-                        if counts["unknown"] == 1
-                        else "need verification",
-                    ),
-                    ("failed", "failed"),
-                    ("other", "not copied"),
-                    ("success", "copied"),
-                    ("present", "already present"),
-                )
-                if counts[status]
-            )
-            or "No copy results."
-        )
+        summary = _copy_result_summary(results)
         body = (
             (
                 f"var expected = {json.dumps(pair)};\n"
@@ -1277,7 +1322,7 @@ check(exposed(note, pane) && exposed(review, WM.el('fittings-copy-dialog')));
             )
             + """
 var pane = WM.el('fittings-copy-body');
-check(text(pane.querySelector('.fit-copy-summary'), summary));
+check(text(WM.el('fittings-copy-summary'), summary));
 var pairs = pane.querySelectorAll('.fit-copy-pair'), row = pairs[pairs.length - 1];
 check(row && expected.status === 'unattempted_throttle');
 var name = row.querySelector('.fit-copy-pair-name'), character = row.querySelector('.fit-copy-character');
@@ -1285,21 +1330,26 @@ var status = row.querySelector('.fit-copy-result'), error = row.querySelector('.
 check(text(name, identity) && text(character, expected.character_name)
   && text(status, 'Not attempted: rate limit') && status.classList.contains(expected.status)
   && (expected.error ? text(error, expected.error) : !error));
-// Shared recovery remains visible in one sticky group above the lower rows.
-// Verify ordering and exposure as well as presence, never repeat it per row.
+// Shared recovery remains ordinary flow above the pairs, not an overlay.
+// Verify presence and safety ordering; only retained context must stay exposed.
 var recovery = pane.querySelector('.fit-copy-recovery');
 var guidance = recovery ? Array.prototype.slice.call(recovery.querySelectorAll('.fit-copy-guidance')) : [];
 check(recovery && recovery.parentNode === pane && visible(recovery)
+  && Array.prototype.indexOf.call(pane.children, recovery) < Array.prototype.indexOf.call(pane.children, pairs[0])
   && guidance.length === 2 && guidance.every(function (node) {
     return node.parentNode === recovery && visible(node);
   }) && /^Needs verification:.*before any retry/i.test(guidance[0].textContent)
   && /^Rate limit:.*fittings not attempted/.test(guidance[1].textContent));
-row.scrollIntoView({block: 'end', behavior: 'instant'});
-check(guidance.every(function (node) { return exposed(node, pane); }));
-var requiredNodes = [name, character, status];
+var technical = WM.el('fittings-copy-technical');
+var disclosure = technical && technical.querySelector('summary');
+check(disclosure && pane.contains(disclosure) && visible(disclosure));
+disclosure.scrollIntoView({block: 'end', behavior: 'instant'});
+var requiredNodes = [name, character, status, disclosure];
 if (expected.error) requiredNodes.push(error);
 check(requiredNodes.every(function (node) { return exposed(node, pane); })
-  && exposed(WM.el('fittings-copy-close'), WM.el('fittings-copy-dialog')));
+  && [WM.el('fittings-copy-close'), WM.el('fittings-copy-summary'), WM.el('fittings-copy-title')].every(function (node) {
+    return exposed(node, WM.el('fittings-copy-dialog'));
+  }));
 """
         )
     else:

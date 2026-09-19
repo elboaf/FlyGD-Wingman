@@ -2508,7 +2508,7 @@ def test_sticky_edges_cover_fractional_scrollport_boundaries():
         ".characters-head",
         ".bind-head > span",
         "#preview-binds .bind-group:not(:empty)",
-        ".fit-copy-recovery",
+        ".fit-copy-pair-context",
     ):
         rule = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", CSS)
         assert rule and "0 -1px var(--panel)" in rule.group(1), selector

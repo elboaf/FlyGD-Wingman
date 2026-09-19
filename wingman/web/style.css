@@ -5968,11 +5968,36 @@ button.btn.danger:disabled {
 /* Copy reuses the app-owned overlay/dialog vocabulary. These rules only
    shape its bounded roster and pair results; no second modal treatment or
    accent is introduced. */
-#fittings-copy-dialog { width: min(680px, 92vw); }
-#fittings-copy-body {
-  display: flex; flex-direction: column; gap: 10px; max-height: 55vh;
-  overflow-y: auto; overscroll-behavior-y: contain;
+#fittings-copy-dialog {
+  width: min(680px, 92vw); max-height: calc(100vh - 48px);
+  display: flex; flex-direction: column; min-width: 0;
 }
+/* Context and actions sit outside the one scroller, not over its first/last row. */
+.fit-copy-heading { flex: none; background: var(--panel); overflow-wrap: anywhere; }
+.fit-copy-heading > h2 { min-width: 0; }
+.fit-copy-heading > h2::before { align-self: flex-start; margin-top: 4px; }
+.fit-copy-heading > .fit-copy-summary { margin-bottom: 10px; }
+.fit-copy-limit-summary { color: var(--warn); font-size: var(--fs-body); margin-bottom: 10px; }
+#fittings-copy-summary[hidden], #fittings-copy-limit-summary[hidden],
+#fittings-copy-progress[hidden] { display: none; }
+#fittings-copy-body {
+  display: flex; flex-direction: column; gap: 10px; max-height: 55vh; min-height: 0;
+  overflow-y: auto; overscroll-behavior-y: contain; scroll-padding: 8px; padding: 4px;
+}
+#fittings-copy-dialog > .buttons { flex: none; }
+#fittings-copy-dialog > .field-msg, #fittings-copy-dialog > .hint { flex: none; }
+#fittings-copy-progress { appearance: none; border: 0; width: 100%; height: 8px; flex: none; accent-color: var(--brand); }
+#fittings-copy-progress::-webkit-progress-bar { background: var(--field); border-radius: var(--radius-sm); }
+#fittings-copy-progress::-webkit-progress-value { background: var(--brand); border-radius: var(--radius-sm); }
+@media (forced-colors: active) {
+  #fittings-copy-progress { forced-color-adjust: none; border: 1px solid var(--fitting-forced-ink); }
+  #fittings-copy-progress::-webkit-progress-bar { background: var(--fitting-forced-surface); }
+  #fittings-copy-progress::-webkit-progress-value { background: var(--fitting-forced-ink); }
+}
+.fit-copy-technical { overflow-wrap: anywhere; color: var(--text-dim); font-size: var(--fs-muted); }
+.fit-copy-technical > summary { cursor: pointer; }
+.fit-copy-technical > summary:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+#fittings-copy-operation-id { user-select: text; margin-top: 6px; }
 .fit-copy-targets { display: flex; flex-direction: column; gap: 7px; }
 .fit-copy-target {
   display: flex; align-items: center; gap: 8px; padding: 5px 0;
@@ -5989,18 +6014,31 @@ button.btn.danger:disabled {
   border-radius: var(--radius-sm); color: var(--text-dim); font-size: var(--fs-muted);
 }
 .fit-copy-pair {
-  display: grid; grid-template-columns: minmax(130px, 1fr) minmax(130px, 1fr);
-  gap: 4px 10px; padding: 8px 0; border-bottom: 1px solid var(--row-line);
-  overflow-wrap: anywhere;
+  display: flex; flex-direction: column; flex: none;
+  gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--row-line);
+  overflow-wrap: anywhere; min-width: 0;
+}
+/* Identity releases at its own pair boundary; it masks orphaned outcome text
+   while that pair exits, rather than becoming a global status heading. */
+.fit-copy-pair-context {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 10px;
+  position: sticky; top: 0; z-index: 1; background: var(--panel);
+  box-shadow: 0 -1px var(--panel); padding: 4px 0; min-width: 0;
+}
+.fit-copy-pair-context > * { min-width: 0; }
+.fit-copy-resolution .check, .fit-copy-target .check { position: relative; }
+.fit-copy-resolution .check input, .fit-copy-target .check input { inset: 0; width: 100%; height: 100%; }
+.fit-copy-resolution input { scroll-margin-top: var(--fit-copy-context-clearance, 64px); }
+@media (max-width: 960px) {
+  .fit-copy-pair-context { grid-template-columns: minmax(0, 1fr); }
+  .fit-copy-target { flex-wrap: wrap; }
+  .fit-copy-target-state { max-width: 100%; flex-basis: 100%; padding-left: 24px; }
 }
 .fit-copy-pair:last-child { border-bottom: 0; }
-.fit-copy-guidance { grid-column: 1 / -1; }
-/* One sticky owner keeps verification before retry advice while reading lower
-   results. It stays inside the existing 55vh body, never above the dialog. */
+/* The compact operation summary now owns retained context. Full verification
+   still precedes retry guidance, but does not crowd the scrolling pair rows. */
 .fit-copy-recovery {
-  position: sticky; top: 0; z-index: 1; flex: none;
-  padding: 6px 0; background: var(--panel);
-  box-shadow: 0 -1px var(--panel);
+  flex: none; padding: 6px 0;
   border-bottom: 1px solid var(--field-border);
 }
 .fit-copy-recovery > .fit-copy-guidance + .fit-copy-guidance { margin-top: 6px; }
@@ -6010,7 +6048,7 @@ button.btn.danger:disabled {
 .fit-copy-needs-resolution > .fit-copy-detail,
 .fit-copy-unavailable > .fit-copy-detail { color: var(--warn); }
 .fit-copy-resolution {
-  grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px;
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px;
 }
 .fit-copy-alternate-field { display: flex; flex-direction: column; flex: 1 1 180px; min-width: 0; gap: 4px; }
 .fit-copy-alternate-field > .lab { color: var(--text-dim); font-size: var(--fs-body); }
@@ -6020,6 +6058,7 @@ button.btn.danger:disabled {
 .fit-copy-result.cancelled { color: var(--warn); }
 .fit-copy-result.failed { color: var(--err); }
 #fittings-copy-status { margin-top: 10px; min-height: 18px; overflow-wrap: anywhere; }
+#fittings-copy-status.status-announcement { min-height: 0; margin: 0; }
 #fittings-copy-dialog .buttons > [hidden] { display: none; }
 
 /* ====================== reduced motion ==============================
