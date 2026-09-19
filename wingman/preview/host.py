@@ -3803,6 +3803,34 @@ class PreviewHost:
             source_hwnd=source_hwnd,
         )
 
+    @staticmethod
+    def _source_desktop_away(libs, source_hwnd) -> bool:
+        """Whether *source_hwnd* is shell-cloaked onto another virtual desktop.
+
+        One DwmGetWindowAttribute per source per sweep -- cheap at the sweep
+        cadence -- and never a taskbar/Z-order read. A missing dwmapi binding
+        or probe function, or a failed call, reports False: tests drive the
+        sweep with partial libs, and in production a broken read must degrade
+        to the pre-#264 behavior (preview shown) rather than hiding the wall.
+        """
+        if libs is None or not source_hwnd:
+            return False
+        probe = getattr(getattr(libs, "dwmapi", None), "DwmGetWindowAttribute", None)
+        if probe is None:
+            return False
+        cloaked = wintypes.DWORD()
+        if (
+            probe(
+                source_hwnd,
+                win32.DWMWA_CLOAKED,
+                ctypes.byref(cloaked),
+                ctypes.sizeof(cloaked),
+            )
+            != 0
+        ):
+            return False
+        return cloaked.value == win32.DWM_CLOAKED_SHELL
+
     def _apply_visibility(self, libs) -> None:
         epoch = self._eve_epoch
         if not self._eve_valid(epoch):
@@ -3815,12 +3843,23 @@ class PreviewHost:
         for key, win in self._windows.items():
             if not self._eve_valid(epoch):
                 return
+            # _restyle can reach a window whose client is not in the registry
+            # yet, so this lookup, unlike the hide_active clause, tolerates
+            # the gap: an unregistered window just skips the cloak probe.
+            client = self._clients.get(key)
+            source_hwnd = client.hwnd if client is not None else 0
             win.set_hidden(
                 visibility.should_hide_source(
                     global_hidden=hidden,
                     hide_active=active,
                     foreground=foreground,
-                    source_hwnd=self._clients[key].hwnd if active else 0,
+                    source_hwnd=source_hwnd if active else 0,
+                    # The desktop-away clause rides the same per-window sweep
+                    # (#264): the SW_HIDE lands on whatever desktop the mirror
+                    # followed to, and the sweep after switching back re-shows
+                    # it beside its uncloaked source. Companions are not given
+                    # this clause -- Windows already cloaks them on the switch.
+                    source_cloaked=self._source_desktop_away(libs, source_hwnd),
                 )
             )
         self._previews_hidden = hidden
