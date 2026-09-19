@@ -164,3 +164,20 @@ def test_settings_defaults_and_unrelated_updates_preserve_companions(tmp_path):
         "enabled": True,
         "definitions": raw,
     }
+
+
+def test_show_on_focus_defaults_on_roundtrips_and_drops_non_bool():
+    """#258 follow-up: the tick defaults on for upgrading installs, and a
+    corrupted value drops the entry like every other field, not silently
+    coerced."""
+    item = definition()
+    assert item.show_on_focus is True
+    raw = c.serialize_definitions((item,))
+    assert raw[0]["show_on_focus"] is True
+    del raw[0]["show_on_focus"]
+    assert c.validate_definitions(raw) == (item,)
+    off = definition(show_on_focus=False)
+    assert c.validate_definitions(c.serialize_definitions((off,))) == (off,)
+    raw = c.serialize_definitions((off,))
+    raw[0]["show_on_focus"] = 1
+    assert c.validate_definitions(raw) == ()

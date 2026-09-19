@@ -60,6 +60,8 @@
   function ready() { return active && hydrated && state.available; }
   function owns(view) { return views[view.row.id] === view; }
   function pending(row) { return row.pending_operation_id !== null && row.pending_operation_id !== undefined; }
+  function isCheck(name) { return name === 'enabled' || name === 'show_on_focus'; }
+  function showOnFocusVisible() { return state.hide_on_lost_focus === true; }
   function countText(text) {
     // Python validators count Unicode code points, not UTF-16 code units.
     return (text.match(/[\uD800-\uDBFF][\uDC00-\uDFFF]|[\s\S]/g) || []).length;
@@ -151,7 +153,7 @@
       view.row = row;
       Object.keys(view.fields).forEach(function (name) {
         var field = view.fields[name];
-        field.base = name === 'label' || name === 'enabled' ? row[name] : row.source[name];
+        field.base = name === 'label' || isCheck(name) ? row[name] : row.source[name];
         if (!field.dirty) setValue(field, field.base);
       });
       if (!view.modeDirty) view.mode = row.mode;
@@ -165,19 +167,19 @@
   }
   function setValue(field, value) {
     field.value = value;
-    if (field.name === 'enabled') field.input.checked = value;
+    if (isCheck(field.name)) field.input.checked = value;
     else field.input.value = value;
   }
   function changeField(view, name) {
     var field = view.fields[name];
     field.seq += 1;
-    field.value = name === 'enabled' ? field.input.checked : field.input.value;
+    field.value = isCheck(name) ? field.input.checked : field.input.value;
     field.dirty = true;
     field.error = '';
     paintField(field);
   }
   function paintField(field) {
-    var unsent = field.dirty && field.name !== 'enabled' && field.name !== 'title_mode';
+    var unsent = field.dirty && !isCheck(field.name) && field.name !== 'title_mode';
     field.status.textContent = field.error || (unsent ? 'Press Enter or Apply to commit.' : '');
     field.status.className = 'hint' + (field.error ? ' err' : '');
   }
@@ -199,6 +201,7 @@
     view.busy = true;
     request(function () {
       if (edit.name === 'enabled') return WM.send('companion_preview_set_enabled', row.id, edit.value, row.generation);
+      if (edit.name === 'show_on_focus') return WM.send('companion_preview_set_show_on_focus', row.id, edit.value, row.generation);
       // Each field commits independently. Never include another field's unsent
       // text merely because the controller accepts one complete edit proposal.
       return WM.send('companion_preview_edit', row.id,
@@ -298,6 +301,17 @@
     input.addEventListener('change', function () { changeField(view, 'enabled'); commit(view, 'enabled'); });
     var enabledStatus = WM.make('span', 'hint');
     view.fields.enabled = {name: 'enabled', input: input, status: enabledStatus, seq: 0, dirty: false, error: ''};
+    // #258 follow-up: only meaningful while "hide every preview while you
+    // are not in EVE" is on, so the checkbox stays hidden the rest of the
+    // time instead of offering a choice that changes nothing.
+    var showCheck = WM.make('label', 'check'), showInput = WM.make('input');
+    showInput.type = 'checkbox'; showCheck.appendChild(showInput); showCheck.appendChild(WM.make('span', 'box'));
+    showCheck.appendChild(WM.make('span', '', 'Show previews when active'));
+    showInput.id = 'companion-' + row.id + '-show-on-focus';
+    showInput.setAttribute('aria-label', 'Show previews when ' + (row.label || 'this companion') + ' is active');
+    showInput.addEventListener('change', function () { changeField(view, 'show_on_focus'); commit(view, 'show_on_focus'); });
+    view.showOnFocus = showCheck;
+    view.fields.show_on_focus = {name: 'show_on_focus', input: showInput, status: enabledStatus, seq: 0, dirty: false, error: ''};
     view.name = WM.make('strong', 'companion-name');
     view.name.id = 'companion-' + row.id + '-name';
     view.source = WM.make('span', 'companion-source hint');
@@ -305,7 +319,7 @@
     view.status = WM.make('span', 'companion-availability'); view.status.id = 'companion-' + row.id + '-status';
     view.status.setAttribute('role', 'status');
     var identity = WM.make('div', 'companion-identity'); identity.appendChild(view.name); identity.appendChild(view.source);
-    summary.appendChild(identity); summary.appendChild(check); summary.appendChild(view.modeText);
+    summary.appendChild(identity); summary.appendChild(check); summary.appendChild(showCheck); summary.appendChild(view.modeText);
     view.node.appendChild(summary); view.node.appendChild(view.status); view.node.appendChild(enabledStatus);
     var details = WM.make('details', 'companion-detail'); details.appendChild(WM.make('summary', '', 'Edit & source'));
     makeField(view, 'label', 'Label', details);
@@ -437,6 +451,8 @@
       var view = views[id], row = view.row;
       view.name.textContent = row.label; view.name.title = row.label;
       view.fields.enabled.input.setAttribute('aria-label', 'Enable ' + row.label);
+      view.fields.show_on_focus.input.setAttribute('aria-label', 'Show previews when ' + row.label + ' is active');
+      view.showOnFocus.hidden = !showOnFocusVisible();
       view.source.textContent = row.source.executable_name + ' — ' + row.source.last_title;
       view.source.title = view.source.textContent;
       view.modeText.textContent = row.mode === 'region' ? 'Selected region' : 'Whole window';

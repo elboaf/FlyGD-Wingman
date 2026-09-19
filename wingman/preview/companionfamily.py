@@ -9,7 +9,7 @@ import ntpath
 from dataclasses import dataclass
 from uuid import uuid4
 
-from . import geometry, win32
+from . import geometry, visibility, win32
 from .companions import (
     MAX_ENABLED,
     CompanionEvent,
@@ -62,6 +62,7 @@ class CompanionFamily:
         catalog=None,
         create_window=CompanionWindow.create,
         create_picker=RegionPicker.create,
+        ring_color=None,
     ):
         self._libs = libs
         self._controller = controller
@@ -69,6 +70,9 @@ class CompanionFamily:
         self._authorized = authorized
         self._temporary_available = temporary
         self._monitors = monitors
+        # Live ring-colour seam, same cadence as the host's selection_color;
+        # the shipped default keeps direct constructions (tests) honest.
+        self._ring_color = ring_color or (lambda: CompanionWindow.selection_color)
         self._catalog = (
             catalog
             if catalog is not None
@@ -86,6 +90,9 @@ class CompanionFamily:
         self._failed_sources = {}
         self._sequence = itertools.count(1)
         self._activation = None
+        # Which companion (definition id) currently owns the shared ring,
+        # or None when the EVE selection does. See observe_ring_foreground.
+        self._ring_identity = None
         self._closed = False
 
     @property
@@ -155,6 +162,10 @@ class CompanionFamily:
         live.retiring = True
         if self._activation and self._activation[0] is live:
             self._activation = None
+        if self._ring_identity == identity:
+            # The latch must not outlive its window: a closed companion
+            # takes the shared ring with it rather than pinning it.
+            self._ring_identity = None
         live.window.set_hidden(True)
         if not live.window.close():
             self._errors[identity] = ("stopping", "Companion cleanup is still pending")
@@ -306,6 +317,7 @@ class CompanionFamily:
             source,
             on_activate=lambda: None,
             on_geometry=lambda rect: None,
+            selection_color=self._ring_color(),
         )
         if candidate.window is None or candidate.window.failed:
             raise SourceUnavailable("Source window could not be captured")
@@ -489,6 +501,89 @@ class CompanionFamily:
             )
         self.scan()
 
+    def show_on_focus_sources(self) -> tuple:
+        """Source hwnds of live companions that spare the wall from the
+        hide-on-lost-focus mask. Read on the pump, where live is mutated;
+        retiring windows are on their way out and never nominate a source.
+        """
+        return tuple(
+            live.binding.hwnd
+            for live in self.live.values()
+            if not live.retiring and live.spec.definition.show_on_focus
+        )
+
+    def observe_ring_foreground(self, foreground, *, eve_focus, ours):
+        """Fold one foreground observation into the sticky ring latch.
+
+        The wall carries ONE "where the user is" ring, shared between the
+        EVE selection and the companions (#258 polish follow-up), and it is
+        STICKY for the same reason the EVE selection's ring is: this
+        environment is full of foreground churn that is not the user
+        moving -- wingman's own windows among them, which periodically take
+        the foreground from the sig bar's update path. Following the raw
+        foreground made the companion ring flicker off on every such
+        theft. So:
+
+        - an EVE client foreground hands the ring to the EVE selection
+          (latch cleared; the EVE ring lights again);
+        - a live companion's source foreground latches that companion;
+        - anything else -- unknown (0), transient, or one of OUR OWN
+          windows -- changes nothing. A closed companion's latch dies with
+          its window (see _close_live).
+        """
+        if not foreground or ours:
+            return
+        if eve_focus:
+            self._ring_identity = None
+            return
+        for live in self.live.values():
+            if not live.retiring and live.binding.hwnd == foreground:
+                self._ring_identity = live.spec.definition.id
+                return
+
+    def ring_latched(self) -> bool:
+        """Whether the shared ring currently belongs to a companion."""
+        return self._ring_identity is not None
+
+    def apply_lost_focus_hidden(self, hidden, active, foreground):
+        """The host's hide-on-lost-focus decision, applied to live windows.
+
+        Companion windows never heard this decision before #258: only the
+        bind/promote flows touched their visibility, so an enabled companion
+        stayed on screen over every other window while its EVE previews hid.
+        The split is the same one visibility.py draws for EVE previews -- the
+        host observes the foreground and reads the settings, the family owns
+        its windows, and the whether lives in the pure module. The authority
+        callback matches _bind/_promote because an un-hide is a promotion of
+        a live window just as much as a first show is.
+
+        The ring itself is latched by observe_ring_foreground earlier in the
+        same sweep; this half only paints it -- a companion is ringed when
+        it owns the latch and is not itself hidden by the hide-active
+        clause. The colour is re-read here so a recolour applies without
+        reopening windows.
+        """
+        color = self._ring_color()
+        for identity, live in tuple(self.live.items()):
+            if live.retiring:
+                continue
+            token = self._token(live.spec)
+            if live.window.selection_color != color:
+                live.window.selection_color = color
+            hidden = visibility.should_hide_source(
+                global_hidden=hidden,
+                hide_active=active,
+                foreground=foreground,
+                source_hwnd=live.binding.hwnd if active else 0,
+            )
+            live.window.set_active(self._ring_identity == identity and not hidden)
+            live.window.set_hidden(
+                hidden,
+                authorized=lambda lv=live, t=token, i=identity: (
+                    self.live.get(i) is lv and self._authorized(t, promotion=True)
+                ),
+            )
+
     def scan(self):
         self._clean_retired()
         # Failed releases keep their live slot, but never regain live authority.
@@ -624,7 +719,13 @@ class CompanionFamily:
             activate, moved = self._wire_window(live)
             rect = self._placement(spec.definition, fresh, source)
             window = self._create_window(
-                self._libs, fresh, rect, source, on_activate=activate, on_geometry=moved
+                self._libs,
+                fresh,
+                rect,
+                source,
+                on_activate=activate,
+                on_geometry=moved,
+                selection_color=self._ring_color(),
             )
             live.window = window
             verified = self._verify(fresh)
@@ -734,6 +835,18 @@ class CompanionFamily:
             or not self._authorized(self._token(live.spec), promotion=True)
         ):
             return
+        # Already there: a redundant SetForegroundWindow on the foreground
+        # window perturbs focus enough to emit a foreground observation that
+        # is not the source, which dropped the ring -- and nothing restored
+        # it, because no real transition followed (#258 polish follow-up).
+        if self._libs.user32.GetForegroundWindow() == live.binding.hwnd:
+            return
+        if self._activation is not None and self._activation[0] is live:
+            # A click during a pending activation must not reset the retry
+            # counter: the pending loop is already converging, and a longer
+            # run of redundant SetForegroundWindows is exactly the churn
+            # that knocked the ring off in the first place.
+            return
         self._activation = (live, 0)
         self.tick_activation()
 
@@ -754,6 +867,15 @@ class CompanionFamily:
                 raise SourceUnavailable("Source window is unavailable")
             user, kernel = self._libs.user32, self._libs.kernel32
             hwnd = live.binding.hwnd
+            if user.GetForegroundWindow() == hwnd:
+                # The transition completed on its own between ticks. Retrying
+                # SetForegroundWindow on an already-foreground window is the
+                # focus churn that dropped the ring -- a pending activation
+                # must converge, never re-fire (#258 polish follow-up).
+                self._activation = None
+                self._errors.pop(live.spec.definition.id, None)
+                self._status()
+                return
             if user.IsIconic(hwnd):
                 if attempts == 0:
                     user.ShowWindowAsync(hwnd, win32.SW_RESTORE)

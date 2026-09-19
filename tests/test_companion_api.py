@@ -22,6 +22,11 @@ from wingman.preview.runtime import PreviewRuntime
         ),
         ("companion_preview_reselect_region", "reselect_region", ("id", 3)),
         ("companion_preview_set_enabled", "set_enabled", ("id", False, 3)),
+        (
+            "companion_preview_set_show_on_focus",
+            "set_show_on_focus",
+            ("id", True, 3),
+        ),
         ("companion_preview_edit", "edit", ("id", "Map", "exact", "Map", 3)),
         ("companion_preview_remove", "remove", ("id", 3)),
         ("companion_preview_reset_geometry", "reset_geometry", ("id", 3)),
@@ -43,11 +48,22 @@ def test_facades_forward_arguments_and_receipt_unchanged(
 def test_literal_companion_push_is_fenced_when_view_closes(tmp_path):
     api = make_api(tmp_path)
     api._push_companion_previews({"revision": 7})
-    assert pushes(api._window) == [("onCompanionPreviews", {"revision": 7})]
+    sent = pushes(api._window)[0][1]
+    assert sent["revision"] == 7
+    # Injected at the bridge boundary: the page gates the per-companion
+    # "show previews when active" checkboxes on this (#258 follow-up).
+    assert sent["hide_on_lost_focus"] is False
     api._close_eve_runtime()
     api._push_companion_previews({"revision": 8})
     assert len(pushes(api._window)) == 1
     assert api._companions.shutdown()
+
+
+def test_companion_state_injects_hide_on_lost_focus_for_the_page(tmp_path):
+    api = make_api(tmp_path)
+    state = {"revision": 1, "rows": [], "operations": []}
+    assert api._companion_state_for_page(state) is state
+    assert state["hide_on_lost_focus"] is False
 
 
 def test_composition_binds_before_demand_and_does_not_touch_eve(tmp_path):

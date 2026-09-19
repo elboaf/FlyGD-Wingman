@@ -78,3 +78,32 @@ def test_off_never_hides_even_with_nothing_running():
         )
         is False
     )
+
+
+def test_companion_source_foreground_spares_the_wall():
+    """#258 follow-up: focusing the source of a companion whose
+    "show previews when active" tick is on is workspace, not away."""
+    assert (
+        should_hide(
+            enabled=True,
+            foreground=0xABCD,
+            client_hwnds=[0x1234],
+            foreground_is_ours=False,
+            companion_sources=(0xABCD,),
+        )
+        is False
+    )
+
+
+def test_flag_off_or_other_foreground_stays_inside_the_mask():
+    for foreground, sources in ((0xABCD, ()), (0x9999, (0xABCD,))):
+        assert (
+            should_hide(
+                enabled=True,
+                foreground=foreground,
+                client_hwnds=[0x1234],
+                foreground_is_ours=False,
+                companion_sources=sources,
+            )
+            is True
+        )

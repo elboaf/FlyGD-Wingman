@@ -444,6 +444,26 @@ class CompanionController:
             except _Refused as exc:
                 return self._refusal_locked(exc, id)
 
+    def set_show_on_focus(
+        self, id: str, show_on_focus: bool, expected_generation: int
+    ) -> dict:
+        """#258 follow-up: whether this companion's source window counts as
+        the multiboxing workspace when it holds the foreground. A pure
+        definition edit -- no live window changes, so a non-native "edit"
+        op like label edits, never a rebinding "enable".
+        """
+        with self._condition:
+            try:
+                if type(show_on_focus) is not bool:
+                    raise _Refused("Show previews when active must be true or false")
+                op = self._reserve_locked("edit", id, expected_generation)
+                op.proposal = replace(
+                    self._definitions[id], show_on_focus=show_on_focus
+                )
+                return self._queue_locked(op)
+            except _Refused as exc:
+                return self._refusal_locked(exc, id)
+
     def edit(
         self,
         id: str,

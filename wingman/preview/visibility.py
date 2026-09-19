@@ -21,7 +21,9 @@ def should_hide_source(*, global_hidden, hide_active, foreground, source_hwnd) -
     )
 
 
-def should_hide(*, enabled, foreground, client_hwnds, foreground_is_ours) -> bool:
+def should_hide(
+    *, enabled, foreground, client_hwnds, foreground_is_ours, companion_sources=()
+) -> bool:
     """Whether every preview should be hidden right now.
 
     True only when the feature is on AND the foreground window belongs to
@@ -39,6 +41,12 @@ def should_hide(*, enabled, foreground, client_hwnds, foreground_is_ours) -> boo
     Without it, opening Wingman to arrange previews would hide the very
     previews being arranged.
 
+    `companion_sources` lists the source windows of live companions whose
+    "show previews when active" choice is on (#258 follow-up): focusing
+    such a window is working in the multiboxing workspace, not leaving it,
+    so it counts the way an EVE client foreground does. A flag-off source
+    stays inside the mask -- that is the point of the per-companion tick.
+
     A foreground of 0 -- the window is being destroyed, or a secure desktop
     (UAC, lock screen) holds it -- hides. Nothing of ours is on screen to
     mirror. Ownership is still checked first: it is the more specific
@@ -47,5 +55,7 @@ def should_hide(*, enabled, foreground, client_hwnds, foreground_is_ours) -> boo
     if not enabled:
         return False
     if foreground_is_ours:
+        return False
+    if foreground in (companion_sources or ()):
         return False
     return foreground not in (client_hwnds or [])

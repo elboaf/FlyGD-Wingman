@@ -5408,7 +5408,7 @@
     limits: {definitions: 32, enabled: 8, live_available: 8, reason: null,
       label_max_chars: 80, title_hint_max_chars: 512, last_title_max_chars: 512,
       window_class_max_chars: 256, executable_path_max_chars: 32768},
-    rows: [], operations: []};
+    rows: [], operations: [], hide_on_lost_focus: true};
   var _devCompanionDefaultSources = [
     {candidate_token: 'dev-mapper', application: 'mapper.exe', title: 'Chain map — Home'},
     {candidate_token: 'dev-notes', application: 'notepad.exe', title: 'Fleet notes'},
@@ -5428,6 +5428,7 @@
     _devCompanionId += 1;
     var id = '00000000000040008000' + ('000000000000' + _devCompanionId.toString(16)).slice(-12);
     var row = {version: 1, id: id, label: label, enabled: true, mode: mode,
+      show_on_focus: true,
       source: {executable_path: 'c:\\demo\\' + source.application, executable_name: source.application,
         window_class: 'DemoSource', title_hint: source.title, title_mode: 'exact', last_title: source.title},
       window: {x: 40, y: 40, w: 320, h: 200}, generation: 1, binding_revision: 1,
@@ -5493,6 +5494,9 @@
   };
   api.companion_preview_set_enabled = function (id, enabled, generation) {
     return _devCompanionRequest(id, generation, function (row) { row.enabled = enabled; });
+  };
+  api.companion_preview_set_show_on_focus = function (id, showOnFocus, generation) {
+    return _devCompanionRequest(id, generation, function (row) { row.show_on_focus = showOnFocus; });
   };
   api.companion_preview_edit = function (id, label, titleMode, titleHint, generation) {
     return _devCompanionRequest(id, generation, function (row) {

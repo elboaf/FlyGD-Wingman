@@ -752,6 +752,7 @@ class PreviewHost:
                     self._crop_controller is None
                     or self._crop_controller._temporary is None
                 ),
+                ring_color=self._selection_ring_color,
             )
 
     def _apply_companion_commands(self, libs):
@@ -3710,6 +3711,13 @@ class PreviewHost:
         could never be mistaken for an alert or quietly acknowledge one.
         That reasoning survives intact -- it just attaches to focus now,
         which is what PreviewWindow spends `selected`/`focused` on.
+
+        The wall carries ONE "where the user is" ring: while a companion's
+        source window holds the foreground, the companion lights its own
+        ring and the EVE selection's ring yields for the sweep. The sticky
+        _selected_key is untouched underneath, so the EVE ring returns the
+        moment an EVE client takes the foreground again (#258 polish
+        follow-up -- both rings lit at once made no sense).
         """
         foreground = self._foreground or (
             libs.user32.GetForegroundWindow() if libs is not None else 0
@@ -3728,6 +3736,23 @@ class PreviewHost:
             # be handed straight back to whatever reappeared under the same
             # name.
             self._selected_key = None
+        if self._companion_family is not None:
+            # Fold this sweep's foreground into the sticky ring latch BEFORE
+            # painting: a companion that owns the latch suppresses the EVE
+            # selection's ring, and an EVE foreground hands the ring back.
+            # Our own windows count as no observation at all -- the sig bar
+            # takes the foreground as a side effect of its update path, and
+            # that is not the user moving (#261 ring-debug evidence).
+            self._companion_family.observe_ring_foreground(
+                foreground,
+                eve_focus=focus is not None,
+                ours=self._foreground_is_ours(libs, foreground),
+            )
+        companion_ring = (
+            self._companion_family.ring_latched()
+            if self._companion_family is not None
+            else False
+        )
 
         # Every window, every sweep, rather than a diff against the previous
         # keys. Both setters early-return on an unchanged flag (window.py's
@@ -3738,7 +3763,7 @@ class PreviewHost:
         # throughout. That case used to need a branch of its own.
         for key, win in self._windows.items():
             win.set_focused(key == focus)
-            win.set_selected(key == self._selected_key)
+            win.set_selected(key == self._selected_key and not companion_ring)
 
         self._apply_visibility(libs)
 
@@ -3747,11 +3772,20 @@ class PreviewHost:
         if not foreground and libs is not None:
             foreground = libs.user32.GetForegroundWindow()
         enabled = self._hiding_on_lost_focus()
+        # Pump-owned like this sweep, so the live read needs no lock. A
+        # source whose companion opted out stays off the list and keeps
+        # hiding the wall.
+        companion_sources = (
+            self._companion_family.show_on_focus_sources()
+            if self._companion_family is not None
+            else ()
+        )
         hidden = visibility.should_hide(
             enabled=enabled,
             foreground=foreground,
             client_hwnds=[c.hwnd for c in self._clients.values()],
             foreground_is_ours=(enabled and self._foreground_is_ours(libs, foreground)),
+            companion_sources=companion_sources,
         )
         return hidden, self._hiding_active_preview(), foreground
 
@@ -3792,6 +3826,13 @@ class PreviewHost:
         self._previews_hidden = hidden
         if self._crop_controller is not None:
             self._crop_controller.set_hidden(hidden)
+        # Companions ride the same decision on the same sweep. Skipping the
+        # epoch guard above would show them during EVE-off drain; skipping
+        # this forward is how #258's companion stayed up over every window
+        # while its EVE previews hid.
+        family = self._companion_family
+        if family is not None:
+            family.apply_lost_focus_hidden(hidden, active, foreground)
 
     def characters(self) -> list:
         """Named characters currently discovered, sorted. Safe from any

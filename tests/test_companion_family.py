@@ -74,6 +74,8 @@ class Window:
         self.binding, self.rect, self.source_rect = binding, rect, source
         self.callbacks = callbacks
         self.hidden = True
+        self.active = False
+        self.selection_color = "#00c8dc"
         self.failed = None
         self.hwnd = 100
         self.close_ok = True
@@ -88,6 +90,9 @@ class Window:
     def set_hidden(self, hidden, *, authorized=None):
         if hidden or authorized is None or authorized():
             self.hidden = hidden
+
+    def set_active(self, active):
+        self.active = active
 
     def move(self, rect):
         self.rect = rect
@@ -345,9 +350,16 @@ def test_activation_rechecks_identity_and_only_restores_foregrounds_source(famil
     iconic[0] = False
     native.tick_activation()
     assert calls == [("restore", 10, 9), ("foreground", 10)]
-    catalog.rows = (replace(BINDING, process_created=43),)
+    # Already foreground: the whole sequence is a no-op. A redundant
+    # SetForegroundWindow perturbs focus into a transient that dropped
+    # the ring on the second click (#258 polish follow-up).
     windows[0].callbacks["on_activate"]()
-    assert len(calls) == 2
+    assert calls == [("restore", 10, 9), ("foreground", 10)]
+    assert not native.activation_pending
+    catalog.rows = (replace(BINDING, process_created=43),)
+    foreground[0] = 0  # back to unknown, so the click runs the sequence
+    windows[0].callbacks["on_activate"]()
+    assert len(calls) == 2  # re-verify fails before any foreground attempt
     assert events[-1].payload[0]["status"] == "source-unavailable"
 
 
@@ -386,3 +398,175 @@ def test_discard_picker_acknowledges_once_after_synchronous_cleanup(family):
     )
     native.command(CompanionCommand("discard", TOKEN, None))
     assert [event.kind for event in events] == ["closed"]
+
+
+def _live_companion(native, windows):
+    native.reconcile((spec(),), 2)
+    assert len(windows) == 1 and not windows[0].hidden
+    return windows[0]
+
+
+def test_lost_focus_hides_and_restores_live_companions(family):
+    """#258: the companion must follow the same hide-on-lost-focus decision
+    its EVE previews already obeyed, in both directions."""
+    native, _, windows, _, _, _ = family
+    window = _live_companion(native, windows)
+
+    native.apply_lost_focus_hidden(True, False, 0)
+    assert window.hidden
+    native.apply_lost_focus_hidden(False, False, 0)
+    assert not window.hidden
+
+
+def test_hide_active_hides_a_companion_over_its_own_source_only(family):
+    native, _, windows, _, _, _ = family
+    window = _live_companion(native, windows)
+
+    native.apply_lost_focus_hidden(False, True, 999)
+    assert not window.hidden
+    native.apply_lost_focus_hidden(False, True, BINDING.hwnd)
+    assert window.hidden
+    native.apply_lost_focus_hidden(False, True, 999)
+    assert not window.hidden
+
+
+def test_lost_focus_unhide_requires_live_authority(family):
+    native, _, windows, _, authority, _ = family
+    window = _live_companion(native, windows)
+    native.apply_lost_focus_hidden(True, False, 0)
+    assert window.hidden
+
+    authority["live"] = False
+    native.apply_lost_focus_hidden(False, False, 0)
+    assert window.hidden
+
+
+def test_lost_focus_leaves_retiring_windows_alone(family):
+    native, _, windows, _, _, _ = family
+    _live_companion(native, windows)
+    calls = []
+    windows[0].set_hidden = lambda *args, **kwargs: calls.append(args)
+    native.live[DEFINITION.id].retiring = True
+
+    native.apply_lost_focus_hidden(True, False, 0)
+
+    assert calls == []
+
+
+def test_show_on_focus_sources_respects_the_tick_and_skips_retiring(family):
+    """#258 follow-up: only ticked, still-live companions nominate their
+    source window to spare the wall from the lost-focus mask."""
+    from dataclasses import replace as dc_replace
+
+    native, _, _, _, _, _ = family
+    native.reconcile((spec(),), 2)
+    assert native.show_on_focus_sources() == (BINDING.hwnd,)
+    native.live[DEFINITION.id].spec = dc_replace(
+        native.live[DEFINITION.id].spec,
+        definition=dc_replace(DEFINITION, show_on_focus=False),
+    )
+    assert native.show_on_focus_sources() == ()
+    native.live[DEFINITION.id].spec = dc_replace(
+        native.live[DEFINITION.id].spec, definition=DEFINITION
+    )
+    native.live[DEFINITION.id].retiring = True
+    assert native.show_on_focus_sources() == ()
+
+
+def test_ring_latch_moves_only_for_real_observations(family):
+    """#261 ring-debug evidence: the foreground is full of churn that is
+    not the user moving -- wingman's own windows among them. The latch
+    follows only EVE foregrounds (handing the ring back) and live
+    companion source foregrounds; everything else keeps it.
+    """
+    native, _, windows, _, _, _ = family
+    _live_companion(native, windows)
+
+    native.observe_ring_foreground(999, eve_focus=False, ours=False)
+    assert not native.ring_latched()
+    native.observe_ring_foreground(BINDING.hwnd, eve_focus=False, ours=False)
+    assert native.ring_latched()
+    # our own window, or an unknown foreground: the latch holds
+    native.observe_ring_foreground(12345, eve_focus=False, ours=True)
+    native.observe_ring_foreground(0, eve_focus=False, ours=False)
+    assert native.ring_latched()
+    # an EVE client takes it back
+    native.observe_ring_foreground(12345, eve_focus=True, ours=False)
+    assert not native.ring_latched()
+
+
+def test_ring_colour_is_reread_from_the_seam_per_sweep(family):
+    native, _, windows, _, _, _ = family
+    window = _live_companion(native, windows)
+    native._ring_color = lambda: "#abcdef"
+
+    native.apply_lost_focus_hidden(False, False, 999)
+
+    assert window.selection_color == "#abcdef"
+
+
+def test_ring_paints_only_the_latch_owner_and_only_when_visible(family):
+    """apply_lost_focus_hidden no longer decides the ring -- it paints the
+    latch. The hide-active clause still suppresses the painted ring while
+    the mirroring companion is itself hidden.
+    """
+    native, _, windows, _, _, _ = family
+    window = _live_companion(native, windows)
+
+    native.observe_ring_foreground(BINDING.hwnd, eve_focus=False, ours=False)
+    native.apply_lost_focus_hidden(False, False, 999)
+    assert window.active
+    native.apply_lost_focus_hidden(False, True, BINDING.hwnd)
+    assert window.hidden and not window.active
+    native.observe_ring_foreground(12345, eve_focus=True, ours=False)
+    native.apply_lost_focus_hidden(False, False, 999)
+    assert not window.active
+
+
+def test_ring_latch_dies_with_its_window(family):
+    native, _, windows, _, _, _ = family
+    _live_companion(native, windows)
+
+    native.observe_ring_foreground(BINDING.hwnd, eve_focus=False, ours=False)
+    assert native.ring_latched()
+    native._close_live(DEFINITION.id)
+    assert not native.ring_latched()
+
+
+def test_pending_activation_converges_without_refiring_a_foreground_source(family):
+    """#258 polish follow-up, second click variant: a first click whose
+    SetForegroundWindow does not confirm synchronously leaves a pending
+    retry loop. If the transition completes on its own, the next tick must
+    recognise the source is already foreground and stop -- re-firing
+    SetForegroundWindow perturbed focus into a transient observation that
+    dropped the ring. And a second click mid-activation must not reset the
+    retry counter, because more retries are more churn, not progress."""
+    native, _, windows, _, _, _ = family
+    calls = []
+    fg = [0]
+    native._libs = SimpleNamespace(
+        user32=SimpleNamespace(
+            IsIconic=lambda hwnd: False,
+            SetForegroundWindow=lambda hwnd: (
+                calls.append(("foreground", hwnd)) or False
+            ),
+            GetForegroundWindow=lambda: fg[0],
+            GetWindowThreadProcessId=lambda hwnd, pid: 20,
+            AttachThreadInput=lambda s, t, v: calls.append(("attach", s, t, v)) or True,
+        ),
+        kernel32=SimpleNamespace(GetCurrentThreadId=lambda: 5),
+    )
+    native.reconcile((spec(),), 2)
+    windows[0].callbacks["on_activate"]()
+    assert native.activation_pending
+    assert calls.count(("foreground", 10)) == 2  # direct, then the attach dance
+
+    calls.clear()
+    windows[0].callbacks["on_activate"]()  # second click mid-activation
+    assert calls == []
+    assert native._activation[1] == 1  # attempts untouched
+
+    fg[0] = 10  # the transition completed on its own
+    native.tick_activation()
+    assert calls == []  # no refire
+    assert not native.activation_pending
