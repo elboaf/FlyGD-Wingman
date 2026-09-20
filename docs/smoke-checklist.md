@@ -22,10 +22,16 @@ selection-aware, ticks survive watcher rebuilds, partial delete failures
 name files, and Archive (move to a folder) joined the context menu, footer
 and Settings.
 
-- [ ] **Shift-click range.** Click a row, shift-click another further down:
-      every row in between ticks, nothing unticks. Shift-click upwards
-      from the anchor works too. Shift-click does not leave browser text
+- [ ] **Shift-click range, both ways.** Click a row's checkbox, shift-click
+      a checkbox further down: every box in between ticks. Shift-click the
+      end box again (now ticked): the whole span CLEARS. Shift-click
+      upwards from the anchor works too, and leaves no browser text
       selection behind.
+- [ ] **The checkbox is the only toggle target.** Clicking elsewhere on a
+      row must not tick or untick it (it only moves the keyboard focus
+      ring). Double-clicking a recording elsewhere on the row opens it and
+      leaves nothing ticked; double-clicking ON the checkbox opens it and
+      leaves the box as it was.
 - [ ] **Ctrl+A.** With the list focused, Ctrl+A ticks everything; the
       footer's Delete/Archive enable. Ctrl+A in a Settings text field
       still does its normal edit thing.

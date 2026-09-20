@@ -728,17 +728,29 @@ def test_context_delete_is_selection_aware_and_releases_the_editor():
 
 
 def test_modern_selection_gestures_exist():
-    """Ctrl+A selects everything and shift-click ticks a range anchored on
-    the keyboard focus row -- the two gestures any modern list is expected
-    to answer. Lexical, like everything here."""
+    """Ctrl+A selects everything, and shift-click on a CHECKBOX ticks a
+    range anchored on the keyboard focus row. The checkbox is the only
+    toggle target: a click elsewhere on the row moves the focus anchor and
+    must not tick anything, so the guard is pinned literally."""
     handler = LIST_JS[LIST_JS.index("scroll.addEventListener('keydown'") :]
     handler = handler[: handler.index("ArrowDown")]
     assert "ev.ctrlKey || ev.metaKey" in handler
     assert "setAll(true)" in handler
-    click = LIST_JS[LIST_JS.index("body.addEventListener('click'") :]
-    click = click[: click.index("setFocus(node.dataset.id)")]
+    click = LIST_JS[
+        LIST_JS.index("body.addEventListener('click'") : LIST_JS.index(
+            "body.addEventListener('dblclick'"
+        )
+    ]
+    # Checkbox-only toggling, asserted as a NEGATIVE too: outside the
+    # .c-check cell the handler may only setFocus and return.
+    assert "ev.target.closest('.c-check')" in click
+    outside = click[: click.index("ev.target.closest('.c-check')")]
+    assert "toggle(" not in outside and "rangeSelect(" not in outside
     assert "ev.shiftKey" in click
     assert "rangeSelect(node.dataset.id)" in click
+    # Shift-click applies the clicked box's OPPOSITE state, so the gesture
+    # deselects the same span it selects.
+    assert "var state = !selected[id];" in LIST_JS
 
 
 def test_selection_survives_a_rebuild_by_file_not_by_id():

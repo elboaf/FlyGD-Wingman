@@ -325,21 +325,26 @@
     });
   }
 
-  // Shift-click: tick the display-order range from the keyboard/last-click
-  // anchor through the clicked row, ADDING to whatever is already ticked
-  // rather than clearing it. Anchored on focusId because setFocus already
-  // made that the anchor of arrow-key Space toggles -- one anchor concept.
+  // Shift-click on a checkbox: apply the CLICKED box's opposite state
+  // across the display-order range from the keyboard/last-click anchor
+  // through the clicked row. Opposite-of-target is what makes the gesture
+  // symmetric -- shift-click an unticked box to tick the span, shift-click
+  // the span again (its end box is now ticked) to clear it -- instead of an
+  // add-only sweep that can never untick. Anchored on focusId because
+  // setFocus already made that the anchor of arrow-key Space toggles -- one
+  // anchor concept.
   function rangeSelect(id) {
     if (!byId(id)) return;
     var from = order.indexOf(focusId);
     var to = order.indexOf(id);
     if (from < 0) from = to;
     var lo = Math.min(from, to), hi = Math.max(from, to);
+    var state = !selected[id];
     for (var i = lo; i <= hi; i++) {
       var row = byId(order[i]);
       if (!row) continue;
-      selected[order[i]] = true;
-      carried[rowKey(row)] = true;
+      selected[order[i]] = state;
+      if (state) carried[rowKey(row)] = true; else delete carried[rowKey(row)];
     }
     setFocus(id);
     // In-place repaints, not render(): a rebuild would re-sort (a "checked"
@@ -416,6 +421,15 @@
     // it leaves exactly one toggle landed by the time dblclick fires,
     // which is the situation the Tk handler was written against.
     if (ev.detail > 1) return;
+    // The CHECKBOX is the selection target, not the row. The row-wide
+    // toggle made every stray click on the way to a double-click tick
+    // something, and the shift-range gesture means "these boxes", not
+    // "this area" -- the box is the deliberate 34px-wide affordance.
+    // A click anywhere else only moves the keyboard focus anchor.
+    if (!ev.target.closest('.c-check')) {
+      setFocus(node.dataset.id);
+      return;
+    }
     if (ev.shiftKey) {
       // Shift-click is a range gesture, not a toggle, and it must not
       // also leave the browser's native text selection behind.
@@ -423,9 +437,6 @@
       rangeSelect(node.dataset.id);
       return;
     }
-    // The WHOLE row is the click target, not just the checkbox cell: a
-    // 34px column is a small thing to ask someone to hit when "I mean this
-    // recording" is unambiguous anywhere on the line.
     setFocus(node.dataset.id);
     toggle(node.dataset.id);
   });
@@ -433,10 +444,12 @@
   body.addEventListener('dblclick', function (ev) {
     var node = ev.target.closest('.list-row');
     if (!node) return;
-    // Exactly one toggle has already landed; undo it. Opening a video is
-    // not a selection gesture, and a user reaching for their upload should
-    // not find an extra row ticked afterwards.
-    toggle(node.dataset.id);
+    // Exactly one toggle has already landed IF the double-click started on
+    // the checkbox (the click handler above skips the second click of the
+    // pair); undo it, or opening would leave the row ticked. Elsewhere on
+    // the row no toggle landed, and undoing nothing must toggle nothing.
+    // Opening a video is not a selection gesture.
+    if (ev.target.closest('.c-check')) toggle(node.dataset.id);
     WM.send('open_path', node.dataset.id);
   });
 
