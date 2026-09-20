@@ -1664,6 +1664,86 @@ def test_state_shapes_do_not_add_soft_halos_on_the_dark_surface():
     assert not outward_halo.search(CSS)
 
 
+def test_status_text_has_a_bounded_shrinkable_slot():
+    """Ellipsis cannot contain a content-sized, nonshrinking flex item."""
+    status = re.search(r"#status\s*\{([^}]*)\}", CSS)
+    assert status
+    flex = re.search(r"(?<![-\w])flex:\s*([^;]+)", status.group(1))
+    assert flex
+    parts = flex.group(1).split()
+    assert len(parts) == 3, "status needs explicit grow/shrink/basis, not flex:none"
+    assert float(parts[0]) == 0 and float(parts[1]) > 0
+    # Retain the old short-status allocation as a basis, not a minimum.
+    assert parts[2] == "210px"
+    assert re.search(r"min-width:\s*0(?:px)?\s*;", status.group(1))
+    for declaration in (
+        "overflow: hidden",
+        "text-overflow: ellipsis",
+        "white-space: nowrap",
+    ):
+        assert declaration in status.group(1)
+
+
+def test_main_progress_keeps_a_useful_floor_when_eve_text_yields():
+    """A zero-basis track otherwise disappears beside a long ROOT/NEXT."""
+    track = re.search(r"#track\s*\{([^}]*)\}", CSS)
+    assert track, "reserve progress width on the main-window ID, not shared chrome"
+    assert re.search(r"min-width:\s*4em\s*;", track.group(1))
+    assert not re.search(r"(?<![-\w])display\s*:", track.group(1)), (
+        "the idle track must retain its native hidden behavior"
+    )
+    assert re.search(
+        r"@media\s*\(max-width:\s*720px\)\s*\{\s*"
+        r"\.evestat\s*\{\s*display:\s*none;\s*\}\s*\}",
+        CSS,
+    ), "retain the historical EVE-yields policy rather than moving the window floor"
+
+
+def test_status_ellipsis_keeps_the_complete_text_and_title():
+    panel = _strip_js_comments((WEB / "panel.js").read_text(encoding="utf-8"))
+    status = re.search(
+        r"function setStatus\(text, kind\)\s*\{(.*?)\n  \}", panel, re.DOTALL
+    )
+    assert status
+    assert "node.textContent = text;" in status.group(1)
+    assert "node.title = text;" in status.group(1)
+    assert "KINDS.indexOf(kind)" in status.group(1)
+
+
+def test_status_progress_forced_colors_are_root_owned():
+    forced_root = re.search(
+        r"@media\s*\(forced-colors:\s*active\)\s*\{\s*:root\s*\{([^}]+)\}",
+        CSS,
+    )
+    assert forced_root
+    for role, color in (
+        ("surface", "Canvas"),
+        ("value", "CanvasText"),
+        ("boundary", "CanvasText"),
+    ):
+        declaration = f"--status-progress-forced-{role}: {color};"
+        assert declaration in forced_root.group(1)
+        assert CSS.count(declaration) == 1
+
+
+def test_status_progress_forced_colors_paint_without_changing_geometry():
+    forced = re.search(
+        r"@media\s*\(forced-colors:\s*active\)\s*\{\s*"
+        r"#track\.track\s*\{([^}]+)\}\s*#track \.bar\s*\{([^}]+)\}",
+        CSS,
+    )
+    assert forced, "the gradient value disappears without a forced-color paint rule"
+    track, bar = forced.groups()
+    assert "forced-color-adjust: none" in track
+    assert "background: var(--status-progress-forced-surface)" in track
+    assert "outline: 1px solid var(--status-progress-forced-boundary)" in track
+    assert "background: var(--status-progress-forced-value)" in bar
+    # Outline paints a boundary without changing the 4px track or flex geometry.
+    assert not re.search(
+        r"(?:width|height|border|display|transform|animation):", track + bar
+    )
+
+
 def test_determinate_progress_animates_transform_not_layout():
     panel = _strip_js_comments((WEB / "panel.js").read_text(encoding="utf-8"))
     bar = re.search(r"\.bar\s*\{([^}]*)\}", CSS)

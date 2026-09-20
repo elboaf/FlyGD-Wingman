@@ -2538,6 +2538,42 @@ response leaves a worker waiting forever, which presents as a hung upload.
 
 ## Progress
 
+The bounded main-window layout regression can run separately from the app with
+Node's native `fetch`/`WebSocket` support (Node 22+) and an explicitly supplied
+Chrome executable:
+
+```bash
+node scripts/check_status_strip_layout.js --chrome /usr/bin/google-chrome --out /tmp/status-strip-layout
+```
+
+It loads production markup/CSS and the strip's actual page owners in an isolated
+browser with no Python bridge, blocks external requests, and exits nonzero on
+failed or incomplete checks. Forced-color cases inspect screenshot pixels as well
+as root-owned surface/value/boundary tokens: a positive rectangle alone is not
+proof of painted progress. Determinate, indeterminate and reduced-motion
+indeterminate values must remain distinct from the surface, with a visible
+boundary. The deliberately broken `--negative-control hidden-value` and
+`--negative-control transparent-value` runs must each exit nonzero with paint
+failures. Use separate output directories for those proofs.
+
+These JSON/pixel checks and captures are bounded browser evidence, not installed
+Windows/WebView2, native progress or AT acceptance. Do not start an upload,
+stitch or native bar merely to populate these fixture checks.
+
+- [ ] **Long status yields without losing progress.** At 1015×633 and 840×625,
+      check a long error sentence and an unbroken filename/path, with EVE readout
+      shown and hidden. The one-line text ellipsizes inside the strip; its complete
+      text remains available to accessibility tools and in the hover title. The
+      severity treatment, padding and strip height stay unchanged. At 55%, the
+      track and percentage remain visible beside both 44×32 DPS/SIG controls.
+      Ordinary ROOT/NEXT values remain readable; a long EVE readout yields before
+      progress collapses. Repeat indeterminate progress with reduced motion and
+      forced colors: the boundary and filled value must actually paint, with a
+      distinguishable unfilled surface where present, not just occupy space.
+      Check forced colors together with reduced motion too: a static painted
+      value, no invented percentage or extra line. Check Idle, settled results
+      and busy route changes too. Browser fixtures do not close this
+      installed scaling/focus/assistive-technology gate.
 - [ ] **No progress control is drawn at rest.** Round 5's G1. On a fresh
       launch the strip reads **Idle** with nothing to its right — no groove,
       no percentage. The bar appears when an upload or stitch starts and
