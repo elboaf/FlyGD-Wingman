@@ -173,6 +173,8 @@ class FakeTelemetry:
     def __init__(self):
         self.reconciled = 0
         self.subscribers = []
+        self.admitted_subscribers = []
+        self.source_closed = False
         self.generation = 0
         self.latest = FleetSnapshot(
             rows=(),
@@ -188,6 +190,14 @@ class FakeTelemetry:
     def subscribe_fleet(self, callback):
         self.subscribers.append(callback)
         return lambda: self.subscribers.remove(callback)
+
+    def subscribe_admitted_fleet(self, callback):
+        # Registration spy only: raw local fixtures never certify publication.
+        self.admitted_subscribers.append(callback)
+        return lambda: self.admitted_subscribers.remove(callback)
+
+    def close_source_admission(self):
+        self.source_closed = True
 
     def requested_fleet_generation(self):
         return self.generation
@@ -773,6 +783,42 @@ def test_fleet_roster_persists_current_pending_then_prior_without_duplicates(api
     assert list(api._fleet_roster.pending) == []
 
 
+@pytest.mark.parametrize("full", [False, True])
+def test_roster_settings_push_uses_post_persistence_authority(api, monkeypatch, full):
+    previous = settings.validated_fleet_bar(
+        {"seen": [f"Offline {i:03}" for i in range(128 if full else 1)]}
+    )["seen"]
+    api._state.settings["fleet_bar"]["seen"] = previous
+    api._fleet_expected_generation = 1
+    pushed = []
+    original_push = api._fleet_state_push
+
+    def capture(handler, payload, delivery):
+        if handler == "onFleetBarState":
+            pushed.append(payload)
+        return original_push(handler, payload, delivery)
+
+    monkeypatch.setattr(api, "_fleet_state_push", capture)
+    api._receive_fleet_snapshot(
+        FleetSnapshot(
+            rows=(FleetRow("New arrival", 1),),
+            stream_health=StreamHealth(state="active"),
+            activation_generation=1,
+        )
+    )
+    api._fleet_worker.iterate_once()
+    assert pushed
+    authoritative = api.fleet_bar_settings()
+    assert pushed[-1]["seen"] == authoritative["seen"]
+    assert pushed[-1]["characters"] == authoritative["characters"]
+    assert "New arrival" in authoritative["seen"]
+    if full:
+        assert len(authoritative["seen"]) == len(previous)
+        assert previous[-1] not in authoritative["seen"]
+        assert previous[-1] not in {c["name"] for c in pushed[-1]["characters"]}
+    assert not api._fleet_settings_dirty
+
+
 def test_fleet_roster_sorts_current_tier_before_pending_and_persisted_names(api):
     """Current characters have a deterministic case-insensitive recency tier."""
     api._state.settings["fleet_bar"]["seen"] = ["Persisted"]
@@ -1304,7 +1350,7 @@ def test_main_wires_subscription_restore_and_shutdown_destruction():
 
     runtime = inspect.getsource(Api._reconcile_eve_runtime)
     presentation = inspect.getsource(Api._start_fleet_presentation)
-    assert "telemetry.subscribe_fleet" in runtime
+    assert "telemetry.subscribe_admitted_fleet" in runtime
     assert "self._fleet_sharing.submit" in runtime
     assert "self._telemetry.subscribe_fleet" in presentation
     assert "self._receive_fleet_snapshot" in presentation

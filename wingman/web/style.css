@@ -2725,6 +2725,7 @@ button.btn:disabled,
 .companion-enabled-group { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
 .companion-enabled-group[hidden] { display: none; }
 .companion-enabled-group > .check { margin: 0; }
+.companion-enabled-group > .check[hidden] { display: none; }
 .companion-enabled-group > .hint { flex-basis: 100%; overflow-wrap: anywhere; }
 .companion-row > .companion-feedback { display: block; margin: 6px 0 0; max-width: 72ch; overflow-wrap: anywhere; }
 .companion-row > .companion-feedback[hidden], .companion-row > .companion-feedback:empty { display: none; }

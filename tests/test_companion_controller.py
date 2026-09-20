@@ -372,6 +372,160 @@ def commit(h, mode="whole"):
     return h.controller.state()["rows"][0], facts
 
 
+def test_hidden_focus_status_uses_existing_publication_without_persistence(h):
+    assert h.receipt(h.controller.set_master(True))["persisted"]
+    row, facts = commit(h)
+    saved = h.path.read_bytes()
+    value = {
+        "id": row["id"],
+        "generation": row["generation"],
+        "binding_revision": 1,
+        "error": None,
+        "rect": facts.window,
+    }
+    for status, binding in (
+        ("live", facts.binding),
+        ("hidden-by-focus", None),
+        ("live", facts.binding),
+    ):
+        event = CompanionEvent(
+            "status", None, (dict(value, status=status, binding=binding),)
+        )
+        h.controller.native_event(event)
+        assert h.controller.drain().result(2)
+        current = h.controller.state()
+        assert current["rows"][0]["status"] == status
+        assert h.controller._rows[row["id"]]["binding"] == binding
+        until(lambda: h.publications[-1]["rows"][0]["status"] == status)
+        assert h.path.read_bytes() == saved
+
+        h.controller.native_event(event)
+        assert h.controller.drain().result(2)
+        assert h.controller.state()["revision"] == current["revision"]
+    assert len(set(h.worker_threads)) == 1
+    assert threading.get_ident() not in h.worker_threads
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        {"generation": 0},
+        {"generation": 2},
+        {"binding_revision": 0},
+        {"binding_revision": True},
+        {"status": "invented-hidden-state"},
+    ],
+    ids=[
+        "old-generation",
+        "future-generation",
+        "old-revision",
+        "bool-revision",
+        "unknown-status",
+    ],
+)
+def test_hidden_focus_status_rejects_stale_authority_and_unknown_vocabulary(h, invalid):
+    assert h.receipt(h.controller.set_master(True))["persisted"]
+    row, facts = commit(h)
+    value = {
+        "id": row["id"],
+        "generation": row["generation"],
+        "binding_revision": 1,
+        "status": "live",
+        "error": None,
+        "binding": facts.binding,
+        "rect": facts.window,
+    }
+    h.controller.native_event(CompanionEvent("status", None, (value,)))
+    assert h.controller.drain().result(2)
+    before = h.controller.state()
+
+    rejected = dict(value, status="hidden-by-focus", binding=None)
+    rejected.update(invalid)
+    h.controller.native_event(CompanionEvent("status", None, (rejected,)))
+    assert h.controller.drain().result(2)
+
+    assert h.controller.state() == before
+    assert h.controller._rows[row["id"]]["binding"] == facts.binding
+
+
+def test_hidden_focus_status_cannot_override_closed_admission(h):
+    assert h.receipt(h.controller.set_master(True))["persisted"]
+    row, facts = commit(h)
+    h.controller.close_admission()
+    h.controller.native_event(
+        CompanionEvent(
+            "status",
+            None,
+            (
+                {
+                    "id": row["id"],
+                    "generation": row["generation"],
+                    "binding_revision": 1,
+                    "status": "hidden-by-focus",
+                    "error": None,
+                    "binding": None,
+                    "rect": facts.window,
+                },
+            ),
+        )
+    )
+    assert h.controller.drain().result(2)
+
+    assert h.controller.state()["rows"][0]["status"] == "stopping"
+    assert not h.controller.state()["available"]
+
+
+@pytest.mark.parametrize("status", ["live", "hidden-by-focus"])
+def test_geometry_revision_handoff_remains_live_only(tmp_path, status):
+    definition = CompanionDefinition(
+        1,
+        uuid4().hex,
+        "Map",
+        True,
+        "whole",
+        SourceDescriptor(r"c:\apps\map.exe", "map.exe", "Map", "Map", "exact", "Map"),
+        Rect(0, 0, 320, 210),
+        None,
+    )
+    harness = Harness(
+        tmp_path, {"enabled": True, "definitions": serialize_definitions([definition])}
+    )
+    controller = harness.controller
+    moved = Rect(500, 400, 320, 210)
+    try:
+        with controller._condition:
+            # Isolate the prepared-swap handoff before the worker can flush it.
+            # A hidden status may update metadata, never inherit pending geometry.
+            controller.record_geometry(GeometryDelta(definition.id, 1, 0, 1, moved))
+            controller._handoff_geometry[definition.id] = (1, 0)
+            controller._handle_status(
+                CompanionEvent(
+                    "status",
+                    None,
+                    (
+                        {
+                            "id": definition.id,
+                            "generation": 1,
+                            "binding_revision": 1,
+                            "status": status,
+                            "error": None,
+                            "binding": None,
+                            "rect": definition.window,
+                        },
+                    ),
+                )
+            )
+        assert controller.drain().result(2)
+        assert controller.state()["rows"][0]["status"] == status
+        expected = moved if status == "live" else definition.window
+        assert (
+            harness.data["companion_previews"]["definitions"][0]["window"]
+            == expected._asdict()
+        )
+    finally:
+        assert controller.shutdown()
+
+
 def test_failed_reselection_preserves_id_generation_and_committed_definition(h):
     row, _ = commit(h)
     before = copy.deepcopy(h.data["companion_previews"])
@@ -715,3 +869,15 @@ def test_reload_of_a_malformed_section_is_refused_without_state_change(h):
     assert refused["pending"] is False and refused["error"]
     after = h.controller.state()
     assert [r["id"] for r in after["rows"]] == [r["id"] for r in before["rows"]]
+
+
+def test_show_on_focus_edit_persists_without_native_commands(h):
+    """#258 follow-up: the tick is a pure definition edit -- persisted and
+    republished, but no rebinding, because no live window changes."""
+    row, _ = commit(h)
+    h.commands.clear()
+    result = h.controller.set_show_on_focus(row["id"], False, row["generation"])
+    assert h.receipt(result)["persisted"]
+    assert h.data["companion_previews"]["definitions"][0]["show_on_focus"] is False
+    assert not any(c.kind == "prepare" for c in h.commands)
+    assert h.controller.state()["rows"][0]["show_on_focus"] is False

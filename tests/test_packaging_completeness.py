@@ -762,6 +762,107 @@ def _load_manual_update_harness():
     return module
 
 
+def _load_write_relnotes():
+    spec = importlib.util.spec_from_file_location(
+        "write_relnotes", ROOT / "packaging" / "write_relnotes.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_installer_waits_for_wingman_instead_of_app_mutex():
+    """The updater launches Setup while Wingman is still shutting down, so
+    [Setup]'s AppMutex -- which can only pop a "close the application"
+    dialog -- turned every scripted update into a self-resolving error
+    (issue #259). The replacement is a [Code] wait, and the guard pins the
+    whole shape: no AppMutex directive may return, and both single-instance
+    mutex names (4.x's and 3.x's) must survive somewhere in the script,
+    because the 3.x one protects RemovePredecessor() against a locked exe
+    exactly as AppMutex used to.
+    """
+    iss = (ROOT / "packaging" / "installer.iss").read_text(encoding="utf-8")
+    assert not re.search(r"^\s*AppMutex\s*=", iss, re.MULTILINE)
+    assert r"Global\FlyGDWingman" in iss
+    assert r"Global\OBSYouTubeUploader" in iss
+    assert "function PrepareToInstall" in iss
+    assert "function WaitForWingmanToClose" in iss
+
+
+def test_the_installer_release_notes_page_is_wired():
+    """Issue #260: the installer's first wizard page is the generated
+    what's-new file. If InfoBeforeFile is present, the generator must
+    exist and be invoked by the shared build chain -- an embedded page
+    pointing at a file nothing writes is an iscc compile error at release
+    time, on the one build nobody wants to debug.
+    """
+    iss = (ROOT / "packaging" / "installer.iss").read_text(encoding="utf-8")
+    assert "InfoBeforeFile=relnotes.txt" in iss
+    assert (ROOT / "packaging" / "write_relnotes.py").is_file()
+    action = (
+        ROOT / ".github" / "actions" / "build-installer" / "action.yml"
+    ).read_text(encoding="utf-8")
+    assert "packaging/write_relnotes.py" in action
+    # autorelease.yml, not release.yml, is the workflow a version bump
+    # actually drives -- v5.10.0 shipped the fallback notes page because
+    # only build.yml/release.yml were taught fetch-depth 0. All three
+    # build-carrying workflows are pinned here.
+    for workflow in ("build.yml", "release.yml", "autorelease.yml"):
+        text = (ROOT / ".github" / "workflows" / workflow).read_text(encoding="utf-8")
+        assert "fetch-depth: 0" in text, (
+            f"{workflow}: the release-notes page is derived from git "
+            "history since the previous tag, which the default shallow "
+            "checkout cannot derive"
+        )
+
+
+def test_write_relnotes_extracts_squash_merged_pr_titles():
+    """This repo squash-merges, so PR titles are exactly the subjects
+    ending in their number; anything else must stay off a user-facing
+    page. The suffix itself is dropped -- "#267" means nothing to a user
+    reading the wizard.
+    """
+    module = _load_write_relnotes()
+    log = "\n".join(
+        [
+            "Preview mirrors stay with their source across desktop-space switches (#267)",
+            "Bump version to 5.9.1",
+            "Merge pull request #999 from elboaf/branch",
+            "Bar geometry no longer takes the OS foreground (#262)",
+            "",
+        ]
+    )
+    assert module.pr_subjects(log) == [
+        "Preview mirrors stay with their source across desktop-space switches",
+        "Bar geometry no longer takes the OS foreground",
+    ]
+
+
+def test_write_relnotes_renders_a_fallback_when_history_is_unavailable():
+    """A shallow checkout, a worktree without tags, or a first release has
+    no history to list. The page must still render -- the writer's
+    contract is to never fail a build over cosmetic content -- and must
+    not render an empty bullet list.
+    """
+    module = _load_write_relnotes()
+    fallback = module.render("5.9.1", [])
+    assert "5.9.1" in fallback
+    assert "GitHub" in fallback
+    assert "  *  " not in fallback
+    listed = module.render("5.9.1", ["Something changed"])
+    assert "  *  Something changed" in listed
+
+
+def test_write_relnotes_collection_is_best_effort():
+    """collect() runs real git and must return a list on any checkout --
+    including one with no tags reachable -- never raising into the build
+    chain. This checkout may or may not have release tags, so only the
+    contract is asserted, not the content.
+    """
+    assert isinstance(_load_write_relnotes().collect(), list)
+
+
 def test_manual_update_harness_is_not_packaged():
     spec = (ROOT / "packaging" / "uploader.spec").read_text(encoding="utf-8")
     assert "tests/manual" not in spec

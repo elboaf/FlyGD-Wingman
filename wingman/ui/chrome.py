@@ -59,6 +59,17 @@ WMSZ_LEFT, WMSZ_RIGHT = 1, 2
 GWLP_WNDPROC = -4
 MONITOR_DEFAULTTONEAREST = 2
 
+# SetWindowPos flags for set_window_geometry. The pair that matters is
+# NOZORDER|NOACTIVATE: pywebview's own resize()/move() pass only
+# SWP_SHOWWINDOW with an HWND_TOP insert-after, so every geometry change
+# raised the window to the top of the Z order AND made it the foreground
+# window -- the sig bar's per-poll focus steal (issue #262).
+SWP_NOSIZE = 0x0001
+SWP_NOMOVE = 0x0002
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+SWP_SHOWWINDOW = 0x0040
+
 # Grab thickness in LOGICAL pixels, scaled per window DPI at hit-test time.
 # BORDER must never exceed INSET -- beyond the inset the WebView2 child owns
 # the pixels and no hit-test arrives, so the extra reach would be dead.
@@ -303,6 +314,31 @@ def _scale_for(user32, hwnd):
         return (dpi / 96.0) if dpi else 1.0
     except OSError:
         return 1.0
+
+
+def set_window_geometry(user32, handle, x, y, width, height, scale) -> bool:
+    """One SetWindowPos applying logical-unit geometry without stealing
+    focus or Z-order position (issue #262).
+
+    pywebview's resize()/move() are the same call but with an HWND_TOP
+    insert-after and only SWP_SHOWWINDOW -- no NOZORDER, no NOACTIVATE --
+    so a bar that re-fits on every poll tick became the foreground window
+    once per tick, yanking focus from the client being flown. This keeps
+    the properties both bars rely on (direct call, no Invoke, so the
+    native-race comments on the callers hold) while adding the two flags.
+    Any of x/y/width/height may be None to leave that axis alone.
+    Returns whether SetWindowPos reported success.
+    """
+    flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW
+    if x is None and y is None:
+        flags |= SWP_NOMOVE
+    if width is None and height is None:
+        flags |= SWP_NOSIZE
+    px = int(x * scale) if x is not None else 0
+    py = int(y * scale) if y is not None else 0
+    pw = int(width * scale) if width is not None else 0
+    ph = int(height * scale) if height is not None else 0
+    return bool(user32.SetWindowPos(handle, None, px, py, pw, ph, flags))
 
 
 def _on_ui_thread(native, fn) -> None:
@@ -643,6 +679,61 @@ def _attach_resize(
 
     _log_geometry(native, pad, scale)
     return insets
+
+
+GWL_STYLE = -16
+WS_MINIMIZEBOX = 0x00020000
+
+
+def enable_taskbar_minimize(window) -> bool:
+    """Let a click on the taskbar button minimize the frameless window.
+
+    FormBorderStyle.None strips WS_MINIMIZEBOX along with the rest of the
+    frame, and without that style Windows treats a taskbar-button click as
+    activation only -- the raised window never minimizes (#257). Adding the
+    style back restores the native minimize/restore toggle: no WM_SYSCOMMAND
+    handling of our own is needed, because DefWindowProc already does the
+    right thing once the style says the window is minimizable. It changes no
+    non-client geometry, so unlike WS_THICKFRAME (see the KNOWN LIMITATION
+    above) it cannot drag half-snap or caption artifacts in with it.
+
+    Same never-fatal contract as _attach_resize: the behaviour users have
+    today is "the button does nothing", and an exception here would take
+    the launch with it.
+    """
+    if sys.platform != "win32":
+        return False
+
+    native = getattr(window, "native", None)
+    if native is None:
+        logger.warning("No native window; taskbar minimize not enabled.")
+        return False
+
+    try:
+        hwnd = native.Handle.ToInt64()
+        user32 = ctypes.windll.user32
+        from ctypes import wintypes
+
+        handle = wintypes.HWND(hwnd)
+        applied = []
+
+        def _patch():
+            style = user32.GetWindowLongW(handle, GWL_STYLE)
+            if not user32.SetWindowLongW(handle, GWL_STYLE, style | WS_MINIMIZEBOX):
+                raise OSError("SetWindowLongW failed")
+            applied.append(True)
+
+        # A style write can dispatch WM_STYLECHANGED synchronously, which
+        # means message-pump work -- the same cross-thread hazard as the
+        # Padding assignment in _apply_inset, so the same UI-thread rule
+        # applies.
+        _on_ui_thread(native, _patch)
+        return bool(applied)
+    except Exception:
+        logger.warning(
+            "Could not set WS_MINIMIZEBOX; taskbar click stays inert.", exc_info=True
+        )
+        return False
 
 
 def enable_resize(window, pad: int = INSET) -> bool:

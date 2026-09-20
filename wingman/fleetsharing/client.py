@@ -1,10 +1,9 @@
-"""Single-attempt fleet-v1 HTTP boundary; no queue, revision allocation or retries.
+"""Single-attempt fleet-v2 HTTP boundary, using the unchanged fleet-v1 signatures.
 
-Every signed method uses the SAME caller-owned session revision sequence. The
-server has separate 500ms publish and control/read cadence buckets; the worker
-must still serialize all signed calls. Scheduling, consent and persistence are
-not transport responsibilities. Recovery admission is retryable only with the
-original journaled request binding; completion is one-use even on response loss.
+Every signed method uses the SAME caller-owned session revision sequence/lane.
+Scheduling, clocks, consent, attempted revisions and journals belong to the caller.
+A response is usable only after framing, request binding and the whole DTO pass;
+this alone does not establish runtime authority or a five-second clock anchor.
 """
 
 from __future__ import annotations
@@ -12,43 +11,72 @@ from __future__ import annotations
 import http.client
 import json
 import re
+import secrets
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
-from urllib.parse import quote, urlsplit
 
-from . import crypto, projection, protocol
+from . import crypto, protocol
 from .config import canonical_origin
-from .model import FleetCatalogue, PublishRow
+from .model import FleetCatalogue
 
 TIMEOUT_S = 5.0
-MAX_RESPONSE_BYTES = 64 * 1024
-MAX_SNAPSHOT_RESPONSE_BYTES = 1024 * 1024
-CATALOGUE_PATH = "/api/fleet/v1/catalogue"
-SNAPSHOT_PATH = "/api/fleet/v1/snapshot"
-PAIRING_REQUESTS_PATH = "/api/fleet/v1/pairing-requests"
-SESSION_PATH = "/api/fleet/v1/session"
-DEVICE_PATH = "/api/fleet/v1/device"
-PARTICIPATION_PATH = "/api/fleet/v1/participation"
-ELIGIBILITY_PATH = "/api/fleet/v1/eligibility"
-SOURCES_PATH = "/api/fleet/v1/sources"
-RECOVERY_PATH = "/api/fleet/v1/recovery-challenges"
+MAX_RESPONSE_BYTES = 65536  # All errors and pre-session successes only.
+MAX_SIGNED_RESPONSE_BYTES = 1048576
+MAX_SNAPSHOT_RESPONSE_BYTES = 67108864
+MAX_AUTOMATIC_RESPONSE_BYTES = 16384
+CATALOGUE_PATH = "/api/fleet/v2/catalogue"
+SNAPSHOT_PATH = "/api/fleet/v2/snapshot"
+PAIRING_REQUESTS_PATH = "/api/fleet/v2/pairing-requests"
+SESSION_PATH = "/api/fleet/v2/session"
+DEVICE_PATH = "/api/fleet/v2/device"
+PARTICIPATION_PATH = "/api/fleet/v2/participation"
+ELIGIBILITY_PATH = "/api/fleet/v2/eligibility"
+SOURCES_PATH = "/api/fleet/v2/sources"
+RECOVERY_PATH = "/api/fleet/v2/recovery-challenges"
+AUTOMATIC_PATH = "/api/fleet/v2/automatic-verification"
+RECEIPTS_PATH = AUTOMATIC_PATH + "/receipts/"
+
+# Only literal route shapes enter HTTP. Selector validation is repeated here so
+# even the raw-byte signing seam cannot admit query/encoded/trailing segments.
+_METHODS = {
+    CATALOGUE_PATH: "GET",
+    SNAPSHOT_PATH: "GET, PUT",
+    SESSION_PATH: "PUT",
+    DEVICE_PATH: "GET, PUT",
+    PARTICIPATION_PATH: "PUT",
+    ELIGIBILITY_PATH: "GET",
+    SOURCES_PATH: "GET, PUT",
+    AUTOMATIC_PATH: "GET, PUT",
+    RECEIPTS_PATH: "GET",
+    PAIRING_REQUESTS_PATH: "POST",
+    PAIRING_REQUESTS_PATH + "/complete": "POST",
+    RECOVERY_PATH: "POST",
+    RECOVERY_PATH + "/complete": "POST",
+}
 
 
 class FleetRelayError(Exception):
-    """Only closed codes and fixed text, never raw bodies or exception context.
+    """Closed codes/fixed text only; malformed errors carry no actionable status.
 
-    A 401/replay/timeout is not a proven device revocation. Only a successfully
-    parsed recovery completion result can require explicit fresh-key setup.
+    A generic 401/409 is not a proven recovery outcome. In particular, preserving
+    such a status on malformed JSON would trigger old workers' coarse branches.
     """
 
     def __init__(self, status: int | None, code: str, message: str) -> None:
         super().__init__(message)
         self.status = status
         self.code = code
+
+
+def _malformed() -> FleetRelayError:
+    return FleetRelayError(
+        None, "malformed_response", "Fleet relay response had an unexpected shape."
+    )
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -67,112 +95,186 @@ def _default_transport(request, timeout=None):
 def _issued_at(now: datetime) -> str:
     if now.tzinfo is None:
         now = now.replace(tzinfo=UTC)
-    return now.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return protocol.utc_date(
+        now.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    )
 
 
-_PAIRING_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+def _route(path: str) -> str:
+    protocol.literal_v2_path(path)
+    if path.startswith(RECEIPTS_PATH):
+        protocol.uuid4_lower(path[len(RECEIPTS_PATH) :])
+        return RECEIPTS_PATH
+    for base in (PAIRING_REQUESTS_PATH, RECOVERY_PATH):
+        if path.startswith(base + "/") and path.endswith("/complete"):
+            protocol.uuid(path[len(base) + 1 : -len("/complete")])
+            return base + "/complete"
+    if path not in _METHODS or path.endswith("/complete"):
+        raise ValueError("Fleet request path has an unexpected shape.")
+    return path
 
 
-def _validate_pairing_id(pairing_id: str) -> str:
-    # Preserve the existing opaque V1 caller contract; URL quoting is additional
-    # defence, not permission to put slashes or control characters in the path.
-    if not isinstance(pairing_id, str) or not _PAIRING_ID_RE.fullmatch(pairing_id):
-        raise ValueError("Fleet relay pairing id has an unexpected shape.")
-    return pairing_id
+def _request_limits(path: str, method: str, body: bytes) -> tuple[str, int]:
+    route = _route(path)
+    if method not in _METHODS[route].split(", ") or not isinstance(body, bytes):
+        raise ValueError("Fleet request has an unexpected shape.")
+    request_bound = 0
+    response_bound = MAX_SIGNED_RESPONSE_BYTES
+    if method == "POST":
+        request_bound, response_bound = 2048, MAX_RESPONSE_BYTES
+    elif route in (AUTOMATIC_PATH, RECEIPTS_PATH):
+        request_bound = 2048 if method == "PUT" else 0
+        response_bound = MAX_AUTOMATIC_RESPONSE_BYTES
+    elif route == SNAPSHOT_PATH:
+        request_bound = 524288 if method == "PUT" else 0
+        if method == "GET":
+            response_bound = MAX_SNAPSHOT_RESPONSE_BYTES
+    elif method == "PUT" and route != SESSION_PATH:
+        request_bound = 2048 if route == SOURCES_PATH else 1024
+    if len(body) > request_bound:
+        raise ValueError("Fleet request body was too large.")
+    return route, response_bound
 
 
-def _classify_status(status: int) -> str:
-    return {
-        401: "unauthorized",
-        403: "forbidden",
-        404: "not_found",
-        409: "conflict",
-        429: "rate_limited",
-    }.get(status, "server_error" if 500 <= status < 600 else "bad_request")
-
-
-# Only codes emitted by the particular route/method at this status are admitted.
-# Everything else (including postproof result names in an error body) falls back
-# to the old safe status classification. Recovery variants never enter this map.
-_CONTROL_ERRORS = {
-    400: ("bad_headers", "bad_request", "invalid_intent"),
+_SIGNED_ERRORS = {
+    400: ("bad_headers", "bad_request", "update_required", "invalid_intent"),
     401: ("unauthorized",),
     403: ("forbidden",),
+    405: ("method_not_allowed",),
     409: ("revision_replayed",),
     429: ("rate_limited",),
     503: ("service_unavailable",),
 }
-_RECOVERY_ERRORS = {
+_PRE_SESSION_ERRORS = {
     400: ("bad_request", "update_required"),
-    401: ("unauthorized",),
-    429: ("rate_limited",),
+    405: ("method_not_allowed",),
     503: ("feature_disabled", "service_unavailable"),
 }
 
 
-def _known_errors(path: str, method: str, status: int) -> tuple[str, ...]:
-    if path == RECOVERY_PATH or (
-        path.startswith(RECOVERY_PATH + "/") and path.endswith("/complete")
-    ):
-        return _RECOVERY_ERRORS.get(status, ())
-    if path in (DEVICE_PATH, PARTICIPATION_PATH, ELIGIBILITY_PATH, SOURCES_PATH):
-        codes = _CONTROL_ERRORS.get(status, ())
-        if method == "PUT" and status == 400:
-            codes += ("update_required",)
-        if path != DEVICE_PATH or method == "PUT":
-            if status == 403:
-                codes += ("capability_required",)
-            if status == 503:
-                codes += ("feature_disabled",)
-        if (
-            method == "PUT"
-            and path in (PARTICIPATION_PATH, SOURCES_PATH)
-            and status == 409
-        ):
-            codes += ("conflict",)
-        if method == "PUT" and path == SOURCES_PATH and status == 403:
-            codes += ("fleet_read_required",)
+def _known_errors(
+    route: str,
+    method: str,
+    status: int,
+    command: protocol.SourceCommand | protocol.AutomaticCommand | None,
+) -> tuple[str, ...]:
+    if method == "POST":
+        codes = _PRE_SESSION_ERRORS.get(status, ())
+        if route == PAIRING_REQUESTS_PATH and status == 400:
+            codes += ("invalid_key",)
+        if route == PAIRING_REQUESTS_PATH + "/complete" and status == 409:
+            codes += ("not_completable",)
+        if route.endswith("/complete") and status == 404:
+            codes += ("not_found",)
+        if route in (RECOVERY_PATH, RECOVERY_PATH + "/complete"):
+            if status == 401:
+                codes += ("unauthorized",)
+            if status == 429:
+                codes += ("rate_limited",)
         return codes
-    if path == SNAPSHOT_PATH and method == "GET":
+    codes = _SIGNED_ERRORS.get(status, ())
+    if route != DEVICE_PATH or method == "PUT":
         if status == 503:
-            return ("feature_disabled",)
-        if status == 400:
-            return ("update_required",)
-    # Existing publication/catalogue callers keep their coarse classifications.
-    # Only explicit update guidance is new on the legacy request-body endpoints.
+            codes += ("feature_disabled",)
+        if status == 403 and route not in (CATALOGUE_PATH, SESSION_PATH):
+            codes += ("capability_required",)
+    if status == 409 and method == "PUT":
+        if route in (PARTICIPATION_PATH, SOURCES_PATH, AUTOMATIC_PATH):
+            codes += ("conflict",)
+        if route in (SOURCES_PATH, AUTOMATIC_PATH):
+            codes += ("request_id_conflict",)
     if (
-        status == 400
-        and method in ("PUT", "POST")
-        and (
-            path in (SNAPSHOT_PATH, PAIRING_REQUESTS_PATH)
-            or path.startswith(PAIRING_REQUESTS_PATH + "/")
-        )
+        status == 403
+        and route == SOURCES_PATH
+        and isinstance(command, protocol.SourceStart)
     ):
-        return ("update_required",)
-    return ()
+        codes += ("fleet_read_required",)
+    if status == 403 and route == SNAPSHOT_PATH:
+        codes += ("not_verified",)
+    if status == 404 and route == RECEIPTS_PATH:
+        codes += ("receipt_not_found",)
+    if (
+        status == 429
+        and route == AUTOMATIC_PATH
+        and isinstance(command, protocol.AutomaticCommand)
+        and command.enabled
+    ):
+        codes += ("receipt_capacity",)
+    return codes
 
 
-def _status_error(path: str, method: str, status: int, raw: bytes) -> FleetRelayError:
-    code = _classify_status(status)
-    if len(raw) <= MAX_RESPONSE_BYTES:
-        try:
-            data = protocol.envelope(protocol.decode_json(raw), "error")
-            known = _known_errors(path, method, status)
-            code = protocol.enum(data["error"], known)
-        except ValueError:
-            pass  # Untrusted/unknown details are intentionally not surfaced.
-    return FleetRelayError(
-        status, code, f"Fleet relay returned status {status} ({code})."
-    )
+def _validate_entity_headers(headers) -> None:
+    # get_all, not get: repeated/mixed-case lines must not silently select one.
+    content_types = headers.get_all("Content-Type", [])
+    if len(content_types) != 1 or not re.fullmatch(
+        r'application/json(?:\s*;\s*charset=(?:utf-8|"utf-8"))?',
+        content_types[0],
+        re.IGNORECASE,
+    ):
+        raise _malformed()
+    cache = headers.get_all("Cache-Control", [])
+    if (
+        len(cache) != 1
+        or [part.strip().lower() for part in cache[0].split(",")].count("no-store") != 1
+    ):
+        raise _malformed()
+    encoding = headers.get_all("Content-Encoding", [])
+    if encoding and (len(encoding) != 1 or encoding[0].lower() != "identity"):
+        raise _malformed()
+
+
+def _validate_success_headers(headers, expected_binding: str) -> None:
+    _validate_entity_headers(headers)
+    bindings = headers.get_all("X-Fleet-Request-Binding", [])
+    if (
+        len(bindings) != 1
+        or not re.fullmatch(r"[0-9a-f]{64}", bindings[0])
+        or bindings[0] != expected_binding
+    ):
+        raise _malformed()
 
 
 def _parse(parser, data):
     try:
         return parser(data)
     except ValueError:
+        raise _malformed() from None
+
+
+def _decode_response(raw: bytes) -> dict:
+    parsed = _parse(protocol.decode_wire_json, raw)
+    if not isinstance(parsed, dict):
+        raise _malformed()
+    if (
+        type(parsed.get("protocol")) is not int
+        or parsed["protocol"] != protocol.API_VERSION
+    ):
         raise FleetRelayError(
-            None, "malformed_response", "Fleet relay response had an unexpected shape."
-        ) from None
+            None,
+            "protocol_mismatch",
+            "Fleet relay response used an unsupported protocol.",
+        )
+    return parsed
+
+
+def _status_error(route, method, status, raw, headers, command) -> FleetRelayError:
+    try:
+        if len(raw) > MAX_RESPONSE_BYTES:
+            raise _malformed()
+        _validate_entity_headers(headers)
+        data = _decode_response(raw)
+        code = _parse(protocol.parse_error, data)
+        if code not in _known_errors(route, method, status, command):
+            raise _malformed()
+        if code == "method_not_allowed" and headers.get_all("Allow", []) != [
+            _METHODS[route]
+        ]:
+            raise _malformed()
+    except FleetRelayError as exc:
+        return exc
+    return FleetRelayError(
+        status, code, f"Fleet relay returned status {status} ({code})."
+    )
 
 
 @dataclass(frozen=True)
@@ -189,78 +291,70 @@ class PairingComplete:
 
 
 class FleetRelayClient:
-    """One origin; credentials and durable bindings always supplied by the caller."""
+    """One origin; credentials and immutable commands supplied by the caller.
+
+    Every public operation accepts optional before_send(). It runs once, after
+    validation/serialization/signing/Request construction, immediately before HTTP.
+    Admission exceptions propagate unchanged; no HTTP attempt or revision undo is
+    performed. The caller owns final lifetime checks and actual GET-start capture.
+    """
 
     def __init__(self, origin: str, *, transport=_default_transport):
         self._origin = canonical_origin(origin)
         self._transport = transport
 
-    def _validate_approval_url(self, raw_url: str) -> str:
-        try:
-            protocol.text(raw_url, 2048)
-            if any(c.isspace() for c in raw_url) or "\\" in raw_url:
-                raise ValueError
-            parsed = urlsplit(raw_url)
-            if (
-                not parsed.scheme
-                and not parsed.netloc
-                and raw_url.startswith("/")
-                and not raw_url.startswith("//")
-            ):
-                return self._origin + raw_url
-            if canonical_origin(f"{parsed.scheme}://{parsed.netloc}") != self._origin:
-                raise ValueError
-            return raw_url
-        except ValueError:
-            raise FleetRelayError(
-                None,
-                "malformed_response",
-                "Fleet relay approval URL was not same-origin HTTPS.",
-            ) from None
-
     def begin_pairing(
         self,
         public_key_spki: bytes,
         *,
-        requested_capabilities: tuple[str, ...] | None = None,
+        requested_capabilities: tuple[str, ...] = (),
+        before_send: Callable[[], None] | None = None,
     ) -> PairingBegin:
-        body = {
-            "protocol": 1,
-            "public_key_spki_b64url": crypto.public_key_spki_b64url(public_key_spki),
-        }
-        if requested_capabilities is not None:
-            body["requested_capabilities"] = list(
-                protocol.capabilities(list(requested_capabilities))
-            )
-        data = self._send(PAIRING_REQUESTS_PATH, "POST", _json(body), headers=None)
-        _parse(
-            lambda d: protocol.envelope(d, "pairing_id approval_url expires_at"), data
-        )
-        return PairingBegin(
-            _parse(_validate_pairing_id, data["pairing_id"]),
-            self._validate_approval_url(data["approval_url"]),
-            _parse(protocol.utc_date, data["expires_at"]),
-        )
-
-    def complete_pairing(
-        self, pairing_id: str, challenge: bytes, private_key: bytes
-    ) -> PairingComplete:
-        pairing_id = _validate_pairing_id(pairing_id)
         body = _json(
             {
-                "protocol": 1,
+                "protocol": protocol.API_VERSION,
+                "public_key_spki_b64url": protocol.public_key_spki_b64url(
+                    crypto.public_key_spki_b64url(public_key_spki)
+                ),
+                "requested_capabilities": list(
+                    protocol.capabilities(list(requested_capabilities))
+                ),
+            }
+        )
+        result = _parse(
+            lambda d: protocol.parse_pairing_begun(d, origin=self._origin),
+            self._send_pre_session(PAIRING_REQUESTS_PATH, body, before_send),
+        )
+        return PairingBegin(result.pairing_id, result.approval_url, result.expires_at)
+
+    def complete_pairing(
+        self,
+        pairing_id: str,
+        challenge: bytes,
+        private_key: bytes,
+        *,
+        before_send: Callable[[], None] | None = None,
+    ) -> PairingComplete:
+        pairing_id = protocol.uuid(pairing_id)
+        if not isinstance(
+            challenge, bytes
+        ) or challenge != crypto.pairing_challenge_preimage(pairing_id):
+            raise ValueError("Fleet pairing challenge has an unexpected shape.")
+        body = _json(
+            {
+                "protocol": protocol.API_VERSION,
                 "completion_signature": crypto.sign_request(private_key, challenge),
             }
         )
-        path = f"{PAIRING_REQUESTS_PATH}/{quote(pairing_id, safe='')}/complete"
-        data = self._send(path, "POST", body, headers=None)
-        _parse(lambda d: protocol.envelope(d, "session_id catalogue"), data)
-        return PairingComplete(
-            _parse(_opaque_session, data["session_id"]),
-            _parse(
-                lambda d: protocol.parse_catalogue(d, nested=True), data["catalogue"]
+        result = _parse(
+            protocol.parse_pairing_completed,
+            self._send_pre_session(
+                f"{PAIRING_REQUESTS_PATH}/{pairing_id}/complete",
+                body,
+                before_send,
             ),
         )
+        return PairingComplete(result.session_id, result.catalogue)
 
     def fetch_catalogue(
         self,
@@ -269,11 +363,19 @@ class FleetRelayClient:
         private_key: bytes,
         revision: int,
         now: datetime | None = None,
+        before_send: Callable[[], None] | None = None,
     ) -> FleetCatalogue:
         return _parse(
             protocol.parse_catalogue,
             self._send_signed(
-                CATALOGUE_PATH, "GET", b"", session_id, private_key, revision, now
+                CATALOGUE_PATH,
+                "GET",
+                b"",
+                session_id,
+                private_key,
+                revision,
+                now,
+                before_send=before_send,
             ),
         )
 
@@ -283,26 +385,22 @@ class FleetRelayClient:
         session_id: str,
         private_key: bytes,
         revision: int,
-        rows: tuple[PublishRow, ...],
+        sampled_at_ms: int,
+        rows: tuple[protocol.CombatRow, ...],
         now: datetime | None = None,
+        before_send: Callable[[], None] | None = None,
     ) -> None:
-        # Keep the existing sparse V1 publication bytes/schema, including withdrawal.
-        projection.validate_publish_batch(rows)
-        body = _json(
-            {
-                "protocol": 1,
-                "rows": [
-                    {
-                        "character_id": row.character_id,
-                        "dps": row.dps,
-                        "ewar": list(row.ewar),
-                    }
-                    for row in rows
-                ],
-            }
-        )
+        """Send original sample/aggregates; withdrawal is exactly sample0/rows[]."""
+        body = _json(_combat_body(sampled_at_ms, rows))
         data = self._send_signed(
-            SNAPSHOT_PATH, "PUT", body, session_id, private_key, revision, now
+            SNAPSHOT_PATH,
+            "PUT",
+            body,
+            session_id,
+            private_key,
+            revision,
+            now,
+            before_send=before_send,
         )
         _parse(lambda d: protocol.envelope(d, ""), data)
 
@@ -313,13 +411,22 @@ class FleetRelayClient:
         private_key: bytes,
         revision: int,
         now: datetime | None = None,
+        before_send: Callable[[], None] | None = None,
     ) -> str:
-        """Empty-body renewal in place; expiry scheduling still belongs to the worker."""
-        data = self._send_signed(
-            SESSION_PATH, "PUT", b"", session_id, private_key, revision, now
-        )
-        _parse(lambda d: protocol.envelope(d, "expires_at"), data)
-        return _parse(protocol.utc_date, data["expires_at"])
+        """Empty-body renewal; expiry scheduling belongs to the caller."""
+        return _parse(
+            protocol.parse_session,
+            self._send_signed(
+                SESSION_PATH,
+                "PUT",
+                b"",
+                session_id,
+                private_key,
+                revision,
+                now,
+                before_send=before_send,
+            ),
+        ).expires_at
 
     def fetch_device(
         self,
@@ -328,11 +435,19 @@ class FleetRelayClient:
         private_key: bytes,
         revision: int,
         now: datetime | None = None,
+        before_send: Callable[[], None] | None = None,
     ) -> protocol.DeviceState:
         return _parse(
             protocol.parse_device,
             self._send_signed(
-                DEVICE_PATH, "GET", b"", session_id, private_key, revision, now
+                DEVICE_PATH,
+                "GET",
+                b"",
+                session_id,
+                private_key,
+                revision,
+                now,
+                before_send=before_send,
             ),
         )
 
@@ -344,17 +459,25 @@ class FleetRelayClient:
         revision: int,
         capabilities: tuple[str, ...],
         now: datetime | None = None,
+        before_send: Callable[[], None] | None = None,
     ) -> protocol.DeviceState:
         body = _json(
             {
-                "protocol": 1,
+                "protocol": protocol.API_VERSION,
                 "capabilities": list(protocol.capabilities(list(capabilities))),
             }
         )
         return _parse(
             protocol.parse_device,
             self._send_signed(
-                DEVICE_PATH, "PUT", body, session_id, private_key, revision, now
+                DEVICE_PATH,
+                "PUT",
+                body,
+                session_id,
+                private_key,
+                revision,
+                now,
+                before_send=before_send,
             ),
         )
 
@@ -367,10 +490,11 @@ class FleetRelayClient:
         enabled: bool,
         expected_generation: int,
         now: datetime | None = None,
+        before_send: Callable[[], None] | None = None,
     ) -> protocol.Participation:
         body = _json(
             {
-                "protocol": 1,
+                "protocol": protocol.API_VERSION,
                 "enabled": protocol.boolean(enabled),
                 "expected_generation": protocol.integer(
                     expected_generation, 0, protocol.INT4_MAX - 1
@@ -380,7 +504,14 @@ class FleetRelayClient:
         return _parse(
             protocol.parse_participation_response,
             self._send_signed(
-                PARTICIPATION_PATH, "PUT", body, session_id, private_key, revision, now
+                PARTICIPATION_PATH,
+                "PUT",
+                body,
+                session_id,
+                private_key,
+                revision,
+                now,
+                before_send=before_send,
             ),
         )
 
@@ -391,11 +522,19 @@ class FleetRelayClient:
         private_key: bytes,
         revision: int,
         now: datetime | None = None,
+        before_send: Callable[[], None] | None = None,
     ) -> protocol.Eligibility:
         return _parse(
             protocol.parse_eligibility,
             self._send_signed(
-                ELIGIBILITY_PATH, "GET", b"", session_id, private_key, revision, now
+                ELIGIBILITY_PATH,
+                "GET",
+                b"",
+                session_id,
+                private_key,
+                revision,
+                now,
+                before_send=before_send,
             ),
         )
 
@@ -406,11 +545,19 @@ class FleetRelayClient:
         private_key: bytes,
         revision: int,
         now: datetime | None = None,
+        before_send: Callable[[], None] | None = None,
     ) -> protocol.Sources:
         return _parse(
             protocol.parse_sources,
             self._send_signed(
-                SOURCES_PATH, "GET", b"", session_id, private_key, revision, now
+                SOURCES_PATH,
+                "GET",
+                b"",
+                session_id,
+                private_key,
+                revision,
+                now,
+                before_send=before_send,
             ),
         )
 
@@ -422,21 +569,97 @@ class FleetRelayClient:
         revision: int,
         command: protocol.SourceCommand,
         now: datetime | None = None,
-    ) -> protocol.SourceView:
+        before_send: Callable[[], None] | None = None,
+    ) -> protocol.SourceStartResult | protocol.SourceStopResult:
         body = _json(protocol.source_command_body(command))
-        source = _parse(
-            protocol.parse_source_control,
+        return _parse(
+            lambda d: protocol.parse_source_result(d, command),
             self._send_signed(
-                SOURCES_PATH, "PUT", body, session_id, private_key, revision, now
+                SOURCES_PATH,
+                "PUT",
+                body,
+                session_id,
+                private_key,
+                revision,
+                now,
+                command=command,
+                before_send=before_send,
             ),
         )
-        if source.source_id.lower() != command.source_id.lower():
-            raise FleetRelayError(
-                None,
-                "malformed_response",
-                "Fleet relay response had an unexpected shape.",
-            )
-        return source
+
+    def fetch_automatic(
+        self,
+        *,
+        session_id: str,
+        private_key: bytes,
+        revision: int,
+        now: datetime | None = None,
+        before_send: Callable[[], None] | None = None,
+    ) -> protocol.AutomaticGet:
+        return _parse(
+            protocol.parse_automatic_get,
+            self._send_signed(
+                AUTOMATIC_PATH,
+                "GET",
+                b"",
+                session_id,
+                private_key,
+                revision,
+                now,
+                before_send=before_send,
+            ),
+        )
+
+    def control_automatic(
+        self,
+        *,
+        session_id: str,
+        private_key: bytes,
+        revision: int,
+        command: protocol.AutomaticCommand,
+        now: datetime | None = None,
+        before_send: Callable[[], None] | None = None,
+    ) -> protocol.AutomaticResult:
+        body = _json(protocol.automatic_command_body(command))
+        return _parse(
+            lambda d: protocol.parse_automatic_result(d, command),
+            self._send_signed(
+                AUTOMATIC_PATH,
+                "PUT",
+                body,
+                session_id,
+                private_key,
+                revision,
+                now,
+                command=command,
+                before_send=before_send,
+            ),
+        )
+
+    def fetch_receipt(
+        self,
+        *,
+        session_id: str,
+        private_key: bytes,
+        revision: int,
+        request_id: str,
+        now: datetime | None = None,
+        before_send: Callable[[], None] | None = None,
+    ) -> protocol.ReceiptGet:
+        request_id = protocol.uuid4_lower(request_id)
+        return _parse(
+            lambda d: protocol.parse_receipt_get(d, expected_request_id=request_id),
+            self._send_signed(
+                RECEIPTS_PATH + request_id,
+                "GET",
+                b"",
+                session_id,
+                private_key,
+                revision,
+                now,
+                before_send=before_send,
+            ),
+        )
 
     def read_snapshot(
         self,
@@ -445,81 +668,103 @@ class FleetRelayClient:
         private_key: bytes,
         revision: int,
         now: datetime | None = None,
-    ) -> tuple[protocol.ObservedRemoteRow, ...]:
+        before_send: Callable[[], None] | None = None,
+    ) -> protocol.CombatSnapshot:
         return _parse(
-            protocol.parse_observed_snapshot,
+            protocol.parse_snapshot,
             self._send_signed(
-                SNAPSHOT_PATH, "GET", b"", session_id, private_key, revision, now
+                SNAPSHOT_PATH,
+                "GET",
+                b"",
+                session_id,
+                private_key,
+                revision,
+                now,
+                before_send=before_send,
             ),
         )
 
     def begin_recovery(
-        self, *, private_key: bytes, request_id: str, issued_at: str
+        self,
+        *,
+        private_key: bytes,
+        request_id: str,
+        issued_at: str,
+        before_send: Callable[[], None] | None = None,
     ) -> protocol.RecoveryChallenge:
-        """Caller persists request_id/issued_at BEFORE calling; retry uses both unchanged.
-
-        No device ID is needed: a migrated V1 identity recovers by registered key.
-        Freshness is checked by the server, not by changing the caller's timestamp.
-        """
+        """Caller persists request_id/issued_at; retries preserve both and the proof."""
         spki = crypto.public_key_spki(private_key)
         preimage = crypto.recovery_initiation_preimage(
             self._origin, request_id, issued_at, spki
         )
-        data = self._send(
-            RECOVERY_PATH,
-            "POST",
-            _json(
-                {
-                    "protocol": 1,
-                    "public_key_spki_b64url": crypto.public_key_spki_b64url(spki),
-                    "request_id": request_id,
-                    "issued_at": issued_at,
-                    "initiation_signature": crypto.sign_request(private_key, preimage),
-                }
-            ),
-            headers=None,
+        body = _json(
+            {
+                "protocol": protocol.API_VERSION,
+                "public_key_spki_b64url": crypto.public_key_spki_b64url(spki),
+                "request_id": request_id,
+                "issued_at": issued_at,
+                "initiation_signature": crypto.sign_request(private_key, preimage),
+            }
         )
-        challenge = _parse(protocol.parse_recovery_challenge, data)
-        if challenge.request_id != request_id:
-            raise FleetRelayError(
-                None,
-                "malformed_response",
-                "Fleet relay response had an unexpected shape.",
-            )
-        return challenge
+        return _parse(
+            lambda d: protocol.parse_recovery_challenge(
+                d, expected_request_id=request_id
+            ),
+            self._send_pre_session(
+                RECOVERY_PATH,
+                body,
+                before_send,
+            ),
+        )
 
     def complete_recovery(
-        self, *, private_key: bytes, challenge: protocol.RecoveryChallenge
+        self,
+        *,
+        private_key: bytes,
+        challenge: protocol.RecoveryChallenge,
+        before_send: Callable[[], None] | None = None,
     ) -> protocol.RecoveryResult:
-        """Caller persists the challenge BEFORE calling; completion is one-use.
+        """Caller persists the challenge BEFORE this one-use completion.
 
-        Lost replies stay unknown. No hidden retry, consent change or key rotation;
-        a proven conflict/revocation result requires explicit fresh-key setup.
+        Loss stays unknown; never retry or infer revocation from an HTTP error.
         """
-        protocol.parse_recovery_challenge({"protocol": 1, **asdict(challenge)})
+        protocol.parse_recovery_challenge(
+            {"protocol": protocol.API_VERSION, **asdict(challenge)}
+        )
         preimage = crypto.recovery_challenge_preimage(
             self._origin,
             challenge.challenge_id,
             challenge.nonce,
             crypto.public_key_spki(private_key),
         )
-        path = f"{RECOVERY_PATH}/{quote(challenge.challenge_id, safe='')}/complete"
+        body = _json(
+            {
+                "protocol": protocol.API_VERSION,
+                "nonce": challenge.nonce,
+                "recovery_signature": crypto.sign_request(private_key, preimage),
+            }
+        )
         return _parse(
             protocol.parse_recovery_result,
-            self._send(
-                path,
-                "POST",
-                _json(
-                    {
-                        "protocol": 1,
-                        "nonce": challenge.nonce,
-                        "recovery_signature": crypto.sign_request(
-                            private_key, preimage
-                        ),
-                    }
-                ),
-                headers=None,
+            self._send_pre_session(
+                f"{RECOVERY_PATH}/{challenge.challenge_id}/complete",
+                body,
+                before_send,
             ),
+        )
+
+    def _send_pre_session(self, path, body, before_send=None) -> dict:
+        _request_limits(path, "POST", body)
+        attempt = secrets.token_urlsafe(32)
+        return self._send(
+            path,
+            "POST",
+            body,
+            headers={"X-Fleet-Attempt": attempt},
+            expected_binding=protocol.pre_session_request_binding(
+                self._origin, path, attempt, body
+            ),
+            before_send=before_send,
         )
 
     def _send_signed(
@@ -531,13 +776,19 @@ class FleetRelayClient:
         private_key: bytes,
         revision: int,
         now: datetime | None,
+        *,
+        command: protocol.SourceCommand | protocol.AutomaticCommand | None = None,
+        before_send: Callable[[], None] | None = None,
     ) -> dict:
-        _opaque_session(session_id)
+        _request_limits(path, method, body)
+        if method == "POST":
+            raise ValueError("Fleet signed request has an unexpected method.")
+        protocol.token(session_id)
         protocol.integer(revision)
         issued_at = _issued_at(now if now is not None else datetime.now(UTC))
         body_sha256 = sha256(body).hexdigest()
         canonical = crypto.canonical_fleet_request(
-            protocol=1,
+            protocol=protocol.SIGNING_SCHEME_VERSION,
             method=method,
             path=path,
             session_id=session_id,
@@ -552,11 +803,15 @@ class FleetRelayClient:
             "X-Fleet-Body-SHA256": body_sha256,
             "X-Fleet-Signature": crypto.sign_request(private_key, canonical),
         }
-        binding = None
-        if path == SNAPSHOT_PATH and method == "GET":
-            headers["X-Fleet-Snapshot-Format"] = "publication-v1"
-            binding = crypto.snapshot_request_binding(canonical)
-        return self._send(path, method, body, headers=headers, snapshot_binding=binding)
+        return self._send(
+            path,
+            method,
+            body,
+            headers=headers,
+            expected_binding=protocol.signed_request_binding(canonical),
+            command=command,
+            before_send=before_send,
+        )
 
     def _send(
         self,
@@ -564,104 +819,99 @@ class FleetRelayClient:
         method: str,
         body: bytes,
         *,
-        headers: dict | None,
-        snapshot_binding: str | None = None,
+        headers: dict,
+        expected_binding: str,
+        command: protocol.SourceCommand | protocol.AutomaticCommand | None = None,
+        before_send: Callable[[], None] | None = None,
     ) -> dict:
+        route, bound = _request_limits(path, method, body)
         request = urllib.request.Request(
             self._origin + path,
             data=(body or None),
-            headers={"Content-Type": "application/json", **(headers or {})},
+            headers={
+                "Content-Type": "application/json",
+                "Accept-Encoding": "identity",
+                **headers,
+            },
             method=method,
         )
-        bound = (
-            MAX_SNAPSHOT_RESPONSE_BYTES
-            if path == SNAPSHOT_PATH and method == "GET"
-            else MAX_RESPONSE_BYTES
-        )
+        # This is outside the HTTP exception boundary: admission refusal is the
+        # caller's control flow, including OSError/HTTPError, not transport loss.
+        if before_send is not None:
+            before_send()
         try:
             with self._transport(request, timeout=TIMEOUT_S) as response:
-                status = getattr(response, "status", 200)
-                if status == 200 and snapshot_binding is not None:
-                    _validate_snapshot_headers(response.headers, snapshot_binding)
+                status = response.status
+                response_headers = response.headers
+                if status == 200:
+                    _validate_success_headers(response_headers, expected_binding)
                 raw = response.read(
                     (bound if status == 200 else MAX_RESPONSE_BYTES) + 1
                 )
         except urllib.error.HTTPError as exc:
-            # HTTPError owns a response stream too. Bound even hostile error JSON
-            # and close it on every path, including a read timeout. Suppress raw
-            # exception chaining: urllib messages can contain URLs or echoed keys.
+            # HTTPError owns a stream too. Read only the error ceiling even for
+            # snapshot GET, and suppress provider URL/key context on read/close.
             try:
                 raw = exc.read(MAX_RESPONSE_BYTES + 1)
             except (OSError, urllib.error.URLError, http.client.HTTPException):
-                raw = b""
+                raise FleetRelayError(
+                    None, "transport_error", "Fleet relay could not be reached."
+                ) from None
             finally:
-                # Cleanup is inside this handler, so sibling except clauses do
-                # not catch it. A close failure must not replace the safe HTTP
-                # classification with a raw transport traceback in the worker.
+                # Sibling except clauses cannot catch this handler's cleanup.
+                # A close failure must not expose raw context or replace a fully
+                # read, validated closed error with an untrusted traceback.
                 with suppress(
                     OSError, urllib.error.URLError, http.client.HTTPException
                 ):
                     exc.close()
-            raise _status_error(path, method, exc.code, raw) from None
-        except (
-            TimeoutError,
-            urllib.error.URLError,
-            OSError,
-            http.client.HTTPException,
-        ):
+            raise _status_error(
+                route, method, exc.code, raw, exc.headers, command
+            ) from None
+        except (urllib.error.URLError, OSError, http.client.HTTPException):
             raise FleetRelayError(
                 None, "transport_error", "Fleet relay could not be reached."
             ) from None
         if status != 200:
-            raise _status_error(path, method, status, raw)
+            raise _status_error(
+                route, method, status, raw, response_headers, command
+            ) from None
         if len(raw) > bound:
-            raise FleetRelayError(
-                status, "malformed_response", "Fleet relay response was too large."
-            )
-        parsed = _parse(protocol.decode_json, raw)
-        if not isinstance(parsed, dict):
-            raise FleetRelayError(
-                status,
-                "malformed_response",
-                "Fleet relay response had an unexpected shape.",
-            )
-        if type(parsed.get("protocol")) is not int or parsed["protocol"] != 1:
-            raise FleetRelayError(
-                status,
-                "protocol_mismatch",
-                "Fleet relay response used an unsupported protocol.",
-            )
-        return parsed
+            raise _malformed()
+        return _decode_response(raw)
 
 
-def _validate_snapshot_headers(headers, expected_binding: str) -> None:
-    # HTTPMessage.get_all sees repeated raw lines; get() alone silently accepts
-    # the first one. Exact values also reject comma-joined duplicates/whitespace.
-    if headers.get_all("X-Fleet-Snapshot-Format", []) != ["publication-v1"]:
-        raise FleetRelayError(
-            200,
-            "protocol_mismatch",
-            "Fleet relay response used an unsupported snapshot format.",
-        )
-    bindings = headers.get_all("X-Fleet-Request-Binding", [])
-    if (
-        len(bindings) != 1
-        or not re.fullmatch(r"[0-9a-f]{64}", bindings[0])
-        or bindings[0] != expected_binding
+def _combat_body(sampled_at_ms: int, rows: tuple[protocol.CombatRow, ...]) -> dict:
+    # Validate internal values BEFORE JSON: 2.0 and an already-rounded fraction
+    # are not made trustworthy by decoding their serialized numeric lexemes.
+    if not isinstance(rows, tuple) or any(
+        type(row) is not protocol.CombatRow for row in rows
     ):
-        raise FleetRelayError(
-            200,
-            "malformed_response",
-            "Fleet relay response did not match this request.",
-        )
-
-
-def _opaque_session(value: object) -> str:
-    # Existing signing callers and migrated V1 state treat session IDs as opaque.
-    # New recovery results additionally require canonical 32-byte tokens.
-    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value):
-        raise ValueError("Fleet relay session has an unexpected shape.")
-    return value
+        raise ValueError("Fleet combat rows have an unexpected shape.")
+    body = {
+        "protocol": protocol.API_VERSION,
+        "sampled_at_ms": sampled_at_ms,
+        "rows": [
+            {
+                "character_id": row.character_id,
+                "outgoing_dps": row.outgoing_dps,
+                "incoming_dps": row.incoming_dps,
+                "activity_age_ms": row.activity_age_ms,
+                "effects": [
+                    {
+                        "kind": effect.kind,
+                        "observations": [
+                            asdict(observation) for observation in effect.observations
+                        ],
+                    }
+                    for effect in row.effects
+                ],
+            }
+            for row in rows
+        ],
+    }
+    protocol.parse_combat_put(body)
+    return body
 
 
 def _json(value: dict) -> bytes:

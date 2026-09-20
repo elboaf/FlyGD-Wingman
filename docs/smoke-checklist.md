@@ -149,7 +149,10 @@ checks at 100/125/150/200% scaling; native/live-service checks need separate app
 - [ ] Connection Refresh belongs to pairing/source state, not a new local-roster
       read. Destination, actionable reasons, consent warnings and eligibility stay
       visible with their owning controls. Privacy appears once: sparse current
-      telemetry, never raw logs or history. Pair/Grant/Start never enable sharing.
+      incoming/outgoing DPS and incoming tackle/NEUT observations, including
+      observed tackle names, never raw logs or history. Combat approval, account
+      automatic verification consent and this PC's sharing remain independent.
+      Pair/Grant/Start never enable sharing.
 - [ ] Current verification precedes new-attempt controls. Pending/local work has
       its own labelled worklist; an in-flight Start with no UUID stays named local
       feedback. Previous attempts is quieter history. Stop stays attached to the
@@ -242,6 +245,11 @@ select native source windows just to populate these screens.
 - [ ] Live and Waiting for source are readable without color. Enabled is close
       to name/status with its own refusal. Off, Disabled, selection-needed,
       stopping and failures stay distinct; Waiting does not claim a closed source.
+      With authorized native sources, hiding/restoring by focus settings changes
+      Hidden by focus settings/Live through the same operational live owner;
+      a source-foreground ring alone never proves Live. Show previews when active
+      appears only under committed hide-on-lost-focus, with its own adjacent
+      refusal. Neither checkbox's reply clears the other's refusal or a label draft.
 - [ ] Expanded rows retain name/status only and release at their own boundary.
       Long errors remain fully readable outside the header. Health pushes retain
       draft inputs, current focus/selection and open details. Tab/Shift+Tab clears
@@ -3462,7 +3470,30 @@ for the synthetic render pass.
 - [ ] Connect/upgrade opens only this explicit action's saved approval URL,
       once. Restart, hydration, expiry, and generic 401 recovery open no browser.
       Fresh setup asks about new-key/old-pending-intent consequences and is
-      admitted only after worker proof or an explicit configured-origin change.
+      admitted only after worker proof or an explicit configured-origin change,
+      and only when retained control/automatic history permits it. Fresh setup
+      must not implicitly acknowledge that history. Review/dismiss unresolved
+      records explicitly, then separately remove the legacy archive. Even an
+      archive with zero unresolved records remains visible and removable.
+- [ ] **Combat disclosure is explicit.** “Approve combat sharing…” requests the
+      combat capability on the saved connection without changing this PC's
+      participation or account automatic consent. Retrying an unregistered key
+      preserves initial pairing and the requested capabilities; a lost completion
+      still offers Retry, rather than waiting indefinitely for an impossible upgrade.
+- [ ] **Account automatic consent is independent.** Confirm automatic boss
+      verification On, leave/reopen Settings, and restart the app. Account consent
+      remains observed On without silently enabling this PC. Off/cancel stays
+      reachable; a late answer to an older On dialog cannot reverse a newer Off.
+      Cancel a queued replacement before its save: the older unresolved journal
+      remains. Repeat during its save: that On must never be sent; cancellation
+      follows the actual durable result without claiming that server consent is Off.
+- [ ] **Fresh setup cannot overtake another choice.** Open Fresh setup, then
+      admit an Off before Fresh reaches the worker. Fresh must refuse against
+      its original command-sequence witness, leaving the Off to finish. Repeat
+      when the Off has already reached durable storage.
+- [ ] **Clock loss remains a real stop.** A relay-clock inconsistency explains
+      that sharing is paused and a full restart is required once the server is
+      stable. Refresh, re-pair and worker restart must not clear that fence.
 - [ ] Use an owned boss with missing Fleet Read. The browser goes only to the
       paired origin's `/auth/eve/fleet-read?character=<owned-id>`. A different
       browser account asks for the correct account, never replacement keys.
@@ -3477,7 +3508,9 @@ for the synthetic render pass.
 - [ ] Check empty, 256-character, unavailable, feature-disabled, paused, revoked,
       ended and unknown-source states. Eligible IDs are distinct from the boss
       selector. Unknown pending UUIDs remain stoppable; one source's response
-      never acknowledges another. An expired unobserved Start names its UUID.
+      never acknowledges another. An expired unobserved Start retains its UUID
+      and says “Start saved; outcome unconfirmed”, without replay or a fabricated
+      terminal-success result.
       A capacity-refused Start (`DEV.fleetSharing('rejected')` in the isolated
       harness) says “Start not saved”, not expired or saved; its UUID remains
       visible and its Stop is disabled. Existing pending sources stay stoppable.
@@ -3485,12 +3518,32 @@ for the synthetic render pass.
       Watch refresh preserves selector selection and Stop focus. A queued On
       leaves Off reachable even while preference saving is held. A failed save
       leaves the actual session choice visible with a restart-risk warning.
+- [ ] On and Stop confirm the state displayed when clicked. While a dialog is
+      open, deliver a changed participation/source generation, automatic binding
+      or pending intent. Confirming must submit the original observation and
+      visibly refuse stale authority, never substitute the newer values. A
+      refused On explanation survives identical and newer unrelated pushes;
+      an explicit retry replaces it. Neither action enables automatic consent.
+- [ ] Leave the section, change binding or enter screenshot staging while an
+      On/Stop dialog is open. Its late answer must not submit. A newer Off
+      inhibits immediately and cannot be overwritten by an old On reply. A
+      repeated pending Stop retains the original request UUID, time and CAS.
+- [ ] With an expired/conflicted durable Stop and a currently observed live
+      source, **Replace pending Stop…** explicitly acknowledges the old request
+      and confirms replacement against the displayed source generation/binding.
+      An old or section-left confirmation must refuse. The replacement control
+      is unavailable while the new Stop is only queued; ordinary Stop remains
+      available and retries that exact request. A replacement must not silently
+      refresh an unknown/ended source or turn automatic verification On.
 - [ ] Sharing On reconciles local telemetry without restarting Wingman. Restart
       recovers pending Off/Stop with the same IDs even while the preference is
       Off. Quit closes delivery/watch, detaches subscribers, then bounded-stops
       sharing before telemetry; a still-stopping worker is not replaced.
 - [ ] Hiding EVE tools refuses while sharing, pending actions, live sources or
-      unknown bound source state need controls. Enabling EVE tools stays usable.
+      unknown bound source state need controls. Pending/enabled/unknown automatic
+      authority and unresolved cutover/participation also keep controls visible;
+      inert settled history alone does not. Local sharing Off does not disable
+      automatic verification consent. Enabling EVE tools stays usable.
 - [ ] **Real installed-window scaling remains required:** repeat at the actual
       840×625 / 839×621 CSS floors on Windows at 100/125/150/200%, without CSS
       zoom. The Task 8 artifact records Chrome plus an isolated pywebview 6.2.1
@@ -3528,7 +3581,8 @@ Record browser evidence separately from installed Windows/WebView2 acceptance.
       disclosure, not an empty heading.
 - [ ] `DEV.fleetSharing('history-only')`: reported expiry and an explicit next
       action remain visible outside history. `ended` says stopped, not untouched
-      setup; `expired`/`rejected` retain local Start failure guidance. No label
+      setup; `expired` retains unconfirmed Start history, while `rejected` says
+      the Start was not saved. No label
       claims to identify the latest attempt by UUID or array order.
 - [ ] `history-pending-start` and `history-pending-stop` keep the pending command
       visible despite its ended observation, including mixed-case source IDs.
@@ -4243,6 +4297,17 @@ cursors, DPI, focus, activation, no-activate restoration, mixed-monitor
 clamping, frozen packaging, or screen readers. Keep those items UNVERIFIED
 until they are actually run on Windows.
 
+- [ ] **Activity filtering never changes collection.** Enable “Only show
+      characters active in the last 30 seconds”. A measured zero still counts;
+      a missing metric is not zero. Quiet rows disappear at their deadline but
+      remain in the complete character list, including visibility preferences.
+      Disable the filter and confirm the same roster reappears. Restart to check
+      persistence. A failed bridge write restores the checkbox and explains why.
+- [ ] **Tackle names and effects expire independently.** Hover a named tackle
+      indicator and inspect its accessible label. Only confidently attributed,
+      unexpired source names appear. Let one name expire while unnamed tackle
+      remains, and let NEUT expire separately. Unrelated damage, refreshes, and
+      redraws must not renew these observations.
 - [ ] **Browser-only CSS measurements stay separate from native acceptance.**
       Run `node scripts/measure_fleetbar_layout.js --chrome /usr/bin/google-chrome`.
       Expected: PASS at 420, 500, and 720 content widths for shell width,
@@ -4387,11 +4452,13 @@ until they are actually run on Windows.
       ship point, scram, and neut a displayed character. Expected: distinct
       `POINT`, `SCRAM`, and `NEUT` labels appear under `EWAR`, including in
       combination, with the full `SCRAM · POINT · NEUT` text visible and
-      unclipped when all three are active. Another tracked EWAR event or
-      outgoing damage from that character refreshes the shared activity
-      window; incoming damage alone does not. All labels clear after
-      30 seconds without that activity; relogging or replacing the active log
-      source clears them immediately. Outgoing neuts and nos never appear.
+      unclipped when all three are active. Each effect/name observation expires
+      independently, at most 30 seconds after its event time. Damage in either
+      direction and other effect/name observations never renew that evidence.
+      Row activity has its own deadline and can outlive an effect: scram at t=0
+      followed by outgoing damage at t=20 loses scram at t=30 while the row stays
+      active until t=50. Relogging or replacing the active log source clears the
+      effects immediately. Outgoing neuts and nos never appear.
 - [ ] **Reader degradation is explicit and non-destructive.** Temporarily make
       the Gamelogs folder unreadable or pause its updates. Expected: the header
       changes to `STALE` or `ERROR` and retains the last good rows. Recovery

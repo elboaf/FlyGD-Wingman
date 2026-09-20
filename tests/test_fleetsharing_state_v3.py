@@ -1,4 +1,4 @@
-"""V3 adds journals, not permission defaults or a second preference writer."""
+"""Legacy V3 journals remain evidence, never current permission defaults."""
 
 import json
 from dataclasses import replace
@@ -6,25 +6,22 @@ from dataclasses import replace
 import pytest
 from test_fleetsharing_state_v2 import journaled
 
+from tests.fleetsharing_state4_helpers import DATE, UUID, legacy, put
 from wingman.fleetsharing import state as s
 
-NEW_FIELDS = ("pending_pairing", "pending_participation", "auth_pause")
 
-
-def test_exact_task6_document_survives_migration_without_writing(tmp_path):
+def test_exact_task6_document_migrates_to_archive_without_writing(tmp_path):
     path = tmp_path / "state.json"
-    original = journaled()
-    s.save(path, original)
-    raw = json.loads(path.read_text())
-    for key in NEW_FIELDS:
-        raw.pop(key, None)
-    raw["version"] = 2
-    path.write_text(json.dumps(raw))
-    before = path.read_bytes()
-    assert s.load(path) == original
+    raw = legacy(2)
+    before = put(path, raw)
+    loaded = s.load(path)
+    assert loaded.cutover.original == raw
+    assert loaded.pending_source_commands == ()
+    assert loaded.pending_recovery is None
+    assert loaded.pending_pairing is None and loaded.pending_participation is None
     assert path.read_bytes() == before
-    s.save(path, original)
-    assert json.loads(path.read_text())["version"] == 3
+    s.save(path, loaded)
+    assert json.loads(path.read_bytes())["version"] == 4
 
 
 def test_new_journals_roundtrip_and_do_not_grant_authority(tmp_path):
@@ -33,15 +30,14 @@ def test_new_journals_roundtrip_and_do_not_grant_authority(tmp_path):
         journaled(),
         pending_pairing=s.PendingPairing(
             "upgrade",
-            "pair-id",
+            UUID,
             "https://relay.example.test/approve",
-            "2026-09-07T12:02:00.000Z",
+            DATE,
             True,
+            ("shared-source-v1", "combat-v2"),
         ),
-        pending_participation=s.PendingParticipation(
-            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", False, 7, True
-        ),
-        auth_pause=s.AuthPause("account_ineligible", "2026-09-07T12:01:00.000Z"),
+        pending_participation=s.PendingParticipation(UUID, False, 7, True),
+        auth_pause=s.AuthPause("account_ineligible", DATE),
     )
     s.save(path, original)
     assert s.load(path) == original
@@ -56,13 +52,14 @@ def test_new_journals_roundtrip_and_do_not_grant_authority(tmp_path):
         ("auth_pause", {"result": "unauthorized", "retry_not_before": None}),
     ],
 )
-def test_malformed_new_journals_fail_closed(tmp_path, field, value):
+def test_malformed_legacy_v3_journals_fail_closed(tmp_path, field, value):
     path = tmp_path / "state.json"
-    s.save(path, journaled())
-    raw = json.loads(path.read_text())
+    raw = legacy(3)
     raw[field] = value
-    path.write_text(json.dumps(raw))
-    assert s.load(path) == s.EMPTY
+    before = put(path, raw)
+    with pytest.raises(s.QuarantineError):
+        s.load(path)
+    assert path.read_bytes() == before
 
 
 def test_pairing_url_must_stay_bound_to_identity_origin_before_save(tmp_path):
@@ -73,10 +70,7 @@ def test_pairing_url_must_stay_bound_to_identity_origin_before_save(tmp_path):
     bad = replace(
         original,
         pending_pairing=s.PendingPairing(
-            "upgrade",
-            "pair-id",
-            "https://evil.test/approve",
-            "2026-09-07T12:02:00.000Z",
+            "upgrade", UUID, "https://evil.test/approve", DATE
         ),
     )
     with pytest.raises(ValueError):

@@ -139,11 +139,35 @@ def current_work_area(bar):
 def apply_geometry(bar, x, y, width, height) -> None:
     current_width = getattr(bar, "width", None)
     current_height = getattr(bar, "height", None)
+    current_x = getattr(bar, "x", None)
+    current_y = getattr(bar, "y", None)
+
+    # One native SetWindowPos when there is a real HWND, falling back to
+    # the pywebview calls on test doubles and non-win32. Not bar.resize/
+    # bar.move unconditionally: both are HWND_TOP + SWP_SHOWWINDOW with
+    # no NOZORDER/NOACTIVATE, so every fleet update made the bar the OS
+    # foreground window -- the same focus steal as the sig bar's fit
+    # (issue #262). The native call keeps the no-Invoke property the
+    # native-race comment on _apply_geometry_if_current relies on.
+    if sys.platform == "win32":
+        handle = window_hwnd(bar)
+        if handle:
+            user32, _set_ptr, _wndproc, _mi, _mmi, wintypes = chrome._win32()
+            scale = chrome._scale_for(user32, handle) or 1.0
+            chrome.set_window_geometry(
+                user32,
+                wintypes.HWND(handle),
+                x if current_x != x or current_y != y else None,
+                y if current_x != x or current_y != y else None,
+                width if current_width != width or current_height != height else None,
+                height if current_width != width or current_height != height else None,
+                scale,
+            )
+            return
+
     if current_width != width or current_height != height:
         bar.resize(width, height)
 
-    current_x = getattr(bar, "x", None)
-    current_y = getattr(bar, "y", None)
     if current_x != x or current_y != y:
         bar.move(x, y)
 

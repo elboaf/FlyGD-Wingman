@@ -512,6 +512,21 @@ def test_enable_resize_survives_a_window_with_no_native_handle():
     assert chrome.enable_resize(NotShownYet()) is False
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the guard under test")
+def test_enable_taskbar_minimize_is_a_no_op_off_windows():
+    """Same contract as enable_resize, same reason: window.py must be able
+    to call it unconditionally, and Linux CI must be able to import the
+    feature at all (#257)."""
+    assert chrome.enable_taskbar_minimize(_Explosive()) is False
+
+
+def test_enable_taskbar_minimize_survives_a_window_with_no_native_handle():
+    class NotShownYet:
+        native = None
+
+    assert chrome.enable_taskbar_minimize(NotShownYet()) is False
+
+
 def test_the_settings_gear_badge_updates_its_accessible_name_from_update_status():
     assert "function renderUpdateBadge(payload)" in APP_JS
     assert "var available = !!payload.update_available;" in APP_JS

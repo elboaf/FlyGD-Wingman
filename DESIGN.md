@@ -933,6 +933,10 @@ regions; moving visual feedback must not reduce an announcement to just “Error
 Expanded Companion rows retain their existing name and operational status on the
 Settings scroller, releasing at that row's boundary. Enabled stays nearby with
 its refusal; source details and full operation errors remain in normal flow.
+Show-on-focus has separate adjacent refusal feedback and appears only when the
+committed hide-on-lost-focus preference makes it relevant. Native-confirmed
+Hidden by focus settings is neither Waiting for source nor Live; the source
+foreground ring alone proves neither availability nor visibility.
 Only Live and Waiting for source use pills. Add owns the accent until its form
 opens, when Choose source takes it; both yield while source selection is active.
 Expanded Fittings rows retain their existing identity above the detail and
@@ -972,7 +976,10 @@ own accepted facts: local display preference, sharing preference/inhibition,
 setup and last-observed authGD participation, and verification/eligibility.
 Unknown is not Off, and a saved binding is not completed pairing: browser approval
 can still be pending after its key is saved. No summary claims actual transmission
-or native visibility. The original consent live region retains local/server facts
+or native visibility. Combat-data approval, account-wide automatic verification
+consent and this PC's participation remain independent. Confirmations carry the
+original displayed control observation, never authority substituted after a reply.
+The original consent live region retains local/server facts
 as visually hidden text; only their repeated standing sentence leaves visual flow.
 Eligibility and actionable connection/recovery details remain beside sharing controls,
 outside the eligible-character disclosure. Refresh belongs to the Connection header;
@@ -987,7 +994,10 @@ Account sources keep Current verification and Pending / local operation in
 separate worklists above the new-attempt controls. All three lists share the
 existing keyed row reconciliation; moving to Pending must retain its Stop control
 and keyboard focus. A Start without a returned UUID stays character-specific
-feedback in the original exposed action region. Only settled ended records enter
+feedback in the original exposed action region. An unobserved persisted Start
+remains pending with outcome unconfirmed, not a fabricated expired result. Saved
+legacy setup history is separate evidence, never a replay queue or a chronology
+inferred from UUIDs. Only settled ended records enter
 the quieter native Previous attempts disclosure; its count comes from rendered
 history and its open state survives updates. Failed or stopped-only
 setups still show reported reasons and a next action outside collapsed history.

@@ -14,14 +14,31 @@ owns the foreground -- a different thing that happens to be dead.
 """
 
 
-def should_hide_source(*, global_hidden, hide_active, foreground, source_hwnd) -> bool:
-    """Presentation only: an unknown foreground never nominates a source."""
+def should_hide_source(
+    *, global_hidden, hide_active, foreground, source_hwnd, source_cloaked=False
+) -> bool:
+    """Presentation only: an unknown foreground never nominates a source.
+
+    `source_cloaked` is the source's DWM shell-cloak read (#264): a source on
+    another virtual desktop is composed off, so mirroring it onto the current
+    desktop would make the preview follow a switch the user made precisely to
+    get a clean screen. That hides unconditionally, ahead of the focus clauses
+    -- the source's own desktop membership is not something the foreground can
+    veto -- and it is deliberately not a setting: switching desktops is an
+    overt act with an obvious expectation. A probe failure reports False
+    (host.py) so a broken read degrades to today's behavior, never to a
+    vanished wall.
+    """
+    if source_cloaked:
+        return True
     return global_hidden or bool(
         hide_active and foreground and foreground == source_hwnd
     )
 
 
-def should_hide(*, enabled, foreground, client_hwnds, foreground_is_ours) -> bool:
+def should_hide(
+    *, enabled, foreground, client_hwnds, foreground_is_ours, companion_sources=()
+) -> bool:
     """Whether every preview should be hidden right now.
 
     True only when the feature is on AND the foreground window belongs to
@@ -39,6 +56,12 @@ def should_hide(*, enabled, foreground, client_hwnds, foreground_is_ours) -> boo
     Without it, opening Wingman to arrange previews would hide the very
     previews being arranged.
 
+    `companion_sources` lists the source windows of live companions whose
+    "show previews when active" choice is on (#258 follow-up): focusing
+    such a window is working in the multiboxing workspace, not leaving it,
+    so it counts the way an EVE client foreground does. A flag-off source
+    stays inside the mask -- that is the point of the per-companion tick.
+
     A foreground of 0 -- the window is being destroyed, or a secure desktop
     (UAC, lock screen) holds it -- hides. Nothing of ours is on screen to
     mirror. Ownership is still checked first: it is the more specific
@@ -47,5 +70,7 @@ def should_hide(*, enabled, foreground, client_hwnds, foreground_is_ours) -> boo
     if not enabled:
         return False
     if foreground_is_ours:
+        return False
+    if foreground in (companion_sources or ()):
         return False
     return foreground not in (client_hwnds or [])

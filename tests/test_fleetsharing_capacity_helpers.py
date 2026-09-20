@@ -12,13 +12,13 @@ from wingman.fleetsharing import state as s
 
 # Transcribed persisted shapes, not the production serializer or the builder.
 BASE_DOCUMENT = {
-    "version": 3,
+    "version": 4,
     "identity": {
         "protected_private_key_b64": PAIRED_STATE.identity.protected_private_key_b64,
         "public_key_spki_b64": PAIRED_STATE.identity.public_key_spki_b64,
     },
     "relay_origin": "https://relay.test",
-    "session_id": "session-1",
+    "session_id": TOKEN,
     "last_revision": 0,
     "device_id": None,
     "session_expires_at": None,
@@ -32,9 +32,12 @@ BASE_DOCUMENT = {
     "pending_pairing": None,
     "pending_participation": None,
     "auth_pause": None,
+    "cutover": None,
+    "automatic": {"observed_consent": None, "pending": None, "last_result": None},
 }
 FIRST_STARTS = [
     {
+        "protocol": 2,
         "operation": "start",
         "source_id": source,
         "character_id": 1,
@@ -108,6 +111,7 @@ def test_fixture_bytes_preserve_recovery_and_attempted_on_metadata(tmp_path):
                 "nonce": TOKEN,
                 "expires_at": DATE,
             },
+            "completion_attempted": False,
         },
         "pending_participation": {
             "intent_id": UUID,
@@ -126,7 +130,8 @@ def test_fixture_bytes_preserve_recovery_and_attempted_on_metadata(tmp_path):
     path.write_bytes(helpers.fixture_bytes(state, indented=True))
     assert s.load(path) == state
     s.save(path, state)
-    assert path.read_bytes() == helpers.fixture_bytes(state, indented=True)
+    assert json.loads(path.read_bytes()) == expected
+    assert len(path.read_bytes()) == len(helpers.fixture_bytes(state))
 
 
 def test_start_boundary_rejects_non_byte_bound_or_unsupported_fixtures():
@@ -140,5 +145,8 @@ def test_start_boundary_rejects_non_byte_bound_or_unsupported_fixtures():
         helpers.fixture_bytes(replace(PAIRED_STATE, relay_origin="https://é.test"))
     with pytest.raises(AssertionError, match="Start"):
         helpers.fixture_bytes(
-            replace(PAIRED_STATE, pending_source_commands=(p.StopSource(UUID, 0),))
+            replace(
+                PAIRED_STATE,
+                pending_source_commands=(p.StopSource(UUID, 0, UUID, DATE, None),),
+            )
         )

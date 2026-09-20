@@ -131,7 +131,6 @@ def live_alerts(tmp_path, monkeypatch, request):
         runtime = TelemetryCoordinator(
             **kwargs,
             _thread_factory=coordinator_mod._noop_thread_factory,
-            _clock=lambda: 0,
         )
         coordinators.append(runtime)
         return runtime
@@ -139,14 +138,19 @@ def live_alerts(tmp_path, monkeypatch, request):
     # Enter the Windows composition branch, not the app or any Win32 binding.
     with monkeypatch.context() as composition:
         composition.setattr(main_mod.sys, "platform", "win32")
-        composition.setattr("wingman.telemetry.clients.ClientDiscovery", FakeDiscovery)
+        composition.setattr(
+            "wingman.telemetry.clients.ClientDiscovery",
+            lambda **_kwargs: FakeDiscovery(),
+        )
         composition.setattr(gamelogs, "GameLogStream", build_stream)
         composition.setattr(coordinator_mod, "TelemetryCoordinator", build_coordinator)
         composition.setattr(
             "wingman.telemetry.metrics.FleetMetrics",
-            lambda: FleetMetrics(_clock=lambda: 0, _utc_now=lambda: NOW),
+            lambda **kwargs: FleetMetrics(**kwargs, _utc_now=lambda: NOW),
         )
-        coordinator = main_mod.build_telemetry(state, host, policy, controller)
+        coordinator = main_mod.build_telemetry(
+            state, host, policy, controller, clock=lambda: 0.0
+        )
     assert coordinator is not None
     api = Api(
         state,

@@ -5,11 +5,12 @@ import logging
 import os
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from . import combatlog, discord, hotkeys, obsconfig, paths, stitch, watcher
+from . import combatlog, discord, hotkeys, obsconfig, paths, raiseipc, stitch, watcher
 from . import settings as settings_mod
 from .alerts.controller import AlertsController, AlertsPorts
 from .eveauth import application
@@ -145,10 +146,11 @@ def acquire_single_instance():
     stitch prefix on startup, so a second instance could sweep a merged file
     the first is actively uploading — this mutex is what prevents that.
 
-    A second instance exits quietly rather than surfacing the first one's
-    window: doing that properly needs cross-process IPC (a named pipe or
-    WM_COPYDATA), which is disproportionate here — the tray icon is already
-    visible and is the intended way to open the window.
+    A second instance exits after signalling the first one to raise its
+    window (#257 — launching from a pinned taskbar icon is how users expect
+    the window back; the raiseipc module owns that handoff). If the signal
+    cannot be sent — an old first instance predating the event, a denied
+    Open — it still exits quietly, exactly as before.
     """
     if sys.platform != "win32":
         return object()  # No enforcement off-Windows; development only.
@@ -686,11 +688,14 @@ def build_alert_policy(state, host, alerts_controller=None):
         return None
 
 
-def build_telemetry(state, host, alert_policy, alerts_controller=None):
+def build_telemetry(
+    state, host, alert_policy, alerts_controller=None, *, clock=time.monotonic
+):
     """Shared EVE discovery/gamelog runtime, or None off Windows."""
     if sys.platform != "win32":
         return None
     try:
+        from .telemetry.admission import _SourceAuthority
         from .telemetry.clients import ClientDiscovery
         from .telemetry.coordinator import TelemetryCoordinator
         from .telemetry.gamelogs import GameLogStream
@@ -707,6 +712,7 @@ def build_telemetry(state, host, alert_policy, alerts_controller=None):
             configured = state.settings.get("gamelogs_dir")
             return Path(configured) if configured else combatlog.find_gamelogs_dir()
 
+        source_admission = _SourceAuthority()
         return TelemetryCoordinator(
             # settings.update temporarily mutates the live document. The host
             # transitions only after a successful master save; keep delivering
@@ -724,9 +730,15 @@ def build_telemetry(state, host, alert_policy, alerts_controller=None):
                 state.settings.get("fleet_sharing", {}).get("enabled")
             ),
             gamelogs_folder=gamelogs_folder,
-            discovery=ClientDiscovery(),
-            stream=GameLogStream(custom_snapshot=custom_snapshot),
-            metrics=FleetMetrics(),
+            discovery=ClientDiscovery(_source_admission=source_admission),
+            stream=GameLogStream(
+                custom_snapshot=custom_snapshot,
+                _clock=clock,
+                _source_admission=source_admission,
+            ),
+            metrics=FleetMetrics(_clock=clock),
+            _clock=clock,
+            _source_admission=source_admission,
             preview_host=host,
             alert_policy=alert_policy,
             custom_snapshot=custom_snapshot,
@@ -736,7 +748,7 @@ def build_telemetry(state, host, alert_policy, alerts_controller=None):
         return None
 
 
-def build_fleet_sharing_worker(state):
+def build_fleet_sharing_worker(state, *, timing_context):
     """Cheap, platform-neutral sole sharing-state owner, retained by Api.
 
     Api starts one resume_pending probe even Off: a durable Stop/Off must not
@@ -759,6 +771,7 @@ def build_fleet_sharing_worker(state):
             ),
             client_factory=FleetRelayClient,
             sharing_enabled=sharing_enabled,
+            timing_context=timing_context,
         )
     except Exception:
         logger.exception("Fleet sharing worker unavailable")
@@ -961,7 +974,15 @@ def main() -> int:
     set_dpi_awareness()
     handle = acquire_single_instance()
     if handle is None:
-        return 0  # Another instance owns the tray; nothing to do.
+        # Another instance owns the tray: poke its window up, then leave.
+        # Signal failure (first instance predates the event) changes nothing
+        # — the old silent exit is still the right fallback.
+        raiseipc.signal_raise()
+        return 0
+
+    # Lives as long as the process, like the mutex handles: the waiter the
+    # window startup below binds to it must outlive every second launch.
+    raise_event = raiseipc.create_raise_event()
 
     # BEFORE ensure_dirs(), which creates state_dir() and would otherwise
     # make the migration a no-op that strands 3.x state. The status is
@@ -1024,8 +1045,20 @@ def main() -> int:
     alerts_controller = build_alerts_controller(state, preview_host, api_box)
     api_box["alerts"] = alerts_controller
     alert_policy = build_alert_policy(state, preview_host, alerts_controller)
-    telemetry = build_telemetry(state, preview_host, alert_policy, alerts_controller)
-    sharing_worker = build_fleet_sharing_worker(state)
+    from .fleetsharing.timing import TimingContext
+
+    # One process lifetime, including lazy telemetry retries and worker restarts.
+    # Identity of this clock is wiring evidence, not suspend-clock certification.
+    fleet_clock = time.monotonic
+    timing_context = TimingContext(
+        clock=fleet_clock,
+        db_continuity_token=object(),
+        elapsed_lifetime_token=object(),
+    )
+    telemetry = build_telemetry(
+        state, preview_host, alert_policy, alerts_controller, clock=fleet_clock
+    )
+    sharing_worker = build_fleet_sharing_worker(state, timing_context=timing_context)
     api = api_mod.Api(
         state,
         preview_host=preview_host,
@@ -1035,9 +1068,10 @@ def main() -> int:
         companion_controller=companion_controller,
         telemetry=telemetry,
         fleet_sharing=sharing_worker,
+        fleet_clock=fleet_clock,
         alerts_controller=alerts_controller,
         telemetry_factory=lambda: build_telemetry(
-            state, preview_host, alert_policy, alerts_controller
+            state, preview_host, alert_policy, alerts_controller, clock=fleet_clock
         ),
     )
     api_box["api"] = api
@@ -1075,7 +1109,18 @@ def main() -> int:
         # create() returns, so a very fast click can land in the gap.
         if window is not None:
             window.show()
+            # show() raises a hidden window but leaves a minimized one
+            # minimized; restore() is a no-op in every other state, so this
+            # is the "Open" contract either way — visible and unminimized.
+            window.restore()
             api._set_sharing_window_visible(True)
+
+    # Second launches use the exact same raise path as the tray's Open
+    # item: same closure, same None guard, same non-main-thread safety
+    # (spike Q6). Started before the tray so a launch racing our own
+    # startup is served; before create() returns is the whole point of the
+    # guard above.
+    raiseipc.start_waiter(raise_event, on_open)
 
     def destroy_windows() -> None:
         """Destroy each window once, retrying only targets that failed."""

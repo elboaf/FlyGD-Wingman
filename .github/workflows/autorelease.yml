@@ -174,6 +174,15 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        # fetch-depth 0: the release-notes page inside the installer is
+        # derived from git history since the previous release tag, which a
+        # depth-1 checkout (the default) neither has nor can name. v5.10.0
+        # shipped its fallback page because THIS was the checkout that ran
+        # the build -- this workflow, not release.yml, is the one a version
+        # bump actually drives.
+        with:
+          fetch-depth: 0
+          fetch-tags: true
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.11"

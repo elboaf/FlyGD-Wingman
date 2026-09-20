@@ -9,9 +9,13 @@
   var watchGeneration = 0;
   var watchChain = Promise.resolve();
   var preferenceAttempt = 0;
+  var preferenceMessage = ''; // This attempt's refusal is not a worker-status field.
   var actionAttempt = 0;
   var actionsInFlight = 0;
   var bindingGeneration = 0;
+  var interactionGeneration = 0;
+  var participationControl = null;
+  var automaticControl = null, setupControl = null, automaticAttempt = 0;
   var sourceRequests = [];
   var actionMessage = '';
   // Last-known labels/observations are presentation only, never a roster or
@@ -46,7 +50,8 @@
     }
     if (!payload && !screenshotFixture) return;
     var live = screenshotFixture ? screenshotLive : {state: state, boss: desiredBoss,
-      sources: knownSources, characters: knownCharacters, message: actionMessage, readFailed: readFailed};
+      sources: knownSources, characters: knownCharacters, message: actionMessage,
+      preferenceMessage: preferenceMessage, readFailed: readFailed};
     screenshotEpoch += 1; watchGeneration += 1; actionAttempt += 1; bindingGeneration += 1;
     screenshotFixture = payload ? JSON.parse(JSON.stringify(payload)) : null;
     screenshotLive = payload ? live : null;
@@ -55,6 +60,7 @@
     state = payload ? null : live.state; hydrated = false;
     knownSources = payload ? [] : live.sources; knownCharacters = payload ? [] : live.characters;
     desiredBoss = payload ? '' : live.boss; actionMessage = payload ? '' : live.message;
+    preferenceMessage = payload ? '' : live.preferenceMessage;
     readFailed = payload ? false : live.readFailed;
     sources.textContent = ''; pendingSources.textContent = ''; historySources.textContent = ''; boss.removeAttribute('data-roster');
     WM.el('sharing-pending').hidden = true;
@@ -91,7 +97,12 @@
     update_required: 'This server requires a supported Wingman build.',
     forbidden: 'authGD refused this operation. Check account eligibility and connection.',
     capability_required: 'This connection needs sharing approval.',
-    conflict: 'Waiting for authGD to reconcile the current action.'
+    conflict: 'Waiting for authGD to reconcile the current action.',
+    unresolved_history: 'Saved requests need your review before setup can continue.',
+    clock_inconsistent: 'The relay clock changed unexpectedly. Sharing is paused. Restart Wingman once the server clock is stable.',
+    elapsed_reset: 'Elapsed time could not be trusted. Sharing is paused; restart Wingman.',
+    elapsed_continuity_lost: 'Elapsed time continuity was lost. Sharing is paused; restart Wingman.',
+    db_continuity_lost: 'The relay database changed. Sharing is paused; restart Wingman after the server is stable.'
   };
 
   function visible() {
@@ -136,6 +147,14 @@
     text('sharing-consent-label', consent.trim());
   }
   function binding() { return state && state.metadata.binding; }
+  function detached(value) { return value ? JSON.parse(JSON.stringify(value)) : null; }
+  function interactionOwner() {
+    var generation = interactionGeneration, bound = bindingGeneration, capture = screenshotEpoch;
+    return function () {
+      return visible() && !screenshotFixture && generation === interactionGeneration
+        && bound === bindingGeneration && capture === screenshotEpoch;
+    };
+  }
   function selected() {
     return ((state && state.sources && state.sources.characters) || []).filter(function (row) {
       return String(row.character_id) === boss.value;
@@ -256,9 +275,26 @@
         row.appendChild(WM.make('div', 'sharing-source-text'));
         var stop = WM.make('button', 'btn', 'Stop verification');
         stop.addEventListener('click', function () {
-          if (!hydrated || stop.disabled) return;
-          action('fleet_sharing_stop_source', id, binding());
+          if (screenshotFixture || !hydrated || stop.disabled || !visible()) return;
+          var observation = detached(stop._sharingControl);
+          if (!observation) return;
+          var owns = interactionOwner();
+          WM.confirm('Stop verification', 'Stop this verification? A saved Start may already have reached authGD. Stop remains unconfirmed until acknowledged.').then(function (ok) {
+            if (ok && owns()) action('fleet_sharing_stop_source', id, observation.binding, observation);
+          });
         });
+        var replaceStop = WM.make('button', 'btn', 'Replace pending Stop…');
+        replaceStop.addEventListener('click', function () {
+          if (screenshotFixture || !hydrated || replaceStop.disabled || replaceStop.hidden || !visible()) return;
+          var observation = detached(stop._sharingControl);
+          if (!observation || !observation.pending || observation.pending.operation !== 'stop' || !observation.observed) return;
+          var owns = interactionOwner();
+          WM.confirm('Replace pending Stop', 'The earlier Stop outcome may be unknown. Acknowledge that request and submit a new Stop for the displayed source? This does not prove the earlier Stop failed, and does not turn verification on.').then(function (ok) {
+            if (ok && owns()) action('fleet_sharing_replace_stop', id, observation.binding, observation);
+          });
+        });
+        row._replaceStop = replaceStop;
+        row.appendChild(replaceStop);
         row.appendChild(stop);
       }
       delete existing[id];
@@ -268,25 +304,34 @@
       var label = nameFor(characterId);
       if (label === 'Unknown character') label = 'Verification ' + id.slice(0, 8);
       var description = label + ' · ' + (localResult && !pending
-        ? result.stage === 'rejected' ? 'Start not saved. Too many pending verification requests. Wait, then Start again explicitly.' : 'Start expired. Start again explicitly.'
+        ? result.stage === 'rejected' ? 'Start not saved. Too many pending verification requests. Wait, then Start again explicitly.' : 'Start outcome unconfirmed.'
         : observed ? observed.state : 'Not yet observed');
       if (observed && (!localResult || pending)) {
         if (observed.reason) description += ' — ' + observed.reason.replace(/_/g, ' ');
         if (sourceUnknown()) description += ' · Last known';
       }
       if (pending) description += ' · ' + (pending.operation === 'stop' ? 'Stop' : 'Start')
-        + (pending.stage === 'queued' ? ' queued locally' : ' saved, awaiting authGD');
+        + (pending.stage === 'queued' ? ' queued locally' : pending.operation === 'start' ? ' saved; outcome unconfirmed.' : ' saved, awaiting authGD');
       if (request) description += ' · Stop request in progress…';
       row.firstChild.textContent = description;
       row.firstChild.title = 'Verification ' + id + ' — ' + description;
       // A page request, like worker-pending work, does not itself disable Stop.
       // Disabling on click would blur the control before settlement can move
       // its focus to history. Only current source/pending evidence authorizes it.
-      row.lastChild.disabled = !hydrated || !state.available || readFailed
+      row.lastChild._sharingControl = detached(((state.controls && state.controls.sources) || []).filter(function (control) {
+        return sourceKey(control.source_id) === id;
+      })[0]);
+      row.lastChild.disabled = !hydrated || !state.available || readFailed || !row.lastChild._sharingControl
         || (!pending && (sourceUnknown() || !observed || !!localResult || ended));
       // Retain the keyed control for pending work that can return this row
       // to the current list, but do not show an obsolete action in history.
       row.lastChild.hidden = ended;
+      var recovery = row.lastChild._sharingControl;
+      row._replaceStop.hidden = !(pending && pending.stage === 'persisted'
+        && recovery && recovery.pending && recovery.pending.operation === 'stop'
+        && recovery.observed && recovery.observed.state !== 'ended' && !sourceUnknown());
+      row._replaceStop.disabled = row.lastChild.disabled;
+      row._replaceStop.setAttribute('aria-label', 'Replace pending Stop — ' + label + ' (' + id + ')');
       row.lastChild.setAttribute('aria-label', 'Stop verification — ' + label + ' (' + id + ')');
       var index = ended ? 2 : pending || request ? 1 : 0;
       var container = ended ? historySources : pending || request ? pendingSources : sources;
@@ -349,6 +394,7 @@
         }
         if (screenshotLive.state && payload.metadata.binding !== screenshotLive.state.metadata.binding) {
           screenshotLive.boss = ''; screenshotLive.sources = []; screenshotLive.characters = [];
+          screenshotLive.preferenceMessage = '';
         }
         screenshotLive.state = payload;
       }
@@ -362,6 +408,9 @@
       desiredBoss = '';
       actionAttempt += 1;
       bindingGeneration += 1;
+      preferenceAttempt += 1;
+      preferencePending = false;
+      preferenceMessage = '';
       sourceRequests = [];
       actionMessage = '';
       knownSources = [];
@@ -389,10 +438,75 @@
     paint();
     return true;
   }
+  function paintSetup() {
+    var controls = state.setup_controls || {};
+    automaticControl = detached(controls.automatic);
+    setupControl = detached(controls.setup);
+    var combat = setupControl && setupControl.combat_approved;
+    WM.el('sharing-combat').hidden = combat;
+    WM.el('sharing-combat').disabled = !state.available || !state.metadata.loaded || !setupControl;
+    var auto = automaticControl, observed = auto && auto.observed, pending = auto && auto.pending;
+    WM.el('sharing-automatic').checked = !!(auto && auto.choice !== null ? auto.choice : observed && observed.enabled);
+    var pendingOn = !!(pending && pending.enabled) || !!(auto && auto.stage === 'queued' && auto.choice === true);
+    WM.el('sharing-automatic').disabled = !state.available || !auto || (!observed && !pendingOn)
+      || (readFailed && !(observed && observed.enabled) && !pendingOn);
+    WM.el('sharing-automatic-cancel').hidden = !pendingOn;
+    WM.el('sharing-automatic-cancel').disabled = !state.available || !!(pending && pending.cancellation_pending);
+    WM.el('sharing-automatic-dismiss').hidden = !pending;
+    WM.el('sharing-automatic-dismiss').disabled = !state.available;
+    WM.el('sharing-automatic-confirm').hidden = !(auto && auto.stage === 'needs_confirmation');
+    WM.el('sharing-automatic-confirm').disabled = !observed || !state.available;
+    var readiness = state.automatic && state.automatic.readiness;
+    var explanations = {off:'Off for your account.', waiting_for_grant:'On; grant Fleet Read to an owned boss below.',
+      authorization_required:'On; renew Fleet Read for an owned boss below.', waiting_for_fleet:'On; waiting for an owned character to lead a fleet.',
+      verifying:'On; checking your fleet boss.', reconnecting:'On; reconnecting to your fleet.', ready:'On; a fleet is verified.',
+      global_disabled:'Unavailable while fleet sharing is disabled on authGD.', member_required:'Restore authGD Member access.',
+      capacity_limited:'Waiting for verification capacity.'};
+    text('sharing-automatic-status', !observed ? 'Automatic verification has not been observed. Refresh after connecting.'
+      : (explanations[readiness] || (observed.enabled ? 'On for your account.' : 'Off for your account.'))
+        + (pending || (auto && auto.stage === 'queued') ? ' A saved or queued choice is not yet confirmed.' : '')
+        + (pending && pending.cancellation_pending ? ' Off will follow only the receipt for this pending On.' : ''));
+    var legacy = setupControl && setupControl.cutover || [];
+    var unresolvedLegacy = legacy.filter(function (item) { return item.status === 'fenced'; }).length;
+    WM.el('sharing-legacy-history').hidden = !(setupControl && setupControl.legacy_archive);
+    text('sharing-legacy-summary', legacy.length + ' saved setup records; ' + unresolvedLegacy + ' unresolved.');
+    WM.el('sharing-legacy-dismiss').hidden = !unresolvedLegacy;
+    WM.el('sharing-legacy-remove').hidden = !!unresolvedLegacy;
+    WM.el('sharing-legacy-dismiss').disabled = !state.available;
+    WM.el('sharing-legacy-remove').disabled = !state.available;
+    text('sharing-setup-history', setupControl && (setupControl.source_requests || setupControl.participation_pending || setupControl.automatic_pending || setupControl.legacy_archive)
+      ? 'Saved requests remain. Resolve or explicitly acknowledge them before Fresh setup; they are not server cancellations.' : '');
+  }
+  function setupAction(method, operation, control, title, message, extra) {
+    if (screenshotFixture || !hydrated || !visible() || !control) return;
+    var observation = detached(control), owns = interactionOwner();
+    var automaticOwner = method === 'fleet_sharing_automatic' ? ++automaticAttempt : null;
+    WM.confirm(title, message).then(function (ok) {
+      if (ok && owns() && (automaticOwner === null || automaticOwner === automaticAttempt)) {
+        // An omitted JS argument becomes null on the Python bridge, not a default.
+        if (typeof extra === 'undefined') action(method, operation, observation);
+        else action(method, operation, observation, extra);
+      } else paint();
+    });
+  }
+  function automaticChoice(value) {
+    if (screenshotFixture || !hydrated || !visible() || !automaticControl) return;
+    var pending = automaticControl.pending;
+    var cancel = !value && ((pending && pending.enabled) || (automaticControl.stage === 'queued' && automaticControl.choice === true));
+    if (!value) {
+      automaticAttempt += 1; // A later Off cancels an unanswered On dialog too.
+      action('fleet_sharing_automatic', cancel ? 'cancel' : 'off', detached(automaticControl));
+      return;
+    }
+    setupAction('fleet_sharing_automatic', 'on', automaticControl,
+      'Automatic boss verification',
+      'Allow authGD to find and verify your owned fleet boss across restarts and future fleets? This affects your account, not just this PC. It does not turn telemetry sharing On.');
+  }
   function paint() {
     if (!state || !visible()) return;
     hydrated = true;
     var meta = state.metadata;
+    participationControl = detached(state.controls && state.controls.participation);
     enabled.checked = preferencePending ? preferenceWanted : state.enabled;
     enabled.disabled = !state.available; // never disable Off behind queued On
     WM.el('sharing-refresh').disabled = !state.available;
@@ -421,10 +535,15 @@
     connect.disabled = !state.available || !meta.loaded || (!retryBrowser && ['queued', 'persisted', 'awaiting_approval'].indexOf(state.pairing) !== -1);
     WM.el('sharing-confirm-on').hidden = !(state.enabled && (state.local_inhibited || state.participation === 'needs_confirmation'));
     WM.el('sharing-confirm-on').disabled = !state.available;
-    text('sharing-preference', state.preference_error);
+    var preferenceFeedback = preferenceMessage;
+    if (state.preference_error && state.preference_error !== preferenceMessage) {
+      preferenceFeedback += (preferenceFeedback ? ' ' : '') + state.preference_error;
+    }
+    text('sharing-preference', preferenceFeedback);
     paintOverview();
     paintCharacters();
     paintSources();
+    paintSetup();
     paintAction();
     if (!state.available) unavailable();
   }
@@ -435,12 +554,13 @@
     var requestedBinding = binding();
     var generation = bindingGeneration;
     actionMessage = '';
-    var sourceAction = method === 'fleet_sharing_start_source' || method === 'fleet_sharing_stop_source';
+    var stopping = method === 'fleet_sharing_stop_source' || method === 'fleet_sharing_replace_stop';
+    var sourceAction = method === 'fleet_sharing_start_source' || stopping;
     if (sourceAction) {
       // Start has no UUID until Python returns one. Keep character feedback,
       // not a fabricated source row. A Stop already identifies its keyed row.
       sourceRequests.push({attempt: attempt,
-        source_id: method === 'fleet_sharing_stop_source' ? sourceKey(args[1]) : null,
+        source_id: stopping ? sourceKey(args[1]) : null,
         character_id: method === 'fleet_sharing_start_source' ? args[1] : null,
         name: method === 'fleet_sharing_start_source' ? nameFor(args[1]) : ''});
     }
@@ -463,8 +583,9 @@
       // Historical acceptance, not an ongoing waiting claim. Exact queued /
       // saved / server stages belong to the corresponding source row below.
       var accepted = method === 'fleet_sharing_start_source' ? 'Start requested.'
-        : method === 'fleet_sharing_stop_source' ? 'Stop requested.'
+        : stopping ? 'Stop requested.'
         : method === 'fleet_sharing_grant_fleet_read' ? 'Fleet Read browser requested. Use the paired account, then Refresh.'
+        : method === 'fleet_sharing_automatic' ? 'Automatic verification request queued; server outcome is not yet confirmed.'
         : 'Setup requested.';
       actionMessage = result && result.queued ? accepted
         : (result && result.error) || 'The action could not be queued. Refresh and retry.';
@@ -473,23 +594,40 @@
   }
   function preference(value) {
     if (screenshotFixture || !hydrated) return;
+    if (!visible()) return;
+    var observation = detached(participationControl);
     var attempt = ++preferenceAttempt;
+    var generation = bindingGeneration;
+    preferenceMessage = '';
+    if (value && !observation) {
+      preferencePending = false;
+      preferenceMessage = 'Refresh and confirm On again.';
+      paint();
+      return;
+    }
+    var owns = interactionOwner();
     preferencePending = true;
     preferenceWanted = value;
     // Paint the user's local request immediately so an in-flight On always
     // leaves a reachable Off. An older reply cannot revert a newer choice.
     enabled.checked = value;
     paintOverview();
-    WM.send('fleet_sharing_set_enabled', value).then(function (result) {
+    text('sharing-preference', state.preference_error);
+    function submit() {
+      return WM.send('fleet_sharing_set_enabled', value, observation).then(function (result) {
+        if (attempt !== preferenceAttempt || generation !== bindingGeneration) return;
+        preferencePending = false;
+        preferenceMessage = !result ? 'Could not apply the sharing choice.' : result.error || '';
+        if (result && result.state) {
+          if (!render(result.state)) paint();
+        } else paint();
+      });
+    }
+    if (!value) { submit(); return; } // Off never waits behind a dialog.
+    WM.confirm('Share fleet telemetry', 'Turn sharing On for the displayed account and participation choice? This does not enable automatic verification.').then(function (ok) {
       if (attempt !== preferenceAttempt) return;
-      preferencePending = false;
-      if (result && result.state) {
-        if (!render(result.state)) paint();
-      } else {
-        if (!result || !result.applied) enabled.checked = state.enabled;
-        paintOverview();
-        text('sharing-preference', !result ? 'Could not apply the sharing choice.' : result.error || '');
-      }
+      if (ok && owns()) submit();
+      else { preferencePending = false; paint(); }
     });
   }
   enabled.addEventListener('change', function () { preference(enabled.checked); });
@@ -508,20 +646,45 @@
     var character = selected();
     if (character && !grant.disabled) action('fleet_sharing_grant_fleet_read', character.character_id, binding());
   });
+  WM.el('sharing-combat').addEventListener('click', function () {
+    if (WM.el('sharing-combat').disabled) return;
+    setupAction('fleet_sharing_setup', 'combat', setupControl, 'Approve combat sharing',
+      'Open authGD to approve current incoming/outgoing DPS, incoming NEUT and tackle observations, including observed tackle names? No raw logs or history are shared. This does not enable this PC or automatic verification.');
+  });
+  WM.el('sharing-automatic').addEventListener('change', function () { if (!WM.el('sharing-automatic').disabled) automaticChoice(WM.el('sharing-automatic').checked); });
+  WM.el('sharing-automatic-confirm').addEventListener('click', function () { automaticChoice(true); });
+  WM.el('sharing-automatic-cancel').addEventListener('click', function () { if (!WM.el('sharing-automatic-cancel').disabled) automaticChoice(false); });
+  WM.el('sharing-legacy-dismiss').addEventListener('click', function () {
+    setupAction('fleet_sharing_setup', 'dismiss_legacy', setupControl, 'Dismiss saved requests?',
+      'Acknowledge the displayed unresolved records from the older client. Their server outcomes remain unknown. This does not turn sharing or verification Off.');
+  });
+  WM.el('sharing-legacy-remove').addEventListener('click', function () {
+    setupAction('fleet_sharing_setup', 'remove_legacy', setupControl, 'Remove dismissed history?',
+      'Remove the displayed legacy archive from this PC. This cannot be undone and does not cancel server actions.');
+  });
+  WM.el('sharing-automatic-dismiss').addEventListener('click', function () {
+    setupAction('fleet_sharing_automatic', 'dismiss', automaticControl, 'Acknowledge unresolved request',
+      'Remove this local automatic request only after the worker can safely retire it? This does not turn server consent Off. An attempted On waits for authenticated expiry proof.');
+  });
   connect.addEventListener('click', function () {
     if (screenshotFixture || !hydrated) return;
-    if (pairingMode !== 'fresh') { action('fleet_sharing_pair', pairingMode); return; }
+    if (pairingMode !== 'fresh') {
+      if (setupControl && (setupControl.pairing_pending || setupControl.recovery_pending)) {
+        setupAction('fleet_sharing_setup', 'retry', setupControl, 'Retry connection',
+          'Acknowledge the displayed incomplete connection attempt and retry with this device key? No sharing or automatic consent is enabled.');
+      } else action('fleet_sharing_pair', pairingMode);
+      return;
+    }
     var originText = changeOrigin ? 'Switches to ' + state.configured_origin + '. ' : '';
-    var owner = screenshotEpoch;
-    WM.confirm('Fresh fleet setup', originText + 'Creates a new device key. Old identity-bound pending actions will not carry over. Continue?').then(function (ok) {
-      if (ok && owner === screenshotEpoch) action('fleet_sharing_pair', 'fresh', changeOrigin);
-    });
+    setupAction('fleet_sharing_setup', 'fresh', setupControl, 'Fresh fleet setup',
+      originText + 'Creates a new device key and acknowledges the displayed settled automatic-verification history. Unresolved requests must be handled first. This does not turn consent Off on the old server. Continue?', changeOrigin);
   });
   function watch() {
     if (screenshotFixture) { paint(); return; }
     var owner = screenshotEpoch;
     var current = ++watchGeneration;
     var open = visible();
+    if (!open) interactionGeneration += 1;
     var requestedState;
     paint();
     // Serialize enter/leave so a slow bridge enter cannot overtake its leave.

@@ -752,6 +752,7 @@ class PreviewHost:
                     self._crop_controller is None
                     or self._crop_controller._temporary is None
                 ),
+                ring_color=self._selection_ring_color,
             )
 
     def _apply_companion_commands(self, libs):
@@ -3710,6 +3711,13 @@ class PreviewHost:
         could never be mistaken for an alert or quietly acknowledge one.
         That reasoning survives intact -- it just attaches to focus now,
         which is what PreviewWindow spends `selected`/`focused` on.
+
+        The wall carries ONE "where the user is" ring: while a companion's
+        source window holds the foreground, the companion lights its own
+        ring and the EVE selection's ring yields for the sweep. The sticky
+        _selected_key is untouched underneath, so the EVE ring returns the
+        moment an EVE client takes the foreground again (#258 polish
+        follow-up -- both rings lit at once made no sense).
         """
         foreground = self._foreground or (
             libs.user32.GetForegroundWindow() if libs is not None else 0
@@ -3728,6 +3736,23 @@ class PreviewHost:
             # be handed straight back to whatever reappeared under the same
             # name.
             self._selected_key = None
+        if self._companion_family is not None:
+            # Fold this sweep's foreground into the sticky ring latch BEFORE
+            # painting: a companion that owns the latch suppresses the EVE
+            # selection's ring, and an EVE foreground hands the ring back.
+            # Our own windows count as no observation at all -- the sig bar
+            # takes the foreground as a side effect of its update path, and
+            # that is not the user moving (#261 ring-debug evidence).
+            self._companion_family.observe_ring_foreground(
+                foreground,
+                eve_focus=focus is not None,
+                ours=self._foreground_is_ours(libs, foreground),
+            )
+        companion_ring = (
+            self._companion_family.ring_latched()
+            if self._companion_family is not None
+            else False
+        )
 
         # Every window, every sweep, rather than a diff against the previous
         # keys. Both setters early-return on an unchanged flag (window.py's
@@ -3738,7 +3763,7 @@ class PreviewHost:
         # throughout. That case used to need a branch of its own.
         for key, win in self._windows.items():
             win.set_focused(key == focus)
-            win.set_selected(key == self._selected_key)
+            win.set_selected(key == self._selected_key and not companion_ring)
 
         self._apply_visibility(libs)
 
@@ -3747,11 +3772,20 @@ class PreviewHost:
         if not foreground and libs is not None:
             foreground = libs.user32.GetForegroundWindow()
         enabled = self._hiding_on_lost_focus()
+        # Pump-owned like this sweep, so the live read needs no lock. A
+        # source whose companion opted out stays off the list and keeps
+        # hiding the wall.
+        companion_sources = (
+            self._companion_family.show_on_focus_sources()
+            if self._companion_family is not None
+            else ()
+        )
         hidden = visibility.should_hide(
             enabled=enabled,
             foreground=foreground,
             client_hwnds=[c.hwnd for c in self._clients.values()],
             foreground_is_ours=(enabled and self._foreground_is_ours(libs, foreground)),
+            companion_sources=companion_sources,
         )
         return hidden, self._hiding_active_preview(), foreground
 
@@ -3769,6 +3803,34 @@ class PreviewHost:
             source_hwnd=source_hwnd,
         )
 
+    @staticmethod
+    def _source_desktop_away(libs, source_hwnd) -> bool:
+        """Whether *source_hwnd* is shell-cloaked onto another virtual desktop.
+
+        One DwmGetWindowAttribute per source per sweep -- cheap at the sweep
+        cadence -- and never a taskbar/Z-order read. A missing dwmapi binding
+        or probe function, or a failed call, reports False: tests drive the
+        sweep with partial libs, and in production a broken read must degrade
+        to the pre-#264 behavior (preview shown) rather than hiding the wall.
+        """
+        if libs is None or not source_hwnd:
+            return False
+        probe = getattr(getattr(libs, "dwmapi", None), "DwmGetWindowAttribute", None)
+        if probe is None:
+            return False
+        cloaked = wintypes.DWORD()
+        if (
+            probe(
+                source_hwnd,
+                win32.DWMWA_CLOAKED,
+                ctypes.byref(cloaked),
+                ctypes.sizeof(cloaked),
+            )
+            != 0
+        ):
+            return False
+        return cloaked.value == win32.DWM_CLOAKED_SHELL
+
     def _apply_visibility(self, libs) -> None:
         epoch = self._eve_epoch
         if not self._eve_valid(epoch):
@@ -3781,17 +3843,35 @@ class PreviewHost:
         for key, win in self._windows.items():
             if not self._eve_valid(epoch):
                 return
+            # _restyle can reach a window whose client is not in the registry
+            # yet, so this lookup, unlike the hide_active clause, tolerates
+            # the gap: an unregistered window just skips the cloak probe.
+            client = self._clients.get(key)
+            source_hwnd = client.hwnd if client is not None else 0
             win.set_hidden(
                 visibility.should_hide_source(
                     global_hidden=hidden,
                     hide_active=active,
                     foreground=foreground,
-                    source_hwnd=self._clients[key].hwnd if active else 0,
+                    source_hwnd=source_hwnd if active else 0,
+                    # The desktop-away clause rides the same per-window sweep
+                    # (#264): the SW_HIDE lands on whatever desktop the mirror
+                    # followed to, and the sweep after switching back re-shows
+                    # it beside its uncloaked source. Companions are not given
+                    # this clause -- Windows already cloaks them on the switch.
+                    source_cloaked=self._source_desktop_away(libs, source_hwnd),
                 )
             )
         self._previews_hidden = hidden
         if self._crop_controller is not None:
             self._crop_controller.set_hidden(hidden)
+        # Companions ride the same decision on the same sweep. Skipping the
+        # epoch guard above would show them during EVE-off drain; skipping
+        # this forward is how #258's companion stayed up over every window
+        # while its EVE previews hid.
+        family = self._companion_family
+        if family is not None:
+            family.apply_lost_focus_hidden(hidden, active, foreground)
 
     def characters(self) -> list:
         """Named characters currently discovered, sorted. Safe from any

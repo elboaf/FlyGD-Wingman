@@ -245,7 +245,11 @@ def create(api, hidden: bool = False) -> "webview.Window":
     # Deferred to `shown` because window.native does not exist until the
     # form is created (winforms.py:195), and the resize border is attached
     # to that form's handle.
-    window.events.shown += lambda: chrome.enable_resize(window)
+    def _attach_chrome():
+        chrome.enable_resize(window)
+        chrome.enable_taskbar_minimize(window)
+
+    window.events.shown += _attach_chrome
     return window
 
 

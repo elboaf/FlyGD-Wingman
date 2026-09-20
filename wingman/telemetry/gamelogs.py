@@ -71,6 +71,7 @@ from pathlib import Path
 from .. import combatlog
 from ..alerts import custom
 from . import parsing
+from .admission import _Delivery, _ResetBoundary, _SourceAuthority
 from .model import (
     CombatFact,
     CustomMatch,
@@ -102,6 +103,7 @@ _CustomPending = dict[tuple[str, str, int], tuple[int, CustomMatch]]
 class _QueuedBatch:
     number: int
     events: tuple[SourceLifecycle | CombatFact, ...]
+    admission: _Delivery | None = None
 
 
 def _stage_custom(pending: _CustomPending, number: int, match: CustomMatch) -> None:
@@ -235,6 +237,7 @@ class GameLogStream:
             [Path], combatlog.LogHeader | None
         ] = _default_read_header,
         _get_file_size: Callable[[Path], int] = _default_get_file_size,
+        _source_admission: _SourceAuthority | None = None,
     ) -> None:
         self._custom_snapshot = custom_snapshot
         self._custom_matcher = custom_matcher
@@ -246,6 +249,11 @@ class GameLogStream:
         self._read_header = _read_header
         self._get_file_size = _get_file_size
 
+        self._source_admission = _source_admission
+        self._admission_receipt = None
+        self._op_admission: _Delivery | None = None
+        self._op_reserved = False
+        self._admission_subscribers: list[Callable] = []
         self._folder: Path | None = None
         self._tracked: dict[str, _Tracked] = {}
         self._subscribers: list[Callable] = []
@@ -320,6 +328,50 @@ class GameLogStream:
 
         return _unsub
 
+    def _subscribe_admission(self, callback: Callable) -> Callable[[], None]:
+        with self._lock:
+            self._admission_subscribers.append(callback)
+
+        def unsubscribe() -> None:
+            with self._lock, contextlib.suppress(ValueError):
+                self._admission_subscribers.remove(callback)
+
+        return unsubscribe
+
+    def _begin_operation_locked(self, reset: _ResetBoundary | None = None) -> None:
+        receipt = self._admission_receipt
+        operation = (
+            self._source_admission._operation("stream", receipt.lifetime)
+            if receipt is not None
+            else None
+        )
+        self._op_admission = (
+            _Delivery(operation, receipt, reset) if operation is not None else None
+        )
+        self._op_reserved = False
+
+    def _invalidate_locked(self) -> None:
+        """Caller owns operation/state; reserve once, before the first mutation."""
+        delivery = self._op_admission
+        if delivery is not None and not self._op_reserved:
+            receipt = self._source_admission._reserve(
+                "stream", delivery.operation.lifetime
+            )
+            if receipt is not None:
+                self._admission_receipt = receipt
+                self._op_admission = _Delivery(
+                    delivery.operation, receipt, invalidates=True
+                )
+            self._op_reserved = True
+
+    def _stop_admission_locked(self, *, completed: bool) -> None:
+        receipt = self._admission_receipt
+        if receipt is not None:
+            self._source_admission._stop("stream", receipt.lifetime)
+            if completed:
+                self._source_admission._stopped("stream", receipt.lifetime)
+                self._admission_receipt = None
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -333,11 +385,17 @@ class GameLogStream:
         """
         with self._lifecycle_lock:
             with self._lock:
-                # Refuse if already running OR a timed-out worker is alive.
+                # Refuse before waiting for an operation the retained owner may
+                # hold in external I/O. Lifecycle ownership prevents a new start
+                # or stop between this check and the serialized state install.
                 if self._started:
                     return True
                 if self._worker is not None and self._worker.is_alive():
                     return False
+            with self._op_lock, self._lock:
+                if self._source_admission is not None:
+                    self._stop_admission_locked(completed=True)
+                    self._admission_receipt = self._source_admission._begin("stream")
                 self._folder = Path(folder)
                 # A stopped interval is intentionally unobserved. Reusing
                 # old cursors would backfill facts generated while Fleet was
@@ -372,6 +430,7 @@ class GameLogStream:
                 with self._lock:
                     self._started = False
                     self._worker = None
+                    self._stop_admission_locked(completed=True)
                 return False
             return True
 
@@ -385,6 +444,7 @@ class GameLogStream:
             with self._lock:
                 worker = self._worker
                 stop_ev = self._stop_event
+                self._stop_admission_locked(completed=False)
                 self._started = False
                 stop_ev.set()
             with self._dispatch_lock:
@@ -392,12 +452,15 @@ class GameLogStream:
                 self._pending_custom.clear()
                 self._pending_matcher_health = None
             if worker is None:
+                with self._lock:
+                    self._stop_admission_locked(completed=True)
                 return True
             worker.join(timeout)
             with self._lock:
                 if worker.is_alive():
                     return False
                 self._worker = None
+                self._stop_admission_locked(completed=True)
             return True
 
     def _run(self, stop_event: threading.Event) -> None:
@@ -421,24 +484,37 @@ class GameLogStream:
         """Re-publish lifecycle for a character, or unavailable if unknown."""
         with self._op_lock:
             with self._lock:
-                tracked = self._tracked.get(character)
-                if tracked is not None:
-                    event = SourceLifecycle(
-                        character=character,
-                        generation=tracked.generation,
-                        source_id=tracked.source_id,
-                        available=True,
-                        active=True,
-                    )
-                else:
-                    event = SourceLifecycle(
-                        character=character,
-                        generation=0,
-                        source_id=None,
-                        available=False,
-                        active=False,
-                    )
+                self._begin_operation_locked()
+                event = self._source_event_locked(character)
             self._enqueue([event])
+        self._drain_queue()
+
+    def _source_event_locked(self, character: str) -> SourceLifecycle:
+        tracked = self._tracked.get(character)
+        return SourceLifecycle(
+            character=character,
+            generation=tracked.generation if tracked else 0,
+            source_id=tracked.source_id if tracked else None,
+            available=tracked is not None,
+            active=tracked is not None,
+        )
+
+    def _restate_admission(
+        self, characters: tuple[str, ...], boundary: _ResetBoundary
+    ) -> None:
+        """One complete current-source restatement, including unavailable joins.
+
+        One batch is its completion barrier: no first character can ACK siblings
+        that have not reached metrics. The existing FIFO/drainer owns delivery.
+        """
+        with self._op_lock:
+            with self._lock:
+                self._begin_operation_locked(boundary)
+                events = [
+                    self._source_event_locked(character)
+                    for character in sorted(set(characters) | self._tracked.keys())
+                ]
+            self._enqueue(events)
         self._drain_queue()
 
     def characters(self) -> tuple[str, ...]:
@@ -562,8 +638,11 @@ class GameLogStream:
             if pending and stop_event is not None and not stop_event.is_set():
                 for _, match in pending.values():
                     _stage_custom(self._pending_custom, number, match)
-            if batch:
-                self._dispatch_queue.append(_QueuedBatch(number, tuple(batch)))
+            admission = self._op_admission
+            if batch or (admission is not None and admission.reset is not None):
+                self._dispatch_queue.append(
+                    _QueuedBatch(number, tuple(batch), admission)
+                )
 
     def _drain_queue(self) -> None:
         """Deliver queued batches FIFO if we own delivery, else return.
@@ -621,6 +700,7 @@ class GameLogStream:
                 with self._lock:
                     subs = list(self._subscribers)
                     batch_subs = list(self._batch_subscribers)
+                    admitted = list(self._admission_subscribers)
                 for event in queued.events:
                     for callback in subs:
                         try:
@@ -637,6 +717,16 @@ class GameLogStream:
                         callback(StreamBatch(queued.events, custom_matches))
                     except Exception:  # noqa: BLE001 — isolate callbacks without exposing private text.
                         logger.warning("Stream batch subscriber failed.")
+                for callback in admitted:
+                    with self._dispatch_lock:
+                        if delivery_epoch != self._custom_delivery_epoch:
+                            custom_matches = ()
+                    try:
+                        callback(
+                            StreamBatch(queued.events, custom_matches), queued.admission
+                        )
+                    except Exception:  # noqa: BLE001 — isolate admitted subscribers, just like legacy delivery.
+                        logger.warning("Admitted stream subscriber failed.")
                 self._deliver_matcher_health()
         finally:
             # Only fires when delivery escaped abnormally; the normal exit
@@ -672,6 +762,7 @@ class GameLogStream:
         lifecycle events; never delivers.
         """
         with self._lock:
+            self._begin_operation_locked()
             folder = self._folder
         if folder is None:
             return
@@ -726,6 +817,7 @@ class GameLogStream:
             # Retire characters no longer in best
             for character in list(self._tracked):
                 if character not in best:
+                    self._invalidate_locked()
                     tracked = self._tracked.pop(character)
                     self._retired_source_ids.add(tracked.source_id)
                     events.append(
@@ -769,6 +861,7 @@ class GameLogStream:
                     start = 0
 
                 # Only now retire the old source (new baseline succeeded).
+                self._invalidate_locked()
                 if existing is not None:
                     self._retired_source_ids.add(existing.source_id)
                     events.append(
@@ -813,6 +906,8 @@ class GameLogStream:
         """Retire every tracked source (folder loss)."""
         events: list[SourceLifecycle] = []
         with self._lock:
+            if self._tracked:
+                self._invalidate_locked()
             for character, tracked in list(self._tracked.items()):
                 self._retired_source_ids.add(tracked.source_id)
                 events.append(
@@ -837,6 +932,7 @@ class GameLogStream:
         overtaken by a retirement published by another operation.
         """
         with self._lock:
+            self._begin_operation_locked()
             snapshot = list(self._tracked.items())
             stop_event = self._stop_event
 
@@ -875,6 +971,7 @@ class GameLogStream:
             old_gen = tracked.generation
             old_sid = tracked.source_id
             with self._lock:
+                self._invalidate_locked()
                 new_gen = self._next_generation
                 self._next_generation += 1
                 tracked.generation = new_gen
@@ -944,6 +1041,7 @@ class GameLogStream:
                         kind=fact.kind,
                         amount=fact.amount,
                         source=fact.source,
+                        observed_name=fact.observed_name,
                     )
                 )
             self._match_custom(line, character, gen, sid, pending, stop_event)

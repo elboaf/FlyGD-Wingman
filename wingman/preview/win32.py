@@ -58,6 +58,17 @@ SW_RESTORE = 9
 HWND_MESSAGE = -3
 HWND_TOPMOST = -1
 
+# --- DWM -----------------------------------------------------------------
+# DwmGetWindowAttribute(DWMWA_CLOAKED) reports WHY a window is composited
+# off. Only the shell variant matters to us: it is how a virtual-desktop
+# switch manifests on a window that stays "visible" by every other read
+# (#264 -- previews followed the switch because nothing else distinguishes
+# them). DWM_CLOAKED_APP is application-managed (UWP suspend) and must not
+# read as "on another desktop".
+DWMWA_CLOAKED = 14
+DWM_CLOAKED_APP = 1
+DWM_CLOAKED_SHELL = 2
+
 # --- Messages -----------------------------------------------------------
 WM_DESTROY = 0x0002
 WM_MOVE = 0x0003
@@ -98,6 +109,11 @@ WM_CANCELMODE = 0x001F
 WM_CAPTURECHANGED = 0x0215
 WM_TIMER = 0x0113
 WM_MOUSEMOVE = 0x0200
+WM_MOUSEACTIVATE = 0x0021
+# WM_MOUSEACTIVATE return: do not activate the clicked window. WS_EX_NOACTIVATE
+# alone proved not to be honored for these popup windows in the field -- the
+# click still took the foreground for a moment (ring-debug log, #261).
+MA_NOACTIVATE = 3
 WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
 WM_RBUTTONDOWN = 0x0204

@@ -3,6 +3,7 @@
 (function () {
   var button = WM.el('btn-fleetbar');
   var check = WM.el('fleetbar-enabled');
+  var hideInactive = WM.el('fleetbar-hide-inactive'), filterPending = false;
   var reset = WM.el('fleetbar-reset');
   var status = WM.el('fleetbar-enabled-status');
   var characterHost = WM.el('fleetbar-character-list');
@@ -264,6 +265,10 @@
       if (screenshotFixture || check !== document.activeElement) check.checked = lastGood;
     }
     if (reset) { reset.disabled = false; }
+    if (hideInactive) {
+      hideInactive.disabled = filterPending;
+      if (!filterPending) hideInactive.checked = !!section.hide_inactive;
+    }
     renderCharacters(section.characters);
   }
 
@@ -303,6 +308,24 @@
       }, function () {
         writesInFlight -= 1;
         failed(true, 'Could not change the Fleet Bar.');
+      });
+    });
+  }
+  if (hideInactive) {
+    hideInactive.disabled = true;
+    hideInactive.addEventListener('change', function () {
+      if (screenshotFixture || !hydrated || filterPending) return;
+      filterPending = true; hideInactive.disabled = true; writesInFlight += 1;
+      function finish(res) {
+        filterPending = false; writesInFlight -= 1;
+        if (!fieldResult(res) && (!res || !res.error)) {
+          setStatusMessage('Could not save the activity filter.');
+        }
+        if (lastState) render(lastState);
+        hideInactive.disabled = false;
+      }
+      WM.send('fleet_bar_set_hide_inactive', hideInactive.checked).then(finish, function () {
+        finish({ applied: false, error: 'Could not save the activity filter.' });
       });
     });
   }

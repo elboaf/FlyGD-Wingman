@@ -343,6 +343,7 @@ def _fleet_bar_defaults() -> dict:
         # the long-lived fixed width needs no settings-version bump: an
         # older document with the key absent still opens at that same width.
         "preferred_content_width": FLEET_BAR_DEFAULT_PREFERRED_CONTENT_WIDTH,
+        "hide_inactive": False,
         "seen": [],
         "hidden": [],
     }
@@ -885,8 +886,9 @@ def validated_fleet_bar(raw) -> dict:
     section = _fleet_bar_defaults()
     if not isinstance(raw, dict):
         return section
-    if isinstance(raw.get("enabled"), bool):
-        section["enabled"] = raw["enabled"]
+    for key in ("enabled", "hide_inactive"):
+        if isinstance(raw.get(key), bool):
+            section[key] = raw[key]
     for key in ("x", "y"):
         value = raw.get(key)
         if isinstance(value, int) and not isinstance(value, bool):

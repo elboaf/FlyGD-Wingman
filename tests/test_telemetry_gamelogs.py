@@ -9,6 +9,7 @@ import datetime
 import os
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
@@ -124,6 +125,112 @@ class _AttemptSignallingLock:
 # ---------------------------------------------------------------------------
 # Source lifecycle and ordering
 # ---------------------------------------------------------------------------
+
+
+def test_truncation_reserves_before_cursor_and_generation_mutation(
+    tmp_path, monkeypatch
+):
+    from wingman.telemetry.admission import _SourceAuthority
+
+    authority = _SourceAuthority()
+    stream = _stream(_source_admission=authority)
+    path = _log(tmp_path, "Alice", OUTGOING_DAMAGE_LINE)
+    stream.start(tmp_path)
+    stream.scan_once(NOW)
+    tracked = stream._tracked["Alice"]
+    original = (tracked.generation, tracked.position, tracked.decoder.getstate())
+    reserve = authority._reserve
+    seen = []
+
+    def before_mutation(lane, lifetime):
+        receipt = reserve(lane, lifetime)
+        assert (
+            tracked.generation,
+            tracked.position,
+            tracked.decoder.getstate(),
+        ) == original
+        assert stream._tracked["Alice"] is tracked
+        seen.append(receipt)
+        return receipt
+
+    monkeypatch.setattr(authority, "_reserve", before_mutation)
+    path.write_text(
+        HEADER.format(name="Alice", session=HEADER_DEFAULT_SESSION), encoding="utf-8"
+    )
+    stream.scan_once(NOW)
+    assert len(seen) == 1
+    assert tracked.generation != original[0]
+    assert stream.stop()
+
+
+def test_refused_restart_does_not_wait_for_timed_out_operation(tmp_path):
+    from wingman.telemetry.admission import _SourceAuthority
+
+    class Worker:
+        alive = True
+
+        def start(self):
+            pass
+
+        def join(self, timeout=None):
+            pass
+
+        def is_alive(self):
+            return self.alive
+
+    authority = _SourceAuthority()
+    worker = Worker()
+    stream = _stream(
+        _source_admission=authority, _thread_factory=lambda **kwargs: worker
+    )
+    assert stream.start(tmp_path)
+    original = stream._admission_receipt
+    assert stream.stop(0) is False
+    done = threading.Event()
+    result = []
+
+    def restart():
+        result.append(stream.start(tmp_path))
+        done.set()
+
+    with stream._op_lock:
+        thread = threading.Thread(target=restart)
+        thread.start()
+        refused_promptly = done.wait(1)
+    thread.join(5)
+    assert not thread.is_alive()
+    worker.alive = False
+    assert stream.stop()
+    assert refused_promptly
+    assert result == [False]
+    assert authority._operation("stream", original.lifetime) is None
+
+
+def test_detached_stream_delivery_keeps_original_lifetime_and_semantics(tmp_path):
+    from wingman.telemetry.admission import _SourceAuthority
+
+    authority = _SourceAuthority()
+    stream = _stream(_source_admission=authority)
+    assert stream.start(tmp_path)
+    stream.scan_once(NOW)
+    original = stream._admission_receipt.lifetime
+    semantic, admitted = [], []
+
+    def restart(event):
+        semantic.append(event)
+        if len(semantic) == 1:
+            assert stream.stop()
+            assert stream.start(tmp_path)
+
+    stream.subscribe(restart)
+    stream._subscribe_admission(lambda batch, proof: admitted.append((batch, proof)))
+    _log(tmp_path, "Alice", OUTGOING_DAMAGE_LINE)
+    stream.scan_once(NOW)
+    assert sum(isinstance(event, CombatFact) for event in semantic) == 1
+    assert [event for batch, _ in admitted for event in batch.events] == semantic
+    assert all(proof.operation.lifetime is original for _, proof in admitted)
+    assert stream._admission_receipt.lifetime is not original
+    assert stream.stop()
 
 
 class TestSourceLifecycleAndOrdering:
@@ -986,6 +1093,124 @@ class TestDedupBeforeCap:
 
 
 class TestCombatFactParsing:
+    @pytest.fixture
+    def player_scramble_line(self):
+        path = Path(__file__).parent / "fixtures" / "gamelogs" / "player_scramble.txt"
+        return next(
+            line
+            for line in path.read_text(encoding="utf-8-sig").splitlines(keepends=True)
+            if "Warp scramble attempt" in line
+        )
+
+    def test_appended_tackle_carries_observed_name(
+        self, tmp_path, player_scramble_line
+    ):
+        stream = _stream()
+        received = _collect(stream)
+        path = _log(tmp_path, "Torvin Wexley")
+        try:
+            stream.start(tmp_path)
+            stream.scan_once(NOW)
+            (active,) = [e for e in received if isinstance(e, SourceLifecycle)]
+            assert active.active
+            with path.open("a", encoding="utf-8") as output:
+                output.write(player_scramble_line)
+            stream.scan_once(NOW)
+            (fact,) = [e for e in received if isinstance(e, CombatFact)]
+            assert fact.character == "Torvin Wexley"
+            assert fact.kind == "incoming_scram"
+            assert fact.amount is None
+            assert fact.source.encode("utf-8") == b"Talia Renn [KVOS] Taranis"
+            assert fact.occurred_at == datetime.datetime(
+                2025, 11, 14, 6, 41, 8, tzinfo=UTC
+            )
+            assert fact.source_generation == active.generation
+            assert fact.source_id == active.source_id
+            assert fact.observed_name == "Talia Renn"
+        finally:
+            stream.stop()
+
+    @pytest.mark.parametrize("reader", ["Torvin Wexley", "Nobody Atall", "Talia Renn"])
+    def test_named_victim_tackle_only_reaches_victim(
+        self, tmp_path, player_scramble_line, reader
+    ):
+        line = player_scramble_line.replace("you!", "Torvin Wexley [OXWLD] Drekavac")
+        stream = _stream()
+        received = _collect(stream)
+        path = _log(tmp_path, reader)
+        try:
+            stream.start(tmp_path)
+            stream.scan_once(NOW)
+            assert stream.characters() == (reader,)
+            with path.open("a", encoding="utf-8") as output:
+                output.write(line)
+            stream.scan_once(NOW)
+            facts = [e for e in received if isinstance(e, CombatFact)]
+            if reader == "Torvin Wexley":
+                (fact,) = facts
+                assert fact.kind == "incoming_scram"
+                assert fact.observed_name == "Talia Renn"
+            else:
+                assert facts == []
+        finally:
+            stream.stop()
+
+    def test_split_utf8_preserves_observed_tackle_name(
+        self, tmp_path, player_scramble_line
+    ):
+        line = player_scramble_line.replace("Talia Renn", "Straße Renn").encode("utf-8")
+        cut = line.index(b"\xc3\x9f") + 1
+        stream = _stream()
+        received = _collect(stream)
+        path = _log(tmp_path, "Torvin Wexley")
+        try:
+            stream.start(tmp_path)
+            stream.scan_once(NOW)
+            with path.open("ab") as output:
+                output.write(line[:cut])
+            stream.scan_once(NOW)
+            assert not [e for e in received if isinstance(e, CombatFact)]
+            with path.open("ab") as output:
+                output.write(line[cut:])
+            stream.scan_once(NOW)
+            facts = [e for e in received if isinstance(e, CombatFact)]
+            (fact,) = facts
+            assert fact.kind == "incoming_scram"
+            assert fact.source.encode("utf-8") == b"Stra\xc3\x9fe Renn [KVOS] Taranis"
+            assert fact.observed_name == "Straße Renn"
+            stream.scan_once(NOW)
+            assert [e for e in received if isinstance(e, CombatFact)] == facts
+        finally:
+            stream.stop()
+
+    def test_appended_unresolved_tackle_remains_unnamed(self, tmp_path):
+        fixture = (
+            Path(__file__).parent / "fixtures" / "gamelogs" / "player_unresolved.txt"
+        )
+        line = next(
+            line
+            for line in fixture.read_text(encoding="utf-8-sig").splitlines(
+                keepends=True
+            )
+            if "Warp disruption attempt" in line
+        )
+        stream = _stream()
+        received = _collect(stream)
+        path = _log(tmp_path, "Rendik Ashvale")
+        try:
+            stream.start(tmp_path)
+            stream.scan_once(NOW)
+            with path.open("a", encoding="utf-8") as output:
+                output.write(line)
+            stream.scan_once(NOW)
+            (fact,) = [e for e in received if isinstance(e, CombatFact)]
+            assert fact.kind == "incoming_point"
+            assert fact.amount is None
+            assert fact.source.encode("utf-8") == b"Doran Velk Proteus"
+            assert fact.observed_name is None
+        finally:
+            stream.stop()
+
     def test_incoming_damage(self, tmp_path):
         stream = _stream()
         received = _collect(stream)

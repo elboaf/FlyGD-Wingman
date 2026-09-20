@@ -103,8 +103,8 @@ packages = [
 ]
 
 [tool.setuptools.package-data]
-# Bundled full setups and their notices must also survive wheel installation.
-wingman = ["assets/setup-presets/*.json", "assets/setup-presets/*.txt"]
+# Bundled full setups/notices and the frozen combat profile must survive wheels.
+wingman = ["assets/setup-presets/*.json", "assets/setup-presets/*.txt", "data/fleet-combat-v2-profile.json"]
 
 [tool.setuptools.dynamic]
 # attr=, so the build reads the literal without importing the package --

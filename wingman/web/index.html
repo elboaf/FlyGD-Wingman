@@ -1319,6 +1319,12 @@
           <p class="field-msg" id="fleetbar-enabled-status" role="status"></p>
         </div>
         <p class="hint" id="fleetbar-character-scope">Local display choices do not change collection, sharing or verification.</p>
+        <div class="setting-row">
+          <label class="check"><input type="checkbox" id="fleetbar-hide-inactive" disabled><span class="box"></span>
+            Only show characters active in the last 30 seconds
+          </label>
+        </div>
+        <p class="hint">This filters the display only. Quiet characters stay in your character list and continue to be monitored.</p>
         <div class="row">
           <button class="btn" id="fleetbar-reset">Reset width</button>
           <span class="hint">Restores the saved 500px content width.</span></div>
@@ -1347,7 +1353,7 @@
           </label>
           <button class="btn" id="sharing-confirm-on" hidden>Confirm sharing On</button>
         </div>
-        <p class="hint" id="sharing-scope">Shares sparse current DPS and scram / point state with eligible authGD Members in the same verified fleet, never raw logs or history.</p>
+        <p class="hint" id="sharing-scope">Shares sparse current incoming/outgoing DPS and incoming scram, point and neutralization observations, including observed tackle names, with eligible authGD Members in the same verified fleet, never raw logs or history. Combat details need separate browser approval.</p>
         <p class="field-msg" id="sharing-preference" role="status"></p>
         <p class="hint" id="sharing-consent" role="status"><span class="status-announcement" id="sharing-consent-announcement"></span><span id="sharing-consent-label"></span></p>
         <p class="operational-status" id="sharing-eligibility" role="status"></p>
@@ -1359,6 +1365,7 @@
           <p class="hint" id="sharing-connection" role="status">Reading connection state…</p>
           <p class="field-msg" id="sharing-browser-error" role="status"></p>
           <button class="btn" id="sharing-connect" disabled>Connect…</button>
+          <button class="btn" id="sharing-combat" disabled>Approve combat sharing…</button>
         </div>
         <div id="sharing-current">
           <h3>Current verification</h3>
@@ -1375,6 +1382,28 @@
         <details id="sharing-history" class="fleet-characters" hidden>
           <summary id="sharing-history-summary">Previous attempts (0)</summary>
           <div id="sharing-history-sources" class="sharing-sources"></div>
+        </details>
+        <h3>Automatic boss verification</h3>
+        <label class="check">
+          <input type="checkbox" id="sharing-automatic" disabled aria-describedby="sharing-automatic-scope"><span class="box"></span>
+          Automatically verify my fleet boss
+        </label>
+        <p class="hint" id="sharing-automatic-scope">Applies to your authGD account across restarts and future fleets. Uses Fleet Read from your owned characters. This does not turn this PC's sharing On.</p>
+        <p class="operational-status" id="sharing-automatic-status" role="status">Automatic verification has not been observed.</p>
+        <div class="row">
+          <button class="btn" id="sharing-automatic-confirm" hidden>Confirm automatic On…</button>
+          <button class="btn" id="sharing-automatic-cancel" hidden>Cancel pending automatic On</button>
+          <button class="btn" id="sharing-automatic-dismiss" hidden>Acknowledge unresolved automatic request…</button>
+        </div>
+        <p class="hint" id="sharing-setup-history" role="status"></p>
+        <details id="sharing-legacy-history" class="fleet-characters" hidden>
+          <summary>Saved setup history</summary>
+          <p class="hint" id="sharing-legacy-summary"></p>
+          <p class="hint">Requests saved by an older version cannot be replayed. Dismissing an unresolved request acknowledges that its outcome is unknown; it does not cancel an action on authGD.</p>
+          <div class="row">
+            <button class="btn" id="sharing-legacy-dismiss">Dismiss saved requests…</button>
+            <button class="btn" id="sharing-legacy-remove" hidden>Remove dismissed history…</button>
+          </div>
         </details>
         <div class="sharing-new-attempt">
         <h3>Start a new verification</h3>

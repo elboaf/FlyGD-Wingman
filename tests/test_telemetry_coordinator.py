@@ -362,6 +362,28 @@ def _harness(tmp_path, **kw):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("with_authority", [False, True])
+def test_legacy_producers_keep_local_delivery_but_never_certify(
+    tmp_path, with_authority
+):
+    from wingman.telemetry.admission import _SourceAuthority
+
+    h = _harness(
+        tmp_path, _source_admission=_SourceAuthority() if with_authority else None
+    )
+    admitted = []
+    unsubscribe = h.coordinator.subscribe_admitted_fleet(admitted.append)
+    h.subscribe()
+    h.coordinator.reconcile()
+    h.discovery.publish(_roster(_session("Alice"), generation=1))
+    h.pump()
+    assert h.snapshots
+    assert admitted == []
+    assert h.metrics.envelopes
+    unsubscribe()
+    assert h.coordinator.stop()
+
+
 @pytest.mark.parametrize("fail_save", [False, True])
 def test_preview_master_transaction_keeps_independent_fleet_discovery(
     tmp_path, monkeypatch, fail_save

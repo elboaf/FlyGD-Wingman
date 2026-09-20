@@ -1710,6 +1710,12 @@ def test_status_ellipsis_keeps_the_complete_text_and_title():
     assert "KINDS.indexOf(kind)" in status.group(1)
 
 
+def test_companion_focus_checkbox_hides_its_author_display():
+    # This label is created by companions.js, so the static-HTML hidden guard
+    # cannot see it. The shared .check display otherwise defeats native hidden.
+    assert ".companion-enabled-group > .check[hidden] { display: none; }" in CSS
+
+
 def test_status_progress_forced_colors_are_root_owned():
     forced_root = re.search(
         r"@media\s*\(forced-colors:\s*active\)\s*\{\s*:root\s*\{([^}]+)\}",

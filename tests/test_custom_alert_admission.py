@@ -87,6 +87,90 @@ def runtime(tmp_path):
         h.coordinator.stop()
 
 
+def test_connected_real_stream_custom_only_pressure_uses_one_sentinel(tmp_path):
+    from tests.test_client_discovery import ALICE
+    from tests.test_telemetry_gamelogs import NOW, _log
+    from wingman.telemetry.admission import _SourceAuthority
+    from wingman.telemetry.clients import ClientDiscovery
+    from wingman.telemetry.clients import _noop_thread_factory as no_clients
+    from wingman.telemetry.coordinator import TelemetryCoordinator, _noop_thread_factory
+    from wingman.telemetry.gamelogs import GameLogStream
+    from wingman.telemetry.gamelogs import _noop_thread_factory as no_stream
+    from wingman.telemetry.metrics import FleetMetrics
+
+    source = _SourceAuthority()
+    custom = [_snapshot()]
+    policy = FakePolicy()
+    discovery = ClientDiscovery(
+        _enumerate_clients=lambda: [ALICE],
+        _thread_factory=no_clients,
+        _source_admission=source,
+    )
+    stream = GameLogStream(
+        custom_snapshot=lambda: custom[0],
+        _thread_factory=no_stream,
+        _utc_now=lambda: NOW,
+        _source_admission=source,
+    )
+    coordinator = TelemetryCoordinator(
+        preview_enabled=lambda: True,
+        fleet_enabled=lambda: False,
+        alerts_enabled=lambda: True,
+        gamelogs_folder=lambda: tmp_path,
+        discovery=discovery,
+        stream=stream,
+        metrics=FleetMetrics(),
+        alert_policy=policy,
+        custom_snapshot=lambda: custom[0],
+        _thread_factory=_noop_thread_factory,
+        _source_admission=source,
+    )
+    coordinator.reconcile()
+    try:
+        discovery.scan_once()
+        stream.scan_once(NOW)
+        path = _log(tmp_path, "Alice")
+        stream.scan_once(NOW)
+        coordinator.dispatch_once(0)
+        seen = []
+        original_callback = stream._admission_subscribers[0]
+        stream._subscribe_admission(
+            lambda batch, proof: seen.extend(batch.custom_matches)
+        )
+        for _ in range(2000):
+            with path.open("a", encoding="utf-8") as output:
+                output.write("fleet invite\n")
+            stream.scan_once(NOW)
+        assert len(seen) == 2000
+        assert len(coordinator._custom_pending) == 1
+        assert coordinator._queue.qsize() == 1
+        coordinator.dispatch_once(0)
+        assert policy.custom_calls == [(seen[-1],)]
+        assert coordinator._queue.empty()
+        assert coordinator._custom_pending == {}
+        # A detached copy of the real installed callback retains its old custom
+        # epoch. Empty stale deliveries must not bypass the bounded mailbox.
+        coordinator._reconcile_stream(None)
+        before = coordinator._queue.qsize()
+        for _ in range(2000):
+            original_callback(StreamBatch(custom_matches=(seen[-1],)), None)
+        assert coordinator._queue.qsize() == before
+        assert coordinator._custom_pending == {}
+        coordinator.dispatch_once(0)
+        assert policy.custom_calls == [(seen[-1],)]
+        coordinator._reconcile_stream(tmp_path)
+        stream.scan_once(NOW)
+        coordinator.dispatch_once(0)
+        with path.open("a", encoding="utf-8") as output:
+            output.write("fleet invite\n")
+        stream.scan_once(NOW)
+        coordinator.dispatch_once(0)
+        assert len(policy.custom_calls) == 2
+        assert policy.custom_calls[-1] == (seen[-1],)
+    finally:
+        assert coordinator.stop()
+
+
 def test_repeated_custom_keys_use_one_sentinel(runtime):
     h, authority = runtime()
     match = _match(authority[0])

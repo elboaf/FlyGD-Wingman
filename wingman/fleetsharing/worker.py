@@ -19,11 +19,12 @@ import logging
 import random
 import secrets
 import threading
-import time
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from fractions import Fraction
+from math import inf, isfinite, nextafter
+from typing import Literal, get_args
 from uuid import uuid4
 
 from ..telemetry.model import FleetSnapshot
@@ -32,8 +33,9 @@ from . import protocol as p
 from . import state as s
 from .client import FleetRelayClient, FleetRelayError
 from .config import resolve_relay_origin
-from .model import FleetCatalogue, PublishRow
-from .scheduling import OPERATIONS, SIGNED_INTERVAL_S, Scheduler, Work
+from .model import FleetCatalogue, PublicationSource, TimedSnapshot, TimingFenceReason
+from .scheduling import OPERATIONS, SIGNED_INTERVAL_S, Work
+from .timing import TimingContext, _ClockContradiction, _TimingLoss
 
 logger = logging.getLogger(__name__)
 BASE_BACKOFF_S = 1.0
@@ -49,6 +51,7 @@ MAX_SNAPSHOT_AGE_S = 5.0
 # even on healthy low-latency links. Leave room for read service and full RTT.
 HEARTBEAT_INTERVAL_S = 1.0
 CAPABILITIES = (p.SHARED_CAPABILITY,)
+COMBAT_CAPABILITIES = (*CAPABILITIES, p.COMBAT_CAPABILITY)
 # Only these classifications may reach status. Never render an exception body.
 ERROR_CODES = frozenset(
     (
@@ -56,12 +59,16 @@ ERROR_CODES = frozenset(
         "forbidden",
         "conflict",
         "revision_replayed",
+        "receipt_not_found",
+        "receipt_capacity",
+        "request_id_conflict",
         "rate_limited",
         "transport_error",
         "server_error",
         "bad_request",
         "bad_headers",
         "not_found",
+        "not_completable",
         "invalid_intent",
         "capability_required",
         "fleet_read_required",
@@ -96,6 +103,7 @@ class PendingSourceStatus:
     operation: str
     character_id: int | None
     stage: str
+    command: p.SourceCommand | None = None
 
 
 @dataclass(frozen=True)
@@ -118,13 +126,22 @@ class SharingStatus:
     source_results: tuple[PendingSourceStatus, ...] = ()
     order: int = 0
     pairing_action_id: str | None = None
+    automatic: s.AutomaticState = field(default_factory=s.AutomaticState)
+    automatic_status: p.AutomaticStatus | None = None
+    automatic_stage: str | None = None
+    automatic_request_id: str | None = None
+    automatic_choice: bool | None = None
+    cutover_outcomes: tuple[s.CutoverOutcome, ...] = ()
+    cutover_present: bool = False
+    command_sequence: int = 0
+    pending_participation: s.PendingParticipation | None = None
+    pending_pairing: s.PendingPairing | None = None
+    pending_recovery: s.PendingRecovery | None = None
 
 
 @dataclass(frozen=True)
 class RemoteEvent:
-    rows: tuple[p.ObservedRemoteRow, ...]
-    receipt_monotonic: float
-    request_elapsed: float
+    payload: TimedSnapshot | None
     lifecycle_epoch: int
     identity_epoch: int
     kind: Literal["replace", "clear"]
@@ -148,6 +165,8 @@ class _Command:
     payload: object
     identity_epoch: int
     binding: str | None
+    supersedes: object = None
+    automatic_history: s.AutomaticState | None = None
 
 
 @dataclass(frozen=True)
@@ -157,6 +176,38 @@ class _Fence:
     session: str | None
     participation: int
     source: tuple[tuple[str, int], ...]
+    automatic: int
+    # Independent from control admission: a timing loss must not obsolete an
+    # otherwise authorized Off/Stop/receipt or identity/control observation.
+    timing: int = field(compare=False)
+
+
+@dataclass(frozen=True)
+class _EligibilityProof:
+    response: p.Eligibility
+    fence: _Fence
+    deadlines: tuple[tuple[int, Fraction], ...]
+
+
+@dataclass(frozen=True)
+class _PublicationSelection:
+    source: PublicationSource | None
+    snapshot: FleetSnapshot | None
+    catalogue: FleetCatalogue
+    eligibility: p.Eligibility
+    proof: _EligibilityProof
+    eligible_character_ids: frozenset[int]
+    member_deadlines: tuple[Fraction, ...]
+    session_deadline: Fraction
+    semantic: tuple
+    withdrawal_reason: Literal["inactive", "source_eligibility_lost"] | None = None
+
+
+@dataclass(frozen=True)
+class _OffWithdrawal:
+    session_deadline: Fraction
+    auth: tuple | None
+    reason: Literal["explicit_off"] = "explicit_off"
 
 
 class _Obsolete(Exception):
@@ -164,6 +215,10 @@ class _Obsolete(Exception):
 
 
 class _PersistenceFailed(Exception):
+    pass
+
+
+class _LoadFailed(Exception):
     pass
 
 
@@ -184,23 +239,19 @@ def _noop_thread_factory(*, target, args, name, daemon):
     return _NoopThread()
 
 
-def _no_op_save_state(_state):
-    """Compatibility seam; production must supply the atomic file writer."""
-
-
 class FleetSharingWorker:
     def __init__(
         self,
         *,
         load_state: Callable[[], s.SharingState],
+        timing_context: TimingContext,
         client_factory=FleetRelayClient,
         unwrap_private_key=s.unwrap_private_key,
         sharing_enabled=lambda: True,
-        save_state=_no_op_save_state,
+        save_state: Callable[[s.SharingState], None],
         wrap_private_key=s.wrap_private_key,
         _generate_private_key=crypto.generate_private_key,
         _thread_factory=threading.Thread,
-        _clock=time.monotonic,
         _utc_clock=lambda: datetime.now(UTC),
         _jitter=random.random,
     ):
@@ -212,14 +263,15 @@ class FleetSharingWorker:
         self._generate_private_key = _generate_private_key
         self._sharing_enabled = sharing_enabled
         self._thread_factory = _thread_factory
-        self._clock = _clock
+        self._timing_context = timing_context
+        self._clock = timing_context._clock
         self._utc_clock = _utc_clock
         self._jitter = _jitter
         self._lock = threading.Lock()
         self._status_lock = threading.Lock()
         self._lifecycle_lock = threading.Lock()
         self._iteration_lock = threading.Lock()
-        self._latest: tuple[FleetSnapshot, float] | None = None
+        self._latest: PublicationSource | None = None
         self._pending = threading.Event()
         self._commands: dict[str, _Command] = {}
         self._deferred_commands: dict[str, _Command] = {}
@@ -228,6 +280,11 @@ class FleetSharingWorker:
         self._remote_order = 0
         self._catalogue_order = 0
         self._participation_generation = 0
+        self._automatic_generation = 0
+        self._automatic_observation = None
+        self._automatic_probe = False
+        self._automatic_receipt_first = True
+        self._automatic_fenced_command = None
         self._source_generations: dict[str, int] = {}
         self._identity_epoch = 0
         # Submission fences completions; only a durably changed key/origin
@@ -242,6 +299,8 @@ class FleetSharingWorker:
         self._status = SharingStatus("stopped")
         self._durable_sources: tuple[PendingSourceStatus, ...] = ()
         self._pairing_action_id = None
+        self._pairing_pollable = None
+        self._parked_pairing = None
         self._subscribers: dict[str, dict[object, Callable]] = {
             "status": {},
             "remote": {},
@@ -253,40 +312,220 @@ class FleetSharingWorker:
 
         # Owner-only state, never reconstructed from a stale pass-local copy.
         self._state: s.SharingState | None = None
+        self._quarantined = False
+        self._identity_mismatch = False
+        self._authenticated_device = None
+        self._control_auth = None
+        self._control_db_fact = None
+        # Public loss closes this under the submission lock, independently of
+        # terminal auth. The DB fact never anchors or reopens retained timing.
+        self._control_time_fenced = timing_context._timing_loss is not None
         self._client = None
         self._client_origin = None
-        self._scheduler = Scheduler()
+        self._scheduler = timing_context._scheduler
         self._local_retry_at = 0.0
         self._needs_device = True
         self._resume_metadata = False
-        self._fresh_on: str | None = None
         self._part_observe = True
         self._needs_fresh_intent = False
         self._source_observe: set[str] = set()
         self._withdraw_needed = False
         self._catalogue: FleetCatalogue | None = None
         self._eligibility: p.Eligibility | None = None
+        self._eligibility_proof: _EligibilityProof | None = None
         self._sources: p.Sources | None = None
         self._due = dict.fromkeys(
-            ("device", "catalogue", "eligibility", "read", "sources"), 0.0
+            ("device", "catalogue", "eligibility", "read", "sources", "automatic"), 0.0
         )
         self._expiry_binding = None
         self._renew_at = 0.0
-        self._expires_at = 0.0
-        self._last_published: tuple[PublishRow, ...] = ()
+        self._expires_at = Fraction(0)
+        self._last_published: tuple = ()
         self._last_publish_at = 0.0
         self._pause_binding = None
         self._pause_until = 0.0
 
-    def submit(self, snapshot: FleetSnapshot) -> None:
+    def fence_timing(self, reason: TimingFenceReason) -> None:
+        """Permanently close this retained lifetime; never a reset/recovery API."""
+        if reason not in get_args(TimingFenceReason):
+            raise ValueError("Unknown timing loss reason.")
         with self._lock:
-            self._latest = (snapshot, self._clock())
+            clear = self._fence_timing_locked(reason)
+        self._pending.set()
+        if clear is not None:
+            self._notify("remote", clear)
+
+    def _fence_timing_locked(self, reason):
+        context = self._timing_context
+        self._control_time_fenced = True
+        if context._timing_loss is not None:
+            return None
+        cutoff = None
+        if reason in ("clock_inconsistent", "db_continuity_lost"):
+            try:
+                stamp = self._clock()
+                if isfinite(stamp):
+                    cutoff = stamp
+            except Exception:  # noqa: BLE001 — optional context-clock failure cannot block permanent closure.
+                # No comparable F; never log or expose private exception details.
+                cutoff = None
+        context._timing_loss = _TimingLoss(reason, cutoff)
+        context._timing_generation += 1
+        return self._remote_event_locked(None, "clear")
+
+    def _apply_timing_loss(self):
+        """Only the signed lane mutates histories; use the signal's fixed F."""
+        context = self._timing_context
+        with self._lock:
+            notice = context._timing_loss
+            if notice is None or context._loss_applied:
+                return
+            context._loss_applied = True
+        if notice.reason == "clock_inconsistent":
+            context._inconsistent = True
+        if notice.cutoff is not None:
+            context._publisher_lost_continuity(cutoff=notice.cutoff)
+        # Untrustworthy elapsed has no comparable F. Keep old pins behind the
+        # permanent fence; a full client/model restart is the only fresh lifetime.
+        context._receiver_lost_history()
+        self._update_status(state="refused", detail=notice.reason)
+
+    def _timing_open_locked(self, fence):
+        context = self._timing_context
+        return (
+            context._timing_loss is None
+            and not context._inconsistent
+            and fence.timing == context._timing_generation
+            and self._control_auth_current_locked()
+            and self._timing_scope_current_locked()
+        )
+
+    def _timing_scope_current_locked(self):
+        context = self._timing_context
+        scope = context._authenticated_scope
+        return bool(
+            scope is not None
+            and self._control_auth is not None
+            and scope[:2] == self._control_auth[3:]
+            and scope[2] is context._db_continuity_token
+            and scope[3] is context._elapsed_lifetime_token
+        )
+
+    def _accept_timing_candidate(self, candidate, fence, work, *, remote=False):
+        clear = event = None
+        with self._lock:
+            self._check_locked(fence, work=work)
+            if not self._timing_open_locked(fence):
+                return
+            if isinstance(candidate, _ClockContradiction):
+                if candidate.base is self._timing_context._state:
+                    clear = self._fence_timing_locked(candidate.reason)
+                    self._timing_context._inconsistent = True
+            elif (
+                candidate is not None
+                and self._timing_context._commit_diagnostic(candidate)
+                and remote
+            ):
+                event = self._remote_event_locked(
+                    candidate.state.receiver.payload, "replace"
+                )
+        if clear is not None:
+            self._notify("remote", clear)
+        elif event is not None:
+            self._notify("remote", event)
+
+    def submit(self, source: PublicationSource) -> None:
+        with self._lock:
+            self._latest = source
         self._pending.set()
 
-    def _queue(self, key, kind, payload, *, binding=None):
+    def _queue(
+        self,
+        key,
+        kind,
+        payload,
+        *,
+        binding=None,
+        supersedes=None,
+        automatic_history=None,
+        expected_sequence=None,
+    ):
         with self._lock:
+            # Compare before reserving an identity epoch. The displayed setup
+            # cannot erase an intervening Off, even if it has already been saved
+            # and disappeared from the queue since the bridge's status read.
+            if expected_sequence is not None and expected_sequence != self._sequence:
+                return None
             if binding is not None and binding != self._status.metadata.binding:
                 return None
+            if kind == "cancel_automatic":
+                queued = self._commands.get(key)
+                if (
+                    queued is not None
+                    and queued.payload[0] == payload[0]
+                    and self._command_binding_current(queued, self._status.metadata)
+                ):
+                    return queued
+                pending = self._state.automatic.pending if self._state else None
+                if (
+                    pending is not None
+                    and pending.command.request_id == payload[0]
+                    and pending.cancel_after_on is not None
+                ):
+                    payload = payload[0], pending.cancel_after_on
+                    if "remove_cancel" not in self._commands:
+                        return _Command(
+                            self._sequence, kind, payload, self._identity_epoch, binding
+                        )
+                queued_on = self._commands.get("automatic")
+                if (
+                    queued_on is not None
+                    and queued_on.kind == "automatic"
+                    and queued_on.payload.request_id == payload[0]
+                ):
+                    # Cancel this displayed, not-yet-durable proposal before
+                    # ingestion can replace an older journal. The generation
+                    # below also fences a save already admitted by the owner;
+                    # its committed On is then cancelled through the usual path.
+                    self._commands.pop("automatic")
+                    self._deferred_commands.pop("automatic", None)
+            if kind == "dismiss_source" and (
+                self._state is None
+                or payload not in self._state.pending_source_commands
+            ):
+                return None
+            if (
+                kind == "source"
+                and isinstance(payload, p.StopSource)
+                and supersedes is None
+            ):
+                queued = self._commands.get(key)
+                previous = (
+                    queued.payload
+                    if queued is not None
+                    else next(
+                        (
+                            c
+                            for c in (
+                                self._state.pending_source_commands
+                                if self._state
+                                else ()
+                            )
+                            if c.source_id.lower() == payload.source_id.lower()
+                        ),
+                        None,
+                    )
+                )
+                if (
+                    isinstance(previous, p.StopSource)
+                    and previous.expected_generation == payload.expected_generation
+                    and previous.expected_automatic == payload.expected_automatic
+                    and (
+                        queued is None
+                        or self._command_binding_current(queued, self._status.metadata)
+                    )
+                ):
+                    return queued or previous
             if (
                 kind == "source"
                 and key not in self._commands
@@ -323,8 +562,30 @@ class FleetSharingWorker:
                     participation_intent_id=payload.intent_id,
                     participation_order=self._sequence + 1,
                 )
-            elif kind == "source":
-                source_id = payload.source_id
+            elif kind in (
+                "automatic",
+                "cancel_automatic",
+                "dismiss_automatic",
+                "remove_cancel",
+            ):
+                self._automatic_generation += 1
+                changes = dict(
+                    automatic_stage="queued",
+                    automatic_choice=payload.enabled
+                    if kind == "automatic"
+                    else False
+                    if kind == "cancel_automatic"
+                    else None,
+                    automatic_request_id=(
+                        payload.request_id
+                        if kind == "automatic"
+                        else payload[1].request_id
+                        if kind == "cancel_automatic"
+                        else payload.command.request_id
+                    ),
+                )
+            elif kind in ("source", "dismiss_source"):
+                source_id = payload.source_id.lower()
                 self._source_generations[source_id] = (
                     self._source_generations.get(source_id, 0) + 1
                 )
@@ -338,11 +599,17 @@ class FleetSharingWorker:
                 )
             self._sequence += 1
             command = _Command(
-                self._sequence, kind, payload, self._identity_epoch, binding
+                self._sequence,
+                kind,
+                payload,
+                self._identity_epoch,
+                binding,
+                supersedes,
+                automatic_history,
             )
             self._commands[key] = command
             clear = (
-                self._remote_event_locked((), self._clock(), 0, "clear")
+                self._remote_event_locked(None, "clear")
                 if kind == "pairing"
                 or (kind == "participation" and not payload.enabled)
                 else None
@@ -354,6 +621,7 @@ class FleetSharingWorker:
                     self._status,
                     **changes,
                     order=self._status.order + 1,
+                    command_sequence=self._sequence,
                     pending_sources=self._pending_sources_locked(),
                 )
         self._pending.set()
@@ -363,7 +631,16 @@ class FleetSharingWorker:
         return command
 
     def request_pairing(
-        self, *, mode="initial", configured_origin=None, action_id=None
+        self,
+        *,
+        mode="initial",
+        configured_origin=None,
+        action_id=None,
+        requested_capabilities=CAPABILITIES,
+        binding=None,
+        supersedes=None,
+        automatic_history=None,
+        expected_sequence=None,
     ) -> bool:
         """Queue initial/retry, same-key upgrade, or explicitly authorized fresh setup.
 
@@ -375,25 +652,291 @@ class FleetSharingWorker:
             configured_origin is not None and not isinstance(configured_origin, str)
         ):
             return False
-        if action_id is not None:
-            try:
+        try:
+            if expected_sequence is not None:
+                p.integer(expected_sequence)
+            capabilities = p.capabilities(list(requested_capabilities))
+            if action_id is not None:
                 p.uuid(action_id)
-            except ValueError:
-                return False
+            if supersedes is not None:
+                if (
+                    binding is None
+                    or mode == "fresh"
+                    or type(supersedes) is not tuple
+                    or len(supersedes) != 2
+                ):
+                    return False
+                pairing, recovery = supersedes
+                if pairing is not None:
+                    pairing = s._pending_pairing(
+                        {
+                            **asdict(pairing),
+                            "requested_capabilities": list(
+                                pairing.requested_capabilities
+                            ),
+                        },
+                        self.status().metadata.paired_origin,
+                    )
+                if recovery is not None:
+                    recovery = s._pending_recovery(asdict(recovery))
+                supersedes = pairing, recovery
+            if automatic_history is not None:
+                if (
+                    binding is None
+                    or mode != "fresh"
+                    or not isinstance(automatic_history, s.AutomaticState)
+                ):
+                    return False
+                automatic_history = s._automatic(
+                    s._to_dict(replace(s.EMPTY, automatic=automatic_history))[
+                        "automatic"
+                    ]
+                )
+                if automatic_history.pending is not None:
+                    return False
+        except (ValueError, TypeError, AttributeError):
+            return False
         return (
-            self._queue("pairing", "pairing", (mode, configured_origin, action_id))
+            self._queue(
+                "pairing",
+                "pairing",
+                (mode, configured_origin, action_id, capabilities),
+                binding=binding,
+                supersedes=supersedes,
+                automatic_history=automatic_history,
+                expected_sequence=expected_sequence,
+            )
             is not None
         )
 
-    def request_participation(self, enabled: bool) -> str | None:
+    def request_participation(
+        self, enabled: bool, *, expected_generation=None, binding=None, supersedes=None
+    ) -> str | None:
         """Return an explicit intent UUID, not a durable or server acknowledgement."""
         if type(enabled) is not bool:
             return None
-        intent = s.PendingParticipation(str(uuid4()), enabled)
-        # New On remains inhibited until its fresh observation/CAS is known.
-        if self._queue("participation", "participation", intent) is None:
+        if supersedes is not None:
+            try:
+                supersedes = s._pending_participation(asdict(supersedes))
+            except (ValueError, TypeError):
+                return None
+        if expected_generation is not None:
+            try:
+                p.integer(expected_generation, 0, p.INT4_MAX - 1)
+            except (ValueError, TypeError):
+                return None
+            with self._lock:
+                observed = self._state.observed_participation if self._state else None
+                if (
+                    binding is None
+                    or binding != self._status.metadata.binding
+                    or not self._terminal_authenticated_locked()
+                    or observed is None
+                    or observed.generation != expected_generation
+                ):
+                    return None
+        intent = s.PendingParticipation(str(uuid4()), enabled, expected_generation)
+        # Unbound choices require a subsequent explicit displayed-CAS confirmation.
+        if (
+            self._queue(
+                "participation",
+                "participation",
+                intent,
+                binding=binding,
+                supersedes=supersedes,
+            )
+            is None
+        ):
             return None
         return intent.intent_id
+
+    def confirm_participation(
+        self, intent_id, *, expected_generation, binding
+    ) -> str | None:
+        with self._lock:
+            pending = self._state.pending_participation if self._state else None
+            if pending is None or pending.intent_id != intent_id:
+                return None
+        return self.request_participation(
+            pending.enabled,
+            expected_generation=expected_generation,
+            binding=binding,
+            supersedes=pending,
+        )
+
+    def request_automatic_status(self, *, binding) -> bool:
+        return (
+            self._queue("automatic_status", "automatic_status", None, binding=binding)
+            is not None
+        )
+
+    def request_automatic(
+        self,
+        enabled,
+        *,
+        expected_generation,
+        expected_revision,
+        binding,
+        supersedes=None,
+    ) -> str | None:
+        try:
+            intent = p.AutomaticCommand(
+                str(uuid4()),
+                self._utc_text(),
+                enabled,
+                expected_generation,
+                expected_revision,
+            )
+            p.automatic_command_body(intent)
+            if supersedes is not None:
+                supersedes = s._pending_automatic(s._pending_automatic_dict(supersedes))
+        except (ValueError, TypeError, AttributeError):
+            return None
+        with self._lock:
+            observed = self._automatic_observation
+            if (
+                binding is None
+                or binding != self._status.metadata.binding
+                or not self._terminal_authenticated_locked()
+                or observed is None
+                or (observed.consent.generation, observed.consent.revision)
+                != (expected_generation, expected_revision)
+                or (
+                    enabled
+                    and (
+                        expected_generation >= p.JS_SAFE_MAX
+                        or expected_revision > p.JS_SAFE_MAX - 2
+                    )
+                )
+            ):
+                return None
+        action = self._queue(
+            "automatic", "automatic", intent, binding=binding, supersedes=supersedes
+        )
+        return intent.request_id if action else None
+
+    def request_cancel_automatic_on(self, request_id, *, binding) -> str | None:
+        try:
+            p.uuid4_lower(request_id)
+            cancel = s.CancelAfterOn(str(uuid4()), self._utc_text())
+        except (ValueError, TypeError):
+            return None
+        with self._lock:
+            pending = self._state.automatic.pending if self._state else None
+            queued_on = self._commands.get("automatic")
+            original = (
+                queued_on.payload
+                if queued_on is not None
+                and queued_on.kind == "automatic"
+                and queued_on.payload.request_id == request_id
+                else pending.command
+                if pending is not None
+                else None
+            )
+            if (
+                binding is None
+                or binding != self._status.metadata.binding
+                or original is None
+                or not original.enabled
+                or original.request_id != request_id
+            ):
+                return None
+            if (
+                pending is not None
+                and pending.command.request_id == request_id
+                and pending.cancel_after_on is not None
+            ):
+                if "remove_cancel" not in self._commands:
+                    return pending.cancel_after_on.request_id
+                cancel = pending.cancel_after_on
+            queued = self._commands.get("cancel_automatic")
+            if queued is not None and queued.payload[0] == request_id:
+                return queued.payload[1].request_id
+        action = self._queue(
+            "cancel_automatic",
+            "cancel_automatic",
+            (request_id, cancel),
+            binding=binding,
+        )
+        return action.payload[1].request_id if action else None
+
+    def request_dismiss_source(self, command, *, binding) -> bool:
+        try:
+            p.source_command_body(command)
+        except (ValueError, TypeError, AttributeError):
+            return False
+        if binding is None:
+            return False
+        return (
+            self._queue(
+                "source:" + command.source_id.lower(),
+                "dismiss_source",
+                command,
+                binding=binding,
+            )
+            is not None
+        )
+
+    def request_dismiss_automatic(self, pending, *, binding) -> bool:
+        try:
+            pending = s._pending_automatic(s._pending_automatic_dict(pending))
+        except (ValueError, TypeError, AttributeError):
+            return False
+        if binding is None:
+            return False
+        return (
+            self._queue("automatic", "dismiss_automatic", pending, binding=binding)
+            is not None
+        )
+
+    def request_remove_automatic_cancel(self, pending, *, binding) -> bool:
+        try:
+            pending = s._pending_automatic(s._pending_automatic_dict(pending))
+        except (ValueError, TypeError, AttributeError):
+            return False
+        if pending.cancel_after_on is None or binding is None:
+            return False
+        return (
+            self._queue("remove_cancel", "remove_cancel", pending, binding=binding)
+            is not None
+        )
+
+    def request_dismiss_cutover(self, selector, *, binding) -> bool:
+        if not isinstance(selector, str):
+            return False
+        with self._lock:
+            if binding is None or selector not in {
+                v.selector for v in self._status.cutover_outcomes
+            }:
+                return False
+        return (
+            self._queue(
+                "archive:" + selector, "dismiss_cutover", selector, binding=binding
+            )
+            is not None
+        )
+
+    def request_remove_cutover(self, outcomes, *, binding) -> bool:
+        if (
+            binding is None
+            or type(outcomes) is not tuple
+            or len(outcomes) > 260
+            or any(
+                type(item) is not s.CutoverOutcome
+                or type(item.selector) is not str
+                or type(item.status) is not str
+                for item in outcomes
+            )
+        ):
+            return False
+        with self._lock:
+            if outcomes != self._status.cutover_outcomes:
+                return False
+            outcomes = self._status.cutover_outcomes
+        return (
+            self._queue("remove_cutover", "remove_cutover", outcomes, binding=binding)
+            is not None
+        )
 
     def request_source_start(
         self, character_id: int, character_link_epoch: str, *, binding=None
@@ -413,21 +956,37 @@ class FleetSharingWorker:
         )
 
     def request_source_stop(
-        self, source_id: str, *, expected_generation: int = 0, binding=None
+        self,
+        source_id: str,
+        *,
+        expected_generation: int,
+        expected_automatic: p.AutomaticBinding | None,
+        binding=None,
+        supersedes: p.SourceCommand | None = None,
     ) -> bool:
         try:
             command = p.StopSource(
-                p.uuid(source_id).lower(),
-                p.integer(expected_generation, 0, p.INT4_MAX - 1),
+                source_id,
+                expected_generation,
+                str(uuid4()),
+                self._utc_text(),
+                expected_automatic,
             )
-        except ValueError:
+            p.source_command_body(command)
+            if supersedes is not None:
+                p.source_command_body(supersedes)
+        except (ValueError, TypeError, AttributeError):
             return False
-        return self._queue_source(command, binding=binding)
+        return self._queue_source(command, binding=binding, supersedes=supersedes)
 
-    def _queue_source(self, command, *, binding=None):
+    def _queue_source(self, command, *, binding=None, supersedes=None):
         return (
             self._queue(
-                "source:" + command.source_id, "source", command, binding=binding
+                "source:" + command.source_id.lower(),
+                "source",
+                command,
+                binding=binding,
+                supersedes=supersedes,
             )
             is not None
         )
@@ -439,6 +998,7 @@ class FleetSharingWorker:
             "start" if isinstance(command, p.StartSource) else "stop",
             command.character_id if isinstance(command, p.StartSource) else None,
             stage,
+            command,
         )
 
     def _command_binding_current(self, command, metadata):
@@ -493,8 +1053,21 @@ class FleetSharingWorker:
                 eligibility=None,
                 source_results=(),
                 observed_participation=state.observed_participation,
+                automatic_status=None,
+                automatic_stage=None,
+                automatic_request_id=None,
+                automatic_choice=None,
             )
-        self._update_status(metadata=metadata, **changes)
+        self._update_status(
+            metadata=metadata,
+            automatic=state.automatic,
+            cutover_outcomes=state.cutover.outcomes if state.cutover else (),
+            cutover_present=state.cutover is not None,
+            pending_participation=state.pending_participation,
+            pending_pairing=state.pending_pairing,
+            pending_recovery=state.pending_recovery,
+            **changes,
+        )
 
     def set_source_watch(self, enabled: bool) -> bool:
         if type(enabled) is not bool:
@@ -561,7 +1134,10 @@ class FleetSharingWorker:
                         or (
                             kind == "remote"
                             and value.kind == "replace"
-                            and self._inhibit
+                            and (
+                                self._inhibit
+                                or self._timing_context._timing_loss is not None
+                            )
                         )
                     )
                 if obsolete:
@@ -577,28 +1153,34 @@ class FleetSharingWorker:
         with self._lock:
             if fence is not None and self._fence_locked() != fence:
                 raise _Obsolete
-            with self._status_lock:
-                status = replace(
-                    self._status,
-                    **changes,
-                    pending_sources=self._pending_sources_locked(
-                        changes.get("metadata")
-                    ),
-                )
-                changed = self._status != status
-                if changed:
-                    status = replace(status, order=self._status.order + 1)
-                self._status = status
-        if changed:
+            status = self._update_status_locked(**changes)
+        if status is not None:
             self._notify("status", status)
 
-    def _remote_event_locked(self, rows, receipt, elapsed, kind):
+    def _update_status_locked(self, **changes):
+        with self._status_lock:
+            status = self._status_candidate_locked(**changes)
+            if status is not None:
+                self._status = status
+            return status
+
+    def _status_candidate_locked(self, **changes):
+        # Caller holds worker AND status locks. Publication completion prepares
+        # the detached value before entering the producer's non-reentrant leaf.
+        status = replace(
+            self._status,
+            **changes,
+            pending_sources=self._pending_sources_locked(changes.get("metadata")),
+        )
+        if self._status == status:
+            return None
+        return replace(status, order=self._status.order + 1)
+
+    def _remote_event_locked(self, payload, kind):
         self._presentation_order += 1
         self._remote_order = self._presentation_order
         return RemoteEvent(
-            rows,
-            receipt,
-            elapsed,
+            payload,
             self._epoch,
             self._identity_epoch,
             kind,
@@ -608,7 +1190,7 @@ class FleetSharingWorker:
 
     def _clear_remote(self):
         with self._lock:
-            event = self._remote_event_locked((), self._clock(), 0, "clear")
+            event = self._remote_event_locked(None, "clear")
         self._notify("remote", event)
 
     def _set_catalogue(self, catalogue, *, fence=None):
@@ -621,17 +1203,20 @@ class FleetSharingWorker:
                     fence.session,
                 ):
                     raise _Obsolete
-            self._catalogue = catalogue
-            self._presentation_order += 1
-            self._catalogue_order = self._presentation_order
-            event = CatalogueEvent(
-                catalogue,
-                self._status.metadata.binding,
-                self._epoch,
-                self._identity_epoch,
-                self._catalogue_order,
-            )
+            event = self._set_catalogue_locked(catalogue)
         self._notify("catalogue", event)
+
+    def _set_catalogue_locked(self, catalogue):
+        self._catalogue = catalogue
+        self._presentation_order += 1
+        self._catalogue_order = self._presentation_order
+        return CatalogueEvent(
+            catalogue,
+            self._status.metadata.binding,
+            self._epoch,
+            self._identity_epoch,
+            self._catalogue_order,
+        )
 
     def start(self) -> bool:
         with self._lifecycle_lock:
@@ -666,7 +1251,7 @@ class FleetSharingWorker:
             self._stop_event.set()
             with self._lock:
                 self._epoch += 1
-                clear = self._remote_event_locked((), self._clock(), 0, "clear")
+                clear = self._remote_event_locked(None, "clear")
             self._pending.set()
         self._notify("remote", clear)
         if worker is None:
@@ -731,6 +1316,8 @@ class FleetSharingWorker:
             self._state.session_id if self._state else None,
             self._participation_generation,
             tuple(sorted(self._source_generations.items())),
+            self._automatic_generation,
+            self._timing_context._timing_generation,
         )
 
     def _fence(self):
@@ -738,11 +1325,20 @@ class FleetSharingWorker:
             return self._fence_locked()
 
     def _check(self, fence, *, work=None):
-        current = self._fence()
+        with self._lock:
+            self._check_locked(fence, work=work)
+
+    def _check_locked(self, fence, *, work=None):
+        if self._identity_mismatch:
+            raise _Obsolete
+        current = self._fence_locked()
+        if current.automatic != fence.automatic and (
+            work is None or work.operation in ("control_automatic", "publish_snapshot")
+        ):
+            raise _Obsolete
         if work is not None:
-            with self._lock:
-                queued = tuple(self._commands.values())
-                deferred = tuple(self._deferred_commands.values())
+            queued = tuple(self._commands.values())
+            deferred = tuple(self._deferred_commands.values())
             if any(
                 command.kind == "pairing"
                 or (
@@ -807,7 +1403,8 @@ class FleetSharingWorker:
         ):
             raise _Obsolete
         if current.source != fence.source and (
-            work is None or work.operation in ("fetch_sources", "control_source")
+            work is None
+            or work.operation in ("fetch_sources", "control_source", "publish_snapshot")
         ):
             raise _Obsolete
 
@@ -831,27 +1428,89 @@ class FleetSharingWorker:
         self._check(replace(fence, session=candidate.session_id), work=work)
 
     def _reset_session(self):
+        # Only a typed negative from this live attempt permits another poll.
+        self._pairing_pollable = None
+        with self._lock:
+            notifications = self._reset_session_locked()
+        for kind, event in notifications:
+            if event is not None:
+                self._notify(kind, event)
+
+    def _reset_session_locked(self):
+        notifications = self._reset_session_caches_locked()
+        status = self._update_status_locked(
+            sources=None,
+            eligibility=None,
+            observed_participation=self._state.observed_participation,
+        )
+        return (*notifications, ("status", status))
+
+    def _reset_session_caches_locked(self):
+        self._control_auth = None
+        self._control_db_fact = None
+        self._automatic_observation = None
+        self._automatic_receipt_first = True
         self._needs_device = True
         self._part_observe = True
         self._source_observe.update(
             c.source_id for c in self._state.pending_source_commands
         )
         self._eligibility = self._sources = None
-        self._clear_remote()
-        self._set_catalogue(None)
+        remote = self._remote_event_locked(None, "clear")
+        catalogue = self._set_catalogue_locked(None)
         self._expiry_binding = None
         self._last_published = ()
         self._due = dict.fromkeys(self._due, 0.0)
-        self._update_status(
-            sources=None,
-            eligibility=None,
-            observed_participation=self._state.observed_participation,
-        )
+        return (("remote", remote), ("catalogue", catalogue))
+
+    def _archived_choice(self, state=None):
+        archive = (state or self._state).cutover
+        if archive is None:
+            return None
+        if any(
+            item.selector == "participation" and item.status == "fenced"
+            for item in archive.outcomes
+        ):
+            return archive.original["pending_participation"]
+        return None
+
+    @staticmethod
+    def _settle_archive(state, *, participation=None, recovered=False):
+        archive = state.cutover
+        if archive is None:
+            return state
+        choice = archive.original.get("pending_participation")
+        outcomes = []
+        for item in archive.outcomes:
+            status = item.status
+            if recovered and status in ("fenced", "expired_unproven"):
+                if item.selector == "session":
+                    status = "superseded_session"
+                elif item.selector in ("pairing", "recovery"):
+                    status = "recovered_identity"
+            if (
+                item.selector == "participation"
+                and status == "fenced"
+                and participation is not None
+                and choice is not None
+                and participation.enabled == choice["enabled"]
+            ):
+                status = "observed_choice"
+            outcomes.append(s.CutoverOutcome(item.selector, status))
+        return replace(state, cutover=replace(archive, outcomes=tuple(outcomes)))
 
     def _load(self):
         if self._state is not None:
             return
-        self._state = self._load_state()
+        if self._quarantined:
+            raise s.QuarantineError
+        try:
+            self._state = self._load_state()
+        except s.QuarantineError:
+            self._quarantined = True
+            raise
+        except OSError:
+            raise _LoadFailed from None
         self._project_saved()
         # The previous process may have just completed an attempt. Its monotonic
         # clock cannot be persisted, so pay one conservative bucket interval on
@@ -862,9 +1521,19 @@ class FleetSharingWorker:
                 self._scheduler.deadlines["read"] = self._clock() + 0.5
                 self._scheduler.deadlines["publication"] = self._clock() + 0.5
         self._reset_session()
+        if self._state.cutover is not None:
+            self._resume_metadata = any(
+                item.status == "fenced" for item in self._state.cutover.outcomes
+            )
+        if self._archived_choice() is not None:
+            with self._lock:
+                self._inhibit = True
+            self._update_status(
+                local_inhibited=True, participation="needs_confirmation"
+            )
         pending = self._state.pending_participation
         if pending is not None:
-            self._withdraw_needed = not pending.enabled
+            self._withdraw_needed = not pending.enabled and bool(self._last_published)
             with self._lock:
                 self._inhibit = True
                 queued_participation = "participation" in self._commands
@@ -916,9 +1585,32 @@ class FleetSharingWorker:
         self._update_status()
 
     def _ingest_pairing(self, command, fence):
-        mode, configured, action_id = command.payload
+        mode, configured, action_id, capabilities = command.payload
         state = self._state
         changed_origin = False
+        auth_ack = command.supersedes
+        history_ack = command.automatic_history
+        if (
+            not self._command_binding_current(command, self.status().metadata)
+            or (
+                auth_ack is not None
+                and auth_ack != (state.pending_pairing, state.pending_recovery)
+            )
+            or (
+                history_ack is not None
+                and (
+                    history_ack != state.automatic
+                    or state.automatic.pending is not None
+                )
+            )
+        ):
+            self._update_status(
+                fence=fence,
+                state="refused",
+                detail="unresolved_history",
+                pairing="rejected",
+            )
+            return
         try:
             if mode == "fresh" and configured is not None:
                 origin = resolve_relay_origin(configured_origin=configured)
@@ -936,11 +1628,46 @@ class FleetSharingWorker:
             "device_revoked",
             "device_key_conflict",
         )
+        if mode == "fresh" and (
+            state.cutover is not None
+            or state.pending_participation is not None
+            or state.pending_source_commands
+            or state.pending_pairing is not None
+            or state.pending_recovery is not None
+            or (
+                state.automatic != s.AutomaticState() and history_ack != state.automatic
+            )
+        ):
+            self._update_status(
+                fence=fence,
+                state="refused",
+                detail="unresolved_history",
+                pairing="rejected",
+            )
+            return
         if mode == "fresh" and not (terminal or changed_origin):
             self._update_status(
                 fence=fence,
                 state="refused",
                 detail="fresh_key_not_authorized",
+                pairing="rejected",
+            )
+            return
+        if (
+            mode != "fresh"
+            and auth_ack is None
+            and (
+                state.pending_recovery is not None
+                or (
+                    state.pending_pairing is not None
+                    and state.pending_pairing.completion_attempted
+                )
+            )
+        ):
+            self._update_status(
+                fence=fence,
+                state="refused",
+                detail="unresolved_history",
                 pairing="rejected",
             )
             return
@@ -956,6 +1683,7 @@ class FleetSharingWorker:
             mode == "initial"
             and state.identity is not None
             and state.pending_pairing is None
+            and auth_ack is None
         ):
             self._update_status(
                 fence=fence,
@@ -973,12 +1701,16 @@ class FleetSharingWorker:
             candidate = s.SharingState(
                 identity=identity,
                 relay_origin=origin,
-                pending_pairing=s.PendingPairing(mode),
+                pending_pairing=s.PendingPairing(
+                    mode, requested_capabilities=capabilities
+                ),
             )
         else:
             candidate = replace(
-                s.replace_session(state, None),
-                pending_pairing=s.PendingPairing(mode),
+                state,
+                pending_pairing=s.PendingPairing(
+                    mode, requested_capabilities=capabilities
+                ),
                 pending_recovery=None,
                 auth_pause=None,
             )
@@ -992,9 +1724,16 @@ class FleetSharingWorker:
                 pairing="rejected",
             )
             return
-        self._persist(candidate, fence)
-        self._reset_session()
-        self._pairing_action_id = action_id
+        try:
+            self._persist(candidate, fence)
+        finally:
+            if self._state is candidate:
+                # The write may commit before a new submission fences projection.
+                # Finish this admission, not a second attempt against its own journal.
+                self._pairing_action_id = action_id
+                self._parked_pairing = None
+                self._drop_command("pairing", command)
+                self._reset_session()
         self._update_status(
             fence=replace(fence, session=self._state.session_id),
             state="connecting",
@@ -1008,12 +1747,87 @@ class FleetSharingWorker:
         if self._state.identity is None:
             self._update_status(state="refused", detail="needs_pairing")
             return True
+        if command.kind in (
+            "dismiss_source",
+            "dismiss_automatic",
+            "remove_cancel",
+            "dismiss_cutover",
+            "remove_cutover",
+        ):
+            return self._ingest_history(command, fence)
+        if command.kind == "automatic_status":
+            self._automatic_probe = True
+            return True
+        if command.kind == "cancel_automatic":
+            self._save_automatic_cancel(command, fence)
+            return True
+        if command.kind == "automatic":
+            if self._state.automatic.pending != command.supersedes:
+                pending = self._state.automatic.pending
+                if pending is not None:
+                    # A stale unsent acknowledgement cannot erase an attempt
+                    # which won the save race, nor resume its contrary mutation.
+                    self._automatic_fenced_command = pending.command
+                self._update_status(fence=fence, automatic_stage="needs_confirmation")
+                return True
+            old = self._state.automatic.pending
+            if old is not None and old.attempted and old.command.enabled:
+                with self._lock:
+                    proven = self._on_expired_proven_locked(old.command)
+                if not proven:
+                    self._needs_device = True
+                    self._update_status(
+                        fence=fence, automatic_stage="awaiting_expiry_proof"
+                    )
+                    return False
+            automatic = replace(
+                self._state.automatic,
+                pending=s.PendingAutomatic(command.payload),
+                last_result=s.AutomaticCompletion(
+                    old, "superseded_unknown" if old.attempted else "cancelled_unsent"
+                )
+                if old is not None
+                else self._state.automatic.last_result,
+            )
+            candidate = replace(self._state, automatic=automatic)
+            try:
+                self._persist(candidate, fence)
+            finally:
+                if candidate is self._state:
+                    # A committed admission is not a stale acknowledgement of
+                    # itself when a newer action fences the post-write callback.
+                    self._automatic_receipt_first = False
+                    self._automatic_fenced_command = None
+                    self._drop_command("automatic", command)
+            self._update_status(fence=fence, automatic_stage="persisted")
+            return True
         if command.kind == "participation":
             intent = command.payload
+            old = self._state.pending_participation
+            archive = self._archived_choice()
+            if (old is not None and old != command.supersedes) or (
+                archive is not None and archive["enabled"] != intent.enabled
+            ):
+                self._update_status(
+                    fence=fence,
+                    participation="needs_confirmation",
+                    detail="unresolved_history",
+                )
+                return True
             try:
                 candidate = replace(self._state, pending_participation=intent)
                 s.check_control_capacity(candidate)
-                self._persist(candidate, fence)
+                try:
+                    self._persist(candidate, fence)
+                finally:
+                    if candidate is self._state:
+                        self._needs_fresh_intent = False
+                        self._part_observe = self._needs_device = True
+                        self._withdraw_needed = not intent.enabled and bool(
+                            self._last_published
+                        )
+                        self._eligibility = None
+                        self._drop_command("participation", command)
             except s.CapacityError:
                 # Keep the exact choice queued and inhibited; a Stop later in
                 # this ingest may release space. No false saved/acknowledged.
@@ -1021,11 +1835,6 @@ class FleetSharingWorker:
                     fence=fence, state="error", detail="source_queue_full"
                 )
                 return False
-            self._fresh_on = intent.intent_id if intent.enabled else None
-            self._needs_fresh_intent = False
-            self._part_observe = self._needs_device = True
-            self._withdraw_needed = not intent.enabled
-            self._eligibility = None
             self._update_status(fence=fence, participation="persisted")
         else:
             incoming = command.payload
@@ -1038,8 +1847,15 @@ class FleetSharingWorker:
                 ),
                 None,
             )
-            if isinstance(incoming, p.StopSource) and isinstance(old, p.StartSource):
-                incoming = p.StopSource(old.source_id, 0)
+            # Same-source replacement is an explicit retirement of unknown work.
+            # Ingestion runs only after the previous serialized HTTP has drained.
+            if old is not None and command.supersedes != old:
+                self._update_status(
+                    fence=fence,
+                    source_control="needs_confirmation",
+                    detail="unresolved_history",
+                )
+                return True
             candidate = (
                 *(
                     c
@@ -1055,14 +1871,21 @@ class FleetSharingWorker:
                 if isinstance(incoming, p.StartSource) and old is None:
                     s.check_admission_capacity(candidate)
                 elif old is None or isinstance(incoming, p.StartSource):
-                    # New critical growth must leave room for older pairing,
-                    # recovery and CAS responses. Existing Stops already own
-                    # their maximum generation width; Start -> Stop shrinks.
+                    # The accepted state4 reserve covers future responses and
+                    # terminal growth without borrowing the archive partition.
                     s.check_control_capacity(candidate)
-                self._persist(candidate, fence)
+                try:
+                    self._persist(candidate, fence)
+                finally:
+                    if candidate is self._state:
+                        if isinstance(incoming, p.StopSource) and incoming != old:
+                            self._source_observe.add(incoming.source_id)
+                        self._drop_command(
+                            "source:" + incoming.source_id.lower(), command
+                        )
             except s.CapacityError:
                 self._check(fence)
-                if isinstance(incoming, p.StartSource) and old is None:
+                if old is None:
                     # Only this unsaved admission is refused. Existing requests
                     # and uncertainty remain intact; disk I/O failures never
                     # take this path. Keep the UUID visible as an honest result.
@@ -1081,13 +1904,111 @@ class FleetSharingWorker:
                     fence=fence, state="error", detail="source_queue_full"
                 )
                 return False
-            if isinstance(incoming, p.StopSource) and incoming != old:
-                self._source_observe.add(incoming.source_id)
             self._update_status(fence=fence, source_control="persisted")
+        return True
+
+    def _ingest_history(self, action, fence):
+        state = self._state
+        kind, value = action.kind, action.payload
+        if kind == "dismiss_source":
+            if value not in state.pending_source_commands:
+                return True
+            candidate = replace(
+                state,
+                pending_source_commands=tuple(
+                    c for c in state.pending_source_commands if c != value
+                ),
+            )
+        elif kind in ("dismiss_automatic", "remove_cancel"):
+            pending = state.automatic.pending
+            if pending != value:
+                completed = state.automatic.last_result
+                if (
+                    pending is not None
+                    and not pending.attempted
+                    and value.cancel_after_on is not None
+                    and completed is not None
+                    and completed.pending == value
+                    and completed.receipt is not None
+                    and s.settle_automatic_receipt(
+                        replace(
+                            state, automatic=replace(state.automatic, pending=value)
+                        ),
+                        completed.receipt,
+                    ).automatic.pending
+                    == pending
+                ):
+                    # The acknowledgement crossed our own On-receipt write.
+                    # It retires only that receipt's still-unsent cancellation,
+                    # never a newer action or an attempted Off.
+                    if kind == "dismiss_automatic":
+                        with self._lock:
+                            proven = self._on_expired_proven_locked(value.command)
+                        if not proven:
+                            self._update_status(
+                                fence=fence, automatic_stage="needs_confirmation"
+                            )
+                            return True
+                    self._persist(
+                        replace(
+                            state, automatic=replace(state.automatic, pending=None)
+                        ),
+                        fence,
+                    )
+                    return True
+                self._update_status(fence=fence, automatic_stage="needs_confirmation")
+                return True
+            if kind == "remove_cancel":
+                automatic = replace(
+                    state.automatic, pending=replace(pending, cancel_after_on=None)
+                )
+            else:
+                if pending.attempted and pending.command.enabled:
+                    with self._lock:
+                        proven = self._on_expired_proven_locked(pending.command)
+                    if not proven:
+                        self._needs_device = True
+                        return False
+                automatic = replace(
+                    state.automatic,
+                    pending=None,
+                    last_result=s.AutomaticCompletion(
+                        pending,
+                        "superseded_unknown"
+                        if pending.attempted
+                        else "cancelled_unsent",
+                    ),
+                )
+            candidate = replace(state, automatic=automatic)
+        elif kind == "dismiss_cutover":
+            if state.cutover is None or value not in {
+                v.selector for v in state.cutover.outcomes
+            }:
+                return True
+            candidate = replace(
+                state,
+                cutover=replace(
+                    state.cutover,
+                    outcomes=tuple(
+                        replace(v, status="dismissed") if v.selector == value else v
+                        for v in state.cutover.outcomes
+                    ),
+                ),
+            )
+        else:
+            if (
+                state.cutover is None
+                or state.cutover.outcomes != value
+                or any(v.status == "fenced" for v in state.cutover.outcomes)
+            ):
+                return True
+            candidate = replace(state, cutover=None)
+        self._persist(candidate, fence)
         return True
 
     def _iterate(self):
         try:
+            self._apply_timing_loss()
             now = self._clock()
             if now < self._local_retry_at:
                 return IDLE_POLL_S, False
@@ -1096,8 +2017,13 @@ class FleetSharingWorker:
                 explicit = bool(self._commands) or self._watch or self._probe_queued
             pending = self._state and (
                 self._state.pending_participation
+                or self._automatic_active()
+                or self._automatic_probe
                 or self._state.pending_source_commands
-                or self._state.pending_pairing
+                or (
+                    self._state.pending_pairing is not None
+                    and self._state.pending_pairing != self._parked_pairing
+                )
                 or self._state.pending_recovery
             )
             if not (
@@ -1113,9 +2039,11 @@ class FleetSharingWorker:
                 self._probe_queued = False
                 restart = self._restart_requested
                 self._restart_requested = False
-                retained = {c.source_id for c in self._state.pending_source_commands}
+                retained = {
+                    c.source_id.lower() for c in self._state.pending_source_commands
+                }
                 retained.update(
-                    c.payload.source_id
+                    c.payload.source_id.lower()
                     for c in self._commands.values()
                     if c.kind == "source"
                 )
@@ -1143,9 +2071,16 @@ class FleetSharingWorker:
         except _Obsolete:
             # Persisted uncertainty is intentionally left for the next owner turn.
             return IDLE_POLL_S, True
+        except s.QuarantineError:
+            self._update_status(state="refused", detail="state_quarantined")
+            return INERT_POLL_S, False
         except s.CapacityError:
             self._update_status(state="error", detail="source_queue_full")
             return IDLE_POLL_S, False
+        except _LoadFailed:
+            self._local_retry_at = self._clock() + BASE_BACKOFF_S
+            self._update_status(state="error", detail="state_load_failed")
+            return BASE_BACKOFF_S, False
         except _PersistenceFailed:
             self._local_retry_at = self._clock() + BASE_BACKOFF_S
             self._update_status(state="error", detail="persistence_failed")
@@ -1155,27 +2090,46 @@ class FleetSharingWorker:
             self._update_status(state="error", detail="local_failure")
             return BASE_BACKOFF_S, False
 
+    @staticmethod
+    def _elapsed_expiry(text, elapsed, utc):
+        delta = datetime.fromisoformat(text) - utc
+        return Fraction(elapsed) + Fraction(
+            (delta.days * 86400 + delta.seconds) * 1000000 + delta.microseconds,
+            1000000,
+        )
+
     def _expiry(self):
         binding = (self._state.session_id, self._state.session_expires_at)
         if binding != self._expiry_binding:
-            remaining = self._remaining(binding[1])
-            self._expires_at = self._clock() + max(0, remaining)
-            self._renew_at = self._clock() + max(
+            elapsed = self._clock()
+            self._expires_at = self._elapsed_expiry(
+                binding[1], elapsed, self._utc_now()
+            )
+            remaining = self._expires_at - Fraction(elapsed)
+            self._renew_at = elapsed + max(
                 0, min(SESSION_RENEWAL_INTERVAL_S, remaining - 60)
             )
             self._expiry_binding = binding
 
     def _work(self, enabled):
+        if self._identity_mismatch:
+            return ()
         state = self._state
         if state.identity is None or state.relay_origin is None:
             return ()
         with self._lock:
             watching, inhibited = self._watch, self._inhibit
+            timing_allowed = self._timing_open_locked(self._fence_locked())
             queued_participation = "participation" in self._commands
         pending = (
             state.pending_participation
+            or self._automatic_active()
+            or self._automatic_probe
             or state.pending_source_commands
-            or state.pending_pairing
+            or (
+                state.pending_pairing is not None
+                and state.pending_pairing != self._parked_pairing
+            )
             or state.pending_recovery
         )
         if not (
@@ -1190,7 +2144,8 @@ class FleetSharingWorker:
         if state.auth_pause:
             pause = state.auth_pause
             if pause.retry_not_before is None:
-                self._update_status(state="refused", detail="needs_fresh_key")
+                if self.status().pairing != "rejected":
+                    self._update_status(state="refused", detail="needs_fresh_key")
                 return ()
             if pause != self._pause_binding:
                 self._pause_binding = pause
@@ -1203,14 +2158,47 @@ class FleetSharingWorker:
             self._persist(replace(state, auth_pause=None), fence)
             state = self._state
         pairing = state.pending_pairing
-        if pairing:
-            if pairing.completion_attempted:
+        terminal_during_pairing = ()
+        if (
+            pairing
+            and state.session_id
+            and state.last_revision < p.INT4_MAX
+            and (
+                self._automatic_active()
+                or self._automatic_probe
+                or any(
+                    isinstance(c, p.StopSource) for c in state.pending_source_commands
+                )
+            )
+        ):
+            if state.session_expires_at is not None:
+                self._expiry()
+            if state.session_expires_at is None or self._clock() < self._expires_at:
+                with self._lock:
+                    authenticated = self._control_auth_current_locked()
+                if not authenticated:
+                    return (Work("fetch_device", "device", priority=0),)
+                terminal_during_pairing = tuple(
+                    w
+                    for w in self._terminal_source_work()
+                    if w.operation != "control_automatic" or not w.payload.enabled
+                )
+        if pairing and pairing != self._parked_pairing:
+            if pairing.completion_attempted and pairing != self._pairing_pollable:
                 # A lost response may mean either registration or no commit at
                 # all. Keep initial provenance for an explicit SAME-key retry;
                 # a generic recovery 401 proves neither revocation nor consent.
-                return self._recovery_work()
+                if (
+                    self._scheduler.choose(terminal_during_pairing, self._clock())
+                    is not None
+                ):
+                    return terminal_during_pairing
+                return (*terminal_during_pairing, *self._recovery_work())
             if pairing.pairing_id is None:
-                return (Work("begin_pairing", "pairing", priority=1),)
+                return (
+                    *terminal_during_pairing,
+                    Work("begin_pairing", "pairing", priority=1),
+                )
             if self._remaining(pairing.expires_at) <= 0:
                 self._update_status(
                     state="refused",
@@ -1218,9 +2206,16 @@ class FleetSharingWorker:
                     pairing="needs_retry",
                     approval_url=None,
                 )
-                return ()
-            return (Work("complete_pairing", "pairing", priority=1),)
-        if state.pending_recovery or not state.session_id:
+                return terminal_during_pairing
+            return (
+                *terminal_during_pairing,
+                Work("complete_pairing", "pairing", priority=1),
+            )
+        if (
+            state.pending_recovery
+            or not state.session_id
+            or state.last_revision >= p.INT4_MAX
+        ):
             return self._recovery_work()
         if state.session_expires_at is not None:
             self._expiry()
@@ -1228,25 +2223,43 @@ class FleetSharingWorker:
                 self._persist(s.replace_session(state, None), fence)
                 self._reset_session()
                 return self._recovery_work()
+        terminal = self._terminal_source_work()
         if self._needs_device or state.session_expires_at is None:
-            return (Work("fetch_device", "device", priority=1),)
+            return (*terminal, Work("fetch_device", "device", priority=1))
         if not state.feature_enabled:
             self._update_status(state="refused", detail="feature_disabled")
             return (
+                *terminal,
                 Work("fetch_device", "device", due=self._due["device"], periodic=True),
             )
         if p.SHARED_CAPABILITY not in (state.approved_capabilities or ()):
             self._update_status(state="refused", detail="needs_upgrade")
             return ()
         if p.SHARED_CAPABILITY not in (state.session_approved_capabilities or ()):
+            if terminal:
+                return terminal
             self._persist(s.replace_session(state, None), fence)
             self._reset_session()
             return self._recovery_work()
         if p.SHARED_CAPABILITY not in (state.acknowledged_capabilities or ()):
-            return (Work("acknowledge_capabilities", "ack", priority=1),)
-        work = []
+            return (*terminal, Work("acknowledge_capabilities", "ack", priority=1))
+        work = list(terminal)
+        if any(
+            capability not in (state.acknowledged_capabilities or ())
+            for capability in self._acknowledge_rights()
+        ):
+            # Combat acknowledgement is publication disclosure, not permission
+            # to receive. Its retry must not strand already-authorized shared GETs.
+            work.append(Work("acknowledge_capabilities", "ack", priority=1))
         if self._withdraw_needed:
-            work.append(Work("publish_snapshot", "withdraw", priority=0, payload=()))
+            work.append(
+                Work(
+                    "publish_snapshot",
+                    "withdraw",
+                    priority=0,
+                    payload=_OffWithdrawal(self._expires_at, self._control_auth),
+                )
+            )
         if self._clock() >= self._renew_at:
             work.append(Work("renew_session", "renew", due=self._renew_at, priority=1))
         intent = state.pending_participation
@@ -1272,17 +2285,18 @@ class FleetSharingWorker:
                     )
                 )
         for command in state.pending_source_commands:
-            critical = isinstance(command, p.StopSource)
-            if command.source_id in self._source_observe or (
-                isinstance(command, p.StartSource)
-                and self._remaining(command.intent_created_at) <= -60
-            ):
+            if isinstance(command, p.StopSource):
+                continue  # Terminal lane above does not require work permission.
+            if not -60 < self._remaining(command.intent_created_at) <= 0:
+                # Expiry is a replay refusal, never proof of noncommit/deletion.
+                continue
+            if command.source_id in self._source_observe:
                 self._source_observe.add(command.source_id)
                 work.append(
                     Work(
                         "fetch_sources",
                         "sources-reconcile",
-                        priority=0 if critical else 2,
+                        priority=2,
                     )
                 )
             else:
@@ -1290,7 +2304,7 @@ class FleetSharingWorker:
                     Work(
                         "control_source",
                         self._source_work_key(command),
-                        priority=0 if critical else 2,
+                        priority=2,
                         payload=command,
                     )
                 )
@@ -1303,6 +2317,7 @@ class FleetSharingWorker:
         if (
             enabled
             and not inhibited
+            and timing_allowed
             and state.observed_participation
             and state.observed_participation.enabled
             and intent is None
@@ -1322,21 +2337,414 @@ class FleetSharingWorker:
                     Work("read_snapshot", "read", due=self._due["read"], periodic=True),
                 )
             )
-            rows = self._publication()
-            if rows is not None and (rows != self._last_published or rows):
+            publication = self._publication()
+            if publication is not None:
+                stage_floor = self._timing_context._next_stage_at or 0
+                stage_due = float(stage_floor)
+                if stage_due < stage_floor:
+                    # Scheduler uses float deadlines. Round UP, never convert an
+                    # exact retained floor into a sub-ULP zero-delay busy loop.
+                    stage_due = nextafter(stage_due, inf)
                 work.append(
                     Work(
                         "publish_snapshot",
                         "publication",
-                        due=self._last_publish_at + HEARTBEAT_INTERVAL_S
-                        if rows == self._last_published
-                        else 0,
+                        due=max(
+                            stage_due,
+                            self._last_publish_at + HEARTBEAT_INTERVAL_S
+                            if publication.semantic == self._last_published
+                            else 0,
+                        ),
                         periodic=True,
-                        payload=rows,
-                        priority=0 if not rows else 2,
+                        payload=publication,
+                        priority=0 if publication.withdrawal_reason else 2,
                     )
                 )
         return tuple(work)
+
+    def _bind_control_auth(self, device_id, fence, work):
+        with self._lock:
+            self._check_locked(fence, work=work)
+            # Retain the response's association, not a newly sampled epoch which
+            # could bless an older response after a queued identity transition.
+            self._control_auth = (
+                fence.lifecycle,
+                fence.identity,
+                fence.session,
+                self._status.metadata.binding,
+                device_id.lower(),
+            )
+            context = self._timing_context
+            if context._authenticated_scope is None:
+                context._authenticated_scope = (
+                    self._control_auth[3],
+                    device_id.lower(),
+                    context._db_continuity_token,
+                    context._elapsed_lifetime_token,
+                )
+            # A different authenticated binding never reidentifies old timing.
+            # Terminal auth still belongs to B; no new model/domain is invented.
+
+    def _control_auth_current_locked(self):
+        state = self._state
+        return bool(
+            state
+            and state.session_id
+            and state.device_id
+            and not self._identity_mismatch
+            and self._control_auth
+            == (
+                self._epoch,
+                self._identity_epoch,
+                state.session_id,
+                self._status.metadata.binding,
+                state.device_id.lower(),
+            )
+        )
+
+    def _terminal_authenticated_locked(self):
+        return self._control_auth_current_locked() and p.SHARED_CAPABILITY in (
+            self._state.approved_capabilities or ()
+        )
+
+    def _terminal_source_work(self):
+        with self._lock:
+            if not self._terminal_authenticated_locked():
+                return ()
+        work = list(self._automatic_work())
+        for command in self._state.pending_source_commands:
+            if not isinstance(command, p.StopSource):
+                continue
+            if command.source_id in self._source_observe:
+                work.append(
+                    Work(
+                        "fetch_receipt",
+                        self._source_work_key(command),
+                        priority=0,
+                        payload=command,
+                    )
+                )
+            elif -60 < self._remaining(command.intent_created_at) <= 0:
+                work.append(
+                    Work(
+                        "control_source",
+                        self._source_work_key(command),
+                        priority=0,
+                        payload=command,
+                    )
+                )
+        return tuple(work)
+
+    @staticmethod
+    def _intent_ms(text):
+        delta = datetime.fromisoformat(p.utc_date(text)) - datetime(
+            1970, 1, 1, tzinfo=UTC
+        )
+        return (delta.days * 86400 + delta.seconds) * 1000 + delta.microseconds // 1000
+
+    def _on_expired_proven_locked(self, command):
+        fact = self._control_db_fact
+        return bool(
+            not self._control_time_fenced
+            and not self._timing_context._inconsistent
+            and self._terminal_authenticated_locked()
+            and fact is not None
+            and fact[:2]
+            == (self._control_auth, self._timing_context._db_continuity_token)
+            and fact[2] >= self._intent_ms(command.intent_created_at) + 60000
+        )
+
+    def _save_automatic_cancel(self, action, fence, *, work=None):
+        pending = self._state.automatic.pending
+        request_id, cancel = action.payload
+        if pending is None:
+            completed = self._state.automatic.last_result
+            if (
+                completed is None
+                or completed.receipt is None
+                or not completed.pending.command.enabled
+                or completed.pending.command.request_id != request_id
+            ):
+                return
+            # A callback may queue cancellation while the On completion's atomic
+            # write is returning. Its exact saved receipt still authorizes only
+            # that On's successor — never the current observed generation.
+            pending = replace(completed.pending, cancel_after_on=cancel)
+            candidate = replace(
+                self._state, automatic=replace(self._state.automatic, pending=pending)
+            )
+            candidate = s.settle_automatic_receipt(candidate, completed.receipt)
+            self._persist(candidate, fence, work=work)
+            self._automatic_receipt_first = False
+            return
+        if not pending.command.enabled or pending.command.request_id != request_id:
+            return
+        if pending.cancel_after_on is not None:
+            return
+        if pending.attempted:
+            automatic = replace(
+                self._state.automatic, pending=replace(pending, cancel_after_on=cancel)
+            )
+        else:
+            automatic = replace(
+                self._state.automatic,
+                pending=None,
+                last_result=s.AutomaticCompletion(pending, "cancelled_unsent"),
+            )
+        self._persist(replace(self._state, automatic=automatic), fence, work=work)
+        self._automatic_receipt_first = True
+
+    def _automatic_active(self):
+        automatic = self._state.automatic
+        return bool(
+            automatic.pending
+            or (automatic.observed_consent and automatic.observed_consent.enabled)
+        )
+
+    def _automatic_work(self):
+        automatic = self._state.automatic
+        pending = automatic.pending
+        work = []
+        if (
+            pending is not None
+            and pending.attempted
+            and (self._automatic_receipt_first or pending.cancel_after_on is not None)
+        ):
+            work.append(
+                Work(
+                    "fetch_receipt",
+                    "automatic-receipt",
+                    priority=0,
+                    payload=pending.command,
+                )
+            )
+        if self._automatic_probe or (
+            self._automatic_active() and self._automatic_observation is None
+        ):
+            work.append(Work("fetch_automatic", "automatic-status", priority=1))
+        elif self._automatic_active() or self._watch:
+            work.append(
+                Work(
+                    "fetch_automatic",
+                    "automatic-status",
+                    due=self._due["automatic"],
+                    periodic=True,
+                )
+            )
+        with self._lock:
+            replacing = any(
+                k in self._commands
+                for k in ("automatic", "cancel_automatic", "remove_cancel")
+            )
+        if (
+            pending is None
+            or pending.cancel_after_on is not None
+            or replacing
+            or pending.command == self._automatic_fenced_command
+            or self._automatic_observation is None
+            or (pending.attempted and self._automatic_receipt_first)
+        ):
+            return tuple(work)
+        command = pending.command
+        consent = automatic.observed_consent
+        if consent is None or (consent.generation, consent.revision) != (
+            command.expected_generation,
+            command.expected_revision,
+        ):
+            return tuple(
+                work
+            )  # No implicit CAS rebase, including derived cancellation Off.
+        if command.enabled:
+            state = self._state
+            if not (
+                state.feature_enabled
+                and all(
+                    p.SHARED_CAPABILITY in (caps or ())
+                    for caps in (
+                        state.approved_capabilities,
+                        state.session_approved_capabilities,
+                        state.acknowledged_capabilities,
+                    )
+                )
+                and -60 < self._remaining(command.intent_created_at) <= 0
+            ):
+                return tuple(work)
+        elif self._remaining(command.intent_created_at) > 0:
+            return tuple(work)
+        return (
+            *work,
+            Work(
+                "control_automatic",
+                "automatic-control",
+                priority=2 if command.enabled else 0,
+                payload=command,
+            ),
+        )
+
+    def _accept_automatic(self, work, result, fence):
+        historical = replace(work, operation="fetch_receipt")
+        with self._lock:
+            self._check_locked(fence, work=historical)
+            if not self._terminal_authenticated_locked():
+                raise _Obsolete
+            actions = tuple(
+                sorted(
+                    (
+                        c
+                        for c in self._commands.values()
+                        if c.kind in ("cancel_automatic", "remove_cancel")
+                    ),
+                    key=lambda c: c.sequence,
+                )
+            )
+        # Validate against the pre-response state before any queued local action
+        # is saved or consumed. A malformed whole response has no partial effects.
+        self._merge_consent(self._state, result.status.consent)
+        if work.operation != "fetch_automatic":
+            selected = self._state.automatic.pending
+            if (
+                selected is None
+                or selected.command != work.payload
+                or not selected.attempted
+            ):
+                raise _Obsolete
+            if result.receipt is not None and (
+                not isinstance(result.receipt, p.AutomaticReceipt)
+                or result.receipt.command != selected.command
+            ):
+                raise FleetRelayError(
+                    None, "malformed_response", "Receipt command mismatch"
+                )
+        # Cancellation changes fence positive dispatch, not the old On receipt.
+        # Apply the captured explicit actions in order after HTTP drains. Later
+        # callbacks stay queued and can still use the bounded saved On receipt.
+        for action in actions:
+            if not self._command_binding_current(action, self.status().metadata):
+                continue
+            if action.kind == "cancel_automatic":
+                self._save_automatic_cancel(action, fence, work=historical)
+            elif action.payload == self._state.automatic.pending:
+                self._persist(
+                    replace(
+                        self._state,
+                        automatic=replace(
+                            self._state.automatic,
+                            pending=replace(action.payload, cancel_after_on=None),
+                        ),
+                    ),
+                    fence,
+                    work=historical,
+                )
+            self._drop_command(action.kind, action)
+        dismissed = None
+        previous_consent = self._state.automatic.observed_consent
+        candidate = self._merge_consent(self._state, result.status.consent)
+        pending = candidate.automatic.pending
+        if work.operation != "fetch_automatic":
+            receipt = result.receipt
+            if (
+                pending is None
+                or pending.command != work.payload
+                or not pending.attempted
+            ):
+                raise _Obsolete
+            if receipt is not None:
+                with self._lock:
+                    action = self._commands.get("automatic")
+                    if (
+                        action is not None
+                        and action.kind == "dismiss_automatic"
+                        and self._command_binding_current(action, self._status.metadata)
+                        and action.payload == pending
+                        and (
+                            not pending.command.enabled
+                            or self._on_expired_proven_locked(pending.command)
+                        )
+                    ):
+                        dismissed = action
+                if dismissed is not None:
+                    # The exact receipt remains evidence of On, but an admitted
+                    # whole-journal dismissal also retires its unsent cancellation.
+                    candidate = replace(
+                        candidate,
+                        automatic=replace(
+                            candidate.automatic,
+                            pending=replace(pending, cancel_after_on=None),
+                        ),
+                    )
+                candidate = s.settle_automatic_receipt(candidate, receipt)
+            else:
+                candidate = replace(
+                    candidate,
+                    automatic=replace(
+                        candidate.automatic,
+                        pending=None,
+                        last_result=s.AutomaticCompletion(pending, "already_off"),
+                    ),
+                )
+        pending = candidate.automatic.pending
+        if (
+            pending is not None
+            and not pending.command.enabled
+            and not result.status.consent.enabled
+            and result.status.consent.revision
+            == candidate.automatic.observed_consent.revision
+        ):
+            candidate = replace(
+                candidate,
+                automatic=replace(
+                    candidate.automatic,
+                    pending=None,
+                    last_result=s.AutomaticCompletion(pending, "observed_off"),
+                ),
+            )
+        self._persist(candidate, fence, work=historical)
+        if dismissed is not None:
+            self._drop_command("automatic", dismissed)
+        observed = candidate.automatic.observed_consent
+        if observed != previous_consent:
+            self._invalidate_source_evidence()
+        if observed.revision == result.status.consent.revision:
+            self._automatic_observation = result.status
+        self._automatic_probe = False
+        self._due["automatic"] = self._clock() + 2.0
+        with self._lock:
+            queued = any(
+                c.kind in ("automatic", "cancel_automatic")
+                for c in self._commands.values()
+            )
+        self._update_status(
+            automatic_status=self._automatic_observation,
+            automatic_stage="queued"
+            if queued
+            else "persisted"
+            if candidate.automatic.pending
+            else "settled",
+        )
+
+    def _invalidate_source_evidence(self):
+        self._eligibility = self._sources = None
+        # Invalidated evidence is immediately due, but must not jump ahead of
+        # every older periodic class after each successful source mutation.
+        now = self._clock()
+        for key in ("eligibility", "sources"):
+            self._due[key] = min(self._due[key], now)
+        with self._lock:
+            self._automatic_generation += 1
+        self._update_status(eligibility=None, sources=None)
+
+    def _merge_consent(self, state, incoming):
+        old = state.automatic.observed_consent
+        if old is not None:
+            if incoming.revision < old.revision:
+                return state
+            if incoming.revision == old.revision and not p._same_consent(old, incoming):
+                raise FleetRelayError(
+                    None, "malformed_response", "Contradictory consent"
+                )
+        return replace(
+            state, automatic=replace(state.automatic, observed_consent=incoming)
+        )
 
     def _eligibility_work(self) -> Work:
         eligibility = self._eligibility
@@ -1358,45 +2766,345 @@ class FleetSharingWorker:
 
     @staticmethod
     def _source_work_key(command):
-        # Stop supersedes Start, but repeated Stop/CAS rebasing is still the
-        # SAME retry owner. Submission generations would let clicks defeat backoff.
+        # Explicit same-source Stop replacement retains its retry floor;
+        # submission generations would let repeated clicks defeat backoff.
         kind = "stop" if isinstance(command, p.StopSource) else "start"
         return "source:" + kind + ":" + command.source_id.lower()
 
     def _prune_source_work(self):
+        self._source_observe.intersection_update(
+            command.source_id for command in self._state.pending_source_commands
+        )
         self._scheduler.retain(
             "source:",
             {self._source_work_key(c) for c in self._state.pending_source_commands},
         )
 
-    def _publication(self):
-        if self._catalogue is None or self._eligibility is None:
-            return None
-        with self._lock:
-            latest = self._latest
-            if latest and self._clock() - latest[1] > MAX_SNAPSHOT_AGE_S:
-                self._latest = latest = None
-        if latest is None:
-            return None
-        if (
-            self._eligibility.state != "ready"
-            or self._eligibility.participation_generation
-            != getattr(self._state.observed_participation, "generation", None)
-        ):
-            return ()
-        entries = {c.character_id: c for c in self._eligibility.characters}
-        rows = projection.project_snapshot(
-            latest[0],
-            self._catalogue,
-            eligible_character_ids=frozenset(entries),
+    def _acknowledge_rights(self):
+        return tuple(
+            capability
+            for capability in COMBAT_CAPABILITIES
+            if capability in (self._state.approved_capabilities or ())
+            and capability in (self._state.session_approved_capabilities or ())
         )
-        # An atomic subset would withdraw active members whose cached proof
-        # merely needs refresh. The relay still enforces current authority.
-        if any(
-            self._remaining(entries[row.character_id].expires_at) <= 0 for row in rows
+
+    def _combat_disclosure(self, required=COMBAT_CAPABILITIES):
+        state = self._state
+        return all(
+            capability in (rights or ())
+            for rights in (
+                state.approved_capabilities,
+                state.session_approved_capabilities,
+                state.acknowledged_capabilities,
+            )
+            for capability in required
+        )
+
+    def _publication(self):
+        proof = self._eligibility_proof
+        if (
+            proof is None
+            or proof.response is not self._eligibility
+            or not self._combat_disclosure(CAPABILITIES)
+            or self._catalogue is None
+            or self._eligibility is None
         ):
             return None
-        return rows
+        try:
+            with self._lock:
+                self._check_locked(
+                    proof.fence, work=Work("publish_snapshot", "publication")
+                )
+                source = self._latest
+        except _Obsolete:
+            return None
+        if self._eligibility.participation_generation != getattr(
+            self._state.observed_participation, "generation", None
+        ):
+            return None
+        if self._eligibility.state == "not_verified":
+            if not self._last_published:
+                return None
+            return _PublicationSelection(
+                None,
+                None,
+                self._catalogue,
+                self._eligibility,
+                proof,
+                frozenset(),
+                (),
+                self._expires_at,
+                (),
+                "source_eligibility_lost",
+            )
+        try:
+            current = getattr(source, "is_current", None)
+            if not callable(current) or current() is not True:
+                return None
+            snapshot = source.snapshot
+        except Exception:  # noqa: BLE001 — unavailable producer advice must not suppress independent receiving or control; final leaf exceptions are not handled here.
+            return None
+        now = self._clock()
+        m = snapshot.sampled_at_mono
+        if (
+            m is None
+            or not isfinite(m)
+            or not isfinite(now)
+            or not 0 <= Fraction(now) - Fraction(m) < MAX_SNAPSHOT_AGE_S
+            or snapshot.metric_error is not None
+            or self._eligibility.state != "ready"
+        ):
+            return None
+        entries = {c.character_id: c for c in self._eligibility.characters}
+        eligible = frozenset(entries)
+        owned = frozenset(c.character_id for c in self._catalogue.characters)
+        resolved = tuple(
+            projection._resolved_combat_rows(snapshot, self._catalogue, owned)
+        )
+        # Missing ownership or unavailable/legacy metrics cannot silently erase a
+        # member of the previous atomic publication, even beside healthy rows.
+        if len(resolved) != len(snapshot.rows) or any(
+            row.combat is None or (row.dps is None and row.incoming_dps is None)
+            for _, row in resolved
+        ):
+            return None
+        try:
+            for _, row in resolved:
+                p._dps(row.dps)
+                p._dps(row.incoming_dps)
+        except ValueError:
+            return None
+        projected = projection.project_combat_snapshot(
+            snapshot,
+            self._catalogue,
+            eligible_character_ids=owned,
+            now_mono=now,
+        )
+        # Validate the complete local temporal handoff BEFORE permission filtering;
+        # an invalid ineligible member is not evidence of whole-source inactivity.
+        if projected is None:
+            return None
+        rows = tuple(row for row in projected if row.character_id in eligible)
+        reason = None
+        if not rows:
+            if not self._last_published:
+                return None
+            reason = (
+                "inactive"
+                if not resolved or any(cid in eligible for cid, _ in resolved)
+                else "source_eligibility_lost"
+            )
+        elif not self._combat_disclosure():
+            return None
+        deadlines = dict(proof.deadlines)
+        members = tuple(deadlines[cid] for cid, _ in resolved if cid in eligible)
+        if any(deadline <= now for deadline in members):
+            return None
+        return _PublicationSelection(
+            source,
+            snapshot,
+            self._catalogue,
+            self._eligibility,
+            proof,
+            eligible,
+            # The minimum proves every selected member while keeping final leaf
+            # work constant even for a large inactive local roster.
+            (min(members),) if members else (),
+            self._expires_at,
+            tuple(
+                (r.character_id, r.row.dps, r.row.incoming_dps, r.row.combat)
+                for r in rows
+            ),
+            reason,
+        )
+
+    def _validate_publication_permission_locked(self, selected, fence, work, now):
+        self._check_locked(fence, work=work)
+        self._check_locked(selected.proof.fence, work=work)
+        part = self._state.observed_participation
+        if (
+            self._inhibit
+            or not self._state.feature_enabled
+            or not self._combat_disclosure(
+                CAPABILITIES if selected.withdrawal_reason else COMBAT_CAPABILITIES
+            )
+            or not self._timing_open_locked(fence)
+            or self._state.pending_participation is not None
+            or part is None
+            or not part.enabled
+            or part.generation != selected.eligibility.participation_generation
+            or selected.catalogue is not self._catalogue
+            or selected.eligibility is not self._eligibility
+            or selected.proof is not self._eligibility_proof
+            or now >= selected.session_deadline
+            or now >= self._expires_at
+            or any(now >= deadline for deadline in selected.member_deadlines)
+        ):
+            raise _Obsolete
+
+    def _validate_off_withdrawal_locked(self, fence, work, now):
+        # The original Off intent/session fences and deadline survive the HTTP
+        # wait. No local sample, membership proof or timing prerequisite applies.
+        self._check_locked(fence, work=work)
+        if (
+            not isinstance(work.payload, _OffWithdrawal)
+            or not self._withdraw_needed
+            or not self._control_auth_current_locked()
+            or self._control_auth != work.payload.auth
+            or not self._combat_disclosure(CAPABILITIES)
+            or not isfinite(now)
+            or now >= work.payload.session_deadline
+            or now >= self._expires_at
+        ):
+            raise _Obsolete
+
+    def _check_publication_completion(self, selected, fence, work, receipt):
+        if selected is None:
+            with self._lock:
+                self._validate_off_withdrawal_locked(fence, work, receipt)
+            return
+        if selected.source is not None and selected.source.is_current() is not True:
+            raise _Obsolete
+        with self._lock:
+            self._validate_publication_permission_locked(selected, fence, work, receipt)
+
+    @staticmethod
+    def _with_publication_source_locked(work, install):
+        # This is the ORIGINAL non-consuming leaf, not another HTTP admission.
+        # Every needed worker/status lock is already held; install is bounded,
+        # with no lock acquisition, I/O, source reentry or notification inside.
+        source = None if work.key == "withdraw" else work.payload.source
+        if source is None:
+            install()
+        elif source.admit_start(install) is not True:
+            raise _Obsolete
+
+    def _validate_publication_completion_locked(self, work, fence, receipt):
+        if work.key == "withdraw":
+            self._validate_off_withdrawal_locked(fence, work, receipt)
+        else:
+            self._validate_publication_permission_locked(
+                work.payload, fence, work, receipt
+            )
+
+    def _publication_success_status_locked(self):
+        # Same presentation precedence as the common success tail, but its
+        # candidate and ACK must install together under publication authority.
+        changes = {}
+        if (
+            self._state.cutover is not None
+            and self._state.pending_participation is None
+            and self._status.participation == "needs_confirmation"
+            and any(
+                item.selector == "participation" and item.status == "observed_choice"
+                for item in self._state.cutover.outcomes
+            )
+        ):
+            changes["participation"] = "observed_choice"
+        if self._archived_choice() is not None:
+            changes.update(
+                state="refused",
+                detail="unresolved_previous_choice",
+                local_inhibited=True,
+            )
+        elif (
+            self._state.pending_pairing is not None
+            and self._state.pending_pairing == self._parked_pairing
+        ):
+            changes.update(
+                state="refused",
+                detail="unresolved_approval",
+                pairing="unresolved_approval",
+                approval_url=None,
+            )
+        elif self._timing_context._timing_loss is not None:
+            changes.update(
+                state="refused", detail=self._timing_context._timing_loss.reason
+            )
+        elif (
+            self._control_auth_current_locked()
+            and not self._timing_scope_current_locked()
+        ):
+            changes.update(state="refused", detail="timing_scope_mismatch")
+        elif not self._needs_fresh_intent and self._state.auth_pause is None:
+            changes.update(state="active", detail=None)
+        return self._status_candidate_locked(**changes) if changes else None
+
+    def _accept_publication(self, work, fence, receipt):
+        with self._lock, self._status_lock:
+            status = self._publication_success_status_locked()
+
+            def install():
+                self._validate_publication_completion_locked(work, fence, receipt)
+                self._last_published = (
+                    () if work.key == "withdraw" else work.payload.semantic
+                )
+                self._last_publish_at = receipt
+                if work.key == "withdraw":
+                    self._withdraw_needed = False
+                if status is not None:
+                    self._status = status
+
+            self._with_publication_source_locked(work, install)
+        if status is not None:
+            self._notify("status", status)
+
+    def _reset_publication_session(
+        self, work, fence, reset_fence, receipt, candidate, auth
+    ):
+        with self._lock, self._status_lock:
+            status = self._status_candidate_locked(
+                sources=None,
+                eligibility=None,
+                observed_participation=self._state.observed_participation,
+            )
+            notifications = ()
+
+            def install():
+                nonlocal notifications
+                # The admitted save is irreversible. Only its exact result state
+                # and original generations/auth may authorize this later reset.
+                # Session rights were deliberately cleared by that saved value;
+                # never treat an arbitrary session=None as completion authority.
+                self._check_locked(reset_fence, work=work)
+                if (
+                    self._state is not candidate
+                    or self._control_auth != auth
+                    or not isfinite(receipt)
+                    or receipt >= work.payload.session_deadline
+                    or receipt >= self._expires_at
+                ):
+                    raise _Obsolete
+                if work.key == "withdraw":
+                    if not self._withdraw_needed or auth != work.payload.auth:
+                        raise _Obsolete
+                else:
+                    selected = work.payload
+                    context = self._timing_context
+                    if (
+                        self._inhibit
+                        or context._timing_loss is not None
+                        or context._inconsistent
+                        or context._timing_generation != fence.timing
+                        or not self._timing_scope_current_locked()
+                        or selected.catalogue is not self._catalogue
+                        or selected.eligibility is not self._eligibility
+                        or selected.proof is not self._eligibility_proof
+                        or any(
+                            receipt >= deadline
+                            for deadline in selected.member_deadlines
+                        )
+                    ):
+                        raise _Obsolete
+                self._pairing_pollable = None
+                notifications = self._reset_session_caches_locked()
+                if status is not None:
+                    self._status = status
+
+            self._with_publication_source_locked(work, install)
+        for kind, event in (*notifications, ("status", status)):
+            if event is not None:
+                self._notify(kind, event)
 
     def _recovery_work(self):
         pending = self._state.pending_recovery
@@ -1407,7 +3115,9 @@ class FleetSharingWorker:
                 if pending.challenge
                 else not -60 < self._remaining(pending.issued_at) <= 60
             )
-            if expired:
+            if expired or pending.completion_attempted:
+                # Completion is one-use even when acceptance/save failed. Replace
+                # the bounded journal, never clear its attempt flag on this binding.
                 pending = None
         if pending is None:
             pending = s.PendingRecovery(secrets.token_urlsafe(32), self._utc_text())
@@ -1417,7 +3127,110 @@ class FleetSharingWorker:
 
     def _execute(self, work, fence):
         self._check(fence, work=work)
-        sent = failed = False
+        prepared = None
+        selected = (
+            work.payload
+            if (work.operation == "publish_snapshot" and work.key != "withdraw")
+            else None
+        )
+        if selected is not None and selected.withdrawal_reason is None:
+            prepared = self._timing_context._stage_publication(
+                selected.source,
+                selected.catalogue,
+                eligible_character_ids=selected.eligible_character_ids,
+            )
+            if prepared is None or prepared.snapshot is not selected.snapshot:
+                raise _Obsolete
+        elif selected is not None and selected.source is not None:
+            # One selected-lane check, not a planning scan or a second pin owner.
+            # An empty projection alone does not prove immutable source evidence.
+            if (
+                self._timing_context._checked_publication_sample(
+                    selected.snapshot,
+                    selected.catalogue,
+                    frozenset(c.character_id for c in selected.catalogue.characters),
+                    Fraction(self._clock()),
+                )
+                is None
+            ):
+                raise _Obsolete
+        started = receipt = None
+        failed = False
+        first_automatic_attempt = False
+        timing_refusal = None
+
+        def validate_publication():
+            nonlocal started, timing_refusal
+            self._check_locked(fence, work=work)
+            if prepared is not None:
+                try:
+                    start = self._timing_context._validate_publication(prepared)
+                except ValueError as exc:
+                    timing_refusal = exc
+                    raise
+            else:
+                start = self._clock()
+                if not isfinite(start) or (
+                    selected.source is not None
+                    and not 0
+                    <= Fraction(start) - Fraction(selected.snapshot.sampled_at_mono)
+                    < MAX_SNAPSHOT_AGE_S
+                ):
+                    raise _Obsolete
+            self._validate_publication_permission_locked(selected, fence, work, start)
+            started = start
+
+        def before_send():
+            nonlocal started
+            with self._lock:
+                if selected is not None:
+                    if selected.source is None:
+                        validate_publication()
+                    elif selected.source.admit_start(validate_publication) is not True:
+                        raise _Obsolete
+                    return
+                if work.key == "withdraw":
+                    start = self._clock()
+                    self._validate_off_withdrawal_locked(fence, work, start)
+                    started = start
+                    return
+                self._check_locked(fence, work=work)
+                if (
+                    work.operation in ("read_snapshot", "publish_snapshot")
+                    and work.key != "withdraw"
+                    and (self._inhibit or not self._timing_open_locked(fence))
+                ):
+                    raise _Obsolete
+                if work.operation in (
+                    "control_source",
+                    "control_automatic",
+                    "fetch_receipt",
+                    "fetch_automatic",
+                    "set_participation",
+                ) and (
+                    not self._control_auth_current_locked()
+                    or self._clock() >= self._expires_at
+                ):
+                    raise _Obsolete
+                if work.operation in ("control_source", "control_automatic"):
+                    command = work.payload
+                    remaining = self._remaining(command.intent_created_at)
+                    if remaining > 0 or (
+                        (
+                            isinstance(command, (p.SourceStart, p.SourceStop))
+                            or command.enabled
+                        )
+                        and remaining <= -60
+                    ):
+                        raise _Obsolete
+                started = self._clock()
+                if (
+                    work.operation == "read_snapshot"
+                    and not self._timing_context._start_snapshot_get(started_at=started)
+                ):
+                    started = None
+                    raise _Obsolete
+
         try:
             state = self._state
             origin = resolve_relay_origin(paired_origin=state.relay_origin)
@@ -1438,6 +3251,21 @@ class FleetSharingWorker:
                 candidate = replace(
                     self._state, last_revision=self._state.last_revision + 1
                 )
+                if operation == "control_automatic":
+                    pending = candidate.automatic.pending
+                    if pending is None or pending.command != work.payload:
+                        raise _Obsolete
+                    first_automatic_attempt = not pending.attempted
+                    # Even a post-write fence refusal leaves durable attempted
+                    # evidence. Its next turn seeks a receipt before any retry.
+                    self._automatic_receipt_first = True
+                    candidate = replace(
+                        candidate,
+                        automatic=replace(
+                            candidate.automatic,
+                            pending=replace(pending, attempted=True),
+                        ),
+                    )
                 if operation == "set_participation":
                     candidate = replace(
                         candidate,
@@ -1453,18 +3281,23 @@ class FleetSharingWorker:
                     "now": self._utc_now(),
                 }
                 if operation == "publish_snapshot":
-                    args["rows"] = work.payload
+                    args["sampled_at_ms"] = prepared.sampled_at_ms if prepared else 0
+                    args["rows"] = prepared.rows if prepared else ()
                 elif operation == "set_participation":
                     args.update(
                         enabled=work.payload.enabled,
                         expected_generation=work.payload.expected_generation,
                     )
                     self._part_observe = True
+                elif operation == "control_automatic":
+                    args["command"] = work.payload
                 elif operation == "control_source":
                     args["command"] = work.payload
                     self._source_observe.add(work.payload.source_id)
+                elif operation == "fetch_receipt":
+                    args["request_id"] = work.payload.request_id
                 elif operation == "acknowledge_capabilities":
-                    args["capabilities"] = CAPABILITIES
+                    args["capabilities"] = self._acknowledge_rights()
             elif operation == "begin_recovery":
                 pending = self._state.pending_recovery
                 args = dict(
@@ -1473,6 +3306,17 @@ class FleetSharingWorker:
                     issued_at=pending.issued_at,
                 )
             elif operation == "complete_recovery":
+                self._persist(
+                    replace(
+                        self._state,
+                        pending_recovery=replace(
+                            self._state.pending_recovery,
+                            completion_attempted=True,
+                        ),
+                    ),
+                    fence,
+                    work=work,
+                )
                 args = dict(
                     private_key=private_key,
                     challenge=self._state.pending_recovery.challenge,
@@ -1482,10 +3326,11 @@ class FleetSharingWorker:
                     public_key_spki=base64.b64decode(
                         state.identity.public_key_spki_b64
                     ),
-                    requested_capabilities=CAPABILITIES,
+                    requested_capabilities=state.pending_pairing.requested_capabilities,
                 )
             elif operation == "complete_pairing":
                 pairing = self._state.pending_pairing
+                self._pairing_pollable = None
                 self._persist(
                     replace(
                         self._state,
@@ -1508,32 +3353,85 @@ class FleetSharingWorker:
                     inhibited = self._inhibit
                 if inhibited or not self._enabled():
                     raise _Obsolete
-            sent = True
-            started = self._clock()
-            result = getattr(self._client, operation)(**args)
+            result = getattr(self._client, operation)(**args, before_send=before_send)
             receipt = self._clock()
-            self._check(fence, work=work)
+            if started is None:
+                # A client that never admitted transport cannot acknowledge work.
+                raise _Obsolete
+            self._check(
+                fence,
+                work=replace(work, operation="fetch_receipt")
+                if operation == "control_automatic"
+                else work,
+            )
+            if operation == "publish_snapshot":
+                self._check_publication_completion(selected, fence, work, receipt)
             self._accept(work, result, fence, started, receipt)
+        except ValueError as exc:
+            if exc is timing_refusal:
+                raise _Obsolete from None
+            raise
         except FleetRelayError as exc:
+            receipt = self._clock()
             failed = True
+            if started is None:
+                raise _Obsolete from None
             self._check(fence, work=work)
-            self._relay_error(work, exc, fence)
+            if work.operation == "publish_snapshot":
+                self._check_publication_completion(selected, fence, work, receipt)
+            if first_automatic_attempt and exc.code in (
+                "bad_request",
+                "invalid_intent",
+                "forbidden",
+                "capability_required",
+                "feature_disabled",
+                "conflict",
+                "request_id_conflict",
+            ):
+                pending = self._state.automatic.pending
+                self._persist(
+                    replace(
+                        self._state,
+                        automatic=replace(
+                            self._state.automatic,
+                            pending=None,
+                            last_result=s.AutomaticCompletion(pending, "rejected"),
+                        ),
+                    ),
+                    fence,
+                    work=work,
+                )
+                self._automatic_probe = True
+                self._update_status(automatic_stage="rejected")
+            elif work.operation == "publish_snapshot":
+                self._relay_error(work, exc, fence, receipt=receipt)
+            else:
+                self._relay_error(work, exc, fence)
         finally:
-            if sent:
+            if started is not None:
+                if work.operation == "read_snapshot":
+                    self._timing_context._finish_snapshot_get(started_at=started)
                 self._scheduler.completed(
                     work,
-                    self._clock(),
+                    receipt if receipt is not None else self._clock(),
                     failed=failed,
                     jitter=self._jitter() if failed else 0,
                 )
                 # Completion may retire a journal (or be obsolete). Do not keep
                 # historical UUID backoff, or resurrect it after reconciliation.
                 self._prune_source_work()
+            self._apply_timing_loss()
 
     def _accept(self, work, result, fence, started, receipt):
         operation = work.operation
         if operation in ("fetch_device", "acknowledge_capabilities"):
             self._accept_device(result, fence, work)
+            candidate = self._timing_context._evaluate_diagnostic(
+                started_at=started,
+                received_at=receipt,
+                server_time_ms=result.server_time_ms,
+            )
+            self._accept_timing_candidate(candidate, fence, work)
         elif operation == "renew_session":
             self._persist(
                 replace(self._state, session_expires_at=result), fence, work=work
@@ -1543,23 +3441,37 @@ class FleetSharingWorker:
             self._set_catalogue(result, fence=fence)
             self._due["catalogue"] = self._clock() + CATALOGUE_REFRESH_INTERVAL_S
         elif operation == "fetch_eligibility":
-            self._eligibility = result
+            # Capture elapsed BEFORE UTC. Time spent in the external clock cannot
+            # extend the proof. Convert once, never on planning or under a leaf.
+            elapsed = Fraction(self._clock())
+            utc = self._utc_now()
+            deadlines = []
+            for entry in result.characters:
+                deadlines.append(
+                    (
+                        entry.character_id,
+                        self._elapsed_expiry(entry.expires_at, elapsed, utc),
+                    )
+                )
+            with self._lock:
+                self._check_locked(fence, work=work)
+                self._eligibility = result
+                self._eligibility_proof = _EligibilityProof(
+                    result, fence, tuple(deadlines)
+                )
             self._due["eligibility"] = self._clock() + ELIGIBILITY_REFRESH_INTERVAL_S
             self._update_status(eligibility=result)
         elif operation == "publish_snapshot":
-            self._last_published = work.payload
-            self._last_publish_at = self._clock()
-            if work.key == "withdraw":
-                self._withdraw_needed = False
+            self._accept_publication(work, fence, receipt)
+            return  # Publication status must not escape into the unfenced tail.
         elif operation == "read_snapshot":
             self._due["read"] = self._clock() + 1.0
-            with self._lock:
-                if self._fence_locked() != fence:
-                    raise _Obsolete
-                event = self._remote_event_locked(
-                    result, receipt, max(0, receipt - started), "replace"
-                )
-            self._notify("remote", event)
+            if not self._timing_context._finish_snapshot_get(started_at=started):
+                return
+            candidate = self._timing_context._evaluate_snapshot(
+                result, started_at=started, received_at=receipt
+            )
+            self._accept_timing_candidate(candidate, fence, work, remote=True)
         elif operation == "set_participation":
             self._persist(
                 replace(
@@ -1575,6 +3487,25 @@ class FleetSharingWorker:
             self._accept_sources(result, fence, work)
         elif operation == "control_source":
             self._finish_source(work.payload, result, fence, work)
+        elif operation in ("fetch_automatic", "control_automatic") or (
+            operation == "fetch_receipt"
+            and isinstance(work.payload, p.AutomaticCommand)
+        ):
+            self._accept_automatic(work, result, fence)
+        elif operation == "fetch_receipt":
+            if not isinstance(
+                result.receipt, p.SourceStopReceipt
+            ) or not p._same_stop_command(work.payload, result.receipt.command):
+                raise FleetRelayError(
+                    None, "malformed_response", "Receipt command mismatch"
+                )
+            self._finish_source(
+                work.payload,
+                replace(result.receipt, command=work.payload),
+                fence,
+                work,
+                status=result.status,
+            )
         elif operation == "begin_recovery":
             self._persist(
                 replace(
@@ -1614,11 +3545,67 @@ class FleetSharingWorker:
             self._reset_session()
             self._resume_metadata = True
             self._update_status(pairing="acknowledged", approval_url=None)
-        self._check(replace(fence, session=self._state.session_id), work=work)
-        if not self._needs_fresh_intent and self._state.auth_pause is None:
+        fence = replace(fence, session=self._state.session_id)
+        self._check(fence, work=work)
+        with self._lock:
+            timing_scope_mismatch = (
+                self._control_auth_current_locked()
+                and not self._timing_scope_current_locked()
+            )
+        if (
+            self._state.cutover is not None
+            and self._state.pending_participation is None
+            and self.status().participation == "needs_confirmation"
+            and any(
+                item.selector == "participation" and item.status == "observed_choice"
+                for item in self._state.cutover.outcomes
+            )
+        ):
+            self._update_status(fence=fence, participation="observed_choice")
+        if self._archived_choice() is not None:
+            self._update_status(
+                state="refused",
+                detail="unresolved_previous_choice",
+                local_inhibited=True,
+            )
+        elif (
+            self._state.pending_pairing is not None
+            and self._state.pending_pairing == self._parked_pairing
+        ):
+            self._update_status(
+                fence=fence,
+                state="refused",
+                detail="unresolved_approval",
+                pairing="unresolved_approval",
+                approval_url=None,
+            )
+        elif self._timing_context._timing_loss is not None:
+            self._update_status(
+                state="refused", detail=self._timing_context._timing_loss.reason
+            )
+        elif timing_scope_mismatch:
+            self._update_status(state="refused", detail="timing_scope_mismatch")
+        elif not self._needs_fresh_intent and self._state.auth_pause is None:
             self._update_status(state="active", detail=None)
 
+    def _check_device_identity(self, device_id, fence, work):
+        with self._lock:
+            self._check_locked(fence, work=work)
+            expected = self._state.device_id
+            if expected is not None and expected.lower() != device_id.lower():
+                self._identity_mismatch = True
+                self._inhibit = True
+                self._authenticated_device = None
+            else:
+                return
+        self._clear_remote()
+        self._update_status(
+            state="refused", detail="identity_mismatch", local_inhibited=True
+        )
+        raise _Obsolete
+
     def _accept_device(self, device, fence, work):
+        self._check_device_identity(device.device_id, fence, work)
         candidate = replace(
             self._state,
             device_id=device.device_id,
@@ -1629,6 +3616,7 @@ class FleetSharingWorker:
             acknowledged_capabilities=device.acknowledged_capabilities,
             observed_participation=device.participation,
         )
+        candidate = self._settle_archive(candidate, participation=device.participation)
         with self._lock:
             queued_participation = "participation" in self._commands
         intent = candidate.pending_participation
@@ -1636,30 +3624,23 @@ class FleetSharingWorker:
         # Deferred controls allow this observation, not effects belonging to a
         # superseded intent. Keep its uncertainty on disk and local inhibit on.
         if intent is not None and not queued_participation:
-            if (
-                intent.enabled
-                and intent.expected_generation is None
-                and intent.intent_id != self._fresh_on
-            ) or (
-                intent.enabled
-                and intent.expected_generation is not None
-                and device.participation.generation > intent.expected_generation
-                and not device.participation.enabled
-            ):
+            if intent.expected_generation is None:
                 self._needs_fresh_intent = True
             elif device.participation.enabled == intent.enabled:
                 candidate = replace(candidate, pending_participation=None)
                 acknowledged = True
-            elif not intent.enabled or intent.expected_generation is None:
-                candidate = replace(
-                    candidate,
-                    pending_participation=replace(
-                        intent,
-                        expected_generation=device.participation.generation,
-                        attempted=False,
-                    ),
-                )
+            elif device.participation.generation != intent.expected_generation:
+                self._needs_fresh_intent = True
         self._persist(candidate, fence, work=work)
+        self._authenticated_device = device.device_id
+        self._bind_control_auth(device.device_id, fence, work)
+        with self._lock:
+            self._check_locked(fence, work=work)
+            self._control_db_fact = (
+                self._control_auth,
+                self._timing_context._db_continuity_token,
+                device.server_time_ms,
+            )
         self._needs_device = False
         self._part_observe = queued_participation
         self._resume_metadata = False
@@ -1675,7 +3656,13 @@ class FleetSharingWorker:
             )
         elif acknowledged:
             self._participation_ack(device.participation.enabled)
-        elif intent is None and device.participation.enabled:
+            self._update_status(participation="observed_choice")
+        elif (
+            intent is None
+            and device.participation.enabled
+            and self._archived_choice() is None
+            and self._state.pending_pairing is None
+        ):
             with self._lock:
                 self._inhibit = False
             self._update_status(local_inhibited=False)
@@ -1685,9 +3672,9 @@ class FleetSharingWorker:
         self._update_status(observed_participation=device.participation)
 
     def _participation_ack(self, enabled):
+        inhibited = not enabled or self._archived_choice() is not None
         with self._lock:
-            self._inhibit = not enabled
-        self._fresh_on = None
+            self._inhibit = inhibited
         self._needs_fresh_intent = self._part_observe = False
         self._eligibility = None
         self._due["eligibility"] = 0
@@ -1695,49 +3682,21 @@ class FleetSharingWorker:
             self._clear_remote()
         self._update_status(
             participation="acknowledged",
-            local_inhibited=not enabled,
+            local_inhibited=inhibited,
             eligibility=None,
             observed_participation=self._state.observed_participation,
         )
 
     def _accept_sources(self, result, fence, work):
-        commands = self._state.pending_source_commands
-        updated = []
-        clear = expired = False
-        expired_results = []
-        for command in commands:
-            if command.source_id not in self._source_observe:
-                updated.append(command)
-                continue
-            view = next(
-                (
-                    v
-                    for v in result.sources
-                    if v.source_id.lower() == command.source_id.lower()
-                ),
-                None,
-            )
-            if isinstance(command, p.StopSource):
-                if view and view.state == "ended":
-                    clear = True
-                    continue
-                updated.append(
-                    p.StopSource(command.source_id, view.generation if view else 0)
-                )
-            elif view is None:
-                if self._remaining(command.intent_created_at) > -60:
-                    updated.append(command)
-                else:
-                    expired = True
-                    expired_results.append(self._source_summary(command, "expired"))
-            # An already admitted ID is acknowledged, even ended. An absent
-            # expired Start is finished without ever minting another consent.
-        self._persist(
-            replace(self._state, pending_source_commands=tuple(updated)),
-            fence,
-            work=work,
+        self._check(fence, work=work)
+        # A catalogue lacks original intent provenance. Even an ended manual
+        # UUID is only an observation, not settlement of this immutable command.
+        clear = False
+        self._source_observe.intersection_update(
+            c.source_id
+            for c in self._state.pending_source_commands
+            if isinstance(c, p.StopSource)
         )
-        self._source_observe.clear()
         if self._sources:
             live = {v.source_id for v in self._sources.sources if v.state != "ended"}
             current = {v.source_id for v in result.sources if v.state != "ended"}
@@ -1749,48 +3708,56 @@ class FleetSharingWorker:
         self._update_status(
             fence=fence,
             sources=result,
-            source_results=(*self.status().source_results, *expired_results)[
-                -p.MAX_SOURCE_INTENTS :
-            ],
             source_control="persisted"
-            if updated
-            else "expired"
-            if expired
-            else "acknowledged",
+            if self._state.pending_source_commands
+            else self.status().source_control,
         )
 
-    def _finish_source(self, command, view, fence, work):
+    def _finish_source(self, command, result, fence, work, *, status=None):
+        if command not in self._state.pending_source_commands:
+            raise _Obsolete
+        view = result.source
         commands = tuple(
             c
             for c in self._state.pending_source_commands
             if c.source_id.lower() != command.source_id.lower()
         )
-        self._persist(
-            replace(self._state, pending_source_commands=commands), fence, work=work
-        )
-        self._source_observe.discard(command.source_id)
-        self._due["sources"] = 0
-        # The individual response is an observation of THIS UUID, not every
-        # queued row. Retain it until the next complete owned-source read.
-        if self._sources is not None:
-            self._sources = replace(
-                self._sources,
-                sources=(
-                    *(
-                        v
-                        for v in self._sources.sources
-                        if v.source_id.lower() != view.source_id.lower()
-                    ),
-                    view,
-                ),
+        candidate = replace(self._state, pending_source_commands=commands)
+        if isinstance(command, p.StopSource):
+            with self._lock:
+                if not self._terminal_authenticated_locked():
+                    raise _Obsolete
+            candidate = self._merge_consent(
+                candidate, (status or result.status).consent
             )
+        self._persist(candidate, fence, work=work)
+        if isinstance(command, p.StopSource):
+            current = status or result.status
+            if (
+                candidate.automatic.observed_consent.revision
+                == current.consent.revision
+            ):
+                self._automatic_observation = current
+                self._due["automatic"] = self._clock() + 2.0
+                self._update_status(automatic_status=current)
+        self._source_observe.discard(command.source_id)
+        self._invalidate_source_evidence()
         if view.state == "ended":
             self._clear_remote()
         self._update_status(source_control="acknowledged", sources=self._sources)
 
     def _accept_recovery(self, result, fence, work):
         if result.result == "reconnected":
+            self._check_device_identity(result.device_id, fence, work)
             pairing = self._state.pending_pairing
+            unfulfilled = (
+                pairing
+                if pairing
+                and not set(pairing.requested_capabilities).issubset(
+                    result.approved_capabilities
+                )
+                else None
+            )
             candidate = replace(
                 s.replace_session(
                     self._state, result.session_id, expires_at=result.session_expires_at
@@ -1800,15 +3767,25 @@ class FleetSharingWorker:
                 observed_participation=result.participation,
                 pending_recovery=None,
                 auth_pause=None,
-                pending_pairing=None,
+                pending_pairing=unfulfilled,
+            )
+            candidate = self._settle_archive(
+                candidate, participation=result.participation, recovered=True
             )
             self._persist(candidate, fence, work=work)
             self._reset_session()
+            self._authenticated_device = result.device_id
+            self._bind_control_auth(
+                result.device_id, replace(fence, session=result.session_id), work
+            )
+            # Recovery proves actual D, not completion of the requested upgrade.
+            # Park only that immutable pairing; other work keeps its own admission.
+            self._parked_pairing = unfulfilled
             if pairing is not None:
                 self._resume_metadata = True
                 self._update_status(
                     fence=replace(fence, session=self._state.session_id),
-                    pairing="acknowledged",
+                    pairing="unresolved_approval" if unfulfilled else "acknowledged",
                     approval_url=None,
                 )
         else:
@@ -1839,20 +3816,45 @@ class FleetSharingWorker:
                 else result.result,
             )
 
-    def _relay_error(self, work, exc, fence):
+    def _relay_error(self, work, exc, fence, *, receipt=None):
         code = exc.code if exc.code in ERROR_CODES else "server_error"
-        self._update_status(state="error", detail=code)
         operation = work.operation
+        if operation == "publish_snapshot":
+            catalogue = None
+            with self._lock, self._status_lock:
+                status = self._status_candidate_locked(state="error", detail=code)
+                auth = self._control_auth
+
+                def install():
+                    nonlocal catalogue
+                    self._validate_publication_completion_locked(work, fence, receipt)
+                    if status is not None:
+                        self._status = status
+                    if exc.status != 401 and exc.code in (
+                        "forbidden",
+                        "capability_required",
+                        "feature_disabled",
+                    ):
+                        self._needs_device = True
+                        self._eligibility = None
+                        catalogue = self._set_catalogue_locked(None)
+                        self._due["catalogue"] = self._due["eligibility"] = 0
+
+                self._with_publication_source_locked(work, install)
+            if status is not None:
+                self._notify("status", status)
+            if catalogue is not None:
+                self._notify("catalogue", catalogue)
+            if exc.status != 401:
+                return
+        else:
+            self._update_status(state="error", detail=code)
         if operation == "complete_pairing":
-            if exc.status == 409:
-                # Unapproved/expired/consumed is coarse conflict, NOT proof of
-                # revocation. Polling remains bounded by the bootstrap scheduler.
-                pairing = replace(
-                    self._state.pending_pairing, completion_attempted=False
-                )
-                self._persist(
-                    replace(self._state, pending_pairing=pairing), fence, work=work
-                )
+            if exc.status == 409 and exc.code == "not_completable":
+                # This live typed negative proves only this poll did not mint a
+                # session. Keep durable uncertainty; never carry knowledge across
+                # restart, response loss, or a replacement pairing binding.
+                self._pairing_pollable = self._state.pending_pairing
             return
         if (
             operation == "begin_recovery"
@@ -1862,17 +3864,35 @@ class FleetSharingWorker:
         ):
             self._update_status(pairing="needs_retry", approval_url=None)
         if operation == "complete_recovery":
-            # One-use completion might already have committed. A fresh challenge
-            # with this registered key is the only safe way to learn a new session.
-            self._persist(replace(self._state, pending_recovery=None), fence, work=work)
+            # Retain attempted evidence until a fresh initiation is durably saved.
             return
         if exc.status == 401 and OPERATIONS[operation] != "bootstrap":
-            self._persist(s.replace_session(self._state, None), fence, work=work)
-            self._reset_session()
+            # The final attempted revision is evidence even when it got a 401.
+            # The exhaustion gate recovers without another signed use or reset.
+            reset_fence = fence
+            candidate = self._state
+            if self._state.last_revision < p.INT4_MAX:
+                candidate = s.replace_session(self._state, None)
+                self._persist(candidate, fence, work=work)
+                reset_fence = replace(fence, session=candidate.session_id)
+            if operation == "publish_snapshot":
+                self._reset_publication_session(
+                    work, fence, reset_fence, receipt, candidate, auth
+                )
+            else:
+                self._reset_session()
         elif operation == "set_participation":
             self._part_observe = self._needs_device = True
         elif operation == "control_source":
             self._source_observe.add(work.payload.source_id)
+        elif operation == "fetch_receipt" and exc.code == "receipt_not_found":
+            if isinstance(work.payload, p.AutomaticCommand):
+                self._automatic_receipt_first = False
+                self._automatic_probe = True
+            else:
+                self._source_observe.discard(work.payload.source_id)
+        elif operation == "control_automatic":
+            self._automatic_receipt_first = True
         elif exc.code in ("forbidden", "capability_required", "feature_disabled"):
             self._needs_device = True
             self._eligibility = None

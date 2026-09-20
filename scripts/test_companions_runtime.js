@@ -85,7 +85,7 @@ class Element {
 }
 const id = '00000000000040008000000000000001', otherId = '00000000000040008000000000000002';
 function row(changes = {}) {
-  return Object.assign({version: 1, id, label: 'Mapper', enabled: true, mode: 'whole',
+  return Object.assign({version: 1, id, label: 'Mapper', enabled: true, show_on_focus: true, mode: 'whole',
     source: {executable_path: 'c:\\mapper.exe', executable_name: 'mapper.exe', window_class: 'Mapper',
       title_hint: 'Map', title_mode: 'exact', last_title: 'Map'},
     window: {x: 10, y: 20, w: 320, h: 210}, generation: 1, binding_revision: 1,
@@ -828,6 +828,58 @@ test('enabled control submits the row generation and rolls back only its own ref
   assert.equal(p.field('enabled-status').textContent, 'Refused');
   assert.equal(p.field('enabled').parentNode.parentNode.contains(p.field('enabled-status')), true);
   assert.equal(p.field('status').parentNode.contains(p.field('enabled-status')), false);
+});
+
+test('show-on-focus checkbox gates on the lost-focus setting and commits its own tick', async () => {
+  const p = await page(state(1, [row()], {}, {hide_on_lost_focus: true}));
+  assert.equal(p.field('show-on-focus').parentNode.hidden, false);
+  p.field('show-on-focus').checked = false; await p.fire(p.field('show-on-focus'), 'change');
+  await p.reply('companion_preview_set_show_on_focus', receipt(1, {id}),
+    [id, false, 1]);
+  await p.reply('companion_previews_state', state(2, [row({show_on_focus: false, generation: 2})],
+    {1: receipt(1, {id})}));
+  assert.equal(p.field('show-on-focus').checked, false);
+
+  const q = await page(state(1, [row()]));
+  assert.equal(q.field('show-on-focus').parentNode.hidden, true);
+});
+
+test('show-on-focus refusal owns adjacent feedback without erasing Enabled refusal or drafts', async () => {
+  const p = await page(state(1, [row()], {}, {hide_on_lost_focus: true}));
+  await p.edit('label', 'Draft');
+  p.field('enabled').checked = false; await p.fire(p.field('enabled'), 'change');
+  await p.reply('companion_preview_set_enabled', receipt(1, {applied: false, persisted: false, error: 'Enabled refused', revision: 1}), [id, false, 1]);
+  assert.equal(p.field('enabled-status').textContent, 'Enabled refused');
+  p.field('show-on-focus').focus(); p.field('show-on-focus').checked = false;
+  await p.fire(p.field('show-on-focus'), 'change');
+  await p.reply('companion_preview_set_show_on_focus', receipt(2, {applied: false, persisted: false, error: 'Focus choice refused', revision: 1}), [id, false, 1]);
+  assert.equal(p.field('enabled-status').textContent, 'Enabled refused');
+  assert.equal(p.field('show-on-focus-status').textContent, 'Focus choice refused');
+  assert.equal(p.field('show-on-focus').getAttribute('aria-describedby'), p.field('show-on-focus-status').id);
+  assert.equal(p.field('show-on-focus').checked, true);
+  assert.equal(p.field('label').value, 'Draft');
+  assert.equal(p.document.activeElement, p.field('show-on-focus'));
+  await p.push(state(2, [row()], {}, {hide_on_lost_focus: false}));
+  assert.equal(p.field('show-on-focus-status').hidden, true);
+  assert.equal(p.field('enabled-status').textContent, 'Enabled refused');
+});
+
+test('focus-hidden stays distinct from Waiting and Live without replacing the operational owner or editor', async () => {
+  const p = await page(state(1, [row({status: 'live'})], {}, {enabled: true}));
+  const owner = p.field('status'), input = p.field('label');
+  input.focus(); await p.edit('label', 'Retained draft');
+  for (const [index, [status, label, pill]] of [
+    ['hidden-by-focus', 'Hidden by focus settings', false],
+    ['waiting', 'Waiting for source', true], ['live', 'Live', true]
+  ].entries()) {
+    await p.push(state(index + 2, [row({status})], {}, {enabled: true}));
+    assert.equal(p.field('status'), owner);
+    assert.equal(owner.querySelector('.companion-status-label').textContent, label);
+    assert.equal(owner.classList.contains('pill'), pill);
+    assert.equal(owner.getAttribute('role'), 'status');
+    assert.equal(p.field('label'), input); assert.equal(input.value, 'Retained draft');
+    assert.equal(p.document.activeElement, input);
+  }
 });
 
 test('direct success awaits acknowledged state before dispatching a queued edit', async () => {

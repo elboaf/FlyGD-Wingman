@@ -524,8 +524,10 @@
       line.appendChild(identity);
       line.appendChild(damageCell(row, maxOutgoing, maxIncoming));
       var incoming = cell('fleet-ewar' + (ewarThreat ? ' active' : ''), ewar);
-      incoming.title = incoming.textContent;
+      var sources = Array.isArray(row.ewar_sources) ? row.ewar_sources : [];
+      incoming.title = [incoming.textContent].concat(sources).join('\n');
       var ariaLabel = ewarAriaLabel(row);
+      if (sources.length) ariaLabel += '; ' + sources.join('; ');
       if (ariaLabel) incoming.setAttribute('aria-label', ariaLabel);
       line.appendChild(incoming);
       rowsNode.appendChild(line);
@@ -535,6 +537,7 @@
     var emptyText = runningCount > 0
       ? 'All running characters are hidden.'
       : 'Waiting for EVE clients…';
+    if (payload.inactive_filtered > 0) emptyText = 'No recent combat activity.';
     setText(empty, emptyText);
     setText(healthNode, 'LOCAL ' + healthLabel(health));
     healthNode.classList.toggle('warn', health.state === 'stale' ||

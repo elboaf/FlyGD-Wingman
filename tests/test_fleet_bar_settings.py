@@ -20,6 +20,7 @@ def _fleet_bar(**overrides):
         "x": None,
         "y": None,
         "preferred_content_width": 500,
+        "hide_inactive": False,
         "seen": [],
         "hidden": [],
     }

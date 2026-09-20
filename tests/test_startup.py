@@ -95,7 +95,7 @@ def startup(monkeypatch, tmp_path):
 
     monkeypatch.setattr(main_mod, "build_preview_host", unavailable_preview)
     monkeypatch.setattr(main_mod, "build_alert_policy", lambda *_args: None)
-    monkeypatch.setattr(main_mod, "build_telemetry", lambda *_args: None)
+    monkeypatch.setattr(main_mod, "build_telemetry", lambda *_args, **_kwargs: None)
 
     def fake_build_tray(on_open, on_quit):
         captured["on_open"] = on_open
@@ -103,6 +103,16 @@ def startup(monkeypatch, tmp_path):
         return FakeIcon()
 
     monkeypatch.setattr(main_mod, "build_tray", fake_build_tray)
+
+    # A real create_raise_event would make a named kernel object per test
+    # run on Windows, and a real start_waiter a thread parked in
+    # WaitForSingleObject forever. Ordering tests only need the wiring.
+    monkeypatch.setattr(main_mod.raiseipc, "create_raise_event", lambda: 4242)
+
+    def fake_start_waiter(handle, on_raise):
+        captured["raise_waiter"] = (handle, on_raise)
+
+    monkeypatch.setattr(main_mod.raiseipc, "start_waiter", fake_start_waiter)
 
     class FakeMainWindow:
         def __init__(self):
@@ -255,6 +265,7 @@ def test_fleet_closes_detaches_and_stops_before_native_destruction(
         order.append(owner + "_subscribe")
 
         def detach():
+            assert telemetry.source_closed
             assert api._fleet_expected_generation is None
             assert api._fleetbar_quitting
             assert api._fleetbar_page_id is None
@@ -266,7 +277,10 @@ def test_fleet_closes_detaches_and_stops_before_native_destruction(
         return detach
 
     telemetry.subscribe_fleet = subscribe
-    monkeypatch.setattr(main_mod, "build_telemetry", lambda *_args: telemetry)
+    telemetry.subscribe_admitted_fleet = subscribe
+    monkeypatch.setattr(
+        main_mod, "build_telemetry", lambda *_args, **_kwargs: telemetry
+    )
     real_stop = FleetPresentationWorker.stop
 
     def stop(worker, timeout=1.0):
@@ -815,6 +829,36 @@ def test_a_second_4x_instance_blocks_startup(monkeypatch):
     monkeypatch.setattr(main_mod, "_create_mutex", fake_create)
 
     assert main_mod.acquire_single_instance() is None
+
+
+def test_a_second_launch_signals_the_first_and_exits(monkeypatch):
+    """#257: launching from a pinned taskbar icon is how users expect the
+    window back, so the silent exit must now be preceded by the raise
+    signal -- and nothing else. Signalling failure is swallowed by
+    raiseipc.signal_raise itself; main() must return 0 either way.
+    """
+    sent = []
+    monkeypatch.setattr(main_mod, "acquire_single_instance", lambda: None)
+    monkeypatch.setattr(main_mod.raiseipc, "signal_raise", lambda: sent.append(True))
+    touched = []
+    monkeypatch.setattr(
+        main_mod.paths, "migrate_state_dir", lambda: touched.append("migrate")
+    )
+
+    assert main_mod.main() == 0
+    assert sent == [True]
+    assert touched == [], "a second instance must not run any startup work"
+
+
+def test_the_first_instance_binds_the_raise_waiter_to_the_tray_open(startup):
+    """Second launches reuse the tray's on_open closure -- same None guard
+    for the not-yet-created window, same non-main-thread show() safety.
+    The waiter must be bound to the handle main() created, and to that
+    exact callable, not a lookalike."""
+    main_mod.main()
+    handle, on_raise = startup.captured["raise_waiter"]
+    assert handle == 4242
+    assert on_raise is startup.captured["on_open"]
 
 
 def test_state_migration_runs_before_ensure_dirs(monkeypatch, tmp_path):

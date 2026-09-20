@@ -87,7 +87,7 @@ def test_save_and_load_round_trip(tmp_path):
             ),
         ),
         relay_origin="https://relay.example.test",
-        session_id="opaque-session-id",
+        session_id="A" * 43,
     )
 
     save(target, original)
@@ -106,7 +106,7 @@ def test_persisted_document_holds_only_the_documented_fields(tmp_path):
             ),
         ),
         relay_origin="https://relay.example.test",
-        session_id="opaque-session-id",
+        session_id="A" * 43,
         last_revision=7,
     )
 
@@ -131,6 +131,8 @@ def test_persisted_document_holds_only_the_documented_fields(tmp_path):
         "pending_pairing",
         "pending_participation",
         "auth_pause",
+        "cutover",
+        "automatic",
     }
     assert document["last_revision"] == 7
     assert set(document["identity"]) == {
@@ -163,7 +165,7 @@ def test_a_document_with_no_identity_yet_persists_null_fields(tmp_path):
 
 def test_last_revision_round_trips(tmp_path):
     target = tmp_path / "fleet_sharing.json"
-    save(target, SharingState(session_id="sess", last_revision=42))
+    save(target, SharingState(session_id="A" * 43, last_revision=42))
     assert load(target).last_revision == 42
 
 
@@ -207,27 +209,30 @@ def test_load_returns_empty_state_for_a_missing_file(tmp_path):
     assert load(tmp_path / "absent.json") == SharingState()
 
 
-def test_load_returns_empty_state_for_corrupt_json(tmp_path):
+def test_load_quarantines_corrupt_json(tmp_path):
     target = tmp_path / "fleet_sharing.json"
     target.write_text("{not json", encoding="utf-8")
-    assert load(target) == SharingState()
+    with pytest.raises(state_mod.QuarantineError):
+        load(target)
 
 
-def test_load_returns_empty_state_for_a_non_object_document(tmp_path):
+def test_load_quarantines_a_non_object_document(tmp_path):
     target = tmp_path / "fleet_sharing.json"
     target.write_text("[1, 2, 3]", encoding="utf-8")
-    assert load(target) == SharingState()
+    with pytest.raises(state_mod.QuarantineError):
+        load(target)
 
 
-def test_load_returns_empty_state_for_an_oversized_file(tmp_path, monkeypatch):
+def test_load_quarantines_an_oversized_file(tmp_path, monkeypatch):
     target = tmp_path / "fleet_sharing.json"
     target.write_text(json.dumps({"version": 1}), encoding="utf-8")
     monkeypatch.setattr(state_mod, "MAX_STATE_FILE_BYTES", 4)
 
-    assert load(target) == SharingState()
+    with pytest.raises(state_mod.QuarantineError):
+        load(target)
 
 
-def test_load_drops_a_half_written_identity_rather_than_constructing_one(tmp_path):
+def test_load_quarantines_half_written_identity_instead_of_dropping_evidence(tmp_path):
     target = tmp_path / "fleet_sharing.json"
     target.write_text(
         json.dumps(
@@ -241,11 +246,8 @@ def test_load_drops_a_half_written_identity_rather_than_constructing_one(tmp_pat
         encoding="utf-8",
     )
 
-    loaded = load(target)
-
-    assert loaded.identity is None
-    assert loaded.relay_origin == "https://relay.example.test"
-    assert loaded.session_id == "sess"
+    with pytest.raises(state_mod.QuarantineError):
+        load(target)
 
 
 @pytest.mark.skipif(

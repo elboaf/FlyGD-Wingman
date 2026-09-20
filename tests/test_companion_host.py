@@ -592,3 +592,24 @@ def test_promotion_requires_current_controller_generation_and_lease(integrated):
         SelectionLease(999, state.pump_epoch),
     )
     assert not r.host._companion_authorized(token, promotion=True)
+
+
+def test_family_rings_read_the_hosts_live_selection_colour_seam(tmp_path):
+    """#258 polish: companions draw the EVE previews' ring in the same
+    configurable colour, injected once at family init and re-read per sweep."""
+    from types import SimpleNamespace
+
+    from wingman.preview.host import PreviewHost
+
+    host_ = PreviewHost(
+        on_layout_changed=lambda *a: None,
+        selection_color=lambda: "#abcdef",
+    )
+    host_.set_companion_controller(SimpleNamespace())
+    libs = SimpleNamespace(
+        kernel32=SimpleNamespace(GetCurrentProcessId=lambda: 4242),
+        user32=SimpleNamespace(GetForegroundWindow=lambda: 0),
+    )
+    host_._init_companion_family(libs)
+    assert host_._companion_family._ring_color == host_._selection_ring_color
+    assert host_._companion_family._ring_color() == "#abcdef"

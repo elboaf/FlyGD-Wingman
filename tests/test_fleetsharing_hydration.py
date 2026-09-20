@@ -91,6 +91,32 @@ def test_missing_worker_watch_returns_unavailable_without_startup(
         "stale-preference-after-failed-refresh",
         "equal-preference-after-failed-refresh",
         "boss-selection-across-unknown",
+        "replace-stop-original",
+        "replace-stop-route",
+        "control-capture-on-generation",
+        "control-capture-on-queued",
+        "control-capture-stop-generation",
+        "control-capture-stop-automatic",
+        "control-capture-stop-pending",
+        "control-dialog-binding",
+        "control-dialog-route",
+        "control-dialog-screenshot",
+        "control-dialog-off",
+        "control-dialog-on-route",
+        "control-dialog-on-binding",
+        "control-missing-authority",
+        "dev-control-authority",
+        "control-setup-combat",
+        "control-setup-automatic",
+        "control-setup-stale",
+        "control-setup-route",
+        "control-setup-off-overtakes",
+        "control-legacy-empty",
+        "control-preference-feedback-pushes",
+        "control-preference-feedback-retry",
+        "control-preference-feedback-off",
+        "control-preference-feedback-binding",
+        "control-preference-feedback-screenshot",
     ],
 )
 def test_sharing_watch_runtime(tmp_path, scenario):
@@ -101,13 +127,55 @@ def test_sharing_watch_runtime(tmp_path, scenario):
         older = live_api.fleet_sharing_state()
         rejected = None
         if scenario == "rejected-admission":
-            _store._state = replace(
-                _store._state,
-                pending_source_commands=maximal_state().pending_source_commands[:200],
-            )
+            from wingman.fleetsharing.protocol import MAX_SOURCE_INTENTS
+
+            commands = maximal_state().pending_source_commands
+            assert len(commands) == MAX_SOURCE_INTENTS
+            _store._state = replace(_store._state, pending_source_commands=commands)
+            saved = _store.load()
             rejected = worker.request_source_start(1, UUID)
+            assert (
+                rejected is not None
+            )  # UUID admission is asynchronous, not a save ACK.
+            assert _store.load() is saved
+            assert not _store.saves
         worker.set_source_watch(True)
         drive(worker, mono, 12)
+        if scenario == "rejected-admission":
+            result = next(
+                item
+                for item in worker.status().source_results
+                if item.source_id == rejected
+            )
+            assert result.stage == "rejected"
+            assert all(
+                command.source_id != rejected
+                for command in _store.load().pending_source_commands
+            )
+            assert all(
+                command.source_id != rejected
+                for state in _store.saves
+                for command in state.pending_source_commands
+            )
+        preference_case = None
+        if scenario.startswith("control-preference-feedback-"):
+            initial = live_api.fleet_sharing_state()
+            worker.request_participation(False)
+            changed = live_api.fleet_sharing_state()
+            refusal = live_api.fleet_sharing_set_enabled(
+                True, initial["controls"]["participation"]
+            )
+            assert not refusal["applied"] and refusal["error"]
+            assert not live_api._state.settings["fleet_sharing"]["enabled"]
+            assert (
+                changed["controls"]["participation"]
+                != initial["controls"]["participation"]
+            )
+            preference_case = {
+                "initial": initial,
+                "changed": changed,
+                "refusal": refusal,
+            }
         page = SharingPageTree()
         page.feed((WEB / "index.html").read_text(encoding="utf-8"))
         fixture = tmp_path / "sharing-page.json"
@@ -119,6 +187,7 @@ def test_sharing_watch_runtime(tmp_path, scenario):
                     "live": live_api.fleet_sharing_state(),
                     "older": older,
                     "rejected": rejected,
+                    "preference_case": preference_case,
                 }
             ),
             encoding="utf-8",
