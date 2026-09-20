@@ -6060,7 +6060,7 @@
         "state": "active", "detail": null, "participation": null, "participation_intent_id": null,
         "participation_order": 0, "source_control": null, "pairing": null, "local_inhibited": false,
         "pending_sources": [], "source_results": [], "pairing_action_id": null,
-        "order": 0, "presentation_order": 0, "preference_order": 0, "preference_error": null,
+        "order": 0, "presentation_order": 1, "preference_order": 0, "preference_error": null,
         "available": true, "enabled": true, "telemetry_available": true, "runtime_error": null,
         "browser_error": null, "browser_retry": null, "configured_origin": "https://authgd.example",
         "metadata": {"loaded": true, "binding": "screenshot-only-binding", "paired_origin": "https://authgd.example",
@@ -6073,10 +6073,15 @@
           {"character_id": 2, "character_name": "Ariadne", "character_link_epoch": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "has_fleet_read": false, "token_usable": true}
         ], "sources": [
           {"source_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "generation": 3, "character_id": 1, "state": "active", "reason": null, "pending_expires_at": null, "automatic": null},
-          {"source_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "generation": 2, "character_id": 2, "state": "ended", "reason": "boss_changed", "pending_expires_at": null, "automatic": null}
+          {"source_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "generation": 2, "character_id": 2, "state": "ended", "reason": "boss_lost", "pending_expires_at": null, "automatic": null}
         ]},
-        "eligibility": {"state": "ready", "participation_generation": 1, "characters": [{"character_id": 1}, {"character_id": 2}]},
+        "eligibility": {"state": "ready", "participation_generation": 1, "characters": [
+          {"character_id": 1, "source_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "source_generation": 3, "authority_generation": 1, "expires_at": "2026-09-07T12:00:10.000Z"},
+          {"character_id": 2, "source_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "source_generation": 3, "authority_generation": 1, "expires_at": "2026-09-07T12:00:10.000Z"}
+        ]},
         "observed_participation": {"enabled": true, "generation": 1},
+        "automatic": {"enabled": false, "pending": false, "cancellation_pending": false, "outcome": null, "readiness": "off"},
+        "automatic_stage": "settled",
         "controls": {
           "participation": {"binding": "screenshot-only-binding", "observed": {"enabled": true, "generation": 1},
             "participation_intent_id": null, "participation_order": 0, "pending": null},
@@ -6085,9 +6090,22 @@
               "observed": {"source_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "generation": 3, "character_id": 1, "state": "active", "reason": null, "pending_expires_at": null, "automatic": null},
               "pending": null, "expected_generation": 3, "expected_automatic": null},
             {"source_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "binding": "screenshot-only-binding",
-              "observed": {"source_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "generation": 2, "character_id": 2, "state": "ended", "reason": "boss_changed", "pending_expires_at": null, "automatic": null},
+              "observed": {"source_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "generation": 2, "character_id": 2, "state": "ended", "reason": "boss_lost", "pending_expires_at": null, "automatic": null},
               "pending": null, "expected_generation": 2, "expected_automatic": null}
           ]
+        },
+        "setup_controls": {
+          "automatic": {"binding": "screenshot-only-binding",
+            "observed": {"generation": 0, "revision": 0, "enabled": false, "approver": "none"},
+            "pending": null, "stage": "settled", "choice": null,
+            "request": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+            "history": "32a5bfe349d3083159faf6c358cc77d296c9a7a7ab96df47b377742ff978e6a7"},
+          "setup": {"binding": "screenshot-only-binding", "configured_origin": "https://authgd.example",
+            "queue_sequence": 0, "combat_approved": false,
+            "history": "fd21a053b5d9e991e8866e247dc1284e1148a60851fae734b507de93a07cdc2a",
+            "pairing_pending": false, "recovery_pending": false, "automatic_enabled": false,
+            "automatic_pending": false, "participation_pending": false, "source_requests": 0,
+            "legacy_archive": false, "cutover": []}
         }
       }}
     },

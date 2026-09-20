@@ -49,9 +49,10 @@
       throw new Error('Fleet sharing action in progress — retry capture when settled');
     }
     if (!payload && !screenshotFixture) return;
-    var live = screenshotFixture ? screenshotLive : {state: state, boss: desiredBoss,
+    // Capture owns its retained live evidence, not the caller's mutable DTO.
+    var live = screenshotFixture ? screenshotLive : detached({state: state, boss: desiredBoss,
       sources: knownSources, characters: knownCharacters, message: actionMessage,
-      preferenceMessage: preferenceMessage, readFailed: readFailed};
+      preferenceMessage: preferenceMessage, readFailed: readFailed});
     screenshotEpoch += 1; watchGeneration += 1; actionAttempt += 1; bindingGeneration += 1;
     screenshotFixture = payload ? JSON.parse(JSON.stringify(payload)) : null;
     screenshotLive = payload ? live : null;
@@ -62,7 +63,16 @@
     desiredBoss = payload ? '' : live.boss; actionMessage = payload ? '' : live.message;
     preferenceMessage = payload ? '' : live.preferenceMessage;
     readFailed = payload ? false : live.readFailed;
-    sources.textContent = ''; pendingSources.textContent = ''; historySources.textContent = ''; boss.removeAttribute('data-roster');
+    participationControl = null; automaticControl = null; setupControl = null;
+    // Detached fixture rows must not carry actionable observations into the
+    // restored live generation, even if an old event still targets a button.
+    [sources, pendingSources, historySources].forEach(function (container) {
+      Array.prototype.forEach.call(container.querySelectorAll('button'), function (control) {
+        control._sharingControl = null; control.disabled = true;
+      });
+      container.textContent = '';
+    });
+    boss.removeAttribute('data-roster');
     WM.el('sharing-pending').hidden = true;
     history.open = false; WM.el('sharing-eligible').open = false;
     if (payload || live.state) render(payload ? screenshotFixture.state : live.state, false, true);
@@ -70,9 +80,16 @@
       history.hidden = true; historySummary.textContent = 'Previous attempts (0)';
       boss.textContent = ''; enabled.checked = false;
       connect.hidden = false; connect.textContent = 'Connect…';
+      pairingMode = 'initial'; changeOrigin = false;
+      WM.el('sharing-combat').hidden = false;
+      WM.el('sharing-automatic').checked = false;
+      text('sharing-automatic-status', 'Automatic verification has not been observed.');
+      ['sharing-confirm-on', 'sharing-automatic-confirm', 'sharing-automatic-cancel', 'sharing-automatic-dismiss',
+        'sharing-legacy-history', 'sharing-legacy-dismiss', 'sharing-legacy-remove'].forEach(function (id) { WM.el(id).hidden = true; });
+      WM.el('sharing-legacy-history').open = false;
       WM.el('sharing-eligible-list').textContent = '';
       ['sharing-consent-announcement', 'sharing-consent-label', 'sharing-eligibility', 'sharing-preference', 'sharing-browser-error',
-        'sharing-action', 'sharing-source-status'].forEach(function (id) { text(id, ''); });
+        'sharing-action', 'sharing-source-status', 'sharing-setup-history', 'sharing-legacy-summary'].forEach(function (id) { text(id, ''); });
       unavailable();
     }
   };
@@ -396,7 +413,7 @@
           screenshotLive.boss = ''; screenshotLive.sources = []; screenshotLive.characters = [];
           screenshotLive.preferenceMessage = '';
         }
-        screenshotLive.state = payload;
+        screenshotLive.state = detached(payload);
       }
       return false;
     }

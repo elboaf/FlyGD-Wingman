@@ -710,6 +710,18 @@ never Start copy, save a formation, select a native source, or contact a relay.
       current/pending verification remain exposed before Start verification;
       settled history stays in Previous attempts. Neither opening a disclosure
       nor screenshot staging changes sharing or source intent.
+- [ ] Static Fleet sharing/detail/history captures represent a frozen synthetic
+      observation: local participation On, a manual verified source, automatic
+      consent observed Off, and combat approval still required. The automatic
+      checkbox is available but unchecked; combat approval remains available.
+      These production-shaped DTOs are presentation evidence, never live authGD
+      consent, transmission or completed operations.
+- [ ] Clear the Fleet fixture before any live payload: automatic/setup facts
+      return to unknown/unavailable, not synthetic Off. With retained or newer
+      live data, restore that exact live state without a read. Repeated cleanup
+      is inert; retired fixture controls and callbacks cannot submit observations.
+      Keep newer control/dialog focus and the existing disclosure lifecycle.
+      Staging and cleanup must make no bridge call or open a consent dialog.
 - [ ] Fixture captures show same-name fitting hull identity, classified additions
       versus present/unavailable pairs, named progress and per-target results.
       Each stage and its fixture clear before the next capture; no real Start,
