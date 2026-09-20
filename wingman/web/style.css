@@ -431,14 +431,17 @@
   --titlebar-h: 44px;
 }
 
-/* Only the probe association cues opt into these system colours. Components
-   still consume semantic roles; the rest of the palette is unchanged. */
+/* Association cues and progress use the user's system colours explicitly.
+   Components still consume semantic roles; the rest of the palette is unchanged. */
 @media (forced-colors: active) {
   :root {
     --formation-forced-ink: CanvasText;
     --formation-forced-surface: Canvas;
     --fitting-forced-ink: CanvasText;
     --fitting-forced-surface: Canvas;
+    --status-progress-forced-surface: Canvas;
+    --status-progress-forced-value: CanvasText;
+    --status-progress-forced-boundary: CanvasText;
   }
 }
 
@@ -2104,9 +2107,11 @@ button.btn:disabled,
   padding: 10px 16px; border-top: 1px solid var(--panel-border);
   background: linear-gradient(180deg, var(--statusbar-top), var(--statusbar-bottom));
 }
+/* Keep the short-status allocation, but constrain long text so its ellipsis
+   works instead of pushing progress and the percentage outside the window. */
 #status {
   font-size: var(--fs-mono); color: var(--text-dim);
-  min-width: 210px; flex: none;
+  min-width: 0; flex: 0 1 210px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* Severity kinds stay FG / SUCCESS / WARNING / ERROR, matching
@@ -2117,6 +2122,9 @@ button.btn:disabled,
 #status.WARNING { color: var(--warn); }
 #status.ERROR { color: var(--err); }
 
+/* The optional ROOT/NEXT readout can be long too. Reserve useful progress
+   before that readout consumes the row; hidden tracks still occupy no space. */
+#track { min-width: 4em; }
 .track {
   flex: 1; height: 4px; border-radius: 2px; background: var(--track);
   overflow: hidden; position: relative;
@@ -2142,6 +2150,17 @@ button.btn:disabled,
   flex: none; width: 42px; text-align: right;
   color: var(--text-faint); font-size: var(--fs-muted);
   font-variant-numeric: tabular-nums;
+}
+
+/* Forced colours suppress the gradient value. Use system-token paint rather
+   than merely reserving an invisible rectangle; outline leaves geometry intact. */
+@media (forced-colors: active) {
+  #track.track {
+    forced-color-adjust: none;
+    background: var(--status-progress-forced-surface);
+    outline: 1px solid var(--status-progress-forced-boundary); outline-offset: 1px;
+  }
+  #track .bar { background: var(--status-progress-forced-value); }
 }
 
 /* Second segment in the status bar. Yields to upload progress at narrow
