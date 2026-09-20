@@ -98,6 +98,7 @@ def test_main_retains_the_single_sharing_owner_for_disabled_startup():
     assert "sharing_worker.start()" not in source
     assert "sharing_unsubscribe" not in source
     assert "api.shutdown_previews()" in source
+    assert "api._shutdown_webhook_lookup" in source
 
 
 def test_build_fittings_controller_loads_local_state_without_network(
