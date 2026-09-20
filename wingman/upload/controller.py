@@ -598,6 +598,93 @@ class UploaderController:
         if failures:
             message += f" {len(failures)} failed."
         self._ports.status(message)
+        if failures:
+            # A locked file (OBS still muxing, a player open) is invisible in
+            # a bare "2 failed." count -- the user cannot tell which rows
+            # survived or why, and retries blind. Name each one; the strip
+            # stays the one-line summary.
+            detail = "\n".join(f"  • {p.name}: {reason}" for p, reason in failures)
+            self._ports.alert(
+                "warning",
+                "Some deletions failed",
+                "These files could not be deleted:\n\n" + detail,
+            )
+
+    def archive_selected(self, ids) -> None:
+        """Move the selection to the archive folder (#270).
+
+        Mirrors delete_selected, with one synchronous gate the delete path
+        does not need: without a configured archive folder there is nothing
+        to confirm and nowhere to move to, and that refusal is an answer
+        ("set it up here") rather than a failure -- so it names the setting.
+        """
+        pairs = [
+            (rid, info) for rid in ids if (info := self._rows.resolve(rid)) is not None
+        ]
+        if not pairs:
+            self._ports.alert(
+                "warning", "No Selection", "Select at least one video to archive."
+            )
+            return
+        dest = self._archive_dir()
+        if not dest:
+            self._ports.alert(
+                "info",
+                "No Archive Folder",
+                "Choose an archive folder in Settings \u203a Uploading first.",
+            )
+            return
+        # Same reason as delete_selected: _confirm blocks until the page
+        # answers, and the answer arrives on the bridge thread this method
+        # runs on.
+        self._delete_thread = threading.Thread(
+            target=self._archive_worker, args=(pairs, dest), daemon=True
+        )
+        self._delete_thread.start()
+
+    def _archive_worker(self, pairs, dest: Path) -> None:
+        infos = [info for _, info in pairs]
+        names = "\n".join(f"  • {i.path.name}" for i in infos)
+        if not self._ports.confirm(
+            "Confirm Archive",
+            f"Move these files to\n{dest}?\n\n{names}"
+            "\n\nThey leave the list and the recording folder, but stay on disk.",
+            confirm_label=f"Move {len(infos)} {'file' if len(infos) == 1 else 'files'}",
+        ):
+            return
+        # Same probe race as delete: a keyframe probe holding a recording
+        # open fails the move exactly where a move crosses volumes.
+        self._kill_probes_for({i.path for i in infos})
+        moved, failures = library.archive([i.path for i in infos], Path(dest))
+        # Forget only what actually went, as delete does: a file that failed
+        # to move still exists where the watcher can see it.
+        failed_paths = {p for p, _ in failures}
+        watcher = self._ports.watcher()
+        if watcher is not None:
+            for info in infos:
+                if info.path not in failed_paths:
+                    watcher.forget(info.path)
+        with self._state_lock:
+            for row_id, _ in pairs:
+                self._links.pop(row_id, None)
+        self.list_rows()
+        message = f"Archived {moved} file(s)."
+        if failures:
+            message += f" {len(failures)} failed."
+        self._ports.status(message)
+        if failures:
+            # Same visibility rule as delete: a bare count cannot be
+            # retried, a named file can.
+            detail = "\n".join(f"  • {p.name}: {reason}" for p, reason in failures)
+            self._ports.alert(
+                "warning",
+                "Some archiving failed",
+                "These files could not be moved:\n\n" + detail,
+            )
+
+    def _archive_dir(self) -> str:
+        folder = self._state.settings.get("archive_folder")
+        return str(folder) if folder else ""
 
     def copy_path(self, row_id: str) -> str:
         """Return the row's link for the page to put on the clipboard.

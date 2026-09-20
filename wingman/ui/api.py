@@ -1104,6 +1104,9 @@ class Api:
     def delete_selected(self, ids) -> None:
         return self._uploader.delete_selected(ids)
 
+    def archive_selected(self, ids) -> None:
+        return self._uploader.archive_selected(ids)
+
     def copy_path(self, row_id: str) -> str:
         return self._uploader.copy_path(row_id)
 
@@ -1824,6 +1827,8 @@ class Api:
         """Native folder picker, seeded with what is configured now."""
         if which == "gamelogs":
             start = str(self._state.settings.get("gamelogs_dir") or "")
+        elif which == "archive":
+            start = str(self._state.settings.get("archive_folder") or "")
         else:
             # recording_dir is None on the first-run route by design, and
             # str(None) would hand create_file_dialog the literal "None".
@@ -4010,6 +4015,27 @@ class Api:
             # while nothing ever polled it.
             self._reconcile_eve_runtime()
             return result
+
+        if which == "archive":
+            # Browse-only (#270): no typing, no detection, so the field the
+            # value lands in is not an editable draft the blur rules own.
+            text = str(path or "").strip()
+            if not text:
+                return self._write_setting("archive_folder", None)
+            folder = Path(text)
+            if not folder.is_dir():
+                return self._field_refused("That folder does not exist.")
+            if folder == self._state.recording_dir:
+                # Archiving into the watched folder would hand the file
+                # straight back to the watcher, which re-announces it as
+                # new -- the recording the user just filed away reappears
+                # ticked in the list. discover() is non-recursive, so a
+                # subfolder of it is fine; equality is the only shape that
+                # re-feeds the watcher.
+                return self._field_refused(
+                    "The archive folder must differ from the recording folder."
+                )
+            return self._write_setting("archive_folder", str(folder))
 
         text = str(path or "").strip()
         if not text:

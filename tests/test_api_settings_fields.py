@@ -1149,3 +1149,50 @@ class _RestyleSpy:
 
     def restyle(self):
         self.restyled += 1
+
+
+def test_setting_the_archive_folder_persists_it(monkeypatch, tmp_path):
+    """#270: Browse-only, no watcher to rebind, no note to report -- the
+    plainest folder endpoint of the three."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    dest = tmp_path / "archive"
+    dest.mkdir()
+
+    result = api.set_folder("archive", str(dest))
+
+    assert result["applied"] is True
+    assert api._state.settings["archive_folder"] == str(dest)
+
+
+def test_the_archive_folder_may_not_be_the_recording_folder(monkeypatch, tmp_path):
+    """Archiving into the watched folder would hand the file straight back
+    to the watcher, which re-announces it as new -- the recording the user
+    just filed away reappears ticked in the list. discover() is
+    non-recursive, so a subfolder of the recording folder is fine; equality
+    is the only shape that re-feeds the watcher."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    rec = tmp_path / "rec"
+    rec.mkdir()
+    api._state.recording_dir = rec
+
+    result = api.set_folder("archive", str(rec))
+    assert result["applied"] is False
+    assert "must differ" in result["error"]
+
+    inside = rec / "old"
+    inside.mkdir()
+    assert api.set_folder("archive", str(inside))["applied"] is True
+
+
+def test_clearing_the_archive_folder_with_an_empty_path(monkeypatch, tmp_path):
+    """Unlike the recording folder, an empty value legitimately means "no
+    archive" -- the same rule the gamelogs folder follows."""
+    api, _window, _saved = settings_api(tmp_path, monkeypatch)
+    dest = tmp_path / "archive"
+    dest.mkdir()
+    api.set_folder("archive", str(dest))
+
+    result = api.set_folder("archive", "")
+
+    assert result["applied"] is True
+    assert api._state.settings["archive_folder"] is None

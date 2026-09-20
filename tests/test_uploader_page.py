@@ -639,6 +639,7 @@ def test_the_row_menu_separates_the_file_from_the_video():
     assert re.findall(r'id="(ctx-[a-z]+)"', menu) == [
         "ctx-play",
         "ctx-rename",
+        "ctx-archive",
         "ctx-delete",
         "ctx-copy",
         "ctx-open",
@@ -704,20 +705,63 @@ def test_deleting_files_lives_with_the_files():
     assert "WM.send('delete_selected'" not in PANEL_JS
 
 
-def test_context_delete_acts_on_the_right_clicked_row_and_releases_the_editor():
-    """Delete in the row menu has the same scope as Play and Rename -- the
-    recording under the cursor, not the selection -- and clears the clip
-    editor first: its media element keeps fetching the file through
-    clipserve, and that open handle is exactly what makes the unlink fail
-    (WinError 32). The confirm stays Python-side."""
+def test_context_delete_is_selection_aware_and_releases_the_editor():
+    """Delete in the row menu acts on the whole checked selection when the
+    right-clicked row is itself ticked, and on the single right-clicked
+    recording otherwise -- a user who boxes a set and right-clicks inside
+    it means "delete these". Both the id and the tick are read before
+    hideMenu() nulls ctxId. The clip editor is released first: its media
+    element keeps fetching the file through clipserve, and that open handle
+    is exactly what makes the unlink fail (WinError 32). The confirm stays
+    Python-side."""
     handler = LIST_JS[LIST_JS.index("ctxDelete.addEventListener") :]
     handler = handler[: handler.index("});")]
     assert "document.dispatchEvent(new CustomEvent('wm:clip-release'))" in handler
-    assert "WM.send('delete_selected', [id])" in handler
+    assert (
+        "WM.send('delete_selected', selected[id] ? WM.list.selectedIds() : [id])"
+        in handler
+    )
     assert "wm:clip-release" in PANEL_JS
     release = PANEL_JS[PANEL_JS.index("'wm:clip-release'") :]
     release = release[: release.index("});")]
     assert "clipHide()" in release
+
+
+def test_modern_selection_gestures_exist():
+    """Ctrl+A selects everything, and shift-click on a CHECKBOX ticks a
+    range anchored on the keyboard focus row. The checkbox is the only
+    toggle target: a click elsewhere on the row moves the focus anchor and
+    must not tick anything, so the guard is pinned literally."""
+    handler = LIST_JS[LIST_JS.index("scroll.addEventListener('keydown'") :]
+    handler = handler[: handler.index("ArrowDown")]
+    assert "ev.ctrlKey || ev.metaKey" in handler
+    assert "setAll(true)" in handler
+    click = LIST_JS[
+        LIST_JS.index("body.addEventListener('click'") : LIST_JS.index(
+            "body.addEventListener('dblclick'"
+        )
+    ]
+    # Checkbox-only toggling, asserted as a NEGATIVE too: outside the
+    # .c-check cell the handler may only setFocus and return.
+    assert "ev.target.closest('.c-check')" in click
+    outside = click[: click.index("ev.target.closest('.c-check')")]
+    assert "toggle(" not in outside and "rangeSelect(" not in outside
+    assert "ev.shiftKey" in click
+    assert "rangeSelect(node.dataset.id)" in click
+    # Shift-click applies the clicked box's OPPOSITE state, so the gesture
+    # deselects the same span it selects.
+    assert "var state = !selected[id];" in LIST_JS
+
+
+def test_selection_survives_a_rebuild_by_file_not_by_id():
+    """Row ids are re-minted on every onRows (ui/rows.py), so the ticks
+    ride a name+size key (`carried`) across rebuilds; a file that vanishes
+    stops matching, which is the drop we want. carried is pruned to the
+    live set on every rebuild so it cannot grow without bound."""
+    handler = LIST_JS[LIST_JS.index("WM.handle('onRows'") :]
+    handler = handler[: handler.index("rows = incoming;")]
+    assert "carried[rowKey(r)]" in handler
+    assert "r.preselected" in handler
 
 
 def test_the_footer_delete_button_releases_the_editor_too():
@@ -728,6 +772,30 @@ def test_the_footer_delete_button_releases_the_editor_too():
     handler = handler[: handler.index("});")]
     release = handler.index("wm:clip-release")
     assert release < handler.index("WM.send('delete_selected'")
+
+
+def test_archive_mirrors_delete_on_every_path():
+    """#270: Archive is Delete's non-destructive sibling, so it follows the
+    same rules on all three surfaces -- the context menu (selection-aware,
+    like ctx-delete), the footer (acts on the selection, releases the clip
+    editor first), and Python-side confirmation. No archive-folder state
+    lives in the page: Python's refusal names the setting, which is the
+    one message that teaches where it is."""
+    assert "WM.send('archive_selected'" in LIST_JS
+    assert "WM.send('archive_selected'" not in PANEL_JS
+    ctx = LIST_JS[LIST_JS.index("ctxArchive.addEventListener") :]
+    ctx = ctx[: ctx.index("});")]
+    assert (
+        "WM.send('archive_selected', selected[id] ? WM.list.selectedIds() : [id])"
+        in ctx
+    )
+    assert "wm:clip-release" in ctx
+    foot = LIST_JS[LIST_JS.index("WM.el('btn-archive').addEventListener") :]
+    foot = foot[: foot.index("});")]
+    assert foot.index("wm:clip-release") < foot.index("WM.send('archive_selected'")
+    # The footer gate matches delete's: enabled by the selection, not the
+    # folder.
+    assert "WM.setEnabled('btn-archive', picked)" in LIST_JS
 
 
 def test_leaving_the_uploader_route_closes_the_clip_editor():

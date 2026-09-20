@@ -15,6 +15,51 @@ dev checks are separate evidence, not installed Windows/WebView2 acceptance.
 
 Run on Windows against a real install before each release.
 
+## Uploader selection rework + Archive (#271/#273/#270) — Windows acceptance NOT RUN (2026-09-20)
+
+The recording list gained modern multi-select, context-menu Delete became
+selection-aware, ticks survive watcher rebuilds, partial delete failures
+name files, and Archive (move to a folder) joined the context menu, footer
+and Settings.
+
+- [ ] **Shift-click range, both ways.** Click a row's checkbox, shift-click
+      a checkbox further down: every box in between ticks. Shift-click the
+      end box again (now ticked): the whole span CLEARS. Shift-click
+      upwards from the anchor works too, and leaves no browser text
+      selection behind.
+- [ ] **The checkbox is the only toggle target.** Clicking elsewhere on a
+      row must not tick or untick it (it only moves the keyboard focus
+      ring). Double-clicking a recording elsewhere on the row opens it and
+      leaves nothing ticked; double-clicking ON the checkbox opens it and
+      leaves the box as it was.
+- [ ] **Ctrl+A.** With the list focused, Ctrl+A ticks everything; the
+      footer's Delete/Archive enable. Ctrl+A in a Settings text field
+      still does its normal edit thing.
+- [ ] **Ticks survive a rebuild.** Tick a few rows, drop a new recording
+      into the watched folder (or otherwise trigger a refresh): the ticks
+      stay on the same recordings.
+- [ ] **Selection-aware context Delete.** Tick two of three rows,
+      right-click a TICKED row → Delete…: the confirm names both ticked
+      files. Right-click the UNTICKED row → Delete…: the confirm names
+      that one file only.
+- [ ] **Partial delete failures name names.** With a file held open (open
+      it in a player), multi-delete: the warning alert lists the failed
+      file and the OS reason, and the strip still shows the count.
+- [ ] **Archive context menu + footer.** Right-click → Archive… with the
+      row ticked moves the whole selection; unticked, just that row. The
+      confirm names the destination folder and is NOT styled as
+      destructive. After the move the rows leave the list and the files
+      exist in the archive folder.
+- [ ] **Name collision.** Archive a file whose name already exists in the
+      archive folder: the newcomer lands as "name (2).ext"; the earlier
+      file is untouched.
+- [ ] **No archive folder.** With Settings › Uploading › Archive folder
+      unset, Archive says where to set it instead of confirming.
+- [ ] **Archive folder setting.** Browse… picks the folder; the read-only
+      field shows the path. Choosing the recording folder itself is
+      refused with "must differ". An archive folder on another drive moves
+      recordings (slow copy, strip feedback) rather than failing.
+
 ## Theme picker hardening — Windows acceptance NOT RUN (2026-09-17)
 
 The picker card changed shape: the preset control is now the same custom

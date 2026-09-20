@@ -115,6 +115,14 @@
              Reports through the status strip, not a dialog: see
              Api.open_recording_dir. -->
         <button class="btn" id="btn-open-folder">Open folder</button>
+        <!-- #270: Archive is the non-destructive sibling of Delete -- a
+             move to the configured archive folder, not an unlink. It sits
+             between Open folder and Delete so the destructive action stays
+             last; with no archive folder configured, Python says so (the
+             refusal names the setting) rather than the button being
+             disabled, because the strip message is the one that teaches
+             where the setting lives. -->
+        <button class="btn" id="btn-archive">Archive selected</button>
         <!-- Uploader 2, third seam: this deletes files from disk and was
              filed under a card headed PUBLISH, beside the button that
              sends them to YouTube. It belongs with the files it acts on.
@@ -380,6 +388,7 @@
   <div class="ctxmenu" id="ctxmenu" hidden>
     <button id="ctx-play">Play</button>
     <button id="ctx-rename">Rename&hellip;</button>
+    <button id="ctx-archive">Archive&hellip;</button>
     <button id="ctx-delete" class="danger">Delete&hellip;</button>
     <div class="ctxsep"></div>
     <button id="ctx-copy">Copy link</button>
@@ -531,6 +540,20 @@
           <button class="btn" data-detect="recording">Detect</button>
         </div>
         <p class="field-msg" id="msg-recdir" hidden></p>
+        <!-- #270: the Archive action's destination. Read-only + Browse,
+             deliberately unlike the two editable folder fields: the issue
+             rules out auto-detection, and a typed free-text path the blur
+             rules would have to police buys nothing over picking a real
+             folder. Equality with the recording folder is refused
+             Python-side (set_folder) because archiving there would hand
+             the file straight back to the watcher. -->
+        <div class="row">
+          <label class="lab" for="f-archdir">Archive folder</label>
+          <input class="field mono" id="f-archdir" type="text" readonly
+                 placeholder="Not set &mdash; archived recordings are moved here out of the list">
+          <button class="btn" data-browse="archive">Browse&hellip;</button>
+        </div>
+        <p class="field-msg" id="msg-archdir" hidden></p>
         <!-- Pre-payload text only; settings.js's render() rewrites this
              slot, and FOLDER_COST there is the source of the sentence.
              Kept in step by hand is exactly what this used to be and how

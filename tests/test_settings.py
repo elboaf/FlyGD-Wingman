@@ -13,6 +13,9 @@ def test_defaults_are_the_documented_values():
         "category": "20",
         "notify_mode": "toast",
         "recording_dir": None,
+        # #270's archive destination. Off (None) until the user browses to
+        # one; it must never be auto-detected, so the default cannot guess.
+        "archive_folder": None,
         "discord_webhook": "",
         "gamelogs_dir": None,
         "channel_id": "",
