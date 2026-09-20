@@ -46,6 +46,13 @@
   var sortDesc = false;
   var ctxId = null;
 
+  // Row ids are re-minted on every rebuild (ui/rows.py), so the SELECTION
+  // survives on this name+size key, not on id: `selected` maps live ids,
+  // `carried` maps the underlying files. A file that disappears between
+  // rebuilds simply stops matching, which is the drop we want.
+  function rowKey(row) { return row.name + '\u0000' + row.size; }
+  var carried = Object.create(null);
+
   // ---- pure helpers -------------------------------------------------
   // Kept as free functions with no DOM access so they can be exercised
   // directly from the devtools console (WM.list.parseSize etc.), which is
@@ -299,10 +306,46 @@
   function toggle(id) {
     if (!byId(id)) return;
     selected[id] = !selected[id];
+    var key = rowKey(byId(id));
+    if (selected[id]) carried[key] = true; else delete carried[key];
     var node = WM.el('list-body').querySelector('[data-id="' + id + '"]');
     if (node) node.classList.toggle('sel', !!selected[id]);
     // A "checked" sort is a snapshot, not a live constraint: re-sorting on
     // every tick would move the row out from under the pointer.
+    document.dispatchEvent(new CustomEvent('wm:selection'));
+  }
+
+  // Shared by the footer buttons, Ctrl+A and clearSelection so all three
+  // keep carried in step with the drawn boxes.
+  function setAll(value) {
+    rows.forEach(function (r) {
+      selected[r.id] = value;
+      var key = rowKey(r);
+      if (value) carried[key] = true; else delete carried[key];
+    });
+  }
+
+  // Shift-click: tick the display-order range from the keyboard/last-click
+  // anchor through the clicked row, ADDING to whatever is already ticked
+  // rather than clearing it. Anchored on focusId because setFocus already
+  // made that the anchor of arrow-key Space toggles -- one anchor concept.
+  function rangeSelect(id) {
+    if (!byId(id)) return;
+    var from = order.indexOf(focusId);
+    var to = order.indexOf(id);
+    if (from < 0) from = to;
+    var lo = Math.min(from, to), hi = Math.max(from, to);
+    for (var i = lo; i <= hi; i++) {
+      var row = byId(order[i]);
+      if (!row) continue;
+      selected[order[i]] = true;
+      carried[rowKey(row)] = true;
+    }
+    setFocus(id);
+    // In-place repaints, not render(): a rebuild would re-sort (a "checked"
+    // snapshot re-sorts, see toggle) and can scroll the list out from under
+    // the click.
+    for (i = lo; i <= hi; i++) repaint(order[i]);
     document.dispatchEvent(new CustomEvent('wm:selection'));
   }
 
@@ -373,6 +416,13 @@
     // it leaves exactly one toggle landed by the time dblclick fires,
     // which is the situation the Tk handler was written against.
     if (ev.detail > 1) return;
+    if (ev.shiftKey) {
+      // Shift-click is a range gesture, not a toggle, and it must not
+      // also leave the browser's native text selection behind.
+      ev.preventDefault();
+      rangeSelect(node.dataset.id);
+      return;
+    }
     // The WHOLE row is the click target, not just the checkbox cell: a
     // 34px column is a small thing to ask someone to hit when "I mean this
     // recording" is unambiguous anywhere on the line.
@@ -393,6 +443,16 @@
   var scroll = WM.el('list-scroll');
   scroll.addEventListener('focus', ensureFocusItem);
   scroll.addEventListener('keydown', function (ev) {
+    // Ctrl+A selects everything, as any modern list does. The guard is
+    // belt-and-braces: this handler is on the list, whose rows hold no
+    // inputs, but a focus target could change without this file noticing.
+    if ((ev.ctrlKey || ev.metaKey) && (ev.key === 'a' || ev.key === 'A')) {
+      if (/^(INPUT|TEXTAREA)$/.test(ev.target.tagName)) return;
+      ev.preventDefault();
+      setAll(true);
+      render();
+      return;
+    }
     if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
       ev.preventDefault();
       ensureFocusItem();
@@ -515,8 +575,12 @@
     if (row) promptRename(id, row.name);
   });
 
-  // Delete acts on the RIGHT-CLICKED recording, not the selection -- the
-  // same scope as Play and Rename above. Python owns the confirmation and
+  // Delete acts on the checked SELECTION when the right-clicked row is one
+  // of the ticked rows -- a user who boxes a set and right-clicks inside it
+  // means "delete these", not "delete one" -- and on the single right-
+  // clicked recording otherwise, matching Rename and Play above. Both id
+  // and tick are captured BEFORE hideMenu() nulls ctxId (same local-copy
+  // as Rename). Python owns the confirmation, which names every file, and
   // reports failures on the strip. The editor is released first: its media
   // element keeps fetching the file through clipserve, and that handle is
   // exactly what makes the unlink fail.
@@ -525,7 +589,7 @@
     hideMenu();
     if (id) {
       document.dispatchEvent(new CustomEvent('wm:clip-release'));
-      WM.send('delete_selected', [id]);
+      WM.send('delete_selected', selected[id] ? WM.list.selectedIds() : [id]);
     }
   });
   document.addEventListener('mousedown', function (ev) {
@@ -557,11 +621,11 @@
   document.addEventListener('wm:selection', refreshFooter);
 
   WM.el('btn-select-all').addEventListener('click', function () {
-    rows.forEach(function (r) { selected[r.id] = true; });
+    setAll(true);
     render();
   });
   WM.el('btn-select-none').addEventListener('click', function () {
-    rows.forEach(function (r) { selected[r.id] = false; });
+    setAll(false);
     render();
   });
 
@@ -593,19 +657,27 @@
   // ---- bridge handlers ----------------------------------------------
   WM.handle('onRows', function (payload) {
     var incoming = payload.rows || [];
-    var known = Object.create(null);
-    incoming.forEach(function (r, i) { r._index = i; known[r.id] = true; });
-    // Ids are minted fresh on every rebuild (see ui/rows.py), so a
-    // selection carried across a refresh by id would silently attach to
-    // different recordings. Selection therefore starts from whatever
-    // Python marked preselected, and stale entries are dropped.
-    Object.keys(selected).forEach(function (id) {
-      if (!known[id]) delete selected[id];
-    });
+    incoming.forEach(function (r, i) { r._index = i; });
+    // Ids are minted fresh on every rebuild (see ui/rows.py), so selection
+    // is re-derived from `carried`, the name+size keys the user ticked --
+    // not from ids, which would silently attach to different recordings.
+    // Python's preselected flag still lands on top (a watcher-announced
+    // new recording ticks itself once, exactly as before). carried is then
+    // pruned to the live set: a deleted file must not re-tick a same-named
+    // replacement that lands later, and it must not grow without bound
+    // across folder changes.
+    var next = Object.create(null);
     incoming.forEach(function (r) {
-      if (r.preselected) selected[r.id] = true;
+      if (carried[rowKey(r)] || r.preselected) next[r.id] = true;
     });
+    carried = Object.create(null);
+    incoming.forEach(function (r) {
+      if (next[r.id]) carried[rowKey(r)] = true;
+    });
+    selected = next;
     rows = incoming;
+    var known = Object.create(null);
+    incoming.forEach(function (r) { known[r.id] = true; });
     if (focusId && !known[focusId]) focusId = null;
     render();
     // Uploader 12. Only when the empty state is the thing on screen: that
@@ -671,7 +743,7 @@
     // render(), so the drawn boxes, the footer's enabled rule and the
     // panel's summary all settle from the same dispatch.
     clearSelection: function () {
-      rows.forEach(function (r) { selected[r.id] = false; });
+      setAll(false);
       render();
     },
     // Exposed for console verification of the pure logic.

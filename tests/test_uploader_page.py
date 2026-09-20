@@ -704,20 +704,51 @@ def test_deleting_files_lives_with_the_files():
     assert "WM.send('delete_selected'" not in PANEL_JS
 
 
-def test_context_delete_acts_on_the_right_clicked_row_and_releases_the_editor():
-    """Delete in the row menu has the same scope as Play and Rename -- the
-    recording under the cursor, not the selection -- and clears the clip
-    editor first: its media element keeps fetching the file through
-    clipserve, and that open handle is exactly what makes the unlink fail
-    (WinError 32). The confirm stays Python-side."""
+def test_context_delete_is_selection_aware_and_releases_the_editor():
+    """Delete in the row menu acts on the whole checked selection when the
+    right-clicked row is itself ticked, and on the single right-clicked
+    recording otherwise -- a user who boxes a set and right-clicks inside
+    it means "delete these". Both the id and the tick are read before
+    hideMenu() nulls ctxId. The clip editor is released first: its media
+    element keeps fetching the file through clipserve, and that open handle
+    is exactly what makes the unlink fail (WinError 32). The confirm stays
+    Python-side."""
     handler = LIST_JS[LIST_JS.index("ctxDelete.addEventListener") :]
     handler = handler[: handler.index("});")]
     assert "document.dispatchEvent(new CustomEvent('wm:clip-release'))" in handler
-    assert "WM.send('delete_selected', [id])" in handler
+    assert (
+        "WM.send('delete_selected', selected[id] ? WM.list.selectedIds() : [id])"
+        in handler
+    )
     assert "wm:clip-release" in PANEL_JS
     release = PANEL_JS[PANEL_JS.index("'wm:clip-release'") :]
     release = release[: release.index("});")]
     assert "clipHide()" in release
+
+
+def test_modern_selection_gestures_exist():
+    """Ctrl+A selects everything and shift-click ticks a range anchored on
+    the keyboard focus row -- the two gestures any modern list is expected
+    to answer. Lexical, like everything here."""
+    handler = LIST_JS[LIST_JS.index("scroll.addEventListener('keydown'") :]
+    handler = handler[: handler.index("ArrowDown")]
+    assert "ev.ctrlKey || ev.metaKey" in handler
+    assert "setAll(true)" in handler
+    click = LIST_JS[LIST_JS.index("body.addEventListener('click'") :]
+    click = click[: click.index("setFocus(node.dataset.id)")]
+    assert "ev.shiftKey" in click
+    assert "rangeSelect(node.dataset.id)" in click
+
+
+def test_selection_survives_a_rebuild_by_file_not_by_id():
+    """Row ids are re-minted on every onRows (ui/rows.py), so the ticks
+    ride a name+size key (`carried`) across rebuilds; a file that vanishes
+    stops matching, which is the drop we want. carried is pruned to the
+    live set on every rebuild so it cannot grow without bound."""
+    handler = LIST_JS[LIST_JS.index("WM.handle('onRows'") :]
+    handler = handler[: handler.index("rows = incoming;")]
+    assert "carried[rowKey(r)]" in handler
+    assert "r.preselected" in handler
 
 
 def test_the_footer_delete_button_releases_the_editor_too():

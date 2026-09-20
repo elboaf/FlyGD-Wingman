@@ -598,6 +598,17 @@ class UploaderController:
         if failures:
             message += f" {len(failures)} failed."
         self._ports.status(message)
+        if failures:
+            # A locked file (OBS still muxing, a player open) is invisible in
+            # a bare "2 failed." count -- the user cannot tell which rows
+            # survived or why, and retries blind. Name each one; the strip
+            # stays the one-line summary.
+            detail = "\n".join(f"  • {p.name}: {reason}" for p, reason in failures)
+            self._ports.alert(
+                "warning",
+                "Some deletions failed",
+                "These files could not be deleted:\n\n" + detail,
+            )
 
     def copy_path(self, row_id: str) -> str:
         """Return the row's link for the page to put on the clipboard.
