@@ -645,6 +645,7 @@ def test_uploader_facade_methods_delegate_lexically_to_private_controller_method
         "list_rows": ("list_rows", ["preselect"]),
         "panel_text": ("panel_text", ["ids", "stitch"]),
         "delete_selected": ("delete_selected", ["ids"]),
+        "archive_selected": ("archive_selected", ["ids"]),
         "copy_path": ("copy_path", ["row_id"]),
         "open_path": ("open_path", ["row_id"]),
         "play_recording": ("play_recording", ["row_id"]),

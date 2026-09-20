@@ -569,13 +569,19 @@ def test_each_folder_field_reaches_its_own_note_and_message():
         tables[name] = set(re.findall(r"(\w+)\s*:", block.group(1)))
 
     keys = tables["TARGET_FIELD"]
-    assert keys == {"recording", "gamelogs"}, (
+    assert keys == {"recording", "gamelogs", "archive"}, (
         f"the folder discriminators changed: {sorted(keys)}. They mirror "
         "Api.set_folder/pick_folder/detect_folder and must match."
     )
-    for name, got in tables.items():
-        assert got == keys, (
-            f"{name} is keyed {sorted(got)} but the folders are "
+    # The archive folder (#270) is Browse-only: no Detect, and setting it
+    # rebinds no watcher, so it has no note slot and no cost sentence. It
+    # must be ABSENT from those two tables -- a present-but-empty entry
+    # would render an empty paragraph on every payload.
+    assert tables["TARGET_NOTE"] == {"recording", "gamelogs"}
+    assert tables["TARGET_COST"] == {"recording", "gamelogs"}
+    for name in ("TARGET_FIELD", "TARGET_MSG"):
+        assert tables[name] == keys, (
+            f"{name} is keyed {sorted(tables[name])} but the folders are "
             f"{sorted(keys)}; the odd one out silently reports nothing"
         )
 

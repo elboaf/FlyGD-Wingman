@@ -261,3 +261,83 @@ def test_off_windows_it_is_a_deliberate_no_op(tmp_path, monkeypatch):
 
     assert api.open_recording_dir() is True
     assert fakes.payloads(sent, "onStatus") == []
+
+
+# ----- Archive (#270): Delete's non-destructive sibling ---------------------
+
+
+def archive_api(tmp_path, names=("a.mkv", "b.mkv")):
+    api, window, rows = api_with(tmp_path, names=names)
+    dest = tmp_path / "archive"
+    dest.mkdir()
+    api._state.settings["archive_folder"] = str(dest)
+    return api, window, rows, dest
+
+
+def test_archiving_with_no_folder_set_says_where_the_setting_lives(tmp_path):
+    """A disabled button could only say "no"; this refusal teaches the one
+    fact the user needs -- which setting to set."""
+    api, _window, _rows = api_with(tmp_path)
+    api.archive_selected(["r0"])
+    assert api._alert.raised == [
+        (
+            "info",
+            "No Archive Folder",
+            "Choose an archive folder in Settings \u203a Uploading first.",
+        )
+    ]
+    assert api._confirm.asked == []
+
+
+def test_archiving_nothing_says_so(tmp_path):
+    api, _window, _rows, _dest = archive_api(tmp_path)
+    api.archive_selected([])
+    assert api._alert.raised == [
+        ("warning", "No Selection", "Select at least one video to archive.")
+    ]
+
+
+def test_archive_moves_names_the_destination_and_is_not_destructive(tmp_path):
+    """The confirm must read as a move, not an irreversible delete: it
+    names where the files go, and it does not take the destructive
+    treatment Delete's confirm earns."""
+    api, _window, _rows, dest = archive_api(tmp_path)
+    api._confirm = fakes.Answers(answer=False)
+    api.archive_selected(["r0", "r1"])
+    join_delete(api)
+
+    ((title, body),) = api._confirm.asked
+    assert title == "Confirm Archive"
+    assert str(dest) in body
+    assert "a.mkv" in body and "b.mkv" in body
+    assert api._confirm.destructive == [False]
+    assert api._confirm.confirm_labels == ["Move 2 files"]
+    assert (tmp_path / "a.mkv").exists()
+
+
+def test_archiving_moves_the_files_and_forgets_them(tmp_path):
+    watcher = fakes.FakeWatcher(tmp_path)
+    api, _window, rows, dest = archive_api(tmp_path)
+    api._confirm = fakes.Answers()
+    api._uploader._ports = type(api._uploader._ports)(
+        **{
+            **{
+                f.name: getattr(api._uploader._ports, f.name)
+                for f in api._uploader._ports.__dataclass_fields__.values()
+            },
+            "watcher": lambda: watcher,
+        }
+    )
+    sent = fakes.record_pushes(api)
+
+    api.archive_selected(["r0"])
+    join_delete(api)
+
+    assert not (tmp_path / "a.mkv").exists()
+    assert (dest / "a.mkv").is_file()
+    assert watcher.forgotten == [rows["r0"].path]
+    assert fakes.payloads(sent, "onStatus")[-1] == {
+        "text": "Archived 1 file(s).",
+        "kind": "FG",
+        "busy": False,
+    }

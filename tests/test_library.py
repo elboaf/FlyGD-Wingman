@@ -483,3 +483,36 @@ def test_discover_orders_deterministically_when_mtimes_tie(tmp_path):
     second = [p.name for p in library.discover(tmp_path)]
     assert set(first) == {"a.mkv", "b.mkv"}
     assert first == second
+
+
+def test_archive_moves_files_into_dest(tmp_path):
+    dest = tmp_path / "archive"
+    a = _touch(tmp_path / "a.mkv")
+    moved, failures = library.archive([a], dest)
+    assert (moved, failures) == (1, [])
+    assert not a.exists()
+    assert (dest / "a.mkv").is_file()
+
+
+def test_archive_never_overwrites_a_same_named_earlier_recording(tmp_path):
+    """The archive is cold storage: overwriting a same-named file would be
+    delete wearing an archive badge. The newcomer is suffixed instead."""
+    dest = tmp_path / "archive"
+    dest.mkdir()
+    _touch(dest / "a.mkv", size=5)
+    new = _touch(tmp_path / "a.mkv", size=7)
+    moved, failures = library.archive([new], dest)
+    assert (moved, failures) == (1, [])
+    assert (dest / "a.mkv").stat().st_size == 5
+    assert (dest / "a (2).mkv").stat().st_size == 7
+
+
+def test_archive_creates_a_missing_dest(tmp_path):
+    """The setting was browsed to a real folder, but the folder can vanish
+    afterwards (removable drive, network share); the move should still
+    work rather than fail every file."""
+    dest = tmp_path / "gone" / "archive"
+    a = _touch(tmp_path / "a.mkv")
+    moved, failures = library.archive([a], dest)
+    assert (moved, failures) == (1, [])
+    assert (dest / "a.mkv").is_file()

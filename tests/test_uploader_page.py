@@ -639,6 +639,7 @@ def test_the_row_menu_separates_the_file_from_the_video():
     assert re.findall(r'id="(ctx-[a-z]+)"', menu) == [
         "ctx-play",
         "ctx-rename",
+        "ctx-archive",
         "ctx-delete",
         "ctx-copy",
         "ctx-open",
@@ -759,6 +760,30 @@ def test_the_footer_delete_button_releases_the_editor_too():
     handler = handler[: handler.index("});")]
     release = handler.index("wm:clip-release")
     assert release < handler.index("WM.send('delete_selected'")
+
+
+def test_archive_mirrors_delete_on_every_path():
+    """#270: Archive is Delete's non-destructive sibling, so it follows the
+    same rules on all three surfaces -- the context menu (selection-aware,
+    like ctx-delete), the footer (acts on the selection, releases the clip
+    editor first), and Python-side confirmation. No archive-folder state
+    lives in the page: Python's refusal names the setting, which is the
+    one message that teaches where it is."""
+    assert "WM.send('archive_selected'" in LIST_JS
+    assert "WM.send('archive_selected'" not in PANEL_JS
+    ctx = LIST_JS[LIST_JS.index("ctxArchive.addEventListener") :]
+    ctx = ctx[: ctx.index("});")]
+    assert (
+        "WM.send('archive_selected', selected[id] ? WM.list.selectedIds() : [id])"
+        in ctx
+    )
+    assert "wm:clip-release" in ctx
+    foot = LIST_JS[LIST_JS.index("WM.el('btn-archive').addEventListener") :]
+    foot = foot[: foot.index("});")]
+    assert foot.index("wm:clip-release") < foot.index("WM.send('archive_selected'")
+    # The footer gate matches delete's: enabled by the selection, not the
+    # folder.
+    assert "WM.setEnabled('btn-archive', picked)" in LIST_JS
 
 
 def test_leaving_the_uploader_route_closes_the_clip_editor():

@@ -477,6 +477,7 @@
   var ctxOpen = WM.el('ctx-open');
   var ctxPlay = WM.el('ctx-play');
   var ctxRename = WM.el('ctx-rename');
+  var ctxArchive = WM.el('ctx-archive');
   var ctxDelete = WM.el('ctx-delete');
 
   function hideMenu() { menu.hidden = true; ctxId = null; }
@@ -592,6 +593,20 @@
       WM.send('delete_selected', selected[id] ? WM.list.selectedIds() : [id]);
     }
   });
+
+  // Archive (#270) is Delete's non-destructive sibling and follows the
+  // exact same scope rule: the checked selection when the right-clicked
+  // row is ticked, that row otherwise. With no archive folder configured
+  // Python says so and names the setting -- a refusal that teaches, which
+  // a disabled menu item could not.
+  ctxArchive.addEventListener('click', function () {
+    var id = ctxId;
+    hideMenu();
+    if (id) {
+      document.dispatchEvent(new CustomEvent('wm:clip-release'));
+      WM.send('archive_selected', selected[id] ? WM.list.selectedIds() : [id]);
+    }
+  });
   document.addEventListener('mousedown', function (ev) {
     if (!menu.hidden && !menu.contains(ev.target)) hideMenu();
   });
@@ -617,6 +632,7 @@
     WM.setEnabled('btn-select-all', any);
     WM.setEnabled('btn-select-none', picked);
     WM.setEnabled('btn-delete', picked);
+    WM.setEnabled('btn-archive', picked);
   }
   document.addEventListener('wm:selection', refreshFooter);
 
@@ -652,6 +668,14 @@
   WM.el('btn-delete').addEventListener('click', function () {
     document.dispatchEvent(new CustomEvent('wm:clip-release'));
     WM.send('delete_selected', WM.list.selectedIds());
+  });
+
+  // Archive (#270), the non-destructive sibling of the delete button just
+  // above: same selection, same release-first rule, and Python owns the
+  // confirm and the no-folder refusal.
+  WM.el('btn-archive').addEventListener('click', function () {
+    document.dispatchEvent(new CustomEvent('wm:clip-release'));
+    WM.send('archive_selected', WM.list.selectedIds());
   });
 
   // ---- bridge handlers ----------------------------------------------
