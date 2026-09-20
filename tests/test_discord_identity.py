@@ -2,6 +2,7 @@
 
 import io
 import json
+import threading
 import urllib.error
 import urllib.request
 
@@ -200,3 +201,102 @@ def test_invalid_host_error_does_not_echo_a_secret():
     )
     assert error and "host" in error.lower()
     assert "secret-token" not in error
+
+
+def test_lookup_lane_times_out_without_replacing_a_retained_dns_owner():
+    webhook, _ = discord.parse_webhook(URL)
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def blocked_transport(request, timeout=None):
+        calls.append((request.full_url, timeout))
+        entered.set()
+        assert release.wait(5)
+        return Response(b'{"id":"1234567890","name":"Fleet logs"}')
+
+    lane = discord.WebhookLookupLane(
+        lambda value: discord.identify_webhook(value, transport=blocked_transport),
+        deadline_s=0.01,
+    )
+    try:
+        assert lane.identify(webhook) == ""
+        assert entered.wait(1)
+        # A second optional request fails promptly, instead of replacing the
+        # DNS owner or adding another blocked worker.
+        assert lane.identify(webhook) == ""
+        assert calls == [(URL, 5)]
+    finally:
+        release.set()
+    assert lane.wait_idle(1)
+    assert lane.identify(webhook) == "Fleet logs"
+    assert calls == [(URL, 5), (URL, 5)]
+
+
+def test_lookup_lane_keeps_each_completed_name_with_its_own_caller(monkeypatch):
+    webhook, _ = discord.parse_webhook(URL)
+    real_event = threading.Event
+    first_waiting = real_event()
+    release_first = real_event()
+    event_count = 0
+
+    class PausingEvent:
+        def __init__(self, pause):
+            self._event = real_event()
+            self._pause = pause
+
+        def set(self):
+            self._event.set()
+
+        def is_set(self):
+            return self._event.is_set()
+
+        def wait(self, timeout=None):
+            result = self._event.wait(timeout)
+            if self._pause and result:
+                first_waiting.set()
+                assert release_first.wait(1)
+            return result
+
+    def events():
+        nonlocal event_count
+        event_count += 1
+        return PausingEvent(event_count == 1)
+
+    names = iter(["First", "Second"])
+    first = {}
+    lane = None
+    # Thread constructs its own start event, so create it before replacing the
+    # lane's event seam below.
+    caller = threading.Thread(
+        target=lambda: first.setdefault("name", lane.identify(webhook))
+    )
+    monkeypatch.setattr(discord.threading, "Event", events)
+    lane = discord.WebhookLookupLane(lambda value: next(names), deadline_s=1)
+    caller.start()
+    assert first_waiting.wait(1)
+    assert lane.identify(webhook) == "Second"
+    release_first.set()
+    caller.join(1)
+    assert first == {"name": "First"}
+
+
+def test_lookup_lane_closes_admission_without_waiting_for_stuck_dns():
+    webhook, _ = discord.parse_webhook(URL)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocked_lookup(value):
+        entered.set()
+        assert release.wait(5)
+        return "Fleet logs"
+
+    lane = discord.WebhookLookupLane(blocked_lookup, deadline_s=0.01)
+    try:
+        assert lane.identify(webhook) == ""
+        assert entered.wait(1)
+        assert lane.close() is False
+        assert lane.identify(webhook) == ""
+    finally:
+        release.set()
+    assert lane.wait_idle(1)

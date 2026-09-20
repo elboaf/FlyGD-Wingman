@@ -402,6 +402,7 @@ class Api:
         update_service=updates_mod,
         update_spawn=threading.Thread,
         is_frozen=lambda: bool(getattr(sys, "frozen", False)),
+        webhook_lookup=None,
     ):
         self._state = state
         # Admission/publication only — never held across Discord HTTP. Every
@@ -409,6 +410,13 @@ class Api:
         self._webhook_lock = threading.Lock()
         self._webhook_generation = 0
         self._webhook_revision = 0
+        # One retained daemon may outlive a caller blocked in DNS. Closing
+        # admission fences every bridge result without joining that owner.
+        self._webhook_lookup = (
+            webhook_lookup
+            if webhook_lookup is not None
+            else discord.WebhookLookupLane()
+        )
         self._preview_config = settings_mod.committed_preview(state.settings)
         self._window = None  # assigned by ui.window.create()
         # Assigned by ui.sigbar.create(), same underscore-only rule as
@@ -2146,7 +2154,7 @@ class Api:
         webhook, error = discord.parse_webhook(text)
         if webhook is None:
             return self._field_refused(error)
-        name = discord.identify_webhook(webhook)
+        name = self._webhook_lookup.identify(webhook)
         result = self._commit_webhook(generation, previous, text, name)
         if result["applied"] and not name:
             result["warning"] = "Webhook saved, but its name could not be identified."
@@ -2162,7 +2170,7 @@ class Api:
             return self._field_refused(
                 "Save a valid Discord webhook before identifying it."
             )
-        name = discord.identify_webhook(webhook)
+        name = self._webhook_lookup.identify(webhook)
         if not name:
             return self._field_refused("Could not identify this webhook. Try again.")
         return self._commit_webhook(generation, previous, previous, name)
@@ -2178,6 +2186,17 @@ class Api:
             return self._webhook_generation, self._state.settings.get(
                 "discord_webhook", ""
             )
+
+    def _shutdown_webhook_lookup(self) -> None:
+        """Close optional metadata admission without waiting on DNS.
+
+        A retained DNS call cannot be interrupted safely. Advancing the
+        generation before it eventually returns makes any caller that was
+        already waiting refuse rather than publishing a late credential name.
+        """
+        with self._webhook_lock:
+            self._webhook_lookup.close()
+            self._webhook_generation += 1
 
     # ----- Settings export/import -----------------------------------------
 

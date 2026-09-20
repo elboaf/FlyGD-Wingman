@@ -11,6 +11,8 @@ import json
 import logging
 import mimetypes
 import re
+import threading
+import time
 import traceback
 import urllib.error
 import urllib.request
@@ -175,6 +177,11 @@ _USER_AGENT = f"FlyGD-Wingman/{_version} (+https://github.com/elboaf/FlyGD-Wingm
 
 _TIMEOUT_SECONDS = 60
 
+# Metadata is optional, but Settings Save/Identify/Remove share a serialized
+# webhook field queue. This is a whole caller deadline rather than urllib's
+# socket timeout: DNS and a slow-but-progressing body can outlive that timeout.
+WEBHOOK_IDENTIFY_DEADLINE_S = 5.0
+
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Refuse to follow redirects on the webhook POST.
@@ -215,7 +222,12 @@ def safe_webhook_name(webhook: Webhook | None, name: object) -> str:
 
 
 def identify_webhook(webhook: Webhook, *, transport=None) -> str:
-    """One bounded, no-redirect GET; return only a safe webhook name or "".
+    """One no-redirect GET; return only a safe webhook name or "".
+
+    `WebhookLookupLane` owns the end-to-end caller deadline in production.
+    This leaf stays synchronous so its complete security boundary — canonical
+    URL, no redirects, bounded body, JSON and safe-name validation — runs in
+    one retained daemon rather than being split across callback stages.
 
     The POST parser deliberately accepts legacy URL shapes. Metadata must not
     inherit userinfo, ports, query strings or extra path segments, nor let an
@@ -250,6 +262,84 @@ def identify_webhook(webhook: Webhook, *, transport=None) -> str:
         return ""
     except Exception:  # noqa: BLE001 - external metadata failures are optional; never echo transport errors or bodies
         return ""
+
+
+class WebhookLookupLane:
+    """One retained optional-metadata owner, never a growing timeout pool.
+
+    DNS cannot be force-cancelled safely. A caller therefore waits only until
+    `deadline_s`, while the one daemon that entered the transport remains the
+    lane owner until it exits. Busy and closed callers fail locally; no worker
+    completion publishes or persists anything, so an overdue result has no
+    authority outside its original synchronous caller.
+    """
+
+    def __init__(
+        self,
+        lookup=identify_webhook,
+        *,
+        deadline_s: float = WEBHOOK_IDENTIFY_DEADLINE_S,
+        clock=time.monotonic,
+        thread_factory=threading.Thread,
+    ):
+        self._lookup = lookup
+        self._deadline_s = max(0.0, deadline_s)
+        self._clock = clock
+        self._thread_factory = thread_factory
+        self._lock = threading.Lock()
+        self._closed = False
+        self._owner = None
+        self._done = None
+
+    def identify(self, webhook: Webhook) -> str:
+        """Return a safe name by the deadline, or "" without replacing owner."""
+        deadline = self._clock() + self._deadline_s
+        with self._lock:
+            if self._closed or self._owner is not None:
+                return ""
+            done = threading.Event()
+            self._done = done
+            result = [""]
+
+            def run():
+                try:
+                    value = self._lookup(webhook)
+                except Exception:  # noqa: BLE001 - optional metadata never reports transport failures
+                    value = ""
+                try:
+                    if isinstance(value, str):
+                        result[0] = value
+                finally:
+                    with self._lock:
+                        self._owner = None
+                        done.set()
+
+            try:
+                owner = self._thread_factory(
+                    target=run, name="discord-webhook-lookup", daemon=True
+                )
+                self._owner = owner
+                owner.start()
+            except Exception:  # noqa: BLE001 - no owner means the optional lookup is unavailable
+                self._owner = None
+                done.set()
+                return ""
+        if not done.wait(max(0.0, deadline - self._clock())):
+            return ""
+        with self._lock:
+            return "" if self._closed else result[0]
+
+    def close(self) -> bool:
+        """Close admission without joining an uninterruptible DNS owner."""
+        with self._lock:
+            self._closed = True
+            return self._owner is None
+
+    def wait_idle(self, timeout: float | None = None) -> bool:
+        """Testable bounded observation; production shutdown intentionally skips it."""
+        with self._lock:
+            done = self._done
+        return done is None or done.wait(timeout)
 
 
 @dataclass(frozen=True)

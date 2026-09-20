@@ -294,10 +294,13 @@ record build, checkout and scaling. No live webhook was used in automated tests.
       and caches the **webhook name**, not its channel. An unavailable lookup
       still saves a valid URL and warns that its name could not be identified.
       Existing nameless webhooks offer Identify webhook. Hydration, route/tab
-      entry and Show do not contact Discord. Lookup/persistence failures never
-      attach an old name to a replacement URL or claim an unsaved name is saved.
-      A delayed settings refresh after an acknowledged Save, Identify or Remove
-      must not restore the old identity, URL, or control availability.
+      entry and Show do not contact Discord. An optional lookup that cannot
+      finish within its bounded deadline saves a valid URL without a name, or
+      refuses explicit Identify; it never indefinitely postpones Save or Remove.
+      Lookup/persistence failures never attach an old name to a replacement URL
+      or claim an unsaved name is saved. A delayed settings refresh after an
+      acknowledged Save, Identify or Remove must not restore the old identity,
+      URL, or control availability.
 - [ ] Show remains masked by default and remasks on leaving Combat logs.
       Remove confirms with the cached name when known, clears URL and name,
       and never reveals a token. Tab/Shift+Tab focus and status announcements
