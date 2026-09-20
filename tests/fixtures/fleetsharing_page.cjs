@@ -56,6 +56,7 @@ class Element {
   querySelectorAll(selector) {
     const all = this.children.flatMap(c => [c, ...c.querySelectorAll('*')]);
     if (selector === '*') return all;
+    if (selector === 'button') return all.filter(c => c.tagName === 'BUTTON');
     if (selector === 'button, input, select') return all.filter(c => ['BUTTON', 'INPUT', 'SELECT'].includes(c.tagName));
     if (selector === '.settings-pane > .settings') return all.filter(c => c.className.split(/\s+/).includes('settings') && c.parentNode.className.split(/\s+/).includes('settings-pane'));
     assert.match(selector, /^\.[\w-]+$/);
