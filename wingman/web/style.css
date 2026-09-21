@@ -1830,7 +1830,7 @@ button.btn:disabled,
    840 floor, blank until a write fails, which for most installs is
    never). `[hidden]` covers a note the page raises only while its
    condition holds -- #preview-depends, #preview-binds-off, and
-   #eve-blockers. Measured: with `hidden` alone the .pv-master
+   #preview-copy-empty. Measured: with `hidden` alone the .pv-master
    block held a 0-height row that still took one 10px flex gap, so the
    block's height moved with the state of the switch above it, which is
    exactly what the gap was chosen to prevent.
