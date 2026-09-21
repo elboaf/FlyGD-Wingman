@@ -66,7 +66,10 @@
       justify-self: end;
     }
     .fleet-title-status {
-      min-width: 100%;
+      /* A passive label: never a click target. Invisible does not mean
+         inert -- an opacity:0 swap would still intercept presses in its
+         band (the buttons' text line) without this (#275). */
+      pointer-events: none;
       text-align: right;
       white-space: nowrap;
       overflow: hidden;
@@ -296,7 +299,13 @@
 </head>
 <body>
   <section class="fleet-shell" id="fleet-shell" aria-label="Fleet Bar">
-    <header class="fleet-title" id="fleet-title">
+    <header class="fleet-title pywebview-drag-region" id="fleet-title">
+      <!-- #275: the whole header strip drags. The region class sits on the
+           header itself; pywebview matches ancestors of the press target, so
+           padding, the flex gap and the status area all start a drag. The
+           inner #fleet-drag keeps its region class as a no-op nested region
+           and as the layout flex child. bindHeaderDrag() stops presses that
+           land on the buttons from reaching the drag handler. -->
       <div class="fleet-drag pywebview-drag-region" id="fleet-drag">
         <span>Fleet Bar</span>
       </div>
