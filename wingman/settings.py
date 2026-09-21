@@ -399,6 +399,12 @@ DEFAULTS = {
     # Not a user-facing preference, but it must live here: save() projects
     # onto DEFAULTS keys, so anything undeclared is dropped on every write.
     "recording_dir": None,
+    # Cold storage for the uploader's Archive action (#270). Separate from
+    # recording_dir on purpose: archiving moves a file OUT of the watched
+    # folder, and the two pointing at the same place would re-announce what
+    # was just archived. Browse-only in the UI, never auto-detected -- a
+    # wrong guess here silently refiles recordings.
+    "archive_folder": None,
     "discord_webhook": "",
     # Credential-bound local metadata; never included in shared settings.
     "discord_webhook_name": "",
@@ -978,6 +984,7 @@ def _normalize(data: dict) -> dict:
         "notify_mode",
         "category",
         "recording_dir",
+        "archive_folder",
         "discord_webhook",
         "discord_webhook_name",
         "gamelogs_dir",
@@ -1004,6 +1011,10 @@ def _normalize(data: dict) -> dict:
         data["category"] = DEFAULTS["category"]
     if data["recording_dir"] is not None and not isinstance(data["recording_dir"], str):
         data["recording_dir"] = None
+    if data["archive_folder"] is not None and not isinstance(
+        data["archive_folder"], str
+    ):
+        data["archive_folder"] = None
     if not isinstance(data["discord_webhook"], str):
         data["discord_webhook"] = ""
     webhook, _ = discord.parse_webhook(data["discord_webhook"])

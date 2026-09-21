@@ -6,6 +6,7 @@ in the UI layer; this module deals only in data.
 """
 
 import datetime
+import shutil
 import subprocess
 import sys
 import time
@@ -417,3 +418,47 @@ def delete(items: list[Path]) -> tuple[int, list[tuple[Path, str]]]:
         except OSError as exc:
             failures.append((path, str(exc)))
     return deleted, failures
+
+
+def _archive_target(dest: Path, name: str) -> Path:
+    """A collision-free destination path inside *dest*.
+
+    The archive is cold storage, so a same-named earlier recording must
+    never be overwritten -- that would be delete wearing an archive badge.
+    Suffixing before the extension ("clip (2).mkv") keeps the pair
+    alphabetically adjacent.
+    """
+    stem, dot, ext = name.rpartition(".")
+    if not dot or not stem:
+        stem, ext = name, ""
+    else:
+        ext = "." + ext
+    candidate = dest / name
+    n = 2
+    while candidate.exists():
+        candidate = dest / f"{stem} ({n}){ext}"
+        n += 1
+    return candidate
+
+
+def archive(items: list[Path], dest: Path) -> tuple[int, list[tuple[Path, str]]]:
+    """Move *items* into the archive folder *dest* (#270).
+
+    Same batch contract as delete(): one failure does not abort the batch,
+    and each failure is (path, error_message). shutil.move copies when the
+    destination is on another volume, so a multi-GB move across drives is
+    slow by nature rather than stuck; a locked source fails with the OS's
+    message. *dest* is created if missing -- the user browsed to a real
+    folder to configure it, so this only covers it being removed (a
+    removable drive, a network share) after the setting was saved.
+    """
+    dest.mkdir(parents=True, exist_ok=True)
+    moved = 0
+    failures: list[tuple[Path, str]] = []
+    for path in items:
+        try:
+            shutil.move(str(path), str(_archive_target(dest, path.name)))
+            moved += 1
+        except OSError as exc:
+            failures.append((path, str(exc)))
+    return moved, failures

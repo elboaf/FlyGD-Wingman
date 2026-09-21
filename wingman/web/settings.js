@@ -34,7 +34,9 @@
   // a pane the user was not looking at -- silent, and worse than the
   // mis-scoped sentence that prompted the split.
   var TARGET_NOTE = { recording: 'detect-note', gamelogs: 'gamelogs-note' };
-  var TARGET_MSG = { recording: 'msg-recdir', gamelogs: 'msg-gamelogs' };
+  var TARGET_MSG = { recording: 'msg-recdir', gamelogs: 'msg-gamelogs', archive: 'msg-archdir' };
+  var TARGET_FIELD = { recording: 'f-recdir', gamelogs: 'f-gamelogs', archive: 'f-archdir' };
+  var TARGET_KEY = { recording: 'recording_dir', gamelogs: 'gamelogs_dir', archive: 'archive_folder' };
   var TARGET_COST = { recording: FOLDER_COST, gamelogs: GAMELOG_COST };
   var TARGET_NOUN = { recording: 'recording', gamelogs: 'gamelogs' };
 
@@ -341,6 +343,7 @@
       privacy: s.privacy || 'unlisted', category: s.category || '20',
       notify_mode: s.notify_mode || 'toast', show_eve_tools: s.show_eve_tools !== false,
       recording_dir: s.recording_dir || '', gamelogs_dir: s.gamelogs_dir || '',
+      archive_folder: s.archive_folder || '',
       discord_webhook: s.discord_webhook || '', start_on_login: !!payload.start_on_login,
       preview_label_size: (s.preview || {}).label_size
                           || WM.el('preview-label-size').options[0].value
@@ -372,6 +375,8 @@
     }
     setField('f-recdir', current.recording_dir);
     setField('f-gamelogs', current.gamelogs_dir);
+    setTitle('f-archdir', current.archive_folder);
+    setField('f-archdir', current.archive_folder);
     // An <input> cannot ellipsize and does not wrap, so a path longer than
     // the field is cut mid-word with nothing to say it was cut
     // (walkthrough Settings 16). S2's stacking widened the field to 422px,
@@ -542,7 +547,8 @@
   // Both folders carry BOTH actions: Settings has distinct Detect paths
   // for the recording directory (via OBS's own config) and the EVE
   // gamelogs directory. `which` matches Api.pick_folder/detect_folder.
-  var TARGET_FIELD = { recording: 'f-recdir', gamelogs: 'f-gamelogs' };
+  // The archive folder (#270) has Browse only -- no Detect, and its field
+  // is read-only, so it never produces a half-typed draft to police.
 
   // A folder is NEVER committed on blur. save_settings rebinds the live
   // watcher, and Watcher.rebind marks every file already in the folder as
@@ -557,7 +563,7 @@
   function commitFolder(which) {
     var field = WM.el(TARGET_FIELD[which]);
     if (!field) { return; }
-    var key = which === 'gamelogs' ? 'gamelogs_dir' : 'recording_dir';
+    var key = TARGET_KEY[which];
     // The accepted UI representation is the trimmed submission. Python
     // owns Path normalization and returns no canonical-path field.
     commit(TARGET_MSG[which], ['set_folder', which, field.value], key, field.value.trim(),
@@ -585,8 +591,7 @@
       commitFolder(which);
     });
     field.addEventListener('blur', function () {
-      var stored = (which === 'gamelogs' ? current.gamelogs_dir
-                                         : current.recording_dir) || '';
+      var stored = current[TARGET_KEY[which]] || '';
       if (field.value.trim() === stored) { return; }
       say(TARGET_MSG[which], 'Press Enter to use this folder, or click '
                            + 'Browse\u2026', 'warn');
