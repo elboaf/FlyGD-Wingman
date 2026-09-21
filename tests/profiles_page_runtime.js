@@ -140,7 +140,8 @@ function chooseKind(value) {
 }
 const scenario = fs.readFileSync(0, 'utf8');
 const source = fs.readFileSync(path.join(web, 'evesettings.js'), 'utf8');
-assert.ok(source.endsWith('}());\n'));
+const closure = source.match(/}\(\)\);\r?\n$/);
+assert.ok(closure);
 const exercise = `
   state = initial;
   wire();
@@ -148,6 +149,6 @@ const exercise = `
   paintPill(state.eve_running);
   ${scenario}
 `;
-vm.runInNewContext(source.slice(0, -7) + exercise + '\n}());\n',
+vm.runInNewContext(source.slice(0, closure.index) + exercise + '\n}());\n',
   {WM, window, document, assert, el, handlers, calls, initial, backupMenus,
     measuredMenu, nativeToggle, chooseKind}, {filename: 'evesettings.js'});

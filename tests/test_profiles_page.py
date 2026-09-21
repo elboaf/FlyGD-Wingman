@@ -2670,6 +2670,38 @@ def _run_profiles_runtime(scenario):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_profiles_runtime_accepts_windows_line_endings(tmp_path):
+    if shutil.which("node") is None:
+        pytest.skip("node is not on PATH")
+
+    tests_dir = tmp_path / "tests"
+    web_dir = tmp_path / "wingman" / "web"
+    tests_dir.mkdir()
+    web_dir.mkdir(parents=True)
+    shutil.copy(
+        pathlib.Path(__file__).with_name("profiles_page_runtime.js"),
+        tests_dir / "profiles_page_runtime.js",
+    )
+    source_web = pathlib.Path(__file__).parents[1] / "wingman" / "web"
+    shutil.copy(source_web / "index.html", web_dir / "index.html")
+    source = (source_web / "evesettings.js").read_bytes()
+    (web_dir / "evesettings.js").write_bytes(
+        source.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+    )
+
+    result = subprocess.run(
+        ["node", str(tests_dir / "profiles_page_runtime.js")],
+        input="assert.equal(calls.length, 0);",
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_copy_summary_counts_only_selected_shown_non_source_targets():
     _run_profiles_runtime(r"""
   assert.equal(el('es-copy').textContent, 'Copy settings');
