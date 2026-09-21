@@ -2161,7 +2161,7 @@ class Api:
             return self._field_refused(error)
         name = self._webhook_lookup.identify(webhook)
         result = self._commit_webhook(generation, previous, text, name)
-        if result["applied"] and not name:
+        if result["applied"] and not result.get("webhook_name"):
             result["warning"] = "Webhook saved, but its name could not be identified."
         return result
 
@@ -2235,13 +2235,19 @@ class Api:
                 with settings_mod.update(self._state.settings) as doc:
                     if doc.get("discord_webhook", "") != previous:
                         raise _WebhookSuperseded
+                    committed_name = name
+                    if url == previous and not committed_name:
+                        webhook, _ = discord.parse_webhook(url)
+                        committed_name = discord.safe_webhook_name(
+                            webhook, doc.get("discord_webhook_name", "")
+                        )
                     if (
                         doc.get("discord_webhook", "") == url
-                        and doc.get("discord_webhook_name", "") == name
+                        and doc.get("discord_webhook_name", "") == committed_name
                     ):
                         raise _SettingUnchanged
                     doc["discord_webhook"] = url
-                    doc["discord_webhook_name"] = name
+                    doc["discord_webhook_name"] = committed_name
             except _WebhookSuperseded:
                 return self._field_refused(superseded)
             except _SettingUnchanged:
@@ -2257,8 +2263,8 @@ class Api:
             self._webhook_revision += 1
             return dict(
                 self._field_ok(),
-                webhook_status=copy_mod.webhook_status(url, name),
-                webhook_name=name,
+                webhook_status=copy_mod.webhook_status(url, committed_name),
+                webhook_name=committed_name,
                 webhook_revision=self._webhook_revision,
             )
 

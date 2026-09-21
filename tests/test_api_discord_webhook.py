@@ -60,6 +60,21 @@ def test_failed_lookup_saves_replacement_without_old_name(api):
     assert pair(api._state.settings) == pair(settings.load()) == (NEW, "")
 
 
+def test_failed_lookup_for_unchanged_url_preserves_existing_name(api):
+    before = paths.settings_file().read_bytes()
+
+    result = api.set_discord_webhook(OLD)
+
+    assert result["applied"] is True
+    assert result["persisted"] is True
+    assert result["error"] is None
+    assert not result.get("warning")
+    assert result["webhook_name"] == "Old name"
+    assert result["webhook_status"] == "Webhook: Old name"
+    assert pair(api._state.settings) == (OLD, "Old name")
+    assert paths.settings_file().read_bytes() == before
+
+
 def test_identify_updates_saved_identity(api, monkeypatch):
     identify_as(monkeypatch, "Renamed webhook")
     result = api.identify_discord_webhook()
@@ -174,9 +189,12 @@ def test_newer_webhook_admission_fences_older_reply_even_for_same_url(
     assert result["applied"] is False and "webhook_status" not in result
     if new_operation == "remove":
         expected = ("", "")
-    elif new_operation in ("save", "replacement-save"):
+    elif new_operation == "replacement-save":
         assert newest["applied"] is True and newest["warning"] == WARNING
-        expected = (NEW if new_operation == "replacement-save" else OLD, "")
+        expected = (NEW, "")
+    elif new_operation == "save":
+        assert newest["applied"] is True and not newest.get("warning")
+        expected = (OLD, "Old name")
     else:
         assert newest["applied"] is False
         expected = (OLD, "Old name")
