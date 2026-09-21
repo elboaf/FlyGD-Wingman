@@ -136,7 +136,7 @@ class CompanionFamily:
                     status=status,
                     error=error,
                     binding=live.binding
-                    if live is not None and status == "live"
+                    if live is not None and status in ("live", "hidden-by-focus")
                     else None,
                     rect=live.window.rect
                     if live is not None

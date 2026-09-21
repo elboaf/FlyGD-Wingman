@@ -422,7 +422,7 @@ def test_focus_visibility_transitions_publish_status_once(family, focus_policy):
     assert window.hidden
     assert [event.kind for event in events] == ["status"]
     hidden = events[-1].payload[0]
-    assert hidden == dict(initial, status="hidden-by-focus", binding=None)
+    assert hidden == dict(initial, status="hidden-by-focus", binding=BINDING)
     events.clear()
 
     native.apply_lost_focus_hidden(*hide)
@@ -451,7 +451,7 @@ def test_focus_visibility_changes_coalesce_one_status_per_sweep(family):
         "hidden-by-focus",
         "hidden-by-focus",
     ]
-    assert all(row["binding"] is None for row in events[0].payload)
+    assert [row["binding"] for row in events[0].payload] == [BINDING, BINDING]
 
 
 @pytest.mark.parametrize("refusal", ["authority", "native-no-change"])
@@ -526,7 +526,7 @@ def test_hidden_status_preserves_authority_and_error_precedence(
     row = events[-1].payload[0]
     assert row["status"] == want
     assert row["error"] == want_error
-    assert row["binding"] is None
+    assert row["binding"] == (BINDING if want == "hidden-by-focus" else None)
 
 
 def test_lost_focus_hides_and_restores_live_companions(family):

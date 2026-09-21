@@ -383,25 +383,34 @@ def test_hidden_focus_status_uses_existing_publication_without_persistence(h):
         "error": None,
         "rect": facts.window,
     }
-    for status, binding in (
-        ("live", facts.binding),
-        ("hidden-by-focus", None),
-        ("live", facts.binding),
-    ):
+    for status in ("live", "hidden-by-focus", "live"):
         event = CompanionEvent(
-            "status", None, (dict(value, status=status, binding=binding),)
+            "status", None, (dict(value, status=status, binding=facts.binding),)
         )
         h.controller.native_event(event)
         assert h.controller.drain().result(2)
         current = h.controller.state()
         assert current["rows"][0]["status"] == status
-        assert h.controller._rows[row["id"]]["binding"] == binding
+        assert h.controller._rows[row["id"]]["binding"] == facts.binding
         until(lambda: h.publications[-1]["rows"][0]["status"] == status)
         assert h.path.read_bytes() == saved
 
         h.controller.native_event(event)
         assert h.controller.drain().result(2)
         assert h.controller.state()["revision"] == current["revision"]
+
+        if status == "hidden-by-focus":
+            reset = h.controller.reset_geometry(row["id"], row["generation"])
+            assert h.receipt(reset)["persisted"]
+            assert h.controller.drain().result(2)
+            assert h.data["companion_previews"]["definitions"][0]["window"] == {
+                "x": 100,
+                "y": 100,
+                "w": 280,
+                "h": 210,
+            }
+            saved = h.path.read_bytes()
+            value["generation"] = h.controller.state()["rows"][0]["generation"]
     assert len(set(h.worker_threads)) == 1
     assert threading.get_ident() not in h.worker_threads
 
