@@ -594,7 +594,7 @@ Keep the function body and all authority-specific assertions unchanged.
 
 ```python
 @pytest.mark.parametrize(
-    "kind,error,invalidation",
+    "kind,error,invalidate",
     [
         ("publication", (403, "forbidden"), "new_intent"),
         ("off", (403, "forbidden"), "lifecycle"),
@@ -614,7 +614,7 @@ Use:
 
 ```python
 @pytest.mark.parametrize(
-    "kind,boundary,replacement",
+    "kind,boundary,invalidate",
     [
         ("publication", "during_save", "new_intent"),
         ("off", "during_save", "lifecycle"),
@@ -795,7 +795,7 @@ Use:
 
 ```python
 @pytest.mark.parametrize(
-    "field,kind",
+    "rights,kind",
     [
         ("approved_capabilities", "combat"),
         ("session_approved_capabilities", "combat"),
