@@ -553,6 +553,23 @@ def test_hide_active_hides_a_companion_over_its_own_source_only(family):
     assert not window.hidden
 
 
+@pytest.mark.parametrize(
+    "reverse", [False, True], ids=["foreground-first", "foreground-last"]
+)
+def test_hide_active_hides_only_the_foreground_companion(family, reverse):
+    native, events, _, _, _, _ = family
+    other = replace(DEFINITION, id="22222222222242228222222222222222")
+    definitions = (spec(other), spec()) if reverse else (spec(), spec(other))
+    native.reconcile(definitions, 2)
+    native.live[other.id].binding = replace(BINDING, hwnd=20)
+    events.clear()
+
+    native.apply_lost_focus_hidden(False, True, BINDING.hwnd)
+
+    assert native.live[DEFINITION.id].window.hidden is True
+    assert native.live[other.id].window.hidden is False
+
+
 def test_lost_focus_unhide_requires_live_authority(family):
     native, _, windows, _, authority, _ = family
     window = _live_companion(native, windows)

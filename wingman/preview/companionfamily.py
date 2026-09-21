@@ -560,22 +560,25 @@ class CompanionFamily:
         """
         color = self._ring_color()
         visibility_changed = False
+        global_hidden = hidden
         for identity, live in tuple(self.live.items()):
             if live.retiring:
                 continue
             token = self._token(live.spec)
             if live.window.selection_color != color:
                 live.window.selection_color = color
-            hidden = visibility.should_hide_source(
-                global_hidden=hidden,
+            source_hidden = visibility.should_hide_source(
+                global_hidden=global_hidden,
                 hide_active=active,
                 foreground=foreground,
                 source_hwnd=live.binding.hwnd if active else 0,
             )
-            live.window.set_active(self._ring_identity == identity and not hidden)
+            live.window.set_active(
+                self._ring_identity == identity and not source_hidden
+            )
             was_hidden = live.window.hidden
             live.window.set_hidden(
-                hidden,
+                source_hidden,
                 authorized=lambda lv=live, t=token, i=identity: (
                     self.live.get(i) is lv and self._authorized(t, promotion=True)
                 ),
