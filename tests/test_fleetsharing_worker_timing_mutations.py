@@ -201,14 +201,14 @@ def test_known_scenario_classes_detect_even_never_serviced_operations(
 
     def omit(self, enabled):
         choices = work(self, enabled)
-        if self._clock() >= 1030:
+        if self._clock() >= self._pending.start + 10:
             return tuple(w for w in choices if w.operation != operation)
         return choices
 
     monkeypatch.setattr(production.FleetSharingWorker, "_work", omit)
     with pytest.raises(AssertionError, match="eligible class starved"):
         cadence.test_current_receiver_matches_exact_freshness_without_local_publication(
-            tmp_path, phase=0.5, watch=True, latency=0.08
+            tmp_path, phase=0, watch=True, latency=0.025
         )
 
 
@@ -239,7 +239,7 @@ def test_healthy_bounds_reject_throttled_but_recovering_snapshots(tmp_path, boun
     relay, samples, timeline, events = cadence.run_trace_owner(
         tmp_path, phase=0.5, watch=True, latency=0.08, configure=throttle
     )
-    cadence.assert_scenario_fairness(relay, watch=True)
+    cadence.assert_scenario_fairness(relay, watch=True, due=relay.timeline.start + 10)
     classified = cadence.assert_exact_trace(relay, samples, events)
     recoveries = cadence.assert_healthy_recovery(classified)
     assert len([t for t in recoveries if 1040 <= t < 1090]) >= 2
