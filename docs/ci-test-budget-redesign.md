@@ -244,10 +244,16 @@ Reduce `tests/test_fleetsharing_source_admission.py` from 201 cases toward 90–
 
 ### Timing mutations
 
-Remove `tests/test_fleetsharing_worker_timing_mutations.py` from ordinary and
-release product pytest. Preserve the underlying direct regressions. If a bounded
-nightly mutation job remains, combine cases that can consume one shared expensive
-trace and enforce its own runtime budget.
+Delete the 25 committed witnesses in
+`tests/test_fleetsharing_worker_timing_mutations.py` after using them as temporary
+probes during consolidation. Preserve the underlying direct product regressions.
+They do not move unchanged into another pytest tier.
+
+A future bounded nightly mutation job is a separate test-strength tool, not part
+of the product-test inventory. If evidence justifies adding one, it must combine
+checks that can consume one shared expensive trace, own a separate runtime
+budget, and be explicitly exempt from the rule that every product test appears
+in required or complete product verification.
 
 ### Transport resources
 
@@ -256,6 +262,14 @@ trace and enforce its own runtime budget.
   gate.
 - Retain a small ordinary-response real-client codec crossing in required CI if
   no existing case owns that seam.
+
+The 47 MB gate owns successful decoding of the maximum supported response through
+the real reader and codec, including exact byte and row counts. It does not own a
+stable peak-allocation ceiling: Windows `tracemalloc` peak is retained as
+observability, not a pass/fail metric. Its initial Windows case budget is 75
+seconds, reviewed after the comparable-run sample; the complete product gate's
+600-second ceiling remains authoritative. A wall-time over the case budget fails
+with the recorded elapsed and peak values.
 
 ## Broader consolidation
 
@@ -308,18 +322,32 @@ Windows-native ownership is orthogonal. A native test cannot be omitted from
 required Windows CI merely because it is expensive; its design must be improved
 or a representative native contract retained.
 
-The execution matrix is:
+The workflow contract is explicit because each publisher owns its test gate; no
+workflow may assume another run completed successfully:
 
-| Context | Selection |
-|---|---|
-| PR Ubuntu | Required portable and product tests |
-| PR Windows | Required tests, including all native seams |
-| Main push | Required, extended, and resource product tests |
-| Nightly | Complete product suite plus optional separately budgeted mutation checks |
-| Release/build | Complete product suite including extended/resource, excluding mutation-of-test checks |
+| Workflow/event | OS and pytest command | Node and codec | Cargo | Evidence and skip enforcement |
+|---|---|---|---|---|
+| `ci.yml` pull request — Ubuntu | `ubuntu-latest`; `pytest tests/ -m "not extended and not resource and not mutation"` | Check Node; build and install the release codec | `cargo test --locked` | JUnit and timing artifact; forbidden availability skips fail |
+| `ci.yml` pull request — Windows | Before sharding: one serial `windows-latest` required job with the same marker expression. If the measured stop/go gate authorizes sharding: whole-file required shard jobs use that expression behind one stable aggregator | Serial topology builds/installs the release codec locally. Sharded topology uses one codec-preparation job that builds/tests and uploads the release binary; every shard checks Node, downloads/installs the binary, and asserts availability | Serial job runs `cargo test --locked`; sharded codec-preparation job runs it once | Serial job uploads one JUnit/timing artifact. Sharded topology uploads per-shard evidence and the aggregator checks every shard, Cargo, and forbidden skips |
+| `ci.yml` push to `main` — Ubuntu | `ubuntu-latest`; `pytest tests/ -m "not mutation"` | Check Node; build/install release codec | `cargo test --locked` | Complete-product JUnit/timing artifact and skip guard |
+| `ci.yml` push to `main` — Windows | `windows-latest`; `pytest tests/ -m "not mutation"` | Check Node; build/install release codec | `cargo test --locked` | Complete-product JUnit/timing artifact and skip guard |
+| `extended.yml` nightly/manual | `windows-latest`; `pytest tests/ -m "not mutation"` | Check Node; build/install release codec | `cargo test --locked` | Complete-product JUnit/timing artifact and skip guard; an optional future mutation job is separate |
+| `build.yml` dispatch | `windows-latest`; `pytest tests/ -m "not mutation"` before installer build | Check Node; build/install release codec | `cargo test --locked` | JUnit/timing artifact and skip guard; installer build still `needs` this job |
+| `release.yml` tag | `windows-latest`; `pytest tests/ -m "not mutation"` before publication | Check Node; build/install release codec | `cargo test --locked` | JUnit/timing artifact and skip guard; build/publish still `needs` this job |
+| `autorelease.yml` version push/dispatch | `windows-latest`; `pytest tests/ -m "not mutation"` before publication | Check Node; build/install release codec | `cargo test --locked` | JUnit/timing artifact and skip guard; release still `needs` this job independently of `ci.yml` |
 
-Node and the built release settings codec remain mandatory wherever their tests
-run. Availability skips are failures.
+`checks` remains Ubuntu-only and continues its existing lexical/build invariants,
+JavaScript smoke, Ruff, and manifest validation; it does not duplicate pytest or
+Cargo. “Forbidden availability skips” means Node or codec absence and any native
+contract that should execute on that OS. A shared result checker reads JUnit skip
+reasons and fails those categories; intentional capability/platform skips remain
+reported with `-rs`.
+
+The exact commands retain `uv run --no-sync python -m pytest`, `--junitxml`, and
+`--durations`; the table abbreviates only those common flags. Marker registration
+uses `--strict-markers`. Product-test coverage guards operate on the collected
+non-`mutation` inventory. Optional mutation tooling is not silently counted as a
+product release gate.
 
 ### Windows file-level shards
 
@@ -331,9 +359,38 @@ file-level shards; add a third only if two are insufficient.
 - Never split cases from one file across concurrent workers.
 - Fail a guard if a test file is missing or assigned twice.
 - Upload JUnit and timing evidence per shard.
-- Use a final aggregator named `test (windows-latest)` so branch protection keeps
-  one stable required status and any shard failure blocks it.
 - Rebalance only from measured drift, not file count.
+
+The PR job topology is `checks`, Ubuntu required tests, Windows codec/Cargo
+preparation, Windows pytest shards, then one aggregator whose explicit job name is
+`test (windows-latest)`. The aggregator has `needs` edges to every required job,
+runs under `if: always()`, and fails unless every `needs.<job>.result` is
+`success`. A cancelled, skipped, or failed prerequisite therefore still emits a
+failing Windows required status instead of suppressing it.
+
+Every required job writes start/completion UTC timestamps to a small artifact.
+The aggregator receives `actions: read`, queries the current workflow's job
+records, and computes earliest required-job start through latest prerequisite
+completion. It reserves fifteen seconds for its own bounded work: more than 285
+seconds before aggregation fails the 300-second PR budget. Its measurement step
+runs under a 15-second shell timeout and the job uses GitHub's one-minute minimum
+`timeout-minutes` guard. JUnit sums remain diagnostic and do not substitute for
+this cross-job measurement.
+
+The serial topology keeps the current exact `test (windows-latest)` status and
+has no aggregator. If sharding is authorized, one atomic workflow change replaces
+the matrix with: an explicit Ubuntu job still named `test (ubuntu-latest)`,
+non-required shard/preparation jobs, and the aggregator as the **only** producer
+of `test (windows-latest)`. An optional legacy serial Windows comparison job must
+use a distinct non-required name such as `test (windows legacy)`; duplicate
+producers of the required name are forbidden.
+
+`checks` also remains exact. `docs/branch-protection.md` is updated with the new
+topology, then the transition PR verifies all three names appear under Required,
+confirms the required Windows check URL belongs to the aggregator, and injects a
+deliberate Windows-only failure into an assigned shard. The aggregator must turn
+red while the explicit Ubuntu required job remains green. Any legacy comparison
+job is removed after that proof.
 
 This avoids the shared-state and timing behavior observed in the rejected xdist
 experiment while reducing wall time after the suite itself is smaller.
@@ -349,13 +406,33 @@ Initial budgets are:
   owner with a separately reviewed budget;
 - `checks`: thirty seconds.
 
-A checked-in budget manifest records file ownership and stable measured limits.
-It is not a hand-maintained case-count copy. Timing reports identify the files
-that exceed budget.
+A checked-in budget manifest records each product test file's owning subsystem,
+cadence, Windows shard, and measured file limit. It is not a hand-maintained
+case-count copy. A new or renamed file is treated as unbudgeted: collection still
+assigns it to a deterministic required fallback shard so it cannot disappear,
+while `checks` fails until its owner, cadence, shard, and provisional limit are
+reviewed. Renames are explicit delete/add operations; limits never follow a path
+silently. File limits change only with timing evidence and review.
 
-Budgets report without failing while ten comparable green hosted runs establish
-stable headroom. Gates are enabled only after that sample. Workflow
-`timeout-minutes` remains deadlock protection rather than the performance metric.
+The workflow records source SHA, collected-node-set hash, selection expression,
+shard-manifest hash, workflow revision, runner image/version, OS, Python, Node,
+uv, pytest, codec/Rust toolchain, cache-hit state, and required-job timestamps.
+An automated report groups attempts only when source, selection, shard manifest,
+and workflow revision match; image/tool changes are shown as strata rather than
+silently pooled. Failed, cancelled, missing-artifact, or availability-skipped
+runs never count as green samples.
+
+Ten comparable green attempts are the minimum rollout sample, not a statistically
+stable population p95. The report uses median and nearest-rank maximum and labels
+the latter accurately; it does not infer a population tail. The sample resets
+after any product selection, shard assignment, workflow topology, or test-runtime
+change. Tool/image changes require either a new sample or an explicit stratified
+comparison. The implementation coordinator collects the generated report and the
+maintainer authorizes enabling or revising gates.
+
+Budgets report without failing during that sample. Workflow `timeout-minutes`
+remains deadlock protection rather than the performance metric. Timing reports
+identify files that exceed budget and show manifest defaults separately.
 
 Critical path means earliest required-job start to latest completion, excluding
 initial Actions queue time. File and testcase sums diagnose cost but do not
@@ -389,14 +466,19 @@ projects below ten minutes and required work is balanced enough to shard.
 
 ### 4. Add cadence markers and complete workflows
 
-Register markers strictly, publish the exact selection truth table, and ensure no
-case disappears from all product contexts. Main, nightly, build, release, and
-autorelease retain their owned gates.
+Register markers strictly, implement the workflow/OS command table above, and
+ensure no product case disappears from all required and complete product
+contexts. Main, nightly, build, release, and autorelease retain their owned Node,
+codec, pytest, Cargo, evidence, and skip-enforcement gates. Optional mutation
+tooling is inventoried separately and is not subject to the product-context
+coverage guard.
 
 ### 5. Add Windows file shards if necessary
 
-Introduce measured shard assignments and the stable aggregator. Verify branch
-protection with a deliberate Windows-only failure before retiring the old job.
+Introduce measured shard assignments, timestamp artifacts/API collection, and
+the fail-closed `if: always()` aggregator. Update and manually verify branch
+protection with a deliberate Windows-only failure before retiring the old matrix
+job.
 
 ### 6. Stabilize and enforce budgets
 
@@ -430,7 +512,9 @@ Acceptance requires:
 2. Complete Windows product verification finishes within 600 seconds.
 3. Every retained representative passes and every temporary mutation is detected
    at its intended boundary.
-4. No test is absent from all required and complete product contexts.
+4. No non-mutation product test is absent from all required and complete product
+   contexts; any optional mutation corpus has its own explicit inventory and
+   nightly command.
 5. Actual DPAPI, Win32 bindings, message-pump, junction/reparse, locking, codec,
    packaging, and subsystem contracts remain covered on Windows.
 6. The stable required Windows status fails for a deliberate Windows-only fault.
