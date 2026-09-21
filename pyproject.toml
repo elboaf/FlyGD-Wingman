@@ -114,6 +114,12 @@ version = { attr = "wingman.__version__" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = [
+    "extended: distinct exhaustive or rare compatibility contracts",
+    "resource: maximum-size, allocation, or performance probes",
+    "mutation: optional test-strength checks that alter implementations",
+]
 
 [tool.ruff]
 target-version = "py311"

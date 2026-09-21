@@ -14,10 +14,13 @@ from email.message import Message
 from hashlib import sha256
 from uuid import UUID
 
+import pytest
+
 from wingman import combatprofile
 from wingman.fleetsharing import client, protocol
 
 LIMITS = combatprofile.LIMITS
+MAXIMUM_RESPONSE_RESOURCE_BUDGET_S = 75.0
 
 
 def maximum_row(index, *, read=False):
@@ -223,15 +226,32 @@ def test_memory_probe_falls_back_without_resource(monkeypatch):
         tracemalloc.stop()
 
 
-def test_maximum_legal_response_actual_reader_and_codec_in_subprocess():
+@pytest.mark.resource
+def test_maximum_legal_response_actual_reader_and_codec_in_subprocess(request):
+    started = time.perf_counter()
     result = subprocess.run(
         [sys.executable, __file__, "--measure"],
         capture_output=True,
         text=True,
-        timeout=300,  # Traced allocation accounting on Windows is slower than RSS.
+        timeout=300,
     )
+    wall_seconds = time.perf_counter() - started
     assert result.returncode == 0, result.stderr
     evidence = json.loads(result.stdout)
+    evidence["subprocess_wall_seconds"] = wall_seconds
+    for name in (
+        "subprocess_wall_seconds",
+        "memory_metric",
+        "memory_peak",
+        "raw_bytes",
+        "rows",
+        "observations",
+    ):
+        request.node.user_properties.append((f"resource.{name}", str(evidence[name])))
+    assert wall_seconds <= MAXIMUM_RESPONSE_RESOURCE_BUDGET_S, (
+        "maximum response resource budget exceeded: "
+        + json.dumps(evidence, sort_keys=True)
+    )
     print(evidence)
     assert evidence["raw_bytes"] == 47022137
     assert evidence["rows"] == LIMITS["get_rows"]
