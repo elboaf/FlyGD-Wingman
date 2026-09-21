@@ -32,6 +32,7 @@
   var start = WM.el('sharing-start');
   var grant = WM.el('sharing-grant');
   var sources = WM.el('sharing-sources');
+  var pendingSources = WM.el('sharing-pending-sources');
   var history = WM.el('sharing-history');
   var historySources = WM.el('sharing-history-sources');
   var historySummary = WM.el('sharing-history-summary');
@@ -48,9 +49,10 @@
       throw new Error('Fleet sharing action in progress — retry capture when settled');
     }
     if (!payload && !screenshotFixture) return;
-    var live = screenshotFixture ? screenshotLive : {state: state, boss: desiredBoss,
+    // Capture owns its retained live evidence, not the caller's mutable DTO.
+    var live = screenshotFixture ? screenshotLive : detached({state: state, boss: desiredBoss,
       sources: knownSources, characters: knownCharacters, message: actionMessage,
-      preferenceMessage: preferenceMessage, readFailed: readFailed};
+      preferenceMessage: preferenceMessage, readFailed: readFailed});
     screenshotEpoch += 1; watchGeneration += 1; actionAttempt += 1; bindingGeneration += 1;
     screenshotFixture = payload ? JSON.parse(JSON.stringify(payload)) : null;
     screenshotLive = payload ? live : null;
@@ -61,16 +63,33 @@
     desiredBoss = payload ? '' : live.boss; actionMessage = payload ? '' : live.message;
     preferenceMessage = payload ? '' : live.preferenceMessage;
     readFailed = payload ? false : live.readFailed;
-    sources.textContent = ''; historySources.textContent = ''; boss.removeAttribute('data-roster');
+    participationControl = null; automaticControl = null; setupControl = null;
+    // Detached fixture rows must not carry actionable observations into the
+    // restored live generation, even if an old event still targets a button.
+    [sources, pendingSources, historySources].forEach(function (container) {
+      Array.prototype.forEach.call(container.querySelectorAll('button'), function (control) {
+        control._sharingControl = null; control.disabled = true;
+      });
+      container.textContent = '';
+    });
+    boss.removeAttribute('data-roster');
+    WM.el('sharing-pending').hidden = true;
     history.open = false; WM.el('sharing-eligible').open = false;
     if (payload || live.state) render(payload ? screenshotFixture.state : live.state, false, true);
     else {
       history.hidden = true; historySummary.textContent = 'Previous attempts (0)';
       boss.textContent = ''; enabled.checked = false;
       connect.hidden = false; connect.textContent = 'Connect…';
+      pairingMode = 'initial'; changeOrigin = false;
+      WM.el('sharing-combat').hidden = false;
+      WM.el('sharing-automatic').checked = false;
+      text('sharing-automatic-status', 'Automatic verification has not been observed.');
+      ['sharing-confirm-on', 'sharing-automatic-confirm', 'sharing-automatic-cancel', 'sharing-automatic-dismiss',
+        'sharing-legacy-history', 'sharing-legacy-dismiss', 'sharing-legacy-remove'].forEach(function (id) { WM.el(id).hidden = true; });
+      WM.el('sharing-legacy-history').open = false;
       WM.el('sharing-eligible-list').textContent = '';
-      ['sharing-consent', 'sharing-eligibility', 'sharing-preference', 'sharing-browser-error',
-        'sharing-action', 'sharing-source-status'].forEach(function (id) { text(id, ''); });
+      ['sharing-consent-announcement', 'sharing-consent-label', 'sharing-eligibility', 'sharing-preference', 'sharing-browser-error',
+        'sharing-action', 'sharing-source-status', 'sharing-setup-history', 'sharing-legacy-summary'].forEach(function (id) { text(id, ''); });
       unavailable();
     }
   };
@@ -110,6 +129,39 @@
     var node = WM.el(id), next = value || '';
     // A repeated snapshot is not a new live-region announcement.
     if (node.textContent !== next) node.textContent = next;
+  }
+  function pairingStage() {
+    // A saved binding is a key/origin, created before browser approval. An
+    // in-progress upgrade also takes precedence over the previous device.
+    var stages = {queued: 'Setup queued locally', persisted: 'Setup saved',
+      awaiting_approval: 'Awaiting approval', needs_retry: 'Setup needs retry', rejected: 'Setup not accepted'};
+    if (stages[state.pairing]) return stages[state.pairing];
+    // Recovery can retain a paired device ID. It must not hide an explicit
+    // current blocker behind that historical association in the overview.
+    if (state.detail === 'needs_fresh_key') return 'Fresh setup required';
+    if (state.detail === 'needs_upgrade' || state.detail === 'capability_required') return 'Sharing approval required';
+    var meta = state.metadata;
+    return !meta.binding ? 'Not connected'
+      : meta.device_id || meta.has_session || state.pairing === 'acknowledged' ? 'Paired' : 'Setup incomplete';
+  }
+  function paintOverview() {
+    // These are accepted facts, not the checkbox draft or proof of delivery.
+    var choice = state.enabled ? 'On' : 'Off';
+    if (state.enabled && state.local_inhibited) choice += ' · transmission paused';
+    if (preferencePending) choice += ' · ' + (preferenceWanted ? 'On' : 'Off') + ' choice pending locally';
+    text('fleet-overview-sharing', choice);
+    var observed = state.observed_participation;
+    text('fleet-overview-auth', !state.available || !state.metadata.loaded ? 'Unknown'
+      : pairingStage() + ' · ' + (observed ? 'last observed ' + (observed.enabled ? 'On' : 'Off') : 'participation unknown'));
+    var consent = state.enabled && state.local_inhibited ? 'Transmission is paused on this PC.' : '';
+    if (preferencePending) consent += ' ' + (preferenceWanted ? 'On' : 'Off') + ' choice pending locally.';
+    if (state.participation === 'queued') consent += ' Choice queued locally.';
+    else if (state.participation === 'persisted') consent += ' Choice saved, awaiting authGD.';
+    // Keep preference and server-observation announcements in their original
+    // live owner. Only the repeated standing sentence leaves the visual flow.
+    text('sharing-consent-announcement', 'This PC: ' + (state.enabled ? 'On' : 'Off')
+      + '. authGD participation: ' + (observed ? 'last observed ' + (observed.enabled ? 'On' : 'Off') : 'unknown') + '. ');
+    text('sharing-consent-label', consent.trim());
   }
   function binding() { return state && state.metadata.binding; }
   function detached(value) { return value ? JSON.parse(JSON.stringify(value)) : null; }
@@ -195,14 +247,14 @@
   function paintAction() {
     var messages = actionMessage ? [actionMessage] : [];
     sourceRequests.forEach(function (request) {
-      if (!request.source_id) messages.push('Start request in progress for ' + request.name + '…');
+      if (!request.source_id) messages.push('Pending / local operation — Start request in progress for ' + request.name + '…');
     });
     text('sharing-action', messages.join(' '));
   }
   function paintSources() {
     var rows = Object.create(null);
     var existing = Object.create(null);
-    [sources, historySources].forEach(function (container) {
+    [sources, pendingSources, historySources].forEach(function (container) {
       Array.prototype.forEach.call(container.children, function (row) { existing[row.getAttribute('data-source')] = row; });
     });
     function item(id) {
@@ -216,7 +268,8 @@
     sourceRequests.forEach(function (request) {
       if (request.source_id) item(request.source_id).request = request;
     });
-    var positions = [0, 0];
+    var positions = [0, 0, 0];
+    var awaitingBoss = false, hasLocalResult = false, hasCurrentObservation = false;
     var reasons = Object.create(null);
     var focusTarget = null;
     Object.keys(rows).forEach(function (id) {
@@ -229,6 +282,9 @@
       // local result. A real observation supersedes that result; a cache cannot.
       var localResult = result && (!observed || sourceUnknown());
       var ended = !!(observed && observed.state === 'ended' && !pending && !request && !localResult);
+      if (localResult) hasLocalResult = true;
+      if (observed && !ended && !localResult) hasCurrentObservation = true;
+      if (observed && !localResult && (observed.state === 'pending' || observed.state === 'paused')) awaitingBoss = true;
       var row = existing[id];
       if (!row) {
         row = WM.make('div', 'sharing-source');
@@ -294,11 +350,11 @@
       row._replaceStop.disabled = row.lastChild.disabled;
       row._replaceStop.setAttribute('aria-label', 'Replace pending Stop — ' + label + ' (' + id + ')');
       row.lastChild.setAttribute('aria-label', 'Stop verification — ' + label + ' (' + id + ')');
-      var index = ended ? 1 : 0;
-      var container = ended ? historySources : sources;
+      var index = ended ? 2 : pending || request ? 1 : 0;
+      var container = ended ? historySources : pending || request ? pendingSources : sources;
       var position = positions[index]++;
       // Even appendChild(existingRow) drops native keyboard focus in Chrome.
-      // Reconcile both lists together, moving only rows whose position changed.
+      // Reconcile all three lists together, moving only rows whose position changed.
       if (container.children[position] !== row) {
         container.insertBefore(row, container.children[position] || null);
         if (focused && !focused.disabled) focusTarget = focused;
@@ -310,21 +366,37 @@
       }
     });
     Object.keys(existing).forEach(function (id) { existing[id].remove(); });
-    history.hidden = positions[1] === 0;
-    historySummary.textContent = 'Previous attempts (' + positions[1] + ')';
+    WM.el('sharing-pending').hidden = positions[1] === 0;
+    history.hidden = positions[2] === 0;
+    historySummary.textContent = 'Previous attempts (' + positions[2] + ')';
     if (focusTarget) focusTarget.focus();
     var requestingStart = sourceRequests.some(function (request) { return !request.source_id; });
+    var currentCount = positions[0] + positions[1];
+    var localWork = positions[1] || requestingStart;
+    var eligibility = state.eligibility;
+    var verification = !state.available ? 'Unknown · unavailable' : sourceUnknown() ? 'Unknown'
+      : eligibility && eligibility.state === 'ready' ? 'Eligible'
+      : eligibility && eligibility.state === 'participation_off' ? 'Participation Off'
+      : localWork || awaitingBoss ? 'Pending'
+      // Ended history or a separate failed Start cannot classify an observed
+      // current attempt when eligibility itself has not been observed.
+      : (eligibility && eligibility.state !== 'ready') || (!hasCurrentObservation && (hasLocalResult || positions[2])) ? 'Not verified' : 'Unknown';
+    if (localWork) verification += ' · local operation pending';
+    text('fleet-overview-verification', verification);
     text('sharing-source-status', !binding() ? 'Connect to view account verifications.'
       : sourceUnknown() ? 'Current verification state unknown. Last-known attempts and current local requests are shown below.'
-      : !positions[0] && !requestingStart && positions[1] ? 'No current verification. Previous attempts: '
+      : !currentCount && !requestingStart && positions[2] ? 'No current verification. Previous attempts: '
         + Object.keys(reasons).sort().map(function (reason) { return reason + ' (' + reasons[reason] + ')'; }).join('; ')
         + '. ' + nextStart()
-      : !positions[0] && !requestingStart && !positions[1] ? 'No verification attempts reported for this account.' : '');
+      : !currentCount && !requestingStart && !positions[2] ? 'No verification attempts reported for this account.' : '');
   }
   function unavailable() {
     // A failed read is not a payload or a saved preference. Keep mutations
     // disarmed without inventing connection data or promising worker recovery.
     hydrated = false;
+    if (!state) text('fleet-overview-sharing', 'Unknown');
+    text('fleet-overview-auth', 'Unknown');
+    text('fleet-overview-verification', 'Unknown · unavailable');
     text('sharing-connection', unavailableMessage);
     text('sharing-grant-status', '');
     Array.prototype.forEach.call(WM.el('fleet-sharing').querySelectorAll('button, input, select'), function (control) {
@@ -341,7 +413,7 @@
           screenshotLive.boss = ''; screenshotLive.sources = []; screenshotLive.characters = [];
           screenshotLive.preferenceMessage = '';
         }
-        screenshotLive.state = payload;
+        screenshotLive.state = detached(payload);
       }
       return false;
     }
@@ -361,6 +433,8 @@
       knownSources = [];
       knownCharacters = [];
       sources.textContent = '';
+      pendingSources.textContent = '';
+      WM.el('sharing-pending').hidden = true;
       historySources.textContent = '';
       history.open = false;
     }
@@ -453,16 +527,17 @@
     enabled.checked = preferencePending ? preferenceWanted : state.enabled;
     enabled.disabled = !state.available; // never disable Off behind queued On
     WM.el('sharing-refresh').disabled = !state.available;
+    var stage = pairingStage();
     var connection = !state.available ? unavailableMessage
       : !meta.loaded ? 'Reading saved connection…'
-      : !meta.binding ? 'Not connected. Connect to ' + state.configured_origin + '.'
-      : 'Paired with ' + meta.paired_origin + '.' + (meta.has_session ? '' : ' Reconnecting…');
+      : stage === 'Not connected' ? 'Not connected. Connect to ' + state.configured_origin + '.'
+      : stage === 'Paired' ? 'Paired with ' + meta.paired_origin + '.' + (meta.has_session ? '' : ' Reconnecting…')
+      : stage + ' for ' + (meta.paired_origin || state.configured_origin) + '.';
     if (readFailed) connection += ' Could not refresh current verification state. Refresh to retry.';
     if (state.runtime_error) connection += ' ' + state.runtime_error;
     else if (state.enabled && !state.telemetry_available) connection += ' Local telemetry is unavailable. Verification controls still work.';
     if (state.detail) connection += ' ' + (details[state.detail] || state.detail.replace(/_/g, ' ') + '.');
-    if (state.pairing === 'queued') connection += ' Setup queued locally.';
-    else if (state.pairing === 'persisted') connection += ' Setup saved, contacting authGD.';
+    if (state.pairing === 'persisted') connection += ' Contacting authGD.';
     else if (state.pairing === 'awaiting_approval' && !state.browser_error) connection += ' Approve setup in your browser.';
     text('sharing-connection', connection);
     var retryBrowser = state.browser_retry === 'pair';
@@ -482,13 +557,7 @@
       preferenceFeedback += (preferenceFeedback ? ' ' : '') + state.preference_error;
     }
     text('sharing-preference', preferenceFeedback);
-    var observed = state.observed_participation;
-    var consent = 'This PC: ' + (state.enabled ? 'On' : 'Off')
-      + (state.enabled && state.local_inhibited ? ', transmission paused.' : '.')
-      + ' authGD participation: ' + (observed ? (observed.enabled ? 'On' : 'Off') : 'not yet observed') + '.';
-    if (state.participation === 'queued') consent += ' Choice queued locally.';
-    else if (state.participation === 'persisted') consent += ' Choice saved, awaiting authGD.';
-    text('sharing-consent', consent);
+    paintOverview();
     paintCharacters();
     paintSources();
     paintSetup();
@@ -559,6 +628,7 @@
     // Paint the user's local request immediately so an in-flight On always
     // leaves a reachable Off. An older reply cannot revert a newer choice.
     enabled.checked = value;
+    paintOverview();
     text('sharing-preference', state.preference_error);
     function submit() {
       return WM.send('fleet_sharing_set_enabled', value, observation).then(function (result) {

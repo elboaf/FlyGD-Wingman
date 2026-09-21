@@ -247,9 +247,12 @@
       });
   }
 
-  function importStatus(text, error) {
+  function importStatus(text, error, announcement) {
     var node = WM.el('setup-status');
     node.textContent = text || '';
+    // The footer may repeat safety visually, but must not shorten this existing
+    // live owner's complete announcement or introduce a second live region.
+    if (announcement) node.appendChild(WM.make('span', 'status-announcement', announcement));
     node.className = error ? 'hint err' : 'hint';
   }
 
@@ -273,6 +276,7 @@
 
   function clearImportSummary() {
     WM.el('setup-summary').hidden = true;
+    WM.el('setup-commit-context').hidden = true;
     ['type', 'counts', 'target', 'destination', 'retention', 'windows', 'limitations', 'warnings'].forEach(function (id) {
       WM.el('setup-' + id).textContent = '';
     });
@@ -332,6 +336,11 @@
     var hasText = !!draft && !!draft.text.trim();
     var choosing = !hasText || !!draft.choosingSource;
     var editing = !!draft && draft.editing;
+    // A parsed summary alone is not an authorized review. Keep all corrections
+    // reachable until the offer exists; Edit/Change only reveal retained fields.
+    var reviewed = !!draft && !!(draft.review || draft.creating || draft.published);
+    WM.el('setup-recipient').hidden = reviewed && !editing && !choosing;
+    WM.el('setup-source-heading').textContent = reviewed ? 'Reviewed source' : 'Setup source';
     WM.el('setup-source-summary').hidden = !hasText;
     WM.el('setup-source-choices').hidden = !choosing;
     WM.el('setup-source-cancel').hidden = !hasText;
@@ -379,6 +388,12 @@
 
   function importControls() {
     var edit = editable();
+    var reviewed = !!draft && !!(draft.review || draft.creating || draft.published);
+    var focused = document.activeElement;
+    WM.el('setup-review').hidden = reviewed;
+    WM.el('setup-create').hidden = !reviewed;
+    WM.el('setup-cancel-note').hidden = !!draft && !!(draft.creating || draft.published);
+    WM.el('setup-summary-heading').textContent = reviewed ? 'Review new profile' : 'Review needs attention';
     ['text', 'name', 'keep-labels', 'refresh'].forEach(function (id) { WM.setEnabled('setup-' + id, edit); });
     ['paste', 'file'].forEach(function (id) { WM.setEnabled('setup-' + id, edit && !draft.reading); });
     ['base', 'character', 'account'].forEach(function (id) {
@@ -401,6 +416,17 @@
     WM.el('setup-pair-status').className = invalid ? 'hint err' : 'hint';
     sourceControls();
     catalogControls();
+    // Disabling Review/Create can blur the invoker before its reply settles;
+    // the mounted status owns that pending outcome. Hidden focus needs a visible
+    // owner, but a newer control, overlay or route must keep its focus.
+    if (WM.current_route === 'uisetup' && WM.el('overlay').hidden && focused
+        && WM.el('setup-import').contains(focused)
+        && (document.activeElement === focused || document.activeElement === document.body)
+        && (!focused.getClientRects().length
+          || ((focused === WM.el('setup-create') || focused === WM.el('setup-review')) && focused.disabled))) {
+      WM.el(draft && draft.review ? 'setup-summary'
+        : edit && !WM.el('setup-review').disabled ? 'setup-review' : 'setup-status').focus({preventScroll: true});
+    }
   }
 
   function importChanged(replacedText) {
@@ -691,7 +717,7 @@
       quantity(counts.windowGroups, 'overview group'), quantity(counts.shipLabels, 'ship label'),
       quantity(counts.layoutWindows, 'layout window')].join(' · ');
     WM.el('setup-target').textContent = target.label;
-    WM.el('setup-destination').textContent = name.trim() + '. Existing profiles will not be overwritten.';
+    WM.el('setup-destination').textContent = name.trim();
     WM.el('setup-retention').textContent = 'Resolution, display mode, monitor preferences, UI scale, unrelated settings and unrelated saved filters from your local base.'
       + (keep ? ' Your complete ship labels are retained.' : '');
     WM.el('setup-native').textContent = native ? 'Overview configuration only; no window layout. Supplied tabs become one group in the primary overview window. Primary and non-overview geometry stay local; surplus overview instances are retired. Absent options, including omitted column settings, stay local.' : '';
@@ -710,6 +736,7 @@
     }).join(' ');
     WM.el('setup-warnings').textContent = warnings.join(' ');
     WM.el('setup-summary').hidden = false;
+    WM.el('setup-commit-context').hidden = false;
   }
 
   function reviewImport() {
@@ -739,11 +766,18 @@
           importStatus(result && result.error || 'Review did not authorize creation. Review the setup again.', true);
         } else {
           draft.review = result.review_id;
-          importStatus('Review ready. Create profile makes a new copy; Cancel creates nothing.');
+          draft.editing = false;
+          // A pending catalog confirmation still owns its picker, not review
+          // validity. Do not hide its return-focus target beneath the overlay.
+          draft.choosingSource = !!catalog;
+          importStatus('Review ready.', false, ' Create profile makes a new copy; Cancel creates nothing.');
         }
         importControls();
-        // Keep the valid review, but let an open dialog own focus and scrolling.
-        if (!WM.el('overlay').hidden) return;
+        // Only the current Review/outcome owner may advance focus. The original
+        // invocation is not a claim over a newer control, BODY or a dialog.
+        var focused = document.activeElement;
+        if (!WM.el('overlay').hidden || (focused !== WM.el('setup-review')
+            && focused !== WM.el('setup-status') && focused !== WM.el('setup-summary'))) return;
         if (result && result.needs_label_choice) {
           WM.el('setup-keep-labels').focus();
           // The wrapped checkbox's invisible input has absolute positioning;
@@ -773,6 +807,8 @@
     receipts.push(pending);
     draft.creating = pending;
     draft.review = '';
+    draft.editing = false;
+    draft.choosingSource = false;
     importStatus('Creating profile. Leaving does not cancel creation.');
     importControls();
     function current() { return isCurrent(pending.view) && draft && draft.creating === pending && !pending.completed; }

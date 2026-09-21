@@ -46,8 +46,18 @@
     // Ordinary live renders preserve a focused draft; teardown must not leave
     // a focused checkbox carrying the synthetic value into its next change.
     if (!payload && check) check.checked = lastGood;
+    paintLocalSummary();
     setStatusMessage(defaultStatus);
   };
+
+  function paintLocalSummary() {
+    var text = hydrated ? (lastGood ? 'On' : 'Off') : 'Unknown';
+    ['fleet-overview-local', 'fleetbar-state'].forEach(function (id) {
+      var node = WM.el(id);
+      if (node && node.textContent !== text) node.textContent = text;
+    });
+  }
+  paintLocalSummary();
 
   if (button) { button.disabled = true; }
   if (check) { check.disabled = true; }
@@ -240,6 +250,7 @@
     }
     lastState = section;
     lastGood = !!section.enabled;
+    paintLocalSummary();
     // A Settings fixture cannot become authority for the global EVE gate or
     // status-strip toggle. Their live snapshot continues underneath it.
     if (!screenshotFixture) WM.fleet_bar_on = lastGood;

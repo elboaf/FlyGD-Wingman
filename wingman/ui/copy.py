@@ -359,21 +359,19 @@ def format_title_hint(count: int, stitch: bool) -> str:
 # --- settings --------------------------------------------------------------
 
 
-def webhook_status(raw: str) -> str:
-    """The line under the webhook field, describing what is stored.
+def webhook_status(raw: str, name: str = "") -> str:
+    """Local identity only: a webhook name, never a channel name or raw ID.
 
-    The field itself is masked, so this is the only confirmation of WHICH
-    webhook is configured; discord.describe omits the token by construction.
-
-    An unparseable value reports the parse error rather than "not
-    configured", which is what it used to say for anything invalid -- a URL
-    the user has visibly typed being described as absent reads as the app
-    ignoring them and hides the actual mistake.
+    Invalid saved URLs still explain the validation problem without echoing
+    any part of the credential. Hydration must never need a metadata request.
     """
-    if not raw or not raw.strip():
-        return "not configured"
+    if not isinstance(raw, str) or not raw.strip():
+        return "No Discord webhook saved"
     hook, error = discord.parse_webhook(raw)
-    return discord.describe(hook) if hook else error
+    if hook is None:
+        return error
+    safe_name = discord.safe_webhook_name(hook, name)
+    return f"Webhook: {safe_name}" if safe_name else "Webhook saved · name unavailable"
 
 
 # --- fetch age -------------------------------------------------------------

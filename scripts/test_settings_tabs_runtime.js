@@ -339,11 +339,11 @@ for (const geometry of [true, false]) {
     const copy = p.document.querySelector('[data-preview-detail-control="copy"]');
     copy.focus(); await p.fire(copy, 'click');
     assert.deepEqual(p.calls.map(call => call.method), ['choose'], 'labels cause no extra source reads');
-    assert.deepEqual(p.calls[0].args[5], {compact: true}, 'long source labels need the chooser’s full-text detail');
+    assert.deepEqual(p.calls[0].args[5], {compact: true, omitRedundantDetail: true}, 'only proven-fit captions may omit full-text detail');
     assert.deepEqual(p.calls[0].args[2], [
-      {label: 'Online', options: [{value: 'Bob', label: geometry ? 'Bob · 640 × 360 px at (-1200, 0)' : 'Bob'}]},
-      {label: 'Offline', options: [{value: 'Carol', label: geometry ? 'Carol · 320 × 210 px at (10, 20)' : 'Carol'}]},
-      {label: 'Saved placements', options: [{value: 'Saved <pilot>', label: 'Saved <pilot>'}]}
+      {label: 'Online', options: [{value: 'Bob', label: geometry ? 'Bob · 640 × 360 px at (-1200, 0)' : 'Bob', keepDetail: !geometry}]},
+      {label: 'Offline', options: [{value: 'Carol', label: geometry ? 'Carol · 320 × 210 px at (10, 20)' : 'Carol', keepDetail: !geometry}]},
+      {label: 'Saved placements', options: [{value: 'Saved <pilot>', label: 'Saved <pilot>', keepDetail: true}]}
     ]);
     await p.reply('choose', null);
     assert.equal(p.calls.length, 0, 'Cancel remains a no-op, not a copy or refresh');
@@ -415,7 +415,7 @@ for (const [label, outcome, text, error] of [
     await p.reply('prompt', null);
     await p.fire(p.document.querySelector('[data-preview-detail-control="copy"]'), 'click');
     assert.deepEqual(p.calls[0].args[2], [
-      {label: 'Saved placements', options: [{value: 'Carol', label: 'Carol'}]}
+      {label: 'Saved placements', options: [{value: 'Carol', label: 'Carol', keepDetail: true}]}
     ], 'the next chooser uses refreshed source eligibility, not Bob');
     await p.reply('choose', null);
   });

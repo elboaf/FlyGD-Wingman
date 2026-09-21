@@ -27,6 +27,35 @@ const window = new Element('window');
 Object.assign(window, {window, document, console, Promise, setTimeout, clearTimeout,
   getComputedStyle: () => ({visibility: 'visible'}),
   CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } }});
+// Only Copy-detail scenarios supply layout metrics. Other dialog/order tests
+// keep the structure-only DOM and therefore exercise the unmeasurable fallback.
+const choiceMetrics = {width: 318, font: '600 13px TestProportional', fontSize: '13px',
+  letterSpacing: 'normal', wordSpacing: 'normal', textTransform: 'none', textWidth: null};
+if (data.scenario.startsWith('copy-detail-')) {
+  const select = document.getElementById('dlg-select');
+  Object.defineProperty(select, 'clientWidth', {get() {
+    return document.getElementById('overlay').hidden ? 0 : choiceMetrics.width;
+  }});
+  window.getComputedStyle = target => target === select
+    ? {visibility: 'visible', paddingLeft: '10px', paddingRight: '10px', ...choiceMetrics}
+    : {visibility: 'visible'};
+  const bounds = Element.prototype.getBoundingClientRect;
+  Element.prototype.getBoundingClientRect = function() {
+    if (this.tagName !== 'SPAN' || this.style.position !== 'absolute' || this.style.whiteSpace !== 'pre') {
+      return bounds.call(this);
+    }
+    // Model proportional glyphs and spacing rather than equating code points
+    // with pixels. Missing copied font metrics cannot prove a fit.
+    let width = this.style.font === choiceMetrics.font && this.style.font
+      ? [...this.textContent].reduce((sum, char) => sum + (char === 'W' ? 16 : /[il .]/.test(char) ? 3 : 7), 0)
+      : 0;
+    width *= parseFloat(this.style.fontSize || choiceMetrics.fontSize) / 13;
+    width += (parseFloat(this.style.letterSpacing) || 0) * this.textContent.length;
+    width += (parseFloat(this.style.wordSpacing) || 0) * this.textContent.split(' ').length;
+    if (choiceMetrics.textWidth !== null) width = choiceMetrics.textWidth;
+    return {...bounds.call(this), width};
+  };
+}
 const context = vm.createContext(window);
 vm.runInContext(fs.readFileSync(web + '/app.js', 'utf8'), context);
 const getters = [], writes = [];
@@ -92,7 +121,117 @@ function change(name, checked) {
     }
     return button;
   };
-  if (data.scenario === 'owner-controls') {
+  if (data.scenario.startsWith('copy-detail-')) {
+    const fullName = 'Aleksandrina Shadowbanes Voidstriders with a long source identity';
+    const longLegacy = 'Legacy name without geometry but with a long unique identity';
+    const sources = [
+      {name: 'Alice', online: true, geometry: {w: 500, h: 300, x: 1, y: 2}},
+      {name: 'WWWWWWWWWW', online: false, geometry: {w: 500, h: 300, x: 1, y: 2}},
+      {name: fullName, online: false, geometry: {w: 640, h: 480, x: -9000, y: -12000}},
+      {name: 'Legacy', online: null, geometry: null},
+      {name: longLegacy, online: null},
+      {name: 'Missing geometry', online: null}
+    ];
+    window.onPreviewGeometry({...clone(data.newer_copy), layout_sources: sources});
+    window.WM.openSettingsSection('previews', 'characters');
+    const dialogChildCount = el('dialog').children.length;
+    const copy = detailButton('Bob', 'copy'); copy.focus(); copy.click();
+    const select = el('dlg-select'), detail = el('dlg-select-detail');
+    const selected = () => select.options[select.selectedIndex];
+    const choose = value => { select.value = value; select.dispatchEvent({type: 'change'}); };
+    const showsDetail = (shown, label) => {
+      assert.equal(detail.hidden, !shown, label);
+      assert.equal(select.getAttribute('aria-describedby'), shown ? 'dlg-select-detail' : null, label + ' description');
+      assert.equal(detail.textContent, selected().title, 'complete selected identity/geometry is retained');
+    };
+    assert.equal(select.value, 'Alice');
+    assert.equal(selected().title, 'Alice · 500 × 300 px at (1, 2)');
+    assert.equal(selected().textContent, selected().title);
+    assert.deepEqual(select.children.map(group => group.label), ['Online', 'Offline', 'Saved placements']);
+    assert.deepEqual(select.options.map(option => option.value), sources.map(source => source.name));
+    const scenario = data.scenario.slice('copy-detail-'.length);
+    if (scenario === 'fit') {
+      showsDetail(false, 'short complete geometry that fits is not repeated at initial show');
+      assert.ok(document.activeElement === select, 'synchronous measurement does not acquire focus');
+    } else if (scenario === 'truncated') {
+      // Even an arbitrarily wide select cannot undo the caption budget.
+      choiceMetrics.width = 4000;
+      choose(fullName);
+      assert.equal([...selected().textContent].length, 44);
+      assert.match(selected().textContent, /…$/);
+      assert.equal(selected().title, fullName + ' · 640 × 480 px at (-9000, -12000)');
+      showsDetail(true, 'caption budget never deletes full identity or negative coordinates');
+      choose('Alice'); showsDetail(false, 'selection updates redundancy');
+    } else if (scenario === 'clipped') {
+      choose('WWWWWWWWWW');
+      assert.equal(selected().textContent, selected().title, 'caption is not code-point truncated');
+      showsDetail(true, 'wide proportional glyphs physically clip inside the closed select');
+      choose('Alice'); showsDetail(false, 'short source is still deduplicated');
+    } else if (scenario === 'legacy') {
+      for (const name of ['Legacy', longLegacy, 'Missing geometry']) {
+        choose(name);
+        assert.equal(selected().title, name, 'null/missing geometry does not invent coordinates or availability');
+        showsDetail(true, 'name-only legacy sources keep their full detail conservatively');
+      }
+      choose('Alice'); showsDetail(false, 'legacy detail policy is per option');
+    } else if (scenario === 'unmeasurable') {
+      for (const width of [0, NaN, undefined]) {
+        choiceMetrics.width = width; window.dispatchEvent({type: 'resize'});
+        showsDetail(true, 'unknown closed-select width keeps readable details');
+      }
+      choiceMetrics.width = 318;
+      for (const textWidth of [0, NaN, Infinity]) {
+        choiceMetrics.textWidth = textWidth; window.dispatchEvent({type: 'resize'});
+        showsDetail(true, 'invalid text measurements cannot prove redundancy');
+      }
+      choiceMetrics.textWidth = null; choiceMetrics.font = '';
+      window.dispatchEvent({type: 'resize'}); showsDetail(true, 'unknown typography keeps detail');
+      choiceMetrics.font = '600 13px TestProportional';
+      document.fonts = {status: 'loading'};
+      window.dispatchEvent({type: 'resize'}); showsDetail(true, 'loading font metrics cannot prove a fit');
+      document.fonts.status = 'loaded';
+      window.dispatchEvent({type: 'resize'}); showsDetail(false, 'known metrics recover without polling');
+    } else if (scenario === 'resize') {
+      showsDetail(false, 'initial measurement happens after overlay is visible');
+      el('dlg-ok').focus();
+      choiceMetrics.width = 180; window.dispatchEvent({type: 'resize'});
+      showsDetail(true, 'shrinking restores physically clipped detail');
+      assert.ok(document.activeElement === el('dlg-ok'), 'resize never takes focus');
+      choiceMetrics.width = 318; window.dispatchEvent({type: 'resize'});
+      showsDetail(false, 'growing omits only the restored duplicate');
+    } else if (scenario === 'typography') {
+      showsDetail(false, 'baseline glyph measurement fits');
+      for (const [property, value] of [['letterSpacing', '6px'], ['wordSpacing', '20px'], ['fontSize', '26px']]) {
+        const previous = choiceMetrics[property]; choiceMetrics[property] = value;
+        window.dispatchEvent({type: 'resize'}); showsDetail(true, property + ' changes the rendered fit');
+        choiceMetrics[property] = previous;
+        window.dispatchEvent({type: 'resize'}); showsDetail(false, property + ' restored');
+      }
+      choiceMetrics.width = 240; choiceMetrics.textWidth = 210;
+      window.dispatchEvent({type: 'resize'});
+      showsDetail(true, 'padding and native caret reserve count even when raw text width fits');
+    } else if (scenario === 'default') {
+      showsDetail(false, 'Copy opted in before a different queued chooser');
+      const other = window.WM.choose('Other compact chooser', 'Unchanged presentation', [
+        {label: 'Sources', options: [{value: 'short', label: 'Short source'}, {value: 'long', label: fullName}]}
+      ], 'Choose', 'Source', {compact: true});
+      el('dlg-cancel').click(); await tick();
+      showsDetail(true, 'queued default compact chooser still shows even a short complete label');
+      window.dispatchEvent({type: 'resize'}); showsDetail(true, 'Copy resize policy never leaks into other choosers');
+      choose('long'); showsDetail(true, 'default chooser still exposes full truncated names');
+      el('dlg-cancel').click(); assert.equal(await other, null);
+      const ordinary = window.WM.choose('Ordinary chooser', 'Not compact', [
+        {label: 'Sources', options: [{value: 'full', label: fullName}]}
+      ]);
+      assert.equal(selected().textContent, fullName);
+      assert.equal(detail.hidden, true); assert.equal(select.getAttribute('aria-describedby'), null);
+      el('dlg-cancel').click(); assert.equal(await ordinary, null);
+    }
+    if (!el('overlay').hidden) { el('dlg-cancel').click(); await tick(); }
+    assert.equal(writes.length, 0, 'detail presentation never admits Copy');
+    assert.equal(el('dialog').children.length, dialogChildCount, 'measurement leaves no extra dialog nodes');
+    assert.ok(document.activeElement === copy, 'Cancel retains ordinary return-focus ownership');
+  } else if (data.scenario === 'owner-controls') {
     window.WM.openSettingsSection('previews', 'characters');
     const marker = detailButton('Target', 'marker');
     assert.equal(marker.disabled, false, 'displayed owner can change Identification');

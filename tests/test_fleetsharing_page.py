@@ -20,7 +20,7 @@ def test_sharing_module_loaded_after_allowlist_before_dev_first_use():
 def test_sharing_controls_have_own_card_and_never_publish_alts_checklist():
     html = (WEB / "index.html").read_text()
     card = html.split('id="fleet-sharing"', 1)[1].split("</section>", 1)[0]
-    assert "<h2>Fleet sharing</h2>" in card
+    assert "<h2>External sharing</h2>" in card
     assert '<label class="check">' in card
     assert 'id="sharing-enabled" disabled' in card
     assert 'class="lab" for="sharing-boss"' in card

@@ -51,10 +51,14 @@
   var addMode = 'whole';
   var master = {base: false, seq: 0, busy: false, queue: [], error: ''};
   var statuses = {
-    off: 'Off', disabled: 'Disabled', live: 'Live',
-    waiting: 'Waiting for source — open its window or reselect the source.',
-    'needs-selection': 'Multiple matches — reselect source',
-    'source-unavailable': 'Source unavailable — reselect source', stopping: 'Stopping…'
+    off: 'Off', disabled: 'Disabled', live: 'Live', 'hidden-by-focus': 'Hidden by focus settings',
+    waiting: 'Waiting for source', 'needs-selection': 'Selection needed',
+    'source-unavailable': 'Source unavailable', stopping: 'Stopping…'
+  };
+  var recoveryHints = {
+    waiting: 'Open its window to resume, or use Edit & source to reselect the source.',
+    'needs-selection': 'Multiple windows match. Use Reselect source… to choose one explicitly.',
+    'source-unavailable': 'Use Reselect source… to choose an available window.'
   };
 
   function ready() { return active && hydrated && state.available; }
@@ -293,13 +297,14 @@
   }
   function makeRow(row) {
     var view = {row: row, node: WM.make('div', 'companion-row'), fields: {}, queue: [], busy: false, error: '', mode: row.mode};
-    var summary = WM.make('div', 'companion-summary');
+    var summary = WM.make('header', 'companion-summary scroll-context');
     var check = WM.make('label', 'check'), input = WM.make('input');
     input.type = 'checkbox'; check.appendChild(input); check.appendChild(WM.make('span', 'box'));
     check.appendChild(WM.make('span', '', 'Enabled'));
     input.id = 'companion-' + row.id + '-enabled';
     input.addEventListener('change', function () { changeField(view, 'enabled'); commit(view, 'enabled'); });
-    var enabledStatus = WM.make('span', 'hint');
+    var enabledStatus = WM.make('span', 'hint'); enabledStatus.id = input.id + '-status';
+    input.setAttribute('aria-describedby', enabledStatus.id);
     view.fields.enabled = {name: 'enabled', input: input, status: enabledStatus, seq: 0, dirty: false, error: ''};
     // #258 follow-up: only meaningful while "hide every preview while you
     // are not in EVE" is on, so the checkbox stays hidden the rest of the
@@ -311,16 +316,30 @@
     showInput.setAttribute('aria-label', 'Show previews when ' + (row.label || 'this companion') + ' is active');
     showInput.addEventListener('change', function () { changeField(view, 'show_on_focus'); commit(view, 'show_on_focus'); });
     view.showOnFocus = showCheck;
-    view.fields.show_on_focus = {name: 'show_on_focus', input: showInput, status: enabledStatus, seq: 0, dirty: false, error: ''};
+    // Each setting retains its own refusal; painting the other checkbox must
+    // not erase it. Operational health still belongs to the row's live owner.
+    var showStatus = WM.make('span', 'hint'); showStatus.id = showInput.id + '-status';
+    showInput.setAttribute('aria-describedby', showStatus.id);
+    view.fields.show_on_focus = {name: 'show_on_focus', input: showInput, status: showStatus, seq: 0, dirty: false, error: ''};
     view.name = WM.make('strong', 'companion-name');
     view.name.id = 'companion-' + row.id + '-name';
     view.source = WM.make('span', 'companion-source hint');
-    view.modeText = WM.make('span', 'hint');
+    view.modeText = WM.make('span', 'companion-mode hint');
     view.status = WM.make('span', 'companion-availability'); view.status.id = 'companion-' + row.id + '-status';
     view.status.setAttribute('role', 'status');
-    var identity = WM.make('div', 'companion-identity'); identity.appendChild(view.name); identity.appendChild(view.source);
-    summary.appendChild(identity); summary.appendChild(check); summary.appendChild(showCheck); summary.appendChild(view.modeText);
-    view.node.appendChild(summary); view.node.appendChild(view.status); view.node.appendChild(enabledStatus);
+    view.led = WM.make('span', 'led'); view.led.setAttribute('aria-hidden', 'true');
+    view.statusText = WM.make('span', 'companion-status-label');
+    view.announcement = WM.make('span', 'status-announcement');
+    view.status.appendChild(view.led); view.status.appendChild(view.statusText); view.status.appendChild(view.announcement);
+    view.feedback = WM.make('span', 'companion-feedback hint'); view.feedback.id = 'companion-' + row.id + '-feedback';
+    summary.appendChild(view.name); summary.appendChild(view.status);
+    // Pin identity only. The switch and its refusal scroll together; a long
+    // operation error stays fully readable without turning context into a wall.
+    var enabledGroup = WM.make('div', 'companion-enabled-group');
+    enabledGroup.appendChild(check); enabledGroup.appendChild(enabledStatus);
+    enabledGroup.appendChild(showCheck); enabledGroup.appendChild(showStatus);
+    view.node.appendChild(summary); view.node.appendChild(enabledGroup); view.node.appendChild(view.feedback);
+    view.node.appendChild(view.source); view.node.appendChild(view.modeText);
     var details = WM.make('details', 'companion-detail'); details.appendChild(WM.make('summary', '', 'Edit & source'));
     makeField(view, 'label', 'Label', details);
     makeField(view, 'title_mode', 'Window title matching', details);
@@ -328,6 +347,7 @@
     modeRadios(view, details);
     var actions = WM.make('div', 'companion-actions');
     view.reselect = button(view, 'source', 'Reselect source…', function () { chooseSource(view); }, actions);
+    view.reselect.setAttribute('aria-describedby', view.feedback.id);
     view.region = button(view, 'region', 'Reselect region…', function () {
       if (screenshotFixture) return;
       WM.endPreviewCapture();
@@ -438,6 +458,11 @@
     var full = state.rows.length >= state.limits.definitions || count >= state.limits.enabled;
     var serverBusy = state.operations.some(function (receipt) { return receipt.pending; });
     WM.setEnabled('companion-add', enabled && !sourceBusy && !selectionBusy && !serverBusy && !full);
+    var adding = !WM.el('companion-add-form').hidden;
+    // The accepted source chooser owns attention while it is open. Derive the
+    // accent from the existing form/operation state, not a second flow owner.
+    WM.el('companion-add').classList.toggle('acc', !adding && !sourceBusy && !selectionBusy);
+    WM.el('companion-add-source').classList.toggle('acc', adding && !sourceBusy && !selectionBusy);
     WM.el('companion-count').textContent = hydrated ? count + ' / ' + state.limits.enabled + ' enabled' : '';
     ['label', 'whole', 'region', 'source'].forEach(function (suffix) {
       WM.setEnabled('companion-add-' + suffix, enabled && !sourceBusy && !selectionBusy && !serverBusy && !full);
@@ -453,11 +478,21 @@
       view.fields.enabled.input.setAttribute('aria-label', 'Enable ' + row.label);
       view.fields.show_on_focus.input.setAttribute('aria-label', 'Show previews when ' + row.label + ' is active');
       view.showOnFocus.hidden = !showOnFocusVisible();
+      view.fields.show_on_focus.status.hidden = !showOnFocusVisible();
       view.source.textContent = row.source.executable_name + ' — ' + row.source.last_title;
       view.source.title = view.source.textContent;
       view.modeText.textContent = row.mode === 'region' ? 'Selected region' : 'Whole window';
-      view.status.textContent = view.error || row.error || (view.busy || pending(row) ? 'Change in progress…' : statuses[row.status] || row.status);
-      view.status.className = 'companion-availability' + (view.error || row.error ? ' field-msg err' : '');
+      var error = view.error || row.error, changing = view.busy || pending(row);
+      var pill = !error && !changing && (row.status === 'live' || row.status === 'waiting');
+      view.statusText.textContent = error ? 'Error' : (changing ? 'Change in progress…' : statuses[row.status] || row.status);
+      view.statusText.setAttribute('aria-hidden', error ? 'true' : 'false');
+      view.status.title = view.statusText.textContent;
+      view.status.className = 'companion-availability' + (error ? ' err' : (pill ? ' pill ' + (row.status === 'live' ? 'ok' : 'idle') : ''));
+      view.led.hidden = !pill;
+      view.feedback.textContent = error || (changing ? '' : recoveryHints[row.status] || '');
+      // Full detail remains live content, not just a description of Error.
+      view.announcement.textContent = error || (view.feedback.textContent ? ' — ' + view.feedback.textContent : '');
+      view.feedback.className = 'companion-feedback ' + (error ? 'field-msg err' : 'hint');
       Object.keys(view.fields).forEach(function (name) {
         var field = view.fields[name]; WM.setEnabled(field.input, enabled);
         if (field.apply) WM.setEnabled(field.apply, enabled);
@@ -483,7 +518,7 @@
   WM.el('companion-add').addEventListener('click', function () {
     if (!ready() || WM.el('companion-add').disabled) return;
     if (!screenshotFixture) WM.endPreviewCapture();
-    WM.el('companion-add-form').hidden = false; WM.el('companion-add-label').focus();
+    WM.el('companion-add-form').hidden = false; paint(); WM.el('companion-add-label').focus();
   });
   ['whole', 'region'].forEach(function (mode) {
     WM.el('companion-add-' + mode).addEventListener('change', function () {

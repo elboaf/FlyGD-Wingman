@@ -12,7 +12,7 @@ import types
 import pytest
 
 from tests import fakes
-from wingman import uploader
+from wingman import discord, uploader
 from wingman.ui import api as api_mod
 from wingman.ui import copy as copy_mod
 
@@ -98,6 +98,11 @@ def settings_api(tmp_path, monkeypatch, watcher=None, **kw):
     through settings_mod.update(), so the real lock-and-rollback machinery
     stays in the loop and only the actual disk write is faked out."""
     saved = {}
+
+    def unavailable(request, timeout=None):
+        raise TimeoutError("No live Discord requests in settings tests")
+
+    monkeypatch.setattr(discord, "_default_transport", unavailable)
     api, window = fakes.build_api(tmp_path, watcher=watcher, **kw)
     api._alert = fakes.Alerts()
     api.list_rows = lambda preselect=None: None
@@ -138,8 +143,8 @@ def test_the_settings_payload_describes_the_webhook_without_its_token(
 
     payload = api.get_settings()
 
-    assert "1538615213203656754" in payload["webhook_status"]
-    assert "tok" not in payload["webhook_status"].split("/")[-1]
+    assert payload["webhook_status"] == "Webhook saved · name unavailable"
+    assert payload["settings"]["discord_webhook_name"] == ""
 
 
 def test_the_settings_payload_carries_the_version_from_dunder_version(

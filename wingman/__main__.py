@@ -1323,6 +1323,9 @@ def main() -> int:
         # worker pushes and removes a ready file on ordinary Quit while retaining
         # the persistent on-disk marker/file pair already handed to Setup.
         _teardown_step("updater", api.shutdown_updates)
+        # Optional webhook metadata can be wedged in DNS; close admission but
+        # never join that retained daemon before remaining teardown.
+        _teardown_step("webhook metadata", api._shutdown_webhook_lookup)
         # Api owns sharing's watch, subscriptions and bounded stop; its preview
         # teardown closes those before stopping the shared telemetry coordinator.
         # Last, and unconditional: a preview thread that outlives the window

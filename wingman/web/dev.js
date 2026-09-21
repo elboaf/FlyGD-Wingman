@@ -545,7 +545,7 @@
   // exercise. There is no Save button to exercise any more; each of these
   // is a commit on its own.
   ['set_privacy', 'set_notify_mode', 'set_category',
-   'set_discord_webhook', 'clear_discord_webhook',
+   'set_discord_webhook', 'clear_discord_webhook', 'identify_discord_webhook',
    'set_alert_enabled', 'set_alert_pve_filter', 'set_alert_persist',
    'set_alert_volume',
    // M3. Same three-key shape, and it belongs in this list rather than the
@@ -590,16 +590,18 @@
    'apply_preview_default_size'
   ].forEach(function (name) {
     api[name] = function (value) {
-      console.log('DEV api.' + name + '(', value, ')');
+      console.log('DEV api.' + name + '(', name.indexOf('discord_webhook') !== -1 ? '[webhook]' : value, ')');
       var res = {applied: true, persisted: true, error: null};
-      // The two webhook endpoints carry the new summary line back on their
+      // The webhook endpoints carry the new summary line back on their
       // own return, because nothing repaints the Settings route after page
       // load. A double without it leaves the harness showing the stale
       // line this fixes -- which is the bug, not the fix.
-      if (name === 'set_discord_webhook') {
-        res.webhook_status = 'discord.com/api/webhooks/1…';
+      if (name === 'set_discord_webhook' || name === 'identify_discord_webhook') {
+        res.webhook_status = 'Webhook: Fleet recordings';
+        res.webhook_name = 'Fleet recordings';
       } else if (name === 'clear_discord_webhook') {
-        res.webhook_status = 'not configured';
+        res.webhook_status = 'No Discord webhook saved';
+        res.webhook_name = '';
       }
       return Promise.resolve(res);
     };
@@ -2272,6 +2274,7 @@
           recording_dir: 'D:\\Videos',
           gamelogs_dir: 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs',
           discord_webhook: 'https://discord.com/api/webhooks/1/tok',
+          discord_webhook_name: 'Fleet recordings',
           channel_id: 'UC123', channel_title: 'FlyGD',
           // Was entirely absent before the Alerts card: _settings_payload
           // ships preview.alerts for free (a shallow dict(cfg)), so this
@@ -2333,15 +2336,10 @@
           // contract allows this bar to stay live with previews off.
           fleet_bar: fleetBarState()
         }, patch || {}),
-      // discord.describe()'s shape for the fake webhook stored above, not
-      // a prose invention: it is host/api/webhooks/<id>… by construction,
-      // and settings.js reads that shape to tell a description apart from
-      // a parse error before naming the webhook in the Remove confirm. A
-      // fixture in a different shape made that branch untestable by hand
-      // -- the dialog said "this webhook" in the harness and named it in
-      // the app. tests/test_settings_page.py holds the two in step.
+      // Cached webhook display metadata, not the destination channel.
+      // Keep the fixture in step with ui/copy.py's local-only summary.
       webhook_status: statusLine === undefined
-        ? 'discord.com/api/webhooks/1…' : statusLine,
+        ? 'Webhook: Fleet recordings' : statusLine,
       detected: { recording: 'D:\\Videos',
                   gamelogs: 'C:\\Users\\tng\\Documents\\EVE\\logs\\Gamelogs' },
       destination: 'Uploads go to FlyGD \u00b7 unlisted',
@@ -6062,7 +6060,7 @@
         "state": "active", "detail": null, "participation": null, "participation_intent_id": null,
         "participation_order": 0, "source_control": null, "pairing": null, "local_inhibited": false,
         "pending_sources": [], "source_results": [], "pairing_action_id": null,
-        "order": 0, "presentation_order": 0, "preference_order": 0, "preference_error": null,
+        "order": 0, "presentation_order": 1, "preference_order": 0, "preference_error": null,
         "available": true, "enabled": true, "telemetry_available": true, "runtime_error": null,
         "browser_error": null, "browser_retry": null, "configured_origin": "https://authgd.example",
         "metadata": {"loaded": true, "binding": "screenshot-only-binding", "paired_origin": "https://authgd.example",
@@ -6075,10 +6073,15 @@
           {"character_id": 2, "character_name": "Ariadne", "character_link_epoch": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "has_fleet_read": false, "token_usable": true}
         ], "sources": [
           {"source_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "generation": 3, "character_id": 1, "state": "active", "reason": null, "pending_expires_at": null, "automatic": null},
-          {"source_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "generation": 2, "character_id": 2, "state": "ended", "reason": "boss_changed", "pending_expires_at": null, "automatic": null}
+          {"source_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "generation": 2, "character_id": 2, "state": "ended", "reason": "boss_lost", "pending_expires_at": null, "automatic": null}
         ]},
-        "eligibility": {"state": "ready", "participation_generation": 1, "characters": [{"character_id": 1}, {"character_id": 2}]},
+        "eligibility": {"state": "ready", "participation_generation": 1, "characters": [
+          {"character_id": 1, "source_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "source_generation": 3, "authority_generation": 1, "expires_at": "2026-09-07T12:00:10.000Z"},
+          {"character_id": 2, "source_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "source_generation": 3, "authority_generation": 1, "expires_at": "2026-09-07T12:00:10.000Z"}
+        ]},
         "observed_participation": {"enabled": true, "generation": 1},
+        "automatic": {"enabled": false, "pending": false, "cancellation_pending": false, "outcome": null, "readiness": "off"},
+        "automatic_stage": "settled",
         "controls": {
           "participation": {"binding": "screenshot-only-binding", "observed": {"enabled": true, "generation": 1},
             "participation_intent_id": null, "participation_order": 0, "pending": null},
@@ -6087,9 +6090,22 @@
               "observed": {"source_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "generation": 3, "character_id": 1, "state": "active", "reason": null, "pending_expires_at": null, "automatic": null},
               "pending": null, "expected_generation": 3, "expected_automatic": null},
             {"source_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "binding": "screenshot-only-binding",
-              "observed": {"source_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "generation": 2, "character_id": 2, "state": "ended", "reason": "boss_changed", "pending_expires_at": null, "automatic": null},
+              "observed": {"source_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "generation": 2, "character_id": 2, "state": "ended", "reason": "boss_lost", "pending_expires_at": null, "automatic": null},
               "pending": null, "expected_generation": 2, "expected_automatic": null}
           ]
+        },
+        "setup_controls": {
+          "automatic": {"binding": "screenshot-only-binding",
+            "observed": {"generation": 0, "revision": 0, "enabled": false, "approver": "none"},
+            "pending": null, "stage": "settled", "choice": null,
+            "request": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+            "history": "32a5bfe349d3083159faf6c358cc77d296c9a7a7ab96df47b377742ff978e6a7"},
+          "setup": {"binding": "screenshot-only-binding", "configured_origin": "https://authgd.example",
+            "queue_sequence": 0, "combat_approved": false,
+            "history": "fd21a053b5d9e991e8866e247dc1284e1148a60851fae734b507de93a07cdc2a",
+            "pairing_pending": false, "recovery_pending": false, "automatic_enabled": false,
+            "automatic_pending": false, "participation_pending": false, "source_requests": 0,
+            "legacy_archive": false, "cutover": []}
         }
       }}
     },

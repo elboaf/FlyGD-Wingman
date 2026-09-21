@@ -37,10 +37,10 @@ function deliver(payload) {
     'sticky-bottom-clamp': /bottom clamp/,
     'sticky-outside-scrollport': /scrollport/
   };
-  const revealCases = ['focus', 'click', 'pointer-click', 'edit-focus', 'edit-click', 'group-height',
+  const revealCases = ['focus', 'click', 'pointer-click', 'edit-focus', 'edit-click', 'group-height', 'cycle-header',
     'bottom-clamp', 'tall-warning', 'tall-visible-control', 'visible', 'top-cycle', 'hidden', 'inactive',
     'unrelated', 'resolved', 'passive'];
-  const scenarios = ['collapsed', 'expanded', 'bookmark-repair', 'size-reason', 'sticky-normal']
+  const scenarios = ['collapsed', 'expanded', 'bookmark-repair', 'size-reason', 'observed-placement', 'sticky-normal']
     .concat(Object.keys(stickyErrors), revealCases.map(name => 'reveal-' + name));
   assert.ok(scenarios.includes(data.scenario), 'Unknown preview warning scenario: ' + data.scenario);
   await new Promise(resolve => setImmediate(resolve));
@@ -55,7 +55,7 @@ function deliver(payload) {
     calls.length = 0;
     const payload = JSON.parse(JSON.stringify(data.fixture));
     if (kind === 'group-height') payload.characters = [];
-    if (kind === 'top-cycle') payload.hotkeys.groups = [{id: 'g-top', name: 'Top', members: [], cycle: 'Ctrl+Alt+1', cycle_prev: ''}];
+    if (kind === 'top-cycle' || kind === 'cycle-header') payload.hotkeys.groups = [{id: 'g-top', name: 'Top', members: [], cycle: 'Ctrl+Alt+1', cycle_prev: ''}];
     if (kind === 'resolved') payload.bookmark_chords.active = [];
     window.onPreviewHotkeys(payload);
     const host = document.getElementById('preview-binds');
@@ -65,7 +65,8 @@ function deliver(payload) {
     // at the very top of the scroll port.
     const row = kind === 'top-cycle'
       ? [...host.querySelectorAll('.row')].find(node => node.querySelector('.bindbtn'))
-      : configure().parentNode;
+      : kind === 'cycle-header' ? document.querySelector('.cycle-group-chords .row') : configure().parentNode;
+    const rowParent = row.parentNode;
     const bind = row.querySelector('.bindbtn');
     const edit = row.querySelectorAll('.linkbtn').find(node => node.textContent === 'Edit…');
     const warning = row.querySelector('.preview-bind-conflict');
@@ -97,6 +98,7 @@ function deliver(payload) {
       if (this === row) throw new Error('display:contents rows have no geometry');
       if (this.parentNode?.classList.contains('bind-head')) return rect(kind === 'top-cycle' ? 450 : 100, 37);
       if (this.classList.contains('bind-group')) return this.textContent ? rect(137, 63) : rect(0, 0);
+      if (this.classList.contains('cycle-group-head')) return rect(100, 63);
       if (this === warning) return rect(100 + content - position, warningHeight);
       if (this === bind || this === edit) return rect(100 + content + warningHeight + 4 - position, 28);
       return rect(0, 0);
@@ -126,7 +128,7 @@ function deliver(payload) {
     if (noScroll) assert.equal(position, start, kind + ' must not move the scroller');
     else {
       assert.notEqual(position, start, 'direct conflict interaction reveals the warning and its controls');
-      const top = kind === 'group-height' ? 200 : 137;
+      const top = kind === 'group-height' ? 200 : kind === 'cycle-header' ? 163 : 137;
       assert.ok(bind.getBoundingClientRect().top >= top, 'focused control clears actual sticky heights');
       assert.ok(bind.getBoundingClientRect().bottom <= 500, 'control remains reachable, including bottom clamp');
       if (!tall) assert.ok(warning.getBoundingClientRect().top >= top, 'warning clears actual sticky headers');
@@ -141,7 +143,7 @@ function deliver(payload) {
       assert.ok(document.contains(target), 'the focus owner is still attached');
       assert.equal(document.activeElement, target, 'reveal preserves the interaction owner');
     }
-    if (kind !== 'passive') assert.equal(row.parentNode, host, 'reveal does not rebuild rows');
+    if (kind !== 'passive') assert.equal(row.parentNode, rowParent, 'reveal does not rebuild rows');
     assert.equal(prompts, kind === 'edit-click' ? 1 : 0);
     const captured = kind === 'click' || kind === 'pointer-click';
     assert.deepEqual(calls, captured ? [['set_bind_capture', true, 1]] : [], 'only the session-identified explicit capture may cross the bridge');
@@ -206,6 +208,64 @@ function deliver(payload) {
         assert.equal(configure().parentNode.querySelector('.bindbtn').getAttribute('aria-describedby'), null);
       }
     }
+    console.log('PASS preview warning grouping ' + data.scenario);
+    return;
+  }
+  if (data.scenario === 'observed-placement') {
+    const payload = JSON.parse(JSON.stringify(data.fixture));
+    payload.sizable = [owner];
+    payload.sizes = {[owner]: [111, 222]}; // Dialog defaults are not observed placement.
+    payload.layout_sources = [
+      {name: 'Other Pilot', online: true, geometry: {x: 777, y: 888, w: 999, h: 555}},
+      {name: owner, online: null, geometry: {x: -420, y: 36, w: 640, h: 360}}
+    ];
+    deliver(payload);
+    const copyStatus = document.getElementById('preview-copy-status');
+    const copyStatusParent = copyStatus.parentNode;
+    configure().click();
+    const detail = document.getElementById('preview-character-detail-' + encodeURIComponent(owner));
+    assert.equal(detail.querySelector('.preview-detail-heading').textContent, 'Configure ' + owner);
+    assert.equal(detail.getAttribute('aria-label'), 'Configure ' + owner);
+    const grid = detail.querySelector('.preview-geometry-grid');
+    assert.ok(grid, 'geometry and crop share a full-width local subgrid');
+    const observed = grid.querySelector('.preview-geometry-observation');
+    assert.ok(observed, 'observed placement is visible beside its actions');
+    assert.equal(observed.textContent, 'Observed placement: 640 × 360 px at (-420, 36)');
+    const actions = grid.querySelector('.geometry-actions');
+    assert.equal(observed.parentNode, actions.parentNode, 'placement and Size/Copy belong together');
+    assert.equal(actions.firstChild.getAttribute('data-preview-detail-control'), 'size');
+    const crop = grid.querySelector('.preview-crop-field');
+    assert.ok(crop, 'crop stays inside the same geometry grouping');
+    const cropStatus = crop.querySelector('.preview-crop-status');
+    assert.equal(cropStatus.getAttribute('role'), 'status');
+    for (const control of crop.querySelectorAll('[data-preview-detail-control]')) {
+      assert.equal(control.getAttribute('aria-describedby'), cropStatus.id);
+    }
+    const marker = detail.querySelector('[data-preview-detail-control="marker"]');
+    marker.focus();
+    let accepted = observation;
+    function geometry(sources, revision, sizable = [owner]) {
+      window.onPreviewGeometry({geometry_revision: revision, sizes: {[owner]: [999, 888]},
+        sizable, client_sizes: {}, layout_sources: sources});
+    }
+    geometry([{name: owner, online: false, geometry: {x: 0, y: -80, w: 320, h: 210}}], ++accepted);
+    assert.equal(observed.textContent, 'Observed placement: 320 × 210 px at (0, -80)');
+    assert.equal(actions.querySelector('[data-preview-detail-control="copy"]'), null);
+    geometry([{name: owner, geometry: {x: 5, y: 6, w: 7, h: 8}}], accepted - 1);
+    assert.equal(observed.textContent, 'Observed placement: 320 × 210 px at (0, -80)', 'older geometry cannot replace observed placement');
+    for (const sources of [[], [{name: owner}], [{name: owner, geometry: null}],
+        [{name: 'Other Pilot', geometry: {x: 1, y: 2, w: 3, h: 4}}]]) {
+      geometry(sources, ++accepted, []);
+      assert.equal(observed.textContent, 'No observed placement.', 'missing matching geometry never falls back to Size defaults or another owner');
+      assert.ok(actions.firstChild.classList.contains('size-none'), 'Size-or-filler first-child contract survives paints');
+      assert.equal(detail.querySelector('.preview-geometry-observation'), observed, 'observation mutates in place');
+      assert.equal(detail.querySelector('.preview-crop-field'), crop, 'geometry never replaces crop owner');
+      assert.equal(detail.querySelector('[data-preview-detail-control="marker"]'), marker);
+      assert.equal(document.activeElement, marker);
+    }
+    assert.equal(document.getElementById('preview-copy-status'), copyStatus);
+    assert.equal(copyStatus.parentNode, copyStatusParent, 'the mounted Copy feedback owner is never reparented');
+    assert.equal(calls.length, 0, 'presenting observations does not fetch or mutate geometry');
     console.log('PASS preview warning grouping ' + data.scenario);
     return;
   }

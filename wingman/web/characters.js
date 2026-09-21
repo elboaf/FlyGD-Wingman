@@ -105,7 +105,7 @@
   }
 
   function statusLabel(value, needsReauth) {
-    if (value === 'authorized') return 'Authorized';
+    if (value === 'authorized') return 'Ready';
     if (needsReauth) return 'Access expired';
     return 'Access needed';
   }
@@ -130,12 +130,17 @@
   }
 
   function rowFilterText(row) {
+    var skills = statusLabel(row.skills, row.needs_reauth);
+    var fittings = statusLabel(row.fittings, row.needs_reauth);
+    // Keep complete current and former sequences: adding isolated aliases
+    // would break multiword name/status/date searches in one vocabulary.
+    var name = asText(row.character_name);
+    var authenticated = formatAuthenticated(row.authenticated_utc);
     return [
-      asText(row.character_name),
-      statusLabel(row.skills, row.needs_reauth),
-      statusLabel(row.fittings, row.needs_reauth),
-      formatAuthenticated(row.authenticated_utc)
-    ].join(' ').toLowerCase();
+      [name, skills, fittings, authenticated].join(' '),
+      [name, row.skills === 'authorized' ? 'Authorized' : skills,
+        row.fittings === 'authorized' ? 'Authorized' : fittings, authenticated].join(' ')
+    ].join('\n').toLowerCase();
   }
 
   function matchingCharacters(characters) {
@@ -254,8 +259,29 @@
     menu.setAttribute('aria-label', 'Character actions');
     menuTrigger = null;
     if (restoreFocus && trigger && !trigger.disabled && trigger.focus) {
-      trigger.focus();
+      trigger.focus({ preventScroll: true });
     }
+  }
+
+  function moveFromCharacterMenu(trigger, backward) {
+    closeMenu(false);
+    var selector = 'button:not([hidden]):not(:disabled), '
+      + 'input:not([hidden]):not(:disabled), select:not([hidden]):not(:disabled), '
+      + 'textarea:not([hidden]):not(:disabled), [tabindex="0"]';
+    var stops = Array.prototype.filter.call(document.querySelectorAll(selector), function (node) {
+      return node.getClientRects().length
+        && window.getComputedStyle(node).visibility !== 'hidden';
+    });
+    var index = stops.indexOf(trigger);
+    var target = index === -1 ? null : stops[index + (backward ? -1 : 1)];
+    if (target && target.focus) target.focus({ preventScroll: true });
+  }
+
+  function dismissMovedMenu() {
+    if (menu.hidden) return;
+    // A fixed menu cannot follow a scrolled/resized row. Return only focus we
+    // still own, without scrolling the roster back to its previous position.
+    closeMenu(menu.contains(document.activeElement));
   }
 
   function openMenu(trigger, row, focusLast) {
@@ -274,11 +300,18 @@
     var menuRect = menu.getBoundingClientRect();
     var left = Math.max(6, Math.min(rect.left,
                                     window.innerWidth - menuRect.width - 6));
+    var bottom = window.innerHeight;
+    var statusbar = WM.el('statusbar-slot');
+    if (statusbar) {
+      // The existing strip can grow with its content; never guess its height.
+      var statusbarRect = statusbar.getBoundingClientRect();
+      if (statusbarRect.height) bottom = Math.min(bottom, statusbarRect.top);
+    }
     var top = rect.bottom + 4;
-    if (window.innerHeight - rect.bottom < menuRect.height + 4) {
+    if (bottom - rect.bottom < menuRect.height + 4) {
       top = rect.top - menuRect.height - 4;
     }
-    top = Math.max(6, Math.min(top, window.innerHeight - menuRect.height - 6));
+    top = Math.max(6, Math.min(top, bottom - menuRect.height - 6));
     menu.style.left = left + 'px';
     menu.style.top = top + 'px';
     focusMenuItem(!!focusLast);
@@ -287,7 +320,7 @@
   function makeHeader() {
     var head = WM.make('div', 'characters-head');
     head.setAttribute('role', 'row');
-    ['Character', 'Skills', 'Fittings', 'Authenticated', 'Actions']
+    ['Character', 'Skills', 'Fittings', 'Actions']
       .forEach(function (label) {
         var cell = WM.make('span', '', label);
         cell.setAttribute('role', 'columnheader');
@@ -330,7 +363,7 @@
     name.setAttribute('role', 'cell');
     var nameText = WM.make('span', 'characters-name-text',
                            row.character_name || String(row.character_id));
-    var authenticated = formatAuthenticated(row.authenticated_utc);
+    nameText.title = nameText.textContent;
     name.appendChild(nameText);
     if (row.persistence_error) {
       name.appendChild(WM.make('span', 'characters-name-note', row.persistence_error));
@@ -338,11 +371,6 @@
     node.appendChild(name);
     node.appendChild(makeStatusCell(row.skills, row.needs_reauth));
     node.appendChild(makeStatusCell(row.fittings, row.needs_reauth));
-    var authenticatedCell = WM.make('span', 'characters-authenticated',
-                                    authenticated ? authenticated : '');
-    authenticatedCell.setAttribute('role', 'cell');
-    node.appendChild(authenticatedCell);
-
     var actions = WM.make('div', 'characters-actions');
     actions.setAttribute('role', 'cell');
     var more = WM.make('button', 'btn characters-menu-trigger', '⋯');
@@ -542,6 +570,12 @@
       closeMenu(true);
       return;
     }
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      var trigger = menuTrigger;
+      moveFromCharacterMenu(trigger, event.shiftKey);
+      return;
+    }
     if (!items.length) return;
     if (event.key === 'ArrowDown') {
       event.preventDefault();
@@ -576,6 +610,8 @@
     closeMenu(false);
   });
   window.addEventListener('blur', function () { closeMenu(false); });
+  window.addEventListener('resize', dismissMovedMenu);
+  roster.addEventListener('scroll', dismissMovedMenu);
 
   document.addEventListener('wm:eve-authority', function () {
     if (!isVisible()) return;

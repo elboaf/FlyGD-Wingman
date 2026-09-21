@@ -1173,6 +1173,7 @@ class CompanionController:
                     or value.get("status")
                     not in (
                         "live",
+                        "hidden-by-focus",
                         "waiting",
                         "needs-selection",
                         "source-unavailable",

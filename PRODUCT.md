@@ -203,19 +203,22 @@ default.
 In Settings, users can persistently hide individual known characters from the
 bar and restore them later, including when they are offline. That choice
 changes only the bar: collection continues, and Preview and Alert behavior
-remains unchanged. Settings › Fleet telemetry separates this local display from
+remains unchanged. The optional recent-activity filter likewise changes only
+display; quiet characters remain collected and remembered. Settings › Fleet telemetry separates this local display from
 shared telemetry setup. Its runtime is independent: turning previews or alerts
 off must not stop it. Because the log proves effect starts but has no
-dependable incoming-effect-ended event, observed EWAR clears after 30 seconds
-without that character producing outgoing damage or receiving another tracked
-EWAR event. A missing log is shown as missing data, never as a fabricated zero,
+dependable incoming-effect-ended event, each incoming EWAR observation expires
+independently, at most 30 seconds after its event time. Damage or another effect
+does not renew it; observed tackle names expire with their own evidence. A missing log is shown as missing data, never as a fabricated zero,
 and the bar never moves an EVE client or sends input to one.
 
 
 ### Fleet sharing setup stays beside the Fleet Bar
 
 Settings › Fleet telemetry holds the optional connection, **Share my fleet telemetry**,
-and owned-boss **Start / Stop** controls. Pairing, granting Fleet Read, and
+and owned-boss **Start / Stop** controls. Combat-data approval and account-wide
+**Automatic boss verification** consent are separate from this PC's sharing choice;
+neither approval enables the other consent. Pairing, granting Fleet Read, and
 opening the source view never turn sharing on or start a source. One owned
 boss authorization covers eligible account-linked alts automatically; the
 selector is not an alt publication checklist and does not prove boss status.
@@ -283,7 +286,8 @@ correction it replaces.
 Free and open source, GPL-3.0. Fleet sharing is optional and off by default:
 a user must explicitly pair with authGD, and only currently eligible
 authGD Members in the same ESI-verified fleet then receive sparse, current
-DPS and `SCRAM/POINT` state; no raw combat logs or history
+incoming/outgoing DPS and incoming scram, point and neutralization observations,
+including observed tackle names after separate combat-data approval; no raw combat logs or history
 ever leave the machine, and the feature remains display-only and
 does not automate gameplay. No account except the user's own Google
 account for their own uploads, and their own Discord webhook.

@@ -36,6 +36,41 @@ const moduleName = data.key.startsWith('fittings-') ? 'fittings'
   : data.key === 'profiles-copy-scope' ? 'evesettings'
   : data.key.startsWith('settings-characters') ? 'characters'
   : crop ? 'previews' : data.key.includes('formations') ? 'formations' : 'uisetup';
+// Model native bubbling focusin for this capture's real row-selection handler.
+// Keep this local: other page harnesses retain their own DOM mechanics.
+if (moduleName === 'formations') {
+  const setAttribute = Element.prototype.setAttribute;
+  Element.prototype.setAttribute = function (name, value) {
+    setAttribute.call(this, name, value);
+    if (name === 'class') this.className = String(value);
+  };
+  const focus = Element.prototype.focus;
+  Element.prototype.focus = function () {
+    const changed = document.activeElement !== this;
+    focus.call(this);
+    if (changed) for (let node = this; node; node = node.parentNode) {
+      node.dispatchEvent({type: 'focusin', target: this});
+    }
+  };
+}
+if (moduleName === 'fittings') {
+  // The page uses native progress properties, which reflect numeric attributes.
+  const value = Object.getOwnPropertyDescriptor(Element.prototype, 'value');
+  Object.defineProperty(Element.prototype, 'value', {
+    get() { return this.tagName === 'PROGRESS' ? Number(this.getAttribute('value') || 0) : value.get.call(this); },
+    set(number) {
+      if (this.tagName === 'PROGRESS') this.setAttribute('value', number);
+      else value.set.call(this, number);
+    }
+  });
+  Object.defineProperty(Element.prototype, 'max', {
+    get() { return Number(this.getAttribute('max') || 1); },
+    set(number) { this.setAttribute('max', number); }
+  });
+  Object.defineProperty(Element.prototype, 'parentElement', {get() { return this.parentNode; }});
+  const style = document.getElementById('fittings-workspace-scroll').style;
+  style.removeProperty = function (name) { delete this[name]; };
+}
 run(fs.readFileSync(web + '/' + moduleName + '.js', 'utf8'));
 const tick = () => new Promise(resolve => setTimeout(resolve, 10));
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return {promise, resolve}; };
@@ -95,7 +130,7 @@ async function gapRegression() {
       assert.equal(el('wanderer-test').disabled, false);
       assert.equal(el('wanderer-remove').disabled, false);
       assert.equal(el('wanderer-save-note').textContent,
-        'Test connection saves the map URL and token, then checks access. It does not turn names on.');
+        'Test connection saves the map URL and token; it does not turn names on.');
     } else if (profiles) {
       anchor = target = el('es-copy-scope-note'); pane = el('es-work');
       assert.equal(el('es-copy-scope').hidden, !state.selective_copy_available);
@@ -115,7 +150,7 @@ async function gapRegression() {
       anchor = target = el('fittings-copy-resolution-note'); pane = el('fittings-copy-body');
       assert.ok(anchor, 'real preflight reply must settle before lower framing');
       assert.equal(anchor.textContent, 'Enter an alternate name or select Skip for each conflict before reviewing changes.');
-      assert.equal(pane.querySelector('.fit-copy-summary').nextSibling.textContent,
+      assert.equal(pane.firstElementChild.textContent,
         'Copies only add fittings; existing fittings are kept.');
       assert.equal(el('fittings-copy-review').disabled, true);
       assert.equal(document.querySelectorAll('.fit-copy-pair').length, 3);
@@ -132,6 +167,7 @@ async function gapRegression() {
       assert.match(recovery.children[0].textContent, /before any retry/i);
       assert.match(recovery.children[1].textContent, /Rate limit:.*fittings not attempted/);
       assert.equal(el('fittings-copy-close').disabled, false);
+      anchor = el('fittings-copy-technical').querySelector('summary');
     }
     // Layout boundary inputs only: this harness does not render CSS. Nodes
     // enter the pane only when the generated script frames the settled anchor.
@@ -145,11 +181,22 @@ async function gapRegression() {
     };
     const nativeRect = Element.prototype.getBoundingClientRect;
     Element.prototype.getBoundingClientRect = function () {
+      const dialog = el('fittings-copy-dialog');
+      const retained = ['fittings-copy-title', 'fittings-copy-summary'].includes(this.id);
       if (this === pane) return rect(100, 100, 800, 540);
+      if (moduleName === 'fittings' && this === dialog) return rect(80, 40, 820, 600);
+      if (retained) {
+        if (this === target && overrun) return rect(120, 35, 760, 65);
+        return rect(120, this.id.endsWith('title') ? 45 : 70, 760, this.id.endsWith('title') ? 65 : 95);
+      }
+      // Recovery is ordinary flow above the lower results, not a sticky owner.
+      if (framed && this.closest('.fit-copy-recovery')) return rect(120, -250, 760, -200);
       if (!framed) return rect(120, 700, 760, 730);
       const r = rect(120, 130, zero && this === target ? 120 : 760, 330);
       if (this === target && overrun) {
-        r[edge] = {left: 100, top: 100, right: 800, bottom: 540}[edge]
+        const bounds = this.id === 'fittings-copy-close'
+          ? {left: 80, top: 40, right: 820, bottom: 600} : {left: 100, top: 100, right: 800, bottom: 540};
+        r[edge] = bounds[edge]
           + (['top', 'left'].includes(edge) ? -overrun : overrun);
         r.width = r.right - r.left; r.height = r.bottom - r.top;
       }
@@ -168,7 +215,8 @@ async function gapRegression() {
     let measured;
     const box = Element.prototype.getBoundingClientRect;
     Element.prototype.getBoundingClientRect = function () { measured = this; return box.call(this); };
-    document.elementFromPoint = () => covered ? document.body : measured;
+    document.elementFromPoint = () => covered && (scenario !== 'covered-summary' || measured === target)
+      ? document.body : measured;
     verify();
     assert.ok(framed, 'must frame the semantic anchor, not just click a control');
     assert.equal(scrolls.at(-1).element, anchor);
@@ -183,6 +231,16 @@ async function gapRegression() {
     else if (scenario === 'hidden') target.hidden = true;
     else if (scenario === 'wrong-text') target.textContent = 'stale or incomplete content';
     else if (scenario.endsWith('clipped')) overrun = 2;
+    else if (scenario === 'hidden-summary') el('fittings-copy-summary').hidden = true;
+    else if (scenario === 'summary-in-body') pane.prepend(el('fittings-copy-summary'));
+    else if (scenario === 'wrong-title') el('fittings-copy-title').textContent = 'Copy 99 fittings to Wrong Pilot';
+    else if (scenario === 'hidden-footer') el('fittings-copy-close').hidden = true;
+    else if (['clipped-summary', 'clipped-title', 'clipped-footer', 'covered-summary'].includes(scenario)) {
+      target = el(scenario === 'clipped-title' ? 'fittings-copy-title'
+        : scenario === 'clipped-footer' ? 'fittings-copy-close' : 'fittings-copy-summary');
+      covered = scenario === 'covered-summary';
+      overrun = covered ? 0 : 2;
+    }
     else if (/^(rounding|edge|overflow)-/.test(scenario)) {
       edge = scenario.split('-')[1];
       overrun = scenario.startsWith('rounding') ? 0.109375 : scenario.startsWith('edge') ? 1 : 1.01;
@@ -191,10 +249,16 @@ async function gapRegression() {
     else if (scenario === 'zero-area') zero = true;
     else if (scenario === 'wrong-name') el('fit-name-fit-rifter-solo').value = 'Wrong fitting';
     else if (scenario === 'wrong-description') el('fit-desc-fit-rifter-solo').value = 'Wrong description';
+    else if (scenario === 'clean-save-enabled') target.disabled = false;
+    else if (scenario === 'immediate-inside-metadata') {
+      document.querySelector('.fit-metadata').appendChild(document.querySelector('.fit-immediate'));
+    }
     else if (scenario === 'missing-rack') document.querySelector('.fit-rack').remove();
     else if (scenario === 'redundant-alias') document.querySelector('.fit-aliases').appendChild(
       WM.make('p', 'fit-alias-row', 'Rifter - Solo PvP'));
-    else if (scenario === 'missing-reassurance') pane.querySelector('.fit-copy-summary').nextSibling.remove();
+    else if (scenario === 'hidden-technical') el('fittings-copy-technical').querySelector('summary').hidden = true;
+    else if (scenario === 'clipped-technical') { target = el('fittings-copy-technical').querySelector('summary'); overrun = 2; }
+    else if (scenario === 'missing-reassurance') pane.firstElementChild.remove();
     else if (scenario === 'inconsistent-capability') el('es-copy-scope-note').classList.add('warn');
     else if (scenario === 'wrong-pair') document.querySelector('.fit-copy-pair-name').textContent = 'Wrong fitting';
     else if (scenario === 'wrong-summary') document.querySelector('.fit-copy-summary').textContent = '6 copied · 0 failed';
@@ -202,9 +266,8 @@ async function gapRegression() {
       .find(node => /Rate limit:/.test(node.textContent)).remove();
     else if (scenario === 'hidden-recovery') pane.querySelectorAll('.fit-copy-guidance')
       .find(node => /before any retry/i.test(node.textContent)).hidden = true;
-    else if (scenario === 'clipped-recovery') {
-      target = pane.querySelector('.fit-copy-guidance'); overrun = 2;
-    } else if (scenario === 'reversed-recovery') {
+    else if (scenario === 'recovery-after-pairs') pane.appendChild(pane.querySelector('.fit-copy-recovery'));
+    else if (scenario === 'reversed-recovery') {
       const group = pane.querySelector('.fit-copy-recovery');
       group.insertBefore(group.children[1], group.children[0]);
     }
@@ -461,6 +524,35 @@ async function fidelityRegression() {
     }
     return true;
   };
+  async function corruptCopyCapture() {
+    const scenario = data.regression;
+    const damage = {
+      'hidden-summary': () => { el('fittings-copy-summary').hidden = true; },
+      'wrong-summary': () => { el('fittings-copy-summary').textContent = 'Wrong counts'; },
+      'wrong-title': () => { el('fittings-copy-title').textContent = 'Copy 99 fittings to Wrong Pilot'; },
+      'missing-progress': () => el('fittings-copy-progress').remove(),
+      'hidden-progress': () => { el('fittings-copy-progress').hidden = true; },
+      'wrong-progress-value': () => { el('fittings-copy-progress').value = 5; },
+      'wrong-progress-max': () => { el('fittings-copy-progress').max = 99; },
+      'wrong-progress-aria': () => el('fittings-copy-progress').setAttribute('aria-valuenow', '5'),
+      'wrong-progress-label': () => el('fittings-copy-progress').setAttribute('aria-labelledby', 'missing-heading'),
+      'missing-technical': () => el('fittings-copy-technical').remove(),
+      'open-technical': () => { el('fittings-copy-technical').open = true; },
+      'wrong-operation-id': () => { el('fittings-copy-operation-id').textContent = 'Operation ID: wrong'; },
+      'wrong-technical-label': () => { el('fittings-copy-technical').querySelector('summary').textContent = 'Wrong detail'; },
+      'unfocusable-technical': () => el('fittings-copy-technical').querySelector('summary').setAttribute('tabindex', '-1'),
+      'live-operation-id': () => { el('fittings-copy-status').textContent = el('fittings-copy-operation-id').textContent; },
+      'hidden-limit-summary': () => { el('fittings-copy-limit-summary').hidden = true; },
+      'wrong-limit-summary': () => { el('fittings-copy-limit-summary').textContent = '20 additions planned'; }
+    }[scenario];
+    if (!damage) return;
+    damage();
+    assert.throws(() => run(data.verify), /Screenshot content did not settle/, scenario);
+    if (data.cleanup) { run(data.cleanup); await tick(); }
+    assert.equal(calls.length, 0, 'damaged capture and cleanup never reach a writer');
+    console.log('PASS screenshot fidelity ' + data.key + ' ' + scenario);
+    return true;
+  }
   WM.route(crop ? 'settings' : 'fittings');
   if (crop) WM.section(moduleName);
   await tick(); calls.length = 0; staging = true;
@@ -601,14 +693,16 @@ async function fidelityRegression() {
       '22 additions requested across all targets; limit 20 (2 over). Select fewer fittings or targets, then review again.');
     assert.equal(el('fittings-copy-status').classList.contains('err'), true,
       'the staged refusal must use the same error state as a live rejected review');
-    assert.match(el('fittings-copy-body').textContent, /^11 selected\./,
+    assert.equal(el('fittings-copy-title').textContent, 'Copy 11 fittings to 2 characters',
       'refusal must be reachable with fewer than 20 selected fits across multiple targets');
+    assert.equal(el('fittings-copy-summary').textContent, 'Choose target characters.');
     const targets = el('fittings-copy-body').querySelectorAll('input').filter(node => node.checked);
     assert.deepEqual(targets.map(node => node.closest('.fit-copy-target')
       .querySelector('label span:last-child').textContent).sort(), ['Eryn Voss', 'Fio Kest']);
     assert.ok(visible(el('fittings-copy-review')));
     assert.equal(el('fittings-copy-start').hidden, true);
     assert.ok(data.verify, 'a settled limit postcondition is required'); run(data.verify);
+    if (await corruptCopyCapture()) return;
     el('fittings-copy-status').textContent = '';
     assert.throws(() => run(data.verify), /Screenshot content did not settle/);
     // Reducing targets permits the same selection; no selection-count shortcut.
@@ -616,7 +710,7 @@ async function fidelityRegression() {
     el('fittings-copy-review').click();
     assert.equal(el('fittings-copy-status').classList.contains('err'), false, 'checking clears stale error styling');
     await tick();
-    assert.match(el('fittings-copy-body').textContent, /11 additions planned/);
+    assert.match(el('fittings-copy-summary').textContent, /11 additions planned/);
     assert.equal(el('fittings-copy-status').classList.contains('err'), false);
     assert.equal(el('fittings-copy-start').hidden, false);
     el('fittings-copy-start').click(); await tick();
@@ -632,7 +726,7 @@ async function fidelityRegression() {
       }
     });
     el('fittings-copy-review').click(); await tick();
-    assert.match(el('fittings-copy-body').textContent, /20 additions planned/);
+    assert.match(el('fittings-copy-summary').textContent, /20 additions planned/);
     assert.equal(el('fittings-copy-start').hidden, false, 'the exact additions limit remains allowed');
     el('fittings-copy-close').click();
   } else {
@@ -645,7 +739,18 @@ async function fidelityRegression() {
     assert.equal(el('fittings-copy-cancel-note').hidden, !isProgress);
     assert.equal(el('fittings-copy-close').disabled, isProgress);
     if (isProgress) {
-      assert.equal(el('fittings-copy-body').textContent, '2 of 6 fitting/character checks complete');
+      assert.equal(el('fittings-copy-summary').textContent, '2 of 6 fitting/character checks complete');
+      const progress = el('fittings-copy-progress');
+      assert.equal(progress.value, 2, 'native progress completed checks');
+      assert.equal(progress.max, 6, 'native progress total checks');
+      assert.equal(progress.tagName, 'PROGRESS');
+      assert.equal(progress.hidden, false);
+      assert.equal(progress.getAttribute('aria-valuemin'), '0');
+      assert.equal(el('fittings-copy-summary').hidden, false);
+      assert.equal(el('fittings-copy-body').contains(el('fittings-copy-summary')), false);
+      assert.equal(progress.getAttribute('aria-valuenow'), '2');
+      assert.equal(progress.getAttribute('aria-valuemax'), '6');
+      assert.equal(progress.getAttribute('aria-labelledby'), 'fittings-copy-title');
       assert.match(el('fittings-copy-status').textContent, /Generated Fit 002 \(Merlin\).*Fio Kest: Needs verification/);
       assert.equal(el('fittings-copy-cancel').disabled, false);
       assert.ok(visible(el('fittings-copy-cancel-note')), 'cost remains visible while progress is active');
@@ -658,6 +763,7 @@ async function fidelityRegression() {
       assert.ok(labels.every(node => /\(Merlin\)/.test(node.textContent)), 'all result hull snapshots retained');
     }
     assert.ok(data.verify, 'a settled copy-state postcondition is required'); run(data.verify);
+    if (await corruptCopyCapture()) return;
     if (isProgress) {
       el('fittings-copy-cancel').hidden = true;
       assert.throws(() => run(data.verify), /Screenshot content did not settle/);
@@ -725,6 +831,24 @@ async function fidelityRegression() {
     if (crop) WM.settingsTab('previews', 'wanderer');
     run(data.stage); await tick();
     run(data.verify);
+    if (data.key === 'profiles-formations') {
+      assert.equal(document.activeElement?.getAttribute('aria-label'), 'Probe 2 West km',
+        'the selected-probe capture must explicitly focus a numbered probe, not add a production default');
+      assert.equal(WM.el('fm-probes').querySelector('.selected').getAttribute('data-probe-index'), '1');
+      const marker = WM.el('fm-preview').querySelector('.fm-probe.selected');
+      assert.equal(marker.getAttribute('data-probe-index'), '1');
+      marker.setAttribute('data-probe-index', '0');
+      assert.throws(() => run(data.verify), /Screenshot content did not settle/, 'a mismatched selected marker is not capture-ready');
+      marker.setAttribute('data-probe-index', '1');
+    } else if (data.key === 'profiles-formations-import') {
+      WM.el('fm-import-review').hidden = false;
+      assert.throws(() => run(data.verify), /Screenshot content did not settle/, 'completed review must not compete with parse Review');
+      WM.el('fm-import-review').hidden = true;
+    } else if (data.key === 'profiles-setup-import') {
+      WM.el('setup-recipient').hidden = false;
+      assert.throws(() => run(data.verify), /Screenshot content did not settle/, 'review capture must not retain entry-form fragments');
+      WM.el('setup-recipient').hidden = true;
+    }
     if (crop) {
       const panel = WM.el('settings-previews-characters');
       assert.equal(panel.hidden, false, 'crop staging must select Characters before framing');

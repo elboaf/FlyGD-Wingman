@@ -613,7 +613,7 @@ def test_custom_card_is_between_builtin_controls_and_the_folder():
     ):
         assert f"WM.send('{method}'" in js
     assert "WM.confirm('Remove custom alert'" in js
-    assert "state.alerts.custom_rules" in js
+    assert "alerts.custom_rules" in js
 
 
 def test_the_alerts_script_is_loaded():
@@ -622,21 +622,25 @@ def test_the_alerts_script_is_loaded():
 
 
 def test_previews_off_state_is_reachable():
-    """Alerts cannot draw with no preview to pulse. Named, not merely
-    styled, so a rename of the mechanism breaks this loudly."""
+    """The prerequisite belongs to the mounted operational owner, not a banner.
+
+    The production runtime harness exercises this branch and its precedence.
+    """
     js = _web("alerts.js")
-    assert "alerts-previews-off" in js
+    assert "Waiting for Previews" in js
     assert "previews_enabled" in js
+    assert 'id="alerts-health" role="status"' in _web("index.html")
 
 
 def test_no_gamelogs_folder_state_is_reachable():
     """The important one: without a folder, alerts silently do nothing,
     indistinguishable from nothing happening in game."""
     js = _web("alerts.js")
-    assert "alerts-no-folder" in js
+    assert "Waiting for a valid gamelog folder" in js
     assert "gamelogs_folder" in js
     html = _web("index.html")
-    assert "Gamelogs folder is not set" in html
+    assert 'id="alerts-health" role="status"' in html
+    assert 'id="f-gamelogs"' in html
 
 
 def test_health_and_characters_render_together():
@@ -645,9 +649,8 @@ def test_health_and_characters_render_together():
     get_alert_state's `running` flag must appear in the same rendered
     sentence as the characters, never the characters alone.
 
-    It renders NAMES rather than a count: with five clients running, "5
-    characters online" is the number you already assumed, and the fact
-    worth having is which one is missing when it says four.
+    It renders monitored NAMES rather than an online count. The reader
+    projection has no expected roster, so it cannot establish coverage.
     """
     js = _web("alerts.js")
     block = js.split("function healthText")[1].split("\n\n")[0]

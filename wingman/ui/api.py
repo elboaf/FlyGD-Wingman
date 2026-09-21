@@ -327,6 +327,10 @@ class _SettingUnchanged(Exception):
     """Exit a serialized no-op without rewriting the complete settings file."""
 
 
+class _WebhookSuperseded(Exception):
+    """Abort a webhook transaction whose saved credential changed during HTTP."""
+
+
 @dataclass
 class AppState:
     """Everything the bridge needs that is not the page.
@@ -398,8 +402,21 @@ class Api:
         update_service=updates_mod,
         update_spawn=threading.Thread,
         is_frozen=lambda: bool(getattr(sys, "frozen", False)),
+        webhook_lookup=None,
     ):
         self._state = state
+        # Admission/publication only — never held across Discord HTTP. Every
+        # explicit attempt advances the generation, even for the same URL.
+        self._webhook_lock = threading.Lock()
+        self._webhook_generation = 0
+        self._webhook_revision = 0
+        # One retained daemon may outlive a caller blocked in DNS. Closing
+        # admission fences every bridge result without joining that owner.
+        self._webhook_lookup = (
+            webhook_lookup
+            if webhook_lookup is not None
+            else discord.WebhookLookupLane()
+        )
         self._preview_config = settings_mod.committed_preview(state.settings)
         self._window = None  # assigned by ui.window.create()
         # Assigned by ui.sigbar.create(), same underscore-only rule as
@@ -1230,18 +1247,26 @@ class Api:
     # ----- settings and account ------------------------------------------
 
     def _settings_payload(self) -> dict:
-        cfg = self._state.settings
+        with self._webhook_lock:
+            cfg = dict(self._state.settings)
+            webhook_revision = self._webhook_revision
+        raw = cfg.get("discord_webhook", "")
+        webhook, _ = discord.parse_webhook(raw if isinstance(raw, str) else "")
+        cfg["discord_webhook_name"] = discord.safe_webhook_name(
+            webhook, cfg.get("discord_webhook_name", "")
+        )
         detected_rec = obsconfig.find_recording_dir()
         detected_logs = combatlog.find_gamelogs_dir()
         return {
-            "settings": dict(cfg),
+            "settings": cfg,
+            "webhook_revision": webhook_revision,
             "preview_hide_active_preview": self._preview_config.get(
                 "hide_active_preview", False
             ),
             # Top level, not inside `settings`: it is derived, not stored,
             # and nesting it invites the page to write it back on Save.
             "webhook_status": copy_mod.webhook_status(
-                cfg.get("discord_webhook", "") or ""
+                cfg.get("discord_webhook", "") or "", cfg["discord_webhook_name"]
             ),
             "detected": {
                 "recording": str(detected_rec) if detected_rec else "",
@@ -1921,13 +1946,24 @@ class Api:
             status["error"] = "Could not reach GitHub -- check your internet."
             return status
         status["latest_tag"] = release["tag"]
+        if not release["digest"]:
+            # A tag alone cannot establish currency or an installable asset.
+            # Keep the existing installer's digest requirement authoritative.
+            status["error"] = (
+                "The latest release has no checksum. Try checking again later."
+            )
+            return status
         if installed is None:
             return status
-        if not release["digest"]:
-            # No digest to compare against: report the release without a
-            # verdict rather than claiming either side of up-to-date.
-            return status
-        status["up_to_date"] = fightrecorder.sha256_file(installed) == release["digest"]
+        try:
+            status["up_to_date"] = (
+                fightrecorder.sha256_file(installed) == release["digest"]
+            )
+        except OSError:
+            logger.exception("Could not read the installed FightRecorder digest")
+            status["error"] = (
+                "Could not verify the installed plugin. Try checking again."
+            )
         return status
 
     def update_fightrecorder(self) -> dict:
@@ -2114,22 +2150,58 @@ class Api:
         anywhere on the page. Removing a webhook is now its own explicit
         action; this endpoint only ever sets one.
         """
-        text = str(value or "").strip()
+        generation, previous = self._begin_webhook()
+        text = value.strip() if isinstance(value, str) else ""
         if not text:
             return self._field_refused(
                 "Paste a webhook URL, or use Remove to clear it."
             )
-        # parse_webhook RETURNS (webhook, error); it does not raise. An
-        # except-ValueError around it never fires, which would have let
-        # every malformed URL through.
         webhook, error = discord.parse_webhook(text)
         if webhook is None:
             return self._field_refused(error)
-        return self._with_webhook_status(self._write_setting("discord_webhook", text))
+        name = self._webhook_lookup.identify(webhook)
+        result = self._commit_webhook(generation, previous, text, name)
+        if result["applied"] and not result.get("webhook_name"):
+            result["warning"] = "Webhook saved, but its name could not be identified."
+        return result
+
+    def identify_discord_webhook(self) -> dict:
+        """Refresh only the saved webhook's name, on an explicit user request."""
+        generation, previous = self._begin_webhook()
+        webhook, _ = discord.parse_webhook(
+            previous if isinstance(previous, str) else ""
+        )
+        if webhook is None:
+            return self._field_refused(
+                "Save a valid Discord webhook before identifying it."
+            )
+        name = self._webhook_lookup.identify(webhook)
+        if not name:
+            return self._field_refused("Could not identify this webhook. Try again.")
+        return self._commit_webhook(generation, previous, previous, name)
 
     def clear_discord_webhook(self) -> dict:
-        """Remove the webhook: the explicit counterpart to the above."""
-        return self._with_webhook_status(self._write_setting("discord_webhook", ""))
+        """Remove both credential and its identity; fence any pending lookup."""
+        generation, previous = self._begin_webhook()
+        return self._commit_webhook(generation, previous, "", "")
+
+    def _begin_webhook(self):
+        with self._webhook_lock:
+            self._webhook_generation += 1
+            return self._webhook_generation, self._state.settings.get(
+                "discord_webhook", ""
+            )
+
+    def _shutdown_webhook_lookup(self) -> None:
+        """Close optional metadata admission without waiting on DNS.
+
+        A retained DNS call cannot be interrupted safely. Advancing the
+        generation before it eventually returns makes any caller that was
+        already waiting refuse rather than publishing a late credential name.
+        """
+        with self._webhook_lock:
+            self._webhook_lookup.close()
+            self._webhook_generation += 1
 
     # ----- Settings export/import -----------------------------------------
 
@@ -2148,36 +2220,53 @@ class Api:
     def settings_import_discard(self, review_id: str) -> bool:
         return self._settingsshare.import_discard(review_id)
 
-    def _with_webhook_status(self, result: dict) -> dict:
-        """Carry the new summary line back on the commit's own return.
+    def _commit_webhook(self, generation, previous, url: str, name: str) -> dict:
+        """Publish one URL/name pair, never a whole-page push that erases drafts.
 
-        The per-field endpoints deliberately do not push a settings
-        payload -- a whole-document delivery rewrites the field the user
-        is still typing in -- and `get_settings` is fetched exactly once,
-        at page load (app.js). Between those two facts, setting a webhook
-        persisted while the page went on saying `not configured` and kept
-        `Show` and `Remove` DISABLED for the rest of the session, which is
-        the state WM.setEnabled is supposed to describe rather than
-        outlive. Found by opening the real window; nothing in the suite
-        renders the page, so it could not have been caught here.
-
-        Returned rather than pushed, and only this one derived value
-        rather than the document, so the fix cannot reintroduce the
-        rewrite-while-typing bug the no-push rule exists to prevent.
-
-        Only on an applied commit: a refusal changed nothing, so the line
-        already on screen is still correct, and overwriting it would
-        replace a description of what IS stored with one of what the user
-        typed.
+        Lock order is webhook admission then settings.update; no network runs
+        under either. Generation fences same-URL attempts, and the transaction
+        rechecks the credential against settings writers outside this lane.
         """
-        if not result["applied"]:
-            return result
-        return dict(
-            result,
-            webhook_status=copy_mod.webhook_status(
-                self._state.settings.get("discord_webhook", "") or ""
-            ),
-        )
+        superseded = "A newer webhook action replaced this one."
+        with self._webhook_lock:
+            if generation != self._webhook_generation:
+                return self._field_refused(superseded)
+            try:
+                with settings_mod.update(self._state.settings) as doc:
+                    if doc.get("discord_webhook", "") != previous:
+                        raise _WebhookSuperseded
+                    committed_name = name
+                    if url == previous and not committed_name:
+                        webhook, _ = discord.parse_webhook(url)
+                        committed_name = discord.safe_webhook_name(
+                            webhook, doc.get("discord_webhook_name", "")
+                        )
+                    if (
+                        doc.get("discord_webhook", "") == url
+                        and doc.get("discord_webhook_name", "") == committed_name
+                    ):
+                        raise _SettingUnchanged
+                    doc["discord_webhook"] = url
+                    doc["discord_webhook_name"] = committed_name
+            except _WebhookSuperseded:
+                return self._field_refused(superseded)
+            except _SettingUnchanged:
+                pass
+            except OSError:
+                # A failed candidate is not yet covered by the configured
+                # credential's logging filter. Never attach exception text.
+                logger.error("Could not persist Discord webhook settings")
+                return self._field_refused("Could not save this to settings.")
+            # Admission generations include in-flight attempts. A separate
+            # committed revision prevents their old hydration snapshots from
+            # sharing the revision of a later successful publication.
+            self._webhook_revision += 1
+            return dict(
+                self._field_ok(),
+                webhook_status=copy_mod.webhook_status(url, committed_name),
+                webhook_name=committed_name,
+                webhook_revision=self._webhook_revision,
+            )
 
     def set_show_eve_tools(self, enabled) -> dict:
         """Show or hide the EVE destinations and sections.

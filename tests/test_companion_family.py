@@ -406,6 +406,144 @@ def _live_companion(native, windows):
     return windows[0]
 
 
+@pytest.mark.parametrize("focus_policy", ["lost-focus", "hide-active"])
+def test_focus_visibility_transitions_publish_status_once(family, focus_policy):
+    native, events, windows, _, _, _ = family
+    window = _live_companion(native, windows)
+    initial = events[-1].payload[0]
+    assert initial["status"] == "live" and initial["binding"] == BINDING
+    hide = (True, False, 0) if focus_policy == "lost-focus" else (False, True, 10)
+    show = (False, False, 0) if focus_policy == "lost-focus" else (False, True, 999)
+    events.clear()
+
+    native.apply_lost_focus_hidden(*show)
+    assert not events
+    native.apply_lost_focus_hidden(*hide)
+    assert window.hidden
+    assert [event.kind for event in events] == ["status"]
+    hidden = events[-1].payload[0]
+    assert hidden == dict(initial, status="hidden-by-focus", binding=BINDING)
+    events.clear()
+
+    native.apply_lost_focus_hidden(*hide)
+    assert not events
+    native.apply_lost_focus_hidden(*show)
+    assert not window.hidden
+    assert [event.kind for event in events] == ["status"]
+    assert events[-1].payload[0] == initial
+    events.clear()
+    native.apply_lost_focus_hidden(*show)
+    assert not events
+
+
+def test_focus_visibility_changes_coalesce_one_status_per_sweep(family):
+    native, events, windows, catalog, _, _ = family
+    other_binding = replace(
+        BINDING, hwnd=11, pid=21, process_created=43, title="Other Mapper"
+    )
+    other = replace(
+        DEFINITION,
+        id="22222222222242228222222222222222",
+        source=replace(
+            DEFINITION.source,
+            title_hint=other_binding.title,
+            last_title=other_binding.title,
+        ),
+    )
+    catalog.rows = (BINDING, other_binding)
+    native.reconcile((spec(), spec(other)), 2)
+    assert len(windows) == 2
+    events.clear()
+
+    native.apply_lost_focus_hidden(True, False, 0)
+
+    assert all(window.hidden for window in windows)
+    assert [event.kind for event in events] == ["status"]
+    assert [row["status"] for row in events[0].payload] == [
+        "hidden-by-focus",
+        "hidden-by-focus",
+    ]
+    assert {row["id"]: row["binding"] for row in events[0].payload} == {
+        DEFINITION.id: BINDING,
+        other.id: other_binding,
+    }
+
+
+@pytest.mark.parametrize("refusal", ["authority", "native-no-change"])
+def test_refused_focus_unhide_does_not_publish_status(family, refusal):
+    native, events, windows, _, authority, _ = family
+    window = _live_companion(native, windows)
+    native.apply_lost_focus_hidden(True, False, 0)
+    events.clear()
+    if refusal == "authority":
+        authority["live"] = False
+    else:
+        window.set_hidden = lambda *args, **kwargs: None
+
+    native.apply_lost_focus_hidden(False, False, 0)
+
+    assert window.hidden
+    assert not events
+
+
+@pytest.mark.parametrize(
+    "retiring,enabled,authorized,failed,error,want,want_error",
+    [
+        (False, True, True, False, None, "hidden-by-focus", None),
+        (
+            True,
+            False,
+            False,
+            True,
+            "Capture failed",
+            "stopping",
+            "Companion cleanup is still pending",
+        ),
+        (False, False, False, True, "Capture failed", "disabled", None),
+        (False, True, False, False, None, "off", None),
+        (False, True, False, True, "Capture failed", "off", "Capture failed"),
+        (False, True, True, True, None, "waiting", None),
+        (
+            False,
+            True,
+            True,
+            True,
+            "Capture failed",
+            "source-unavailable",
+            "Capture failed",
+        ),
+        (
+            False,
+            True,
+            True,
+            False,
+            "Capture failed",
+            "source-unavailable",
+            "Capture failed",
+        ),
+    ],
+)
+def test_hidden_status_preserves_authority_and_error_precedence(
+    family, retiring, enabled, authorized, failed, error, want, want_error
+):
+    native, events, windows, _, authority, _ = family
+    window = _live_companion(native, windows)
+    window.hidden = True
+    window.failed = failed
+    native.live[DEFINITION.id].retiring = retiring
+    native._specs[DEFINITION.id] = spec(replace(DEFINITION, enabled=enabled))
+    authority["live"] = authorized
+    if error is not None:
+        native._errors[DEFINITION.id] = ("source-unavailable", error)
+
+    native._status()
+
+    row = events[-1].payload[0]
+    assert row["status"] == want
+    assert row["error"] == want_error
+    assert row["binding"] == (BINDING if want == "hidden-by-focus" else None)
+
+
 def test_lost_focus_hides_and_restores_live_companions(family):
     """#258: the companion must follow the same hide-on-lost-focus decision
     its EVE previews already obeyed, in both directions."""
@@ -428,6 +566,23 @@ def test_hide_active_hides_a_companion_over_its_own_source_only(family):
     assert window.hidden
     native.apply_lost_focus_hidden(False, True, 999)
     assert not window.hidden
+
+
+@pytest.mark.parametrize(
+    "reverse", [False, True], ids=["foreground-first", "foreground-last"]
+)
+def test_hide_active_hides_only_the_foreground_companion(family, reverse):
+    native, events, _, _, _, _ = family
+    other = replace(DEFINITION, id="22222222222242228222222222222222")
+    definitions = (spec(other), spec()) if reverse else (spec(), spec(other))
+    native.reconcile(definitions, 2)
+    native.live[other.id].binding = replace(BINDING, hwnd=20)
+    events.clear()
+
+    native.apply_lost_focus_hidden(False, True, BINDING.hwnd)
+
+    assert native.live[DEFINITION.id].window.hidden is True
+    assert native.live[other.id].window.hidden is False
 
 
 def test_lost_focus_unhide_requires_live_authority(family):

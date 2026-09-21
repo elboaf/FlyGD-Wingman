@@ -10,6 +10,41 @@ ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "wingman" / "web"
 
 
+def test_wanderer_retains_compact_identity_without_pinning_the_whole_form():
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    context = re.search(
+        r'<header class="scroll-context"[^>]*>(.*?)</header>', html, re.DOTALL
+    )
+    assert context, "Wanderer needs a bounded local context at the scroll edge"
+    assert 'id="wanderer-heading"' in context.group(1)
+    assert 'id="wanderer-health"' in context.group(1)
+    # Heading and authoritative status stay; editable controls and long feedback
+    # must not consume the scrollport or separate the switch from its refusal.
+    for field in ("enabled", "coverage", "url", "token", "enabled-error"):
+        assert f'id="wanderer-{field}"' not in context.group(1)
+    assert html.count('id="wanderer-health"') == 1
+    health = re.search(r'<p[^>]*id="wanderer-health"[^>]*>(.*?)</p>', html, re.DOTALL)
+    assert health and 'id="wanderer-health-label"' in health[1]
+    assert 'class="status-announcement" id="wanderer-health-detail"' in health[1]
+    css = (WEB / "style.css").read_text(encoding="utf-8")
+    rule = re.search(r"^\.scroll-context\s*\{([^}]*)\}", css, re.MULTILINE)
+    assert rule and "position: sticky" in rule.group(1)
+    assert "background: var(--panel)" in rule.group(1)
+    assert "top: 0" in rule.group(1)
+    pane = re.search(r"#settings-previews-wanderer\s*\{([^}]*)\}", css)
+    clearance = (
+        re.search(r"scroll-padding-top:\s*(\d+)px", pane.group(1)) if pane else None
+    )
+    assert clearance and int(clearance.group(1)) >= 62 + 4
+    announcement = re.search(r"\.status-announcement\s*\{([^}]*)\}", css)
+    assert announcement and "position: absolute" in announcement[1]
+    assert "clip-path: inset(50%)" in announcement[1]
+    assert (
+        "display: none" not in announcement[1]
+        and "visibility: hidden" not in announcement[1]
+    )
+
+
 def test_wanderer_runtime():
     node = shutil.which("node")
     assert node, "Node is required for Wanderer response-ownership coverage"
@@ -168,10 +203,11 @@ def test_wanderer_card_is_in_previews_with_accessible_safe_controls():
         previews,
     )
     assert re.search(r'id="wanderer-health"[^>]*role="status"', previews)
+    assert re.search(r'<p class="operational-status" id="wanderer-health"', previews)
+    assert re.search(r'<p class="hint" id="wanderer-coverage"', previews), (
+        "Only the combined health/coverage headline is authoritative; recovery is subordinate"
+    )
     for state in ("health", "coverage"):
-        assert re.search(
-            rf'<p class="operational-status" id="wanderer-{state}"', previews
-        ), "Both connection and coverage are operational information, not static help"
         assert previews.index(f'id="wanderer-{state}"') < previews.index(
             'id="wanderer-url"'
         )

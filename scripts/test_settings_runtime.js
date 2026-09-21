@@ -78,7 +78,7 @@ function page(hydrate = true, fightrecorder = false, previewSize = false) {
   const ids = [
     'f-privacy', 'f-category', 'f-recdir', 'f-gamelogs', 'f-webhook',
     'show-eve-tools', 'start-on-login', 'webhook-status', 'btn-webhook-show',
-    'btn-webhook-remove', 'detect-note', 'gamelogs-note', 'about-version',
+    'btn-webhook-remove', 'btn-webhook-identify', 'detect-note', 'gamelogs-note', 'about-version',
     'msg-general', 'msg-about', 'msg-uploads', 'msg-notify', 'msg-recdir',
     'msg-gamelogs', 'msg-discord', 'category-draft', 'btn-auth', 'tos-link', 'btn-update-check',
     'btn-update-download', 'btn-update-install', 'restore-preview-positions',
@@ -88,7 +88,7 @@ function page(hydrate = true, fightrecorder = false, previewSize = false) {
     // load, so an absent id would leave every registration below it dead.
     'btn-settings-export', 'btn-settings-import', 'msg-backup'
   ];
-  if (fightrecorder) ids.push('fr-status', 'btn-fr-check', 'btn-fr-update', 'msg-fightrecorder',
+  if (fightrecorder) ids.push('fr-status', 'fr-latest', 'btn-fr-check', 'btn-fr-update', 'msg-fightrecorder',
     'preview-minimize-inactive', 'preview-minimize-inactive-status', 'sigbar-enabled', 'sigbar-enabled-status');
   if (previewSize) ids.push('preview-default-size', 'preview-default-size-status');
   const elements = Object.fromEntries(ids.map(id => [id, new Element(id)]));
@@ -131,6 +131,7 @@ function page(hydrate = true, fightrecorder = false, previewSize = false) {
     return notify.find(input => input.checked) || null;
   };
   const calls = [];
+  const confirmations = [];
   const restoreEvents = [];
   document.addEventListener('wm:preview-restore-positions', event => restoreEvents.push(event.detail.enabled));
   const gates = [];
@@ -142,7 +143,7 @@ function page(hydrate = true, fightrecorder = false, previewSize = false) {
     },
     apply_eve_gate: value => gates.push(value),
     handle: () => {},
-    confirm: () => Promise.resolve(true),
+    confirm: (...args) => { confirmations.push(args); return Promise.resolve(true); },
     send: (method, ...args) => {
       if (method === 'auth_labels') return Promise.resolve({});
       let resolve;
@@ -156,13 +157,17 @@ function page(hydrate = true, fightrecorder = false, previewSize = false) {
     filename: 'wingman/web/settings.js'
   });
   const api = {
-    el: id => elements[id], calls, gates, notify, restoreEvents,
-    hydrate(settings = {}) {
+    el: id => elements[id], calls, confirmations, gates, notify, restoreEvents,
+    section(name) { document.dispatchEvent({type: 'wm:section', detail: name}); },
+    hydrate(settings = {}, webhook_revision = 0) {
       document.dispatchEvent({type: 'wm:settings', detail: {
+        webhook_revision,
         settings: Object.assign({privacy: 'unlisted', category: '20', notify_mode: 'toast',
           show_eve_tools: true, recording_dir: 'C:\\old', gamelogs_dir: 'C:\\logs',
           discord_webhook: '', preview: {restore_preview_positions: true}}, settings),
-        start_on_login: false, detected: {}, webhook_status: 'not configured'
+        start_on_login: false, detected: {}, webhook_status: settings.discord_webhook
+          ? (settings.discord_webhook_name ? 'Webhook: ' + settings.discord_webhook_name
+             : 'Webhook saved · name unavailable') : 'No Discord webhook saved'
       }});
     },
     focus(id) { document.activeElement = elements[id]; },
@@ -385,69 +390,82 @@ test('label size stays editable with previews and labels off', async () => {
   assert.equal(p.el('preview-label-size').value, 'large');
 });
 
-for (const latest_tag of ['', 'v1.2.3']) {
-  test('FightRecorder unknown currency does not claim a verified update: ' + latest_tag, async () => {
+for (const installed of [false, true]) {
+  test('FightRecorder local presence is not a release claim: ' + installed, async () => {
     const p = page(true, true);
-    await p.reply('fightrecorder_status', {installed: true, detected: true, path: 'synthetic.dll',
-      up_to_date: null, latest_tag, error: ''}, [false]);
-    assert.match(p.el('fr-status').textContent, /Installed.*update status unknown/i);
-    if (!latest_tag) assert.match(p.el('fr-status').textContent, /Check for updates/);
-    if (latest_tag) assert.ok(p.el('fr-status').textContent.includes(latest_tag));
-    assert.doesNotMatch(p.el('fr-status').textContent, /update is available|up to date/i);
-    assert.equal(p.el('btn-fr-update').textContent, 'Install latest');
-    assert.equal(p.el('btn-fr-update').hidden, false);
-    assert.equal(p.el('btn-fr-update').disabled, false);
-    assert.equal(p.calls.length, 0, 'no automatic check or install');
-    p.fire('btn-fr-check', 'click');
-    await p.reply('fightrecorder_status', {installed: true, detected: true, path: 'synthetic.dll',
-      up_to_date: false, latest_tag: 'v1.2.4', error: ''}, [true]);
-    assert.match(p.el('fr-status').textContent, /update is available.*v1\.2\.4/i);
-    assert.equal(p.el('btn-fr-update').textContent, 'Update');
-    assert.equal(p.el('btn-fr-update').hidden, false);
-    p.fire('btn-fr-check', 'click');
-    await p.reply('fightrecorder_status', {installed: true, detected: true, path: 'synthetic.dll',
-      up_to_date: true, latest_tag: 'v1.2.4', error: ''}, [true]);
-    assert.match(p.el('fr-status').textContent, /Up to date/);
+    await p.reply('fightrecorder_status', {installed, detected: true,
+      up_to_date: null, latest_tag: '', error: ''}, [false]);
+    assert.equal(p.el('fr-status').textContent, installed ? 'Installed' : 'Not installed');
     assert.equal(p.el('btn-fr-update').hidden, true);
+    assert.equal(p.el('fr-latest').hidden, true);
+    assert.equal(p.calls.length, 0, 'no automatic check or install');
+  });
+}
+
+for (const [change, text, action, latest] of [
+  [{up_to_date: true}, 'Installed · v1.2.5 · Up to date', null, ''],
+  [{up_to_date: false}, 'Installed · release version unavailable', 'Update', 'Latest: v1.2.5'],
+  [{installed: false}, 'Not installed', 'Install', 'Latest: v1.2.5'],
+  [{up_to_date: null}, 'Installed · release version unavailable', null, 'Latest: v1.2.5'],
+  [{error: 'Could not check releases.'}, 'Installed', null, ''],
+  [{installed: false, error: 'Could not check releases.'}, 'Not installed', null, ''],
+  [{detected: false, installed: false}, 'Not installed', null, 'Latest: v1.2.5']
+]) {
+  test('FightRecorder explicit check matrix: ' + JSON.stringify(change), async () => {
+    const p = page(true, true);
+    const local = {installed: true, detected: true, up_to_date: null, latest_tag: '', error: ''};
+    await p.reply('fightrecorder_status', local, [false]);
+    p.fire('btn-fr-check', 'click');
+    await p.reply('fightrecorder_status', Object.assign({}, local, {latest_tag: 'v1.2.5'}, change), [true]);
+    assert.equal(p.el('fr-status').textContent, text);
+    assert.equal(p.el('fr-latest').textContent, latest);
+    assert.equal(p.el('fr-latest').hidden, !latest);
+    assert.equal(p.el('btn-fr-update').hidden, !action);
+    assert.equal(/\bacc\b/.test(p.el('btn-fr-update').className), !!action);
+    if (action) assert.equal(p.el('btn-fr-update').textContent, action);
+    if (change.error) {
+      assert.equal(p.el('msg-fightrecorder').textContent, change.error);
+      assert.equal(p.el('msg-fightrecorder').hidden, false);
+    }
     assert.equal(p.calls.length, 0);
   });
 }
 
-test('FightRecorder install emphasis follows known need without disabling unknown-state recovery', async () => {
+test('FightRecorder failed recheck retires a previous install offer and preserves local presence', async () => {
   const p = page(true, true);
-  const button = p.el('btn-fr-update');
-  const local = {installed: true, detected: true, path: 'synthetic.dll',
-    up_to_date: null, latest_tag: '', error: ''};
+  const local = {installed: true, detected: true, up_to_date: null, latest_tag: '', error: ''};
   await p.reply('fightrecorder_status', local, [false]);
-  assert.doesNotMatch(button.className, /\bacc\b/);
-  assert.match(button.className, /\bbtn\b/);
-  assert.equal(button.disabled, false);
-  assert.equal(button.hidden, false);
-  p.fire('btn-fr-update', 'click');
-  assert.equal(button.disabled, true);
-  await p.reply('update_fightrecorder', {ok: true, tag: 'v1.2.4'}, []);
-  await p.reply('fightrecorder_status', local, [false]);
-  assert.doesNotMatch(button.className, /\bacc\b/);
-  assert.equal(button.disabled, false);
-  for (const [change, accented, hidden] of [
-    [{up_to_date: false, latest_tag: 'v1.2.5'}, true, false],
-    [{up_to_date: null}, false, false],
-    [{installed: false}, true, false],
-    [{up_to_date: true}, false, true],
-    [{up_to_date: false}, true, false],
-    [{error: 'Could not check releases.'}, false, true],
-    [{installed: false}, true, false],
-    [{detected: false}, false, true]
-  ]) {
-    p.fire('btn-fr-check', 'click');
-    await p.reply('fightrecorder_status', Object.assign({}, local, change), [true]);
-    assert.equal(/\bacc\b/.test(button.className), accented, JSON.stringify(change));
-    assert.match(button.className, /\bbtn\b/);
-    assert.equal(button.hidden, hidden);
-    assert.equal(button.disabled, false, 'emphasis never changes existing admission');
-  }
-  assert.equal(p.calls.length, 0);
+  p.fire('btn-fr-check', 'click');
+  await p.reply('fightrecorder_status', Object.assign({}, local, {latest_tag: 'v1.2.5', up_to_date: false}), [true]);
+  assert.equal(p.el('btn-fr-update').hidden, false);
+  p.fire('btn-fr-check', 'click');
+  assert.equal(p.el('btn-fr-update').hidden, true, 'previous offer retires when a new check starts');
+  await p.reply('fightrecorder_status', null, [true]);
+  assert.equal(p.el('fr-status').textContent, 'Installed');
+  assert.equal(p.el('btn-fr-update').hidden, true);
+  assert.equal(p.el('msg-fightrecorder').hidden, false);
 });
+
+for (const refreshed of ['installed', 'absent', 'unavailable']) {
+  test('FightRecorder installation failure survives its local refresh: ' + refreshed, async () => {
+    const p = page(true, true);
+    const local = {installed: true, detected: true, up_to_date: null, latest_tag: '', error: ''};
+    await p.reply('fightrecorder_status', local, [false]);
+    p.fire('btn-fr-check', 'click');
+    await p.reply('fightrecorder_status', Object.assign({}, local, {latest_tag: 'v1.2.5', up_to_date: false}), [true]);
+    p.fire('btn-fr-update', 'click');
+    assert.equal(p.el('btn-fr-update').disabled, true);
+    await p.reply('update_fightrecorder', {ok: false, error: 'OBS is holding the plugin open.'}, []);
+    await p.reply('fightrecorder_status', refreshed === 'unavailable' ? null
+      : Object.assign({}, local, {installed: refreshed === 'installed', detected: refreshed === 'installed'}), [false]);
+    assert.equal(p.el('msg-fightrecorder').hidden, false);
+    assert.equal(p.el('msg-fightrecorder').textContent, 'OBS is holding the plugin open.');
+    assert.equal(p.el('fr-status').textContent, refreshed === 'absent' ? 'Not installed' : 'Installed');
+    assert.equal(p.el('btn-fr-update').hidden, true);
+    assert.equal(p.el('btn-fr-check').disabled, false);
+    assert.equal(p.calls.length, 0, 'refresh never adds another network request');
+  });
+}
 
 test('category draft guidance is associated with its input, separate from shared outcomes', () => {
   const field = markup.getElementById('f-category');
@@ -844,6 +862,128 @@ test('folder acknowledgement does not label a later draft as saved', async () =>
   await p.submit('f-recdir', 'missing', 'keydown');
   await p.reply('set_folder', refused);
   assert.equal(p.el('f-recdir').value, 'C:\\accepted');
+});
+
+test('webhook metadata lookup is explicit, never hydration, route entry, Show or blur', async () => {
+  const p = page(false);
+  p.fire('btn-webhook-identify', 'click');
+  await turn();
+  assert.equal(p.calls.length, 0, 'no action before hydration');
+  p.hydrate({discord_webhook: 'https://discord.com/api/webhooks/1/accepted'});
+  assert.equal(p.el('webhook-status').textContent, 'Webhook saved · name unavailable');
+  assert.equal(p.el('btn-webhook-identify').hidden, false);
+  p.section('uploading');
+  p.fire('btn-webhook-show', 'click');
+  p.fire('f-webhook', 'blur');
+  await turn();
+  assert.equal(p.calls.length, 0);
+  p.fire('btn-webhook-identify', 'click');
+  await turn();
+  assert.equal(p.calls.length, 1);
+  await p.reply('identify_discord_webhook', Object.assign({}, accepted,
+    {webhook_status: 'Webhook: Fleet recordings', webhook_name: 'Fleet recordings'}), []);
+  assert.equal(p.el('webhook-status').textContent, 'Webhook: Fleet recordings');
+  assert.equal(p.el('btn-webhook-identify').hidden, true);
+  assert.equal(p.el('f-webhook').value, 'https://discord.com/api/webhooks/1/accepted');
+});
+
+test('saved webhook lookup failure warns without reverting a successfully saved URL', async () => {
+  const p = page();
+  const url = 'https://discord.com/api/webhooks/1/accepted';
+  await p.submit('f-webhook', url, 'keydown');
+  await p.reply('set_discord_webhook', Object.assign({}, accepted, {
+    webhook_status: 'Webhook saved · name unavailable', webhook_name: '',
+    warning: 'Webhook saved, but its name could not be identified.'
+  }));
+  assert.equal(p.el('f-webhook').value, url);
+  assert.equal(p.el('btn-webhook-identify').hidden, false);
+  assert.match(p.el('msg-discord').textContent, /saved.*name could not be identified/);
+  assert.match(p.el('msg-discord').className, /warn/);
+  assert.equal(p.el('msg-discord').hidden, false);
+  assert.equal(p.el('btn-webhook-remove').disabled, false);
+});
+
+for (const response of [refused, null]) {
+  test('Identify refusal preserves the saved webhook and permits retry: ' + JSON.stringify(response), async () => {
+    const p = page();
+    p.hydrate({discord_webhook: 'https://discord.com/api/webhooks/1/accepted'});
+    p.fire('btn-webhook-identify', 'click');
+    await turn();
+    await p.reply('identify_discord_webhook', response);
+    assert.equal(p.el('f-webhook').value, 'https://discord.com/api/webhooks/1/accepted');
+    assert.equal(p.el('webhook-status').textContent, 'Webhook saved · name unavailable');
+    assert.equal(p.el('btn-webhook-identify').hidden, false);
+    assert.equal(p.el('msg-discord').hidden, false);
+  });
+}
+
+test('Identify shares Save/Remove ordering, preserves drafts and never overwrites newer identity', async () => {
+  const p = page();
+  p.hydrate({discord_webhook: 'https://discord.com/api/webhooks/1/accepted'});
+  p.fire('btn-webhook-identify', 'click');
+  await turn();
+  await p.submit('f-webhook', 'https://discord.com/api/webhooks/2/new', 'keydown');
+  p.edit('f-webhook', 'unsubmitted draft');
+  p.hydrate({discord_webhook: 'https://discord.com/api/webhooks/1/accepted'});
+  assert.equal(p.calls.some(call => call.method === 'set_discord_webhook'), false);
+  await p.reply('identify_discord_webhook', Object.assign({}, accepted,
+    {webhook_status: 'Webhook: Old name', webhook_name: 'Old name'}));
+  await p.reply('set_discord_webhook', Object.assign({}, accepted,
+    {webhook_status: 'Webhook: New name', webhook_name: 'New name'}));
+  assert.equal(p.el('webhook-status').textContent, 'Webhook: New name');
+  assert.equal(p.el('f-webhook').value, 'unsubmitted draft');
+  assert.equal(p.el('btn-webhook-identify').hidden, true);
+  p.fire('btn-webhook-remove', 'click');
+  await turn();
+  assert.match(p.confirmations[0][1], /Webhook: New name/);
+  assert.doesNotMatch(p.confirmations[0][1], /api\/webhooks|unsubmitted draft/);
+  await p.reply('clear_discord_webhook', Object.assign({}, accepted,
+    {webhook_status: 'No Discord webhook saved', webhook_name: ''}));
+  assert.equal(p.el('btn-webhook-identify').hidden, true);
+  assert.equal(p.el('webhook-status').textContent, 'No Discord webhook saved');
+  assert.equal(p.el('f-webhook').type, 'password');
+});
+
+for (const operation of ['identify', 'save', 'clear']) {
+  test('old hydration after ' + operation + ' acknowledgement cannot restore an obsolete webhook pair', async () => {
+    const p = page();
+    const old = 'https://discord.com/api/webhooks/1/accepted';
+    const next = 'https://discord.com/api/webhooks/2/new';
+    p.hydrate({discord_webhook: old}, 0);
+    if (operation === 'identify') p.fire('btn-webhook-identify', 'click');
+    else if (operation === 'save') await p.submit('f-webhook', next, 'keydown');
+    else p.fire('btn-webhook-remove', 'click');
+    await turn();
+    const name = operation === 'clear' ? '' : 'Newest name';
+    const status = operation === 'clear' ? 'No Discord webhook saved' : 'Webhook: Newest name';
+    const method = {identify:'identify_discord_webhook', save:'set_discord_webhook', clear:'clear_discord_webhook'}[operation];
+    await p.reply(method, Object.assign({}, accepted,
+      {webhook_revision: 1, webhook_name: name, webhook_status: status}));
+    p.hydrate({discord_webhook: old, category: '22'}, 0);
+    assert.equal(p.el('webhook-status').textContent, status);
+    assert.equal(p.el('btn-webhook-identify').hidden, true);
+    assert.equal(p.el('btn-webhook-remove').disabled, operation === 'clear');
+    assert.equal(p.el('f-webhook').value, operation === 'clear' ? '' : operation === 'save' ? next : old);
+    assert.equal(p.el('f-category').value, '22', 'webhook fence must not discard unrelated imported settings');
+    await p.submit('f-webhook', 'invalid', 'keydown');
+    await p.reply('set_discord_webhook', refused);
+    assert.equal(p.el('f-webhook').value, operation === 'clear' ? '' : operation === 'save' ? next : old,
+      'refusal baseline must stay at the acknowledged URL');
+    p.hydrate({discord_webhook: next, discord_webhook_name: 'Later name'}, 2);
+    assert.equal(p.el('webhook-status').textContent, 'Webhook: Later name');
+  });
+}
+
+test('Identify cannot jump ahead of a pending URL save', async () => {
+  const p = page();
+  p.hydrate({discord_webhook: 'https://discord.com/api/webhooks/1/accepted'});
+  await p.submit('f-webhook', 'https://discord.com/api/webhooks/2/new', 'keydown');
+  p.fire('btn-webhook-identify', 'click');
+  await turn();
+  assert.equal(p.calls.some(call => call.method === 'identify_discord_webhook'), false);
+  await p.reply('set_discord_webhook', Object.assign({}, accepted,
+    {webhook_status: 'Webhook: New name', webhook_name: 'New name'}));
+  assert.equal(p.el('btn-webhook-identify').hidden, true);
 });
 
 test('webhook acknowledgement captures the trimmed submission, not the later input', async () => {

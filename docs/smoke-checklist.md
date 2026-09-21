@@ -15,6 +15,299 @@ dev checks are separate evidence, not installed Windows/WebView2 acceptance.
 
 Run on Windows against a real install before each release.
 
+## Screenshot UX step 7 — installed Windows acceptance NOT RUN
+
+Formations and Setup import use synthetic presentation checks at 1015×633 and
+840×625. Fixtures do not prove formation editing, balancing, probe operations,
+clipboard access, parsing, profile creation, filesystem writes or persistence.
+Repeat installed WebView2 checks at 100/125/150/200% scaling. Real Save, Create,
+import/export and disposable-filesystem verification require separate approval.
+Setup sharing and the step-6 Profiles base/copy/backup/identity surfaces are not
+redesigned by this slice.
+
+- [ ] Resting Formations has no selected probe. Focus or interact with each of
+      probes 1–4, then all eight: the owning row and original numbered marker
+      remain associated despite SVG depth order. The dashed row outline and marker
+      ring/bold number remain distinguishable without color. Keyboard focus has
+      its own solid ring; moving focus to a toolbar control retains selection.
+      Hover alone selects nothing; dragging the diagram still only rotates it.
+- [ ] Repaint or resize the same draft: selection remains on the same probe.
+      Switching formation, removing/replacing the selected probe, entering or
+      cancelling import, changing candidate, replacing the account document or
+      leaving clears it. Removing an earlier probe must not select the next probe
+      accidentally. Selection alone never dirties a draft, saves or crosses the bridge.
+- [ ] Screen readers identify numbered row groups and the selected diagram probe,
+      without a fake selectable-grid role or extra live announcement. Check actual
+      AT speech, forced colors, marker-label clearance, long formation/account
+      names and input focus at the floor. These native checks remain open.
+- [ ] Save explains clean/loading/saving/missing-revision or the existing invalid
+      formation reason. Balance distinguishes no formation/probes from already
+      balanced; Launches as drawn stays readable and neutral. Closing EVE remains
+      standing Save guidance, never a fabricated disabled-state reason. Preserve
+      complete save failures and warnings under their original live owner.
+- [ ] Formation Source offers explicit Review. Successful Review shows names and
+      previews, with source retained behind its disclosure and no competing parse
+      Review. Preview selects a candidate diagram only. Name conflicts remain next
+      to their inputs; corrections remain after source disclosure/resize/unrelated
+      updates. Actual source edits invalidate review and re-enable explicit Review;
+      failed parsing stays retryable. Account/local-draft destination and later Save
+      boundary remain beside Add. Do not perform real Add/Save during render checks.
+- [ ] Setup source entry gives Review priority. Walk native YAML requiring a
+      ship-label decision, retain the labels, then authorize Review: the correction
+      and its instruction collapse with the entire entry, not as a stale fragment.
+      Edit restores the eligible checked policy and retained source without
+      invalidating authorization; actual source edits retire the old choice.
+      Valid review collapses the entire entry form, not a fragment behind the title. Review new profile is the current
+      stage, recipient/base/new destination sit by Create, and non-overwrite/Cancel
+      safety remains visible. Edit/Change reveals retained input; opening alone
+      does not invalidate a valid review, but actual input does. A summary needing
+      corrections must not hide those controls or authorize Create.
+- [ ] Setup Review and Formation Save/Balance/Add keep owned keyboard focus when
+      disabling, both with immediate and deferred browser blur. Check pending,
+      success, refusal, conflict and retry; useful mounted outcome/note owners
+      retain focus without scroll jumps. Move focus to another control or dialog,
+      change route/candidate/formation, or supersede a request: old replies must
+      not claim focus. Forced-color row/marker cues still use forced-mode root tokens.
+- [ ] Tab/Shift+Tab reaches Edit, source controls, Cancel and Create without hidden
+      focus or scroll jumps. Review/operation completion respects an open dialog's
+      focus. Before Create, Cancel creates nothing; after it is sent, Back does not
+      cancel publication. Leaving clears the private draft, but a late receipt must
+      report only its own outcome without stealing a newer route/draft/focus.
+- [ ] At both sizes, work scrollers and normal-flow action areas retain ownership;
+      no horizontal overflow, obscured selection or clipped prior-stage fragments.
+      Accepted Share setup still names the same source/snapshot, offers Copy setup
+      and Save file, and retains its non-destructive wording and fixture staging.
+- [ ] Separately authorize real controller/codec/filesystem acceptance: validate
+      corrected-name Add versus later Save, backup/recovery and EVE-closed refusals;
+      Review remains read-only and Create makes a new profile without overwriting
+      existing profiles. Browser fixtures and mocked bridge results prove none of
+      these native outcomes.
+
+## Screenshot UX step 6 — installed Windows acceptance NOT RUN
+
+Character access and Profiles use bounded synthetic Chromium checks at 1015×633
+and 840×625. Staged character data does not prove authorization. Profiles fixtures
+do not prove account identification, filesystem access, codec, copy, backup,
+restore, delete or persistence. None of those live operations were performed.
+Repeat installed WebView2 checks at 100/125/150/200% scaling with separate approval
+for native, authorization and filesystem operations.
+
+- [ ] Character / Skills / Fittings / Actions headers align with their cells.
+      Ready, Access needed and Access expired remain complete words at the floor;
+      both capability columns and the row action remain visible. The authentication
+      date is absent from the table, not the payload or date filter. Ready and
+      legacy Authorized searches, including multiword name/status/date queries,
+      still work. Long names truncate with full accessible identity and title.
+- [ ] With 50 characters, scroll through fractional positions: the header remains
+      opaque and no row fragments bleed through its top edge. Open the last visible
+      row's menu; it stays above the status strip and inside the viewport. Escape
+      returns focus; Tab/Shift+Tab follows row order. Scroll/resize dismisses stale
+      placement, restoring only owned menu focus without a scroll jump.
+- [ ] Waiting still leaves Authenticate unavailable and Cancel available, with the
+      same browser instructions. EVE chooses the character. Failed reads retain
+      the prior roster/filter; partial cleanup remains visible after the row leaves
+      and is never presented as complete success. Confirm announcements with AT.
+- [ ] Profiles base and account identification remain substantially unchanged.
+      Copy settings stays with source, profile/server, scope and target count in
+      one action bar. At the floor the summary wraps above the action and its EVE
+      advisory. No second live summary or target-list scroller is introduced.
+- [ ] Character/account scope, source/profile/server changes, filter, Select shown
+      and Clear selection retain their semantics. The count matches selected,
+      shown, non-source targets; clearing a filter restores hidden selections.
+      Zero targets disables Copy. EVE-open is still an advisory, not a new block;
+      missing codec remains an explicit whole-file warning. Long identities do not
+      cause horizontal scrolling inside the work pane or separate action from context.
+- [ ] Backup ellipsis announces its own target and backup time, with native
+      expanded/collapsed semantics. Restore remains neutral. Delete remains inside
+      the disclosure and destructive. Check a nonfinal DOM row at the viewport
+      bottom: the popup opens upward and stays within the route. Escape restores
+      the summary; Tab/Shift+Tab remains native. Scroll/resize never strands focus
+      in hidden Delete or takes focus from an outside control. Rows still scroll
+      fully clear of the status bar; no additional footer workaround was added.
+- [ ] With separately authorized disposable files, verify existing Copy/Restore
+      confirmations and backup-before-write behavior, per-target failures, and
+      Delete confirmation. These filesystem/native checks remain open; Node or
+      Chromium doubles are not evidence of successful writes or recovery.
+
+## Screenshot UX step 5 — installed Windows acceptance NOT RUN
+
+Fleet telemetry and Alerts use bounded synthetic Chromium checks at 1015×633 and
+840×625. These are presentation evidence only: no live authGD, ESI, gamelog source,
+EVE client, Fleet Bar or alert delivery is established. Repeat installed WebView2
+checks at 100/125/150/200% scaling; native/live-service checks need separate approval.
+
+- [ ] Fleet overview precedes Local display and External sharing. All four facts
+      start Unknown, never invented Off or zero. Fleet Bar On/Off and local sharing
+      On/Off are independent; preference drafts do not overwrite accepted overview
+      facts. Local settings remain display-only; hidden characters can be restored
+      offline, and Reset width restores the saved 500px preference.
+- [ ] Setup saved/awaiting approval is not Paired merely because a binding exists.
+      authGD participation is labelled last observed On/Off or unknown. Applied
+      local Off, last-observed server On, pending intent and a save failure can
+      coexist without implying transmission. Full state remains in the original
+      consent live region without repeating it visually in the subsection.
+- [ ] Connection Refresh belongs to pairing/source state, not a new local-roster
+      read. Destination, actionable reasons, consent warnings and eligibility stay
+      visible with their owning controls. Privacy appears once: sparse current
+      incoming/outgoing DPS and incoming tackle/NEUT observations, including
+      observed tackle names, never raw logs or history. Combat approval, account
+      automatic verification consent and this PC's sharing remain independent.
+      Pair/Grant/Start never enable sharing.
+- [ ] Current verification precedes new-attempt controls. Pending/local work has
+      its own labelled worklist; an in-flight Start with no UUID stays named local
+      feedback. Previous attempts is quieter history. Stop stays attached to the
+      correct attempt, retains focus on movement, and disappears only for settled
+      history. Pending work can revive the same keyed history row/control.
+- [ ] Stopped/failed-only reasons and the next action remain outside collapsed
+      history. No UUID or array ordering implies latest. Unknown reads preserve
+      same-binding last-known labels without enabling mutations; a new binding
+      discards them. Empty new-boss selection never contradicts an existing source.
+- [ ] At both sizes, check long reasons, Running/Offline/unknown local groups,
+      native disclosures, Tab/Shift+Tab, retained focus/scroll and no horizontal
+      overflow. Heading hierarchy uses words, not color alone or side stripes.
+- [ ] Alerts Off has one standing operational sentence and leaves checked event,
+      sound and behavior preferences editable. Waiting for Previews/folder is
+      not an error. Reader failure retains its specific reason and never stale
+      Watching names. A running reader with names says Watching plus those names;
+      with no names it says Watching gamelogs. Names are monitored log sources,
+      not the running-client roster. Partial/complete/X-of-Y/all/missing-character
+      claims are deliberately deferred; no backend roster join belongs here.
+- [ ] Health, write outcomes, event Test, volume, collision, Advanced field and
+      Custom status owners remain mounted under their existing lifecycle. Equal
+      polls do not reannounce unchanged text or clear another owner's refusal.
+      No-events configuration considers custom rules; custom matcher degradation
+      remains separate from reader state.
+- [ ] Advanced Flashes/Speed retain independent ordered writes, refusal messages,
+      newer drafts and hydration fences. Confirm timed/Test/foreground vs persistent
+      behavior still reads accurately. Custom Alerts empty state/editor and Gamelog
+      folder Browse/Detect/Enter commits are unchanged. No blur commits added.
+
+## Screenshot UX step 4 — installed Windows acceptance NOT RUN
+
+Bookmarks/Previews use bounded synthetic Chromium checks at 1015×633 and 840×625.
+These do not establish installed WebView2, native keybind/geometry/crop behavior
+or screen-reader speech. Repeat at 100/125/150/200% Windows scaling; native/live
+checks require separate authorization. Do not launch EVE, native previews or a
+picker merely to stage these screenshots.
+
+- [ ] Running sits beside Register keybinds in EVE as a text-bearing pill. Off is
+      quiet; stopped/stale/unavailable errors retain their full recovery text in
+      the same live status owner. Running with no binds/windows still shows its
+      registration blockers. An Off/error push never leaves Running visible.
+      Quiet Off leaves the live owner exposed but empty; identical status polls
+      must not repeatedly announce unchanged text.
+- [ ] The status-strip SIG toggle remains 44×32px beside the readout and DPS,
+      with its tooltip, accessible name, push-owned pressed/active state and
+      existing toggle behavior. EVE windows Refresh belongs to that card's header;
+      remembered absent windows remain marked not running with their identity intact.
+- [ ] Windows disclosures keep their defaults. Appearance/Placement and size
+      controls use related columns when wide and stack at the floor. Each helper
+      and refusal remains beside its control; lock/minimize exceptions retain
+      their ownership. Tab changes retain drafts, disclosures and scroll.
+- [ ] Character headers, Offline boundaries and cycle-group context stay opaque
+      at fractional scroll edges. Group context releases at its own panel end;
+      the manager never sticks. Long names keep a deliberate bounded track and
+      full accessible identity; Clear/Edit/Configure and reorder/remove stay usable.
+- [ ] Forward/Back share a row when wide, stack at the floor, and preserve keyboard
+      order. Unconflicted binds, Clear, member Remove and Add-member controls also
+      clear wrapped sticky headings when focused, without moving pointer-down
+      targets. Group drafts/focus/selection survive applicable refreshes. Tab/section/
+      route leave disarms capture; late capture/dialog answers cannot save a key
+      or steal focus after a newer interaction.
+- [ ] Bookmark overlap is a concise warning with visibly actionable Open Bookmarks.
+      The full owner, chord, consequence and recovery remain accessible from the
+      owning keybind. Local conflicts and real registration failures retain their
+      distinct meaning; latent overlap is not a destructive error.
+- [ ] Configure gives geometry/crop the detail width. Observed placement comes from
+      current geometry, never Size defaults or a queue ACK. Unknown stays unknown.
+      Saved crop controls remain usable under their existing prerequisites; long
+      status text and Size/Copy do not collide or cause horizontal overflow.
+- [ ] Copy's target/source identity remains explicit. Only a fully readable complete
+      selected geometry loses the repeated detail. Long/clipped captions and legacy
+      sources keep full detail; resizing or changing selection restores it when
+      needed. Copy/Cancel, Tab/Shift+Tab trap, Escape/scrim, queued focus restoration,
+      stale-answer revocation and current-geometry revision fencing remain intact.
+- [ ] Separate native acceptance confirms named layouts remain explicit snapshots,
+      Size ACKs never override observation, and real EVE clients are never moved
+      or resized by Wingman. Browser fixtures do not close this gate.
+
+## Screenshot UX step 3 — installed Windows acceptance NOT RUN
+
+Companions/Wanderer have synthetic Chromium checks at 1015×633 and 840×625,
+not installed WebView2 acceptance. Repeat at 100/125/150/200% Windows scaling.
+Use presentation fixtures only for captures; do not contact live Wanderer or
+select native source windows just to populate these screens.
+
+- [ ] Empty/list Companions gives Add modest primary prominence. Open Add:
+      Choose source is the sole accent; Cancel and successful completion restore
+      Add. Source enumeration/selection leaves no competing accent behind the
+      unchanged compact chooser. Native disclosure chevrons respond to Enter/Space.
+- [ ] Live and Waiting for source are readable without color. Enabled is close
+      to name/status with its own refusal. Off, Disabled, selection-needed,
+      stopping and failures stay distinct; Waiting does not claim a closed source.
+      With authorized native sources, hiding/restoring by focus settings changes
+      Hidden by focus settings/Live through the same operational live owner;
+      a source-foreground ring alone never proves Live. Show previews when active
+      appears only under committed hide-on-lost-focus, with its own adjacent
+      refusal. Neither checkbox's reply clears the other's refusal or a label draft.
+- [ ] Expanded rows retain name/status only and release at their own boundary.
+      Long errors remain fully readable outside the header. Health pushes retain
+      draft inputs, current focus/selection and open details. Tab/Shift+Tab clears
+      the header; Enable and its refusal always scroll together. With a screen
+      reader focused on Reselect region, a refusal announces its full reason,
+      not only Error; later row errors likewise remain in the same live owner.
+- [ ] Wanderer reads Connected · Names available for 2 of 3 previews (not proof
+      of visible label pixels). Full/partial/expired availability, Off, waiting,
+      stopped/unavailable and connection failures remain truthful. Explicit Test
+      success while Off does not change the authoritative Off headline.
+- [ ] Map connection and its concise status remain pinned. Enable/refusal, long
+      recovery and Test outcomes stay in normal flow; controls can be focused
+      and read below the header at the floor. Tab changes preserve drafts/scroll;
+      older health/replies never overwrite newer URL/token edits.
+- [ ] Test still saves the submitted URL/token binding; blank token reuses only
+      the same normalized saved binding. Remove confirms and clears credentials,
+      not the enable preference. Neither visit nor presentation triggers network.
+- [ ] With authorized real sources separately from screenshot staging, confirm
+      capture, crop, activation and geometry behavior is unchanged: only Wingman's
+      preview moves/resizes, never the source window. These native checks remain open.
+
+## Screenshot UX step 2 — installed Windows acceptance NOT RUN
+
+Uploading/General has bounded synthetic Chromium checks at 1015×633 and
+840×625, not installed WebView2 acceptance. Run at 100/125/150/200% scaling;
+record build, checkout and scaling. No live webhook was used in automated tests.
+
+- [ ] YouTube keeps all account/default content. Account action stays beside
+      its status; Privacy and Category read as peers. Enter still commits
+      Category; changing tabs preserves drafts and scroll.
+- [ ] Recording folder heading and notification choices fit at both sizes.
+      Longer errors still scroll normally. Changing folders retains existing
+      recordings in the list, unticked and not announced as new.
+- [ ] FightRecorder local load shows only Installed/Not installed; no install
+      action or release claim. Explicit digest match shows Installed · tag ·
+      Up to date. A mismatch shows release version unavailable, Latest: tag,
+      and Update; absence offers Install only after a successful check.
+      Failed checks (including an unreadable DLL or missing release checksum)
+      preserve presence and hide the offer. Declined UAC or a failed install
+      remains visible even if the subsequent local refresh fails or OBS disappears.
+- [ ] With an authorized disposable webhook, explicit Enter save identifies
+      and caches the **webhook name**, not its channel. An unavailable lookup
+      still saves a valid URL and warns that its name could not be identified.
+      Existing nameless webhooks offer Identify webhook. Hydration, route/tab
+      entry and Show do not contact Discord. An optional lookup that cannot
+      finish within its bounded deadline saves a valid URL without a name, or
+      refuses explicit Identify; it never indefinitely postpones Save or Remove.
+      Lookup/persistence failures never attach an old name to a replacement URL
+      or claim an unsaved name is saved. A delayed settings refresh after an
+      acknowledged Save, Identify or Remove must not restore the old identity,
+      URL, or control availability.
+- [ ] Show remains masked by default and remasks on leaving Combat logs.
+      Remove confirms with the cached name when known, clears URL and name,
+      and never reveals a token. Tab/Shift+Tab focus and status announcements
+      remain usable with long names/errors and pending lookup replies.
+- [ ] General Export/Import are content-width buttons; export/import review,
+      the Uploader's action width, and upload/update admission are unchanged.
+
 ## Uploader selection rework + Archive (#271/#273/#270) — Windows acceptance NOT RUN (2026-09-20)
 
 The recording list gained modern multi-select, context-menu Delete became
@@ -421,8 +714,8 @@ synthetic presentation checks separate from authorized live operations.
       prove actual bookmark-engine liveness or physical key delivery. Open
       Bookmarks follows the normal section route and disarms Preview capture.
 - [ ] Webhook Enter-to-save guidance is visible before editing; blur never
-      commits. Unknown FightRecorder update status leaves Install latest
-      available but neutral. General groups Startup distinctly, Fleet help
+      commits. Unknown FightRecorder update status hides Install/Update
+      until an explicit successful check. General groups Startup distinctly, Fleet help
       preserves local/sharing scope and visible error feedback, and bookmark
       reset names its full scope. Check long text without shrinking the type.
 
@@ -465,6 +758,18 @@ never Start copy, save a formation, select a native source, or contact a relay.
       current/pending verification remain exposed before Start verification;
       settled history stays in Previous attempts. Neither opening a disclosure
       nor screenshot staging changes sharing or source intent.
+- [ ] Static Fleet sharing/detail/history captures represent a frozen synthetic
+      observation: local participation On, a manual verified source, automatic
+      consent observed Off, and combat approval still required. The automatic
+      checkbox is available but unchecked; combat approval remains available.
+      These production-shaped DTOs are presentation evidence, never live authGD
+      consent, transmission or completed operations.
+- [ ] Clear the Fleet fixture before any live payload: automatic/setup facts
+      return to unknown/unavailable, not synthetic Off. With retained or newer
+      live data, restore that exact live state without a read. Repeated cleanup
+      is inert; retired fixture controls and callbacks cannot submit observations.
+      Keep newer control/dialog focus and the existing disclosure lifecycle.
+      Staging and cleanup must make no bridge call or open a consent dialog.
 - [ ] Fixture captures show same-name fitting hull identity, classified additions
       versus present/unavailable pairs, named progress and per-target results.
       Each stage and its fixture clear before the next capture; no real Start,
@@ -902,18 +1207,17 @@ somewhere stale and nothing on that screen is worth reviewing.
 - [ ] Recording folder is pre-filled from OBS config without being asked
 - [ ] **The FightRecorder card reports locally and only checks the
       network when asked.** Settings, the card under Recording folder.
-      On load the status line reads from disk only — "Up to date.",
-      "Not installed.", or "OBS Studio was not detected." — and no
-      GitHub request has fired. Press **Check for updates**: the line
-      gains a release tag and an update verdict ("An update is
-      available (v1.1.2)." / "Up to date."). With the machine offline,
-      the check reports that it could not reach GitHub instead of
-      clearing the installed/not-installed state. **Install** /
-      **Update** appears only when there is something to install; on a
-      Program Files OBS it raises one UAC prompt, and declining it
-      produces a status-line error, never a crash. After a successful
-      update the line names the new release and OBS's plugin directory
-      holds the new DLL (verify the bytes changed if the release did).
+      On load the status line reads from disk only — Installed or
+      Not installed — without a release tag or Install/Update offer.
+      OBS absence has separate feedback. Press **Check for updates**:
+      only a matching release digest identifies the installed tag as
+      Up to date. A mismatch reports release version unavailable and
+      Latest: tag with Update; absence offers Install. An offline check
+      reports failure without clearing local presence or offering install.
+      On a Program Files OBS, installation raises one UAC prompt; declining
+      it leaves an error visible through the following local-only refresh.
+      After success, verify the new DLL bytes; check explicitly again to
+      establish release identity. Never use embedded DLL version metadata.
 - [ ] With OBS absent, the in-app first-run folder screen appears instead of
       a bare OS dialog — see the LOAD-BEARING first-run item under
       Settings > Folder dialogs for the full check.
@@ -1400,10 +1704,13 @@ somewhere stale and nothing on that screen is worth reviewing.
       plays (served from a loopback HTTP port -- WebView2 refuses direct
       file:// media); clicking or press-dragging the timeline scrubs the
       playhead and seeks; the playhead follows playback.
-- [ ] **Markers snap and read true.** Drag the in-handle: it snaps DOWN to
-      a keyframe (the readout shows the snapped time — what a cut will
-      actually take; stream copy cannot start mid-GOP, so a clip may begin
-      a few seconds early, never late). Handles may not cross. Set
+- [ ] **Markers snap and read true.** When keyframes are known, drag the
+      in-handle: it snaps DOWN to a keyframe (the readout shows the snapped
+      time — what a cut will actually take; stream copy cannot start mid-GOP,
+      so a clip may begin a few seconds early, never late). If the probe returns
+      no usable keyframes, the chosen start remains at the requested time,
+      clamped inside the recording, rather than pinned to zero. The cut still
+      uses FFmpeg's input-side keyframe seek. Handles may not cross. Set
       start / Set end take the playhead position. Play selection plays the
       marked range and stops at the out point.
 - [ ] **Cut clip lands a file.** Press Cut clip. Expected: the strip shows
@@ -1424,9 +1731,10 @@ somewhere stale and nothing on that screen is worth reviewing.
       `Stitch locally`. Expected: `Stitched into <stem> - stitched.mkv in
       the recording folder.`, one new row, originals untouched.
 - [ ] **Open folder opens the watched folder.** Press it in the list footer
-      with a folder configured: Explorer opens on that folder. This is the
-      only affordance on this screen that reaches the FILES — double-click
-      and both context-menu entries all act on the YouTube link.
+      with a folder configured: Explorer opens on that folder. Play, Rename
+      and Delete act on the recording on disk; double-click, Copy link and
+      Open in browser act on its uploaded YouTube link. The original two-item
+      context menu held only link actions; that is no longer the whole menu.
       Then the two refusals, which report on the status strip and must NOT
       raise a dialog: with no folder set, "No recording folder is set.
       Choose one in Settings."; with the configured folder renamed or
@@ -1472,6 +1780,29 @@ somewhere stale and nothing on that screen is worth reviewing.
       new file at that exact path. This is a known limitation of the
       seen-entry tracking: the recreated file may not be re-announced until
       the app restarts. That is expected behavior, not a bug to report.
+
+## Screenshot UX foundation — Windows/WebView2 acceptance
+
+Plan `PLAN-cb2f7ba3`, step 1 only. Isolated Chromium checks passed at 840×625,
+839×621 and 1015×633 for the Characters roster, Preview table/Offline stack,
+Wanderer lower controls, Fittings metadata and copy-result recovery. These used
+synthetic presentation fixtures, not live EVE, network, persistence or clipboard
+operations. The checks below remain **NOT RUN** in Windows/WebView2.
+
+- [ ] At 100/125/150/200% scaling, scroll Characters and the Preview table through
+      their sticky headers. No row fragments bleed above or through the headers;
+      Offline stays below the column labels while its rows remain visible.
+- [ ] Scroll Wanderer to Test/Remove. Map connection stays visible; the enable
+      switch scrolls with its own refusal message. Tab/Shift+Tab through URL,
+      token and actions: focus clears the retained header, including with long
+      health/error messages. Switching subpages retains drafts and scroll
+      without submitting a field.
+- [ ] Open a fitting and Edit metadata, then scroll through its details. The
+      existing fitting row remains visible, releases at its own boundary, and
+      does not cover focused fields. Refresh still retains draft/focus/scroll.
+- [ ] Scroll mixed copy results to the bottom. No hairline of an earlier row
+      appears above recovery guidance. Wheel at each affected pane's boundary
+      must not move another pane; Close and row menus remain reachable.
 
 ## Settings subpages — Windows/WebView2 acceptance
 
@@ -1551,12 +1882,13 @@ lifecycle checks are separate evidence, not native acceptance.
       reopen the dialog and confirm it is masked again. The webhook is a
       credential — anyone holding it can post to the channel.
 - [ ] **Pasting into the masked webhook field still works.** Copy a webhook
-      URL, paste into the masked field, confirm the line beneath resolves to
-      `discord.com/api/webhooks/{id}…` (the id, never the token).
+      URL, paste into the masked field and press Enter. Confirm the line
+      becomes `Webhook: <name>` or `Webhook saved · name unavailable` with
+      a saved-but-unidentified warning. The name is not a channel identity.
 - [ ] **An invalid webhook says what is wrong.** Type `http://discord.com/api/webhooks/1/2`
-      (http, not https). Expected: the line beneath reads "Webhook URL must
-      use https.", not "not configured". Clear the field entirely and
-      confirm it returns to "not configured".
+      (http, not https) and press Enter. Expected: inline validation explains
+      the refusal, while the saved identity remains unchanged. Clearing the
+      field alone never removes the saved webhook.
 - [ ] **Click Connect Google Account while the account state is still
       resolving.** On a cold app start, open Settings and click Connect
       immediately, while the label still reads "Checking…". Expected: the
@@ -1816,15 +2148,13 @@ behavior that only shows up at size.
       behaviour: with no Cancel button and no pre-edit copy anywhere on the
       page, a stray edit used to destroy a credential with no way back.
 - [ ] **Remove clears it.** Press **Remove** next to the field. Expected:
-      the webhook is cleared and the status line says not configured.
-      Removal is an explicit action now, never a side effect.
-- [ ] **The webhook summary label tracks what you type.** In Settings, with
-      a webhook already configured, paste a *different* valid webhook URL
-      over it. Expected: the summary line underneath updates immediately to
-      the new webhook's id — it must not keep describing the previous one.
-      Type something invalid and it reads "not configured"; clear the field
-      and it reads "not configured" too. At no point does the label show the
-      token portion of the URL.
+      confirmation precedes removal of both URL and cached name. The status
+      says No Discord webhook saved. Removal is never a side effect.
+- [ ] **The webhook summary describes saved state, not a draft.** Paste a
+      different valid URL and press Enter. The accepted reply names only the
+      new webhook, or reports its name unavailable; it never retains the old
+      name. Invalid/empty submissions leave the previous saved identity intact.
+      At no point does the status or error show the URL/token.
 - [ ] **Gamelogs folder not found.** Rename your `Gamelogs` folder (or run
       from an account with no EVE install) with no `gamelogs_dir` set in
       Settings, then press **Upload**. Expected:
@@ -2276,6 +2606,42 @@ response leaves a worker waiting forever, which presents as a hung upload.
 
 ## Progress
 
+The bounded main-window layout regression can run separately from the app with
+Node's native `fetch`/`WebSocket` support (Node 22+) and an explicitly supplied
+Chrome executable:
+
+```bash
+node scripts/check_status_strip_layout.js --chrome /usr/bin/google-chrome --out /tmp/status-strip-layout
+```
+
+It loads production markup/CSS and the strip's actual page owners in an isolated
+browser with no Python bridge, blocks external requests, and exits nonzero on
+failed or incomplete checks. Forced-color cases inspect screenshot pixels as well
+as root-owned surface/value/boundary tokens: a positive rectangle alone is not
+proof of painted progress. Determinate, indeterminate and reduced-motion
+indeterminate values must remain distinct from the surface, with a visible
+boundary. The deliberately broken `--negative-control hidden-value` and
+`--negative-control transparent-value` runs must each exit nonzero with paint
+failures. Use separate output directories for those proofs.
+
+These JSON/pixel checks and captures are bounded browser evidence, not installed
+Windows/WebView2, native progress or AT acceptance. Do not start an upload,
+stitch or native bar merely to populate these fixture checks.
+
+- [ ] **Long status yields without losing progress.** At 1015×633 and 840×625,
+      check a long error sentence and an unbroken filename/path, with EVE readout
+      shown and hidden. The one-line text ellipsizes inside the strip; its complete
+      text remains available to accessibility tools and in the hover title. The
+      severity treatment, padding and strip height stay unchanged. At 55%, the
+      track and percentage remain visible beside both 44×32 DPS/SIG controls.
+      Ordinary ROOT/NEXT values remain readable; a long EVE readout yields before
+      progress collapses. Repeat indeterminate progress with reduced motion and
+      forced colors: the boundary and filled value must actually paint, with a
+      distinguishable unfilled surface where present, not just occupy space.
+      Check forced colors together with reduced motion too: a static painted
+      value, no invented percentage or extra line. Check Idle, settled results
+      and busy route changes too. Browser fixtures do not close this
+      installed scaling/focus/assistive-technology gate.
 - [ ] **No progress control is drawn at rest.** Round 5's G1. On a fresh
       launch the strip reads **Idle** with nothing to its right — no groove,
       no percentage. The bar appears when an upload or stitch starts and
@@ -4146,11 +4512,13 @@ until they are actually run on Windows.
       ship point, scram, and neut a displayed character. Expected: distinct
       `POINT`, `SCRAM`, and `NEUT` labels appear under `EWAR`, including in
       combination, with the full `SCRAM · POINT · NEUT` text visible and
-      unclipped when all three are active. Another tracked EWAR event or
-      outgoing damage from that character refreshes the shared activity
-      window; incoming damage alone does not. All labels clear after
-      30 seconds without that activity; relogging or replacing the active log
-      source clears them immediately. Outgoing neuts and nos never appear.
+      unclipped when all three are active. Each effect/name observation expires
+      independently, at most 30 seconds after its event time. Damage in either
+      direction and other effect/name observations never renew that evidence.
+      Row activity has its own deadline and can outlive an effect: scram at t=0
+      followed by outgoing damage at t=20 loses scram at t=30 while the row stays
+      active until t=50. Relogging or replacing the active log source clears the
+      effects immediately. Outgoing neuts and nos never appear.
 - [ ] **Reader degradation is explicit and non-destructive.** Temporarily make
       the Gamelogs folder unreadable or pause its updates. Expected: the header
       changes to `STALE` or `ERROR` and retains the last good rows. Recovery
@@ -5590,6 +5958,60 @@ for these items.
       mouse and keyboard, Escape closes it, focus returns to the trigger, and
       no horizontal or outer-pane overflow appears.
 
+### Library presentation and metadata ownership
+
+These presentation checks do not prove ESI, clipboard or persisted library writes.
+Use controlled replies for failure/race cases; any real local-write checks need a
+separately approved disposable library.
+
+- [ ] At 1015×633, the visual Fitting, Hull and Owner/status headings align with
+      ordinary and cannot-copy rows. At 840×625, identity/status stack without a
+      misleading column header or horizontal overflow. The complete warning and
+      Details… action remain reachable. Check long fitting/hull/collection names,
+      including full accessible names/titles; sparse collections stay sparse.
+- [ ] Keyboard-activate Cannot copy · Details… while collapsed, then while open.
+      Keep focus on its rebuilt fitting-specific action through the detail reply,
+      without scrolling. If refreshed eligibility removes the warning, continue
+      on that fitting's expansion button, never another editor. Filtering/paging
+      it away, a newer row/control/render/route or a dialog must revoke the old
+      continuation. Already-open Details stays open; the row toggle still closes it.
+- [ ] Select page, Clear selection and Copy selected share one area. Copy is the
+      only accent and reports the current filtered page's selected count. Check
+      zero/one/many, filter/page pruning and refresh. Selection-only changes must
+      not rebuild an open editor, move its caret, lose drafts or scroll. Keyboard
+      Clear returns locally to Select page; programmatic changes never take focus.
+- [ ] Expand one-owner and multi-owner fittings. Above 960px, description/export/
+      modules appear before aliases/ownership/management in two regions; at the
+      floor they follow the same logical order in one column. Copy to clipboard
+      stays neutral and still exports saved content, not a name/description draft.
+- [ ] Metadata starts closed. Open/close without edits stays clean. Edit either
+      field to show Unsaved changes and enable neutral Save; revert both to clean
+      and disabled Save. Immediate collections/supersession stay outside the
+      Save group and do not dirty or save those fields.
+- [ ] While Save is pending, type back to the old baseline: still dirty, Save
+      disabled. A successful acknowledgement establishes exactly its submitted
+      pair, never overwrites newer typing, and clears the cue only if displayed
+      values now match. An older detail reply cannot regress that baseline.
+- [ ] Refuse/fail Save: retain text, baseline and the operation's error. Reverting
+      to committed values may be clean and disable Save while the error remains.
+      With controlled committed CRLF descriptions or names containing line breaks,
+      edit/revert stays clean and editing the other field preserves the untouched
+      exact string; native control rendering is not permission to normalize data.
+      Repeat across list refresh, refusal and an acknowledgement with newer typing
+      retained: rebuilding controls must not forget the committed raw pair.
+      Failed refreshes, filtered/off-page rows and route changes retain drafts
+      under their existing lifecycle. Check discard/deletion and later re-entry.
+- [ ] Refresh with focus/caret in the editor, an immediate control, another row,
+      search or a dialog. Restore only currently owned focus and selection, never
+      take it back from the newer surface. Collection refusal refresh also keeps
+      its control focused without saving the metadata draft.
+- [ ] Tab/Shift+Tab through row buttons, metadata, collections and supersession
+      with long content. The complete focus target clears the measured sticky
+      identity and bottom boundary, including checkbox paint and textarea borders.
+      Resize between widths while expanded. Forced colors retain checkbox,
+      expanded-row, dirty-text and keyboard-focus distinctions. Repeat with real
+      AT and Windows/WebView2 at 100/125/150/200%; browser doubles do not prove it.
+
 ### Library, import and curation
 
 - [ ] **A real Personal Fittings read imports atomically.** Put representative
@@ -5701,6 +6123,64 @@ for these items.
       case fails closed. Restore the live draft on screenshot teardown.
 
 ### Explicit additive copy
+
+- [ ] **Synthetic presentation is not write acceptance.** At 1015x633 and
+      840x625 use only bounded bridge doubles for this pass, not real ESI,
+      clipboard, intents or user-library writes. Record Windows/WebView2 and
+      actual AT checks separately from Chromium geometry/runtime evidence.
+- [ ] **Headings retain the accepted operation, not the next setup.** Check one
+      fitting/character, plural fittings/targets and selection-only headings.
+      Prune a selected row before Review: setup's heading updates without rebuilding
+      target controls or retaining an obsolete cap estimate. Prune while Review is
+      pending: its accepted ticket still owns the originally submitted set, not the
+      later selection or opening hull-map count. Complete with an empty early failure,
+      open/abandon another setup, then reopen Last copy results: its own target
+      names/count and fitting count remain. Repeat off-route and with reversed
+      replies; known fitting count without target identity uses selection-only text,
+      and wholly missing retained facts use the phase-generic title, not result counts.
+- [ ] **Context and actions remain visible while pairs scroll.** The compact
+      operation heading/summary and applicable limit state stay opaque above the
+      single existing body scroller; Close/Review/Cancel stay below it. Scroll
+      preflight and results to the bottom. No content fragments bleed under the
+      heading, and Already present remains attached to its fitting/hull/target.
+      Full errors and verification-before-retry recovery remain readable in body.
+      Long names, targets and errors wrap without horizontal overflow. With a
+      conflict input/Skip focused, cross the row-stacking breakpoint both ways:
+      only an obscured current control is revealed, without losing caret/focus.
+      Passive size observations must not undo a deliberate wheel scroll.
+- [ ] **Rejected limits do not invent permission or block rechecking.** Eleven
+      ready fits on two targets show 22 ready additions requested and 2 over 20,
+      not 22 planned/attempted writes. Review copy remains enabled and Start
+      unavailable. Submit 22 fitting IDs, prune to one while Review is pending,
+      then return the old 22-addition rejection: neither its cap summary nor error
+      may reappear; current guidance asks for a fresh Review. Unchanged membership
+      (including reordered rows) retains the rejection. Older replies cannot replace
+      newer accepted tickets or setup guidance. Rejection refresh still updates
+      roster eligibility/names; focus returns to the same target, or the body when
+      removed/disabled, without overriding newer focus/scroll/request owners.
+      Unselected disabled roster characters do not inflate requested pair counts.
+      Editing targets invalidates the old estimate; only another
+      review classifies it. Alternate/Skip edits retain the existing Review changes
+      predicate, pair-specific associations, drafts and owned focus/caret. Skip's
+      accessible name includes its visible “Skip this pair” label and pair context.
+      Activate Review with both pointer and keyboard: before disabling, only its
+      focused owner hands off to the mounted body; late replies cannot reclaim focus.
+- [ ] **Progress counts checks, not writes.** Exercise 0 of M, middle, M of M,
+      zero/missing totals and stale-ticket pushes. Bar value/max and accessible
+      operation label agree with exact visible check counts; no fake percentage
+      when total is unknown. Current fitting-to-target text remains announced by
+      the existing status owner only. Cancel stays reachable while permitted,
+      Close stays unavailable while running, and completed copies remain after
+      cancellation. In forced colours the bar's value remains distinct from its
+      track (at least 3:1); no decorative animation is needed.
+- [ ] **Results and support details keep their owners.** Verify success, partial
+      failure, needs-verification, rate-limit exclusions and empty refusal, with
+      unchanged ordering/classification and specific recovery. Technical details
+      starts quiet, is keyboard operable and reveals only the existing selectable
+      Operation ID, never tokens/bodies or a new clipboard action. Tab/Shift+Tab
+      include it and the footer. Toggling it does not move focus; newer control,
+      dialog, route or operation prevents stale restoration. Opening/closing copy
+      must not rebuild the metadata editor or corrupt its draft/selection.
 
 - [ ] **Preflight names every classification and exact cost.** Build one batch
       containing Ready, Already present (equivalent content under any name),
@@ -6354,19 +6834,18 @@ behaviour a lexical guard cannot reach.
       message into one (a failed write): the row must appear, and vanish
       again when the message clears. `:empty` drives it, so nothing has to
       remember to clear a `hidden` attribute.
-- [ ] **A raised-only note costs no line either, and this reaches three
-      sections.** The same rule collapses a row whose hint is `[hidden]`
-      rather than empty, so it also governs `#preview-binds-off`,
-      `#alerts-previews-off`, `#alerts-no-folder`, `#alerts-depends` and
-      Bookmarks' `#eve-blockers`. Walk Bookmarks, Previews and Alerts with
-      each of those notes both raised and clear. Expected: no row ever
+- [ ] **A raised-only note costs no line either.** The same rule collapses
+      a row whose hint is `[hidden]` rather than empty, including
+      `#preview-binds-off` and Bookmarks' `#eve-blockers`. Walk those notes
+      both raised and clear. Alerts now folds prerequisites into its mounted
+      health owner instead of three separate raised-only banners. Expected: no row ever
       shows blank, and no note ever fails to appear. The `hidden` case is
       the one the first draft of this rule missed — the row stayed a
       0-height flex item and still spent its 10px gap.
 - [ ] **A live region keeps its line.** Settings > Alerts. `#alerts-health`
       and `#alerts-status` are `role="status"` and are deliberately NOT
       collapsed: a live region that is `display: none` when its text lands
-      may never be announced. Expected: the `Watching gamelogs — …` line
+      may never be announced. Expected: the `Watching …` line
       renders in place, and with a screen reader on, a change to it is
       spoken.
 - [ ] **The roster card is as wide as its table and no wider.** Settings >
@@ -6378,7 +6857,7 @@ behaviour a lexical guard cannot reach.
       so the width it does not use becomes dead space inside every row.
 - [ ] **A long character name is not clipped at the default size.**
       Expected: names up to roughly 20 characters render whole. The column
-      is `minmax(150px, 260px)` — both ends lengths, so it still cannot
+      is `minmax(200px, 260px)` — both ends lengths, so it still cannot
       move between sessions with whoever is logged in, which is what round
       3's B1 forbade. A genuinely extreme name still ellipsizes and still
       carries the full string in its `title`.

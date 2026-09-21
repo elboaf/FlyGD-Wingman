@@ -509,29 +509,48 @@ def test_the_commit_row_carries_the_count_and_the_hazard():
         assert part in commit.group(1), part
 
 
+def test_long_server_identity_wraps_without_widening_the_work_scroller():
+    rule = _brace_block(CSS, "#es-folder-set {")
+    assert "max-width: 100%" in rule
+    assert "overflow-wrap: anywhere" in rule
+
+
+def test_narrow_copy_hazard_stays_beside_its_action():
+    assert "margin-left: 0" in _brace_block(CSS, "#es-copy {")
+    hidden_hazard = _brace_block(CSS, "#es-eve-state-commit[hidden] + #es-copy {")
+    assert "margin-left: auto" in hidden_hazard
+
+
 def test_the_commit_row_groups_state_apart_from_action_and_hazard():
     """The count and source are one fact -- what will happen, and to what.
-    Grouping them lets the wide tier give that group the row's remaining
-    space instead of leaving it as a bare gap between the button on the
-    left and a pill stranded at the far right edge.
+    Grouping them lets the wide tier give context the remaining space,
+    followed by the hazard and the right-anchored action. At the floor,
+    context wraps together without changing the existing summary owner.
     """
     commit = re.search(r'<div class="row" id="es-commit">(.*?)</div>', BODY, re.DOTALL)
     assert commit, "the commit row is gone"
     inner = commit.group(1)
     info = re.search(
         r'<span class="es-commit-info">\s*'
+        r'<span class="es-commit-summary-line">\s*'
         r'<span id="es-copy-count" class="es-count">[^<]*</span>\s*'
         r'<span id="es-copy-source" class="es-copy-source"></span>\s*'
+        r"</span>\s*"
         r'<span id="es-copy-profile" class="es-copy-source"></span>\s*'
         r'<span id="es-copy-scope-commit" class="es-copy-source" hidden></span>\s*'
         r"</span>",
         inner,
     )
     assert info, "count, source, profile and copy scope must share one grouping span"
-    assert inner.index('id="es-copy"') < inner.index('class="es-commit-info"')
-    assert inner.index('class="es-commit-info"') < inner.index(
-        'id="es-eve-state-commit"'
+    assert (
+        inner.index('class="es-commit-info"')
+        < inner.index('id="es-eve-state-commit"')
+        < inner.index('id="es-copy"')
     )
+    assert re.search(r'id="es-copy"[^>]*>Copy settings</button>', inner)
+    summary = _brace_block(CSS, ".es-commit-summary-line {")
+    assert "flex-wrap: wrap" in summary
+    assert "aria-live" not in inner and 'role="status"' not in inner
 
     rule = re.search(r"\.es-commit-info \{([^}]*)\}", CSS)
     assert rule, ".es-commit-info has no rule"
@@ -737,7 +756,7 @@ def test_copy_button_and_followup_do_not_infer_python_results():
     paint = re.search(r"function paintCommit\(\) \{(.*?)\n  \}", CODE, re.DOTALL).group(
         1
     )
-    assert "Copy to " in paint
+    assert "'Copy settings'" in paint
     assert "Copy operation in progress" in paint
     assert ">Copy to selected</button>" not in BODY
     assert 'id="es-copy-followup"' in BODY
@@ -1044,13 +1063,16 @@ def test_backups_route_has_one_heading_and_native_retention_disclosure():
     assert 'id="es-backup-filter-clear"' in BACKUPS_ROUTE
 
 
-def test_the_last_backup_menu_opens_away_from_the_route_edge():
+def test_backup_menu_placement_uses_measured_space_not_last_dom_row():
     rule = re.search(
-        r"\.es-backup-row:last-child \.bk-menu > button \{(.*?)\}",
+        r"\.bk-menu\.opens-up > button \{(.*?)\}",
         CSS,
         re.DOTALL,
     )
-    assert rule, "the final backup menu still opens into the route boundary"
+    assert rule, (
+        "backup menus must flip at the visible boundary, not just the final row"
+    )
+    assert ".es-backup-row:last-child .bk-menu > button" not in CSS
     assert "top: auto" in rule.group(1)
     assert re.search(r"bottom:\s*calc\(100% \+ 4px\)", rule.group(1))
 
@@ -1635,9 +1657,22 @@ def test_backup_actions_use_an_accessible_disclosure():
     assert "details" in body and "summary" in body
     assert "aria-label" in body
     assert "Escape" in body
-    assert ".focus()" in body
+    assert "trigger.focus({preventScroll: true})" in body
     assert "querySelectorAll('.bk-menu[open]')" in body
     assert "other !== menu" in body and "other.open = false" in body
+
+
+def test_backup_ellipsis_has_a_scoped_hit_area_and_native_semantics():
+    trigger = _brace_block(CSS, ".bk-menu > summary {")
+    assert "width: 32px" in trigger and "height: 32px" in trigger
+    render = _brace_block(CODE, "function renderBackups() {")
+    assert (
+        "'bk-menu-trigger', '\\u22ef'" in render or "'bk-menu-trigger', '⋯'" in render
+    )
+    assert "aria-haspopup" not in render
+    assert "'role', 'menu'" not in render
+    assert "'role', 'menuitem'" not in render
+    assert "aria-expanded" not in render
 
 
 def test_backup_filter_and_disclosures_remain_usable_during_mutations():
@@ -2418,7 +2453,8 @@ function backupRows() {
   return el('es-backups').children.filter(node => node.className.includes('es-backup-row'));
 }
 function text(node) { return node.textContent + node.children.map(text).join(' '); }
-const context = {WM, document, assert, el, handlers, routes, calls,
+const window = {addEventListener() {}};
+const context = {WM, window, document, assert, el, handlers, routes, calls,
                  initial, backup, other, backupRows, text};
 """
     # Inject only the test scenario into the closure; production declarations,
@@ -2616,4 +2652,289 @@ def test_unstructured_errors_never_invent_a_recovery_path_and_normal_entry_clear
   renderBackups();
   assert.equal(el('es-backup-filter').value, '');
   assert.equal(backupRows().length, 2);
+""")
+
+
+def _run_profiles_runtime(scenario):
+    if shutil.which("node") is None:
+        pytest.skip("node is not on PATH")
+    result = subprocess.run(
+        ["node", str(pathlib.Path(__file__).with_name("profiles_page_runtime.js"))],
+        input=scenario,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_profiles_runtime_accepts_windows_line_endings(tmp_path):
+    if shutil.which("node") is None:
+        pytest.skip("node is not on PATH")
+
+    tests_dir = tmp_path / "tests"
+    web_dir = tmp_path / "wingman" / "web"
+    tests_dir.mkdir()
+    web_dir.mkdir(parents=True)
+    shutil.copy(
+        pathlib.Path(__file__).with_name("profiles_page_runtime.js"),
+        tests_dir / "profiles_page_runtime.js",
+    )
+    source_web = pathlib.Path(__file__).parents[1] / "wingman" / "web"
+    shutil.copy(source_web / "index.html", web_dir / "index.html")
+    source = (source_web / "evesettings.js").read_bytes()
+    (web_dir / "evesettings.js").write_bytes(
+        source.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+    )
+
+    result = subprocess.run(
+        ["node", str(tests_dir / "profiles_page_runtime.js")],
+        input="assert.equal(calls.length, 0);",
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_copy_summary_counts_only_selected_shown_non_source_targets():
+    _run_profiles_runtime(r"""
+  assert.equal(el('es-copy').textContent, 'Copy settings');
+  assert.equal(el('es-copy-count').textContent, 'Nothing selected');
+  assert.equal(el('es-copy').disabled, true);
+  assert.equal(el('es-eve-state-commit').hidden, true);
+  assert.equal(el('es-copy-source').textContent, 'From Source pilot');
+  assert.equal(el('es-copy-profile').textContent,
+    'Profile: Fleet profile with a long exact name · Server: Tranquility');
+  el('es-copy').click();
+  assert.equal(calls.length, 0);
+  el('es-all').click();
+  assert.equal(el('es-copy-count').textContent, '3 characters will be overwritten');
+  assert.equal(el('es-copy').textContent, 'Copy settings');
+  assert.equal(el('es-copy').disabled, false);
+  assert.equal(el('es-eve-state-commit').textContent, 'EVE running');
+  assert.equal(el('es-eve-state-commit').hidden, false);
+  el('es-filter').value = 'Alpha'; el('es-filter').fire('input');
+  assert.equal(el('es-copy-count').textContent, '1 character will be overwritten');
+  el('es-copy').click();
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)),
+    [['eve_settings_copy', '/char/source', ['/char/alpha'], ['windows']]]);
+  assert.equal(el('es-copy').textContent, 'Copy operation in progress…');
+  assert.equal(el('es-copy').disabled, true);
+  pendingMutation = ''; setBusy(false);
+  el('es-filter').value = ''; el('es-filter').fire('input');
+  assert.equal(el('es-copy-count').textContent, '3 characters will be overwritten');
+  el('es-source').value = '/char/alpha'; el('es-source').fire('change');
+  assert.equal(el('es-copy-source').textContent, 'From Alpha pilot');
+  assert.equal(el('es-copy-count').textContent, '2 characters will be overwritten');
+  el('es-source').value = '/char/source'; el('es-source').fire('change');
+  assert.equal(el('es-copy-count').textContent, '3 characters will be overwritten');
+  el('es-filter').value = 'no match'; el('es-filter').fire('input');
+  assert.equal(el('es-copy-count').textContent, 'Nothing selected');
+  assert.equal(el('es-copy').disabled, true);
+  el('es-none').click();
+  el('es-filter').value = 'Beta'; el('es-filter').fire('input'); el('es-all').click();
+  el('es-filter').value = ''; el('es-filter').fire('input');
+  assert.equal(el('es-copy-count').textContent, '1 character will be overwritten');
+  assert.equal(el('es-targets').querySelectorAll('input').filter(box => box.checked)[0].value, '/char/beta');
+  assert.equal(calls.length, 1, 'local filters, source and bulk choices never fetch');
+""")
+
+
+@pytest.mark.parametrize("available", [True, False])
+def test_copy_keeps_kind_specific_groups_and_whole_file_call_shape(available):
+    _run_profiles_runtime(
+        "state.selective_copy_available = "
+        + json.dumps(available)
+        + ";\n"
+        + r"""
+  renderCopyGroups(); renderTargets();
+  const groups = el('es-copy-groups').querySelectorAll('input');
+  if (state.selective_copy_available) {
+    assert.equal(el('es-copy-scope-summary').textContent, 'Keep: Overview');
+    groups[0].checked = false; groups[0].fire('change');
+    assert.equal(el('es-copy-scope-summary').textContent, 'Keep all groups: Windows, Overview');
+    groups[1].checked = true; groups[1].fire('change');
+    assert.equal(el('es-copy-scope-summary').textContent, 'Keep: Windows');
+    groups[0].checked = true; groups[0].fire('change');
+    assert.equal(el('es-copy-scope-summary').textContent, 'Copy all groups: Windows, Overview');
+    assert.equal(el('es-copy-scope-commit').hidden, true);
+  } else {
+    assert.equal(el('es-copy-scope').hidden, true);
+    assert.equal(el('es-copy-scope-commit').textContent, 'Whole settings file');
+    assert.equal(el('es-copy-scope-commit').hidden, false);
+    assert.ok(el('es-copy-scope-note').textContent.includes('replace the whole settings file'));
+  }
+  chooseKind('accounts');
+  assert.equal(el('es-copy-count').textContent, 'Nothing selected');
+  assert.equal(el('es-copy-source').textContent, 'From Main account');
+  assert.equal(el('es-source-identity').textContent, 'Main account · Source pilot');
+  el('es-all').click();
+  assert.equal(el('es-copy-count').textContent, '1 account will be overwritten');
+  assert.equal(el('es-copy').textContent, 'Copy settings');
+  state.identification_active = true; paintCommit();
+  assert.equal(el('es-copy').disabled, true);
+  el('es-copy').click(); assert.equal(calls.length, 0);
+  state.identification_active = false; paintCommit();
+  el('es-copy').click();
+  const expected = ['eve_settings_copy', '/account/source', ['/account/alt']];
+  if (state.selective_copy_available) expected.push([]);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [expected]);
+  pendingMutation = ''; setBusy(false);
+  chooseKind('characters');
+  if (state.selective_copy_available) {
+    assert.equal(el('es-copy-scope-summary').textContent, 'Copy all groups: Windows, Overview');
+  }
+  state.characters = []; renderSource(); renderTargets();
+  assert.equal(el('es-copy-source').textContent, 'No source');
+  assert.equal(el('es-copy-count').textContent, 'Nothing selected');
+  assert.equal(el('es-copy').disabled, true);
+"""
+    )
+
+
+def test_backup_native_disclosure_keeps_identity_focus_and_exact_mutations():
+    _run_profiles_runtime(r"""
+  const menus = backupMenus();
+  const first = menus[0]; const second = menus[1];
+  const trigger = first.querySelector('summary');
+  const remove = first.querySelector('button');
+  const restore = first.parentNode.children[0];
+  assert.equal(trigger.textContent, '⋯');
+  assert.equal(trigger.title, 'Backup actions');
+  assert.equal(trigger.getAttribute('aria-label'),
+    'Actions for backup of Fleet 0 ' + 'long identity '.repeat(8) + ' from 2026-08-24 14:03');
+  assert.equal(trigger.getAttribute('aria-haspopup'), null);
+  assert.equal(trigger.getAttribute('aria-expanded'), null);
+  assert.equal(first.getAttribute('role'), null);
+  assert.equal(remove.getAttribute('role'), null);
+  assert.equal(restore.textContent, 'Restore');
+  assert.equal(restore.classList.contains('danger'), false);
+  assert.equal(remove.classList.contains('danger'), true);
+  trigger.focus();
+  assert.equal(trigger.fire('keydown', {key: 'Enter'}).defaultPrevented, false);
+  nativeToggle(first);
+  assert.equal(first.open, true);
+  assert.equal(document.activeElement, trigger, 'opening keeps native focus ownership');
+  assert.equal(trigger.fire('keydown', {key: 'Tab'}).defaultPrevented, false);
+  trigger.fire('focusout', {relatedTarget: remove}); remove.focus();
+  assert.equal(first.open, true, 'Tab within the disclosure does not close it');
+  el('route-backups').scrollTop = 430;
+  assert.equal(remove.fire('keydown', {key: 'Escape'}).defaultPrevented, true);
+  assert.equal(first.open, false);
+  assert.equal(document.activeElement, trigger);
+  assert.equal(trigger.focusOptions.preventScroll, true);
+  assert.equal(el('route-backups').scrollTop, 430);
+  nativeToggle(first); nativeToggle(second);
+  assert.equal(first.open, false); assert.equal(second.open, true);
+  const next = menus[2].querySelector('summary');
+  second.querySelector('button').fire('focusout', {relatedTarget: next}); next.focus();
+  assert.equal(second.open, false, 'Tab out dismisses without trapping focus');
+  assert.equal(document.activeElement, next);
+  restore.click();
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['eve_settings_restore', '/backups/archive-0.zip']]);
+  pendingMutation = ''; setBusy(false);
+  nativeToggle(first); remove.click();
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[1])), ['eve_settings_delete_backup', '/backups/archive-0.zip']);
+""")
+
+
+@pytest.mark.parametrize(
+    ("route_bottom", "status_top", "trigger_top", "trigger_bottom", "opens_up"),
+    [
+        (600, 570, 524, 556, True),  # status strip, not route bottom, forces up
+        (560, 590, 520, 552, True),  # route bottom, not status strip, forces up
+        (600, 590, 170, 202, False),
+        (600, 590, 522, 554, False),  # exact popup + 4px gap fits
+        (600, 590, 523, 555, True),
+    ],
+)
+def test_backup_nonfinal_visible_row_uses_route_and_statusbar_bounds(
+    route_bottom, status_top, trigger_top, trigger_bottom, opens_up
+):
+    _run_profiles_runtime(
+        "const geometry = "
+        + json.dumps([route_bottom, status_top, trigger_top, trigger_bottom, opens_up])
+        + ";\n"
+        + r"""
+  el('route-backups').rect = {left: 12, right: 828, top: 60, bottom: geometry[0], width: 816, height: geometry[0] - 60};
+  el('statusbar-slot').rect = {left: 0, right: 840, top: geometry[1], bottom: 625, width: 840, height: 625 - geometry[1]};
+  el('route-backups').scrollTop = 430;
+  const menu = backupMenus()[5];
+  assert.equal(backupMenus().length, 20, 'retain history batching and ordering');
+  assert.equal(menu.parentNode.parentNode.children[1].children[0].textContent,
+    'Fleet 5 ' + 'long identity '.repeat(8));
+  measuredMenu(menu, geometry[2], geometry[3]);
+  menu.querySelector('summary').focus(); nativeToggle(menu);
+  assert.equal(menu.open, true);
+  assert.equal(menu.classList.contains('opens-up'), geometry[4]);
+  assert.equal(el('route-backups').scrollTop, 430);
+  // Reopening higher after scroll must discard a previous upward direction.
+  measuredMenu(menu, 170, 202); nativeToggle(menu, false); nativeToggle(menu);
+  assert.equal(menu.classList.contains('opens-up'), false);
+  assert.equal(calls.length, 0);
+"""
+    )
+
+
+def test_backup_popup_obeys_window_floor_and_dismisses_when_neither_side_fits():
+    _run_profiles_runtime(r"""
+  const menu = backupMenus()[5];
+  const trigger = menu.querySelector('summary');
+  // Route extends beyond the window; the status strip is unmeasurable.
+  el('route-backups').rect = {top: 60, bottom: 700, height: 640};
+  measuredMenu(menu, 580, 612); trigger.focus(); nativeToggle(menu);
+  assert.equal(menu.classList.contains('opens-up'), true);
+  // A transient tiny scrollport has no usable side: close, never scroll it.
+  el('route-backups').rect = {top: 560, bottom: 620, height: 60};
+  nativeToggle(menu, false); nativeToggle(menu);
+  assert.equal(menu.open, false);
+  assert.equal(document.activeElement, trigger);
+  assert.equal(calls.length, 0);
+""")
+
+
+@pytest.mark.parametrize("event", ["scroll", "resize"])
+def test_backup_geometry_dismissal_returns_only_its_owned_focus(event):
+    _run_profiles_runtime(
+        "const event = "
+        + json.dumps(event)
+        + ";\n"
+        + r"""
+  const menu = backupMenus()[5], trigger = menu.querySelector('summary');
+  trigger.focus(); nativeToggle(menu); menu.querySelector('button').focus();
+  el('route-backups').scrollTop = 430;
+  if (event === 'scroll') el('route-backups').fire('scroll');
+  else window.fire('resize');
+  assert.equal(menu.open, false);
+  assert.ok(document.activeElement === trigger, 'closing must not leave focus in hidden Delete');
+  assert.equal(trigger.focusOptions.preventScroll, true);
+  assert.equal(el('route-backups').scrollTop, 430);
+  assert.equal(calls.length, 0);
+"""
+    )
+
+
+def test_backup_scroll_resize_and_unmeasurable_geometry_do_not_steal_focus():
+    _run_profiles_runtime(r"""
+  const listenerCount = (window.listeners.resize || []).length;
+  renderBackups(); renderBackups();
+  assert.equal((window.listeners.resize || []).length, listenerCount);
+  const menu = backupMenus()[5];
+  const trigger = menu.querySelector('summary');
+  trigger.focus(); nativeToggle(menu);
+  assert.equal(menu.open, true, 'zero-sized hidden route keeps native fallback');
+  el('es-backup-filter').focus();
+  el('route-backups').fire('scroll');
+  assert.equal(menu.open, false);
+  assert.equal(document.activeElement, el('es-backup-filter'));
+  nativeToggle(menu); window.fire('resize');
+  assert.equal(menu.open, false);
+  assert.equal(document.activeElement, el('es-backup-filter'));
+  assert.equal(calls.length, 0);
 """)

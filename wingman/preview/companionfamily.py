@@ -124,13 +124,8 @@ class CompanionFamily:
                 status, error = "disabled", None
             elif not self._authorized(self._token(spec), promotion=True):
                 status = "off"
-            elif (
-                live is not None
-                and not live.window.failed
-                and not live.window.hidden
-                and error is None
-            ):
-                status, error = "live", None
+            elif live is not None and not live.window.failed and error is None:
+                status = "hidden-by-focus" if live.window.hidden else "live"
             rows.append(
                 dict(
                     id=identity,
@@ -141,7 +136,7 @@ class CompanionFamily:
                     status=status,
                     error=error,
                     binding=live.binding
-                    if live is not None and status == "live"
+                    if live is not None and status in ("live", "hidden-by-focus")
                     else None,
                     rect=live.window.rect
                     if live is not None
@@ -564,25 +559,34 @@ class CompanionFamily:
         reopening windows.
         """
         color = self._ring_color()
+        visibility_changed = False
+        global_hidden = hidden
         for identity, live in tuple(self.live.items()):
             if live.retiring:
                 continue
             token = self._token(live.spec)
             if live.window.selection_color != color:
                 live.window.selection_color = color
-            hidden = visibility.should_hide_source(
-                global_hidden=hidden,
+            source_hidden = visibility.should_hide_source(
+                global_hidden=global_hidden,
                 hide_active=active,
                 foreground=foreground,
                 source_hwnd=live.binding.hwnd if active else 0,
             )
-            live.window.set_active(self._ring_identity == identity and not hidden)
+            live.window.set_active(
+                self._ring_identity == identity and not source_hidden
+            )
+            was_hidden = live.window.hidden
             live.window.set_hidden(
-                hidden,
+                source_hidden,
                 authorized=lambda lv=live, t=token, i=identity: (
                     self.live.get(i) is lv and self._authorized(t, promotion=True)
                 ),
             )
+            # A refused show is not a visibility transition.
+            visibility_changed |= live.window.hidden != was_hidden
+        if visibility_changed:
+            self._status()
 
     def scan(self):
         self._clean_retired()

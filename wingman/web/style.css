@@ -83,6 +83,10 @@
   /* Distance rings and height tethers carry information, unlike a panel edge.
      Reuse a readable neutral: 4.99:1 against the formation plot's --sunken. */
   --formation-guide: var(--text-faint);
+  --formation-selection-ink: var(--text);
+  --formation-label-ink: var(--text-faint);
+  --formation-label-halo: var(--sunken);
+  --formation-preview-surface: var(--sunken);
   /* A fourth text step, between --text-dim and --text-faint, and it is
      not a rounding error: it is the colour of the two uppercase tracked
      section labels (.card > h2 and .rail-head), which sit above
@@ -427,6 +431,20 @@
   --titlebar-h: 44px;
 }
 
+/* Association cues and progress use the user's system colours explicitly.
+   Components still consume semantic roles; the rest of the palette is unchanged. */
+@media (forced-colors: active) {
+  :root {
+    --formation-forced-ink: CanvasText;
+    --formation-forced-surface: Canvas;
+    --fitting-forced-ink: CanvasText;
+    --fitting-forced-surface: Canvas;
+    --status-progress-forced-surface: Canvas;
+    --status-progress-forced-value: CanvasText;
+    --status-progress-forced-boundary: CanvasText;
+  }
+}
+
 /* The wash lives on html and the base --bg layer must stay UNDER it in the
    same shorthand. body is transparent on purpose: #route-main::after below
    is a z-index -1 pseudo-element, and a negative-z child paints beneath its
@@ -609,6 +627,7 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
    divider is --text-label now and the rank is carried by size alone --
    which is the dimension that cannot invert when a token moves
    underneath it. See .bind-group-name's own note. */
+.card > .card-heading > h2,
 .card > h2 {
   font-size: var(--fs-body); letter-spacing: .14em; text-transform: uppercase;
   color: var(--text-label); margin-bottom: 12px; font-weight: 600;
@@ -627,10 +646,16 @@ h1 { font-size: var(--fs-head); font-weight: 620; }
    whose type is small, uppercase and widely tracked, and deleting it would
    restyle five screens to settle an argument about colour. It now reads as
    punctuation rather than as a claim, which is what a heading is. */
+.card > .card-heading > h2::before,
 .card > h2::before {
   content: ""; width: 3px; height: 12px; border-radius: 2px; flex: none;
   background: var(--field-border);
 }
+
+.card-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 12px; }
+.card-heading[hidden] { display: none; }
+.card > .card-heading > h2 { margin-bottom: 0; min-width: 0; }
+.card-heading > .btn { margin-left: auto; }
 
 .row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .row:last-child { margin-bottom: 0; }
@@ -1635,30 +1660,49 @@ button.btn:disabled,
    ellipsis-in-a-bounded-track name treatment and small fixed buttons --
    the same vocabulary as #preview-binds, because this is the same kind of
    list, just ordered and editable in place. */
-.cycle-group-panel { margin: 0 0 16px 0; }
+.cycle-group-panel { margin: 0 0 16px 0; min-width: 0; }
 .cycle-group-head {
   display: flex; align-items: baseline; gap: 8px; margin: 4px 0 6px 0;
+  padding: 4px 0;
 }
-.cycle-group-name { color: var(--text); font-size: var(--fs-body); }
-.cycle-group-count { color: var(--text-dim); font-size: var(--fs-muted); }
+.cycle-group-head[hidden] { display: none; }
+/* The existing panel is the sticky boundary, not a new scroller or selection.
+   Cycle groups sit after the character table, so its 22px offset does not apply. */
+.cycle-group-panel > .cycle-group-head {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--panel); box-shadow: 0 -1px var(--panel);
+}
+.cycle-group-name { min-width: 0; overflow-wrap: anywhere; color: var(--text); font-size: var(--fs-body); }
+.cycle-group-count { flex: none; color: var(--text-dim); font-size: var(--fs-muted); }
 .cycle-member-row { align-items: center; }
-.cycle-member-row .cycle-order-name { flex: 1 1 auto; }
+.cycle-member-row .cycle-order-name { flex: 0 1 200px; }
 .cycle-member-btn { flex: 0 0 auto; }
 .cycle-add-row { margin-top: 6px; }
-.cycle-add-row .cycle-add-select { flex: 1 1 auto; min-width: 0; }
+.cycle-group-panel .cycle-add-row > select.field.cycle-add-select { flex: 0 1 200px; min-width: 0; }
 
-/* The chord rows inside a group panel reuse makeRow, so they must opt out
-   of the settings-row stacked-label treatment (`width: 100%` on .lab) that
-   would push the chord button to its own line: name left, chord button
-   right, conflict text wrapping below like it does in the bind table. */
-.cycle-group-chords { margin: 2px 0 8px 0; }
-.cycle-group-chords .row { flex-wrap: wrap; row-gap: 4px; }
-.cycle-group-chords .row > .lab {
-  width: auto; flex: 1 1 auto; min-width: 0; align-self: center;
+/* Each direction keeps its own warning and controls in DOM order. Two
+   adjacent blocks fit wide panes; at the floor they stack, without shrinking
+   hit areas or spreading the direction label away from its keybind. */
+.cycle-group-chords {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start; gap: 12px; margin: 2px 0 8px 0;
 }
-.cycle-group-chords .row > .bindbtn { flex: 0 0 auto; }
-.cycle-group-chords .row > :where(.preview-bind-conflict) { flex: 1 0 100%; }
+.cycle-group-chords[hidden] { display: none; }
+.cycle-group-chords .row { flex-wrap: wrap; gap: 4px 6px; min-width: 0; margin: 0; }
+/* Outrank the later shared Settings label stack without changing other rows. */
+.cycle-group-panel .cycle-group-chords .row > .lab {
+  width: auto; flex: 0 0 54px; min-width: 0; align-self: center;
+}
+.cycle-group-chords .row > .bindbtn {
+  flex: 0 0 150px; max-width: 150px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cycle-group-chords .row > .rowacts { flex: none; }
+.cycle-group-chords .row > :where(.preview-bind-conflict) { flex: 1 0 100%; overflow-wrap: anywhere; }
 .cycle-group-chords .row > span:empty { display: none; }
+@media (max-width: 960px) {
+  .cycle-group-chords { grid-template-columns: minmax(0, 1fr); }
+}
 
 /* Prose that TEACHES rather than prose that warns, folded away.
 
@@ -1785,8 +1829,8 @@ button.btn:disabled,
    (#preview-show-labels-status, #preview-opacity-status: 18px each at the
    840 floor, blank until a write fails, which for most installs is
    never). `[hidden]` covers a note the page raises only while its
-   condition holds -- #preview-depends, #preview-binds-off,
-   #alerts-previews-off. Measured: with `hidden` alone the .pv-master
+   condition holds -- #preview-depends, #preview-binds-off, and
+   #preview-copy-empty. Measured: with `hidden` alone the .pv-master
    block held a 0-height row that still took one 10px flex gap, so the
    block's height moved with the state of the switch above it, which is
    exactly what the gap was chosen to prevent.
@@ -2063,9 +2107,11 @@ button.btn:disabled,
   padding: 10px 16px; border-top: 1px solid var(--panel-border);
   background: linear-gradient(180deg, var(--statusbar-top), var(--statusbar-bottom));
 }
+/* Keep the short-status allocation, but constrain long text so its ellipsis
+   works instead of pushing progress and the percentage outside the window. */
 #status {
   font-size: var(--fs-mono); color: var(--text-dim);
-  min-width: 210px; flex: none;
+  min-width: 0; flex: 0 1 210px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* Severity kinds stay FG / SUCCESS / WARNING / ERROR, matching
@@ -2076,6 +2122,9 @@ button.btn:disabled,
 #status.WARNING { color: var(--warn); }
 #status.ERROR { color: var(--err); }
 
+/* The optional ROOT/NEXT readout can be long too. Reserve useful progress
+   before that readout consumes the row; hidden tracks still occupy no space. */
+#track { min-width: 4em; }
 .track {
   flex: 1; height: 4px; border-radius: 2px; background: var(--track);
   overflow: hidden; position: relative;
@@ -2101,6 +2150,17 @@ button.btn:disabled,
   flex: none; width: 42px; text-align: right;
   color: var(--text-faint); font-size: var(--fs-muted);
   font-variant-numeric: tabular-nums;
+}
+
+/* Forced colours suppress the gradient value. Use system-token paint rather
+   than merely reserving an invisible rectangle; outline leaves geometry intact. */
+@media (forced-colors: active) {
+  #track.track {
+    forced-color-adjust: none;
+    background: var(--status-progress-forced-surface);
+    outline: 1px solid var(--status-progress-forced-boundary); outline-offset: 1px;
+  }
+  #track .bar { background: var(--status-progress-forced-value); }
 }
 
 /* Second segment in the status bar. Yields to upload progress at narrow
@@ -2292,7 +2352,7 @@ button.btn:disabled,
 
 /* Character authorization is a short setup action, but the roster is a
    scanning surface. The shared Settings measure remains right for the first
-   card; the section and roster deliberately use the pane width so five
+   card; the section and roster deliberately use the pane width so four
    columns do not compete while an outer gutter sits empty. Only the roster
    grows, preserving its single internal scroller for long character lists. */
 #section-characters { height: 100%; max-width: none; }
@@ -2304,6 +2364,7 @@ button.btn:disabled,
 #characters-roster {
   display: flex; flex: 1; min-height: 0; flex-direction: column;
   gap: 0; overflow-y: auto; scrollbar-gutter: stable;
+  overscroll-behavior-y: contain;
 }
 #characters-roster:has(> #characters-empty:not([hidden])) {
   justify-content: center;
@@ -2316,14 +2377,15 @@ button.btn:disabled,
    roster and act on one character. Explicit metadata tracks keep each
    independently rendered row aligned with the header; max-content here would
    size those tracks from different text in every grid. At the 840px floor,
-   row padding leaves 572px; the four fixed tracks and gaps use 408px, leaving
-   the character column 164px. The menu carries the rare destructive action
+   row padding leaves 572px; the three fixed tracks and gaps use 324px, leaving
+   the character column 248px. Both complete access-status phrases fit their
+   tracks, and Actions has room for its heading. The menu carries the rare destructive action
    outside the scan line. */
 .characters-head,
 .characters-row {
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) 92px 106px 138px 32px;
-  gap: 10px;
+  grid-template-columns: minmax(180px, 1fr) 112px 112px 64px;
+  gap: 12px;
   align-items: center;
 }
 .characters-head {
@@ -2332,10 +2394,12 @@ button.btn:disabled,
   min-height: 28px;
   font-size: var(--fs-muted); color: var(--text-dim);
   background: var(--panel);
+  /* Seal fractional scrollport edges without changing header/row geometry. */
+  box-shadow: 0 -1px var(--panel);
   border-bottom: 1px solid var(--panel-border);
 }
-.characters-head > span:last-child,
-.characters-actions { justify-self: end; }
+.characters-head > span:not(:first-child) { text-align: center; }
+.characters-actions { justify-self: center; }
 .characters-row {
   padding: 8px 10px;
   border-bottom: 1px solid var(--panel-border);
@@ -2352,6 +2416,7 @@ button.btn:disabled,
 }
 .characters-status {
   display: inline-flex; align-items: center; justify-content: center;
+  justify-self: center;
   min-height: 24px; padding: 0 9px;
   border: 1px solid var(--field-border); border-radius: 999px;
   background: var(--sunken);
@@ -2361,9 +2426,6 @@ button.btn:disabled,
 .characters-status.authorized { color: var(--ok); }
 .characters-status.access-needed,
 .characters-status.access-expired { color: var(--warn); }
-.characters-authenticated {
-  color: var(--text-faint); font-size: var(--fs-muted); white-space: nowrap;
-}
 .characters-actions {
   display: flex; align-items: center; gap: 8px;
 }
@@ -2469,7 +2531,7 @@ button.btn:disabled,
   background: var(--panel);
   /* Each span is a separate grid item. Paint across the following gap so
      row text cannot flash between the cells while the pane scrolls. */
-  box-shadow: 10px 0 var(--panel);
+  box-shadow: 10px 0 var(--panel), 0 -1px var(--panel);
 }
 /* Five labels occupy six tracks. Cover the trailing flexible space too:
    full-width warnings otherwise show through beyond the last cell's shadow. */
@@ -2546,6 +2608,7 @@ button.btn:disabled,
   top: var(--preview-bind-head-height);
   z-index: 1;
   background: var(--panel);
+  box-shadow: 0 -1px var(--panel);
 }
 /* The opening rule wants less air than a named group: there is no word
    under it to separate from, only the header row. */
@@ -2579,15 +2642,15 @@ button.btn:disabled,
      THE NAME TRACK IS NOT CONTENT-SIZED, and that is the whole reason
      this list may have an inline name at all. `max-content` over
      character names is round 3's B1: the track follows whoever is logged
-     in, so the bind button moves between sessions. `minmax(210px, 320px)`
+     in, so the bind button moves between sessions. `minmax(200px, 260px)`
      keeps the stability B1 bought -- both ends are lengths, so the track
      never consults the roster -- while dropping the cross-list half of
      its rule. Bookmarks still stacks, because "Convert EvE-Scout
      Bookmarks" is 189.6px and genuinely needs its own line.
 
-     The 210px floor and 320px ceiling reclaim enough collapsed-row space
-     for names without returning to content-sized tracks. Names wider than
-     the resolved track still ellipsize and still carry a `title`.
+     A 200px floor clears the measured 596px content demand in the 592px
+     floor pane; the 260px ceiling packs wide rows without content sizing. Names
+     wider than the resolved track still ellipsize and still carry a `title`.
      test_each_keybind_list_declares_a_deliberate_first_track holds both
      halves of that.
 
@@ -2606,7 +2669,7 @@ button.btn:disabled,
      not the scan line. Change the number of per-row children and this number
      changes with it -- test_page_conventions.py derives the expected count
      from makeRow's unconditional appends rather than trusting this comment. */
-  grid-template-columns: minmax(210px, 320px) repeat(4, max-content) minmax(0, 1fr);
+  grid-template-columns: minmax(200px, 260px) repeat(4, max-content) minmax(0, 1fr);
 }
 
 /* The scrollbar gutter leaves 591px at the 839px floor. Controls and the
@@ -2641,17 +2704,50 @@ button.btn:disabled,
 .companion-list { display: flex; flex-direction: column; }
 .companion-list[hidden] { display: none; }
 .companion-row { padding: 14px 0; border-top: 1px solid var(--field-border); min-width: 0; }
-.companion-summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 14px; align-items: center; }
+/* This row is the sticky containing block, not a new scroll owner. Only an
+   expanded row retains its compact identity, then releases at its own edge. */
+.companion-summary.scroll-context {
+  position: static; display: flex; align-items: center; gap: 12px;
+  height: 44px; padding: 8px 0 10px;
+}
+.companion-row:has(> .companion-detail[open]) > .companion-summary { position: sticky; }
 .companion-summary[hidden] { display: none; }
-.companion-summary > .hint { grid-column: 1 / -1; }
-/* Capture mode is row metadata, not helper text for the preceding checkbox. */
-#companion-list .companion-summary > .hint { margin-left: 0; }
-.companion-identity { min-width: 0; }
+/* 18px text + the pill's 8px padding/border + 18px header padding = 44px.
+   Keyboard reveal needs another 10px; the existing Settings pane still scrolls. */
+.settings-pane:has(> #section-companions.active) { scroll-padding-top: 54px; }
 .companion-name, .companion-source { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .companion-name[hidden], .companion-source[hidden] { display: none; }
-.companion-name { font-weight: 600; }
+.companion-name { font-weight: 600; min-width: 0; line-height: 18px; }
+.companion-availability { flex: none; line-height: 18px; white-space: nowrap; }
+.companion-summary > .companion-availability { margin: 0; }
+.companion-availability.err { color: var(--err); }
+.companion-availability .led[hidden] { display: none; }
+.companion-enabled-group { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.companion-enabled-group[hidden] { display: none; }
+.companion-enabled-group > .check { margin: 0; }
+.companion-enabled-group > .check[hidden] { display: none; }
+.companion-enabled-group > .hint { flex-basis: 100%; overflow-wrap: anywhere; }
+.companion-row > .companion-feedback { display: block; margin: 6px 0 0; max-width: 72ch; overflow-wrap: anywhere; }
+.companion-row > .companion-feedback[hidden], .companion-row > .companion-feedback:empty { display: none; }
+.companion-mode { display: block; }
+.companion-mode[hidden] { display: none; }
 .companion-detail { margin-top: 8px; }
-.companion-detail > summary { color: var(--text-btn); cursor: pointer; width: fit-content; }
+.companion-detail > summary, .companion-help > summary {
+  display: flex; align-items: center; gap: 8px; width: fit-content;
+  color: var(--text-btn); cursor: pointer; list-style: none;
+}
+.companion-detail > summary[hidden], .companion-help > summary[hidden] { display: none; }
+.companion-detail > summary::-webkit-details-marker, .companion-help > summary::-webkit-details-marker { display: none; }
+/* Replace the native marker, never add a second arrow beside it. Details keeps
+   its native keyboard/disclosure behavior; only the marker's shape changes. */
+.companion-detail > summary::before, .companion-help > summary::before {
+  content: ""; width: 6px; height: 6px; flex: none;
+  border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(-45deg);
+}
+.companion-detail[open] > summary::before, .companion-help[open] > summary::before { transform: rotate(45deg); }
+.companion-detail > summary:focus-visible, .companion-help > summary:focus-visible {
+  outline: 2px solid var(--focus-ring); outline-offset: 3px;
+}
 .companion-detail[open] > summary { margin-bottom: 12px; }
 .companion-detail > .row { margin: 10px 0; }
 .companion-detail .field, .companion-add-form .field { min-width: 0; flex: 1 1 200px; }
@@ -2718,7 +2814,7 @@ button.btn:disabled,
 
 /* This one no longer merely restates the override above. While B1
    collapsed the column unconditionally, this block said the same thing
-   twice; the name sits in a bounded 210px-to-320px track now, so below
+   twice; the name sits in a bounded 200px-to-260px track now, so below
    720px this is what would actually hand it the whole line back instead of ellipsizing it in
    a track a narrow card cannot afford. WOULD, not does -- the CSS floor
    is 840x625 at every scaling (see the note at #eve-binds), so 720px is
@@ -2751,7 +2847,9 @@ button.btn:disabled,
 }
 .preview-detail-field {
   display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+  min-width: 0; max-width: 100%;
 }
+.preview-character-detail[hidden], .preview-detail-field[hidden] { display: none; }
 .preview-detail-label {
   font-size: var(--fs-muted); color: var(--text-dim);
 }
@@ -2763,14 +2861,29 @@ button.btn:disabled,
   max-width: 32ch; font-size: var(--fs-muted); color: var(--err);
 }
 .preview-marker-status:empty { display: none; }
-.preview-character-detail .geometry-actions { min-height: 28px; }
+/* Observation/actions and crop form one full-width geometry area. In-place
+   paintGeometry/paintCrops still own their original descendants. */
+.preview-geometry-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  flex-basis: 100%; width: 100%; min-width: 0; gap: 8px 16px;
+}
+.preview-geometry-grid[hidden] { display: none; }
+.preview-geometry-observation { margin: 0; overflow-wrap: anywhere; }
+.preview-character-detail .geometry-actions {
+  min-height: 28px; max-width: 100%; width: 100%; flex-wrap: wrap;
+}
+.preview-character-detail .geometry-actions > .size-none { flex-basis: 100%; max-width: 100%; }
+@media (max-width: 960px) {
+  .preview-geometry-grid { grid-template-columns: minmax(0, 1fr); }
+}
 .preview-configure { justify-self: start; }
 
 /* Crop stays inside the one disclosure. Its status gets a wrapping line,
    not a content-sized track that widens every character row. */
 .preview-crop-field { flex: 1 1 280px; min-width: 0; max-width: 100%; }
 .preview-crop-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.preview-crop-actions .check[hidden], .preview-crop-actions .btn[hidden] { display: none; }
+.preview-crop-actions[hidden], .preview-crop-actions .check[hidden],
+.preview-crop-actions .btn[hidden] { display: none; }
 .preview-crop-status { max-width: 65ch; margin-top: 0; overflow-wrap: anywhere; }
 
 /* Lead the owning row, before its controls and any optional detail. More
@@ -2781,6 +2894,14 @@ button.btn:disabled,
   padding-top: 8px;
   color: var(--danger); font-size: var(--fs-muted);
 }
+/* Configured Bookmark overlap is a warning, not registration refusal. Keep
+   capture's independent border and the shared disabled treatment intact. */
+.preview-bind-conflict.preview-bookmark-conflict { color: var(--warn); }
+.preview-bookmark-conflict > .linkbtn { color: var(--text-btn); text-decoration: underline; text-underline-offset: 3px; }
+#preview-binds .bindbtn.bookmark-overlap:not(:disabled),
+.cycle-group-chords .bindbtn.bookmark-overlap:not(:disabled) { color: var(--warn); }
+#preview-binds .bindbtn.bookmark-overlap:not(:disabled):not(.capturing),
+.cycle-group-chords .bindbtn.bookmark-overlap:not(:disabled):not(.capturing) { border-color: var(--warn); }
 
 /* Group manager disclosure block. Spans the full grid width. Uses
    <details> rather than .bind-group: the bind-group rule at
@@ -2813,10 +2934,39 @@ button.btn:disabled,
    removing the flex layout that applies while the panel is open. */
 .preview-group-manager:not([open]) > .group-manager-body { display: none; }
 
-/* Sharing and local display are separate cards in Fleet telemetry. */
+/* One overview, then independent configuration subsections. Scope the flat
+   surfaces here rather than changing cards in other Settings sections. */
+#section-fleet .fleet-subsection { background: var(--panel); border: 0; border-top: 1px solid var(--field-border); border-radius: 0; }
+#section-fleet h2::before { display: none; }
+#section-fleet .fleet-subsection > h2 { color: var(--text); }
+.fleet-overview-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 24px; margin: 0; }
+.fleet-overview-facts > div { min-width: 0; }
+.fleet-overview-facts dt { color: var(--text-dim); font-size: var(--fs-muted); margin-bottom: 3px; }
+.fleet-overview-facts dd { margin: 0; overflow-wrap: anywhere; }
+#fleet-overview-verification { font-weight: 600; }
+#section-fleet .fleet-local-control > .row { margin-bottom: 0; }
+#fleetbar-state { margin: 0; }
+#section-fleet .fleet-subsection > .hint { margin: 8px 0; }
 #fleet-sharing { overflow-wrap: anywhere; }
-#fleet-sharing > h3 { margin: 16px 0 8px; font-size: var(--fs-body); color: var(--text-dim); }
+#fleet-sharing h3 { margin: 16px 0 8px; font-size: var(--fs-body); color: var(--text); }
 #fleet-sharing > p { margin: 8px 0; }
+#fleet-sharing .card-heading { margin: 0; }
+#fleet-sharing .card-heading > h3 { margin: 0; }
+.sharing-connection-group { margin-top: 16px; }
+.sharing-connection-group > p { margin: 8px 0; }
+.sharing-new-attempt { margin-top: 16px; padding-top: 4px; border-top: 1px solid var(--field-border); }
+#sharing-history { margin-top: 10px; }
+#sharing-history-sources { padding: 0 12px; background: var(--field); border-radius: 6px; }
+#sharing-history-sources .sharing-source-text { color: var(--text-dim); font-size: var(--fs-muted); }
+#sharing-pending { margin-top: 12px; }
+#sharing-pending h3 { color: var(--text-dim); }
+#sharing-pending-sources .sharing-source { padding: 10px 0; }
+@media (max-width: 960px) {
+  .fleet-overview-facts { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .fleet-overview-facts > div { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 12px; }
+  .fleet-overview-facts dt { margin: 0; }
+}
+
 #fleet-sharing [hidden] { display: none; }
 #sharing-boss { flex: 1 1 100%; min-width: 0; width: 100%; max-width: 100%; }
 #sharing-eligible { margin-top: 12px; }
@@ -2827,6 +2977,10 @@ button.btn:disabled,
 .sharing-source[hidden] { display: none; }
 .sharing-source-text { flex: 1; min-width: 0; }
 .sharing-source > .btn { flex: none; }
+@media (max-width: 960px) {
+  #fleet-sharing .sharing-source { flex-wrap: wrap; gap: 6px; }
+  #fleet-sharing .sharing-source-text { flex-basis: 100%; }
+}
 
 /* Fleet visibility stays in one native disclosure outside the toggle row.
    The renderer moves keyed rows between the groups instead of replacing this
@@ -2873,11 +3027,14 @@ button.btn:disabled,
 .group-add-row {
   display: flex; align-items: center; gap: 6px;
 }
-.group-add-name { flex: 1 1 auto; min-width: 0; }
+.preview-group-manager .group-add-row > .group-add-name { flex: 0 1 200px; min-width: 0; }
 .group-manage-row {
   display: flex; align-items: center; gap: 6px;
 }
-.group-manage-name { flex: 1 1 auto; min-width: 0; font-size: var(--fs-muted); }
+/* Bounded, non-growing names keep lifecycle actions beside their owner.
+   Wrap long group names rather than imposing a minimum on the whole pane. */
+.group-manage-name { flex: 0 1 200px; min-width: 0; overflow-wrap: anywhere; font-size: var(--fs-muted); }
+.group-manage-row > .btn { flex: none; }
 
 /* A latent bookmark collision (previews.js's bookmarkClash) marks the
    chord without the warning colour .clash uses -- nothing is being taken
@@ -3075,11 +3232,14 @@ button.btn:disabled,
 .bk-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 .bk-menu { position: relative; }
 .bk-menu > summary {
-  list-style: none; padding: 7px 10px;
+  list-style: none; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px;
   border: 1px solid var(--control-border); border-radius: var(--radius-sm);
   background: var(--control); color: var(--text-btn);
-  cursor: pointer; font-size: var(--fs-mono);
+  cursor: pointer; font-size: 18px; line-height: 1;
 }
+.bk-menu > summary[hidden] { display: none; }
 .bk-menu > summary::-webkit-details-marker { display: none; }
 .bk-menu > summary:hover { background: var(--control-hover); color: var(--text); }
 .bk-menu > summary:focus-visible {
@@ -3091,10 +3251,9 @@ button.btn:disabled,
   min-width: 112px; background: var(--panel);
   box-shadow: 0 10px 28px rgba(0, 0, 0, .55);
 }
-/* The route owns the scrollbar. Its final visible archive row can sit at the
-   scrollport boundary even when controls follow the archive, so open that
-   row's menu upward into the list rather than downward across the edge. */
-.es-backup-row:last-child .bk-menu > button {
+/* The existing disclosure measures the route edge when it opens. Any row
+   can be the last visible one; DOM order alone cannot choose the safe side. */
+.bk-menu.opens-up > button {
   top: auto; bottom: calc(100% + 4px);
 }
 #es-backups-more { margin-top: 8px; }
@@ -3147,10 +3306,20 @@ button.btn:disabled,
    #eve-bind-warning's precedent below. */
 #es-warning { color: var(--warn); }
 
-/* Same reasoning as #es-warning: a missing Gamelogs folder is the
-   important one of the Alerts card's three states -- without it alerts
-   silently do nothing, which reads as nothing happening in game. */
-#alerts-no-folder { color: var(--warn); }
+/* One operational line leads the master switch's editable preferences.
+   Long monitored names and reader/write errors wrap, never truncate. */
+#alerts-health { color: var(--text); font-size: var(--fs-body); font-weight: 600; }
+#alerts-health.err { color: var(--err); }
+#alerts-health, #alerts-status, #alerts-events-note { overflow-wrap: anywhere; }
+#alerts-status { color: var(--warn); }
+#alerts-preferences {
+  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--field-border);
+  min-width: 0;
+}
+#alerts-preferences-lead {
+  margin: 0; color: var(--text-dim); font-size: var(--fs-body); font-weight: 600;
+}
+#alert-pulse-lead { color: var(--text-dim); }
 
 /* The alert colour, as a small fixed palette rather than a colour input.
    <input type="color"> opened the native Win32 ChooseColor dialog -- the
@@ -3311,10 +3480,9 @@ button.btn:disabled,
   justify-content: start;
   gap: 10px; align-items: center;
 }
-/* The event table is a different rhythm from the three single checkboxes
-   above it -- a packed grid under three loose rows -- and at .row's 10px
-   it read as three more checkboxes in the same list. */
-.alert-events { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--field-border); }
+/* The preference group's heading supplies separation from the master;
+   the event table belongs directly beneath that heading. */
+.alert-events { margin-top: 12px; }
 .alert-head { display: contents; }
 /* The same [hidden] trap .alert-row carries below, and for the same
    reason: display:contents beats the UA stylesheet's [hidden] outright,
@@ -3535,7 +3703,8 @@ button.btn:disabled,
    change often enough to be worth reading. Given one line, the path is the
    half that may be cut. */
 #es-folder-set {
-  flex: none; color: var(--text-dim); font-size: var(--fs-muted);
+  flex: none; max-width: 100%; overflow-wrap: anywhere;
+  color: var(--text-dim); font-size: var(--fs-muted);
 }
 /* This is a static summary, not a form field: keep its noun inline so
    configured setup gives a line back to target picking. The path retains
@@ -3561,6 +3730,19 @@ button.btn:disabled,
   min-width: 0; overflow-wrap: anywhere;
 }
 .es-commit-info[hidden] { display: none; }
+/* Keep the quantity and source together without spending two resting lines.
+   Long identities wrap inside this same owner, never over the Copy action. */
+.es-commit-summary-line {
+  display: flex; flex-wrap: wrap; gap: 2px 12px; min-width: 0;
+}
+.es-commit-summary-line[hidden] { display: none; }
+.es-commit-summary-line > .es-count { flex: none; }
+.es-commit-summary-line > .es-copy-source { min-width: 0; }
+@media (max-width: 840px) {
+  #es-commit > .es-commit-info { flex-basis: 100%; }
+  #es-copy { margin-left: 0; }
+  #es-eve-state-commit[hidden] + #es-copy { margin-left: auto; }
+}
 
 /* The quantity, stated before the irreversible action (PRODUCT.md). Body
    size, not muted: it is the number the user is meant to check, and the
@@ -3575,8 +3757,7 @@ button.btn:disabled,
   overflow-wrap: anywhere;
 }
 
-/* Right edge, so the hazard is the last thing before the eye leaves the
-   row -- and so it lands in the same place whether or not the count wrapped.
+/* Keep the hazard beside Copy, including when the summary wraps above them.
 
    The [hidden] override is REQUIRED, not decorative: .pill sets
    display: inline-flex, and an author rule beats the UA stylesheet's
@@ -4224,6 +4405,24 @@ button.btn:disabled,
   background: var(--panel); padding: 0 22px;
 }
 .settings-subpage[hidden] { display: none; }
+#section-previews .settings-subpage { overscroll-behavior-y: contain; }
+/* Retain local identity, not the whole form. The enable switch and its refusal
+   scroll together; pinning only the switch would hide failed-save feedback. */
+.scroll-context {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--panel); box-shadow: 0 -1px var(--panel);
+  padding: 8px 0 10px;
+}
+.scroll-context > h2 {
+  font-size: 15px; font-weight: 620; line-height: 20px;
+  color: var(--text); margin: 0;
+}
+/* The two-line heading/status occupies 62px at the supported floor. Keep
+   keyboard reveal below it; long recovery text stays outside this context. */
+#wanderer-settings .scroll-context > .operational-status {
+  margin: 4px 0 0; line-height: 20px; font-weight: 600; color: var(--text);
+}
+#settings-previews-wanderer { scroll-padding-top: 72px; }
 /* Cards retain their control/feedback ownership but not a second visual box. */
 .settings-subpage > .card {
   border: 0; box-shadow: none; background: transparent; border-radius: 0;
@@ -4242,6 +4441,45 @@ button.btn:disabled,
 }
 .settings-subpage > .card > h2::before { display: none; }
 .settings-subpage .hint, .settings-subpage .field-msg { max-width: 72ch; }
+/* These are peers within upload defaults, not two full-width sections. */
+.upload-defaults {
+  display: grid; grid-template-columns: 150px minmax(180px, 1fr);
+  gap: 20px; max-width: 480px; align-items: start;
+}
+/* Keep the folder context visible with the notification choices without
+   changing the tab's scroll owner or discarding retained scroll. */
+#settings-uploading-recording > .card + .card {
+  padding-top: 14px; margin-top: 14px;
+}
+#settings-uploading-recording > .card > h2 { margin-bottom: 10px; }
+.webhook-identity {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px;
+  margin-top: 12px;
+}
+.webhook-identity > .operational-status { margin: 0; min-width: 0; }
+/* Backup is a pair of ordinary actions, not the Uploader's full-width CTA. */
+.settings-backup-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+/* Pair the Bookmark engine with its preference without duplicating status;
+   full errors get their own line rather than squeezing the enable control. */
+.bookmark-runtime { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-bottom: 12px; }
+.bookmark-runtime[hidden] { display: none; }
+.bookmark-runtime > .row { margin: 0; min-width: 0; max-width: 100%; }
+.bookmark-runtime > .row:has(.err) { flex-basis: 100%; }
+
+/* Related preferences share space, but every consequence stays below its own
+   control. These units add no cards or scroll owners, and stack at the floor. */
+#preview-window-options .preview-option-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 24px;
+}
+#preview-window-options .preview-option-grid[hidden] { display: none; }
+#preview-window-options .preview-option-unit { min-width: 0; }
+#preview-window-options .row > .hint { flex-basis: 100%; min-width: 0; overflow-wrap: anywhere; }
+#preview-window-options .row:has(> .check) > .hint { flex-basis: calc(100% - 24px); }
+#preview-window-options .row > .btn { max-width: 100%; white-space: normal; }
+#preview-window-options .pv-exc { max-width: 100%; }
+@media (max-width: 960px) {
+  #preview-window-options .preview-option-grid { grid-template-columns: minmax(0, 1fr); }
+}
 .settings-disclosure {
   border-bottom: 1px solid var(--field-border); padding-bottom: 17px; margin-bottom: 17px;
 }
@@ -4354,6 +4592,12 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .settings .sub-hint {
   color: var(--text-faint); font-size: var(--fs-muted);
   margin: 6px 0 0; max-width: 72ch;
+}
+/* Compact retained headlines must not shorten their existing live-region
+   content. Keep full recovery accessible without adding height or an owner. */
+.status-announcement {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap;
 }
 /* Current readiness is information to scan, not an explanatory footnote.
    Keep status nodes mounted even when empty so live updates are announced. */
@@ -4679,6 +4923,33 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 #setup-work #setup-catalog-origin { margin: 0 0 8px; }
 #setup-import .field:disabled { color: var(--text-faint); opacity: .5; }
 #setup-summary:focus, #setup-status:focus { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+/* Import stages retain their fields, but a compact review must not leave a
+   fragment of the recipient form above its heading after focus/scroll. Export
+   keeps its accepted sizing and hierarchy; these overrides are import-only. */
+#setup-import { gap: 8px; }
+#setup-import .us-heading h1 { font-size: 20px; line-height: 1.25; }
+#setup-import #setup-source-summary {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: center;
+}
+#setup-import #setup-source-summary > .row { grid-column: 2; grid-row: 1; }
+#setup-import #setup-source-name { margin: 0; }
+#setup-import #setup-catalog-origin { grid-column: 1 / -1; margin: 0; }
+#setup-import #setup-source-section { margin-bottom: 12px; }
+#setup-import #setup-summary { margin: 8px 0; padding: 12px; background: var(--panel); }
+#setup-import #setup-commit { display: flex; gap: 12px; align-items: flex-start; }
+#setup-import #setup-commit > .row { flex: none; }
+#setup-import #setup-commit-context { flex: 1; min-width: 0; grid-template-columns: 76px minmax(0, 1fr); gap: 4px 10px; }
+#setup-import #setup-commit-context p { margin: 0; overflow-wrap: anywhere; }
+#setup-import #setup-commit-context .hint { margin-top: 4px; }
+#setup-import #setup-destination { font-weight: 600; }
+#setup-import #setup-safety { margin: 8px 0 0; overflow-wrap: anywhere; }
+#setup-import #setup-source-summary[hidden], #setup-import #setup-recipient[hidden],
+#setup-import #setup-commit-context[hidden], #setup-import #setup-review[hidden],
+#setup-import #setup-create[hidden], #setup-import #setup-cancel-note[hidden] { display: none; }
+@media (max-width: 840px) {
+  #setup-import #setup-commit { flex-wrap: wrap; gap: 8px; }
+  #setup-import #setup-commit-context { flex-basis: 100%; }
+}
 
 /* ================== probe formation editor ==========================
    A sub-screen of Profiles on its own route id (index.html, app.js).
@@ -4757,7 +5028,24 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .fm-work[hidden], #fm-editor-work[hidden], #fm-import-work[hidden],
 #fm-commit[hidden], #fm-import-commit[hidden] { display: none; }
 #fm-commit, #fm-import-commit { flex: none; flex-wrap: wrap; row-gap: 4px; }
-#fm-import-heading { margin: 0; font-size: var(--fs-body); color: var(--text); }
+#fm-import-heading, #fm-import-candidates-heading {
+  margin: 0; font-size: var(--fs-body); color: var(--text);
+}
+#fm-import-source { flex: none; min-width: 0; }
+#fm-import-source > summary { cursor: pointer; color: var(--text-dim); }
+#fm-import-source > summary:focus-visible, #fm-import-candidates-heading:focus-visible,
+#fm-save-status:focus-visible, #fm-balance-note:focus-visible, #fm-import-status:focus-visible {
+  outline: 2px solid var(--focus-ring); outline-offset: -2px;
+}
+#fm-import-source > .lab { display: block; margin: 8px 0 4px; }
+#fm-import-candidates {
+  display: flex; flex-direction: column; gap: 10px; flex: 1; min-width: 0;
+}
+#fm-import-candidates[hidden], #fm-import-review[hidden] { display: none; }
+#fm-import-account-context, #fm-import-save-note {
+  flex-basis: 100%; margin: 0; overflow-wrap: anywhere;
+}
+#fm-import-account-context { color: var(--text-dim); }
 #fm-import-text { flex: none; width: 100%; resize: vertical; min-height: 80px; }
 #fm-import-list { flex: none; display: flex; flex-direction: column; gap: 10px; }
 .fm-import-row { display: flex; flex-wrap: wrap; gap: 4px 8px; min-width: 0; }
@@ -4769,6 +5057,11 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 /* Keep the live region present before its text arrives, and wrap file errors
    rather than letting a long path widen the editor at the viewport floor. */
 #fm-save-status { min-height: 1.4em; overflow-wrap: anywhere; }
+#fm-editor-work > .row { flex-wrap: wrap; }
+#fm-name { flex: 1; min-width: 0; }
+#fm-balance-note { color: var(--text-dim); }
+#fm-dirty { overflow-wrap: anywhere; }
+#fm-dirty:not(.err) { color: var(--text-dim); }
 
 /* The three coordinate tracks are capped, not elastic. `1fr` handed them
    every spare pixel, which is the same thing the recording list's
@@ -4776,10 +5069,23 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
    times wider than the widest number it can hold reads as misalignment,
    not as spacing. 64px is what a five-digit value needs. */
 .fm-grid {
-  display: grid;
-  grid-template-columns: 2ch repeat(3, minmax(64px, 130px)) 96px auto;
+  --fm-probe-columns: 2ch repeat(3, minmax(64px, 130px)) 96px 58px;
+  display: grid; grid-template-columns: var(--fm-probe-columns);
   gap: 4px 8px; align-items: center; justify-content: start;
+  margin: 2px 3px;
 }
+.fm-probe-row {
+  display: grid; grid-column: 1 / -1; grid-template-columns: var(--fm-probe-columns);
+  gap: 8px; align-items: center; min-width: 0;
+}
+/* A dashed row outline is selection; the solid focus ring still belongs to
+   the actual field/button. Neither relies on the tinted background. */
+.fm-probe-row.selected {
+  outline: 1px dashed var(--formation-selection-ink); outline-offset: 2px;
+  background: var(--row-active);
+}
+.fm-probe-row.selected > .fm-idx { font-weight: 700; color: var(--text); }
+.fm-probe-row > .field { min-width: 0; width: 100%; }
 /* NO .14em tracking here, and that is a decision rather than an omission:
    test_page_conventions.py pins the uppercase-tracked group to exactly
    four selectors, each with a stated rank. These name the six tracks of
@@ -4807,7 +5113,7 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 #fm-preview, #fm-import-preview {
   flex: 0 1 auto; min-height: 150px; height: 100%;
   width: auto; max-width: calc(100% - 110px - 16px); aspect-ratio: 1;
-  background: var(--sunken); border: 1px solid var(--panel-border);
+  background: var(--formation-preview-surface); border: 1px solid var(--panel-border);
   border-radius: var(--radius); cursor: grab; touch-action: none;
   overflow: hidden;
 }
@@ -4825,7 +5131,20 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
    CSS pixel here. A fixed square viewBox would have scaled this type down
    to about 5px at the 840x625 floor. */
 .fm-probe-label {
-  fill: var(--text-faint); font-size: var(--fs-label);
+  fill: var(--formation-label-ink); font-size: var(--fs-label);
+  paint-order: stroke; stroke: var(--formation-label-halo); stroke-width: 3px;
+}
+.fm-probe-label.selected { fill: var(--formation-selection-ink); font-weight: 700; }
+.fm-probe-selection-ring { fill: none; stroke: var(--formation-selection-ink); stroke-width: 1.5; }
+@media (forced-colors: active) {
+  .fm-probe-row.selected { outline-color: var(--formation-forced-ink); }
+  .fm-probe-selection-ring { stroke: var(--formation-forced-ink); }
+  .fm-probe-label, .fm-probe-label.selected {
+    fill: var(--formation-forced-ink); stroke: var(--formation-forced-surface);
+  }
+  #route-formations #fm-preview, #route-formations #fm-import-preview {
+    background: var(--formation-forced-surface);
+  }
 }
 .fm-tether {
   stroke: var(--formation-guide); stroke-width: 1; stroke-dasharray: 2 3;
@@ -5545,9 +5864,28 @@ button.btn.danger:disabled {
    fitting row (name/ship/meta instead of a character's readiness) and its
    expanded detail (rack-grouped modules instead of a requirement list). */
 
+#route-fittings {
+  --fit-identity-tracks: minmax(0, 1.25fr) minmax(0, .8fr);
+  --fit-row-tracks: 24px var(--fit-identity-tracks) minmax(160px, 1fr);
+  --fit-row-padding: 6px 10px;
+  --fit-row-gap: 8px;
+}
+.fit-selection-actions {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
+  padding-bottom: 8px;
+}
+/* These helpers act on the same selection the adjacent primary action uses. */
+.fit-selection-actions > .workspace-primary { margin-left: 4px; }
+
 /* Import and its complete review share the workspace scroller, so a long
    warning list cannot squeeze the fitting list out of the 840x625 floor. */
-.fit-workspace-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.fit-workspace-scroll {
+  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain;
+  /* Wrapped identity/status changes row height; the page measures its owner. */
+  scroll-padding-top: var(--fit-sticky-clearance, 44px);
+  /* Native textarea focus reveals its caret; also clear the control's border. */
+  scroll-padding-bottom: 16px;
+}
 .fit-list { width: 100%; }
 #fittings-import-open { margin-bottom: 8px; }
 .fit-import-panel {
@@ -5572,38 +5910,68 @@ button.btn.danger:disabled {
   border-left: 2px solid transparent;
 }
 .fit-row.open { background: var(--row-hover); border-left-color: var(--row-ring); }
-.fit-row-top { display: flex; align-items: center; gap: 8px; padding: 6px 10px; }
-/* .check is a <label>; giving it its own class alongside keeps the
-   selection box out of the row's flex growth without a second wrapper
-   element. */
-.fit-select { flex: none; }
+.fit-list-head, .fit-row-top {
+  display: grid; grid-template-columns: var(--fit-row-tracks);
+  align-items: center; gap: var(--fit-row-gap); padding: var(--fit-row-padding);
+}
+.fit-list-head {
+  border-left: 2px solid transparent;
+  border-bottom: 1px solid var(--row-line);
+  color: var(--text-faint); font-size: var(--fs-label);
+}
+.fit-list-head[hidden] { display: none; }
+/* Reserve the same chevron and gap as the identity button's first cell. */
+.fit-column-name { padding-left: 23px; }
+/* Reuse the actual row identity and controls. Sticky releases at this fitting's
+   boundary, rather than leaving a detached title over the next fitting. */
+.fit-row.open > .fit-row-top {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--panel); box-shadow: 0 -1px var(--panel);
+}
+/* The native checkbox remains separate from the row's expansion button. */
+.fit-select { align-self: start; padding-top: 6px; }
+/* Native focus must reveal the painted checkbox, not a zero-size page anchor. */
+.fit-select, .fit-collections .check { position: relative; }
+.fit-select input, .fit-collections .check input { inset: 0; width: 100%; height: 100%; }
 .fit-row-toggle {
-  display: flex; align-items: center; gap: 9px; flex: 1; min-width: 0;
+  display: grid; grid-column: 2 / 4; grid-template-columns: var(--fit-identity-tracks);
+  align-items: center; gap: var(--fit-row-gap); min-width: 0;
   background: none; border: 0; padding: 4px 0;
   color: var(--text); font: inherit; font-size: var(--fs-body);
   cursor: pointer; text-align: left;
 }
 .fit-row-toggle:hover { color: var(--text); }
-.fit-row-toggle .chev { width: 14px; font-size: var(--fs-body); color: var(--text-dim); }
-.fit-name {
-  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap;
+.fit-row-toggle .chev {
+  flex: 0 0 14px; font-size: var(--fs-body); color: var(--text-dim);
 }
-.fit-ship { flex: none; color: var(--text-dim); font-size: var(--fs-muted); }
-.fit-meta {
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; text-align: right; color: var(--text-faint);
-  font-size: var(--fs-muted);
+.fit-identity { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.fit-name, .fit-ship, .fit-meta {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-
-/* A deployment blocker must survive a long name or collection list. */
+.fit-ship { color: var(--text-dim); font-size: var(--fs-muted); }
+.fit-meta { color: var(--text-faint); font-size: var(--fs-muted); }
+.fit-row-status { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+/* Warning and its action stay together, never stealing the ownership column. */
 .fit-deployability {
-  flex: none; white-space: nowrap; color: var(--warn); font-size: var(--fs-body);
+  align-self: flex-start; text-align: left; white-space: normal;
+  overflow-wrap: anywhere; color: var(--warn); font-size: var(--fs-muted);
 }
-
+.fit-row-toggle:focus-visible,
+.fit-metadata-disclosure > summary:focus-visible {
+  outline: 2px solid var(--focus-ring); outline-offset: 2px;
+}
 .fit-detail {
-  padding: 4px 10px 12px 29px;
-  display: flex; flex-direction: column; gap: 10px;
+  padding: 8px 10px 12px 29px;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px;
+}
+.fit-detail > .notice { grid-column: 1 / -1; }
+.fit-detail-content, .fit-detail-management {
+  display: flex; flex-direction: column; gap: 12px; min-width: 0;
+}
+.fit-detail-content, .fit-detail-management, .fit-immediate { overflow-wrap: anywhere; }
+.fit-immediate {
+  display: flex; flex-direction: column; gap: 12px; min-width: 0;
+  padding-top: 12px; border-top: 1px solid var(--field-border);
 }
 .fit-description { color: var(--text-dim); font-size: var(--fs-muted); }
 .fit-subhead {
@@ -5619,7 +5987,9 @@ button.btn.danger:disabled {
   display: flex; align-items: baseline; gap: 6px; padding-left: 8px;
   font-size: var(--fs-muted);
 }
+.fit-detail .fit-item-name { min-width: 0; overflow-wrap: anywhere; }
 .fit-item-qty { color: var(--text-faint); }
+.fit-detail .fit-item-qty { flex: none; }
 .fit-aliases, .fit-presences, .fit-collections, .fit-supersession,
 .fit-metadata {
   display: flex; flex-direction: column; gap: 4px;
@@ -5636,16 +6006,30 @@ button.btn.danger:disabled {
 .fit-metadata-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .fit-metadata-actions > .hint { margin: 0; }
 .fit-metadata-actions > .hint:empty { display: none; }
-.fit-immediate-note {
-  margin: 0; padding-top: 10px; border-top: 1px solid var(--field-border);
-}
+.fit-metadata-status { font-weight: 600; overflow-wrap: anywhere; }
+.fit-immediate-note { margin: 0; }
+.fit-metadata .field { min-width: 0; width: 100%; }
 .fit-alias-row, .fit-presence-row {
   font-size: var(--fs-muted); color: var(--text-dim);
 }
-.fit-presence-row { display: flex; align-items: baseline; gap: 8px; }
+.fit-presence-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.fit-presence-row > span { min-width: 0; overflow-wrap: anywhere; }
 .fit-presence-name { color: var(--text); }
 .fit-presence-meta { color: var(--text-faint); }
 .fit-description-field { min-height: 60px; resize: vertical; }
+
+@media (max-width: 960px) {
+  #route-fittings { --fit-row-tracks: 24px minmax(0, 1fr); }
+  .fit-list-head { display: none; }
+  .fit-row-toggle { grid-column: 2; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .fit-ship { padding-left: 23px; }
+  .fit-row-status { grid-column: 2; padding-left: 23px; margin-top: -4px; }
+  .fit-detail { grid-template-columns: minmax(0, 1fr); }
+}
+@media (forced-colors: active) {
+  .fit-row.open { outline: 1px solid var(--fitting-forced-ink); outline-offset: -1px; }
+  .fit-row.open > .fit-row-top { background: var(--fitting-forced-surface); }
+}
 
 .fit-pager {
   flex: none; display: flex; align-items: center; justify-content: center;
@@ -5666,11 +6050,36 @@ button.btn.danger:disabled {
 /* Copy reuses the app-owned overlay/dialog vocabulary. These rules only
    shape its bounded roster and pair results; no second modal treatment or
    accent is introduced. */
-#fittings-copy-dialog { width: min(680px, 92vw); }
-#fittings-copy-body {
-  display: flex; flex-direction: column; gap: 10px; max-height: 55vh;
-  overflow-y: auto;
+#fittings-copy-dialog {
+  width: min(680px, 92vw); max-height: calc(100vh - 48px);
+  display: flex; flex-direction: column; min-width: 0;
 }
+/* Context and actions sit outside the one scroller, not over its first/last row. */
+.fit-copy-heading { flex: none; background: var(--panel); overflow-wrap: anywhere; }
+.fit-copy-heading > h2 { min-width: 0; }
+.fit-copy-heading > h2::before { align-self: flex-start; margin-top: 4px; }
+.fit-copy-heading > .fit-copy-summary { margin-bottom: 10px; }
+.fit-copy-limit-summary { color: var(--warn); font-size: var(--fs-body); margin-bottom: 10px; }
+#fittings-copy-summary[hidden], #fittings-copy-limit-summary[hidden],
+#fittings-copy-progress[hidden] { display: none; }
+#fittings-copy-body {
+  display: flex; flex-direction: column; gap: 10px; max-height: 55vh; min-height: 0;
+  overflow-y: auto; overscroll-behavior-y: contain; scroll-padding: 8px; padding: 4px;
+}
+#fittings-copy-dialog > .buttons { flex: none; }
+#fittings-copy-dialog > .field-msg, #fittings-copy-dialog > .hint { flex: none; }
+#fittings-copy-progress { appearance: none; border: 0; width: 100%; height: 8px; flex: none; accent-color: var(--brand); }
+#fittings-copy-progress::-webkit-progress-bar { background: var(--field); border-radius: var(--radius-sm); }
+#fittings-copy-progress::-webkit-progress-value { background: var(--brand); border-radius: var(--radius-sm); }
+@media (forced-colors: active) {
+  #fittings-copy-progress { forced-color-adjust: none; border: 1px solid var(--fitting-forced-ink); }
+  #fittings-copy-progress::-webkit-progress-bar { background: var(--fitting-forced-surface); }
+  #fittings-copy-progress::-webkit-progress-value { background: var(--fitting-forced-ink); }
+}
+.fit-copy-technical { overflow-wrap: anywhere; color: var(--text-dim); font-size: var(--fs-muted); }
+.fit-copy-technical > summary { cursor: pointer; }
+.fit-copy-technical > summary:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+#fittings-copy-operation-id { user-select: text; margin-top: 6px; }
 .fit-copy-targets { display: flex; flex-direction: column; gap: 7px; }
 .fit-copy-target {
   display: flex; align-items: center; gap: 8px; padding: 5px 0;
@@ -5687,17 +6096,31 @@ button.btn.danger:disabled {
   border-radius: var(--radius-sm); color: var(--text-dim); font-size: var(--fs-muted);
 }
 .fit-copy-pair {
-  display: grid; grid-template-columns: minmax(130px, 1fr) minmax(130px, 1fr);
-  gap: 4px 10px; padding: 8px 0; border-bottom: 1px solid var(--row-line);
-  overflow-wrap: anywhere;
+  display: flex; flex-direction: column; flex: none;
+  gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--row-line);
+  overflow-wrap: anywhere; min-width: 0;
+}
+/* Identity releases at its own pair boundary; it masks orphaned outcome text
+   while that pair exits, rather than becoming a global status heading. */
+.fit-copy-pair-context {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 10px;
+  position: sticky; top: 0; z-index: 1; background: var(--panel);
+  box-shadow: 0 -1px var(--panel); padding: 4px 0; min-width: 0;
+}
+.fit-copy-pair-context > * { min-width: 0; }
+.fit-copy-resolution .check, .fit-copy-target .check { position: relative; }
+.fit-copy-resolution .check input, .fit-copy-target .check input { inset: 0; width: 100%; height: 100%; }
+.fit-copy-resolution input { scroll-margin-top: var(--fit-copy-context-clearance, 64px); }
+@media (max-width: 960px) {
+  .fit-copy-pair-context { grid-template-columns: minmax(0, 1fr); }
+  .fit-copy-target { flex-wrap: wrap; }
+  .fit-copy-target-state { max-width: 100%; flex-basis: 100%; padding-left: 24px; }
 }
 .fit-copy-pair:last-child { border-bottom: 0; }
-.fit-copy-guidance { grid-column: 1 / -1; }
-/* One sticky owner keeps verification before retry advice while reading lower
-   results. It stays inside the existing 55vh body, never above the dialog. */
+/* The compact operation summary now owns retained context. Full verification
+   still precedes retry guidance, but does not crowd the scrolling pair rows. */
 .fit-copy-recovery {
-  position: sticky; top: 0; z-index: 1; flex: none;
-  padding: 6px 0; background: var(--panel);
+  flex: none; padding: 6px 0;
   border-bottom: 1px solid var(--field-border);
 }
 .fit-copy-recovery > .fit-copy-guidance + .fit-copy-guidance { margin-top: 6px; }
@@ -5707,7 +6130,7 @@ button.btn.danger:disabled {
 .fit-copy-needs-resolution > .fit-copy-detail,
 .fit-copy-unavailable > .fit-copy-detail { color: var(--warn); }
 .fit-copy-resolution {
-  grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px;
+  display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px;
 }
 .fit-copy-alternate-field { display: flex; flex-direction: column; flex: 1 1 180px; min-width: 0; gap: 4px; }
 .fit-copy-alternate-field > .lab { color: var(--text-dim); font-size: var(--fs-body); }
@@ -5717,6 +6140,7 @@ button.btn.danger:disabled {
 .fit-copy-result.cancelled { color: var(--warn); }
 .fit-copy-result.failed { color: var(--err); }
 #fittings-copy-status { margin-top: 10px; min-height: 18px; overflow-wrap: anywhere; }
+#fittings-copy-status.status-announcement { min-height: 0; margin: 0; }
 #fittings-copy-dialog .buttons > [hidden] { display: none; }
 
 /* ====================== reduced motion ==============================

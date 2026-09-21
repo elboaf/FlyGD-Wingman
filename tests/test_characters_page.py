@@ -71,7 +71,17 @@ def test_characters_shell_splits_authorization_from_the_wide_roster():
     )
     assert shared_grid
     assert "max-content" not in shared_grid.group(1)
-    assert "minmax(150px, 1fr) 92px 106px 138px 32px" in shared_grid.group(1)
+    assert "minmax(180px, 1fr) 112px 112px 64px" in shared_grid.group(1)
+    assert "gap: 12px" in shared_grid.group(1)
+    assert re.search(
+        r"\.characters-head > span:not\(:first-child\)\s*\{[^}]*text-align:\s*center",
+        CSS,
+    )
+    assert re.search(r"\.characters-actions\s*\{[^}]*justify-self:\s*center", CSS)
+    assert re.search(r"\.characters-status\s*\{[^}]*justify-content:\s*center", CSS)
+    assert re.search(r"\.characters-head\s*\{[^}]*padding:\s*\S+ 10px", CSS)
+    assert re.search(r"\.characters-row\s*\{[^}]*padding:\s*\S+ 10px", CSS)
+    assert "characters-authenticated" not in CSS
 
     for element_id in (
         "characters-count",
@@ -203,19 +213,20 @@ def test_characters_filter_and_empty_states_are_rendered_locally():
     assert "return 'Character roster';" in JS
 
 
-# The wire vocabulary stays `authorized` / `sign_in`, but the latter is a
-# condition, not a row action. The page gives it non-imperative wording and
-# distinguishes a rejected grant from a capability that was never granted.
-def test_characters_render_uses_clear_status_words_and_bare_authenticated_time():
+# Wire values and the retained authentication search stay compatible. Only
+# the visible authorized label and date column change; missing/expired access
+# remains a condition, not an invitation to authenticate that particular row.
+def test_characters_render_uses_ready_without_removing_authentication_search():
     assert "row.skills === 'authorized'" in JS
     assert "row.fittings === 'authorized'" in JS
-    assert "return 'Authorized';" in JS
+    assert "return 'Ready';" in JS
     assert "return 'Access needed';" in JS
     assert "return 'Access expired';" in JS
     assert "return 'Sign in';" not in JS
     assert "authenticated_utc" in JS
     assert "'Authenticated ' + authenticated" not in JS
-    assert "authenticated ? authenticated : ''" in JS
+    assert "formatAuthenticated(row.authenticated_utc)" in JS
+    assert "characters-authenticated" not in JS
 
 
 def test_characters_roster_exposes_table_semantics():
@@ -223,12 +234,12 @@ def test_characters_roster_exposes_table_semantics():
     roster = re.search(r'<div[^>]+id="characters-roster"[^>]*>', pane)
     assert roster
     assert 'role="table"' in roster.group(0)
-    assert 'aria-colcount="5"' in roster.group(0)
+    assert 'aria-colcount="4"' in roster.group(0)
     assert "head.setAttribute('role', 'row');" in JS
     assert "cell.setAttribute('role', 'columnheader');" in JS
     assert "node.setAttribute('role', 'row');" in JS
     assert "name.setAttribute('role', 'cell');" in JS
-    assert "authenticatedCell.setAttribute('role', 'cell');" in JS
+    assert "['Character', 'Skills', 'Fittings', 'Actions']" in JS
     assert "actions.setAttribute('role', 'cell');" in JS
     status_cell = re.search(r"function makeStatusCell\(.*?\n  \}", JS, re.DOTALL)
     assert status_cell
@@ -349,19 +360,8 @@ def test_characters_menu_and_forget_flow_are_fixed_accessible_and_tri_state():
     )
 
 
-@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
-@pytest.mark.parametrize(
-    "forget_result",
-    [
-        {"applied": True, "persisted": False, "error": "Cleanup was not saved."},
-        {"applied": True, "persisted": False, "error": ""},
-        {"applied": False, "persisted": False, "error": "Copy is still running."},
-        None,
-    ],
-)
-def test_characters_warnings_menu_and_global_auth_commands_behave_together(
-    forget_result,
-):
+def _run_characters_page(scenario):
+    """Execute the production closure; only DOM and bridge boundaries are doubled."""
     script = textwrap.dedent(
         rf"""
         const vm = require('vm');
@@ -416,7 +416,11 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together(
             }},
             setAttribute: function (name, value) {{ this.attributes[name] = String(value); }},
             getAttribute: function (name) {{ return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null; }},
-            focus: function () {{ document.activeElement = this; }},
+            focus: function (options) {{
+              this.focusOptions = options;
+              this.focusCalls = (this.focusCalls || 0) + 1;
+              document.activeElement = this;
+            }},
             contains: function (target) {{
               for (let cur = target; cur; cur = cur.parentNode) if (cur === this) return true;
               return false;
@@ -439,7 +443,13 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together(
               return null;
             }},
             getBoundingClientRect: function () {{
-              return {{ left: 100, top: 100, bottom: 120, width: 80, height: 20 }};
+              return this.rect || {{ left: 100, top: 100, bottom: 120, width: 80, height: 20 }};
+            }},
+            getClientRects: function () {{
+              for (let current = this; current; current = current.parentNode) {{
+                if (current.hidden) return [];
+              }}
+              return [this.getBoundingClientRect()];
             }}
           }};
           Object.defineProperty(node, 'firstChild', {{
@@ -460,6 +470,22 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together(
           activeElement: null,
           getElementById: function (id) {{ return nodes[id] || null; }},
           createElement: function (tag) {{ return makeNode(tag, '', ''); }},
+          querySelectorAll: function (selector) {{
+            const out = [];
+            function accepts(node) {{
+              if (node.hidden || node.disabled) return false;
+              if (['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'].includes(node.tagName)) return true;
+              return node.getAttribute('tabindex') === '0';
+            }}
+            function walk(node) {{
+              node.children.forEach(function (child) {{
+                if (accepts(child)) out.push(child);
+                walk(child);
+              }});
+            }}
+            walk(section);
+            return out;
+          }},
           addEventListener: function (type, fn) {{
             (documentListeners[type] || (documentListeners[type] = [])).push(fn);
           }},
@@ -473,6 +499,9 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together(
           document,
           innerWidth: 800,
           innerHeight: 600,
+          getComputedStyle: function (node) {{
+            return {{ visibility: node.visibility || 'visible' }};
+          }},
           addEventListener: function (type, fn) {{
             (windowListeners[type] || (windowListeners[type] = [])).push(fn);
           }},
@@ -496,6 +525,8 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together(
         const filter = add('input', 'characters-filter', 'field');
         const filterClear = add('button', 'characters-filter-clear', 'linkbtn');
         const roster = add('div', 'characters-roster', '');
+        const statusbar = add('div', 'statusbar-slot', '');
+        statusbar.rect = {{ left: 0, top: 550, bottom: 600, width: 800, height: 50 }};
         const empty = add('div', 'characters-empty', 'empty');
         roster.appendChild(empty);
         const menu = add('div', 'characters-menu', 'ctxmenu');
@@ -516,6 +547,11 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together(
 
         let authResolve;
         let cancelResolve;
+        let deferReads = false;
+        const stateReads = [];
+        const calls = [];
+        const confirmations = [];
+        let confirmResult = true;
         let forgetResult = {{ applied: true, persisted: true, error: '' }};
         let statePayload = {{
           available: true,
@@ -544,8 +580,12 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together(
             if (text !== undefined && text !== null) node.textContent = String(text);
             return node;
           }},
-          send: function (method) {{
-            if (method === 'eve_characters_state') return Promise.resolve(statePayload);
+          send: function (method, ...args) {{
+            calls.push([method, ...args]);
+            if (method === 'eve_characters_state') {{
+              if (deferReads) return new Promise((resolve) => stateReads.push(resolve));
+              return Promise.resolve(statePayload);
+            }}
             if (method === 'eve_characters_authenticate') {{
               return new Promise(function (resolve) {{ authResolve = resolve; }});
             }}
@@ -557,7 +597,7 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together(
             }}
             throw new Error('unexpected method ' + method);
           }},
-          confirm: function () {{ return Promise.resolve(true); }}
+          confirm: function (...args) {{ confirmations.push(args); return Promise.resolve(confirmResult); }}
         }};
 
         global.window = window;
@@ -577,7 +617,41 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together(
           return null;
         }}
 
+        const assert = require('node:assert/strict');
         (async function () {{
+          {scenario}
+        }})().catch(function (error) {{ console.error(error); process.exitCode = 1; }});
+        """
+    )
+
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
+        fh.write(script)
+        path = pathlib.Path(fh.name)
+    try:
+        proc = subprocess.run(
+            ["node", str(path)], capture_output=True, text=True, check=False
+        )
+    finally:
+        path.unlink(missing_ok=True)
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    return json.loads(proc.stdout) if proc.stdout.strip() else None
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+@pytest.mark.parametrize(
+    "forget_result",
+    [
+        {"applied": True, "persisted": False, "error": "Cleanup was not saved."},
+        {"applied": True, "persisted": False, "error": ""},
+        {"applied": False, "persisted": False, "error": "Copy is still running."},
+        None,
+    ],
+)
+def test_characters_warnings_menu_and_global_auth_commands_behave_together(
+    forget_result,
+):
+    result = _run_characters_page(
+        rf"""
           document.dispatchEvent(new CustomEvent('wm:section', {{ detail: 'characters' }}));
           await tick();
           const initialNotice = notice.textContent;
@@ -675,25 +749,8 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together(
             waitingCancel,
             cancelDisabledImmediately
           }}));
-        }})();
         """
     )
-
-    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as fh:
-        fh.write(script)
-        path = pathlib.Path(fh.name)
-    try:
-        proc = subprocess.run(
-            ["node", str(path)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    finally:
-        path.unlink(missing_ok=True)
-
-    assert proc.returncode == 0, proc.stderr or proc.stdout
-    result = json.loads(proc.stdout)
     assert "Last sign-in failed." in result["initialNotice"]
     assert "Restored eve_authority.json from backup." in result["initialNotice"]
     assert "The EVE fittings subsystem is unavailable." in result["initialNotice"]
@@ -744,6 +801,308 @@ def test_characters_warnings_menu_and_global_auth_commands_behave_together(
         "disabled": False,
     }
     assert result["cancelDisabledImmediately"] is True
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_characters_four_cells_keep_full_identity_status_classes_and_search_aliases():
+    _run_characters_page(
+        r"""
+        const longName = 'A very long pilot identity that must remain available in full';
+        const original = statePayload.characters[0];
+        statePayload.characters = [
+          Object.assign({}, original, {character_name: longName, skills: 'authorized',
+            fittings: 'authorized', needs_reauth: false}),
+          Object.assign({}, original, {character_id: 5, character_name: 'Partial Pilot',
+            skills: 'authorized', needs_reauth: false, authenticated_utc: '2026-08-02T05:30:00Z'}),
+          Object.assign({}, original, {character_id: 6, character_name: 'Expired Pilot',
+            authenticated_utc: 'invalid'}),
+          Object.assign({}, original, {character_id: 7, character_name: 'New Pilot',
+            needs_reauth: false, authenticated_utc: ''})
+        ];
+        document.dispatchEvent(new CustomEvent('wm:section', {detail: 'characters'}));
+        await tick();
+        assert.deepEqual(roster.children[0].children.map(c => c.textContent),
+          ['Character', 'Skills', 'Fittings', 'Actions']);
+        assert.ok(roster.children[0].children.every(c => c.getAttribute('role') === 'columnheader'));
+        roster.children.slice(1).forEach(row => {
+          assert.equal(row.getAttribute('role'), 'row');
+          assert.equal(row.children.length, 4);
+          assert.ok(row.children.every(c => c.getAttribute('role') === 'cell'));
+          assert.equal(findByClass(row, 'characters-authenticated'), null);
+          assert.equal(findByClass(row, 'characters-auth-action'), null);
+        });
+        const first = roster.children[1];
+        assert.equal(findByClass(first, 'characters-name-text').textContent, longName);
+        assert.equal(findByClass(first, 'characters-name-text').title, longName);
+        assert.equal(findByClass(first, 'characters-menu-trigger').title, 'More actions');
+        assert.equal(findByClass(first, 'characters-menu-trigger').getAttribute('aria-label'),
+          'More actions for ' + longName);
+        assert.deepEqual(roster.children.slice(1).map(row => row.children.slice(1, 3)
+          .map(c => [c.textContent, c.className])), [
+          [['Ready', 'characters-status authorized'], ['Ready', 'characters-status authorized']],
+          [['Ready', 'characters-status authorized'], ['Access needed', 'characters-status access-needed']],
+          [['Access expired', 'characters-status access-expired'], ['Access expired', 'characters-status access-expired']],
+          [['Access needed', 'characters-status access-needed'], ['Access needed', 'characters-status access-needed']]
+        ]);
+        const readsBeforeFilter = calls.length;
+        for (const [query, names] of [
+          [' ready ', [longName, 'Partial Pilot']],
+          ['AUTHORIZED', [longName, 'Partial Pilot']],
+          ['Authorized Authorized', [longName]],
+          ['Partial Pilot Authorized Access needed', ['Partial Pilot']],
+          ['Partial Pilot Ready Access needed', ['Partial Pilot']],
+          ['Ready Ready 2026-09-04', [longName]],
+          ['Access needed 2026-08-02', ['Partial Pilot']],
+          ['2026-09-04 12:00 UTC', [longName]],
+          ['2026-08-02', ['Partial Pilot']],
+          ['Access expired', ['Expired Pilot']],
+          ['Access needed', ['Partial Pilot', 'New Pilot']],
+          ['invalid', []]
+        ]) {
+          filter.value = query;
+          filter.dispatchEvent({type: 'input'});
+          assert.deepEqual(roster.children.filter(row => row.className === 'characters-row')
+            .map(row => findByClass(row, 'characters-name-text').textContent), names, query);
+        }
+        assert.equal(calls.length, readsBeforeFilter, 'filter stays page-local');
+        filterClear.dispatchEvent({type: 'click'});
+        assert.equal(count.textContent, '4 characters');
+        assert.equal(document.activeElement, filter);
+        """
+    )
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+@pytest.mark.parametrize("statusbar_top", [550, 480, None])
+def test_characters_menu_stays_inside_viewport_above_measured_statusbar(statusbar_top):
+    _run_characters_page(
+        rf"""
+        document.dispatchEvent(new CustomEvent('wm:section', {{detail: 'characters'}}));
+        await tick();
+        const trigger = findByClass(roster, 'characters-menu-trigger');
+        const stripTop = {json.dumps(statusbar_top)};
+        if (stripTop === null) delete nodes['statusbar-slot'];
+        else {{
+          statusbar.rect.top = stripTop;
+          statusbar.rect.height = window.innerHeight - stripTop;
+        }}
+        menu.rect = {{left: 0, top: 0, bottom: 40, width: 190, height: 40}};
+        for (const top of [10, 450, 510, 575]) {{
+          trigger.rect = {{left: 775, top, bottom: top + 24, width: 24, height: 24}};
+          trigger.dispatchEvent({{type: 'click'}});
+          const x = parseFloat(menu.style.left), y = parseFloat(menu.style.top);
+          assert.ok(x >= 6 && x + 190 <= 794, 'menu stays within horizontal viewport');
+          assert.ok(y >= 6 && y + 40 <= (stripTop === null ? 600 : stripTop) - 6,
+            'menu bottom must clear the actual status strip, not only the viewport');
+          menu.dispatchEvent({{type: 'keydown', key: 'Escape'}});
+          assert.equal(document.activeElement, trigger);
+        }}
+        """
+    )
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+@pytest.mark.parametrize("shift", [False, True])
+def test_characters_menu_tab_rejoins_native_row_order_without_scroll_or_trap(shift):
+    _run_characters_page(
+        rf"""
+        const first = statePayload.characters[0];
+        statePayload.characters = [first, Object.assign({{}}, first, {{
+          character_id: 5,
+          character_name: 'Second Pilot'
+        }})];
+        document.dispatchEvent(new CustomEvent('wm:section', {{detail: 'characters'}}));
+        await tick();
+        const triggers = roster.children
+          .filter(row => row.className === 'characters-row')
+          .map(row => findByClass(row, 'characters-menu-trigger'));
+        const owner = triggers[0];
+        owner.dispatchEvent({{type: 'keydown', key: 'ArrowDown'}});
+        assert.equal(document.activeElement, forget);
+        const event = {{type: 'keydown', key: 'Tab', shiftKey: {json.dumps(shift)}}};
+        menu.dispatchEvent(event);
+        const target = {"filter" if shift else "triggers[1]"};
+        assert.equal(event.defaultPrevented, true, 'one explicit focus move owns Tab');
+        assert.equal(menu.hidden, true, 'Tab dismisses the fixed menu');
+        assert.equal(owner.getAttribute('aria-expanded'), 'false');
+        assert.equal(document.activeElement, target);
+        assert.equal(target.focusOptions.preventScroll, true, 'moving focus must not scroll the roster');
+        """
+    )
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+@pytest.mark.parametrize("event_target", ["roster", "window"])
+@pytest.mark.parametrize("outside_focus", [False, True])
+def test_characters_menu_dismisses_stale_anchor_without_stealing_focus(
+    event_target, outside_focus
+):
+    _run_characters_page(
+        rf"""
+        document.dispatchEvent(new CustomEvent('wm:section', {{detail: 'characters'}}));
+        await tick();
+        const trigger = findByClass(roster, 'characters-menu-trigger');
+        trigger.dispatchEvent({{type: 'click'}});
+        if ({json.dumps(outside_focus)}) filter.focus();
+        const target = {event_target};
+        target.dispatchEvent({{type: target === roster ? 'scroll' : 'resize'}});
+        assert.equal(menu.hidden, true, 'an invalidated anchor cannot leave its fixed menu behind');
+        assert.equal(trigger.getAttribute('aria-expanded'), 'false');
+        assert.equal(document.activeElement, {"filter" if outside_focus else "trigger"});
+        if (!{json.dumps(outside_focus)}) assert.equal(trigger.focusOptions.preventScroll, true);
+        const focusCalls = trigger.focusCalls || 0;
+        filter.focus();
+        target.dispatchEvent({{type: target === roster ? 'scroll' : 'resize'}});
+        assert.equal(document.activeElement, filter);
+        assert.equal(trigger.focusCalls || 0, focusCalls, 'closed menus cannot reclaim focus');
+        """
+    )
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_characters_delayed_reads_retain_roster_and_reject_stale_or_hidden_replies():
+    _run_characters_page(
+        r"""
+        document.dispatchEvent(new CustomEvent('wm:section', {detail: 'characters'}));
+        await tick();
+        const prior = roster.children[1];
+        deferReads = true;
+        document.dispatchEvent(new CustomEvent('wm:eve-authority'));
+        document.dispatchEvent(new CustomEvent('wm:eve-authority'));
+        assert.equal(roster.children[1], prior, 'pending reads retain the painted roster');
+        const updated = Object.assign({}, statePayload, {characters: [Object.assign({},
+          statePayload.characters[0], {character_name: 'Newest Pilot'})]});
+        stateReads[1](updated);
+        await tick();
+        stateReads[0](statePayload);
+        await tick();
+        assert.equal(findByClass(roster, 'characters-name-text').textContent, 'Newest Pilot');
+        document.dispatchEvent(new CustomEvent('wm:eve-authority'));
+        document.dispatchEvent(new CustomEvent('wm:section', {detail: 'general'}));
+        stateReads[2](statePayload);
+        await tick();
+        assert.equal(findByClass(roster, 'characters-name-text').textContent, 'Newest Pilot');
+        document.dispatchEvent(new CustomEvent('wm:eve-authority'));
+        assert.equal(stateReads.length, 3, 'hidden authority events do not read');
+        """
+    )
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+@pytest.mark.parametrize("accepted", [False, True])
+def test_characters_waiting_disables_authentication_but_retains_cancel_until_idle(
+    accepted,
+):
+    _run_characters_page(
+        rf"""
+        statePayload.authorization_activity = 'waiting';
+        statePayload.auth_configured = false;
+        document.dispatchEvent(new CustomEvent('wm:section', {{detail: 'characters'}}));
+        await tick();
+        assert.equal(authenticate.disabled, true);
+        assert.equal(cancel.hidden, false);
+        assert.equal(cancel.disabled, false, 'Cancel does not require a configured Authenticate button');
+        cancel.dispatchEvent({{type: 'click'}});
+        assert.equal(cancel.disabled, true);
+        cancelResolve({{accepted: {json.dumps(accepted)}, error: 'Cancellation was refused.'}});
+        await tick();
+        assert.equal(cancel.hidden, false, 'acceptance/refusal is not an idle-state observation');
+        assert.equal(authenticate.disabled, true);
+        assert.equal(cancel.disabled, {json.dumps(accepted)});
+        if (!{json.dumps(accepted)}) assert.ok(notice.textContent.includes('Cancellation was refused.'));
+        statePayload.authorization_activity = 'idle';
+        document.dispatchEvent(new CustomEvent('wm:eve-authority'));
+        await tick();
+        assert.equal(cancel.hidden, true);
+        assert.deepEqual(calls.filter(call => call[0] !== 'eve_characters_state'),
+          [['eve_characters_cancel_auth']]);
+        """
+    )
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+@pytest.mark.parametrize("persisted", [False, True])
+def test_characters_forget_receipt_retains_removed_identity_after_row_disappears(
+    persisted,
+):
+    _run_characters_page(
+        rf"""
+        document.dispatchEvent(new CustomEvent('wm:section', {{detail: 'characters'}}));
+        await tick();
+        const trigger = findByClass(roster, 'characters-menu-trigger');
+        trigger.dispatchEvent({{type: 'click'}});
+        confirmResult = false;
+        forget.dispatchEvent({{type: 'click'}});
+        await tick();
+        assert.equal(document.activeElement, trigger);
+        assert.equal(menu.hidden, true);
+        assert.equal(calls.filter(call => call[0] === 'eve_characters_forget').length, 0);
+        assert.equal(confirmations[0][0], 'Forget character');
+        assert.ok(confirmations[0][1].includes('Needs Reauth'));
+        assert.ok(confirmations[0][1].includes('Skills and Fittings'));
+        assert.equal(confirmations[0][2].destructive, true);
+        confirmResult = true;
+        trigger.dispatchEvent({{type: 'click'}});
+        statePayload.characters = [];
+        forgetResult = {{applied: true, persisted: {json.dumps(persisted)}, error: ''}};
+        forget.dispatchEvent({{type: 'click'}});
+        await tick();
+        await tick();
+        assert.deepEqual(calls.filter(call => call[0] === 'eve_characters_forget'),
+          [['eve_characters_forget', 4]]);
+        assert.equal(findByClass(roster, 'characters-row'), null);
+        assert.equal(live.textContent, 'Needs Reauth was removed.');
+        if ({json.dumps(persisted)}) {{
+          assert.ok(!notice.textContent.includes('Restart Wingman'));
+        }} else {{
+          assert.ok(notice.textContent.includes('Needs Reauth'));
+          assert.ok(notice.textContent.includes('Restart Wingman'));
+          const receipt = notice.textContent;
+          statePayload = null;
+          document.dispatchEvent(new CustomEvent('wm:eve-authority'));
+          await tick();
+          assert.ok(notice.textContent.includes('Restart Wingman'));
+          assert.ok(notice.textContent.includes('Needs Reauth'));
+          assert.ok(notice.textContent.includes('Could not refresh'));
+          assert.ok(receipt.includes('local Skills/Fittings data'));
+        }}
+        """
+    )
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_characters_menu_preserves_keyboard_navigation_and_outside_dismissal():
+    _run_characters_page(
+        r"""
+        document.dispatchEvent(new CustomEvent('wm:section', {detail: 'characters'}));
+        await tick();
+        const trigger = findByClass(roster, 'characters-menu-trigger');
+        for (const key of ['ArrowDown', 'ArrowUp', 'Enter', ' ']) {
+          trigger.dispatchEvent({type: 'keydown', key});
+          assert.equal(menu.hidden, false);
+          assert.equal(document.activeElement, forget);
+          assert.equal(trigger.getAttribute('aria-haspopup'), 'menu');
+          assert.equal(trigger.getAttribute('aria-expanded'), 'true');
+          for (const key of ['ArrowDown', 'ArrowUp', 'Home', 'End']) {
+            menu.dispatchEvent({type: 'keydown', key});
+            assert.equal(document.activeElement, forget);
+          }
+          menu.dispatchEvent({type: 'keydown', key: 'Escape'});
+          assert.equal(document.activeElement, trigger);
+          assert.equal(menu.hidden, true);
+        }
+        trigger.dispatchEvent({type: 'click'});
+        filter.focus();
+        document.dispatchEvent({type: 'mousedown', target: filter});
+        assert.equal(menu.hidden, true);
+        assert.equal(document.activeElement, filter, 'outside dismissal cannot reclaim focus');
+        trigger.dispatchEvent({type: 'click'});
+        filter.focus();
+        window.dispatchEvent({type: 'blur'});
+        assert.equal(menu.hidden, true);
+        assert.equal(document.activeElement, filter);
+        """
+    )
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")

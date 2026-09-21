@@ -472,7 +472,6 @@
         <div class="row">
           <span class="lab">Status</span>
           <span class="pill idle" id="auth-pill"><span class="led"></span><span id="auth-text">Checking&hellip;</span></span>
-          <span style="flex:1"></span>
           <button class="btn" id="btn-auth">Sign in with Google</button>
         </div>
         <p class="hint">
@@ -488,6 +487,7 @@
 
       <section class="card">
         <h2>Upload defaults</h2>
+        <div class="upload-defaults">
         <div class="row">
           <label class="lab" for="f-privacy">Privacy</label>
           <!-- The value attributes are YouTube's API strings and are what
@@ -505,6 +505,7 @@
           <label class="lab" for="f-category">YouTube category ID</label>
           <input class="field" id="f-category" type="text" inputmode="numeric"
                  spellcheck="false" aria-describedby="category-draft msg-uploads">
+        </div>
         </div>
         <p class="field-msg" id="category-draft" hidden></p>
         <!-- Settings 13. The maintainer settled the control half: this
@@ -560,9 +561,7 @@
              it drifted, so the two are asserted equal in
              tests/test_settings_page.py rather than trusted. -->
         <p class="sub-hint" id="detect-note">
-          Changing the recording folder starts watching it. Recordings
-          already there won’t be announced, and arrive unticked in the
-          list.
+          Watch this folder. Existing recordings stay listed, unticked and not announced as new.
         </p>
       </section>
 
@@ -598,12 +597,12 @@
                network. -->
           <p class="operational-status" id="fr-status" role="status">Checking installed plugin&hellip;</p>
         </div>
+        <p class="sub-hint" id="fr-latest" hidden></p>
         <div class="row">
           <span class="lab"></span>
           <button class="btn" id="btn-fr-check">Check for updates</button>
-          <!-- Hidden until a check (or the local load) says there is
-               something to install: an Install button beside "not
-               installed" is fine, beside "up to date" is noise. -->
+          <!-- Only an explicit successful check offers Install/Update.
+               Local presence alone never establishes a release identity. -->
           <button class="btn acc" id="btn-fr-update" hidden>Install</button>
         </div>
         <p class="field-msg" id="msg-fightrecorder" hidden></p>
@@ -634,7 +633,10 @@
           <button class="btn danger" id="btn-webhook-remove">Remove</button>
         </div>
         <p class="hint" id="webhook-save-note">Press Enter to save changes. Remove clears the saved webhook.</p>
-        <p class="sub-hint" id="webhook-status">not configured</p>
+        <div class="webhook-identity">
+          <p class="operational-status" id="webhook-status" role="status">No Discord webhook saved</p>
+          <button class="linkbtn" id="btn-webhook-identify" hidden>Identify webhook</button>
+        </div>
         <p class="field-msg" id="msg-discord" hidden></p>
       </section>
 
@@ -649,9 +651,9 @@
           <p class="hint" id="companion-off-note">Companion previews are off. You can still add and configure them.</p>
           <p class="hint" id="companion-master-status" role="status"></p>
         </div>
-        <p class="hint">Keep a non-EVE window or a selected region in view. Independent of your EVE previews.</p>
+        <p class="hint">Mirror a whole non-EVE window or selected region. Independent of EVE previews.</p>
         <div class="companion-toolbar">
-          <button class="btn" type="button" id="companion-add" disabled>Add companion…</button>
+          <button class="btn acc" type="button" id="companion-add" disabled>Add companion…</button>
           <span class="hint" id="companion-count"></span>
         </div>
         <div class="companion-add-form" id="companion-add-form" hidden>
@@ -675,10 +677,10 @@
         </div>
         <p class="hint" id="companion-status" role="status"></p>
         <div id="companion-list" class="companion-list"></div>
-        <p class="hint" id="companion-empty">No companions yet. Add a mapper, notes, or another non-EVE window.</p>
-        <details class="hint-more">
+        <p class="hint" id="companion-empty">No companions yet.</p>
+        <details class="hint-more companion-help">
           <summary>How companions behave</summary>
-          <p class="hint">Click a preview to switch to its source. Left-drag to move; right-drag to resize. Positions are remembered. A closed source waits to return; multiple matches need you to select one. Minimized or protected windows may not provide a live image.</p>
+          <p class="hint">Closed sources wait to return; multiple matches require explicit selection. Moving or resizing changes only Wingman’s preview, never the source window. Minimized or protected sources may not provide a live image.</p>
         </details>
       </section>
     </div>
@@ -715,7 +717,7 @@
         </div>
         <p class="hint" id="characters-live" role="status" aria-live="polite"></p>
         <div id="characters-roster" role="table" aria-label="Character roster"
-             aria-colcount="5">
+             aria-colcount="4">
           <div class="empty" id="characters-empty" role="row">
             <span role="cell">No characters yet.</span>
           </div>
@@ -755,6 +757,7 @@
              between it and the switch would have put the gate ~800px below
              the fold. -->
         <h2>EVE-focused keybinds</h2>
+        <div class="bookmark-runtime">
         <div class="row">
           <!-- The .check/.box pattern is not decoration: .check input is
                opacity:0 and the styled .box is the visible control. A bare
@@ -764,13 +767,11 @@
             Register keybinds in EVE
           </label>
         </div>
-        <!-- `hidden` is the resting state, not a bug. bookmarks.js shows
-             this row only where the line is news -- see showEngineRow.
-             Without it the markup's own "Not running" is on screen from
-             first paint until the first payload lands, under an unticked
-             switch that already said so. -->
-        <div class="row" id="eve-engine-row" hidden><span class="lab"></span>
-          <span class="hint operational-status" id="eve-engine-state">Not running</span></div>
+        <!-- Quiet Off is empty, not hidden: the same live owner must already
+             be exposed when a failed start supplies its recovery text. -->
+        <div class="row" id="eve-engine-row"><span class="lab"></span>
+          <span class="hint operational-status" id="eve-engine-state" role="status" aria-live="polite"></span></div>
+        </div>
         <div class="row" id="eve-blockers-row" hidden><span class="lab"></span>
           <span class="hint" id="eve-blockers"></span></div>
         <!-- No `Import from an existing helper...` button. It held the only
@@ -799,15 +800,16 @@
       </section>
 
       <section class="card">
-        <h2>EVE windows</h2>
+        <header class="card-heading">
+          <h2>EVE windows</h2>
+          <button class="btn" id="eve-refresh-windows" aria-label="Refresh EVE windows">Refresh</button>
+        </header>
         <!-- The second sentence is C9's half of the fix and is load-bearing,
              not padding: bookmarks.js marks only the exception now, and this
              is what stops "no mark" being something the reader has to infer.
              See the comment on that branch for what it replaced. -->
-        <p class="hint">Keybinds only fire while a selected window is
-          active. All listed windows are running unless marked otherwise.</p>
-        <div class="row"><span class="lab"></span>
-          <button class="btn" id="eve-refresh-windows">Refresh</button></div>
+        <p class="hint">Keybinds fire only in the selected active EVE window.
+          Listed windows are running unless marked otherwise.</p>
         <div id="eve-windows"></div>
       </section>
 
@@ -816,10 +818,7 @@
         <!-- A third card in the Bookmarks section, because the bar is the
              same engine's readout: it renders what the keybinds' status
              line pushes, so a reader looking for it looks here first. -->
-        <p class="hint">A small always-on-top copy of the SIG / ROOT / NEXT
-          readout that floats over other windows. Drag it anywhere on
-          screen; it remembers where you left it. Show or hide it with the
-          checkbox below, or use the Floating sig bar toggle in the status strip.</p>
+        <p class="hint">Shows SIG / ROOT / NEXT above other windows. Drag the bar to reposition it.</p>
         <div class="row">
           <label class="check">
             <input type="checkbox" id="sigbar-enabled"><span class="box"></span>
@@ -917,6 +916,8 @@
       <section class="card" id="preview-window-options">
         <details class="settings-disclosure" id="preview-group-appearance" open>
           <summary>Appearance</summary>
+        <div class="preview-option-grid">
+        <div class="preview-option-unit">
         <div class="row">
           <label class="check">
             <input type="checkbox" id="preview-show-labels"><span class="box"></span>
@@ -942,6 +943,8 @@
           </select>
         </div>
         <p class="field-msg" id="preview-label-size-status" hidden></p>
+        </div>
+        <div class="preview-option-unit">
         <div class="row">
           <label class="lab" for="preview-opacity">Opacity</label>
           <!-- PERCENT, not the DWM alpha byte. Round 5's C2: this control
@@ -969,6 +972,8 @@
             and label stay at full strength.</span></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="preview-opacity-status"></span></div>
+        </div>
+        </div>
 
         </details>
         <details class="settings-disclosure" id="preview-group-placement" open>
@@ -993,6 +998,8 @@
           <p class="hint" id="preview-layout-reopen" hidden></p>
           <p class="hint" id="preview-layout-status" role="status" aria-live="polite" tabindex="-1">Loading saved layouts…</p>
         </div>
+        <div class="preview-option-grid">
+        <div class="preview-option-unit">
         <div class="row">
           <label class="check">
             <input type="checkbox" id="restore-preview-positions"><span class="box"></span>
@@ -1007,6 +1014,8 @@
             each preview in a default stack instead. Positions are still
             remembered while this is off, so turning it back on restores
             what you last had.</span></div>
+        </div>
+        <div class="preview-option-unit">
         <div class="row"><label class="check">
             <input type="checkbox" id="preview-snap"><span class="box"></span>
             Snap previews to each other and the screen edges
@@ -1036,6 +1045,8 @@
           <div class="pv-exc-list" id="preview-lock-exceptions-list"
                role="group" aria-labelledby="preview-lock-exceptions-summary"></div>
         </details>
+        </div>
+        </div>
 
         </details>
         <details class="settings-disclosure" id="preview-group-size">
@@ -1051,6 +1062,8 @@
           <span class="hint" id="preview-lock-aspect-status">Off lets the
             resize handle move each edge freely, stretching the
             picture.</span></div>
+        <div class="preview-option-grid">
+        <div class="preview-option-unit">
         <div class="row">
           <label class="lab" for="preview-default-size">Default preview
             size</label>
@@ -1072,6 +1085,8 @@
           <button class="btn" id="btn-preview-apply-size">Apply saved size to all open previews</button>
           <span class="hint">Replaces custom sizes on open Wingman previews, not EVE windows.</span>
           <span class="hint" id="preview-apply-size-status"></span></div>
+        </div>
+        <div class="preview-option-unit">
         <div class="row">
           <!-- The ring a selected preview wears. #rrggbb in and out; the
                page never unpacks the string, Python owns the format.
@@ -1098,6 +1113,8 @@
                aria-labelledby="preview-selection-color-label"></div>
           <span class="hint" id="preview-selection-color-status">The ring
             on the preview you last clicked.</span></div>
+        </div>
+        </div>
 
         </details>
         <!-- The one group that reaches through the mirror to the REAL EVE
@@ -1197,28 +1214,30 @@
       </section>
       <section class="settings-subpage" id="settings-previews-wanderer" role="tabpanel" aria-labelledby="settings-tab-previews-wanderer" tabindex="0" hidden>
       <section class="card" id="wanderer-settings" aria-labelledby="wanderer-heading">
-        <h2 id="wanderer-heading">Map connection</h2>
+        <header class="scroll-context">
+          <h2 id="wanderer-heading">Map connection</h2>
+          <p class="operational-status" id="wanderer-health" role="status" aria-live="polite"><span id="wanderer-health-label">Loading Wanderer settings…</span><span class="status-announcement" id="wanderer-health-detail"></span></p>
+        </header>
         <div class="row"><label class="check">
           <input type="checkbox" id="wanderer-enabled" disabled aria-describedby="wanderer-enabled-error"><span class="box"></span>
           Show Wanderer system names below character labels
         </label></div>
         <p class="field-msg" id="wanderer-enabled-error" hidden></p>
-        <p class="operational-status" id="wanderer-health" role="status" aria-live="polite">Loading Wanderer settings…</p>
-        <p class="operational-status" id="wanderer-coverage"></p>
-        <p class="hint">Uses map-local names for your current named previews. Character labels must be shown.</p>
+        <p class="hint" id="wanderer-coverage"></p>
+        <p class="hint">Map-local names; requires character labels.</p>
         <div class="row">
           <label class="lab" for="wanderer-url">Map URL</label>
           <input class="field" id="wanderer-url" type="url" disabled spellcheck="false" autocomplete="off" placeholder="https://wanderer.ltd/your-map" aria-describedby="wanderer-url-help wanderer-url-draft wanderer-connection-error">
         </div>
-        <p class="hint" id="wanderer-url-help">Open your map in Wanderer and paste the address from your browser, not its settings or character-list page.</p>
+        <p class="hint" id="wanderer-url-help">Paste the map page address, not a settings or character-list URL.</p>
         <p class="hint" id="wanderer-url-draft"></p>
         <div class="row">
           <label class="lab" for="wanderer-token">Map API token</label>
           <span class="hint" id="wanderer-credential">No token stored for the saved map URL.</span>
           <input class="field" id="wanderer-token" type="password" disabled spellcheck="false" autocomplete="new-password" aria-describedby="wanderer-token-draft wanderer-connection-error wanderer-credential">
         </div>
-        <p class="hint" id="wanderer-token-draft">Stored only on this PC, protected by Windows. Leave blank to reuse the token for the same saved map URL.</p>
-        <p class="hint" id="wanderer-save-note">Test connection saves the map URL and token, then checks access. It does not turn names on.</p>
+        <p class="hint" id="wanderer-token-draft">Windows-protected on this PC. Blank reuses the token only for the same saved map URL.</p>
+        <p class="hint" id="wanderer-save-note">Test connection saves the map URL and token; it does not turn names on.</p>
         <p class="field-msg" id="wanderer-connection-error" hidden></p>
         <div class="row">
           <button class="btn" id="wanderer-test" type="button" disabled aria-describedby="wanderer-save-note wanderer-connection-error wanderer-test-status wanderer-test-error">Test connection</button>
@@ -1299,17 +1318,30 @@
     </div>
 
     <div class="settings" id="section-fleet">
-      <section class="card" id="preview-fleet-options">
-        <h2>Fleet Bar</h2>
-        <div class="row">
-          <label class="check">
-            <input type="checkbox" id="fleetbar-enabled"><span class="box"></span>
-            Show Fleet Bar
-          </label>
+      <section class="card" id="fleet-overview" aria-labelledby="fleet-overview-heading">
+        <h2 id="fleet-overview-heading">Fleet overview</h2>
+        <!-- Each existing module paints only its own accepted facts. These
+             summaries are not new live regions or evidence of delivery. -->
+        <dl class="fleet-overview-facts">
+          <div><dt>Fleet Bar</dt><dd id="fleet-overview-local">Unknown</dd></div>
+          <div><dt>Sharing from this PC</dt><dd id="fleet-overview-sharing">Unknown</dd></div>
+          <div><dt>authGD</dt><dd id="fleet-overview-auth">Unknown</dd></div>
+          <div><dt>Verification / eligibility</dt><dd id="fleet-overview-verification">Unknown</dd></div>
+        </dl>
+      </section>
+      <section class="card fleet-subsection" id="preview-fleet-options">
+        <h2>Local display</h2>
+        <div class="fleet-local-control">
+          <div class="row">
+            <label class="check">
+              <input type="checkbox" id="fleetbar-enabled"><span class="box"></span>
+              Show Fleet Bar
+            </label>
+            <span class="operational-status" id="fleetbar-state">Unknown</span>
+          </div>
+          <p class="field-msg" id="fleetbar-enabled-status" role="status"></p>
         </div>
-        <p class="hint">An always-on-top view of your clients' combat activity, independent of previews and alerts.</p>
-        <p class="hint">Local display only. Hiding the bar does not turn sharing Off or Stop verification.</p>
-        <p class="field-msg" id="fleetbar-enabled-status" role="status"></p>
+        <p class="hint" id="fleetbar-character-scope">Local display choices do not change collection, sharing or verification.</p>
         <div class="setting-row">
           <label class="check"><input type="checkbox" id="fleetbar-hide-inactive" disabled><span class="box"></span>
             Only show characters active in the last 30 seconds
@@ -1317,16 +1349,16 @@
         </div>
         <p class="hint">This filters the display only. Quiet characters stay in your character list and continue to be monitored.</p>
         <div class="row">
-          <button class="btn" id="fleetbar-reset">Reset Fleet Bar width</button>
-          <span class="hint">Puts Fleet Bar back to its default 500px content width.</span></div>
+          <button class="btn" id="fleetbar-reset">Reset width</button>
+          <span class="hint">Restores the saved 500px content width.</span></div>
         <details class="fleet-characters">
           <summary>How Fleet Bar works</summary>
-          <p class="hint">One row per running, logged-in EVE client shows outgoing and incoming DPS over the last 10 seconds, plus scram, point and neut activity. A client without an active gamelog says NO LOG, not a guessed zero.</p>
-          <p class="hint">Drag Fleet Bar by its header. If edge resize is available, use the left or right edge. Wingman remembers width and position.</p>
+          <p class="hint">Shows recent DPS and scram, point and neut activity. Without an active gamelog, a client shows NO LOG, never a guessed zero.</p>
+          <p class="hint">Drag the header to move Fleet Bar; use its left or right edge when resize is available. Width and position are remembered.</p>
+          <p class="hint">Hidden characters stay collected and can be restored here while offline.</p>
         </details>
         <details class="fleet-characters" id="fleetbar-characters">
           <summary>Show local characters in Fleet Bar</summary>
-          <p class="hint" id="fleetbar-character-scope">Local display only. These choices do not change collection or sharing.</p>
           <div class="fleet-character-list" id="fleetbar-character-list"></div>
           <p class="hint fleet-character-empty" id="fleetbar-characters-empty">
             Characters appear here after Wingman sees them running.
@@ -1335,15 +1367,8 @@
         </details>
       </section>
 
-      <section class="card" id="fleet-sharing">
-        <h2>Fleet sharing</h2>
-        <p class="hint" id="sharing-connection" role="status">Reading connection state…</p>
-        <p class="field-msg" id="sharing-browser-error" role="status"></p>
-        <div class="row">
-          <button class="btn" id="sharing-connect" disabled>Connect…</button>
-          <button class="btn" id="sharing-combat" disabled>Approve combat sharing…</button>
-          <button class="btn" id="sharing-refresh" disabled>Refresh</button>
-        </div>
+      <section class="card fleet-subsection" id="fleet-sharing">
+        <h2>External sharing</h2>
         <div class="row">
           <label class="check">
             <input type="checkbox" id="sharing-enabled" disabled aria-describedby="sharing-scope"><span class="box"></span>
@@ -1351,11 +1376,36 @@
           </label>
           <button class="btn" id="sharing-confirm-on" hidden>Confirm sharing On</button>
         </div>
-        <p class="hint" id="sharing-scope">Shares current incoming/outgoing DPS and incoming scram, point and neutralization observations with eligible authGD Members in the same verified fleet, never raw logs or history. Combat details need separate browser approval.</p>
+        <p class="hint" id="sharing-scope">Shares sparse current incoming/outgoing DPS and incoming scram, point and neutralization observations, including observed tackle names, with eligible authGD Members in the same verified fleet, never raw logs or history. Combat details need separate browser approval.</p>
         <p class="field-msg" id="sharing-preference" role="status"></p>
-        <p class="hint" id="sharing-consent" role="status"></p>
+        <p class="hint" id="sharing-consent" role="status"><span class="status-announcement" id="sharing-consent-announcement"></span><span id="sharing-consent-label"></span></p>
         <p class="operational-status" id="sharing-eligibility" role="status"></p>
+        <div class="sharing-connection-group">
+          <header class="card-heading">
+            <h3>Connection</h3>
+            <button class="btn" id="sharing-refresh" aria-label="Refresh sharing connection and verification" disabled>Refresh</button>
+          </header>
+          <p class="hint" id="sharing-connection" role="status">Reading connection state…</p>
+          <p class="field-msg" id="sharing-browser-error" role="status"></p>
+          <button class="btn" id="sharing-connect" disabled>Connect…</button>
+          <button class="btn" id="sharing-combat" disabled>Approve combat sharing…</button>
+        </div>
+        <div id="sharing-current">
+          <h3>Current verification</h3>
+          <p class="hint" id="sharing-source-status">Verification state is not known yet.</p>
+          <div class="sharing-sources" id="sharing-sources"></div>
+        </div>
+        <!-- This result owner remains exposed even without pending rows. A
+             Start call has no source UUID until its bridge reply arrives. -->
         <p class="field-msg" id="sharing-action" role="status"></p>
+        <div id="sharing-pending" hidden>
+          <h3>Pending / local operation</h3>
+          <div class="sharing-sources" id="sharing-pending-sources"></div>
+        </div>
+        <details id="sharing-history" class="fleet-characters" hidden>
+          <summary id="sharing-history-summary">Previous attempts (0)</summary>
+          <div id="sharing-history-sources" class="sharing-sources"></div>
+        </details>
         <h3>Automatic boss verification</h3>
         <label class="check">
           <input type="checkbox" id="sharing-automatic" disabled aria-describedby="sharing-automatic-scope"><span class="box"></span>
@@ -1378,15 +1428,9 @@
             <button class="btn" id="sharing-legacy-remove" hidden>Remove dismissed history…</button>
           </div>
         </details>
-        <h3>Current and pending verification</h3>
-        <p class="hint" id="sharing-source-status">Verification state is not known yet.</p>
-        <div class="sharing-sources" id="sharing-sources"></div>
-        <details id="sharing-history" class="fleet-characters" hidden>
-          <summary id="sharing-history-summary">Previous attempts (0)</summary>
-          <div id="sharing-history-sources" class="sharing-sources"></div>
-        </details>
-        <h3>Start verification</h3>
-        <p class="hint">Start checks that the selected character is your boss. One boss authorization covers eligible account-linked alts automatically.</p>
+        <div class="sharing-new-attempt">
+        <h3>Start a new verification</h3>
+        <p class="hint">Verify your fleet boss to cover eligible account-linked alts.</p>
         <div class="row">
           <label class="lab" for="sharing-boss">Owned boss for a new attempt</label>
           <select class="field" id="sharing-boss" disabled><option value="">Waiting for owned characters</option></select>
@@ -1396,12 +1440,12 @@
           <button class="btn" id="sharing-grant" disabled>Grant Fleet Read…</button>
           <button class="btn" id="sharing-start" disabled>Start verification</button>
         </div>
+        </div>
         <details id="sharing-eligible" class="fleet-characters">
           <summary>Sharing details and eligible characters</summary>
           <p class="hint">Pairing, Fleet Read and Start do not turn telemetry sharing on.</p>
-          <p class="hint">Other participants and alts need no Fleet Read. Start can remain pending or paused
-            until authGD verifies the boss. Verification controls work with sharing and local displays off;
-            closing this view never stops verification.</p>
+          <p class="hint">One boss authorization covers eligible account-linked alts; other participants and alts need no Fleet Read. The selector starts a new attempt, not a list of alts to share.</p>
+          <p class="hint">Verification may stay pending or paused until authGD verifies the boss. These controls work with sharing and Fleet Bar Off; closing this view never stops verification.</p>
           <ul class="sharing-list" id="sharing-eligible-list"></ul>
         </details>
       </section>
@@ -1411,67 +1455,23 @@
 
       <section class="card">
         <h2>Gamelog alerts</h2>
-        <div class="row"><span class="lab"></span>
-          <!-- Round 5, A3. This used to end "when combat starts, your warp
-               is scrambled, or you decloak" -- the three rows of the event
-               table, restated ~400px above the table. The enumeration was
-               the only part a reader could get from the table itself, and
-               it is the part that has to be re-edited every time the table
-               changes. What is left is the mechanism, which the table does
-               NOT state: that the trigger is the gamelog and that the
-               preview pulsed is the client the event happened in. -->
-          <span class="hint">Gamelog-driven alerts pulse a client's preview
-            when one of the events below fires in it &mdash; useful for a
-            client that is not the one you are looking at.</span></div>
-        <div class="row"><span class="lab"></span>
-          <!-- Round 3, R4's finding 3. Opened "Previews are off, so"
-               like the two sentences above it, in a view where the
-               unticked switch says it as well. Rendered only while it is
-               true, so the state clause was the one part carrying nothing
-               new; what is left is the consequence and the way out, which
-               is the shape ui/copy.py's INERT_NOTES keeps.
-
-               "The switch is in the card above" until round 5's D1, which
-               was true while this card was the third in Previews and false
-               the moment it was not. The way out is half of what this
-               sentence is FOR, so it has to name the surface it now
-               actually lives on. Same "Settings > X" form the previews
-               card uses for Bookmarks, which is the convention even from
-               inside Settings. -->
-          <span class="hint" id="alerts-previews-off" hidden>
-            Alerts pulse a preview, so they need previews switched on. The
-            switch is under Settings &rsaquo; Previews.</span></div>
-        <div class="row"><span class="lab"></span>
-          <!-- Was "set it under Settings > Folders", which named a section
-               D2 dissolved. It points one card down now rather than across
-               the rail, and that is the whole of what D2 bought here: the
-               folder this feature cannot run without used to be three rail
-               entries away from the card reporting it missing. -->
-          <span class="hint" id="alerts-no-folder" hidden>
-            Your EVE Gamelogs folder is not set. Alerts cannot run without
-            it &mdash; set it in the card below.</span></div>
+        <p class="hint">Gamelog events pulse the affected client's preview,
+          so you can notice a client you are not looking at.</p>
         <div class="row">
-                    <label class="check">
-            <input type="checkbox" id="alert-enabled"><span class="box"></span>
+          <label class="check">
+            <input type="checkbox" id="alert-enabled" aria-describedby="alerts-health alerts-status"><span class="box"></span>
             Watch gamelogs and raise alerts
           </label>
         </div>
+        <!-- Prerequisites and monitored names share one operational owner.
+             Write receipts stay separate and mounted, including when empty. -->
         <div class="row"><span class="lab"></span>
-          <!-- Never the character count alone: get_alert_state's `running`
-               flag renders in the same sentence, so a failed shared reader
-               cannot keep reading as a healthy "watching N characters". -->
-          <span class="hint" id="alerts-health" role="status"></span></div>
+          <span class="hint" id="alerts-health" role="status">Checking alert health…</span></div>
         <div class="row"><span class="lab"></span>
           <span class="hint" id="alerts-status" role="status"></span></div>
-        <!-- The consequence of the switch above for the twelve controls
-             below, in the same voice as settings.js's DEPENDS one card up
-             and only while it is true. #alerts-health states the STATE
-             ("Not watching gamelogs."); this states what that means for
-             everything under it, which is what was missing: a dependent
-             option rendered as a peer of the switch it depends on, with
-             nothing saying so. -->
-        <div class="row"><span class="lab"></span>
-          <span class="hint" id="alerts-depends" hidden></span></div>
+        <div id="alerts-preferences" role="group" aria-labelledby="alerts-preferences-lead">
+        <h3 id="alerts-preferences-lead">Preferences used when Alerts are on</h3>
+        <p class="field-msg warn" id="alerts-events-note" role="status"></p>
         <!-- One grid over all three rows, with the rows themselves
              display:contents -- the same technique #preview-binds uses,
              and for the same reason. Three independent flex rows put each
@@ -1584,12 +1584,11 @@
              They are below the table now and one checkbox in, so their
              subject is the thing immediately above them.
              role="group" + aria-labelledby, because indentation is not
-             available to a screen reader and the lead-in line is the only
-             thing that says what "these" are. -->
+             available to a screen reader; the group label also names its
+             shared behavior and volume controls. -->
         <div class="alert-mods" role="group" aria-labelledby="alert-mods-lead">
         <div class="row"><span class="lab"></span>
-          <span class="hint" id="alert-mods-lead">These change how the
-            events above behave.</span></div>
+          <span class="hint" id="alert-mods-lead">Behavior and volume</span></div>
         <div class="row">
           <!-- Names BOTH events it governs. patterns.py's FILTERED_EVENTS
                is {combat, warp_scramble}; decloak is excluded there
@@ -1661,9 +1660,9 @@
              feedback slot here, beside the field that produced it. -->
         <details id="alert-advanced">
           <summary>Advanced pulse behavior</summary>
-          <p class="hint" id="alert-pulse-help">Flashes sets the count for timed alerts,
-            including Test and the client you are looking at. With Keep pulsing on,
-            other clients pulse until you select their preview. Speed applies to both.</p>
+          <p class="hint" id="alert-pulse-lead">Set how many times each alert flashes and how quickly it pulses.</p>
+          <p class="hint" id="alert-pulse-help">Flashes sets the timed count, including Test and the foreground client.
+            With Keep pulsing on, other clients pulse until you select their preview. Speed applies to both.</p>
           <!-- Task 6. Three independent flex rows put Flashes/Speed at
                whatever x the row's OWN name pushed them to ("Combat" and
                "Decloak" sat close together, "Warp scramble" -- the longest
@@ -1734,6 +1733,7 @@
           </div>
           </div>
         </details>
+        </div>
       </section>
 
       <section class="card" id="custom-alerts">
@@ -1883,7 +1883,7 @@
           share. Importing replaces the settings the file carries; your
           Discord webhook is never exported or imported.
         </p>
-        <div class="actions">
+        <div class="settings-backup-actions">
           <button class="btn" id="btn-settings-export">Export settings&hellip;</button>
           <button class="btn" id="btn-settings-import">Import settings&hellip;</button>
         </div>
@@ -2138,14 +2138,16 @@
            paint the action, hazard, backup promise and completion in place. -->
         <div id="es-commit-context" class="es-commit-context">
           <div class="row" id="es-commit">
-            <button id="es-copy" class="btn acc" disabled>Copy to 0 characters</button>
             <span class="es-commit-info">
-              <span id="es-copy-count" class="es-count">Nothing selected</span>
-              <span id="es-copy-source" class="es-copy-source"></span>
+              <span class="es-commit-summary-line">
+                <span id="es-copy-count" class="es-count">Nothing selected</span>
+                <span id="es-copy-source" class="es-copy-source"></span>
+              </span>
               <span id="es-copy-profile" class="es-copy-source"></span>
               <span id="es-copy-scope-commit" class="es-copy-source" hidden></span>
             </span>
             <span id="es-eve-state-commit" class="pill">EVE closed</span>
+            <button id="es-copy" class="btn acc" disabled>Copy settings</button>
           </div>
           <p id="es-copy-backup-note" class="hint"></p>
           <div id="es-copy-followup" class="es-copy-followup" hidden>
@@ -2353,15 +2355,15 @@
         <h1>Import setup</h1>
       </div>
       <div id="setup-work">
-        <p class="hint">Create a new profile from a local base. Your existing profiles stay unchanged. Close every EVE client before Review and Create.</p>
-        <section class="setup-section" aria-labelledby="setup-source-heading">
+        <p class="hint">Close every EVE client before Review and Create.</p>
+        <section class="setup-section" id="setup-source-section" aria-labelledby="setup-source-heading">
           <h2 id="setup-source-heading">Setup source</h2>
           <div id="setup-source-summary" hidden>
             <p id="setup-source-name"></p>
             <p class="hint" id="setup-catalog-origin" hidden></p>
             <div class="row">
-              <button class="btn" id="setup-source-change" type="button" aria-controls="setup-source-choices" aria-expanded="false">Change source</button>
-              <button class="btn" id="setup-source-edit" type="button" aria-controls="setup-editor" aria-expanded="false">Edit text</button>
+              <button class="btn" id="setup-source-change" type="button" aria-controls="setup-source-choices setup-recipient" aria-expanded="false">Change source</button>
+              <button class="btn" id="setup-source-edit" type="button" aria-controls="setup-editor setup-recipient" aria-expanded="false">Edit text</button>
             </div>
           </div>
           <div id="setup-source-choices">
@@ -2389,7 +2391,7 @@
             <button class="btn" id="setup-editor-close" type="button">Done editing</button>
           </div>
         </section>
-        <section class="setup-section" aria-labelledby="setup-recipient-heading">
+        <section class="setup-section" id="setup-recipient" aria-labelledby="setup-recipient-heading">
           <h2 id="setup-recipient-heading">Local base and recipient</h2>
           <p class="hint" id="setup-base-help">The base profile supplies your display preferences and settings not included in the setup.</p>
           <div class="us-pickers setup-pickers">
@@ -2414,21 +2416,14 @@
             </div>
           </div>
           <p class="hint" id="setup-pair-status" role="status" aria-live="polite"></p>
+          <div id="setup-label-choice" hidden>
+            <p class="hint">This YAML cannot reproduce the ordered ship-label sequence. Use a Wingman preset for complete labels, or explicitly retain yours.</p>
+            <label class="check"><input id="setup-keep-labels" type="checkbox"><span class="box"></span>Keep my ship labels</label>
+          </div>
         </section>
-        <div id="setup-label-choice" hidden>
-          <p class="hint">This YAML cannot reproduce the ordered ship-label sequence. Use a Wingman preset for complete labels, or explicitly retain yours.</p>
-          <label class="check"><input id="setup-keep-labels" type="checkbox"><span class="box"></span>Keep my ship labels</label>
-        </div>
         <section id="setup-summary" aria-labelledby="setup-summary-heading" tabindex="-1" hidden>
           <h2 id="setup-summary-heading">Review new profile</h2>
           <dl class="us-review">
-            <dt>Create</dt>
-            <dd><p id="setup-destination"></p></dd>
-            <dt>For</dt>
-            <dd>
-              <p id="setup-target"></p>
-              <p class="hint" id="setup-account-notice">Account-level changes also affect other characters of this account if they later use the new profile.</p>
-            </dd>
             <dt>Changes</dt>
             <dd><p id="setup-type"></p></dd>
             <dt>Keeps</dt>
@@ -2452,10 +2447,22 @@
         </details>
       </div>
       <div id="setup-actions">
-        <div class="row">
-          <button class="btn" id="setup-review" type="button" disabled>Review</button>
-          <button class="btn" id="setup-create" type="button" disabled>Create profile</button>
+        <div id="setup-commit">
+          <dl class="us-review" id="setup-commit-context" hidden>
+            <dt>New profile</dt>
+            <dd><p id="setup-destination"></p></dd>
+            <dt>For</dt>
+            <dd>
+              <p id="setup-target"></p>
+              <p class="hint" id="setup-account-notice">Account-level changes also affect other characters of this account if they later use the new profile.</p>
+            </dd>
+          </dl>
+          <div class="row">
+            <button class="btn" id="setup-review" type="button" disabled>Review</button>
+            <button class="btn" id="setup-create" type="button" disabled hidden>Create profile</button>
+          </div>
         </div>
+        <p class="hint" id="setup-safety">Existing profiles will not be overwritten. <span id="setup-cancel-note">Cancel creates nothing.</span></p>
         <p class="hint" id="setup-status" role="status" aria-live="polite" tabindex="-1"></p>
       </div>
     </div>
@@ -2510,8 +2517,8 @@
         <div class="row">
           <button class="btn" id="fm-add-probe" type="button">Add probe</button>
           <select id="fm-all-range" class="field" aria-label="Set every range"></select>
-          <button class="btn" id="fm-balance" type="button">Balance</button>
-          <span class="hint" id="fm-balance-note"></span>
+          <button class="btn" id="fm-balance" type="button" aria-describedby="fm-balance-note">Balance</button>
+          <span class="hint" id="fm-balance-note" tabindex="-1"></span>
         </div>
         <!-- The first SVG in the app. Every stroke and fill comes from a
              :root token through a class, never from a presentation
@@ -2526,27 +2533,34 @@
       </div>
       <section class="fm-work" id="fm-import-work" aria-labelledby="fm-import-heading" hidden>
         <h2 id="fm-import-heading">Paste formations</h2>
-        <p class="hint" id="fm-import-save-note">Add formations changes only your draft. Nothing is saved until Save formations.</p>
-        <label class="lab" for="fm-import-text">Shared formation text</label>
-        <textarea class="field" id="fm-import-text" rows="4"
-                  aria-describedby="fm-import-save-note fm-import-status"></textarea>
-        <div id="fm-import-list"></div>
-        <svg id="fm-import-preview" viewBox="0 0 100 100"
-             role="img" aria-label="Imported formation preview"></svg>
+        <details id="fm-import-source" open>
+          <summary>Source text</summary>
+          <label class="lab" for="fm-import-text">Shared formation text</label>
+          <textarea class="field" id="fm-import-text" rows="4"
+                    aria-describedby="fm-import-save-note fm-import-status"></textarea>
+        </details>
+        <section id="fm-import-candidates" aria-labelledby="fm-import-candidates-heading" hidden>
+          <h3 id="fm-import-candidates-heading" tabindex="-1">Review names and formation previews</h3>
+          <div id="fm-import-list"></div>
+          <svg id="fm-import-preview" viewBox="0 0 100 100"
+               role="img" aria-label="Imported formation preview"></svg>
+        </section>
       </section>
       <div class="row" id="fm-import-commit" hidden>
+        <span id="fm-import-account-context"></span>
         <button class="btn" id="fm-import-review" type="button">Review</button>
         <button class="btn" id="fm-import-add" type="button" disabled>Add formations</button>
         <button class="btn" id="fm-import-cancel" type="button">Cancel</button>
-        <span class="hint" id="fm-import-status" role="status"></span>
+        <p class="hint" id="fm-import-save-note">Add formations changes only your draft. Nothing is saved until Save formations.</p>
+        <span class="hint" id="fm-import-status" role="status" tabindex="-1"></span>
       </div>
       <div class="row" id="fm-commit">
-        <button class="btn acc" id="fm-save" type="button">Save formations</button>
+        <button class="btn acc" id="fm-save" type="button" aria-describedby="fm-dirty">Save formations</button>
         <button class="btn" id="fm-reload" type="button">Reload</button>
         <span class="hint" id="fm-dirty"></span>
         <span class="hint fm-save-note" id="fm-account-context"></span>
         <span class="hint fm-save-note">Edits change only your draft until Save formations. Saving needs every EVE client closed.</span>
-        <span class="hint fm-save-note" id="fm-save-status" role="status" aria-live="polite"></span>
+        <span class="hint fm-save-note" id="fm-save-status" role="status" aria-live="polite" tabindex="-1"></span>
       </div>
     </div>
   </div>
@@ -2745,7 +2759,6 @@
       <header class="skills-head">
         <h1 id="fittings-collection-name">All fittings</h1>
         <span class="skills-plan-count" id="fittings-collection-count"></span>
-        <button class="btn acc workspace-primary" id="fittings-copy-selected" disabled>Copy selected</button>
       </header>
 
       <div class="skills-notices" id="fittings-notices" hidden></div>
@@ -2760,9 +2773,10 @@
         <button class="linkbtn" id="fittings-filter-clear" hidden>Clear filters</button>
       </div>
 
-      <div class="skills-filterbar">
-        <button class="btn" id="fittings-select-page" disabled>Select page</button>
-        <button class="btn" id="fittings-clear-selection" disabled>Clear selection</button>
+      <div class="fit-selection-actions" role="group" aria-label="Fitting selection">
+        <button class="linkbtn" id="fittings-select-page" disabled>Select page</button>
+        <button class="linkbtn" id="fittings-clear-selection" disabled>Clear selection</button>
+        <button class="btn acc workspace-primary" id="fittings-copy-selected" disabled>Copy selected</button>
       </div>
 
       <div class="fit-workspace-scroll" id="fittings-workspace-scroll">
@@ -2785,6 +2799,9 @@
           </div>
           <p class="field-msg" id="fittings-import-status" role="status"></p>
         </div>
+        <div class="fit-list-head" id="fittings-list-head" aria-hidden="true" hidden>
+          <span></span><span class="fit-column-name">Fitting</span><span>Hull</span><span>Owner/status</span>
+        </div>
         <div class="fit-list" id="fittings-list"></div>
         <div class="empty" id="fittings-empty" hidden></div>
       </div>
@@ -2802,7 +2819,11 @@
     <div class="overlay" id="fittings-copy-overlay" hidden>
       <div class="dialog" id="fittings-copy-dialog" role="dialog" tabindex="-1"
            aria-modal="true" aria-labelledby="fittings-copy-title">
-        <h2 id="fittings-copy-title">Copy fittings</h2>
+        <div class="fit-copy-heading">
+          <h2 id="fittings-copy-title">Copy fittings</h2>
+          <p class="fit-copy-summary" id="fittings-copy-summary" hidden></p>
+          <p class="fit-copy-limit-summary" id="fittings-copy-limit-summary" hidden></p>
+        </div>
         <div class="body" id="fittings-copy-body" role="region" tabindex="-1"
              aria-labelledby="fittings-copy-title"></div>
         <p class="field-msg" id="fittings-copy-status" role="status"></p>
@@ -2907,19 +2928,11 @@
       <button class="winbtn" id="btn-fleetbar" title="Fleet Bar"
               aria-label="Fleet Bar"
               aria-pressed="false">DPS</button>
-      <!-- Toggles the floating sig bar (ui/sigbar.py + sigbar.html). A
-           .winbtn, not a .btn: it is chrome that lives beside chrome, and
-           the 44px square keeps the strip's height unchanged. `.active`
-           styling is shared with .winbtn.gear.active's treatment -- see
-           style.css, which colours the glyph and not the fill, so the
-           accent stays the strip's scarcity.
-
-           Directly left of the EVE segment, with a ">" between the sig
-           glyph and that segment's SIG readout: the arrow says what the
-           toggle is FOR -- it floats the very segment it points at --
-           which a bare medallion beside three labels never could. -->
+      <!-- SIG names what floats instead of resembling resize decoration.
+           It remains 44×32px chrome beside the readout, with the same
+           push-owned active treatment; the native bar itself is unchanged. -->
       <button class="winbtn" id="btn-sigbar" title="Floating sig bar"
-              aria-pressed="false">&#8982;&#8250;</button>
+              aria-label="Floating sig bar" aria-pressed="false">SIG</button>
       <span class="evestat" id="evestat" hidden>
         <span class="evelabel">SIG</span><span id="eve-sig">—</span>
         <span class="evelabel">ROOT</span><span id="eve-root">—</span>

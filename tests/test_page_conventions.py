@@ -1350,7 +1350,7 @@ def test_enabled_subordinate_actions_have_readable_resting_contrast():
     giving every enabled subordinate action, including compact Preview row
     actions, a readable resting state.
     """
-    linkbtn = re.search(r"\.linkbtn\s*\{([^}]*)\}", CSS)
+    linkbtn = re.search(r"^\.linkbtn\s*\{([^}]*)\}", CSS, re.MULTILINE)
     assert linkbtn, "the shared .linkbtn treatment is missing"
     assert "color: var(--text-dim)" in linkbtn.group(1)
     assert "color: var(--text-faint)" not in linkbtn.group(1)
@@ -1662,6 +1662,92 @@ def test_the_previews_table_names_the_configure_disclosure():
 def test_state_shapes_do_not_add_soft_halos_on_the_dark_surface():
     outward_halo = re.compile(r"box-shadow:\s*0 0 (?!0(?:px)?\b)")
     assert not outward_halo.search(CSS)
+
+
+def test_status_text_has_a_bounded_shrinkable_slot():
+    """Ellipsis cannot contain a content-sized, nonshrinking flex item."""
+    status = re.search(r"#status\s*\{([^}]*)\}", CSS)
+    assert status
+    flex = re.search(r"(?<![-\w])flex:\s*([^;]+)", status.group(1))
+    assert flex
+    parts = flex.group(1).split()
+    assert len(parts) == 3, "status needs explicit grow/shrink/basis, not flex:none"
+    assert float(parts[0]) == 0 and float(parts[1]) > 0
+    # Retain the old short-status allocation as a basis, not a minimum.
+    assert parts[2] == "210px"
+    assert re.search(r"min-width:\s*0(?:px)?\s*;", status.group(1))
+    for declaration in (
+        "overflow: hidden",
+        "text-overflow: ellipsis",
+        "white-space: nowrap",
+    ):
+        assert declaration in status.group(1)
+
+
+def test_main_progress_keeps_a_useful_floor_when_eve_text_yields():
+    """A zero-basis track otherwise disappears beside a long ROOT/NEXT."""
+    track = re.search(r"#track\s*\{([^}]*)\}", CSS)
+    assert track, "reserve progress width on the main-window ID, not shared chrome"
+    assert re.search(r"min-width:\s*4em\s*;", track.group(1))
+    assert not re.search(r"(?<![-\w])display\s*:", track.group(1)), (
+        "the idle track must retain its native hidden behavior"
+    )
+    assert re.search(
+        r"@media\s*\(max-width:\s*720px\)\s*\{\s*"
+        r"\.evestat\s*\{\s*display:\s*none;\s*\}\s*\}",
+        CSS,
+    ), "retain the historical EVE-yields policy rather than moving the window floor"
+
+
+def test_status_ellipsis_keeps_the_complete_text_and_title():
+    panel = _strip_js_comments((WEB / "panel.js").read_text(encoding="utf-8"))
+    status = re.search(
+        r"function setStatus\(text, kind\)\s*\{(.*?)\n  \}", panel, re.DOTALL
+    )
+    assert status
+    assert "node.textContent = text;" in status.group(1)
+    assert "node.title = text;" in status.group(1)
+    assert "KINDS.indexOf(kind)" in status.group(1)
+
+
+def test_companion_focus_checkbox_hides_its_author_display():
+    # This label is created by companions.js, so the static-HTML hidden guard
+    # cannot see it. The shared .check display otherwise defeats native hidden.
+    assert ".companion-enabled-group > .check[hidden] { display: none; }" in CSS
+
+
+def test_status_progress_forced_colors_are_root_owned():
+    forced_root = re.search(
+        r"@media\s*\(forced-colors:\s*active\)\s*\{\s*:root\s*\{([^}]+)\}",
+        CSS,
+    )
+    assert forced_root
+    for role, color in (
+        ("surface", "Canvas"),
+        ("value", "CanvasText"),
+        ("boundary", "CanvasText"),
+    ):
+        declaration = f"--status-progress-forced-{role}: {color};"
+        assert declaration in forced_root.group(1)
+        assert CSS.count(declaration) == 1
+
+
+def test_status_progress_forced_colors_paint_without_changing_geometry():
+    forced = re.search(
+        r"@media\s*\(forced-colors:\s*active\)\s*\{\s*"
+        r"#track\.track\s*\{([^}]+)\}\s*#track \.bar\s*\{([^}]+)\}",
+        CSS,
+    )
+    assert forced, "the gradient value disappears without a forced-color paint rule"
+    track, bar = forced.groups()
+    assert "forced-color-adjust: none" in track
+    assert "background: var(--status-progress-forced-surface)" in track
+    assert "outline: 1px solid var(--status-progress-forced-boundary)" in track
+    assert "background: var(--status-progress-forced-value)" in bar
+    # Outline paints a boundary without changing the 4px track or flex geometry.
+    assert not re.search(
+        r"(?:width|height|border|display|transform|animation):", track + bar
+    )
 
 
 def test_determinate_progress_animates_transform_not_layout():
@@ -2502,6 +2588,29 @@ def test_the_previews_header_stays_above_rows_while_settings_scrolls():
         )
 
 
+def test_sticky_edges_declare_fractional_scrollport_boundary_cover():
+    """Opaque fills alone leave a hairline at fractional CSS-pixel edges."""
+    for selector in (
+        ".characters-head",
+        ".bind-head > span",
+        "#preview-binds .bind-group:not(:empty)",
+        ".fit-copy-pair-context",
+    ):
+        rule = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", CSS)
+        assert rule and "0 -1px var(--panel)" in rule.group(1), selector
+
+
+def test_nested_work_panes_declare_overscroll_containment():
+    for selector in (
+        "#characters-roster",
+        "#section-previews .settings-subpage",
+        ".fit-workspace-scroll",
+        "#fittings-copy-body",
+    ):
+        rules = re.findall(re.escape(selector) + r"\s*\{([^}]*)\}", CSS)
+        assert any("overscroll-behavior-y: contain" in rule for rule in rules), selector
+
+
 def test_preview_sticky_header_paints_the_trailing_track():
     """Five labels share six tracks; full-width warnings must not show through.
 
@@ -2875,7 +2984,7 @@ def test_clear_is_not_drawn_where_it_could_only_refuse():
     # Right-aligning inside the cell pins Edit... to one edge and turns a
     # missing Clear into an empty slot. That is one declaration, and
     # deleting it left the whole suite green until a review looked for it.
-    acts = re.search(r"\.rowacts\s*\{([^}]*)\}", CSS)
+    acts = re.search(r"^\.rowacts\s*\{([^}]*)\}", CSS, re.MULTILINE)
     assert acts, "`.rowacts` has no rule -- Clear and Edit... share its cell"
     assert "justify-content: flex-end" in acts.group(1), (
         "`.rowacts` no longer right-aligns its contents, so Edit... sits at "

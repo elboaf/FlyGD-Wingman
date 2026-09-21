@@ -949,6 +949,37 @@
     WM.route('backups');
   }
 
+  function placeBackupMenu(menu, trigger) {
+    menu.classList.remove('opens-up');
+    var route = WM.el('route-backups').getBoundingClientRect();
+    var anchor = trigger.getBoundingClientRect();
+    var popup = menu.querySelector('button').getBoundingClientRect();
+    // Backups can be repainted while its route is hidden. Keep the native
+    // downward fallback until there is visible geometry to decide from.
+    if (!route.height || !anchor.height || !popup.height) return;
+    var top = Math.max(0, route.top);
+    var bottom = Math.min(window.innerHeight, route.bottom);
+    var status = WM.el('statusbar-slot').getBoundingClientRect();
+    if (status.height) bottom = Math.min(bottom, status.top);
+    // A scrolled row need not be the last DOM row. Use its actual space,
+    // retaining the existing right anchor and the stylesheet's 4px gap.
+    if (anchor.bottom + 4 + popup.height <= bottom) return;
+    if (anchor.top - 4 - popup.height >= top) {
+      menu.classList.add('opens-up');
+    } else {
+      menu.open = false;
+    }
+  }
+
+  function closeBackupMenus() {
+    Array.prototype.forEach.call(
+      WM.el('es-backups').querySelectorAll('.bk-menu[open]'), function (menu) {
+        var ownsFocus = menu.contains(document.activeElement);
+        menu.open = false;
+        if (ownsFocus) menu.querySelector('summary').focus({preventScroll: true});
+      });
+  }
+
   function renderBackups() {
     // A route refresh may lose the archive after the recovery button used
     // cached state. Fall back only for our filter, never for the user's text.
@@ -1013,9 +1044,10 @@
         mutate('eve_settings_restore', item.path);
       }));
       var menu = WM.make('details', 'bk-menu');
-      var trigger = WM.make('summary', 'bk-menu-trigger', 'More');
-      trigger.setAttribute('aria-label', 'More actions for ' + item.display_name
-        + ' backup from ' + whenText(item.created));
+      var trigger = WM.make('summary', 'bk-menu-trigger', '\u22ef');
+      trigger.title = 'Backup actions';
+      trigger.setAttribute('aria-label', 'Actions for backup of ' + item.display_name
+        + ' from ' + whenText(item.created));
       menu.appendChild(trigger);
       menu.appendChild(button('Delete', function () {
         mutate('eve_settings_delete_backup', item.path);
@@ -1026,12 +1058,18 @@
           host.querySelectorAll('.bk-menu[open]'), function (other) {
             if (other !== menu) other.open = false;
           });
+        placeBackupMenu(menu, trigger);
+      });
+      menu.addEventListener('focusout', function (event) {
+        // Native Tab order stays intact; leaving the disclosure only hides
+        // its action, never redirects focus to the row just left.
+        if (!menu.contains(event.relatedTarget)) menu.open = false;
       });
       menu.addEventListener('keydown', function (event) {
         if (event.key === 'Escape' && menu.open) {
           event.preventDefault();
           menu.open = false;
-          trigger.focus();
+          trigger.focus({preventScroll: true});
         }
       });
       actions.appendChild(menu);
@@ -1128,7 +1166,7 @@
     scopeCommit.classList.toggle('warn', wholeFile);
     copyButton.textContent = busy && pendingMutation === 'eve_settings_copy'
       ? 'Copy operation in progress\u2026'
-      : 'Copy to ' + count + ' ' + noun + (count === 1 ? '' : 's');
+      : 'Copy settings';
     WM.el('es-copy-followup').hidden = !copyFollowup;
     var label = WM.el('es-copy-count');
     label.textContent = count
@@ -1624,6 +1662,11 @@
       backupVisible += 20;
       renderBackups();
     });
+    // Geometry changed: dismiss without scrolling or taking outside focus.
+    // Restore owned focus before it is stranded in the hidden Delete action.
+    // These belong to the page wiring, not each rebuilt archive row.
+    WM.el('route-backups').addEventListener('scroll', closeBackupMenus);
+    window.addEventListener('resize', closeBackupMenus);
 
     document.addEventListener('wm:route', function (event) {
       var leavingIdentity = identityRouteOpen

@@ -404,6 +404,7 @@ def test_named_back_os_refusal_is_reported_without_dispatch():
         "stale",
         "cancel",
         "marker",
+        "focus-clearance",
         "focus-draft",
         "focus-lifecycle",
         "focus-ownership",

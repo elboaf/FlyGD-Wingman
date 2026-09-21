@@ -31,8 +31,10 @@ function result(overrides = {}, error = null) {
 class Element {
   constructor(id) {
     Object.assign(this, {id, value: '', checked: false, disabled: false, hidden: false,
-      textContent: '', className: '', listeners: {}, attributes: {}});
+      _textContent: '', children: [], className: '', listeners: {}, attributes: {}});
   }
+  get textContent() { return this._textContent + this.children.map(child => child.textContent).join(''); }
+  set textContent(value) { this._textContent = String(value); this.children = []; }
   addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
   dispatchEvent(event) {
     event.target ||= this;
@@ -47,6 +49,8 @@ function page() {
   const html = fs.readFileSync(path.join(web, 'index.html'), 'utf8');
   const elements = Object.fromEntries([...html.matchAll(/id="([^"]+)"/g)]
     .map(match => [match[1], new Element(match[1])]));
+  // This live region is composite in the real markup (pinned by the page guard).
+  elements['wanderer-health'].children = [elements['wanderer-health-label'], elements['wanderer-health-detail']];
   const document = new Element('document');
   const calls = [], confirmations = [], handlers = {}, logs = [];
   const WM = {
@@ -228,7 +232,7 @@ test('old worker generation and delayed same-revision read cannot rewind health'
   await p.reply('wanderer_state', state({enabled: true, generation: 5, status: 'connecting'}));
   p.push(state({enabled: true, generation: 4, status: 'connecting'}));
   assert.match(p.el('health').textContent, /Connected/);
-  assert.match(p.el('coverage').textContent, /1 of 3/);
+  assert.equal(p.el('health-label').textContent, 'Connected · Names available for 1 of 3 previews');
 });
 
 test('a new config revision cannot reuse old worker-generation coverage', async () => {
@@ -241,7 +245,7 @@ test('a new config revision cannot reuse old worker-generation coverage', async 
   p.push(state({enabled: true, credential_present: true, revision: 2, generation: 2,
     map_identifier: 'next', status: 'connecting', previewed: 3}));
   assert.match(p.el('health').textContent, /Connecting/);
-  assert.match(p.el('coverage').textContent, /0 of 3/);
+  assert.match(p.el('health').textContent, /Names available for 0 of 3 previews/);
 });
 
 test('empty current binding explains Remove scope while retaining earlier-credential recovery', async () => {
@@ -266,7 +270,7 @@ for (const [matched, available, next] of [
     const connected = {enabled: true, credential_present: true, automatic_ready: true,
       status: 'connected', previewed: 3, matched, available};
     await p.hydrate(connected);
-    assert.match(p.el('coverage').textContent, new RegExp(available + ' of 3'));
+    assert.equal(p.el('health-label').textContent, 'Connected · Names available for ' + available + ' of 3 previews');
     assert.match(p.el('coverage').textContent, next);
     assert.equal(p.calls.length, 0, 'copy must not request another check');
     p.push(state({...connected, status: 'error', error_code: 'invalid_token', paused: true}));
@@ -484,7 +488,7 @@ for (const [overrides, expected] of [
   [{enabled: true, base_url: ''}, /Setup/],
   [{enabled: true, credential_present: true, status: 'connecting'}, /Connecting/],
   [{enabled: true, credential_present: true, status: 'connected', previewed: 3, matched: 2, available: 2}, /Connected/],
-  [{enabled: true, credential_present: true, status: 'connected', previewed: 3}, /No tracked/],
+  [{enabled: true, credential_present: true, status: 'connected', previewed: 3}, /Connected · Names available for 0 of 3 previews/],
   [{enabled: true, credential_present: true, status: 'error', error_code: 'invalid_token', paused: true}, /token|auth/i],
   [{enabled: true, credential_present: true, status: 'error', error_code: 'wrong_map', paused: true}, /map/i],
   [{enabled: true, credential_present: true, status: 'error', error_code: 'disabled', paused: true}, /API.*disabled/i],
@@ -500,14 +504,53 @@ for (const [overrides, expected] of [
   });
 }
 
+for (const [status, expected] of [['stopped', 'Stopped'], ['worker_failed', 'Unavailable']]) {
+  test('terminal health stays distinct from ordinary preview waiting: ' + status, async () => {
+    const p = page();
+    await p.hydrate({enabled: true, credential_present: true, status, host_available: false,
+      status_text: 'Names cannot run. Reopen Wingman.'});
+    assert.equal(p.el('health-label').textContent, expected);
+    assert.equal(p.el('coverage').textContent, 'Names cannot run. Reopen Wingman.');
+    assert.equal(p.calls.length, 0);
+  });
+}
+
+test('health headline stays compact while long recovery and independent test outcomes stay local', async () => {
+  const p = page();
+  const detail = 'Server unavailable. '.repeat(50);
+  await p.hydrate({enabled: true, credential_present: true, status: 'error',
+    error_code: 'timeout', status_text: detail, paused: false});
+  assert.equal(p.el('health-label').textContent, 'Retrying');
+  assert.equal(p.el('coverage').textContent, detail);
+  assert.ok(p.el('health').textContent.includes(detail), 'full recovery remains in the existing live region');
+  assert.equal(p.calls.length, 0);
+  p.push(state({enabled: false, credential_present: true, status: 'connected',
+    previewed: 3, matched: 3, available: 3, test_result: 'success', test_result_text: 'Connected to Wanderer.'}));
+  assert.equal(p.el('health-label').textContent, 'Off');
+  assert.doesNotMatch(p.el('health').textContent + p.el('coverage').textContent, /3 of 3/);
+  assert.match(p.el('test-status').textContent, /Connected/);
+});
+
+test('healthy full coverage needs no second status or recovery paragraph', async () => {
+  const p = page();
+  await p.hydrate({enabled: true, credential_present: true, status: 'connected',
+    automatic_ready: true, previewed: 3, matched: 3, available: 3});
+  assert.equal(p.el('health').textContent, 'Connected · Names available for 3 of 3 previews');
+  assert.equal(p.el('coverage').textContent, '');
+  p.push(state({enabled: true, credential_present: true, status: 'stale', automatic_ready: true,
+    previewed: 3, matched: 3, available: 0, stale: 3}));
+  assert.equal(p.el('health-label').textContent, 'Stale · Names available for 0 of 3 previews');
+  assert.match(p.el('coverage').textContent, /3 expired/);
+});
+
 test('coverage uses only current-session counters, including partial stale coverage', async () => {
   const p = page(); await p.hydrate({enabled: true, credential_present: true, status: 'connected',
     previewed: 4, matched: 3, available: 1, stale: 2});
-  assert.match(p.el('coverage').textContent, /1 of 4/);
-  assert.match(p.el('coverage').textContent, /3 of 4/);
-  assert.match(p.el('coverage').textContent, /2 stale/);
+  assert.equal(p.el('health-label').textContent, 'Connected · Names available for 1 of 4 previews');
+  assert.match(p.el('coverage').textContent, /3 of 4 tracked/);
+  assert.match(p.el('coverage').textContent, /2 expired/);
   p.push(state({enabled: true, credential_present: true, status: 'connected', generation: 2}));
-  assert.match(p.el('coverage').textContent, /No named previews/);
+  assert.match(p.el('health').textContent, /Connected · No named previews/);
 });
 
 test('entering the connection card disarms real preview keybind capture before typing', async () => {
@@ -630,7 +673,7 @@ if (process.argv[2] === '--handoff-trace') {
     p.push(raced);
     p.enter(); await p.reply('wanderer_state', settled);
     assert.match(p.el('health').textContent, /Connected/);
-    assert.match(p.el('coverage').textContent, /2 of 2/);
+    assert.match(p.el('health').textContent, /Connected · Names available for 2 of 2 previews/);
     assert.equal(p.el('url').value, 'unsubmitted draft');
   });
 }

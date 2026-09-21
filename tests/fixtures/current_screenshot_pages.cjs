@@ -38,8 +38,8 @@ const methods = family === 'fleet' ? ['fleetScreenshot', 'fleetSharingScreenshot
 const clone = value => JSON.parse(JSON.stringify(value));
 const tick = () => new Promise(resolve => setTimeout(resolve, 5));
 const live = data.fixture[family] ? clone(data.fixture[family]) : null;
-// Live versions intentionally exceed the synthetic revision, proving separate
-// ownership rather than a guessed high fixture revision.
+// Live revisions exceed the fixture: restoring authority must not depend on
+// a guessed higher synthetic revision. Fleet controls are production-projected.
 if (family === 'companions') {
   live.state.revision = 7; live.state.rows[0].label = 'Live companion'; live.state.rows[0].generation = 7;
 } else if (family === 'wanderer') {
@@ -47,8 +47,8 @@ if (family === 'companions') {
   live.state.base_url = 'https://live.example'; live.state.map_identifier = 'live-map';
 } else if (family === 'fleet') {
   live.display.state.revision = 7; live.display.state.enabled = true; live.display.state.characters[0].name = 'Live pilot';
+  live.sharing.state = clone(data.live_sharing);
   live.sharing.state.presentation_order = 7;
-  live.sharing.state.metadata.paired_origin = 'https://live.example';
 }
 function pushLive() {
   if (family === 'companions') window.onCompanionPreviews(clone(live.state));
@@ -119,7 +119,7 @@ function assertContent() {
     assert.equal(WM.el('wanderer-url').value, 'https://wanderer.example/home-chain');
     assert.equal(WM.el('wanderer-token').value, '');
     assert.equal(WM.el('wanderer-url-draft').textContent, '');
-    assert.match(WM.el('wanderer-health').textContent, /Connected to Wanderer/);
+    assert.equal(WM.el('wanderer-health-label').textContent, 'Connected · Names available for 2 of 3 previews');
     assert.match(WM.el('wanderer-coverage').textContent, /2 of 3/);
     if (data.key === 'settings-wanderer-narrow') {
       assert.equal(scrolls.at(-1).element.id, 'wanderer-health',
@@ -130,7 +130,7 @@ function assertContent() {
     assert.match(WM.el('fleetbar-character-list').textContent, /Running.*Aiga Otsolen.*Offline.*Tanuki Solette/);
     assert.match(WM.el('sharing-connection').textContent, /Paired with https:\/\/authgd.example/);
     assert.equal(WM.el('sharing-history').hidden, false);
-    assert.match(WM.el('sharing-history-sources').textContent, /ended — boss changed/);
+    assert.match(WM.el('sharing-history-sources').textContent, /ended — boss lost/);
   }
 }
 function mutations() {
@@ -143,12 +143,253 @@ function mutations() {
     fire('wanderer-test'); fire('wanderer-remove'); fire('wanderer-enabled', 'change');
     WM.el('wanderer-token').dispatchEvent({type: 'keydown', key: 'Enter'});
   } else {
-    for (const id of ['btn-fleetbar', 'fleetbar-reset', 'sharing-start', 'sharing-grant', 'sharing-connect', 'sharing-confirm-on']) fire(id);
-    fire('fleetbar-enabled', 'change'); fire('sharing-enabled', 'change');
-    document.querySelector('[data-fleet-character] input').dispatchEvent({type: 'change'});
-    WM.el('sharing-refresh').click();
-    WM.el('sharing-sources').querySelector('button').dispatchEvent({type: 'click'});
+    const confirm = WM.confirm;
+    let confirmations = 0;
+    WM.confirm = (...args) => { confirmations += 1; return confirm(...args); };
+    try {
+      for (const id of ['btn-fleetbar', 'fleetbar-reset', 'sharing-start', 'sharing-grant', 'sharing-connect', 'sharing-confirm-on',
+        'sharing-combat', 'sharing-automatic-confirm', 'sharing-automatic-cancel', 'sharing-automatic-dismiss',
+        'sharing-legacy-dismiss', 'sharing-legacy-remove']) fire(id);
+      fire('fleetbar-enabled', 'change'); fire('sharing-enabled', 'change');
+      for (const checked of [true, false]) {
+        WM.el('sharing-automatic').checked = checked; fire('sharing-automatic', 'change');
+      }
+      document.querySelector('[data-fleet-character] input').dispatchEvent({type: 'change'});
+      WM.el('sharing-refresh').click();
+      // Replace pending Stop is the first (hidden) button; exercise real Stop.
+      const stop = WM.el('sharing-sources').firstChild.lastChild;
+      assert.equal(stop.textContent, 'Stop verification');
+      assert.equal(stop.hidden, false);
+      assert.equal(stop.disabled, false);
+      stop.dispatchEvent({type: 'click'});
+      assert.equal(confirmations, 0, 'fixture events must not even request confirmation');
+    } finally { WM.confirm = confirm; }
   }
+}
+async function sharingLifecycle(scenario) {
+  const A = clone(live.sharing.state), B = clone(data.live_sharing_newer);
+  // Each pure projection starts at its first envelope. Sequence these two
+  // deliveries without inventing or rewriting any control observation/hash.
+  B.presentation_order = A.presentation_order + 1;
+  const fire = (id, type = 'click') => WM.el(id).dispatchEvent({type});
+  const groups = ['sharing-sources', 'sharing-pending-sources', 'sharing-history-sources'];
+  const rowIds = () => groups.map(id => WM.el(id).children.map(row => row.getAttribute('data-source')));
+  const view = () => document.querySelectorAll('[id]').filter(node => node.id.startsWith('sharing-')
+    || ['fleet-overview-sharing', 'fleet-overview-auth', 'fleet-overview-verification'].includes(node.id))
+    .map(node => [node.id, node.textContent, node.hidden, node.disabled, node.checked, node.value, !!node.open]);
+  const controls = ['sharing-combat', 'sharing-automatic-confirm', 'sharing-automatic-cancel',
+    'sharing-automatic-dismiss', 'sharing-legacy-dismiss', 'sharing-legacy-remove', 'sharing-connect', 'sharing-confirm-on'];
+  const confirm = WM.confirm;
+  let confirmations = 0;
+  WM.confirm = (...args) => { confirmations += 1; return confirm(...args); };
+  function noAuthority() {
+    const before = confirmations;
+    for (const id of controls) fire(id);
+    for (const id of ['sharing-enabled', 'sharing-automatic']) {
+      WM.el(id).checked = true; fire(id, 'change');
+      WM.el(id).checked = false; fire(id, 'change');
+    }
+    assert.equal(confirmations, before, 'unhydrated/fixture controls must not open a consent dialog');
+    assert.equal(calls.length, 0, 'unhydrated/fixture controls must not send any observation');
+  }
+  function cold() {
+    assert.equal(WM.el('fleet-overview-sharing').textContent, 'Unknown');
+    assert.equal(WM.el('fleet-overview-auth').textContent, 'Unknown');
+    assert.equal(WM.el('fleet-overview-verification').textContent, 'Unknown · unavailable');
+    assert.match(WM.el('sharing-connection').textContent, /unavailable/);
+    assert.match(WM.el('sharing-automatic-status').textContent, /has not been observed/);
+    assert.doesNotMatch(WM.el('sharing-automatic-status').textContent, /Off for your account|On for your account|On;/);
+    assert.equal(WM.el('sharing-automatic').checked, false);
+    assert.equal(WM.el('sharing-combat').hidden, false);
+    for (const id of ['sharing-confirm-on', 'sharing-automatic-confirm', 'sharing-automatic-cancel',
+      'sharing-automatic-dismiss', 'sharing-legacy-history', 'sharing-legacy-dismiss', 'sharing-legacy-remove']) {
+      assert.equal(WM.el(id).hidden, true, id + ' has no observed action after cold cleanup');
+    }
+    for (const id of ['sharing-setup-history', 'sharing-legacy-summary', 'sharing-consent', 'sharing-preference',
+      'sharing-eligibility', 'sharing-action', 'sharing-browser-error', 'sharing-source-status']) {
+      assert.equal(WM.el(id).textContent, '', id + ' retained synthetic feedback');
+    }
+    assert.equal(WM.el('sharing-legacy-history').open, false);
+    assert.deepEqual(rowIds(), [[], [], []]);
+    assert.equal(WM.el('sharing-eligible-list').children.length, 0);
+    assert.equal(WM.el('sharing-history').hidden, true);
+    assert.equal(WM.el('sharing-history-summary').textContent, 'Previous attempts (0)');
+    for (const node of WM.el('fleet-sharing').querySelectorAll('button, input, select')) {
+      assert.equal(node.disabled, true, node.id + ' must remain unavailable');
+    }
+    noAuthority();
+  }
+  function observed(expected) {
+    assert.equal(WM.el('sharing-connection').textContent, 'Paired with ' + expected.metadata.paired_origin + '.');
+    assert.equal(WM.el('sharing-automatic').checked, true);
+    assert.equal(WM.el('sharing-automatic').disabled, false);
+    assert.match(WM.el('sharing-automatic-status').textContent, /^On;/);
+    assert.equal(WM.el('sharing-combat').hidden, true);
+    assert.equal(WM.el('sharing-enabled').checked, expected.enabled);
+    assert.equal(WM.el('fleet-overview-sharing').textContent, expected.enabled ? 'On' : 'Off');
+    assert.match(WM.el('fleet-overview-auth').textContent, /Paired · last observed On/);
+    assert.equal(WM.el('fleet-overview-verification').textContent,
+      expected.pending_sources.length ? 'Eligible · local operation pending' : 'Eligible');
+    assert.deepEqual(rowIds(), [
+      expected.sources.sources.filter(row => row.state !== 'ended').map(row => row.source_id),
+      expected.pending_sources.map(row => row.source_id),
+      expected.sources.sources.filter(row => row.state === 'ended').map(row => row.source_id)
+    ]);
+    for (const control of expected.controls.sources) {
+      const row = document.querySelector('[data-source="' + control.source_id + '"]');
+      assert.deepEqual(clone(row.lastChild._sharingControl), control);
+    }
+    assert.doesNotMatch(WM.el('fleet-sharing').textContent, /poisoned|authgd\.example/);
+  }
+  function poison(input) {
+    input.metadata.paired_origin = 'https://poisoned.example';
+    input.metadata.binding = 'poisoned-binding';
+    input.sources.characters[0].character_name = 'poisoned character';
+    input.sources.sources[0].reason = 'poisoned';
+    input.controls.sources[0].binding = 'poisoned-control';
+    input.setup_controls.automatic.observed.enabled = false;
+    input.setup_controls.setup.combat_approved = false;
+  }
+  async function stage(generation) {
+    calls.length = 0; staging = true;
+    run(data.prepare);
+    if (generation !== undefined) {
+      const next = clone(data.fixture.fleet.sharing);
+      next.state.presentation_order += generation;
+      WM.fleetSharingScreenshot(next);
+    }
+    run(data.stage); await tick(); run(data.verify);
+    assert.equal(WM.el('sharing-automatic-status').textContent, 'Off for your account.');
+    assert.equal(WM.el('sharing-combat').hidden, false);
+    mutations(); await tick(); assert.equal(calls.length, 0);
+  }
+  async function cleanup() {
+    run(data.cleanup); await tick();
+    assert.equal(calls.length, 0, 'fixture cleanup is entirely local');
+    assert.equal(WM.el('sharing-history').open, false);
+    assert.equal(WM.el('sharing-eligible').open, false);
+  }
+  async function automaticOff(expected) {
+    staging = false; calls.length = 0;
+    const before = confirmations;
+    WM.el('sharing-automatic').checked = false; fire('sharing-automatic', 'change');
+    await tick();
+    assert.equal(confirmations, before, 'ordinary automatic Off does not wait on a dialog');
+    assert.deepEqual(clone(calls), [['fleet_sharing_automatic', 'off', expected.setup_controls.automatic]]);
+  }
+
+  if (scenario === 'cold' || scenario === 'cold-then-live' || scenario === 'repeat') {
+    const retired = [];
+    for (let iteration = 0; iteration < (scenario === 'repeat' ? 3 : 1); iteration++) {
+      await stage(scenario === 'repeat' ? iteration + 1 : undefined);
+      retired.push(WM.el('sharing-sources').firstChild.lastChild);
+      // Input interaction is still fixture-only; cleanup must clear the draft
+      // checked state and disclosure even when no live observation ever arrived.
+      WM.el('sharing-automatic').checked = true;
+      fire('sharing-automatic', 'change');
+      WM.el('sharing-legacy-history').open = true;
+      await cleanup(); cold();
+      for (const control of retired) {
+        assert.equal(control._sharingControl, null, 'no prior fixture generation retains an observation');
+        assert.equal(control.disabled, true);
+      }
+      const neutral = view();
+      run(data.cleanup); await tick(); assert.deepEqual(view(), neutral);
+    }
+    if (scenario === 'cold-then-live') {
+      staging = false; window.onFleetSharingState(clone(B)); observed(B);
+      await automaticOff(B);
+    }
+  } else if (scenario === 'live-before') {
+    const input = clone(A);
+    window.onFleetSharingState(input);
+    WM.el('sharing-boss').value = '1'; fire('sharing-boss', 'change');
+    const before = view();
+    await stage(); poison(input); await cleanup();
+    assert.deepEqual(view(), before, 'stage must detach the preexisting live snapshot and roster');
+    observed(A);
+    await automaticOff(A);
+  } else if (scenario === 'live-during') {
+    window.onFleetSharingState(clone(A));
+    await stage();
+    const input = clone(B);
+    window.onFleetSharingState(input); poison(input);
+    window.onFleetSharingState(clone(A)); // Older delivery cannot replace buffered B.
+    await cleanup(); observed(B);
+    await automaticOff(B);
+  } else if (scenario === 'authority') {
+    window.onFleetSharingState(clone(A));
+    // This dialog captured A, but no operation has been sent. Fixture epochs
+    // must invalidate its answer rather than substitute B's newer authority.
+    WM.el('sharing-automatic').checked = true; fire('sharing-automatic', 'change');
+    assert.equal(confirmations, 1);
+    assert.equal(WM.el('overlay').hidden, false);
+    hold = true; WM.el('sharing-refresh').click(); await tick(); hold = false;
+    assert.equal(waiting.length, 1);
+    await stage();
+    const fixtureStop = WM.el('sharing-sources').firstChild.lastChild;
+    window.onFleetSharingState(clone(B));
+    await cleanup(); observed(B);
+    waiting.shift().resolve({state: clone(A)}); await tick(); observed(B);
+    assert.equal(calls.length, 0, 'pre-fixture read completion cannot acquire live authority');
+    WM.el('dlg-ok').click(); await tick();
+    assert.equal(calls.length, 0, 'pre-fixture confirmation cannot survive the fixture epoch');
+    const before = confirmations;
+    fixtureStop.dispatchEvent({type: 'click'}); await tick();
+    assert.equal(confirmations, before, 'a detached fixture Stop cannot open a live dialog');
+    assert.equal(calls.length, 0);
+    await automaticOff(B);
+    calls.length = 0;
+    const stop = WM.el('sharing-sources').firstChild.lastChild;
+    stop.click(); assert.equal(WM.el('overlay').hidden, false);
+    WM.el('dlg-ok').click(); await tick();
+    assert.deepEqual(clone(calls), [['fleet_sharing_stop_source', B.controls.sources[0].source_id,
+      B.metadata.binding, B.controls.sources[0]]]);
+  } else if (scenario === 'focus') {
+    window.onFleetSharingState(clone(A));
+    WM.el('sharing-boss').value = '1'; fire('sharing-boss', 'change');
+    WM.el('sharing-history').open = true; WM.el('sharing-eligible').open = true;
+    const draft = WM.el('wanderer-url'); draft.value = 'https://private-draft.example/map';
+    await stage();
+    draft.focus();
+    await cleanup();
+    assert.equal(document.activeElement, draft, 'cleanup cannot steal newer outside focus');
+    assert.equal(draft.value, 'https://private-draft.example/map');
+    assert.equal(WM.el('sharing-boss').value, '1', 'same-binding boss draft survives capture');
+    await stage();
+    WM.confirm('Newer outside dialog', 'Retain this independently owned dialog.');
+    WM.el('dlg-cancel').focus();
+    await cleanup();
+    assert.equal(WM.el('overlay').hidden, false);
+    assert.equal(WM.el('dlg-title').textContent, 'Newer outside dialog');
+    assert.equal(document.activeElement, WM.el('dlg-cancel'));
+    WM.el('dlg-cancel').click(); await tick(); assert.equal(calls.length, 0);
+  } else if (scenario === 'worklists') {
+    window.onFleetSharingState(clone(A));
+    const before = rowIds();
+    await stage();
+    assert.deepEqual(rowIds(), before);
+    const fixtureRows = groups.flatMap(id => WM.el(id).children);
+    window.onFleetSharingState(clone(B));
+    await cleanup(); observed(B);
+    assert.deepEqual(rowIds(), [before[0], B.pending_sources.map(row => row.source_id), before[2]]);
+    assert.equal(WM.el('sharing-pending').hidden, false);
+    assert.match(WM.el('sharing-pending-sources').textContent, /Start saved; outcome unconfirmed/);
+    assert.equal(WM.el('sharing-history-summary').textContent, 'Previous attempts (1)');
+    assert.match(WM.el('sharing-history-sources').textContent, /ended — boss lost/);
+    const restored = groups.flatMap(id => WM.el(id).children);
+    assert.ok(restored.every(row => !fixtureRows.includes(row)), 'restored rows must not retain fixture control captures');
+    const neutral = view();
+    run(data.cleanup); assert.deepEqual(view(), neutral);
+    restored[0].lastChild.focus();
+    window.onFleetSharingState(clone(B));
+    const reconciled = groups.flatMap(id => WM.el(id).children);
+    assert.equal(reconciled.length, restored.length);
+    reconciled.forEach((row, index) => assert.equal(row, restored[index], 'ordinary live reconciliation keeps keyed rows'));
+    assert.equal(document.activeElement, restored[0].lastChild);
+    assert.equal(calls.length, 0);
+  } else assert.fail('Unknown sharing lifecycle case: ' + scenario);
+  WM.confirm = confirm;
 }
 (async () => {
   if (data.scenario === 'preview-subpage') {
@@ -274,6 +515,10 @@ function mutations() {
   if (family === 'fleet') { load('fleet'); load('fleetsharing'); }
   else load(family);
   WM.openSettingsSection(data.section); await tick();
+  if (data.scenario.startsWith('sharing-lifecycle-')) {
+    await sharingLifecycle(data.scenario.slice('sharing-lifecycle-'.length));
+    console.log('PASS current screenshot ' + data.scenario); return;
+  }
   if (data.scenario === 'cold') {
     calls.length = 0; staging = true;
     run(data.prepare); WM.openSettingsSection(data.section); await tick(); run(data.stage); await tick(); run(data.verify);
@@ -332,7 +577,7 @@ function mutations() {
     console.log('PASS current screenshot ' + data.scenario); return;
   }
   if (data.scenario.startsWith('wanderer-fence-')) {
-    assert.equal(WM.el('wanderer-health').textContent, 'Connected to Wanderer.');
+    assert.equal(WM.el('wanderer-health-label').textContent, 'Connected · Names available for 2 of 3 previews');
     const buffered = data.scenario.endsWith('buffered');
     calls.length = 0; staging = true;
     if (buffered) run(data.prepare);
@@ -348,8 +593,8 @@ function mutations() {
     assert.equal(WM.el('wanderer-health').textContent, 'Connecting…');
     assert.equal(WM.el('wanderer-coverage').textContent, '');
     window.onWandererState({...rebound, generation: 8, available: 1});
-    assert.equal(WM.el('wanderer-health').textContent, 'Connected to Wanderer.');
-    assert.match(WM.el('wanderer-coverage').textContent, /^1 of 3/);
+    assert.equal(WM.el('wanderer-health-label').textContent, 'Connected · Names available for 1 of 3 previews');
+    assert.match(WM.el('wanderer-coverage').textContent, /^2 of 3 tracked/);
     assert.equal(calls.length, 0);
     console.log('PASS current screenshot ' + data.scenario); return;
   }

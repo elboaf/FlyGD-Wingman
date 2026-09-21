@@ -245,16 +245,16 @@ describing the change as "seven edits, all mechanical". If it is mechanical
 you are not deciding anything, which is the problem.
 
 
-## Appearance: one card, six family picks
+## Appearance: one card, family picks
 
 The theme picker lives in Settings › General — configuration by
 PRODUCT.md's own test, and the first Appearance control the app has had.
-Its safety argument is structural, so it is recorded here rather than
-enforced by review: `themes.py` derives every concrete token from ONE
-swatch per family while preserving each role's reference LIGHTNESS, and
-contrast is a function of luminance alone, so any combination the
-composer can produce holds the preset's measured ratios. The composer
-offers only swatches the preset's pool tags as compatible with the
+`themes.FAMILIES` owns the available family list. `themes.py` derives roles
+from one permitted swatch per family while preserving reference HLS lightness.
+HLS lightness is not WCAG relative luminance, so pool membership alone does not
+guarantee contrast. The inherited custom-palette control-edge contrast gap remains
+open; actual token pairs still need measured coverage against the floors below.
+The composer offers only swatches the preset's pool tags as compatible with the
 family; `--link` is not in any pool (its own note in style.css explains
 why it must stay blue), and severity tokens (`--training`, `--unmet`)
 are likewise fixed vocabulary. The native surface is painted from the
@@ -357,7 +357,7 @@ three entries, `Uploading`, `Companion previews` and `General`.
 rows, for two different reasons that make the same hole. `#eve-binds` does
 it because its labels are long action names and it gives them a whole line
 instead. `#preview-binds` does it to give the character name a
-length-bounded `minmax(150px, 260px)` track of its own — an inline column,
+length-bounded `minmax(200px, 260px)` track of its own — an inline column,
 not a line — so the name is a cell in the table rather than a heading above
 it. Either way ID specificity beats
 the `max-width: 720px` block written against `.settings .row > .lab`, so
@@ -394,7 +394,7 @@ that test from B1's reasoning — the reasoning is recorded here precisely
 so the conclusion is not re-derived from it.
 
 Round 6 widened Previews' column from a flat `150px` to
-`minmax(150px, 260px)` and the ban is unaffected, which is the point worth
+`minmax(150px, 260px)` and the ban was unaffected, which is the point worth
 recording: B1 forbids a track sized *by the roster*, not a track that
 varies with the WINDOW. Both ends are lengths, so the column still cannot
 move between sessions with whoever is logged in — it simply stops
@@ -403,6 +403,11 @@ beside it. `_preview_binds_cell_tracks` in `test_page_conventions.py`
 checks the rule rather than the spelling, and rejects `max-content`
 anywhere in the track including inside a `minmax()`, which the regex it
 replaced could not see.
+
+The current Preview table uses `minmax(200px, 260px)`. Step 4's rendered floor
+check found the intervening 210px minimum needed 596px in a 592px pane; 200px
+removes overflow without shrinking action hit areas. The 260px ceiling brings
+controls closer on wider panes. Clear/Edit keep their shared, right-aligned cell.
 
 **Open, not decided — the two stacked treatments are 1px apart.**
 `.settings .row > .lab` is `--fs-body` (13px) with a 4px `row-gap`;
@@ -626,6 +631,27 @@ focus and text selection restored only when that editor still owns focus.
 A newer route, row or dialog must never have focus taken back by a refresh.
 Save remains explicit, and disclosure state is session-only.
 
+Retained metadata records distinguish their committed name/description from the
+values being edited. **Unsaved changes** means exact string inequality in either
+field, or a pending Save, not simply that a draft record exists. Reverting both
+fields is clean and disables Save; a pending submission remains dirty even if the
+user types back to the old baseline. A true acknowledgement advances the local
+committed high-water mark and exact submitted pair without replacing newer typing.
+A refusal leaves the baseline unchanged; its message can remain while reverted
+values are clean. Accepted reads and existing row/route fences cannot undo a newer
+acknowledgement or replace dirty, pending or refused values. This is page-local
+state, not a new backend revision or persisted library format. Native text controls
+may display saved line breaks differently (for example CRLF as LF in a textarea).
+An untouched field, or a return to its original rendered value, retains its exact
+original string; editing the other field must not silently rewrite it. New edits
+use the control's value. No normalization is added to the stored metadata.
+
+The metadata fields, neutral Save and existing outcome belong to one explicit-save
+group. Collections and Superseded by are a separate immediate group, with their
+own existing write endpoints and refusal refresh. Their changes never save or
+mark name/description dirty. Stable control identities preserve only currently
+owned immediate-control focus during refresh; a newer control or dialog wins.
+
 Fittings' neutral **Import from clipboard…** opens an inline EFT draft and
 attempts a read only when text, review and result are all absent. Reopening a
 retained draft or result preserves it; **Read clipboard** explicitly replaces
@@ -648,7 +674,65 @@ share that page-owned selection; existing filter/page/route pruning remains in
 force. Selection-only changes repaint checkboxes and the Copy count, never the
 metadata editor or a bridge read/write. Clearing from the focused helper returns
 focus locally to Select page without scrolling; programmatic changes never take
-focus from an editor. Copy selected remains the sole accent action.
+focus from an editor. Copy selected remains the sole accent action. Its existing
+selected count and subordinate helpers share one action area, without exposing
+preflight's target-character selection.
+
+Fittings keeps native checkboxes and expansion buttons, not an ARIA table around
+interactive detail content. The visual Fitting, Hull and Owner/status labels share
+tracks and insets with every row. The warning's complete Details… action stays
+beside ownership, outside the expansion button. Details retains a fitting-specific
+focus identity across rebuilds, falling back to that fitting's expansion button if
+the warning disappears. New controls, row actions, renders, routes and dialogs
+revoke the old continuation; a removed fitting has no fallback. Full fitting/hull/status text
+remains in accessible names or titles when visually truncated. At 960px and below,
+identity and status stack and the now-misleading visual header disappears; selection
+and expansion stay reachable. The actual expanded header remains opaque and sticky
+within its fitting, with measured focus clearance rather than a fixed row-height
+assumption. Native checkbox focus occupies the painted label's bounds.
+
+Wide fitting details put description, saved clipboard export and module groups
+before aliases, ownership and management in the DOM, drawn as two regions. The
+same order becomes one column at the floor. The existing workspace remains the
+only work scroller; sparse collections gain no filler. Clipboard export remains
+neutral and uses saved content, independent of metadata drafts.
+
+Fitting-copy context is descriptive, never write authority. Before review the
+heading describes current selected fittings and targets. Once a ticket is accepted,
+a detached snapshot retains its actual fitting IDs/count, ordered target IDs/names,
+ticket identity and hull labels through progress, terminal failures and session-only
+Last copy results. It never derives counts from opening hull keys, result rows or
+attempted additions. Another abandoned setup cannot supply an older result's context.
+A known fitting count without retained target identity uses the selection-only
+heading; absent operation facts use the phase-generic title, never invented identities.
+No context is persisted or added to backend payloads. Background selection pruning
+updates only setup's description and retires an obsolete rejected limit estimate;
+an accepted response still owns its submitted set. A rejected response
+must match the pending request's detached fitting-ID snapshot to current selection
+membership before showing its feedback; row reordering is not a membership change.
+Otherwise it asks for a fresh Review without estimating additions. Rejection-time
+roster refresh retains logical target focus, or the body if that target is removed
+or disabled, and yields to newer request/focus/scroll owners.
+
+The operation heading and compact summary sit together outside the existing copy
+body scroller; footer actions remain separate. Pair-local identity keeps fitting,
+hull and target with its outcome while rows scroll. A viewport resize reveals an
+obscured current body control without changing focus/caret; passive size observation
+never undoes deliberate scrolling. Full error and recovery guidance
+remains in the body, with verification advice before retry advice. The original
+copy status owns announcements; visible summaries and progress do not add live
+regions. A determinate bar counts fitting/character checks, including non-additions,
+not successful writes. Missing or zero totals never fabricate a percentage. The
+native bar uses existing theme tokens, with system-colour tokens retaining its value
+and track in forced colours.
+
+Rejected limit counts are requested additions, not an accepted ticket. Review copy
+stays available for an authoritative recheck; raw selection is never a limit gate.
+Review changes retains the existing alternate-name/Skip predicate. Choice edits
+invalidate old presentation estimates rather than calculating new classifications.
+The existing nonempty operation identifier lives in a quiet, keyboard-reachable
+Technical details disclosure, selectable as text without a new clipboard action.
+Copy selected remains the sole route-level accent; copy-dialog actions stay neutral.
 
 Formation import separates parsing source text from validating edited candidates.
 After successful Review, unchanged source cannot be parsed again and discard name
@@ -735,7 +819,7 @@ user is standing on.**
 **A precondition is stated once, by the control that owns it — not by
 every control it governs.** A master switch that gates a block of settings
 gets ONE line saying what the block is waiting for, and the block is drawn
-as subordinate to it: `alerts.js`'s `DEPENDS` for the twelve controls under
+as subordinate to it: Alerts' labelled preferences region under
 `#alert-enabled`, and `#preview-depends` for the nine under
 `#preview-enabled` (`.pv-master` in `style.css` is the rule under the
 switch that says so structurally).
@@ -781,6 +865,11 @@ static help. Keep current readiness near its owning switch or heading, with
 recovery beside it; enabled settings alone do not establish live operation.
 Move the existing status node rather than creating a second live-region owner.
 Expected Off or Waiting states are not errors merely because work is inactive.
+Bookmarks puts its existing engine status beside Register keybinds in EVE;
+only Running gets a pill. Both getter/save and push paths retain full error text
+in that same polite live region, including an Off error. Quiet Off leaves that
+owner exposed but empty; unchanged polls do not rewrite live text. Registration blockers
+remain separate facts: a running engine does not prove keys are registered.
 Fleet eligibility stays beside sharing status, outside its roster disclosure;
 settled history hides obsolete Stop controls but retains their keyed identity if
 pending work makes an attempt current again. Advanced alert Flashes and Speed
@@ -804,6 +893,18 @@ capture, owned focus and detached screenshot/live state. Older payloads without
 geometry still identify the source without invented coordinates. This is read
 evidence, not a guarantee that a user cannot move the source before pressing Copy.
 
+Preview Copy alone opts into hiding a redundant selected-detail line when the
+complete caption fits the closed selector. Truncated, clipped, unmeasurable and
+legacy/null-geometry source details stay readable. Other compact choosers retain
+their full-detail default. Observed placement in Configure uses that same current
+geometry source, not Size defaults; geometry/actions and crop occupy a full-width
+local grid, stacking at the floor without creating another scroll owner.
+
+Bookmark overlap warnings show “Conflicts with a Bookmark keybind” and the
+underlined Open Bookmarks action. Their same description node retains the full
+owner/chord/consequence/recovery for accessibility. This warning treatment does
+not replace local conflict precedence or genuine registration-error information.
+
 
 ## Routes and sections
 
@@ -820,12 +921,38 @@ roving tabindex. Left/Right wrap; Home/End select the first/last tab. A tab chan
 moves focus out of the hidden panel, cancels Preview keybind capture and pending
 detail-focus restoration, and masks a revealed webhook when leaving Combat logs.
 It must not reset a draft or submit a field. The section header and preview master
-switch stay outside the subpage scroller; only the character table and Offline
-heading stick inside it, without the old scroll-jump navigation offset.
+switch stay outside the subpage scroller. Inside it, the character table and
+Offline heading retain their stack, without the old scroll-jump navigation
+offset. Wanderer's compact Map connection heading and name-availability status
+stay visible while its form scrolls; the enable switch stays with its refusal
+message in normal flow. Availability counts fresh projected names, not proof
+that labels are visibly painted. Long recovery and Test outcomes stay with the
+connection controls, outside the retained context visually. Both compact status
+owners retain full detail as visually hidden content in their original live
+regions; moving visual feedback must not reduce an announcement to just “Error”.
+Expanded Companion rows retain their existing name and operational status on the
+Settings scroller, releasing at that row's boundary. Enabled stays nearby with
+its refusal; source details and full operation errors remain in normal flow.
+Show-on-focus has separate adjacent refusal feedback and appears only when the
+committed hide-on-lost-focus preference makes it relevant. Native-confirmed
+Hidden by focus settings is neither Waiting for source nor Live; the source
+foreground ring alone proves neither availability nor visibility.
+Only Live and Waiting for source use pills. Add owns the accent until its form
+opens, when Choose source takes it; both yield while source selection is active.
+Expanded Fittings rows retain their existing identity above the detail and
+release at that fitting's boundary. Keyboard reveal clears these local headers.
 
 Windows uses native disclosures: Appearance and Placement start open; Size and
 shape and When you switch away start closed. Each exception list stays with its
-controlling preference. The tabs and flat subpage treatment are scoped to these
+controlling preference. Related control units use two columns above 960px and
+stack below; helpers stay beneath their owning controls, not at the far edge.
+Cycle-group headings retain local identity within their panel boundary, after
+the character table's separate opaque header/Offline stack. The group manager
+never sticks; bounded name tracks keep Rename/Delete and member actions nearby.
+Forward/Back share a row above 960px and stack below, preserving DOM tab order.
+All group controls clear the measured local heading when focused, including
+unconflicted binds and member actions. Pointer-down targets do not move before
+activation; full heading height is reserved even while it releases at the panel end. The tabs and flat subpage treatment are scoped to these
 two sections; other Settings screens keep their existing layout.
 
 `WM.route` switches destinations; `WM.section` switches groups inside
@@ -843,15 +970,36 @@ so the Settings gear can show availability before General opens. It does not
 run inside `get_settings()`, block hydration, poll, download, or push before
 readiness; General reads the cached state and offers an explicit retry.
 
-**Fleet telemetry is configuration, not a destination.** Its section separates
-local Fleet Bar display controls from shared connection, participation and roster
-verification. Section entry/exit changes only view watching, never sharing or
-source intent. Deep links and remembered sections obey the EVE-tools gate and
-use the same section notifications as the rail.
+**Fleet telemetry is configuration, not a destination.** Its compact overview
+precedes Local display and External sharing. Each existing module paints only its
+own accepted facts: local display preference, sharing preference/inhibition,
+setup and last-observed authGD participation, and verification/eligibility.
+Unknown is not Off, and a saved binding is not completed pairing: browser approval
+can still be pending after its key is saved. No summary claims actual transmission
+or native visibility. Combat-data approval, account-wide automatic verification
+consent and this PC's participation remain independent. Confirmations carry the
+original displayed control observation, never authority substituted after a reply.
+The original consent live region retains local/server facts
+as visually hidden text; only their repeated standing sentence leaves visual flow.
+Eligibility and actionable connection/recovery details remain beside sharing controls,
+outside the eligible-character disclosure. Refresh belongs to the Connection header;
+it does not add a local-roster read. Opaque, flat subsections keep shell artwork out
+from behind operational text without making every fact another pill or card.
 
-Account sources keep current and locally pending attempts visible. Only settled
-ended records enter the native Previous attempts disclosure; its count comes
-from rendered history and its open state survives updates. Failed or stopped-only
+Section entry/exit changes only view watching, never sharing or source intent.
+Deep links and remembered sections obey the EVE-tools gate and use the same
+section notifications as the rail.
+
+Account sources keep Current verification and Pending / local operation in
+separate worklists above the new-attempt controls. All three lists share the
+existing keyed row reconciliation; moving to Pending must retain its Stop control
+and keyboard focus. A Start without a returned UUID stays character-specific
+feedback in the original exposed action region. An unobserved persisted Start
+remains pending with outcome unconfirmed, not a fabricated expired result. Saved
+legacy setup history is separate evidence, never a replay queue or a chronology
+inferred from UUIDs. Only settled ended records enter
+the quieter native Previous attempts disclosure; its count comes from rendered
+history and its open state survives updates. Failed or stopped-only
 setups still show reported reasons and a next action outside collapsed history.
 There is no reliable terminal chronology: UUIDs and array order cannot identify
 a latest attempt. Retained same-connection observations are labelled last-known
@@ -866,6 +1014,108 @@ bind, off-screen. The capture handler `preventDefault()`s every key
 including Tab — an escaped capture inside Settings would swallow a folder
 path or a webhook mid-type.
 
+
+## Alerts operational hierarchy
+
+The original mounted `alerts-health` owns the one standing operational sentence;
+`alerts-status` still owns independent master/modifier write outcomes. Event Test,
+volume, collision, pulse-field and custom-alert messages retain their own owners.
+Health reads cannot erase those receipts. Preferences remain readable and editable
+while Off inside “Preferences used when Alerts are on”, never visually disabled.
+The no-events warning is configuration, not a second reader state; it accounts for
+custom rules as well as built-ins. Advanced keeps a concise lead plus the distinction
+between timed/Test/foreground pulses and persistent pulses on other clients.
+
+Alerts reports Off, prerequisite waiting, Watching with the reported monitored names,
+Watching gamelogs when a running reader has no names, or Not watching with its error.
+These names identify selected log sources, **not the running-client roster**. Explicit
+partial/complete coverage is unavailable and deliberately deferred: no X-of-Y, “all”
+or “missing” character claims, and no backend or cross-subsystem roster join in this
+presentation program. Custom-matcher degradation remains a separate fact.
+
+## Character access and Profiles row actions
+
+Character access presents four aligned columns: Character, Skills, Fittings and
+Actions. Ready is the visible label for the existing authorized capability; Access
+needed and Access expired remain separate facts. The authentication timestamp is
+not a displayed column, but stays in the model and existing date searches. Both
+Ready and legacy Authorized name/status/date searches remain supported. Header and
+row tracks share padding; status and action centers align without compressing the
+complete access phrases. Long names retain their full text and title.
+
+The Character roster retains its internal scroller and opaque sticky header. Its
+existing fixed menu clears the actual status strip rather than a guessed height.
+Tab rejoins native traversal from the owning row; scroll or resize dismisses stale
+geometry and returns only owned menu focus without scrolling or taking outside focus.
+Authorization waiting, cancellation, read-failure retention and partial-cleanup
+announcements are independent of these presentation changes.
+
+Profiles retains one work scroller and its nonshrinking, normal-flow copy bar.
+The existing selected-target count and source share a wrapping summary line, with
+profile/server and scope context beneath; Copy settings follows that summary, with
+the EVE advisory beside the action. At the floor the action row follows the summary.
+The count still means selected, shown, non-source targets, exactly what Copy uses;
+hidden selections remain retained. No second live summary is introduced. Long server
+identities wrap within the existing folder row rather than widening the scroller.
+
+Backup row actions reuse native details/summary, not a second ARIA menu system.
+The visible ellipsis has a row-specific accessible identity and timestamp; native
+expanded state and Tab behavior remain intact. Delete stays inside the disclosure,
+Restore stays neutral, and both retain their existing worker confirmations. A
+measured route/status-strip boundary chooses the popup side for any visible row,
+not only the final DOM row. Escape returns focus; geometry dismissal returns it
+only if that disclosure still owns it, without undoing scroll or stealing focus.
+Backup ordering, filtering, retention and filesystem behavior are unchanged.
+
+## Formation and setup import stages
+
+Probe selection is transient page state, not formation data or EVE's selected
+formation ID. No probe is initially selected. Row/field interaction selects its
+original ordinal, which still labels the depth-sorted diagram marker. A dashed
+row boundary and outlined, bold-numbered marker distinguish selection from the
+field's solid keyboard focus ring. Rows are labelled groups, not an ARIA grid;
+the diagram remains a noninteractive image and keeps its rotation behavior.
+Selection survives ordinary repaint, but never moves to a replacement probe or
+another formation, import candidate, account document or route lifetime.
+
+Save and Balance explain their actual local disabled predicates. Clean drafts,
+loading, saving and missing read revisions are not errors. Existing validation
+and operation errors retain their complete text and original status owners.
+Launches as drawn is neutral guidance beside Balance; closing every EVE client
+is a standing Save prerequisite, not inferred live readiness. Save, Balance and
+Add hand self-disabling keyboard focus to their mounted outcome/note owner without
+scrolling, whether the browser blurs immediately or at its next rendering update.
+Only still-owned completion focus may advance to the added formation; a newer
+control, candidate, formation, route or dialog takes precedence. Selected-probe
+system colors are decided by narrow forced-mode tokens at `:root`, never component literals.
+
+Formation import separates source parsing (Review), candidate diagram selection
+(Preview), local draft addition (Add formations), and the later explicit Save.
+Successful Review subordinates retained source text and removes the competing
+parse action. Actual source edits invalidate that review; merely reopening source
+does not discard corrected names. Candidate conflicts remain associated with
+name fields, and Add validates the corrected candidates rather than reparsing
+unchanged source. Its destination names the acknowledged account's local draft,
+never a profile identity the editor does not receive.
+
+Setup import keeps source entry and completed review visually distinct. A valid
+review collapses the retained source/recipient controls, including an eligible
+ship-label correction and its instruction. Edit reveals the retained policy only
+for the source that required it, without changing review validity until actual
+input changes. Review hands self-disabling focus to the existing status while
+pending and advances to reviewed context only while focus is still owned.
+A summary without an accepted
+review ID is not authorization and must keep corrections reachable. The final
+action context names the proposed new profile and recipient character/account/base.
+Non-overwrite and cancellation safety remain visible, with the original complete
+review announcement retained in its existing live owner. After Create is sent,
+Back is not cancellation; its detached receipt still owns completion. Source and
+review stay private to the existing route lifetime. Setup sharing is independent
+and retains its accepted presentation and snapshot semantics.
+
+Both tools retain their existing work scrollers and normal-flow action siblings.
+Responsive wrapping must not turn previous-stage fields into clipped fragments,
+strand hidden focus, or cover controls with a second fixed or sticky surface.
 
 ## Words
 

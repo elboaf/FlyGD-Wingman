@@ -13,7 +13,7 @@ import weakref
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from . import atomicio, bookmarks, paths, themes
+from . import atomicio, bookmarks, discord, paths, themes
 from .alerts import custom as alert_custom
 from .alerts import patterns as alert_patterns
 from .alerts import state as alert_state
@@ -406,6 +406,8 @@ DEFAULTS = {
     # wrong guess here silently refiles recordings.
     "archive_folder": None,
     "discord_webhook": "",
+    # Credential-bound local metadata; never included in shared settings.
+    "discord_webhook_name": "",
     "gamelogs_dir": None,
     # The YouTube channel the last successful upload actually landed on,
     # learned from the videos.insert response rather than looked up: the
@@ -984,6 +986,7 @@ def _normalize(data: dict) -> dict:
         "recording_dir",
         "archive_folder",
         "discord_webhook",
+        "discord_webhook_name",
         "gamelogs_dir",
         "channel_id",
         "channel_title",
@@ -1014,6 +1017,10 @@ def _normalize(data: dict) -> dict:
         data["archive_folder"] = None
     if not isinstance(data["discord_webhook"], str):
         data["discord_webhook"] = ""
+    webhook, _ = discord.parse_webhook(data["discord_webhook"])
+    data["discord_webhook_name"] = discord.safe_webhook_name(
+        webhook, data["discord_webhook_name"]
+    )
     if data["gamelogs_dir"] is not None and not isinstance(data["gamelogs_dir"], str):
         data["gamelogs_dir"] = None
     # Both reach a Label, so a non-string from a hand-edited file would be

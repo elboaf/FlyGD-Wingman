@@ -707,15 +707,56 @@
     return points.length > 44 ? points.slice(0, 43).join('') + '…' : label;
   }
 
+  function choiceCaptionFits(selected) {
+    // Native select scrollWidth does not expose its clipped text. Measure the
+    // complete caption with the same typography, not the popup's point budget.
+    if (overlay.hidden || !dlgSelect.getClientRects().length
+        || selected.title !== selected.textContent
+        || selected.getAttribute('data-keep-detail') === 'true'
+        || /[\r\n\t\f]/.test(selected.title)
+        || (document.fonts && document.fonts.status !== 'loaded')) return false;
+    var style = window.getComputedStyle(dlgSelect);
+    var fontSize = parseFloat(style.fontSize);
+    // Leave room for native arrow chrome beyond CSS padding, plus rounding.
+    // Border pixels are already excluded by clientWidth. Uncertain fit keeps
+    // the detail — a spare line is preferable to losing source information.
+    var available = dlgSelect.clientWidth - parseFloat(style.paddingLeft)
+      - parseFloat(style.paddingRight) - Math.max(24, fontSize * 2) - 2;
+    if (!style.font || !style.letterSpacing || !style.wordSpacing
+        || !style.textTransform || !(fontSize > 0) || !isFinite(fontSize)
+        || !(available > 0) || !isFinite(available)) return false;
+    var measure = document.createElement('span');
+    measure.setAttribute('aria-hidden', 'true');
+    measure.style.position = 'absolute';
+    measure.style.visibility = 'hidden';
+    measure.style.whiteSpace = 'pre';
+    measure.style.width = 'max-content';
+    measure.style.font = style.font;
+    measure.style.fontSize = style.fontSize;
+    measure.style.letterSpacing = style.letterSpacing;
+    measure.style.wordSpacing = style.wordSpacing;
+    measure.style.textTransform = style.textTransform;
+    measure.textContent = selected.title;
+    dlg.appendChild(measure);
+    var width = measure.getBoundingClientRect().width;
+    dlg.removeChild(measure);
+    return width > 0 && isFinite(width) && width < available;
+  }
+
   function showChoiceDetail() {
     var compact = active && active.kind === 'choice' && active.compact;
     var selected = compact && dlgSelect.options[dlgSelect.selectedIndex];
-    dlgSelectDetail.hidden = !selected;
+    var redundant = selected && active.omitRedundantDetail && choiceCaptionFits(selected);
+    dlgSelectDetail.hidden = !selected || !!redundant;
     dlgSelectDetail.textContent = selected ? selected.title : '';
-    if (selected) dlgSelect.setAttribute('aria-describedby', 'dlg-select-detail');
+    if (selected && !redundant) dlgSelect.setAttribute('aria-describedby', 'dlg-select-detail');
     else dlgSelect.removeAttribute('aria-describedby');
   }
   dlgSelect.addEventListener('change', showChoiceDetail);
+  function resizeChoiceDetail() {
+    if (!overlay.hidden && active && active.kind === 'choice'
+        && active.compact && active.omitRedundantDetail) showChoiceDetail();
+  }
 
   // A worker may disable its trigger before its confirmation reaches the
   // page. Remember focus while the page still owns it, then fall back to an
@@ -757,12 +798,12 @@
           var label = option.label || option.value;
           node.textContent = item.compact ? compactCaption(label) : label;
           if (item.compact) node.title = label;
+          if (option.keepDetail) node.setAttribute('data-keep-detail', 'true');
           optgroup.appendChild(node);
         });
         if (optgroup.children.length) { dlgSelect.appendChild(optgroup); }
       });
     }
-    showChoiceDetail();
     // Answerable dialogs need the same explicit way out.
     btnCancel.hidden = !(isConfirm || isPrompt || isChoice);
     btnOk.textContent = isConfirm
@@ -794,6 +835,7 @@
     // destructive before the eye reaches the button.
     if (destructive) { dlg.className = 'dialog confirm destructive'; }
     overlay.hidden = false;
+    showChoiceDetail(); // Rendered width is unavailable while the overlay is hidden.
     // The field, not the button: a prompt exists to be typed into, and
     // landing on OK means every user starts with a Tab. A destructive
     // confirm starts on its safe answer; Enter then follows the focused
@@ -918,9 +960,14 @@
 
   WM.choose = function (title, body, groups, confirmLabel, fieldLabel, opts) {
     return new Promise(function (resolve) {
+      if (opts && opts.compact && opts.omitRedundantDetail) {
+        // The stable callback is registered at most once, only for opt-in use.
+        window.addEventListener('resize', resizeChoiceDetail);
+      }
       enqueue({kind: 'choice', title: title, body: body, label: fieldLabel || 'Copy from',
                groups: groups || [], confirm_label: confirmLabel || 'Choose',
-               compact: !!(opts && opts.compact), resolve: resolve});
+               compact: !!(opts && opts.compact),
+               omitRedundantDetail: !!(opts && opts.omitRedundantDetail), resolve: resolve});
     });
   };
 

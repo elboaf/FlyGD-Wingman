@@ -28,6 +28,261 @@ CSS = re.sub(
 )
 
 
+def test_copy_context_stays_outside_the_only_body_scroller():
+    nodes = fitting_nodes()
+    by_id = {node["attrs"].get("id"): node for node in nodes}
+    heading = next(
+        (n for n in nodes if "fit-copy-heading" in n["attrs"].get("class", "").split()),
+        None,
+    )
+    assert heading, "Copy heading and summaries need one retained opaque surface"
+    assert [n["attrs"].get("id") for n in heading["children"]] == [
+        "fittings-copy-title",
+        "fittings-copy-summary",
+        "fittings-copy-limit-summary",
+    ]
+    dialog = by_id["fittings-copy-dialog"]["children"]
+    assert dialog.index(heading) < dialog.index(by_id["fittings-copy-body"])
+    assert by_id["fittings-copy-status"] in dialog
+    assert by_id["fittings-copy-status"]["attrs"]["role"] == "status"
+    assert all(
+        "role" not in n["attrs"] and "aria-live" not in n["attrs"]
+        for n in heading["children"]
+    )
+    assert any(by_id["fittings-copy-close"] in n["children"] for n in dialog)
+
+
+def test_copy_dialog_bounds_its_existing_scroller_without_overlaying_the_footer():
+    dialog = fitting_rules("#fittings-copy-dialog")[0]
+    for prop in (
+        "display: flex",
+        "flex-direction: column",
+        "max-height: calc(100vh - 48px)",
+    ):
+        assert prop in dialog
+    body = fitting_rules("#fittings-copy-body")[0]
+    for prop in (
+        "min-height: 0",
+        "overflow-y: auto",
+        "scroll-padding:",
+        "padding: 4px;",
+    ):
+        assert prop in body
+    assert "flex: none" in fitting_rules(".fit-copy-heading")[0]
+    assert "background: var(--panel)" in fitting_rules(".fit-copy-heading")[0]
+    assert all("overflow-y:" not in rule for rule in fitting_rules(".fit-copy-heading"))
+    assert "flex: none" in fitting_rules("#fittings-copy-dialog > .buttons")[0]
+
+
+def test_copy_pair_identity_is_the_only_row_local_sticky_owner():
+    context = fitting_rules(".fit-copy-pair-context")
+    assert context, "Pair identity must remain attached while its outcome is visible"
+    for prop in ("position: sticky", "top: 0", "background: var(--panel)"):
+        assert prop in context[0]
+    assert all("position: sticky" not in r for r in fitting_rules(".fit-copy-recovery"))
+    assert "flex-direction: column" in fitting_rules(".fit-copy-pair")[0]
+    assert (
+        "grid-template-columns: minmax(0, 1fr)"
+        in fitting_rules(".fit-copy-pair-context")[-1]
+    )
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        "#fittings-copy-summary[hidden]",
+        "#fittings-copy-limit-summary[hidden]",
+        "#fittings-copy-progress[hidden]",
+    ],
+)
+def test_copy_dynamic_header_and_progress_respect_hidden(selector):
+    assert any("display: none" in body for body in fitting_rules(selector))
+
+
+def test_copy_progress_is_compact_and_not_decoratively_animated():
+    rules = fitting_rules("#fittings-copy-progress")
+    assert rules
+    assert "width: 100%" in rules[0]
+    assert "appearance: none" in rules[0], (
+        "Native paint must not bypass the token-owned track"
+    )
+    assert all("animation:" not in r and "transition:" not in r for r in rules)
+
+
+def test_copy_progress_retains_a_visible_forced_colour_track_and_value():
+    assert "forced-color-adjust: none" in fitting_rules("#fittings-copy-progress")[-1]
+    assert (
+        "var(--fitting-forced-ink)"
+        in fitting_rules("#fittings-copy-progress::-webkit-progress-value")[-1]
+    )
+    assert (
+        "var(--fitting-forced-surface)"
+        in fitting_rules("#fittings-copy-progress::-webkit-progress-bar")[-1]
+    )
+
+
+def test_copy_technical_disclosure_keeps_support_id_selectable_and_wrapped():
+    body = fitting_rules(".fit-copy-technical")
+    assert body and "overflow-wrap: anywhere" in body[0]
+    assert "user-select: text" in fitting_rules("#fittings-copy-operation-id")[0]
+    assert (
+        "var(--focus-ring)"
+        in fitting_rules(".fit-copy-technical > summary:focus-visible")[0]
+    )
+
+
+def test_copy_native_skip_focus_uses_the_painted_label_bounds():
+    assert fitting_rules(".fit-copy-resolution .check"), (
+        "Native Skip needs a local focus footprint"
+    )
+    assert "position: relative" in fitting_rules(".fit-copy-resolution .check")[0]
+    assert "inset: 0" in fitting_rules(".fit-copy-resolution .check input")[0]
+
+
+def test_copy_mirrored_live_status_removes_the_visible_status_spacing():
+    rules = fitting_rules("#fittings-copy-status.status-announcement")
+    assert rules, (
+        "The copy status ID spacing must not expose its screen-reader-only mirror"
+    )
+    assert "min-height: 0" in rules[0]
+    assert "margin: 0" in rules[0]
+
+
+def test_expanded_fitting_keeps_its_identity_above_the_detail():
+    rule = re.search(r"\.fit-row\.open > \.fit-row-top\s*\{([^}]*)\}", CSS)
+    assert rule, "Only the expanded fitting needs retained row identity"
+    for prop in ("position: sticky", "top: 0", "background: var(--panel)", "z-index:"):
+        assert prop in rule.group(1)
+    workspace = re.search(r"\.fit-workspace-scroll\s*\{([^}]*)\}", CSS)
+    assert workspace and re.search(
+        r"scroll-padding-top:\s*var\(--fit-sticky-clearance,\s*44px\)",
+        workspace.group(1),
+    ), "Wrapped row identity needs measured clearance, with the original fallback"
+    assert "'--fit-sticky-clearance'" in FITTINGS_JS
+    assert "scroll-padding-bottom: 16px" in workspace.group(1), (
+        "Native textarea caret reveal must also clear the full control border"
+    )
+
+
+def fitting_nodes():
+    tree = PageTree()
+    tree.feed(HTML)
+
+    def walk(node):
+        yield node
+        for child in node["children"]:
+            yield from walk(child)
+
+    return list(walk(tree.root))
+
+
+def fitting_rules(selector):
+    return [
+        body
+        for selectors, body in re.findall(r"([^{}]+)\{([^{}]*)\}", CSS)
+        if selector in [part.strip() for part in selectors.split(",")]
+    ]
+
+
+def test_fitting_visual_header_labels_existing_controls_without_table_roles():
+    nodes = fitting_nodes()
+    by_id = {node["attrs"].get("id"): node for node in nodes}
+    header = by_id.get("fittings-list-head")
+    assert header, "The fitting list needs deliberate visual column labels"
+    assert header["attrs"].get("aria-hidden") == "true"
+    assert "role" not in header["attrs"]
+    workspace = by_id["fittings-workspace-scroll"]["children"]
+    assert workspace.index(header) < workspace.index(by_id["fittings-list"])
+    assert workspace.index(by_id["fittings-import-panel"]) < workspace.index(header)
+    assert (
+        'role="table"'
+        not in HTML.split('id="route-fittings"')[1].split('id="route-firstrun"')[0]
+    )
+
+
+def test_fitting_header_and_rows_share_deliberate_tracks_and_insets():
+    for selector in (".fit-list-head", ".fit-row-top"):
+        body = fitting_rules(selector)[0]
+        assert "grid-template-columns: var(--fit-row-tracks)" in body
+        assert "padding: var(--fit-row-padding)" in body
+        assert "gap: var(--fit-row-gap)" in body
+    route = fitting_rules("#route-fittings")[0]
+    assert "--fit-row-tracks:" in route and "--fit-identity-tracks:" in route
+    assert (
+        "grid-template-columns: var(--fit-identity-tracks)"
+        in fitting_rules(".fit-row-toggle")[0]
+    )
+
+
+def test_fitting_selection_helpers_and_primary_share_one_action_area():
+    nodes = fitting_nodes()
+    by_id = {node["attrs"].get("id"): node for node in nodes}
+    parent = next(
+        node for node in nodes if by_id["fittings-copy-selected"] in node["children"]
+    )
+    children = parent["children"]
+    assert by_id["fittings-select-page"] in children
+    assert by_id["fittings-clear-selection"] in children
+    assert [child["attrs"].get("id") for child in children] == [
+        "fittings-select-page",
+        "fittings-clear-selection",
+        "fittings-copy-selected",
+    ]
+    assert "acc" in by_id["fittings-copy-selected"]["attrs"]["class"].split()
+    assert all(
+        "acc" not in by_id[id_]["attrs"]["class"].split()
+        for id_ in ("fittings-select-page", "fittings-clear-selection")
+    )
+
+
+def test_fitting_details_stack_at_reachable_floor_without_another_scroller():
+    detail = fitting_rules(".fit-detail")[0]
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in detail
+    assert "grid-template-columns: minmax(0, 1fr)" in fitting_rules(".fit-detail")[-1]
+    for selector in (".fit-detail-content", ".fit-detail-management", ".fit-immediate"):
+        assert fitting_rules(selector), selector
+        assert all("overflow-y:" not in rule for rule in fitting_rules(selector))
+    assert "display: none" in fitting_rules(".fit-list-head")[-1]
+    assert "grid-column: 2" in fitting_rules(".fit-row-status")[-1]
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        ".fit-row-toggle:focus-visible",
+        ".fit-metadata-disclosure > summary:focus-visible",
+    ],
+)
+def test_fitting_native_expanders_use_the_shared_focus_token(selector):
+    assert any("var(--focus-ring)" in body for body in fitting_rules(selector))
+
+
+def test_detail_module_wrapping_does_not_restyle_shared_clipboard_review():
+    assert all("flex:" not in rule for rule in fitting_rules(".fit-item-qty"))
+    assert any(
+        "flex: none" in rule for rule in fitting_rules(".fit-detail .fit-item-qty")
+    )
+    assert fitting_rules(".fit-detail .fit-item-name")
+
+
+def test_fitting_checkbox_focus_scrolls_its_visible_label():
+    for selector in (".fit-select", ".fit-collections .check"):
+        assert any("position: relative" in rule for rule in fitting_rules(selector))
+    for selector in (".fit-select input", ".fit-collections .check input"):
+        assert any(
+            "inset: 0" in rule and "width: 100%" in rule and "height: 100%" in rule
+            for rule in fitting_rules(selector)
+        )
+
+
+def test_fitting_forced_colour_outline_is_decided_at_root():
+    assert "outline:" in fitting_rules(".fit-row.open")[-1]
+    assert "var(--fitting-forced-ink)" in fitting_rules(".fit-row.open")[-1]
+    roots = re.findall(r":root\s*\{([^{}]*)\}", CSS)
+    assert any("--fitting-forced-ink: CanvasText" in body for body in roots)
+    assert not re.search(r"\bCanvas(?:Text)?\b", re.sub(r":root\s*\{[^{}]*\}", "", CSS))
+
+
 def test_clipboard_import_is_inline_labelled_and_keeps_status_mounted():
     tree = PageTree()
     tree.feed(HTML)
@@ -442,7 +697,7 @@ def test_rejected_conflict_recheck_preserves_the_usable_preflight():
     rejection = request[rejected_at:accepted_assignment_at]
 
     assert accepted_assignment_at > rejected_at
-    assert "renderCopyPreflight();" in rejection
+    assert "renderCopyPreflight(true);" in rejection
     assert "payload && payload.error" in rejection
     assert (
         "updateConflictReady();"
@@ -603,15 +858,26 @@ class Element {
     this.id = attrs.id || '';
     this.type = attrs.type || '';
     this.value = '';
-    this.style = {};
+    this.style = {
+      setProperty(name, value) { this[name] = value; },
+      removeProperty(name) { delete this[name]; }
+    };
     this.classList = {
       contains: name => this.className.split(/\s+/).includes(name),
       add: name => { this.className += ' ' + name; },
       remove: name => {
         this.className = this.className.split(/\s+/).filter(x => x !== name).join(' ');
+      },
+      toggle: (name, force) => {
+        const present = force === undefined ? !this.classList.contains(name) : force;
+        this.classList.remove(name);
+        if (present) this.classList.add(name);
+        return present;
       }
     };
   }
+  set id(value) { this.attrs.id = String(value); }
+  get id() { return this.attrs.id || ''; }
   appendChild(child) {
     if (child.parentNode) child.remove();
     this.children.push(child);
@@ -662,6 +928,7 @@ class Element {
     return found;
   }
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+  getBoundingClientRect() { return {height: 36, width: 600, top: 0, bottom: 36, left: 0, right: 600}; }
   getClientRects() {
     for (let node = this; node; node = node.parentNode) {
       if (node.hidden || node.style.display === 'none'
@@ -775,7 +1042,7 @@ function screenshotPayload() {
   };
 }
 const WM = {
-  current_route: 'fittings', el,
+  current_route: 'fittings', el: id => document.getElementById(id),
   route(name) {
     WM.current_route = name;
     if (name === 'fittings') route.classList.add('active');
@@ -822,7 +1089,7 @@ const WM = {
   },
   confirm() { return Promise.resolve(true); }
 };
-global.window = {WM, getComputedStyle};
+global.window = {WM, getComputedStyle, addEventListener() {}};
 global.WM = WM;
 if (interleavingScenario || scenario === 'dialog-description') {
   const panelPath = require('node:path').join(require('node:path').dirname(process.argv[4]), 'panel.js');
@@ -985,6 +1252,10 @@ async function runStateMachineScenario() {
     const save = el('fittings-list').querySelectorAll('button')
       .find(button => button.textContent === 'Save');
     assert.ok(save, 'expanded real module renders its Save mutation control');
+    el('fittings-list').querySelector('.fit-metadata-disclosure').open = true;
+    const name = el('fit-name-fit-1');
+    name.value = 'Edited name';
+    name.dispatchEvent({type: 'input'});
     save.click();
     await flush();
     assert.equal((pending.fittings_state || []).length, 1,
@@ -1022,7 +1293,7 @@ async function runStateMachineScenario() {
     assert.equal(el('fittings-copy-start').hidden, true);
     assert.equal(el('fittings-copy-cancel').hidden, false);
     assert.equal(el('fittings-copy-close').disabled, true);
-    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
+    assert.equal(el('fittings-copy-summary').textContent,
       '1 of 1 fitting/character check complete');
     handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'unrelated'});
     assert.equal(el('fittings-copy-title').textContent, 'Copying fittings');
@@ -1065,8 +1336,8 @@ async function runStateMachineScenario() {
     assert.equal(el('fittings-copy-review').hidden, false,
       'stale reply cannot move the reopened dialog out of targets phase');
     assert.equal(el('fittings-copy-start').hidden, true);
-    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
-      '1 selected. Choose target characters.');
+    assert.equal(el('fittings-copy-summary').textContent, 'Choose target characters.');
+    assert.equal(el('fittings-copy-title').textContent, 'Copy 1 fitting to Second Pilot');
     assert.equal(el('fittings-copy-body').querySelector('.fit-copy-pair-name'), null,
       'the stale pair is not rendered in the current targets phase');
 
@@ -1079,8 +1350,7 @@ async function runStateMachineScenario() {
     assert.equal(el('fittings-copy-review').hidden, true);
     assert.equal(el('fittings-copy-start').hidden, false,
       'only the current dialog reply enters preflight');
-    assert.match(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
-      /^1 addition planned/);
+    assert.match(el('fittings-copy-summary').textContent, /^1 addition planned/);
     assert.equal(el('fittings-copy-body').querySelector('.fit-copy-pair-name').textContent,
       'Current fitting B (Sabre)');
     el('fittings-copy-start').click();
@@ -1122,9 +1392,9 @@ async function runStateMachineScenario() {
     cancelB.focus();
 
     function assertCopyBActive(eventName) {
-      assert.equal(el('fittings-copy-title').textContent, 'Copying fittings',
+      assert.equal(el('fittings-copy-title').textContent, 'Copy 1 fitting to Pilot',
         eventName + ' cannot replace copy B');
-      assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
+      assert.equal(el('fittings-copy-summary').textContent,
         '0 of 1 fitting/character check complete');
       assert.equal(el('fittings-copy-selected').textContent, 'Copy selected (1)',
         eventName + ' cannot clear copy B selection');
@@ -1146,7 +1416,7 @@ async function runStateMachineScenario() {
 
     handlers.onFittingsProgress({kind: 'copy', phase: 'progress', ticket_id: 'ticket-b',
       operation_id: 'copy-b', completed: 1, total: 1, result: {status: 'success'}});
-    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
+    assert.equal(el('fittings-copy-summary').textContent,
       '1 of 1 fitting/character check complete');
     handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'ticket-b',
       operation_id: 'copy-b', completed: 1, total: 1, result: {
@@ -1154,7 +1424,7 @@ async function runStateMachineScenario() {
           fitting_name: 'Copy B result', character_name: 'Pilot', status: 'success'
         }]
       }});
-    assert.equal(el('fittings-copy-title').textContent, 'Copy results');
+    assert.equal(el('fittings-copy-title').textContent, 'Copy 1 fitting to Pilot');
     assert.equal(el('fittings-copy-body').querySelector('.fit-copy-pair-name').textContent,
       'Copy B result', 'matching copy B completion renders normally');
     return;
@@ -1189,12 +1459,11 @@ async function runStateMachineScenario() {
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(unhandledRejections.length, 0,
       'stale false start result cannot render a cleared preflight');
-    assert.equal(el('fittings-copy-title').textContent, 'Copy fittings');
+    assert.equal(el('fittings-copy-title').textContent, 'Copy 1 fitting to Second Pilot');
     assert.equal(el('fittings-copy-review').hidden, false,
       'dialog B remains in targets phase');
     assert.equal(el('fittings-copy-start').hidden, true);
-    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
-      '1 selected. Choose target characters.');
+    assert.equal(el('fittings-copy-summary').textContent, 'Choose target characters.');
     assert.equal(document.contains(targetB), true);
     assert.equal(targetB.checked, true);
     assert.equal(document.activeElement, targetB);
@@ -1205,7 +1474,7 @@ async function runStateMachineScenario() {
     await beginCopy();
     handlers.onFittingsProgress({kind: 'copy', phase: 'progress', ticket_id: 'ticket',
       operation_id: 'copy-a', completed: 1, total: 1, result: {status: 'success'}});
-    assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
+    assert.equal(el('fittings-copy-summary').textContent,
       '1 of 1 fitting/character check complete');
     const cancellations = calls.filter(call => call[0] === 'fittings_cancel_copy').length;
     WM.current_route = 'skills';
@@ -1235,13 +1504,13 @@ async function runStateMachineScenario() {
     assert.equal(document.activeElement, targetB);
 
     function assertTargetsDialogB(eventName) {
-      assert.equal(el('fittings-copy-title').textContent, 'Copy fittings',
+      assert.equal(el('fittings-copy-title').textContent, 'Copy 1 fitting to Second Pilot',
         eventName + ' cannot turn dialog B into copy A results');
       assert.equal(el('fittings-copy-review').hidden, false,
         eventName + ' leaves dialog B in targets phase');
       assert.equal(el('fittings-copy-start').hidden, true);
-      assert.equal(el('fittings-copy-body').querySelector('.fit-copy-summary').textContent,
-        '1 selected. Choose target characters.', 'copy A summary is not rendered');
+      assert.equal(el('fittings-copy-summary').textContent,
+        'Choose target characters.', 'copy A summary is not rendered');
       assert.equal(el('fittings-copy-body').querySelector('.fit-copy-result'), null,
         'copy A result is not rendered');
       assert.equal(document.contains(targetB), true,
@@ -1273,7 +1542,7 @@ async function runStateMachineScenario() {
     assert.ok(calls.some(call => call[0] === 'fittings_start_copy'));
     handlers.onFittingsProgress({kind: 'copy', phase: 'progress', ticket_id: 'ticket',
       completed: 1, total: 1, result: {status: 'success'}});
-    assert.equal(el('fittings-copy-status').textContent, 'Copied');
+    assert.equal(el('fittings-copy-status').textContent, '1 of 1 fitting/character check complete · Copied');
     assert.equal(el('fittings-copy-close').disabled, true);
     key('Escape');
     el('fittings-copy-close').click();
@@ -1284,7 +1553,7 @@ async function runStateMachineScenario() {
     handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'ticket',
       result: {operation_id: 'op-1', status: 'cancelled', write_count: 1,
         results: []}});
-    assert.equal(el('fittings-copy-title').textContent, 'Copy results');
+    assert.equal(el('fittings-copy-title').textContent, 'Copy 1 fitting to Pilot');
     assert.equal(el('fittings-copy-selected').disabled, true,
       'completion clears selection');
     assert.equal(el('fittings-copy-close').disabled, false,
@@ -1369,7 +1638,7 @@ async function runInterleavingScenario() {
     assert.equal(el('overlay').hidden, false);
     handlers.onFittingsProgress({kind: 'copy', phase: 'complete', ticket_id: 'ticket',
       result: {results: [], write_count: 0, status: 'cancelled'}});
-    assert.equal(el('fittings-copy-title').textContent, 'Copy results');
+    assert.equal(el('fittings-copy-title').textContent, 'Copy 1 fitting to Pilot');
     assert.equal(cancel.hidden, true, 'completion invalidated generic dialog return focus');
     assert.equal(document.activeElement.id, 'dlg-ok', 'completion leaves generic dialog in charge');
     assert.equal(key('Escape').defaultPrevented, true);
