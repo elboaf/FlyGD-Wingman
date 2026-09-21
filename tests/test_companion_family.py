@@ -437,8 +437,20 @@ def test_focus_visibility_transitions_publish_status_once(family, focus_policy):
 
 
 def test_focus_visibility_changes_coalesce_one_status_per_sweep(family):
-    native, events, windows, _, _, _ = family
-    other = replace(DEFINITION, id="22222222222242228222222222222222")
+    native, events, windows, catalog, _, _ = family
+    other_binding = replace(
+        BINDING, hwnd=11, pid=21, process_created=43, title="Other Mapper"
+    )
+    other = replace(
+        DEFINITION,
+        id="22222222222242228222222222222222",
+        source=replace(
+            DEFINITION.source,
+            title_hint=other_binding.title,
+            last_title=other_binding.title,
+        ),
+    )
+    catalog.rows = (BINDING, other_binding)
     native.reconcile((spec(), spec(other)), 2)
     assert len(windows) == 2
     events.clear()
@@ -451,7 +463,10 @@ def test_focus_visibility_changes_coalesce_one_status_per_sweep(family):
         "hidden-by-focus",
         "hidden-by-focus",
     ]
-    assert [row["binding"] for row in events[0].payload] == [BINDING, BINDING]
+    assert {row["id"]: row["binding"] for row in events[0].payload} == {
+        DEFINITION.id: BINDING,
+        other.id: other_binding,
+    }
 
 
 @pytest.mark.parametrize("refusal", ["authority", "native-no-change"])
