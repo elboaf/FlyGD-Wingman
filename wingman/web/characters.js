@@ -263,6 +263,20 @@
     }
   }
 
+  function moveFromCharacterMenu(trigger, backward) {
+    closeMenu(false);
+    var selector = 'button:not([hidden]):not(:disabled), '
+      + 'input:not([hidden]):not(:disabled), select:not([hidden]):not(:disabled), '
+      + 'textarea:not([hidden]):not(:disabled), [tabindex="0"]';
+    var stops = Array.prototype.filter.call(document.querySelectorAll(selector), function (node) {
+      return node.getClientRects().length
+        && window.getComputedStyle(node).visibility !== 'hidden';
+    });
+    var index = stops.indexOf(trigger);
+    var target = index === -1 ? null : stops[index + (backward ? -1 : 1)];
+    if (target && target.focus) target.focus({ preventScroll: true });
+  }
+
   function dismissMovedMenu() {
     if (menu.hidden) return;
     // A fixed menu cannot follow a scrolled/resized row. Return only focus we
@@ -557,9 +571,9 @@
       return;
     }
     if (event.key === 'Tab') {
-      // This portal precedes the roster in DOM order. Resume native forward
-      // or backward Tab from the owning row, not from the authorization card.
-      closeMenu(true);
+      event.preventDefault();
+      var trigger = menuTrigger;
+      moveFromCharacterMenu(trigger, event.shiftKey);
       return;
     }
     if (!items.length) return;

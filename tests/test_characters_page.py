@@ -444,6 +444,12 @@ def _run_characters_page(scenario):
             }},
             getBoundingClientRect: function () {{
               return this.rect || {{ left: 100, top: 100, bottom: 120, width: 80, height: 20 }};
+            }},
+            getClientRects: function () {{
+              for (let current = this; current; current = current.parentNode) {{
+                if (current.hidden) return [];
+              }}
+              return [this.getBoundingClientRect()];
             }}
           }};
           Object.defineProperty(node, 'firstChild', {{
@@ -464,6 +470,22 @@ def _run_characters_page(scenario):
           activeElement: null,
           getElementById: function (id) {{ return nodes[id] || null; }},
           createElement: function (tag) {{ return makeNode(tag, '', ''); }},
+          querySelectorAll: function (selector) {{
+            const out = [];
+            function accepts(node) {{
+              if (node.hidden || node.disabled) return false;
+              if (['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA'].includes(node.tagName)) return true;
+              return node.getAttribute('tabindex') === '0';
+            }}
+            function walk(node) {{
+              node.children.forEach(function (child) {{
+                if (accepts(child)) out.push(child);
+                walk(child);
+              }});
+            }}
+            walk(section);
+            return out;
+          }},
           addEventListener: function (type, fn) {{
             (documentListeners[type] || (documentListeners[type] = [])).push(fn);
           }},
@@ -477,6 +499,9 @@ def _run_characters_page(scenario):
           document,
           innerWidth: 800,
           innerHeight: 600,
+          getComputedStyle: function (node) {{
+            return {{ visibility: node.visibility || 'visible' }};
+          }},
           addEventListener: function (type, fn) {{
             (windowListeners[type] || (windowListeners[type] = [])).push(fn);
           }},
@@ -881,18 +906,27 @@ def test_characters_menu_stays_inside_viewport_above_measured_statusbar(statusba
 def test_characters_menu_tab_rejoins_native_row_order_without_scroll_or_trap(shift):
     _run_characters_page(
         rf"""
+        const first = statePayload.characters[0];
+        statePayload.characters = [first, Object.assign({{}}, first, {{
+          character_id: 5,
+          character_name: 'Second Pilot'
+        }})];
         document.dispatchEvent(new CustomEvent('wm:section', {{detail: 'characters'}}));
         await tick();
-        const trigger = findByClass(roster, 'characters-menu-trigger');
-        trigger.dispatchEvent({{type: 'keydown', key: 'ArrowDown'}});
+        const triggers = roster.children
+          .filter(row => row.className === 'characters-row')
+          .map(row => findByClass(row, 'characters-menu-trigger'));
+        const owner = triggers[0];
+        owner.dispatchEvent({{type: 'keydown', key: 'ArrowDown'}});
         assert.equal(document.activeElement, forget);
         const event = {{type: 'keydown', key: 'Tab', shiftKey: {json.dumps(shift)}}};
         menu.dispatchEvent(event);
+        const target = {"filter" if shift else "triggers[1]"};
+        assert.equal(event.defaultPrevented, true, 'one explicit focus move owns Tab');
         assert.equal(menu.hidden, true, 'Tab dismisses the fixed menu');
-        assert.equal(trigger.getAttribute('aria-expanded'), 'false');
-        assert.equal(document.activeElement, trigger, 'native Tab resumes at its row trigger');
-        assert.equal(trigger.focusOptions.preventScroll, true, 'returning focus must not scroll the roster');
-        assert.ok(!event.defaultPrevented, 'browser owns forward/backward Tab traversal');
+        assert.equal(owner.getAttribute('aria-expanded'), 'false');
+        assert.equal(document.activeElement, target);
+        assert.equal(target.focusOptions.preventScroll, true, 'moving focus must not scroll the roster');
         """
     )
 
