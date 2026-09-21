@@ -302,6 +302,9 @@ def test_incomplete_scan_and_matching_title_churn_do_not_reset_capture_backoff(
 def test_hidden_window_is_not_published_as_live(recovery):
     r = recovery
     r.family.reconcile((spec(),), 2)
+    binding = r.family.live[DEFINITION.id].binding
     r.family.live[DEFINITION.id].window.set_hidden(True)
     r.family.scan()
-    assert status(r)["status"] != "live" and status(r)["binding"] is None
+    row = status(r)
+    assert row["status"] == "hidden-by-focus"
+    assert row["binding"] == binding
