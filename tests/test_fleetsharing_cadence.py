@@ -1,19 +1,18 @@
 """Virtual waits drive the REAL owner loop, not ideal-time iterate_once calls.
 
-Publisher PUTs use the real signed client and a file journal; metadata/CAS use
-the existing time-enforcing server double. Publisher and receiver run independently
-against the actual immutable Request-byte trace; receiver requests cannot change
-publication timing. Event waits, monotonic time and HTTP latency are virtual.
-No thread sleeps, sockets, provider state or wall-clock deadlines.
+Default scheduler scenarios use validated in-memory state. Explicit publisher,
+receiver, and JSON representatives retain durable file crossings. Publisher PUTs
+use the real signed client; metadata/CAS use the existing time-enforcing server
+double. Publisher and receiver run independently against the actual immutable
+Request-byte trace; receiver requests cannot change publication timing. Event
+waits, monotonic time and HTTP latency are virtual. No thread sleeps, sockets,
+provider state or wall-clock deadlines.
 """
 
-import base64
-import hashlib
 import heapq
 import json
 import math
 import threading
-import urllib.error
 from dataclasses import asdict, dataclass, replace
 from datetime import timedelta
 from fractions import Fraction
@@ -22,7 +21,6 @@ from typing import ClassVar
 from uuid import UUID
 
 import pytest
-from cryptography.hazmat.primitives.serialization import load_der_public_key
 from test_fleetsharing_worker import (
     DEVICE,
     KEY,
@@ -37,15 +35,8 @@ from test_fleetsharing_worker import (
 from test_fleetsharing_worker import UUID as SOURCE_ID
 
 from tests.fleetsharing_timing_helpers import FakePublicationSource
-from tests.test_fleetsharing_client import (
-    FakeTransport,
-    Response,
-    _headers_of,
-    framing_headers,
-    request_binding,
-)
+from tests.test_fleetsharing_client import Response, framing_headers, request_binding
 from tests.test_fleetsharing_worker_state4 import FileStore
-from wingman.fleetsharing import crypto
 from wingman.fleetsharing import protocol as p
 from wingman.fleetsharing.client import FleetRelayClient, FleetRelayError
 from wingman.telemetry.model import (
@@ -128,69 +119,6 @@ class TimedRelay(SignedPublicationRelay):
         self.published = []
         self.delay = latency
         self.latency = lambda: timeline.advance(timeline.now + self.delay)
-
-    def _publication_transport(self, request, timeout=None):
-        if not isinstance(self.store, _InMemoryStateStore):
-            return super()._publication_transport(request, timeout)
-
-        assert request.method == "PUT"
-        assert request.full_url == "https://relay.test/api/fleet/v2/snapshot"
-        headers = _headers_of(request)
-        raw = request.data
-        assert isinstance(raw, bytes)
-        digest = hashlib.sha256(raw).hexdigest()
-        assert headers["x-fleet-body-sha256"] == digest
-        session = headers["x-fleet-session"]
-        revision = int(headers["x-fleet-revision"])
-        saved = self.store.load()
-        assert (saved.last_revision, saved.session_id) == (revision, session)
-        canonical = "\n".join(
-            (
-                "fleet-v1",
-                "PUT",
-                "/api/fleet/v2/snapshot",
-                session,
-                headers["x-fleet-issued-at"],
-                str(revision),
-                digest,
-            )
-        ).encode()
-        signature = headers["x-fleet-signature"]
-        load_der_public_key(crypto.public_key_spki(KEY)).verify(
-            base64.urlsafe_b64decode(signature + "=" * (-len(signature) % 4)), canonical
-        )
-        body = p.parse_combat_put(json.loads(raw))
-        record = {
-            "request": request,
-            "revision": saved.last_revision,
-            "started": self.clock(),
-        }
-        self.signed_publications.append(record)
-        args = {
-            "session_id": session,
-            "private_key": KEY,
-            "revision": revision,
-            "rows": body.rows,
-        }
-
-        def apply():
-            self.publish_calls.append((revision, body.rows))
-            self.published.append((record["started"], body))
-            if not body.rows:
-                self.withdrawal_completed = True
-
-        try:
-            self._call("publish_snapshot", args, apply)
-        except FleetRelayError as exc:
-            if exc.status is None:
-                raise urllib.error.URLError("test transport lost response") from exc
-            return FakeTransport({"protocol": 2, "error": exc.code}, exc.status)(
-                request, timeout
-            )
-        finally:
-            record["completed"] = self.clock()
-            assert request.data is raw, "signed request bytes changed at HTTP"
-        return FakeTransport({"protocol": 2})(request, timeout)
 
     def _call(self, operation, args, apply):
         if "revision" in args:

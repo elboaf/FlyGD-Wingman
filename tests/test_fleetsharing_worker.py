@@ -784,7 +784,7 @@ class SignedPublicationRelay(FakeRelayClient):
 
     Metadata/CAS doubles remain useful, but no PUB argument reconstruction is a
     publication witness. Every PUB here verifies actual immutable Request bytes,
-    Ed25519 signature and a freshly reloaded real state file before server work.
+    Ed25519 signature and freshly loaded validated state before server work.
     """
 
     def __init__(self, *, store, **kwargs):
@@ -811,7 +811,7 @@ class SignedPublicationRelay(FakeRelayClient):
         assert headers["x-fleet-body-sha256"] == digest
         session = headers["x-fleet-session"]
         revision = int(headers["x-fleet-revision"])
-        saved = s.load(self.store.path)
+        saved = self.store.load()
         assert (saved.last_revision, saved.session_id) == (revision, session)
         canonical = "\n".join(
             (
