@@ -7,20 +7,22 @@ publication timing. Event waits, monotonic time and HTTP latency are virtual.
 No thread sleeps, sockets, provider state or wall-clock deadlines.
 """
 
+import base64
+import hashlib
 import heapq
 import json
 import math
-import tempfile
 import threading
+import urllib.error
 from dataclasses import asdict, dataclass, replace
 from datetime import timedelta
 from fractions import Fraction
 from itertools import pairwise
-from pathlib import Path
 from typing import ClassVar
 from uuid import UUID
 
 import pytest
+from cryptography.hazmat.primitives.serialization import load_der_public_key
 from test_fleetsharing_worker import (
     DEVICE,
     KEY,
@@ -29,13 +31,21 @@ from test_fleetsharing_worker import (
     PAIRED_STATE,
     SignedPublicationRelay,
     _date,
+    _InMemoryStateStore,
     _worker,
 )
 from test_fleetsharing_worker import UUID as SOURCE_ID
 
 from tests.fleetsharing_timing_helpers import FakePublicationSource
-from tests.test_fleetsharing_client import Response, framing_headers, request_binding
+from tests.test_fleetsharing_client import (
+    FakeTransport,
+    Response,
+    _headers_of,
+    framing_headers,
+    request_binding,
+)
 from tests.test_fleetsharing_worker_state4 import FileStore
+from wingman.fleetsharing import crypto
 from wingman.fleetsharing import protocol as p
 from wingman.fleetsharing.client import FleetRelayClient, FleetRelayError
 from wingman.telemetry.model import (
@@ -45,6 +55,12 @@ from wingman.telemetry.model import (
     StreamHealth,
 )
 from wingman.ui.remotefleet import RemoteFleetStore
+
+
+def durable_cadence_store(path):
+    store = FileStore(path)
+    store.save(PAIRED_STATE)
+    return store
 
 
 def cadence_source(now, dps=0):
@@ -113,6 +129,69 @@ class TimedRelay(SignedPublicationRelay):
         self.delay = latency
         self.latency = lambda: timeline.advance(timeline.now + self.delay)
 
+    def _publication_transport(self, request, timeout=None):
+        if not isinstance(self.store, _InMemoryStateStore):
+            return super()._publication_transport(request, timeout)
+
+        assert request.method == "PUT"
+        assert request.full_url == "https://relay.test/api/fleet/v2/snapshot"
+        headers = _headers_of(request)
+        raw = request.data
+        assert isinstance(raw, bytes)
+        digest = hashlib.sha256(raw).hexdigest()
+        assert headers["x-fleet-body-sha256"] == digest
+        session = headers["x-fleet-session"]
+        revision = int(headers["x-fleet-revision"])
+        saved = self.store.load()
+        assert (saved.last_revision, saved.session_id) == (revision, session)
+        canonical = "\n".join(
+            (
+                "fleet-v1",
+                "PUT",
+                "/api/fleet/v2/snapshot",
+                session,
+                headers["x-fleet-issued-at"],
+                str(revision),
+                digest,
+            )
+        ).encode()
+        signature = headers["x-fleet-signature"]
+        load_der_public_key(crypto.public_key_spki(KEY)).verify(
+            base64.urlsafe_b64decode(signature + "=" * (-len(signature) % 4)), canonical
+        )
+        body = p.parse_combat_put(json.loads(raw))
+        record = {
+            "request": request,
+            "revision": saved.last_revision,
+            "started": self.clock(),
+        }
+        self.signed_publications.append(record)
+        args = {
+            "session_id": session,
+            "private_key": KEY,
+            "revision": revision,
+            "rows": body.rows,
+        }
+
+        def apply():
+            self.publish_calls.append((revision, body.rows))
+            self.published.append((record["started"], body))
+            if not body.rows:
+                self.withdrawal_completed = True
+
+        try:
+            self._call("publish_snapshot", args, apply)
+        except FleetRelayError as exc:
+            if exc.status is None:
+                raise urllib.error.URLError("test transport lost response") from exc
+            return FakeTransport({"protocol": 2, "error": exc.code}, exc.status)(
+                request, timeout
+            )
+        finally:
+            record["completed"] = self.clock()
+            assert request.data is raw, "signed request bytes changed at HTTP"
+        return FakeTransport({"protocol": 2})(request, timeout)
+
     def _call(self, operation, args, apply):
         if "revision" in args:
             saved = self.store.load()
@@ -176,11 +255,10 @@ def run_owner(
     duration=120,
     configure=lambda *_: None,
     telemetry_until=None,
+    state_store=None,
 ):
     timeline = VirtualWait(1000 + phase, 1000 + duration)
-    directory = tempfile.TemporaryDirectory(prefix="wingman-signed-cadence-")
-    store = FileStore(Path(directory.name) / "sharing.json")
-    store.save(PAIRED_STATE)
+    store = state_store or _InMemoryStateStore(PAIRED_STATE)
     client = TimedRelay(timeline, store, latency, publications)
     if publisher:
         rights = (p.SHARED_CAPABILITY, p.COMBAT_CAPABILITY)
@@ -242,7 +320,6 @@ def run_owner(
         worker._run(timeline.stop)
     finally:
         assert worker.stop()
-        directory.cleanup()
     assert client.cadence_refusals == 0
     assert worker.status().detail is None
     for bucket in ("read", "publication"):
@@ -360,7 +437,7 @@ def test_source_phase_and_small_clock_skew_do_not_withdraw(period, phase, skew):
     assert timeline.end - times[-1] < 10.0
 
 
-def test_publisher_trace_crosses_real_signed_client(monkeypatch):
+def test_publisher_trace_crosses_real_signed_client(monkeypatch, tmp_path):
     reached = []
     original = FleetRelayClient.publish_snapshot
 
@@ -370,7 +447,13 @@ def test_publisher_trace_crosses_real_signed_client(monkeypatch):
         return result
 
     monkeypatch.setattr(FleetRelayClient, "publish_snapshot", observe)
-    client, _, _, _ = run_owner(publisher=True, duration=8)
+    store = durable_cadence_store(tmp_path / "publisher-trace.json")
+    client, _, _, _ = run_owner(
+        publisher=True,
+        duration=8,
+        state_store=store,
+    )
+    assert client.store is store
     assert reached, "publisher trace never crossed real FleetRelayClient signing/HTTP"
     assert len(reached) == len(client.published) == len(client.signed_publications)
     assert [
@@ -385,6 +468,7 @@ def test_publisher_trace_crosses_real_signed_client(monkeypatch):
 
 def test_due_independent_bucket_does_not_wait_for_post_operation_poll():
     client, _, _, _ = run_owner(publisher=True, duration=8)
+    assert isinstance(client.store, _InMemoryStateStore)
     first_publish = next(
         i for i, call in enumerate(client.calls) if call[0] == "publish_snapshot"
     )
@@ -728,10 +812,10 @@ def run_trace_owner(
     duration=120,
     configure=lambda *_: None,
     publications=None,
+    state_store=None,
 ):
     timeline = VirtualWait(1000 + phase, 1000 + duration)
-    store = FileStore(tmp_path / "cadence.json")
-    store.save(PAIRED_STATE)
+    store = state_store or _InMemoryStateStore(PAIRED_STATE)
     relay = TraceRelay(
         timeline,
         store,
@@ -1578,7 +1662,10 @@ def test_external_put_trace_preserves_original_origins_and_nullable_values(tmp_p
         ),
     )
     relay, samples, _, events = run_trace_owner(
-        tmp_path, duration=20, publications=trace
+        tmp_path,
+        duration=20,
+        publications=trace,
+        state_store=durable_cadence_store(tmp_path / "external-trace.json"),
     )
     assert_exact_trace(relay, samples, events)
     rows = [
