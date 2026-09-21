@@ -2588,7 +2588,7 @@ def test_the_previews_header_stays_above_rows_while_settings_scrolls():
         )
 
 
-def test_sticky_edges_cover_fractional_scrollport_boundaries():
+def test_sticky_edges_declare_fractional_scrollport_boundary_cover():
     """Opaque fills alone leave a hairline at fractional CSS-pixel edges."""
     for selector in (
         ".characters-head",
@@ -2600,7 +2600,7 @@ def test_sticky_edges_cover_fractional_scrollport_boundaries():
         assert rule and "0 -1px var(--panel)" in rule.group(1), selector
 
 
-def test_nested_work_panes_contain_wheel_scrolling():
+def test_nested_work_panes_declare_overscroll_containment():
     for selector in (
         "#characters-roster",
         "#section-previews .settings-subpage",

@@ -357,7 +357,7 @@ three entries, `Uploading`, `Companion previews` and `General`.
 rows, for two different reasons that make the same hole. `#eve-binds` does
 it because its labels are long action names and it gives them a whole line
 instead. `#preview-binds` does it to give the character name a
-length-bounded `minmax(150px, 260px)` track of its own — an inline column,
+length-bounded `minmax(200px, 260px)` track of its own — an inline column,
 not a line — so the name is a cell in the table rather than a heading above
 it. Either way ID specificity beats
 the `max-width: 720px` block written against `.settings .row > .lab`, so

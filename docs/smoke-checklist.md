@@ -6857,7 +6857,7 @@ behaviour a lexical guard cannot reach.
       so the width it does not use becomes dead space inside every row.
 - [ ] **A long character name is not clipped at the default size.**
       Expected: names up to roughly 20 characters render whole. The column
-      is `minmax(150px, 260px)` — both ends lengths, so it still cannot
+      is `minmax(200px, 260px)` — both ends lengths, so it still cannot
       move between sessions with whoever is logged in, which is what round
       3's B1 forbade. A genuinely extreme name still ellipsizes and still
       carries the full string in its `title`.
