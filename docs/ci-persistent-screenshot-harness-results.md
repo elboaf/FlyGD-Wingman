@@ -617,17 +617,149 @@ A full suite was deliberately not rerun for round 2. Executable changes are limi
 
 Round-2 syntax and static gates passed for the changed Python files and all four worker/DOM CJS fixtures, together with repository-wide Ruff check/format and `git diff --check`.
 
+### Final whole-branch review fix wave
+
+The final executable endpoint is commit
+`4a8fa45311f284c3cee05924cfc10f202dd838d6` (`test: isolate screenshot
+worker realms`). The documentation commit that records this endpoint is
+**evidence-only** and intentionally outside the executable range. It must not be
+used as the implementation SHA.
+
+The critical review finding was reproducible. Although the screenshot DOM was
+VM-owned, `screenshot_pages.cjs` and `current_screenshot_pages.cjs` still
+injected host-owned console methods, timers, browser shims, returned objects,
+and then assigned host bridge/prototype functions onto VM objects. Constructor
+chains therefore reached the Node realm. The existing isolation identities were
+strengthened without adding target IDs. On the prior implementation they failed
+with escaped-boundary lists including console, clipboard, timers, browser
+classes/functions, returned objects, `WM.send`/`WM.confirm`, and current-owner
+DOM overrides. The Fittings failure-log probe separately failed because its
+structured failure reply had no `logs` field.
+
+The fix follows the already-reviewed Fittings boundary design:
+
+- each screenshot/current request now evaluates one complete scenario program
+  inside its fresh VM, including the assertion facade, console, DOM, browser
+  shims, bridge doubles, production modules, generated expressions, and any
+  temporary prototype overrides;
+- hidden host adapters are captured in VM-private closures and their temporary
+  globals are deleted before production or generated code runs;
+- every adapter input and output is a primitive JSON string envelope; host
+  errors are serialized and reconstructed in the VM rather than crossing as
+  objects;
+- timeout, interval and animation-frame callbacks remain VM-owned, are invoked
+  with the VM `window` receiver and VM arguments, and are addressed by numeric
+  request-local tokens rather than native handles;
+- a per-request randomized private dispatch binding lets the host signal timer
+  readiness without publishing a host callback through `window`, `document`,
+  `WM`, or another public object;
+- screenshot/current completion crosses back as primitive JSON, and neither a
+  VM promise nor a VM error/object/array/iterator crosses into host request
+  state;
+- all three workers retain at most 40 request-local log/info/warn/debug lines,
+  clip each line to 400 characters, include that context only in structured
+  failure replies, preserve the original JavaScript stack, and never write
+  captured logs as raw stdout.
+
+The existing generated/current isolation probes enumerate own callable
+properties on console, clipboard, document, `Element.prototype`, and `WM`, plus
+browser/timer globals and representative returned values. They attempt
+constructor-chain realm recovery, mutate the recovered realm and public value
+chains, exercise callback receivers/arguments and numeric tokens, then prove a
+following request is pristine. The existing failure identities log more than
+the retained limit through log/info/warn/debug before both throw and rejection
+paths and assert bounded context plus line clipping in the structured reply.
+Fittings uses the same existing failure identity; no new target ID was added.
+
+TDD RED was observed before implementation:
+
+```text
+generated screenshot realm probe
+  public boundary escaped the request VM: console.*, clipboard.*, WM.send,
+  WM.confirm, Event, CustomEvent, setTimeout, clearTimeout,
+  requestAnimationFrame, matchMedia, getComputedStyle, window, location,
+  navigator, returned objects and native timer handles
+
+current-owner realm probe
+  public boundary escaped the request VM: console.*, DOM prototype overrides,
+  WM.send, timers, window and other injected/assigned boundaries
+
+Fittings failure-log probe
+  expected a bounded logs list in the failure reply
+  got: None
+```
+
+Fresh final GREEN evidence, all after the executable changes:
+
+```text
+protocol/isolation identities
+  15 passed, 582 deselected in 15.83s
+  15 cases, zero failures/errors/skips
+  JUnit: /tmp/wingman-final-review-fix-protocol.xml
+  SHA-256: 616ff39a6411023ac1142ad080f588695ac6d08b128b78c642af1dbc5d29285d
+
+NodeScenarioWorker lifecycle/protocol suite
+  12 passed in 6.98s
+  12 cases, zero failures/errors/skips
+  JUnit: /tmp/wingman-final-review-fix-node-worker.xml
+  SHA-256: 8ceb9499df36a199cbacb7d8eb5a2765e4f0334ff0a75f4fc7bbc3a3cf89da37
+
+four target files
+  597 passed in 82.83s
+  597 cases, zero failures/errors/skips
+  JUnit: /tmp/wingman-final-review-fix-target.xml
+  SHA-256: f4f77e6d8754e315a829547b9194b73e86c38a5b536e0de767a7461c30faa19f
+
+other shared-worker consumers
+  tests/test_ui_setup_page.py + tests/test_formations_page.py
+  448 passed in 51.99s
+  448 cases, zero failures/errors/skips
+  JUnit: /tmp/wingman-final-review-fix-other-consumers.xml
+  SHA-256: b8aac68a8a3e5ba5e5ee8eb75df61cf8a5298e3bb51ae8a354e29f24cea61919
+
+fresh full suite
+  16,686 passed, 14 skipped in 693.66s (11m33s)
+  16,700 cases, zero failures/errors, 14 platform-only skips
+  JUnit: /tmp/wingman-final-review-fix-full-final.xml
+  SHA-256: 83705126abf02318a743fe5584927d2c1d6be08ba0f4db6894271811e8543bef
+```
+
+The earlier complete-suite result remains historical evidence only; it is not
+claimed to verify `4a8fa453`. The fresh run above used Node v26.5.0 and Python
+3.11.15 after rebuilding/installing the locked release settings codec and
+confirming `codec.codec_available() == True`. Its 14 skips are the same
+Windows-only integration cases listed in the earlier skip inventory; there are
+zero Node-availability or codec-availability skips.
+
+Final collection remains exactly **597 unique target IDs**, with per-file counts
+`246 / 90 / 160 / 101` and the unchanged forward-order SHA-256
+`4ff87df92ef58977cd8e5b99b85ca52dddd330f4fc86b037d5f6d209e99de6e7`.
+No matrix entry, screenshot key, generated expression, PASS label, Node-absence
+behavior, persistent-worker topology, or shared Fittings-worker ownership was
+removed or changed.
+
+Fresh independent gates passed after the final edits: 35 direct Node DOM tests,
+JS smoke, Cargo test, repository-wide Ruff check and format check, Node syntax
+for all four worker/DOM fixtures, `git diff --check`, the dead-symbol search, the
+15-path allowlist comparison, and prohibited production/workflow/config scope
+checks. Local polish/self-review found no remaining actionable finding.
+
 ### Changed-path and cleanup proof
 
 The final prohibited-scope command returned no output:
 
 ```bash
 git diff --name-only \
-  c4a2b206..02556db14ea7991a5ac4e5c0ec426f4d6ab4c98a -- \
+  c4a2b206..4a8fa45311f284c3cee05924cfc10f202dd838d6 -- \
   wingman .github scripts packaging pyproject.toml uv.lock
 ```
 
-The final implementation scope is pinned to `02556db14ea7991a5ac4e5c0ec426f4d6ab4c98a`. The documentation commit that records this endpoint changes only the already-allowed plan/results paths and is intentionally outside the pinned implementation range, avoiding a self-referential commit SHA. The complete changed-path set from `c4a2b206` through the pinned endpoint is exactly the final 15-path allowlist:
+The final executable scope is pinned to
+`4a8fa45311f284c3cee05924cfc10f202dd838d6`. The documentation commit that
+records this endpoint is evidence-only, changes only the already-allowed results
+path, and is intentionally outside the pinned executable range to avoid a
+self-referential SHA. The complete changed-path set from `c4a2b206` through the
+pinned executable endpoint is exactly the final 15-path allowlist:
 
 ```text
 docs/ci-persistent-screenshot-harness-results.md
