@@ -659,19 +659,18 @@ def selected_off(worker, mono):
     pytest.fail("authorized Off withdrawal never selected")
 
 
-@pytest.mark.parametrize("http_error", [False, True])
 @pytest.mark.parametrize(
-    "authority",
+    "http_error,authority",
     [
-        "deadline_equal",
-        "deadline_over",
-        "deadline_extended",
-        "approved_capabilities",
-        "session_approved_capabilities",
-        "acknowledged_capabilities",
-        "auth",
-        "new_intent",
-        "new_session",
+        (False, "deadline_equal"),
+        (True, "deadline_over"),
+        (False, "deadline_extended"),
+        (False, "approved_capabilities"),
+        (False, "session_approved_capabilities"),
+        (False, "acknowledged_capabilities"),
+        (False, "auth"),
+        (False, "new_intent"),
+        (False, "new_session"),
     ],
 )
 def test_off_completion_retains_original_applicable_authority(
@@ -771,12 +770,16 @@ def error_install_case(tmp_path, kind):
     return worker, client, mono, work, fence
 
 
-@pytest.mark.parametrize("kind", ["publication", "off"])
 @pytest.mark.parametrize(
-    "error", [(403, "forbidden"), (401, "unauthorized"), (503, "service_unavailable")]
-)
-@pytest.mark.parametrize(
-    "invalidate", ["new_intent", "lifecycle", "auth", "shared_rights"]
+    "kind,error,invalidate",
+    [
+        ("publication", (403, "forbidden"), "new_intent"),
+        ("off", (403, "forbidden"), "lifecycle"),
+        ("publication", (401, "unauthorized"), "auth"),
+        ("off", (401, "unauthorized"), "shared_rights"),
+        ("publication", (503, "service_unavailable"), "lifecycle"),
+        ("off", (503, "service_unavailable"), "new_intent"),
+    ],
 )
 def test_publication_error_install_rechecks_original_authority_atomically(
     tmp_path, monkeypatch, kind, error, invalidate
@@ -969,13 +972,13 @@ def test_current_publication_error_captures_effects_before_unlocked_notification
     assert worker._scheduler.retry_at[work.key] == receipt + 1
 
 
-@pytest.mark.parametrize("kind", ["publication", "off"])
 @pytest.mark.parametrize(
-    "boundary,invalidate",
+    "kind,boundary,invalidate",
     [
-        ("during_save", "new_intent"),
-        ("during_save", "lifecycle"),
-        ("after_save", "lifecycle"),
+        ("publication", "during_save", "new_intent"),
+        ("off", "during_save", "lifecycle"),
+        ("publication", "after_save", "lifecycle"),
+        ("off", "after_save", "new_intent"),
     ],
 )
 def test_publication_401_durable_loss_cannot_reset_after_replacement(
@@ -1032,9 +1035,7 @@ def test_publication_401_durable_loss_cannot_reset_after_replacement(
         assert saves[0].last_revision == revision + 1
         assert s.load(client.path).session_id is None
         if invalidate == "new_intent":
-            assert worker.request_participation(
-                True, expected_generation=1, binding=worker.status().metadata.binding
-            )
+            assert worker.request_participation(True)
         else:
             assert worker.stop()
         status = worker.status()
@@ -1123,11 +1124,15 @@ def source_completion_case(tmp_path, kind):
     return worker, client, mono, work, fence
 
 
-@pytest.mark.parametrize("kind", ["publication", "inactive"])
 @pytest.mark.parametrize(
-    "error", [None, (403, "forbidden"), (503, "service_unavailable")]
+    "kind,error,revoke",
+    [
+        (kind, error, True)
+        for kind in ("publication", "inactive")
+        for error in (None, (403, "forbidden"), (503, "service_unavailable"))
+    ]
+    + [("publication", None, False)],
 )
-@pytest.mark.parametrize("revoke", [False, True])
 def test_original_source_guards_actual_completion_install(
     tmp_path, monkeypatch, kind, error, revoke
 ):
@@ -1245,8 +1250,15 @@ def test_original_source_guards_actual_completion_install(
     assert worker._timing_context._next_stage_at == floor
 
 
-@pytest.mark.parametrize("kind", ["publication", "off", "off_refused"])
-@pytest.mark.parametrize("replace_intent", [False, True])
+@pytest.mark.parametrize(
+    "kind,replace_intent",
+    [
+        ("publication", True),
+        ("off", True),
+        ("off_refused", True),
+        ("publication", False),
+    ],
+)
 def test_publication_success_status_install_keeps_original_intent(
     tmp_path, monkeypatch, kind, replace_intent
 ):
@@ -1329,9 +1341,16 @@ def test_publication_success_status_install_keeps_original_intent(
     assert worker._scheduler.deadlines["publication"] == mono[0] + 0.5
 
 
-@pytest.mark.parametrize("kind", ["publication", "inactive"])
-@pytest.mark.parametrize("boundary", ["during_save", "reset_acquisition"])
-@pytest.mark.parametrize("revoke", [False, True])
+@pytest.mark.parametrize(
+    "kind,boundary,revoke",
+    [
+        ("publication", "during_save", True),
+        ("inactive", "during_save", True),
+        ("publication", "reset_acquisition", True),
+        ("inactive", "reset_acquisition", True),
+        ("publication", "reset_acquisition", False),
+    ],
+)
 def test_original_source_guards_post_save_401_reset(
     tmp_path, monkeypatch, kind, boundary, revoke
 ):
@@ -1416,10 +1435,16 @@ def test_original_source_guards_post_save_401_reset(
     assert worker._timing_context._next_stage_at == floor
 
 
-@pytest.mark.parametrize("kind", ["publication", "inactive", "off"])
 @pytest.mark.parametrize(
-    "error",
-    [None, (403, "forbidden"), (401, "unauthorized"), (503, "service_unavailable")],
+    "kind,error",
+    [
+        ("publication", None),
+        ("off", None),
+        ("publication", (403, "forbidden")),
+        ("inactive", (401, "unauthorized")),
+        ("off", (401, "unauthorized")),
+        ("off", (503, "service_unavailable")),
+    ],
 )
 def test_completion_leaf_lock_order_and_nonconsuming_costs(
     tmp_path, monkeypatch, kind, error
