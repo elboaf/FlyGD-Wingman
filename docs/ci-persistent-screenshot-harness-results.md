@@ -249,8 +249,12 @@ tests/test_shoot_screens.py::test_gap_capture_worker_vm_failures_preserve_stack_
 There are no other additions or removals. Thus every pre-existing business node
 remains, except that the one aggregate Fittings node is represented by its same
 eleven scenarios as eleven independently reportable nodes. The raw collection
-artifact is `/tmp/wingman-screenshot-harness-final-nodes.txt` (63,564 bytes,
-SHA-256 `9ed430e815799c37b5bba9f815e933e98543df1543c058da016e8d852a60a5f6`).
+artifact path, 63,564-byte size, and SHA-256
+`9ed430e815799c37b5bba9f815e933e98543df1543c058da016e8d852a60a5f6` are
+run-specific metadata because pytest appends an elapsed-time footer. Reproducible
+identity evidence is the filtered 597-line forward node list described below:
+597 unique IDs with SHA-256
+`4ff87df92ef58977cd8e5b99b85ca52dddd330f4fc86b037d5f6d209e99de6e7`.
 
 ### Process topology and reuse
 
@@ -475,11 +479,18 @@ git diff --check
 The prohibited-scope command returned no output:
 
 ```bash
-git diff --name-only c4a2b206..HEAD -- \
+git diff --name-only \
+  c4a2b206..c311c81d77c82dc934af378e05d85f577710c605 -- \
   wingman .github scripts packaging pyproject.toml uv.lock
 ```
 
-The complete changed-path set from `c4a2b206` through the implementation HEAD is
+The pinned endpoint `c311c81d77c82dc934af378e05d85f577710c605` is the
+audited implementation plus initial-evidence endpoint. This follow-up correction
+changes only this results document and the ignored Task 6 report, so it is
+intentionally outside that range; recording its own final SHA here would make the
+audit self-referential.
+
+The complete changed-path set from `c4a2b206` through that pinned endpoint is
 exactly the twelve-path allowlist frozen in Task 0:
 
 ```text
@@ -497,8 +508,15 @@ tests/test_new_screenshots.py
 tests/test_shoot_screens.py
 ```
 
-Repository search found no `_COPY_ACCESSIBILITY_HARNESS`, `_run_fittings_node`,
-or `fittings-harness.cjs` symbols. The only Python launches of
+The exact dead-symbol search was scoped to executable test sources:
+
+```bash
+rg -n "_COPY_ACCESSIBILITY_HARNESS|_run_fittings_node|fittings-harness\.cjs" tests/
+# no matches, exit 1
+```
+
+Plans and results may retain those names as historical evidence; no matching
+symbol remains under `tests/`. The only Python launches of
 `screenshot_pages.cjs` are the two `NodeScenarioWorker` startup argument lists;
 the only launch of `current_screenshot_pages.cjs` is its worker startup. The one
 preserved `screenshot_alerts.cjs` `subprocess.run` call site still produces the
