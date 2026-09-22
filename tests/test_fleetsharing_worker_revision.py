@@ -319,9 +319,7 @@ def test_other_committed_admissions_finish_bookkeeping(
         assert "/receipts/" in requests[0].full_url
 
 
-def test_terminal_only_source_retirement_bounds_observation_and_retry_metadata(
-    tmp_path,
-):
+def test_terminal_source_retirement_repeats_real_durable_lifecycle(tmp_path):
     from tests.fleetsharing_worker_control_helpers import ControlRelay
     from tests.test_fleetsharing_worker_state4 import file_rig
 
@@ -349,7 +347,7 @@ def test_terminal_only_source_retirement_bounds_observation_and_retry_metadata(
     worker._scheduler.failures[stable] = 6
     worker._scheduler._served[stable] = 99
     floor = worker._scheduler.deadlines["read"]
-    for n in range(260):
+    for n in range(3):
         source = f"{n + 1:08x}-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
         assert worker.request_source_stop(
             source, expected_generation=0, expected_automatic=None
@@ -383,6 +381,72 @@ def test_terminal_only_source_retirement_bounds_observation_and_retry_metadata(
         worker._scheduler._served,
     ):
         assert all(not key.startswith("source:") or key == stable for key in metadata)
+
+
+@pytest.mark.parametrize(
+    "retired_count",
+    [
+        p.MAX_SOURCE_INTENTS - 1,
+        p.MAX_SOURCE_INTENTS,
+        p.MAX_SOURCE_INTENTS + 1,
+    ],
+)
+def test_terminal_only_source_retirement_bounds_observation_and_retry_metadata(
+    tmp_path, retired_count
+):
+    from tests.fleetsharing_worker_control_helpers import ControlRelay
+    from tests.test_fleetsharing_worker_state4 import file_rig
+
+    worker, _, store, mono = file_rig(tmp_path)
+    relay = ControlRelay(worker, store)
+    reply = relay.reply
+
+    def unavailable(request, saved):
+        if "/receipts/" in request.full_url:
+            return {"protocol": 2, "error": "service_unavailable"}, 503
+        return reply(request, saved)
+
+    relay.reply = unavailable
+    worker.resume_pending()
+    drive(worker, mono, 3)
+    assert worker.request_source_stop(
+        UUID, expected_generation=0, expected_automatic=None
+    )
+    drive(worker, mono, 3)
+    persistent = s.load(store.path).pending_source_commands[0]
+
+    retired = {
+        f"{number + 1:08x}-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        for number in range(retired_count)
+    }
+    stable = worker._source_work_key(persistent)
+    stale_keys = {f"source:stop:{source_id}" for source_id in retired}
+    worker._source_observe = retired | {persistent.source_id}
+    worker._source_generations = {source_id: 1 for source_id in retired}
+    worker._source_generations[persistent.source_id] = 7
+
+    unrelated = "automatic:stable"
+    deadline = mono[0] + 100000
+    for key in stale_keys | {stable, unrelated}:
+        worker._scheduler.retry_at[key] = deadline
+        worker._scheduler.failures[key] = 6
+        worker._scheduler._served[key] = 99
+    read_deadline = worker._scheduler.deadlines["read"]
+
+    worker.iterate_once()
+
+    assert worker._source_observe == {persistent.source_id}
+    assert worker._source_generations == {persistent.source_id: 7}
+    for metadata in (
+        worker._scheduler.retry_at,
+        worker._scheduler.failures,
+        worker._scheduler._served,
+    ):
+        assert all(not key.startswith("source:") or key == stable for key in metadata)
+    assert worker._scheduler.retry_at[unrelated] == deadline
+    assert worker._scheduler.failures[unrelated] == 6
+    assert worker._scheduler._served[unrelated] == 99
+    assert worker._scheduler.deadlines["read"] >= read_deadline
 
 
 @pytest.mark.parametrize(
@@ -564,7 +628,7 @@ def test_revision_guards_kill_in_memory_mutants(tmp_path, monkeypatch, name):
             "        self._source_observe.intersection_update(\n            command.source_id for command in self._state.pending_source_commands\n        )\n",
             "",
             test_terminal_only_source_retirement_bounds_observation_and_retry_metadata,
-            {},
+            dict(retired_count=p.MAX_SOURCE_INTENTS + 1),
         ),
         "binding_projection": (
             "                automatic_status=None,\n                automatic_stage=None,\n                automatic_request_id=None,\n",
