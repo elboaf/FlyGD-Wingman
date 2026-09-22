@@ -443,6 +443,9 @@ def test_terminal_only_source_retirement_bounds_observation_and_retry_metadata(
         worker._scheduler._served,
     ):
         assert all(not key.startswith("source:") or key == stable for key in metadata)
+    assert worker._scheduler.retry_at[stable] == deadline
+    assert worker._scheduler.failures[stable] == 6
+    assert worker._scheduler._served[stable] == 99
     assert worker._scheduler.retry_at[unrelated] == deadline
     assert worker._scheduler.failures[unrelated] == 6
     assert worker._scheduler._served[unrelated] == 99
