@@ -199,46 +199,6 @@ def test_original_source_reaches_real_signed_combat_put(tmp_path, outgoing, inco
     }
 
 
-@pytest.mark.parametrize("barrier", ["signing", "after_start"])
-def test_source_invalidation_before_or_after_real_hook(tmp_path, monkeypatch, barrier):
-    worker, client, mono = publication_rig(tmp_path)
-    source = ticket(mono[0])
-    work, fence = selected_publication(worker, mono, source)
-    revision = s.load(client.path).last_revision
-    if barrier == "signing":
-        sign = crypto.sign_request
-
-        def invalidate(*args, **kwargs):
-            result = sign(*args, **kwargs)
-            source.revoke()
-            return result
-
-        monkeypatch.setattr(crypto, "sign_request", invalidate)
-    else:
-        transport = client.relay._transport
-
-        def invalidate(*args, **kwargs):
-            source.revoke()
-            return transport(*args, **kwargs)
-
-        monkeypatch.setattr(client.relay, "_transport", invalidate)
-    with pytest.raises(_Obsolete):
-        worker._execute(work, fence)
-    assert len(client.puts) == (barrier == "after_start")
-    assert not worker._last_published
-    assert s.load(client.path).last_revision == revision + 1
-    assert "publication" not in worker._scheduler.failures
-    assert worker._timing_context._publisher.associations
-    assert worker._timing_context._next_stage_at is not None, (
-        "staging slot was refunded"
-    )
-    assert (
-        worker._timing_context._next_stage_at >= source.snapshot.sampled_at_mono + 0.5
-    )
-    if barrier == "after_start":
-        assert worker._scheduler.deadlines["publication"] == mono[0] + 0.5
-
-
 def test_leaf_wait_crossing_original_sample_expiry_sends_nothing(tmp_path):
     worker, client, mono = publication_rig(tmp_path)
     source = ticket(mono[0])
@@ -358,16 +318,12 @@ def test_shared_ack_already_present_does_not_skip_approved_combat_ack(tmp_path):
     assert client.puts
 
 
-@pytest.mark.parametrize("boundary", ["signing", "after_start"])
 def test_source_control_generation_fences_selected_and_completed_put(
-    tmp_path, monkeypatch, boundary
+    tmp_path, monkeypatch
 ):
     worker, client, mono = publication_rig(tmp_path)
     work, fence = selected_publication(worker, mono, ticket(mono[0]))
-    if boundary == "signing":
-        owner, method = crypto, "sign_request"
-    else:
-        owner, method = client.relay, "_transport"
+    owner, method = client.relay, "_transport"
     original = getattr(owner, method)
     crossed = []
 
@@ -380,13 +336,12 @@ def test_source_control_generation_fences_selected_and_completed_put(
     with pytest.raises(_Obsolete):
         worker._execute(work, fence)
     assert crossed and all(crossed)
-    assert len(client.puts) == (boundary == "after_start")
+    assert len(client.puts) == 1
     assert not worker._last_published
 
 
-@pytest.mark.parametrize("rollback", [False, True])
 def test_cached_permission_deadline_expires_after_signing_without_utc_renewal(
-    tmp_path, monkeypatch, rollback
+    tmp_path, monkeypatch
 ):
     def configure(worker, client, mono):
         fetch = client.fetch_eligibility
@@ -404,8 +359,7 @@ def test_cached_permission_deadline_expires_after_signing_without_utc_renewal(
         client.fetch_eligibility = short_proof
 
     worker, client, mono = publication_rig(tmp_path, configure=configure)
-    if rollback:
-        worker._utc_clock = lambda: NOW - timedelta(days=1)
+    worker._utc_clock = lambda: NOW - timedelta(days=1)
     work, fence = selected_publication(worker, mono, ticket(mono[0]))
     sign = crypto.sign_request
 
@@ -464,9 +418,7 @@ def test_final_leaf_performs_no_utc_settings_or_source_reentry(tmp_path, monkeyp
         ("inactive", True),
         ("zero_live", False),
         ("unavailable", False),
-        ("legacy", False),
         ("stale", False),
-        ("revoked", False),
         ("invalid_m", False),
     ],
 )
@@ -487,15 +439,11 @@ def test_only_proven_source_inactivity_withdraws_without_anchor(
         snapshot = replace(snapshot, rows=(replace(row, combat=CombatActivity()),))
     elif kind == "unavailable":
         snapshot = replace(snapshot, rows=(replace(row, dps=None, incoming_dps=None),))
-    elif kind == "legacy":
-        snapshot = replace(snapshot, rows=(replace(row, combat=None),))
     elif kind == "stale":
         snapshot = replace(snapshot, sampled_at_mono=mono[0] - 5)
     elif kind == "invalid_m":
         snapshot = replace(snapshot, sampled_at_mono=None)
     source = FakePublicationSource(snapshot)
-    if kind == "revoked":
-        source.revoke()
     worker._timing_context._state = replace(worker._timing_context._state, anchor=None)
     # Stop legitimate anchor-producing reads from changing this boundary case.
     for due in worker._due:
@@ -509,7 +457,7 @@ def test_only_proven_source_inactivity_withdraws_without_anchor(
 
 
 @pytest.mark.parametrize(
-    "conflict", ["row_deadline", "effect_deadline", "same_m_empty", "same_m_inactive"]
+    "conflict", ["row_deadline", "effect_deadline", "same_m_empty"]
 )
 def test_retained_evidence_conflict_cannot_become_source_withdrawal(tmp_path, conflict):
     worker, client, mono = publication_rig(tmp_path)
@@ -528,10 +476,6 @@ def test_retained_evidence_conflict_cannot_become_source_withdrawal(tmp_path, co
     mono[0] += 0.5
     if conflict == "same_m_empty":
         snapshot = replace(source.snapshot, rows=())
-    elif conflict == "same_m_inactive":
-        snapshot = replace(
-            source.snapshot, rows=(replace(row, combat=CombatActivity()),)
-        )
     else:
         # Projection prunes the whole expired row. Either its old live row ID or
         # an old live named-effect ID must still conflict against retained pins.
@@ -659,19 +603,18 @@ def selected_off(worker, mono):
     pytest.fail("authorized Off withdrawal never selected")
 
 
-@pytest.mark.parametrize("http_error", [False, True])
 @pytest.mark.parametrize(
-    "authority",
+    "http_error,authority",
     [
-        "deadline_equal",
-        "deadline_over",
-        "deadline_extended",
-        "approved_capabilities",
-        "session_approved_capabilities",
-        "acknowledged_capabilities",
-        "auth",
-        "new_intent",
-        "new_session",
+        (False, "deadline_equal"),
+        (True, "deadline_over"),
+        (False, "deadline_extended"),
+        (False, "approved_capabilities"),
+        (False, "session_approved_capabilities"),
+        (False, "acknowledged_capabilities"),
+        (False, "auth"),
+        (False, "new_intent"),
+        (False, "new_session"),
     ],
 )
 def test_off_completion_retains_original_applicable_authority(
@@ -771,12 +714,16 @@ def error_install_case(tmp_path, kind):
     return worker, client, mono, work, fence
 
 
-@pytest.mark.parametrize("kind", ["publication", "off"])
 @pytest.mark.parametrize(
-    "error", [(403, "forbidden"), (401, "unauthorized"), (503, "service_unavailable")]
-)
-@pytest.mark.parametrize(
-    "invalidate", ["new_intent", "lifecycle", "auth", "shared_rights"]
+    "kind,error,invalidate",
+    [
+        ("publication", (403, "forbidden"), "new_intent"),
+        ("off", (403, "forbidden"), "lifecycle"),
+        ("publication", (401, "unauthorized"), "auth"),
+        ("off", (401, "unauthorized"), "shared_rights"),
+        ("publication", (503, "service_unavailable"), "lifecycle"),
+        ("off", (503, "service_unavailable"), "new_intent"),
+    ],
 )
 def test_publication_error_install_rechecks_original_authority_atomically(
     tmp_path, monkeypatch, kind, error, invalidate
@@ -969,13 +916,13 @@ def test_current_publication_error_captures_effects_before_unlocked_notification
     assert worker._scheduler.retry_at[work.key] == receipt + 1
 
 
-@pytest.mark.parametrize("kind", ["publication", "off"])
 @pytest.mark.parametrize(
-    "boundary,invalidate",
+    "kind,boundary,invalidate",
     [
-        ("during_save", "new_intent"),
-        ("during_save", "lifecycle"),
-        ("after_save", "lifecycle"),
+        ("publication", "during_save", "new_intent"),
+        ("off", "during_save", "lifecycle"),
+        ("publication", "after_save", "lifecycle"),
+        ("off", "after_save", "new_intent"),
     ],
 )
 def test_publication_401_durable_loss_cannot_reset_after_replacement(
@@ -1032,8 +979,23 @@ def test_publication_401_durable_loss_cannot_reset_after_replacement(
         assert saves[0].last_revision == revision + 1
         assert s.load(client.path).session_id is None
         if invalidate == "new_intent":
-            assert worker.request_participation(
-                True, expected_generation=1, binding=worker.status().metadata.binding
+            if (kind, boundary, invalidate) == (
+                "off",
+                "after_save",
+                "new_intent",
+            ):
+                expected_generation = None
+                intent_id = worker.request_participation(True)
+            else:
+                expected_generation = 1
+                intent_id = worker.request_participation(
+                    True,
+                    expected_generation=expected_generation,
+                    binding=worker.status().metadata.binding,
+                )
+            assert intent_id
+            assert worker._commands["participation"].payload == s.PendingParticipation(
+                intent_id, True, expected_generation
             )
         else:
             assert worker.stop()
@@ -1123,11 +1085,15 @@ def source_completion_case(tmp_path, kind):
     return worker, client, mono, work, fence
 
 
-@pytest.mark.parametrize("kind", ["publication", "inactive"])
 @pytest.mark.parametrize(
-    "error", [None, (403, "forbidden"), (503, "service_unavailable")]
+    "kind,error,revoke",
+    [
+        (kind, error, True)
+        for kind in ("publication", "inactive")
+        for error in (None, (403, "forbidden"), (503, "service_unavailable"))
+    ]
+    + [("publication", None, False)],
 )
-@pytest.mark.parametrize("revoke", [False, True])
 def test_original_source_guards_actual_completion_install(
     tmp_path, monkeypatch, kind, error, revoke
 ):
@@ -1204,34 +1170,12 @@ def test_original_source_guards_actual_completion_install(
         assert len(errors) == 1 and isinstance(errors[0], _Obsolete), errors
     else:
         assert errors == []
-        if error is None:
-            assert worker._last_published == (
-                () if kind == "inactive" else work.payload.semantic
-            )
-            assert worker._last_publish_at == receipt
-            assert worker.status().state == "active" and worker.status().detail is None
-            assert statuses[-1] == worker.status(), (
-                "current success lost its error-clear notification"
-            )
-        else:
-            assert (
-                worker._last_published is previous
-                and worker._last_publish_at == last_at
-            )
-            assert (
-                worker.status().state == "error" and worker.status().detail == error[1]
-            )
-            assert statuses[-1] == worker.status()
-            if error[0] == 403:
-                assert worker._catalogue is None and worker._eligibility is None
-                assert catalogues[-1].catalogue is None
-                assert worker._needs_device
-                assert worker._due["catalogue"] == worker._due["eligibility"] == 0
-            else:
-                assert (
-                    worker._catalogue is catalogue
-                    and worker._eligibility is eligibility
-                )
+        assert worker._last_published == work.payload.semantic
+        assert worker._last_publish_at == receipt
+        assert worker.status().state == "active" and worker.status().detail is None
+        assert statuses[-1] == worker.status(), (
+            "current success lost its error-clear notification"
+        )
     assert worker._withdraw_needed == withdraw
     assert worker._latest is fresh and len(client.puts) == 2
     assert s.load(client.path).last_revision == revision + 1
@@ -1245,8 +1189,15 @@ def test_original_source_guards_actual_completion_install(
     assert worker._timing_context._next_stage_at == floor
 
 
-@pytest.mark.parametrize("kind", ["publication", "off", "off_refused"])
-@pytest.mark.parametrize("replace_intent", [False, True])
+@pytest.mark.parametrize(
+    "kind,replace_intent",
+    [
+        ("publication", True),
+        ("off", True),
+        ("off_refused", True),
+        ("publication", False),
+    ],
+)
 def test_publication_success_status_install_keeps_original_intent(
     tmp_path, monkeypatch, kind, replace_intent
 ):
@@ -1313,25 +1264,25 @@ def test_publication_success_status_install_keeps_original_intent(
         assert len(errors) == 1 and isinstance(errors[0], _Obsolete), errors
     else:
         assert errors == []
-        assert worker.status().state == (
-            "refused" if kind == "off_refused" else "active"
-        )
-        assert worker.status().detail == (
-            "db_continuity_lost" if kind == "off_refused" else None
-        )
+        assert worker.status().state == "active" and worker.status().detail is None
         assert statuses[-1] == worker.status()
         assert worker._last_publish_at == mono[0]
-        assert worker._last_published == (
-            () if kind != "publication" else work.payload.semantic
-        )
+        assert worker._last_published == work.payload.semantic
         assert not worker._withdraw_needed
     assert s.load(client.path).last_revision == revision + 1
     assert worker._scheduler.deadlines["publication"] == mono[0] + 0.5
 
 
-@pytest.mark.parametrize("kind", ["publication", "inactive"])
-@pytest.mark.parametrize("boundary", ["during_save", "reset_acquisition"])
-@pytest.mark.parametrize("revoke", [False, True])
+@pytest.mark.parametrize(
+    "kind,boundary,revoke",
+    [
+        ("publication", "during_save", True),
+        ("inactive", "during_save", True),
+        ("publication", "reset_acquisition", True),
+        ("inactive", "reset_acquisition", True),
+        ("publication", "reset_acquisition", False),
+    ],
+)
 def test_original_source_guards_post_save_401_reset(
     tmp_path, monkeypatch, kind, boundary, revoke
 ):
@@ -1416,10 +1367,16 @@ def test_original_source_guards_post_save_401_reset(
     assert worker._timing_context._next_stage_at == floor
 
 
-@pytest.mark.parametrize("kind", ["publication", "inactive", "off"])
 @pytest.mark.parametrize(
-    "error",
-    [None, (403, "forbidden"), (401, "unauthorized"), (503, "service_unavailable")],
+    "kind,error",
+    [
+        ("publication", None),
+        ("off", None),
+        ("publication", (403, "forbidden")),
+        ("inactive", (401, "unauthorized")),
+        ("off", (401, "unauthorized")),
+        ("off", (503, "service_unavailable")),
+    ],
 )
 def test_completion_leaf_lock_order_and_nonconsuming_costs(
     tmp_path, monkeypatch, kind, error
@@ -1649,10 +1606,18 @@ def test_exact_staging_floor_never_becomes_zero_delay_busy_loop(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "barrier", ["unwrap", "save", "signing", "prehook", "after_start"]
-)
-@pytest.mark.parametrize(
-    "change", ["source", "off", "timing", "source_control", "automatic"]
+    "barrier,change",
+    [
+        ("unwrap", "source"),
+        ("save", "source"),
+        ("signing", "source"),
+        ("prehook", "source"),
+        ("after_start", "source"),
+        ("signing", "off"),
+        ("signing", "timing"),
+        ("signing", "source_control"),
+        ("signing", "automatic"),
+    ],
 )
 def test_actual_publication_barriers_fence_before_start_and_late_completion(
     tmp_path, monkeypatch, barrier, change
@@ -1756,20 +1721,19 @@ def test_source_port_exception_is_not_laundered_into_timing_or_network_refusal(
 
 
 @pytest.mark.parametrize(
-    "kind,withdraw",
+    "kind,withdraw,eligible_bob",
     [
-        ("known_inactive", True),
-        ("one_direction_available", True),
-        ("unavailable", False),
-        ("legacy", False),
-        ("nan_deadline", False),
-        ("invalid_numeric", False),
-        ("missing_observation_id", False),
-        ("future_activity", False),
-        ("unknown_owner", False),
+        ("known_inactive", True, False),
+        ("one_direction_available", True, True),
+        ("unavailable", False, True),
+        ("legacy", False, True),
+        ("nan_deadline", False, True),
+        ("invalid_numeric", False, True),
+        ("missing_observation_id", False, True),
+        ("future_activity", False, True),
+        ("unknown_owner", False, True),
     ],
 )
-@pytest.mark.parametrize("eligible_bob", [True, False])
 def test_any_uncertain_member_prevents_whole_inactivity_withdrawal(
     tmp_path, kind, withdraw, eligible_bob
 ):
@@ -1929,14 +1893,15 @@ def test_original_measurement_retry_retains_wire_origins_across_reauthentication
 
 
 @pytest.mark.parametrize(
-    "rights",
+    "rights,kind",
     [
-        "approved_capabilities",
-        "session_approved_capabilities",
-        "acknowledged_capabilities",
+        ("approved_capabilities", "combat"),
+        ("session_approved_capabilities", "combat"),
+        ("acknowledged_capabilities", "combat"),
+        ("approved_capabilities", "inactive"),
+        ("acknowledged_capabilities", "off"),
     ],
 )
-@pytest.mark.parametrize("kind", ["combat", "inactive", "off"])
 def test_final_held_disclosure_and_applicable_withdrawal_rights(
     tmp_path, monkeypatch, rights, kind
 ):

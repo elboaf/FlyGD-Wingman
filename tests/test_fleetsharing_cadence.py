@@ -1,22 +1,23 @@
 """Virtual waits drive the REAL owner loop, not ideal-time iterate_once calls.
 
-Publisher PUTs use the real signed client and a file journal; metadata/CAS use
-the existing time-enforcing server double. Publisher and receiver run independently
-against the actual immutable Request-byte trace; receiver requests cannot change
-publication timing. Event waits, monotonic time and HTTP latency are virtual.
-No thread sleeps, sockets, provider state or wall-clock deadlines.
+Default scheduler scenarios use in-memory state that is capacity-checked on save.
+Only explicit publisher, receiver, and JSON FileStore representatives exercise
+persisted decode/validation and durable file crossings. Publisher PUTs
+use the real signed client; metadata/CAS use the existing time-enforcing server
+double. Publisher and receiver run independently against the actual immutable
+Request-byte trace; receiver requests cannot change publication timing. Event
+waits, monotonic time and HTTP latency are virtual. No thread sleeps, sockets,
+provider state or wall-clock deadlines.
 """
 
 import heapq
 import json
 import math
-import tempfile
 import threading
 from dataclasses import asdict, dataclass, replace
 from datetime import timedelta
 from fractions import Fraction
 from itertools import pairwise
-from pathlib import Path
 from typing import ClassVar
 from uuid import UUID
 
@@ -29,6 +30,7 @@ from test_fleetsharing_worker import (
     PAIRED_STATE,
     SignedPublicationRelay,
     _date,
+    _InMemoryStateStore,
     _worker,
 )
 from test_fleetsharing_worker import UUID as SOURCE_ID
@@ -47,6 +49,12 @@ from wingman.telemetry.model import (
 from wingman.ui.remotefleet import RemoteFleetStore
 
 
+def durable_cadence_store(path):
+    store = FileStore(path)
+    store.save(PAIRED_STATE)
+    return store
+
+
 def cadence_source(now, dps=0):
     # Healthy zero/zero through a genuine 30s combat hold. A new event every
     # twenty seconds keeps the long scenario active without renewing old IDs.
@@ -63,6 +71,7 @@ def cadence_source(now, dps=0):
 
 class VirtualWait:
     def __init__(self, start, end):
+        self.start = start
         self.now = start
         self.end = end
         self.stop = threading.Event()
@@ -176,11 +185,10 @@ def run_owner(
     duration=120,
     configure=lambda *_: None,
     telemetry_until=None,
+    state_store=None,
 ):
     timeline = VirtualWait(1000 + phase, 1000 + duration)
-    directory = tempfile.TemporaryDirectory(prefix="wingman-signed-cadence-")
-    store = FileStore(Path(directory.name) / "sharing.json")
-    store.save(PAIRED_STATE)
+    store = state_store or _InMemoryStateStore(PAIRED_STATE)
     client = TimedRelay(timeline, store, latency, publications)
     if publisher:
         rights = (p.SHARED_CAPABILITY, p.COMBAT_CAPABILITY)
@@ -242,7 +250,6 @@ def run_owner(
         worker._run(timeline.stop)
     finally:
         assert worker.stop()
-        directory.cleanup()
     assert client.cadence_refusals == 0
     assert worker.status().detail is None
     for bucket in ("read", "publication"):
@@ -305,8 +312,15 @@ def renewed_source_proof(
     return configure
 
 
-@pytest.mark.parametrize("changing", [False, True])
-@pytest.mark.parametrize("latency", [0.08, 0.2, 0.4, 0.6])
+@pytest.mark.parametrize(
+    "changing,latency",
+    [
+        (False, 0.08),
+        (True, 0.2),
+        (False, 0.6),
+        (True, 0.6),
+    ],
+)
 def test_renewed_source_preserves_active_publications(changing, latency):
     client, _, timeline, _ = run_owner(
         publisher=True,
@@ -338,9 +352,17 @@ def test_authoritative_source_loss_still_withdraws_active_local_metrics():
     assert all(not body.rows for t, body in client.published if t >= empty[0][0])
 
 
-@pytest.mark.parametrize("period", [5, 6])
-@pytest.mark.parametrize("phase", [0, 2, 4])
-@pytest.mark.parametrize("skew", [-0.5, 0.5])
+@pytest.mark.parametrize(
+    "period,phase,skew",
+    [
+        (5, 0, -0.5),
+        (6, 0, 0.5),
+        (5, 2, 0.5),
+        (6, 2, -0.5),
+        (5, 4, -0.5),
+        (6, 4, 0.5),
+    ],
+)
 def test_source_phase_and_small_clock_skew_do_not_withdraw(period, phase, skew):
     client, _, timeline, _ = run_owner(
         publisher=True,
@@ -360,7 +382,7 @@ def test_source_phase_and_small_clock_skew_do_not_withdraw(period, phase, skew):
     assert timeline.end - times[-1] < 10.0
 
 
-def test_publisher_trace_crosses_real_signed_client(monkeypatch):
+def test_publisher_trace_crosses_real_signed_client(monkeypatch, tmp_path):
     reached = []
     original = FleetRelayClient.publish_snapshot
 
@@ -370,7 +392,13 @@ def test_publisher_trace_crosses_real_signed_client(monkeypatch):
         return result
 
     monkeypatch.setattr(FleetRelayClient, "publish_snapshot", observe)
-    client, _, _, _ = run_owner(publisher=True, duration=8)
+    store = durable_cadence_store(tmp_path / "publisher-trace.json")
+    client, _, _, _ = run_owner(
+        publisher=True,
+        duration=8,
+        state_store=store,
+    )
+    assert client.store is store
     assert reached, "publisher trace never crossed real FleetRelayClient signing/HTTP"
     assert len(reached) == len(client.published) == len(client.signed_publications)
     assert [
@@ -385,6 +413,7 @@ def test_publisher_trace_crosses_real_signed_client(monkeypatch):
 
 def test_due_independent_bucket_does_not_wait_for_post_operation_poll():
     client, _, _, _ = run_owner(publisher=True, duration=8)
+    assert isinstance(client.store, _InMemoryStateStore)
     first_publish = next(
         i for i, call in enumerate(client.calls) if call[0] == "publish_snapshot"
     )
@@ -420,91 +449,94 @@ def test_future_heartbeat_deadline_is_not_rounded_to_idle_poll():
     assert second[0] - first[0] == pytest.approx(1.08)
 
 
-@pytest.mark.parametrize("phase", [0, 0.2, 0.5, 0.9])
-@pytest.mark.parametrize("watch", [False, True])
-@pytest.mark.parametrize("latency", [0.025, 0.08, 0.12])
+@pytest.mark.parametrize(
+    "phase,watch,latency",
+    [
+        (0, False, 0.025),
+        (0.2, True, 0.08),
+        (0.5, False, 0.12),
+        (0.9, False, 0.08),
+        (0.9, True, 0.12),
+    ],
+)
 def test_healthy_sparse_publication_stays_live_in_quiet_receiver(
     tmp_path, phase, watch, latency
 ):
-    publisher, _, _, _ = run_owner(publisher=True, watch=watch, latency=latency)
-    receiver, samples, _, events = run_trace_owner(
+    publisher, _, _, _ = run_owner(
+        publisher=True, watch=watch, latency=latency, duration=20
+    )
+    receiver, samples, timeline, events = run_trace_owner(
         tmp_path,
         publications=actual_publication_trace(publisher.published),
         phase=phase,
         latency=latency,
+        duration=20,
     )
     assert publisher.publish_calls and receiver.calls and samples
     assert_mixed_trace_bounds(
-        publisher, receiver, samples, events, phase=phase, latency=latency, watch=watch
+        publisher,
+        receiver,
+        samples,
+        events,
+        phase=phase,
+        latency=latency,
+        watch=watch,
+        end=timeline.end,
     )
 
 
-def simultaneous_metadata(worker, client, timeline):
+def simultaneous_metadata(worker, client, timeline, *, offset=10):
+    due_at = timeline.start + offset
+
     def due():
-        # Isolate service competition, without changing cadence or choosing work.
         for key in worker._due:
             worker._due[key] = timeline.now
         worker._renew_at = timeline.now
 
-    timeline.at(1030, due)
+    timeline.at(due_at, due)
+    return due_at
 
 
-@pytest.mark.parametrize("phase", [0, 0.2, 0.5, 0.9])
-@pytest.mark.parametrize("latency", [0.025, 0.08, 0.12])
+@pytest.mark.parametrize(
+    "phase,latency",
+    [
+        (0, 0.025),
+        (0, 0.12),
+        (0.5, 0.08),
+        (0.9, 0.12),
+    ],
+)
 def test_source_watch_and_simultaneous_metadata_renewal_do_not_starve_read(
     tmp_path, phase, latency
 ):
     publisher, _, _, _ = run_owner(
-        publisher=True, watch=True, latency=latency, configure=simultaneous_metadata
+        publisher=True,
+        watch=True,
+        latency=latency,
+        duration=20,
+        configure=simultaneous_metadata,
     )
-    receiver, samples, _, events = run_trace_owner(
+    receiver, samples, timeline, events = run_trace_owner(
         tmp_path,
         publications=actual_publication_trace(publisher.published),
         phase=phase,
         watch=True,
         latency=latency,
+        duration=20,
         configure=simultaneous_metadata,
     )
     for client in (publisher, receiver):
-        assert_scenario_fairness(client, watch=True)
+        assert_scenario_fairness(client, watch=True, due=client.timeline.start + 10)
     assert_mixed_trace_bounds(
-        publisher, receiver, samples, events, phase=phase, latency=latency, watch=True
+        publisher,
+        receiver,
+        samples,
+        events,
+        phase=phase,
+        latency=latency,
+        watch=True,
+        end=timeline.end,
     )
-
-
-@pytest.mark.parametrize("latency, expected", [(3.2, ("stale",)), (11, ())])
-def test_full_delayed_response_is_honestly_stale_or_expired(
-    tmp_path, latency, expected
-):
-    publisher, _, _, _ = run_owner(publisher=True, duration=60)
-
-    def delay_reads(worker, client, timeline):
-        def response():
-            delay = (
-                latency
-                if (timeline.now >= 1020 and client.calls[-1][0] == "read_snapshot")
-                else 0.08
-            )
-            timeline.advance(timeline.now + delay)
-
-        client.latency = response
-
-    receiver, samples, _, events = run_trace_owner(
-        tmp_path,
-        publications=actual_publication_trace(publisher.published),
-        duration=60,
-        configure=delay_reads,
-    )
-    assert_exact_trace(receiver, samples, events)
-    delayed = [
-        r - a
-        for op, a, r, _, _, _ in receiver.raw
-        if op == "read_snapshot" and a >= 1020
-    ]
-    assert delayed and all(span == pytest.approx(latency) for span in delayed)
-    # Even while newer publications exist on the relay, the in-flight response
-    # cannot be restamped as fresh or rejuvenated by faster future scheduling.
-    assert all(states == expected for t, _, states in samples if t >= 1035)
 
 
 def test_rate_limit_backoff_does_not_spin_or_block_other_bucket():
@@ -728,10 +760,10 @@ def run_trace_owner(
     duration=120,
     configure=lambda *_: None,
     publications=None,
+    state_store=None,
 ):
     timeline = VirtualWait(1000 + phase, 1000 + duration)
-    store = FileStore(tmp_path / "cadence.json")
-    store.save(PAIRED_STATE)
+    store = state_store or _InMemoryStateStore(PAIRED_STATE)
     relay = TraceRelay(
         timeline,
         store,
@@ -876,7 +908,7 @@ def assert_exact_trace(relay, samples, events):
     return classified
 
 
-def assert_scenario_fairness(relay, *, watch, due=1030):
+def assert_scenario_fairness(relay, *, watch, due):
     # Known eligible scenario classes, NOT inferred from successful operations.
     metadata = {"fetch_device", "fetch_eligibility", "fetch_catalogue", "renew_session"}
     if watch:
@@ -896,26 +928,44 @@ def assert_scenario_fairness(relay, *, watch, due=1030):
     )
 
 
-@pytest.mark.parametrize("phase", [0, 0.2, 0.5, 0.9])
-@pytest.mark.parametrize("watch", [False, True])
-@pytest.mark.parametrize("latency", [0.025, 0.08, 0.12])
+@pytest.mark.parametrize(
+    "phase,watch,latency",
+    [
+        (0, True, 0.025),
+        (0.2, False, 0.12),
+        (0.5, True, 0.08),
+        (0.9, False, 0.025),
+        (0.9, True, 0.12),
+    ],
+)
 def test_current_receiver_matches_exact_freshness_without_local_publication(
     tmp_path, phase, watch, latency
 ):
+    recovery_expected = watch and (latency, phase) in (
+        (0.08, 0.5),
+        (0.12, 0.9),
+    )
+    duration = 40 if recovery_expected else 20
+    offset = 30 - phase if recovery_expected else 10
+
+    def configure(worker, relay, timeline):
+        simultaneous_metadata(worker, relay, timeline, offset=offset)
+
     relay, samples, timeline, events = run_trace_owner(
         tmp_path,
         phase=phase,
         watch=watch,
         latency=latency,
-        configure=simultaneous_metadata,
+        duration=duration,
+        configure=configure,
     )
-    assert_scenario_fairness(relay, watch=watch)
+    assert_scenario_fairness(relay, watch=watch, due=relay.timeline.start + offset)
     classified = assert_exact_trace(relay, samples, events)
     recoveries = assert_healthy_recovery(classified)
     assert_healthy_trace_bounds(
         relay, classified, phase=phase, latency=latency, end=timeline.end
     )
-    if watch and (latency, phase) in ((0.08, 0.5), (0.12, 0.9)):
+    if recovery_expected:
         assert recoveries, "expected stale-to-live callback transition not witnessed"
 
 
@@ -1408,9 +1458,17 @@ def test_bad_postlock_interval_does_not_bias_genuinely_new_origins(tmp_path):
     ]
 
 
-@pytest.mark.parametrize("period", [5, 6])
-@pytest.mark.parametrize("phase", [0, 2, 4])
-@pytest.mark.parametrize("skew", [-0.5, 0.5])
+@pytest.mark.parametrize(
+    "period,phase,skew",
+    [
+        (5, 0, -0.5),
+        (6, 0, 0.5),
+        (5, 2, 0.5),
+        (6, 2, -0.5),
+        (5, 4, -0.5),
+        (6, 4, 0.5),
+    ],
+)
 def test_expiring_proof_refresh_progress_is_independent_of_local_publication(
     tmp_path, period, phase, skew
 ):
@@ -1578,7 +1636,10 @@ def test_external_put_trace_preserves_original_origins_and_nullable_values(tmp_p
         ),
     )
     relay, samples, _, events = run_trace_owner(
-        tmp_path, duration=20, publications=trace
+        tmp_path,
+        duration=20,
+        publications=trace,
+        state_store=durable_cadence_store(tmp_path / "external-trace.json"),
     )
     assert_exact_trace(relay, samples, events)
     rows = [

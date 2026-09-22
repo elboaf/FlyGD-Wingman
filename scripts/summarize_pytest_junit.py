@@ -52,6 +52,7 @@ def summarize(input_path: Path) -> dict[str, object]:
 
     files: dict[str, dict[str, float | int]] = {}
     slowest: list[dict[str, str | float]] = []
+    resource_evidence: list[dict[str, object]] = []
     total_seconds = 0.0
     case_count = 0
 
@@ -59,6 +60,15 @@ def summarize(input_path: Path) -> dict[str, object]:
         classname = testcase.get("classname", "")
         name = testcase.get("name", "")
         node_id = _node_id(classname, name)
+        properties = {
+            str(prop.get("name")): str(prop.get("value", ""))
+            for prop in testcase.findall("./properties/property")
+            if str(prop.get("name", "")).startswith("resource.")
+        }
+        if properties:
+            resource_evidence.append(
+                {"node_id": node_id, "properties": dict(sorted(properties.items()))}
+            )
         seconds = _parse_seconds(testcase.get("time", "0"), node_id)
         file_key = _file_key(classname)
 
@@ -78,6 +88,7 @@ def summarize(input_path: Path) -> dict[str, object]:
         "case_count": case_count,
         "files": files,
         "slowest": slowest[:30],
+        "resource_evidence": resource_evidence,
     }
 
 
@@ -101,6 +112,18 @@ def _print_summary(summary: dict[str, object]) -> None:
         node_id = str(row.get("node_id", "<unknown>"))
         seconds = float(row.get("seconds", 0.0))
         print(f"  {seconds:.3f}s {node_id}")
+
+    print("Resource evidence:")
+    resource_evidence = summary["resource_evidence"]
+    assert isinstance(resource_evidence, list)
+    for row in resource_evidence:
+        assert isinstance(row, dict)
+        node_id = str(row.get("node_id", "<unknown>"))
+        print(f"  {node_id}:")
+        properties = row.get("properties", {})
+        assert isinstance(properties, dict)
+        for name in sorted(properties):
+            print(f"    {name}: {properties[name]}")
 
 
 def _write_json_atomic(output_path: Path, summary: dict[str, object]) -> None:
