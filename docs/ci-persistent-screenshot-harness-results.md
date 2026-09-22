@@ -819,3 +819,78 @@ total testcase sum.
 Until that comparison is conclusive, hosted status is **PENDING**, no hosted GO
 is claimed, and Plan B remains unauthorized. An anomalous or incomparable run
 would remain inconclusive rather than authorizing matrix consolidation.
+
+## Unhandled-rejection realm hardening
+
+A final critical review found one remaining realm boundary: each host
+`unhandledRejection` listener inspected a VM-owned rejection reason while
+building its error record. The final executable endpoint is
+`43e65136aeb01acf1680d6214f2a4561331388cc` (`test: serialize VM failures in
+request realms`).
+
+All three workers now retain VM failures as opaque references only. Each
+reference is installed without inspection in randomized temporary slots in its
+originating request VM; VM-owned serializer code reads/coerces `name`, `message`
+and `stack`, bounds them, emits primitive JSON, and deletes both slots and the
+serializer. The host then parses and defensively bounds only the primitive JSON
+record. Getter/trap failures stay inside the VM serializer. The same path covers
+screenshot/current timer-dispatch throws, synchronous `vm.runInContext` throws,
+Fittings timer callback throws, Fittings unhandled rejections, and Fittings
+scenario rejection values before a host `ScenarioExecutionFailure` is built.
+Host-only adapter and assertion errors retain the existing host error path.
+
+The existing three VM-failure identities were strengthened without adding a
+target ID. Getter-bearing and Proxy reasons exercise `name`, `message`, `stack`,
+coercion, and prototype traps, throw from a getter, attempt caller/constructor
+realm recovery, preserve a host marker on the prior implementation, retain
+bounded failure logs and the `protocolHostileReject` stack, and prove the next
+request is pristine in the same worker. RED on all three workers was the next
+request failing with `unhandled rejection escaped into the host realm` and
+`true !== false`; GREEN uses the same identities.
+
+Fresh evidence after executable commit `43e65136`:
+
+```text
+protocol/isolation identities
+  15 passed in 11.89s
+  15 cases, zero failures/errors/skips
+  JUnit: /tmp/wingman-unhandled-rejection-fix-protocol-final.xml
+  SHA-256: 873ec6e3d907a79e70d3856743004b73734346d8c69b8d0bb9916e88860b417c
+
+NodeScenarioWorker lifecycle/protocol suite
+  12 passed in 6.15s
+  12 cases, zero failures/errors/skips
+  JUnit: /tmp/wingman-unhandled-rejection-fix-node-worker-final.xml
+  SHA-256: 89e73ef609d3971a94e31eb4c7ba244d6cfb9d0fcc83ee878068fdb711d74a7e
+
+four target files
+  597 passed in 80.86s
+  597 cases, zero failures/errors/skips
+  JUnit: /tmp/wingman-unhandled-rejection-fix-target-final.xml
+  SHA-256: 0b2f34fe8cdae90ebeafbe51e5b63051c91267536e75ecdc9a69b0835f0a35f6
+
+other shared-worker consumers
+  tests/test_ui_setup_page.py + tests/test_formations_page.py
+  448 passed in 50.19s
+  448 cases, zero failures/errors/skips
+  JUnit: /tmp/wingman-unhandled-rejection-fix-other-consumers-final.xml
+  SHA-256: d170927f4c3572cf90b4d94caf76e3a8390555bc7ee2523c3bfa349dd37467bf
+
+fresh full suite
+  16,686 passed, 14 skipped in 646.14s (10m46s)
+  16,700 cases, zero failures/errors, 14 platform-only skips
+  JUnit: /tmp/wingman-unhandled-rejection-fix-full.xml
+  SHA-256: 27f5800f6091a460841d1ff221cda7463a972547f6fa6b188c4ff47096e3fca5
+```
+
+Collection remains exactly 597 unique IDs, with per-file counts
+`246 / 90 / 160 / 101` and forward-order SHA-256
+`4ff87df92ef58977cd8e5b99b85ca52dddd330f4fc86b037d5f6d209e99de6e7`.
+Independent post-commit gates also passed: 35 Node DOM tests, executable JS
+smoke, Cargo regression, Ruff check, Ruff format check (520 files), Node syntax
+for all four CJS fixtures, and `git diff --check`. The complete executable range
+still matches the existing 15-path allowlist and contains no production,
+workflow, dependency, packaging-source, or configuration change.
+
+No branch was pushed and no workflow was dispatched. Hosted Windows/Ubuntu
+comparison remains **PENDING**, and Plan B remains unauthorized.
