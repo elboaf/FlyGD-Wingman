@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import queue
 import shutil
+import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,6 +23,8 @@ const rl = readline.createInterface({
   crlfDelay: Infinity,
 });
 
+let exitOnNextRequest = null;
+
 function reply(request, fields) {
   process.stdout.write(JSON.stringify(Object.assign({
     id: request.id,
@@ -33,6 +38,16 @@ function reply(request, fields) {
 
 rl.on('line', (line) => {
   const request = JSON.parse(line);
+
+  if (exitOnNextRequest) {
+    const pending = exitOnNextRequest;
+    exitOnNextRequest = null;
+    process.stderr.write(
+      'synthetic late EOF after ' + pending.scenario + '\n',
+      () => process.exit(pending.code)
+    );
+    return;
+  }
 
   if (request.scenario === 'echo' || request.scenario === 'echo-after-restart'
       || request.scenario === 'echo-after-mismatch') {
@@ -59,6 +74,28 @@ rl.on('line', (line) => {
         request_env: process.env.NODE_SCENARIO_REQUEST_ENV || ''
       });
     }, 200);
+    return;
+  }
+
+  if (request.scenario === 'ok-then-exit-on-next-eof') {
+    exitOnNextRequest = {code: 27, scenario: request.scenario};
+    reply(request, {});
+    return;
+  }
+
+  if (request.scenario === 'ok-then-exit-close') {
+    process.stdout.write(JSON.stringify({
+      id: request.id,
+      scenario: request.scenario,
+      ok: true,
+      duration_ms: 0.5,
+      error: '',
+      stack: ''
+    }) + '\n', () => {
+      process.stderr.write('synthetic late exit for ' + request.scenario + '\n', () => {
+        process.exit(29);
+      });
+    });
     return;
   }
 
@@ -163,6 +200,136 @@ def test_real_node_worker_reuses_utf8_process_then_recovers_from_failure_timeout
     node_worker.close()
     final_proc.wait(timeout=5)
     assert final_proc.poll() is not None
+
+
+def test_immediate_request_after_ok_reports_late_eof_context_and_recovers(
+    node_worker: NodeScenarioWorker,
+):
+    successful_scenario = "ok-then-exit-on-next-eof"
+    reply = node_worker.request(successful_scenario)
+    exited = node_worker._proc
+
+    assert reply["ok"] is True
+    assert exited is not None
+
+    with pytest.raises(NodeScenarioCrash, match=r"status 27") as crashed:
+        node_worker.request("echo-after-restart", {"text": "not silently restarted"})
+
+    rendered = str(crashed.value)
+    assert crashed.value.scenario == "echo-after-restart"
+    assert "before replying to the next request" in rendered
+    assert f"for {successful_scenario!r} (request 1)" in rendered
+    assert "synthetic late EOF after ok-then-exit-on-next-eof" in crashed.value.stderr
+    assert node_worker._proc is None
+
+    recovered = node_worker.request("echo-after-restart", {"text": "fresh"})
+
+    assert recovered["text"] == "fresh"
+    assert recovered["id"] == 3
+    assert node_worker._proc is not None
+    assert node_worker._proc.pid != exited.pid
+
+
+# A child cannot observe the parent's broken write to trigger its own exit.
+# Script the pipe and reap instead of coupling this branch to a timer race.
+class _BreakOnSecondWrite:
+    def __init__(self) -> None:
+        self._writes = 0
+
+    def write(self, text: str) -> int:
+        self._writes += 1
+        if self._writes == 2:
+            raise BrokenPipeError("synthetic broken pipe")
+        return len(text)
+
+    def flush(self) -> None:
+        return None
+
+
+class _ExitWhenReaped:
+    def __init__(self) -> None:
+        self.stdin = _BreakOnSecondWrite()
+        self._status: int | None = None
+        self.wait_timeouts: list[float | None] = []
+
+    def poll(self) -> int | None:
+        return self._status
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.wait_timeouts.append(timeout)
+        if self._status is None:
+            self._status = 28
+        return self._status
+
+    def terminate(self) -> None:
+        self._status = -15
+
+    def kill(self) -> None:
+        self._status = -9
+
+
+def test_broken_write_after_ok_reaps_status_and_prior_context(tmp_path: Path):
+    replies: queue.Queue[object] = queue.Queue()
+    replies.put(
+        {
+            "id": 1,
+            "scenario": "successful-before-broken-write",
+            "ok": True,
+            "duration_ms": 0.5,
+            "error": "",
+            "stack": "",
+        }
+    )
+    proc = _ExitWhenReaped()
+    state = SimpleNamespace(
+        proc=proc,
+        replies=replies,
+        stderr_tail=SimpleNamespace(text=lambda: "synthetic late broken-write stderr"),
+        stdout_thread=threading.Thread(),
+        stderr_thread=threading.Thread(),
+        last_successful_scenario=None,
+        last_successful_request_id=None,
+    )
+    worker = NodeScenarioWorker(["unused"], cwd=tmp_path)
+    worker._state = state
+    worker._proc = proc
+
+    first = worker.request("successful-before-broken-write")
+
+    assert first["ok"] is True
+    with pytest.raises(NodeScenarioCrash, match=r"status 28") as crashed:
+        worker.request("request-with-broken-write")
+
+    rendered = str(crashed.value)
+    assert crashed.value.scenario == "request-with-broken-write"
+    assert "while sending the next request" in rendered
+    assert "for 'successful-before-broken-write' (request 1)" in rendered
+    assert crashed.value.stderr == "synthetic late broken-write stderr"
+    assert len(proc.wait_timeouts) == 1
+    assert proc.wait_timeouts[0] is not None
+    assert 0 < proc.wait_timeouts[0] <= 0.25
+    assert worker._proc is None
+
+
+def test_close_reports_exit_after_last_ok_reply_and_worker_remains_recoverable(
+    node_worker: NodeScenarioWorker,
+):
+    reply = node_worker.request("ok-then-exit-close")
+
+    assert reply["ok"] is True
+    with pytest.raises(NodeScenarioCrash, match="status 29") as crashed:
+        node_worker.close()
+
+    assert crashed.value.scenario == "ok-then-exit-close"
+    assert "before close" in str(crashed.value)
+    assert "for 'ok-then-exit-close' (request 1)" in str(crashed.value)
+    assert "synthetic late exit for ok-then-exit-close" in crashed.value.stderr
+    assert node_worker._proc is None
+
+    recovered = node_worker.request("echo-after-restart", {"text": "fresh"})
+
+    assert recovered["text"] == "fresh"
+    assert recovered["id"] == 2
 
 
 def test_failure_renders_javascript_stack_in_pytest_diagnostics(node_worker):

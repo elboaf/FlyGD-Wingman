@@ -1,43 +1,583 @@
 // Real Settings owners + markup. Only the external bridge and DOM mechanics
 // are doubled; generated shooter expressions are the system under test.
 const assert = require('node:assert/strict');
+const {randomBytes} = require('node:crypto');
 const fs = require('node:fs');
+const readline = require('node:readline');
 const vm = require('node:vm');
-const data = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const {performance} = require('node:perf_hooks');
+const {isNativeError} = require('node:util/types');
+const {DOM_FACTORY_SOURCE} = require('./screenshot_dom.cjs');
+
+if (process.argv.length !== 4) {
+  process.stderr.write('Usage: current_screenshot_pages.cjs <markup-json> <web-root>\n');
+  process.exit(2);
+}
+const startupPageJson = fs.readFileSync(process.argv[2], 'utf8');
 const web = process.argv[3];
-const {createDOM} = require('./screenshot_dom.cjs');
-const {document, Element, scrolls} = createDOM(data.page);
-const window = new Element('window');
-Object.assign(window, {document, console: {...console, error: (...args) => { throw Error(args.join(' ')); }}, Promise, Math, Date,
-  navigator: {clipboard: {readText: () => assert.fail('clipboard read'), writeText: () => assert.fail('clipboard write')}},
-  Event: class { constructor(type) { this.type = type; } },
-  CustomEvent: class { constructor(type, opts) { this.type = type; this.detail = opts.detail; } },
-  setTimeout, clearTimeout, setInterval: () => 1, clearInterval: () => {},
-  requestAnimationFrame: callback => setTimeout(callback, 0),
-  matchMedia: () => ({matches: false}), getComputedStyle: () => ({visibility: 'visible'}), location: {search: ''}});
-window.window = window;
-const runtime = vm.createContext(window);
-const run = text => { if (text) return vm.runInContext(text, runtime); };
-const load = name => run(fs.readFileSync(web + '/' + name + '.js', 'utf8'));
-load('app');
-const WM = window.WM;
-const calls = [], waiting = [];
-let staging = false, hold = false, reply = () => null;
-WM.send = (method, ...args) => {
-  calls.push([method, ...args]);
-  assert.equal(staging, false, 'synthetic stage reached bridge: ' + method);
-  if (hold) return new Promise(resolve => waiting.push({method, resolve}));
-  return Promise.resolve(reply(method, ...args));
-};
-WM.endPreviewCapture = () => {};
-load('panel');
-const family = data.scenario === 'preview-subpage' ? 'previews'
-  : data.section === 'previews' ? 'wanderer' : data.section;
-const methods = family === 'fleet' ? ['fleetScreenshot', 'fleetSharingScreenshot']
-  : [family === 'wanderer' ? 'wandererScreenshot' : 'companionsScreenshot'];
-const clone = value => JSON.parse(JSON.stringify(value));
-const tick = () => new Promise(resolve => setTimeout(resolve, 5));
+const HOST_REJECTION_MARKER = '__wingmanUnhandledHostRealmEscapeProbe';
+const VM_FAILURE_NAME_LIMIT = 128;
+const VM_FAILURE_MESSAGE_LIMIT = 4096;
+const VM_FAILURE_STACK_LIMIT = 65536;
+const VM_FAILURE_JSON_LIMIT = 70000;
+const webSourcesJson = JSON.stringify(Object.fromEntries([
+  'app', 'panel', 'previews', 'fleet', 'fleetsharing', 'companions',
+  'wanderer', 'settings', 'bookmarks', 'alerts',
+].map(name => [name, fs.readFileSync(web + '/' + name + '.js', 'utf8')])));
+
+async function scenarioProgram(publishTimerDispatch) {
+  const startupJson = globalThis.__wingmanStartupPageJson;
+  const payloadJson = globalThis.__wingmanPayloadJson;
+  const webJson = globalThis.__wingmanWebSourcesJson;
+  const domFactorySource = globalThis.__wingmanDomFactorySource;
+  const scheduleTimer = globalThis.__wingmanTimerScheduleAdapter;
+  const clearTimer = globalThis.__wingmanTimerClearAdapter;
+  const encode = globalThis.__wingmanTextEncoderAdapter;
+  const searchParams = globalThis.__wingmanURLSearchParamsAdapter;
+  const takeUnhandled = globalThis.__wingmanUnhandledAdapter;
+  const protocolEventAdapter = globalThis.__wingmanProtocolEventAdapter;
+  delete globalThis.__wingmanStartupPageJson;
+  delete globalThis.__wingmanPayloadJson;
+  delete globalThis.__wingmanWebSourcesJson;
+  delete globalThis.__wingmanDomFactorySource;
+  delete globalThis.__wingmanTimerScheduleAdapter;
+  delete globalThis.__wingmanTimerClearAdapter;
+  delete globalThis.__wingmanTextEncoderAdapter;
+  delete globalThis.__wingmanURLSearchParamsAdapter;
+  delete globalThis.__wingmanUnhandledAdapter;
+  delete globalThis.__wingmanProtocolEventAdapter;
+
+  const outputLines = [];
+  const renderLogValue = value => {
+    if (typeof value === 'string') return value;
+    try {
+      const encoded = JSON.stringify(value);
+      if (encoded !== undefined) return encoded;
+    } catch {}
+    try { return String(value); } catch { return '<unprintable>'; }
+  };
+  const recordLog = args => {
+    let line = args.map(renderLogValue).join(' ');
+    if (line.length > 400) line = line.slice(0, 399) + '…';
+    outputLines.push(line);
+    if (outputLines.length > 40) outputLines.shift();
+  };
+  const console = globalThis.console = {
+    log: (...args) => recordLog(args),
+    info: (...args) => recordLog(args),
+    debug: (...args) => recordLog(args),
+    warn: (...args) => recordLog(args),
+    error: (...args) => { throw new Error(args.map(renderLogValue).join(' ')); },
+  };
+
+  class AssertionError extends Error {
+    constructor(message) {
+      super(message || 'Assertion failed');
+      this.name = 'AssertionError';
+    }
+  }
+  const render = value => {
+    try { return JSON.stringify(value); } catch { return String(value); }
+  };
+  const deeplyEqual = (actual, expected) => {
+    if (Object.is(actual, expected)) return true;
+    if (!actual || !expected || typeof actual !== 'object'
+        || typeof expected !== 'object') return false;
+    if (Array.isArray(actual) !== Array.isArray(expected)) return false;
+    const actualKeys = Object.keys(actual);
+    const expectedKeys = Object.keys(expected);
+    if (actualKeys.length !== expectedKeys.length) return false;
+    return actualKeys.every((key, index) => key === expectedKeys[index]
+      && deeplyEqual(actual[key], expected[key]));
+  };
+  const assert = {
+    ok(value, message) {
+      if (!value) throw new AssertionError(message || 'Expected value to be truthy');
+    },
+    equal(actual, expected, message) {
+      if (!Object.is(actual, expected)) {
+        throw new AssertionError(message
+          || `Expected ${render(actual)} to equal ${render(expected)}`);
+      }
+    },
+    notEqual(actual, expected, message) {
+      if (Object.is(actual, expected)) {
+        throw new AssertionError(message
+          || `Expected ${render(actual)} not to equal ${render(expected)}`);
+      }
+    },
+    deepEqual(actual, expected, message) {
+      if (!deeplyEqual(actual, expected)) {
+        throw new AssertionError(message
+          || `Expected ${render(actual)} to deep-equal ${render(expected)}`);
+      }
+    },
+    match(actual, pattern, message) {
+      if (!pattern.test(String(actual))) {
+        throw new AssertionError(message
+          || `Expected ${render(actual)} to match ${String(pattern)}`);
+      }
+    },
+    doesNotMatch(actual, pattern, message) {
+      if (pattern.test(String(actual))) {
+        throw new AssertionError(message
+          || `Expected ${render(actual)} not to match ${String(pattern)}`);
+      }
+    },
+    throws(callback, pattern, message) {
+      let thrown;
+      try { callback(); } catch (error) { thrown = error; }
+      if (!thrown) throw new AssertionError(message || 'Expected function to throw');
+      if (pattern && !pattern.test(String(thrown.message || thrown))) {
+        throw new AssertionError(message
+          || `Expected ${String(thrown.message || thrown)} to match ${String(pattern)}`);
+      }
+      return thrown;
+    },
+    fail(message) { throw new AssertionError(message); },
+  };
+
+  function fromHost(adapter, request) {
+    const envelope = Reflect.apply(adapter, undefined, [JSON.stringify(request)]);
+    if (typeof envelope !== 'string') {
+      throw new TypeError('Host adapter returned a non-primitive envelope');
+    }
+    const response = JSON.parse(envelope);
+    if (!response || response.ok !== true) {
+      const errorTypes = {Error, EvalError, RangeError, ReferenceError,
+        SyntaxError, TypeError, URIError};
+      const ErrorType = errorTypes[response && response.errorName] || Error;
+      const error = new ErrorType(
+        response && response.errorMessage || 'Host adapter failed');
+      if (response && typeof response.errorStack === 'string'
+          && response.errorStack) error.stack = response.errorStack;
+      throw error;
+    }
+    return response.value;
+  }
+  function reportProtocolEvent(name) {
+    fromHost(protocolEventAdapter, {name});
+  }
+  function errorRecord(error) {
+    let name = 'Error';
+    let message = 'Unknown error';
+    let stack = '';
+    try { if (error && typeof error.name === 'string') name = error.name; } catch {}
+    try {
+      if (error && typeof error.message === 'string') message = error.message;
+      else message = String(error);
+    } catch {}
+    try { if (error && error.stack) stack = String(error.stack); } catch {}
+    return {name, message, stack};
+  }
+  function reviveError(record) {
+    const errorTypes = {Error, EvalError, RangeError, ReferenceError,
+      SyntaxError, TypeError, URIError};
+    const ErrorType = errorTypes[record && record.name] || Error;
+    const error = new ErrorType(record && record.message || 'Asynchronous failure');
+    if (record && typeof record.stack === 'string' && record.stack) {
+      error.stack = record.stack;
+    }
+    return error;
+  }
+
+  const timerCallbacks = new Map();
+  const timerErrors = [];
+  let nextTimer = 1;
+  let nextInterval = 1;
+  function timerKey(kind, token) { return kind + ':' + token; }
+  function dispatchTimer(kind, token) {
+    const key = timerKey(kind, token);
+    const entry = timerCallbacks.get(key);
+    if (!entry) return;
+    if (kind !== 'interval') timerCallbacks.delete(key);
+    try {
+      Reflect.apply(entry.callback, globalThis.window || globalThis, entry.args);
+    } catch (error) {
+      timerErrors.push(errorRecord(error));
+    }
+  }
+  publishTimerDispatch(dispatchTimer);
+  function schedule(kind, callback, delay, args) {
+    if (typeof callback !== 'function') {
+      throw new TypeError(kind + ' callback must be a function');
+    }
+    const token = kind === 'interval' ? nextInterval++ : nextTimer++;
+    timerCallbacks.set(timerKey(kind, token), {callback, args});
+    try {
+      fromHost(scheduleTimer, {kind, token, delay: Number(delay)});
+    } catch (error) {
+      timerCallbacks.delete(timerKey(kind, token));
+      throw error;
+    }
+    return token;
+  }
+  function clear(kind, token) {
+    timerCallbacks.delete(timerKey(kind, token));
+    fromHost(clearTimer, {kind, token});
+  }
+  function setTimeout(callback, delay = 0, ...args) {
+    return schedule('timeout', callback, delay, args);
+  }
+  function clearTimeout(token) { clear('timeout', token); }
+  function setInterval(callback, delay = 0, ...args) {
+    return schedule('interval', callback, delay, args);
+  }
+  function clearInterval(token) { clear('interval', token); }
+  function requestAnimationFrame(callback) {
+    return schedule('timeout', callback, 0, []);
+  }
+  Object.assign(globalThis, {
+    setTimeout, clearTimeout, setInterval, clearInterval, requestAnimationFrame,
+  });
+
+  function encoderInput(value) {
+    if (typeof value === 'symbol') {
+      throw new TypeError('Cannot convert a Symbol value to a string');
+    }
+    return String(value);
+  }
+  const encoders = new WeakSet();
+  function encoder(instance) {
+    if (!encoders.has(instance)) throw new TypeError('Illegal invocation');
+  }
+  class TextEncoder {
+    constructor() { encoders.add(this); }
+    get encoding() { encoder(this); return 'utf-8'; }
+    encode(input = '') {
+      encoder(this);
+      const encoded = fromHost(encode,
+        {operation: 'encode', input: encoderInput(input), capacity: 0});
+      const result = new Uint8Array(encoded.bytes.length);
+      for (let index = 0; index < encoded.bytes.length; index++) {
+        result[index] = encoded.bytes[index];
+      }
+      return result;
+    }
+    encodeInto(input, destination) {
+      encoder(this);
+      if (!(destination instanceof Uint8Array)) {
+        throw new TypeError('The destination must be a Uint8Array');
+      }
+      const encoded = fromHost(encode, {
+        operation: 'encodeInto', input: encoderInput(input),
+        capacity: destination.length,
+      });
+      for (let index = 0; index < encoded.written; index++) {
+        destination[index] = encoded.bytes[index];
+      }
+      return {read: encoded.read, written: encoded.written};
+    }
+  }
+  Object.defineProperty(TextEncoder.prototype, Symbol.toStringTag,
+    {value: 'TextEncoder', configurable: true});
+
+  const parameterStates = new WeakMap();
+  function stateFor(instance) {
+    if (!parameterStates.has(instance)) throw new TypeError('Illegal invocation');
+    return parameterStates.get(instance);
+  }
+  function webString(value) {
+    if (typeof value === 'symbol') {
+      throw new TypeError('Cannot convert a Symbol value to a string');
+    }
+    return String(value);
+  }
+  function urlOperation(operation, serializedState, args) {
+    const response = fromHost(searchParams,
+      {operation, serializedState, argumentsJson: JSON.stringify(args)});
+    if (!response || typeof response.state !== 'string') {
+      throw new TypeError('Host URLSearchParams adapter returned invalid state');
+    }
+    return response;
+  }
+  function invoke(instance, operation, args) {
+    const response = urlOperation(operation, stateFor(instance), args);
+    parameterStates.set(instance, response.state);
+    return response.result;
+  }
+  class URLSearchParams {
+    constructor(init = '') {
+      let operation = 'construct-string';
+      let args;
+      if (init instanceof URLSearchParams) {
+        args = [stateFor(init)];
+      } else if (typeof init === 'string') {
+        args = [init];
+      } else if (init !== null && init !== undefined
+          && typeof init[Symbol.iterator] === 'function') {
+        operation = 'construct-entries';
+        const entries = [];
+        for (const pair of init) {
+          const values = Array.from(pair);
+          if (values.length !== 2) {
+            throw new TypeError(
+              'Each query pair must be an iterable [name, value] tuple');
+          }
+          entries.push([webString(values[0]), webString(values[1])]);
+        }
+        args = [entries];
+      } else if (init !== null && typeof init === 'object') {
+        operation = 'construct-entries';
+        const entries = [];
+        for (const name of Object.keys(init)) {
+          entries.push([webString(name), webString(init[name])]);
+        }
+        args = [entries];
+      } else {
+        args = [webString(init)];
+      }
+      const response = urlOperation(operation, '', args);
+      parameterStates.set(this, response.state);
+    }
+    get size() { return invoke(this, 'size', []); }
+    append(name, value) { invoke(this, 'append', [webString(name), webString(value)]); }
+    delete(name, value) {
+      const args = [webString(name)];
+      if (arguments.length > 1) args.push(webString(value));
+      invoke(this, 'delete', args);
+    }
+    get(name) { return invoke(this, 'get', [webString(name)]); }
+    getAll(name) { return invoke(this, 'getAll', [webString(name)]); }
+    has(name, value) {
+      const args = [webString(name)];
+      if (arguments.length > 1) args.push(webString(value));
+      return invoke(this, 'has', args);
+    }
+    set(name, value) { invoke(this, 'set', [webString(name), webString(value)]); }
+    sort() { invoke(this, 'sort', []); }
+    toString() { return invoke(this, 'toString', []); }
+    *entries() {
+      for (let index = 0; ; index++) {
+        const entries = invoke(this, 'entries', []);
+        if (index >= entries.length) return;
+        yield [entries[index][0], entries[index][1]];
+      }
+    }
+    *keys() { for (const entry of this.entries()) yield entry[0]; }
+    *values() { for (const entry of this.entries()) yield entry[1]; }
+    forEach(callback, thisArg = undefined) {
+      for (let index = 0; ; index++) {
+        const entries = invoke(this, 'entries', []);
+        if (index >= entries.length) return;
+        callback.call(thisArg, entries[index][1], entries[index][0], this);
+      }
+    }
+    [Symbol.iterator]() { return this.entries(); }
+  }
+  Object.defineProperty(URLSearchParams.prototype, Symbol.toStringTag,
+    {value: 'URLSearchParams', configurable: true});
+  globalThis.TextEncoder = TextEncoder;
+  globalThis.URLSearchParams = URLSearchParams;
+
+  globalThis.Event = class Event {
+    constructor(type) { this.type = type; }
+  };
+  globalThis.CustomEvent = class CustomEvent {
+    constructor(type, options = {}) { this.type = type; this.detail = options.detail; }
+  };
+  globalThis.navigator = {clipboard: {
+    readText() { throw new Error('clipboard read'); },
+    writeText() { throw new Error('clipboard write'); },
+  }};
+  globalThis.requestAnimationFrame = callback => setTimeout(callback, 0);
+  globalThis.matchMedia = () => ({matches: false});
+  globalThis.getComputedStyle = () => ({visibility: 'visible'});
+  globalThis.location = {search: ''};
+
+  const data = JSON.parse(payloadJson) || {};
+  const webSources = JSON.parse(webJson);
+  const createDOM = (0, eval)('(' + domFactorySource + ')');
+  const page = JSON.parse(startupJson);
+  const {document, Element, scrolls} = createDOM(page);
+  const windowState = new Element('window');
+  Object.defineProperties(globalThis, Object.getOwnPropertyDescriptors(windowState));
+  Object.setPrototypeOf(globalThis, Element.prototype);
+  Object.defineProperty(globalThis, 'constructor', {
+    value: Element, writable: true, configurable: true,
+  });
+  const window = globalThis;
+  globalThis.window = window;
+  globalThis.document = document;
+  globalThis.Element = Element;
+  const run = expression => { if (expression) return (0, eval)(expression); };
+  const Promise = globalThis.Promise;
+  for (const name of [
+    '__wingmanStartupPageJson', '__wingmanPayloadJson',
+    '__wingmanWebSourcesJson', '__wingmanDomFactorySource',
+    '__wingmanTimerScheduleAdapter', '__wingmanTimerClearAdapter',
+    '__wingmanTextEncoderAdapter', '__wingmanURLSearchParamsAdapter',
+    '__wingmanUnhandledAdapter', '__wingmanProtocolEventAdapter',
+    '__wingmanCompleteAdapter',
+  ]) {
+    assert.equal(name in globalThis, false,
+      'host adapter remained globally reachable: ' + name);
+  }
+
+  try {
+    const protocolProbe = data.protocol_probe;
+    if (data.failure_logs) {
+      for (let index = 0; index < 45; index++) {
+        console.debug('protocol filler context ' + index);
+      }
+      console.log('protocol log context');
+      console.info('protocol info context');
+      console.debug('protocol debug context');
+      console.warn('protocol warn context ' + 'x'.repeat(500));
+    }
+    if (protocolProbe === 'vm-throw') {
+      run(`(() => { function protocolVmThrow() { throw new Error('protocol VM throw'); }
+        protocolVmThrow(); })()`);
+    }
+    if (protocolProbe === 'vm-reject') {
+      if (data.hostile_rejection) {
+        let hostileRejectionArmed = false;
+        const hostileVmAccesses = new Set();
+        function attemptUnhandledRealmEscape(label) {
+          let caller;
+          try { caller = attemptUnhandledRealmEscape.caller; } catch {}
+          for (let depth = 0; caller && depth < 8; depth++) {
+            try {
+              const realm = caller.constructor('return globalThis')();
+              if (realm === globalThis) hostileVmAccesses.add(label);
+              if (realm && 'process' in realm) {
+                realm.__wingmanUnhandledHostRealmEscapeProbe =
+                  data.hostile_rejection + ':' + label;
+                return true;
+              }
+            } catch {}
+            try { caller = caller.caller; } catch { break; }
+          }
+          if (hostileRejectionArmed
+              && !globalThis.__wingmanSerializingUnhandledReason) {
+            try {
+              const realm = takeUnhandled.constructor('return globalThis')();
+              realm.__wingmanUnhandledHostRealmEscapeProbe =
+                data.hostile_rejection + ':' + label;
+              return true;
+            } catch {}
+          }
+          return false;
+        }
+        function protocolHostileReject() {
+          const expected = 'protocol hostile ' + data.hostile_rejection
+            + ' rejection';
+          const target = {};
+          Object.defineProperties(target, {
+            name: {get: function hostileNameGetter() {
+              attemptUnhandledRealmEscape('name');
+              throw new Error('hostile name getter failure');
+            }},
+            message: {get: function hostileMessageGetter() {
+              const escaped = attemptUnhandledRealmEscape('message');
+              return escaped ? 'host realm escaped through rejection' : expected;
+            }},
+            stack: {get: function hostileStackGetter() {
+              attemptUnhandledRealmEscape('stack');
+              return 'Error: ' + expected
+                + '\\n    at protocolHostileReject (protocol-probe.cjs:1:1)';
+            }},
+          });
+          let reason = target;
+          if (data.hostile_rejection === 'proxy') {
+            reason = new Proxy(target, {
+              get: function hostileProxyGet(owner, key, receiver) {
+                attemptUnhandledRealmEscape('get:' + String(key));
+                if (key === Symbol.toPrimitive) {
+                  return function protocolHostileCoercion() {
+                    attemptUnhandledRealmEscape('coercion');
+                    return expected;
+                  };
+                }
+                return Reflect.get(owner, key, receiver);
+              },
+              getPrototypeOf: function hostileProxyGetPrototypeOf(owner) {
+                attemptUnhandledRealmEscape('prototype');
+                return Reflect.getPrototypeOf(owner);
+              },
+            });
+            Object.getPrototypeOf(reason);
+            String(reason);
+            if (!hostileVmAccesses.has('prototype')
+                || !hostileVmAccesses.has('coercion')) {
+              throw new Error('hostile Proxy probes did not run in the request VM');
+            }
+          }
+          hostileRejectionArmed = true;
+          Promise.reject(reason);
+        }
+        protocolHostileReject();
+      } else {
+        run(`(() => { function protocolVmReject() {
+          Promise.reject(new Error('protocol VM rejection')); }
+          protocolVmReject(); })()`);
+      }
+    }
+    if (protocolProbe?.startsWith('pending-timer-')) {
+      const activeInterval = setInterval(() => {
+        reportProtocolEvent('active-interval');
+        clearInterval(activeInterval);
+      }, 0);
+      await new Promise(resolve => setTimeout(() => {
+        reportProtocolEvent('active-control');
+        resolve();
+      }, 0));
+      await new Promise(resolve => setTimeout(resolve, 0));
+      setTimeout(() => reportProtocolEvent('leaked-timeout'), 0);
+      setInterval(() => reportProtocolEvent('leaked-interval'), 0);
+      if (protocolProbe === 'pending-timer-assertion-exit') {
+        throw new Error('protocol cleanup probe failure');
+      }
+    }
+    if (protocolProbe) {
+      assert.equal(timerCallbacks.size, 0, 'request left a live timer');
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const asynchronousErrors = timerErrors.concat(fromHost(takeUnhandled, {}));
+      if (asynchronousErrors.length) throw reviveError(asynchronousErrors[0]);
+      assert.equal(timerCallbacks.size, 0, 'request left a live timer');
+      assert.fail('protocol probe did not fail');
+    }
+    const load = name => run(webSources[name]);
+    load('app');
+    const WM = window.WM;
+    const calls = [], waiting = [];
+    let staging = false, hold = false, reply = () => null;
+    const hostClone = value => JSON.parse(JSON.stringify(value));
+    const clone = value => run('JSON.parse(' + JSON.stringify(JSON.stringify(value)) + ')');
+    const webValue = value => {
+      if (value === null || value === undefined || typeof value !== 'object'
+          || value instanceof Promise) return value;
+      return clone(value);
+    };
+    WM.send = (method, ...args) => {
+      calls.push([method, ...args]);
+      assert.equal(staging, false, 'synthetic stage reached bridge: ' + method);
+      if (hold) return new Promise(resolve => waiting.push({method, resolve}));
+      return Promise.resolve(webValue(reply(method, ...args)));
+    };
+    WM.endPreviewCapture = () => {};
+    load('panel');
+    const family = data.scenario === 'preview-subpage' ? 'previews'
+      : data.section === 'previews' ? 'wanderer' : data.section;
+    const methods = family === 'fleet' ? ['fleetScreenshot', 'fleetSharingScreenshot']
+      : [family === 'wanderer' ? 'wandererScreenshot' : 'companionsScreenshot'];
+    const tick = () => new Promise(resolve => setTimeout(resolve, 5));
 const live = data.fixture[family] ? clone(data.fixture[family]) : null;
+if (data.companion_live_probe) {
+  const probe = data.companion_live_probe;
+  assert.equal(family, 'companions', 'companion live probe requires its owner family');
+  assert.equal(live.state.revision, probe.expected_revision,
+    'companion live revision leaked across requests');
+  assert.equal(live.state.rows[0].label, probe.expected_label,
+    'companion live label leaked across requests');
+  assert.equal(live.state.rows[0].source.last_title, probe.expected_last_title,
+    'companion nested live state leaked across requests');
+  if (probe.poison) {
+    live.state.revision = 9001;
+    live.state.rows[0].label = 'Poisoned companion';
+    live.state.rows[0].source.last_title = 'Poisoned nested source title';
+  }
+}
 // Live revisions exceed the fixture: restoring authority must not depend on
 // a guessed higher synthetic revision. Fleet controls are production-projected.
 if (family === 'companions') {
@@ -173,10 +713,14 @@ async function sharingLifecycle(scenario) {
   B.presentation_order = A.presentation_order + 1;
   const fire = (id, type = 'click') => WM.el(id).dispatchEvent({type});
   const groups = ['sharing-sources', 'sharing-pending-sources', 'sharing-history-sources'];
-  const rowIds = () => groups.map(id => WM.el(id).children.map(row => row.getAttribute('data-source')));
-  const view = () => document.querySelectorAll('[id]').filter(node => node.id.startsWith('sharing-')
-    || ['fleet-overview-sharing', 'fleet-overview-auth', 'fleet-overview-verification'].includes(node.id))
-    .map(node => [node.id, node.textContent, node.hidden, node.disabled, node.checked, node.value, !!node.open]);
+  const rowIds = () => groups.map(id => Array.from(
+    WM.el(id).children, row => row.getAttribute('data-source')));
+  const view = () => Array.from(document.querySelectorAll('[id]').filter(
+    node => node.id.startsWith('sharing-')
+      || ['fleet-overview-sharing', 'fleet-overview-auth',
+        'fleet-overview-verification'].includes(node.id)),
+  node => [node.id, node.textContent, node.hidden, node.disabled,
+    node.checked, node.value, !!node.open]);
   const controls = ['sharing-combat', 'sharing-automatic-confirm', 'sharing-automatic-cancel',
     'sharing-automatic-dismiss', 'sharing-legacy-dismiss', 'sharing-legacy-remove', 'sharing-connect', 'sharing-confirm-on'];
   const confirm = WM.confirm;
@@ -230,14 +774,14 @@ async function sharingLifecycle(scenario) {
     assert.match(WM.el('fleet-overview-auth').textContent, /Paired · last observed On/);
     assert.equal(WM.el('fleet-overview-verification').textContent,
       expected.pending_sources.length ? 'Eligible · local operation pending' : 'Eligible');
-    assert.deepEqual(rowIds(), [
+    assert.deepEqual(rowIds(), hostClone([
       expected.sources.sources.filter(row => row.state !== 'ended').map(row => row.source_id),
       expected.pending_sources.map(row => row.source_id),
       expected.sources.sources.filter(row => row.state === 'ended').map(row => row.source_id)
-    ]);
+    ]));
     for (const control of expected.controls.sources) {
       const row = document.querySelector('[data-source="' + control.source_id + '"]');
-      assert.deepEqual(clone(row.lastChild._sharingControl), control);
+      assert.deepEqual(hostClone(row.lastChild._sharingControl), hostClone(control));
     }
     assert.doesNotMatch(WM.el('fleet-sharing').textContent, /poisoned|authgd\.example/);
   }
@@ -275,7 +819,9 @@ async function sharingLifecycle(scenario) {
     WM.el('sharing-automatic').checked = false; fire('sharing-automatic', 'change');
     await tick();
     assert.equal(confirmations, before, 'ordinary automatic Off does not wait on a dialog');
-    assert.deepEqual(clone(calls), [['fleet_sharing_automatic', 'off', expected.setup_controls.automatic]]);
+    assert.deepEqual(hostClone(calls), hostClone([
+      ['fleet_sharing_automatic', 'off', expected.setup_controls.automatic]
+    ]));
   }
 
   if (scenario === 'cold' || scenario === 'cold-then-live' || scenario === 'repeat') {
@@ -330,7 +876,7 @@ async function sharingLifecycle(scenario) {
     const fixtureStop = WM.el('sharing-sources').firstChild.lastChild;
     window.onFleetSharingState(clone(B));
     await cleanup(); observed(B);
-    waiting.shift().resolve({state: clone(A)}); await tick(); observed(B);
+    waiting.shift().resolve(webValue({state: clone(A)})); await tick(); observed(B);
     assert.equal(calls.length, 0, 'pre-fixture read completion cannot acquire live authority');
     WM.el('dlg-ok').click(); await tick();
     assert.equal(calls.length, 0, 'pre-fixture confirmation cannot survive the fixture epoch');
@@ -343,8 +889,10 @@ async function sharingLifecycle(scenario) {
     const stop = WM.el('sharing-sources').firstChild.lastChild;
     stop.click(); assert.equal(WM.el('overlay').hidden, false);
     WM.el('dlg-ok').click(); await tick();
-    assert.deepEqual(clone(calls), [['fleet_sharing_stop_source', B.controls.sources[0].source_id,
-      B.metadata.binding, B.controls.sources[0]]]);
+    assert.deepEqual(hostClone(calls), hostClone([
+      ['fleet_sharing_stop_source', B.controls.sources[0].source_id,
+        B.metadata.binding, B.controls.sources[0]]
+    ]));
   } else if (scenario === 'focus') {
     window.onFleetSharingState(clone(A));
     WM.el('sharing-boss').value = '1'; fire('sharing-boss', 'change');
@@ -369,21 +917,23 @@ async function sharingLifecycle(scenario) {
     const before = rowIds();
     await stage();
     assert.deepEqual(rowIds(), before);
-    const fixtureRows = groups.flatMap(id => WM.el(id).children);
+    const fixtureRows = groups.flatMap(id => Array.from(WM.el(id).children));
     window.onFleetSharingState(clone(B));
     await cleanup(); observed(B);
-    assert.deepEqual(rowIds(), [before[0], B.pending_sources.map(row => row.source_id), before[2]]);
+    assert.deepEqual(rowIds(), hostClone([
+      before[0], B.pending_sources.map(row => row.source_id), before[2]
+    ]));
     assert.equal(WM.el('sharing-pending').hidden, false);
     assert.match(WM.el('sharing-pending-sources').textContent, /Start saved; outcome unconfirmed/);
     assert.equal(WM.el('sharing-history-summary').textContent, 'Previous attempts (1)');
     assert.match(WM.el('sharing-history-sources').textContent, /ended — boss lost/);
-    const restored = groups.flatMap(id => WM.el(id).children);
+    const restored = groups.flatMap(id => Array.from(WM.el(id).children));
     assert.ok(restored.every(row => !fixtureRows.includes(row)), 'restored rows must not retain fixture control captures');
     const neutral = view();
     run(data.cleanup); assert.deepEqual(view(), neutral);
     restored[0].lastChild.focus();
     window.onFleetSharingState(clone(B));
-    const reconciled = groups.flatMap(id => WM.el(id).children);
+    const reconciled = groups.flatMap(id => Array.from(WM.el(id).children));
     assert.equal(reconciled.length, restored.length);
     reconciled.forEach((row, index) => assert.equal(row, restored[index], 'ordinary live reconciliation keeps keyed rows'));
     assert.equal(document.activeElement, restored[0].lastChild);
@@ -391,7 +941,7 @@ async function sharingLifecycle(scenario) {
   } else assert.fail('Unknown sharing lifecycle case: ' + scenario);
   WM.confirm = confirm;
 }
-(async () => {
+async function executeScenario() {
   if (data.scenario === 'preview-subpage') {
     load('previews'); WM.openSettingsSection('previews'); await tick();
     const outer = document.querySelector('.settings-pane');
@@ -478,7 +1028,7 @@ async function sharingLifecycle(scenario) {
     document.activeElement = document.body;
     load(data.section === 'uploading' ? 'settings' : data.section);
     WM.openSettingsSection(data.section);
-    if (data.section === 'uploading') window.onSettings({settings: {category: '20'}});
+    if (data.section === 'uploading') window.onSettings(clone({settings: {category: '20'}}));
     await tick();
     const expected = data.section === 'uploading' ? '#fr-status'
       : data.section === 'bookmarks' ? '#eve-windows' : '#custom-alert-health';
@@ -583,7 +1133,7 @@ async function sharingLifecycle(scenario) {
     if (buffered) run(data.prepare);
     // Settings changed before worker reconfiguration. The acknowledgement is
     // current, but this coverage still belongs to the previous binding.
-    const rebound = {...clone(live.state), revision: 8, generation: 7, map_identifier: 'new-binding'};
+    const rebound = clone({...live.state, revision: 8, generation: 7, map_identifier: 'new-binding'});
     window.onWandererState(rebound);
     if (buffered) {
       assert.equal(WM.el('wanderer-url').value, 'https://wanderer.example/home-chain');
@@ -592,7 +1142,7 @@ async function sharingLifecycle(scenario) {
     }
     assert.equal(WM.el('wanderer-health').textContent, 'Connecting…');
     assert.equal(WM.el('wanderer-coverage').textContent, '');
-    window.onWandererState({...rebound, generation: 8, available: 1});
+    window.onWandererState(clone({...rebound, generation: 8, available: 1}));
     assert.equal(WM.el('wanderer-health-label').textContent, 'Connected · Names available for 1 of 3 previews');
     assert.match(WM.el('wanderer-coverage').textContent, /^2 of 3 tracked/);
     assert.equal(calls.length, 0);
@@ -613,8 +1163,8 @@ async function sharingLifecycle(scenario) {
     };
     refuse();
     const error = {applied: false, persisted: false, error: 'Live write failed'};
-    waiting.shift().resolve(error); await tick();
-    if (action === 'overlap') { refuse(); waiting.shift().resolve(error); await tick(); }
+    waiting.shift().resolve(webValue(error)); await tick();
+    if (action === 'overlap') { refuse(); waiting.shift().resolve(webValue(error)); await tick(); }
     assert.match(WM.el(action === 'character' ? 'fleetbar-characters-status' : 'fleetbar-enabled-status').textContent, /Live write failed/);
     hold = false; staging = true;
     run(data.prepare); run(data.cleanup); // Admission resumes only after every reply.
@@ -639,8 +1189,8 @@ async function sharingLifecycle(scenario) {
     refuse();
     const error = {queued: false, error: 'Browser launch failed'};
     // Settle the newer owner first: the older pending call still blocks capture.
-    waiting.pop().resolve(error); await tick();
-    if (action === 'overlap') { refuse(); waiting.pop().resolve(error); await tick(); }
+    waiting.pop().resolve(webValue(error)); await tick();
+    if (action === 'overlap') { refuse(); waiting.pop().resolve(webValue(error)); await tick(); }
     assert.match(WM.el('sharing-action').textContent, /Browser launch failed/);
     hold = false; staging = true;
     run(data.prepare); run(data.cleanup);
@@ -693,7 +1243,7 @@ async function sharingLifecycle(scenario) {
     await tick(); run(data.stage); await tick();
     assertContent();
     if (data.scenario === 'late-read') {
-      waiting.splice(0).forEach(item => item.resolve(liveReply(item.method)));
+      waiting.splice(0).forEach(item => item.resolve(webValue(liveReply(item.method))));
       await tick(); assertContent();
     }
     // A newer live delivery during capture must be retained, not merely
@@ -755,4 +1305,479 @@ async function sharingLifecycle(scenario) {
       ['test_wanderer_connection', 'https://live.example/live-map-updated', '']);
   }
   console.log('PASS current screenshot ' + data.key + ' ' + data.scenario);
-})().catch(error => { console.error(error); process.exitCode = 1; });
+}
+    await executeScenario();
+    const activeTimeouts = () => Array.from(timerCallbacks.keys())
+      .filter(key => key.startsWith('timeout:'));
+    assert.equal(activeTimeouts().length, 0,
+      'request left a live timer: ' + activeTimeouts().join(','));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const asynchronousErrors = timerErrors.concat(fromHost(takeUnhandled, {}));
+    if (asynchronousErrors.length) throw reviveError(asynchronousErrors[0]);
+    assert.equal(activeTimeouts().length, 0,
+      'request left a live timer: ' + activeTimeouts().join(','));
+    const passLines = outputLines.filter(line => line.startsWith('PASS current screenshot'));
+    assert.equal(passLines.length, 1, 'request must produce exactly one terminal PASS line');
+    assert.equal(outputLines.at(-1), passLines[0], 'request PASS line must be terminal');
+    return {
+      ok: true,
+      output: passLines[0],
+      error: '',
+      stack: '',
+      logs: outputLines.slice(),
+    };
+  } catch (error) {
+    const failure = errorRecord(error);
+    return {
+      ok: false,
+      output: '',
+      error: failure.message,
+      stack: failure.stack,
+      logs: outputLines.slice(),
+    };
+  }
+}
+
+function safeErrorRecord(error) {
+  let name = 'Error';
+  let message = 'Unknown error';
+  let stack = '';
+  try { if (error && typeof error.name === 'string') name = error.name; } catch {}
+  try {
+    if (error && typeof error.message === 'string') message = error.message;
+    else message = String(error);
+  } catch {}
+  try { if (error && error.stack) stack = String(error.stack); } catch {}
+  return {name, message, stack};
+}
+
+function adapterEnvelope(operation) {
+  try {
+    return JSON.stringify({ok: true, value: operation()});
+  } catch (error) {
+    const failure = safeErrorRecord(error);
+    try {
+      return JSON.stringify({
+        ok: false,
+        errorName: failure.name,
+        errorMessage: failure.message,
+        errorStack: failure.stack,
+      });
+    } catch {
+      return '{"ok":false,"errorName":"Error","errorMessage":"Host adapter failed","errorStack":""}';
+    }
+  }
+}
+
+function adapterRequest(envelope) {
+  assert.equal(typeof envelope, 'string',
+    'host adapter request must be a primitive JSON envelope');
+  const request = JSON.parse(envelope);
+  assert.ok(request && typeof request === 'object' && !Array.isArray(request),
+    'host adapter request must decode to an object');
+  return request;
+}
+
+function boundedVmFailureField(record, name, fallback, limit) {
+  const value = record[name];
+  if (typeof value !== 'string') return fallback;
+  return value.length > limit ? value.slice(0, limit) : value;
+}
+
+function parseVmFailureJson(serialized) {
+  assert.equal(typeof serialized, 'string',
+    'VM failure serializer must return primitive JSON');
+  assert.ok(serialized.length <= VM_FAILURE_JSON_LIMIT,
+    'VM failure serializer exceeded its bounded envelope');
+  let record;
+  try {
+    record = JSON.parse(serialized);
+  } catch {
+    throw new Error('VM failure serializer returned invalid JSON');
+  }
+  assert.ok(record && typeof record === 'object' && !Array.isArray(record),
+    'VM failure serializer returned an invalid record');
+  return {
+    name: boundedVmFailureField(
+      record, 'name', 'Error', VM_FAILURE_NAME_LIMIT),
+    message: boundedVmFailureField(
+      record, 'message', 'Unhandled rejection', VM_FAILURE_MESSAGE_LIMIT),
+    stack: boundedVmFailureField(
+      record, 'stack', '', VM_FAILURE_STACK_LIMIT),
+  };
+}
+
+// VM failures stay opaque on the host; only request-realm code may inspect them.
+function serializeOpaqueVmFailure(runtime, reason) {
+  const token = randomBytes(16).toString('hex');
+  const reasonSlot = '__wingmanOpaqueFailure_' + token;
+  const serializerSlot = '__wingmanFailureSerializer_' + token;
+  runtime[reasonSlot] = reason;
+  let serialized;
+  try {
+    serialized = vm.runInContext(`(() => {
+      const reasonSlot = ${JSON.stringify(reasonSlot)};
+      const serializerSlot = ${JSON.stringify(serializerSlot)};
+      globalThis.__wingmanSerializingUnhandledReason = true;
+      globalThis[serializerSlot] = function serializeVmFailure(reason) {
+        const clip = (value, fallback, limit) => {
+          if (typeof value !== 'string') return fallback;
+          return value.length > limit ? value.slice(0, limit) : value;
+        };
+        const read = (name, fallback, limit) => {
+          try { return clip(reason == null ? undefined : reason[name], fallback, limit); }
+          catch { return fallback; }
+        };
+        const coerce = fallback => {
+          try { return clip(String(reason), fallback, ${VM_FAILURE_MESSAGE_LIMIT}); }
+          catch { return fallback; }
+        };
+        const name = read('name', 'Error', ${VM_FAILURE_NAME_LIMIT});
+        let message = read('message', null, ${VM_FAILURE_MESSAGE_LIMIT});
+        if (message === null) message = coerce('Unhandled rejection');
+        const stack = read('stack', '', ${VM_FAILURE_STACK_LIMIT});
+        return JSON.stringify({name, message, stack});
+      };
+      try {
+        return globalThis[serializerSlot](globalThis[reasonSlot]);
+      } catch {
+        return '{"name":"Error","message":"Unhandled rejection could not be serialized","stack":""}';
+      } finally {
+        delete globalThis[reasonSlot];
+        delete globalThis[serializerSlot];
+        delete globalThis.__wingmanSerializingUnhandledReason;
+      }
+    })()`, runtime);
+  } catch {
+    throw new Error('VM failure serialization did not complete');
+  } finally {
+    delete runtime[reasonSlot];
+    delete runtime[serializerSlot];
+    delete runtime.__wingmanSerializingUnhandledReason;
+  }
+  return parseVmFailureJson(serialized);
+}
+
+class ScenarioExecutionFailure extends Error {
+  constructor(result) {
+    super(result.error || 'worker reported failure');
+    this.name = 'ScenarioExecutionFailure';
+    this.remoteStack = typeof result.stack === 'string' ? result.stack : '';
+    this.logs = Array.isArray(result.logs)
+      ? result.logs.slice(-40).map(line => {
+        const text = String(line);
+        return text.length > 400 ? text.slice(0, 399) + '…' : text;
+      })
+      : [];
+  }
+}
+
+async function runScenario(request, cleanupProbe = null) {
+  if (request.payload?.assert_unhandled_host_pristine) {
+    const leaked = Object.hasOwn(globalThis, HOST_REJECTION_MARKER);
+    delete globalThis[HOST_REJECTION_MARKER];
+    assert.equal(leaked, false,
+      'unhandled rejection escaped into the host realm');
+  }
+  const timers = new Map();
+  const intervals = new Map();
+  const unhandledRejections = [];
+  const dispatchFailures = [];
+  let runtime;
+  let completionResolve;
+  let completionCalled = false;
+  const completion = new Promise(resolve => { completionResolve = resolve; });
+  const dispatchBinding = '__wingmanTimerDispatch_'
+    + randomBytes(16).toString('hex');
+  const captureRejection = reason => {
+    unhandledRejections.push(reason);
+  };
+  process.on('unhandledRejection', captureRejection);
+
+  const timerScheduleAdapter = envelope => adapterEnvelope(() => {
+    const timer = adapterRequest(envelope);
+    assert.ok(['timeout', 'interval'].includes(timer.kind),
+      'unknown timer adapter operation');
+    assert.equal(Number.isInteger(timer.token) && timer.token > 0, true,
+      'timer token must be a positive integer');
+    const handles = timer.kind === 'interval' ? intervals : timers;
+    assert.equal(handles.has(timer.token), false, 'timer token was reused');
+    const delay = Number(timer.delay);
+    const dispatch = () => {
+      if (timer.kind !== 'interval') handles.delete(timer.token);
+      try {
+        vm.runInContext(
+          dispatchBinding + '(' + JSON.stringify(timer.kind) + ','
+            + JSON.stringify(timer.token) + ')',
+          runtime,
+        );
+      } catch (error) {
+        dispatchFailures.push(error);
+      }
+    };
+    const handle = timer.kind === 'interval'
+      ? setInterval(dispatch, Number.isFinite(delay) ? delay : 0)
+      : setTimeout(dispatch, Number.isFinite(delay) ? delay : 0);
+    handles.set(timer.token, handle);
+    return null;
+  });
+  const timerClearAdapter = envelope => adapterEnvelope(() => {
+    const timer = adapterRequest(envelope);
+    assert.ok(['timeout', 'interval'].includes(timer.kind),
+      'unknown timer clear adapter operation');
+    const handles = timer.kind === 'interval' ? intervals : timers;
+    const handle = handles.get(timer.token);
+    if (handle !== undefined) {
+      if (timer.kind === 'interval') clearInterval(handle);
+      else clearTimeout(handle);
+    }
+    handles.delete(timer.token);
+    return null;
+  });
+  const hostTextEncoder = new globalThis.TextEncoder();
+  const textEncoderAdapter = envelope => adapterEnvelope(() => {
+    const request = adapterRequest(envelope);
+    if (request.operation === 'encode') {
+      return {bytes: Array.from(hostTextEncoder.encode(request.input))};
+    }
+    if (request.operation === 'encodeInto') {
+      const destination = new Uint8Array(request.capacity);
+      const result = hostTextEncoder.encodeInto(request.input, destination);
+      return {
+        read: result.read,
+        written: result.written,
+        bytes: Array.from(destination.subarray(0, result.written)),
+      };
+    }
+    throw new Error('Unknown TextEncoder adapter operation: ' + request.operation);
+  });
+  const urlSearchParamsAdapter = envelope => adapterEnvelope(() => {
+    const request = adapterRequest(envelope);
+    const args = JSON.parse(request.argumentsJson);
+    let params;
+    if (request.operation === 'construct-string') {
+      params = new globalThis.URLSearchParams(args[0]);
+    } else if (request.operation === 'construct-entries') {
+      params = new globalThis.URLSearchParams(args[0]);
+    } else {
+      params = new globalThis.URLSearchParams(request.serializedState);
+    }
+    let result = null;
+    if (request.operation === 'append') params.append(args[0], args[1]);
+    else if (request.operation === 'delete') {
+      if (args.length > 1) params.delete(args[0], args[1]);
+      else params.delete(args[0]);
+    } else if (request.operation === 'get') result = params.get(args[0]);
+    else if (request.operation === 'getAll') result = params.getAll(args[0]);
+    else if (request.operation === 'has') {
+      result = args.length > 1
+        ? params.has(args[0], args[1]) : params.has(args[0]);
+    } else if (request.operation === 'set') params.set(args[0], args[1]);
+    else if (request.operation === 'sort') params.sort();
+    else if (request.operation === 'size') result = params.size;
+    else if (request.operation === 'toString') result = params.toString();
+    else if (request.operation === 'entries') result = Array.from(params.entries());
+    else if (!['construct-string', 'construct-entries'].includes(
+      request.operation
+    )) {
+      throw new Error(
+        'Unknown URLSearchParams adapter operation: ' + request.operation);
+    }
+    return {state: params.toString(), result};
+  });
+  const unhandledAdapter = envelope => adapterEnvelope(() => {
+    adapterRequest(envelope);
+    const failures = unhandledRejections.splice(0);
+    failures.push(...dispatchFailures.splice(0));
+    return failures.map(reason => serializeOpaqueVmFailure(runtime, reason));
+  });
+  const protocolEventAdapter = envelope => adapterEnvelope(() => {
+    const event = adapterRequest(envelope);
+    assert.equal(typeof event.name, 'string', 'protocol event must be primitive');
+    if (cleanupProbe) cleanupProbe.events.push(event.name);
+    return null;
+  });
+  const completeAdapter = envelope => adapterEnvelope(() => {
+    assert.equal(typeof envelope, 'string',
+      'completion must be a primitive JSON envelope');
+    assert.equal(completionCalled, false, 'request completed more than once');
+    completionCalled = true;
+    completionResolve(envelope);
+    return null;
+  });
+
+  runtime = vm.createContext({
+    __wingmanStartupPageJson: startupPageJson,
+    __wingmanPayloadJson: JSON.stringify(request.payload || {}),
+    __wingmanWebSourcesJson: webSourcesJson,
+    __wingmanDomFactorySource: DOM_FACTORY_SOURCE,
+    __wingmanTimerScheduleAdapter: timerScheduleAdapter,
+    __wingmanTimerClearAdapter: timerClearAdapter,
+    __wingmanTextEncoderAdapter: textEncoderAdapter,
+    __wingmanURLSearchParamsAdapter: urlSearchParamsAdapter,
+    __wingmanUnhandledAdapter: unhandledAdapter,
+    __wingmanProtocolEventAdapter: protocolEventAdapter,
+    __wingmanCompleteAdapter: completeAdapter,
+  });
+
+  try {
+    const launch = `
+      let ${dispatchBinding};
+      (() => {
+        const complete = globalThis.__wingmanCompleteAdapter;
+        delete globalThis.__wingmanCompleteAdapter;
+        void (async () => {
+          let result;
+          try {
+            result = await (${scenarioProgram.toString()})(
+              dispatch => { ${dispatchBinding} = dispatch; });
+          } catch (error) {
+            let message = 'Unknown error';
+            let stack = '';
+            try {
+              message = error && typeof error.message === 'string'
+                ? error.message : String(error);
+            } catch {}
+            try { if (error && error.stack) stack = String(error.stack); } catch {}
+            result = {ok: false, output: '', error: message, stack, logs: []};
+          }
+          complete(JSON.stringify(result));
+        })();
+      })()
+    `;
+    let launchResult;
+    try {
+      launchResult = vm.runInContext(launch, runtime, {
+        filename: 'current_screenshot_scenario_worker.cjs',
+      });
+    } catch (error) {
+      const failure = serializeOpaqueVmFailure(runtime, error);
+      throw new ScenarioExecutionFailure({
+        error: failure.message,
+        stack: failure.stack,
+        logs: [],
+      });
+    }
+    assert.equal(launchResult, undefined,
+      'scenario launch exposed a VM-owned promise');
+    const resultEnvelope = await completion;
+    assert.equal(typeof resultEnvelope, 'string',
+      'scenario completion was not primitive JSON');
+    const result = JSON.parse(resultEnvelope);
+    assert.ok(result && typeof result === 'object' && !Array.isArray(result),
+      'scenario result must decode to an object');
+    if (!result.ok) throw new ScenarioExecutionFailure(result);
+    try {
+      assert.equal(timers.size, 0, 'request left a live timer');
+    } catch (error) {
+      const failure = safeErrorRecord(error);
+      throw new ScenarioExecutionFailure({
+        error: failure.message,
+        stack: failure.stack,
+        logs: result.logs,
+      });
+    }
+    return result.output;
+  } finally {
+    process.removeListener('unhandledRejection', captureRejection);
+    if (cleanupProbe) {
+      cleanupProbe.pendingTimers = timers.size;
+      cleanupProbe.pendingIntervals = intervals.size;
+      cleanupProbe.timers = timers;
+      cleanupProbe.intervals = intervals;
+    }
+    for (const handle of timers.values()) clearTimeout(handle);
+    for (const handle of intervals.values()) clearInterval(handle);
+    timers.clear();
+    intervals.clear();
+  }
+}
+
+async function runCleanupProbe(request) {
+  const probe = {events: []};
+  let output, failure;
+  try {
+    output = await runScenario(request, probe);
+  } catch (error) {
+    failure = error;
+  }
+  if (failure && !probe.timers) throw failure;
+  assert.equal(probe.pendingTimers, 1,
+    'cleanup must start with one pending tracked timer');
+  assert.equal(probe.pendingIntervals, 1,
+    'cleanup must start with one pending tracked interval');
+  await new Promise(resolve => setTimeout(() => {
+    probe.events.push('cleanup-control');
+    resolve();
+  }, 0));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(probe.events,
+    ['active-interval', 'active-control', 'cleanup-control'],
+    'pending request callbacks must be cancelled before the same-delay control');
+  assert.equal(probe.timers.size, 0, 'request timer tracking must be cleared');
+  assert.equal(probe.intervals.size, 0, 'request interval tracking must be cleared');
+  if (failure) throw failure;
+  return output;
+}
+
+function failureFields(error) {
+  return {
+    ok: false,
+    error: error instanceof ScenarioExecutionFailure
+      ? error.message
+      : isNativeError(error) ? error.message : String(error),
+    stack: error instanceof ScenarioExecutionFailure
+      ? error.remoteStack
+      : isNativeError(error) ? String(error.stack || '') : '',
+    logs: error instanceof ScenarioExecutionFailure ? error.logs : [],
+  };
+}
+
+async function serveRequest(request) {
+  const started = performance.now();
+  const listenerSentinel = () => {};
+  process.on('unhandledRejection', listenerSentinel);
+  try {
+    const listenerBaseline = process.listeners('unhandledRejection');
+    let fields;
+    try {
+      const cleanupProbe = request.payload?.protocol_probe?.startsWith('pending-timer-');
+      const output = await (cleanupProbe ? runCleanupProbe(request) : runScenario(request));
+      fields = {ok: true, output, error: '', stack: ''};
+    } catch (error) {
+      fields = failureFields(error);
+    }
+    try {
+      assert.deepEqual(process.listeners('unhandledRejection'), listenerBaseline,
+        'unhandledRejection listener baseline changed');
+    } catch (error) {
+      const listenerFailure = failureFields(error);
+      if (Array.isArray(fields?.logs) && fields.logs.length) {
+        listenerFailure.logs = fields.logs;
+      }
+      fields = listenerFailure;
+    }
+    return {
+      id: request.id,
+      scenario: request.scenario,
+      duration_ms: performance.now() - started,
+      ...fields,
+    };
+  } finally {
+    process.removeListener('unhandledRejection', listenerSentinel);
+  }
+}
+
+async function serveWorker() {
+  const rl = readline.createInterface({input: process.stdin, crlfDelay: Infinity});
+  for await (const line of rl) {
+    const request = JSON.parse(line);
+    const reply = await serveRequest(request);
+    process.stdout.write(JSON.stringify(reply) + '\n');
+  }
+}
+
+serveWorker().catch(error => {
+  process.stderr.write((isNativeError(error) ? String(error.stack || error.message) : String(error)) + '\n');
+  process.exitCode = 1;
+});

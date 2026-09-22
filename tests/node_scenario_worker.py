@@ -13,6 +13,8 @@ from pathlib import Path
 
 _STOP_TIMEOUT_S = 1.0
 _KILL_TIMEOUT_S = 1.0
+_CLOSE_EXIT_GRACE_S = 0.1
+_BROKEN_PROCESS_REAP_TIMEOUT_S = 0.25
 _STDERR_TAIL_LINES = 40
 _STDERR_LINE_LIMIT = 400
 
@@ -85,6 +87,8 @@ class _ProcessState:
     stderr_tail: _StderrTail
     stdout_thread: threading.Thread
     stderr_thread: threading.Thread
+    last_successful_scenario: str | None = None
+    last_successful_request_id: int | None = None
 
 
 class NodeScenarioWorker:
@@ -119,10 +123,13 @@ class NodeScenarioWorker:
                 state.proc.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
                 state.proc.stdin.flush()
             except (AttributeError, BrokenPipeError, OSError, ValueError) as error:
+                late_exit = self._broken_process_exit_message(
+                    state, phase="while sending the next request"
+                )
                 stderr = self._discard_process(reason="request write failed")
                 raise NodeScenarioCrash(
                     scenario,
-                    f"worker crash while sending request: {error}",
+                    late_exit or f"worker crash while sending request: {error}",
                     stderr=stderr,
                 ) from error
             deadline = time.monotonic() + float(timeout)
@@ -145,12 +152,15 @@ class NodeScenarioWorker:
                         stderr=stderr,
                     )
                 if item is _EOF:
+                    late_exit = self._broken_process_exit_message(
+                        state, phase="before replying to the next request"
+                    )
                     stderr = self._discard_process(
                         reason="worker exited before replying"
                     )
                     raise NodeScenarioCrash(
                         scenario,
-                        "worker crash before reply",
+                        late_exit or "worker crash before reply",
                         stderr=stderr,
                     )
                 if isinstance(item, _ProtocolError):
@@ -184,6 +194,8 @@ class NodeScenarioWorker:
                         reply=reply,
                     )
                 if reply["ok"]:
+                    state.last_successful_scenario = scenario
+                    state.last_successful_request_id = request_id
                     return reply
                 raise NodeScenarioFailure(
                     scenario,
@@ -195,6 +207,29 @@ class NodeScenarioWorker:
 
     def close(self) -> None:
         with self._request_lock:
+            state = self._state
+            if state is None:
+                return
+            exit_code = state.proc.poll()
+            if exit_code is None and state.last_successful_scenario is not None:
+                try:
+                    exit_code = state.proc.wait(timeout=_CLOSE_EXIT_GRACE_S)
+                except subprocess.TimeoutExpired:
+                    exit_code = None
+            if exit_code is not None and state.last_successful_scenario is not None:
+                last_scenario = state.last_successful_scenario
+                last_request_id = state.last_successful_request_id
+                stderr = self._discard_process(reason="unexpected exit before close")
+                raise NodeScenarioCrash(
+                    last_scenario,
+                    self._late_exit_message(
+                        exit_code,
+                        last_scenario,
+                        last_request_id,
+                        phase="before close",
+                    ),
+                    stderr=stderr,
+                )
             self._discard_process(reason="close requested")
 
     def _ensure_started(self, scenario: str) -> _ProcessState:
@@ -202,7 +237,21 @@ class NodeScenarioWorker:
         if state is not None and state.proc.poll() is None:
             return state
         if state is not None:
-            self._discard_process(reason="stale process state")
+            exit_code = state.proc.poll()
+            last_scenario = state.last_successful_scenario
+            last_request_id = state.last_successful_request_id
+            stderr = self._discard_process(reason="stale process state")
+            if exit_code is not None and last_scenario is not None:
+                raise NodeScenarioCrash(
+                    scenario,
+                    self._late_exit_message(
+                        exit_code,
+                        last_scenario,
+                        last_request_id,
+                        phase="before the next request",
+                    ),
+                    stderr=stderr,
+                )
         replies: queue.Queue[object] = queue.Queue()
         stderr_tail = _StderrTail()
         stdout_started = threading.Event()
@@ -283,6 +332,38 @@ class NodeScenarioWorker:
 
     def _stderr_text(self, state: _ProcessState) -> str:
         return state.stderr_tail.text()
+
+    def _broken_process_exit_message(
+        self, state: _ProcessState, *, phase: str
+    ) -> str | None:
+        exit_code = state.proc.poll()
+        if exit_code is None:
+            try:
+                exit_code = state.proc.wait(timeout=_BROKEN_PROCESS_REAP_TIMEOUT_S)
+            except (OSError, subprocess.TimeoutExpired):
+                exit_code = state.proc.poll()
+        if exit_code is None or state.last_successful_scenario is None:
+            return None
+        return self._late_exit_message(
+            exit_code,
+            state.last_successful_scenario,
+            state.last_successful_request_id,
+            phase=phase,
+        )
+
+    def _late_exit_message(
+        self,
+        exit_code: int,
+        last_scenario: str,
+        last_request_id: int | None,
+        *,
+        phase: str,
+    ) -> str:
+        request = f" (request {last_request_id})" if last_request_id is not None else ""
+        return (
+            f"worker exited with status {exit_code} {phase} after successful reply"
+            f" for {last_scenario!r}{request}"
+        )
 
     def _stop_process(self, proc: subprocess.Popen[str]) -> None:
         if proc.poll() is not None:

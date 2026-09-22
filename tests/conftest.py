@@ -21,6 +21,17 @@ import secrets
 
 import pytest
 
+from tests.fittings_scenario_worker import create_fittings_worker
+
+
+@pytest.fixture(scope="session")
+def fittings_page_worker(tmp_path_factory: pytest.TempPathFactory):
+    worker = create_fittings_worker(tmp_path_factory)
+    try:
+        yield worker
+    finally:
+        worker.close()
+
 
 @pytest.fixture
 def tmp_path(request, tmp_path_factory):

@@ -10,11 +10,14 @@ import importlib.util
 import json
 import pathlib
 import re
+import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from tests.html_tree import PageTree
+from tests.node_scenario_worker import NodeScenarioFailure, NodeScenarioWorker
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WEB = ROOT / "wingman" / "web"
@@ -185,23 +188,573 @@ class _CaptureTextTree(PageTree):
         node["text"] = node.get("text", "") + data
 
 
-def _run_gap_capture(tmp_path, key, scenario):
-    screen = next((screen for screen in shoot.SCREENS if screen.key == key), None)
-    assert screen, f"missing gap capture: {key}"
+def _leaf_texts(node):
+    texts = {}
+    if not node["children"] and node["attrs"].get("id"):
+        texts[node["attrs"]["id"]] = node.get("text", "").strip()
+    for child in node["children"]:
+        texts.update(_leaf_texts(child))
+    return texts
+
+
+@pytest.fixture(scope="session")
+def gap_capture_markup(tmp_path_factory: pytest.TempPathFactory) -> Path:
     tree = _CaptureTextTree()
     tree.feed((WEB / "index.html").read_text(encoding="utf-8"))
+    path = tmp_path_factory.mktemp("gap-capture-worker") / "page.json"
+    path.write_text(json.dumps(tree.root, ensure_ascii=False), encoding="utf-8")
+    return path
 
-    def leaf_texts(node):
-        texts = {}
-        if not node["children"] and node["attrs"].get("id"):
-            texts[node["attrs"]["id"]] = node.get("text", "").strip()
-        for child in node["children"]:
-            texts.update(leaf_texts(child))
-        return texts
 
+@pytest.fixture(scope="session")
+def gap_capture_worker(gap_capture_markup: Path):
+    node = shutil.which("node")
+    assert node is not None, "node is not installed"
+    worker = NodeScenarioWorker(
+        [
+            node,
+            str(ROOT / "tests/fixtures/screenshot_pages.cjs"),
+            "--worker",
+            str(gap_capture_markup),
+            str(WEB),
+        ],
+        cwd=ROOT,
+    )
+    page = json.loads(gap_capture_markup.read_text(encoding="utf-8"))
+    worker._gap_capture_texts = _leaf_texts(page)
+    try:
+        yield worker
+    finally:
+        worker.close()
+
+
+def test_gap_capture_worker_reuses_process_and_preserves_business_outcomes(
+    gap_capture_worker: NodeScenarioWorker, monkeypatch: pytest.MonkeyPatch
+):
+    original_setup = shoot.screen_setup_script
+    setup_count = 0
+    mutation = """
+(() => {
+  const domMarker = '__wingmanScreenshotDOMProbe';
+  const Element = document.constructor;
+  const domTargets = [
+    ['document', document],
+    ['Element', Element],
+    ['Element.prototype', Element.prototype],
+    ['document.getElementById', document.getElementById],
+    ['Element.prototype.querySelector', Element.prototype.querySelector],
+    ['document.attrs', document.attrs],
+    ['document.children', document.children],
+    ['document.style', document.style]
+  ];
+  for (const [name, target] of domTargets) {
+    for (let value = target; value; value = Object.getPrototypeOf(value)) {
+      value[domMarker] = name;
+    }
+  }
+  document.constructor.constructor('return globalThis')()[domMarker] = 'global';
+
+  const realmMarker = '__wingmanScreenshotRealmEscapeProbe';
+  function realmOf(value) {
+    if (value === null || value === undefined) return null;
+    const constructor = value.constructor;
+    if (typeof constructor !== 'function' ||
+        typeof constructor.constructor !== 'function') return null;
+    return constructor.constructor('return globalThis')();
+  }
+  const boundaries = [];
+  function collect(label, owner) {
+    if (!owner) return;
+    for (const key of Reflect.ownKeys(owner)) {
+      const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+      if (!descriptor) continue;
+      for (const [kind, value] of [
+        ['value', descriptor.value], ['get', descriptor.get], ['set', descriptor.set]
+      ]) {
+        if (typeof value === 'function') {
+          boundaries.push([label + '.' + String(key) + '.' + kind, value]);
+        }
+      }
+    }
+  }
+  collect('console', console);
+  collect('clipboard', navigator.clipboard);
+  collect('document', document);
+  collect('Element.prototype', Element.prototype);
+  collect('WM', WM);
+  for (const [name, value] of Object.entries({
+    Event, CustomEvent, Element, TextEncoder, URLSearchParams,
+    setTimeout, clearTimeout, requestAnimationFrame, matchMedia,
+    getComputedStyle
+  })) boundaries.push([name, value]);
+  const timeoutArgument = {request_local: true};
+  const timeoutToken = setTimeout(function (value) {
+    const realm = realmOf(this);
+    if (realm) realm[realmMarker] = 'timeout callback receiver';
+    if (value !== timeoutArgument) {
+      throw new Error('timeout argument left the request VM');
+    }
+  }, 0, timeoutArgument);
+  const frameToken = requestAnimationFrame(function (...args) {
+    const realm = realmOf(this);
+    if (realm) realm[realmMarker] = 'animation callback receiver';
+    if (args.length) throw new Error('animation frame gained host arguments');
+  });
+  const returnedValues = [
+    ['window', window], ['document', document], ['location', location],
+    ['navigator', navigator], ['clipboard', navigator.clipboard],
+    ['Event result', new Event('realm-probe')],
+    ['CustomEvent result', new CustomEvent('realm-probe', {detail: timeoutArgument})],
+    ['matchMedia result', matchMedia('(min-width: 1px)')],
+    ['getComputedStyle result', getComputedStyle(document.body)],
+    ['timeout token', Object(timeoutToken)], ['frame token', Object(frameToken)]
+  ];
+  for (const [name, callable] of boundaries) {
+    const realm = realmOf(callable);
+    if (realm) realm[realmMarker] = name;
+  }
+  for (const [name, value] of returnedValues) {
+    const realm = realmOf(value);
+    if (realm) realm[realmMarker] = name;
+  }
+  for (const name of ['readText', 'writeText']) {
+    try {
+      navigator.clipboard[name]('probe');
+    } catch (error) {
+      const realm = realmOf(error);
+      if (realm) realm[realmMarker] = 'clipboard ' + name + ' error';
+    }
+  }
+  const escaped = [...boundaries, ...returnedValues].filter(([, value]) => {
+    const realm = realmOf(value);
+    return realm && (realm !== globalThis || 'process' in realm);
+  }).map(([name]) => name);
+  if (escaped.length) {
+    throw new Error('public boundary escaped the request VM: ' + escaped.join(', '));
+  }
+
+  const marker = '__wingmanScreenshotRequestProbe';
+  for (const [name, intrinsic] of Object.entries(
+    {Promise, Math, Date, TextEncoder, URLSearchParams}
+  )) {
+    const targets = [
+      ['constructor', intrinsic],
+      ['prototype', intrinsic.prototype],
+      ['constructor-base', Object.getPrototypeOf(intrinsic)],
+      ['instance-base', intrinsic.prototype &&
+        Object.getPrototypeOf(intrinsic.prototype)]
+    ];
+    for (const [level, target] of targets) {
+      if (target) target[marker] = name + '.' + level;
+    }
+  }
+  const returnedMarker = '__wingmanReturnedPrototypeProbe';
+  const params = new URLSearchParams('a=1&a=2');
+  const iterator = params.entries();
+  const returned = [
+    new TextEncoder().encode('probe'),
+    params.getAll('a'),
+    iterator,
+    iterator.next().value
+  ];
+  for (const value of returned) {
+    for (let target = Object.getPrototypeOf(value); target;
+        target = Object.getPrototypeOf(target)) {
+      target[returnedMarker] = 'mutated';
+    }
+  }
+  let errorRealm;
+  try {
+    new TextEncoder().encode(Symbol('host-realm-probe'));
+  } catch (error) {
+    errorRealm = error.constructor.constructor('return globalThis')();
+  }
+  if (!errorRealm) throw new Error('TextEncoder Symbol did not fail');
+  errorRealm.__wingmanHostRealmProbe = 'mutated';
+})()
+"""
+    pristine = """
+(() => {
+  const domMarker = '__wingmanScreenshotDOMProbe';
+  const Element = document.constructor;
+  const domRealms = [
+    ['document', document.constructor.constructor('return globalThis')()],
+    ['Element', Element.constructor('return globalThis')()],
+    ['document.getElementById',
+      document.getElementById.constructor('return globalThis')()],
+    ['Element.prototype.querySelector',
+      Element.prototype.querySelector.constructor('return globalThis')()]
+  ];
+  for (const [name, realm] of domRealms) {
+    if (realm !== globalThis || 'process' in realm) {
+      throw new Error('DOM callable escaped the request VM: ' + name);
+    }
+  }
+  const realmMarker = '__wingmanScreenshotRealmEscapeProbe';
+  function realmOf(value) {
+    if (value === null || value === undefined) return null;
+    const constructor = value.constructor;
+    if (typeof constructor !== 'function' ||
+        typeof constructor.constructor !== 'function') return null;
+    return constructor.constructor('return globalThis')();
+  }
+  const boundaries = [];
+  function collect(label, owner) {
+    if (!owner) return;
+    for (const key of Reflect.ownKeys(owner)) {
+      const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+      if (!descriptor) continue;
+      for (const [kind, value] of [
+        ['value', descriptor.value], ['get', descriptor.get], ['set', descriptor.set]
+      ]) {
+        if (typeof value === 'function') {
+          boundaries.push([label + '.' + String(key) + '.' + kind, value]);
+        }
+      }
+    }
+  }
+  collect('console', console);
+  collect('clipboard', navigator.clipboard);
+  collect('document', document);
+  collect('Element.prototype', Element.prototype);
+  collect('WM', WM);
+  for (const [name, value] of Object.entries({
+    Event, CustomEvent, Element, TextEncoder, URLSearchParams,
+    setTimeout, clearTimeout, requestAnimationFrame, matchMedia,
+    getComputedStyle
+  })) boundaries.push([name, value]);
+  const timeoutArgument = {request_local: true};
+  const timeoutToken = setTimeout(function (value) {
+    const realm = realmOf(this);
+    if (realm && (realm !== globalThis || 'process' in realm)) {
+      realm[realmMarker] = 'timeout callback receiver';
+    }
+    if (value !== timeoutArgument) {
+      throw new Error('timeout argument left the request VM');
+    }
+  }, 0, timeoutArgument);
+  const frameToken = requestAnimationFrame(function (...args) {
+    const realm = realmOf(this);
+    if (realm && (realm !== globalThis || 'process' in realm)) {
+      realm[realmMarker] = 'animation callback receiver';
+    }
+    if (args.length) throw new Error('animation frame gained host arguments');
+  });
+  const returnedValues = [
+    ['window', window], ['document', document], ['location', location],
+    ['navigator', navigator], ['clipboard', navigator.clipboard],
+    ['Event result', new Event('realm-probe')],
+    ['CustomEvent result', new CustomEvent('realm-probe', {detail: timeoutArgument})],
+    ['matchMedia result', matchMedia('(min-width: 1px)')],
+    ['getComputedStyle result', getComputedStyle(document.body)],
+    ['timeout token', Object(timeoutToken)], ['frame token', Object(frameToken)]
+  ];
+  for (const [name, value] of [...boundaries, ...returnedValues]) {
+    const realm = realmOf(value);
+    if (!realm || realm !== globalThis || 'process' in realm) {
+      throw new Error('public boundary escaped the request VM: ' + name);
+    }
+    if (Object.prototype.hasOwnProperty.call(realm, realmMarker) ||
+        Object.prototype.hasOwnProperty.call(value, realmMarker)) {
+      throw new Error('public boundary leaked between requests: ' + name);
+    }
+  }
+  for (const name of ['readText', 'writeText']) {
+    try {
+      navigator.clipboard[name]('probe');
+    } catch (error) {
+      const realm = realmOf(error);
+      if (!realm || realm !== globalThis || 'process' in realm) {
+        throw new Error('clipboard error escaped the request VM: ' + name);
+      }
+      if (Object.prototype.hasOwnProperty.call(realm, realmMarker)) {
+        throw new Error('clipboard error realm leaked between requests: ' + name);
+      }
+    }
+  }
+  const domTargets = [
+    ['document', document],
+    ['Element', Element],
+    ['Element.prototype', Element.prototype],
+    ['document.getElementById', document.getElementById],
+    ['Element.prototype.querySelector', Element.prototype.querySelector],
+    ['document.attrs', document.attrs],
+    ['document.children', document.children],
+    ['document.style', document.style]
+  ];
+  for (const [name, target] of domTargets) {
+    for (let value = target; value; value = Object.getPrototypeOf(value)) {
+      if (Object.prototype.hasOwnProperty.call(value, domMarker)) {
+        throw new Error('request DOM leaked: ' + name);
+      }
+    }
+  }
+
+  const marker = '__wingmanScreenshotRequestProbe';
+  for (const [name, intrinsic] of Object.entries(
+    {Promise, Math, Date, TextEncoder, URLSearchParams}
+  )) {
+    const targets = [
+      ['constructor', intrinsic],
+      ['prototype', intrinsic.prototype],
+      ['constructor-base', Object.getPrototypeOf(intrinsic)],
+      ['instance-base', intrinsic.prototype &&
+        Object.getPrototypeOf(intrinsic.prototype)]
+    ];
+    for (const [level, target] of targets) {
+      if (target && Object.prototype.hasOwnProperty.call(target, marker)) {
+        throw new Error('request intrinsic leaked: ' + name + '.' + level);
+      }
+    }
+  }
+  for (const name of [
+    '__wingmanStartupPageJson', '__wingmanPayloadJson',
+    '__wingmanWebSourcesJson', '__wingmanDomFactorySource',
+    '__wingmanTimerScheduleAdapter', '__wingmanTimerClearAdapter',
+    '__wingmanTextEncoderAdapter', '__wingmanURLSearchParamsAdapter',
+    '__wingmanUnhandledAdapter', '__wingmanProtocolEventAdapter',
+    '__wingmanCompleteAdapter'
+  ]) {
+    if (name in globalThis) {
+      throw new Error('host adapter remained globally reachable: ' + name);
+    }
+  }
+  let adapterError;
+  let errorRealm;
+  try {
+    new TextEncoder().encode(Symbol('host-realm-probe'));
+  } catch (error) {
+    adapterError = error;
+    errorRealm = error.constructor.constructor('return globalThis')();
+  }
+  if (!errorRealm) throw new Error('TextEncoder Symbol did not fail');
+  if (!(adapterError instanceof TypeError)) {
+    throw new Error('TextEncoder host error was not reconstructed as TypeError');
+  }
+  if (errorRealm.__wingmanHostRealmProbe) {
+    throw new Error('host realm marker leaked between requests');
+  }
+  if (errorRealm !== globalThis) {
+    throw new Error('TextEncoder error escaped the request VM');
+  }
+  const returnedMarker = '__wingmanReturnedPrototypeProbe';
+  const isolationParams = new URLSearchParams('a=1&a=2');
+  const isolationIterator = isolationParams.entries();
+  const returned = [
+    new TextEncoder().encode('probe'),
+    isolationParams.getAll('a'),
+    isolationIterator,
+    isolationIterator.next().value
+  ];
+  if (!(returned[0] instanceof Uint8Array) || !Array.isArray(returned[1]) ||
+      !Array.isArray(returned[3]) ||
+      isolationIterator[Symbol.iterator]() !== isolationIterator) {
+    throw new Error('adapter result was not reconstructed in the request VM');
+  }
+  for (const value of returned) {
+    for (let target = Object.getPrototypeOf(value); target;
+        target = Object.getPrototypeOf(target)) {
+      if (Object.prototype.hasOwnProperty.call(target, returnedMarker)) {
+        throw new Error('returned value prototype leaked between requests');
+      }
+    }
+  }
+  const encoder = new TextEncoder();
+  if (encoder.encoding !== 'utf-8' ||
+      Array.from(encoder.encode('Aé𐐀')).join(',') !==
+        '65,195,169,240,144,144,128') {
+    throw new Error('request TextEncoder behavior changed');
+  }
+  const destination = new Uint8Array(2);
+  const encoded = encoder.encodeInto('éA', destination);
+  if (encoded.read !== 1 || encoded.written !== 2 ||
+      Array.from(destination).join(',') !== '195,169') {
+    throw new Error('request TextEncoder encodeInto behavior changed');
+  }
+  const params = new URLSearchParams('?a=1&a=2&space=hello+world');
+  if (params.get('a') !== '1' || params.getAll('a').join(',') !== '1,2' ||
+      params.get('space') !== 'hello world' || !params.has('a', '2')) {
+    throw new Error('request URLSearchParams read behavior changed');
+  }
+  params.delete('a', '1');
+  params.set('a', '3');
+  params.append('b', 'two words');
+  params.sort();
+  const serialized = 'a=3&b=two+words&space=hello+world';
+  if (params.size !== 3 || params.toString() !== serialized ||
+      new URLSearchParams(params).toString() !== serialized ||
+      Array.from(params.keys()).join(',') !== 'a,b,space' ||
+      Array.from(params.values()).join(',') !== '3,two words,hello world') {
+    throw new Error('request URLSearchParams mutation behavior changed');
+  }
+  const visited = [];
+  params.forEach((value, name, owner) => {
+    if (owner !== params) throw new Error('URLSearchParams owner changed');
+    visited.push(name + '=' + value);
+  });
+  if (visited.join('&') !== 'a=3&b=two words&space=hello world') {
+    throw new Error('request URLSearchParams iteration behavior changed');
+  }
+})()
+"""
+
+    def intrinsic_probe_setup(screen):
+        nonlocal setup_count
+        setup_count += 1
+        setup = original_setup(screen)
+        assert setup
+        if setup_count == 1:
+            return setup + ";" + mutation
+        return pristine + ";" + setup
+
+    monkeypatch.setattr(shoot, "screen_setup_script", intrinsic_probe_setup)
+    first = _request_gap_capture(
+        gap_capture_worker, "settings-wanderer-controls-narrow", "settled"
+    )
+    process = gap_capture_worker._proc
+    negative = _request_gap_capture(
+        gap_capture_worker, "settings-wanderer-controls-narrow", "missing"
+    )
+    second = _request_gap_capture(
+        gap_capture_worker, "settings-wanderer-controls-narrow", "settled"
+    )
+    assert first["output"] == (
+        "PASS screenshot gap settings-wanderer-controls-narrow settled"
+    )
+    assert negative["output"] == (
+        "PASS screenshot gap settings-wanderer-controls-narrow missing"
+    )
+    assert second["output"] == first["output"]
+    assert gap_capture_worker._proc is process
+
+
+def test_gap_capture_worker_vm_failures_preserve_stack_and_recover(
+    gap_capture_worker: NodeScenarioWorker,
+):
+    _request_gap_capture(
+        gap_capture_worker, "settings-wanderer-controls-narrow", "settled"
+    )
+    process = gap_capture_worker._proc
+    for mode, stack_name in [
+        ("vm-throw", "protocolVmThrow"),
+        ("vm-reject", "protocolVmReject"),
+    ]:
+        with pytest.raises(NodeScenarioFailure) as failure:
+            gap_capture_worker.request(
+                f"protocol/{mode}",
+                {"protocol_probe": mode, "failure_logs": True},
+                timeout=20.0,
+            )
+        assert stack_name in failure.value.stack
+        assert failure.value.reply is not None
+        logs = failure.value.reply.get("logs")
+        assert isinstance(logs, list)
+        assert 1 <= len(logs) <= 40
+        assert all(isinstance(line, str) and len(line) <= 400 for line in logs)
+        for level in ("log", "info", "warn", "debug"):
+            assert any(f"protocol {level} context" in line for line in logs)
+        assert any(line.endswith("…") for line in logs)
+        _request_gap_capture(
+            gap_capture_worker, "settings-wanderer-controls-narrow", "settled"
+        )
+        assert gap_capture_worker._proc is process
+
+    for kind in ("getters", "proxy"):
+        with pytest.raises(NodeScenarioFailure) as failure:
+            gap_capture_worker.request(
+                f"protocol/vm-reject/{kind}",
+                {
+                    "protocol_probe": "vm-reject",
+                    "hostile_rejection": kind,
+                    "failure_logs": True,
+                },
+                timeout=20.0,
+            )
+        assert "protocolHostileReject" in failure.value.stack
+        assert failure.value.reply is not None
+        recovered = _request_gap_capture(
+            gap_capture_worker,
+            "settings-wanderer-controls-narrow",
+            "settled",
+            probes={"assert_unhandled_host_pristine": True},
+        )
+        assert recovered["output"] == (
+            "PASS screenshot gap settings-wanderer-controls-narrow settled"
+        )
+        assert f"protocol hostile {kind} rejection" in str(failure.value.reply["error"])
+        assert any(
+            "protocol log context" in line
+            for line in failure.value.reply.get("logs", [])
+        )
+        assert gap_capture_worker._proc is process
+
+
+@pytest.mark.parametrize(
+    "scenarios",
+    [
+        pytest.param(("settled", "missing", "settled"), id="settled-missing-settled"),
+        pytest.param(("covered", "settled", "hidden"), id="covered-settled-hidden"),
+    ],
+)
+def test_gap_capture_worker_is_order_independent(
+    gap_capture_worker: NodeScenarioWorker, scenarios
+):
+    outputs = [
+        _request_gap_capture(
+            gap_capture_worker, "settings-wanderer-controls-narrow", scenario
+        )["output"]
+        for scenario in scenarios
+    ]
+    assert outputs == [
+        f"PASS screenshot gap settings-wanderer-controls-narrow {scenario}"
+        for scenario in scenarios
+    ]
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["pending-timer-normal-exit", "pending-timer-assertion-exit"],
+    ids=["pending-timer-normal-exit", "pending-timer-assertion-exit"],
+)
+def test_gap_capture_worker_cancels_pending_timer(
+    gap_capture_worker: NodeScenarioWorker, mode
+):
+    _request_gap_capture(
+        gap_capture_worker, "settings-wanderer-controls-narrow", "settled"
+    )
+    process = gap_capture_worker._proc
+    with pytest.raises(NodeScenarioFailure) as failure:
+        gap_capture_worker.request(
+            f"protocol/{mode}", {"protocol_probe": mode}, timeout=20.0
+        )
+    expected_error = (
+        "request left a live timer"
+        if mode == "pending-timer-normal-exit"
+        else "protocol cleanup probe failure"
+    )
+    assert failure.value.reply is not None
+    assert str(failure.value.reply["error"]).splitlines()[0] == expected_error
+    assert expected_error in failure.value.stack
+    recovered = _request_gap_capture(
+        gap_capture_worker, "settings-wanderer-controls-narrow", "settled"
+    )
+    assert recovered["output"] == (
+        "PASS screenshot gap settings-wanderer-controls-narrow settled"
+    )
+    assert gap_capture_worker._proc is process
+
+
+def _request_gap_capture(
+    worker: NodeScenarioWorker,
+    key,
+    scenario,
+    *,
+    probes: dict[str, object] | None = None,
+) -> dict[str, object]:
+    screen = next((screen for screen in shoot.SCREENS if screen.key == key), None)
+    assert screen, f"missing gap capture: {key}"
     payload = {
-        "page": tree.root,
-        "texts": leaf_texts(tree.root),
+        "texts": worker._gap_capture_texts,
         "key": key,
         "gap": scenario if key in GAP_CAPTURES else None,
         "regression": scenario,
@@ -212,22 +765,9 @@ def _run_gap_capture(tmp_path, key, scenario):
         "fixture": shoot.fittings_fixture_setup_script(),
         "reset": shoot._fittings_reset_script(),
     }
-    path = tmp_path / "gap-capture.json"
-    path.write_text(json.dumps(payload), encoding="utf-8")
-    result = subprocess.run(
-        [
-            "node",
-            str(ROOT / "tests/fixtures/screenshot_pages.cjs"),
-            str(path),
-            str(WEB),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=20,
-        check=False,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "PASS screenshot " in result.stdout
+    if probes:
+        payload.update(probes)
+    return worker.request(f"{key}/{scenario}", payload, timeout=20.0)
 
 
 @pytest.mark.parametrize("key", GAP_CAPTURES)
@@ -235,8 +775,10 @@ def _run_gap_capture(tmp_path, key, scenario):
     "scenario",
     ["settled", "missing", "hidden", "wrong-text", "clipped", "covered", "zero-area"],
 )
-def test_gap_capture_requires_semantic_content_after_framing(tmp_path, key, scenario):
-    _run_gap_capture(tmp_path, key, scenario)
+def test_gap_capture_requires_semantic_content_after_framing(
+    gap_capture_worker, key, scenario
+):
+    _request_gap_capture(gap_capture_worker, key, scenario)
 
 
 @pytest.mark.parametrize(
@@ -251,9 +793,11 @@ def test_gap_capture_requires_semantic_content_after_framing(tmp_path, key, scen
     ],
 )
 def test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests(
-    tmp_path, scenario
+    gap_capture_worker, scenario
 ):
-    _run_gap_capture(tmp_path, "fittings-copy-preflight-bottom-narrow", scenario)
+    _request_gap_capture(
+        gap_capture_worker, "fittings-copy-preflight-bottom-narrow", scenario
+    )
 
 
 @pytest.mark.parametrize(
@@ -269,9 +813,9 @@ def test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests(
     ],
 )
 def test_metadata_capture_waits_for_real_detail_without_creating_drafts(
-    tmp_path, scenario
+    gap_capture_worker, scenario
 ):
-    _run_gap_capture(tmp_path, "fittings-metadata-narrow", scenario)
+    _request_gap_capture(gap_capture_worker, "fittings-metadata-narrow", scenario)
 
 
 @pytest.mark.parametrize(
@@ -279,9 +823,9 @@ def test_metadata_capture_waits_for_real_detail_without_creating_drafts(
     ["codec-missing", "codec-missing-clipped", "inconsistent-capability", "unresolved"],
 )
 def test_profiles_scope_capture_uses_actual_capability_without_overrides(
-    tmp_path, scenario
+    gap_capture_worker, scenario
 ):
-    _run_gap_capture(tmp_path, "profiles-copy-scope", scenario)
+    _request_gap_capture(gap_capture_worker, "profiles-copy-scope", scenario)
 
 
 @pytest.mark.parametrize(
@@ -300,9 +844,9 @@ def test_profiles_scope_capture_uses_actual_capability_without_overrides(
     ],
 )
 def test_lower_copy_capture_rejects_unsettled_or_wrong_outcomes(
-    tmp_path, key, scenario
+    gap_capture_worker, key, scenario
 ):
-    _run_gap_capture(tmp_path, key, scenario)
+    _request_gap_capture(gap_capture_worker, key, scenario)
 
 
 @pytest.mark.parametrize(
@@ -324,15 +868,19 @@ def test_lower_copy_capture_rejects_unsettled_or_wrong_outcomes(
     ],
 )
 def test_lower_copy_capture_requires_retained_context_and_footer(
-    tmp_path, key, scenario
+    gap_capture_worker, key, scenario
 ):
     """A valid last row cannot disguise lost header context or footer controls."""
-    _run_gap_capture(tmp_path, key, scenario)
+    _request_gap_capture(gap_capture_worker, key, scenario)
 
 
-def test_lower_result_capture_keeps_recovery_before_pairs_not_sticky(tmp_path):
-    _run_gap_capture(
-        tmp_path, "fittings-copy-result-bottom-narrow", "recovery-after-pairs"
+def test_lower_result_capture_keeps_recovery_before_pairs_not_sticky(
+    gap_capture_worker,
+):
+    _request_gap_capture(
+        gap_capture_worker,
+        "fittings-copy-result-bottom-narrow",
+        "recovery-after-pairs",
     )
 
 
@@ -375,10 +923,10 @@ def test_lower_result_capture_keeps_recovery_before_pairs_not_sticky(tmp_path):
     ],
 )
 def test_copy_capture_rejects_stale_context_progress_and_technical_details(
-    tmp_path, key, scenario
+    gap_capture_worker, key, scenario
 ):
     """The generated capture guard must reject independent semantic corruption."""
-    _run_gap_capture(tmp_path, key, scenario)
+    _request_gap_capture(gap_capture_worker, key, scenario)
 
 
 @pytest.mark.parametrize("key", GAP_CAPTURES)

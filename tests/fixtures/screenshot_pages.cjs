@@ -1,79 +1,576 @@
 // Executes generated capture expressions and whole production modules against
 // real markup ancestry. Only DOM mechanics and external delivery are doubled.
 const assert = require('node:assert/strict');
+const {randomBytes} = require('node:crypto');
 const fs = require('node:fs');
+const readline = require('node:readline');
 const vm = require('node:vm');
-const data = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-const web = process.argv[3];
-const {createDOM} = require('./screenshot_dom.cjs');
-const {document, Element, scrolls} = createDOM(data.page);
-for (const [id, text] of Object.entries(data.texts || {})) document.getElementById(id).textContent = text;
-const window = new Element('window');
-Object.assign(window, {document, console: {...console, error: (...args) => { throw Error(args.join(' ')); }},
-  navigator: {clipboard: {readText: () => assert.fail('clipboard read'), writeText: () => assert.fail('clipboard write')}},
-  Promise, Math, Date, TextEncoder, URLSearchParams,
-  Event: class { constructor(type) { this.type = type; } },
-  CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } },
-  setTimeout, clearTimeout, requestAnimationFrame: callback => setTimeout(callback, 0),
-  matchMedia: () => ({matches: false}), getComputedStyle: () => ({visibility: 'visible'}), location: {search: ''}});
-window.window = window;
-const runtime = vm.createContext(window);
-const run = expression => vm.runInContext(expression, runtime);
-run(fs.readFileSync(web + '/app.js', 'utf8'));
-const WM = window.WM;
-const calls = [];
-let staging = false;
-let bridgeReply = () => null;
-WM.send = (method, ...args) => {
-  calls.push([method, ...args]);
-  if (staging) assert.fail('Staged screen reached bridge: ' + method);
-  return Promise.resolve(bridgeReply(method, ...args));
-};
-WM.confirm = () => { if (staging) assert.fail('Unexpected confirmation'); return Promise.resolve(false); };
-const crop = data.key.startsWith('settings-');
-const moduleName = data.key.startsWith('fittings-') ? 'fittings'
-  : data.key.startsWith('settings-wanderer') ? 'wanderer'
-  : data.key === 'profiles-copy-scope' ? 'evesettings'
-  : data.key.startsWith('settings-characters') ? 'characters'
-  : crop ? 'previews' : data.key.includes('formations') ? 'formations' : 'uisetup';
-// Model native bubbling focusin for this capture's real row-selection handler.
-// Keep this local: other page harnesses retain their own DOM mechanics.
-if (moduleName === 'formations') {
-  const setAttribute = Element.prototype.setAttribute;
-  Element.prototype.setAttribute = function (name, value) {
-    setAttribute.call(this, name, value);
-    if (name === 'class') this.className = String(value);
-  };
-  const focus = Element.prototype.focus;
-  Element.prototype.focus = function () {
-    const changed = document.activeElement !== this;
-    focus.call(this);
-    if (changed) for (let node = this; node; node = node.parentNode) {
-      node.dispatchEvent({type: 'focusin', target: this});
-    }
-  };
+const {performance} = require('node:perf_hooks');
+const {isNativeError} = require('node:util/types');
+const {DOM_FACTORY_SOURCE} = require('./screenshot_dom.cjs');
+
+if (process.argv.length !== 5 || process.argv[2] !== '--worker') {
+  process.stderr.write('Usage: screenshot_pages.cjs --worker <markup-json> <web-root>\n');
+  process.exit(2);
 }
-if (moduleName === 'fittings') {
-  // The page uses native progress properties, which reflect numeric attributes.
-  const value = Object.getOwnPropertyDescriptor(Element.prototype, 'value');
-  Object.defineProperty(Element.prototype, 'value', {
-    get() { return this.tagName === 'PROGRESS' ? Number(this.getAttribute('value') || 0) : value.get.call(this); },
-    set(number) {
-      if (this.tagName === 'PROGRESS') this.setAttribute('value', number);
-      else value.set.call(this, number);
+const startupPath = process.argv[3];
+const startupPageJson = fs.readFileSync(startupPath, 'utf8');
+const web = process.argv[4];
+const HOST_REJECTION_MARKER = '__wingmanUnhandledHostRealmEscapeProbe';
+const VM_FAILURE_NAME_LIMIT = 128;
+const VM_FAILURE_MESSAGE_LIMIT = 4096;
+const VM_FAILURE_STACK_LIMIT = 65536;
+const VM_FAILURE_JSON_LIMIT = 70000;
+const webSourcesJson = JSON.stringify(Object.fromEntries([
+  'app', 'fittings', 'wanderer', 'evesettings', 'characters', 'previews',
+  'formations', 'uisetup',
+].map(name => [name, fs.readFileSync(web + '/' + name + '.js', 'utf8')])));
+
+async function scenarioProgram(publishTimerDispatch) {
+  const startupJson = globalThis.__wingmanStartupPageJson;
+  const payloadJson = globalThis.__wingmanPayloadJson;
+  const webJson = globalThis.__wingmanWebSourcesJson;
+  const domFactorySource = globalThis.__wingmanDomFactorySource;
+  const scheduleTimer = globalThis.__wingmanTimerScheduleAdapter;
+  const clearTimer = globalThis.__wingmanTimerClearAdapter;
+  const encode = globalThis.__wingmanTextEncoderAdapter;
+  const searchParams = globalThis.__wingmanURLSearchParamsAdapter;
+  const takeUnhandled = globalThis.__wingmanUnhandledAdapter;
+  const protocolEventAdapter = globalThis.__wingmanProtocolEventAdapter;
+  delete globalThis.__wingmanStartupPageJson;
+  delete globalThis.__wingmanPayloadJson;
+  delete globalThis.__wingmanWebSourcesJson;
+  delete globalThis.__wingmanDomFactorySource;
+  delete globalThis.__wingmanTimerScheduleAdapter;
+  delete globalThis.__wingmanTimerClearAdapter;
+  delete globalThis.__wingmanTextEncoderAdapter;
+  delete globalThis.__wingmanURLSearchParamsAdapter;
+  delete globalThis.__wingmanUnhandledAdapter;
+  delete globalThis.__wingmanProtocolEventAdapter;
+
+  const outputLines = [];
+  const renderLogValue = value => {
+    if (typeof value === 'string') return value;
+    try {
+      const encoded = JSON.stringify(value);
+      if (encoded !== undefined) return encoded;
+    } catch {}
+    try { return String(value); } catch { return '<unprintable>'; }
+  };
+  const recordLog = args => {
+    let line = args.map(renderLogValue).join(' ');
+    if (line.length > 400) line = line.slice(0, 399) + '…';
+    outputLines.push(line);
+    if (outputLines.length > 40) outputLines.shift();
+  };
+  globalThis.console = {
+    log: (...args) => recordLog(args),
+    info: (...args) => recordLog(args),
+    debug: (...args) => recordLog(args),
+    warn: (...args) => recordLog(args),
+    error: (...args) => { throw new Error(args.map(renderLogValue).join(' ')); },
+  };
+
+  class AssertionError extends Error {
+    constructor(message) {
+      super(message || 'Assertion failed');
+      this.name = 'AssertionError';
     }
+  }
+  const render = value => {
+    try { return JSON.stringify(value); } catch { return String(value); }
+  };
+  const deeplyEqual = (actual, expected) => {
+    if (Object.is(actual, expected)) return true;
+    if (!actual || !expected || typeof actual !== 'object'
+        || typeof expected !== 'object') return false;
+    if (Array.isArray(actual) !== Array.isArray(expected)) return false;
+    const actualKeys = Object.keys(actual);
+    const expectedKeys = Object.keys(expected);
+    if (actualKeys.length !== expectedKeys.length) return false;
+    return actualKeys.every((key, index) => key === expectedKeys[index]
+      && deeplyEqual(actual[key], expected[key]));
+  };
+  const assert = {
+    ok(value, message) {
+      if (!value) throw new AssertionError(message || 'Expected value to be truthy');
+    },
+    equal(actual, expected, message) {
+      if (!Object.is(actual, expected)) {
+        throw new AssertionError(message
+          || `Expected ${render(actual)} to equal ${render(expected)}`);
+      }
+    },
+    notEqual(actual, expected, message) {
+      if (Object.is(actual, expected)) {
+        throw new AssertionError(message
+          || `Expected ${render(actual)} not to equal ${render(expected)}`);
+      }
+    },
+    deepEqual(actual, expected, message) {
+      if (!deeplyEqual(actual, expected)) {
+        throw new AssertionError(message
+          || `Expected ${render(actual)} to deep-equal ${render(expected)}`);
+      }
+    },
+    match(actual, pattern, message) {
+      if (!pattern.test(String(actual))) {
+        throw new AssertionError(message
+          || `Expected ${render(actual)} to match ${String(pattern)}`);
+      }
+    },
+    doesNotMatch(actual, pattern, message) {
+      if (pattern.test(String(actual))) {
+        throw new AssertionError(message
+          || `Expected ${render(actual)} not to match ${String(pattern)}`);
+      }
+    },
+    throws(callback, pattern, message) {
+      let thrown;
+      try { callback(); } catch (error) { thrown = error; }
+      if (!thrown) throw new AssertionError(message || 'Expected function to throw');
+      if (pattern && !pattern.test(String(thrown.message || thrown))) {
+        throw new AssertionError(message
+          || `Expected ${String(thrown.message || thrown)} to match ${String(pattern)}`);
+      }
+      return thrown;
+    },
+    fail(message) { throw new AssertionError(message); },
+  };
+
+  function fromHost(adapter, request) {
+    const envelope = Reflect.apply(adapter, undefined, [JSON.stringify(request)]);
+    if (typeof envelope !== 'string') {
+      throw new TypeError('Host adapter returned a non-primitive envelope');
+    }
+    const response = JSON.parse(envelope);
+    if (!response || response.ok !== true) {
+      const errorTypes = {Error, EvalError, RangeError, ReferenceError,
+        SyntaxError, TypeError, URIError};
+      const ErrorType = errorTypes[response && response.errorName] || Error;
+      const error = new ErrorType(
+        response && response.errorMessage || 'Host adapter failed');
+      if (response && typeof response.errorStack === 'string'
+          && response.errorStack) error.stack = response.errorStack;
+      throw error;
+    }
+    return response.value;
+  }
+  function reportProtocolEvent(name) {
+    fromHost(protocolEventAdapter, {name});
+  }
+  function errorRecord(error) {
+    let name = 'Error';
+    let message = 'Unknown error';
+    let stack = '';
+    try { if (error && typeof error.name === 'string') name = error.name; } catch {}
+    try {
+      if (error && typeof error.message === 'string') message = error.message;
+      else message = String(error);
+    } catch {}
+    try { if (error && error.stack) stack = String(error.stack); } catch {}
+    return {name, message, stack};
+  }
+  function reviveError(record) {
+    const errorTypes = {Error, EvalError, RangeError, ReferenceError,
+      SyntaxError, TypeError, URIError};
+    const ErrorType = errorTypes[record && record.name] || Error;
+    const error = new ErrorType(record && record.message || 'Asynchronous failure');
+    if (record && typeof record.stack === 'string' && record.stack) {
+      error.stack = record.stack;
+    }
+    return error;
+  }
+
+  const timerCallbacks = new Map();
+  const timerErrors = [];
+  let nextTimer = 1;
+  function timerKey(kind, token) { return kind + ':' + token; }
+  function dispatchTimer(kind, token) {
+    const key = timerKey(kind, token);
+    const entry = timerCallbacks.get(key);
+    if (!entry) return;
+    if (kind !== 'interval') timerCallbacks.delete(key);
+    try {
+      Reflect.apply(entry.callback, globalThis.window || globalThis, entry.args);
+    } catch (error) {
+      timerErrors.push(errorRecord(error));
+    }
+  }
+  publishTimerDispatch(dispatchTimer);
+  function schedule(kind, callback, delay, args) {
+    if (typeof callback !== 'function') {
+      throw new TypeError(kind + ' callback must be a function');
+    }
+    const token = nextTimer++;
+    timerCallbacks.set(timerKey(kind, token), {callback, args});
+    try {
+      fromHost(scheduleTimer, {kind, token, delay: Number(delay)});
+    } catch (error) {
+      timerCallbacks.delete(timerKey(kind, token));
+      throw error;
+    }
+    return token;
+  }
+  function clear(kind, token) {
+    timerCallbacks.delete(timerKey(kind, token));
+    fromHost(clearTimer, {kind, token});
+  }
+  function setTimeout(callback, delay = 0, ...args) {
+    return schedule('timeout', callback, delay, args);
+  }
+  function clearTimeout(token) { clear('timeout', token); }
+  function requestAnimationFrame(callback) {
+    return schedule('timeout', callback, 0, []);
+  }
+  Object.assign(globalThis, {setTimeout, clearTimeout, requestAnimationFrame});
+
+  function encoderInput(value) {
+    if (typeof value === 'symbol') {
+      throw new TypeError('Cannot convert a Symbol value to a string');
+    }
+    return String(value);
+  }
+  const encoders = new WeakSet();
+  function encoder(instance) {
+    if (!encoders.has(instance)) throw new TypeError('Illegal invocation');
+  }
+  class TextEncoder {
+    constructor() { encoders.add(this); }
+    get encoding() { encoder(this); return 'utf-8'; }
+    encode(input = '') {
+      encoder(this);
+      const encoded = fromHost(encode,
+        {operation: 'encode', input: encoderInput(input), capacity: 0});
+      const result = new Uint8Array(encoded.bytes.length);
+      for (let index = 0; index < encoded.bytes.length; index++) {
+        result[index] = encoded.bytes[index];
+      }
+      return result;
+    }
+    encodeInto(input, destination) {
+      encoder(this);
+      if (!(destination instanceof Uint8Array)) {
+        throw new TypeError('The destination must be a Uint8Array');
+      }
+      const encoded = fromHost(encode, {
+        operation: 'encodeInto', input: encoderInput(input),
+        capacity: destination.length,
+      });
+      for (let index = 0; index < encoded.written; index++) {
+        destination[index] = encoded.bytes[index];
+      }
+      return {read: encoded.read, written: encoded.written};
+    }
+  }
+  Object.defineProperty(TextEncoder.prototype, Symbol.toStringTag,
+    {value: 'TextEncoder', configurable: true});
+
+  const parameterStates = new WeakMap();
+  function stateFor(instance) {
+    if (!parameterStates.has(instance)) throw new TypeError('Illegal invocation');
+    return parameterStates.get(instance);
+  }
+  function webString(value) {
+    if (typeof value === 'symbol') {
+      throw new TypeError('Cannot convert a Symbol value to a string');
+    }
+    return String(value);
+  }
+  function urlOperation(operation, serializedState, args) {
+    const response = fromHost(searchParams,
+      {operation, serializedState, argumentsJson: JSON.stringify(args)});
+    if (!response || typeof response.state !== 'string') {
+      throw new TypeError('Host URLSearchParams adapter returned invalid state');
+    }
+    return response;
+  }
+  function invoke(instance, operation, args) {
+    const response = urlOperation(operation, stateFor(instance), args);
+    parameterStates.set(instance, response.state);
+    return response.result;
+  }
+  class URLSearchParams {
+    constructor(init = '') {
+      let operation = 'construct-string';
+      let args;
+      if (init instanceof URLSearchParams) {
+        args = [stateFor(init)];
+      } else if (typeof init === 'string') {
+        args = [init];
+      } else if (init !== null && init !== undefined
+          && typeof init[Symbol.iterator] === 'function') {
+        operation = 'construct-entries';
+        const entries = [];
+        for (const pair of init) {
+          const values = Array.from(pair);
+          if (values.length !== 2) {
+            throw new TypeError(
+              'Each query pair must be an iterable [name, value] tuple');
+          }
+          entries.push([webString(values[0]), webString(values[1])]);
+        }
+        args = [entries];
+      } else if (init !== null && typeof init === 'object') {
+        operation = 'construct-entries';
+        const entries = [];
+        for (const name of Object.keys(init)) {
+          entries.push([webString(name), webString(init[name])]);
+        }
+        args = [entries];
+      } else {
+        args = [webString(init)];
+      }
+      const response = urlOperation(operation, '', args);
+      parameterStates.set(this, response.state);
+    }
+    get size() { return invoke(this, 'size', []); }
+    append(name, value) { invoke(this, 'append', [webString(name), webString(value)]); }
+    delete(name, value) {
+      const args = [webString(name)];
+      if (arguments.length > 1) args.push(webString(value));
+      invoke(this, 'delete', args);
+    }
+    get(name) { return invoke(this, 'get', [webString(name)]); }
+    getAll(name) { return invoke(this, 'getAll', [webString(name)]); }
+    has(name, value) {
+      const args = [webString(name)];
+      if (arguments.length > 1) args.push(webString(value));
+      return invoke(this, 'has', args);
+    }
+    set(name, value) { invoke(this, 'set', [webString(name), webString(value)]); }
+    sort() { invoke(this, 'sort', []); }
+    toString() { return invoke(this, 'toString', []); }
+    *entries() {
+      for (let index = 0; ; index++) {
+        const entries = invoke(this, 'entries', []);
+        if (index >= entries.length) return;
+        yield [entries[index][0], entries[index][1]];
+      }
+    }
+    *keys() { for (const entry of this.entries()) yield entry[0]; }
+    *values() { for (const entry of this.entries()) yield entry[1]; }
+    forEach(callback, thisArg = undefined) {
+      for (let index = 0; ; index++) {
+        const entries = invoke(this, 'entries', []);
+        if (index >= entries.length) return;
+        callback.call(thisArg, entries[index][1], entries[index][0], this);
+      }
+    }
+    [Symbol.iterator]() { return this.entries(); }
+  }
+  Object.defineProperty(URLSearchParams.prototype, Symbol.toStringTag,
+    {value: 'URLSearchParams', configurable: true});
+  globalThis.TextEncoder = TextEncoder;
+  globalThis.URLSearchParams = URLSearchParams;
+
+  globalThis.Event = class Event {
+    constructor(type) { this.type = type; }
+  };
+  globalThis.CustomEvent = class CustomEvent {
+    constructor(type, options = {}) { this.type = type; this.detail = options.detail; }
+  };
+  globalThis.navigator = {clipboard: {
+    readText() { throw new Error('clipboard read'); },
+    writeText() { throw new Error('clipboard write'); },
+  }};
+  globalThis.matchMedia = () => ({matches: false});
+  globalThis.getComputedStyle = () => ({visibility: 'visible'});
+  globalThis.location = {search: ''};
+
+  const data = JSON.parse(payloadJson) || {};
+  const webSources = JSON.parse(webJson);
+  const createDOM = (0, eval)('(' + domFactorySource + ')');
+  const page = JSON.parse(startupJson);
+  const {document, Element, scrolls} = createDOM(page);
+  const windowState = new Element('window');
+  Object.defineProperties(globalThis, Object.getOwnPropertyDescriptors(windowState));
+  Object.setPrototypeOf(globalThis, Element.prototype);
+  Object.defineProperty(globalThis, 'constructor', {
+    value: Element, writable: true, configurable: true,
   });
-  Object.defineProperty(Element.prototype, 'max', {
-    get() { return Number(this.getAttribute('max') || 1); },
-    set(number) { this.setAttribute('max', number); }
-  });
-  Object.defineProperty(Element.prototype, 'parentElement', {get() { return this.parentNode; }});
-  const style = document.getElementById('fittings-workspace-scroll').style;
-  style.removeProperty = function (name) { delete this[name]; };
-}
-run(fs.readFileSync(web + '/' + moduleName + '.js', 'utf8'));
-const tick = () => new Promise(resolve => setTimeout(resolve, 10));
-const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return {promise, resolve}; };
+  const window = globalThis;
+  globalThis.window = window;
+  globalThis.document = document;
+  globalThis.Element = Element;
+  for (const [id, text] of Object.entries(data.texts || {})) {
+    document.getElementById(id).textContent = text;
+  }
+  const run = expression => { if (expression) return (0, eval)(expression); };
+  const Promise = globalThis.Promise;
+  for (const name of [
+    '__wingmanStartupPageJson', '__wingmanPayloadJson',
+    '__wingmanWebSourcesJson', '__wingmanDomFactorySource',
+    '__wingmanTimerScheduleAdapter', '__wingmanTimerClearAdapter',
+    '__wingmanTextEncoderAdapter', '__wingmanURLSearchParamsAdapter',
+    '__wingmanUnhandledAdapter', '__wingmanProtocolEventAdapter',
+    '__wingmanCompleteAdapter',
+  ]) {
+    assert.equal(name in globalThis, false,
+      'host adapter remained globally reachable: ' + name);
+  }
+
+  try {
+    const protocolProbe = data.protocol_probe;
+    if (data.failure_logs) {
+      for (let index = 0; index < 45; index++) {
+        console.debug('protocol filler context ' + index);
+      }
+      console.log('protocol log context');
+      console.info('protocol info context');
+      console.debug('protocol debug context');
+      console.warn('protocol warn context ' + 'x'.repeat(500));
+    }
+    if (protocolProbe === 'vm-throw') {
+      run(`(() => { function protocolVmThrow() { throw new Error('protocol VM throw'); }
+        protocolVmThrow(); })()`);
+    }
+    if (protocolProbe === 'vm-reject') {
+      if (data.hostile_rejection) {
+        let hostileRejectionArmed = false;
+        const hostileVmAccesses = new Set();
+        function attemptUnhandledRealmEscape(label) {
+          let caller;
+          try { caller = attemptUnhandledRealmEscape.caller; } catch {}
+          for (let depth = 0; caller && depth < 8; depth++) {
+            try {
+              const realm = caller.constructor('return globalThis')();
+              if (realm === globalThis) hostileVmAccesses.add(label);
+              if (realm && 'process' in realm) {
+                realm.__wingmanUnhandledHostRealmEscapeProbe =
+                  data.hostile_rejection + ':' + label;
+                return true;
+              }
+            } catch {}
+            try { caller = caller.caller; } catch { break; }
+          }
+          if (hostileRejectionArmed
+              && !globalThis.__wingmanSerializingUnhandledReason) {
+            try {
+              const realm = takeUnhandled.constructor('return globalThis')();
+              realm.__wingmanUnhandledHostRealmEscapeProbe =
+                data.hostile_rejection + ':' + label;
+              return true;
+            } catch {}
+          }
+          return false;
+        }
+        function protocolHostileReject() {
+          const expected = 'protocol hostile ' + data.hostile_rejection
+            + ' rejection';
+          const target = {};
+          Object.defineProperties(target, {
+            name: {get: function hostileNameGetter() {
+              attemptUnhandledRealmEscape('name');
+              throw new Error('hostile name getter failure');
+            }},
+            message: {get: function hostileMessageGetter() {
+              const escaped = attemptUnhandledRealmEscape('message');
+              return escaped ? 'host realm escaped through rejection' : expected;
+            }},
+            stack: {get: function hostileStackGetter() {
+              attemptUnhandledRealmEscape('stack');
+              return 'Error: ' + expected
+                + '\\n    at protocolHostileReject (protocol-probe.cjs:1:1)';
+            }},
+          });
+          let reason = target;
+          if (data.hostile_rejection === 'proxy') {
+            reason = new Proxy(target, {
+              get: function hostileProxyGet(owner, key, receiver) {
+                attemptUnhandledRealmEscape('get:' + String(key));
+                if (key === Symbol.toPrimitive) {
+                  return function protocolHostileCoercion() {
+                    attemptUnhandledRealmEscape('coercion');
+                    return expected;
+                  };
+                }
+                return Reflect.get(owner, key, receiver);
+              },
+              getPrototypeOf: function hostileProxyGetPrototypeOf(owner) {
+                attemptUnhandledRealmEscape('prototype');
+                return Reflect.getPrototypeOf(owner);
+              },
+            });
+            Object.getPrototypeOf(reason);
+            String(reason);
+            if (!hostileVmAccesses.has('prototype')
+                || !hostileVmAccesses.has('coercion')) {
+              throw new Error('hostile Proxy probes did not run in the request VM');
+            }
+          }
+          hostileRejectionArmed = true;
+          Promise.reject(reason);
+        }
+        protocolHostileReject();
+      } else {
+        run(`(() => { function protocolVmReject() {
+          Promise.reject(new Error('protocol VM rejection')); }
+          protocolVmReject(); })()`);
+      }
+    }
+    if (protocolProbe?.startsWith('pending-timer-')) {
+      setTimeout(() => reportProtocolEvent('leaked'), 0);
+      if (protocolProbe === 'pending-timer-assertion-exit') {
+        throw new Error('protocol cleanup probe failure');
+      }
+    }
+    if (!protocolProbe) {
+    run(webSources.app);
+    const WM = window.WM;
+    const calls = [];
+    let staging = false;
+    let bridgeReply = () => null;
+    WM.send = (method, ...args) => {
+      calls.push([method, ...args]);
+      if (staging) assert.fail('Staged screen reached bridge: ' + method);
+      return Promise.resolve(bridgeReply(method, ...args));
+    };
+    WM.confirm = () => { if (staging) assert.fail('Unexpected confirmation'); return Promise.resolve(false); };
+    const crop = data.key.startsWith('settings-');
+    const moduleName = data.key.startsWith('fittings-') ? 'fittings'
+      : data.key.startsWith('settings-wanderer') ? 'wanderer'
+      : data.key === 'profiles-copy-scope' ? 'evesettings'
+      : data.key.startsWith('settings-characters') ? 'characters'
+      : crop ? 'previews' : data.key.includes('formations') ? 'formations' : 'uisetup';
+    // Model native bubbling focusin for this capture's real row-selection handler.
+    // Keep this local: other page harnesses retain their own DOM mechanics.
+    if (moduleName === 'formations') {
+      const setAttribute = Element.prototype.setAttribute;
+      Element.prototype.setAttribute = function (name, value) {
+        setAttribute.call(this, name, value);
+        if (name === 'class') this.className = String(value);
+      };
+      const focus = Element.prototype.focus;
+      Element.prototype.focus = function () {
+        const changed = document.activeElement !== this;
+        focus.call(this);
+        if (changed) for (let node = this; node; node = node.parentNode) {
+          node.dispatchEvent({type: 'focusin', target: this});
+        }
+      };
+    }
+    if (moduleName === 'fittings') {
+      // The page uses native progress properties, which reflect numeric attributes.
+      const value = Object.getOwnPropertyDescriptor(Element.prototype, 'value');
+      Object.defineProperty(Element.prototype, 'value', {
+        get() { return this.tagName === 'PROGRESS' ? Number(this.getAttribute('value') || 0) : value.get.call(this); },
+        set(number) {
+          if (this.tagName === 'PROGRESS') this.setAttribute('value', number);
+          else value.set.call(this, number);
+        }
+      });
+      Object.defineProperty(Element.prototype, 'max', {
+        get() { return Number(this.getAttribute('max') || 1); },
+        set(number) { this.setAttribute('max', number); }
+      });
+      Object.defineProperty(Element.prototype, 'parentElement', {get() { return this.parentNode; }});
+      const style = document.getElementById('fittings-workspace-scroll').style;
+      style.removeProperty = function (name) { delete this[name]; };
+    }
+    run(webSources[moduleName]);
+    const tick = () => new Promise(resolve => setTimeout(resolve, 10));
+    const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return {promise, resolve}; };
 async function gapRegression() {
   const scenario = data.gap;
   const el = id => document.getElementById(id);
@@ -120,7 +617,8 @@ async function gapRegression() {
       assert.throws(verify, /Screenshot content did not settle/);
       assert.equal(calls.length, 0);
       if (data.cleanup) run(data.cleanup);
-      return console.log('PASS screenshot gap ' + data.key + ' unresolved');
+      outputLines.push('PASS screenshot gap ' + data.key + ' unresolved');
+      return;
     }
     let anchor, pane, target;
     if (wanderer) {
@@ -283,7 +781,7 @@ async function gapRegression() {
     assert.equal(calls.length, 0, 'fixture cleanup stays local');
     if (!['settled', 'codec-missing'].includes(scenario)) break;
   }
-  console.log('PASS screenshot gap ' + data.key + ' ' + scenario);
+  outputLines.push('PASS screenshot gap ' + data.key + ' ' + scenario);
 }
 async function cropRegression() {
   const scenario = data.regression;
@@ -484,10 +982,12 @@ async function fittingsDetailRegression() {
       assert.equal(toggle('Rifter - Solo PvP').getAttribute('aria-expanded'), 'true');
       assert.equal(document.querySelectorAll('.fit-row.open').length, 1);
       const texts = selector => row.querySelectorAll(selector).map(el => el.textContent);
-      assert.deepEqual(texts('.fit-rack-name'), ['High power', 'Medium power', 'Low power']);
-      assert.deepEqual(texts('.fit-item-name'), ['150mm Light AutoCannon II', '1MN Afterburner II', 'Gyrostabilizer II']);
-      assert.deepEqual(texts('.fit-alias-row'), ['Rifter Tackle Fit']);
-      assert.deepEqual(texts('.fit-presence-name'), ['Aria Voss', 'Bex Talon']);
+      assert.deepEqual(Array.from(texts('.fit-rack-name')),
+        ['High power', 'Medium power', 'Low power']);
+      assert.deepEqual(Array.from(texts('.fit-item-name')),
+        ['150mm Light AutoCannon II', '1MN Afterburner II', 'Gyrostabilizer II']);
+      assert.deepEqual(Array.from(texts('.fit-alias-row')), ['Rifter Tackle Fit']);
+      assert.deepEqual(Array.from(texts('.fit-presence-name')), ['Aria Voss', 'Bex Talon']);
       const metadata = row.querySelector('.fit-metadata-disclosure');
       assert.ok(metadata && metadata.tagName === 'DETAILS', 'metadata editing uses native disclosure');
       assert.equal(metadata.open, false, 'staged fitting details are read-first');
@@ -510,7 +1010,7 @@ async function fittingsDetailRegression() {
     else assert.throws(verify, /Screenshot content did not settle: fittings-detail/);
     assert.equal(calls.length, 0, 'all fixture actions and delayed replies remain local');
   }
-  console.log('PASS screenshot fittings-detail ' + scenario);
+  outputLines.push('PASS screenshot fittings-detail ' + scenario);
 }
 async function fidelityRegression() {
   document.activeElement = document.body;
@@ -550,7 +1050,7 @@ async function fidelityRegression() {
     assert.throws(() => run(data.verify), /Screenshot content did not settle/, scenario);
     if (data.cleanup) { run(data.cleanup); await tick(); }
     assert.equal(calls.length, 0, 'damaged capture and cleanup never reach a writer');
-    console.log('PASS screenshot fidelity ' + data.key + ' ' + scenario);
+    outputLines.push('PASS screenshot fidelity ' + data.key + ' ' + scenario);
     return true;
   }
   WM.route(crop ? 'settings' : 'fittings');
@@ -631,7 +1131,7 @@ async function fidelityRegression() {
       if (geometry === 'descendant-hit') run(data.verify);
       else assert.throws(() => run(data.verify), /Screenshot content did not settle/, geometry);
       assert.equal(calls.length, 0, 'geometry verification must not click mutators');
-      console.log('PASS screenshot Groups geometry ' + geometry); return;
+      outputLines.push('PASS screenshot Groups geometry ' + geometry); return;
     }
     manager.open = false;
     assert.throws(() => run(data.verify), /Screenshot content did not settle/);
@@ -686,7 +1186,7 @@ async function fidelityRegression() {
   } else if (data.key === 'fittings-copy-limit') {
     const selectedIds = document.querySelectorAll('#fittings-list .fit-select input')
       .filter(node => node.checked).map(node => node.value).sort();
-    assert.deepEqual(selectedIds, ['fit-gen-1', 'fit-gen-2', 'fit-gen-3', 'fit-gen-4',
+    assert.deepEqual(Array.from(selectedIds), ['fit-gen-1', 'fit-gen-2', 'fit-gen-3', 'fit-gen-4',
       'fit-gen-5', 'fit-gen-6', 'fit-gen-7', 'fit-gen-8', 'fit-gen-9', 'fit-gen-10', 'fit-gen-11'].sort(),
       'select every intended entry exactly once, never an outside entry sharing its name');
     assert.equal(el('fittings-copy-status').textContent,
@@ -697,7 +1197,7 @@ async function fidelityRegression() {
       'refusal must be reachable with fewer than 20 selected fits across multiple targets');
     assert.equal(el('fittings-copy-summary').textContent, 'Choose target characters.');
     const targets = el('fittings-copy-body').querySelectorAll('input').filter(node => node.checked);
-    assert.deepEqual(targets.map(node => node.closest('.fit-copy-target')
+    assert.deepEqual(Array.from(targets, node => node.closest('.fit-copy-target')
       .querySelector('label span:last-child').textContent).sort(), ['Eryn Voss', 'Fio Kest']);
     assert.ok(visible(el('fittings-copy-review')));
     assert.equal(el('fittings-copy-start').hidden, true);
@@ -806,9 +1306,9 @@ async function fidelityRegression() {
     assert.ok(calls.some(call => call[0] === 'fittings_state'), 'ordinary reads resume after teardown');
     assert.ok(calls.every(call => call[0] === 'fittings_state'), 'reentry never resumes a synthetic writer');
   }
-  console.log('PASS screenshot fidelity ' + data.key + ' ' + data.regression);
+  outputLines.push('PASS screenshot fidelity ' + data.key + ' ' + data.regression);
 }
-(async () => {
+async function executeScenario() {
   if (data.gap) { await gapRegression(); return; }
   if (['settings-previews-groups', 'settings-characters-waiting', 'settings-characters-partial-cleanup', 'fittings-copy-limit',
        'fittings-copy-progress', 'fittings-copy-result'].includes(data.key)) {
@@ -820,7 +1320,7 @@ async function fidelityRegression() {
   await tick(); calls.length = 0;
   if (data.regression) {
     await cropRegression();
-    console.log('PASS screenshot regression ' + JSON.stringify(data.regression));
+    outputLines.push('PASS screenshot regression ' + JSON.stringify(data.regression));
     return;
   }
   staging = true;
@@ -904,5 +1404,450 @@ async function fidelityRegression() {
     assert.ok(calls.slice(beforeCatalogRead).some(call => call[0] === 'eve_settings_setup_catalog'), 'ordinary catalog reads resume after cleanup');
   } else WM.section('previews');
   assert.ok(calls.length, 'ordinary reads resume after cleanup');
-  console.log('PASS screenshot ' + data.key);
-})().catch(error => { console.error(error); process.exitCode = 1; });
+  outputLines.push('PASS screenshot ' + data.key);
+}
+    await executeScenario();
+    }
+    assert.equal(timerCallbacks.size, 0, 'request left a live timer');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const asynchronousErrors = timerErrors.concat(fromHost(takeUnhandled, {}));
+    if (asynchronousErrors.length) throw reviveError(asynchronousErrors[0]);
+    assert.equal(timerCallbacks.size, 0, 'request left a live timer');
+    const passLines = outputLines.filter(line => line.startsWith('PASS screenshot'));
+    assert.equal(passLines.length, 1, 'request must produce exactly one terminal PASS line');
+    assert.equal(outputLines.at(-1), passLines[0], 'request PASS line must be terminal');
+    return {
+      ok: true,
+      output: passLines[0],
+      error: '',
+      stack: '',
+      logs: outputLines.slice(),
+    };
+  } catch (error) {
+    const failure = errorRecord(error);
+    return {
+      ok: false,
+      output: '',
+      error: failure.message,
+      stack: failure.stack,
+      logs: outputLines.slice(),
+    };
+  }
+}
+
+function safeErrorRecord(error) {
+  let name = 'Error';
+  let message = 'Unknown error';
+  let stack = '';
+  try { if (error && typeof error.name === 'string') name = error.name; } catch {}
+  try {
+    if (error && typeof error.message === 'string') message = error.message;
+    else message = String(error);
+  } catch {}
+  try { if (error && error.stack) stack = String(error.stack); } catch {}
+  return {name, message, stack};
+}
+
+function adapterEnvelope(operation) {
+  try {
+    return JSON.stringify({ok: true, value: operation()});
+  } catch (error) {
+    const failure = safeErrorRecord(error);
+    try {
+      return JSON.stringify({
+        ok: false,
+        errorName: failure.name,
+        errorMessage: failure.message,
+        errorStack: failure.stack,
+      });
+    } catch {
+      return '{"ok":false,"errorName":"Error","errorMessage":"Host adapter failed","errorStack":""}';
+    }
+  }
+}
+
+function adapterRequest(envelope) {
+  assert.equal(typeof envelope, 'string',
+    'host adapter request must be a primitive JSON envelope');
+  const request = JSON.parse(envelope);
+  assert.ok(request && typeof request === 'object' && !Array.isArray(request),
+    'host adapter request must decode to an object');
+  return request;
+}
+
+function boundedVmFailureField(record, name, fallback, limit) {
+  const value = record[name];
+  if (typeof value !== 'string') return fallback;
+  return value.length > limit ? value.slice(0, limit) : value;
+}
+
+function parseVmFailureJson(serialized) {
+  assert.equal(typeof serialized, 'string',
+    'VM failure serializer must return primitive JSON');
+  assert.ok(serialized.length <= VM_FAILURE_JSON_LIMIT,
+    'VM failure serializer exceeded its bounded envelope');
+  let record;
+  try {
+    record = JSON.parse(serialized);
+  } catch {
+    throw new Error('VM failure serializer returned invalid JSON');
+  }
+  assert.ok(record && typeof record === 'object' && !Array.isArray(record),
+    'VM failure serializer returned an invalid record');
+  return {
+    name: boundedVmFailureField(
+      record, 'name', 'Error', VM_FAILURE_NAME_LIMIT),
+    message: boundedVmFailureField(
+      record, 'message', 'Unhandled rejection', VM_FAILURE_MESSAGE_LIMIT),
+    stack: boundedVmFailureField(
+      record, 'stack', '', VM_FAILURE_STACK_LIMIT),
+  };
+}
+
+// VM failures stay opaque on the host; only request-realm code may inspect them.
+function serializeOpaqueVmFailure(runtime, reason) {
+  const token = randomBytes(16).toString('hex');
+  const reasonSlot = '__wingmanOpaqueFailure_' + token;
+  const serializerSlot = '__wingmanFailureSerializer_' + token;
+  runtime[reasonSlot] = reason;
+  let serialized;
+  try {
+    serialized = vm.runInContext(`(() => {
+      const reasonSlot = ${JSON.stringify(reasonSlot)};
+      const serializerSlot = ${JSON.stringify(serializerSlot)};
+      globalThis.__wingmanSerializingUnhandledReason = true;
+      globalThis[serializerSlot] = function serializeVmFailure(reason) {
+        const clip = (value, fallback, limit) => {
+          if (typeof value !== 'string') return fallback;
+          return value.length > limit ? value.slice(0, limit) : value;
+        };
+        const read = (name, fallback, limit) => {
+          try { return clip(reason == null ? undefined : reason[name], fallback, limit); }
+          catch { return fallback; }
+        };
+        const coerce = fallback => {
+          try { return clip(String(reason), fallback, ${VM_FAILURE_MESSAGE_LIMIT}); }
+          catch { return fallback; }
+        };
+        const name = read('name', 'Error', ${VM_FAILURE_NAME_LIMIT});
+        let message = read('message', null, ${VM_FAILURE_MESSAGE_LIMIT});
+        if (message === null) message = coerce('Unhandled rejection');
+        const stack = read('stack', '', ${VM_FAILURE_STACK_LIMIT});
+        return JSON.stringify({name, message, stack});
+      };
+      try {
+        return globalThis[serializerSlot](globalThis[reasonSlot]);
+      } catch {
+        return '{"name":"Error","message":"Unhandled rejection could not be serialized","stack":""}';
+      } finally {
+        delete globalThis[reasonSlot];
+        delete globalThis[serializerSlot];
+        delete globalThis.__wingmanSerializingUnhandledReason;
+      }
+    })()`, runtime);
+  } catch {
+    throw new Error('VM failure serialization did not complete');
+  } finally {
+    delete runtime[reasonSlot];
+    delete runtime[serializerSlot];
+    delete runtime.__wingmanSerializingUnhandledReason;
+  }
+  return parseVmFailureJson(serialized);
+}
+
+class ScenarioExecutionFailure extends Error {
+  constructor(result) {
+    super(result.error || 'worker reported failure');
+    this.name = 'ScenarioExecutionFailure';
+    this.remoteStack = typeof result.stack === 'string' ? result.stack : '';
+    this.logs = Array.isArray(result.logs)
+      ? result.logs.slice(-40).map(line => {
+        const text = String(line);
+        return text.length > 400 ? text.slice(0, 399) + '…' : text;
+      })
+      : [];
+  }
+}
+
+async function runScenario(request, cleanupProbe = null) {
+  if (request.payload?.assert_unhandled_host_pristine) {
+    const leaked = Object.hasOwn(globalThis, HOST_REJECTION_MARKER);
+    delete globalThis[HOST_REJECTION_MARKER];
+    assert.equal(leaked, false,
+      'unhandled rejection escaped into the host realm');
+  }
+  const timers = new Map();
+  const unhandledRejections = [];
+  const dispatchFailures = [];
+  let runtime;
+  let completionResolve;
+  let completionCalled = false;
+  const completion = new Promise(resolve => { completionResolve = resolve; });
+  const dispatchBinding = '__wingmanTimerDispatch_'
+    + randomBytes(16).toString('hex');
+  const captureRejection = reason => {
+    unhandledRejections.push(reason);
+  };
+  process.on('unhandledRejection', captureRejection);
+
+  const timerScheduleAdapter = envelope => adapterEnvelope(() => {
+    const timer = adapterRequest(envelope);
+    assert.equal(timer.kind, 'timeout', 'unknown timer adapter operation');
+    assert.equal(Number.isInteger(timer.token) && timer.token > 0, true,
+      'timer token must be a positive integer');
+    assert.equal(timers.has(timer.token), false, 'timer token was reused');
+    const delay = Number(timer.delay);
+    const handle = setTimeout(() => {
+      timers.delete(timer.token);
+      try {
+        vm.runInContext(
+          dispatchBinding + "('timeout'," + JSON.stringify(timer.token) + ')',
+          runtime,
+        );
+      } catch (error) {
+        dispatchFailures.push(error);
+      }
+    }, Number.isFinite(delay) ? delay : 0);
+    timers.set(timer.token, handle);
+    return null;
+  });
+  const timerClearAdapter = envelope => adapterEnvelope(() => {
+    const timer = adapterRequest(envelope);
+    assert.equal(timer.kind, 'timeout', 'unknown timer clear adapter operation');
+    const handle = timers.get(timer.token);
+    if (handle !== undefined) clearTimeout(handle);
+    timers.delete(timer.token);
+    return null;
+  });
+  const hostTextEncoder = new globalThis.TextEncoder();
+  const textEncoderAdapter = envelope => adapterEnvelope(() => {
+    const request = adapterRequest(envelope);
+    if (request.operation === 'encode') {
+      return {bytes: Array.from(hostTextEncoder.encode(request.input))};
+    }
+    if (request.operation === 'encodeInto') {
+      const destination = new Uint8Array(request.capacity);
+      const result = hostTextEncoder.encodeInto(request.input, destination);
+      return {
+        read: result.read,
+        written: result.written,
+        bytes: Array.from(destination.subarray(0, result.written)),
+      };
+    }
+    throw new Error('Unknown TextEncoder adapter operation: ' + request.operation);
+  });
+  const urlSearchParamsAdapter = envelope => adapterEnvelope(() => {
+    const request = adapterRequest(envelope);
+    const args = JSON.parse(request.argumentsJson);
+    let params;
+    if (request.operation === 'construct-string') {
+      params = new globalThis.URLSearchParams(args[0]);
+    } else if (request.operation === 'construct-entries') {
+      params = new globalThis.URLSearchParams(args[0]);
+    } else {
+      params = new globalThis.URLSearchParams(request.serializedState);
+    }
+    let result = null;
+    if (request.operation === 'append') params.append(args[0], args[1]);
+    else if (request.operation === 'delete') {
+      if (args.length > 1) params.delete(args[0], args[1]);
+      else params.delete(args[0]);
+    } else if (request.operation === 'get') result = params.get(args[0]);
+    else if (request.operation === 'getAll') result = params.getAll(args[0]);
+    else if (request.operation === 'has') {
+      result = args.length > 1
+        ? params.has(args[0], args[1]) : params.has(args[0]);
+    } else if (request.operation === 'set') params.set(args[0], args[1]);
+    else if (request.operation === 'sort') params.sort();
+    else if (request.operation === 'size') result = params.size;
+    else if (request.operation === 'toString') result = params.toString();
+    else if (request.operation === 'entries') result = Array.from(params.entries());
+    else if (!['construct-string', 'construct-entries'].includes(
+      request.operation
+    )) {
+      throw new Error(
+        'Unknown URLSearchParams adapter operation: ' + request.operation);
+    }
+    return {state: params.toString(), result};
+  });
+  const unhandledAdapter = envelope => adapterEnvelope(() => {
+    adapterRequest(envelope);
+    const failures = unhandledRejections.splice(0);
+    failures.push(...dispatchFailures.splice(0));
+    return failures.map(reason => serializeOpaqueVmFailure(runtime, reason));
+  });
+  const protocolEventAdapter = envelope => adapterEnvelope(() => {
+    const event = adapterRequest(envelope);
+    assert.equal(typeof event.name, 'string', 'protocol event must be primitive');
+    if (cleanupProbe) cleanupProbe.events.push(event.name);
+    return null;
+  });
+  const completeAdapter = envelope => adapterEnvelope(() => {
+    assert.equal(typeof envelope, 'string',
+      'completion must be a primitive JSON envelope');
+    assert.equal(completionCalled, false, 'request completed more than once');
+    completionCalled = true;
+    completionResolve(envelope);
+    return null;
+  });
+
+  runtime = vm.createContext({
+    __wingmanStartupPageJson: startupPageJson,
+    __wingmanPayloadJson: JSON.stringify(request.payload || {}),
+    __wingmanWebSourcesJson: webSourcesJson,
+    __wingmanDomFactorySource: DOM_FACTORY_SOURCE,
+    __wingmanTimerScheduleAdapter: timerScheduleAdapter,
+    __wingmanTimerClearAdapter: timerClearAdapter,
+    __wingmanTextEncoderAdapter: textEncoderAdapter,
+    __wingmanURLSearchParamsAdapter: urlSearchParamsAdapter,
+    __wingmanUnhandledAdapter: unhandledAdapter,
+    __wingmanProtocolEventAdapter: protocolEventAdapter,
+    __wingmanCompleteAdapter: completeAdapter,
+  });
+
+  try {
+    const launch = `
+      let ${dispatchBinding};
+      (() => {
+        const complete = globalThis.__wingmanCompleteAdapter;
+        delete globalThis.__wingmanCompleteAdapter;
+        void (async () => {
+          let result;
+          try {
+            result = await (${scenarioProgram.toString()})(
+              dispatch => { ${dispatchBinding} = dispatch; });
+          } catch (error) {
+            let message = 'Unknown error';
+            let stack = '';
+            try {
+              message = error && typeof error.message === 'string'
+                ? error.message : String(error);
+            } catch {}
+            try { if (error && error.stack) stack = String(error.stack); } catch {}
+            result = {ok: false, output: '', error: message, stack, logs: []};
+          }
+          complete(JSON.stringify(result));
+        })();
+      })()
+    `;
+    let launchResult;
+    try {
+      launchResult = vm.runInContext(launch, runtime, {
+        filename: 'screenshot_scenario_worker.cjs',
+      });
+    } catch (error) {
+      const failure = serializeOpaqueVmFailure(runtime, error);
+      throw new ScenarioExecutionFailure({
+        error: failure.message,
+        stack: failure.stack,
+        logs: [],
+      });
+    }
+    assert.equal(launchResult, undefined,
+      'scenario launch exposed a VM-owned promise');
+    const resultEnvelope = await completion;
+    assert.equal(typeof resultEnvelope, 'string',
+      'scenario completion was not primitive JSON');
+    const result = JSON.parse(resultEnvelope);
+    assert.ok(result && typeof result === 'object' && !Array.isArray(result),
+      'scenario result must decode to an object');
+    if (!result.ok) throw new ScenarioExecutionFailure(result);
+    try {
+      assert.equal(timers.size, 0, 'request left a live timer');
+    } catch (error) {
+      const failure = safeErrorRecord(error);
+      throw new ScenarioExecutionFailure({
+        error: failure.message,
+        stack: failure.stack,
+        logs: result.logs,
+      });
+    }
+    return result.output;
+  } finally {
+    process.removeListener('unhandledRejection', captureRejection);
+    if (cleanupProbe) {
+      cleanupProbe.pendingTimers = timers.size;
+      cleanupProbe.timers = timers;
+    }
+    for (const handle of timers.values()) clearTimeout(handle);
+    timers.clear();
+  }
+}
+
+async function runCleanupProbe(request) {
+  const probe = {events: []};
+  let output, failure;
+  try {
+    output = await runScenario(request, probe);
+  } catch (error) {
+    failure = error;
+  }
+  if (failure && !probe.timers) throw failure;
+  assert.equal(probe.pendingTimers, 1, 'cleanup must start with one pending tracked timer');
+  await new Promise(resolve => setTimeout(() => {
+    probe.events.push('control');
+    resolve();
+  }, 0));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(probe.events, ['control'],
+    'request timer callback must be cancelled before reply');
+  assert.equal(probe.timers.size, 0, 'request timer tracking must be cleared');
+  if (failure) throw failure;
+  return output;
+}
+
+function failureFields(error) {
+  return {
+    ok: false,
+    error: error instanceof ScenarioExecutionFailure
+      ? error.message
+      : isNativeError(error) ? error.message : String(error),
+    stack: error instanceof ScenarioExecutionFailure
+      ? error.remoteStack
+      : isNativeError(error) ? String(error.stack || '') : '',
+    logs: error instanceof ScenarioExecutionFailure ? error.logs : [],
+  };
+}
+
+async function serveRequest(request) {
+  const started = performance.now();
+  const listenerBaseline = process.listeners('unhandledRejection');
+  let fields;
+  try {
+    const cleanupProbe = request.payload?.protocol_probe?.startsWith('pending-timer-');
+    const output = await (cleanupProbe ? runCleanupProbe(request) : runScenario(request));
+    fields = {ok: true, output, error: '', stack: ''};
+  } catch (error) {
+    fields = failureFields(error);
+  }
+  try {
+    assert.deepEqual(process.listeners('unhandledRejection'), listenerBaseline,
+      'unhandledRejection listener baseline changed');
+  } catch (error) {
+    const listenerFailure = failureFields(error);
+    if (Array.isArray(fields?.logs) && fields.logs.length) {
+      listenerFailure.logs = fields.logs;
+    }
+    fields = listenerFailure;
+  }
+  return {
+    id: request.id,
+    scenario: request.scenario,
+    duration_ms: performance.now() - started,
+    ...fields,
+  };
+}
+
+async function serveWorker() {
+  const rl = readline.createInterface({input: process.stdin, crlfDelay: Infinity});
+  for await (const line of rl) {
+    const request = JSON.parse(line);
+    const reply = await serveRequest(request);
+    process.stdout.write(JSON.stringify(reply) + '\n');
+  }
+}
+
+serveWorker().catch(error => {
+  process.stderr.write((isNativeError(error) ? String(error.stack || error.message) : String(error)) + '\n');
+  process.exitCode = 1;
+});
