@@ -1,7 +1,8 @@
 """Virtual waits drive the REAL owner loop, not ideal-time iterate_once calls.
 
-Default scheduler scenarios use validated in-memory state. Explicit publisher,
-receiver, and JSON representatives retain durable file crossings. Publisher PUTs
+Default scheduler scenarios use in-memory state that is capacity-checked on save.
+Only explicit publisher, receiver, and JSON FileStore representatives exercise
+persisted decode/validation and durable file crossings. Publisher PUTs
 use the real signed client; metadata/CAS use the existing time-enforcing server
 double. Publisher and receiver run independently against the actual immutable
 Request-byte trace; receiver requests cannot change publication timing. Event

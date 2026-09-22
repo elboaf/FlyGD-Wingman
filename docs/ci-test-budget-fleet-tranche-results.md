@@ -34,11 +34,11 @@ The tranche changed test architecture and inventory only. `git diff --name-only 
 
 | Area | Before nodes | After nodes | Contract result |
 |---|---:|---:|---|
-| `tests/test_fleetsharing_cadence.py` | 139 | 75 | Scheduler products use validated in-memory state by default; explicit durable signed PUT, external GET, JSON/capacity, save-before-I/O, and atomic-file representatives remain. Ordinary horizons and Cartesian products were consolidated while recurrence and stale-to-live representatives remain explicit. |
+| `tests/test_fleetsharing_cadence.py` | 139 | 75 | Scheduler products use in-memory state that is capacity-checked on save; only explicit FileStore signed PUT, external GET, and JSON/capacity representatives exercise persisted decode/validation, save-before-I/O, and atomic-file boundaries. Ordinary horizons and Cartesian products were consolidated while recurrence and stale-to-live representatives remain explicit. |
 | `tests/test_fleetsharing_source_admission.py` | 201 | 120 | Durable file-backed authority, completion, error, barrier, rights, deadline, save, and lock-order contracts remain through explicit representative tuples. |
 | `tests/test_fleetsharing_worker_timing_mutations.py` | 25 | 0 | All 25 temporary mutation witnesses passed once against the final direct regressions, then the permanent mutation-of-test module was deleted. |
 | `tests/test_fleetsharing_transport_resources.py` | 3 | 3 | Two ordinary transport contracts remain required; the 47 MB maximum-response reader/codec contract is marked `resource`, has a 75-second parent wall budget, and publishes JUnit resource evidence. |
-| `tests/test_fleetsharing_worker_revision.py` | 37 | 32 | The 260-cycle repeated lifecycle became three real durable recurrences plus three symbolic `MAX_SOURCE_INTENTS - 1`, `MAX_SOURCE_INTENTS`, and `MAX_SOURCE_INTENTS + 1` pruning boundaries. Eight permanent revision mutation witnesses were removed after their final pass. |
+| `tests/test_fleetsharing_worker_revision.py` | 37 | 32 | The 260-cycle repeated lifecycle became three real durable recurrences plus three symbolic `MAX_SOURCE_INTENTS - 1`, `MAX_SOURCE_INTENTS`, and `MAX_SOURCE_INTENTS + 1` pruning boundaries. Eight permanent revision mutation witnesses were removed after each mutant triggered a direct regression failure under the broad witness harness. |
 | **Five-file total** | **405** | **230** | **175 targeted nodes removed or consolidated; retained contracts are listed below.** |
 
 The suite also gained three `tests/test_ci_timing.py` guards for strict marker registration, resource-marker ownership, and JUnit resource-property preservation. The reference run reported 16,421 cases; the fresh local suite reported 16,249 outcomes (`16,235 passed + 14 skipped`). Because the branch includes unrelated pre-tranche changes and the platforms differ, that complete-suite delta is not attributed solely to this tranche.
@@ -57,7 +57,7 @@ The suite also gained three `tests/test_ci_timing.py` guards for strict marker r
 | Source retirement recurrence | Three complete durable source retirement lifecycles. |
 | Source metadata capacity | Direct below/at/above `MAX_SOURCE_INTENTS` setup verifies observation, generation, retry, failure, served, unrelated metadata, and read-deadline retention. |
 | Ordinary transport | Maximum PUT escaping and memory-probe fallback remain in `-m "not resource"`. |
-| Maximum response resource | Exact 47,022,137 bytes, 8,192 rows, 155,648 observations, real reader and release codec. |
+| Maximum response resource | Exact 47,022,137 bytes, 8,192 rows, 155,648 observations, real reader and Python fleetsharing protocol codec. The native release settings codec remains a separate full-suite prerequisite. |
 
 The tranche file boundary is:
 
@@ -95,7 +95,7 @@ Every production mutation was temporary and restored before commit. Non-killing 
 | Source retirement scheduler retention removed | Same three-row command | `3 failed in 3.58s`. | Valid RED at all symbolic rows. |
 | Source retirement generation retention removed | Same three-row command | `3 failed in 3.82s`. | Valid RED at all symbolic rows. |
 | Final timing mutation corpus before deletion | `uv run --no-sync python -m pytest tests/test_fleetsharing_worker_timing_mutations.py -q` | `25 passed in 5.01s`. | All deliberate timing mutants were rejected before deletion. |
-| Final revision mutation corpus before deletion | `uv run --no-sync python -m pytest tests/test_fleetsharing_worker_revision.py::test_revision_guards_kill_in_memory_mutants -q` | `8 passed in 3.35s`. | All deliberate revision mutants, including source metadata, were rejected before deletion. |
+| Final revision mutation corpus before deletion | `uv run --no-sync python -m pytest tests/test_fleetsharing_worker_revision.py::test_revision_guards_kill_in_memory_mutants -q` | `8 passed in 3.35s`. | Each mutant caused its direct regression to raise `AssertionError` or `pytest.fail.Exception`. Because the outer harness accepted either exception, this run proves a direct regression failure per mutant but not, by itself, the intended assertion. The three specific source-metadata pruning RED probes above remain the stronger assertion-level evidence for that boundary. |
 | Direct product regressions after mutation-corpus deletion | `uv run --no-sync python -m pytest tests/test_fleetsharing_worker_timing.py tests/test_fleetsharing_worker_revision.py tests/test_fleetsharing_cadence.py -q --durations=30` | Fresh post-commit result: `162 passed in 13.75s`. | Direct product regressions remain after witness removal. |
 
 ## Local timing evidence

@@ -318,9 +318,8 @@ def test_shared_ack_already_present_does_not_skip_approved_combat_ack(tmp_path):
     assert client.puts
 
 
-@pytest.mark.parametrize("boundary", ["after_start"])
 def test_source_control_generation_fences_selected_and_completed_put(
-    tmp_path, monkeypatch, boundary
+    tmp_path, monkeypatch
 ):
     worker, client, mono = publication_rig(tmp_path)
     work, fence = selected_publication(worker, mono, ticket(mono[0]))
@@ -337,13 +336,12 @@ def test_source_control_generation_fences_selected_and_completed_put(
     with pytest.raises(_Obsolete):
         worker._execute(work, fence)
     assert crossed and all(crossed)
-    assert len(client.puts) == (boundary == "after_start")
+    assert len(client.puts) == 1
     assert not worker._last_published
 
 
-@pytest.mark.parametrize("rollback", [True])
 def test_cached_permission_deadline_expires_after_signing_without_utc_renewal(
-    tmp_path, monkeypatch, rollback
+    tmp_path, monkeypatch
 ):
     def configure(worker, client, mono):
         fetch = client.fetch_eligibility
@@ -361,8 +359,7 @@ def test_cached_permission_deadline_expires_after_signing_without_utc_renewal(
         client.fetch_eligibility = short_proof
 
     worker, client, mono = publication_rig(tmp_path, configure=configure)
-    if rollback:
-        worker._utc_clock = lambda: NOW - timedelta(days=1)
+    worker._utc_clock = lambda: NOW - timedelta(days=1)
     work, fence = selected_publication(worker, mono, ticket(mono[0]))
     sign = crypto.sign_request
 
@@ -1173,34 +1170,12 @@ def test_original_source_guards_actual_completion_install(
         assert len(errors) == 1 and isinstance(errors[0], _Obsolete), errors
     else:
         assert errors == []
-        if error is None:
-            assert worker._last_published == (
-                () if kind == "inactive" else work.payload.semantic
-            )
-            assert worker._last_publish_at == receipt
-            assert worker.status().state == "active" and worker.status().detail is None
-            assert statuses[-1] == worker.status(), (
-                "current success lost its error-clear notification"
-            )
-        else:
-            assert (
-                worker._last_published is previous
-                and worker._last_publish_at == last_at
-            )
-            assert (
-                worker.status().state == "error" and worker.status().detail == error[1]
-            )
-            assert statuses[-1] == worker.status()
-            if error[0] == 403:
-                assert worker._catalogue is None and worker._eligibility is None
-                assert catalogues[-1].catalogue is None
-                assert worker._needs_device
-                assert worker._due["catalogue"] == worker._due["eligibility"] == 0
-            else:
-                assert (
-                    worker._catalogue is catalogue
-                    and worker._eligibility is eligibility
-                )
+        assert worker._last_published == work.payload.semantic
+        assert worker._last_publish_at == receipt
+        assert worker.status().state == "active" and worker.status().detail is None
+        assert statuses[-1] == worker.status(), (
+            "current success lost its error-clear notification"
+        )
     assert worker._withdraw_needed == withdraw
     assert worker._latest is fresh and len(client.puts) == 2
     assert s.load(client.path).last_revision == revision + 1
@@ -1289,17 +1264,10 @@ def test_publication_success_status_install_keeps_original_intent(
         assert len(errors) == 1 and isinstance(errors[0], _Obsolete), errors
     else:
         assert errors == []
-        assert worker.status().state == (
-            "refused" if kind == "off_refused" else "active"
-        )
-        assert worker.status().detail == (
-            "db_continuity_lost" if kind == "off_refused" else None
-        )
+        assert worker.status().state == "active" and worker.status().detail is None
         assert statuses[-1] == worker.status()
         assert worker._last_publish_at == mono[0]
-        assert worker._last_published == (
-            () if kind != "publication" else work.payload.semantic
-        )
+        assert worker._last_published == work.payload.semantic
         assert not worker._withdraw_needed
     assert s.load(client.path).last_revision == revision + 1
     assert worker._scheduler.deadlines["publication"] == mono[0] + 0.5

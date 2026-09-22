@@ -493,7 +493,7 @@ Apply this decorator to `test_current_receiver_matches_exact_freshness_without_l
 )
 ```
 
-Pass `duration=20` to both publisher and receiver runners in these three families. Pass `end=timeline.end` into mixed/healthy bound assertions. For fairness, pass `due=client.timeline.start + 10` or `due=relay.timeline.start + 10`.
+Pass `duration=20` to the two publisher/mixed families and to the three ordinary receiver representatives. The two receiver stale-to-live representatives `(phase=0.5, watch=True, latency=0.08)` and `(phase=0.9, watch=True, latency=0.12)` use `duration=40` with phase-aligned relative metadata offsets `30 - phase` (`29.5` and `29.1`); all other receiver representatives use offset `10`. Pass `end=timeline.end` into mixed/healthy bound assertions. For fairness, pass the exact due time derived from each configured relative offset.
 
 - [ ] **Step 4: Reduce renewed-source latency combinations**
 

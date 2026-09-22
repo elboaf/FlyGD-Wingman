@@ -143,14 +143,11 @@ def test_only_maximum_response_owns_fleet_transport_resource_marker():
         text=True,
     )
     assert result.returncode == 0, result.stderr
-    assert (
+    collected = {line.strip() for line in result.stdout.splitlines() if "::" in line}
+    assert collected == {
+        "tests/test_fleetsharing_transport_resources.py::"
         "test_maximum_legal_response_actual_reader_and_codec_in_subprocess"
-        in result.stdout
-    )
-    assert (
-        "test_maximum_put_uses_actual_default_escaping_under_512k" not in result.stdout
-    )
-    assert "test_memory_probe_falls_back_without_resource" not in result.stdout
+    }
 
 
 def test_cli_if_present_returns_zero_and_skips_output(tmp_path: Path):
