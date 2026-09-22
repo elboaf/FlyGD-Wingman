@@ -244,7 +244,7 @@ The prescribed scope commands produced:
 - `git status --short`: no output before the results document was created.
 - `git diff --stat HEAD~7..HEAD`: four files, 289 insertions, 610 deletions. Because review fixes produced ten implementation commits, this seven-commit window does not cover the complete tranche.
 - `git diff --check HEAD~7..HEAD`: exit 0, no output.
-- Supplemental complete range `git diff --stat 5a1b800b..HEAD`: nine files, 445 insertions, 630 deletions.
+- Supplemental complete range `git diff --stat 5a1b800b..65ff70c9`: nine files, 445 insertions, 630 deletions.
 - `git diff --check 5a1b800b..65ff70c9`: exit 0, no output.
 - `git diff --name-only 5a1b800b..65ff70c9 -- wingman .github`: no output.
 - The prescribed debug, zero-budget, and placeholder search across `pyproject.toml`, `scripts`, `tests`, and this document was repeated after this document was written and returned no matches (`rg` exit 1).
