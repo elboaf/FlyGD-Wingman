@@ -36,7 +36,6 @@ async function runScenario(request, cleanupProbe = null) {
   const timers = new Map();
   const intervals = new Set();
   let nextTimer = 1;
-  let nextInterval = 1;
   const requestSetTimeout = (callback, delay, ...args) => {
     const token = nextTimer++;
     const handle = setTimeout(() => {
@@ -51,12 +50,15 @@ async function runScenario(request, cleanupProbe = null) {
     if (handle !== undefined) clearTimeout(handle);
     timers.delete(token);
   };
-  const requestSetInterval = () => {
-    const token = nextInterval++;
-    intervals.add(token);
-    return token;
+  const requestSetInterval = (callback, delay, ...args) => {
+    const handle = setInterval(callback, delay, ...args);
+    intervals.add(handle);
+    return handle;
   };
-  const requestClearInterval = token => { intervals.delete(token); };
+  const requestClearInterval = handle => {
+    intervals.delete(handle);
+    clearInterval(handle);
+  };
   const unhandledRejections = [];
   const captureRejection = reason => unhandledRejections.push(reason);
   process.on('unhandledRejection', captureRejection);
@@ -333,9 +335,28 @@ async function runScenario(request, cleanupProbe = null) {
     }
     if (protocolProbe?.startsWith('pending-timer-')) {
       assert.ok(cleanupProbe, 'pending timer protocol requires a cleanup probe');
-      requestSetTimeout(() => cleanupProbe.events.push('leaked'), 0);
+      const activeInterval = requestSetInterval(() => {
+        cleanupProbe.events.push('active-interval');
+        requestClearInterval(activeInterval);
+      }, 0);
+      cleanupProbe.intervalHandles = [activeInterval];
+      await new Promise(resolve => setTimeout(() => {
+        cleanupProbe.events.push('active-control');
+        resolve();
+      }, 0));
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(cleanupProbe.events, ['active-interval', 'active-control'],
+        'request interval must run before its same-delay control');
+      assert.equal(intervals.has(activeInterval), false,
+        'requestClearInterval must release the active interval');
+      requestSetTimeout(() => cleanupProbe.events.push('leaked-timeout'), 0);
+      const pendingInterval = requestSetInterval(
+        () => cleanupProbe.events.push('leaked-interval'), 0);
+      cleanupProbe.intervalHandles.push(pendingInterval);
       cleanupProbe.pendingTimers = timers.size;
+      cleanupProbe.pendingIntervals = intervals.size;
       cleanupProbe.timers = timers;
+      cleanupProbe.intervals = intervals;
       if (protocolProbe === 'pending-timer-assertion-exit') {
         throw new Error('protocol cleanup probe failure');
       }
@@ -373,6 +394,21 @@ async function runScenario(request, cleanupProbe = null) {
       : [family === 'wanderer' ? 'wandererScreenshot' : 'companionsScreenshot'];
     const tick = () => new Promise(resolve => requestSetTimeout(resolve, 5));
 const live = data.fixture[family] ? clone(data.fixture[family]) : null;
+if (data.companion_live_probe) {
+  const probe = data.companion_live_probe;
+  assert.equal(family, 'companions', 'companion live probe requires its owner family');
+  assert.equal(live.state.revision, probe.expected_revision,
+    'companion live revision leaked across requests');
+  assert.equal(live.state.rows[0].label, probe.expected_label,
+    'companion live label leaked across requests');
+  assert.equal(live.state.rows[0].source.last_title, probe.expected_last_title,
+    'companion nested live state leaked across requests');
+  if (probe.poison) {
+    live.state.revision = 9001;
+    live.state.rows[0].label = 'Poisoned companion';
+    live.state.rows[0].source.last_title = 'Poisoned nested source title';
+  }
+}
 // Live revisions exceed the fixture: restoring authority must not depend on
 // a guessed higher synthetic revision. Fleet controls are production-projected.
 if (family === 'companions') {
@@ -1109,6 +1145,7 @@ async function executeScenario() {
   } finally {
     process.removeListener('unhandledRejection', captureRejection);
     for (const handle of timers.values()) clearTimeout(handle);
+    for (const handle of intervals) clearInterval(handle);
     timers.clear();
     intervals.clear();
   }
@@ -1122,18 +1159,27 @@ async function runCleanupProbe(request) {
   } catch (error) {
     failure = error;
   }
-  if (failure && !probe.timers) throw failure;
-  assert.equal(probe.pendingTimers, 1, 'cleanup must start with one pending tracked timer');
-  await new Promise(resolve => setTimeout(() => {
-    probe.events.push('control');
-    resolve();
-  }, 0));
-  await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(probe.events, ['control'],
-    'request timer callback must be cancelled before reply');
-  assert.equal(probe.timers.size, 0, 'request timer tracking must be cleared');
-  if (failure) throw failure;
-  return output;
+  try {
+    if (failure && !probe.timers) throw failure;
+    assert.equal(probe.pendingTimers, 1,
+      'cleanup must start with one pending tracked timer');
+    assert.equal(probe.pendingIntervals, 1,
+      'cleanup must start with one pending tracked interval');
+    await new Promise(resolve => setTimeout(() => {
+      probe.events.push('cleanup-control');
+      resolve();
+    }, 0));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(probe.events,
+      ['active-interval', 'active-control', 'cleanup-control'],
+      'pending request callbacks must be cancelled before the same-delay control');
+    assert.equal(probe.timers.size, 0, 'request timer tracking must be cleared');
+    assert.equal(probe.intervals.size, 0, 'request interval tracking must be cleared');
+    if (failure) throw failure;
+    return output;
+  } finally {
+    for (const handle of probe.intervalHandles || []) clearInterval(handle);
+  }
 }
 
 function failureFields(error) {
@@ -1146,27 +1192,33 @@ function failureFields(error) {
 
 async function serveRequest(request) {
   const started = performance.now();
-  const listenerBaseline = process.listeners('unhandledRejection');
-  let fields;
+  const listenerSentinel = () => {};
+  process.on('unhandledRejection', listenerSentinel);
   try {
-    const cleanupProbe = request.payload?.protocol_probe?.startsWith('pending-timer-');
-    const output = await (cleanupProbe ? runCleanupProbe(request) : runScenario(request));
-    fields = {ok: true, output, error: '', stack: ''};
-  } catch (error) {
-    fields = failureFields(error);
+    const listenerBaseline = process.listeners('unhandledRejection');
+    let fields;
+    try {
+      const cleanupProbe = request.payload?.protocol_probe?.startsWith('pending-timer-');
+      const output = await (cleanupProbe ? runCleanupProbe(request) : runScenario(request));
+      fields = {ok: true, output, error: '', stack: ''};
+    } catch (error) {
+      fields = failureFields(error);
+    }
+    try {
+      assert.deepEqual(process.listeners('unhandledRejection'), listenerBaseline,
+        'unhandledRejection listener baseline changed');
+    } catch (error) {
+      fields = failureFields(error);
+    }
+    return {
+      id: request.id,
+      scenario: request.scenario,
+      duration_ms: performance.now() - started,
+      ...fields,
+    };
+  } finally {
+    process.removeListener('unhandledRejection', listenerSentinel);
   }
-  try {
-    assert.deepEqual(process.listeners('unhandledRejection'), listenerBaseline,
-      'unhandledRejection listener baseline changed');
-  } catch (error) {
-    fields = failureFields(error);
-  }
-  return {
-    id: request.id,
-    scenario: request.scenario,
-    duration_ms: performance.now() - started,
-    ...fields,
-  };
 }
 
 async function serveWorker() {

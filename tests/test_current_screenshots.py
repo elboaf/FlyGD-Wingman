@@ -56,6 +56,149 @@ SUBPAGES = {
     "settings-wanderer-narrow": "wanderer",
 }
 
+_VM_INTRINSIC_MUTATION = r"""
+(() => {
+  const marker = '__wingmanCurrentScreenshotRequestProbe';
+  for (const [name, intrinsic] of Object.entries(
+    {Promise, Math, Date, TextEncoder, URLSearchParams}
+  )) {
+    const targets = [
+      ['constructor', intrinsic],
+      ['prototype', intrinsic.prototype],
+      ['constructor-base', Object.getPrototypeOf(intrinsic)],
+      ['instance-base', intrinsic.prototype && Object.getPrototypeOf(intrinsic.prototype)]
+    ];
+    for (const [level, target] of targets) {
+      if (target) target[marker] = name + '.' + level;
+    }
+  }
+  const returnedMarker = '__wingmanCurrentReturnedPrototypeProbe';
+  const params = new URLSearchParams('a=1&a=2');
+  const iterator = params.entries();
+  const returned = [
+    new TextEncoder().encode('probe'),
+    params.getAll('a'),
+    iterator,
+    iterator.next().value
+  ];
+  for (const value of returned) {
+    for (let target = Object.getPrototypeOf(value); target;
+        target = Object.getPrototypeOf(target)) {
+      target[returnedMarker] = 'mutated';
+    }
+  }
+  let errorRealm;
+  try {
+    new TextEncoder().encode(Symbol('host-realm-probe'));
+  } catch (error) {
+    errorRealm = error.constructor.constructor('return globalThis')();
+  }
+  if (!errorRealm) throw new Error('TextEncoder Symbol did not fail');
+  errorRealm.__wingmanCurrentHostRealmProbe = 'mutated';
+})()
+"""
+
+_VM_INTRINSIC_PRISTINE = r"""
+(() => {
+  const marker = '__wingmanCurrentScreenshotRequestProbe';
+  for (const [name, intrinsic] of Object.entries(
+    {Promise, Math, Date, TextEncoder, URLSearchParams}
+  )) {
+    const targets = [
+      ['constructor', intrinsic],
+      ['prototype', intrinsic.prototype],
+      ['constructor-base', Object.getPrototypeOf(intrinsic)],
+      ['instance-base', intrinsic.prototype && Object.getPrototypeOf(intrinsic.prototype)]
+    ];
+    for (const [level, target] of targets) {
+      if (target && Object.prototype.hasOwnProperty.call(target, marker)) {
+        throw new Error('request intrinsic leaked: ' + name + '.' + level);
+      }
+    }
+  }
+  if ('__wingmanTextEncoderAdapter' in globalThis ||
+      '__wingmanURLSearchParamsAdapter' in globalThis) {
+    throw new Error('host adapter remained globally reachable');
+  }
+  let adapterError;
+  let errorRealm;
+  try {
+    new TextEncoder().encode(Symbol('host-realm-probe'));
+  } catch (error) {
+    adapterError = error;
+    errorRealm = error.constructor.constructor('return globalThis')();
+  }
+  if (!errorRealm) throw new Error('TextEncoder Symbol did not fail');
+  if (!(adapterError instanceof TypeError)) {
+    throw new Error('TextEncoder host error was not reconstructed as TypeError');
+  }
+  if (errorRealm.__wingmanCurrentHostRealmProbe) {
+    throw new Error('host realm marker leaked between requests');
+  }
+  if (errorRealm !== globalThis) {
+    throw new Error('TextEncoder error escaped the request VM');
+  }
+  const returnedMarker = '__wingmanCurrentReturnedPrototypeProbe';
+  const isolationParams = new URLSearchParams('a=1&a=2');
+  const isolationIterator = isolationParams.entries();
+  const returned = [
+    new TextEncoder().encode('probe'),
+    isolationParams.getAll('a'),
+    isolationIterator,
+    isolationIterator.next().value
+  ];
+  if (!(returned[0] instanceof Uint8Array) || !Array.isArray(returned[1]) ||
+      !Array.isArray(returned[3]) ||
+      isolationIterator[Symbol.iterator]() !== isolationIterator) {
+    throw new Error('adapter result was not reconstructed in the request VM');
+  }
+  for (const value of returned) {
+    for (let target = Object.getPrototypeOf(value); target;
+        target = Object.getPrototypeOf(target)) {
+      if (Object.prototype.hasOwnProperty.call(target, returnedMarker)) {
+        throw new Error('returned value prototype leaked between requests');
+      }
+    }
+  }
+  const encoder = new TextEncoder();
+  if (encoder.encoding !== 'utf-8' ||
+      Array.from(encoder.encode('Aé𐐀')).join(',') !==
+        '65,195,169,240,144,144,128') {
+    throw new Error('request TextEncoder behavior changed');
+  }
+  const destination = new Uint8Array(2);
+  const encoded = encoder.encodeInto('éA', destination);
+  if (encoded.read !== 1 || encoded.written !== 2 ||
+      Array.from(destination).join(',') !== '195,169') {
+    throw new Error('request TextEncoder encodeInto behavior changed');
+  }
+  const params = new URLSearchParams('?a=1&a=2&space=hello+world');
+  if (params.get('a') !== '1' || params.getAll('a').join(',') !== '1,2' ||
+      params.get('space') !== 'hello world' || !params.has('a', '2')) {
+    throw new Error('request URLSearchParams read behavior changed');
+  }
+  params.delete('a', '1');
+  params.set('a', '3');
+  params.append('b', 'two words');
+  params.sort();
+  const serialized = 'a=3&b=two+words&space=hello+world';
+  if (params.size !== 3 || params.toString() !== serialized ||
+      new URLSearchParams(params).toString() !== serialized ||
+      Array.from(params.keys()).join(',') !== 'a,b,space' ||
+      Array.from(params.values()).join(',') !== '3,two words,hello world') {
+    throw new Error('request URLSearchParams mutation behavior changed');
+  }
+  const visited = [];
+  params.forEach((value, name, owner) => {
+    if (owner !== params) throw new Error('URLSearchParams owner changed');
+    visited.push(name + '=' + value);
+  });
+  if (visited.join('&') !== 'a=3&b=two words&space=hello world') {
+    throw new Error('request URLSearchParams iteration behavior changed');
+  }
+})()
+"""
+
 
 @pytest.fixture(scope="session")
 def current_screenshot_markup(tmp_path_factory: pytest.TempPathFactory) -> Path:
@@ -88,8 +231,16 @@ def current_screenshot_worker(current_screenshot_markup: Path):
 def test_current_screenshot_worker_isolates_owner_families(
     current_screenshot_worker: NodeScenarioWorker,
 ):
+    companion_probe = {
+        "expected_revision": 0,
+        "expected_label": "Mapper",
+        "expected_last_title": "Example map — home chain",
+    }
     _request_current_page(
-        current_screenshot_worker, "settings-companions-populated", "normal"
+        current_screenshot_worker,
+        "settings-companions-populated",
+        "normal",
+        probes={"companion_live_probe": {**companion_probe, "poison": True}},
     )
     process = current_screenshot_worker._proc
     _request_current_page(current_screenshot_worker, "settings-wanderer", "late-read")
@@ -103,7 +254,10 @@ def test_current_screenshot_worker_isolates_owner_families(
         "PASS current screenshot settings-companions-populated invalid"
     )
     _request_current_page(
-        current_screenshot_worker, "settings-companions-populated", "normal"
+        current_screenshot_worker,
+        "settings-companions-populated",
+        "normal",
+        probes={"companion_live_probe": {**companion_probe, "poison": False}},
     )
     assert current_screenshot_worker._proc is process
 
@@ -111,10 +265,29 @@ def test_current_screenshot_worker_isolates_owner_families(
 def test_current_screenshot_worker_vm_failures_preserve_stack_and_recover(
     current_screenshot_worker: NodeScenarioWorker,
 ):
+    screen = next(
+        screen
+        for screen in shoot.SCREENS
+        if screen.key == "settings-companions-populated"
+    )
+    stage = shoot.screen_setup_script(screen)
     _request_current_page(
-        current_screenshot_worker, "settings-companions-populated", "normal"
+        current_screenshot_worker,
+        "settings-companions-populated",
+        "normal",
+        probes={"stage": stage + ";" + _VM_INTRINSIC_MUTATION},
     )
     process = current_screenshot_worker._proc
+    pristine = _request_current_page(
+        current_screenshot_worker,
+        "settings-companions-populated",
+        "normal",
+        probes={"stage": _VM_INTRINSIC_PRISTINE + ";" + stage},
+    )
+    assert pristine["output"] == (
+        "PASS current screenshot settings-companions-populated normal"
+    )
+    assert current_screenshot_worker._proc is process
     for mode, stack_name in [
         ("vm-throw", "protocolVmThrow"),
         ("vm-reject", "protocolVmReject"),
@@ -560,7 +733,11 @@ def test_fleet_cleanup_restores_focused_master_without_changing_live_focus_polic
 
 
 def _request_current_page(
-    worker: NodeScenarioWorker, key: str, scenario: str
+    worker: NodeScenarioWorker,
+    key: str,
+    scenario: str,
+    *,
+    probes: dict[str, object] | None = None,
 ) -> dict[str, object]:
     screen = next((s for s in shoot.SCREENS if s.key == key), None)
     assert screen, f"missing current capture: {key}"
@@ -580,6 +757,8 @@ def _request_current_page(
         payload["live_sharing_newer"] = _sharing_screenshot_projection(
             live=True, newer=True, pending=scenario == "sharing-lifecycle-worklists"
         )
+    if probes:
+        payload.update(probes)
     return worker.request(f"{key}/{scenario}", payload, timeout=20.0)
 
 
