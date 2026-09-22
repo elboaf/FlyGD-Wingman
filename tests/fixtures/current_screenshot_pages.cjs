@@ -6,24 +6,17 @@ const readline = require('node:readline');
 const vm = require('node:vm');
 const {performance} = require('node:perf_hooks');
 const {isNativeError} = require('node:util/types');
-const {createDOM} = require('./screenshot_dom.cjs');
-
-function freezeJson(value) {
-  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
-  Object.freeze(value);
-  for (const child of Object.values(value)) freezeJson(child);
-  return value;
-}
+const {DOM_FACTORY_SOURCE} = require('./screenshot_dom.cjs');
 
 if (process.argv.length !== 4) {
   process.stderr.write('Usage: current_screenshot_pages.cjs <markup-json> <web-root>\n');
   process.exit(2);
 }
-const startupPage = freezeJson(JSON.parse(fs.readFileSync(process.argv[2], 'utf8')));
+const startupPageJson = fs.readFileSync(process.argv[2], 'utf8');
 const web = process.argv[3];
 
 async function runScenario(request, cleanupProbe = null) {
-  const data = {page: startupPage, ...(request.payload || {})};
+  const data = {...(request.payload || {})};
   const outputLines = [];
   const requestConsole = {
     log: (...args) => outputLines.push(args.join(' ')),
@@ -66,7 +59,6 @@ async function runScenario(request, cleanupProbe = null) {
   const captureRejection = reason => unhandledRejections.push(reason);
   process.on('unhandledRejection', captureRejection);
   try {
-    const {document, Element, scrolls} = createDOM(data.page);
     // The adapter function is a hidden call-through into the host realm. Only
     // this primitive envelope may cross back into the request VM.
     const adapterEnvelope = operation => {
@@ -132,20 +124,36 @@ async function runScenario(request, cleanupProbe = null) {
         }
         return {state: params.toString(), result};
       });
-    const window = new Element('window');
-    Object.assign(window, {
-      document,
-      console: requestConsole,
+    const runtime = vm.createContext({
+      __wingmanStartupPageJson: startupPageJson,
       __wingmanTextEncoderAdapter: textEncoderAdapter,
       __wingmanURLSearchParamsAdapter: urlSearchParamsAdapter,
+      console: requestConsole,
       setTimeout: requestSetTimeout,
       clearTimeout: requestClearTimeout,
       setInterval: requestSetInterval,
       clearInterval: requestClearInterval,
     });
-    window.window = window;
-    const runtime = vm.createContext(window);
     const run = text => { if (text) return vm.runInContext(text, runtime); };
+    run(`(() => {
+      const createDOM = ${DOM_FACTORY_SOURCE};
+      const page = JSON.parse(globalThis.__wingmanStartupPageJson);
+      delete globalThis.__wingmanStartupPageJson;
+      const {document, Element, scrolls} = createDOM(page);
+      const windowState = new Element('window');
+      Object.defineProperties(
+        globalThis, Object.getOwnPropertyDescriptors(windowState));
+      Object.setPrototypeOf(globalThis, Element.prototype);
+      globalThis.window = globalThis;
+      globalThis.document = document;
+      globalThis.Element = Element;
+      globalThis.__wingmanScrolls = scrolls;
+    })()`);
+    const window = run('globalThis');
+    const document = window.document;
+    const Element = window.Element;
+    const scrolls = window.__wingmanScrolls;
+    delete window.__wingmanScrolls;
     run(`(() => {
       const encode = globalThis.__wingmanTextEncoderAdapter;
       const searchParams = globalThis.__wingmanURLSearchParamsAdapter;
@@ -552,10 +560,14 @@ async function sharingLifecycle(scenario) {
   B.presentation_order = A.presentation_order + 1;
   const fire = (id, type = 'click') => WM.el(id).dispatchEvent({type});
   const groups = ['sharing-sources', 'sharing-pending-sources', 'sharing-history-sources'];
-  const rowIds = () => groups.map(id => WM.el(id).children.map(row => row.getAttribute('data-source')));
-  const view = () => document.querySelectorAll('[id]').filter(node => node.id.startsWith('sharing-')
-    || ['fleet-overview-sharing', 'fleet-overview-auth', 'fleet-overview-verification'].includes(node.id))
-    .map(node => [node.id, node.textContent, node.hidden, node.disabled, node.checked, node.value, !!node.open]);
+  const rowIds = () => groups.map(id => Array.from(
+    WM.el(id).children, row => row.getAttribute('data-source')));
+  const view = () => Array.from(document.querySelectorAll('[id]').filter(
+    node => node.id.startsWith('sharing-')
+      || ['fleet-overview-sharing', 'fleet-overview-auth',
+        'fleet-overview-verification'].includes(node.id)),
+  node => [node.id, node.textContent, node.hidden, node.disabled,
+    node.checked, node.value, !!node.open]);
   const controls = ['sharing-combat', 'sharing-automatic-confirm', 'sharing-automatic-cancel',
     'sharing-automatic-dismiss', 'sharing-legacy-dismiss', 'sharing-legacy-remove', 'sharing-connect', 'sharing-confirm-on'];
   const confirm = WM.confirm;
@@ -752,7 +764,7 @@ async function sharingLifecycle(scenario) {
     const before = rowIds();
     await stage();
     assert.deepEqual(rowIds(), before);
-    const fixtureRows = groups.flatMap(id => WM.el(id).children);
+    const fixtureRows = groups.flatMap(id => Array.from(WM.el(id).children));
     window.onFleetSharingState(clone(B));
     await cleanup(); observed(B);
     assert.deepEqual(rowIds(), hostClone([
@@ -762,13 +774,13 @@ async function sharingLifecycle(scenario) {
     assert.match(WM.el('sharing-pending-sources').textContent, /Start saved; outcome unconfirmed/);
     assert.equal(WM.el('sharing-history-summary').textContent, 'Previous attempts (1)');
     assert.match(WM.el('sharing-history-sources').textContent, /ended — boss lost/);
-    const restored = groups.flatMap(id => WM.el(id).children);
+    const restored = groups.flatMap(id => Array.from(WM.el(id).children));
     assert.ok(restored.every(row => !fixtureRows.includes(row)), 'restored rows must not retain fixture control captures');
     const neutral = view();
     run(data.cleanup); assert.deepEqual(view(), neutral);
     restored[0].lastChild.focus();
     window.onFleetSharingState(clone(B));
-    const reconciled = groups.flatMap(id => WM.el(id).children);
+    const reconciled = groups.flatMap(id => Array.from(WM.el(id).children));
     assert.equal(reconciled.length, restored.length);
     reconciled.forEach((row, index) => assert.equal(row, restored[index], 'ordinary live reconciliation keeps keyed rows'));
     assert.equal(document.activeElement, restored[0].lastChild);

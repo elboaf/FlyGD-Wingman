@@ -6,25 +6,18 @@ const readline = require('node:readline');
 const vm = require('node:vm');
 const {performance} = require('node:perf_hooks');
 const {isNativeError} = require('node:util/types');
-const {createDOM} = require('./screenshot_dom.cjs');
-
-function freezeJson(value) {
-  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
-  Object.freeze(value);
-  for (const child of Object.values(value)) freezeJson(child);
-  return value;
-}
+const {DOM_FACTORY_SOURCE} = require('./screenshot_dom.cjs');
 
 if (process.argv.length !== 5 || process.argv[2] !== '--worker') {
   process.stderr.write('Usage: screenshot_pages.cjs --worker <markup-json> <web-root>\n');
   process.exit(2);
 }
 const startupPath = process.argv[3];
-const startupPage = freezeJson(JSON.parse(fs.readFileSync(startupPath, 'utf8')));
+const startupPageJson = fs.readFileSync(startupPath, 'utf8');
 const web = process.argv[4];
 
 async function runScenario(request, cleanupProbe = null) {
-  const data = {page: startupPage, ...(request.payload || {})};
+  const data = {...(request.payload || {})};
   const outputLines = [];
   const requestConsole = {
     log: (...args) => outputLines.push(args.join(' ')),
@@ -51,8 +44,6 @@ async function runScenario(request, cleanupProbe = null) {
   const captureRejection = reason => unhandledRejections.push(reason);
   process.on('unhandledRejection', captureRejection);
   try {
-    const {document, Element, scrolls} = createDOM(data.page);
-    for (const [id, text] of Object.entries(data.texts || {})) document.getElementById(id).textContent = text;
     // The adapter function is a hidden call-through into the host realm. Only
     // this primitive envelope may cross back into the request VM.
     const adapterEnvelope = operation => {
@@ -118,19 +109,49 @@ async function runScenario(request, cleanupProbe = null) {
         }
         return {state: params.toString(), result};
       });
-    const window = new Element('window');
-    Object.assign(window, {document, console: requestConsole,
-      navigator: {clipboard: {readText: () => assert.fail('clipboard read'), writeText: () => assert.fail('clipboard write')}},
+    const runtime = vm.createContext({
+      __wingmanStartupPageJson: startupPageJson,
       __wingmanTextEncoderAdapter: textEncoderAdapter,
       __wingmanURLSearchParamsAdapter: urlSearchParamsAdapter,
+      console: requestConsole,
+      navigator: {clipboard: {
+        readText: () => assert.fail('clipboard read'),
+        writeText: () => assert.fail('clipboard write'),
+      }},
       Event: class { constructor(type) { this.type = type; } },
-      CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } },
-      setTimeout: requestSetTimeout, clearTimeout: requestClearTimeout,
+      CustomEvent: class {
+        constructor(type, options) { this.type = type; this.detail = options.detail; }
+      },
+      setTimeout: requestSetTimeout,
+      clearTimeout: requestClearTimeout,
       requestAnimationFrame: callback => requestSetTimeout(callback, 0),
-      matchMedia: () => ({matches: false}), getComputedStyle: () => ({visibility: 'visible'}), location: {search: ''}});
-    window.window = window;
-    const runtime = vm.createContext(window);
+      matchMedia: () => ({matches: false}),
+      getComputedStyle: () => ({visibility: 'visible'}),
+      location: {search: ''},
+    });
     const run = expression => vm.runInContext(expression, runtime);
+    run(`(() => {
+      const createDOM = ${DOM_FACTORY_SOURCE};
+      const page = JSON.parse(globalThis.__wingmanStartupPageJson);
+      delete globalThis.__wingmanStartupPageJson;
+      const {document, Element, scrolls} = createDOM(page);
+      const windowState = new Element('window');
+      Object.defineProperties(
+        globalThis, Object.getOwnPropertyDescriptors(windowState));
+      Object.setPrototypeOf(globalThis, Element.prototype);
+      globalThis.window = globalThis;
+      globalThis.document = document;
+      globalThis.Element = Element;
+      globalThis.__wingmanScrolls = scrolls;
+    })()`);
+    const window = run('globalThis');
+    const document = window.document;
+    const Element = window.Element;
+    const scrolls = window.__wingmanScrolls;
+    delete window.__wingmanScrolls;
+    for (const [id, text] of Object.entries(data.texts || {})) {
+      document.getElementById(id).textContent = text;
+    }
     Object.assign(window, run('({Promise, Math, Date})'));
     run(`(() => {
       const encode = globalThis.__wingmanTextEncoderAdapter;
@@ -783,10 +804,12 @@ async function fittingsDetailRegression() {
       assert.equal(toggle('Rifter - Solo PvP').getAttribute('aria-expanded'), 'true');
       assert.equal(document.querySelectorAll('.fit-row.open').length, 1);
       const texts = selector => row.querySelectorAll(selector).map(el => el.textContent);
-      assert.deepEqual(texts('.fit-rack-name'), ['High power', 'Medium power', 'Low power']);
-      assert.deepEqual(texts('.fit-item-name'), ['150mm Light AutoCannon II', '1MN Afterburner II', 'Gyrostabilizer II']);
-      assert.deepEqual(texts('.fit-alias-row'), ['Rifter Tackle Fit']);
-      assert.deepEqual(texts('.fit-presence-name'), ['Aria Voss', 'Bex Talon']);
+      assert.deepEqual(Array.from(texts('.fit-rack-name')),
+        ['High power', 'Medium power', 'Low power']);
+      assert.deepEqual(Array.from(texts('.fit-item-name')),
+        ['150mm Light AutoCannon II', '1MN Afterburner II', 'Gyrostabilizer II']);
+      assert.deepEqual(Array.from(texts('.fit-alias-row')), ['Rifter Tackle Fit']);
+      assert.deepEqual(Array.from(texts('.fit-presence-name')), ['Aria Voss', 'Bex Talon']);
       const metadata = row.querySelector('.fit-metadata-disclosure');
       assert.ok(metadata && metadata.tagName === 'DETAILS', 'metadata editing uses native disclosure');
       assert.equal(metadata.open, false, 'staged fitting details are read-first');
@@ -985,7 +1008,7 @@ async function fidelityRegression() {
   } else if (data.key === 'fittings-copy-limit') {
     const selectedIds = document.querySelectorAll('#fittings-list .fit-select input')
       .filter(node => node.checked).map(node => node.value).sort();
-    assert.deepEqual(selectedIds, ['fit-gen-1', 'fit-gen-2', 'fit-gen-3', 'fit-gen-4',
+    assert.deepEqual(Array.from(selectedIds), ['fit-gen-1', 'fit-gen-2', 'fit-gen-3', 'fit-gen-4',
       'fit-gen-5', 'fit-gen-6', 'fit-gen-7', 'fit-gen-8', 'fit-gen-9', 'fit-gen-10', 'fit-gen-11'].sort(),
       'select every intended entry exactly once, never an outside entry sharing its name');
     assert.equal(el('fittings-copy-status').textContent,
@@ -996,7 +1019,7 @@ async function fidelityRegression() {
       'refusal must be reachable with fewer than 20 selected fits across multiple targets');
     assert.equal(el('fittings-copy-summary').textContent, 'Choose target characters.');
     const targets = el('fittings-copy-body').querySelectorAll('input').filter(node => node.checked);
-    assert.deepEqual(targets.map(node => node.closest('.fit-copy-target')
+    assert.deepEqual(Array.from(targets, node => node.closest('.fit-copy-target')
       .querySelector('label span:last-child').textContent).sort(), ['Eryn Voss', 'Fio Kest']);
     assert.ok(visible(el('fittings-copy-review')));
     assert.equal(el('fittings-copy-start').hidden, true);

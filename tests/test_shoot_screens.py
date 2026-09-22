@@ -235,6 +235,25 @@ def test_gap_capture_worker_reuses_process_and_preserves_business_outcomes(
     setup_count = 0
     mutation = """
 (() => {
+  const domMarker = '__wingmanScreenshotDOMProbe';
+  const Element = document.constructor;
+  const domTargets = [
+    ['document', document],
+    ['Element', Element],
+    ['Element.prototype', Element.prototype],
+    ['document.getElementById', document.getElementById],
+    ['Element.prototype.querySelector', Element.prototype.querySelector],
+    ['document.attrs', document.attrs],
+    ['document.children', document.children],
+    ['document.style', document.style]
+  ];
+  for (const [name, target] of domTargets) {
+    for (let value = target; value; value = Object.getPrototypeOf(value)) {
+      value[domMarker] = name;
+    }
+  }
+  document.constructor.constructor('return globalThis')()[domMarker] = 'global';
+
   const marker = '__wingmanScreenshotRequestProbe';
   for (const [name, intrinsic] of Object.entries(
     {Promise, Math, Date, TextEncoder, URLSearchParams}
@@ -277,6 +296,39 @@ def test_gap_capture_worker_reuses_process_and_preserves_business_outcomes(
 """
     pristine = """
 (() => {
+  const domMarker = '__wingmanScreenshotDOMProbe';
+  const Element = document.constructor;
+  const domRealms = [
+    ['document', document.constructor.constructor('return globalThis')()],
+    ['Element', Element.constructor('return globalThis')()],
+    ['document.getElementById',
+      document.getElementById.constructor('return globalThis')()],
+    ['Element.prototype.querySelector',
+      Element.prototype.querySelector.constructor('return globalThis')()]
+  ];
+  for (const [name, realm] of domRealms) {
+    if (realm !== globalThis || 'process' in realm) {
+      throw new Error('DOM callable escaped the request VM: ' + name);
+    }
+  }
+  const domTargets = [
+    ['document', document],
+    ['Element', Element],
+    ['Element.prototype', Element.prototype],
+    ['document.getElementById', document.getElementById],
+    ['Element.prototype.querySelector', Element.prototype.querySelector],
+    ['document.attrs', document.attrs],
+    ['document.children', document.children],
+    ['document.style', document.style]
+  ];
+  for (const [name, target] of domTargets) {
+    for (let value = target; value; value = Object.getPrototypeOf(value)) {
+      if (Object.prototype.hasOwnProperty.call(value, domMarker)) {
+        throw new Error('request DOM leaked: ' + name);
+      }
+    }
+  }
+
   const marker = '__wingmanScreenshotRequestProbe';
   for (const [name, intrinsic] of Object.entries(
     {Promise, Math, Date, TextEncoder, URLSearchParams}

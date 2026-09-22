@@ -62,6 +62,24 @@ rl.on('line', (line) => {
     return;
   }
 
+  if (request.scenario === 'ok-then-exit-next'
+      || request.scenario === 'ok-then-exit-close') {
+    const code = request.scenario === 'ok-then-exit-next' ? 27 : 29;
+    process.stdout.write(JSON.stringify({
+      id: request.id,
+      scenario: request.scenario,
+      ok: true,
+      duration_ms: 0.5,
+      error: '',
+      stack: ''
+    }) + '\n', () => {
+      process.stderr.write('synthetic late exit for ' + request.scenario + '\n', () => {
+        process.exit(code);
+      });
+    });
+    return;
+  }
+
   if (request.scenario === 'crash') {
     process.stderr.write('synthetic crash stderr\n');
     process.exit(23);
@@ -163,6 +181,52 @@ def test_real_node_worker_reuses_utf8_process_then_recovers_from_failure_timeout
     node_worker.close()
     final_proc.wait(timeout=5)
     assert final_proc.poll() is not None
+
+
+def test_exit_after_ok_reply_crashes_next_request_then_allows_restart(
+    node_worker: NodeScenarioWorker,
+):
+    reply = node_worker.request("ok-then-exit-next")
+    exited = node_worker._proc
+
+    assert reply["ok"] is True
+    assert exited is not None
+    exited.wait(timeout=5)
+
+    with pytest.raises(NodeScenarioCrash, match="status 27") as crashed:
+        node_worker.request("echo-after-restart", {"text": "not silently restarted"})
+
+    assert crashed.value.scenario == "echo-after-restart"
+    assert "ok-then-exit-next" in str(crashed.value)
+    assert "synthetic late exit for ok-then-exit-next" in crashed.value.stderr
+    assert node_worker._proc is None
+
+    recovered = node_worker.request("echo-after-restart", {"text": "fresh"})
+
+    assert recovered["text"] == "fresh"
+    assert recovered["id"] == 3
+    assert node_worker._proc is not None
+    assert node_worker._proc.pid != exited.pid
+
+
+def test_close_reports_exit_after_last_ok_reply_and_worker_remains_recoverable(
+    node_worker: NodeScenarioWorker,
+):
+    reply = node_worker.request("ok-then-exit-close")
+
+    assert reply["ok"] is True
+    with pytest.raises(NodeScenarioCrash, match="status 29") as crashed:
+        node_worker.close()
+
+    assert crashed.value.scenario == "ok-then-exit-close"
+    assert "successful reply" in str(crashed.value)
+    assert "synthetic late exit for ok-then-exit-close" in crashed.value.stderr
+    assert node_worker._proc is None
+
+    recovered = node_worker.request("echo-after-restart", {"text": "fresh"})
+
+    assert recovered["text"] == "fresh"
+    assert recovered["id"] == 2
 
 
 def test_failure_renders_javascript_stack_in_pytest_diagnostics(node_worker):
