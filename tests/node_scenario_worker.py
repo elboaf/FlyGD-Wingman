@@ -14,6 +14,7 @@ from pathlib import Path
 _STOP_TIMEOUT_S = 1.0
 _KILL_TIMEOUT_S = 1.0
 _CLOSE_EXIT_GRACE_S = 0.1
+_BROKEN_PROCESS_REAP_TIMEOUT_S = 0.25
 _STDERR_TAIL_LINES = 40
 _STDERR_LINE_LIMIT = 400
 
@@ -122,10 +123,13 @@ class NodeScenarioWorker:
                 state.proc.stdin.write(json.dumps(request, ensure_ascii=False) + "\n")
                 state.proc.stdin.flush()
             except (AttributeError, BrokenPipeError, OSError, ValueError) as error:
+                late_exit = self._broken_process_exit_message(
+                    state, phase="while sending the next request"
+                )
                 stderr = self._discard_process(reason="request write failed")
                 raise NodeScenarioCrash(
                     scenario,
-                    f"worker crash while sending request: {error}",
+                    late_exit or f"worker crash while sending request: {error}",
                     stderr=stderr,
                 ) from error
             deadline = time.monotonic() + float(timeout)
@@ -148,12 +152,15 @@ class NodeScenarioWorker:
                         stderr=stderr,
                     )
                 if item is _EOF:
+                    late_exit = self._broken_process_exit_message(
+                        state, phase="before replying to the next request"
+                    )
                     stderr = self._discard_process(
                         reason="worker exited before replying"
                     )
                     raise NodeScenarioCrash(
                         scenario,
-                        "worker crash before reply",
+                        late_exit or "worker crash before reply",
                         stderr=stderr,
                     )
                 if isinstance(item, _ProtocolError):
@@ -325,6 +332,24 @@ class NodeScenarioWorker:
 
     def _stderr_text(self, state: _ProcessState) -> str:
         return state.stderr_tail.text()
+
+    def _broken_process_exit_message(
+        self, state: _ProcessState, *, phase: str
+    ) -> str | None:
+        exit_code = state.proc.poll()
+        if exit_code is None:
+            try:
+                exit_code = state.proc.wait(timeout=_BROKEN_PROCESS_REAP_TIMEOUT_S)
+            except (OSError, subprocess.TimeoutExpired):
+                exit_code = state.proc.poll()
+        if exit_code is None or state.last_successful_scenario is None:
+            return None
+        return self._late_exit_message(
+            exit_code,
+            state.last_successful_scenario,
+            state.last_successful_request_id,
+            phase=phase,
+        )
 
     def _late_exit_message(
         self,

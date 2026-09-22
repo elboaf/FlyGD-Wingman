@@ -555,6 +555,68 @@ Final target collection is still exactly **597 unique IDs**, with unchanged per-
 
 Fresh independent gates also passed: 35 direct Node DOM tests, JS smoke, Cargo test, Ruff check, Ruff format check, Node syntax checks for all four worker/DOM fixtures, and `git diff --check`.
 
+### Final polish scoped fix round 2
+
+Round 2 closes the remaining race in the late-exit diagnostic. A process may still be alive when `_ensure_started()` polls it, then close stdin or stdout immediately afterward. The resulting broken write or queued EOF previously discarded the process and emitted a generic crash before collecting its real status and prior successful request context.
+
+The write-failure and EOF branches now perform a bounded broken-process reap/poll before discard. The bound is 250ms and is reached only after the request path has already observed a broken write or EOF; healthy requests receive no sleep, grace, or additional poll. When the process exits within that bound and the state has a prior successful reply, `NodeScenarioCrash` uses the real status plus the last successful scenario/request ID and retained stderr. The current request still fails, state is discarded, and a later request may restart. Generic write/EOF diagnostics remain the fallback when no late-exit context is available.
+
+The tests deterministically control both race branches:
+
+- the real synthetic Node worker stays alive after the successful reply and exits only after reading the immediate next request, forcing the queued-EOF branch without a pre-wait;
+- a scripted process double accepts one successful request, breaks the next stdin write, and returns status 28 only when the broken-process reap runs. It records the exact bounded wait and supplies deterministic stderr without timers.
+
+Neither next-request test waits for process exit. The existing close/last-request case now also asserts the prior scenario and request ID.
+
+TDD RED on the prior implementation:
+
+```text
+queued EOF
+  expected status 27 and prior request context
+  got: worker crash before reply
+
+broken write
+  expected status 28 and prior request context
+  got: worker crash while sending request: [Errno 32] Broken pipe
+```
+
+Fresh round-2 GREEN evidence:
+
+```text
+NodeScenarioWorker lifecycle/protocol suite
+  12 passed in 3.74s
+  12 cases, zero failures/errors/skips
+  JUnit: /tmp/wingman-final-polish-round2-worker.xml
+  SHA-256: 61c22727a5aec152d195e76cdedd7b6e99cb612198eb09f16e3a444ef18761d2
+
+immediate race stability probe
+  both immediate cases passed in five consecutive invocations
+
+screenshot protocol/isolation identities
+  15 passed, 582 deselected in 11.41s
+  JUnit: /tmp/wingman-final-polish-round2-protocol.xml
+  SHA-256: 4debe78b52b2509e0c8ea3aade6f3628eb10706159137cbb788da46da980bf58
+
+four target files
+  597 passed in 74.61s
+  597 cases, zero failures/errors/skips
+  JUnit: /tmp/wingman-final-polish-round2-target.xml
+  SHA-256: b127dd32b9faa81f8e883fef728be639d226ec79378839e77085b5a2b50f17a9
+
+other shared-worker consumers
+  tests/test_ui_setup_page.py + tests/test_formations_page.py
+  448 passed in 45.69s
+  448 cases, zero failures/errors/skips
+  JUnit: /tmp/wingman-final-polish-round2-other-consumers.xml
+  SHA-256: 3fa2ff58eef9162d2bb4db9f9f70b481f9dd4ee85a3628375b4c37bd5f58cadd
+```
+
+Final collection remains exactly **597 unique target IDs**, with counts `246 / 90 / 160 / 101` and filtered-node SHA-256 `4ff87df92ef58977cd8e5b99b85ca52dddd330f4fc86b037d5f6d209e99de6e7`.
+
+A full suite was deliberately not rerun for round 2. Executable changes are limited to `tests/node_scenario_worker.py` and its direct protocol test. Repository search identified the four screenshot/Fittings targets plus UI Setup and Formations as shared-worker consumers; all six consumer files were run in full, alongside the dedicated protocol suite. The results/report edits only record evidence and do not expand executable scope. The clean round-1 full-suite result remains historical evidence, not a claimed round-2 run.
+
+Round-2 syntax and static gates passed for the changed Python files and all four worker/DOM CJS fixtures, together with repository-wide Ruff check/format and `git diff --check`.
+
 ### Changed-path and cleanup proof
 
 The final prohibited-scope command returned no output:
