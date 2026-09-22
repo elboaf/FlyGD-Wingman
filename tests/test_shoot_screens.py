@@ -250,6 +250,29 @@ def test_gap_capture_worker_reuses_process_and_preserves_business_outcomes(
       if (target) target[marker] = name + '.' + level;
     }
   }
+  const returnedMarker = '__wingmanReturnedPrototypeProbe';
+  const params = new URLSearchParams('a=1&a=2');
+  const iterator = params.entries();
+  const returned = [
+    new TextEncoder().encode('probe'),
+    params.getAll('a'),
+    iterator,
+    iterator.next().value
+  ];
+  for (const value of returned) {
+    for (let target = Object.getPrototypeOf(value); target;
+        target = Object.getPrototypeOf(target)) {
+      target[returnedMarker] = 'mutated';
+    }
+  }
+  let errorRealm;
+  try {
+    new TextEncoder().encode(Symbol('host-realm-probe'));
+  } catch (error) {
+    errorRealm = error.constructor.constructor('return globalThis')();
+  }
+  if (!errorRealm) throw new Error('TextEncoder Symbol did not fail');
+  errorRealm.__wingmanHostRealmProbe = 'mutated';
 })()
 """
     pristine = """
@@ -274,6 +297,46 @@ def test_gap_capture_worker_reuses_process_and_preserves_business_outcomes(
   if ('__wingmanTextEncoderAdapter' in globalThis ||
       '__wingmanURLSearchParamsAdapter' in globalThis) {
     throw new Error('host adapter remained globally reachable');
+  }
+  let adapterError;
+  let errorRealm;
+  try {
+    new TextEncoder().encode(Symbol('host-realm-probe'));
+  } catch (error) {
+    adapterError = error;
+    errorRealm = error.constructor.constructor('return globalThis')();
+  }
+  if (!errorRealm) throw new Error('TextEncoder Symbol did not fail');
+  if (!(adapterError instanceof TypeError)) {
+    throw new Error('TextEncoder host error was not reconstructed as TypeError');
+  }
+  if (errorRealm.__wingmanHostRealmProbe) {
+    throw new Error('host realm marker leaked between requests');
+  }
+  if (errorRealm !== globalThis) {
+    throw new Error('TextEncoder error escaped the request VM');
+  }
+  const returnedMarker = '__wingmanReturnedPrototypeProbe';
+  const isolationParams = new URLSearchParams('a=1&a=2');
+  const isolationIterator = isolationParams.entries();
+  const returned = [
+    new TextEncoder().encode('probe'),
+    isolationParams.getAll('a'),
+    isolationIterator,
+    isolationIterator.next().value
+  ];
+  if (!(returned[0] instanceof Uint8Array) || !Array.isArray(returned[1]) ||
+      !Array.isArray(returned[3]) ||
+      isolationIterator[Symbol.iterator]() !== isolationIterator) {
+    throw new Error('adapter result was not reconstructed in the request VM');
+  }
+  for (const value of returned) {
+    for (let target = Object.getPrototypeOf(value); target;
+        target = Object.getPrototypeOf(target)) {
+      if (Object.prototype.hasOwnProperty.call(target, returnedMarker)) {
+        throw new Error('returned value prototype leaked between requests');
+      }
+    }
   }
   const encoder = new TextEncoder();
   if (encoder.encoding !== 'utf-8' ||

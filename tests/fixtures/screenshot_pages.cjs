@@ -51,31 +51,71 @@ async function runScenario(request, cleanupProbe = null) {
   try {
     const {document, Element, scrolls} = createDOM(data.page);
     for (const [id, text] of Object.entries(data.texts || {})) document.getElementById(id).textContent = text;
+    // The adapter function is a hidden call-through into the host realm. Only
+    // this primitive envelope may cross back into the request VM.
+    const adapterEnvelope = operation => {
+      try {
+        return JSON.stringify({ok: true, value: operation()});
+      } catch (error) {
+        let errorName = 'Error';
+        let errorMessage = 'Host adapter failed';
+        try {
+          if (error && typeof error.name === 'string') errorName = error.name;
+        } catch {}
+        try {
+          if (error && typeof error.message === 'string') errorMessage = error.message;
+          else errorMessage = String(error);
+        } catch {}
+        try {
+          return JSON.stringify({ok: false, errorName, errorMessage});
+        } catch {
+          return '{"ok":false,"errorName":"Error","errorMessage":"Host adapter failed"}';
+        }
+      }
+    };
     const hostTextEncoder = new globalThis.TextEncoder();
-    const textEncoderAdapter = (operation, input, capacity) => {
-      if (operation === 'encode') return Array.from(hostTextEncoder.encode(input));
+    const textEncoderAdapter = (operation, input, capacity) => adapterEnvelope(() => {
+      if (operation === 'encode') {
+        return {bytes: Array.from(hostTextEncoder.encode(input))};
+      }
       if (operation === 'encodeInto') {
         const destination = new Uint8Array(capacity);
         const result = hostTextEncoder.encodeInto(input, destination);
-        return {...result, bytes: Array.from(destination.subarray(0, result.written))};
+        return {read: result.read, written: result.written,
+          bytes: Array.from(destination.subarray(0, result.written))};
       }
       throw new Error('Unknown TextEncoder adapter operation: ' + operation);
-    };
-    const urlSearchParamsAdapter = (operation, input) => {
-      if (operation === 'normalize') {
-        const params = new globalThis.URLSearchParams();
-        params.append(input, '');
-        return params.keys().next().value;
-      }
-      if (operation === 'parse') {
-        return Array.from(new globalThis.URLSearchParams(input).entries(),
-          ([name, value]) => [name, value]);
-      }
-      if (operation === 'serialize') {
-        return new globalThis.URLSearchParams(input).toString();
-      }
-      throw new Error('Unknown URLSearchParams adapter operation: ' + operation);
-    };
+    });
+    const urlSearchParamsAdapter = (operation, serializedState, argumentsJson) =>
+      adapterEnvelope(() => {
+        const args = JSON.parse(argumentsJson);
+        let params;
+        if (operation === 'construct-string') {
+          params = new globalThis.URLSearchParams(args[0]);
+        } else if (operation === 'construct-entries') {
+          params = new globalThis.URLSearchParams(args[0]);
+        } else {
+          params = new globalThis.URLSearchParams(serializedState);
+        }
+        let result = null;
+        if (operation === 'append') params.append(args[0], args[1]);
+        else if (operation === 'delete') {
+          if (args.length > 1) params.delete(args[0], args[1]);
+          else params.delete(args[0]);
+        } else if (operation === 'get') result = params.get(args[0]);
+        else if (operation === 'getAll') result = params.getAll(args[0]);
+        else if (operation === 'has') {
+          result = args.length > 1 ? params.has(args[0], args[1]) : params.has(args[0]);
+        } else if (operation === 'set') params.set(args[0], args[1]);
+        else if (operation === 'sort') params.sort();
+        else if (operation === 'size') result = params.size;
+        else if (operation === 'toString') result = params.toString();
+        else if (operation === 'entries') result = Array.from(params.entries());
+        else if (!['construct-string', 'construct-entries'].includes(operation)) {
+          throw new Error('Unknown URLSearchParams adapter operation: ' + operation);
+        }
+        return {state: params.toString(), result};
+      });
     const window = new Element('window');
     Object.assign(window, {document, console: requestConsole,
       navigator: {clipboard: {readText: () => assert.fail('clipboard read'), writeText: () => assert.fail('clipboard write')}},
@@ -96,6 +136,23 @@ async function runScenario(request, cleanupProbe = null) {
       delete globalThis.__wingmanTextEncoderAdapter;
       delete globalThis.__wingmanURLSearchParamsAdapter;
 
+      const errorTypes = {Error, EvalError, RangeError, ReferenceError,
+        SyntaxError, TypeError, URIError};
+      function fromHost(envelope) {
+        if (typeof envelope !== 'string') {
+          throw new TypeError('Host adapter returned a non-primitive envelope');
+        }
+        const response = JSON.parse(envelope);
+        if (!response || response.ok !== true) {
+          const ErrorType = errorTypes[response && response.errorName] || Error;
+          throw new ErrorType(response && response.errorMessage || 'Host adapter failed');
+        }
+        return response.value;
+      }
+      function encoderInput(value) {
+        return typeof value === 'symbol' ? value : String(value);
+      }
+
       const encoders = new WeakSet();
       function encoder(instance) {
         if (!encoders.has(instance)) throw new TypeError('Illegal invocation');
@@ -105,9 +162,11 @@ async function runScenario(request, cleanupProbe = null) {
         get encoding() { encoder(this); return 'utf-8'; }
         encode(input = '') {
           encoder(this);
-          const bytes = encode('encode', input);
-          const result = new Uint8Array(bytes.length);
-          for (let index = 0; index < bytes.length; index++) result[index] = bytes[index];
+          const encoded = fromHost(encode('encode', encoderInput(input), 0));
+          const result = new Uint8Array(encoded.bytes.length);
+          for (let index = 0; index < encoded.bytes.length; index++) {
+            result[index] = encoded.bytes[index];
+          }
           return result;
         }
         encodeInto(input, destination) {
@@ -115,7 +174,8 @@ async function runScenario(request, cleanupProbe = null) {
           if (!(destination instanceof Uint8Array)) {
             throw new TypeError('The destination must be a Uint8Array');
           }
-          const encoded = encode('encodeInto', input, destination.length);
+          const encoded = fromHost(encode(
+            'encodeInto', encoderInput(input), destination.length));
           for (let index = 0; index < encoded.written; index++) {
             destination[index] = encoded.bytes[index];
           }
@@ -125,128 +185,103 @@ async function runScenario(request, cleanupProbe = null) {
       Object.defineProperty(TextEncoder.prototype, Symbol.toStringTag,
         {value: 'TextEncoder', configurable: true});
 
-      const parameterEntries = new WeakMap();
-      function entriesFor(instance) {
-        const entries = parameterEntries.get(instance);
-        if (!entries) throw new TypeError('Illegal invocation');
-        return entries;
+      // Durable facade state is a primitive query string — host URL objects,
+      // iterators and parse results never become reachable request state.
+      const parameterStates = new WeakMap();
+      function stateFor(instance) {
+        if (!parameterStates.has(instance)) throw new TypeError('Illegal invocation');
+        return parameterStates.get(instance);
       }
-      function normalize(value) { return searchParams('normalize', value); }
-      function parse(value) {
-        const parsed = searchParams('parse', value);
-        const entries = [];
-        for (let index = 0; index < parsed.length; index++) {
-          entries.push([String(parsed[index][0]), String(parsed[index][1])]);
+      function webString(value) {
+        if (typeof value === 'symbol') {
+          throw new TypeError('Cannot convert a Symbol value to a string');
         }
-        return entries;
+        return String(value);
+      }
+      function urlOperation(operation, serializedState, args) {
+        const response = fromHost(searchParams(
+          operation, serializedState, JSON.stringify(args)));
+        if (!response || typeof response.state !== 'string') {
+          throw new TypeError('Host URLSearchParams adapter returned invalid state');
+        }
+        return response;
+      }
+      function invoke(instance, operation, args) {
+        const response = urlOperation(operation, stateFor(instance), args);
+        parameterStates.set(instance, response.state);
+        return response.result;
       }
       class URLSearchParams {
         constructor(init = '') {
-          let entries;
+          let operation = 'construct-string';
+          let args;
           if (init instanceof URLSearchParams) {
-            entries = [];
-            for (const [name, value] of entriesFor(init)) entries.push([name, value]);
+            args = [stateFor(init)];
           } else if (typeof init === 'string') {
-            entries = parse(init);
+            args = [init];
           } else if (init !== null && init !== undefined &&
               typeof init[Symbol.iterator] === 'function') {
-            entries = [];
+            operation = 'construct-entries';
+            const entries = [];
             for (const pair of init) {
               const values = Array.from(pair);
               if (values.length !== 2) {
                 throw new TypeError('Each query pair must be an iterable [name, value] tuple');
               }
-              entries.push([normalize(values[0]), normalize(values[1])]);
+              entries.push([webString(values[0]), webString(values[1])]);
             }
+            args = [entries];
           } else if (init !== null && typeof init === 'object') {
-            entries = [];
+            operation = 'construct-entries';
+            const entries = [];
             for (const name of Object.keys(init)) {
-              entries.push([normalize(name), normalize(init[name])]);
+              entries.push([webString(name), webString(init[name])]);
             }
+            args = [entries];
           } else {
-            entries = parse(normalize(init));
+            args = [webString(init)];
           }
-          parameterEntries.set(this, entries);
+          const response = urlOperation(operation, '', args);
+          parameterStates.set(this, response.state);
         }
-        get size() { return entriesFor(this).length; }
+        get size() { return invoke(this, 'size', []); }
         append(name, value) {
-          entriesFor(this).push([normalize(name), normalize(value)]);
+          invoke(this, 'append', [webString(name), webString(value)]);
         }
         delete(name, value) {
-          const entries = entriesFor(this);
-          const normalizedName = normalize(name);
-          const hasValue = arguments.length > 1;
-          const normalizedValue = hasValue ? normalize(value) : null;
-          for (let index = entries.length - 1; index >= 0; index--) {
-            if (entries[index][0] === normalizedName &&
-                (!hasValue || entries[index][1] === normalizedValue)) {
-              entries.splice(index, 1);
-            }
-          }
+          const args = [webString(name)];
+          if (arguments.length > 1) args.push(webString(value));
+          invoke(this, 'delete', args);
         }
-        get(name) {
-          const normalizedName = normalize(name);
-          for (const entry of entriesFor(this)) {
-            if (entry[0] === normalizedName) return entry[1];
-          }
-          return null;
-        }
-        getAll(name) {
-          const normalizedName = normalize(name);
-          const values = [];
-          for (const entry of entriesFor(this)) {
-            if (entry[0] === normalizedName) values.push(entry[1]);
-          }
-          return values;
-        }
+        get(name) { return invoke(this, 'get', [webString(name)]); }
+        getAll(name) { return invoke(this, 'getAll', [webString(name)]); }
         has(name, value) {
-          const normalizedName = normalize(name);
-          const hasValue = arguments.length > 1;
-          const normalizedValue = hasValue ? normalize(value) : null;
-          return entriesFor(this).some(entry => entry[0] === normalizedName &&
-            (!hasValue || entry[1] === normalizedValue));
+          const args = [webString(name)];
+          if (arguments.length > 1) args.push(webString(value));
+          return invoke(this, 'has', args);
         }
         set(name, value) {
-          const entries = entriesFor(this);
-          const normalizedName = normalize(name);
-          const normalizedValue = normalize(value);
-          let found = false;
-          for (let index = 0; index < entries.length; index++) {
-            if (entries[index][0] !== normalizedName) continue;
-            if (!found) {
-              entries[index][1] = normalizedValue;
-              found = true;
-            } else {
-              entries.splice(index--, 1);
-            }
-          }
-          if (!found) entries.push([normalizedName, normalizedValue]);
+          invoke(this, 'set', [webString(name), webString(value)]);
         }
-        sort() {
-          const entries = entriesFor(this);
-          const ordered = entries.map((entry, index) => ({entry, index}));
-          ordered.sort((left, right) => left.entry[0] < right.entry[0] ? -1
-            : left.entry[0] > right.entry[0] ? 1 : left.index - right.index);
-          entries.splice(0, entries.length, ...ordered.map(item => item.entry));
-        }
-        toString() { return searchParams('serialize', entriesFor(this)); }
+        sort() { invoke(this, 'sort', []); }
+        toString() { return invoke(this, 'toString', []); }
         *entries() {
-          const entries = entriesFor(this);
-          for (let index = 0; index < entries.length; index++) {
+          for (let index = 0; ; index++) {
+            const entries = invoke(this, 'entries', []);
+            if (index >= entries.length) return;
             yield [entries[index][0], entries[index][1]];
           }
         }
         *keys() {
-          const entries = entriesFor(this);
-          for (let index = 0; index < entries.length; index++) yield entries[index][0];
+          for (const entry of this.entries()) yield entry[0];
         }
         *values() {
-          const entries = entriesFor(this);
-          for (let index = 0; index < entries.length; index++) yield entries[index][1];
+          for (const entry of this.entries()) yield entry[1];
         }
         forEach(callback, thisArg = undefined) {
-          const entries = entriesFor(this);
-          for (let index = 0; index < entries.length; index++) {
+          for (let index = 0; ; index++) {
+            const entries = invoke(this, 'entries', []);
+            if (index >= entries.length) return;
             callback.call(thisArg, entries[index][1], entries[index][0], this);
           }
         }
