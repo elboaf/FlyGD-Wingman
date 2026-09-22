@@ -1,15 +1,17 @@
 """Current main-window cards exercise real owners, never live domain actions."""
 
 import json
-import subprocess
+import shutil
 from copy import deepcopy
 from dataclasses import asdict, replace
+from pathlib import Path
 from threading import RLock
 from types import SimpleNamespace
 
 import pytest
 
 from tests.html_tree import PageTree
+from tests.node_scenario_worker import NodeScenarioFailure, NodeScenarioWorker
 from tests.test_new_screenshots import ROOT, shoot
 
 # Explicit coverage contract; the original inventory remains in order.
@@ -55,11 +57,122 @@ SUBPAGES = {
 }
 
 
+@pytest.fixture(scope="session")
+def current_screenshot_markup(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    tree = PageTree()
+    tree.feed((ROOT / "wingman/web/index.html").read_text(encoding="utf-8"))
+    path = tmp_path_factory.mktemp("current-screenshot-worker") / "page.json"
+    path.write_text(json.dumps(tree.root, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+@pytest.fixture(scope="session")
+def current_screenshot_worker(current_screenshot_markup: Path):
+    node = shutil.which("node")
+    assert node is not None, "node is not installed"
+    worker = NodeScenarioWorker(
+        [
+            node,
+            str(ROOT / "tests/fixtures/current_screenshot_pages.cjs"),
+            str(current_screenshot_markup),
+            str(ROOT / "wingman/web"),
+        ],
+        cwd=ROOT,
+    )
+    try:
+        yield worker
+    finally:
+        worker.close()
+
+
+def test_current_screenshot_worker_isolates_owner_families(
+    current_screenshot_worker: NodeScenarioWorker,
+):
+    _request_current_page(
+        current_screenshot_worker, "settings-companions-populated", "normal"
+    )
+    process = current_screenshot_worker._proc
+    _request_current_page(current_screenshot_worker, "settings-wanderer", "late-read")
+    _request_current_page(
+        current_screenshot_worker, "settings-fleet-sharing", "late-synthetic"
+    )
+    invalid = _request_current_page(
+        current_screenshot_worker, "settings-companions-populated", "invalid"
+    )
+    assert invalid["output"] == (
+        "PASS current screenshot settings-companions-populated invalid"
+    )
+    _request_current_page(
+        current_screenshot_worker, "settings-companions-populated", "normal"
+    )
+    assert current_screenshot_worker._proc is process
+
+
+def test_current_screenshot_worker_vm_failures_preserve_stack_and_recover(
+    current_screenshot_worker: NodeScenarioWorker,
+):
+    _request_current_page(
+        current_screenshot_worker, "settings-companions-populated", "normal"
+    )
+    process = current_screenshot_worker._proc
+    for mode, stack_name in [
+        ("vm-throw", "protocolVmThrow"),
+        ("vm-reject", "protocolVmReject"),
+    ]:
+        with pytest.raises(NodeScenarioFailure) as failure:
+            current_screenshot_worker.request(
+                f"protocol/{mode}", {"protocol_probe": mode}, timeout=20.0
+            )
+        assert stack_name in failure.value.stack
+        recovered = _request_current_page(
+            current_screenshot_worker, "settings-companions-populated", "normal"
+        )
+        assert recovered["output"] == (
+            "PASS current screenshot settings-companions-populated normal"
+        )
+        assert current_screenshot_worker._proc is process
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["pending-timer-normal-exit", "pending-timer-assertion-exit"],
+    ids=["pending-timer-normal-exit", "pending-timer-assertion-exit"],
+)
+def test_current_screenshot_worker_cancels_pending_timer(
+    current_screenshot_worker: NodeScenarioWorker, mode: str
+):
+    _request_current_page(
+        current_screenshot_worker, "settings-companions-populated", "normal"
+    )
+    process = current_screenshot_worker._proc
+    with pytest.raises(NodeScenarioFailure) as failure:
+        current_screenshot_worker.request(
+            f"protocol/{mode}", {"protocol_probe": mode}, timeout=20.0
+        )
+    expected_error = (
+        "request left a live timer"
+        if mode == "pending-timer-normal-exit"
+        else "protocol cleanup probe failure"
+    )
+    assert failure.value.reply is not None
+    assert str(failure.value.reply["error"]).splitlines()[0] == expected_error
+    assert expected_error in failure.value.stack
+    recovered = _request_current_page(
+        current_screenshot_worker, "settings-companions-populated", "normal"
+    )
+    assert recovered["output"] == (
+        "PASS current screenshot settings-companions-populated normal"
+    )
+    assert current_screenshot_worker._proc is process
+
+
 @pytest.mark.parametrize(
     "key", [key for key in SUBPAGES if key.startswith("settings-previews")]
 )
-def test_preview_stages_select_visible_subpages_and_their_scroll_owner(tmp_path, key):
-    run_current_page(tmp_path, key, "preview-subpage")
+def test_preview_stages_select_visible_subpages_and_their_scroll_owner(
+    current_screenshot_worker: NodeScenarioWorker, key: str
+):
+    _request_current_page(current_screenshot_worker, key, "preview-subpage")
 
 
 def test_current_inventory_and_floor_coverage():
@@ -77,25 +190,35 @@ def test_current_inventory_and_floor_coverage():
 @pytest.mark.parametrize(
     "scenario", ["normal", "late-read", "late-synthetic", "invalid"]
 )
-def test_current_synthetic_owners(tmp_path, key, scenario):
-    run_current_page(tmp_path, key, scenario)
+def test_current_synthetic_owners(
+    current_screenshot_worker: NodeScenarioWorker, key: str, scenario: str
+):
+    _request_current_page(current_screenshot_worker, key, scenario)
 
 
 @pytest.mark.parametrize("key", LIVE)
-def test_lower_cards_frame_live_content_without_actions(tmp_path, key):
-    run_current_page(tmp_path, key, "live-card")
+def test_lower_cards_frame_live_content_without_actions(
+    current_screenshot_worker: NodeScenarioWorker, key: str
+):
+    _request_current_page(current_screenshot_worker, key, "live-card")
 
 
 @pytest.mark.parametrize(
     "key",
     ["settings-companions-populated", "settings-wanderer", "settings-fleet-sharing"],
 )
-def test_cleanup_before_any_live_hydration_erases_synthetic_content(tmp_path, key):
-    run_current_page(tmp_path, key, "cold")
+def test_cleanup_before_any_live_hydration_erases_synthetic_content(
+    current_screenshot_worker: NodeScenarioWorker, key: str
+):
+    _request_current_page(current_screenshot_worker, key, "cold")
 
 
-def test_companion_capture_does_not_take_over_a_live_dialog(tmp_path):
-    run_current_page(tmp_path, "settings-companions-source-narrow", "live-dialog")
+def test_companion_capture_does_not_take_over_a_live_dialog(
+    current_screenshot_worker: NodeScenarioWorker,
+):
+    _request_current_page(
+        current_screenshot_worker, "settings-companions-source-narrow", "live-dialog"
+    )
 
 
 def _sharing_screenshot_status(*, live=False, newer=False, pending=False):
@@ -376,47 +499,72 @@ def test_sharing_screenshot_projection_guard_rejects_drift(fault):
         "worklists",
     ],
 )
-def test_sharing_screenshot_lifecycle_preserves_live_authority(tmp_path, case):
-    run_current_page(tmp_path, "settings-fleet-sharing", "sharing-lifecycle-" + case)
+def test_sharing_screenshot_lifecycle_preserves_live_authority(
+    current_screenshot_worker: NodeScenarioWorker, case: str
+):
+    _request_current_page(
+        current_screenshot_worker,
+        "settings-fleet-sharing",
+        "sharing-lifecycle-" + case,
+    )
 
 
 @pytest.mark.parametrize("evidence", ["cached", "same", "newer"])
-def test_sharing_cleanup_preserves_failed_refresh_authority(tmp_path, evidence):
-    run_current_page(tmp_path, "settings-fleet-sharing", "sharing-read-" + evidence)
+def test_sharing_cleanup_preserves_failed_refresh_authority(
+    current_screenshot_worker: NodeScenarioWorker, evidence: str
+):
+    _request_current_page(
+        current_screenshot_worker, "settings-fleet-sharing", "sharing-read-" + evidence
+    )
 
 
 @pytest.mark.parametrize("delivery", ["live", "buffered"])
-def test_wanderer_cleanup_obeys_live_binding_health_fence(tmp_path, delivery):
-    run_current_page(tmp_path, "settings-wanderer", "wanderer-fence-" + delivery)
+def test_wanderer_cleanup_obeys_live_binding_health_fence(
+    current_screenshot_worker: NodeScenarioWorker, delivery: str
+):
+    _request_current_page(
+        current_screenshot_worker, "settings-wanderer", "wanderer-fence-" + delivery
+    )
 
 
 @pytest.mark.parametrize(
     "action", ["toggle-button", "toggle-check", "reset", "character", "overlap"]
 )
-def test_fleet_capture_refuses_pending_live_writes(tmp_path, action):
-    run_current_page(
-        tmp_path, "settings-fleet-characters-narrow", "fleet-pending-" + action
+def test_fleet_capture_refuses_pending_live_writes(
+    current_screenshot_worker: NodeScenarioWorker, action: str
+):
+    _request_current_page(
+        current_screenshot_worker,
+        "settings-fleet-characters-narrow",
+        "fleet-pending-" + action,
     )
 
 
 @pytest.mark.parametrize("action", ["pair", "grant", "overlap"])
-def test_sharing_capture_refuses_pending_browser_actions(tmp_path, action):
-    run_current_page(tmp_path, "settings-fleet-sharing", "sharing-pending-" + action)
+def test_sharing_capture_refuses_pending_browser_actions(
+    current_screenshot_worker: NodeScenarioWorker, action: str
+):
+    _request_current_page(
+        current_screenshot_worker,
+        "settings-fleet-sharing",
+        "sharing-pending-" + action,
+    )
 
 
 def test_fleet_cleanup_restores_focused_master_without_changing_live_focus_policy(
-    tmp_path,
+    current_screenshot_worker: NodeScenarioWorker,
 ):
-    run_current_page(tmp_path, "settings-fleet-characters-narrow", "fleet-focused")
+    _request_current_page(
+        current_screenshot_worker, "settings-fleet-characters-narrow", "fleet-focused"
+    )
 
 
-def run_current_page(tmp_path, key, scenario):
+def _request_current_page(
+    worker: NodeScenarioWorker, key: str, scenario: str
+) -> dict[str, object]:
     screen = next((s for s in shoot.SCREENS if s.key == key), None)
     assert screen, f"missing current capture: {key}"
-    tree = PageTree()
-    tree.feed((ROOT / "wingman/web/index.html").read_text(encoding="utf-8"))
-    data = {
-        "page": tree.root,
+    payload: dict[str, object] = {
         "key": key,
         "section": screen.section,
         "scenario": scenario,
@@ -428,26 +576,11 @@ def run_current_page(tmp_path, key, scenario):
         "tab": SUBPAGES.get(key),
     }
     if screen.section == "fleet":
-        data["live_sharing"] = _sharing_screenshot_projection(live=True)
-        data["live_sharing_newer"] = _sharing_screenshot_projection(
+        payload["live_sharing"] = _sharing_screenshot_projection(live=True)
+        payload["live_sharing_newer"] = _sharing_screenshot_projection(
             live=True, newer=True, pending=scenario == "sharing-lifecycle-worklists"
         )
-    path = tmp_path / "capture.json"
-    path.write_text(json.dumps(data), encoding="utf-8")
-    result = subprocess.run(
-        [
-            "node",
-            str(ROOT / "tests/fixtures/current_screenshot_pages.cjs"),
-            str(path),
-            str(ROOT / "wingman/web"),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=20,
-        check=False,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "PASS current screenshot" in result.stdout
+    return worker.request(f"{key}/{scenario}", payload, timeout=20.0)
 
 
 @pytest.mark.parametrize("key", SYNTHETIC)
