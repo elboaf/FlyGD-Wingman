@@ -2,78 +2,139 @@
 // real markup ancestry. Only DOM mechanics and external delivery are doubled.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const readline = require('node:readline');
 const vm = require('node:vm');
-const data = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-const web = process.argv[3];
+const {performance} = require('node:perf_hooks');
+const {isNativeError} = require('node:util/types');
 const {createDOM} = require('./screenshot_dom.cjs');
-const {document, Element, scrolls} = createDOM(data.page);
-for (const [id, text] of Object.entries(data.texts || {})) document.getElementById(id).textContent = text;
-const window = new Element('window');
-Object.assign(window, {document, console: {...console, error: (...args) => { throw Error(args.join(' ')); }},
-  navigator: {clipboard: {readText: () => assert.fail('clipboard read'), writeText: () => assert.fail('clipboard write')}},
-  Promise, Math, Date, TextEncoder, URLSearchParams,
-  Event: class { constructor(type) { this.type = type; } },
-  CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } },
-  setTimeout, clearTimeout, requestAnimationFrame: callback => setTimeout(callback, 0),
-  matchMedia: () => ({matches: false}), getComputedStyle: () => ({visibility: 'visible'}), location: {search: ''}});
-window.window = window;
-const runtime = vm.createContext(window);
-const run = expression => vm.runInContext(expression, runtime);
-run(fs.readFileSync(web + '/app.js', 'utf8'));
-const WM = window.WM;
-const calls = [];
-let staging = false;
-let bridgeReply = () => null;
-WM.send = (method, ...args) => {
-  calls.push([method, ...args]);
-  if (staging) assert.fail('Staged screen reached bridge: ' + method);
-  return Promise.resolve(bridgeReply(method, ...args));
-};
-WM.confirm = () => { if (staging) assert.fail('Unexpected confirmation'); return Promise.resolve(false); };
-const crop = data.key.startsWith('settings-');
-const moduleName = data.key.startsWith('fittings-') ? 'fittings'
-  : data.key.startsWith('settings-wanderer') ? 'wanderer'
-  : data.key === 'profiles-copy-scope' ? 'evesettings'
-  : data.key.startsWith('settings-characters') ? 'characters'
-  : crop ? 'previews' : data.key.includes('formations') ? 'formations' : 'uisetup';
-// Model native bubbling focusin for this capture's real row-selection handler.
-// Keep this local: other page harnesses retain their own DOM mechanics.
-if (moduleName === 'formations') {
-  const setAttribute = Element.prototype.setAttribute;
-  Element.prototype.setAttribute = function (name, value) {
-    setAttribute.call(this, name, value);
-    if (name === 'class') this.className = String(value);
-  };
-  const focus = Element.prototype.focus;
-  Element.prototype.focus = function () {
-    const changed = document.activeElement !== this;
-    focus.call(this);
-    if (changed) for (let node = this; node; node = node.parentNode) {
-      node.dispatchEvent({type: 'focusin', target: this});
-    }
-  };
+
+function freezeJson(value) {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  Object.freeze(value);
+  for (const child of Object.values(value)) freezeJson(child);
+  return value;
 }
-if (moduleName === 'fittings') {
-  // The page uses native progress properties, which reflect numeric attributes.
-  const value = Object.getOwnPropertyDescriptor(Element.prototype, 'value');
-  Object.defineProperty(Element.prototype, 'value', {
-    get() { return this.tagName === 'PROGRESS' ? Number(this.getAttribute('value') || 0) : value.get.call(this); },
-    set(number) {
-      if (this.tagName === 'PROGRESS') this.setAttribute('value', number);
-      else value.set.call(this, number);
+
+const workerMode = process.argv[2] === '--worker';
+const startupPath = workerMode ? process.argv[3] : process.argv[2];
+const startupData = freezeJson(JSON.parse(fs.readFileSync(startupPath, 'utf8')));
+const startupPage = workerMode ? startupData : startupData.page;
+const web = workerMode ? process.argv[4] : process.argv[3];
+
+async function runScenario(request) {
+  const data = {page: startupPage, ...(request.payload || {})};
+  const outputLines = [];
+  const requestConsole = {
+    log: (...args) => outputLines.push(args.join(' ')),
+    info: (...args) => outputLines.push(args.join(' ')),
+    debug: (...args) => outputLines.push(args.join(' ')),
+    warn: (...args) => outputLines.push(args.join(' ')),
+    error: (...args) => { throw new Error(args.join(' ')); },
+  };
+  const timers = new Set();
+  const requestSetTimeout = (callback, delay, ...args) => {
+    let handle;
+    handle = setTimeout(() => {
+      timers.delete(handle);
+      callback(...args);
+    }, delay);
+    timers.add(handle);
+    return handle;
+  };
+  const requestClearTimeout = handle => {
+    timers.delete(handle);
+    clearTimeout(handle);
+  };
+  const unhandledRejections = [];
+  const captureRejection = reason => unhandledRejections.push(reason);
+  process.on('unhandledRejection', captureRejection);
+  try {
+    const {document, Element, scrolls} = createDOM(data.page);
+    for (const [id, text] of Object.entries(data.texts || {})) document.getElementById(id).textContent = text;
+    const window = new Element('window');
+    Object.assign(window, {document, console: requestConsole,
+      navigator: {clipboard: {readText: () => assert.fail('clipboard read'), writeText: () => assert.fail('clipboard write')}},
+      Promise, Math, Date, TextEncoder, URLSearchParams,
+      Event: class { constructor(type) { this.type = type; } },
+      CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } },
+      setTimeout: requestSetTimeout, clearTimeout: requestClearTimeout,
+      requestAnimationFrame: callback => requestSetTimeout(callback, 0),
+      matchMedia: () => ({matches: false}), getComputedStyle: () => ({visibility: 'visible'}), location: {search: ''}});
+    window.window = window;
+    const runtime = vm.createContext(window);
+    const run = expression => vm.runInContext(expression, runtime);
+    const protocolProbe = request.payload?.protocol_probe;
+    if (protocolProbe === 'vm-throw') {
+      run(`(() => { function protocolVmThrow() { throw new Error('protocol VM throw'); }
+        protocolVmThrow(); })()`);
     }
-  });
-  Object.defineProperty(Element.prototype, 'max', {
-    get() { return Number(this.getAttribute('max') || 1); },
-    set(number) { this.setAttribute('max', number); }
-  });
-  Object.defineProperty(Element.prototype, 'parentElement', {get() { return this.parentNode; }});
-  const style = document.getElementById('fittings-workspace-scroll').style;
-  style.removeProperty = function (name) { delete this[name]; };
-}
-run(fs.readFileSync(web + '/' + moduleName + '.js', 'utf8'));
-const tick = () => new Promise(resolve => setTimeout(resolve, 10));
-const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return {promise, resolve}; };
+    if (protocolProbe === 'vm-reject') {
+      run(`(() => { function protocolVmReject() {
+        Promise.reject(new Error('protocol VM rejection')); }
+        protocolVmReject(); })()`);
+    }
+    if (protocolProbe?.startsWith('pending-timer-')) {
+      requestSetTimeout(() => outputLines.push('leaked timer'), 0);
+      if (protocolProbe === 'pending-timer-assertion-exit') {
+        throw new Error('protocol cleanup probe failure');
+      }
+    }
+    if (!protocolProbe) {
+    run(fs.readFileSync(web + '/app.js', 'utf8'));
+    const WM = window.WM;
+    const calls = [];
+    let staging = false;
+    let bridgeReply = () => null;
+    WM.send = (method, ...args) => {
+      calls.push([method, ...args]);
+      if (staging) assert.fail('Staged screen reached bridge: ' + method);
+      return Promise.resolve(bridgeReply(method, ...args));
+    };
+    WM.confirm = () => { if (staging) assert.fail('Unexpected confirmation'); return Promise.resolve(false); };
+    const crop = data.key.startsWith('settings-');
+    const moduleName = data.key.startsWith('fittings-') ? 'fittings'
+      : data.key.startsWith('settings-wanderer') ? 'wanderer'
+      : data.key === 'profiles-copy-scope' ? 'evesettings'
+      : data.key.startsWith('settings-characters') ? 'characters'
+      : crop ? 'previews' : data.key.includes('formations') ? 'formations' : 'uisetup';
+    // Model native bubbling focusin for this capture's real row-selection handler.
+    // Keep this local: other page harnesses retain their own DOM mechanics.
+    if (moduleName === 'formations') {
+      const setAttribute = Element.prototype.setAttribute;
+      Element.prototype.setAttribute = function (name, value) {
+        setAttribute.call(this, name, value);
+        if (name === 'class') this.className = String(value);
+      };
+      const focus = Element.prototype.focus;
+      Element.prototype.focus = function () {
+        const changed = document.activeElement !== this;
+        focus.call(this);
+        if (changed) for (let node = this; node; node = node.parentNode) {
+          node.dispatchEvent({type: 'focusin', target: this});
+        }
+      };
+    }
+    if (moduleName === 'fittings') {
+      // The page uses native progress properties, which reflect numeric attributes.
+      const value = Object.getOwnPropertyDescriptor(Element.prototype, 'value');
+      Object.defineProperty(Element.prototype, 'value', {
+        get() { return this.tagName === 'PROGRESS' ? Number(this.getAttribute('value') || 0) : value.get.call(this); },
+        set(number) {
+          if (this.tagName === 'PROGRESS') this.setAttribute('value', number);
+          else value.set.call(this, number);
+        }
+      });
+      Object.defineProperty(Element.prototype, 'max', {
+        get() { return Number(this.getAttribute('max') || 1); },
+        set(number) { this.setAttribute('max', number); }
+      });
+      Object.defineProperty(Element.prototype, 'parentElement', {get() { return this.parentNode; }});
+      const style = document.getElementById('fittings-workspace-scroll').style;
+      style.removeProperty = function (name) { delete this[name]; };
+    }
+    run(fs.readFileSync(web + '/' + moduleName + '.js', 'utf8'));
+    const tick = () => new Promise(resolve => requestSetTimeout(resolve, 10));
+    const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return {promise, resolve}; };
 async function gapRegression() {
   const scenario = data.gap;
   const el = id => document.getElementById(id);
@@ -120,7 +181,8 @@ async function gapRegression() {
       assert.throws(verify, /Screenshot content did not settle/);
       assert.equal(calls.length, 0);
       if (data.cleanup) run(data.cleanup);
-      return console.log('PASS screenshot gap ' + data.key + ' unresolved');
+      outputLines.push('PASS screenshot gap ' + data.key + ' unresolved');
+      return;
     }
     let anchor, pane, target;
     if (wanderer) {
@@ -283,7 +345,7 @@ async function gapRegression() {
     assert.equal(calls.length, 0, 'fixture cleanup stays local');
     if (!['settled', 'codec-missing'].includes(scenario)) break;
   }
-  console.log('PASS screenshot gap ' + data.key + ' ' + scenario);
+  outputLines.push('PASS screenshot gap ' + data.key + ' ' + scenario);
 }
 async function cropRegression() {
   const scenario = data.regression;
@@ -510,7 +572,7 @@ async function fittingsDetailRegression() {
     else assert.throws(verify, /Screenshot content did not settle: fittings-detail/);
     assert.equal(calls.length, 0, 'all fixture actions and delayed replies remain local');
   }
-  console.log('PASS screenshot fittings-detail ' + scenario);
+  outputLines.push('PASS screenshot fittings-detail ' + scenario);
 }
 async function fidelityRegression() {
   document.activeElement = document.body;
@@ -550,7 +612,7 @@ async function fidelityRegression() {
     assert.throws(() => run(data.verify), /Screenshot content did not settle/, scenario);
     if (data.cleanup) { run(data.cleanup); await tick(); }
     assert.equal(calls.length, 0, 'damaged capture and cleanup never reach a writer');
-    console.log('PASS screenshot fidelity ' + data.key + ' ' + scenario);
+    outputLines.push('PASS screenshot fidelity ' + data.key + ' ' + scenario);
     return true;
   }
   WM.route(crop ? 'settings' : 'fittings');
@@ -631,7 +693,7 @@ async function fidelityRegression() {
       if (geometry === 'descendant-hit') run(data.verify);
       else assert.throws(() => run(data.verify), /Screenshot content did not settle/, geometry);
       assert.equal(calls.length, 0, 'geometry verification must not click mutators');
-      console.log('PASS screenshot Groups geometry ' + geometry); return;
+      outputLines.push('PASS screenshot Groups geometry ' + geometry); return;
     }
     manager.open = false;
     assert.throws(() => run(data.verify), /Screenshot content did not settle/);
@@ -806,9 +868,9 @@ async function fidelityRegression() {
     assert.ok(calls.some(call => call[0] === 'fittings_state'), 'ordinary reads resume after teardown');
     assert.ok(calls.every(call => call[0] === 'fittings_state'), 'reentry never resumes a synthetic writer');
   }
-  console.log('PASS screenshot fidelity ' + data.key + ' ' + data.regression);
+  outputLines.push('PASS screenshot fidelity ' + data.key + ' ' + data.regression);
 }
-(async () => {
+async function executeScenario() {
   if (data.gap) { await gapRegression(); return; }
   if (['settings-previews-groups', 'settings-characters-waiting', 'settings-characters-partial-cleanup', 'fittings-copy-limit',
        'fittings-copy-progress', 'fittings-copy-result'].includes(data.key)) {
@@ -820,7 +882,7 @@ async function fidelityRegression() {
   await tick(); calls.length = 0;
   if (data.regression) {
     await cropRegression();
-    console.log('PASS screenshot regression ' + JSON.stringify(data.regression));
+    outputLines.push('PASS screenshot regression ' + JSON.stringify(data.regression));
     return;
   }
   staging = true;
@@ -904,5 +966,78 @@ async function fidelityRegression() {
     assert.ok(calls.slice(beforeCatalogRead).some(call => call[0] === 'eve_settings_setup_catalog'), 'ordinary catalog reads resume after cleanup');
   } else WM.section('previews');
   assert.ok(calls.length, 'ordinary reads resume after cleanup');
-  console.log('PASS screenshot ' + data.key);
-})().catch(error => { console.error(error); process.exitCode = 1; });
+  outputLines.push('PASS screenshot ' + data.key);
+}
+    await executeScenario();
+    }
+    assert.equal(timers.size, 0, 'request left a live timer');
+    await new Promise(resolve => setImmediate(resolve));
+    if (unhandledRejections.length) throw unhandledRejections[0];
+    assert.equal(timers.size, 0, 'request left a live timer');
+    const passLines = outputLines.filter(line => line.startsWith('PASS screenshot'));
+    assert.equal(passLines.length, 1, 'request must produce exactly one terminal PASS line');
+    assert.equal(outputLines.at(-1), passLines[0], 'request PASS line must be terminal');
+    return passLines[0];
+  } finally {
+    process.removeListener('unhandledRejection', captureRejection);
+    for (const handle of timers) clearTimeout(handle);
+    timers.clear();
+  }
+}
+
+function failureFields(error) {
+  return {
+    ok: false,
+    error: isNativeError(error) ? error.message : String(error),
+    stack: isNativeError(error) ? String(error.stack || '') : '',
+  };
+}
+
+async function serveRequest(request) {
+  const started = performance.now();
+  const listenerBaseline = process.listeners('unhandledRejection');
+  let fields;
+  try {
+    const output = await runScenario(request);
+    fields = {ok: true, output, error: '', stack: ''};
+  } catch (error) {
+    fields = failureFields(error);
+  }
+  try {
+    assert.deepEqual(process.listeners('unhandledRejection'), listenerBaseline,
+      'unhandledRejection listener baseline changed');
+  } catch (error) {
+    fields = failureFields(error);
+  }
+  return {
+    id: request.id,
+    scenario: request.scenario,
+    duration_ms: performance.now() - started,
+    ...fields,
+  };
+}
+
+async function serveWorker() {
+  const rl = readline.createInterface({input: process.stdin, crlfDelay: Infinity});
+  for await (const line of rl) {
+    const request = JSON.parse(line);
+    const reply = await serveRequest(request);
+    process.stdout.write(JSON.stringify(reply) + '\n');
+  }
+}
+
+async function serveOneShot() {
+  const reply = await serveRequest({id: 0, scenario: 'one-shot', payload: startupData});
+  if (!reply.ok) {
+    process.stderr.write((reply.stack || reply.error) + '\n');
+    process.exitCode = 1;
+    return;
+  }
+  process.stdout.write(reply.output + '\n');
+}
+
+const serving = workerMode ? serveWorker() : serveOneShot();
+serving.catch(error => {
+  process.stderr.write((isNativeError(error) ? String(error.stack || error.message) : String(error)) + '\n');
+  process.exitCode = 1;
+});

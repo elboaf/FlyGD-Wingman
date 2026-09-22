@@ -10,11 +10,14 @@ import importlib.util
 import json
 import pathlib
 import re
+import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from tests.html_tree import PageTree
+from tests.node_scenario_worker import NodeScenarioFailure, NodeScenarioWorker
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WEB = ROOT / "wingman" / "web"
@@ -185,23 +188,149 @@ class _CaptureTextTree(PageTree):
         node["text"] = node.get("text", "") + data
 
 
-def _run_gap_capture(tmp_path, key, scenario):
-    screen = next((screen for screen in shoot.SCREENS if screen.key == key), None)
-    assert screen, f"missing gap capture: {key}"
+def _leaf_texts(node):
+    texts = {}
+    if not node["children"] and node["attrs"].get("id"):
+        texts[node["attrs"]["id"]] = node.get("text", "").strip()
+    for child in node["children"]:
+        texts.update(_leaf_texts(child))
+    return texts
+
+
+@pytest.fixture(scope="session")
+def gap_capture_markup(tmp_path_factory: pytest.TempPathFactory) -> Path:
     tree = _CaptureTextTree()
     tree.feed((WEB / "index.html").read_text(encoding="utf-8"))
+    path = tmp_path_factory.mktemp("gap-capture-worker") / "page.json"
+    path.write_text(json.dumps(tree.root, ensure_ascii=False), encoding="utf-8")
+    return path
 
-    def leaf_texts(node):
-        texts = {}
-        if not node["children"] and node["attrs"].get("id"):
-            texts[node["attrs"]["id"]] = node.get("text", "").strip()
-        for child in node["children"]:
-            texts.update(leaf_texts(child))
-        return texts
 
+@pytest.fixture(scope="session")
+def gap_capture_worker(gap_capture_markup: Path):
+    node = shutil.which("node")
+    assert node is not None, "node is not installed"
+    worker = NodeScenarioWorker(
+        [
+            node,
+            str(ROOT / "tests/fixtures/screenshot_pages.cjs"),
+            "--worker",
+            str(gap_capture_markup),
+            str(WEB),
+        ],
+        cwd=ROOT,
+    )
+    page = json.loads(gap_capture_markup.read_text(encoding="utf-8"))
+    worker._gap_capture_texts = _leaf_texts(page)
+    try:
+        yield worker
+    finally:
+        worker.close()
+
+
+def test_gap_capture_worker_reuses_process_and_preserves_business_outcomes(
+    gap_capture_worker: NodeScenarioWorker,
+):
+    first = _request_gap_capture(
+        gap_capture_worker, "settings-wanderer-controls-narrow", "settled"
+    )
+    process = gap_capture_worker._proc
+    negative = _request_gap_capture(
+        gap_capture_worker, "settings-wanderer-controls-narrow", "missing"
+    )
+    second = _request_gap_capture(
+        gap_capture_worker, "settings-wanderer-controls-narrow", "settled"
+    )
+    assert first["output"] == (
+        "PASS screenshot gap settings-wanderer-controls-narrow settled"
+    )
+    assert negative["output"] == (
+        "PASS screenshot gap settings-wanderer-controls-narrow missing"
+    )
+    assert second["output"] == first["output"]
+    assert gap_capture_worker._proc is process
+
+
+def test_gap_capture_worker_vm_failures_preserve_stack_and_recover(
+    gap_capture_worker: NodeScenarioWorker,
+):
+    _request_gap_capture(
+        gap_capture_worker, "settings-wanderer-controls-narrow", "settled"
+    )
+    process = gap_capture_worker._proc
+    for mode, stack_name in [
+        ("vm-throw", "protocolVmThrow"),
+        ("vm-reject", "protocolVmReject"),
+    ]:
+        with pytest.raises(NodeScenarioFailure) as failure:
+            gap_capture_worker.request(
+                f"protocol/{mode}", {"protocol_probe": mode}, timeout=20.0
+            )
+        assert stack_name in failure.value.stack
+        _request_gap_capture(
+            gap_capture_worker, "settings-wanderer-controls-narrow", "settled"
+        )
+        assert gap_capture_worker._proc is process
+
+
+@pytest.mark.parametrize(
+    "scenarios",
+    [
+        pytest.param(("settled", "missing", "settled"), id="settled-missing-settled"),
+        pytest.param(("covered", "settled", "hidden"), id="covered-settled-hidden"),
+    ],
+)
+def test_gap_capture_worker_is_order_independent(
+    gap_capture_worker: NodeScenarioWorker, scenarios
+):
+    outputs = [
+        _request_gap_capture(
+            gap_capture_worker, "settings-wanderer-controls-narrow", scenario
+        )["output"]
+        for scenario in scenarios
+    ]
+    assert outputs == [
+        f"PASS screenshot gap settings-wanderer-controls-narrow {scenario}"
+        for scenario in scenarios
+    ]
+
+
+@pytest.mark.parametrize(
+    "mode",
+    ["pending-timer-normal-exit", "pending-timer-assertion-exit"],
+    ids=["pending-timer-normal-exit", "pending-timer-assertion-exit"],
+)
+def test_gap_capture_worker_cancels_pending_timer(
+    gap_capture_worker: NodeScenarioWorker, mode
+):
+    _request_gap_capture(
+        gap_capture_worker, "settings-wanderer-controls-narrow", "settled"
+    )
+    process = gap_capture_worker._proc
+    with pytest.raises(NodeScenarioFailure) as failure:
+        gap_capture_worker.request(
+            f"protocol/{mode}", {"protocol_probe": mode}, timeout=20.0
+        )
+    if mode == "pending-timer-normal-exit":
+        assert "live timer" in str(failure.value).lower()
+    else:
+        assert "protocol cleanup probe failure" in str(failure.value)
+    recovered = _request_gap_capture(
+        gap_capture_worker, "settings-wanderer-controls-narrow", "settled"
+    )
+    assert recovered["output"] == (
+        "PASS screenshot gap settings-wanderer-controls-narrow settled"
+    )
+    assert gap_capture_worker._proc is process
+
+
+def _request_gap_capture(
+    worker: NodeScenarioWorker, key, scenario
+) -> dict[str, object]:
+    screen = next((screen for screen in shoot.SCREENS if screen.key == key), None)
+    assert screen, f"missing gap capture: {key}"
     payload = {
-        "page": tree.root,
-        "texts": leaf_texts(tree.root),
+        "texts": worker._gap_capture_texts,
         "key": key,
         "gap": scenario if key in GAP_CAPTURES else None,
         "regression": scenario,
@@ -212,22 +341,7 @@ def _run_gap_capture(tmp_path, key, scenario):
         "fixture": shoot.fittings_fixture_setup_script(),
         "reset": shoot._fittings_reset_script(),
     }
-    path = tmp_path / "gap-capture.json"
-    path.write_text(json.dumps(payload), encoding="utf-8")
-    result = subprocess.run(
-        [
-            "node",
-            str(ROOT / "tests/fixtures/screenshot_pages.cjs"),
-            str(path),
-            str(WEB),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=20,
-        check=False,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "PASS screenshot " in result.stdout
+    return worker.request(f"{key}/{scenario}", payload, timeout=20.0)
 
 
 @pytest.mark.parametrize("key", GAP_CAPTURES)
@@ -235,8 +349,10 @@ def _run_gap_capture(tmp_path, key, scenario):
     "scenario",
     ["settled", "missing", "hidden", "wrong-text", "clipped", "covered", "zero-area"],
 )
-def test_gap_capture_requires_semantic_content_after_framing(tmp_path, key, scenario):
-    _run_gap_capture(tmp_path, key, scenario)
+def test_gap_capture_requires_semantic_content_after_framing(
+    gap_capture_worker, key, scenario
+):
+    _request_gap_capture(gap_capture_worker, key, scenario)
 
 
 @pytest.mark.parametrize(
@@ -251,9 +367,11 @@ def test_gap_capture_requires_semantic_content_after_framing(tmp_path, key, scen
     ],
 )
 def test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests(
-    tmp_path, scenario
+    gap_capture_worker, scenario
 ):
-    _run_gap_capture(tmp_path, "fittings-copy-preflight-bottom-narrow", scenario)
+    _request_gap_capture(
+        gap_capture_worker, "fittings-copy-preflight-bottom-narrow", scenario
+    )
 
 
 @pytest.mark.parametrize(
@@ -269,9 +387,9 @@ def test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests(
     ],
 )
 def test_metadata_capture_waits_for_real_detail_without_creating_drafts(
-    tmp_path, scenario
+    gap_capture_worker, scenario
 ):
-    _run_gap_capture(tmp_path, "fittings-metadata-narrow", scenario)
+    _request_gap_capture(gap_capture_worker, "fittings-metadata-narrow", scenario)
 
 
 @pytest.mark.parametrize(
@@ -279,9 +397,9 @@ def test_metadata_capture_waits_for_real_detail_without_creating_drafts(
     ["codec-missing", "codec-missing-clipped", "inconsistent-capability", "unresolved"],
 )
 def test_profiles_scope_capture_uses_actual_capability_without_overrides(
-    tmp_path, scenario
+    gap_capture_worker, scenario
 ):
-    _run_gap_capture(tmp_path, "profiles-copy-scope", scenario)
+    _request_gap_capture(gap_capture_worker, "profiles-copy-scope", scenario)
 
 
 @pytest.mark.parametrize(
@@ -300,9 +418,9 @@ def test_profiles_scope_capture_uses_actual_capability_without_overrides(
     ],
 )
 def test_lower_copy_capture_rejects_unsettled_or_wrong_outcomes(
-    tmp_path, key, scenario
+    gap_capture_worker, key, scenario
 ):
-    _run_gap_capture(tmp_path, key, scenario)
+    _request_gap_capture(gap_capture_worker, key, scenario)
 
 
 @pytest.mark.parametrize(
@@ -324,15 +442,19 @@ def test_lower_copy_capture_rejects_unsettled_or_wrong_outcomes(
     ],
 )
 def test_lower_copy_capture_requires_retained_context_and_footer(
-    tmp_path, key, scenario
+    gap_capture_worker, key, scenario
 ):
     """A valid last row cannot disguise lost header context or footer controls."""
-    _run_gap_capture(tmp_path, key, scenario)
+    _request_gap_capture(gap_capture_worker, key, scenario)
 
 
-def test_lower_result_capture_keeps_recovery_before_pairs_not_sticky(tmp_path):
-    _run_gap_capture(
-        tmp_path, "fittings-copy-result-bottom-narrow", "recovery-after-pairs"
+def test_lower_result_capture_keeps_recovery_before_pairs_not_sticky(
+    gap_capture_worker,
+):
+    _request_gap_capture(
+        gap_capture_worker,
+        "fittings-copy-result-bottom-narrow",
+        "recovery-after-pairs",
     )
 
 
@@ -375,10 +497,10 @@ def test_lower_result_capture_keeps_recovery_before_pairs_not_sticky(tmp_path):
     ],
 )
 def test_copy_capture_rejects_stale_context_progress_and_technical_details(
-    tmp_path, key, scenario
+    gap_capture_worker, key, scenario
 ):
     """The generated capture guard must reject independent semantic corruption."""
-    _run_gap_capture(tmp_path, key, scenario)
+    _request_gap_capture(gap_capture_worker, key, scenario)
 
 
 @pytest.mark.parametrize("key", GAP_CAPTURES)
