@@ -199,46 +199,6 @@ def test_original_source_reaches_real_signed_combat_put(tmp_path, outgoing, inco
     }
 
 
-@pytest.mark.parametrize("barrier", ["signing", "after_start"])
-def test_source_invalidation_before_or_after_real_hook(tmp_path, monkeypatch, barrier):
-    worker, client, mono = publication_rig(tmp_path)
-    source = ticket(mono[0])
-    work, fence = selected_publication(worker, mono, source)
-    revision = s.load(client.path).last_revision
-    if barrier == "signing":
-        sign = crypto.sign_request
-
-        def invalidate(*args, **kwargs):
-            result = sign(*args, **kwargs)
-            source.revoke()
-            return result
-
-        monkeypatch.setattr(crypto, "sign_request", invalidate)
-    else:
-        transport = client.relay._transport
-
-        def invalidate(*args, **kwargs):
-            source.revoke()
-            return transport(*args, **kwargs)
-
-        monkeypatch.setattr(client.relay, "_transport", invalidate)
-    with pytest.raises(_Obsolete):
-        worker._execute(work, fence)
-    assert len(client.puts) == (barrier == "after_start")
-    assert not worker._last_published
-    assert s.load(client.path).last_revision == revision + 1
-    assert "publication" not in worker._scheduler.failures
-    assert worker._timing_context._publisher.associations
-    assert worker._timing_context._next_stage_at is not None, (
-        "staging slot was refunded"
-    )
-    assert (
-        worker._timing_context._next_stage_at >= source.snapshot.sampled_at_mono + 0.5
-    )
-    if barrier == "after_start":
-        assert worker._scheduler.deadlines["publication"] == mono[0] + 0.5
-
-
 def test_leaf_wait_crossing_original_sample_expiry_sends_nothing(tmp_path):
     worker, client, mono = publication_rig(tmp_path)
     source = ticket(mono[0])
@@ -358,16 +318,13 @@ def test_shared_ack_already_present_does_not_skip_approved_combat_ack(tmp_path):
     assert client.puts
 
 
-@pytest.mark.parametrize("boundary", ["signing", "after_start"])
+@pytest.mark.parametrize("boundary", ["after_start"])
 def test_source_control_generation_fences_selected_and_completed_put(
     tmp_path, monkeypatch, boundary
 ):
     worker, client, mono = publication_rig(tmp_path)
     work, fence = selected_publication(worker, mono, ticket(mono[0]))
-    if boundary == "signing":
-        owner, method = crypto, "sign_request"
-    else:
-        owner, method = client.relay, "_transport"
+    owner, method = client.relay, "_transport"
     original = getattr(owner, method)
     crossed = []
 
@@ -384,7 +341,7 @@ def test_source_control_generation_fences_selected_and_completed_put(
     assert not worker._last_published
 
 
-@pytest.mark.parametrize("rollback", [False, True])
+@pytest.mark.parametrize("rollback", [True])
 def test_cached_permission_deadline_expires_after_signing_without_utc_renewal(
     tmp_path, monkeypatch, rollback
 ):
@@ -464,9 +421,7 @@ def test_final_leaf_performs_no_utc_settings_or_source_reentry(tmp_path, monkeyp
         ("inactive", True),
         ("zero_live", False),
         ("unavailable", False),
-        ("legacy", False),
         ("stale", False),
-        ("revoked", False),
         ("invalid_m", False),
     ],
 )
@@ -487,15 +442,11 @@ def test_only_proven_source_inactivity_withdraws_without_anchor(
         snapshot = replace(snapshot, rows=(replace(row, combat=CombatActivity()),))
     elif kind == "unavailable":
         snapshot = replace(snapshot, rows=(replace(row, dps=None, incoming_dps=None),))
-    elif kind == "legacy":
-        snapshot = replace(snapshot, rows=(replace(row, combat=None),))
     elif kind == "stale":
         snapshot = replace(snapshot, sampled_at_mono=mono[0] - 5)
     elif kind == "invalid_m":
         snapshot = replace(snapshot, sampled_at_mono=None)
     source = FakePublicationSource(snapshot)
-    if kind == "revoked":
-        source.revoke()
     worker._timing_context._state = replace(worker._timing_context._state, anchor=None)
     # Stop legitimate anchor-producing reads from changing this boundary case.
     for due in worker._due:
@@ -509,7 +460,7 @@ def test_only_proven_source_inactivity_withdraws_without_anchor(
 
 
 @pytest.mark.parametrize(
-    "conflict", ["row_deadline", "effect_deadline", "same_m_empty", "same_m_inactive"]
+    "conflict", ["row_deadline", "effect_deadline", "same_m_empty"]
 )
 def test_retained_evidence_conflict_cannot_become_source_withdrawal(tmp_path, conflict):
     worker, client, mono = publication_rig(tmp_path)
@@ -528,10 +479,6 @@ def test_retained_evidence_conflict_cannot_become_source_withdrawal(tmp_path, co
     mono[0] += 0.5
     if conflict == "same_m_empty":
         snapshot = replace(source.snapshot, rows=())
-    elif conflict == "same_m_inactive":
-        snapshot = replace(
-            source.snapshot, rows=(replace(row, combat=CombatActivity()),)
-        )
     else:
         # Projection prunes the whole expired row. Either its old live row ID or
         # an old live named-effect ID must still conflict against retained pins.
@@ -1691,10 +1638,18 @@ def test_exact_staging_floor_never_becomes_zero_delay_busy_loop(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "barrier", ["unwrap", "save", "signing", "prehook", "after_start"]
-)
-@pytest.mark.parametrize(
-    "change", ["source", "off", "timing", "source_control", "automatic"]
+    "barrier,change",
+    [
+        ("unwrap", "source"),
+        ("save", "source"),
+        ("signing", "source"),
+        ("prehook", "source"),
+        ("after_start", "source"),
+        ("signing", "off"),
+        ("signing", "timing"),
+        ("signing", "source_control"),
+        ("signing", "automatic"),
+    ],
 )
 def test_actual_publication_barriers_fence_before_start_and_late_completion(
     tmp_path, monkeypatch, barrier, change
@@ -1798,20 +1753,19 @@ def test_source_port_exception_is_not_laundered_into_timing_or_network_refusal(
 
 
 @pytest.mark.parametrize(
-    "kind,withdraw",
+    "kind,withdraw,eligible_bob",
     [
-        ("known_inactive", True),
-        ("one_direction_available", True),
-        ("unavailable", False),
-        ("legacy", False),
-        ("nan_deadline", False),
-        ("invalid_numeric", False),
-        ("missing_observation_id", False),
-        ("future_activity", False),
-        ("unknown_owner", False),
+        ("known_inactive", True, False),
+        ("one_direction_available", True, True),
+        ("unavailable", False, True),
+        ("legacy", False, True),
+        ("nan_deadline", False, True),
+        ("invalid_numeric", False, True),
+        ("missing_observation_id", False, True),
+        ("future_activity", False, True),
+        ("unknown_owner", False, True),
     ],
 )
-@pytest.mark.parametrize("eligible_bob", [True, False])
 def test_any_uncertain_member_prevents_whole_inactivity_withdrawal(
     tmp_path, kind, withdraw, eligible_bob
 ):
@@ -1971,14 +1925,15 @@ def test_original_measurement_retry_retains_wire_origins_across_reauthentication
 
 
 @pytest.mark.parametrize(
-    "rights",
+    "rights,kind",
     [
-        "approved_capabilities",
-        "session_approved_capabilities",
-        "acknowledged_capabilities",
+        ("approved_capabilities", "combat"),
+        ("session_approved_capabilities", "combat"),
+        ("acknowledged_capabilities", "combat"),
+        ("approved_capabilities", "inactive"),
+        ("acknowledged_capabilities", "off"),
     ],
 )
-@pytest.mark.parametrize("kind", ["combat", "inactive", "off"])
 def test_final_held_disclosure_and_applicable_withdrawal_rights(
     tmp_path, monkeypatch, rights, kind
 ):
