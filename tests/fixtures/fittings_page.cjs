@@ -126,7 +126,9 @@ async function scenarioProgram() {
     if (typeof callback !== 'function') {
       throw new TypeError(kind + ' callback must be a function');
     }
-    const token = fromHost(scheduleTimer(kind, callback, Number(delay), args));
+    const callbackThis = globalThis.window || globalThis;
+    const dispatch = () => Reflect.apply(callback, callbackThis, args);
+    const token = fromHost(scheduleTimer(kind, dispatch, Number(delay)));
     if (!Number.isInteger(token) || token < 1) {
       throw new TypeError('Host timer adapter returned an invalid token');
     }
@@ -593,6 +595,59 @@ assert.deepEqual(loadOrder,
     ? ['panel.js', 'fittings.js'] : ['fittings.js'],
   'production script load order changed');
 
+function timerCallbackThisProbe(expectPristine) {
+  const marker = '__wingmanFittingsTimerCallbackThisProbe';
+  const execution = {events: []};
+  const argument = {request_local: true};
+  function callbackThisIsSafe(name, callbackThis) {
+    try {
+      if (!callbackThis || !callbackThis.constructor) return false;
+      const callbackRealm = callbackThis.constructor.constructor(
+        'return globalThis')();
+      if (callbackRealm !== globalThis || 'process' in callbackRealm) return false;
+      for (let target = Object.getPrototypeOf(callbackThis); target;
+          target = Object.getPrototypeOf(target)) {
+        if (expectPristine
+            && Object.prototype.hasOwnProperty.call(target, marker)) {
+          return false;
+        }
+        if (!expectPristine) target[marker] = name;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  setTimeout(function (value, label) {
+    execution.events.push(
+      callbackThisIsSafe('timeout', this)
+        && value === argument && label === 'timeout-argument'
+        ? 'timeout' : 'wrong-timeout');
+  }, 0, argument, 'timeout-argument');
+  let intervalId;
+  intervalId = setInterval(function (value) {
+    execution.events.push(
+      callbackThisIsSafe('interval', this) && value === argument
+        ? 'interval' : 'wrong-interval');
+    clearInterval(intervalId);
+  }, 0, argument);
+  requestAnimationFrame(function (...args) {
+    execution.events.push(
+      callbackThisIsSafe('frame', this) && args.length === 0
+        ? 'frame' : 'wrong-frame');
+  });
+  const cancelledFrame = requestAnimationFrame(function () {
+    execution.events.push('cancelled-frame');
+  });
+  clearTimeout(cancelledFrame);
+  setImmediate(function (value) {
+    execution.events.push(
+      callbackThisIsSafe('immediate', this) && value === argument
+        ? 'immediate' : 'wrong-immediate');
+  }, argument);
+  return execution;
+}
+
 function mutateIsolation() {
   const marker = '__wingmanFittingsRequestProbe';
   for (const [name, intrinsic] of Object.entries(
@@ -674,20 +729,7 @@ function mutateIsolation() {
     clearTimeout(timeoutId);
     clearInterval(intervalId);
   }
-  const timerExecution = {events: []};
-  const argument = {request_local: true};
-  setTimeout((value, label) => {
-    timerExecution.events.push(
-      value === argument && label === 'timeout-argument'
-        ? 'timeout-arguments' : 'wrong-timeout-arguments');
-  }, 0, argument, 'timeout-argument');
-  requestAnimationFrame((...args) => {
-    timerExecution.events.push(args.length === 0 ? 'frame' : 'wrong-frame-arguments');
-  });
-  const cancelledFrame = requestAnimationFrame(
-    () => timerExecution.events.push('cancelled-frame'));
-  clearTimeout(cancelledFrame);
-  return timerExecution;
+  return timerCallbackThisProbe(false);
 }
 
 function assertPristineIsolation() {
@@ -836,11 +878,14 @@ function assertPristineIsolation() {
     visited.push(name + '=' + value);
   });
   assert.equal(visited.join('&'), 'a=3&b=two words&space=hello world');
+  return timerCallbackThisProbe(true);
 }
 
-const timerExecution = data.isolation_probe === 'mutate'
-  ? mutateIsolation() : null;
-if (data.isolation_probe === 'pristine') assertPristineIsolation();
+let timerExecution = null;
+if (data.isolation_probe === 'mutate') timerExecution = mutateIsolation();
+if (data.isolation_probe === 'pristine') {
+  timerExecution = assertPristineIsolation();
+}
 if (!scenario.startsWith('interleaving-screenshot-')) {
   assert.equal(data.screenshot, null,
     'ordinary scenario received a screenshot payload');
@@ -1742,15 +1787,11 @@ await (async () => {
   } else throw new Error('Unknown scenario: ' + scenario);
 })();
 if (timerExecution) {
-  await new Promise(resolve => setImmediate(value => {
-    timerExecution.events.push(
-      value === 'immediate-argument'
-        ? 'immediate-arguments' : 'wrong-immediate-arguments');
-    resolve();
-  }, 'immediate-argument'));
+  await new Promise(resolve => setTimeout(resolve, 0));
   assert.deepEqual(timerExecution.events,
-    ['timeout-arguments', 'frame', 'immediate-arguments'],
-    'timer facades changed callback arguments, order, or cancellation');
+    ['timeout', 'interval', 'frame', 'immediate'],
+    'timer callbacks changed arguments, order, cancellation, or this realm: '
+      + timerExecution.events.join(','));
 }
 const output = 'PASS ' + scenario;
 outputLines.push(output);
@@ -1786,11 +1827,11 @@ async function runScenario(request, cleanupProbe = null) {
   const allNativeIntervals = new Set();
   let nextTimer = 1;
   let nextInterval = 1;
-  const requestSetTimeout = (callback, delay, ...args) => {
+  const requestSetTimeout = (callback, delay) => {
     const token = nextTimer++;
     const handle = setTimeout(() => {
       timers.delete(token);
-      callback(...args);
+      callback();
     }, delay);
     timers.set(token, handle);
     allNativeTimers.add(handle);
@@ -1801,11 +1842,10 @@ async function runScenario(request, cleanupProbe = null) {
     if (handle !== undefined) clearTimeout(handle);
     timers.delete(token);
   };
-  const requestSetImmediate = (callback, ...args) =>
-    requestSetTimeout(callback, 0, ...args);
-  const requestSetInterval = (callback, delay, ...args) => {
+  const requestSetImmediate = callback => requestSetTimeout(callback, 0);
+  const requestSetInterval = (callback, delay) => {
     const token = nextInterval++;
-    const handle = setInterval(callback, delay, ...args);
+    const handle = setInterval(() => callback(), delay);
     intervals.set(token, handle);
     allNativeIntervals.add(handle);
     return token;
@@ -1815,20 +1855,18 @@ async function runScenario(request, cleanupProbe = null) {
     if (handle !== undefined) clearInterval(handle);
     intervals.delete(token);
   };
-  const timerScheduleAdapter = (kind, callback, delay, args) =>
+  const timerScheduleAdapter = (kind, callback, delay) =>
     adapterEnvelope(() => {
       hostAssert.equal(typeof callback, 'function',
         'timer adapter callback must be callable');
-      hostAssert.equal(Array.isArray(args), true,
-        'timer adapter arguments must be an array');
       if (kind === 'timeout') {
-        return requestSetTimeout(callback, delay, ...args);
+        return requestSetTimeout(callback, delay);
       }
       if (kind === 'immediate') {
-        return requestSetImmediate(callback, ...args);
+        return requestSetImmediate(callback);
       }
       if (kind === 'interval') {
-        return requestSetInterval(callback, delay, ...args);
+        return requestSetInterval(callback, delay);
       }
       throw new Error('Unknown timer adapter operation: ' + kind);
     });
