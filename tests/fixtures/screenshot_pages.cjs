@@ -1,6 +1,7 @@
 // Executes generated capture expressions and whole production modules against
 // real markup ancestry. Only DOM mechanics and external delivery are doubled.
 const assert = require('node:assert/strict');
+const {randomBytes} = require('node:crypto');
 const fs = require('node:fs');
 const readline = require('node:readline');
 const vm = require('node:vm');
@@ -15,310 +16,406 @@ if (process.argv.length !== 5 || process.argv[2] !== '--worker') {
 const startupPath = process.argv[3];
 const startupPageJson = fs.readFileSync(startupPath, 'utf8');
 const web = process.argv[4];
+const webSourcesJson = JSON.stringify(Object.fromEntries([
+  'app', 'fittings', 'wanderer', 'evesettings', 'characters', 'previews',
+  'formations', 'uisetup',
+].map(name => [name, fs.readFileSync(web + '/' + name + '.js', 'utf8')])));
 
-async function runScenario(request, cleanupProbe = null) {
-  const data = {...(request.payload || {})};
+async function scenarioProgram(publishTimerDispatch) {
+  const startupJson = globalThis.__wingmanStartupPageJson;
+  const payloadJson = globalThis.__wingmanPayloadJson;
+  const webJson = globalThis.__wingmanWebSourcesJson;
+  const domFactorySource = globalThis.__wingmanDomFactorySource;
+  const scheduleTimer = globalThis.__wingmanTimerScheduleAdapter;
+  const clearTimer = globalThis.__wingmanTimerClearAdapter;
+  const encode = globalThis.__wingmanTextEncoderAdapter;
+  const searchParams = globalThis.__wingmanURLSearchParamsAdapter;
+  const takeUnhandled = globalThis.__wingmanUnhandledAdapter;
+  const protocolEventAdapter = globalThis.__wingmanProtocolEventAdapter;
+  delete globalThis.__wingmanStartupPageJson;
+  delete globalThis.__wingmanPayloadJson;
+  delete globalThis.__wingmanWebSourcesJson;
+  delete globalThis.__wingmanDomFactorySource;
+  delete globalThis.__wingmanTimerScheduleAdapter;
+  delete globalThis.__wingmanTimerClearAdapter;
+  delete globalThis.__wingmanTextEncoderAdapter;
+  delete globalThis.__wingmanURLSearchParamsAdapter;
+  delete globalThis.__wingmanUnhandledAdapter;
+  delete globalThis.__wingmanProtocolEventAdapter;
+
   const outputLines = [];
-  const requestConsole = {
-    log: (...args) => outputLines.push(args.join(' ')),
-    info: (...args) => outputLines.push(args.join(' ')),
-    debug: (...args) => outputLines.push(args.join(' ')),
-    warn: (...args) => outputLines.push(args.join(' ')),
-    error: (...args) => { throw new Error(args.join(' ')); },
+  const renderLogValue = value => {
+    if (typeof value === 'string') return value;
+    try {
+      const encoded = JSON.stringify(value);
+      if (encoded !== undefined) return encoded;
+    } catch {}
+    try { return String(value); } catch { return '<unprintable>'; }
   };
-  const timers = new Set();
-  const requestSetTimeout = (callback, delay, ...args) => {
-    let handle;
-    handle = setTimeout(() => {
-      timers.delete(handle);
-      callback(...args);
-    }, delay);
-    timers.add(handle);
-    return handle;
+  const recordLog = args => {
+    let line = args.map(renderLogValue).join(' ');
+    if (line.length > 400) line = line.slice(0, 399) + '…';
+    outputLines.push(line);
+    if (outputLines.length > 40) outputLines.shift();
   };
-  const requestClearTimeout = handle => {
-    timers.delete(handle);
-    clearTimeout(handle);
+  globalThis.console = {
+    log: (...args) => recordLog(args),
+    info: (...args) => recordLog(args),
+    debug: (...args) => recordLog(args),
+    warn: (...args) => recordLog(args),
+    error: (...args) => { throw new Error(args.map(renderLogValue).join(' ')); },
   };
-  const unhandledRejections = [];
-  const captureRejection = reason => unhandledRejections.push(reason);
-  process.on('unhandledRejection', captureRejection);
-  try {
-    // The adapter function is a hidden call-through into the host realm. Only
-    // this primitive envelope may cross back into the request VM.
-    const adapterEnvelope = operation => {
-      try {
-        return JSON.stringify({ok: true, value: operation()});
-      } catch (error) {
-        let errorName = 'Error';
-        let errorMessage = 'Host adapter failed';
-        try {
-          if (error && typeof error.name === 'string') errorName = error.name;
-        } catch {}
-        try {
-          if (error && typeof error.message === 'string') errorMessage = error.message;
-          else errorMessage = String(error);
-        } catch {}
-        try {
-          return JSON.stringify({ok: false, errorName, errorMessage});
-        } catch {
-          return '{"ok":false,"errorName":"Error","errorMessage":"Host adapter failed"}';
-        }
-      }
-    };
-    const hostTextEncoder = new globalThis.TextEncoder();
-    const textEncoderAdapter = (operation, input, capacity) => adapterEnvelope(() => {
-      if (operation === 'encode') {
-        return {bytes: Array.from(hostTextEncoder.encode(input))};
-      }
-      if (operation === 'encodeInto') {
-        const destination = new Uint8Array(capacity);
-        const result = hostTextEncoder.encodeInto(input, destination);
-        return {read: result.read, written: result.written,
-          bytes: Array.from(destination.subarray(0, result.written))};
-      }
-      throw new Error('Unknown TextEncoder adapter operation: ' + operation);
-    });
-    const urlSearchParamsAdapter = (operation, serializedState, argumentsJson) =>
-      adapterEnvelope(() => {
-        const args = JSON.parse(argumentsJson);
-        let params;
-        if (operation === 'construct-string') {
-          params = new globalThis.URLSearchParams(args[0]);
-        } else if (operation === 'construct-entries') {
-          params = new globalThis.URLSearchParams(args[0]);
-        } else {
-          params = new globalThis.URLSearchParams(serializedState);
-        }
-        let result = null;
-        if (operation === 'append') params.append(args[0], args[1]);
-        else if (operation === 'delete') {
-          if (args.length > 1) params.delete(args[0], args[1]);
-          else params.delete(args[0]);
-        } else if (operation === 'get') result = params.get(args[0]);
-        else if (operation === 'getAll') result = params.getAll(args[0]);
-        else if (operation === 'has') {
-          result = args.length > 1 ? params.has(args[0], args[1]) : params.has(args[0]);
-        } else if (operation === 'set') params.set(args[0], args[1]);
-        else if (operation === 'sort') params.sort();
-        else if (operation === 'size') result = params.size;
-        else if (operation === 'toString') result = params.toString();
-        else if (operation === 'entries') result = Array.from(params.entries());
-        else if (!['construct-string', 'construct-entries'].includes(operation)) {
-          throw new Error('Unknown URLSearchParams adapter operation: ' + operation);
-        }
-        return {state: params.toString(), result};
-      });
-    const runtime = vm.createContext({
-      __wingmanStartupPageJson: startupPageJson,
-      __wingmanTextEncoderAdapter: textEncoderAdapter,
-      __wingmanURLSearchParamsAdapter: urlSearchParamsAdapter,
-      console: requestConsole,
-      navigator: {clipboard: {
-        readText: () => assert.fail('clipboard read'),
-        writeText: () => assert.fail('clipboard write'),
-      }},
-      Event: class { constructor(type) { this.type = type; } },
-      CustomEvent: class {
-        constructor(type, options) { this.type = type; this.detail = options.detail; }
-      },
-      setTimeout: requestSetTimeout,
-      clearTimeout: requestClearTimeout,
-      requestAnimationFrame: callback => requestSetTimeout(callback, 0),
-      matchMedia: () => ({matches: false}),
-      getComputedStyle: () => ({visibility: 'visible'}),
-      location: {search: ''},
-    });
-    const run = expression => vm.runInContext(expression, runtime);
-    run(`(() => {
-      const createDOM = ${DOM_FACTORY_SOURCE};
-      const page = JSON.parse(globalThis.__wingmanStartupPageJson);
-      delete globalThis.__wingmanStartupPageJson;
-      const {document, Element, scrolls} = createDOM(page);
-      const windowState = new Element('window');
-      Object.defineProperties(
-        globalThis, Object.getOwnPropertyDescriptors(windowState));
-      Object.setPrototypeOf(globalThis, Element.prototype);
-      globalThis.window = globalThis;
-      globalThis.document = document;
-      globalThis.Element = Element;
-      globalThis.__wingmanScrolls = scrolls;
-    })()`);
-    const window = run('globalThis');
-    const document = window.document;
-    const Element = window.Element;
-    const scrolls = window.__wingmanScrolls;
-    delete window.__wingmanScrolls;
-    for (const [id, text] of Object.entries(data.texts || {})) {
-      document.getElementById(id).textContent = text;
-    }
-    Object.assign(window, run('({Promise, Math, Date})'));
-    run(`(() => {
-      const encode = globalThis.__wingmanTextEncoderAdapter;
-      const searchParams = globalThis.__wingmanURLSearchParamsAdapter;
-      delete globalThis.__wingmanTextEncoderAdapter;
-      delete globalThis.__wingmanURLSearchParamsAdapter;
 
+  class AssertionError extends Error {
+    constructor(message) {
+      super(message || 'Assertion failed');
+      this.name = 'AssertionError';
+    }
+  }
+  const render = value => {
+    try { return JSON.stringify(value); } catch { return String(value); }
+  };
+  const deeplyEqual = (actual, expected) => {
+    if (Object.is(actual, expected)) return true;
+    if (!actual || !expected || typeof actual !== 'object'
+        || typeof expected !== 'object') return false;
+    if (Array.isArray(actual) !== Array.isArray(expected)) return false;
+    const actualKeys = Object.keys(actual);
+    const expectedKeys = Object.keys(expected);
+    if (actualKeys.length !== expectedKeys.length) return false;
+    return actualKeys.every((key, index) => key === expectedKeys[index]
+      && deeplyEqual(actual[key], expected[key]));
+  };
+  const assert = {
+    ok(value, message) {
+      if (!value) throw new AssertionError(message || 'Expected value to be truthy');
+    },
+    equal(actual, expected, message) {
+      if (!Object.is(actual, expected)) {
+        throw new AssertionError(message
+          || `Expected ${render(actual)} to equal ${render(expected)}`);
+      }
+    },
+    notEqual(actual, expected, message) {
+      if (Object.is(actual, expected)) {
+        throw new AssertionError(message
+          || `Expected ${render(actual)} not to equal ${render(expected)}`);
+      }
+    },
+    deepEqual(actual, expected, message) {
+      if (!deeplyEqual(actual, expected)) {
+        throw new AssertionError(message
+          || `Expected ${render(actual)} to deep-equal ${render(expected)}`);
+      }
+    },
+    match(actual, pattern, message) {
+      if (!pattern.test(String(actual))) {
+        throw new AssertionError(message
+          || `Expected ${render(actual)} to match ${String(pattern)}`);
+      }
+    },
+    doesNotMatch(actual, pattern, message) {
+      if (pattern.test(String(actual))) {
+        throw new AssertionError(message
+          || `Expected ${render(actual)} not to match ${String(pattern)}`);
+      }
+    },
+    throws(callback, pattern, message) {
+      let thrown;
+      try { callback(); } catch (error) { thrown = error; }
+      if (!thrown) throw new AssertionError(message || 'Expected function to throw');
+      if (pattern && !pattern.test(String(thrown.message || thrown))) {
+        throw new AssertionError(message
+          || `Expected ${String(thrown.message || thrown)} to match ${String(pattern)}`);
+      }
+      return thrown;
+    },
+    fail(message) { throw new AssertionError(message); },
+  };
+
+  function fromHost(adapter, request) {
+    const envelope = Reflect.apply(adapter, undefined, [JSON.stringify(request)]);
+    if (typeof envelope !== 'string') {
+      throw new TypeError('Host adapter returned a non-primitive envelope');
+    }
+    const response = JSON.parse(envelope);
+    if (!response || response.ok !== true) {
       const errorTypes = {Error, EvalError, RangeError, ReferenceError,
         SyntaxError, TypeError, URIError};
-      function fromHost(envelope) {
-        if (typeof envelope !== 'string') {
-          throw new TypeError('Host adapter returned a non-primitive envelope');
-        }
-        const response = JSON.parse(envelope);
-        if (!response || response.ok !== true) {
-          const ErrorType = errorTypes[response && response.errorName] || Error;
-          throw new ErrorType(response && response.errorMessage || 'Host adapter failed');
-        }
-        return response.value;
-      }
-      function encoderInput(value) {
-        return typeof value === 'symbol' ? value : String(value);
-      }
+      const ErrorType = errorTypes[response && response.errorName] || Error;
+      const error = new ErrorType(
+        response && response.errorMessage || 'Host adapter failed');
+      if (response && typeof response.errorStack === 'string'
+          && response.errorStack) error.stack = response.errorStack;
+      throw error;
+    }
+    return response.value;
+  }
+  function reportProtocolEvent(name) {
+    fromHost(protocolEventAdapter, {name});
+  }
+  function errorRecord(error) {
+    let name = 'Error';
+    let message = 'Unknown error';
+    let stack = '';
+    try { if (error && typeof error.name === 'string') name = error.name; } catch {}
+    try {
+      if (error && typeof error.message === 'string') message = error.message;
+      else message = String(error);
+    } catch {}
+    try { if (error && error.stack) stack = String(error.stack); } catch {}
+    return {name, message, stack};
+  }
+  function reviveError(record) {
+    const errorTypes = {Error, EvalError, RangeError, ReferenceError,
+      SyntaxError, TypeError, URIError};
+    const ErrorType = errorTypes[record && record.name] || Error;
+    const error = new ErrorType(record && record.message || 'Asynchronous failure');
+    if (record && typeof record.stack === 'string' && record.stack) {
+      error.stack = record.stack;
+    }
+    return error;
+  }
 
-      const encoders = new WeakSet();
-      function encoder(instance) {
-        if (!encoders.has(instance)) throw new TypeError('Illegal invocation');
-      }
-      class TextEncoder {
-        constructor() { encoders.add(this); }
-        get encoding() { encoder(this); return 'utf-8'; }
-        encode(input = '') {
-          encoder(this);
-          const encoded = fromHost(encode('encode', encoderInput(input), 0));
-          const result = new Uint8Array(encoded.bytes.length);
-          for (let index = 0; index < encoded.bytes.length; index++) {
-            result[index] = encoded.bytes[index];
-          }
-          return result;
-        }
-        encodeInto(input, destination) {
-          encoder(this);
-          if (!(destination instanceof Uint8Array)) {
-            throw new TypeError('The destination must be a Uint8Array');
-          }
-          const encoded = fromHost(encode(
-            'encodeInto', encoderInput(input), destination.length));
-          for (let index = 0; index < encoded.written; index++) {
-            destination[index] = encoded.bytes[index];
-          }
-          return {read: encoded.read, written: encoded.written};
-        }
-      }
-      Object.defineProperty(TextEncoder.prototype, Symbol.toStringTag,
-        {value: 'TextEncoder', configurable: true});
+  const timerCallbacks = new Map();
+  const timerErrors = [];
+  let nextTimer = 1;
+  function timerKey(kind, token) { return kind + ':' + token; }
+  function dispatchTimer(kind, token) {
+    const key = timerKey(kind, token);
+    const entry = timerCallbacks.get(key);
+    if (!entry) return;
+    if (kind !== 'interval') timerCallbacks.delete(key);
+    try {
+      Reflect.apply(entry.callback, globalThis.window || globalThis, entry.args);
+    } catch (error) {
+      timerErrors.push(errorRecord(error));
+    }
+  }
+  publishTimerDispatch(dispatchTimer);
+  function schedule(kind, callback, delay, args) {
+    if (typeof callback !== 'function') {
+      throw new TypeError(kind + ' callback must be a function');
+    }
+    const token = nextTimer++;
+    timerCallbacks.set(timerKey(kind, token), {callback, args});
+    try {
+      fromHost(scheduleTimer, {kind, token, delay: Number(delay)});
+    } catch (error) {
+      timerCallbacks.delete(timerKey(kind, token));
+      throw error;
+    }
+    return token;
+  }
+  function clear(kind, token) {
+    timerCallbacks.delete(timerKey(kind, token));
+    fromHost(clearTimer, {kind, token});
+  }
+  function setTimeout(callback, delay = 0, ...args) {
+    return schedule('timeout', callback, delay, args);
+  }
+  function clearTimeout(token) { clear('timeout', token); }
+  function requestAnimationFrame(callback) {
+    return schedule('timeout', callback, 0, []);
+  }
+  Object.assign(globalThis, {setTimeout, clearTimeout, requestAnimationFrame});
 
-      // Durable facade state is a primitive query string — host URL objects,
-      // iterators and parse results never become reachable request state.
-      const parameterStates = new WeakMap();
-      function stateFor(instance) {
-        if (!parameterStates.has(instance)) throw new TypeError('Illegal invocation');
-        return parameterStates.get(instance);
+  function encoderInput(value) {
+    if (typeof value === 'symbol') {
+      throw new TypeError('Cannot convert a Symbol value to a string');
+    }
+    return String(value);
+  }
+  const encoders = new WeakSet();
+  function encoder(instance) {
+    if (!encoders.has(instance)) throw new TypeError('Illegal invocation');
+  }
+  class TextEncoder {
+    constructor() { encoders.add(this); }
+    get encoding() { encoder(this); return 'utf-8'; }
+    encode(input = '') {
+      encoder(this);
+      const encoded = fromHost(encode,
+        {operation: 'encode', input: encoderInput(input), capacity: 0});
+      const result = new Uint8Array(encoded.bytes.length);
+      for (let index = 0; index < encoded.bytes.length; index++) {
+        result[index] = encoded.bytes[index];
       }
-      function webString(value) {
-        if (typeof value === 'symbol') {
-          throw new TypeError('Cannot convert a Symbol value to a string');
-        }
-        return String(value);
+      return result;
+    }
+    encodeInto(input, destination) {
+      encoder(this);
+      if (!(destination instanceof Uint8Array)) {
+        throw new TypeError('The destination must be a Uint8Array');
       }
-      function urlOperation(operation, serializedState, args) {
-        const response = fromHost(searchParams(
-          operation, serializedState, JSON.stringify(args)));
-        if (!response || typeof response.state !== 'string') {
-          throw new TypeError('Host URLSearchParams adapter returned invalid state');
-        }
-        return response;
+      const encoded = fromHost(encode, {
+        operation: 'encodeInto', input: encoderInput(input),
+        capacity: destination.length,
+      });
+      for (let index = 0; index < encoded.written; index++) {
+        destination[index] = encoded.bytes[index];
       }
-      function invoke(instance, operation, args) {
-        const response = urlOperation(operation, stateFor(instance), args);
-        parameterStates.set(instance, response.state);
-        return response.result;
-      }
-      class URLSearchParams {
-        constructor(init = '') {
-          let operation = 'construct-string';
-          let args;
-          if (init instanceof URLSearchParams) {
-            args = [stateFor(init)];
-          } else if (typeof init === 'string') {
-            args = [init];
-          } else if (init !== null && init !== undefined &&
-              typeof init[Symbol.iterator] === 'function') {
-            operation = 'construct-entries';
-            const entries = [];
-            for (const pair of init) {
-              const values = Array.from(pair);
-              if (values.length !== 2) {
-                throw new TypeError('Each query pair must be an iterable [name, value] tuple');
-              }
-              entries.push([webString(values[0]), webString(values[1])]);
-            }
-            args = [entries];
-          } else if (init !== null && typeof init === 'object') {
-            operation = 'construct-entries';
-            const entries = [];
-            for (const name of Object.keys(init)) {
-              entries.push([webString(name), webString(init[name])]);
-            }
-            args = [entries];
-          } else {
-            args = [webString(init)];
-          }
-          const response = urlOperation(operation, '', args);
-          parameterStates.set(this, response.state);
-        }
-        get size() { return invoke(this, 'size', []); }
-        append(name, value) {
-          invoke(this, 'append', [webString(name), webString(value)]);
-        }
-        delete(name, value) {
-          const args = [webString(name)];
-          if (arguments.length > 1) args.push(webString(value));
-          invoke(this, 'delete', args);
-        }
-        get(name) { return invoke(this, 'get', [webString(name)]); }
-        getAll(name) { return invoke(this, 'getAll', [webString(name)]); }
-        has(name, value) {
-          const args = [webString(name)];
-          if (arguments.length > 1) args.push(webString(value));
-          return invoke(this, 'has', args);
-        }
-        set(name, value) {
-          invoke(this, 'set', [webString(name), webString(value)]);
-        }
-        sort() { invoke(this, 'sort', []); }
-        toString() { return invoke(this, 'toString', []); }
-        *entries() {
-          for (let index = 0; ; index++) {
-            const entries = invoke(this, 'entries', []);
-            if (index >= entries.length) return;
-            yield [entries[index][0], entries[index][1]];
-          }
-        }
-        *keys() {
-          for (const entry of this.entries()) yield entry[0];
-        }
-        *values() {
-          for (const entry of this.entries()) yield entry[1];
-        }
-        forEach(callback, thisArg = undefined) {
-          for (let index = 0; ; index++) {
-            const entries = invoke(this, 'entries', []);
-            if (index >= entries.length) return;
-            callback.call(thisArg, entries[index][1], entries[index][0], this);
-          }
-        }
-        [Symbol.iterator]() { return this.entries(); }
-      }
-      Object.defineProperty(URLSearchParams.prototype, Symbol.toStringTag,
-        {value: 'URLSearchParams', configurable: true});
+      return {read: encoded.read, written: encoded.written};
+    }
+  }
+  Object.defineProperty(TextEncoder.prototype, Symbol.toStringTag,
+    {value: 'TextEncoder', configurable: true});
 
-      globalThis.TextEncoder = TextEncoder;
-      globalThis.URLSearchParams = URLSearchParams;
-    })()`);
-    assert.equal(Object.hasOwn(window, '__wingmanTextEncoderAdapter'), false);
-    assert.equal(Object.hasOwn(window, '__wingmanURLSearchParamsAdapter'), false);
-    const protocolProbe = request.payload?.protocol_probe;
+  const parameterStates = new WeakMap();
+  function stateFor(instance) {
+    if (!parameterStates.has(instance)) throw new TypeError('Illegal invocation');
+    return parameterStates.get(instance);
+  }
+  function webString(value) {
+    if (typeof value === 'symbol') {
+      throw new TypeError('Cannot convert a Symbol value to a string');
+    }
+    return String(value);
+  }
+  function urlOperation(operation, serializedState, args) {
+    const response = fromHost(searchParams,
+      {operation, serializedState, argumentsJson: JSON.stringify(args)});
+    if (!response || typeof response.state !== 'string') {
+      throw new TypeError('Host URLSearchParams adapter returned invalid state');
+    }
+    return response;
+  }
+  function invoke(instance, operation, args) {
+    const response = urlOperation(operation, stateFor(instance), args);
+    parameterStates.set(instance, response.state);
+    return response.result;
+  }
+  class URLSearchParams {
+    constructor(init = '') {
+      let operation = 'construct-string';
+      let args;
+      if (init instanceof URLSearchParams) {
+        args = [stateFor(init)];
+      } else if (typeof init === 'string') {
+        args = [init];
+      } else if (init !== null && init !== undefined
+          && typeof init[Symbol.iterator] === 'function') {
+        operation = 'construct-entries';
+        const entries = [];
+        for (const pair of init) {
+          const values = Array.from(pair);
+          if (values.length !== 2) {
+            throw new TypeError(
+              'Each query pair must be an iterable [name, value] tuple');
+          }
+          entries.push([webString(values[0]), webString(values[1])]);
+        }
+        args = [entries];
+      } else if (init !== null && typeof init === 'object') {
+        operation = 'construct-entries';
+        const entries = [];
+        for (const name of Object.keys(init)) {
+          entries.push([webString(name), webString(init[name])]);
+        }
+        args = [entries];
+      } else {
+        args = [webString(init)];
+      }
+      const response = urlOperation(operation, '', args);
+      parameterStates.set(this, response.state);
+    }
+    get size() { return invoke(this, 'size', []); }
+    append(name, value) { invoke(this, 'append', [webString(name), webString(value)]); }
+    delete(name, value) {
+      const args = [webString(name)];
+      if (arguments.length > 1) args.push(webString(value));
+      invoke(this, 'delete', args);
+    }
+    get(name) { return invoke(this, 'get', [webString(name)]); }
+    getAll(name) { return invoke(this, 'getAll', [webString(name)]); }
+    has(name, value) {
+      const args = [webString(name)];
+      if (arguments.length > 1) args.push(webString(value));
+      return invoke(this, 'has', args);
+    }
+    set(name, value) { invoke(this, 'set', [webString(name), webString(value)]); }
+    sort() { invoke(this, 'sort', []); }
+    toString() { return invoke(this, 'toString', []); }
+    *entries() {
+      for (let index = 0; ; index++) {
+        const entries = invoke(this, 'entries', []);
+        if (index >= entries.length) return;
+        yield [entries[index][0], entries[index][1]];
+      }
+    }
+    *keys() { for (const entry of this.entries()) yield entry[0]; }
+    *values() { for (const entry of this.entries()) yield entry[1]; }
+    forEach(callback, thisArg = undefined) {
+      for (let index = 0; ; index++) {
+        const entries = invoke(this, 'entries', []);
+        if (index >= entries.length) return;
+        callback.call(thisArg, entries[index][1], entries[index][0], this);
+      }
+    }
+    [Symbol.iterator]() { return this.entries(); }
+  }
+  Object.defineProperty(URLSearchParams.prototype, Symbol.toStringTag,
+    {value: 'URLSearchParams', configurable: true});
+  globalThis.TextEncoder = TextEncoder;
+  globalThis.URLSearchParams = URLSearchParams;
+
+  globalThis.Event = class Event {
+    constructor(type) { this.type = type; }
+  };
+  globalThis.CustomEvent = class CustomEvent {
+    constructor(type, options = {}) { this.type = type; this.detail = options.detail; }
+  };
+  globalThis.navigator = {clipboard: {
+    readText() { throw new Error('clipboard read'); },
+    writeText() { throw new Error('clipboard write'); },
+  }};
+  globalThis.matchMedia = () => ({matches: false});
+  globalThis.getComputedStyle = () => ({visibility: 'visible'});
+  globalThis.location = {search: ''};
+
+  const data = JSON.parse(payloadJson) || {};
+  const webSources = JSON.parse(webJson);
+  const createDOM = (0, eval)('(' + domFactorySource + ')');
+  const page = JSON.parse(startupJson);
+  const {document, Element, scrolls} = createDOM(page);
+  const windowState = new Element('window');
+  Object.defineProperties(globalThis, Object.getOwnPropertyDescriptors(windowState));
+  Object.setPrototypeOf(globalThis, Element.prototype);
+  Object.defineProperty(globalThis, 'constructor', {
+    value: Element, writable: true, configurable: true,
+  });
+  const window = globalThis;
+  globalThis.window = window;
+  globalThis.document = document;
+  globalThis.Element = Element;
+  for (const [id, text] of Object.entries(data.texts || {})) {
+    document.getElementById(id).textContent = text;
+  }
+  const run = expression => { if (expression) return (0, eval)(expression); };
+  const Promise = globalThis.Promise;
+  for (const name of [
+    '__wingmanStartupPageJson', '__wingmanPayloadJson',
+    '__wingmanWebSourcesJson', '__wingmanDomFactorySource',
+    '__wingmanTimerScheduleAdapter', '__wingmanTimerClearAdapter',
+    '__wingmanTextEncoderAdapter', '__wingmanURLSearchParamsAdapter',
+    '__wingmanUnhandledAdapter', '__wingmanProtocolEventAdapter',
+    '__wingmanCompleteAdapter',
+  ]) {
+    assert.equal(name in globalThis, false,
+      'host adapter remained globally reachable: ' + name);
+  }
+
+  try {
+    const protocolProbe = data.protocol_probe;
+    if (data.failure_logs) {
+      for (let index = 0; index < 45; index++) {
+        console.debug('protocol filler context ' + index);
+      }
+      console.log('protocol log context');
+      console.info('protocol info context');
+      console.debug('protocol debug context');
+      console.warn('protocol warn context ' + 'x'.repeat(500));
+    }
     if (protocolProbe === 'vm-throw') {
       run(`(() => { function protocolVmThrow() { throw new Error('protocol VM throw'); }
         protocolVmThrow(); })()`);
@@ -329,16 +426,13 @@ async function runScenario(request, cleanupProbe = null) {
         protocolVmReject(); })()`);
     }
     if (protocolProbe?.startsWith('pending-timer-')) {
-      assert.ok(cleanupProbe, 'pending timer protocol requires a cleanup probe');
-      requestSetTimeout(() => cleanupProbe.events.push('leaked'), 0);
-      cleanupProbe.pendingTimers = timers.size;
-      cleanupProbe.timers = timers;
+      setTimeout(() => reportProtocolEvent('leaked'), 0);
       if (protocolProbe === 'pending-timer-assertion-exit') {
         throw new Error('protocol cleanup probe failure');
       }
     }
     if (!protocolProbe) {
-    run(fs.readFileSync(web + '/app.js', 'utf8'));
+    run(webSources.app);
     const WM = window.WM;
     const calls = [];
     let staging = false;
@@ -390,8 +484,8 @@ async function runScenario(request, cleanupProbe = null) {
       const style = document.getElementById('fittings-workspace-scroll').style;
       style.removeProperty = function (name) { delete this[name]; };
     }
-    run(fs.readFileSync(web + '/' + moduleName + '.js', 'utf8'));
-    const tick = () => new Promise(resolve => requestSetTimeout(resolve, 10));
+    run(webSources[moduleName]);
+    const tick = () => new Promise(resolve => setTimeout(resolve, 10));
     const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return {promise, resolve}; };
 async function gapRegression() {
   const scenario = data.gap;
@@ -1230,17 +1324,270 @@ async function executeScenario() {
 }
     await executeScenario();
     }
-    assert.equal(timers.size, 0, 'request left a live timer');
-    await new Promise(resolve => setImmediate(resolve));
-    if (unhandledRejections.length) throw unhandledRejections[0];
-    assert.equal(timers.size, 0, 'request left a live timer');
+    assert.equal(timerCallbacks.size, 0, 'request left a live timer');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const asynchronousErrors = timerErrors.concat(fromHost(takeUnhandled, {}));
+    if (asynchronousErrors.length) throw reviveError(asynchronousErrors[0]);
+    assert.equal(timerCallbacks.size, 0, 'request left a live timer');
     const passLines = outputLines.filter(line => line.startsWith('PASS screenshot'));
     assert.equal(passLines.length, 1, 'request must produce exactly one terminal PASS line');
     assert.equal(outputLines.at(-1), passLines[0], 'request PASS line must be terminal');
-    return passLines[0];
+    return {
+      ok: true,
+      output: passLines[0],
+      error: '',
+      stack: '',
+      logs: outputLines.slice(),
+    };
+  } catch (error) {
+    const failure = errorRecord(error);
+    return {
+      ok: false,
+      output: '',
+      error: failure.message,
+      stack: failure.stack,
+      logs: outputLines.slice(),
+    };
+  }
+}
+
+function safeErrorRecord(error) {
+  let name = 'Error';
+  let message = 'Unknown error';
+  let stack = '';
+  try { if (error && typeof error.name === 'string') name = error.name; } catch {}
+  try {
+    if (error && typeof error.message === 'string') message = error.message;
+    else message = String(error);
+  } catch {}
+  try { if (error && error.stack) stack = String(error.stack); } catch {}
+  return {name, message, stack};
+}
+
+function adapterEnvelope(operation) {
+  try {
+    return JSON.stringify({ok: true, value: operation()});
+  } catch (error) {
+    const failure = safeErrorRecord(error);
+    try {
+      return JSON.stringify({
+        ok: false,
+        errorName: failure.name,
+        errorMessage: failure.message,
+        errorStack: failure.stack,
+      });
+    } catch {
+      return '{"ok":false,"errorName":"Error","errorMessage":"Host adapter failed","errorStack":""}';
+    }
+  }
+}
+
+function adapterRequest(envelope) {
+  assert.equal(typeof envelope, 'string',
+    'host adapter request must be a primitive JSON envelope');
+  const request = JSON.parse(envelope);
+  assert.ok(request && typeof request === 'object' && !Array.isArray(request),
+    'host adapter request must decode to an object');
+  return request;
+}
+
+class ScenarioExecutionFailure extends Error {
+  constructor(result) {
+    super(result.error || 'worker reported failure');
+    this.name = 'ScenarioExecutionFailure';
+    this.remoteStack = typeof result.stack === 'string' ? result.stack : '';
+    this.logs = Array.isArray(result.logs)
+      ? result.logs.slice(-40).map(line => {
+        const text = String(line);
+        return text.length > 400 ? text.slice(0, 399) + '…' : text;
+      })
+      : [];
+  }
+}
+
+async function runScenario(request, cleanupProbe = null) {
+  const timers = new Map();
+  const unhandledRejections = [];
+  const dispatchFailures = [];
+  let runtime;
+  let completionResolve;
+  let completionCalled = false;
+  const completion = new Promise(resolve => { completionResolve = resolve; });
+  const dispatchBinding = '__wingmanTimerDispatch_'
+    + randomBytes(16).toString('hex');
+  const captureRejection = reason => {
+    unhandledRejections.push(safeErrorRecord(reason));
+  };
+  process.on('unhandledRejection', captureRejection);
+
+  const timerScheduleAdapter = envelope => adapterEnvelope(() => {
+    const timer = adapterRequest(envelope);
+    assert.equal(timer.kind, 'timeout', 'unknown timer adapter operation');
+    assert.equal(Number.isInteger(timer.token) && timer.token > 0, true,
+      'timer token must be a positive integer');
+    assert.equal(timers.has(timer.token), false, 'timer token was reused');
+    const delay = Number(timer.delay);
+    const handle = setTimeout(() => {
+      timers.delete(timer.token);
+      try {
+        vm.runInContext(
+          dispatchBinding + "('timeout'," + JSON.stringify(timer.token) + ')',
+          runtime,
+        );
+      } catch (error) {
+        dispatchFailures.push(safeErrorRecord(error));
+      }
+    }, Number.isFinite(delay) ? delay : 0);
+    timers.set(timer.token, handle);
+    return null;
+  });
+  const timerClearAdapter = envelope => adapterEnvelope(() => {
+    const timer = adapterRequest(envelope);
+    assert.equal(timer.kind, 'timeout', 'unknown timer clear adapter operation');
+    const handle = timers.get(timer.token);
+    if (handle !== undefined) clearTimeout(handle);
+    timers.delete(timer.token);
+    return null;
+  });
+  const hostTextEncoder = new globalThis.TextEncoder();
+  const textEncoderAdapter = envelope => adapterEnvelope(() => {
+    const request = adapterRequest(envelope);
+    if (request.operation === 'encode') {
+      return {bytes: Array.from(hostTextEncoder.encode(request.input))};
+    }
+    if (request.operation === 'encodeInto') {
+      const destination = new Uint8Array(request.capacity);
+      const result = hostTextEncoder.encodeInto(request.input, destination);
+      return {
+        read: result.read,
+        written: result.written,
+        bytes: Array.from(destination.subarray(0, result.written)),
+      };
+    }
+    throw new Error('Unknown TextEncoder adapter operation: ' + request.operation);
+  });
+  const urlSearchParamsAdapter = envelope => adapterEnvelope(() => {
+    const request = adapterRequest(envelope);
+    const args = JSON.parse(request.argumentsJson);
+    let params;
+    if (request.operation === 'construct-string') {
+      params = new globalThis.URLSearchParams(args[0]);
+    } else if (request.operation === 'construct-entries') {
+      params = new globalThis.URLSearchParams(args[0]);
+    } else {
+      params = new globalThis.URLSearchParams(request.serializedState);
+    }
+    let result = null;
+    if (request.operation === 'append') params.append(args[0], args[1]);
+    else if (request.operation === 'delete') {
+      if (args.length > 1) params.delete(args[0], args[1]);
+      else params.delete(args[0]);
+    } else if (request.operation === 'get') result = params.get(args[0]);
+    else if (request.operation === 'getAll') result = params.getAll(args[0]);
+    else if (request.operation === 'has') {
+      result = args.length > 1
+        ? params.has(args[0], args[1]) : params.has(args[0]);
+    } else if (request.operation === 'set') params.set(args[0], args[1]);
+    else if (request.operation === 'sort') params.sort();
+    else if (request.operation === 'size') result = params.size;
+    else if (request.operation === 'toString') result = params.toString();
+    else if (request.operation === 'entries') result = Array.from(params.entries());
+    else if (!['construct-string', 'construct-entries'].includes(
+      request.operation
+    )) {
+      throw new Error(
+        'Unknown URLSearchParams adapter operation: ' + request.operation);
+    }
+    return {state: params.toString(), result};
+  });
+  const unhandledAdapter = envelope => adapterEnvelope(() => {
+    adapterRequest(envelope);
+    return unhandledRejections.splice(0).concat(dispatchFailures.splice(0));
+  });
+  const protocolEventAdapter = envelope => adapterEnvelope(() => {
+    const event = adapterRequest(envelope);
+    assert.equal(typeof event.name, 'string', 'protocol event must be primitive');
+    if (cleanupProbe) cleanupProbe.events.push(event.name);
+    return null;
+  });
+  const completeAdapter = envelope => adapterEnvelope(() => {
+    assert.equal(typeof envelope, 'string',
+      'completion must be a primitive JSON envelope');
+    assert.equal(completionCalled, false, 'request completed more than once');
+    completionCalled = true;
+    completionResolve(envelope);
+    return null;
+  });
+
+  runtime = vm.createContext({
+    __wingmanStartupPageJson: startupPageJson,
+    __wingmanPayloadJson: JSON.stringify(request.payload || {}),
+    __wingmanWebSourcesJson: webSourcesJson,
+    __wingmanDomFactorySource: DOM_FACTORY_SOURCE,
+    __wingmanTimerScheduleAdapter: timerScheduleAdapter,
+    __wingmanTimerClearAdapter: timerClearAdapter,
+    __wingmanTextEncoderAdapter: textEncoderAdapter,
+    __wingmanURLSearchParamsAdapter: urlSearchParamsAdapter,
+    __wingmanUnhandledAdapter: unhandledAdapter,
+    __wingmanProtocolEventAdapter: protocolEventAdapter,
+    __wingmanCompleteAdapter: completeAdapter,
+  });
+
+  try {
+    const launch = `
+      let ${dispatchBinding};
+      (() => {
+        const complete = globalThis.__wingmanCompleteAdapter;
+        delete globalThis.__wingmanCompleteAdapter;
+        void (async () => {
+          let result;
+          try {
+            result = await (${scenarioProgram.toString()})(
+              dispatch => { ${dispatchBinding} = dispatch; });
+          } catch (error) {
+            let message = 'Unknown error';
+            let stack = '';
+            try {
+              message = error && typeof error.message === 'string'
+                ? error.message : String(error);
+            } catch {}
+            try { if (error && error.stack) stack = String(error.stack); } catch {}
+            result = {ok: false, output: '', error: message, stack, logs: []};
+          }
+          complete(JSON.stringify(result));
+        })();
+      })()
+    `;
+    const launchResult = vm.runInContext(launch, runtime, {
+      filename: 'screenshot_scenario_worker.cjs',
+    });
+    assert.equal(launchResult, undefined,
+      'scenario launch exposed a VM-owned promise');
+    const resultEnvelope = await completion;
+    assert.equal(typeof resultEnvelope, 'string',
+      'scenario completion was not primitive JSON');
+    const result = JSON.parse(resultEnvelope);
+    assert.ok(result && typeof result === 'object' && !Array.isArray(result),
+      'scenario result must decode to an object');
+    if (!result.ok) throw new ScenarioExecutionFailure(result);
+    try {
+      assert.equal(timers.size, 0, 'request left a live timer');
+    } catch (error) {
+      const failure = safeErrorRecord(error);
+      throw new ScenarioExecutionFailure({
+        error: failure.message,
+        stack: failure.stack,
+        logs: result.logs,
+      });
+    }
+    return result.output;
   } finally {
     process.removeListener('unhandledRejection', captureRejection);
-    for (const handle of timers) clearTimeout(handle);
+    if (cleanupProbe) {
+      cleanupProbe.pendingTimers = timers.size;
+      cleanupProbe.timers = timers;
+    }
+    for (const handle of timers.values()) clearTimeout(handle);
     timers.clear();
   }
 }
@@ -1270,8 +1617,13 @@ async function runCleanupProbe(request) {
 function failureFields(error) {
   return {
     ok: false,
-    error: isNativeError(error) ? error.message : String(error),
-    stack: isNativeError(error) ? String(error.stack || '') : '',
+    error: error instanceof ScenarioExecutionFailure
+      ? error.message
+      : isNativeError(error) ? error.message : String(error),
+    stack: error instanceof ScenarioExecutionFailure
+      ? error.remoteStack
+      : isNativeError(error) ? String(error.stack || '') : '',
+    logs: error instanceof ScenarioExecutionFailure ? error.logs : [],
   };
 }
 
@@ -1290,7 +1642,11 @@ async function serveRequest(request) {
     assert.deepEqual(process.listeners('unhandledRejection'), listenerBaseline,
       'unhandledRejection listener baseline changed');
   } catch (error) {
-    fields = failureFields(error);
+    const listenerFailure = failureFields(error);
+    if (Array.isArray(fields?.logs) && fields.logs.length) {
+      listenerFailure.logs = fields.logs;
+    }
+    fields = listenerFailure;
   }
   return {
     id: request.id,

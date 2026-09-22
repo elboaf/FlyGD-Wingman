@@ -254,6 +254,85 @@ def test_gap_capture_worker_reuses_process_and_preserves_business_outcomes(
   }
   document.constructor.constructor('return globalThis')()[domMarker] = 'global';
 
+  const realmMarker = '__wingmanScreenshotRealmEscapeProbe';
+  function realmOf(value) {
+    if (value === null || value === undefined) return null;
+    const constructor = value.constructor;
+    if (typeof constructor !== 'function' ||
+        typeof constructor.constructor !== 'function') return null;
+    return constructor.constructor('return globalThis')();
+  }
+  const boundaries = [];
+  function collect(label, owner) {
+    if (!owner) return;
+    for (const key of Reflect.ownKeys(owner)) {
+      const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+      if (!descriptor) continue;
+      for (const [kind, value] of [
+        ['value', descriptor.value], ['get', descriptor.get], ['set', descriptor.set]
+      ]) {
+        if (typeof value === 'function') {
+          boundaries.push([label + '.' + String(key) + '.' + kind, value]);
+        }
+      }
+    }
+  }
+  collect('console', console);
+  collect('clipboard', navigator.clipboard);
+  collect('document', document);
+  collect('Element.prototype', Element.prototype);
+  collect('WM', WM);
+  for (const [name, value] of Object.entries({
+    Event, CustomEvent, Element, TextEncoder, URLSearchParams,
+    setTimeout, clearTimeout, requestAnimationFrame, matchMedia,
+    getComputedStyle
+  })) boundaries.push([name, value]);
+  const timeoutArgument = {request_local: true};
+  const timeoutToken = setTimeout(function (value) {
+    const realm = realmOf(this);
+    if (realm) realm[realmMarker] = 'timeout callback receiver';
+    if (value !== timeoutArgument) {
+      throw new Error('timeout argument left the request VM');
+    }
+  }, 0, timeoutArgument);
+  const frameToken = requestAnimationFrame(function (...args) {
+    const realm = realmOf(this);
+    if (realm) realm[realmMarker] = 'animation callback receiver';
+    if (args.length) throw new Error('animation frame gained host arguments');
+  });
+  const returnedValues = [
+    ['window', window], ['document', document], ['location', location],
+    ['navigator', navigator], ['clipboard', navigator.clipboard],
+    ['Event result', new Event('realm-probe')],
+    ['CustomEvent result', new CustomEvent('realm-probe', {detail: timeoutArgument})],
+    ['matchMedia result', matchMedia('(min-width: 1px)')],
+    ['getComputedStyle result', getComputedStyle(document.body)],
+    ['timeout token', Object(timeoutToken)], ['frame token', Object(frameToken)]
+  ];
+  for (const [name, callable] of boundaries) {
+    const realm = realmOf(callable);
+    if (realm) realm[realmMarker] = name;
+  }
+  for (const [name, value] of returnedValues) {
+    const realm = realmOf(value);
+    if (realm) realm[realmMarker] = name;
+  }
+  for (const name of ['readText', 'writeText']) {
+    try {
+      navigator.clipboard[name]('probe');
+    } catch (error) {
+      const realm = realmOf(error);
+      if (realm) realm[realmMarker] = 'clipboard ' + name + ' error';
+    }
+  }
+  const escaped = [...boundaries, ...returnedValues].filter(([, value]) => {
+    const realm = realmOf(value);
+    return realm && (realm !== globalThis || 'process' in realm);
+  }).map(([name]) => name);
+  if (escaped.length) {
+    throw new Error('public boundary escaped the request VM: ' + escaped.join(', '));
+  }
+
   const marker = '__wingmanScreenshotRequestProbe';
   for (const [name, intrinsic] of Object.entries(
     {Promise, Math, Date, TextEncoder, URLSearchParams}
@@ -311,6 +390,88 @@ def test_gap_capture_worker_reuses_process_and_preserves_business_outcomes(
       throw new Error('DOM callable escaped the request VM: ' + name);
     }
   }
+  const realmMarker = '__wingmanScreenshotRealmEscapeProbe';
+  function realmOf(value) {
+    if (value === null || value === undefined) return null;
+    const constructor = value.constructor;
+    if (typeof constructor !== 'function' ||
+        typeof constructor.constructor !== 'function') return null;
+    return constructor.constructor('return globalThis')();
+  }
+  const boundaries = [];
+  function collect(label, owner) {
+    if (!owner) return;
+    for (const key of Reflect.ownKeys(owner)) {
+      const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+      if (!descriptor) continue;
+      for (const [kind, value] of [
+        ['value', descriptor.value], ['get', descriptor.get], ['set', descriptor.set]
+      ]) {
+        if (typeof value === 'function') {
+          boundaries.push([label + '.' + String(key) + '.' + kind, value]);
+        }
+      }
+    }
+  }
+  collect('console', console);
+  collect('clipboard', navigator.clipboard);
+  collect('document', document);
+  collect('Element.prototype', Element.prototype);
+  collect('WM', WM);
+  for (const [name, value] of Object.entries({
+    Event, CustomEvent, Element, TextEncoder, URLSearchParams,
+    setTimeout, clearTimeout, requestAnimationFrame, matchMedia,
+    getComputedStyle
+  })) boundaries.push([name, value]);
+  const timeoutArgument = {request_local: true};
+  const timeoutToken = setTimeout(function (value) {
+    const realm = realmOf(this);
+    if (realm && (realm !== globalThis || 'process' in realm)) {
+      realm[realmMarker] = 'timeout callback receiver';
+    }
+    if (value !== timeoutArgument) {
+      throw new Error('timeout argument left the request VM');
+    }
+  }, 0, timeoutArgument);
+  const frameToken = requestAnimationFrame(function (...args) {
+    const realm = realmOf(this);
+    if (realm && (realm !== globalThis || 'process' in realm)) {
+      realm[realmMarker] = 'animation callback receiver';
+    }
+    if (args.length) throw new Error('animation frame gained host arguments');
+  });
+  const returnedValues = [
+    ['window', window], ['document', document], ['location', location],
+    ['navigator', navigator], ['clipboard', navigator.clipboard],
+    ['Event result', new Event('realm-probe')],
+    ['CustomEvent result', new CustomEvent('realm-probe', {detail: timeoutArgument})],
+    ['matchMedia result', matchMedia('(min-width: 1px)')],
+    ['getComputedStyle result', getComputedStyle(document.body)],
+    ['timeout token', Object(timeoutToken)], ['frame token', Object(frameToken)]
+  ];
+  for (const [name, value] of [...boundaries, ...returnedValues]) {
+    const realm = realmOf(value);
+    if (!realm || realm !== globalThis || 'process' in realm) {
+      throw new Error('public boundary escaped the request VM: ' + name);
+    }
+    if (Object.prototype.hasOwnProperty.call(realm, realmMarker) ||
+        Object.prototype.hasOwnProperty.call(value, realmMarker)) {
+      throw new Error('public boundary leaked between requests: ' + name);
+    }
+  }
+  for (const name of ['readText', 'writeText']) {
+    try {
+      navigator.clipboard[name]('probe');
+    } catch (error) {
+      const realm = realmOf(error);
+      if (!realm || realm !== globalThis || 'process' in realm) {
+        throw new Error('clipboard error escaped the request VM: ' + name);
+      }
+      if (Object.prototype.hasOwnProperty.call(realm, realmMarker)) {
+        throw new Error('clipboard error realm leaked between requests: ' + name);
+      }
+    }
+  }
   const domTargets = [
     ['document', document],
     ['Element', Element],
@@ -346,9 +507,17 @@ def test_gap_capture_worker_reuses_process_and_preserves_business_outcomes(
       }
     }
   }
-  if ('__wingmanTextEncoderAdapter' in globalThis ||
-      '__wingmanURLSearchParamsAdapter' in globalThis) {
-    throw new Error('host adapter remained globally reachable');
+  for (const name of [
+    '__wingmanStartupPageJson', '__wingmanPayloadJson',
+    '__wingmanWebSourcesJson', '__wingmanDomFactorySource',
+    '__wingmanTimerScheduleAdapter', '__wingmanTimerClearAdapter',
+    '__wingmanTextEncoderAdapter', '__wingmanURLSearchParamsAdapter',
+    '__wingmanUnhandledAdapter', '__wingmanProtocolEventAdapter',
+    '__wingmanCompleteAdapter'
+  ]) {
+    if (name in globalThis) {
+      throw new Error('host adapter remained globally reachable: ' + name);
+    }
   }
   let adapterError;
   let errorRealm;
@@ -472,9 +641,19 @@ def test_gap_capture_worker_vm_failures_preserve_stack_and_recover(
     ]:
         with pytest.raises(NodeScenarioFailure) as failure:
             gap_capture_worker.request(
-                f"protocol/{mode}", {"protocol_probe": mode}, timeout=20.0
+                f"protocol/{mode}",
+                {"protocol_probe": mode, "failure_logs": True},
+                timeout=20.0,
             )
         assert stack_name in failure.value.stack
+        assert failure.value.reply is not None
+        logs = failure.value.reply.get("logs")
+        assert isinstance(logs, list)
+        assert 1 <= len(logs) <= 40
+        assert all(isinstance(line, str) and len(line) <= 400 for line in logs)
+        for level in ("log", "info", "warn", "debug"):
+            assert any(f"protocol {level} context" in line for line in logs)
+        assert any(line.endswith("…") for line in logs)
         _request_gap_capture(
             gap_capture_worker, "settings-wanderer-controls-narrow", "settled"
         )

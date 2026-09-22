@@ -34,6 +34,7 @@ async function scenarioProgram() {
   const clearTimer = globalThis.__wingmanTimerClearAdapter;
   const encode = globalThis.__wingmanTextEncoderAdapter;
   const searchParams = globalThis.__wingmanURLSearchParamsAdapter;
+  const recordHostLog = globalThis.__wingmanLogAdapter;
   const reportProtocolEvent = globalThis.__wingmanProtocolEvent;
   const unhandledRejections = globalThis.__wingmanUnhandledRejections;
   delete globalThis.__wingmanStartupPageJson;
@@ -45,6 +46,7 @@ async function scenarioProgram() {
   delete globalThis.__wingmanTimerClearAdapter;
   delete globalThis.__wingmanTextEncoderAdapter;
   delete globalThis.__wingmanURLSearchParamsAdapter;
+  delete globalThis.__wingmanLogAdapter;
   delete globalThis.__wingmanProtocolEvent;
   delete globalThis.__wingmanUnhandledRejections;
 
@@ -306,12 +308,27 @@ async function scenarioProgram() {
   const stateMachineScenario = scenario.startsWith('state-');
   const interleavingScenario = scenario.startsWith('interleaving-');
   const outputLines = [];
+  const renderLogValue = value => {
+    if (typeof value === 'string') return value;
+    try {
+      const encoded = JSON.stringify(value);
+      if (encoded !== undefined) return encoded;
+    } catch {}
+    try { return String(value); } catch { return '<unprintable>'; }
+  };
+  const captureLog = args => {
+    let line = args.map(renderLogValue).join(' ');
+    if (line.length > 400) line = line.slice(0, 399) + '…';
+    outputLines.push(line);
+    if (outputLines.length > 40) outputLines.shift();
+    fromHost(recordHostLog(JSON.stringify({line})));
+  };
   globalThis.console = {
-    log: (...args) => outputLines.push(args.join(' ')),
-    info: (...args) => outputLines.push(args.join(' ')),
-    debug: (...args) => outputLines.push(args.join(' ')),
-    warn: (...args) => outputLines.push(args.join(' ')),
-    error: (...args) => { throw new Error(args.join(' ')); },
+    log: (...args) => captureLog(args),
+    info: (...args) => captureLog(args),
+    debug: (...args) => captureLog(args),
+    warn: (...args) => captureLog(args),
+    error: (...args) => { throw new Error(args.map(renderLogValue).join(' ')); },
   };
 
 // Only DOM mechanics live here. Fittings rendering, listeners, selection and
@@ -754,6 +771,8 @@ function assertPristineIsolation() {
     'TextEncoder host adapter remained globally reachable');
   assert.equal('__wingmanURLSearchParamsAdapter' in globalThis, false,
     'URLSearchParams host adapter remained globally reachable');
+  assert.equal('__wingmanLogAdapter' in globalThis, false,
+    'log host adapter remained globally reachable');
   assert.equal(Object.prototype.hasOwnProperty.call(
     document, '__wingmanFittingsDocumentProbe'), false,
   'request DOM leaked between requests');
@@ -892,6 +911,15 @@ if (!scenario.startsWith('interleaving-screenshot-')) {
 }
 
 const protocolProbe = data.protocol_probe;
+if (data.failure_logs) {
+  for (let index = 0; index < 45; index++) {
+    console.debug('protocol filler context ' + index);
+  }
+  console.log('protocol log context');
+  console.info('protocol info context');
+  console.debug('protocol debug context');
+  console.warn('protocol warn context ' + 'x'.repeat(500));
+}
 if (protocolProbe === 'vm-throw') {
   function protocolVmThrow() { throw new Error('protocol VM throw'); }
   protocolVmThrow();
@@ -1805,6 +1833,7 @@ function adapterEnvelope(operation) {
   } catch (error) {
     let errorName = 'Error';
     let errorMessage = 'Host adapter failed';
+    let errorStack = '';
     try {
       if (error && typeof error.name === 'string') errorName = error.name;
     } catch {}
@@ -1812,15 +1841,36 @@ function adapterEnvelope(operation) {
       if (error && typeof error.message === 'string') errorMessage = error.message;
       else errorMessage = String(error);
     } catch {}
+    try { if (error && error.stack) errorStack = String(error.stack); } catch {}
     try {
-      return JSON.stringify({ok: false, errorName, errorMessage});
+      return JSON.stringify({ok: false, errorName, errorMessage, errorStack});
     } catch {
-      return '{"ok":false,"errorName":"Error","errorMessage":"Host adapter failed"}';
+      return '{"ok":false,"errorName":"Error","errorMessage":"Host adapter failed","errorStack":""}';
     }
   }
 }
 
+class ScenarioExecutionFailure extends Error {
+  constructor(error, logs) {
+    let message = 'Unknown error';
+    let remoteStack = '';
+    try {
+      message = error && typeof error.message === 'string'
+        ? error.message : String(error);
+    } catch {}
+    try { if (error && error.stack) remoteStack = String(error.stack); } catch {}
+    super(message);
+    this.name = 'ScenarioExecutionFailure';
+    this.remoteStack = remoteStack;
+    this.logs = logs.slice(-40).map(line => {
+      const text = String(line);
+      return text.length > 400 ? text.slice(0, 399) + '…' : text;
+    });
+  }
+}
+
 async function runScenario(request, cleanupProbe = null) {
+  const requestLogs = [];
   const timers = new Map();
   const intervals = new Map();
   const allNativeTimers = new Set();
@@ -1920,6 +1970,17 @@ async function runScenario(request, cleanupProbe = null) {
       }
       return {state: params.toString(), result};
     });
+  const logAdapter = envelope => adapterEnvelope(() => {
+    hostAssert.equal(typeof envelope, 'string',
+      'log adapter request must be a primitive JSON envelope');
+    const entry = JSON.parse(envelope);
+    hostAssert.equal(typeof entry.line, 'string', 'log line must be primitive');
+    let line = entry.line;
+    if (line.length > 400) line = line.slice(0, 399) + '…';
+    requestLogs.push(line);
+    if (requestLogs.length > 40) requestLogs.shift();
+    return null;
+  });
   const protocolEvent = name => {
     hostAssert.equal(typeof name, 'string', 'protocol event must be primitive');
     if (cleanupProbe) cleanupProbe.events.push(name);
@@ -1934,6 +1995,7 @@ async function runScenario(request, cleanupProbe = null) {
     __wingmanTimerClearAdapter: timerClearAdapter,
     __wingmanTextEncoderAdapter: textEncoderAdapter,
     __wingmanURLSearchParamsAdapter: urlSearchParamsAdapter,
+    __wingmanLogAdapter: logAdapter,
     __wingmanProtocolEvent: protocolEvent,
   });
   const unhandledRejections = vm.runInContext('[]', runtime);
@@ -1941,19 +2003,23 @@ async function runScenario(request, cleanupProbe = null) {
   const captureRejection = reason => unhandledRejections.push(reason);
   process.on('unhandledRejection', captureRejection);
   try {
-    const output = await vm.runInContext(
-      '(' + scenarioProgram.toString() + ')()',
-      runtime,
-      {filename: 'fittings_scenario_worker.cjs'},
-    );
-    hostAssert.equal(timers.size, 0, 'request left a live timer');
-    hostAssert.equal(intervals.size, 0, 'request left a live interval');
-    await new Promise(resolve => setImmediate(resolve));
-    if (unhandledRejections.length) throw unhandledRejections[0];
-    hostAssert.equal(timers.size, 0, 'request left a live timer');
-    hostAssert.equal(intervals.size, 0, 'request left a live interval');
-    hostAssert.equal(typeof output, 'string', 'request did not return a PASS label');
-    return output;
+    try {
+      const output = await vm.runInContext(
+        '(' + scenarioProgram.toString() + ')()',
+        runtime,
+        {filename: 'fittings_scenario_worker.cjs'},
+      );
+      hostAssert.equal(timers.size, 0, 'request left a live timer');
+      hostAssert.equal(intervals.size, 0, 'request left a live interval');
+      await new Promise(resolve => setImmediate(resolve));
+      if (unhandledRejections.length) throw unhandledRejections[0];
+      hostAssert.equal(timers.size, 0, 'request left a live timer');
+      hostAssert.equal(intervals.size, 0, 'request left a live interval');
+      hostAssert.equal(typeof output, 'string', 'request did not return a PASS label');
+      return output;
+    } catch (error) {
+      throw new ScenarioExecutionFailure(error, requestLogs);
+    }
   } finally {
     process.removeListener('unhandledRejection', captureRejection);
     if (cleanupProbe) {
@@ -2012,8 +2078,13 @@ async function runCleanupProbe(request) {
 function failureFields(error) {
   return {
     ok: false,
-    error: isNativeError(error) ? error.message : String(error),
-    stack: isNativeError(error) ? String(error.stack || '') : '',
+    error: error instanceof ScenarioExecutionFailure
+      ? error.message
+      : isNativeError(error) ? error.message : String(error),
+    stack: error instanceof ScenarioExecutionFailure
+      ? error.remoteStack
+      : isNativeError(error) ? String(error.stack || '') : '',
+    logs: error instanceof ScenarioExecutionFailure ? error.logs : [],
   };
 }
 
@@ -2037,7 +2108,11 @@ async function serveRequest(request) {
       hostAssert.deepEqual(process.listeners('unhandledRejection'), listenerBaseline,
         'unhandledRejection listener baseline changed');
     } catch (error) {
-      fields = failureFields(error);
+      const listenerFailure = failureFields(error);
+      if (Array.isArray(fields?.logs) && fields.logs.length) {
+        listenerFailure.logs = fields.logs;
+      }
+      fields = listenerFailure;
     }
     return {
       id: request.id,

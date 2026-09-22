@@ -867,10 +867,22 @@ def test_fittings_worker_vm_failures_preserve_stack_and_recover(
         with pytest.raises(NodeScenarioFailure) as failure:
             fittings_page_worker.request(
                 f"protocol/{mode}",
-                {"screenshot": None, "protocol_probe": mode},
+                {
+                    "screenshot": None,
+                    "protocol_probe": mode,
+                    "failure_logs": True,
+                },
                 timeout=15.0,
             )
         assert stack_name in failure.value.stack
+        assert failure.value.reply is not None
+        logs = failure.value.reply.get("logs")
+        assert isinstance(logs, list)
+        assert 1 <= len(logs) <= 40
+        assert all(isinstance(line, str) and len(line) <= 400 for line in logs)
+        for level in ("log", "info", "warn", "debug"):
+            assert any(f"protocol {level} context" in line for line in logs)
+        assert any(line.endswith("…") for line in logs)
         recovered = request_fittings_scenario(fittings_page_worker, "checkbox-name")
         assert recovered["output"] == "PASS checkbox-name"
         assert fittings_page_worker._proc is process
