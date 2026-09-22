@@ -269,15 +269,49 @@ The 14 skips match the earlier inspected Linux platform/capability inventory; no
 
 ## Hosted Windows evidence
 
-Hosted Windows evidence unavailable; workflow and sharding planning remain unauthorized.
+PR [#277](https://github.com/elboaf/FlyGD-Wingman/pull/277) produced the required hosted evidence at branch SHA `2ed88f372edba7f94cd815d484595960236b984b`:
 
-No branch publication, pull request, workflow dispatch, run lookup, artifact download, Windows timing comparison, or Windows projection was performed because publication was not authorized.
+- CI run: [`35684157184`](https://github.com/elboaf/FlyGD-Wingman/actions/runs/35684157184)
+- Windows job: [`106607316881`](https://github.com/elboaf/FlyGD-Wingman/actions/runs/35684157184/job/106607316881)
+- Ubuntu job: [`106607316829`](https://github.com/elboaf/FlyGD-Wingman/actions/runs/35684157184/job/106607316829)
+
+The controlled comparison is the immediately preceding successful `main` run for UX merge `cfa1aca256c2aadf7082bbb5061275c749e345c6`, whose added tests are also present in the PR run:
+
+- baseline run: [`35643273320`](https://github.com/elboaf/FlyGD-Wingman/actions/runs/35643273320)
+- baseline Windows job: [`106477509176`](https://github.com/elboaf/FlyGD-Wingman/actions/runs/35643273320/job/106477509176)
+
+| Hosted metric | Current `main` | PR #277 | Change |
+|---|---:|---:|---:|
+| Required critical path | 19m46s | 13m49s | -5m57s (-30.1%) |
+| Windows job | 19m46s | 13m48s | -5m58s (-30.2%) |
+| Windows pytest step | 18m42s | 12m41s | -6m01s (-32.2%) |
+| Ubuntu job | 8m20s | 6m29s | -1m51s (-22.2%) |
+| Ubuntu pytest step | 7m45s | 6m07s | -1m38s (-21.1%) |
+| Windows JUnit testcase sum | 1084.184s | 724.378s | -359.806s (-33.2%) |
+| Windows cases | 16,844 | 16,672 | -172 |
+| Five-target Windows sum | 443.268s | 72.547s | -370.721s (-83.6%) |
+
+The target-file result by owner was:
+
+| Target | Current `main` | PR #277 |
+|---|---:|---:|
+| Cadence | 261.008s / 139 cases | 5.240s / 75 cases |
+| Source admission | 57.743s / 201 cases | 18.164s / 120 cases |
+| Timing mutations | 43.598s / 25 cases | deleted |
+| Maximum transport resource | 45.269s / 3 cases | 44.550s / 3 cases |
+| Worker revision | 35.650s / 37 cases | 4.593s / 32 cases |
+
+All three required checks passed. The resource test deliberately remains in current PR CI until the later cadence/workflow phase; its stable 44.550-second Windows cost is now measured rather than inferred.
 
 ## Stop/go conclusion
 
-**GO for the bounded Fleet tranche only:** Tasks 1–7 are locally verified, their temporary mutation evidence is recorded, the targeted inventory is 230 nodes instead of 405, required/resource selection works, the release codec and Node were available, the complete local suite passed, JS smoke passed, Cargo passed, Ruff passed, and the implementation range contains no production or workflow changes.
+**GO for the bounded Fleet tranche:** the hosted target-set sum fell 83.6%, the Windows pytest step fell 32.2%, and the required critical path fell 30.1%. Contract representatives, resource evidence, Node, native settings codec, Cargo, JS smoke, Ruff, and both hosted platforms passed.
 
-**STOP for budget, workflow, sharding, and broader-hotspot decisions:** the required hosted Windows evidence does not exist. The Linux timings above must not be described as a Windows improvement. Do not implement broader hotspot reductions, marker selectors, budget manifests, nightly workflows, or Windows shards from this tranche. A separate remaining-hotspot plan requires an authorized hosted Windows run and its exact file ranking.
+**GO for a separate remaining-hotspot consolidation plan:** PR CI still takes 13m49s and the Windows job still takes 13m48s, missing both the five-minute required-path ceiling and ten-minute complete-Windows ceiling. The next plan should start from PR #277's Windows artifact and the ranked non-resource hotspots below.
+
+**STOP for workflow selection, budget enforcement, and Windows sharding:** consolidate the remaining serial hotspots first, remeasure, and authorize workflow tiers or whole-file shards only at the approved stop/go gates.
+
+The leading non-resource Windows owners are `test_ui_setup_controller.py` (44.067s), `test_shoot_screens.py` (38.610s), `test_fleetsharing_capacity.py` (30.868s), `test_new_screenshots.py` (26.005s), `test_current_screenshots.py` (25.852s), `test_fittings_page.py` (23.838s), `test_preview_savedlayouts_page.py` (20.796s), and `test_ui_setup_profile.py` (20.590s). The top ten files including the resource probe own 293.4 summed seconds; the top twenty own 430.2 seconds.
 
 ### Self-review
 
@@ -293,7 +327,7 @@ No branch publication, pull request, workflow dispatch, run lookup, artifact dow
 
 ### Concerns
 
-- Hosted Windows evidence is unavailable, so no Windows runtime, five-minute required-path, ten-minute complete-suite, workflow, or sharding claim is authorized.
+- Hosted Windows evidence confirms the tranche improvement but still misses the five-minute required-path and ten-minute complete-Windows ceilings; workflow selection, budget enforcement, and sharding remain unauthorized pending broader consolidation.
 - The pre-polish Linux full suite took 517.37 seconds and the final polished suite took 539.32 seconds wall time; runner variation was not investigated, and several non-target files remain above the design's 20-second diagnostic threshold. Those are inputs to a separate measured hotspot plan, not scope for this tranche.
 - Three single-check mutation probes were non-killing because independent later checks enforce the same authority boundary. The plan ledger explicitly ruled them redundant/non-applicable; compound mutations were intentionally not forced.
 - The branch contains unrelated work before tranche base `5a1b800b`; complete-suite deltas against the reference run are therefore not attributed solely to this tranche.
