@@ -2,12 +2,13 @@
 
 ## Source identities
 
-The identities below are literal command outputs captured before this results-only commit.
+The tranche identities are pinned so each verification claim names the code it exercised. The initial evidence was captured before the results commit; the final test-bearing HEAD was added after the bounded polish wave.
 
 | Identity | Command | Literal output |
 |---|---|---|
 | Merge base | `git merge-base origin/main HEAD` | `78adb17a8346f4810f48863dd10a87c386091948` |
-| Verified implementation HEAD | `git rev-parse HEAD` | `65ff70c9a037697e206e662db451b82871eee9be` |
+| Pre-polish implementation HEAD | `git rev-parse HEAD` before the results commit | `65ff70c9a037697e206e662db451b82871eee9be` |
+| Final test-bearing HEAD | `git rev-parse HEAD` before this documentation-only follow-up | `35aad4886d9cc15f32860e7ebd01723082f47dcf` |
 | Tranche implementation base | Plan ledger and `git log` | `5a1b800b` (`docs: align Fleet plan parameter names`) |
 | Windows reference | GitHub Actions | [`35534240008`](https://github.com/elboaf/FlyGD-Wingman/actions/runs/35534240008) at `78adb17a8346f4810f48863dd10a87c386091948` |
 
@@ -251,6 +252,21 @@ The prescribed scope commands produced:
 
 No workflow changes, production changes, temporary zero budget, debug instrumentation, placeholders, or tracked generated evidence were found.
 
+### Post-polish final verification
+
+A bounded polish wave corrected the exact resource-owner guard, removed single-value source-admission parameterizations, simplified now-unreachable test branches, and corrected documentation claims. On final test-bearing HEAD `35aad4886d9cc15f32860e7ebd01723082f47dcf`, fresh verification produced:
+
+| Command | Result |
+|---|---|
+| `uv run --no-sync python -m pytest tests/ -q -rs --durations=30 --junitxml=/tmp/fleet-tranche-final-polished.xml` | `16235 passed, 14 skipped in 539.32s (0:08:59)` |
+| Focused final Fleet/CI selection | `238 passed in 33.66s` |
+| `uv run --no-sync python -m pytest tests/test_documentation.py -q` | `7 passed in 1.11s` |
+| Focused Ruff check | `All checks passed!` |
+| Focused Ruff format check | `7 files already formatted` |
+| `git diff --check` | Exit 0, no output |
+
+The 14 skips match the earlier inspected Linux platform/capability inventory; no Node or settings-codec availability skip was introduced. This final run supersedes the pre-polish full-suite result for branch-completion status while retaining the earlier timing as historical tranche evidence.
+
 ## Hosted Windows evidence
 
 Hosted Windows evidence unavailable; workflow and sharding planning remain unauthorized.
@@ -278,6 +294,6 @@ No branch publication, pull request, workflow dispatch, run lookup, artifact dow
 ### Concerns
 
 - Hosted Windows evidence is unavailable, so no Windows runtime, five-minute required-path, ten-minute complete-suite, workflow, or sharding claim is authorized.
-- The fresh Linux full suite took 517.37 seconds wall time and had several non-target files above the design's 20-second diagnostic threshold; those are inputs to a separate measured hotspot plan, not scope for this tranche.
+- The pre-polish Linux full suite took 517.37 seconds and the final polished suite took 539.32 seconds wall time; runner variation was not investigated, and several non-target files remain above the design's 20-second diagnostic threshold. Those are inputs to a separate measured hotspot plan, not scope for this tranche.
 - Three single-check mutation probes were non-killing because independent later checks enforce the same authority boundary. The plan ledger explicitly ruled them redundant/non-applicable; compound mutations were intentionally not forced.
 - The branch contains unrelated work before tranche base `5a1b800b`; complete-suite deltas against the reference run are therefore not attributed solely to this tranche.
