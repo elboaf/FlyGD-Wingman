@@ -95,6 +95,25 @@ _VM_INTRINSIC_MUTATION = r"""
   }
   if (!errorRealm) throw new Error('TextEncoder Symbol did not fail');
   errorRealm.__wingmanCurrentHostRealmProbe = 'mutated';
+  if (!Object.prototype.hasOwnProperty.call(
+      globalThis, '__wingmanCurrentIntervalMutationRan')) {
+    globalThis.__wingmanCurrentIntervalMutationRan = true;
+    const marker = '__wingmanCurrentIntervalTokenProbe';
+    const intervalId = setInterval(() => {}, 60000);
+    try {
+      if (Number.isInteger(intervalId) && intervalId !== 1) {
+        throw new Error('first request interval ID was not request-local');
+      }
+      const wrapper = Object(intervalId);
+      wrapper[marker] = 'wrapper';
+      for (let target = Object.getPrototypeOf(wrapper); target;
+          target = Object.getPrototypeOf(target)) {
+        target[marker] = 'prototype';
+      }
+    } finally {
+      clearInterval(intervalId);
+    }
+  }
 })()
 """
 
@@ -119,6 +138,32 @@ _VM_INTRINSIC_PRISTINE = r"""
   if ('__wingmanTextEncoderAdapter' in globalThis ||
       '__wingmanURLSearchParamsAdapter' in globalThis) {
     throw new Error('host adapter remained globally reachable');
+  }
+  if (!Object.prototype.hasOwnProperty.call(
+      globalThis, '__wingmanCurrentIntervalPristineRan')) {
+    globalThis.__wingmanCurrentIntervalPristineRan = true;
+    const marker = '__wingmanCurrentIntervalTokenProbe';
+    const firstIntervalId = setInterval(() => {}, 60000);
+    const secondIntervalId = setInterval(() => {}, 60000);
+    try {
+      const wrapper = Object(firstIntervalId);
+      for (let target = wrapper; target; target = Object.getPrototypeOf(target)) {
+        if (Object.prototype.hasOwnProperty.call(target, marker)) {
+          throw new Error('interval token prototype leaked between requests');
+        }
+      }
+      if (!Number.isInteger(firstIntervalId) ||
+          !Number.isInteger(secondIntervalId)) {
+        throw new Error('interval ID exposed a host object');
+      }
+      if (firstIntervalId !== 1 || secondIntervalId !== 2) {
+        throw new Error('interval IDs were not numeric and request-local');
+      }
+      wrapper[marker] = 'pristine-wrapper';
+    } finally {
+      clearInterval(firstIntervalId);
+      clearInterval(secondIntervalId);
+    }
   }
   let adapterError;
   let errorRealm;

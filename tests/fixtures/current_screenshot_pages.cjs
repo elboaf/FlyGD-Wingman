@@ -34,8 +34,9 @@ async function runScenario(request, cleanupProbe = null) {
   };
   const console = requestConsole;
   const timers = new Map();
-  const intervals = new Set();
+  const intervals = new Map();
   let nextTimer = 1;
+  let nextInterval = 1;
   const requestSetTimeout = (callback, delay, ...args) => {
     const token = nextTimer++;
     const handle = setTimeout(() => {
@@ -51,13 +52,15 @@ async function runScenario(request, cleanupProbe = null) {
     timers.delete(token);
   };
   const requestSetInterval = (callback, delay, ...args) => {
+    const token = nextInterval++;
     const handle = setInterval(callback, delay, ...args);
-    intervals.add(handle);
-    return handle;
+    intervals.set(token, handle);
+    return token;
   };
-  const requestClearInterval = handle => {
-    intervals.delete(handle);
-    clearInterval(handle);
+  const requestClearInterval = token => {
+    const handle = intervals.get(token);
+    if (handle !== undefined) clearInterval(handle);
+    intervals.delete(token);
   };
   const unhandledRejections = [];
   const captureRejection = reason => unhandledRejections.push(reason);
@@ -339,7 +342,8 @@ async function runScenario(request, cleanupProbe = null) {
         cleanupProbe.events.push('active-interval');
         requestClearInterval(activeInterval);
       }, 0);
-      cleanupProbe.intervalHandles = [activeInterval];
+      const activeNativeInterval = intervals.get(activeInterval);
+      cleanupProbe.cancelNativeIntervals = () => clearInterval(activeNativeInterval);
       await new Promise(resolve => setTimeout(() => {
         cleanupProbe.events.push('active-control');
         resolve();
@@ -352,7 +356,11 @@ async function runScenario(request, cleanupProbe = null) {
       requestSetTimeout(() => cleanupProbe.events.push('leaked-timeout'), 0);
       const pendingInterval = requestSetInterval(
         () => cleanupProbe.events.push('leaked-interval'), 0);
-      cleanupProbe.intervalHandles.push(pendingInterval);
+      const pendingNativeInterval = intervals.get(pendingInterval);
+      cleanupProbe.cancelNativeIntervals = () => {
+        clearInterval(activeNativeInterval);
+        clearInterval(pendingNativeInterval);
+      };
       cleanupProbe.pendingTimers = timers.size;
       cleanupProbe.pendingIntervals = intervals.size;
       cleanupProbe.timers = timers;
@@ -1145,7 +1153,7 @@ async function executeScenario() {
   } finally {
     process.removeListener('unhandledRejection', captureRejection);
     for (const handle of timers.values()) clearTimeout(handle);
-    for (const handle of intervals) clearInterval(handle);
+    for (const handle of intervals.values()) clearInterval(handle);
     timers.clear();
     intervals.clear();
   }
@@ -1178,7 +1186,7 @@ async function runCleanupProbe(request) {
     if (failure) throw failure;
     return output;
   } finally {
-    for (const handle of probe.intervalHandles || []) clearInterval(handle);
+    if (probe.cancelNativeIntervals) probe.cancelNativeIntervals();
   }
 }
 
