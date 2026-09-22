@@ -21,7 +21,7 @@ const startupData = freezeJson(JSON.parse(fs.readFileSync(startupPath, 'utf8')))
 const startupPage = workerMode ? startupData : startupData.page;
 const web = workerMode ? process.argv[4] : process.argv[3];
 
-async function runScenario(request) {
+async function runScenario(request, cleanupProbe = null) {
   const data = {page: startupPage, ...(request.payload || {})};
   const outputLines = [];
   const requestConsole = {
@@ -51,10 +51,12 @@ async function runScenario(request) {
   try {
     const {document, Element, scrolls} = createDOM(data.page);
     for (const [id, text] of Object.entries(data.texts || {})) document.getElementById(id).textContent = text;
+    const RequestTextEncoder = class TextEncoder extends globalThis.TextEncoder {};
+    const RequestURLSearchParams = class URLSearchParams extends globalThis.URLSearchParams {};
     const window = new Element('window');
     Object.assign(window, {document, console: requestConsole,
       navigator: {clipboard: {readText: () => assert.fail('clipboard read'), writeText: () => assert.fail('clipboard write')}},
-      Promise, Math, Date, TextEncoder, URLSearchParams,
+      TextEncoder: RequestTextEncoder, URLSearchParams: RequestURLSearchParams,
       Event: class { constructor(type) { this.type = type; } },
       CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } },
       setTimeout: requestSetTimeout, clearTimeout: requestClearTimeout,
@@ -63,6 +65,7 @@ async function runScenario(request) {
     window.window = window;
     const runtime = vm.createContext(window);
     const run = expression => vm.runInContext(expression, runtime);
+    Object.assign(window, run('({Promise, Math, Date})'));
     const protocolProbe = request.payload?.protocol_probe;
     if (protocolProbe === 'vm-throw') {
       run(`(() => { function protocolVmThrow() { throw new Error('protocol VM throw'); }
@@ -74,7 +77,10 @@ async function runScenario(request) {
         protocolVmReject(); })()`);
     }
     if (protocolProbe?.startsWith('pending-timer-')) {
-      requestSetTimeout(() => outputLines.push('leaked timer'), 0);
+      assert.ok(cleanupProbe, 'pending timer protocol requires a cleanup probe');
+      requestSetTimeout(() => cleanupProbe.events.push('leaked'), 0);
+      cleanupProbe.pendingTimers = timers.size;
+      cleanupProbe.timers = timers;
       if (protocolProbe === 'pending-timer-assertion-exit') {
         throw new Error('protocol cleanup probe failure');
       }
@@ -985,6 +991,28 @@ async function executeScenario() {
   }
 }
 
+async function runCleanupProbe(request) {
+  const probe = {events: []};
+  let output, failure;
+  try {
+    output = await runScenario(request, probe);
+  } catch (error) {
+    failure = error;
+  }
+  if (failure && !probe.timers) throw failure;
+  assert.equal(probe.pendingTimers, 1, 'cleanup must start with one pending tracked timer');
+  await new Promise(resolve => setTimeout(() => {
+    probe.events.push('control');
+    resolve();
+  }, 0));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(probe.events, ['control'],
+    'request timer callback must be cancelled before reply');
+  assert.equal(probe.timers.size, 0, 'request timer tracking must be cleared');
+  if (failure) throw failure;
+  return output;
+}
+
 function failureFields(error) {
   return {
     ok: false,
@@ -998,7 +1026,8 @@ async function serveRequest(request) {
   const listenerBaseline = process.listeners('unhandledRejection');
   let fields;
   try {
-    const output = await runScenario(request);
+    const cleanupProbe = request.payload?.protocol_probe?.startsWith('pending-timer-');
+    const output = await (cleanupProbe ? runCleanupProbe(request) : runScenario(request));
     fields = {ok: true, output, error: '', stack: ''};
   } catch (error) {
     fields = failureFields(error);

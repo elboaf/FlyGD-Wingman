@@ -229,8 +229,47 @@ def gap_capture_worker(gap_capture_markup: Path):
 
 
 def test_gap_capture_worker_reuses_process_and_preserves_business_outcomes(
-    gap_capture_worker: NodeScenarioWorker,
+    gap_capture_worker: NodeScenarioWorker, monkeypatch: pytest.MonkeyPatch
 ):
+    original_setup = shoot.screen_setup_script
+    setup_count = 0
+    mutation = """
+(() => {
+  const marker = '__wingmanScreenshotRequestProbe';
+  for (const intrinsic of [Promise, Math, Date, TextEncoder, URLSearchParams]) {
+    intrinsic[marker] = 'mutated';
+    if (intrinsic.prototype) intrinsic.prototype[marker] = 'mutated';
+  }
+})()
+"""
+    pristine = """
+(() => {
+  const marker = '__wingmanScreenshotRequestProbe';
+  for (const [name, intrinsic] of Object.entries(
+    {Promise, Math, Date, TextEncoder, URLSearchParams}
+  )) {
+    const constructorChanged = Object.prototype.hasOwnProperty.call(
+      intrinsic, marker
+    );
+    const prototypeChanged = intrinsic.prototype &&
+      Object.prototype.hasOwnProperty.call(intrinsic.prototype, marker);
+    if (constructorChanged || prototypeChanged) {
+      throw new Error('request intrinsic leaked: ' + name);
+    }
+  }
+})()
+"""
+
+    def intrinsic_probe_setup(screen):
+        nonlocal setup_count
+        setup_count += 1
+        setup = original_setup(screen)
+        assert setup
+        if setup_count == 1:
+            return setup + ";" + mutation
+        return pristine + ";" + setup
+
+    monkeypatch.setattr(shoot, "screen_setup_script", intrinsic_probe_setup)
     first = _request_gap_capture(
         gap_capture_worker, "settings-wanderer-controls-narrow", "settled"
     )
@@ -311,10 +350,14 @@ def test_gap_capture_worker_cancels_pending_timer(
         gap_capture_worker.request(
             f"protocol/{mode}", {"protocol_probe": mode}, timeout=20.0
         )
-    if mode == "pending-timer-normal-exit":
-        assert "live timer" in str(failure.value).lower()
-    else:
-        assert "protocol cleanup probe failure" in str(failure.value)
+    expected_error = (
+        "request left a live timer"
+        if mode == "pending-timer-normal-exit"
+        else "protocol cleanup probe failure"
+    )
+    assert failure.value.reply is not None
+    assert str(failure.value.reply["error"]).splitlines()[0] == expected_error
+    assert expected_error in failure.value.stack
     recovered = _request_gap_capture(
         gap_capture_worker, "settings-wanderer-controls-narrow", "settled"
     )
