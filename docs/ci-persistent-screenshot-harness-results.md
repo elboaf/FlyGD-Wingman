@@ -1005,5 +1005,169 @@ The executable commit changes only three already-allowed test paths:
 `tests/fixtures/fittings_page.cjs`, and `tests/test_fittings_page.py`. No
 production, workflow, dependency, packaging, configuration, screenshot key,
 generated expression, PASS label, Node-absence behavior, or persistent-worker
-ownership changed. Hosted comparison remains **PENDING**, and Plan B remains
-unauthorized.
+ownership changed. Hosted comparison remained **PENDING** at that implementation
+evidence checkpoint.
+
+## Task 6 hosted evidence and final stop/go
+
+This section supersedes the earlier checkpoint-specific hosted-pending statements.
+The final decision is **GO for the separate screenshot matrix-consolidation Plan B
+only**. Workflow selection, budget enforcement, sharding, and any claim of an
+overall end-to-end runtime improvement remain **STOPPED**.
+
+### Published identity and required checks
+
+| Item | Final evidence |
+|---|---|
+| PR | [#280](https://github.com/elboaf/FlyGD-Wingman/pull/280), `Reuse Node workers for screenshot test harnesses` |
+| Hosted run | [`35767700980`](https://github.com/elboaf/FlyGD-Wingman/actions/runs/35767700980), final conclusion `success` |
+| Tested head | `18f85d2d4a53423544c157af70aa29a310de8924` |
+| Checks | successful; original job `106881304100`, retained through reruns |
+| Windows | successful original job [`106881304254`](https://github.com/elboaf/FlyGD-Wingman/actions/runs/35767700980/job/106881304254); the successful result was retained through the Ubuntu-only reruns |
+| Final Ubuntu | successful third-attempt job [`106891265191`](https://github.com/elboaf/FlyGD-Wingman/actions/runs/35767700980/job/106891265191) |
+
+Before this hosted-evidence documentation change, branch `HEAD` was exactly the
+tested head `18f85d2d`; `git diff 18f85d2d..HEAD` was empty. This evidence update
+changes documentation only. There is no executable commit after the hosted head.
+
+The compared artifacts are:
+
+```text
+/tmp/wingman-pr277-windows/pytest-result.xml
+/tmp/wingman-pr277-windows/pytest-timing.json
+/tmp/wingman-pr277-ubuntu/pytest-result.xml
+/tmp/wingman-pr277-ubuntu/pytest-timing.json
+/tmp/wingman-pr280-final-windows/pytest-result.xml
+/tmp/wingman-pr280-final-windows/pytest-timing.json
+/tmp/wingman-pr280-final-ubuntu/pytest-result.xml
+/tmp/wingman-pr280-final-ubuntu/pytest-timing.json
+```
+
+All final required checks pass: checks, Windows pytest/Cargo, final Ubuntu
+pytest/Cargo, and their artifact uploads. The final JUnits contain zero failures
+or errors. Windows retains 67 expected skips; Ubuntu retains 14 expected
+platform skips.
+
+### Exact hosted identity proof
+
+Artifact normalization proves the same transformation already frozen locally:
+
+```text
+PR #277 target IDs: 572
+PR #280 target IDs: 597
+removed: 1 aggregate Fittings ID
+added: 11 independently reported forms of the same Fittings scenarios
+added: 15 protocol/isolation IDs
+all other baseline target IDs retained: yes
+Windows and Ubuntu final target ID sets equal: yes
+```
+
+Final hosted per-file counts are exactly `246 / 90 / 160 / 101`. Thus the
+screenshot business matrix is preserved, except for the authorized one-to-eleven
+Fittings reporting split, and all worker reuse/isolation probes pass on both
+platforms. The Fittings file's `87 -> 101` change is fourteen net identities:
+ten net from replacing one aggregate with eleven scenario IDs, plus four worker
+protocol/isolation IDs.
+
+### Hosted testcase-time comparison
+
+JUnit testcase sums are additive diagnostic evidence, not wall-clock or critical-
+path measurements.
+
+| Platform | Scope | PR #277 | PR #280 final | Change |
+|---|---|---:|---:|---:|
+| Windows | all JUnit cases | 724.378s / 16,672 | 834.507s / 16,700 | +110.129s / +28 cases |
+| Windows | four target files | 114.305s / 572 | 80.029s / 597 | **-34.276s (-30.0%)** |
+| Ubuntu | all JUnit cases | 338.004s / 16,672 | 344.815s / 16,700 | +6.811s / +28 cases |
+| Ubuntu | four target files | 82.344s / 572 | 74.147s / 597 | **-8.197s (-10.0%)** |
+
+Target-file detail:
+
+| Platform | File | PR #277 | PR #280 final | Change |
+|---|---|---:|---:|---:|
+| Windows | `test_shoot_screens.py` | 38.610s / 240 | 26.392s / 246 | -12.218s / +6 |
+| Windows | `test_new_screenshots.py` | 26.005s / 89 | 15.617s / 90 | -10.388s / +1 |
+| Windows | `test_current_screenshots.py` | 25.852s / 156 | 20.755s / 160 | -5.097s / +4 |
+| Windows | `test_fittings_page.py` | 23.838s / 87 | 17.265s / 101 | -6.573s / +14 |
+| Ubuntu | `test_shoot_screens.py` | 27.116s / 240 | 23.202s / 246 | -3.914s / +6 |
+| Ubuntu | `test_new_screenshots.py` | 19.714s / 89 | 15.979s / 90 | -3.735s / +1 |
+| Ubuntu | `test_current_screenshots.py` | 17.111s / 156 | 15.826s / 160 | -1.285s / +4 |
+| Ubuntu | `test_fittings_page.py` | 18.403s / 87 | 19.140s / 101 | +0.737s / +14 |
+
+Both platforms therefore show a lower four-file target sum despite the 25 net
+additional target identities. Ubuntu Fittings alone rises slightly while
+carrying fourteen net additional identities; the other seven platform/file
+comparisons decrease.
+
+### Wall-clock interpretation
+
+| Platform | PR #277 job / Test step | PR #280 final job / Test step |
+|---|---:|---:|
+| Windows | 13m48s / 12m41s | 16m51s / 14m28s |
+| Ubuntu | 6m29s / 6m07s | 6m46s / 6m18s |
+
+This movement is inconclusive runner variation, not evidence of an end-to-end
+speedup. Unchanged files rose materially in the same Windows artifact, including
+`test_fleetsharing_worker.py` (`18.211s -> 38.939s`),
+`test_fleetsharing_source_admission.py` (`18.164s -> 37.395s`), and
+`test_preview_savedlayouts_page.py` (`20.796s -> 32.350s`). The all-case Windows
+sum also rises by 110.129s while the target sum falls by 34.276s. No overall
+runtime, job-duration, required-critical-path, or runner-efficiency improvement
+is claimed.
+
+### Ubuntu rerun history
+
+The first Ubuntu attempt, job
+[`106881304343`](https://github.com/elboaf/FlyGD-Wingman/actions/runs/35767700980/job/106881304343),
+failed
+`test_preserved_real_thread_mailbox_publishes_latest_after_held_publication`.
+The second attempt, job
+[`106888497787`](https://github.com/elboaf/FlyGD-Wingman/actions/runs/35767700980/job/106888497787),
+failed a different test,
+`test_preserved_real_thread_submit_flood_cannot_shorten_publish_retry`.
+Both are real-thread Fleet tests in unmodified `tests/test_fleetsharing_worker.py`,
+outside this branch's changed-path scope. The first test passed ten of ten fresh
+local invocations. Those facts do not turn either failed attempt into passing
+evidence; the final decision relies on the third hosted Ubuntu attempt, where
+the complete suite and required checks passed.
+
+### Current Windows hotspot ranking
+
+The artifact's resource probe is reported separately from ordinary test
+hotspots. It is an intentional maximum-legal-response reader/codec measurement,
+not an ordinary unit-test optimization candidate:
+
+```text
+resource probe
+30.310s  tests.test_fleetsharing_transport_resources.
+         test_maximum_legal_response_actual_reader_and_codec_in_subprocess
+         traced peak: 282,144,272 bytes; 155,648 observations; 8,192 rows
+```
+
+The top ordinary Windows testcase hotspots in the final artifact are:
+
+```text
+20.530s  tests.test_fleetsharing_worker.
+         test_simultaneous_periodic_controls_completion_cadence_and_withdrawal
+16.572s  tests.test_fleetsharing_utf8.
+         test_upgrade_url_off_stop_and_sources_survive_restart
+10.230s  tests.test_fleetsharing_capacity.
+         test_full_memory_queue_preserves_existing_slot_and_refuses_unrelated_growth
+ 9.932s  tests.test_fleetsharing_capacity.
+         test_real_thread_preserves_inflight_start_and_queued_off_stop_through_io_failure[same-source]
+ 9.863s  tests.test_fleetsharing_reservation.
+         test_hot_api_submission_inside_pairing_save_preserves_reserved_batch
+ 9.644s  tests.test_fleetsharing_timing.
+         test_rolling_diagnostic_allows_legal_one_ms_per_second_drift_for_2101_prefixes
+```
+
+### Final decision boundary
+
+**GO — separate screenshot matrix-consolidation Plan B only.** The authorization
+rests on all final required checks passing after reruns, the exact business ID
+transformation matching the plan, persistent-worker isolation probes passing,
+and target-file testcase sums decreasing on both hosted platforms.
+
+**STOP — workflow selection, budget enforcement, sharding, and any overall
+runtime claim.** This tranche did not establish an end-to-end speedup, did not
+change workflows, and does not authorize those follow-ups.
