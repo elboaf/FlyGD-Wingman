@@ -30,6 +30,8 @@ async function scenarioProgram() {
   const scenario = globalThis.__wingmanScenario;
   const fittingsScript = globalThis.__wingmanFittingsSource;
   const panelScript = globalThis.__wingmanPanelSource;
+  const scheduleTimer = globalThis.__wingmanTimerScheduleAdapter;
+  const clearTimer = globalThis.__wingmanTimerClearAdapter;
   const encode = globalThis.__wingmanTextEncoderAdapter;
   const searchParams = globalThis.__wingmanURLSearchParamsAdapter;
   const reportProtocolEvent = globalThis.__wingmanProtocolEvent;
@@ -39,6 +41,8 @@ async function scenarioProgram() {
   delete globalThis.__wingmanScenario;
   delete globalThis.__wingmanFittingsSource;
   delete globalThis.__wingmanPanelSource;
+  delete globalThis.__wingmanTimerScheduleAdapter;
+  delete globalThis.__wingmanTimerClearAdapter;
   delete globalThis.__wingmanTextEncoderAdapter;
   delete globalThis.__wingmanURLSearchParamsAdapter;
   delete globalThis.__wingmanProtocolEvent;
@@ -118,6 +122,46 @@ async function scenarioProgram() {
     }
     return response.value;
   }
+  function timerCallback(kind, callback, delay, args) {
+    if (typeof callback !== 'function') {
+      throw new TypeError(kind + ' callback must be a function');
+    }
+    const token = fromHost(scheduleTimer(kind, callback, Number(delay), args));
+    if (!Number.isInteger(token) || token < 1) {
+      throw new TypeError('Host timer adapter returned an invalid token');
+    }
+    return token;
+  }
+  function clearTimerToken(kind, token) {
+    fromHost(clearTimer(kind, token));
+  }
+  function setTimeout(callback, delay = 0, ...args) {
+    return timerCallback('timeout', callback, delay, args);
+  }
+  function clearTimeout(token) {
+    clearTimerToken('timeout', token);
+  }
+  function setImmediate(callback, ...args) {
+    return timerCallback('immediate', callback, 0, args);
+  }
+  function setInterval(callback, delay = 0, ...args) {
+    return timerCallback('interval', callback, delay, args);
+  }
+  function clearInterval(token) {
+    clearTimerToken('interval', token);
+  }
+  function requestAnimationFrame(callback) {
+    return setTimeout(callback, 0);
+  }
+  Object.assign(globalThis, {
+    setTimeout,
+    clearTimeout,
+    setImmediate,
+    setInterval,
+    clearInterval,
+    requestAnimationFrame,
+  });
+
   function encoderInput(value) {
     return typeof value === 'symbol' ? value : String(value);
   }
@@ -524,6 +568,7 @@ globalThis.window = {
   setImmediate,
   setInterval,
   clearInterval,
+  requestAnimationFrame,
   TextEncoder,
   URLSearchParams,
   Promise,
@@ -587,6 +632,26 @@ function mutateIsolation() {
   assert.ok(errorRealm, 'TextEncoder Symbol did not fail');
   errorRealm.__wingmanFittingsHostRealmProbe = 'mutated';
   document.__wingmanFittingsDocumentProbe = 'mutated';
+  const timerCallableMarker = '__wingmanFittingsTimerCallableProbe';
+  for (const name of [
+    'setTimeout', 'clearTimeout', 'setImmediate', 'setInterval', 'clearInterval',
+    'requestAnimationFrame',
+  ]) {
+    assert.equal(window[name], globalThis[name],
+      name + ' differs between window and globalThis');
+    for (const callable of [globalThis[name], window[name]]) {
+      const callableRealm = callable.constructor('return globalThis')();
+      assert.equal(callableRealm, globalThis,
+        name + ' callable escaped the request VM');
+      assert.equal('process' in callableRealm, false,
+        name + ' callable exposed Node process');
+      callable[timerCallableMarker] = name;
+      for (let target = Object.getPrototypeOf(callable); target;
+          target = Object.getPrototypeOf(target)) {
+        target[timerCallableMarker] = name;
+      }
+    }
+  }
   const timeoutId = setTimeout(() => {}, 60000);
   const intervalId = setInterval(() => {}, 60000);
   try {
@@ -609,6 +674,20 @@ function mutateIsolation() {
     clearTimeout(timeoutId);
     clearInterval(intervalId);
   }
+  const timerExecution = {events: []};
+  const argument = {request_local: true};
+  setTimeout((value, label) => {
+    timerExecution.events.push(
+      value === argument && label === 'timeout-argument'
+        ? 'timeout-arguments' : 'wrong-timeout-arguments');
+  }, 0, argument, 'timeout-argument');
+  requestAnimationFrame((...args) => {
+    timerExecution.events.push(args.length === 0 ? 'frame' : 'wrong-frame-arguments');
+  });
+  const cancelledFrame = requestAnimationFrame(
+    () => timerExecution.events.push('cancelled-frame'));
+  clearTimeout(cancelledFrame);
+  return timerExecution;
 }
 
 function assertPristineIsolation() {
@@ -638,6 +717,32 @@ function assertPristineIsolation() {
   'request DOM leaked between requests');
   assert.equal(data.screenshot, null,
     'request screenshot payload leaked into an ordinary scenario');
+  for (const adapter of [
+    '__wingmanTimerScheduleAdapter', '__wingmanTimerClearAdapter',
+  ]) {
+    assert.equal(adapter in globalThis, false,
+      'timer host adapter remained globally reachable: ' + adapter);
+  }
+  const timerCallableMarker = '__wingmanFittingsTimerCallableProbe';
+  for (const name of [
+    'setTimeout', 'clearTimeout', 'setImmediate', 'setInterval', 'clearInterval',
+    'requestAnimationFrame',
+  ]) {
+    assert.equal(window[name], globalThis[name],
+      name + ' differs between window and globalThis');
+    for (const callable of [globalThis[name], window[name]]) {
+      const callableRealm = callable.constructor('return globalThis')();
+      assert.equal(callableRealm, globalThis,
+        name + ' callable escaped the request VM');
+      assert.equal('process' in callableRealm, false,
+        name + ' callable exposed Node process');
+      for (let target = callable; target; target = Object.getPrototypeOf(target)) {
+        if (Object.prototype.hasOwnProperty.call(target, timerCallableMarker)) {
+          throw new Error(name + ' callable prototype leaked between requests');
+        }
+      }
+    }
+  }
 
   const timerMarker = '__wingmanFittingsTimerTokenProbe';
   const timeoutIds = [setTimeout(() => {}, 60000), setTimeout(() => {}, 60000)];
@@ -733,7 +838,8 @@ function assertPristineIsolation() {
   assert.equal(visited.join('&'), 'a=3&b=two words&space=hello world');
 }
 
-if (data.isolation_probe === 'mutate') mutateIsolation();
+const timerExecution = data.isolation_probe === 'mutate'
+  ? mutateIsolation() : null;
 if (data.isolation_probe === 'pristine') assertPristineIsolation();
 if (!scenario.startsWith('interleaving-screenshot-')) {
   assert.equal(data.screenshot, null,
@@ -760,10 +866,12 @@ if (protocolProbe && protocolProbe.startsWith('pending-timer-')) {
     events.push(name);
     reportProtocolEvent(name);
   };
-  const activeInterval = setInterval(() => {
-    event('active-interval');
+  const intervalArgument = {request_local: true};
+  const activeInterval = setInterval(value => {
+    event(value === intervalArgument
+      ? 'active-interval' : 'wrong-interval-arguments');
     clearInterval(activeInterval);
-  }, 0);
+  }, 0, intervalArgument);
   await new Promise(resolve => setTimeout(() => {
     event('active-control');
     resolve();
@@ -1633,6 +1741,17 @@ await (async () => {
     }
   } else throw new Error('Unknown scenario: ' + scenario);
 })();
+if (timerExecution) {
+  await new Promise(resolve => setImmediate(value => {
+    timerExecution.events.push(
+      value === 'immediate-argument'
+        ? 'immediate-arguments' : 'wrong-immediate-arguments');
+    resolve();
+  }, 'immediate-argument'));
+  assert.deepEqual(timerExecution.events,
+    ['timeout-arguments', 'frame', 'immediate-arguments'],
+    'timer facades changed callback arguments, order, or cancellation');
+}
 const output = 'PASS ' + scenario;
 outputLines.push(output);
 assert.equal(outputLines.at(-1), output, 'request PASS line must be terminal');
@@ -1696,6 +1815,29 @@ async function runScenario(request, cleanupProbe = null) {
     if (handle !== undefined) clearInterval(handle);
     intervals.delete(token);
   };
+  const timerScheduleAdapter = (kind, callback, delay, args) =>
+    adapterEnvelope(() => {
+      hostAssert.equal(typeof callback, 'function',
+        'timer adapter callback must be callable');
+      hostAssert.equal(Array.isArray(args), true,
+        'timer adapter arguments must be an array');
+      if (kind === 'timeout') {
+        return requestSetTimeout(callback, delay, ...args);
+      }
+      if (kind === 'immediate') {
+        return requestSetImmediate(callback, ...args);
+      }
+      if (kind === 'interval') {
+        return requestSetInterval(callback, delay, ...args);
+      }
+      throw new Error('Unknown timer adapter operation: ' + kind);
+    });
+  const timerClearAdapter = (kind, token) => adapterEnvelope(() => {
+    if (kind === 'timeout') requestClearTimeout(token);
+    else if (kind === 'interval') requestClearInterval(token);
+    else throw new Error('Unknown timer clear adapter operation: ' + kind);
+    return null;
+  });
   const hostTextEncoder = new globalThis.TextEncoder();
   const textEncoderAdapter = (operation, input, capacity) => adapterEnvelope(() => {
     if (operation === 'encode') {
@@ -1750,14 +1892,11 @@ async function runScenario(request, cleanupProbe = null) {
     __wingmanScenario: request.scenario,
     __wingmanFittingsSource: fittingsSource,
     __wingmanPanelSource: panelSource,
+    __wingmanTimerScheduleAdapter: timerScheduleAdapter,
+    __wingmanTimerClearAdapter: timerClearAdapter,
     __wingmanTextEncoderAdapter: textEncoderAdapter,
     __wingmanURLSearchParamsAdapter: urlSearchParamsAdapter,
     __wingmanProtocolEvent: protocolEvent,
-    setTimeout: requestSetTimeout,
-    clearTimeout: requestClearTimeout,
-    setImmediate: requestSetImmediate,
-    setInterval: requestSetInterval,
-    clearInterval: requestClearInterval,
   });
   const unhandledRejections = vm.runInContext('[]', runtime);
   runtime.__wingmanUnhandledRejections = unhandledRejections;
