@@ -13,11 +13,32 @@ Task 0 records evidence only. It changes no production or test behavior and does
 | `git merge-base HEAD main` at collection | `c4a2b2060de8f8317e61a732708a9b5bd88beb98` |
 | Hosted comparator PR | [PR #277](https://github.com/elboaf/FlyGD-Wingman/pull/277) |
 | Hosted comparator run | [`35684157184`](https://github.com/elboaf/FlyGD-Wingman/actions/runs/35684157184) |
-| Hosted comparator checkout | `2ed88f372edba7f94cd815d484595960236b984b` |
+| Hosted comparator PR head | `2ed88f372edba7f94cd815d484595960236b984b` |
+| Hosted comparator Actions checkout | synthetic merge `94e0cd8f0fb84cb8dd4451ba84121674194c8787` (`Merge 2ed88f372edba7f94cd815d484595960236b984b into cfa1aca256c2aadf7082bbb5061275c749e345c6`) |
 | Windows comparator job | [`106607316881`](https://github.com/elboaf/FlyGD-Wingman/actions/runs/35684157184/job/106607316881), successful |
 | Ubuntu job recorded with the run | [`106607316829`](https://github.com/elboaf/FlyGD-Wingman/actions/runs/35684157184/job/106607316829), successful |
 
-The artifact executed PR head `2ed88f372edba7f94cd815d484595960236b984b`; it did **not** execute the later squash merge `c4a2b2060de8f8317e61a732708a9b5bd88beb98`. The four target test files are unchanged from `c4a2b206` to the Task 0 start, and the artifact checkout and `c4a2b206` share all 572 normalized target node IDs. The comparator is accepted because that node set is byte-for-byte identical, not because the two SHAs are treated as interchangeable.
+The Actions checkout log shows that all three jobs fetched and checked out synthetic merge `94e0cd8f0fb84cb8dd4451ba84121674194c8787`, not the PR head directly and not the later squash merge `c4a2b2060de8f8317e61a732708a9b5bd88beb98`. The log records `HEAD is now at 94e0cd8 Merge 2ed88f37... into cfa1aca2...` for checks, Ubuntu, and Windows.
+
+Reconstructing that checkout with:
+
+```bash
+git merge-tree --write-tree cfa1aca2 2ed88f37
+# eb93f6f02270af7a49251f2998e8ef047b374002
+```
+
+produces exactly the tree recorded by GitHub's commit API for `94e0cd8`. The six workload-defining blobs below are byte-identical between that reconstructed synthetic merge and squash `c4a2b206`:
+
+| Path | Synthetic-merge blob | `c4a2b206` blob |
+|---|---|---|
+| `tests/test_shoot_screens.py` | `8ac28c6911c0474624b15be4def2d647b326fd88` | `8ac28c6911c0474624b15be4def2d647b326fd88` |
+| `tests/test_new_screenshots.py` | `dc6ac94873923b0a7f53d6ffa1047fab77c4fd7d` | `dc6ac94873923b0a7f53d6ffa1047fab77c4fd7d` |
+| `tests/test_current_screenshots.py` | `62db1fa43386c615c312b8bfd78015424cb76c77` | `62db1fa43386c615c312b8bfd78015424cb76c77` |
+| `tests/test_fittings_page.py` | `e7e87cd4b4474495140154db01a1254e24fb7d2c` | `e7e87cd4b4474495140154db01a1254e24fb7d2c` |
+| `tests/fixtures/screenshot_pages.cjs` | `ef60e44b95e4f11ec75ff769fe1d1b2c2bb3747c` | `ef60e44b95e4f11ec75ff769fe1d1b2c2bb3747c` |
+| `tests/fixtures/current_screenshot_pages.cjs` | `910acc4f211dd0e6c8a54b05ebec0a5ac7cec0b4` | `910acc4f211dd0e6c8a54b05ebec0a5ac7cec0b4` |
+
+The shared normalized 572-node set remains supporting evidence. Exact blob equality is the primary proof that the hosted comparator measured the same four target tests and both pre-worker screenshot fixtures; the SHAs themselves are not treated as interchangeable.
 
 ### Exact 572-node inventory
 
@@ -127,7 +148,7 @@ The persistent-worker scope therefore migrates 314 current Node child launches. 
 
 ### Allowed changed paths
 
-Task 6 must compare the completed tranche against this exact allowlist:
+Final scope compares the completed tranche against this exact 15-path allowlist. The final polish explicitly justifies the added shared DOM factory and worker lifecycle source/tests; it does not authorize any production, workflow, or configuration path.
 
 ```text
 docs/ci-persistent-screenshot-harness-results.md
@@ -137,10 +158,13 @@ tests/fittings_scenario_worker.py
 tests/fixtures/current_screenshot_pages.cjs
 tests/fixtures/fittings_page.cjs
 tests/fixtures/persistent_screenshot_harness_base_nodes.txt
+tests/fixtures/screenshot_dom.cjs
 tests/fixtures/screenshot_pages.cjs
+tests/node_scenario_worker.py
 tests/test_current_screenshots.py
 tests/test_fittings_page.py
 tests/test_new_screenshots.py
+tests/test_node_scenario_worker.py
 tests/test_shoot_screens.py
 ```
 
@@ -474,24 +498,74 @@ git diff --check
   no output, exit 0
 ```
 
+### Final polish fix wave
+
+The final polish implementation is commit `02556db14ea7991a5ac4e5c0ec426f4d6ab4c98a` (`test: seal screenshot DOM worker lifecycle`). It fixes two shared isolation/lifecycle defects without adding a screenshot/current protocol identity:
+
+- `screenshot_dom.cjs` now exports both its existing CommonJS `createDOM` and one closure-free `DOM_FACTORY_SOURCE`. `screenshot_pages.cjs` and `current_screenshot_pages.cjs` retain only startup JSON text in the host, parse that text inside each request VM, evaluate the DOM factory there, and expose VM-owned document, `Element`, methods, arrays, style objects, and prototype/function chains before production or generated source runs. Host `assert`, host error instances, and host page objects do not enter the DOM construction path.
+- The existing generated/current worker identities now use `document.constructor.constructor('return globalThis')`, mutate document/`Element`/method/object prototype chains, and prove the following request is pristine and still in the request VM.
+- `NodeScenarioWorker` records its last successful scenario/request. A retained process that exits after an `ok` reply is now reported as `NodeScenarioCrash` on the next request instead of being silently restarted. `close()` uses a bounded 100ms close-only grace to catch an immediate late exit and reports status, last successful scenario/request, and stderr. Request-detected timeout/crash/protocol failures still discard state and permit the following request to restart.
+- The accepted minor request-console attachment enhancement was deliberately not implemented.
+
+TDD RED was observed before implementation:
+
+```text
+generated screenshot DOM escape
+  failed: DOM callable escaped the request VM: document
+
+current-owner DOM escape
+  failed: DOM callable escaped the request VM: document
+
+late exit after ok, next request
+  failed: DID NOT RAISE NodeScenarioCrash
+
+late exit after ok, close
+  failed: DID NOT RAISE NodeScenarioCrash
+```
+
+Fresh GREEN evidence after the compatibility correction:
+
+```text
+all worker protocol/isolation identities
+  15 passed, 582 deselected in 15.24s
+  JUnit: /tmp/wingman-final-polish-protocol.xml
+  SHA-256: aac2c57908550aea6dbdd38070c13a1d7834a053bd883bd38f57356a0ca622aa
+
+NodeScenarioWorker lifecycle/protocol suite
+  11 passed in 5.01s
+  JUnit: /tmp/wingman-final-polish-node-worker.xml
+  SHA-256: fc374625fedfba7a8957c263536736e0f4c3a58f7668af3f6ad99560a79d4146
+
+four target files
+  597 passed in 87.01s
+  597 cases, zero failures/errors/skips, testcase sum 78.917s
+  JUnit: /tmp/wingman-final-polish-focused.xml
+  SHA-256: 280753467712ab90a1c5e18d8583664be14b09468fb9cf72362f579c2e831132
+
+full suite
+  16,685 passed, 14 skipped in 628.81s (10m28s)
+  16,699 cases, zero failures/errors, testcase sum 580.109s
+  JUnit: /tmp/wingman-final-polish-full.xml
+  SHA-256: a5389c7c3104948db7d2c2059b12c5e980018202a373f7997de85ebc54a98eb4
+```
+
+The fourteen full-suite skips are the same platform-only Windows integration cases listed above; there are zero Node-availability or codec-availability skips. Node v26.5.0 and `codec.codec_available() == True` were verified before the run.
+
+Final target collection is still exactly **597 unique IDs**, with unchanged per-file counts `246 / 90 / 160 / 101` and the same reproducible filtered-node SHA-256 `4ff87df92ef58977cd8e5b99b85ca52dddd330f4fc86b037d5f6d209e99de6e7`. No screenshot/current protocol ID was added.
+
+Fresh independent gates also passed: 35 direct Node DOM tests, JS smoke, Cargo test, Ruff check, Ruff format check, Node syntax checks for all four worker/DOM fixtures, and `git diff --check`.
+
 ### Changed-path and cleanup proof
 
-The prohibited-scope command returned no output:
+The final prohibited-scope command returned no output:
 
 ```bash
 git diff --name-only \
-  c4a2b206..c311c81d77c82dc934af378e05d85f577710c605 -- \
+  c4a2b206..02556db14ea7991a5ac4e5c0ec426f4d6ab4c98a -- \
   wingman .github scripts packaging pyproject.toml uv.lock
 ```
 
-The pinned endpoint `c311c81d77c82dc934af378e05d85f577710c605` is the
-audited implementation plus initial-evidence endpoint. This follow-up correction
-changes only this results document and the ignored Task 6 report, so it is
-intentionally outside that range; recording its own final SHA here would make the
-audit self-referential.
-
-The complete changed-path set from `c4a2b206` through that pinned endpoint is
-exactly the twelve-path allowlist frozen in Task 0:
+The final implementation scope is pinned to `02556db14ea7991a5ac4e5c0ec426f4d6ab4c98a`. The documentation commit that records this endpoint changes only the already-allowed plan/results paths and is intentionally outside the pinned implementation range, avoiding a self-referential commit SHA. The complete changed-path set from `c4a2b206` through the pinned endpoint is exactly the final 15-path allowlist:
 
 ```text
 docs/ci-persistent-screenshot-harness-results.md
@@ -501,10 +575,13 @@ tests/fittings_scenario_worker.py
 tests/fixtures/current_screenshot_pages.cjs
 tests/fixtures/fittings_page.cjs
 tests/fixtures/persistent_screenshot_harness_base_nodes.txt
+tests/fixtures/screenshot_dom.cjs
 tests/fixtures/screenshot_pages.cjs
+tests/node_scenario_worker.py
 tests/test_current_screenshots.py
 tests/test_fittings_page.py
 tests/test_new_screenshots.py
+tests/test_node_scenario_worker.py
 tests/test_shoot_screens.py
 ```
 

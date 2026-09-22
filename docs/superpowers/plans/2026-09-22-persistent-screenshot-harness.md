@@ -14,7 +14,7 @@
 
 - Current authority is merged `main` at `c4a2b2060de8f8317e61a732708a9b5bd88beb98`; do not reuse the stale pre-merge PR worktree or its 777-node six-file inventory.
 - The exact four target files collect 572 identities at the base: `test_shoot_screens.py` 240, `test_new_screenshots.py` 89, `test_current_screenshots.py` 156, and `test_fittings_page.py` 87.
-- Preserve all 572 existing node IDs. Splitting the one aggregate Fittings state-machine node into eleven adds ten identities; fifteen explicitly named protocol/isolation tests bring the planned final four-file inventory to 597. Task 0 records the exact base ID set before source changes.
+- Preserve every base node ID except the one aggregate Fittings state-machine ID, which is intentionally replaced by its same eleven independently reportable scenario IDs. That split adds ten net identities; fifteen explicitly named protocol/isolation tests bring the planned final four-file inventory from 572 to 597. Task 0 records the exact base ID set before source changes.
 - Do not delete, pairwise-reduce, rename, or reparameterize existing screenshot business scenarios in this tranche. Matrix consolidation is a separate plan after hosted worker evidence.
 - Existing negative screenshot scenarios such as `missing`, `covered`, `hidden`, `invalid`, and geometry corruption are successful tests: they prove the verifier rejects bad state and must continue returning `ok: true` with their exact PASS label. Only explicit `protocol_probe` requests may intentionally return `ok: false`.
 - Do not change production files, workflow selectors, marker policy, branch protection, persisted data, screenshot keys, generated shooter expressions, packaging/configuration, or pywebview behavior.
@@ -35,10 +35,10 @@
 
 ## File Structure
 
-### Shared unchanged infrastructure
+### Shared infrastructure
 
-- `tests/node_scenario_worker.py` — existing process lifecycle, request correlation, timeout/crash handling, stderr tail, and stack-note rendering. Modify only if a failing general protocol test proves a defect shared by existing workers.
-- `tests/fixtures/screenshot_dom.cjs` — existing per-call DOM primitive. Preserve its fresh `Element` class, document, focus, listeners, and scroll ownership.
+- `tests/node_scenario_worker.py` — process lifecycle, request correlation, timeout/crash handling, stderr tail, and stack-note rendering. Modify only when a failing general protocol test proves a defect shared by existing workers; the final polish adds detection for a retained worker that exits after an `ok` reply.
+- `tests/fixtures/screenshot_dom.cjs` — per-call DOM primitive. Preserve its CommonJS `createDOM` export and direct Node behavior while also exposing one closure-free factory source that screenshot workers evaluate inside each request VM.
 
 ### Files changed by this plan
 
@@ -770,10 +770,13 @@ tests/fittings_scenario_worker.py
 tests/fixtures/current_screenshot_pages.cjs
 tests/fixtures/fittings_page.cjs
 tests/fixtures/persistent_screenshot_harness_base_nodes.txt
+tests/fixtures/screenshot_dom.cjs
 tests/fixtures/screenshot_pages.cjs
+tests/node_scenario_worker.py
 tests/test_current_screenshots.py
 tests/test_fittings_page.py
 tests/test_new_screenshots.py
+tests/test_node_scenario_worker.py
 tests/test_shoot_screens.py
 ```
 
