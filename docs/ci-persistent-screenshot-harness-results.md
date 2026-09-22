@@ -894,3 +894,116 @@ workflow, dependency, packaging-source, or configuration change.
 
 No branch was pushed and no workflow was dispatched. Hosted Windows/Ubuntu
 comparison remains **PENDING**, and Plan B remains unauthorized.
+
+## Final CodeRabbit completion-boundary hardening
+
+The final executable endpoint is commit
+`a59717fdfbed321446d686fd42a5696ed7979b03` (`test: isolate Fittings scenario
+completion`). The evidence commit that contains this section is intentionally
+outside the executable range.
+
+The remaining valid completion-boundary finding was reproducible. Fittings
+still used host-side `await vm.runInContext(asyncScenario())`; JavaScript
+therefore assimilated the VM-owned promise by calling its mutable `then` with
+native resolver callbacks. The existing Fittings VM-failure protocol identity
+was strengthened in place, without adding a pytest target ID. Its request VM
+mutates `Promise.prototype.then`, recognizes native resolver callbacks, records
+a host marker through the already-audited log adapter, and verifies both the
+current request and the following request remain pristine.
+
+RED was reproduced against parent commit
+`5751f46148ac40511fd1f7316cb2234c4c2ece8f` in a disposable source archive with
+only that strengthened probe applied:
+
+```text
+tests/test_fittings_page.py::test_fittings_worker_vm_failures_preserve_stack_and_recover
+FAILED: VM promise thenable was assimilated outside the request realm
+stack: protocolHostileThen -> scenarioProgram -> runScenario
+```
+
+The fix follows the screenshot/current completion-adapter pattern:
+
+- the host owns a completion promise and a one-shot adapter that accepts only a
+  primitive JSON string;
+- the adapter is injected only long enough for VM code to capture it, then its
+  global is deleted before the scenario runs;
+- `vm.runInContext` launches a detached async scenario and is asserted to return
+  `undefined`, so no VM promise or thenable reaches host request state;
+- the request VM catches scenario failures, safely reads/coerces and bounds the
+  failure, preserves the bounded request log buffer, and serializes one plain
+  result envelope;
+- the host bounds the envelope, output, error, stack, log count and log length
+  after JSON parsing, then retains the existing timer, interval, asynchronous
+  rejection, listener and final cleanup checks.
+
+The only other executable change removes the unused
+`probe.cancelNativeIntervals` cleanup branch from
+`current_screenshot_pages.cjs`. That worker never assigned the property; a
+post-change search of the file returns no reference. No indentation-only,
+`_gap_capture_texts`, or close-test review suggestions were applied.
+
+Fresh local evidence for executable commit `a59717fd`:
+
+```text
+NodeScenarioWorker lifecycle/protocol suite
+  12 passed in 4.71s
+  12 cases, zero failures/errors/skips
+  JUnit: /tmp/wingman-final-coderabbit-worker.xml
+  SHA-256: aa6f8c3bbfae56a444179a632c57bfd108fa477cf2ae8d41dbae4dc8ade836c2
+
+Fittings worker protocol identities
+  4 passed in 2.87s
+  4 cases, zero failures/errors/skips
+  JUnit: /tmp/wingman-final-coderabbit-fittings-protocol.xml
+  SHA-256: 09341efe4ecda9b2d541602bcf25b66337e7d91311d268902ec52a7473242fdb
+
+new-screenshot Fittings pending consumers
+  2 passed in 2.75s
+  2 cases, zero failures/errors/skips
+  JUnit: /tmp/wingman-final-coderabbit-pending-consumers.xml
+  SHA-256: 50b9af81956da2d7f2201def81039aad66bbb6a0d74abf76881a3d970d944279
+
+full Fittings file
+  101 passed in 14.24s
+  101 cases, zero failures/errors/skips
+  JUnit: /tmp/wingman-final-coderabbit-fittings-file.xml
+  SHA-256: 855ab9d494820761764f857ea3126bb58dae2121589ea50925469eda84a5866e
+
+all protocol/isolation identities
+  15 passed in 11.20s
+  15 cases, zero failures/errors/skips
+  JUnit: /tmp/wingman-final-coderabbit-protocol.xml
+  SHA-256: 21dbef979b1ececd79eee545c9b2d164882357e424cec7d91444fc9149be6f5e
+
+four target files
+  597 passed in 77.25s
+  597 cases, zero failures/errors/skips
+  JUnit: /tmp/wingman-final-coderabbit-target.xml
+  SHA-256: 47c9e769768f00b4e2b8146c6a5f9236e6acfd761a187528419ad3417e572354
+
+fresh full suite
+  16,686 passed, 14 skipped in 651.89s (10m51s)
+  16,700 cases, zero failures/errors, 14 platform-only skips
+  JUnit: /tmp/wingman-final-coderabbit-full.xml
+  SHA-256: 4c760eb19aa7c9831519b58da5d8e232cde2597208932be2e689b30609160655
+```
+
+The 14 skips are the existing Windows-only delete sharing, junction, DPAPI,
+Win32/window-station and pystray integration cases. There were no Node or
+settings-codec availability skips. Prerequisites were Node v26.5.0, Python
+3.11.15, Ruff 0.16.7 and `codec.codec_available() == True`.
+
+Collection remains exactly 597 unique IDs, with per-file counts
+`246 / 90 / 160 / 101` and forward-order SHA-256
+`4ff87df92ef58977cd8e5b99b85ca52dddd330f4fc86b037d5f6d209e99de6e7`.
+Node syntax passed for screenshot/current/Fittings/DOM fixtures; executable JS
+smoke passed every page module; repository-wide Ruff check and format check
+passed; and `git diff --check` returned no output.
+
+The executable commit changes only three already-allowed test paths:
+`tests/fixtures/current_screenshot_pages.cjs`,
+`tests/fixtures/fittings_page.cjs`, and `tests/test_fittings_page.py`. No
+production, workflow, dependency, packaging, configuration, screenshot key,
+generated expression, PASS label, Node-absence behavior, or persistent-worker
+ownership changed. Hosted comparison remains **PENDING**, and Plan B remains
+unauthorized.
