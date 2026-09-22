@@ -2,7 +2,7 @@
 
 import importlib.util
 import json
-import subprocess
+import shutil
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from tests.html_tree import PageTree
+from tests.node_scenario_worker import NodeScenarioWorker
 from tests.test_fittings_page import _run_fittings_node
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +29,58 @@ KEYS = {
 }
 
 
+@pytest.fixture(scope="session")
+def new_screenshot_markup(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    tree = PageTree()
+    tree.feed((ROOT / "wingman/web/index.html").read_text(encoding="utf-8"))
+    path = tmp_path_factory.mktemp("new-screenshot-worker") / "page.json"
+    path.write_text(json.dumps(tree.root, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+@pytest.fixture(scope="session")
+def new_screenshot_worker(new_screenshot_markup: Path):
+    node = shutil.which("node")
+    assert node is not None, "node is not installed"
+    worker = NodeScenarioWorker(
+        [
+            node,
+            str(ROOT / "tests/fixtures/screenshot_pages.cjs"),
+            "--worker",
+            str(new_screenshot_markup),
+            str(ROOT / "wingman/web"),
+        ],
+        cwd=ROOT,
+    )
+    try:
+        yield worker
+    finally:
+        worker.close()
+
+
+def test_new_screenshot_worker_reuses_process_and_preserves_negative_contracts(
+    new_screenshot_worker: NodeScenarioWorker,
+):
+    first = _request_screenshot_page(
+        new_screenshot_worker, "settings-previews-groups", "fidelity"
+    )
+    process = new_screenshot_worker._proc
+    negative = _request_screenshot_page(
+        new_screenshot_worker,
+        "settings-previews-groups",
+        {"geometry": "missing-summary"},
+    )
+    second = _request_screenshot_page(
+        new_screenshot_worker, "settings-previews-groups", "fidelity"
+    )
+    assert first["output"] == (
+        "PASS screenshot fidelity settings-previews-groups fidelity"
+    )
+    assert negative["output"] == "PASS screenshot Groups geometry missing-summary"
+    assert second["output"] == first["output"]
+    assert new_screenshot_worker._proc is process
+
+
 def test_new_capture_inventory():
     screens = {screen.key: screen for screen in shoot.SCREENS}
     assert screens.keys() >= KEYS
@@ -37,13 +90,14 @@ def test_new_capture_inventory():
     assert "uisetup" not in shoot.EXCLUDED_ROUTES
 
 
-def run_screenshot_page(tmp_path, key, regression=None):
+def _request_screenshot_page(
+    worker: NodeScenarioWorker,
+    key: str,
+    regression: object | None = None,
+) -> dict[str, object]:
     assert hasattr(shoot, "new_screen_prepare_script"), "new staging seam is missing"
     screen = next(screen for screen in shoot.SCREENS if screen.key == key)
-    tree = PageTree()
-    tree.feed((ROOT / "wingman/web/index.html").read_text(encoding="utf-8"))
-    data = {
-        "page": tree.root,
+    payload: dict[str, object] = {
         "key": key,
         "prepare": shoot.new_screen_prepare_script(screen),
         "stage": shoot.screen_setup_script(screen),
@@ -52,31 +106,17 @@ def run_screenshot_page(tmp_path, key, regression=None):
         "regression": regression,
     }
     if key.startswith("fittings-"):
-        data["fixture"] = shoot.fittings_fixture_setup_script()
-        data["reset"] = shoot._fittings_reset_script()
-        data["fittings_prepare"] = shoot._fittings_prepare_script(key)
-        data["previous_prepare"] = shoot._fittings_prepare_script("fittings-alliance")
-        data["previous_stage"] = shoot._fittings_setup_script("fittings-alliance")
+        payload["fixture"] = shoot.fittings_fixture_setup_script()
+        payload["reset"] = shoot._fittings_reset_script()
+        payload["fittings_prepare"] = shoot._fittings_prepare_script(key)
+        payload["previous_prepare"] = shoot._fittings_prepare_script(
+            "fittings-alliance"
+        )
+        payload["previous_stage"] = shoot._fittings_setup_script("fittings-alliance")
     elif regression and key == "settings-previews-crop-narrow":
-        data["crop_fixture"] = shoot.load_dev_tool_screenshot_fixture()["crop"]
-        data["crop_fixture"]["preview"] = shoot.load_dev_preview_fixture()
-    path = tmp_path / "capture.json"
-    path.write_text(json.dumps(data), encoding="utf-8")
-    result = subprocess.run(
-        [
-            "node",
-            str(ROOT / "tests/fixtures/screenshot_pages.cjs"),
-            str(path),
-            str(ROOT / "wingman/web"),
-        ],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        timeout=20,
-        check=False,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "PASS screenshot" in result.stdout
+        payload["crop_fixture"] = shoot.load_dev_tool_screenshot_fixture()["crop"]
+        payload["crop_fixture"]["preview"] = shoot.load_dev_preview_fixture()
+    return worker.request(f"{key}/{regression!r}", payload, timeout=20.0)
 
 
 @pytest.mark.parametrize(
@@ -100,8 +140,10 @@ def run_screenshot_page(tmp_path, key, regression=None):
         ],
     ],
 )
-def test_capture_fidelity_and_writer_free_exit(tmp_path, key, scenario):
-    run_screenshot_page(tmp_path, key, scenario)
+def test_capture_fidelity_and_writer_free_exit(
+    new_screenshot_worker: NodeScenarioWorker, key, scenario
+):
+    _request_screenshot_page(new_screenshot_worker, key, scenario)
 
 
 @pytest.mark.parametrize(
@@ -111,7 +153,9 @@ def test_capture_fidelity_and_writer_free_exit(tmp_path, key, scenario):
         pytest.param("fit-gen-0", id="unselected-name-collision"),
     ],
 )
-def test_limit_capture_uses_entry_identity(tmp_path, monkeypatch, renamed_id):
+def test_limit_capture_uses_entry_identity(
+    new_screenshot_worker: NodeScenarioWorker, monkeypatch, renamed_id
+):
     fixture = shoot.load_dev_fittings_screenshot_fixture()
     entries = {entry["id"]: entry for entry in fixture["entries"]}
     entries[renamed_id]["name"] = entries["fit-gen-1"]["name"]
@@ -121,7 +165,7 @@ def test_limit_capture_uses_entry_identity(tmp_path, monkeypatch, renamed_id):
     monkeypatch.setattr(
         shoot, "load_dev_fittings_screenshot_fixture", lambda: deepcopy(fixture)
     )
-    run_screenshot_page(tmp_path, "fittings-copy-limit", "fidelity")
+    _request_screenshot_page(new_screenshot_worker, "fittings-copy-limit", "fidelity")
 
 
 @pytest.mark.parametrize("stage", ["progress", "results"])
@@ -165,13 +209,21 @@ def test_fittings_capture_preserves_pending_confirmation(tmp_path, stage):
         "null-hit",
     ],
 )
-def test_groups_capture_rejects_clipped_or_occluded_controls(tmp_path, geometry):
-    run_screenshot_page(tmp_path, "settings-previews-groups", {"geometry": geometry})
+def test_groups_capture_rejects_clipped_or_occluded_controls(
+    new_screenshot_worker: NodeScenarioWorker, geometry
+):
+    _request_screenshot_page(
+        new_screenshot_worker,
+        "settings-previews-groups",
+        {"geometry": geometry},
+    )
 
 
 @pytest.mark.parametrize("key", sorted(KEYS))
-def test_new_capture_staging_executes_without_bridge_or_clipboard(tmp_path, key):
-    run_screenshot_page(tmp_path, key)
+def test_new_capture_staging_executes_without_bridge_or_clipboard(
+    new_screenshot_worker: NodeScenarioWorker, key
+):
+    _request_screenshot_page(new_screenshot_worker, key)
 
 
 @pytest.mark.parametrize(
@@ -192,8 +244,10 @@ def test_new_capture_staging_executes_without_bridge_or_clipboard(tmp_path, key)
         "late-cleanup",
     ],
 )
-def test_fittings_detail_capture_requires_settled_named_detail(tmp_path, scenario):
-    run_screenshot_page(tmp_path, "fittings-detail", scenario)
+def test_fittings_detail_capture_requires_settled_named_detail(
+    new_screenshot_worker: NodeScenarioWorker, scenario
+):
+    _request_screenshot_page(new_screenshot_worker, "fittings-detail", scenario)
 
 
 @pytest.mark.parametrize(
@@ -218,25 +272,35 @@ def test_fittings_detail_capture_requires_settled_named_detail(tmp_path, scenari
         "reentry",
     ],
 )
-def test_crop_screenshot_blocks_live_controls(tmp_path, control):
-    run_screenshot_page(tmp_path, "settings-previews-crop-narrow", {"control": control})
+def test_crop_screenshot_blocks_live_controls(
+    new_screenshot_worker: NodeScenarioWorker, control
+):
+    _request_screenshot_page(
+        new_screenshot_worker,
+        "settings-previews-crop-narrow",
+        {"control": control},
+    )
 
 
 @pytest.mark.parametrize(
     "control", ["bind", "size", "copy", "rename", "delete", "crop-remove"]
 )
-def test_crop_screenshot_blocks_dialog_started_live(tmp_path, control):
-    run_screenshot_page(
-        tmp_path,
+def test_crop_screenshot_blocks_dialog_started_live(
+    new_screenshot_worker: NodeScenarioWorker, control
+):
+    _request_screenshot_page(
+        new_screenshot_worker,
         "settings-previews-crop-narrow",
         {"control": control, "late": "dialog"},
     )
 
 
 @pytest.mark.parametrize("control", ["bind", "size"])
-def test_crop_screenshot_blocks_parser_started_live(tmp_path, control):
-    run_screenshot_page(
-        tmp_path,
+def test_crop_screenshot_blocks_parser_started_live(
+    new_screenshot_worker: NodeScenarioWorker, control
+):
+    _request_screenshot_page(
+        new_screenshot_worker,
         "settings-previews-crop-narrow",
         {"control": control, "late": "parser"},
     )
@@ -244,10 +308,12 @@ def test_crop_screenshot_blocks_parser_started_live(tmp_path, control):
 
 @pytest.mark.parametrize("operation", ["matching", "newer", "older"])
 def test_crop_screenshot_cleanup_settles_only_terminal_live_operation(
-    tmp_path, operation
+    new_screenshot_worker: NodeScenarioWorker, operation
 ):
-    run_screenshot_page(
-        tmp_path, "settings-previews-crop-narrow", {"operation": operation}
+    _request_screenshot_page(
+        new_screenshot_worker,
+        "settings-previews-crop-narrow",
+        {"operation": operation},
     )
 
 

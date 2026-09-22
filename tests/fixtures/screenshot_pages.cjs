@@ -15,11 +15,13 @@ function freezeJson(value) {
   return value;
 }
 
-const workerMode = process.argv[2] === '--worker';
-const startupPath = workerMode ? process.argv[3] : process.argv[2];
-const startupData = freezeJson(JSON.parse(fs.readFileSync(startupPath, 'utf8')));
-const startupPage = workerMode ? startupData : startupData.page;
-const web = workerMode ? process.argv[4] : process.argv[3];
+if (process.argv.length !== 5 || process.argv[2] !== '--worker') {
+  process.stderr.write('Usage: screenshot_pages.cjs --worker <markup-json> <web-root>\n');
+  process.exit(2);
+}
+const startupPath = process.argv[3];
+const startupPage = freezeJson(JSON.parse(fs.readFileSync(startupPath, 'utf8')));
+const web = process.argv[4];
 
 async function runScenario(request, cleanupProbe = null) {
   const data = {page: startupPage, ...(request.payload || {})};
@@ -1284,18 +1286,7 @@ async function serveWorker() {
   }
 }
 
-async function serveOneShot() {
-  const reply = await serveRequest({id: 0, scenario: 'one-shot', payload: startupData});
-  if (!reply.ok) {
-    process.stderr.write((reply.stack || reply.error) + '\n');
-    process.exitCode = 1;
-    return;
-  }
-  process.stdout.write(reply.output + '\n');
-}
-
-const serving = workerMode ? serveWorker() : serveOneShot();
-serving.catch(error => {
+serveWorker().catch(error => {
   process.stderr.write((isNativeError(error) ? String(error.stack || error.message) : String(error)) + '\n');
   process.exitCode = 1;
 });
