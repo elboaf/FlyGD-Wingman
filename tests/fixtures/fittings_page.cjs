@@ -1,16 +1,272 @@
 
-const assert = require('node:assert/strict');
+const hostAssert = require('node:assert/strict');
 const fs = require('node:fs');
+const readline = require('node:readline');
 const vm = require('node:vm');
-const data = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-const page = data.page;
-const scenario = process.argv[3];
-const stateMachineScenario = scenario.startsWith('state-');
-const interleavingScenario = scenario.startsWith('interleaving-');
-const unhandledRejections = [];
-if (scenario === 'state-stale-start-result') {
-  process.on('unhandledRejection', error => { unhandledRejections.push(error); });
+const {performance} = require('node:perf_hooks');
+const {isNativeError} = require('node:util/types');
+
+function freezeJson(value) {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  Object.freeze(value);
+  for (const child of Object.values(value)) freezeJson(child);
+  return value;
 }
+
+if (process.argv.length !== 5) {
+  process.stderr.write(
+    'Usage: fittings_page.cjs <markup-json> <fittings-js> <panel-js>\n');
+  process.exit(2);
+}
+const startupPage = freezeJson(
+  JSON.parse(fs.readFileSync(process.argv[2], 'utf8')));
+const startupPageJson = JSON.stringify(startupPage);
+const fittingsSource = fs.readFileSync(process.argv[3], 'utf8');
+const panelSource = fs.readFileSync(process.argv[4], 'utf8');
+
+async function scenarioProgram() {
+  const startupJson = globalThis.__wingmanStartupPageJson;
+  const payloadJson = globalThis.__wingmanPayloadJson;
+  const scenario = globalThis.__wingmanScenario;
+  const fittingsScript = globalThis.__wingmanFittingsSource;
+  const panelScript = globalThis.__wingmanPanelSource;
+  const encode = globalThis.__wingmanTextEncoderAdapter;
+  const searchParams = globalThis.__wingmanURLSearchParamsAdapter;
+  const reportProtocolEvent = globalThis.__wingmanProtocolEvent;
+  const unhandledRejections = globalThis.__wingmanUnhandledRejections;
+  delete globalThis.__wingmanStartupPageJson;
+  delete globalThis.__wingmanPayloadJson;
+  delete globalThis.__wingmanScenario;
+  delete globalThis.__wingmanFittingsSource;
+  delete globalThis.__wingmanPanelSource;
+  delete globalThis.__wingmanTextEncoderAdapter;
+  delete globalThis.__wingmanURLSearchParamsAdapter;
+  delete globalThis.__wingmanProtocolEvent;
+  delete globalThis.__wingmanUnhandledRejections;
+
+  class AssertionError extends Error {
+    constructor(message) {
+      super(message || 'Assertion failed');
+      this.name = 'AssertionError';
+    }
+  }
+  const render = value => {
+    try { return JSON.stringify(value); } catch { return String(value); }
+  };
+  const deeplyEqual = (actual, expected) => {
+    if (Object.is(actual, expected)) return true;
+    if (!actual || !expected || typeof actual !== 'object'
+        || typeof expected !== 'object') return false;
+    if (Array.isArray(actual) !== Array.isArray(expected)) return false;
+    const actualKeys = Object.keys(actual);
+    const expectedKeys = Object.keys(expected);
+    if (actualKeys.length !== expectedKeys.length) return false;
+    return actualKeys.every((key, index) => key === expectedKeys[index]
+      && deeplyEqual(actual[key], expected[key]));
+  };
+  const assert = {
+    ok(value, message) {
+      if (!value) throw new AssertionError(message || 'Expected value to be truthy');
+    },
+    equal(actual, expected, message) {
+      if (!Object.is(actual, expected)) {
+        throw new AssertionError(message
+          || `Expected ${render(actual)} to equal ${render(expected)}`);
+      }
+    },
+    notEqual(actual, expected, message) {
+      if (Object.is(actual, expected)) {
+        throw new AssertionError(message
+          || `Expected ${render(actual)} not to equal ${render(expected)}`);
+      }
+    },
+    deepEqual(actual, expected, message) {
+      if (!deeplyEqual(actual, expected)) {
+        throw new AssertionError(message
+          || `Expected ${render(actual)} to deep-equal ${render(expected)}`);
+      }
+    },
+    match(actual, pattern, message) {
+      if (!pattern.test(String(actual))) {
+        throw new AssertionError(message
+          || `Expected ${render(actual)} to match ${String(pattern)}`);
+      }
+    },
+    throws(callback, pattern, message) {
+      let thrown;
+      try { callback(); } catch (error) { thrown = error; }
+      if (!thrown) throw new AssertionError(message || 'Expected function to throw');
+      if (pattern && !pattern.test(String(thrown.message || thrown))) {
+        throw new AssertionError(message
+          || `Expected ${String(thrown.message || thrown)} to match ${String(pattern)}`);
+      }
+      return thrown;
+    },
+    fail(message) { throw new AssertionError(message); },
+  };
+
+  function fromHost(envelope) {
+    if (typeof envelope !== 'string') {
+      throw new TypeError('Host adapter returned a non-primitive envelope');
+    }
+    const response = JSON.parse(envelope);
+    if (!response || response.ok !== true) {
+      const errorTypes = {Error, EvalError, RangeError, ReferenceError,
+        SyntaxError, TypeError, URIError};
+      const ErrorType = errorTypes[response && response.errorName] || Error;
+      throw new ErrorType(response && response.errorMessage || 'Host adapter failed');
+    }
+    return response.value;
+  }
+  function encoderInput(value) {
+    return typeof value === 'symbol' ? value : String(value);
+  }
+  const encoders = new WeakSet();
+  function encoder(instance) {
+    if (!encoders.has(instance)) throw new TypeError('Illegal invocation');
+  }
+  class TextEncoder {
+    constructor() { encoders.add(this); }
+    get encoding() { encoder(this); return 'utf-8'; }
+    encode(input = '') {
+      encoder(this);
+      const encoded = fromHost(encode('encode', encoderInput(input), 0));
+      const result = new Uint8Array(encoded.bytes.length);
+      for (let index = 0; index < encoded.bytes.length; index++) {
+        result[index] = encoded.bytes[index];
+      }
+      return result;
+    }
+    encodeInto(input, destination) {
+      encoder(this);
+      if (!(destination instanceof Uint8Array)) {
+        throw new TypeError('The destination must be a Uint8Array');
+      }
+      const encoded = fromHost(encode(
+        'encodeInto', encoderInput(input), destination.length));
+      for (let index = 0; index < encoded.written; index++) {
+        destination[index] = encoded.bytes[index];
+      }
+      return {read: encoded.read, written: encoded.written};
+    }
+  }
+  Object.defineProperty(TextEncoder.prototype, Symbol.toStringTag,
+    {value: 'TextEncoder', configurable: true});
+
+  const parameterStates = new WeakMap();
+  function stateFor(instance) {
+    if (!parameterStates.has(instance)) throw new TypeError('Illegal invocation');
+    return parameterStates.get(instance);
+  }
+  function webString(value) {
+    if (typeof value === 'symbol') {
+      throw new TypeError('Cannot convert a Symbol value to a string');
+    }
+    return String(value);
+  }
+  function urlOperation(operation, serializedState, args) {
+    const response = fromHost(searchParams(
+      operation, serializedState, JSON.stringify(args)));
+    if (!response || typeof response.state !== 'string') {
+      throw new TypeError('Host URLSearchParams adapter returned invalid state');
+    }
+    return response;
+  }
+  function invoke(instance, operation, args) {
+    const response = urlOperation(operation, stateFor(instance), args);
+    parameterStates.set(instance, response.state);
+    return response.result;
+  }
+  class URLSearchParams {
+    constructor(init = '') {
+      let operation = 'construct-string';
+      let args;
+      if (init instanceof URLSearchParams) {
+        args = [stateFor(init)];
+      } else if (typeof init === 'string') {
+        args = [init];
+      } else if (init !== null && init !== undefined
+          && typeof init[Symbol.iterator] === 'function') {
+        operation = 'construct-entries';
+        const entries = [];
+        for (const pair of init) {
+          const values = Array.from(pair);
+          if (values.length !== 2) {
+            throw new TypeError(
+              'Each query pair must be an iterable [name, value] tuple');
+          }
+          entries.push([webString(values[0]), webString(values[1])]);
+        }
+        args = [entries];
+      } else if (init !== null && typeof init === 'object') {
+        operation = 'construct-entries';
+        const entries = [];
+        for (const name of Object.keys(init)) {
+          entries.push([webString(name), webString(init[name])]);
+        }
+        args = [entries];
+      } else {
+        args = [webString(init)];
+      }
+      const response = urlOperation(operation, '', args);
+      parameterStates.set(this, response.state);
+    }
+    get size() { return invoke(this, 'size', []); }
+    append(name, value) {
+      invoke(this, 'append', [webString(name), webString(value)]);
+    }
+    delete(name, value) {
+      const args = [webString(name)];
+      if (arguments.length > 1) args.push(webString(value));
+      invoke(this, 'delete', args);
+    }
+    get(name) { return invoke(this, 'get', [webString(name)]); }
+    getAll(name) { return invoke(this, 'getAll', [webString(name)]); }
+    has(name, value) {
+      const args = [webString(name)];
+      if (arguments.length > 1) args.push(webString(value));
+      return invoke(this, 'has', args);
+    }
+    set(name, value) {
+      invoke(this, 'set', [webString(name), webString(value)]);
+    }
+    sort() { invoke(this, 'sort', []); }
+    toString() { return invoke(this, 'toString', []); }
+    *entries() {
+      for (let index = 0; ; index++) {
+        const entries = invoke(this, 'entries', []);
+        if (index >= entries.length) return;
+        yield [entries[index][0], entries[index][1]];
+      }
+    }
+    *keys() { for (const entry of this.entries()) yield entry[0]; }
+    *values() { for (const entry of this.entries()) yield entry[1]; }
+    forEach(callback, thisArg = undefined) {
+      for (let index = 0; ; index++) {
+        const entries = invoke(this, 'entries', []);
+        if (index >= entries.length) return;
+        callback.call(thisArg, entries[index][1], entries[index][0], this);
+      }
+    }
+    [Symbol.iterator]() { return this.entries(); }
+  }
+  Object.defineProperty(URLSearchParams.prototype, Symbol.toStringTag,
+    {value: 'URLSearchParams', configurable: true});
+  globalThis.TextEncoder = TextEncoder;
+  globalThis.URLSearchParams = URLSearchParams;
+
+  const data = {page: JSON.parse(startupJson), ...(JSON.parse(payloadJson) || {})};
+  const page = data.page;
+  const stateMachineScenario = scenario.startsWith('state-');
+  const interleavingScenario = scenario.startsWith('interleaving-');
+  const outputLines = [];
+  globalThis.console = {
+    log: (...args) => outputLines.push(args.join(' ')),
+    info: (...args) => outputLines.push(args.join(' ')),
+    debug: (...args) => outputLines.push(args.join(' ')),
+    warn: (...args) => outputLines.push(args.join(' ')),
+    error: (...args) => { throw new Error(args.join(' ')); },
+  };
 
 // Only DOM mechanics live here. Fittings rendering, listeners, selection and
 // phase changes all run from the unmodified production module below.
@@ -132,12 +388,12 @@ function fromTree(tree) {
   return node;
 }
 const document = fromTree(page);
-global.document = document;
+globalThis.document = document;
 document.body = document.querySelector('body');
 document.activeElement = document.body;
 document.createElement = tag => new Element(tag);
 document.getElementById = id => document.querySelectorAll('[id]').find(x => x.id === id) || null;
-global.getComputedStyle = node => {
+const getComputedStyle = node => {
   let visibility = 'visible';
   for (let current = node; current; current = current.parentNode) {
     if (current.style.visibility) { visibility = current.style.visibility; break; }
@@ -258,13 +514,271 @@ const WM = {
   },
   confirm() { return Promise.resolve(true); }
 };
-global.window = {WM, getComputedStyle, addEventListener() {}};
-global.WM = WM;
-if (interleavingScenario || scenario === 'dialog-description') {
-  const panelPath = require('node:path').join(require('node:path').dirname(process.argv[4]), 'panel.js');
-  vm.runInThisContext(fs.readFileSync(panelPath, 'utf8'), {filename: 'panel.js'});
+globalThis.getComputedStyle = getComputedStyle;
+globalThis.window = {
+  WM,
+  getComputedStyle,
+  addEventListener() {},
+  setTimeout,
+  clearTimeout,
+  setImmediate,
+  setInterval,
+  clearInterval,
+  TextEncoder,
+  URLSearchParams,
+  Promise,
+  Math,
+  Date,
+};
+globalThis.window.window = globalThis.window;
+globalThis.WM = WM;
+
+function loadSource(source, filename) {
+  (0, eval)(source + '\n//# sourceURL=' + filename);
 }
-vm.runInThisContext(fs.readFileSync(process.argv[4], 'utf8'), {filename: 'fittings.js'});
+const loadOrder = [];
+if (scenario === 'dialog-description' || scenario.startsWith('interleaving-')) {
+  loadSource(panelScript, 'panel.js');
+  loadOrder.push('panel.js');
+}
+loadSource(fittingsScript, 'fittings.js');
+loadOrder.push('fittings.js');
+assert.deepEqual(loadOrder,
+  scenario === 'dialog-description' || scenario.startsWith('interleaving-')
+    ? ['panel.js', 'fittings.js'] : ['fittings.js'],
+  'production script load order changed');
+
+function mutateIsolation() {
+  const marker = '__wingmanFittingsRequestProbe';
+  for (const [name, intrinsic] of Object.entries(
+    {Promise, Math, Date, TextEncoder, URLSearchParams}
+  )) {
+    const targets = [
+      ['constructor', intrinsic],
+      ['prototype', intrinsic.prototype],
+      ['constructor-base', Object.getPrototypeOf(intrinsic)],
+      ['instance-base', intrinsic.prototype
+        && Object.getPrototypeOf(intrinsic.prototype)],
+    ];
+    for (const [level, target] of targets) {
+      if (target) target[marker] = name + '.' + level;
+    }
+  }
+  const returnedMarker = '__wingmanFittingsReturnedPrototypeProbe';
+  const params = new URLSearchParams('a=1&a=2');
+  const iterator = params.entries();
+  for (const value of [
+    new TextEncoder().encode('probe'),
+    params.getAll('a'),
+    iterator,
+    iterator.next().value,
+  ]) {
+    for (let target = Object.getPrototypeOf(value); target;
+        target = Object.getPrototypeOf(target)) {
+      target[returnedMarker] = 'mutated';
+    }
+  }
+  let errorRealm;
+  try {
+    new TextEncoder().encode(Symbol('host-realm-probe'));
+  } catch (error) {
+    errorRealm = error.constructor.constructor('return globalThis')();
+  }
+  assert.ok(errorRealm, 'TextEncoder Symbol did not fail');
+  errorRealm.__wingmanFittingsHostRealmProbe = 'mutated';
+  document.__wingmanFittingsDocumentProbe = 'mutated';
+  const timeoutId = setTimeout(() => {}, 60000);
+  const intervalId = setInterval(() => {}, 60000);
+  try {
+    assert.equal(Number.isInteger(timeoutId), true,
+      'timeout ID exposed a host object');
+    assert.equal(Number.isInteger(intervalId), true,
+      'interval ID exposed a host object');
+    assert.equal(timeoutId, 1, 'first timeout ID was not request-local');
+    assert.equal(intervalId, 1, 'first interval ID was not request-local');
+    const timerMarker = '__wingmanFittingsTimerTokenProbe';
+    for (const value of [timeoutId, intervalId]) {
+      const wrapper = Object(value);
+      wrapper[timerMarker] = 'wrapper';
+      for (let target = Object.getPrototypeOf(wrapper); target;
+          target = Object.getPrototypeOf(target)) {
+        target[timerMarker] = 'prototype';
+      }
+    }
+  } finally {
+    clearTimeout(timeoutId);
+    clearInterval(intervalId);
+  }
+}
+
+function assertPristineIsolation() {
+  const marker = '__wingmanFittingsRequestProbe';
+  for (const [name, intrinsic] of Object.entries(
+    {Promise, Math, Date, TextEncoder, URLSearchParams}
+  )) {
+    const targets = [
+      ['constructor', intrinsic],
+      ['prototype', intrinsic.prototype],
+      ['constructor-base', Object.getPrototypeOf(intrinsic)],
+      ['instance-base', intrinsic.prototype
+        && Object.getPrototypeOf(intrinsic.prototype)],
+    ];
+    for (const [level, target] of targets) {
+      if (target && Object.prototype.hasOwnProperty.call(target, marker)) {
+        throw new Error('request intrinsic leaked: ' + name + '.' + level);
+      }
+    }
+  }
+  assert.equal('__wingmanTextEncoderAdapter' in globalThis, false,
+    'TextEncoder host adapter remained globally reachable');
+  assert.equal('__wingmanURLSearchParamsAdapter' in globalThis, false,
+    'URLSearchParams host adapter remained globally reachable');
+  assert.equal(Object.prototype.hasOwnProperty.call(
+    document, '__wingmanFittingsDocumentProbe'), false,
+  'request DOM leaked between requests');
+  assert.equal(data.screenshot, null,
+    'request screenshot payload leaked into an ordinary scenario');
+
+  const timerMarker = '__wingmanFittingsTimerTokenProbe';
+  const timeoutIds = [setTimeout(() => {}, 60000), setTimeout(() => {}, 60000)];
+  const intervalIds = [setInterval(() => {}, 60000), setInterval(() => {}, 60000)];
+  try {
+    for (const value of [...timeoutIds, ...intervalIds]) {
+      const wrapper = Object(value);
+      for (let target = wrapper; target; target = Object.getPrototypeOf(target)) {
+        if (Object.prototype.hasOwnProperty.call(target, timerMarker)) {
+          throw new Error('timer token prototype leaked between requests');
+        }
+      }
+      assert.equal(Number.isInteger(value), true,
+        'timer ID exposed a host object');
+    }
+    assert.deepEqual(timeoutIds, [1, 2],
+      'timeout IDs were not numeric and request-local');
+    assert.deepEqual(intervalIds, [1, 2],
+      'interval IDs were not numeric and request-local');
+  } finally {
+    timeoutIds.forEach(clearTimeout);
+    intervalIds.forEach(clearInterval);
+  }
+
+  let adapterError;
+  let errorRealm;
+  try {
+    new TextEncoder().encode(Symbol('host-realm-probe'));
+  } catch (error) {
+    adapterError = error;
+    errorRealm = error.constructor.constructor('return globalThis')();
+  }
+  assert.ok(errorRealm, 'TextEncoder Symbol did not fail');
+  assert.equal(adapterError instanceof TypeError, true,
+    'TextEncoder host error was not reconstructed as TypeError');
+  assert.equal(Boolean(errorRealm.__wingmanFittingsHostRealmProbe), false,
+    'host realm marker leaked between requests');
+  assert.equal(errorRealm, globalThis,
+    'TextEncoder error escaped the request VM');
+
+  const returnedMarker = '__wingmanFittingsReturnedPrototypeProbe';
+  const isolationParams = new URLSearchParams('a=1&a=2');
+  const isolationIterator = isolationParams.entries();
+  const returned = [
+    new TextEncoder().encode('probe'),
+    isolationParams.getAll('a'),
+    isolationIterator,
+    isolationIterator.next().value,
+  ];
+  assert.equal(returned[0] instanceof Uint8Array, true,
+    'TextEncoder result was not VM-owned');
+  assert.equal(Array.isArray(returned[1]), true,
+    'URLSearchParams array was not VM-owned');
+  assert.equal(Array.isArray(returned[3]), true,
+    'URLSearchParams entry was not VM-owned');
+  assert.equal(isolationIterator[Symbol.iterator](), isolationIterator,
+    'URLSearchParams iterator was not VM-owned');
+  for (const value of returned) {
+    for (let target = Object.getPrototypeOf(value); target;
+        target = Object.getPrototypeOf(target)) {
+      if (Object.prototype.hasOwnProperty.call(target, returnedMarker)) {
+        throw new Error('returned value prototype leaked between requests');
+      }
+    }
+  }
+  const encoder = new TextEncoder();
+  assert.equal(encoder.encoding, 'utf-8');
+  assert.equal(Array.from(encoder.encode('Aé𐐀')).join(','),
+    '65,195,169,240,144,144,128');
+  const destination = new Uint8Array(2);
+  assert.deepEqual(encoder.encodeInto('éA', destination), {read: 1, written: 2});
+  assert.equal(Array.from(destination).join(','), '195,169');
+  const params = new URLSearchParams('?a=1&a=2&space=hello+world');
+  assert.equal(params.get('a'), '1');
+  assert.deepEqual(params.getAll('a'), ['1', '2']);
+  assert.equal(params.get('space'), 'hello world');
+  assert.equal(params.has('a', '2'), true);
+  params.delete('a', '1');
+  params.set('a', '3');
+  params.append('b', 'two words');
+  params.sort();
+  const serialized = 'a=3&b=two+words&space=hello+world';
+  assert.equal(params.size, 3);
+  assert.equal(params.toString(), serialized);
+  assert.equal(new URLSearchParams(params).toString(), serialized);
+  assert.deepEqual(Array.from(params.keys()), ['a', 'b', 'space']);
+  assert.deepEqual(Array.from(params.values()), ['3', 'two words', 'hello world']);
+  const visited = [];
+  params.forEach((value, name, owner) => {
+    assert.equal(owner, params, 'URLSearchParams owner changed');
+    visited.push(name + '=' + value);
+  });
+  assert.equal(visited.join('&'), 'a=3&b=two words&space=hello world');
+}
+
+if (data.isolation_probe === 'mutate') mutateIsolation();
+if (data.isolation_probe === 'pristine') assertPristineIsolation();
+if (!scenario.startsWith('interleaving-screenshot-')) {
+  assert.equal(data.screenshot, null,
+    'ordinary scenario received a screenshot payload');
+}
+
+const protocolProbe = data.protocol_probe;
+if (protocolProbe === 'vm-throw') {
+  function protocolVmThrow() { throw new Error('protocol VM throw'); }
+  protocolVmThrow();
+}
+if (protocolProbe === 'vm-reject') {
+  function protocolVmReject() {
+    Promise.reject(new Error('protocol VM rejection'));
+  }
+  protocolVmReject();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  if (unhandledRejections.length) throw unhandledRejections[0];
+  assert.fail('protocol VM rejection was not captured');
+}
+if (protocolProbe && protocolProbe.startsWith('pending-timer-')) {
+  const events = [];
+  const event = name => {
+    events.push(name);
+    reportProtocolEvent(name);
+  };
+  const activeInterval = setInterval(() => {
+    event('active-interval');
+    clearInterval(activeInterval);
+  }, 0);
+  await new Promise(resolve => setTimeout(() => {
+    event('active-control');
+    resolve();
+  }, 0));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(events, ['active-interval', 'active-control'],
+    'request interval must run before its same-delay control');
+  setTimeout(() => event('leaked-timeout'), 0);
+  setInterval(() => event('leaked-interval'), 0);
+  if (protocolProbe === 'pending-timer-assertion-exit') {
+    throw new Error('protocol cleanup probe failure');
+  }
+  throw new AssertionError('request left a live timer');
+}
+
 function key(name, shift = false, handled = false) {
   const event = {type: 'keydown', key: name, shiftKey: shift, defaultPrevented: handled,
     preventDefault() { this.defaultPrevented = true; }};
@@ -778,7 +1292,7 @@ async function runInterleavingScenario() {
     assert.equal(document.activeElement.id, confirmationFocus,
       'screenshot presentation must not steal the real pending confirmation focus');
     // Execute the production guard too — visibility alone cannot prove exposure.
-    assert.throws(() => vm.runInThisContext(data.screenshot.verify), /Screenshot content did not settle/);
+    assert.throws(() => (0, eval)(data.screenshot.verify), /Screenshot content did not settle/);
     assert.equal(el('overlay').hidden, false, 'capture verification never dismisses the question');
     assert.equal(el('dlg-title').textContent, 'Copy fittings');
     assert.equal(el('dlg-body').textContent, confirmationBody);
@@ -856,7 +1370,7 @@ async function runInterleavingScenario() {
     assert.equal(document.activeElement.id, 'fittings-copy-selected');
   }
 }
-(async () => {
+await (async () => {
   if (scenario === 'dialog-description') {
     const dialog = el('dialog'), body = el('dlg-body');
     const invoker = el('fittings-refresh-all'); invoker.focus();
@@ -1118,8 +1632,259 @@ async function runInterleavingScenario() {
       assert.equal(document.activeElement, invoker);
     }
   } else throw new Error('Unknown scenario: ' + scenario);
-})().then(() => console.log('PASS ' + scenario)).catch(error => {
-  // Node's object-identity diff can print the entire cyclic page tree.
-  console.error(error.message.slice(0, 1000));
+})();
+const output = 'PASS ' + scenario;
+outputLines.push(output);
+assert.equal(outputLines.at(-1), output, 'request PASS line must be terminal');
+return output;
+}
+
+function adapterEnvelope(operation) {
+  try {
+    return JSON.stringify({ok: true, value: operation()});
+  } catch (error) {
+    let errorName = 'Error';
+    let errorMessage = 'Host adapter failed';
+    try {
+      if (error && typeof error.name === 'string') errorName = error.name;
+    } catch {}
+    try {
+      if (error && typeof error.message === 'string') errorMessage = error.message;
+      else errorMessage = String(error);
+    } catch {}
+    try {
+      return JSON.stringify({ok: false, errorName, errorMessage});
+    } catch {
+      return '{"ok":false,"errorName":"Error","errorMessage":"Host adapter failed"}';
+    }
+  }
+}
+
+async function runScenario(request, cleanupProbe = null) {
+  const timers = new Map();
+  const intervals = new Map();
+  const allNativeTimers = new Set();
+  const allNativeIntervals = new Set();
+  let nextTimer = 1;
+  let nextInterval = 1;
+  const requestSetTimeout = (callback, delay, ...args) => {
+    const token = nextTimer++;
+    const handle = setTimeout(() => {
+      timers.delete(token);
+      callback(...args);
+    }, delay);
+    timers.set(token, handle);
+    allNativeTimers.add(handle);
+    return token;
+  };
+  const requestClearTimeout = token => {
+    const handle = timers.get(token);
+    if (handle !== undefined) clearTimeout(handle);
+    timers.delete(token);
+  };
+  const requestSetImmediate = (callback, ...args) =>
+    requestSetTimeout(callback, 0, ...args);
+  const requestSetInterval = (callback, delay, ...args) => {
+    const token = nextInterval++;
+    const handle = setInterval(callback, delay, ...args);
+    intervals.set(token, handle);
+    allNativeIntervals.add(handle);
+    return token;
+  };
+  const requestClearInterval = token => {
+    const handle = intervals.get(token);
+    if (handle !== undefined) clearInterval(handle);
+    intervals.delete(token);
+  };
+  const hostTextEncoder = new globalThis.TextEncoder();
+  const textEncoderAdapter = (operation, input, capacity) => adapterEnvelope(() => {
+    if (operation === 'encode') {
+      return {bytes: Array.from(hostTextEncoder.encode(input))};
+    }
+    if (operation === 'encodeInto') {
+      const destination = new Uint8Array(capacity);
+      const result = hostTextEncoder.encodeInto(input, destination);
+      return {read: result.read, written: result.written,
+        bytes: Array.from(destination.subarray(0, result.written))};
+    }
+    throw new Error('Unknown TextEncoder adapter operation: ' + operation);
+  });
+  const urlSearchParamsAdapter = (operation, serializedState, argumentsJson) =>
+    adapterEnvelope(() => {
+      const args = JSON.parse(argumentsJson);
+      let params;
+      if (operation === 'construct-string') {
+        params = new globalThis.URLSearchParams(args[0]);
+      } else if (operation === 'construct-entries') {
+        params = new globalThis.URLSearchParams(args[0]);
+      } else {
+        params = new globalThis.URLSearchParams(serializedState);
+      }
+      let result = null;
+      if (operation === 'append') params.append(args[0], args[1]);
+      else if (operation === 'delete') {
+        if (args.length > 1) params.delete(args[0], args[1]);
+        else params.delete(args[0]);
+      } else if (operation === 'get') result = params.get(args[0]);
+      else if (operation === 'getAll') result = params.getAll(args[0]);
+      else if (operation === 'has') {
+        result = args.length > 1
+          ? params.has(args[0], args[1]) : params.has(args[0]);
+      } else if (operation === 'set') params.set(args[0], args[1]);
+      else if (operation === 'sort') params.sort();
+      else if (operation === 'size') result = params.size;
+      else if (operation === 'toString') result = params.toString();
+      else if (operation === 'entries') result = Array.from(params.entries());
+      else if (!['construct-string', 'construct-entries'].includes(operation)) {
+        throw new Error('Unknown URLSearchParams adapter operation: ' + operation);
+      }
+      return {state: params.toString(), result};
+    });
+  const protocolEvent = name => {
+    hostAssert.equal(typeof name, 'string', 'protocol event must be primitive');
+    if (cleanupProbe) cleanupProbe.events.push(name);
+  };
+  const runtime = vm.createContext({
+    __wingmanStartupPageJson: startupPageJson,
+    __wingmanPayloadJson: JSON.stringify(request.payload || {}),
+    __wingmanScenario: request.scenario,
+    __wingmanFittingsSource: fittingsSource,
+    __wingmanPanelSource: panelSource,
+    __wingmanTextEncoderAdapter: textEncoderAdapter,
+    __wingmanURLSearchParamsAdapter: urlSearchParamsAdapter,
+    __wingmanProtocolEvent: protocolEvent,
+    setTimeout: requestSetTimeout,
+    clearTimeout: requestClearTimeout,
+    setImmediate: requestSetImmediate,
+    setInterval: requestSetInterval,
+    clearInterval: requestClearInterval,
+  });
+  const unhandledRejections = vm.runInContext('[]', runtime);
+  runtime.__wingmanUnhandledRejections = unhandledRejections;
+  const captureRejection = reason => unhandledRejections.push(reason);
+  process.on('unhandledRejection', captureRejection);
+  try {
+    const output = await vm.runInContext(
+      '(' + scenarioProgram.toString() + ')()',
+      runtime,
+      {filename: 'fittings_scenario_worker.cjs'},
+    );
+    hostAssert.equal(timers.size, 0, 'request left a live timer');
+    hostAssert.equal(intervals.size, 0, 'request left a live interval');
+    await new Promise(resolve => setImmediate(resolve));
+    if (unhandledRejections.length) throw unhandledRejections[0];
+    hostAssert.equal(timers.size, 0, 'request left a live timer');
+    hostAssert.equal(intervals.size, 0, 'request left a live interval');
+    hostAssert.equal(typeof output, 'string', 'request did not return a PASS label');
+    return output;
+  } finally {
+    process.removeListener('unhandledRejection', captureRejection);
+    if (cleanupProbe) {
+      cleanupProbe.pendingTimers = timers.size;
+      cleanupProbe.pendingIntervals = intervals.size;
+      cleanupProbe.timers = timers;
+      cleanupProbe.intervals = intervals;
+      const nativeIntervals = [...allNativeIntervals];
+      cleanupProbe.cancelNativeIntervals = () => {
+        for (const handle of nativeIntervals) clearInterval(handle);
+      };
+    }
+    for (const handle of allNativeTimers) clearTimeout(handle);
+    for (const handle of allNativeIntervals) clearInterval(handle);
+    timers.clear();
+    intervals.clear();
+    allNativeTimers.clear();
+    allNativeIntervals.clear();
+  }
+}
+
+async function runCleanupProbe(request) {
+  const probe = {events: []};
+  let output;
+  let failure;
+  try {
+    output = await runScenario(request, probe);
+  } catch (error) {
+    failure = error;
+  }
+  try {
+    if (failure && !probe.timers) throw failure;
+    hostAssert.equal(probe.pendingTimers, 1,
+      'cleanup must start with one pending tracked timer');
+    hostAssert.equal(probe.pendingIntervals, 1,
+      'cleanup must start with one pending tracked interval');
+    await new Promise(resolve => setTimeout(() => {
+      probe.events.push('cleanup-control');
+      resolve();
+    }, 0));
+    await new Promise(resolve => setImmediate(resolve));
+    hostAssert.deepEqual(probe.events,
+      ['active-interval', 'active-control', 'cleanup-control'],
+      'pending request callbacks must be cancelled before the same-delay control');
+    hostAssert.equal(probe.timers.size, 0,
+      'request timer tracking must be cleared');
+    hostAssert.equal(probe.intervals.size, 0,
+      'request interval tracking must be cleared');
+    if (failure) throw failure;
+    return output;
+  } finally {
+    if (probe.cancelNativeIntervals) probe.cancelNativeIntervals();
+  }
+}
+
+function failureFields(error) {
+  return {
+    ok: false,
+    error: isNativeError(error) ? error.message : String(error),
+    stack: isNativeError(error) ? String(error.stack || '') : '',
+  };
+}
+
+async function serveRequest(request) {
+  const started = performance.now();
+  const listenerSentinel = () => {};
+  process.on('unhandledRejection', listenerSentinel);
+  try {
+    const listenerBaseline = process.listeners('unhandledRejection');
+    let fields;
+    try {
+      const cleanupProbe = request.payload?.protocol_probe?.startsWith(
+        'pending-timer-');
+      const output = await (cleanupProbe
+        ? runCleanupProbe(request) : runScenario(request));
+      fields = {ok: true, output, error: '', stack: ''};
+    } catch (error) {
+      fields = failureFields(error);
+    }
+    try {
+      hostAssert.deepEqual(process.listeners('unhandledRejection'), listenerBaseline,
+        'unhandledRejection listener baseline changed');
+    } catch (error) {
+      fields = failureFields(error);
+    }
+    return {
+      id: request.id,
+      scenario: request.scenario,
+      duration_ms: performance.now() - started,
+      ...fields,
+    };
+  } finally {
+    process.removeListener('unhandledRejection', listenerSentinel);
+  }
+}
+
+async function serveWorker() {
+  const rl = readline.createInterface({input: process.stdin, crlfDelay: Infinity});
+  for await (const line of rl) {
+    const request = JSON.parse(line);
+    const reply = await serveRequest(request);
+    process.stdout.write(JSON.stringify(reply) + '\n');
+  }
+}
+
+serveWorker().catch(error => {
+  process.stderr.write(
+    (isNativeError(error) ? String(error.stack || error.message) : String(error))
+    + '\n');
   process.exitCode = 1;
 });

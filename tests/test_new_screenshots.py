@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
+from tests.fittings_scenario_worker import request_fittings_scenario
 from tests.html_tree import PageTree
 from tests.node_scenario_worker import NodeScenarioWorker
-from tests.test_fittings_page import _run_fittings_node
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location(
@@ -169,22 +169,28 @@ def test_limit_capture_uses_entry_identity(
 
 
 @pytest.mark.parametrize("stage", ["progress", "results"])
-def test_fittings_capture_preserves_pending_confirmation(tmp_path, stage):
+def test_fittings_capture_preserves_pending_confirmation(
+    fittings_page_worker: NodeScenarioWorker, stage: str
+):
     key = "fittings-copy-progress" if stage == "progress" else "fittings-copy-result"
     screen = next(screen for screen in shoot.SCREENS if screen.key == key)
     fixture = shoot.load_dev_fittings_screenshot_fixture()
     fixture["copy_stage"] = stage
     scenario = "interleaving-screenshot-" + stage
-    result = _run_fittings_node(
-        tmp_path,
+    reply = request_fittings_scenario(
+        fittings_page_worker,
         scenario,
         screenshot={
             "payload": fixture,
             "verify": shoot.new_screen_verify_script(screen),
         },
     )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert f"PASS {scenario}" in result.stdout
+    process = fittings_page_worker._proc
+    ordinary = request_fittings_scenario(fittings_page_worker, "checkbox-name")
+
+    assert reply["output"] == f"PASS {scenario}"
+    assert ordinary["output"] == "PASS checkbox-name"
+    assert fittings_page_worker._proc is process
 
 
 @pytest.mark.parametrize(

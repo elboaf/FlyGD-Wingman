@@ -5,15 +5,15 @@ markup. It tests keyboard/focus behavior, not browser layout or WebView2's
 accessibility tree; those still require the Windows smoke pass.
 """
 
-import json
 import re
 import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
 
+from tests.fittings_scenario_worker import request_fittings_scenario
 from tests.html_tree import PageTree
+from tests.node_scenario_worker import NodeScenarioFailure, NodeScenarioWorker
 
 WEB = Path(__file__).resolve().parent.parent / "wingman" / "web"
 
@@ -829,23 +829,83 @@ def test_render_pager_defaults_page_when_the_payload_has_none():
     )
 
 
-def _run_fittings_node(
-    tmp_path, scenario, script=WEB / "fittings.js", *, screenshot=None
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_fittings_worker_reuses_process_and_preserves_business_outcomes(
+    fittings_page_worker: NodeScenarioWorker,
 ):
-    page = PageTree()
-    page.feed(HTML)
-    markup = tmp_path / "page.json"
-    markup.write_text(
-        json.dumps({"page": page.root, "screenshot": screenshot}), encoding="utf-8"
+    first = fittings_page_worker.request(
+        "checkbox-name",
+        {"screenshot": None, "isolation_probe": "mutate"},
+        timeout=15.0,
     )
-    harness = Path(__file__).resolve().parent / "fixtures" / "fittings_page.cjs"
-    return subprocess.run(
-        ["node", str(harness), str(markup), scenario, str(script)],
-        capture_output=True,
-        text=True,
-        timeout=15,
-        check=False,
+    process = fittings_page_worker._proc
+    dialog = request_fittings_scenario(fittings_page_worker, "dialog-description")
+    pristine = fittings_page_worker.request(
+        "checkbox-name",
+        {"screenshot": None, "isolation_probe": "pristine"},
+        timeout=15.0,
     )
+
+    assert first["output"] == "PASS checkbox-name"
+    assert dialog["output"] == "PASS dialog-description"
+    assert pristine["output"] == "PASS checkbox-name"
+    assert fittings_page_worker._proc is process
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_fittings_worker_vm_failures_preserve_stack_and_recover(
+    fittings_page_worker: NodeScenarioWorker,
+):
+    initial = request_fittings_scenario(fittings_page_worker, "checkbox-name")
+    process = fittings_page_worker._proc
+    assert initial["output"] == "PASS checkbox-name"
+
+    for mode, stack_name in [
+        ("vm-throw", "protocolVmThrow"),
+        ("vm-reject", "protocolVmReject"),
+    ]:
+        with pytest.raises(NodeScenarioFailure) as failure:
+            fittings_page_worker.request(
+                f"protocol/{mode}",
+                {"screenshot": None, "protocol_probe": mode},
+                timeout=15.0,
+            )
+        assert stack_name in failure.value.stack
+        recovered = request_fittings_scenario(fittings_page_worker, "checkbox-name")
+        assert recovered["output"] == "PASS checkbox-name"
+        assert fittings_page_worker._proc is process
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+@pytest.mark.parametrize(
+    "mode",
+    ["pending-timer-normal-exit", "pending-timer-assertion-exit"],
+    ids=["pending-timer-normal-exit", "pending-timer-assertion-exit"],
+)
+def test_fittings_worker_cancels_pending_timer(
+    fittings_page_worker: NodeScenarioWorker, mode: str
+):
+    initial = request_fittings_scenario(fittings_page_worker, "checkbox-name")
+    process = fittings_page_worker._proc
+    assert initial["output"] == "PASS checkbox-name"
+
+    with pytest.raises(NodeScenarioFailure) as failure:
+        fittings_page_worker.request(
+            f"protocol/{mode}",
+            {"screenshot": None, "protocol_probe": mode},
+            timeout=15.0,
+        )
+    expected_error = (
+        "request left a live timer"
+        if mode == "pending-timer-normal-exit"
+        else "protocol cleanup probe failure"
+    )
+    assert failure.value.reply is not None
+    assert str(failure.value.reply["error"]).splitlines()[0] == expected_error
+    assert expected_error in failure.value.stack
+    recovered = request_fittings_scenario(fittings_page_worker, "checkbox-name")
+    assert recovered["output"] == "PASS checkbox-name"
+    assert fittings_page_worker._proc is process
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
@@ -883,15 +943,17 @@ def _run_fittings_node(
         "route-leave",
     ],
 )
-def test_copy_accessibility_in_node(tmp_path, scenario):
-    result = _run_fittings_node(tmp_path, scenario)
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert f"PASS {scenario}" in result.stdout
+def test_copy_accessibility_in_node(
+    fittings_page_worker: NodeScenarioWorker, scenario: str
+):
+    reply = request_fittings_scenario(fittings_page_worker, scenario)
+    assert reply["output"] == f"PASS {scenario}"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
-def test_fittings_state_machine_in_node(tmp_path):
-    scenarios = (
+@pytest.mark.parametrize(
+    "scenario",
+    [
         "state-route-lifecycle",
         "state-request-sequence",
         "state-selection-scope",
@@ -903,8 +965,10 @@ def test_fittings_state_machine_in_node(tmp_path):
         "state-ticket-progress",
         "state-stale-start-result",
         "state-copy-lifecycle",
-    )
-    for scenario in scenarios:
-        result = _run_fittings_node(tmp_path, scenario)
-        assert result.returncode == 0, result.stdout + result.stderr
-        assert f"PASS {scenario}" in result.stdout
+    ],
+)
+def test_fittings_state_machine_in_node(
+    fittings_page_worker: NodeScenarioWorker, scenario: str
+):
+    reply = request_fittings_scenario(fittings_page_worker, scenario)
+    assert reply["output"] == f"PASS {scenario}"
