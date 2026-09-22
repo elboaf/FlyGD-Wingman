@@ -659,6 +659,35 @@ def test_gap_capture_worker_vm_failures_preserve_stack_and_recover(
         )
         assert gap_capture_worker._proc is process
 
+    for kind in ("getters", "proxy"):
+        with pytest.raises(NodeScenarioFailure) as failure:
+            gap_capture_worker.request(
+                f"protocol/vm-reject/{kind}",
+                {
+                    "protocol_probe": "vm-reject",
+                    "hostile_rejection": kind,
+                    "failure_logs": True,
+                },
+                timeout=20.0,
+            )
+        assert "protocolHostileReject" in failure.value.stack
+        assert failure.value.reply is not None
+        recovered = _request_gap_capture(
+            gap_capture_worker,
+            "settings-wanderer-controls-narrow",
+            "settled",
+            probes={"assert_unhandled_host_pristine": True},
+        )
+        assert recovered["output"] == (
+            "PASS screenshot gap settings-wanderer-controls-narrow settled"
+        )
+        assert f"protocol hostile {kind} rejection" in str(failure.value.reply["error"])
+        assert any(
+            "protocol log context" in line
+            for line in failure.value.reply.get("logs", [])
+        )
+        assert gap_capture_worker._proc is process
+
 
 @pytest.mark.parametrize(
     "scenarios",
@@ -716,7 +745,11 @@ def test_gap_capture_worker_cancels_pending_timer(
 
 
 def _request_gap_capture(
-    worker: NodeScenarioWorker, key, scenario
+    worker: NodeScenarioWorker,
+    key,
+    scenario,
+    *,
+    probes: dict[str, object] | None = None,
 ) -> dict[str, object]:
     screen = next((screen for screen in shoot.SCREENS if screen.key == key), None)
     assert screen, f"missing gap capture: {key}"
@@ -732,6 +765,8 @@ def _request_gap_capture(
         "fixture": shoot.fittings_fixture_setup_script(),
         "reset": shoot._fittings_reset_script(),
     }
+    if probes:
+        payload.update(probes)
     return worker.request(f"{key}/{scenario}", payload, timeout=20.0)
 
 

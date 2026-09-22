@@ -16,6 +16,11 @@ if (process.argv.length !== 5 || process.argv[2] !== '--worker') {
 const startupPath = process.argv[3];
 const startupPageJson = fs.readFileSync(startupPath, 'utf8');
 const web = process.argv[4];
+const HOST_REJECTION_MARKER = '__wingmanUnhandledHostRealmEscapeProbe';
+const VM_FAILURE_NAME_LIMIT = 128;
+const VM_FAILURE_MESSAGE_LIMIT = 4096;
+const VM_FAILURE_STACK_LIMIT = 65536;
+const VM_FAILURE_JSON_LIMIT = 70000;
 const webSourcesJson = JSON.stringify(Object.fromEntries([
   'app', 'fittings', 'wanderer', 'evesettings', 'characters', 'previews',
   'formations', 'uisetup',
@@ -421,9 +426,88 @@ async function scenarioProgram(publishTimerDispatch) {
         protocolVmThrow(); })()`);
     }
     if (protocolProbe === 'vm-reject') {
-      run(`(() => { function protocolVmReject() {
-        Promise.reject(new Error('protocol VM rejection')); }
-        protocolVmReject(); })()`);
+      if (data.hostile_rejection) {
+        let hostileRejectionArmed = false;
+        const hostileVmAccesses = new Set();
+        function attemptUnhandledRealmEscape(label) {
+          let caller;
+          try { caller = attemptUnhandledRealmEscape.caller; } catch {}
+          for (let depth = 0; caller && depth < 8; depth++) {
+            try {
+              const realm = caller.constructor('return globalThis')();
+              if (realm === globalThis) hostileVmAccesses.add(label);
+              if (realm && 'process' in realm) {
+                realm.__wingmanUnhandledHostRealmEscapeProbe =
+                  data.hostile_rejection + ':' + label;
+                return true;
+              }
+            } catch {}
+            try { caller = caller.caller; } catch { break; }
+          }
+          if (hostileRejectionArmed
+              && !globalThis.__wingmanSerializingUnhandledReason) {
+            try {
+              const realm = takeUnhandled.constructor('return globalThis')();
+              realm.__wingmanUnhandledHostRealmEscapeProbe =
+                data.hostile_rejection + ':' + label;
+              return true;
+            } catch {}
+          }
+          return false;
+        }
+        function protocolHostileReject() {
+          const expected = 'protocol hostile ' + data.hostile_rejection
+            + ' rejection';
+          const target = {};
+          Object.defineProperties(target, {
+            name: {get: function hostileNameGetter() {
+              attemptUnhandledRealmEscape('name');
+              throw new Error('hostile name getter failure');
+            }},
+            message: {get: function hostileMessageGetter() {
+              const escaped = attemptUnhandledRealmEscape('message');
+              return escaped ? 'host realm escaped through rejection' : expected;
+            }},
+            stack: {get: function hostileStackGetter() {
+              attemptUnhandledRealmEscape('stack');
+              return 'Error: ' + expected
+                + '\\n    at protocolHostileReject (protocol-probe.cjs:1:1)';
+            }},
+          });
+          let reason = target;
+          if (data.hostile_rejection === 'proxy') {
+            reason = new Proxy(target, {
+              get: function hostileProxyGet(owner, key, receiver) {
+                attemptUnhandledRealmEscape('get:' + String(key));
+                if (key === Symbol.toPrimitive) {
+                  return function protocolHostileCoercion() {
+                    attemptUnhandledRealmEscape('coercion');
+                    return expected;
+                  };
+                }
+                return Reflect.get(owner, key, receiver);
+              },
+              getPrototypeOf: function hostileProxyGetPrototypeOf(owner) {
+                attemptUnhandledRealmEscape('prototype');
+                return Reflect.getPrototypeOf(owner);
+              },
+            });
+            Object.getPrototypeOf(reason);
+            String(reason);
+            if (!hostileVmAccesses.has('prototype')
+                || !hostileVmAccesses.has('coercion')) {
+              throw new Error('hostile Proxy probes did not run in the request VM');
+            }
+          }
+          hostileRejectionArmed = true;
+          Promise.reject(reason);
+        }
+        protocolHostileReject();
+      } else {
+        run(`(() => { function protocolVmReject() {
+          Promise.reject(new Error('protocol VM rejection')); }
+          protocolVmReject(); })()`);
+      }
     }
     if (protocolProbe?.startsWith('pending-timer-')) {
       setTimeout(() => reportProtocolEvent('leaked'), 0);
@@ -1391,6 +1475,86 @@ function adapterRequest(envelope) {
   return request;
 }
 
+function boundedVmFailureField(record, name, fallback, limit) {
+  const value = record[name];
+  if (typeof value !== 'string') return fallback;
+  return value.length > limit ? value.slice(0, limit) : value;
+}
+
+function parseVmFailureJson(serialized) {
+  assert.equal(typeof serialized, 'string',
+    'VM failure serializer must return primitive JSON');
+  assert.ok(serialized.length <= VM_FAILURE_JSON_LIMIT,
+    'VM failure serializer exceeded its bounded envelope');
+  let record;
+  try {
+    record = JSON.parse(serialized);
+  } catch {
+    throw new Error('VM failure serializer returned invalid JSON');
+  }
+  assert.ok(record && typeof record === 'object' && !Array.isArray(record),
+    'VM failure serializer returned an invalid record');
+  return {
+    name: boundedVmFailureField(
+      record, 'name', 'Error', VM_FAILURE_NAME_LIMIT),
+    message: boundedVmFailureField(
+      record, 'message', 'Unhandled rejection', VM_FAILURE_MESSAGE_LIMIT),
+    stack: boundedVmFailureField(
+      record, 'stack', '', VM_FAILURE_STACK_LIMIT),
+  };
+}
+
+// VM failures stay opaque on the host; only request-realm code may inspect them.
+function serializeOpaqueVmFailure(runtime, reason) {
+  const token = randomBytes(16).toString('hex');
+  const reasonSlot = '__wingmanOpaqueFailure_' + token;
+  const serializerSlot = '__wingmanFailureSerializer_' + token;
+  runtime[reasonSlot] = reason;
+  let serialized;
+  try {
+    serialized = vm.runInContext(`(() => {
+      const reasonSlot = ${JSON.stringify(reasonSlot)};
+      const serializerSlot = ${JSON.stringify(serializerSlot)};
+      globalThis.__wingmanSerializingUnhandledReason = true;
+      globalThis[serializerSlot] = function serializeVmFailure(reason) {
+        const clip = (value, fallback, limit) => {
+          if (typeof value !== 'string') return fallback;
+          return value.length > limit ? value.slice(0, limit) : value;
+        };
+        const read = (name, fallback, limit) => {
+          try { return clip(reason == null ? undefined : reason[name], fallback, limit); }
+          catch { return fallback; }
+        };
+        const coerce = fallback => {
+          try { return clip(String(reason), fallback, ${VM_FAILURE_MESSAGE_LIMIT}); }
+          catch { return fallback; }
+        };
+        const name = read('name', 'Error', ${VM_FAILURE_NAME_LIMIT});
+        let message = read('message', null, ${VM_FAILURE_MESSAGE_LIMIT});
+        if (message === null) message = coerce('Unhandled rejection');
+        const stack = read('stack', '', ${VM_FAILURE_STACK_LIMIT});
+        return JSON.stringify({name, message, stack});
+      };
+      try {
+        return globalThis[serializerSlot](globalThis[reasonSlot]);
+      } catch {
+        return '{"name":"Error","message":"Unhandled rejection could not be serialized","stack":""}';
+      } finally {
+        delete globalThis[reasonSlot];
+        delete globalThis[serializerSlot];
+        delete globalThis.__wingmanSerializingUnhandledReason;
+      }
+    })()`, runtime);
+  } catch {
+    throw new Error('VM failure serialization did not complete');
+  } finally {
+    delete runtime[reasonSlot];
+    delete runtime[serializerSlot];
+    delete runtime.__wingmanSerializingUnhandledReason;
+  }
+  return parseVmFailureJson(serialized);
+}
+
 class ScenarioExecutionFailure extends Error {
   constructor(result) {
     super(result.error || 'worker reported failure');
@@ -1406,6 +1570,12 @@ class ScenarioExecutionFailure extends Error {
 }
 
 async function runScenario(request, cleanupProbe = null) {
+  if (request.payload?.assert_unhandled_host_pristine) {
+    const leaked = Object.hasOwn(globalThis, HOST_REJECTION_MARKER);
+    delete globalThis[HOST_REJECTION_MARKER];
+    assert.equal(leaked, false,
+      'unhandled rejection escaped into the host realm');
+  }
   const timers = new Map();
   const unhandledRejections = [];
   const dispatchFailures = [];
@@ -1416,7 +1586,7 @@ async function runScenario(request, cleanupProbe = null) {
   const dispatchBinding = '__wingmanTimerDispatch_'
     + randomBytes(16).toString('hex');
   const captureRejection = reason => {
-    unhandledRejections.push(safeErrorRecord(reason));
+    unhandledRejections.push(reason);
   };
   process.on('unhandledRejection', captureRejection);
 
@@ -1435,7 +1605,7 @@ async function runScenario(request, cleanupProbe = null) {
           runtime,
         );
       } catch (error) {
-        dispatchFailures.push(safeErrorRecord(error));
+        dispatchFailures.push(error);
       }
     }, Number.isFinite(delay) ? delay : 0);
     timers.set(timer.token, handle);
@@ -1502,7 +1672,9 @@ async function runScenario(request, cleanupProbe = null) {
   });
   const unhandledAdapter = envelope => adapterEnvelope(() => {
     adapterRequest(envelope);
-    return unhandledRejections.splice(0).concat(dispatchFailures.splice(0));
+    const failures = unhandledRejections.splice(0);
+    failures.push(...dispatchFailures.splice(0));
+    return failures.map(reason => serializeOpaqueVmFailure(runtime, reason));
   });
   const protocolEventAdapter = envelope => adapterEnvelope(() => {
     const event = adapterRequest(envelope);
@@ -1558,9 +1730,19 @@ async function runScenario(request, cleanupProbe = null) {
         })();
       })()
     `;
-    const launchResult = vm.runInContext(launch, runtime, {
-      filename: 'screenshot_scenario_worker.cjs',
-    });
+    let launchResult;
+    try {
+      launchResult = vm.runInContext(launch, runtime, {
+        filename: 'screenshot_scenario_worker.cjs',
+      });
+    } catch (error) {
+      const failure = serializeOpaqueVmFailure(runtime, error);
+      throw new ScenarioExecutionFailure({
+        error: failure.message,
+        stack: failure.stack,
+        logs: [],
+      });
+    }
     assert.equal(launchResult, undefined,
       'scenario launch exposed a VM-owned promise');
     const resultEnvelope = await completion;

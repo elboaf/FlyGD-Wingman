@@ -601,6 +601,35 @@ def test_current_screenshot_worker_vm_failures_preserve_stack_and_recover(
         )
         assert current_screenshot_worker._proc is process
 
+    for kind in ("getters", "proxy"):
+        with pytest.raises(NodeScenarioFailure) as failure:
+            current_screenshot_worker.request(
+                f"protocol/vm-reject/{kind}",
+                {
+                    "protocol_probe": "vm-reject",
+                    "hostile_rejection": kind,
+                    "failure_logs": True,
+                },
+                timeout=20.0,
+            )
+        assert "protocolHostileReject" in failure.value.stack
+        assert failure.value.reply is not None
+        recovered = _request_current_page(
+            current_screenshot_worker,
+            "settings-companions-populated",
+            "normal",
+            probes={"assert_unhandled_host_pristine": True},
+        )
+        assert recovered["output"] == (
+            "PASS current screenshot settings-companions-populated normal"
+        )
+        assert f"protocol hostile {kind} rejection" in str(failure.value.reply["error"])
+        assert any(
+            "protocol log context" in line
+            for line in failure.value.reply.get("logs", [])
+        )
+        assert current_screenshot_worker._proc is process
+
 
 @pytest.mark.parametrize(
     "mode",

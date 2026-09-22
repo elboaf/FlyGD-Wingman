@@ -887,6 +887,33 @@ def test_fittings_worker_vm_failures_preserve_stack_and_recover(
         assert recovered["output"] == "PASS checkbox-name"
         assert fittings_page_worker._proc is process
 
+    for kind in ("getters", "proxy"):
+        with pytest.raises(NodeScenarioFailure) as failure:
+            fittings_page_worker.request(
+                f"protocol/vm-reject/{kind}",
+                {
+                    "screenshot": None,
+                    "protocol_probe": "vm-reject",
+                    "hostile_rejection": kind,
+                    "failure_logs": True,
+                },
+                timeout=15.0,
+            )
+        assert "protocolHostileReject" in failure.value.stack
+        assert failure.value.reply is not None
+        recovered = fittings_page_worker.request(
+            "checkbox-name",
+            {"screenshot": None, "assert_unhandled_host_pristine": True},
+            timeout=15.0,
+        )
+        assert recovered["output"] == "PASS checkbox-name"
+        assert f"protocol hostile {kind} rejection" in str(failure.value.reply["error"])
+        assert any(
+            "protocol log context" in line
+            for line in failure.value.reply.get("logs", [])
+        )
+        assert fittings_page_worker._proc is process
+
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
 @pytest.mark.parametrize(

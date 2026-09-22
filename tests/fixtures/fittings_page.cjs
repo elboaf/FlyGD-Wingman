@@ -1,5 +1,6 @@
 
 const hostAssert = require('node:assert/strict');
+const {randomBytes} = require('node:crypto');
 const fs = require('node:fs');
 const readline = require('node:readline');
 const vm = require('node:vm');
@@ -23,6 +24,11 @@ const startupPage = freezeJson(
 const startupPageJson = JSON.stringify(startupPage);
 const fittingsSource = fs.readFileSync(process.argv[3], 'utf8');
 const panelSource = fs.readFileSync(process.argv[4], 'utf8');
+const HOST_REJECTION_MARKER = '__wingmanUnhandledHostRealmEscapeProbe';
+const VM_FAILURE_NAME_LIMIT = 128;
+const VM_FAILURE_MESSAGE_LIMIT = 4096;
+const VM_FAILURE_STACK_LIMIT = 65536;
+const VM_FAILURE_JSON_LIMIT = 70000;
 
 async function scenarioProgram() {
   const startupJson = globalThis.__wingmanStartupPageJson;
@@ -36,7 +42,7 @@ async function scenarioProgram() {
   const searchParams = globalThis.__wingmanURLSearchParamsAdapter;
   const recordHostLog = globalThis.__wingmanLogAdapter;
   const reportProtocolEvent = globalThis.__wingmanProtocolEvent;
-  const unhandledRejections = globalThis.__wingmanUnhandledRejections;
+  const takeUnhandled = globalThis.__wingmanUnhandledAdapter;
   delete globalThis.__wingmanStartupPageJson;
   delete globalThis.__wingmanPayloadJson;
   delete globalThis.__wingmanScenario;
@@ -48,7 +54,7 @@ async function scenarioProgram() {
   delete globalThis.__wingmanURLSearchParamsAdapter;
   delete globalThis.__wingmanLogAdapter;
   delete globalThis.__wingmanProtocolEvent;
-  delete globalThis.__wingmanUnhandledRejections;
+  delete globalThis.__wingmanUnhandledAdapter;
 
   class AssertionError extends Error {
     constructor(message) {
@@ -123,6 +129,16 @@ async function scenarioProgram() {
       throw new ErrorType(response && response.errorMessage || 'Host adapter failed');
     }
     return response.value;
+  }
+  function reviveError(record) {
+    const errorTypes = {Error, EvalError, RangeError, ReferenceError,
+      SyntaxError, TypeError, URIError};
+    const ErrorType = errorTypes[record && record.name] || Error;
+    const error = new ErrorType(record && record.message || 'Unhandled rejection');
+    if (record && typeof record.stack === 'string' && record.stack) {
+      error.stack = record.stack;
+    }
+    return error;
   }
   function timerCallback(kind, callback, delay, args) {
     if (typeof callback !== 'function') {
@@ -925,12 +941,92 @@ if (protocolProbe === 'vm-throw') {
   protocolVmThrow();
 }
 if (protocolProbe === 'vm-reject') {
-  function protocolVmReject() {
-    Promise.reject(new Error('protocol VM rejection'));
+  if (data.hostile_rejection) {
+    let hostileRejectionArmed = false;
+    const hostileVmAccesses = new Set();
+    function attemptUnhandledRealmEscape(label) {
+      let caller;
+      try { caller = attemptUnhandledRealmEscape.caller; } catch {}
+      for (let depth = 0; caller && depth < 8; depth++) {
+        try {
+          const realm = caller.constructor('return globalThis')();
+          if (realm === globalThis) hostileVmAccesses.add(label);
+          if (realm && 'process' in realm) {
+            realm.__wingmanUnhandledHostRealmEscapeProbe =
+              data.hostile_rejection + ':' + label;
+            return true;
+          }
+        } catch {}
+        try { caller = caller.caller; } catch { break; }
+      }
+      if (hostileRejectionArmed
+          && !globalThis.__wingmanSerializingUnhandledReason) {
+        try {
+          const realm = recordHostLog.constructor('return globalThis')();
+          realm.__wingmanUnhandledHostRealmEscapeProbe =
+            data.hostile_rejection + ':' + label;
+          return true;
+        } catch {}
+      }
+      return false;
+    }
+    function protocolHostileReject() {
+      const expected = 'protocol hostile ' + data.hostile_rejection
+        + ' rejection';
+      const target = {};
+      Object.defineProperties(target, {
+        name: {get: function hostileNameGetter() {
+          attemptUnhandledRealmEscape('name');
+          throw new Error('hostile name getter failure');
+        }},
+        message: {get: function hostileMessageGetter() {
+          const escaped = attemptUnhandledRealmEscape('message');
+          return escaped ? 'host realm escaped through rejection' : expected;
+        }},
+        stack: {get: function hostileStackGetter() {
+          attemptUnhandledRealmEscape('stack');
+          return 'Error: ' + expected
+            + '\n    at protocolHostileReject (protocol-probe.cjs:1:1)';
+        }},
+      });
+      let reason = target;
+      if (data.hostile_rejection === 'proxy') {
+        reason = new Proxy(target, {
+          get: function hostileProxyGet(owner, key, receiver) {
+            attemptUnhandledRealmEscape('get:' + String(key));
+            if (key === Symbol.toPrimitive) {
+              return function protocolHostileCoercion() {
+                attemptUnhandledRealmEscape('coercion');
+                return expected;
+              };
+            }
+            return Reflect.get(owner, key, receiver);
+          },
+          getPrototypeOf: function hostileProxyGetPrototypeOf(owner) {
+            attemptUnhandledRealmEscape('prototype');
+            return Reflect.getPrototypeOf(owner);
+          },
+        });
+        Object.getPrototypeOf(reason);
+        String(reason);
+        if (!hostileVmAccesses.has('prototype')
+            || !hostileVmAccesses.has('coercion')) {
+          throw new Error('hostile Proxy probes did not run in the request VM');
+        }
+      }
+      hostileRejectionArmed = true;
+      Promise.reject(reason);
+    }
+    protocolHostileReject();
+  } else {
+    function protocolVmReject() {
+      Promise.reject(new Error('protocol VM rejection'));
+    }
+    protocolVmReject();
   }
-  protocolVmReject();
   await new Promise(resolve => setTimeout(resolve, 0));
-  if (unhandledRejections.length) throw unhandledRejections[0];
+  const rejected = fromHost(takeUnhandled());
+  if (rejected.length) throw reviveError(rejected[0]);
   assert.fail('protocol VM rejection was not captured');
 }
 if (protocolProbe && protocolProbe.startsWith('pending-timer-')) {
@@ -1321,7 +1417,7 @@ async function runStateMachineScenario() {
     startA.resolve(false);
     await flush();
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(unhandledRejections.length, 0,
+    assert.equal(fromHost(takeUnhandled()).length, 0,
       'stale false start result cannot render a cleared preflight');
     assert.equal(el('fittings-copy-title').textContent, 'Copy 1 fitting to Second Pilot');
     assert.equal(el('fittings-copy-review').hidden, false,
@@ -1850,18 +1946,91 @@ function adapterEnvelope(operation) {
   }
 }
 
+function boundedVmFailureField(record, name, fallback, limit) {
+  const value = record[name];
+  if (typeof value !== 'string') return fallback;
+  return value.length > limit ? value.slice(0, limit) : value;
+}
+
+function parseVmFailureJson(serialized) {
+  hostAssert.equal(typeof serialized, 'string',
+    'VM failure serializer must return primitive JSON');
+  hostAssert.ok(serialized.length <= VM_FAILURE_JSON_LIMIT,
+    'VM failure serializer exceeded its bounded envelope');
+  let record;
+  try {
+    record = JSON.parse(serialized);
+  } catch {
+    throw new Error('VM failure serializer returned invalid JSON');
+  }
+  hostAssert.ok(record && typeof record === 'object' && !Array.isArray(record),
+    'VM failure serializer returned an invalid record');
+  return {
+    name: boundedVmFailureField(
+      record, 'name', 'Error', VM_FAILURE_NAME_LIMIT),
+    message: boundedVmFailureField(
+      record, 'message', 'Unhandled rejection', VM_FAILURE_MESSAGE_LIMIT),
+    stack: boundedVmFailureField(
+      record, 'stack', '', VM_FAILURE_STACK_LIMIT),
+  };
+}
+
+// VM failures stay opaque on the host; only request-realm code may inspect them.
+function serializeOpaqueVmFailure(runtime, reason) {
+  const token = randomBytes(16).toString('hex');
+  const reasonSlot = '__wingmanOpaqueFailure_' + token;
+  const serializerSlot = '__wingmanFailureSerializer_' + token;
+  runtime[reasonSlot] = reason;
+  let serialized;
+  try {
+    serialized = vm.runInContext(`(() => {
+      const reasonSlot = ${JSON.stringify(reasonSlot)};
+      const serializerSlot = ${JSON.stringify(serializerSlot)};
+      globalThis.__wingmanSerializingUnhandledReason = true;
+      globalThis[serializerSlot] = function serializeVmFailure(reason) {
+        const clip = (value, fallback, limit) => {
+          if (typeof value !== 'string') return fallback;
+          return value.length > limit ? value.slice(0, limit) : value;
+        };
+        const read = (name, fallback, limit) => {
+          try { return clip(reason == null ? undefined : reason[name], fallback, limit); }
+          catch { return fallback; }
+        };
+        const coerce = fallback => {
+          try { return clip(String(reason), fallback, ${VM_FAILURE_MESSAGE_LIMIT}); }
+          catch { return fallback; }
+        };
+        const name = read('name', 'Error', ${VM_FAILURE_NAME_LIMIT});
+        let message = read('message', null, ${VM_FAILURE_MESSAGE_LIMIT});
+        if (message === null) message = coerce('Unhandled rejection');
+        const stack = read('stack', '', ${VM_FAILURE_STACK_LIMIT});
+        return JSON.stringify({name, message, stack});
+      };
+      try {
+        return globalThis[serializerSlot](globalThis[reasonSlot]);
+      } catch {
+        return '{"name":"Error","message":"Unhandled rejection could not be serialized","stack":""}';
+      } finally {
+        delete globalThis[reasonSlot];
+        delete globalThis[serializerSlot];
+        delete globalThis.__wingmanSerializingUnhandledReason;
+      }
+    })()`, runtime);
+  } catch {
+    throw new Error('VM failure serialization did not complete');
+  } finally {
+    delete runtime[reasonSlot];
+    delete runtime[serializerSlot];
+    delete runtime.__wingmanSerializingUnhandledReason;
+  }
+  return parseVmFailureJson(serialized);
+}
+
 class ScenarioExecutionFailure extends Error {
-  constructor(error, logs) {
-    let message = 'Unknown error';
-    let remoteStack = '';
-    try {
-      message = error && typeof error.message === 'string'
-        ? error.message : String(error);
-    } catch {}
-    try { if (error && error.stack) remoteStack = String(error.stack); } catch {}
-    super(message);
+  constructor(record, logs) {
+    super(record.message || 'Unknown error');
     this.name = 'ScenarioExecutionFailure';
-    this.remoteStack = remoteStack;
+    this.remoteStack = record.stack || '';
     this.logs = logs.slice(-40).map(line => {
       const text = String(line);
       return text.length > 400 ? text.slice(0, 399) + '…' : text;
@@ -1870,7 +2039,16 @@ class ScenarioExecutionFailure extends Error {
 }
 
 async function runScenario(request, cleanupProbe = null) {
+  if (request.payload?.assert_unhandled_host_pristine) {
+    const leaked = Object.hasOwn(globalThis, HOST_REJECTION_MARKER);
+    delete globalThis[HOST_REJECTION_MARKER];
+    hostAssert.equal(leaked, false,
+      'unhandled rejection escaped into the host realm');
+  }
   const requestLogs = [];
+  const unhandledRejections = [];
+  const timerFailures = [];
+  let runtime;
   const timers = new Map();
   const intervals = new Map();
   const allNativeTimers = new Set();
@@ -1881,7 +2059,7 @@ async function runScenario(request, cleanupProbe = null) {
     const token = nextTimer++;
     const handle = setTimeout(() => {
       timers.delete(token);
-      callback();
+      try { callback(); } catch (error) { timerFailures.push(error); }
     }, delay);
     timers.set(token, handle);
     allNativeTimers.add(handle);
@@ -1895,7 +2073,9 @@ async function runScenario(request, cleanupProbe = null) {
   const requestSetImmediate = callback => requestSetTimeout(callback, 0);
   const requestSetInterval = (callback, delay) => {
     const token = nextInterval++;
-    const handle = setInterval(() => callback(), delay);
+    const handle = setInterval(() => {
+      try { callback(); } catch (error) { timerFailures.push(error); }
+    }, delay);
     intervals.set(token, handle);
     allNativeIntervals.add(handle);
     return token;
@@ -1985,7 +2165,12 @@ async function runScenario(request, cleanupProbe = null) {
     hostAssert.equal(typeof name, 'string', 'protocol event must be primitive');
     if (cleanupProbe) cleanupProbe.events.push(name);
   };
-  const runtime = vm.createContext({
+  const unhandledAdapter = () => adapterEnvelope(() => {
+    const failures = unhandledRejections.splice(0);
+    failures.push(...timerFailures.splice(0));
+    return failures.map(reason => serializeOpaqueVmFailure(runtime, reason));
+  });
+  runtime = vm.createContext({
     __wingmanStartupPageJson: startupPageJson,
     __wingmanPayloadJson: JSON.stringify(request.payload || {}),
     __wingmanScenario: request.scenario,
@@ -1997,29 +2182,37 @@ async function runScenario(request, cleanupProbe = null) {
     __wingmanURLSearchParamsAdapter: urlSearchParamsAdapter,
     __wingmanLogAdapter: logAdapter,
     __wingmanProtocolEvent: protocolEvent,
+    __wingmanUnhandledAdapter: unhandledAdapter,
   });
-  const unhandledRejections = vm.runInContext('[]', runtime);
-  runtime.__wingmanUnhandledRejections = unhandledRejections;
-  const captureRejection = reason => unhandledRejections.push(reason);
+  const captureRejection = reason => {
+    unhandledRejections.push(reason);
+  };
   process.on('unhandledRejection', captureRejection);
   try {
+    let output;
     try {
-      const output = await vm.runInContext(
+      output = await vm.runInContext(
         '(' + scenarioProgram.toString() + ')()',
         runtime,
         {filename: 'fittings_scenario_worker.cjs'},
       );
-      hostAssert.equal(timers.size, 0, 'request left a live timer');
-      hostAssert.equal(intervals.size, 0, 'request left a live interval');
-      await new Promise(resolve => setImmediate(resolve));
-      if (unhandledRejections.length) throw unhandledRejections[0];
-      hostAssert.equal(timers.size, 0, 'request left a live timer');
-      hostAssert.equal(intervals.size, 0, 'request left a live interval');
-      hostAssert.equal(typeof output, 'string', 'request did not return a PASS label');
-      return output;
     } catch (error) {
-      throw new ScenarioExecutionFailure(error, requestLogs);
+      throw new ScenarioExecutionFailure(
+        serializeOpaqueVmFailure(runtime, error), requestLogs);
     }
+    hostAssert.equal(timers.size, 0, 'request left a live timer');
+    hostAssert.equal(intervals.size, 0, 'request left a live interval');
+    await new Promise(resolve => setImmediate(resolve));
+    if (unhandledRejections.length || timerFailures.length) {
+      const reason = unhandledRejections.length
+        ? unhandledRejections.shift() : timerFailures.shift();
+      throw new ScenarioExecutionFailure(
+        serializeOpaqueVmFailure(runtime, reason), requestLogs);
+    }
+    hostAssert.equal(timers.size, 0, 'request left a live timer');
+    hostAssert.equal(intervals.size, 0, 'request left a live interval');
+    hostAssert.equal(typeof output, 'string', 'request did not return a PASS label');
+    return output;
   } finally {
     process.removeListener('unhandledRejection', captureRejection);
     if (cleanupProbe) {
