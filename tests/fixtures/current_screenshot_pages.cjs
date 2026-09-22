@@ -1701,27 +1701,23 @@ async function runCleanupProbe(request) {
   } catch (error) {
     failure = error;
   }
-  try {
-    if (failure && !probe.timers) throw failure;
-    assert.equal(probe.pendingTimers, 1,
-      'cleanup must start with one pending tracked timer');
-    assert.equal(probe.pendingIntervals, 1,
-      'cleanup must start with one pending tracked interval');
-    await new Promise(resolve => setTimeout(() => {
-      probe.events.push('cleanup-control');
-      resolve();
-    }, 0));
-    await new Promise(resolve => setImmediate(resolve));
-    assert.deepEqual(probe.events,
-      ['active-interval', 'active-control', 'cleanup-control'],
-      'pending request callbacks must be cancelled before the same-delay control');
-    assert.equal(probe.timers.size, 0, 'request timer tracking must be cleared');
-    assert.equal(probe.intervals.size, 0, 'request interval tracking must be cleared');
-    if (failure) throw failure;
-    return output;
-  } finally {
-    if (probe.cancelNativeIntervals) probe.cancelNativeIntervals();
-  }
+  if (failure && !probe.timers) throw failure;
+  assert.equal(probe.pendingTimers, 1,
+    'cleanup must start with one pending tracked timer');
+  assert.equal(probe.pendingIntervals, 1,
+    'cleanup must start with one pending tracked interval');
+  await new Promise(resolve => setTimeout(() => {
+    probe.events.push('cleanup-control');
+    resolve();
+  }, 0));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(probe.events,
+    ['active-interval', 'active-control', 'cleanup-control'],
+    'pending request callbacks must be cancelled before the same-delay control');
+  assert.equal(probe.timers.size, 0, 'request timer tracking must be cleared');
+  assert.equal(probe.intervals.size, 0, 'request interval tracking must be cleared');
+  if (failure) throw failure;
+  return output;
 }
 
 function failureFields(error) {

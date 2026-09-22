@@ -25,10 +25,13 @@ const startupPageJson = JSON.stringify(startupPage);
 const fittingsSource = fs.readFileSync(process.argv[3], 'utf8');
 const panelSource = fs.readFileSync(process.argv[4], 'utf8');
 const HOST_REJECTION_MARKER = '__wingmanUnhandledHostRealmEscapeProbe';
+const HOST_PROMISE_MARKER = '__wingmanVmPromiseHostAssimilationProbe';
 const VM_FAILURE_NAME_LIMIT = 128;
 const VM_FAILURE_MESSAGE_LIMIT = 4096;
 const VM_FAILURE_STACK_LIMIT = 65536;
 const VM_FAILURE_JSON_LIMIT = 70000;
+const SCENARIO_OUTPUT_LIMIT = 4096;
+const SCENARIO_RESULT_JSON_LIMIT = 100000;
 
 async function scenarioProgram() {
   const startupJson = globalThis.__wingmanStartupPageJson;
@@ -346,6 +349,43 @@ async function scenarioProgram() {
     warn: (...args) => captureLog(args),
     error: (...args) => { throw new Error(args.map(renderLogValue).join(' ')); },
   };
+  const scenarioErrorRecord = error => {
+    const clip = (value, fallback, limit) => {
+      if (typeof value !== 'string') return fallback;
+      return value.length > limit ? value.slice(0, limit) : value;
+    };
+    const read = (name, fallback, limit) => {
+      try { return clip(error == null ? undefined : error[name], fallback, limit); }
+      catch { return fallback; }
+    };
+    const coerce = fallback => {
+      try { return clip(String(error), fallback, 4096); }
+      catch { return fallback; }
+    };
+    let message = read('message', null, 4096);
+    if (message === null) message = coerce('Unknown error');
+    return {message, stack: read('stack', '', 65536)};
+  };
+  try {
+  if (data.promise_assimilation_probe) {
+    const originalThen = Promise.prototype.then;
+    globalThis.__wingmanPromiseThenInvoked = false;
+    Promise.prototype.then = function protocolHostileThen(onFulfilled, onRejected) {
+      let nativeResolver = false;
+      try {
+        nativeResolver = Function.prototype.toString.call(onFulfilled)
+          .includes('[native code]');
+      } catch {}
+      if (nativeResolver) {
+        globalThis.__wingmanPromiseThenInvoked = true;
+        try {
+          const realm = recordHostLog.constructor('return globalThis')();
+          realm.__wingmanVmPromiseHostAssimilationProbe = true;
+        } catch {}
+      }
+      return originalThen.call(this, onFulfilled, onRejected);
+    };
+  }
 
 // Only DOM mechanics live here. Fittings rendering, listeners, selection and
 // phase changes all run from the unmodified production module below.
@@ -789,6 +829,8 @@ function assertPristineIsolation() {
     'URLSearchParams host adapter remained globally reachable');
   assert.equal('__wingmanLogAdapter' in globalThis, false,
     'log host adapter remained globally reachable');
+  assert.equal('__wingmanCompleteAdapter' in globalThis, false,
+    'completion host adapter remained globally reachable');
   assert.equal(Object.prototype.hasOwnProperty.call(
     document, '__wingmanFittingsDocumentProbe'), false,
   'request DOM leaked between requests');
@@ -1917,10 +1959,24 @@ if (timerExecution) {
     'timer callbacks changed arguments, order, cancellation, or this realm: '
       + timerExecution.events.join(','));
 }
+if (data.promise_assimilation_probe) {
+  assert.equal(globalThis.__wingmanPromiseThenInvoked, false,
+    'VM promise thenable was assimilated outside the request realm');
+}
 const output = 'PASS ' + scenario;
 outputLines.push(output);
 assert.equal(outputLines.at(-1), output, 'request PASS line must be terminal');
-return output;
+return {ok: true, output, error: '', stack: '', logs: outputLines.slice()};
+  } catch (error) {
+    const failure = scenarioErrorRecord(error);
+    return {
+      ok: false,
+      output: '',
+      error: failure.message,
+      stack: failure.stack,
+      logs: outputLines.slice(),
+    };
+  }
 }
 
 function adapterEnvelope(operation) {
@@ -1972,6 +2028,46 @@ function parseVmFailureJson(serialized) {
       record, 'message', 'Unhandled rejection', VM_FAILURE_MESSAGE_LIMIT),
     stack: boundedVmFailureField(
       record, 'stack', '', VM_FAILURE_STACK_LIMIT),
+  };
+}
+
+function parseScenarioResultJson(serialized) {
+  hostAssert.equal(typeof serialized, 'string',
+    'scenario completion must be primitive JSON');
+  hostAssert.ok(serialized.length <= SCENARIO_RESULT_JSON_LIMIT,
+    'scenario completion exceeded its bounded envelope');
+  let result;
+  try {
+    result = JSON.parse(serialized);
+  } catch {
+    throw new Error('scenario completion returned invalid JSON');
+  }
+  hostAssert.ok(result && typeof result === 'object' && !Array.isArray(result),
+    'scenario completion returned an invalid record');
+  hostAssert.equal(typeof result.ok, 'boolean',
+    'scenario completion omitted its status');
+  hostAssert.equal(typeof result.output, 'string',
+    'scenario completion output must be primitive');
+  hostAssert.equal(typeof result.error, 'string',
+    'scenario completion error must be primitive');
+  hostAssert.equal(typeof result.stack, 'string',
+    'scenario completion stack must be primitive');
+  hostAssert.ok(Array.isArray(result.logs),
+    'scenario completion logs must be an array');
+  const logs = result.logs.slice(-40).map(line => {
+    hostAssert.equal(typeof line, 'string',
+      'scenario completion log line must be primitive');
+    return line.length > 400 ? line.slice(0, 399) + '…' : line;
+  });
+  return {
+    ok: result.ok,
+    output: result.output.length > SCENARIO_OUTPUT_LIMIT
+      ? result.output.slice(0, SCENARIO_OUTPUT_LIMIT) : result.output,
+    error: result.error.length > VM_FAILURE_MESSAGE_LIMIT
+      ? result.error.slice(0, VM_FAILURE_MESSAGE_LIMIT) : result.error,
+    stack: result.stack.length > VM_FAILURE_STACK_LIMIT
+      ? result.stack.slice(0, VM_FAILURE_STACK_LIMIT) : result.stack,
+    logs,
   };
 }
 
@@ -2045,10 +2141,19 @@ async function runScenario(request, cleanupProbe = null) {
     hostAssert.equal(leaked, false,
       'unhandled rejection escaped into the host realm');
   }
+  if (request.payload?.assert_promise_host_pristine) {
+    const leaked = Object.hasOwn(globalThis, HOST_PROMISE_MARKER);
+    delete globalThis[HOST_PROMISE_MARKER];
+    hostAssert.equal(leaked, false,
+      'VM promise was assimilated in the host realm');
+  }
   const requestLogs = [];
   const unhandledRejections = [];
   const timerFailures = [];
   let runtime;
+  let completionResolve;
+  let completionCalled = false;
+  const completion = new Promise(resolve => { completionResolve = resolve; });
   const timers = new Map();
   const intervals = new Map();
   const allNativeTimers = new Set();
@@ -2170,6 +2275,14 @@ async function runScenario(request, cleanupProbe = null) {
     failures.push(...timerFailures.splice(0));
     return failures.map(reason => serializeOpaqueVmFailure(runtime, reason));
   });
+  const completeAdapter = envelope => adapterEnvelope(() => {
+    hostAssert.equal(typeof envelope, 'string',
+      'completion must be a primitive JSON envelope');
+    hostAssert.equal(completionCalled, false, 'request completed more than once');
+    completionCalled = true;
+    completionResolve(envelope);
+    return null;
+  });
   runtime = vm.createContext({
     __wingmanStartupPageJson: startupPageJson,
     __wingmanPayloadJson: JSON.stringify(request.payload || {}),
@@ -2183,22 +2296,69 @@ async function runScenario(request, cleanupProbe = null) {
     __wingmanLogAdapter: logAdapter,
     __wingmanProtocolEvent: protocolEvent,
     __wingmanUnhandledAdapter: unhandledAdapter,
+    __wingmanCompleteAdapter: completeAdapter,
   });
   const captureRejection = reason => {
     unhandledRejections.push(reason);
   };
   process.on('unhandledRejection', captureRejection);
   try {
-    let output;
+    const launch = `
+      (() => {
+        const complete = globalThis.__wingmanCompleteAdapter;
+        delete globalThis.__wingmanCompleteAdapter;
+        void (async () => {
+          let result;
+          try {
+            result = await (${scenarioProgram.toString()})();
+          } catch (error) {
+            const clip = (value, fallback, limit) => {
+              if (typeof value !== 'string') return fallback;
+              return value.length > limit ? value.slice(0, limit) : value;
+            };
+            const read = (name, fallback, limit) => {
+              try {
+                return clip(error == null ? undefined : error[name], fallback, limit);
+              } catch { return fallback; }
+            };
+            const coerce = fallback => {
+              try { return clip(String(error), fallback, ${VM_FAILURE_MESSAGE_LIMIT}); }
+              catch { return fallback; }
+            };
+            let message = read('message', null, ${VM_FAILURE_MESSAGE_LIMIT});
+            if (message === null) message = coerce('Unknown error');
+            result = {
+              ok: false,
+              output: '',
+              error: message,
+              stack: read('stack', '', ${VM_FAILURE_STACK_LIMIT}),
+              logs: [],
+            };
+          }
+          let envelope;
+          try { envelope = JSON.stringify(result); }
+          catch {
+            envelope = '{"ok":false,"output":"","error":"Scenario result could not be serialized","stack":"","logs":[]}';
+          }
+          complete(envelope);
+        })();
+      })()
+    `;
+    let launchResult;
     try {
-      output = await vm.runInContext(
-        '(' + scenarioProgram.toString() + ')()',
-        runtime,
-        {filename: 'fittings_scenario_worker.cjs'},
-      );
+      launchResult = vm.runInContext(launch, runtime, {
+        filename: 'fittings_scenario_worker.cjs',
+      });
     } catch (error) {
       throw new ScenarioExecutionFailure(
         serializeOpaqueVmFailure(runtime, error), requestLogs);
+    }
+    hostAssert.equal(launchResult, undefined,
+      'scenario launch exposed a VM-owned promise');
+    const result = parseScenarioResultJson(await completion);
+    if (!result.ok) {
+      throw new ScenarioExecutionFailure(
+        {message: result.error, stack: result.stack}, result.logs);
     }
     hostAssert.equal(timers.size, 0, 'request left a live timer');
     hostAssert.equal(intervals.size, 0, 'request left a live interval');
@@ -2211,8 +2371,7 @@ async function runScenario(request, cleanupProbe = null) {
     }
     hostAssert.equal(timers.size, 0, 'request left a live timer');
     hostAssert.equal(intervals.size, 0, 'request left a live interval');
-    hostAssert.equal(typeof output, 'string', 'request did not return a PASS label');
-    return output;
+    return result.output;
   } finally {
     process.removeListener('unhandledRejection', captureRejection);
     if (cleanupProbe) {

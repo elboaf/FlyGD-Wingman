@@ -860,6 +860,20 @@ def test_fittings_worker_vm_failures_preserve_stack_and_recover(
     process = fittings_page_worker._proc
     assert initial["output"] == "PASS checkbox-name"
 
+    promise_probe = fittings_page_worker.request(
+        "checkbox-name",
+        {"screenshot": None, "promise_assimilation_probe": True},
+        timeout=15.0,
+    )
+    assert promise_probe["output"] == "PASS checkbox-name"
+    recovered = fittings_page_worker.request(
+        "checkbox-name",
+        {"screenshot": None, "assert_promise_host_pristine": True},
+        timeout=15.0,
+    )
+    assert recovered["output"] == "PASS checkbox-name"
+    assert fittings_page_worker._proc is process
+
     for mode, stack_name in [
         ("vm-throw", "protocolVmThrow"),
         ("vm-reject", "protocolVmReject"),
