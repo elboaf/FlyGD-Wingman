@@ -51,12 +51,36 @@ async function runScenario(request, cleanupProbe = null) {
   try {
     const {document, Element, scrolls} = createDOM(data.page);
     for (const [id, text] of Object.entries(data.texts || {})) document.getElementById(id).textContent = text;
-    const RequestTextEncoder = class TextEncoder extends globalThis.TextEncoder {};
-    const RequestURLSearchParams = class URLSearchParams extends globalThis.URLSearchParams {};
+    const hostTextEncoder = new globalThis.TextEncoder();
+    const textEncoderAdapter = (operation, input, capacity) => {
+      if (operation === 'encode') return Array.from(hostTextEncoder.encode(input));
+      if (operation === 'encodeInto') {
+        const destination = new Uint8Array(capacity);
+        const result = hostTextEncoder.encodeInto(input, destination);
+        return {...result, bytes: Array.from(destination.subarray(0, result.written))};
+      }
+      throw new Error('Unknown TextEncoder adapter operation: ' + operation);
+    };
+    const urlSearchParamsAdapter = (operation, input) => {
+      if (operation === 'normalize') {
+        const params = new globalThis.URLSearchParams();
+        params.append(input, '');
+        return params.keys().next().value;
+      }
+      if (operation === 'parse') {
+        return Array.from(new globalThis.URLSearchParams(input).entries(),
+          ([name, value]) => [name, value]);
+      }
+      if (operation === 'serialize') {
+        return new globalThis.URLSearchParams(input).toString();
+      }
+      throw new Error('Unknown URLSearchParams adapter operation: ' + operation);
+    };
     const window = new Element('window');
     Object.assign(window, {document, console: requestConsole,
       navigator: {clipboard: {readText: () => assert.fail('clipboard read'), writeText: () => assert.fail('clipboard write')}},
-      TextEncoder: RequestTextEncoder, URLSearchParams: RequestURLSearchParams,
+      __wingmanTextEncoderAdapter: textEncoderAdapter,
+      __wingmanURLSearchParamsAdapter: urlSearchParamsAdapter,
       Event: class { constructor(type) { this.type = type; } },
       CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } },
       setTimeout: requestSetTimeout, clearTimeout: requestClearTimeout,
@@ -66,6 +90,176 @@ async function runScenario(request, cleanupProbe = null) {
     const runtime = vm.createContext(window);
     const run = expression => vm.runInContext(expression, runtime);
     Object.assign(window, run('({Promise, Math, Date})'));
+    run(`(() => {
+      const encode = globalThis.__wingmanTextEncoderAdapter;
+      const searchParams = globalThis.__wingmanURLSearchParamsAdapter;
+      delete globalThis.__wingmanTextEncoderAdapter;
+      delete globalThis.__wingmanURLSearchParamsAdapter;
+
+      const encoders = new WeakSet();
+      function encoder(instance) {
+        if (!encoders.has(instance)) throw new TypeError('Illegal invocation');
+      }
+      class TextEncoder {
+        constructor() { encoders.add(this); }
+        get encoding() { encoder(this); return 'utf-8'; }
+        encode(input = '') {
+          encoder(this);
+          const bytes = encode('encode', input);
+          const result = new Uint8Array(bytes.length);
+          for (let index = 0; index < bytes.length; index++) result[index] = bytes[index];
+          return result;
+        }
+        encodeInto(input, destination) {
+          encoder(this);
+          if (!(destination instanceof Uint8Array)) {
+            throw new TypeError('The destination must be a Uint8Array');
+          }
+          const encoded = encode('encodeInto', input, destination.length);
+          for (let index = 0; index < encoded.written; index++) {
+            destination[index] = encoded.bytes[index];
+          }
+          return {read: encoded.read, written: encoded.written};
+        }
+      }
+      Object.defineProperty(TextEncoder.prototype, Symbol.toStringTag,
+        {value: 'TextEncoder', configurable: true});
+
+      const parameterEntries = new WeakMap();
+      function entriesFor(instance) {
+        const entries = parameterEntries.get(instance);
+        if (!entries) throw new TypeError('Illegal invocation');
+        return entries;
+      }
+      function normalize(value) { return searchParams('normalize', value); }
+      function parse(value) {
+        const parsed = searchParams('parse', value);
+        const entries = [];
+        for (let index = 0; index < parsed.length; index++) {
+          entries.push([String(parsed[index][0]), String(parsed[index][1])]);
+        }
+        return entries;
+      }
+      class URLSearchParams {
+        constructor(init = '') {
+          let entries;
+          if (init instanceof URLSearchParams) {
+            entries = [];
+            for (const [name, value] of entriesFor(init)) entries.push([name, value]);
+          } else if (typeof init === 'string') {
+            entries = parse(init);
+          } else if (init !== null && init !== undefined &&
+              typeof init[Symbol.iterator] === 'function') {
+            entries = [];
+            for (const pair of init) {
+              const values = Array.from(pair);
+              if (values.length !== 2) {
+                throw new TypeError('Each query pair must be an iterable [name, value] tuple');
+              }
+              entries.push([normalize(values[0]), normalize(values[1])]);
+            }
+          } else if (init !== null && typeof init === 'object') {
+            entries = [];
+            for (const name of Object.keys(init)) {
+              entries.push([normalize(name), normalize(init[name])]);
+            }
+          } else {
+            entries = parse(normalize(init));
+          }
+          parameterEntries.set(this, entries);
+        }
+        get size() { return entriesFor(this).length; }
+        append(name, value) {
+          entriesFor(this).push([normalize(name), normalize(value)]);
+        }
+        delete(name, value) {
+          const entries = entriesFor(this);
+          const normalizedName = normalize(name);
+          const hasValue = arguments.length > 1;
+          const normalizedValue = hasValue ? normalize(value) : null;
+          for (let index = entries.length - 1; index >= 0; index--) {
+            if (entries[index][0] === normalizedName &&
+                (!hasValue || entries[index][1] === normalizedValue)) {
+              entries.splice(index, 1);
+            }
+          }
+        }
+        get(name) {
+          const normalizedName = normalize(name);
+          for (const entry of entriesFor(this)) {
+            if (entry[0] === normalizedName) return entry[1];
+          }
+          return null;
+        }
+        getAll(name) {
+          const normalizedName = normalize(name);
+          const values = [];
+          for (const entry of entriesFor(this)) {
+            if (entry[0] === normalizedName) values.push(entry[1]);
+          }
+          return values;
+        }
+        has(name, value) {
+          const normalizedName = normalize(name);
+          const hasValue = arguments.length > 1;
+          const normalizedValue = hasValue ? normalize(value) : null;
+          return entriesFor(this).some(entry => entry[0] === normalizedName &&
+            (!hasValue || entry[1] === normalizedValue));
+        }
+        set(name, value) {
+          const entries = entriesFor(this);
+          const normalizedName = normalize(name);
+          const normalizedValue = normalize(value);
+          let found = false;
+          for (let index = 0; index < entries.length; index++) {
+            if (entries[index][0] !== normalizedName) continue;
+            if (!found) {
+              entries[index][1] = normalizedValue;
+              found = true;
+            } else {
+              entries.splice(index--, 1);
+            }
+          }
+          if (!found) entries.push([normalizedName, normalizedValue]);
+        }
+        sort() {
+          const entries = entriesFor(this);
+          const ordered = entries.map((entry, index) => ({entry, index}));
+          ordered.sort((left, right) => left.entry[0] < right.entry[0] ? -1
+            : left.entry[0] > right.entry[0] ? 1 : left.index - right.index);
+          entries.splice(0, entries.length, ...ordered.map(item => item.entry));
+        }
+        toString() { return searchParams('serialize', entriesFor(this)); }
+        *entries() {
+          const entries = entriesFor(this);
+          for (let index = 0; index < entries.length; index++) {
+            yield [entries[index][0], entries[index][1]];
+          }
+        }
+        *keys() {
+          const entries = entriesFor(this);
+          for (let index = 0; index < entries.length; index++) yield entries[index][0];
+        }
+        *values() {
+          const entries = entriesFor(this);
+          for (let index = 0; index < entries.length; index++) yield entries[index][1];
+        }
+        forEach(callback, thisArg = undefined) {
+          const entries = entriesFor(this);
+          for (let index = 0; index < entries.length; index++) {
+            callback.call(thisArg, entries[index][1], entries[index][0], this);
+          }
+        }
+        [Symbol.iterator]() { return this.entries(); }
+      }
+      Object.defineProperty(URLSearchParams.prototype, Symbol.toStringTag,
+        {value: 'URLSearchParams', configurable: true});
+
+      globalThis.TextEncoder = TextEncoder;
+      globalThis.URLSearchParams = URLSearchParams;
+    })()`);
+    assert.equal(Object.hasOwn(window, '__wingmanTextEncoderAdapter'), false);
+    assert.equal(Object.hasOwn(window, '__wingmanURLSearchParamsAdapter'), false);
     const protocolProbe = request.payload?.protocol_probe;
     if (protocolProbe === 'vm-throw') {
       run(`(() => { function protocolVmThrow() { throw new Error('protocol VM throw'); }

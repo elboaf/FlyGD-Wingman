@@ -236,9 +236,19 @@ def test_gap_capture_worker_reuses_process_and_preserves_business_outcomes(
     mutation = """
 (() => {
   const marker = '__wingmanScreenshotRequestProbe';
-  for (const intrinsic of [Promise, Math, Date, TextEncoder, URLSearchParams]) {
-    intrinsic[marker] = 'mutated';
-    if (intrinsic.prototype) intrinsic.prototype[marker] = 'mutated';
+  for (const [name, intrinsic] of Object.entries(
+    {Promise, Math, Date, TextEncoder, URLSearchParams}
+  )) {
+    const targets = [
+      ['constructor', intrinsic],
+      ['prototype', intrinsic.prototype],
+      ['constructor-base', Object.getPrototypeOf(intrinsic)],
+      ['instance-base', intrinsic.prototype &&
+        Object.getPrototypeOf(intrinsic.prototype)]
+    ];
+    for (const [level, target] of targets) {
+      if (target) target[marker] = name + '.' + level;
+    }
   }
 })()
 """
@@ -248,14 +258,58 @@ def test_gap_capture_worker_reuses_process_and_preserves_business_outcomes(
   for (const [name, intrinsic] of Object.entries(
     {Promise, Math, Date, TextEncoder, URLSearchParams}
   )) {
-    const constructorChanged = Object.prototype.hasOwnProperty.call(
-      intrinsic, marker
-    );
-    const prototypeChanged = intrinsic.prototype &&
-      Object.prototype.hasOwnProperty.call(intrinsic.prototype, marker);
-    if (constructorChanged || prototypeChanged) {
-      throw new Error('request intrinsic leaked: ' + name);
+    const targets = [
+      ['constructor', intrinsic],
+      ['prototype', intrinsic.prototype],
+      ['constructor-base', Object.getPrototypeOf(intrinsic)],
+      ['instance-base', intrinsic.prototype &&
+        Object.getPrototypeOf(intrinsic.prototype)]
+    ];
+    for (const [level, target] of targets) {
+      if (target && Object.prototype.hasOwnProperty.call(target, marker)) {
+        throw new Error('request intrinsic leaked: ' + name + '.' + level);
+      }
     }
+  }
+  if ('__wingmanTextEncoderAdapter' in globalThis ||
+      '__wingmanURLSearchParamsAdapter' in globalThis) {
+    throw new Error('host adapter remained globally reachable');
+  }
+  const encoder = new TextEncoder();
+  if (encoder.encoding !== 'utf-8' ||
+      Array.from(encoder.encode('Aé𐐀')).join(',') !==
+        '65,195,169,240,144,144,128') {
+    throw new Error('request TextEncoder behavior changed');
+  }
+  const destination = new Uint8Array(2);
+  const encoded = encoder.encodeInto('éA', destination);
+  if (encoded.read !== 1 || encoded.written !== 2 ||
+      Array.from(destination).join(',') !== '195,169') {
+    throw new Error('request TextEncoder encodeInto behavior changed');
+  }
+  const params = new URLSearchParams('?a=1&a=2&space=hello+world');
+  if (params.get('a') !== '1' || params.getAll('a').join(',') !== '1,2' ||
+      params.get('space') !== 'hello world' || !params.has('a', '2')) {
+    throw new Error('request URLSearchParams read behavior changed');
+  }
+  params.delete('a', '1');
+  params.set('a', '3');
+  params.append('b', 'two words');
+  params.sort();
+  const serialized = 'a=3&b=two+words&space=hello+world';
+  if (params.size !== 3 || params.toString() !== serialized ||
+      new URLSearchParams(params).toString() !== serialized ||
+      Array.from(params.keys()).join(',') !== 'a,b,space' ||
+      Array.from(params.values()).join(',') !== '3,two words,hello world') {
+    throw new Error('request URLSearchParams mutation behavior changed');
+  }
+  const visited = [];
+  params.forEach((value, name, owner) => {
+    if (owner !== params) throw new Error('URLSearchParams owner changed');
+    visited.push(name + '=' + value);
+  });
+  if (visited.join('&') !== 'a=3&b=two words&space=hello world') {
+    throw new Error('request URLSearchParams iteration behavior changed');
   }
 })()
 """
