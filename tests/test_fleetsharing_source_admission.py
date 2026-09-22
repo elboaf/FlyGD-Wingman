@@ -1035,7 +1035,24 @@ def test_publication_401_durable_loss_cannot_reset_after_replacement(
         assert saves[0].last_revision == revision + 1
         assert s.load(client.path).session_id is None
         if invalidate == "new_intent":
-            assert worker.request_participation(True)
+            if (kind, boundary, invalidate) == (
+                "off",
+                "after_save",
+                "new_intent",
+            ):
+                expected_generation = None
+                intent_id = worker.request_participation(True)
+            else:
+                expected_generation = 1
+                intent_id = worker.request_participation(
+                    True,
+                    expected_generation=expected_generation,
+                    binding=worker.status().metadata.binding,
+                )
+            assert intent_id
+            assert worker._commands["participation"].payload == s.PendingParticipation(
+                intent_id, True, expected_generation
+            )
         else:
             assert worker.stop()
         status = worker.status()
