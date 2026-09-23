@@ -270,7 +270,19 @@ Each mutation must preserve fixture display and fail only when cleanup restores 
 
 - [ ] **Step 2: Witness Companion delayed-continuation revocation**
 
-Temporarily weaken both source-chooser revocation fences in `chooseSource`:
+Temporarily weaken all three revocation fences crossed by the fixture source continuation. In the shared `request` completion, replace:
+
+```javascript
+      if (requests.indexOf(item) === -1) return;
+```
+
+with:
+
+```javascript
+      if (false && requests.indexOf(item) === -1) return; // MUTATION
+```
+
+Then weaken both source-chooser fences in `chooseSource`:
 
 ```javascript
     function current() { return ready(); } // MUTATION
