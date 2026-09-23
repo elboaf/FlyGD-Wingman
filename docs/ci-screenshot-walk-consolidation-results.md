@@ -285,8 +285,129 @@ The current-owner walk matrix decreased from 60 to 12 identities. Each removed i
 
 ## Local verification
 
-PENDING — Task 4 will record final inventory, order, full-suite, executable, native, lint, format, and changed-path evidence.
+### Exact final inventory
+
+The final four-file collection contains exactly 543 unique node IDs, a reduction
+of exactly 54 from the 597-ID baseline. The normalized forward-order hashes are:
+
+- Baseline, 597 IDs: `4ff87df92ef58977cd8e5b99b85ca52dddd330f4fc86b037d5f6d209e99de6e7`.
+- Final, 543 IDs: `0142f2bec02e99ca96859c7e58044dd413e7c3026f82e907b8bf267e8c53d04d`.
+
+| File | Baseline | Final | Delta |
+|---|---:|---:|---:|
+| `tests/test_shoot_screens.py` | 246 | 240 | -6 |
+| `tests/test_new_screenshots.py` | 90 | 90 | 0 |
+| `tests/test_current_screenshots.py` | 160 | 112 | -48 |
+| `tests/test_fittings_page.py` | 101 | 101 | 0 |
+| **Total** | **597** | **543** | **-54** |
+
+The exact set audit passed: all 597 baseline and all 543 final IDs were unique,
+`baseline - final` contained exactly the 54 IDs represented by the mapping tables
+above, `final - baseline` was empty, and every removed ID belonged to one of the
+three authorized walk matrices. The mapping audit counted only table rows with
+two test node IDs, avoiding the four one-node baseline inventory rows; it found
+exactly 54 removed-to-retained rows.
+
+### Mutation restoration
+
+All eight mutation probes recorded above failed at their intended retained
+witness assertion. Each temporary `scripts/shoot_screens.py` mutation was restored
+before the next probe, the unmodified 71-case pre-consolidation selection passed,
+and final protected-path and changed-path checks found no source mutation residue.
+
+### Order isolation
+
+The generated node lists each contained all 543 final identities. The forward
+list hash is the final normalized hash above; the reverse-list SHA-256 is
+`2a2be39e384f80b1252b048b92eb2550b43f3af30a4e7e20d14ca1796cf391bd`, and
+the deterministic seed-`30422062` shuffled-list SHA-256 is
+`dbb302db92e18c1d786d52934c1bbad68b80a72530774b0a4e6e2fc99ba5ff4e`.
+
+| Execution order | Result |
+|---|---|
+| Normal file order | 543 passed in 78.88s |
+| Reverse file order | 543 passed in 77.56s |
+| Forward collected-node order | 543 passed in 75.49s |
+| Reverse collected-node order | 543 passed in 75.30s |
+| Deterministic shuffled-node order, seed `30422062` | 543 passed in 75.20s |
+
+The harness permission policy rejected the plan's literal shell command
+substitution and a subsequent `xargs` attempt without an available approval UI.
+The five runs therefore used Python `subprocess.run(..., check=True)` with the
+same pytest executable, options, file arguments, and exact generated node lists;
+no ordering plugin or altered selection was used.
+
+### Release codec prerequisite
+
+`cargo build --locked --release --manifest-path
+packaging/settings-codec/Cargo.toml --target-dir
+packaging/settings-codec/target` completed successfully in 4.83s. The release
+binary was copied to this checkout's ignored `packaging/bin`, and
+`codec.codec_available()` asserted true. The ignored `packaging/bin/` and
+`packaging/settings-codec/target/` outputs did not create tracked changes.
+
+### Focused and full pytest
+
+The focused four-file run passed **543 tests with zero skips, failures, or
+errors in 77.38s**. Its JUnit contains 543 cases and has SHA-256
+`6f0d8271cef20ada85e2ab482f9498b8e254253e384bdf8207555142e5c07552`.
+
+The complete local suite passed **16,632 tests with 14 skips, zero failures, and
+zero errors in 554.01s (9m14s)**. Its JUnit contains 16,646 cases and has
+SHA-256 `18aab0c99bf620ba4065081dae5f9abb94907218b98d5c40b0cb34b1294fcc69`.
+This is exactly 54 fewer passed tests than the PR #280 comparator's 16,686 passed
+and 14 skipped, matching only the authorized node removal. The skip inventory is
+identical to the comparator and consists only of these platform integrations:
+
+| Test | Reason |
+|---|---|
+| `tests.test_clipserve.test_a_live_reader_does_not_block_deletion` | delete-while-open is a Windows sharing rule |
+| `tests.test_evesettings_profilecopy.test_prepare_copy_rejects_a_real_windows_server_junction_outside_the_root` | requires a real Windows junction |
+| `tests.test_evesettings_profilecopy.test_prepare_copy_rejects_a_real_windows_profile_junction_outside_the_server` | requires a real Windows junction |
+| `tests.test_evesettings_profilecopy.test_cleanup_refuses_a_stage_shaped_windows_junction_rather_than_following_it` | requires a real Windows junction |
+| `tests.test_eveskills_dpapi.test_round_trips_on_windows` | requires real DPAPI |
+| `tests.test_eveskills_dpapi.test_crypt32_binding_is_cached` | requires real WinDLL |
+| `tests.test_preview_host.test_stop_from_another_thread_really_exits_the_pump` | needs a real message pump and window station |
+| `tests.test_preview_win32.test_every_used_function_is_declared` | binds user32/gdi32/dwmapi |
+| `tests.test_preview_win32.test_pointer_sized_returns_are_not_left_at_the_c_int_default` | binds user32/gdi32/dwmapi |
+| `tests.test_preview_win32.test_bind_is_cached_so_declarations_are_applied_once` | binds user32/gdi32/dwmapi |
+| `tests.test_tray.test_adapter_loads_against_the_pinned_pystray_windows_backend` | pystray Windows backend |
+| `tests.test_ui_setup_profile.test_recognized_file_shaped_junction_refuses[core_char_31.dat]` | requires real Windows junction |
+| `tests.test_ui_setup_profile.test_recognized_file_shaped_junction_refuses[prefs.ini]` | requires real Windows junction |
+| `tests.test_wanderer_integration.test_real_windows_credential_document_roundtrip_replace_binding_and_remove` | real Windows user-bound DPAPI required |
+
+Node v26.5.0 and the built release codec were available. There were no Node,
+native-codec, or other availability skips.
+
+### Independent gates
+
+| Gate | Outcome |
+|---|---|
+| `node scripts/js_smoke.js` | Passed: every module for all three pages loaded |
+| `node --test tests/fixtures/screenshot_dom.test.cjs` | 35 passed, 0 failed/skipped |
+| `cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml` | 1 passed, 0 failed/ignored |
+| `uv run --no-sync ruff check .` | All checks passed |
+| `uv run --no-sync ruff format --check .` | 520 files already formatted |
+| `git diff --check` | Passed |
+
+### Changed-path and exclusion proof
+
+The exact `30422062..HEAD` changed-path allowlist passed with these five paths:
+
+- `docs/ci-screenshot-walk-consolidation-results.md`;
+- `docs/superpowers/plans/2026-09-22-screenshot-walk-consolidation.md`;
+- `docs/superpowers/specs/2026-09-22-screenshot-walk-consolidation-design.md`;
+- `tests/test_current_screenshots.py`;
+- `tests/test_shoot_screens.py`.
+
+The protected-path command over `wingman`, `.github`, `scripts`, `packaging`,
+`pyproject.toml`, `uv.lock`, and `tests/fixtures` printed nothing. Production,
+JavaScript fixtures, workflows, packaging sources, dependencies, configuration,
+screenshot inventories, generated expressions, and persistent-worker protocol
+are unchanged. The only executable changes are the authorized pytest parameter
+selections in the two test files.
 
 ## Hosted evidence
 
-PENDING — no hosted or overall-runtime claim.
+HOSTED PENDING — no hosted, Windows-runtime, overall-runtime, wall-clock, or
+critical-path improvement claim is made from this local evidence.
