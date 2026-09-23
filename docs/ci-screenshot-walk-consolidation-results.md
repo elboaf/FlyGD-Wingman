@@ -409,8 +409,129 @@ selections in the two test files.
 
 ## Hosted evidence
 
-HOSTED PENDING — no hosted, Windows-runtime, overall-runtime, wall-clock, or
-critical-path improvement claim is made from this local evidence.
+### Run authority and comparability
+
+The hosted comparator remains PR #280 run
+[`35767700980`](https://github.com/elboaf/FlyGD-Wingman/actions/runs/35767700980),
+whose executable head is `18f85d2d4a53423544c157af70aa29a310de8924`.
+Its final Windows and Ubuntu artifacts are retained at
+`/tmp/wingman-pr280-final-windows` and `/tmp/wingman-pr280-final-ubuntu`.
+
+PR #285 run
+[`35812158175`](https://github.com/elboaf/FlyGD-Wingman/actions/runs/35812158175)
+tested branch head `978bb02df6fe1b4b4f607b3c0ce39d2f6c539c40` through synthetic
+merge `c9a8e0d` into base `438ac1c6fd6fe1e8ef51b1a0c32bb558128ca4fb`.
+The base movement from the PR #280 source baseline, `30422062..438ac1c6`, is
+only PR #284. Its changed paths do not include any of the four target tests,
+their fixtures, `scripts/shoot_screens.py`, or `.github/workflows/ci.yml`.
+The comparator and PR #285 artifacts are therefore comparable for this bounded
+target identity and testcase-sum analysis. This hosted-evidence update is
+documentation-only and follows the tested executable head.
+
+Run `35812158175` supplied two complete successful attempts:
+
+| Attempt | Checks | Ubuntu job | Ubuntu job / Test | Windows job | Windows job / Test |
+|---|---:|---:|---:|---:|---:|
+| 1 | `107025872947` — passed | `107025873111` — passed | 6m38s / 6m13s | `107025873164` — passed | 12m26s / 11m30s |
+| 2 | `107028566697` — passed | `107028566862` — passed | 5m51s / 5m28s | `107028567019` — passed | 13m01s / 11m58s |
+
+Attempt 1 artifacts are retained at
+`/tmp/wingman-pr285-attempt1-{windows,ubuntu}`; attempt 2 artifacts are at
+`/tmp/wingman-pr285-attempt2-{windows,ubuntu}`. All six artifact directories
+contain both `pytest-result.xml` and `pytest-timing.json`.
+
+### Result, identity, and skip audits
+
+The XML and JSON in all six artifact directories were parsed together. For each
+artifact, the JUnit testcase count and testcase-time sum reproduce the JSON
+`case_count`, `total_seconds`, per-file counts, and per-file sums. Both PR #285
+attempts have **16,646 cases**, zero failures, and zero errors on each platform.
+Windows has **67 expected skips** and Ubuntu has **14 expected skips**; the skip
+test identities match the comparator and each other on the same platform. The
+two Windows reasons that embed a generated pytest temporary directory differ
+only in that run-specific path.
+
+The target identity audit also passed exactly:
+
+- the comparator Windows and Ubuntu target sets both equal the published
+  597-ID Appendix A inventory;
+- both PR #285 attempts on both platforms equal the published 543-ID Appendix B
+  inventory;
+- Windows and Ubuntu target sets are identical within each attempt;
+- relative to the comparator, exactly the 54 mapped IDs are absent and zero IDs
+  are added;
+- both attempts retain exact per-file counts `240 / 90 / 112 / 101`.
+
+### Per-file hosted testcase sums
+
+JUnit testcase sums are additive diagnostic observations. They are not job
+wall-clock or required-critical-path measurements.
+
+| Platform | Evidence | `test_shoot_screens.py` | `test_new_screenshots.py` | `test_current_screenshots.py` | `test_fittings_page.py` | Four-file target |
+|---|---|---:|---:|---:|---:|---:|
+| Windows | PR #280 comparator | 26.392s / 246 | 15.617s / 90 | 20.755s / 160 | 17.265s / 101 | 80.029s / 597 |
+| Windows | PR #285 attempt 1 | 32.298s / 240 | 20.952s / 90 | 23.416s / 112 | 22.198s / 101 | 98.864s / 543 |
+| Windows | PR #285 attempt 2 | 31.861s / 240 | 20.674s / 90 | 22.785s / 112 | 22.203s / 101 | 97.523s / 543 |
+| Ubuntu | PR #280 comparator | 23.202s / 246 | 15.979s / 90 | 15.826s / 160 | 19.140s / 101 | 74.147s / 597 |
+| Ubuntu | PR #285 attempt 1 | 23.435s / 240 | 16.085s / 90 | 15.879s / 112 | 19.402s / 101 | 74.801s / 543 |
+| Ubuntu | PR #285 attempt 2 | 17.256s / 240 | 11.970s / 90 | 11.917s / 112 | 10.759s / 101 | 51.902s / 543 |
+
+The two changed test files are the affected scope. The unchanged New Screenshots
+and Fittings files are target-local runner controls:
+
+| Platform | Evidence | All-case JUnit sum | Affected two-file sum | Unchanged target controls | Affected / control |
+|---|---|---:|---:|---:|---:|
+| Windows | PR #280 comparator | 834.507s | 47.147s | 32.882s | 1.434 |
+| Windows | PR #285 attempt 1 | 654.602s | 55.714s | 43.150s | 1.291 |
+| Windows | PR #285 attempt 2 | 679.696s | 54.646s | 42.877s | 1.274 |
+| Ubuntu | PR #280 comparator | 344.815s | 39.028s | 35.119s | 1.111 |
+| Ubuntu | PR #285 attempt 1 | 342.432s | 39.314s | 35.487s | 1.108 |
+| Ubuntu | PR #285 attempt 2 | 310.710s | 29.173s | 22.729s | 1.284 |
+
+For the 543 IDs common to comparator and PR #285, the comparator sums are
+79.591s on Windows and 73.960s on Ubuntu. The 54 removed pure-Python
+orchestration cases account for only **0.438s on Windows** and **0.187s on
+Ubuntu** in the comparator. The corresponding common-ID sums are 98.864s and
+74.801s in attempt 1, and 97.523s and 51.902s in attempt 2.
+
+For wall-clock context only, the PR #280 final Windows job/Test observations were
+16m51s / 14m28s and its final Ubuntu observations were 6m46s / 6m18s. PR #285's
+two job/Test observations are recorded in the attempt table above. These values
+vary independently of the tiny removed-case cost and do not establish an overall
+runtime result.
+
+### Interpretation
+
+The raw Windows four-file target sum is slower in both PR #285 attempts:
+98.864s and 97.523s versus the comparator's 80.029s. This is not evidence that
+the consolidation itself regressed the target. Both unchanged control files
+increase similarly in both attempts, while the affected/control ratio improves
+from **1.434** in the comparator to **1.291** and **1.274**. The removed cases
+represented only 0.438s of comparator Windows testcase time, so no material
+absolute reduction was expected from this Stage 1 contract simplification.
+
+Ubuntu reinforces the high-variance interpretation: attempt 1 is near-flat at
+74.801s versus 74.147s, while attempt 2 is much faster at 51.902s. Its affected
+and control files move together rather than isolating a stable Stage 1 timing
+effect. The all-case sums, Test steps, and complete jobs likewise vary enough
+that they are observations only.
+
+Accordingly, this evidence makes **no Stage 1 speedup claim and no overall
+runtime, job-duration, wall-clock, runner-efficiency, or critical-path
+improvement claim**.
+
+### Decision boundary
+
+**GO — a separate Stage 2 current-owner lifecycle consolidation only.** Both
+hosted attempts pass all required jobs; identity, skip, failure/error, mapping,
+and scope contracts hold; and Windows target-control normalization supplies an
+explanation for the raw target increase rather than an unexplained material
+regression. Stage 2 must remain a separate change with its own contract and
+mutation evidence.
+
+**STOP — workflow selection, budget enforcement, sharding, every overall-runtime
+claim, and Stages 3–4.** None is authorized by this evidence; each remains
+stopped until separately designed and supported by its own evidence.
 
 ## Appendix A — Complete normalized baseline node list (597)
 
