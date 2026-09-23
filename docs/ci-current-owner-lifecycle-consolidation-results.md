@@ -677,7 +677,7 @@ Observed: `1 failed in 5.45s`; the failure was `assert.equal` in `executeScenari
 
 ## Independent validator and fixture-isolation evidence
 
-The six future retained validator/isolation identities passed together before mutation: `6 passed in 4.71s`.
+The six future retained validator/isolation identities passed together before mutation: `6 passed in 4.71s`. After all eight inverse restorations, the same six identities passed again: `6 passed in 4.86s`.
 
 Each mutation below was applied alone. Validator probes failed inside the retained invalid-scenario loop at the owner-specific `assert.throws(() => WM[method]({kind: 'wrong'}), /Invalid .* screenshot fixture/)`, before either staging iteration. Fixture-isolation probes failed in the second `assertContent()` call immediately after `pushLive()` delivered the newer live projection, before `mutations()` and cleanup.
 
@@ -751,6 +751,7 @@ Adding genuine pending synthetic work for those owners would require a separate 
 ### Task 2
 
 - Pre-mutation retained validator/isolation set: PASS (`6 passed in 4.71s`).
+- Post-restoration retained validator/isolation set: PASS (`6 passed in 4.86s`).
 - Independent malformed-payload validators: expected FAIL for Companions, Wanderer, Fleet display, and Fleet sharing at each owner's retained `assert.throws`; exact IDs, assertions, and durations are recorded above.
 - Independent fixture isolation: expected FAIL for all four owners in the post-newer-live `assertContent()` recheck, before cleanup; exact IDs, assertions, and durations are recorded above.
 - Per-mutation restoration: PASS — exact inverse edit followed by an empty file diff after each of eight probes.
