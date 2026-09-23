@@ -16,7 +16,7 @@
 |---|---|
 | Task 1 — freeze baseline and harden Fleet-sharing restoration evidence | COMPLETE — baseline, fixture green, observability gap, mutation red, restoration, matrix, and JS smoke recorded |
 | Task 2 — validator and fixture-isolation mutation witnesses | COMPLETE — four independent validator reds, four independent post-live fixture-isolation reds, inverse restoration after every probe, and final empty production diff |
-| Task 3 — newest-live and Companion continuation mutation witnesses | PENDING — Task 3 |
+| Task 3 — newest-live and Companion continuation mutation witnesses | COMPLETE — four independent stale-authority restoration reds, Companion delayed-continuation diagnosis and exact escaped-overlay red, inverse restoration, explicit Wanderer/Fleet non-claim, and final six-case green |
 | Task 4 — reduce the lifecycle matrix | PENDING — Task 4 |
 | Task 5 — complete local verification and exact after inventory | PENDING — Task 5 |
 | Task 6 — polish, review, publication, and hosted evidence | PENDING — Task 6 |
@@ -696,6 +696,39 @@ Fleet display and Fleet sharing were separate runs against the same retained Fle
 
 Every mutation was removed by its exact inverse edit before the next probe. After each probe, `git diff --exit-code -- <mutated production file>` exited 0; after all eight, `git diff --exit-code -- wingman` exited 0. No witness mutation survives in the branch.
 
+## Newest-live restoration and Companion delayed-continuation evidence
+
+The six future retained Task 3 identities passed before mutation: `6 passed in 4.73s`. Each newest-live mutation was then applied alone, after which the exact inverse edit restored an empty production-file diff before the next probe.
+
+| Production owner | Retained identity | Temporary mutation | Exact intended cleanup failure | Result |
+|---|---|---|---|---|
+| `WM.companionsScreenshot` | `normal-settings-companions-source-narrow` | Suppress `screenshotLive = payload` in `onCompanionPreviews` | Companion list retained `Live companion` instead of matching `/Live companion updated/` | `1 failed in 3.86s` |
+| `WM.wandererScreenshot` | `normal-settings-wanderer` | Return at the start of the live fixture interception branch | `Expected "https://live.example/live-map" to equal "https://live.example/live-map-updated"` | `1 failed in 3.85s` |
+| `WM.fleetScreenshot` | `normal-settings-fleet-sharing` | Suppress `screenshotLive = section` | Fleet list retained `RunningLive pilotAriadneOfflineTanuki Solette` instead of matching `/Live pilot updated/` | `1 failed in 5.46s` |
+| `WM.fleetSharingScreenshot` | `normal-settings-fleet-sharing` | Suppress `screenshotLive.state = detached(payload)` | `Expected "Paired with https://live.example." to equal "Paired with https://newer.example."` | `1 failed in 5.43s` |
+
+All four failures occurred only after fixture display, the newer live delivery, fixture revalidation, local mutations, and cleanup reached the newest-live restoration assertion. The fixture content therefore remained isolated while capture was active; each red independently proves that cleanup must restore the newest buffered live authority rather than the pre-capture snapshot.
+
+The plan's preflight-ruling Companion mutant weakened the shared request-completion membership guard, the chooser callback epoch guard, and `current()` to readiness-only. Contrary to the preflight prediction, that exact three-edit mutant remained green: `1 passed in 2.15s`. Investigation showed that cleanup's `requests = []` reassigns the list before release, while `settle()` iterates `requests.slice()`. Bypassing the later `indexOf(item)` guard therefore lets the stale promise callback run but does not put the stale item back into the current settlement list, so its chooser continuation is never invoked.
+
+The minimum sufficient semantic fence set was:
+
+1. retain the pending item through screenshot cleanup by suppressing `requests = []`;
+2. weaken the fixture-source completion's `owner !== epoch || attempt !== flow` guard;
+3. weaken `current()` to readiness-only.
+
+That combined mutant failed at the intended post-release revocation assertion:
+
+```text
+Expected false to equal true
+```
+
+Observed result: `1 failed in 3.78s`. This is the exact escaped continuation symptom: after cleanup and release, the stale fixture-source continuation reopened the chooser, so `WM.el('overlay').hidden` was `false` where the harness requires `true`; no bridge call escaped first.
+
+This is a reachable revocation contract rather than unrelated over-mutation. The retained scenario already creates the exact fixture-source `Promise.resolve(...)` request and releases its real result after cleanup. Retaining that admitted request only removes cleanup's shared cancellation of the existing item; the other two mutations remove the two production ownership checks that the same `chooseSource` closure crosses before calling `WM.choose`. Fixture mode still supplies the bounded synthetic source result and does not admit a native selection or bridge write. Restoring each weakened fence individually while leaving the other two disabled returned the retained identity to green (`1 passed in 2.23s`, `1 passed in 1.98s`, and `1 passed in 1.99s` respectively), establishing that all three are necessary for this witness.
+
+The diagnostic instrumentation and every Companion mutation were removed by exact inverse edits. `git diff --exit-code -- wingman/web/companions.js` and then `git diff --exit-code -- wingman` exited 0.
+
 ## Exact 21-row removed-to-retained mapping
 
 No identity is removed in Task 1. This is the authoritative mapping to be applied and audited in Task 4.
@@ -734,6 +767,8 @@ Wanderer, Fleet display, and Fleet sharing have no equivalent fixture-owned dela
 
 Adding genuine pending synthetic work for those owners would require a separate fixture-design change and is outside this tranche. The one permitted fixture change below strengthens an existing Fleet-sharing newest-live observable; it does not create delayed synthetic work or a new scenario.
 
+Task 3 therefore makes no delayed-continuation mutation claim for retained `late-synthetic-settings-wanderer` or `late-synthetic-settings-fleet-sharing`. Those identities prove only their existing current cleanup/idempotence behavior. The delayed synthetic revocation witness is Companion-only.
+
 ## Local verification
 
 ### Task 1
@@ -758,12 +793,24 @@ Adding genuine pending synthetic work for those owners would require a separate 
 - Final production restoration: PASS — `git diff --exit-code -- wingman` exited 0.
 - Planned-mutation fidelity: PASS — all eight planned mutations failed at the intended owner boundary; no equivalent substitute mutation was needed.
 
+### Task 3
+
+- Pre-mutation retained newest-live/late-synthetic set: PASS (`6 passed in 4.73s`).
+- Independent newest-live buffering: expected FAIL for Companions, Wanderer, Fleet display, and Fleet sharing at each owner's exact stale-versus-newer cleanup assertion.
+- Planned Companion three-edit mutant: INCONCLUSIVE/GREEN (`1 passed in 2.15s`) because stale completion was absent from `settle()`'s current request list.
+- Diagnosed minimum sufficient Companion fence set: expected FAIL at the hidden-overlay assertion (`Expected false to equal true`; `1 failed in 3.78s`).
+- Minimum-set checks: restoring any one of request retention, chooser callback epoch fencing, or `current()` ownership fencing returned the identity to green (`1 passed in 2.23s`, `1 passed in 1.98s`, `1 passed in 1.99s`).
+- Final restored retained set: PASS (`6 passed in 4.84s`).
+- Final production restoration: PASS — `git diff --exit-code -- wingman` exited 0.
+- Whitespace/error check: PASS — `git diff --check` exited 0.
+
 ## Deviations and concerns
 
 - Planned assertion deviation: the planned regex against `newer.example` was strengthened to exact equality with the actual rendered connection sentence, `Paired with https://newer.example.`.
 - Fixture sequencing deviation: cloning `live_sharing_newer` alone was rejected as stale because both generated projections start at presentation order 1 while the generic incumbent is raised to 7. The fixture therefore carries the incumbent order forward by one on its detached clone. This follows the existing `sharingLifecycle` sequencing pattern, does not modify `data.live_sharing_newer`, adds no bridge call or identity, and keeps the production monotonic-render contract intact.
 - Task 2 deviations: none. Every planned mutation produced its intended owner assertion, so no substitute mutation was required.
-- Remaining concerns: none for Tasks 1–2. Later tasks still owe newest-live and Companion delayed-continuation witnesses, matrix reduction, full local suites, and hosted evidence explicitly marked pending below.
+- Task 3 deviation: the preflight-ruling Companion mutant was insufficient. Cleanup removes the stale request from the list that `settle()` enumerates, so bypassing only the completion guard cannot revive the chooser callback. The diagnosed substitute mutates cleanup-time request retention plus the two chooser-local fences; three one-fence restoration checks establish that this is the minimum sufficient set for the exact escaped-overlay witness.
+- Remaining concerns: none for Task 3's owner-boundary claims. Tasks 4–6 still owe matrix reduction, full local suites, and hosted evidence explicitly marked pending below.
 
 ### Later-task verification
 
@@ -771,7 +818,7 @@ Adding genuine pending synthetic work for those owners would require a separate 
 - Exact 19-ID retained matrix and normalized hash: PENDING — Task 5.
 - Exact 21 removals and zero additions: PENDING — Tasks 4 and 5.
 - Validator and fixture-isolation mutation witnesses: COMPLETE — Task 2.
-- Newest-live and delayed-continuation mutation witnesses: PENDING — Task 3.
+- Newest-live and delayed-continuation mutation witnesses: COMPLETE — Task 3.
 - Execution-order, lifecycle, isolation, full pytest, DOM, Cargo, Ruff, and formatting gates: PENDING — Task 5.
 
 ## Hosted evidence
