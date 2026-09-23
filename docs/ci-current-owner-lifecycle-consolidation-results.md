@@ -19,7 +19,7 @@
 | Task 3 — newest-live and Companion continuation mutation witnesses | COMPLETE — four independent stale-authority restoration reds, Companion delayed-continuation diagnosis and exact escaped-overlay red, inverse restoration, explicit Wanderer/Fleet non-claim, and final six-case green |
 | Task 4 — reduce the lifecycle matrix | COMPLETE — derived 19-case matrix, exact ordered-ID proof, 21 generated mappings, and 91-case whole-file green |
 | Task 5 — complete local verification and exact after inventory | COMPLETE — exact 543-to-522 inventory, five order runs, release codec, focused/full JUnit, skip audit, independent gates, and scope audit recorded |
-| Task 6 — polish, review, publication, and hosted evidence | PARTIAL / PENDING PUBLICATION — executable-head local/hosted checks and the bounded Stage 3 decision are recorded; evidence commit `18683074` and this correction remain local/unpushed, so evidence-head required checks are pending |
+| Task 6 — polish, review, publication, and hosted evidence | COMPLETE — final evidence-head run `35885692394` passed checks, Ubuntu, and Windows at head `e69336c521e9fa35604b3b29f2735b782e6ec4c2`, validating both hosted-evidence documentation commits after executable run `35882408360` |
 
 ## Exact baseline inventory
 
@@ -1469,7 +1469,8 @@ overall wall-clock, runner-efficiency, critical-path, or Stage 2 speedup claim.
 - Newest-live and delayed-continuation mutation witnesses: COMPLETE — Task 3.
 - Execution-order, lifecycle, isolation, full pytest, DOM, Cargo, Ruff, formatting, and scope gates: COMPLETE — Task 5.
 - Hosted Windows/Ubuntu executable-head identity, skip, timing, provenance, and bounded Stage 3 decision: COMPLETE — Task 6 evidence phase.
-- Publication and evidence-head required checks: PENDING — evidence commit `18683074` and this correction are local/unpushed.
+- Publication and evidence-head required checks: COMPLETE — final run `35885692394` passed at documentation head `e69336c521e9fa35604b3b29f2735b782e6ec4c2` and validated both hosted-evidence documentation commits after executable run `35882408360`.
+- This status-closing change is documentation-only. Its own PR-head checks will be watched after push; they have not run yet and are not claimed here.
 
 ## Hosted evidence
 
@@ -1507,6 +1508,25 @@ Windows executed the same synthetic merge rather than merely sharing a PR head.
 The downloaded PR #286 artifacts are retained at
 `/tmp/wingman-pr286-{windows,ubuntu}`. Each directory contains
 `pytest-result.xml` and `pytest-timing.json`.
+
+### Final evidence-head publication run
+
+PR #286 run
+[`35885692394`](https://github.com/elboaf/FlyGD-Wingman/actions/runs/35885692394)
+validated documentation head `e69336c521e9fa35604b3b29f2735b782e6ec4c2` after executable run
+`35882408360`. This is the exact final evidence-head run required to close Task 6;
+it covers both hosted-evidence documentation commits, `18683074` and `e69336c5`.
+
+| Job | Final evidence-head result |
+|---|---:|
+| Checks `107265140385` | passed — 16s |
+| Ubuntu `107265140643` | passed — 5m49s |
+| Windows `107265140898` | passed — 13m39s |
+
+All three required jobs passed at the exact documentation head. The present
+status-closing commit changes documentation only and will have its own PR-head
+checks watched after push; those checks have not happened and are not claimed by
+this results document.
 
 ### Comparator provenance
 
@@ -1623,16 +1643,18 @@ overall timing effect.
 
 ### Interpretation and decision boundary
 
-All required executable-head checks and executable contracts pass. Publication
-and required evidence-head checks remain pending until the local documentation
-commits are pushed and final checks complete. Both hosted platforms show the
-exact authorized 21-removal, zero-addition transformation, unchanged
-normalized skip tuples, and no failures or errors. Windows affected-file and
-target sums decrease against both comparator attempts by approximately the
-removed-case cost while common IDs remain close. Ubuntu's affected file decreases
-against attempt 1 and is flat against attempt 2, while target, all-case, Test-step,
-and job observations remain highly variable. The evidence supports consolidation
-and finds no unexplained material target regression.
+All required executable-head checks, executable contracts, publication checks,
+and final evidence-head checks pass. Final run `35885692394` validated the two
+hosted-evidence documentation commits at exact head
+`e69336c521e9fa35604b3b29f2735b782e6ec4c2` after executable run
+`35882408360`. Both hosted platforms show the exact authorized 21-removal,
+zero-addition transformation, unchanged normalized skip tuples, and no failures
+or errors. Windows affected-file and target sums decrease against both comparator
+attempts by approximately the removed-case cost while common IDs remain close.
+Ubuntu's affected file decreases against attempt 1 and is flat against attempt 2,
+while target, all-case, Test-step, and job observations remain highly variable.
+The evidence supports consolidation and finds no unexplained material target
+regression.
 
 It does **not** establish a Stage 2 speedup, an overall runtime improvement, a
 job-duration improvement, runner efficiency, or a critical-path reduction.
@@ -1645,7 +1667,8 @@ evidence, implementation, local verification, and hosted review.
 claim, and lower Fittings context consolidation.** None is authorized by this
 Stage 2 evidence.
 
-**Task 6 remains PARTIAL / PENDING PUBLICATION.** Evidence commit `18683074` and
-this focused correction are local only. Per instruction, they were not pushed and
-PR #286 was not updated; required evidence-head checks therefore have not run.
-Task 6 must not be marked complete until publication and those final checks pass.
+**Task 6 is COMPLETE.** Final evidence-head run `35885692394` passed checks,
+Ubuntu, and Windows at head `e69336c521e9fa35604b3b29f2735b782e6ec4c2`,
+validating both hosted-evidence documentation commits after executable run
+`35882408360`. This status-closing commit is documentation-only and has not been
+pushed; its own PR-head checks will be watched after push and are not claimed here.
