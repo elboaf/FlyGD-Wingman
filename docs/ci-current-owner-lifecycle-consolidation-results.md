@@ -15,7 +15,7 @@
 | Task | Status |
 |---|---|
 | Task 1 — freeze baseline and harden Fleet-sharing restoration evidence | COMPLETE — baseline, fixture green, observability gap, mutation red, restoration, matrix, and JS smoke recorded |
-| Task 2 — validator and fixture-isolation mutation witnesses | PENDING — Task 2 |
+| Task 2 — validator and fixture-isolation mutation witnesses | COMPLETE — four independent validator reds, four independent post-live fixture-isolation reds, inverse restoration after every probe, and final empty production diff |
 | Task 3 — newest-live and Companion continuation mutation witnesses | PENDING — Task 3 |
 | Task 4 — reduce the lifecycle matrix | PENDING — Task 4 |
 | Task 5 — complete local verification and exact after inventory | PENDING — Task 5 |
@@ -675,6 +675,27 @@ Expected "Paired with https://live.example." to equal "Paired with https://newer
 
 Observed: `1 failed in 5.45s`; the failure was `assert.equal` in `executeScenario`, after fixture display and cleanup reached the restoration check. The production edit was restored by exact inverse edit, and `git diff --exit-code -- wingman/web/fleetsharing.js` again exited 0.
 
+## Independent validator and fixture-isolation evidence
+
+The six future retained validator/isolation identities passed together before mutation: `6 passed in 4.71s`.
+
+Each mutation below was applied alone. Validator probes failed inside the retained invalid-scenario loop at the owner-specific `assert.throws(() => WM[method]({kind: 'wrong'}), /Invalid .* screenshot fixture/)`, before either staging iteration. Fixture-isolation probes failed in the second `assertContent()` call immediately after `pushLive()` delivered the newer live projection, before `mutations()` and cleanup.
+
+| Boundary | Production owner | Retained identity | Temporary mutation | Exact intended failure | Result |
+|---|---|---|---|---|---|
+| Validator | `WM.companionsScreenshot` | `invalid-settings-companions-source-narrow` | First-body early return for `payload.kind === 'wrong'` | `assert.throws`: `Expected function to throw` | `1 failed in 3.63s` |
+| Validator | `WM.wandererScreenshot` | `invalid-settings-wanderer` | First-body early return for `payload.kind === 'wrong'` | `assert.throws`: `Expected function to throw` | `1 failed in 3.64s` |
+| Validator | `WM.fleetScreenshot` | `invalid-settings-fleet-sharing` | First-body early return for `payload.kind === 'wrong'` | First Fleet method's `assert.throws`: `Expected function to throw` | `1 failed in 5.16s` |
+| Validator | `WM.fleetSharingScreenshot` | `invalid-settings-fleet-sharing` | First-body early return for `payload.kind === 'wrong'` | Second Fleet method's `assert.throws`: `Expected function to throw` | `1 failed in 5.40s` |
+| Fixture isolation | `onCompanionPreviews` / `WM.companionsScreenshot` | `normal-settings-companions-source-narrow` | `if (false && screenshotFixture)` | Post-newer-live `run(data.verify)`: `Screenshot content did not settle: settings-companions-source-narrow` | `1 failed in 4.01s` |
+| Fixture isolation | `receive` / `WM.wandererScreenshot` | `normal-settings-wanderer` | `if (false && screenshotFixture && !synthetic)` | Post-newer-live URL-draft assertion: `Expected "Not saved — press Enter or Test connection." to equal ""` | `1 failed in 3.68s` |
+| Fixture isolation | `render` / `WM.fleetScreenshot` | `normal-settings-fleet-sharing` | `if (false && screenshotFixture && !synthetic)` | Post-newer-live character assertion: `Expected "RunningLive pilot updatedAriadneOfflineTanuki Solette" to match /Running.*Aiga Otsolen.*Offline.*Tanuki Solette/` | `1 failed in 5.42s` |
+| Fixture isolation | `render` / `WM.fleetSharingScreenshot` | `normal-settings-fleet-sharing` | `if (false && screenshotFixture && !synthetic)` | Post-newer-live `run(data.verify)`: `Screenshot content did not settle: settings-fleet-sharing` | `1 failed in 5.15s` |
+
+Fleet display and Fleet sharing were separate runs against the same retained Fleet identity. The method order is `fleetScreenshot`, then `fleetSharingScreenshot`; in each validator run the unmutated sibling still rejected malformed input and the mutated owner's own `assert.throws` was the one that failed.
+
+Every mutation was removed by its exact inverse edit before the next probe. After each probe, `git diff --exit-code -- <mutated production file>` exited 0; after all eight, `git diff --exit-code -- wingman` exited 0. No witness mutation survives in the branch.
+
 ## Exact 21-row removed-to-retained mapping
 
 No identity is removed in Task 1. This is the authoritative mapping to be applied and audited in Task 4.
@@ -727,18 +748,29 @@ Adding genuine pending synthetic work for those owners would require a separate 
 - Whitespace/error check: PASS — `git diff --check` exited 0.
 - Changed-path scope: PASS — only `tests/fixtures/current_screenshot_pages.cjs` and this results document were committed.
 
+### Task 2
+
+- Pre-mutation retained validator/isolation set: PASS (`6 passed in 4.71s`).
+- Independent malformed-payload validators: expected FAIL for Companions, Wanderer, Fleet display, and Fleet sharing at each owner's retained `assert.throws`; exact IDs, assertions, and durations are recorded above.
+- Independent fixture isolation: expected FAIL for all four owners in the post-newer-live `assertContent()` recheck, before cleanup; exact IDs, assertions, and durations are recorded above.
+- Per-mutation restoration: PASS — exact inverse edit followed by an empty file diff after each of eight probes.
+- Final production restoration: PASS — `git diff --exit-code -- wingman` exited 0.
+- Planned-mutation fidelity: PASS — all eight planned mutations failed at the intended owner boundary; no equivalent substitute mutation was needed.
+
 ## Deviations and concerns
 
 - Planned assertion deviation: the planned regex against `newer.example` was strengthened to exact equality with the actual rendered connection sentence, `Paired with https://newer.example.`.
 - Fixture sequencing deviation: cloning `live_sharing_newer` alone was rejected as stale because both generated projections start at presentation order 1 while the generic incumbent is raised to 7. The fixture therefore carries the incumbent order forward by one on its detached clone. This follows the existing `sharingLifecycle` sequencing pattern, does not modify `data.live_sharing_newer`, adds no bridge call or identity, and keeps the production monotonic-render contract intact.
-- Remaining concerns: none for Task 1. Later tasks still owe the independent owner-boundary mutations, matrix reduction, full local suites, and hosted evidence explicitly marked pending below.
+- Task 2 deviations: none. Every planned mutation produced its intended owner assertion, so no substitute mutation was required.
+- Remaining concerns: none for Tasks 1–2. Later tasks still owe newest-live and Companion delayed-continuation witnesses, matrix reduction, full local suites, and hosted evidence explicitly marked pending below.
 
 ### Later-task verification
 
 - Exact 522-ID after inventory and normalized hash: PENDING — Task 5.
 - Exact 19-ID retained matrix and normalized hash: PENDING — Task 5.
 - Exact 21 removals and zero additions: PENDING — Tasks 4 and 5.
-- Validator, fixture-isolation, newest-live, and delayed-continuation mutation witnesses: PENDING — Tasks 2 and 3.
+- Validator and fixture-isolation mutation witnesses: COMPLETE — Task 2.
+- Newest-live and delayed-continuation mutation witnesses: PENDING — Task 3.
 - Execution-order, lifecycle, isolation, full pytest, DOM, Cargo, Ruff, and formatting gates: PENDING — Task 5.
 
 ## Hosted evidence
