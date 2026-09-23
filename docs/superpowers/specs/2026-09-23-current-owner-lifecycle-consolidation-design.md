@@ -35,8 +35,8 @@ Fleet remains one retained test identity per special scenario because every Flee
 The PR changes no:
 
 - production JavaScript owner or public interface;
-- Node fixture, generated setup, preparation, verification, or cleanup expression;
-- screen inventory, route, section, geometry, fixture payload, or screenshot key;
+- generated setup, preparation, verification, or cleanup expression;
+- screen inventory, route, section, geometry, production fixture payload, or screenshot key;
 - persistent-worker protocol or isolation contract;
 - workflow, dependency, packaging, marker, budget, shard, or runtime behavior.
 
@@ -76,7 +76,7 @@ Only `settings-companions-source-narrow` currently creates real pending syntheti
 
 Wanderer, Fleet display, and Fleet sharing have no equivalent fixture-owned delayed continuation. Their retained `late-synthetic` identities preserve the current stage-cleanup-idempotence behavior, but they do not prove delayed asynchronous revocation. Retaining more Wanderer or Fleet keys would repeat the same no-pending-continuation path.
 
-Adding genuine pending synthetic work for those owners would require a separate fixture-design change and is outside this parameter-selection-only tranche.
+Adding genuine pending synthetic work for those owners would require a separate fixture-design change and is outside this tranche. The one permitted fixture change below strengthens an existing Fleet-sharing newest-live observable; it does not create delayed synthetic work or a new scenario.
 
 ## Case derivation
 
@@ -106,6 +106,10 @@ For Companions, Wanderer, Fleet display, and Fleet sharing separately:
 2. **Fixture isolation:** bypass the owner's effective fixture/read/live fence so held reads or live delivery paints during capture. The retained representative must fail while rechecking synthetic fixture content.
 3. **Newest-live restoration:** preserve fixture display but suppress buffering the newest live delivery. Cleanup must restore stale authority and fail the retained lifecycle assertion.
 
+Fleet sharing does not currently make that third defect visible: the generic fixture path only increments `presentation_order`, while cleanup checks an origin already present before capture. Strengthen `tests/fixtures/current_screenshot_pages.cjs` so the generic Fleet live update installs the existing `live_sharing_newer` projection, whose origin/binding differs visibly from the initial live projection. After cleanup, assert the newer sharing origin/binding exactly. Then suppressing Fleet sharing's newest-live buffer must fail that assertion independently of Fleet display restoration.
+
+This is test-fixture hardening only. It must reuse the existing `live_sharing_newer` request payload, add no identity, call no bridge, and change no production JavaScript.
+
 ### Companion-only delayed continuation
 
 Disable the source chooser's fixture epoch/request revocation enough for its delayed synthetic result to continue after cleanup. The retained `late-synthetic/settings-companions-source-narrow` identity must fail because the chooser reopens or a bridge call escapes.
@@ -134,9 +138,12 @@ The implementation results must publish:
 
 ## Implementation shape
 
-Committed executable changes are limited to case derivation and parameter selection in `tests/test_current_screenshots.py`.
+Committed test changes are limited to:
 
-Add one results document for mapping, mutation, inventory, local verification, and hosted evidence. The spec and plan are the only other planned paths. Do not modify production JavaScript, `.cjs` fixtures, screenshot tooling, other tests, workflows, or configuration.
+- case derivation and parameter selection in `tests/test_current_screenshots.py`;
+- the Fleet-sharing newest-live observable in `tests/fixtures/current_screenshot_pages.cjs`.
+
+Add one results document for mapping, mutation, inventory, local verification, and hosted evidence. The spec and plan are the only other planned paths. Do not modify production JavaScript, screenshot tooling, other tests, workflows, or configuration.
 
 ## Verification
 
@@ -145,6 +152,8 @@ Local verification must include:
 - exact target collection `240 / 90 / 91 / 101 = 522` with unique IDs;
 - exact synthetic-owner collection of 19 IDs in the required order;
 - exact 21 removals and zero additions;
+- a focused fixture regression proving cleanup restores the visibly distinct newer Fleet-sharing projection;
+- an independent Fleet-sharing buffer-suppression mutation failing that exact assertion;
 - normal, reverse-file, forward-node, reverse-node, and deterministic shuffled execution;
 - unchanged worker protocol/isolation and lifecycle suites;
 - full pytest with Node and built release settings codec, with all skips inspected;
