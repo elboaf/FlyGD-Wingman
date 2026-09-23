@@ -1381,7 +1381,8 @@ def test_fleet_page_keeps_header_actions_outside_drag_and_stable_columns():
     html = (window_mod._web_dir() / "fleetbar.html").read_text(encoding="utf-8")
     js = (window_mod._web_dir() / "fleetbar.js").read_text(encoding="utf-8")
 
-    assert html.count("pywebview-drag-region") == 1
+    assert html.count("pywebview-drag-region") == 2
+    assert '<header class="fleet-title pywebview-drag-region" id="fleet-title">' in html
     assert '<div class="fleet-drag pywebview-drag-region" id="fleet-drag">' in html
     assert "CHARACTER" in html
     assert ">DPS · 10s<" in html and ">OUT<" in html and ">IN<" in html

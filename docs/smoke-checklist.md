@@ -4527,11 +4527,13 @@ until they are actually run on Windows.
 
 ### Installed Windows/WebView2 only — still UNVERIFIED until run
 
-- [ ] **Header drag is dedicated and actions stay out of it.** Drag only from
-      the `Fleet Bar` header strip. Hover or keyboard-focus the header:
-      `Reset width` and `Hide` appear without changing header height. Try
-      dragging from the health label, either header action, the table, and the
-      empty-state copy. Expected: only the dedicated drag strip moves the
+- [ ] **The whole header drags; actions stay out of it.** Drag from any part of
+      the `Fleet Bar` header strip except its two buttons: the label, the
+      padding around it, the flex gap, and the health label. Hover or
+      keyboard-focus the header: `Reset width` and `Hide` appear without
+      changing header height, and clicking directly on their text works. Try
+      dragging from either header action, the table, and the empty-state
+      copy. Expected: every header press outside the buttons moves the
       window; rows stay scrollable and the action buttons never start a drag.
 - [ ] **Left and right edges resize, with native cursor feedback.** At 100%,
       125%, 150%, and 200% Windows display scaling, the left and right edges

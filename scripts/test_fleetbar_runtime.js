@@ -46,15 +46,27 @@ class EventTarget {
     if (!event.type) throw new Error('event.type required');
     if (!event.target) event.target = this;
     event.currentTarget = this;
+    // A stopped event no longer propagates: neither this node's remaining
+    // listeners nor any ancestor sees it (matches the real DOM enough for
+    // the #275 guards to be exercised as written).
+    if (event.stopped) return false;
     if (!event.preventDefault) {
       event.defaultPrevented = false;
       event.preventDefault = function () { this.defaultPrevented = true; };
+    }
+    // The real DOM stops calling listeners up the ancestor chain once a
+    // listener stops propagation; synthetic events need the same shape for
+    // #275's actions-layer guard to be exercised as written.
+    if (!event.stopPropagation) {
+      event.stopped = false;
+      event.stopPropagation = function () { this.stopped = true; };
     }
     for (const listener of [...(this.listeners[event.type] || [])]) {
       if (listener.once) {
         this.listeners[event.type] = this.listeners[event.type].filter(l => l !== listener);
       }
       listener.fn(event);
+      if (event.stopped) break;
     }
     return !event.defaultPrevented;
   }
@@ -192,7 +204,7 @@ async function page(options = {}) {
   };
   document.getElementById = id => nodes.get(id) || null;
   document.createElement = () => new Element(document);
-  document.querySelectorAll = selector => selector === '.pywebview-drag-region' ? [drag] : [];
+  document.querySelectorAll = selector => selector === '.pywebview-drag-region' ? [title, drag] : [];
   document.querySelector = selector => selector === '.fleet-shell' ? shell
     : selector === '.fleet-table' ? table : null;
 

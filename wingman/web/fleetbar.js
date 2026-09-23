@@ -183,10 +183,29 @@
   }
 
   function bindHeaderDrag() {
-    var header = document.getElementById('fleet-drag');
+    // The drag region is the whole header (#275). pywebview's body-level
+    // walker matches ancestors, so the header class alone moves the window
+    // from every press the page handler sees. Button presses stop here:
+    // the buttons keep their own handlers, and neither pywebview nor the
+    // page may turn that press into a drag.
+    var header = document.getElementById('fleet-title');
+    var actions = document.getElementById('fleet-title-actions');
     if (!header) return;
+    actions.addEventListener('mousedown', function (event) {
+      if (event && typeof event.stopPropagation === 'function') {
+        event.stopPropagation();
+      }
+    });
     header.addEventListener('mousedown', function (event) {
-      if (event.button !== 0 || headerDrag) return;
+      if (headerDrag) return;
+      if (event.button !== 0) {
+        // A title bar drags on the left button only; keep other buttons from
+        // arming pywebview's mover.
+        if (event && typeof event.stopPropagation === 'function') {
+          event.stopPropagation();
+        }
+        return;
+      }
       var current = { version: ++dragVersion, actionVersion: dragActionVersion };
       var x = window.screenX;
       var y = window.screenY;

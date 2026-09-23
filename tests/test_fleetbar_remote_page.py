@@ -41,7 +41,8 @@ def test_damage_tracks_keep_complete_remote_markers_and_header_only_drag():
     assert "width: 100vw" in shell[1]
     assert "max-width: 720px" in shell[1]
     assert "border-left" not in html
-    assert html.count("pywebview-drag-region") == 1
+    assert html.count("pywebview-drag-region") == 2
+    assert '<header class="fleet-title pywebview-drag-region" id="fleet-title">' in html
     assert '<div class="fleet-drag pywebview-drag-region" id="fleet-drag">' in html
     assert 'id="fleet-reset-width"' in html and 'id="fleet-hide"' in html
     assert "opacity: 0" in html and "pointer-events: none" in html
