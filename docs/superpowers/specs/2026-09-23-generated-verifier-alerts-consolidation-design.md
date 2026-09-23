@@ -18,10 +18,10 @@ and mechanism dimensions together:
    visibility/absence states, and eight clipped-edge states.
 
 The revised candidate is deliberately broader than a greedy minimum. Its
-19 generated cases retain successful, absent-anchor, and exact-text evidence for
-every owner, then consolidate only the shared hidden and geometry products. Its
-24 Alerts cases retain all base states, both anchors, every visibility mode, and
-every geometry edge.
+21 generated cases retain successful, absent-anchor, exact-text, and same-owner
+geometry-wiring evidence for every owner, then consolidate only the remaining
+shared hidden and geometry products. Its 24 Alerts cases retain all base states,
+both anchors, every visibility mode, and every geometry edge.
 
 This is the third staged PR in screenshot matrix-consolidation Plan B. It does
 not authorize lower Fittings consolidation, workflow changes, cadence changes,
@@ -56,16 +56,16 @@ candidate:
 
 | Product | Before | Candidate after | Removed |
 |---|---:|---:|---:|
-| Generated gap verifier | 35 | 19 | 16 |
+| Generated gap verifier | 35 | 21 | 14 |
 | Alerts top anchors | 31 | 24 | 7 |
-| **Combined** | **66** | **43** | **23** |
-| `tests/test_shoot_screens.py` | 240 | 217 | 23 |
-| Four screenshot files | 522 | 499 | 23 |
+| **Combined** | **66** | **45** | **21** |
+| `tests/test_shoot_screens.py` | 240 | 219 | 21 |
+| Four screenshot files | 522 | 501 | 21 |
 
 The candidate four-file normalized SHA-256 is
-`87147fc38afa59a4645b1212e5afbb71348fdf75d560f1de4958978d182b0610`.
-The candidate retained 43-ID product hash is
-`9c88e60a59e6b95ed5088c4007057f86dc9395f02b93b549804d12e05ed648d6`.
+`e88ac1870bf8bae920ef474e28efdbc42201b153d96322acc46c07c337f1e0f2`.
+The candidate retained 45-ID product hash is
+`9b4f901e51bb536c06208e8401a68467f7114136db10bf7c5604feb8b5200588`.
 These are projections from the approved ordered candidate, not count targets:
 if required mutation evidence expands the retained set, the implementation
 must publish the actual IDs and hashes and explain the evidence-driven
@@ -73,7 +73,7 @@ expansion.
 
 Structural Node process starts are expected to change from 35 to 28. The seven
 removed Alerts identities each launch the one-shot `screenshot_alerts.cjs`
-process. The 16 removed generated identities are requests to the existing
+process. The 14 removed generated identities are requests to the existing
 persistent screenshot worker, so they reduce testcase work but do not reduce
 process starts.
 
@@ -105,9 +105,10 @@ The seven scenarios do not make every shared hidden or geometry crossing a
 separate product contract. Missing nodes and wrong text are different: each
 owner body checks a different exact anchor, so all five missing and all five
 wrong-text cases remain. Settled cases are positive controls, not sensitivity
-evidence. Hidden and geometry mechanisms retain one representative crossing
-each, same-owner missing/wrong-text evidence, and the independent 13-case
-shared geometry tolerance matrix.
+evidence. Every owner also retains a same-owner geometry case that proves its
+exact anchor remains wired into `exposed()`. The remaining hidden and geometry
+removals rely on those owner witnesses, retained shared-mechanism crossings, and
+the independent 13-case shared geometry tolerance matrix.
 
 The following existing tests remain unchanged and continue to own key-specific
 semantics:
@@ -143,7 +144,7 @@ visibility and clipped products are consolidated pairwise across the master and
 health anchors without deleting either missing short circuit, any visibility
 mechanism, or any edge comparison.
 
-## Candidate retained generated matrix — 19 cases
+## Candidate retained generated matrix — 21 cases
 
 Retain all five successful verifiers in `GAP_CAPTURES` order:
 
@@ -163,42 +164,44 @@ Retain absence and exact-text sensitivity for every owner:
 | Fittings preflight bottom | `missing-fittings-copy-preflight-bottom-narrow` | `wrong-text-fittings-copy-preflight-bottom-narrow` |
 | Fittings result bottom | `missing-fittings-copy-result-bottom-narrow` | `wrong-text-fittings-copy-result-bottom-narrow` |
 
-Retain one representative for each consolidated shared mechanism:
+Retain these owner geometry and shared-mechanism witnesses:
 
 - `hidden-profiles-copy-scope`;
+- `clipped-profiles-copy-scope`;
+- `clipped-fittings-metadata-narrow`;
 - `clipped-fittings-copy-preflight-bottom-narrow`;
 - `covered-fittings-copy-result-bottom-narrow`;
 - `zero-area-settings-wanderer-controls-narrow`.
 
 Settled cases prove success only. The ten owner-specific missing/wrong-text
-cases prove fail-closed target-anchor guards. The four representatives prove
-shared hidden and geometry branches.
+cases prove fail-closed target-anchor guards. The geometry cases give every
+owner a same-owner wiring witness while collectively preserving hidden,
+clipped, covered, and zero-area branches.
 
 ### Complete generated removed-to-retained mapping
 
-Every removed identity maps to same-owner semantic evidence and independent
-shared-helper evidence. Neither dimension alone is sufficient. The owner labels
-below resolve to the complete retained IDs in the table immediately above; they
-are exact cases, not family-level claims.
+Every removed identity maps to same-owner semantic evidence, a same-owner
+geometry/wiring witness, and independent shared-helper evidence. No dimension
+is sufficient alone. The owner labels below resolve to the complete retained
+IDs in the tables immediately above; they are exact cases, not family-level
+claims.
 
-| Removed identity | Same-owner/same-anchor semantic evidence | Shared production/helper evidence |
-|---|---|---|
-| `hidden-settings-wanderer-controls-narrow` | Wanderer `missing` and `wrong-text` | `hidden-profiles-copy-scope`; remove `parent.hidden` rejection |
-| `hidden-fittings-metadata-narrow` | Metadata `missing` and `wrong-text` | `hidden-profiles-copy-scope`; remove `parent.hidden` rejection |
-| `hidden-fittings-copy-preflight-bottom-narrow` | Preflight `missing` and `wrong-text` | `hidden-profiles-copy-scope`; remove `parent.hidden` rejection |
-| `hidden-fittings-copy-result-bottom-narrow` | Result `missing` and `wrong-text` | `hidden-profiles-copy-scope`; remove `parent.hidden` rejection |
-| `clipped-settings-wanderer-controls-narrow` | Wanderer `missing` and `wrong-text` | `clipped-fittings-copy-preflight-bottom-narrow` plus four-edge/tolerance matrix |
-| `clipped-profiles-copy-scope` | Profiles `missing` and `wrong-text` | `clipped-fittings-copy-preflight-bottom-narrow` plus four-edge/tolerance matrix |
-| `clipped-fittings-metadata-narrow` | Metadata `missing` and `wrong-text` | `clipped-fittings-copy-preflight-bottom-narrow` plus four-edge/tolerance matrix |
-| `clipped-fittings-copy-result-bottom-narrow` | Result `missing` and `wrong-text` | `clipped-fittings-copy-preflight-bottom-narrow` plus four-edge/tolerance matrix |
-| `covered-settings-wanderer-controls-narrow` | Wanderer `missing` and `wrong-text` | `covered-fittings-copy-result-bottom-narrow` plus five-point hit-test mutants |
-| `covered-profiles-copy-scope` | Profiles `missing` and `wrong-text` | `covered-fittings-copy-result-bottom-narrow` plus five-point hit-test mutants |
-| `covered-fittings-metadata-narrow` | Metadata `missing` and `wrong-text` | `covered-fittings-copy-result-bottom-narrow` plus five-point hit-test mutants |
-| `covered-fittings-copy-preflight-bottom-narrow` | Preflight `missing` and `wrong-text` | `covered-fittings-copy-result-bottom-narrow` plus five-point hit-test mutants |
-| `zero-area-profiles-copy-scope` | Profiles `missing` and `wrong-text` | `zero-area-settings-wanderer-controls-narrow`; remove width/height rejection independently |
-| `zero-area-fittings-metadata-narrow` | Metadata `missing` and `wrong-text` | `zero-area-settings-wanderer-controls-narrow`; remove width/height rejection independently |
-| `zero-area-fittings-copy-preflight-bottom-narrow` | Preflight `missing` and `wrong-text` | `zero-area-settings-wanderer-controls-narrow`; remove width/height rejection independently |
-| `zero-area-fittings-copy-result-bottom-narrow` | Result `missing` and `wrong-text` | `zero-area-settings-wanderer-controls-narrow`; remove width/height rejection independently |
+| Removed identity | Same-owner semantic evidence | Same-owner geometry/wiring witness | Shared production/helper evidence |
+|---|---|---|---|
+| `hidden-settings-wanderer-controls-narrow` | Wanderer `missing` and `wrong-text` | `zero-area-settings-wanderer-controls-narrow` | `hidden-profiles-copy-scope`; remove `parent.hidden` rejection |
+| `hidden-fittings-metadata-narrow` | Metadata `missing` and `wrong-text` | `clipped-fittings-metadata-narrow` | `hidden-profiles-copy-scope`; remove `parent.hidden` rejection |
+| `hidden-fittings-copy-preflight-bottom-narrow` | Preflight `missing` and `wrong-text` | `clipped-fittings-copy-preflight-bottom-narrow` | `hidden-profiles-copy-scope`; remove `parent.hidden` rejection |
+| `hidden-fittings-copy-result-bottom-narrow` | Result `missing` and `wrong-text` | `covered-fittings-copy-result-bottom-narrow` | `hidden-profiles-copy-scope`; remove `parent.hidden` rejection |
+| `clipped-settings-wanderer-controls-narrow` | Wanderer `missing` and `wrong-text` | `zero-area-settings-wanderer-controls-narrow` | `clipped-fittings-copy-preflight-bottom-narrow` plus four-edge/tolerance matrix |
+| `clipped-fittings-copy-result-bottom-narrow` | Result `missing` and `wrong-text` | `covered-fittings-copy-result-bottom-narrow` | `clipped-fittings-copy-preflight-bottom-narrow` plus four-edge/tolerance matrix |
+| `covered-settings-wanderer-controls-narrow` | Wanderer `missing` and `wrong-text` | `zero-area-settings-wanderer-controls-narrow` | `covered-fittings-copy-result-bottom-narrow` plus five-point hit-test mutants |
+| `covered-profiles-copy-scope` | Profiles `missing` and `wrong-text` | `clipped-profiles-copy-scope` | `covered-fittings-copy-result-bottom-narrow` plus five-point hit-test mutants |
+| `covered-fittings-metadata-narrow` | Metadata `missing` and `wrong-text` | `clipped-fittings-metadata-narrow` | `covered-fittings-copy-result-bottom-narrow` plus five-point hit-test mutants |
+| `covered-fittings-copy-preflight-bottom-narrow` | Preflight `missing` and `wrong-text` | `clipped-fittings-copy-preflight-bottom-narrow` | `covered-fittings-copy-result-bottom-narrow` plus five-point hit-test mutants |
+| `zero-area-profiles-copy-scope` | Profiles `missing` and `wrong-text` | `clipped-profiles-copy-scope` | `zero-area-settings-wanderer-controls-narrow`; remove width/height rejection independently |
+| `zero-area-fittings-metadata-narrow` | Metadata `missing` and `wrong-text` | `clipped-fittings-metadata-narrow` | `zero-area-settings-wanderer-controls-narrow`; remove width/height rejection independently |
+| `zero-area-fittings-copy-preflight-bottom-narrow` | Preflight `missing` and `wrong-text` | `clipped-fittings-copy-preflight-bottom-narrow` | `zero-area-settings-wanderer-controls-narrow`; remove width/height rejection independently |
+| `zero-area-fittings-copy-result-bottom-narrow` | Result `missing` and `wrong-text` | `covered-fittings-copy-result-bottom-narrow` | `zero-area-settings-wanderer-controls-narrow`; remove width/height rejection independently |
 
 ## Candidate retained Alerts matrix — 24 cases
 
@@ -271,9 +274,9 @@ Together these retain all four comparisons and both anchors.
 
 ## Mutation qualification gate
 
-The 43-case candidate is conditional. Mutation evidence may expand the retained
+The 45-case candidate is conditional. Mutation evidence may expand the retained
 set; it may never weaken a production, helper, harness, assertion, or fixture
-contract merely to reach 43 cases or 499 four-file identities.
+contract merely to reach 45 cases or 501 four-file identities.
 
 All mutations are temporary and uncommitted. Restore and diff-audit the mutated
 path after every probe and before every commit. No witness-only test,
@@ -322,6 +325,26 @@ approved candidate.
 Fixture-dispatch mutants may additionally prove that harness inputs are wired,
 but they never qualify production sensitivity. No removed identity may be
 justified circularly by disabling only the fixture behavior that creates it.
+
+### Owner-to-helper wiring mutation ledger
+
+Every owner must retain one geometry case that fails when its exact semantic
+anchor is narrowly removed from `exposed()` wiring:
+
+| Owner | Narrow production token mutation | Required same-owner geometry witness |
+|---|---|---|
+| Wanderer controls | remove `remove` from `[note, test, remove]` | `zero-area-settings-wanderer-controls-narrow` |
+| Profiles copy scope | remove `check(exposed(note, pane))` | `clipped-profiles-copy-scope` |
+| Fittings metadata | remove `save` from the final exposed-node list | `clipped-fittings-metadata-narrow` |
+| Fittings preflight bottom | remove `exposed(note, pane)` from the final requirement | `clipped-fittings-copy-preflight-bottom-narrow` |
+| Fittings result bottom | remove `status` from `requiredNodes` | `covered-fittings-copy-result-bottom-narrow` |
+
+An equivalent narrow token edit is permitted if surrounding production text
+changes before implementation, but it must isolate the same owner-to-helper
+wiring. The retained same-owner geometry case must fail at the intended
+exposure assertion, and the source must be restored before the next probe.
+Semantic missing and wrong-text mutations remain separate evidence; they do not
+substitute for this wiring ledger.
 
 ### Consolidated generated production branches
 
@@ -422,8 +445,12 @@ For the generated matrix, parameterize `(scenario, key)` together from:
 1. `settled` for all five `GAP_CAPTURES` keys in existing mapping order;
 2. `missing` for all five keys in the same order;
 3. `wrong-text` for all five keys in the same order;
-4. the four shared-mechanism representatives in the order `hidden`, `clipped`,
-   `covered`, `zero-area`.
+4. the six owner-geometry/shared-mechanism witnesses in this order:
+   `hidden-profiles-copy-scope`, `clipped-profiles-copy-scope`,
+   `clipped-fittings-metadata-narrow`,
+   `clipped-fittings-copy-preflight-bottom-narrow`,
+   `covered-fittings-copy-result-bottom-narrow`, and
+   `zero-area-settings-wanderer-controls-narrow`.
 
 Preserve pytest ID spelling as `scenario-key`. Do not create aggregate loop
 identities or hand-copy all five settled pairs.
@@ -464,17 +491,17 @@ for redesign rather than broadening scope silently.
 
 Before deletion, freeze and publish the complete normalized 522-ID baseline and
 its hash. After implementation, publish the complete normalized after inventory,
-its hash, the retained 43-ID product inventory and hash, and an exact set diff.
+its hash, the retained 45-ID product inventory and hash, and an exact set diff.
 For the approved candidate, acceptance is:
 
-- `217 / 90 / 91 / 101 = 499` unique four-file IDs;
-- exactly 23 removed IDs;
+- `219 / 90 / 91 / 101 = 501` unique four-file IDs;
+- exactly 21 removed IDs;
 - zero added IDs;
-- all 23 removals present in the mapping tables above;
+- all 21 removals present in the mapping tables above;
 - candidate four-file hash
-  `87147fc38afa59a4645b1212e5afbb71348fdf75d560f1de4958978d182b0610`;
+  `e88ac1870bf8bae920ef474e28efdbc42201b153d96322acc46c07c337f1e0f2`;
 - candidate retained-product hash
-  `9c88e60a59e6b95ed5088c4007057f86dc9395f02b93b549804d12e05ed648d6`.
+  `9b4f901e51bb536c06208e8401a68467f7114136db10bf7c5604feb8b5200588`.
 
 If mutation evidence expands the candidate, recalculate and publish the actual
 counts, complete inventories, hashes, exact removals, and zero-addition proof.
@@ -507,8 +534,8 @@ Local verification must also include:
 - proof that every temporary mutant was restored and no witness-only change
   remains.
 
-The full-suite projection for the unexpanded candidate is 16,588 passed with the
-same 14 intentional local platform skips, or 16,602 JUnit cases including those
+The full-suite projection for the unexpanded candidate is 16,590 passed with the
+same 14 intentional local platform skips, or 16,604 JUnit cases including those
 skips. These are identity projections to audit, not permission to ignore an
 unexpected collection change.
 
@@ -536,7 +563,7 @@ Ubuntu JUnit and timing artifacts directly and require:
 - Windows and Ubuntu full testcase identity sets are equal;
 - both target sets equal the published after inventory;
 - exact target counts match the qualified candidate, expected
-  `217 / 90 / 91 / 101 = 499` if unexpanded;
+  `219 / 90 / 91 / 101 = 501` if unexpanded;
 - relative to PR #286, exactly the published removals are absent and no identity
   is added;
 - Windows and Ubuntu normalized skip tuples match the comparator exactly;
@@ -555,10 +582,10 @@ support “no unexplained material target regression.” It may not support a St
 
 ### Alerts-only consolidation
 
-Rejected as too timid. It removes seven one-shot launches but leaves all 16
-removable generated hidden/geometry crossings intact. Same-owner missing and
-wrong-text cases preserve owner semantics while the shared helper and geometry
-matrix qualify those 16 removals.
+Rejected as too timid. It removes seven one-shot launches but leaves all 14
+removable generated hidden/geometry crossings intact. Same-owner missing,
+wrong-text, and geometry-wiring cases preserve owner contracts while the shared
+helper and geometry matrix qualify those 14 removals.
 
 ### Greedy mutant set-cover
 
@@ -571,7 +598,7 @@ and every edge.
 
 ### Raw deletion or count target
 
-Rejected. `66 -> 43`, `240 -> 217`, and `522 -> 499` are consequences of the
+Rejected. `66 -> 45`, `240 -> 219`, and `522 -> 501` are consequences of the
 qualified contract matrix, not goals that justify deleting a different case or
 weakening an assertion. Mutation evidence may only expand the retained set.
 
@@ -637,20 +664,22 @@ Stop implementation and return to design review if any of these occurs:
 1. a generated exact-anchor predicate cannot be killed by its retained
    same-owner missing/wrong-text case or an unchanged same-anchor dedicated
    contract;
-2. a generic mechanism or shared-helper dimension lacks an intended-assertion
+2. an owner-to-helper wiring mutation is not killed by its retained same-owner
+   geometry case at the intended exposure assertion;
+3. a generic mechanism or shared-helper dimension lacks an intended-assertion
    witness;
-3. either Alerts guard, any visibility mechanism, or any edge comparison lacks
+4. either Alerts guard, any visibility mechanism, or any edge comparison lacks
    an exact retained witness;
-4. qualification requires a persistent fixture, tooling, production, workflow,
+5. qualification requires a persistent fixture, tooling, production, workflow,
    configuration, dependency, or additional test-module change;
-5. the exact identity diff includes an addition or an unmapped removal;
-6. any of the 15 Alerts base states, both missing short circuits, the 13-case
+6. the exact identity diff includes an addition or an unmapped removal;
+7. any of the 15 Alerts base states, both missing short circuits, the 13-case
    geometry matrix, or existing walk/ownership/action-free tests would need to
    shrink;
-7. Node, codec, native, or platform skip behavior changes;
-8. hosted Windows and Ubuntu identities or normalized skips diverge;
-9. evidence suggests lower Fittings, workflow, budget, or sharding work is
-   needed to complete this tranche.
+8. Node, codec, native, or platform skip behavior changes;
+9. hosted Windows and Ubuntu identities or normalized skips diverge;
+10. evidence suggests lower Fittings, workflow, budget, or sharding work is
+    needed to complete this tranche.
 
 An evidence-driven retained-case expansion within `tests/test_shoot_screens.py`
 is permitted and must be documented. Any broader support change is not.
