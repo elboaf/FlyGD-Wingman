@@ -267,7 +267,21 @@ The current-owner walk matrix decreased from 60 to 12 identities. Each removed i
 | `tests/test_current_screenshots.py::test_current_walk_prepares_before_entry_and_always_cleans[capture-settings-fleet-sharing]` | `tests/test_current_screenshots.py::test_current_walk_prepares_before_entry_and_always_cleans[capture-settings-fleet-sharing-history-narrow]` |
 | `tests/test_current_screenshots.py::test_current_walk_prepares_before_entry_and_always_cleans[capture-settings-fleet-sharing-details]` | `tests/test_current_screenshots.py::test_current_walk_prepares_before_entry_and_always_cleans[capture-settings-fleet-sharing-history-narrow]` |
 
-PENDING — Task 3 will record the remaining six gap and failed-postcondition mappings.
+### Gap walk
+
+| Removed ID | Retained ID |
+|---|---|
+| `tests/test_shoot_screens.py::test_gap_capture_walk_settles_then_verifies_and_reports_fixture[fittings-metadata-narrow]` | `tests/test_shoot_screens.py::test_gap_capture_walk_settles_then_verifies_and_reports_fixture[fittings-copy-preflight-bottom-narrow]` |
+| `tests/test_shoot_screens.py::test_gap_capture_walk_settles_then_verifies_and_reports_fixture[fittings-copy-result-bottom-narrow]` | `tests/test_shoot_screens.py::test_gap_capture_walk_settles_then_verifies_and_reports_fixture[fittings-copy-preflight-bottom-narrow]` |
+
+### Failed postcondition walk
+
+| Removed ID | Retained ID |
+|---|---|
+| `tests/test_shoot_screens.py::test_walk_refuses_capture_when_postcondition_fails[fittings-detail]` | `tests/test_shoot_screens.py::test_walk_refuses_capture_when_postcondition_fails[fittings-copy-progress]` |
+| `tests/test_shoot_screens.py::test_walk_refuses_capture_when_postcondition_fails[fittings-copy-result]` | `tests/test_shoot_screens.py::test_walk_refuses_capture_when_postcondition_fails[fittings-copy-progress]` |
+| `tests/test_shoot_screens.py::test_walk_refuses_capture_when_postcondition_fails[fittings-copy-limit]` | `tests/test_shoot_screens.py::test_walk_refuses_capture_when_postcondition_fails[fittings-copy-progress]` |
+| `tests/test_shoot_screens.py::test_walk_refuses_capture_when_postcondition_fails[settings-characters-partial-cleanup]` | `tests/test_shoot_screens.py::test_walk_refuses_capture_when_postcondition_fails[settings-previews-groups]` |
 
 ## Local verification
 

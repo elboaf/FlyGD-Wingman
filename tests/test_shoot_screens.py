@@ -929,7 +929,14 @@ def test_copy_capture_rejects_stale_context_progress_and_technical_details(
     _request_gap_capture(gap_capture_worker, key, scenario)
 
 
-@pytest.mark.parametrize("key", GAP_CAPTURES)
+@pytest.mark.parametrize(
+    "key",
+    [
+        "settings-wanderer-controls-narrow",
+        "profiles-copy-scope",
+        "fittings-copy-preflight-bottom-narrow",
+    ],
+)
 def test_gap_capture_walk_settles_then_verifies_and_reports_fixture(
     tmp_path, monkeypatch, key
 ):
@@ -2438,14 +2445,7 @@ def test_walk_injects_fittings_fixture_before_stage_actions(tmp_path, monkeypatc
 
 @pytest.mark.parametrize(
     "key",
-    [
-        "fittings-detail",
-        "fittings-copy-progress",
-        "fittings-copy-result",
-        "fittings-copy-limit",
-        "settings-previews-groups",
-        "settings-characters-partial-cleanup",
-    ],
+    ["fittings-copy-progress", "settings-previews-groups"],
 )
 def test_walk_refuses_capture_when_postcondition_fails(tmp_path, monkeypatch, key):
     screen = next(s for s in shoot.SCREENS if s.key == key)
