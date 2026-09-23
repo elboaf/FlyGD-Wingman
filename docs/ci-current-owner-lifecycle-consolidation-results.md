@@ -17,7 +17,7 @@
 | Task 1 — freeze baseline and harden Fleet-sharing restoration evidence | COMPLETE — baseline, fixture green, observability gap, mutation red, restoration, matrix, and JS smoke recorded |
 | Task 2 — validator and fixture-isolation mutation witnesses | COMPLETE — four independent validator reds, four independent post-live fixture-isolation reds, inverse restoration after every probe, and final empty production diff |
 | Task 3 — newest-live and Companion continuation mutation witnesses | COMPLETE — four independent stale-authority restoration reds, Companion delayed-continuation diagnosis and exact escaped-overlay red, inverse restoration, explicit Wanderer/Fleet non-claim, and final six-case green |
-| Task 4 — reduce the lifecycle matrix | PENDING — Task 4 |
+| Task 4 — reduce the lifecycle matrix | COMPLETE — derived 19-case matrix, exact ordered-ID proof, 21 generated mappings, and 91-case whole-file green |
 | Task 5 — complete local verification and exact after inventory | PENDING — Task 5 |
 | Task 6 — polish, review, publication, and hosted evidence | PENDING — Task 6 |
 
@@ -731,9 +731,9 @@ The diagnostic instrumentation and every Companion mutation were removed by exac
 
 ## Exact 21-row removed-to-retained mapping
 
-No identity is removed in Task 1. This is the authoritative mapping to be applied and audited in Task 4.
+Task 4 generated these rows from the 40-ID before collection and 19-ID after collection using the spec's seven-key table. The audit proved 21 unique removed IDs, 21 unique generated rows, and every retained target present in the after set.
 
-| Planned removed identity | Retained representative |
+| Removed identity | Retained representative |
 |---|---|
 | `tests/test_current_screenshots.py::test_current_synthetic_owners[late-read-settings-companions-populated]` | `tests/test_current_screenshots.py::test_current_synthetic_owners[late-read-settings-companions-source-narrow]` |
 | `tests/test_current_screenshots.py::test_current_synthetic_owners[late-read-settings-companions-detail-narrow]` | `tests/test_current_screenshots.py::test_current_synthetic_owners[late-read-settings-companions-source-narrow]` |
@@ -757,7 +757,7 @@ No identity is removed in Task 1. This is the authoritative mapping to be applie
 | `tests/test_current_screenshots.py::test_current_synthetic_owners[invalid-settings-fleet-sharing-details]` | `tests/test_current_screenshots.py::test_current_synthetic_owners[invalid-settings-fleet-sharing]` |
 | `tests/test_current_screenshots.py::test_current_synthetic_owners[invalid-settings-fleet-sharing-history-narrow]` | `tests/test_current_screenshots.py::test_current_synthetic_owners[invalid-settings-fleet-sharing]` |
 
-Planned arithmetic: 40 before - 21 removed + 0 added = 19 after; 543 before - 21 removed + 0 added = 522 after.
+Applied arithmetic: 40 before - 21 removed + 0 added = 19 after; 543 before - 21 removed + 0 added = 522 after.
 
 ## Late-synthetic limitation
 
@@ -804,19 +804,28 @@ Task 3 therefore makes no delayed-continuation mutation claim for retained `late
 - Final production restoration: PASS — `git diff --exit-code -- wingman` exited 0.
 - Whitespace/error check: PASS — `git diff --check` exited 0.
 
+### Task 4
+
+- Pre-reduction desired-count probe: expected FAIL — `expected 19, still collected 40`.
+- Derived matrix collection: PASS — 19 unique IDs in the required order: ten `normal` cases in unchanged `SYNTHETIC` insertion order, then Companion/Wanderer/Fleet representatives for `late-read`, `late-synthetic`, and `invalid`.
+- Focused derived matrix: PASS (`19 passed in 6.78s`).
+- Generated mapping audit: PASS — 21 unique removed IDs, 21 unique rows, every scenario preserved, and every retained target present in the after set.
+- Whole current screenshot file: PASS (`91 passed in 14.16s`).
+
 ## Deviations and concerns
 
 - Planned assertion deviation: the planned regex against `newer.example` was strengthened to exact equality with the actual rendered connection sentence, `Paired with https://newer.example.`.
 - Fixture sequencing deviation: cloning `live_sharing_newer` alone was rejected as stale because both generated projections start at presentation order 1 while the generic incumbent is raised to 7. The fixture therefore carries the incumbent order forward by one on its detached clone. This follows the existing `sharingLifecycle` sequencing pattern, does not modify `data.live_sharing_newer`, adds no bridge call or identity, and keeps the production monotonic-render contract intact.
 - Task 2 deviations: none. Every planned mutation produced its intended owner assertion, so no substitute mutation was required.
 - Task 3 deviation: the preflight-ruling Companion mutant was insufficient. Cleanup removes the stale request from the list that `settle()` enumerates, so bypassing only the completion guard cannot revive the chooser callback. The diagnosed substitute mutates cleanup-time request retention plus the two chooser-local fences; three one-fence restoration checks establish that this is the minimum sufficient set for the exact escaped-overlay witness.
-- Remaining concerns: none for Task 3's owner-boundary claims. Tasks 4–6 still owe matrix reduction, full local suites, and hosted evidence explicitly marked pending below.
+- Task 4 deviations: none. `SYNTHETIC`, the test body, and every other test remain unchanged; only the derived constants and the target test's decorators changed.
+- Remaining concerns: none for Task 4. Tasks 5–6 still owe full local suites, exact after hashes/inventory, and hosted evidence explicitly marked pending below.
 
 ### Later-task verification
 
 - Exact 522-ID after inventory and normalized hash: PENDING — Task 5.
 - Exact 19-ID retained matrix and normalized hash: PENDING — Task 5.
-- Exact 21 removals and zero additions: PENDING — Tasks 4 and 5.
+- Exact 21 removals and zero additions: COMPLETE for the synthetic-owner matrix — Task 4; full four-file inventory confirmation remains PENDING — Task 5.
 - Validator and fixture-isolation mutation witnesses: COMPLETE — Task 2.
 - Newest-live and delayed-continuation mutation witnesses: COMPLETE — Task 3.
 - Execution-order, lifecycle, isolation, full pytest, DOM, Cargo, Ruff, and formatting gates: PENDING — Task 5.
