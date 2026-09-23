@@ -19,7 +19,7 @@
 | Task 3 — newest-live and Companion continuation mutation witnesses | COMPLETE — four independent stale-authority restoration reds, Companion delayed-continuation diagnosis and exact escaped-overlay red, inverse restoration, explicit Wanderer/Fleet non-claim, and final six-case green |
 | Task 4 — reduce the lifecycle matrix | COMPLETE — derived 19-case matrix, exact ordered-ID proof, 21 generated mappings, and 91-case whole-file green |
 | Task 5 — complete local verification and exact after inventory | COMPLETE — exact 543-to-522 inventory, five order runs, release codec, focused/full JUnit, skip audit, independent gates, and scope audit recorded |
-| Task 6 — polish, review, publication, and hosted evidence | COMPLETE — final local polish/review, PR #286 hosted provenance/artifact audit, and bounded Stage 3 decision recorded; this documentation task does not push or update the PR |
+| Task 6 — polish, review, publication, and hosted evidence | PARTIAL / PENDING PUBLICATION — executable-head local/hosted checks and the bounded Stage 3 decision are recorded; evidence commit `18683074` and this correction remain local/unpushed, so evidence-head required checks are pending |
 
 ## Exact baseline inventory
 
@@ -1468,19 +1468,22 @@ overall wall-clock, runner-efficiency, critical-path, or Stage 2 speedup claim.
 - Validator and fixture-isolation mutation witnesses: COMPLETE — Task 2.
 - Newest-live and delayed-continuation mutation witnesses: COMPLETE — Task 3.
 - Execution-order, lifecycle, isolation, full pytest, DOM, Cargo, Ruff, formatting, and scope gates: COMPLETE — Task 5.
-- Hosted Windows/Ubuntu identity, skip, timing, provenance, and Stage 3 decision: COMPLETE — Task 6.
+- Hosted Windows/Ubuntu executable-head identity, skip, timing, provenance, and bounded Stage 3 decision: COMPLETE — Task 6 evidence phase.
+- Publication and evidence-head required checks: PENDING — evidence commit `18683074` and this correction are local/unpushed.
 
 ## Hosted evidence
 
-### Final review and hosted authority
+### Executable-head review and hosted authority
 
 Task 6's local polish and independent whole-branch review completed against executable
 head `0c785ce18193b5900f8d810a8a4dc7e0f10c9f1e` with no actionable finding or
-polish edit. Fresh final local gates at that head passed: 522 focused cases; 16,611
+polish edit. Fresh executable-head local gates passed: 522 focused cases; 16,611
 full-suite passes with 14 intentional platform-only skips; JS smoke; 35 Node DOM
 cases; Cargo; Ruff check and format; inventory/hash, scope, and diff checks. The
 hosted run below tests that exact executable head. This hosted-evidence update is
-documentation-only and does not change the executable endpoint.
+documentation-only and does not change the executable endpoint. These results are
+executable-head evidence only; they do not constitute evidence-head checks for the
+local documentation commits.
 
 PR [#286](https://github.com/elboaf/FlyGD-Wingman/pull/286) run
 [`35882408360`](https://github.com/elboaf/FlyGD-Wingman/actions/runs/35882408360)
@@ -1523,9 +1526,29 @@ whose exact two-attempt provenance and artifacts are published in
 The job API and checkout logs were re-audited for all six comparator jobs. Every
 job reports run `35812158175`, the exact PR #285 head, successful conclusion, and
 the full `c9a8e0d...` synthetic merge checkout. Comparator artifacts remain at
-`/tmp/wingman-pr285-attempt{1,2}-{windows,ubuntu}`. This comparison is bounded
-to the published identity transformation and target testcase sums; it does not
-attribute whole-suite or runner behavior across the intervening base change.
+`/tmp/wingman-pr285-attempt{1,2}-{windows,ubuntu}`.
+
+Git blob and `git diff --quiet` audits prove the workflow and unchanged target
+controls are byte-for-byte identical between comparator head
+`978bb02df6fe1b4b4f607b3c0ce39d2f6c539c40` and executable head
+`0c785ce18193b5900f8d810a8a4dc7e0f10c9f1e`:
+
+| Audited path | PR #285 blob | PR #286 executable-head blob | Result |
+|---|---|---|---|
+| `.github/workflows/ci.yml` | `bc42ea5d7ce2ae334308e1f15a8fc869c5bf32f7` | `bc42ea5d7ce2ae334308e1f15a8fc869c5bf32f7` | byte-identical |
+| `tests/test_shoot_screens.py` | `8491f88f4fd31fa256ffef3d734a4ff64f80f496` | `8491f88f4fd31fa256ffef3d734a4ff64f80f496` | byte-identical |
+| `tests/test_new_screenshots.py` | `26a5b3ac5832324f0e51d76420a532d969a989ec` | `26a5b3ac5832324f0e51d76420a532d969a989ec` | byte-identical |
+| `tests/test_fittings_page.py` | `74c581e7aba6c11b84642bd0acbca5c4ad49724d` | `74c581e7aba6c11b84642bd0acbca5c4ad49724d` | byte-identical |
+| `tests/test_current_screenshots.py` | `75c68954a4571d7aaf4987a29f450353a59634c8` | `8617a27fbb1b5712a77d26dac6744901ba39ac2e` | authorized difference |
+| `tests/fixtures/current_screenshot_pages.cjs` | `e23af908bf169df5a2c1440fbd164dad9922f46c` | `4fefab29825e562cf850b9c3f50a63ac28f407c6` | authorized difference |
+
+Equal Git blob IDs and successful quiet diffs establish exact byte equality. In
+the audited workflow/target executable scope, only the authorized
+`tests/test_current_screenshots.py` matrix reduction and
+`tests/fixtures/current_screenshot_pages.cjs` fixture hardening differ. This
+comparison remains bounded to the published identity transformation and target
+testcase sums; it does not attribute whole-suite or runner behavior across the
+intervening base change.
 
 ### XML, JSON, identity, and skip audit
 
@@ -1600,8 +1623,10 @@ overall timing effect.
 
 ### Interpretation and decision boundary
 
-All required checks and executable contracts pass. Both hosted platforms show
-the exact authorized 21-removal, zero-addition transformation, unchanged
+All required executable-head checks and executable contracts pass. Publication
+and required evidence-head checks remain pending until the local documentation
+commits are pushed and final checks complete. Both hosted platforms show the
+exact authorized 21-removal, zero-addition transformation, unchanged
 normalized skip tuples, and no failures or errors. Windows affected-file and
 target sums decrease against both comparator attempts by approximately the
 removed-case cost while common IDs remain close. Ubuntu's affected file decreases
@@ -1620,5 +1645,7 @@ evidence, implementation, local verification, and hosted review.
 claim, and lower Fittings context consolidation.** None is authorized by this
 Stage 2 evidence.
 
-This Task 6 documentation was committed locally only. Per instruction, it was not
-pushed and PR #286 was not updated.
+**Task 6 remains PARTIAL / PENDING PUBLICATION.** Evidence commit `18683074` and
+this focused correction are local only. Per instruction, they were not pushed and
+PR #286 was not updated; required evidence-head checks therefore have not run.
+Task 6 must not be marked complete until publication and those final checks pass.
