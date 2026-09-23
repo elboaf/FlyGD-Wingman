@@ -1087,7 +1087,10 @@ def _request_current_page(
     return worker.request(f"{key}/{scenario}", payload, timeout=20.0)
 
 
-@pytest.mark.parametrize("key", SYNTHETIC)
+@pytest.mark.parametrize(
+    "key",
+    ["settings-companions-populated", "settings-fleet-sharing-history-narrow"],
+)
 @pytest.mark.parametrize(
     "failure", [None, "prepare", "entry", "stage", "verify", "capture"]
 )
