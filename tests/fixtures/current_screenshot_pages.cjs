@@ -1254,7 +1254,9 @@ async function executeScenario() {
       live.state.revision += 1; live.state.generation += 1; live.state.map_identifier = 'live-map-updated';
     } else {
       live.display.state.revision += 1; live.display.state.characters[0].name = 'Live pilot updated';
-      live.sharing.state.presentation_order += 1;
+      const sharingOrder = live.sharing.state.presentation_order + 1;
+      live.sharing.state = clone(data.live_sharing_newer);
+      live.sharing.state.presentation_order = sharingOrder;
     }
     pushLive(); await tick(); assertContent();
     mutations(); await tick();
@@ -1270,7 +1272,7 @@ async function executeScenario() {
       assert.equal(WM.el('overlay').hidden, true);
     } else {
       assert.match(WM.el('fleetbar-character-list').textContent, /Live pilot updated/);
-      assert.match(WM.el('sharing-connection').textContent, /https:\/\/live.example/);
+      assert.equal(WM.el('sharing-connection').textContent, 'Paired with https://newer.example.');
       assert.equal(WM.el('sharing-history').open, false);
     }
   }

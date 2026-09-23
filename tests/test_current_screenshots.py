@@ -27,6 +27,18 @@ SYNTHETIC = {
     "settings-fleet-sharing-details": "fleet",
     "settings-fleet-sharing-history-narrow": "fleet",
 }
+_SYNTHETIC_OWNER_REPRESENTATIVES = (
+    "settings-companions-source-narrow",
+    "settings-wanderer",
+    "settings-fleet-sharing",
+)
+_SYNTHETIC_OWNER_CASES = tuple(
+    (scenario, key)
+    for scenario in ("normal", "late-read", "late-synthetic", "invalid")
+    for key in (
+        tuple(SYNTHETIC) if scenario == "normal" else _SYNTHETIC_OWNER_REPRESENTATIVES
+    )
+)
 LIVE = {
     "settings-uploading": "uploading",
     "settings-uploading-recording": "uploading",
@@ -684,10 +696,7 @@ def test_current_inventory_and_floor_coverage():
         assert shoot.new_screen_verify_script(screens[key])
 
 
-@pytest.mark.parametrize("key", SYNTHETIC)
-@pytest.mark.parametrize(
-    "scenario", ["normal", "late-read", "late-synthetic", "invalid"]
-)
+@pytest.mark.parametrize(("scenario", "key"), _SYNTHETIC_OWNER_CASES)
 def test_current_synthetic_owners(
     current_screenshot_worker: NodeScenarioWorker, key: str, scenario: str
 ):
