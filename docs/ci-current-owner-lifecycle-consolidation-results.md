@@ -19,7 +19,7 @@
 | Task 3 — newest-live and Companion continuation mutation witnesses | COMPLETE — four independent stale-authority restoration reds, Companion delayed-continuation diagnosis and exact escaped-overlay red, inverse restoration, explicit Wanderer/Fleet non-claim, and final six-case green |
 | Task 4 — reduce the lifecycle matrix | COMPLETE — derived 19-case matrix, exact ordered-ID proof, 21 generated mappings, and 91-case whole-file green |
 | Task 5 — complete local verification and exact after inventory | COMPLETE — exact 543-to-522 inventory, five order runs, release codec, focused/full JUnit, skip audit, independent gates, and scope audit recorded |
-| Task 6 — polish, review, publication, and hosted evidence | PENDING — Task 6 |
+| Task 6 — polish, review, publication, and hosted evidence | COMPLETE — final local polish/review, PR #286 hosted provenance/artifact audit, and bounded Stage 3 decision recorded; this documentation task does not push or update the PR |
 
 ## Exact baseline inventory
 
@@ -1458,7 +1458,7 @@ overall wall-clock, runner-efficiency, critical-path, or Stage 2 speedup claim.
 - Task 4 deviations: none. `SYNTHETIC`, the test body, and every other test remain unchanged; only the derived constants and the target test's decorators changed.
 - Task 5 evidence-harness correction: the first normal-file command itself passed 522 tests, but the local summary parser rejected pytest's parenthesized long-duration suffix. The parser was corrected against the saved output and all five orders were then rerun from scratch; only the fresh five-run results are tabulated above.
 - Task 5 deviations: none from the requested inventory, order, codec, pytest, skip-inspection, independent-gate, or scope contracts.
-- Remaining concern: hosted evidence is still pending Task 6. Local verification makes no runtime-improvement claim and cannot substitute for Ubuntu/Windows hosted identity and timing artifacts.
+- Hosted caveat: testcase sums, Test-step durations, and job durations remain variable runner observations. They support the bounded contract/regression decision below, not a Stage 2 or overall speedup claim.
 
 ### Later-task verification
 
@@ -1468,7 +1468,157 @@ overall wall-clock, runner-efficiency, critical-path, or Stage 2 speedup claim.
 - Validator and fixture-isolation mutation witnesses: COMPLETE — Task 2.
 - Newest-live and delayed-continuation mutation witnesses: COMPLETE — Task 3.
 - Execution-order, lifecycle, isolation, full pytest, DOM, Cargo, Ruff, formatting, and scope gates: COMPLETE — Task 5.
+- Hosted Windows/Ubuntu identity, skip, timing, provenance, and Stage 3 decision: COMPLETE — Task 6.
 
 ## Hosted evidence
 
-HOSTED PENDING — Task 6. No branch push, pull request, hosted checks, JUnit or timing-artifact download, hosted comparator audit, Stage 3 stop/go decision, or runtime-improvement claim has been made.
+### Final review and hosted authority
+
+Task 6's local polish and independent whole-branch review completed against executable
+head `0c785ce18193b5900f8d810a8a4dc7e0f10c9f1e` with no actionable finding or
+polish edit. Fresh final local gates at that head passed: 522 focused cases; 16,611
+full-suite passes with 14 intentional platform-only skips; JS smoke; 35 Node DOM
+cases; Cargo; Ruff check and format; inventory/hash, scope, and diff checks. The
+hosted run below tests that exact executable head. This hosted-evidence update is
+documentation-only and does not change the executable endpoint.
+
+PR [#286](https://github.com/elboaf/FlyGD-Wingman/pull/286) run
+[`35882408360`](https://github.com/elboaf/FlyGD-Wingman/actions/runs/35882408360)
+tested branch head `0c785ce18193b5900f8d810a8a4dc7e0f10c9f1e` through synthetic
+merge `c1ab289e4fdd31e7cc5be2c8322a2557c48e1a26` into the exact Stage 2
+base `459c5d6b57f5f35c97d3076bee25a6f65ba515be`.
+
+| Job | Hosted result | Job / Test observation |
+|---|---|---:|
+| Checks `107253913132` | passed | 16s |
+| Ubuntu `107253913433` | passed | 6m54s / 6m15s |
+| Windows `107253913529` | passed | 12m34s / 11m38s |
+
+The GitHub job API confirms that all three jobs belong to run `35882408360`,
+report the exact branch head above, and concluded successfully. Each checkout log
+contains the full synthetic merge SHA and reports
+`c1ab289 Merge 0c785ce18193b5900f8d810a8a4dc7e0f10c9f1e into
+459c5d6b57f5f35c97d3076bee25a6f65ba515be`. Thus checks, Ubuntu, and
+Windows executed the same synthetic merge rather than merely sharing a PR head.
+
+The downloaded PR #286 artifacts are retained at
+`/tmp/wingman-pr286-{windows,ubuntu}`. Each directory contains
+`pytest-result.xml` and `pytest-timing.json`.
+
+### Comparator provenance
+
+The direct comparator is PR #285 run
+[`35812158175`](https://github.com/elboaf/FlyGD-Wingman/actions/runs/35812158175),
+whose exact two-attempt provenance and artifacts are published in
+`docs/ci-screenshot-walk-consolidation-results.md`. It tested branch head
+`978bb02df6fe1b4b4f607b3c0ce39d2f6c539c40` through synthetic merge
+`c9a8e0d5bc83e4c04354b15c5f42e8fecd7475ce` into base
+`438ac1c6fd6fe1e8ef51b1a0c32bb558128ca4fb`.
+
+| Attempt | Checks | Ubuntu job / Test | Windows job / Test |
+|---|---:|---:|---:|
+| 1 | `107025872947` — passed, 14s | `107025873111` — passed, 6m38s / 6m13s | `107025873164` — passed, 12m26s / 11m30s |
+| 2 | `107028566697` — passed, 9s | `107028566862` — passed, 5m51s / 5m28s | `107028567019` — passed, 13m01s / 11m58s |
+
+The job API and checkout logs were re-audited for all six comparator jobs. Every
+job reports run `35812158175`, the exact PR #285 head, successful conclusion, and
+the full `c9a8e0d...` synthetic merge checkout. Comparator artifacts remain at
+`/tmp/wingman-pr285-attempt{1,2}-{windows,ubuntu}`. This comparison is bounded
+to the published identity transformation and target testcase sums; it does not
+attribute whole-suite or runner behavior across the intervening base change.
+
+### XML, JSON, identity, and skip audit
+
+All six comparator artifacts and both PR #286 artifacts were parsed directly.
+For every artifact, the JUnit testcase count and testcase-time sum reproduce the
+JSON `case_count`, `total_seconds`, per-file counts, and per-file sums.
+
+| Platform | Evidence | Cases | Passed | Skipped | Failures / errors |
+|---|---|---:|---:|---:|---:|
+| Windows | PR #285 attempt 1 | 16,646 | 16,579 | 67 | 0 / 0 |
+| Windows | PR #285 attempt 2 | 16,646 | 16,579 | 67 | 0 / 0 |
+| Windows | PR #286 | 16,625 | 16,558 | 67 | 0 / 0 |
+| Ubuntu | PR #285 attempt 1 | 16,646 | 16,632 | 14 | 0 / 0 |
+| Ubuntu | PR #285 attempt 2 | 16,646 | 16,632 | 14 | 0 / 0 |
+| Ubuntu | PR #286 | 16,625 | 16,611 | 14 | 0 / 0 |
+
+Skip evidence was compared as exact `(test identity, normalized skip reason)`
+tuples. Normalization changes only path separators and generated
+`pytest-of-*/pytest-N/<temporary-leaf>` fragments to a fixed `<PYTEST_TMP>`
+token. All 67 Windows tuples and all 14 Ubuntu tuples match exactly between PR
+#286 and each PR #285 attempt; no non-path reason text differs.
+
+The hosted identity audit passed every contract:
+
+- PR #286 Windows and Ubuntu full testcase identity sets are equal;
+- both platform target sets equal the published 522-ID final inventory, whose
+  normalized collection hash is
+  `07c1e080c24157001c3aa936ac7c26ec6307e9f246973cfb65f92164c31a51e6`;
+- exact target counts are `240 / 90 / 91 / 101 = 522` on both platforms;
+- relative to each PR #285 attempt, exactly the published 21 mapped identities
+  are absent from both the full suite and target set, with zero additions;
+- no validator, fixture-isolation, newest-live, delayed-continuation, order,
+  worker-isolation, scope, or packaging contract failed.
+
+### Per-file and total testcase sums
+
+JUnit testcase sums are additive diagnostic observations. They are not job
+wall-clock, required-critical-path, or runner-efficiency measurements.
+
+| Platform | Evidence | `test_shoot_screens.py` | `test_new_screenshots.py` | `test_current_screenshots.py` | `test_fittings_page.py` | Four-file target | All cases |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Windows | PR #285 attempt 1 | 32.298s / 240 | 20.952s / 90 | 23.416s / 112 | 22.198s / 101 | 98.864s / 543 | 654.602s |
+| Windows | PR #285 attempt 2 | 31.861s / 240 | 20.674s / 90 | 22.785s / 112 | 22.203s / 101 | 97.523s / 543 | 679.696s |
+| Windows | PR #286 | 30.799s / 240 | 20.145s / 90 | 17.042s / 91 | 22.330s / 101 | 90.316s / 522 | 656.277s |
+| Ubuntu | PR #285 attempt 1 | 23.435s / 240 | 16.085s / 90 | 15.879s / 112 | 19.402s / 101 | 74.801s / 543 | 342.432s |
+| Ubuntu | PR #285 attempt 2 | 17.256s / 240 | 11.970s / 90 | 11.917s / 112 | 10.759s / 101 | 51.902s / 543 | 310.710s |
+| Ubuntu | PR #286 | 23.304s / 240 | 16.237s / 90 | 11.901s / 91 | 19.826s / 101 | 71.268s / 522 | 341.717s |
+
+The exact current-file decomposition separates the 21 deleted identities from
+the retained IDs:
+
+| Platform | Comparator | Common 91 current IDs | Removed 21 IDs | Comparator current total | PR #286 common/current total |
+|---|---|---:|---:|---:|---:|
+| Windows | PR #285 attempt 1 | 16.623s | 6.793s | 23.416s | 17.042s |
+| Windows | PR #285 attempt 2 | 16.147s | 6.638s | 22.785s | 17.042s |
+| Ubuntu | PR #285 attempt 1 | 11.493s | 4.386s | 15.879s | 11.901s |
+| Ubuntu | PR #285 attempt 2 | 8.482s | 3.435s | 11.917s | 11.901s |
+
+On Windows, the affected current file decreases by 6.374s and 5.743s, while the
+four-file target decreases by 8.548s and 7.207s. Those movements are close to the
+6.793s and 6.638s cost of the removed cases; the retained 91 IDs remain within
+0.419s and 0.895s of their comparator sums. This supports the expected matrix
+consolidation effect and shows no unexplained material Windows target regression.
+
+On Ubuntu, the affected current file decreases by 3.978s versus attempt 1 and is
+flat within 0.016s versus attempt 2. The four-file target is 3.533s below attempt
+1 but 19.366s above the unusually fast attempt 2; the all-case sums similarly
+range from 310.710s to 342.432s around PR #286's 341.717s. The attempt-2 retained
+current IDs are also materially faster than both attempt 1 and PR #286. Ubuntu
+therefore demonstrates substantial run variance rather than a stable Stage 2 or
+overall timing effect.
+
+### Interpretation and decision boundary
+
+All required checks and executable contracts pass. Both hosted platforms show
+the exact authorized 21-removal, zero-addition transformation, unchanged
+normalized skip tuples, and no failures or errors. Windows affected-file and
+target sums decrease against both comparator attempts by approximately the
+removed-case cost while common IDs remain close. Ubuntu's affected file decreases
+against attempt 1 and is flat against attempt 2, while target, all-case, Test-step,
+and job observations remain highly variable. The evidence supports consolidation
+and finds no unexplained material target regression.
+
+It does **not** establish a Stage 2 speedup, an overall runtime improvement, a
+job-duration improvement, runner efficiency, or a critical-path reduction.
+
+**GO — a separate Stage 3 shared generated-verifier and Alerts geometry
+consolidation only.** That next tranche still requires its own design, mutation
+evidence, implementation, local verification, and hosted review.
+
+**STOP — workflow selection, budget enforcement, sharding, every overall-runtime
+claim, and lower Fittings context consolidation.** None is authorized by this
+Stage 2 evidence.
+
+This Task 6 documentation was committed locally only. Per instruction, it was not
+pushed and PR #286 was not updated.
