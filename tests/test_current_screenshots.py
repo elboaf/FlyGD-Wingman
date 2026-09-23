@@ -36,9 +36,7 @@ _SYNTHETIC_OWNER_CASES = tuple(
     (scenario, key)
     for scenario in ("normal", "late-read", "late-synthetic", "invalid")
     for key in (
-        tuple(SYNTHETIC)
-        if scenario == "normal"
-        else _SYNTHETIC_OWNER_REPRESENTATIVES
+        tuple(SYNTHETIC) if scenario == "normal" else _SYNTHETIC_OWNER_REPRESENTATIVES
     )
 )
 LIVE = {
