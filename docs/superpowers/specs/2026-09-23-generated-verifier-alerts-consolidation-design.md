@@ -18,7 +18,7 @@ and mechanism dimensions together:
    visibility/absence states, and eight clipped-edge states.
 
 The revised candidate is deliberately broader than a greedy minimum. Its
-21 generated cases retain successful, absent-anchor, exact-text, and same-owner
+22 generated cases retain successful, absent-anchor, exact-text, and same-owner
 geometry-wiring evidence for every owner, then consolidate only the remaining
 shared hidden and geometry products. Its 24 Alerts cases retain all base states,
 both anchors, every visibility mode, and every geometry edge.
@@ -56,16 +56,16 @@ candidate:
 
 | Product | Before | Candidate after | Removed |
 |---|---:|---:|---:|
-| Generated gap verifier | 35 | 21 | 14 |
+| Generated gap verifier | 35 | 22 | 13 |
 | Alerts top anchors | 31 | 24 | 7 |
-| **Combined** | **66** | **45** | **21** |
-| `tests/test_shoot_screens.py` | 240 | 219 | 21 |
-| Four screenshot files | 522 | 501 | 21 |
+| **Combined** | **66** | **46** | **20** |
+| `tests/test_shoot_screens.py` | 240 | 220 | 20 |
+| Four screenshot files | 522 | 502 | 20 |
 
 The candidate four-file normalized SHA-256 is
-`e88ac1870bf8bae920ef474e28efdbc42201b153d96322acc46c07c337f1e0f2`.
-The candidate retained 45-ID product hash is
-`9b4f901e51bb536c06208e8401a68467f7114136db10bf7c5604feb8b5200588`.
+`592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a`.
+The candidate retained 46-ID product hash is
+`359da2ca8f13df995ac43ed76bd0aa19ba75cb4ec3b1fe1e4fb6c8e6a38d71f9`.
 These are projections from the approved ordered candidate, not count targets:
 if required mutation evidence expands the retained set, the implementation
 must publish the actual IDs and hashes and explain the evidence-driven
@@ -73,7 +73,7 @@ expansion.
 
 Structural Node process starts are expected to change from 35 to 28. The seven
 removed Alerts identities each launch the one-shot `screenshot_alerts.cjs`
-process. The 14 removed generated identities are requests to the existing
+process. The 13 removed generated identities are requests to the existing
 persistent screenshot worker, so they reduce testcase work but do not reduce
 process starts.
 
@@ -144,7 +144,7 @@ visibility and clipped products are consolidated pairwise across the master and
 health anchors without deleting either missing short circuit, any visibility
 mechanism, or any edge comparison.
 
-## Candidate retained generated matrix — 21 cases
+## Candidate retained generated matrix — 22 cases
 
 Retain all five successful verifiers in `GAP_CAPTURES` order:
 
@@ -170,6 +170,7 @@ Retain these owner geometry and shared-mechanism witnesses:
 - `clipped-profiles-copy-scope`;
 - `clipped-fittings-metadata-narrow`;
 - `clipped-fittings-copy-preflight-bottom-narrow`;
+- `clipped-fittings-copy-result-bottom-narrow`;
 - `covered-fittings-copy-result-bottom-narrow`;
 - `zero-area-settings-wanderer-controls-narrow`.
 
@@ -191,9 +192,8 @@ claims.
 | `hidden-settings-wanderer-controls-narrow` | Wanderer `missing` and `wrong-text` | `zero-area-settings-wanderer-controls-narrow` | `hidden-profiles-copy-scope`; remove `parent.hidden` rejection |
 | `hidden-fittings-metadata-narrow` | Metadata `missing` and `wrong-text` | `clipped-fittings-metadata-narrow` | `hidden-profiles-copy-scope`; remove `parent.hidden` rejection |
 | `hidden-fittings-copy-preflight-bottom-narrow` | Preflight `missing` and `wrong-text` | `clipped-fittings-copy-preflight-bottom-narrow` | `hidden-profiles-copy-scope`; remove `parent.hidden` rejection |
-| `hidden-fittings-copy-result-bottom-narrow` | Result `missing` and `wrong-text` | `covered-fittings-copy-result-bottom-narrow` | `hidden-profiles-copy-scope`; remove `parent.hidden` rejection |
+| `hidden-fittings-copy-result-bottom-narrow` | Result `missing` and `wrong-text` | `clipped-fittings-copy-result-bottom-narrow` | `hidden-profiles-copy-scope`; remove `parent.hidden` rejection |
 | `clipped-settings-wanderer-controls-narrow` | Wanderer `missing` and `wrong-text` | `zero-area-settings-wanderer-controls-narrow` | `clipped-fittings-copy-preflight-bottom-narrow` plus four-edge/tolerance matrix |
-| `clipped-fittings-copy-result-bottom-narrow` | Result `missing` and `wrong-text` | `covered-fittings-copy-result-bottom-narrow` | `clipped-fittings-copy-preflight-bottom-narrow` plus four-edge/tolerance matrix |
 | `covered-settings-wanderer-controls-narrow` | Wanderer `missing` and `wrong-text` | `zero-area-settings-wanderer-controls-narrow` | `covered-fittings-copy-result-bottom-narrow` plus five-point hit-test mutants |
 | `covered-profiles-copy-scope` | Profiles `missing` and `wrong-text` | `clipped-profiles-copy-scope` | `covered-fittings-copy-result-bottom-narrow` plus five-point hit-test mutants |
 | `covered-fittings-metadata-narrow` | Metadata `missing` and `wrong-text` | `clipped-fittings-metadata-narrow` | `covered-fittings-copy-result-bottom-narrow` plus five-point hit-test mutants |
@@ -201,7 +201,7 @@ claims.
 | `zero-area-profiles-copy-scope` | Profiles `missing` and `wrong-text` | `clipped-profiles-copy-scope` | `zero-area-settings-wanderer-controls-narrow`; remove width/height rejection independently |
 | `zero-area-fittings-metadata-narrow` | Metadata `missing` and `wrong-text` | `clipped-fittings-metadata-narrow` | `zero-area-settings-wanderer-controls-narrow`; remove width/height rejection independently |
 | `zero-area-fittings-copy-preflight-bottom-narrow` | Preflight `missing` and `wrong-text` | `clipped-fittings-copy-preflight-bottom-narrow` | `zero-area-settings-wanderer-controls-narrow`; remove width/height rejection independently |
-| `zero-area-fittings-copy-result-bottom-narrow` | Result `missing` and `wrong-text` | `covered-fittings-copy-result-bottom-narrow` | `zero-area-settings-wanderer-controls-narrow`; remove width/height rejection independently |
+| `zero-area-fittings-copy-result-bottom-narrow` | Result `missing` and `wrong-text` | `clipped-fittings-copy-result-bottom-narrow` | `zero-area-settings-wanderer-controls-narrow`; remove width/height rejection independently |
 
 ## Candidate retained Alerts matrix — 24 cases
 
@@ -274,9 +274,9 @@ Together these retain all four comparisons and both anchors.
 
 ## Mutation qualification gate
 
-The 45-case candidate is conditional. Mutation evidence may expand the retained
+The 46-case candidate is conditional. Mutation evidence may expand the retained
 set; it may never weaken a production, helper, harness, assertion, or fixture
-contract merely to reach 45 cases or 501 four-file identities.
+contract merely to reach 46 cases or 502 four-file identities.
 
 All mutations are temporary and uncommitted. Restore and diff-audit the mutated
 path after every probe and before every commit. No witness-only test,
@@ -337,14 +337,17 @@ anchor is narrowly removed from `exposed()` wiring:
 | Profiles copy scope | remove `check(exposed(note, pane))` | `clipped-profiles-copy-scope` |
 | Fittings metadata | remove `save` from the final exposed-node list | `clipped-fittings-metadata-narrow` |
 | Fittings preflight bottom | remove `exposed(note, pane)` from the final requirement | `clipped-fittings-copy-preflight-bottom-narrow` |
-| Fittings result bottom | remove `status` from `requiredNodes` | `covered-fittings-copy-result-bottom-narrow` |
+| Fittings result bottom | remove `status` from `requiredNodes` | `clipped-fittings-copy-result-bottom-narrow` |
 
 An equivalent narrow token edit is permitted if surrounding production text
 changes before implementation, but it must isolate the same owner-to-helper
 wiring. The retained same-owner geometry case must fail at the intended
-exposure assertion, and the source must be restored before the next probe.
-Semantic missing and wrong-text mutations remain separate evidence; they do not
-substitute for this wiring ledger.
+exposure assertion, and the source must be restored before the next probe. For
+Result specifically, the clipped status target must reach the final
+`requiredNodes` exposure check and the retained clipped case must fail there;
+the broad covered case remains shared hit-test evidence only. Semantic missing
+and wrong-text mutations remain separate evidence; they do not substitute for
+this wiring ledger.
 
 ### Consolidated generated production branches
 
@@ -445,10 +448,11 @@ For the generated matrix, parameterize `(scenario, key)` together from:
 1. `settled` for all five `GAP_CAPTURES` keys in existing mapping order;
 2. `missing` for all five keys in the same order;
 3. `wrong-text` for all five keys in the same order;
-4. the six owner-geometry/shared-mechanism witnesses in this order:
+4. the seven owner-geometry/shared-mechanism witnesses in this order:
    `hidden-profiles-copy-scope`, `clipped-profiles-copy-scope`,
    `clipped-fittings-metadata-narrow`,
    `clipped-fittings-copy-preflight-bottom-narrow`,
+   `clipped-fittings-copy-result-bottom-narrow`,
    `covered-fittings-copy-result-bottom-narrow`, and
    `zero-area-settings-wanderer-controls-narrow`.
 
@@ -491,17 +495,17 @@ for redesign rather than broadening scope silently.
 
 Before deletion, freeze and publish the complete normalized 522-ID baseline and
 its hash. After implementation, publish the complete normalized after inventory,
-its hash, the retained 45-ID product inventory and hash, and an exact set diff.
+its hash, the retained 46-ID product inventory and hash, and an exact set diff.
 For the approved candidate, acceptance is:
 
-- `219 / 90 / 91 / 101 = 501` unique four-file IDs;
-- exactly 21 removed IDs;
+- `220 / 90 / 91 / 101 = 502` unique four-file IDs;
+- exactly 20 removed IDs;
 - zero added IDs;
-- all 21 removals present in the mapping tables above;
+- all 20 removals present in the mapping tables above;
 - candidate four-file hash
-  `e88ac1870bf8bae920ef474e28efdbc42201b153d96322acc46c07c337f1e0f2`;
+  `592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a`;
 - candidate retained-product hash
-  `9b4f901e51bb536c06208e8401a68467f7114136db10bf7c5604feb8b5200588`.
+  `359da2ca8f13df995ac43ed76bd0aa19ba75cb4ec3b1fe1e4fb6c8e6a38d71f9`.
 
 If mutation evidence expands the candidate, recalculate and publish the actual
 counts, complete inventories, hashes, exact removals, and zero-addition proof.
@@ -534,8 +538,8 @@ Local verification must also include:
 - proof that every temporary mutant was restored and no witness-only change
   remains.
 
-The full-suite projection for the unexpanded candidate is 16,590 passed with the
-same 14 intentional local platform skips, or 16,604 JUnit cases including those
+The full-suite projection for the unexpanded candidate is 16,591 passed with the
+same 14 intentional local platform skips, or 16,605 JUnit cases including those
 skips. These are identity projections to audit, not permission to ignore an
 unexpected collection change.
 
@@ -563,7 +567,7 @@ Ubuntu JUnit and timing artifacts directly and require:
 - Windows and Ubuntu full testcase identity sets are equal;
 - both target sets equal the published after inventory;
 - exact target counts match the qualified candidate, expected
-  `219 / 90 / 91 / 101 = 501` if unexpanded;
+  `220 / 90 / 91 / 101 = 502` if unexpanded;
 - relative to PR #286, exactly the published removals are absent and no identity
   is added;
 - Windows and Ubuntu normalized skip tuples match the comparator exactly;
@@ -582,10 +586,10 @@ support “no unexplained material target regression.” It may not support a St
 
 ### Alerts-only consolidation
 
-Rejected as too timid. It removes seven one-shot launches but leaves all 14
+Rejected as too timid. It removes seven one-shot launches but leaves all 13
 removable generated hidden/geometry crossings intact. Same-owner missing,
 wrong-text, and geometry-wiring cases preserve owner contracts while the shared
-helper and geometry matrix qualify those 14 removals.
+helper and geometry matrix qualify those 13 removals.
 
 ### Greedy mutant set-cover
 
@@ -598,7 +602,7 @@ and every edge.
 
 ### Raw deletion or count target
 
-Rejected. `66 -> 45`, `240 -> 219`, and `522 -> 501` are consequences of the
+Rejected. `66 -> 46`, `240 -> 220`, and `522 -> 502` are consequences of the
 qualified contract matrix, not goals that justify deleting a different case or
 weakening an assertion. Mutation evidence may only expand the retained set.
 
