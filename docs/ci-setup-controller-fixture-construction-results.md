@@ -13,7 +13,7 @@ Task 1 changes documentation only. No executable file or test identity changed.
 - Task 1: **COMPLETE** — exact ordered inventories, actual newline-normalized hashes, comparator provenance and extracted-file integrity, complete normalized skip tuples, and timing observations are frozen below.
 - Task 2: **COMPLETE** — the fresh test-only publisher, optional seed seam, comprehensive parity/isolation/failure witness, default atomic-path evidence, and restoration-safe mutation qualification are recorded below.
 - Task 3: **COMPLETE** — only the controller fixture's two seed calls use the fresh publisher; the second witness proves construction has four direct opens and no fsync while a real create retains seven ordered atomic body fsyncs.
-- Task 4: **NOT STARTED — Task 4 owns complete local endpoint verification.**
+- Task 4: **COMPLETE** — the exact local 190/136/16,607 endpoint, focused and full JUnit evidence, availability checks, independent gates, mutation restoration, and five-path scope are recorded below.
 - Task 5: **NOT STARTED — Task 5 owns final polish, whole review, publication stop, and hosted comparison.**
 
 Task 1 changed path: `docs/ci-setup-controller-fixture-construction-results.md` only.
@@ -17561,7 +17561,219 @@ descriptor sets are empty.
 
 ## Local endpoint verification
 
-**NOT STARTED — Task 4 owns this evidence.** Task 1 performed the baseline collection and artifact checks required before executable work; it does not claim the post-implementation focused, full-suite, Node, Cargo, Ruff, or endpoint gates.
+Task 4 ran the complete prescribed local endpoint from the clean Task 3 commit
+`30d315ec`. This task changes documentation only and makes no hosted or speedup
+claim.
+
+### Environment and release codec
+
+The required codec was built and installed exactly with:
+
+```text
+cargo build --locked --release \
+  --manifest-path packaging/settings-codec/Cargo.toml \
+  --target-dir packaging/settings-codec/target
+uv run --no-sync python -c "import os,pathlib,shutil; from wingman.evesettings import codec; name='wingman-settings-codec'+('.exe' if os.name=='nt' else ''); source=pathlib.Path('packaging/settings-codec/target/release')/name; target=pathlib.Path('packaging/bin')/name; target.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(source,target); assert codec.codec_available()"
+node --version
+```
+
+The release build completed, `codec.codec_available()` returned true, and the
+installed and release binaries were byte-identical with SHA-256
+`4a4b57f48829002be1aff6eda8193f9e1fb8257a9bef5666dd26b0e225e815b4`.
+Node was available at
+`/home/tng/.local/share/mise/installs/node/26.5.0/bin/node`, version `v26.5.0`.
+The remaining tool versions were Cargo `1.91.0`, rustc `1.91.0`, uv `0.11.3`,
+and Python `3.11.15`.
+
+### Actual endpoint identities
+
+The prescribed Block C collection ran twice during Task 4 and returned the same
+summary both times:
+
+- Controller inventory: `190` IDs, `190` unique, ordered final-newline SHA-256
+  `ebf5f437078c0532caa477db71061153bdf5a06149e3cd191f197b22db4f84d4`.
+  The exact frozen 188-ID inventory above is the ordered prefix. The only suffix,
+  in order, is:
+  1. `tests/test_ui_setup_controller.py::test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_failures`
+  2. `tests/test_ui_setup_controller.py::test_fast_fixture_construction_preserves_controller_body_atomic_persistence`
+- Structural `setup` inventory: the exact frozen 136-ID inventory above is
+  unchanged, with `136` unique IDs and ordered final-newline SHA-256
+  `02f8ec20cd3ac604839e12a9523a157419cc6486b1cf4e1a9f66918409e940d2`.
+- Complete inventory: `16,607` IDs, `16,607` unique, ordered final-newline SHA-256
+  `788c629201704e4c72777aa64d169bb5af17db83c7c57059bb49a6f50cc1d491`.
+  Its exact inventory is the frozen 16,605-ID inventory above with only the same
+  two controller suffix IDs added in that order. Additions are exactly `2`;
+  removals, renames, baseline reorders, and further suffixes are exactly `0`.
+- Arithmetic passed: `136 × 2 × 2 = 544`, `188 + 2 = 190`, and
+  `16,605 + 2 = 16,607`.
+
+The identity command was:
+
+```text
+uv run --no-sync python /tmp/setup_fixture_endpoint_audit.py
+```
+
+Its generated inventories are
+`/tmp/wingman-setup-fixture-endpoint/controller-190.txt`,
+`setup-users-136.txt`, `complete-16607.txt`, and `added-2.txt`.
+
+### Focused, default, native, and Node gates
+
+The two focused witnesses passed before and after the mutation catalog:
+
+```text
+uv run --no-sync python -m pytest \
+  tests/test_ui_setup_controller.py::test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_failures \
+  tests/test_ui_setup_controller.py::test_fast_fixture_construction_preserves_controller_body_atomic_persistence -q
+```
+
+Both runs reported `2 passed`; the pre-catalog run took `3.57s` and the
+post-catalog run took `3.70s`.
+
+The complete setup/controller/default/native command was:
+
+```text
+uv run --no-sync python -m pytest \
+  tests/test_ui_setup_controller.py \
+  tests/test_ui_setup_schema.py \
+  tests/test_ui_setup_profile.py \
+  tests/test_ui_setup_integration.py \
+  tests/test_evesettings_codec.py \
+  tests/test_evesettings_profilecopy.py \
+  tests/test_atomicio.py -q -rs --durations=50 \
+  --junitxml=/tmp/wingman-setup-fixture-focused.xml
+```
+
+It reported `470 passed, 5 skipped in 44.31s`, zero failures/errors, all `190`
+controller rows passed with zero skips, all `72` codec rows passed, and all `8`
+focused rows explicitly parameterized as native passed. The JUnit contains `475`
+testcases, records `44.296s`, and has SHA-256
+`48fd7876cf2c4a4eeb592543177ec78180838167a3db47972dd33791bfbc213a`.
+The five focused skips were only these real-Windows-junction cases:
+
+```text
+tests/test_ui_setup_profile.py::test_recognized_file_shaped_junction_refuses[core_char_31.dat] — requires real Windows junction
+tests/test_ui_setup_profile.py::test_recognized_file_shaped_junction_refuses[prefs.ini] — requires real Windows junction
+tests/test_evesettings_profilecopy.py::test_prepare_copy_rejects_a_real_windows_server_junction_outside_the_root — requires a real Windows junction
+tests/test_evesettings_profilecopy.py::test_prepare_copy_rejects_a_real_windows_profile_junction_outside_the_server — requires a real Windows junction
+tests/test_evesettings_profilecopy.py::test_cleanup_refuses_a_stage_shaped_windows_junction_rather_than_following_it — requires a real Windows junction
+```
+
+The executable setup-page boundary command selected the three direct runtime
+scenarios plus worker reuse/correlation and isolation, and reported
+`5 passed in 11.07s`:
+
+```text
+uv run --no-sync python -m pytest \
+  'tests/test_ui_setup_page.py::test_setup_page_runtime[eve-unknown]' \
+  'tests/test_ui_setup_page.py::test_setup_page_runtime[malformed-text]' \
+  'tests/test_ui_setup_page.py::test_setup_page_runtime[stale-manifest]' \
+  tests/test_ui_setup_page.py::test_setup_page_worker_protocol_reuses_process_and_correlates_unknown_scenario \
+  tests/test_ui_setup_page.py::test_setup_page_worker_isolation_sentinel -q
+```
+
+### Complete pytest and normalized Linux skips
+
+The full command was:
+
+```text
+uv run --no-sync python -m pytest tests/ -q -rs --durations=50 \
+  --junitxml=/tmp/wingman-setup-fixture-full.xml
+```
+
+It reported `16,593 passed, 14 skipped in 642.76s`, with zero failures/errors.
+The JUnit contains exactly `16,607` testcases, records `642.514s`, and has
+SHA-256
+`c8f12af735fca8b7135c006d564f71d80b48280e7470784e4c629dec29fc93bb`.
+The controller contributes exactly `190` passed rows and zero skips. No skip
+mentions absent Node or an unavailable settings codec; the release codec and
+Node-backed rows executed. The complete normalized Linux skip tuples are:
+
+```text
+tests/test_clipserve.py::test_a_live_reader_does_not_block_deletion — delete-while-open is a Windows sharing rule
+tests/test_evesettings_profilecopy.py::test_prepare_copy_rejects_a_real_windows_server_junction_outside_the_root — requires a real Windows junction
+tests/test_evesettings_profilecopy.py::test_prepare_copy_rejects_a_real_windows_profile_junction_outside_the_server — requires a real Windows junction
+tests/test_evesettings_profilecopy.py::test_cleanup_refuses_a_stage_shaped_windows_junction_rather_than_following_it — requires a real Windows junction
+tests/test_eveskills_dpapi.py::test_round_trips_on_windows — requires real DPAPI
+tests/test_eveskills_dpapi.py::test_crypt32_binding_is_cached — requires real WinDLL
+tests/test_preview_host.py::test_stop_from_another_thread_really_exits_the_pump — needs a real message pump and window station
+tests/test_preview_win32.py::test_every_used_function_is_declared — binds user32/gdi32/dwmapi
+tests/test_preview_win32.py::test_pointer_sized_returns_are_not_left_at_the_c_int_default — binds user32/gdi32/dwmapi
+tests/test_preview_win32.py::test_bind_is_cached_so_declarations_are_applied_once — binds user32/gdi32/dwmapi
+tests/test_tray.py::test_adapter_loads_against_the_pinned_pystray_windows_backend — pystray Windows backend
+tests/test_ui_setup_profile.py::test_recognized_file_shaped_junction_refuses[core_char_31.dat] — requires real Windows junction
+tests/test_ui_setup_profile.py::test_recognized_file_shaped_junction_refuses[prefs.ini] — requires real Windows junction
+tests/test_wanderer_integration.py::test_real_windows_credential_document_roundtrip_replace_binding_and_remove — real Windows user-bound DPAPI required
+```
+
+### Independent gates
+
+The independent commands and results were:
+
+- `cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml` —
+  `1 passed; 0 failed; 0 ignored`.
+- `node scripts/js_smoke.js` — every module from `index.html`,
+  `fleetbar.html`, and `sigbar.html` loaded; final result
+  `PASS every page module loaded`.
+- `uv run --no-sync ruff check .` — `All checks passed!`.
+- `uv run --no-sync ruff format --check .` — `520 files already formatted`.
+- `git diff --check` — clean.
+
+### Mutation restoration, scope, and claim discipline
+
+All nine exact temporary mutants produced their intended RED independently.
+Pi policy rejected shell-variable expansion in the prescribed loop, so the same
+catalog was run as nine explicit sequential commands:
+
+```text
+python /tmp/setup_fixture_mutation_probe.py remove-o-excl
+python /tmp/setup_fixture_mutation_probe.py path-preflight
+python /tmp/setup_fixture_mutation_probe.py direct-fsync
+python /tmp/setup_fixture_mutation_probe.py atomic-delegation
+python /tmp/setup_fixture_mutation_probe.py extra-byte
+python /tmp/setup_fixture_mutation_probe.py mapping-order
+python /tmp/setup_fixture_mutation_probe.py line-endings
+python /tmp/setup_fixture_mutation_probe.py hardlink-template
+python /tmp/setup_fixture_mutation_probe.py direct-body-write
+```
+
+For the first eight, `tests/setup_fixtures.py` restored
+byte-exactly to SHA-256
+`534c8d26b2afe2fcb25f1c4632013a362514312099b194f2de35963147f35639`.
+For `direct-body-write`, `wingman/evesettings/setup_profile.py` restored
+byte-exactly to SHA-256
+`9a257521fb71286a34818a900cedffb8369e49e50e63061cc7feb6e146dbbb15`.
+Every probe also compared its complete binary diff and porcelain-v2 status with
+its own pre-probe snapshot. The post-catalog witnesses passed, the protected-path
+diff was empty, and neither `MUTATION` nor `_FRESH_FILE_TEMPLATES` remained.
+Probe records are under `/tmp/wingman-setup-fixture-mutants/`.
+
+The baseline-to-endpoint scope audit found exactly these five paths and no
+others:
+
+```text
+docs/ci-setup-controller-fixture-construction-results.md
+docs/superpowers/plans/2026-09-24-setup-controller-fixture-construction.md
+docs/superpowers/specs/2026-09-24-setup-controller-fixture-construction-design.md
+tests/setup_fixtures.py
+tests/test_ui_setup_controller.py
+```
+
+The protected-path audit was run with:
+
+```text
+git diff --exit-code -- wingman .github tests/fixtures \
+  tests/test_ui_setup_schema.py tests/test_ui_setup_profile.py \
+  tests/test_ui_setup_integration.py tests/test_evesettings_codec.py \
+  tests/test_evesettings_profilecopy.py tests/test_atomicio.py \
+  pyproject.toml uv.lock packaging
+```
+
+It was empty. The separate temporary-symbol search over
+`tests/setup_fixtures.py` and `tests/test_ui_setup_controller.py` also returned
+no matches. Task 4 adds only this documentation record. This endpoint is local
+evidence only: no branch was pushed, no remote state was mutated, no hosted
+result is claimed, and no speedup is stated.
 
 ## Hosted comparison
 
