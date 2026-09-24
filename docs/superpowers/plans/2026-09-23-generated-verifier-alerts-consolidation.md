@@ -104,6 +104,308 @@ Preflight results:
 
 ---
 
+## Reproducibility Blocks
+
+Every block writes only under `/tmp` unless a mutation is explicitly applied through Block B. The plan author syntax-checked every Python/Bash block, ran Block A, dry-ran Block D against the projected 502-ID inventory, parsed the PR #286 artifacts with Block F, and ran all Block C control/mutant sequences in disposable archives.
+
+### Reproducibility Block A — baseline/candidate inventory and report archive
+
+```bash
+cat > /tmp/stage3_inventory_audit.py <<'PY'
+from hashlib import sha256
+from pathlib import Path
+import json, shutil, subprocess, tarfile
+W=Path('/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation'); P=W/'.venv/bin/python'
+O=Path('/tmp/wingman-stage3-inventory'); A=Path('/tmp/wingman-stage3-inventory.tar.gz')
+FILES=('tests/test_shoot_screens.py','tests/test_new_screenshots.py','tests/test_current_screenshots.py','tests/test_fittings_page.py')
+G='tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing['
+L='tests/test_shoot_screens.py::test_alerts_base_capture_requires_top_anchors_without_actions['
+def collect(args,name):
+ r=subprocess.run([str(P),'-m','pytest',*args,'--collect-only','-q','-p','no:cacheprovider'],cwd=W,text=True,capture_output=True,check=True,timeout=180); (O/name).write_text(r.stdout); n=[x for x in r.stdout.splitlines() if x.startswith('tests/')]; assert len(n)==len(set(n)); return n
+def h(n): return sha256(('\n'.join(n)+'\n').encode()).hexdigest()
+if O.exists(): shutil.rmtree(O)
+O.mkdir()
+base=collect(FILES,'baseline-collection.txt'); products=collect((G[:-1],L[:-1]),'baseline-products-collection.txt')
+keys=('settings-wanderer-controls-narrow','profiles-copy-scope','fittings-metadata-narrow','fittings-copy-preflight-bottom-narrow','fittings-copy-result-bottom-narrow')
+gen=[f'{G}{s}-{k}]' for s in ('settled','missing','wrong-text') for k in keys]+[f'{G}{x}]' for x in ('hidden-profiles-copy-scope','clipped-profiles-copy-scope','clipped-fittings-metadata-narrow','clipped-fittings-copy-preflight-bottom-narrow','clipped-fittings-copy-result-bottom-narrow','covered-fittings-copy-result-bottom-narrow','zero-area-settings-wanderer-controls-narrow')]
+alerts=[f'{L}{x}]' for x in ('settled-disabled','settled-enabled','wrong-route','wrong-section','inactive-route','inactive-section','missing-section','missing-pane','hidden-section','hidden-pane','hidden-card','wrong-owner','empty-health','zero-health','outside-viewport','missing-master','missing-health','hidden-master','invisible-health','display-none-master','clipped-master-top','clipped-master-right','clipped-health-bottom','clipped-health-left')]
+after=[]; emitted_g=emitted_l=False
+for node in base:
+ if node.startswith(G):
+  if not emitted_g: after.extend(gen); emitted_g=True
+ elif node.startswith(L):
+  if not emitted_l: after.extend(alerts); emitted_l=True
+ else: after.append(node)
+retained=gen+alerts; removed=[x for x in base if x not in set(after)]; added=[x for x in after if x not in set(base)]
+counts=lambda nodes:[sum(x.startswith(f+'::') for x in nodes) for f in FILES]
+assert counts(base)==[240,90,91,101] and len(base)==522 and len(products)==66 and h(base)=='07c1e080c24157001c3aa936ac7c26ec6307e9f246973cfb65f92164c31a51e6'
+assert counts(after)==[220,90,91,101] and len(after)==502 and len(retained)==46 and len(removed)==20 and added==[]
+assert h(after)=='592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a' and h(retained)=='359da2ca8f13df995ac43ed76bd0aa19ba75cb4ec3b1fe1e4fb6c8e6a38d71f9'
+for name,nodes in {'baseline-522.txt':base,'baseline-products-66.txt':products,'candidate-502.txt':after,'candidate-products-46.txt':retained,'removed-20.txt':removed,'added-0.txt':added}.items(): (O/name).write_text('\n'.join(nodes)+('\n' if nodes else ''))
+summary={'baseline_counts':counts(base),'baseline_total':len(base),'baseline_hash':h(base),'baseline_product_total':len(products),'candidate_counts':counts(after),'candidate_total':len(after),'candidate_hash':h(after),'candidate_product_total':len(retained),'candidate_product_hash':h(retained),'removed':len(removed),'added':len(added)}
+(O/'summary.json').write_text(json.dumps(summary,sort_keys=True,indent=2)+'\n')
+if A.exists(): A.unlink()
+with tarfile.open(A,'w:gz') as t:
+ for p in sorted(O.iterdir()): t.add(p,arcname=p.name)
+print(json.dumps(summary,sort_keys=True)); print(f'report_archive={A}')
+PY
+python -m py_compile /tmp/stage3_inventory_audit.py
+python /tmp/stage3_inventory_audit.py
+```
+
+### Reproducibility Block B — guarded mutation apply/restore
+
+Every worktree mutation in Tasks 2–3 uses this driver. Put the exact multiline before and after blocks named by the step in `/tmp/stage3-before.txt` and `/tmp/stage3-after.txt`; use a mutation-specific backup path. `check`, `apply`, and `restore` each enforce count one. A command that reports any other count stops the probe.
+
+```bash
+cat > /tmp/stage3_guarded_replace.py <<'PY'
+from pathlib import Path
+import argparse, hashlib, json
+p=argparse.ArgumentParser(); p.add_argument('mode',choices=('check','apply','restore')); p.add_argument('target',type=Path); p.add_argument('before',type=Path); p.add_argument('after',type=Path); p.add_argument('backup',type=Path); a=p.parse_args()
+b=a.before.read_text(); n=a.after.read_text(); assert b and n and b!=n
+if a.mode in ('check','apply'):
+ t=a.target.read_text(); assert t.count(b)==1,('before_count',t.count(b)); u=t.replace(b,n,1); assert u.count(n)==1,('after_count',u.count(n))
+ if a.mode=='check': print(json.dumps({'before_count':1,'after_count':1,'target':str(a.target)}))
+ else:
+  assert not a.backup.exists(); a.backup.write_bytes(a.target.read_bytes()); a.target.write_text(u); assert a.target.read_text().count(n)==1; print(json.dumps({'before_count':1,'after_count':1,'original_sha256':hashlib.sha256(a.backup.read_bytes()).hexdigest()}))
+else:
+ assert a.backup.is_file(); t=a.target.read_text(); assert t.count(n)==1,('after_count',t.count(n)); raw=a.backup.read_bytes(); original=raw.decode(); assert original.count(b)==1,('backup_before_count',original.count(b)); a.target.write_bytes(raw); assert a.target.read_text().count(b)==1; a.backup.unlink(); print(json.dumps({'restored_before_count':1,'restored_sha256':hashlib.sha256(a.target.read_bytes()).hexdigest()}))
+PY
+python -m py_compile /tmp/stage3_guarded_replace.py
+```
+
+For each exact mutation row, run `check`, then `apply`, then that row's fully spelled witness command, then `restore`, and finally the row's exact `git diff --exit-code` path audit. The target path and mutation-specific backup path are concrete in each row; never reuse a live backup across probes.
+
+```bash
+python /tmp/stage3_guarded_replace.py check scripts/shoot_screens.py /tmp/stage3-before.txt /tmp/stage3-after.txt /tmp/stage3-mutation.backup
+python /tmp/stage3_guarded_replace.py apply scripts/shoot_screens.py /tmp/stage3-before.txt /tmp/stage3-after.txt /tmp/stage3-mutation.backup
+```
+
+After the named witness command:
+
+```bash
+python /tmp/stage3_guarded_replace.py restore scripts/shoot_screens.py /tmp/stage3-before.txt /tmp/stage3-after.txt /tmp/stage3-mutation.backup
+git diff --exit-code -- scripts/shoot_screens.py
+```
+
+### Reproducibility Block C — unique framed-helper and target-coordinate probes
+
+This complete script uses disposable `git archive` copies. Its `H` anchor contains the tolerance comments, tolerance value, dimensions, all edges, all five points, and full hit body, so it occurs once only in `_framed_content_script`. `rep()` asserts `before_count == 1` and `after_count == 1` for every source and fixture mutation.
+
+```bash
+cat > /tmp/stage3-helper-probe.py <<'PY'
+from pathlib import Path
+import io,subprocess,tarfile,tempfile
+W=Path('/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation'); P=W/'.venv/bin/python'
+G='tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing['; X='tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests['
+COVER=G+'covered-fittings-copy-result-bottom-narrow]'; SETTLED=G+'settled-fittings-copy-result-bottom-narrow]'; ZERO=G+'zero-area-settings-wanderer-controls-narrow]'
+H='''  // Scroll offsets can round while DOMRects retain fractions (measured 0.109375px).
+  // Allow at most one CSS pixel at an edge, never a covered hit-test point.
+  var tolerance = 1;
+  if (r.width <= 0 || r.height <= 0
+      || r.left < Math.max(0, p.left) - tolerance || r.right > Math.min(innerWidth, p.right) + tolerance
+      || r.top < Math.max(0, p.top) - tolerance || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;
+  var inset = Math.min(4, r.width / 4, r.height / 4);
+  return [[r.left + inset, r.top + inset], [r.right - inset, r.top + inset],
+    [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset],
+    [(r.left + r.right) / 2, (r.top + r.bottom) / 2]].every(function (point) {
+      var hit = document.elementFromPoint(point[0], point[1]);
+      return hit && (hit === node || node.contains(hit));
+    });
+'''
+F='''    // Each hit-test point belongs to the last measured node unless another
+    // surface covers it. This isolates the generated guard, not CSS hit testing.
+    let measured;
+    const box = Element.prototype.getBoundingClientRect;
+    Element.prototype.getBoundingClientRect = function () { measured = this; return box.call(this); };
+    document.elementFromPoint = () => covered && (scenario !== 'covered-summary' || measured === target)
+      ? document.body : measured;
+'''
+Z='''      const r = rect(120, 130, zero && this === target ? 120 : 760, 330);'''; ZH='''      const r = zero && this === target
+        ? rect(120, 130, 760, 130)
+        : rect(120, 130, 760, 330);'''
+POINTS=((124,134),(756,134),(124,326),(756,326),(440,230))
+ARRAY='''  return [[r.left + inset, r.top + inset], [r.right - inset, r.top + inset],
+    [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset],
+    [(r.left + r.right) / 2, (r.top + r.bottom) / 2]].every(function (point) {'''
+REMOVED=(
+'''  return [[r.right - inset, r.top + inset],
+    [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset],
+    [(r.left + r.right) / 2, (r.top + r.bottom) / 2]].every(function (point) {''',
+'''  return [[r.left + inset, r.top + inset],
+    [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset],
+    [(r.left + r.right) / 2, (r.top + r.bottom) / 2]].every(function (point) {''',
+'''  return [[r.left + inset, r.top + inset], [r.right - inset, r.top + inset],
+    [r.right - inset, r.bottom - inset],
+    [(r.left + r.right) / 2, (r.top + r.bottom) / 2]].every(function (point) {''',
+'''  return [[r.left + inset, r.top + inset], [r.right - inset, r.top + inset],
+    [r.left + inset, r.bottom - inset],
+    [(r.left + r.right) / 2, (r.top + r.bottom) / 2]].every(function (point) {''',
+'''  return [[r.left + inset, r.top + inset], [r.right - inset, r.top + inset],
+    [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset]].every(function (point) {''')
+def rep(path,b,a):
+ t=path.read_text(); assert t.count(b)==1,('before_count',t.count(b)); u=t.replace(b,a,1); assert u.count(a)==1,('after_count',u.count(a)); path.write_text(u)
+def fixture(kind,index=0):
+ x,y=POINTS[index]; value={'body':'document.body','null':'null','descendant':'descendantHit'}[kind]; gate='covered && measured === target'; extra=''
+ if kind=='descendant': extra="    const descendantHit = WM.make('span');\n    target.appendChild(descendantHit);\n"; gate='measured === target'
+ return f'''    // Each hit-test point belongs to the last measured node unless another
+    // surface covers it. This isolates the generated guard, not CSS hit testing.
+    let measured;
+    const box = Element.prototype.getBoundingClientRect;
+    Element.prototype.getBoundingClientRect = function () {{ measured = this; return box.call(this); }};
+    const expectedTargetRect = rect(120, 130, 760, 330), expectedTargetInset = 4;
+    const expectedTargetPoints = [[124,134],[756,134],[124,326],[756,326],[440,230]];
+    const coveredTargetPoint = expectedTargetPoints[{index}]; assert.deepEqual(coveredTargetPoint,[{x},{y}]);
+{extra}    document.elementFromPoint = (x,y) => {{ if ({gate}) assert.deepEqual(box.call(target),expectedTargetRect); return {gate} && x === coveredTargetPoint[0] && y === coveredTargetPoint[1] ? {value} : measured; }};
+'''
+def run(name,helper,node,fix=None,ea='AssertionError:',eb='at Object.throws'):
+ with tempfile.TemporaryDirectory(prefix='stage3-'+name+'-') as d:
+  R=Path(d)
+  with tarfile.open(fileobj=io.BytesIO(ARCH),mode='r:') as t: t.extractall(R,filter='data')
+  s=R/'scripts/shoot_screens.py'; f=R/'tests/fixtures/screenshot_pages.cjs'; assert s.read_text().count(H)==1
+  if fix=='zero-height': rep(f,Z,ZH)
+  elif fix: rep(f,F,fix)
+  q=lambda:subprocess.run([str(P),'-m','pytest',node,'-q','-p','no:cacheprovider'],cwd=R,text=True,capture_output=True,timeout=60)
+  green=q(); assert green.returncode==0,green.stdout+green.stderr; rep(s,H,helper); red=q(); out=red.stdout+red.stderr; assert red.returncode!=0 and ea in out and eb in out,out; print(name+': control PASS; mutant FAIL at '+eb+' / '+ea)
+ARCH=subprocess.check_output(['git','-C',str(W),'archive','HEAD'])
+for i in range(5): run('point-'+str(i),H.replace(ARRAY,REMOVED[i]),COVER,fixture('body',i),'AssertionError: covered')
+mut={
+'width':(H.replace('  if (r.width <= 0 || r.height <= 0\n','  if (r.height <= 0\n'),ZERO,None,'AssertionError: zero-area','at Object.throws'),
+'height':(H.replace('  if (r.width <= 0 || r.height <= 0\n','  if (r.width <= 0\n'),ZERO,'zero-height','AssertionError: zero-area','at Object.throws'),
+'every':(H.replace(']].every(function (point) {',']].some(function (point) {'),COVER,fixture('body'),'AssertionError: covered','at Object.throws'),
+'null':(H.replace('      return hit && (hit === node || node.contains(hit));','      return !hit || hit === node || node.contains(hit);'),COVER,fixture('null'),'AssertionError: covered','at Object.throws'),
+'unrelated':(H.replace('      return hit && (hit === node || node.contains(hit));','      return Boolean(hit);'),COVER,fixture('body'),'AssertionError: covered','at Object.throws'),
+'direct':(H.replace('      return hit && (hit === node || node.contains(hit));','      return hit && hit !== node && node.contains(hit);'),SETTLED,None,'Screenshot content did not settle: fittings-copy-result-bottom-narrow','at check'),
+'descendant':(H.replace('      return hit && (hit === node || node.contains(hit));','      return hit && hit === node;'),SETTLED,fixture('descendant'),'Screenshot content did not settle: fittings-copy-result-bottom-narrow','at check')}
+for edge,old,new in (('left','      || r.left < Math.max(0, p.left) - tolerance || r.right > Math.min(innerWidth, p.right) + tolerance\n','      || r.right > Math.min(innerWidth, p.right) + tolerance\n'),('right','      || r.left < Math.max(0, p.left) - tolerance || r.right > Math.min(innerWidth, p.right) + tolerance\n','      || r.left < Math.max(0, p.left) - tolerance\n'),('top','      || r.top < Math.max(0, p.top) - tolerance || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;\n','      || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;\n'),('bottom','      || r.top < Math.max(0, p.top) - tolerance || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;\n','      || r.top < Math.max(0, p.top) - tolerance) return false;\n')): mut['edge-'+edge]=(H.replace(old,new),X+'overflow-'+edge+']',None,'AssertionError: overflow-'+edge,'at Object.throws')
+for edge in ('top','right','bottom','left'): mut['tolerance-'+edge]=(H.replace('  var tolerance = 1;\n','  var tolerance = 1.01;\n'),X+'overflow-'+edge+']',None,'AssertionError: overflow-'+edge,'at Object.throws')
+for name,args in mut.items(): run(name,*args)
+PY
+python -m py_compile /tmp/stage3-helper-probe.py
+python /tmp/stage3-helper-probe.py
+```
+
+Expected output is five `point-N` PASS/FAIL-at-intended-assert lines plus width, height, four edges, four tolerance probes, every, null, unrelated, direct, and descendant lines. No disposable mutation survives.
+
+### Reproducibility Block D — five execution orders
+
+```bash
+cat > /tmp/stage3_five_orders.py <<'PY'
+from pathlib import Path
+import hashlib,json,random,subprocess,sys
+W=Path('/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation'); P=W/'.venv/bin/python'; O=Path('/tmp/wingman-stage3-five-orders'); dry='--dry-run' in sys.argv
+F=('tests/test_shoot_screens.py','tests/test_new_screenshots.py','tests/test_current_screenshots.py','tests/test_fittings_page.py')
+def h(n): return hashlib.sha256(('\n'.join(n)+'\n').encode()).hexdigest()
+if dry: nodes=[x for x in Path('/tmp/wingman-stage3-inventory/candidate-502.txt').read_text().splitlines() if x.startswith('tests/')]
+else:
+ r=subprocess.run([str(P),'-m','pytest',*F,'--collect-only','-q','-p','no:cacheprovider'],cwd=W,text=True,capture_output=True,check=True,timeout=180); nodes=[x for x in r.stdout.splitlines() if x.startswith('tests/')]
+assert len(nodes)==len(set(nodes))==502 and h(nodes)=='592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a'
+by={f:[n for n in nodes if n.startswith(f+'::')] for f in F}; assert [len(by[f]) for f in F]==[220,90,91,101]
+shuffle=list(nodes); random.Random(0x8D5B9305).shuffle(shuffle)
+orders={'normal-file':(list(F),[n for f in F for n in by[f]]),'reverse-file':(list(reversed(F)),[n for f in reversed(F) for n in by[f]]),'forward-node':(list(nodes),list(nodes)),'reverse-node':(list(reversed(nodes)),list(reversed(nodes))),'shuffled-node-seed-8d5b9305':(shuffle,shuffle)}
+expected={'normal-file':'592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a','reverse-file':'ac515f4df98d8036bf5248d64a5a3645491cfe1c596f133f965056b5d6e24e79','forward-node':'592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a','reverse-node':'411ca8b2d5b3bae72340dcbdd672ae473af53123fd924dcfdc8e0268d88ef14f','shuffled-node-seed-8d5b9305':'ba282ea09921c2f6edb13c0e7b2946b858a584bd2593360d6d7f919a037a23ee'}
+O.mkdir(exist_ok=True); summary={}
+for name,(args,ordered) in orders.items():
+ assert h(ordered)==expected[name]; (O/f'{name}.nodes.txt').write_text('\n'.join(ordered)+'\n')
+ if dry: output='DRY-RUN'
+ else:
+  q=subprocess.run([str(P),'-m','pytest',*args,'-q','-p','no:cacheprovider'],cwd=W,text=True,capture_output=True,timeout=300); output=q.stdout+q.stderr; (O/f'{name}.pytest.txt').write_text(output); assert q.returncode==0 and '502 passed' in output,output
+ summary[name]={'count':len(ordered),'sha256':h(ordered),'result':output.splitlines()[-1]}
+(O/'summary.json').write_text(json.dumps(summary,sort_keys=True,indent=2)+'\n'); print(json.dumps(summary,sort_keys=True))
+PY
+python -m py_compile /tmp/stage3_five_orders.py
+python /tmp/stage3_five_orders.py
+```
+
+### Reproducibility Block E — hosted API, logs, artifacts, and synthetic-merge blobs
+
+```bash
+cat > /tmp/stage3_hosted_collect.sh <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+cd /mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation
+R=elboaf/FlyGD-Wingman; C=35882408360; D=/tmp/wingman-stage3-hosted; mkdir -p "$D"
+gh pr view -R "$R" --json number,headRefName,headRefOid,baseRefOid,url > "$D/pr.json"
+gh run list -R "$R" --workflow ci.yml --event pull_request --limit 100 --json databaseId,headSha,conclusion > "$D/runs.json"
+python - <<'PY'
+import json
+from pathlib import Path
+d=Path('/tmp/wingman-stage3-hosted'); p=json.loads((d/'pr.json').read_text()); r=json.loads((d/'runs.json').read_text()); m=[x for x in r if x['headSha']==p['headRefOid'] and x['conclusion']=='success']; assert len(m)==1,m; (d/'run-id').write_text(str(m[0]['databaseId']))
+PY
+S=$(cat "$D/run-id"); gh api "repos/$R/actions/runs/$S" > "$D/run.json"; gh api --paginate --slurp "repos/$R/actions/runs/$S/jobs?per_page=100" > "$D/jobs.json"
+gh run view "$S" -R "$R" --log > "$D/stage3.log"; gh run view "$C" -R "$R" --log > "$D/comparator.log"
+python - <<'PY'
+import json,re
+from datetime import datetime
+from pathlib import Path
+d=Path('/tmp/wingman-stage3-hosted'); p=json.loads((d/'pr.json').read_text()); run=json.loads((d/'run.json').read_text()); pages=json.loads((d/'jobs.json').read_text()); jobs=[j for page in pages for j in page['jobs']]; req={'checks','test (ubuntu-latest)','test (windows-latest)'}; selected={j['name']:j for j in jobs if j['name'] in req}; assert set(selected)==req and all(j['conclusion']=='success' for j in selected.values()); assert run['head_sha']==p['headRefOid']
+t=(d/'stage3.log').read_text(errors='replace'); merges=set(re.findall(r'\+([0-9a-f]{40}):refs/remotes/pull/\d+/merge',t)); subjects=set(re.findall(r'HEAD is now at [0-9a-f]+ Merge ([0-9a-f]{40}) into ([0-9a-f]{40})',t)); assert len(merges)==1 and subjects=={(p['headRefOid'],p['baseRefOid'])}; merge=next(iter(merges)); assert t.count(merge)>=3
+c=(d/'comparator.log').read_text(errors='replace'); assert set(re.findall(r'\+([0-9a-f]{40}):refs/remotes/pull/286/merge',c))=={'c1ab289e4fdd31e7cc5be2c8322a2557c48e1a26'}; assert set(re.findall(r'HEAD is now at [0-9a-f]+ Merge ([0-9a-f]{40}) into ([0-9a-f]{40})',c))=={('0c785ce18193b5900f8d810a8a4dc7e0f10c9f1e','459c5d6b57f5f35c97d3076bee25a6f65ba515be')}
+seconds=lambda a,b:(datetime.fromisoformat(b.replace('Z','+00:00'))-datetime.fromisoformat(a.replace('Z','+00:00'))).total_seconds(); observations={}
+for name,j in selected.items():
+ test=[s for s in j['steps'] if s['name']=='Test']; observations[name]={'job_seconds':seconds(j['started_at'],j['completed_at']),'test_step_seconds':seconds(test[0]['started_at'],test[0]['completed_at']) if test else None}
+out={'pr':p['number'],'run':run['id'],'branch_head':p['headRefOid'],'synthetic_merge':merge,'base':p['baseRefOid'],'jobs':{n:selected[n]['id'] for n in sorted(req)},'observations':observations}; (d/'provenance.json').write_text(json.dumps(out,sort_keys=True,indent=2)+'\n'); print(json.dumps(out,sort_keys=True))
+PY
+python - <<'PY'
+import shutil
+from pathlib import Path
+for p in map(Path,('/tmp/wingman-pr286-ubuntu','/tmp/wingman-pr286-windows','/tmp/wingman-stage3-ubuntu','/tmp/wingman-stage3-windows')):
+ if p.exists(): shutil.rmtree(p)
+PY
+gh run download "$C" -R "$R" -n pytest-evidence-ubuntu-latest -D /tmp/wingman-pr286-ubuntu
+gh run download "$C" -R "$R" -n pytest-evidence-windows-latest -D /tmp/wingman-pr286-windows
+gh run download "$S" -R "$R" -n pytest-evidence-ubuntu-latest -D /tmp/wingman-stage3-ubuntu
+gh run download "$S" -R "$R" -n pytest-evidence-windows-latest -D /tmp/wingman-stage3-windows
+python - <<'PY'
+import json,subprocess
+from pathlib import Path
+d=Path('/tmp/wingman-stage3-hosted'); p=json.loads((d/'provenance.json').read_text()); c='c1ab289e4fdd31e7cc5be2c8322a2557c48e1a26'; s=p['synthetic_merge']
+for x in (c,s,p['branch_head'],'8d5b9305'): subprocess.run(['git','fetch','--quiet','origin',x],check=True)
+paths=('.github/workflows/ci.yml','scripts','tests/fixtures','tests/conftest.py','tests/node_scenario_worker.py','tests/test_new_screenshots.py','tests/test_current_screenshots.py','tests/test_fittings_page.py','pyproject.toml','uv.lock','packaging'); blobs={}
+for path in paths:
+ a=subprocess.check_output(['git','rev-parse',f'{c}:{path}'],text=True).strip(); b=subprocess.check_output(['git','rev-parse',f'{s}:{path}'],text=True).strip(); assert a==b,(path,a,b); blobs[path]=a
+assert subprocess.run(['git','merge-base','--is-ancestor','8d5b9305',p['branch_head']]).returncode==0; authored=set(subprocess.check_output(['git','diff','--name-only','8d5b9305..'+p['branch_head']],text=True).splitlines()); allowed={'docs/ci-generated-verifier-alerts-consolidation-results.md','docs/superpowers/plans/2026-09-23-generated-verifier-alerts-consolidation.md','docs/superpowers/specs/2026-09-23-generated-verifier-alerts-consolidation-design.md','tests/test_shoot_screens.py'}; assert authored<=allowed,sorted(authored-allowed)
+(d/'blob-comparison.json').write_text(json.dumps({'comparator_synthetic_merge':c,'stage3_synthetic_merge':s,'equal_exercised_blobs':blobs,'stage3_authored_head':p['branch_head'],'stage3_authored_paths':sorted(authored)},sort_keys=True,indent=2)+'\n')
+PY
+python /tmp/stage3_hosted_artifacts.py
+SH
+bash -n /tmp/stage3_hosted_collect.sh
+bash /tmp/stage3_hosted_collect.sh
+```
+
+### Reproducibility Block F — JUnit identities/skips/timing sums
+
+```bash
+cat > /tmp/stage3_hosted_artifacts.py <<'PY'
+from pathlib import Path
+from collections import defaultdict
+import hashlib,json,re,sys,xml.etree.ElementTree as ET
+C={p:Path('/tmp/wingman-pr286-'+p) for p in ('ubuntu','windows')}; S={p:Path('/tmp/wingman-stage3-'+p) for p in ('ubuntu','windows')}; FILES=('tests/test_shoot_screens.py','tests/test_new_screenshots.py','tests/test_current_screenshots.py','tests/test_fittings_page.py'); G='tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing['; A='tests/test_shoot_screens.py::test_alerts_base_capture_requires_top_anchors_without_actions['
+R={G+x+']' for x in ('hidden-settings-wanderer-controls-narrow','hidden-fittings-metadata-narrow','hidden-fittings-copy-preflight-bottom-narrow','hidden-fittings-copy-result-bottom-narrow','clipped-settings-wanderer-controls-narrow','covered-settings-wanderer-controls-narrow','covered-profiles-copy-scope','covered-fittings-metadata-narrow','covered-fittings-copy-preflight-bottom-narrow','zero-area-profiles-copy-scope','zero-area-fittings-metadata-narrow','zero-area-fittings-copy-preflight-bottom-narrow','zero-area-fittings-copy-result-bottom-narrow')}|{A+x+']' for x in ('hidden-health','invisible-master','display-none-health','clipped-master-bottom','clipped-master-left','clipped-health-top','clipped-health-right')}
+def ident(c):
+ p=c.get('classname').split('.'); assert len(p)>=2 and p[0]=='tests'; return '::'.join(('/'.join(p[:2])+'.py',*p[2:],c.get('name')))
+def skip(s): return re.sub(r'pytest-of-[^/\s]+/pytest-\d+/[^\s:\"\']+','pytest-of-<USER>/pytest-<N>/<PYTEST_TMP>',s.replace('\\','/'))
+def parse(d):
+ cases=list(ET.parse(d/'pytest-result.xml').getroot().iter('testcase')); ids=[ident(c) for c in cases]; assert len(ids)==len(set(ids)); count=defaultdict(int); sec=defaultdict(float); times={}; skips=[]; fail=err=0
+ for c,n in zip(cases,ids,strict=True):
+  f=n.split('::',1)[0]; t=float(c.get('time','0') or 0); count[f]+=1; sec[f]+=t; times[n]=t; z=c.find('skipped'); skips.append((n,skip((z.get('message') or z.text or '')))) if z is not None else None; fail+=len(c.findall('failure')); err+=len(c.findall('error'))
+ timing=json.loads((d/'pytest-timing.json').read_text()); assert timing['case_count']==len(ids)
+ for f,v in timing['files'].items(): assert v['cases']==count[f] and abs(v['seconds']-sec[f])<1e-9
+ target=[n for n in ids if n.split('::',1)[0] in FILES]; return {'ids':ids,'set':set(ids),'target':target,'target_set':set(target),'count':count,'sec':sec,'times':times,'skips':skips,'fail':fail,'err':err,'g':[n for n in ids if n.startswith(G)],'a':[n for n in ids if n.startswith(A)]}
+def h(n): return hashlib.sha256(('\n'.join(n)+'\n').encode()).hexdigest()
+c={p:parse(d) for p,d in C.items()}; assert c['ubuntu']['set']==c['windows']['set']
+assert len(c['ubuntu']['target_set'])==522 and [c['ubuntu']['count'][f] for f in FILES]==[240,90,91,101] and len(c['ubuntu']['g'])==35 and len(c['ubuntu']['a'])==31 and len(c['ubuntu']['skips'])==14 and len(c['windows']['skips'])==67
+if '--comparator-self-test' in sys.argv: print('comparator-self-test: PASS'); raise SystemExit(0)
+s={p:parse(d) for p,d in S.items()}; assert s['ubuntu']['set']==s['windows']['set'] and s['ubuntu']['target_set']==s['windows']['target_set']
+report={}
+for p in ('ubuntu','windows'):
+ b=c[p]; q=s[p]; assert q['fail']==q['err']==b['fail']==b['err']==0; assert q['skips']==b['skips']; assert [q['count'][f] for f in FILES]==[220,90,91,101] and len(q['g'])==22 and len(q['a'])==24 and h(q['target'])=='592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a'; assert b['target_set']-q['target_set']==R and q['target_set']-b['target_set']==set(); common=b['target_set']&q['target_set']; report[p]={'cases':[len(b['ids']),len(q['ids'])],'skips':len(q['skips']),'generated_seconds':sum(q['times'][n] for n in q['g']),'alerts_seconds':sum(q['times'][n] for n in q['a']),'combined_product_seconds':sum(q['times'][n] for n in q['g']+q['a']),'per_file':{f:[q['count'][f],q['sec'][f]] for f in FILES},'four_file_seconds':sum(q['sec'][f] for f in FILES),'all_case_seconds':sum(q['sec'].values()),'removed_seconds':sum(b['times'][n] for n in R),'common_seconds':[sum(b['times'][n] for n in common),sum(q['times'][n] for n in common)]}
+Path('/tmp/wingman-stage3-hosted-audit.json').write_text(json.dumps(report,sort_keys=True,indent=2)+'\n'); print(json.dumps(report,sort_keys=True))
+PY
+python -m py_compile /tmp/stage3_hosted_artifacts.py
+python /tmp/stage3_hosted_artifacts.py --comparator-self-test
+```
+
 ### Task 1: Freeze the Exact PR #286 Baseline and Comparator Controls
 
 **Files:**
@@ -131,52 +433,17 @@ uv sync --locked --extra dev
 
 Expected: the branch contains `8d5b9305`, has only the approved Stage 3 design/plan history before Task 1, Node is available, and dependency sync succeeds.
 
-- [ ] **Step 2: Collect the complete baseline and both products without deleting cases**
+- [ ] **Step 2: Collect and archive the complete baseline without deleting cases**
 
-```bash
-uv run --no-sync python -m pytest \
-  tests/test_shoot_screens.py tests/test_new_screenshots.py \
-  tests/test_current_screenshots.py tests/test_fittings_page.py \
-  --collect-only -q -p no:cacheprovider > /tmp/wingman-stage3-before-all.txt
-uv run --no-sync python -m pytest \
-  tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing \
-  tests/test_shoot_screens.py::test_alerts_base_capture_requires_top_anchors_without_actions \
-  --collect-only -q -p no:cacheprovider > /tmp/wingman-stage3-before-products.txt
-```
+Run **Reproducibility Block A** exactly. It collects the four-file baseline and both products, writes complete ordered ID reports under `/tmp/wingman-stage3-inventory`, and creates `/tmp/wingman-stage3-inventory.tar.gz`.
 
-Run a Python audit that keeps lines beginning with `tests/`, preserves collection order, joins with `\n`, includes the final newline, and asserts:
+Expected exact output fields: baseline counts `[240, 90, 91, 101]`, baseline total `522`, product total `66`, and baseline hash `07c1e080c24157001c3aa936ac7c26ec6307e9f246973cfb65f92164c31a51e6`.
 
-```python
-assert counts == {
-    "tests/test_shoot_screens.py": 240,
-    "tests/test_new_screenshots.py": 90,
-    "tests/test_current_screenshots.py": 91,
-    "tests/test_fittings_page.py": 101,
-}
-assert len(all_nodes) == len(set(all_nodes)) == 522
-assert len(product_nodes) == len(set(product_nodes)) == 66
-assert sha256(("\n".join(all_nodes) + "\n").encode()).hexdigest() == (
-    "07c1e080c24157001c3aa936ac7c26ec6307e9f246973cfb65f92164c31a51e6"
-)
-```
+- [ ] **Step 3: Recompute and archive the candidate in a disposable checkout**
 
-Expected: exact baseline formulas and hashes match the approved design. Save the complete 522-ID and 66-ID ordered lists in the results document.
+The same Block A applies the exact Task 4 derivation only inside a temporary `git archive`, collects the actual candidate, and asserts the order-sensitive hashes rather than set-filtering the baseline.
 
-- [ ] **Step 3: Recompute the approved candidate in memory and in a temporary archive**
-
-Use the exact formulas in the plan-author preflight. First assert in memory that the retained product is 22 generated + 24 Alerts and that all retained IDs exist in the 66-ID baseline. Then create an untracked temporary archive, apply the exact Task 4 derivation there, collect it, and assert:
-
-```python
-assert candidate_counts == (220, 90, 91, 101)
-assert len(candidate_all) == len(set(candidate_all)) == 502
-assert len(candidate_products) == len(set(candidate_products)) == 46
-assert candidate_product_hash == "359da2ca8f13df995ac43ed76bd0aa19ba75cb4ec3b1fe1e4fb6c8e6a38d71f9"
-assert candidate_four_file_hash == "592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a"
-assert len(set(all_nodes) - set(candidate_all)) == 20
-assert not (set(candidate_all) - set(all_nodes))
-```
-
-Expected: the candidate projection matches the design. Delete only the temporary archive after recording its command/output; do not edit or delete any worktree test case.
+Expected exact output fields: candidate counts `[220, 90, 91, 101]`, candidate total `502`, retained product total `46`, candidate hash `592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a`, retained-product hash `359da2ca8f13df995ac43ed76bd0aa19ba75cb4ec3b1fe1e4fb6c8e6a38d71f9`, 20 removals, and zero additions. The worktree remains unmodified.
 
 - [ ] **Step 4: Freeze exact PR #286 provenance and artifact integrity**
 
@@ -287,20 +554,36 @@ If the before text does not match exactly once, refuse the mutant. If the test f
 
 - [ ] **Step 1: Run the complete future-retained generated set and unchanged geometry matrix green**
 
-Run all 22 candidate IDs plus:
+Use the exact 22 retained node arguments plus the independent 13-case geometry function; no `-k` approximation is permitted:
 
 ```bash
 uv run --no-sync python -m pytest \
-  tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests \
-  tests/test_shoot_screens.py::test_metadata_capture_waits_for_real_detail_without_creating_drafts \
-  tests/test_shoot_screens.py::test_profiles_scope_capture_uses_actual_capability_without_overrides \
-  tests/test_shoot_screens.py::test_lower_copy_capture_rejects_unsettled_or_wrong_outcomes \
-  tests/test_shoot_screens.py::test_lower_copy_capture_requires_retained_context_and_footer \
-  tests/test_shoot_screens.py::test_lower_result_capture_keeps_recovery_before_pairs_not_sticky \
-  tests/test_shoot_screens.py::test_copy_capture_rejects_stale_context_progress_and_technical_details -q
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[settled-settings-wanderer-controls-narrow]' \
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[settled-profiles-copy-scope]' \
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[settled-fittings-metadata-narrow]' \
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[settled-fittings-copy-preflight-bottom-narrow]' \
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[settled-fittings-copy-result-bottom-narrow]' \
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[missing-settings-wanderer-controls-narrow]' \
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[missing-profiles-copy-scope]' \
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[missing-fittings-metadata-narrow]' \
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[missing-fittings-copy-preflight-bottom-narrow]' \
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[missing-fittings-copy-result-bottom-narrow]' \
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[wrong-text-settings-wanderer-controls-narrow]' \
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[wrong-text-profiles-copy-scope]' \
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[wrong-text-fittings-metadata-narrow]' \
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[wrong-text-fittings-copy-preflight-bottom-narrow]' \
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[wrong-text-fittings-copy-result-bottom-narrow]' \
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[hidden-profiles-copy-scope]' \
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[clipped-profiles-copy-scope]' \
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[clipped-fittings-metadata-narrow]' \
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[clipped-fittings-copy-preflight-bottom-narrow]' \
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[clipped-fittings-copy-result-bottom-narrow]' \
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]' \
+  'tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[zero-area-settings-wanderer-controls-narrow]' \
+  tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests -q
 ```
 
-Expected: all selected cases pass before mutation.
+Expected: exactly 35 selected cases pass before mutation: retained 22 plus independent geometry 13.
 
 - [ ] **Step 2: Qualify every owner anchor's absence and exact text**
 
@@ -360,121 +643,50 @@ Expected: each retained geometry witness fails at the fixture's `assert.throws` 
 
 - [ ] **Step 4: Qualify hidden and positive-area branches**
 
-Use these exact shared-helper mutations:
+For hidden, use **Reproducibility Block B** with exact before/after snippet files. The production before snippet includes the complete `for (var parent = node; ...)` loop; the fixture before snippet includes the complete `getClientRects` loop. The guard must report `before_count: 1` and `after_count: 1` for each file before applying. Run `hidden-profiles-copy-scope`: fixture-only control PASS, paired production mutant FAIL at `Object.throws` with `AssertionError: hidden`. Restore fixture and source through Block B and require their original SHA-256 values.
 
-```javascript
-// hidden branch
-if (parent.hidden || window.getComputedStyle(parent).visibility === 'hidden') return false;
-// becomes
-if (window.getComputedStyle(parent).visibility === 'hidden') return false;
+For width and height, run Block C. Its unique production before block starts with the `0.109375px` comment, includes `var tolerance = 1`, all four comparisons, all five points, and the complete hit-return body. It cannot match `_fidelity_verify_script`. Width uses the existing zero-width target; height uses the exact guarded zero-height fixture replacement. Expected for each: control PASS; mutant FAIL at `Object.throws` with `AssertionError: zero-area`.
 
-// width branch
-if (r.width <= 0 || r.height <= 0
-// becomes
-if (r.height <= 0
-
-// height branch
-if (r.width <= 0 || r.height <= 0
-// becomes
-if (r.width <= 0
-```
-
-Witnesses and supplemental fixture inputs:
-
-- Hidden: run `hidden-profiles-copy-scope`. Because the DOM double's `getClientRects()` also rejects `hidden`, temporarily change only `if (node.hidden) return [];` to `if (node.hidden && scenario !== 'hidden') return [];`. With original production the case must still pass as a negative because `parent.hidden` rejects it; with the production hidden mutant it must fail at `assert.throws`. Restore both files. Fixture-only failure is not evidence.
-- Width: `zero-area-settings-wanderer-controls-narrow` must kill removal of `r.width <= 0`.
-- Height: for the same retained zero-area ID, temporarily replace the exact fixture line:
-
-```javascript
-const r = rect(120, 130, zero && this === target ? 120 : 760, 330);
-```
-
-with:
-
-```javascript
-const r = zero && this === target
-  ? rect(120, 130, 760, 130)
-  : rect(120, 130, 760, 330);
-```
-
-Original production must reject the zero-height target; after removal of `r.height <= 0`, the retained ID must fail at `assert.throws`. Restore the fixture before recording the production mutant as qualified. The shared no-client-rect branch is qualified separately by Task 3's retained `display-none-master` production witness.
+The shared no-client-rect branch is qualified separately by Task 3's retained `display-none-master` production witness.
 
 - [ ] **Step 5: Qualify all four containment edges and one-pixel tolerance**
 
-Mutate each exact clause independently:
+Run the four edge-removal and four tolerance probes in Block C. Every probe replaces the same unique full helper block, with exactly one named comparison removed or `var tolerance = 1` changed to `1.01`. Each before/after pair is checked for count one before execution.
 
-```javascript
-r.left < Math.max(0, p.left) - tolerance
-r.right > Math.min(innerWidth, p.right) + tolerance
-r.top < Math.max(0, p.top) - tolerance
-r.bottom > Math.min(innerHeight, p.bottom) + tolerance
-```
+Expected independent failures:
 
-Remove only the named clause and run the matching unchanged geometry identity:
+- left → `overflow-left` / `AssertionError: overflow-left` at `Object.throws`;
+- right → `overflow-right` / `AssertionError: overflow-right`;
+- top → `overflow-top` / `AssertionError: overflow-top`;
+- bottom → `overflow-bottom` / `AssertionError: overflow-bottom`;
+- tolerance `1.01` → each of `overflow-top`, `overflow-right`, `overflow-bottom`, and `overflow-left` fails in its own disposable sequence.
 
-- left → `overflow-left`;
-- right → `overflow-right`;
-- top → `overflow-top`;
-- bottom → `overflow-bottom`.
+All `rounding-*` and `edge-*` controls remain green with original production. The retained clipped preflight case is the product-level witness; the independent 13-case matrix owns exact edge/tolerance attribution.
 
-Then change `var tolerance = 1;` to `var tolerance = 1.01;` and run all four `overflow-*` cases. Expected: the matching negative case is wrongly accepted and fails at `assert.throws`; all `rounding-*` and `edge-*` controls remain green with original production.
+- [ ] **Step 6: Qualify all five target-specific hit-test points and `.every()`**
 
-The retained `clipped-fittings-copy-preflight-bottom-narrow` is the product-level clipped witness; the 13-case matrix owns exact edge/tolerance attribution.
+Run **Reproducibility Block C** exactly. For the retained covered Result target, the fixture's framed rectangle is `(120, 130, 760, 330)`, the helper-derived inset is `4`, and the five exact coordinates are `(124,134)`, `(756,134)`, `(124,326)`, `(756,326)`, and `(440,230)`.
 
-- [ ] **Step 6: Qualify all five hit-test points and `.every()`**
+The temporary fixture callback accepts `(x, y)`, requires `measured === target`, rechecks `box.call(target)` against the exact target rectangle, and covers only the selected coordinate. It has no global counter and cannot consume calls made for another required node. For each coordinate, Block C removes exactly that coordinate from the unique `_framed_content_script` helper block in a disposable archive.
 
-The exact production point list is:
+Expected for each of the five probes: fixture-only control PASS; production point-removal mutant FAIL in `screenshot_scenario_worker.cjs` at `Object.throws` with `AssertionError: covered`. Each full before block and each distinct after block has count exactly one.
 
-```javascript
-[[r.left + inset, r.top + inset], [r.right - inset, r.top + inset],
-  [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset],
-  [(r.left + r.right) / 2, (r.top + r.bottom) / 2]].every(function (point) {
-```
+Block C separately changes the same unique full helper block from `.every` to `.some` while only one exact target coordinate is covered. Expected: control PASS; mutant FAIL at `Object.throws` with `AssertionError: covered`.
 
-For each point index 0 through 4, replace the exact fixture line:
+- [ ] **Step 7: Qualify width, height, null, unrelated, direct-node, and descendant branches independently**
 
-```javascript
-document.elementFromPoint = () => covered && (scenario !== 'covered-summary' || measured === target)
-  ? document.body : measured;
-```
+Continue **Reproducibility Block C**. Every production mutant replaces the unique multiline `_framed_content_script` fragment beginning with the `0.109375px` tolerance comment and ending after the hit-test return; no single-line global replacement is permitted.
 
-with this temporary index-specific form for the first probe:
+Expected independent results:
 
-```javascript
-let hitIndex = 0;
-document.elementFromPoint = () => {
-  const pointIndex = hitIndex++ % 5;
-  return covered && pointIndex === 0 ? document.body : measured;
-};
-```
+- width removal: retained zero-area Wanderer control PASS; mutant FAIL at `Object.throws` with `AssertionError: zero-area`;
+- height removal with exact zero-height supplemental fixture: control PASS; mutant FAIL at the same intended assertion;
+- null acceptance with one exact target coordinate returning null: control PASS; mutant FAIL at `Object.throws` with `AssertionError: covered`;
+- unrelated-hit acceptance with one exact target coordinate returning `document.body`: control PASS; mutant FAIL at that same negative assertion;
+- direct-node rejection using the unchanged direct-hit fixture: settled Result control PASS; mutant FAIL at generated `check` with `Screenshot content did not settle: fittings-copy-result-bottom-narrow`;
+- descendant rejection using an actual child only at one exact target coordinate: settled Result control PASS; mutant FAIL at the same generated `check`.
 
-Repeat the exact replacement four more times with the equality integer changed to `1`, `2`, `3`, and `4` respectively.
-
-Then:
-
-1. Verify original production rejects the retained `covered-fittings-copy-result-bottom-narrow` input.
-2. Temporarily remove only that coordinate from the production array.
-3. Rerun the retained covered result ID; expected failure is the fixture `assert.throws` because the verifier now accepts the omitted covered point.
-4. Restore both files.
-
-Then keep one point covered and replace `.every(function (point) {` with `.some(function (point) {`. Expected: the retained covered result ID kills the mutant at `assert.throws`. A broad all-points-covered input alone cannot qualify `.every()` because `.some()` would still return false.
-
-- [ ] **Step 7: Qualify null-hit, unrelated-hit, direct-node, and descendant handling**
-
-Apply one exact production mutation at a time to:
-
-```javascript
-return hit && (hit === node || node.contains(hit));
-```
-
-| Dimension | Temporary replacement | Input/witness | Intended result |
-|---|---|---|---|
-| Null refusal | `return !hit || (hit === node || node.contains(hit));` | For `covered-fittings-copy-result-bottom-narrow`, use `let hitIndex = 0; document.elementFromPoint = () => { const pointIndex = hitIndex++ % 5; return covered && pointIndex === 0 ? null : measured; };` | Original rejects the null first point after damage; mutant accepts it; fixture `assert.throws` fails |
-| Unrelated covered hit | `return Boolean(hit);` | Existing retained `covered-fittings-copy-result-bottom-narrow` | Mutant accepts `document.body`; fixture `assert.throws` fails |
-| Direct-node equality | `return hit && hit !== node && node.contains(hit);` | `settled-fittings-copy-result-bottom-narrow` with the existing direct `measured === node` hits | Positive case fails in the final required-node exposure check |
-| Descendant acceptance | `return hit && hit === node;` | For `settled-fittings-copy-result-bottom-narrow`, replace the exact fixture callback with `const descendantHit = WM.make('span'); target.appendChild(descendantHit); document.elementFromPoint = () => measured === target ? descendantHit : measured;` | Original positive passes; mutant fails in the final required-node exposure check |
-
-The supplemental fixture must not alter target text, ownership, geometry, or other hit points. Restore it after each probe.
+These are six separate control/mutant sequences. Null, unrelated, direct-node, and descendant evidence may not share a mutated fixture or be inferred from another row.
 
 - [ ] **Step 8: Build the complete 13-removal generated ledger**
 
@@ -923,15 +1135,15 @@ Expected: all focused generated, shared-geometry, Alerts, walk, worker-protocol,
 
 - [ ] **Step 3: Run the four files in five exact orders**
 
-Build ordered node arrays from the fresh 502-ID inventory and execute with Python `subprocess.run([...])`, passing every explicit node as its own argument:
+Run **Reproducibility Block D** exactly. It uses Python argument arrays, passes every explicit node separately, fixes integer seed `0x8d5b9305`, saves every ordered list and pytest output, and refuses any collection other than the published 502 IDs.
 
-1. normal file order;
-2. reverse file order, preserving collection order within each file;
-3. explicit forward node order;
-4. explicit reverse node order;
-5. deterministic shuffled node order with integer seed `0x8d5b9305`.
+Expected 502 passes in each executed order and these exact order hashes:
 
-Expected: 502 passed in every order if unexpanded. Record each exact node-order SHA-256 and pytest result. Normal-file and forward-node hashes equal the published after hash; the other three hashes are computed and published from their actual order.
+- normal file: `592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a`;
+- reverse file: `ac515f4df98d8036bf5248d64a5a3645491cfe1c596f133f965056b5d6e24e79`;
+- forward node: `592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a`;
+- reverse node: `411ca8b2d5b3bae72340dcbdd672ae473af53123fd924dcfdc8e0268d88ef14f`;
+- shuffled node: `ba282ea09921c2f6edb13c0e7b2946b858a584bd2593360d6d7f919a037a23ee`.
 
 - [ ] **Step 4: Build/install the release codec and run focused four-file JUnit**
 
@@ -1099,38 +1311,31 @@ The PR body states:
 - structural process-start observation only;
 - no workflow, budget, shard, overall-runtime, speedup, or lower Fittings claim.
 
-- [ ] **Step 7: Record exact Stage 3 hosted provenance**
+- [ ] **Step 7: Derive exact Stage 3 hosted provenance from API and checkout logs**
 
-For the executable run record:
+Run **Reproducibility Block E** exactly after authorization and a successful executable-head run. It derives the current PR and successful run from the reviewed branch head, fetches run/job API records, downloads every required job log, and parses checkout evidence.
 
-- PR number and run ID;
-- exact branch head;
-- exact synthetic merge;
-- exact base;
-- checks, Ubuntu, and Windows job IDs;
-- checkout-log proof for the synthetic merge in every job;
-- downloaded Windows/Ubuntu artifact paths containing `pytest-result.xml` and `pytest-timing.json`.
+The parser requires one exact Stage 3 synthetic merge in every job log, requires every checkout subject’s full 40-character head and base to match the PR API head/base, and records PR, run, branch head, synthetic merge, base, and the three job IDs. It independently re-parses comparator logs and refuses anything other than comparator synthetic merge `c1ab289e4fdd31e7cc5be2c8322a2557c48e1a26`, head `0c785ce18193b5900f8d810a8a4dc7e0f10c9f1e`, and base `459c5d6b57f5f35c97d3076bee25a6f65ba515be`.
 
-All required jobs must pass. If the base moved, record it explicitly; do not pretend PR #286 and Stage 3 share a base.
+Expected: all required jobs have `success`; Stage 3 provenance is written to `/tmp/wingman-stage3-hosted/provenance.json`; Windows and Ubuntu artifacts are downloaded with both evidence files present.
 
-- [ ] **Step 8: Compare hosted artifacts directly with PR #286 run `35882408360`**
+- [ ] **Step 8: Compare exercised synthetic-merge blobs and hosted artifacts**
 
-Parse both Stage 3 platform artifacts and `/tmp/wingman-pr286-{windows,ubuntu}`. Require:
+Block E compares **comparator synthetic merge to Stage 3 synthetic merge**, not branch head to branch head, for the files actually exercised by Actions: `.github/workflows/ci.yml`, the complete `scripts`, `tests/fixtures`, `tests/conftest.py`, `tests/node_scenario_worker.py`, all three unchanged target tests, `pyproject.toml`, `uv.lock`, and complete `packaging`. Any unequal exercised control makes timing comparison inconclusive.
 
-- Windows and Ubuntu Stage 3 full testcase identity sets are equal;
-- both Stage 3 target sets equal the published after inventory;
-- exact target counts are `220 / 90 / 91 / 101 = 502` if unexpanded;
-- relative to PR #286, exactly the published 20 identities are absent and zero are added;
-- normalized Windows skip tuple set equals PR #286's 67 tuples;
-- normalized Ubuntu skip tuple set equals PR #286's 14 tuples;
-- no failure, error, Node skip, codec skip, or unexplained availability skip;
-- generated, Alerts, combined-product, per-file, four-file, and all-case testcase sums are reported;
-- removed-ID and common-retained-ID sums are decomposed where artifacts permit;
-- pytest Test-step and job durations are reported only as observations.
+Branch heads are handled separately: Block E compares source baseline `8d5b9305` to the Stage 3 authored branch head only for the four-path authored-diff allowlist. Comparator branch head is not used as a substitute for the comparator synthetic merge.
 
-For unchanged-workflow/target controls, compare Git blobs between PR #286 executable head and Stage 3 executable head. Authorized difference is only `tests/test_shoot_screens.py` plus documentation; `.github/workflows/ci.yml`, scripts, fixtures, other target files, dependencies, and packaging must remain byte-identical or the timing comparison is inconclusive.
+Then run **Reproducibility Block F**. It directly parses Windows/Ubuntu JUnit and timing JSON, normalizes complete identities including class owners, normalizes skip path fragments, cross-checks JSON/JUnit counts and per-file sums, and requires:
 
-Hosted pass projections for an unchanged environment are derived, not blindly hardcoded: Ubuntu baseline `16,611` passed minus 20 gives 16,591 with 14 skips; Windows baseline `16,558` passed minus 20 gives 16,538 with 67 skips. If actual platform collection differs, audit exact identities/reasons before any conclusion.
+- equal Stage 3 platform identity and target sets;
+- `220 / 90 / 91 / 101 = 502`, generated 22, Alerts 24;
+- exact after hash `592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a`;
+- the explicit 20-ID removed set and zero additions relative to PR #286;
+- exact comparator skip tuples: Ubuntu 14 and Windows 67;
+- zero failures/errors;
+- generated, Alerts, combined-product, per-file, four-file, all-case, removed-ID, and common-retained-ID sums.
+
+Block E records Test-step/job observations from the API; Block F records testcase sums. Hosted pass projections remain conditional: Ubuntu 16,591 passed/14 skipped and Windows 16,538 passed/67 skipped only if actual identities and normalized skips match. No observation is a speedup claim.
 
 - [ ] **Step 9: Make the bounded next decision**
 
@@ -1172,6 +1377,10 @@ Before treating this plan as executable, the plan author performs these checks:
 - [x] **Mutation consistency:** Every temporary production/helper mutant has an intended retained witness, exact assertion, and restoration gate; supplemental fixture input is never credited alone.
 - [x] **Scope consistency:** The only planned executable diff is `tests/test_shoot_screens.py`; scripts, fixtures, production, workflows, configuration, dependencies, packaging, markers, budgets, and shards remain protected.
 - [x] **Claim discipline:** Structural process counts and durations are observations only; no Stage 3, whole-suite, job, runner-efficiency, or critical-path speedup is claimed.
+- [x] **Probe isolation:** All five hit probes require the exact Result target and exact derived `(x, y)` coordinate; no global counter or cross-node state determines coverage.
+- [x] **Unique anchors:** Width, height, edge, tolerance, every, null, unrelated, direct, descendant, and point-removal mutants replace one full `_framed_content_script` helper block whose source count is exactly one.
+- [x] **Script syntax:** All six embedded temporary scripts were extracted from this Markdown and passed `python -m py_compile` or `bash -n`; Blocks A and C ran read-only/disposable successfully, Block D dry-run reproduced all five hashes, and Block F comparator self-test parsed PR #286’s artifacts.
+- [x] **Provenance separation:** Exercised blobs compare synthetic merge to synthetic merge; branch heads are compared separately only for the Stage 3 authored diff.
 
 ## Execution Handoff
 
