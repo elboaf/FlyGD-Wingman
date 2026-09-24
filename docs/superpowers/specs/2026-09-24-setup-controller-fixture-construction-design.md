@@ -2,10 +2,11 @@
 
 ## Status
 
-Approved design. Implementation is test-only and requires a separate reviewed
-plan. It must preserve all 188 `tests/test_ui_setup_controller.py` testcase
-identities and every production-strength persistence boundary exercised after
-fixture construction.
+Approved design, revised after review. Implementation is test-only and requires
+a separate reviewed plan. It must preserve all 188 existing
+`tests/test_ui_setup_controller.py` testcase identities in their existing order,
+add exactly two bounded witness identities, and preserve every
+production-strength persistence boundary exercised after fixture construction.
 
 ## Purpose
 
@@ -17,17 +18,21 @@ The optimization is deliberately narrow:
 
 - `seed_profile()` remains atomic by default for schema, profile, integration,
   native-codec, and every other caller;
-- only the `setup` fixture in `tests/test_ui_setup_controller.py` explicitly
-  requests a test-only publisher for its four newly created DAT files;
+- only the repeated `setup` fixture in `tests/test_ui_setup_controller.py`
+  explicitly requests the test-only publisher for operational fixture
+  construction; the two bounded witnesses invoke it only for qualification;
 - encoding and encode-output readback verification still run through
   `codec.write_document()`;
 - controller create operations still use the real atomic staging, rewrite,
   preference-copy, publication, and selection-persistence paths.
 
-This design makes a structural work claim only: 136 setup-fixture cases create
-four initial DAT files each, so the explicit fixture path removes 544
-fixture-construction fsync calls. It makes no Windows, Linux, suite, job,
-runner-efficiency, critical-path, or wall-clock speedup claim.
+This design makes a structural work claim only: the same 136 existing
+setup-fixture cases create four initial DAT files each, so the explicit fixture
+path removes 544 fixture-construction fsync calls. The two new witnesses are
+additional qualification coverage and do not consume the pytest `setup`
+fixture, so they do not change that calculation. The design makes no Windows,
+Linux, suite, job, runner-efficiency, critical-path, or wall-clock speedup
+claim.
 
 ## Authority and measured baseline
 
@@ -140,6 +145,10 @@ Its contract is exact:
   `O_BINARY` where available);
 - use a regular standalone file, never a hardlink, reflink, symlink, copied
   session template, or shared backing object;
+- use the module-level `os` binding in `tests.setup_fixtures` for `os.open`,
+  `os.write`, `os.close`, and cleanup through `os.unlink` so behavior and
+  failure paths are directly observable without mutating the shared `os`
+  module object;
 - use a mode consistent with the atomic temporary-file path where the platform
   exposes meaningful mode bits;
 - loop until every byte has been written, handling legal partial writes;
@@ -213,8 +222,10 @@ fresh-file publisher to both calls:
 - recipient account DAT;
 - recipient character DAT.
 
-No other fixture or caller opts in. In particular, these remain on the default
-atomic path:
+No other reusable fixture or existing caller opts in. The two approved witness
+tests may call the helper or `seed_profile()` explicitly to compare and qualify
+the path, but they do not change any reusable fixture. In particular, these
+remain on the default atomic path:
 
 - `tests/test_ui_setup_schema.py`;
 - `tests/test_ui_setup_profile.py`;
@@ -242,9 +253,10 @@ Fast construction must produce the same files as atomic construction:
 - identical filenames and relative paths;
 - identical YAML and INI bytes, including source LF and recipient CRLF line
   endings;
-- identical tree discovery results after path normalization;
-- identical setup profile manifests after path normalization;
-- identical pytest node IDs and collection order.
+- identical tree discovery results after the narrowly allowed normalization;
+- identical setup profile manifests after path-root normalization;
+- all 188 existing pytest node IDs preserved in their existing order, followed
+  by exactly two bounded witness identities.
 
 The fresh publisher changes publication mechanics only. It must not change
 fixture data, file names, document factories, source/recipient distinctions,
@@ -259,19 +271,37 @@ on disk, hardlink fan-out, or mutable cache.
 Isolation checks must establish:
 
 - separate atomic and fast fixture roots do not alias;
-- every regular fixture file has one link;
+- every fast-published file is an ordinary regular file, remains writable, and
+  has exactly one link;
 - corresponding files are not `samefile()` aliases;
 - mutating one fast fixture cannot alter another;
 - source and recipient profiles remain distinct within one fixture;
+- stable ordinary metadata—file identity, file type, size, permission/mode
+  bits, and link count—does not change across codec readback, discovery, and
+  manifest capture;
 - trying to create the same profile twice still fails.
 
-The duplicate-profile failure may occur at exclusive profile-directory
-creation before DAT publication. The contract is that duplicate construction
-never silently reuses or mutates the existing profile.
+Do not compare volatile access/change/birth timestamps or require atomic and
+fast publication to have identical filesystem timestamps. The duplicate-profile
+failure occurs at profile-directory creation and proves only that profile
+construction does not silently reuse an existing directory. It is separate
+from, and insufficient for, the publisher's required existing-file/O_EXCL
+contract.
 
 ## Acceptance tests
 
-All new executable evidence stays in the two authorized test files. Existing
+All new executable evidence stays in the two authorized test files. Add exactly
+two non-parameterized witness tests to the end of
+`tests/test_ui_setup_controller.py` so the ordered baseline 188-node inventory
+remains an exact prefix:
+
+1. one comprehensive publisher/parity/isolation/failure-contract witness;
+2. one construction-versus-controller-body persistence witness.
+
+Exercise the helper's failure branches inside the comprehensive test with a
+loop and precise per-branch assertion messages rather than parametrizing them
+into additional pytest identities. Neither new test requests the pytest
+`setup` fixture; each constructs only the state its witness needs. Existing
 schema, profile, integration, and codec tests remain unchanged and provide
 independent regression coverage.
 
@@ -290,9 +320,13 @@ publisher. Compare:
 6. normalized `tree.discover()` output;
 7. normalized `setup_profile.capture_manifest()` output.
 
-Normalization may remove only the deliberately different temporary root prefix.
-It must retain server/profile/file names, kind, IDs, order, sizes, hashes, and
-all other semantic fields.
+Discovery normalization may remove only the deliberately different temporary
+root/path prefix and `tree.Profile.modified`, whose value is the profile
+directory's volatile `st_mtime`. Preserve every other `Tree`, `Server`,
+`Profile`, and `SettingsFile` field, including list order, names, keys, kinds,
+IDs, and file counts. Manifests contain no timestamp field: normalize only the
+temporary path root and then require the complete `ProfileManifest` and every
+`FileRevision` name, size, hash, and order to match exactly.
 
 ### B. Source/recipient and local-preference distinctions
 
@@ -306,29 +340,63 @@ The parity evidence also pins the distinctions already asserted by schema tests:
 - source and recipient private sentinels remain different;
 - document and manifest ordering remain unchanged.
 
-### C. Isolation, link, and duplicate witnesses
+### C. Isolation, metadata, duplicate, and direct publisher failure witnesses
 
 Create at least two fast fixtures under independent directories and prove:
 
 - no corresponding file is a hardlink or shared file identity;
-- `st_nlink == 1` for each regular fixture file where reported;
+- each fast file is regular, writable, and has `st_nlink == 1`;
+- the ordinary stable metadata named above survives readback/discovery/manifest
+  observation;
 - changing bytes in one fixture does not change the other;
 - no session template path exists;
 - duplicate profile creation is refused and leaves the original bytes intact.
 
+In the same comprehensive witness, call the fresh publisher directly with
+module-level `os` proxies and exercise all of these executable contracts:
+
+1. an existing destination is refused by `O_EXCL` and its bytes are unchanged;
+2. repeated partial `os.write` results are looped until the complete payload is
+   present before close;
+3. zero write progress raises, closes the descriptor, and removes the partial
+   destination;
+4. a sentinel exception after an earlier partial write closes and removes the
+   partial destination while preserving that original exception;
+5. a sentinel close exception removes the destination and preserves that
+   original close exception.
+
+For failure cleanup, assert both path absence and the exact original exception
+identity or sentinel. The duplicate-profile `mkdir` refusal is not evidence for
+any of these publisher-level branches.
+
 ### D. Construction fsync witness
 
-Instrument `wingman.atomicio` without replacing or suppressing the process-wide
-`os.fsync` function. Patch the module's `os` binding to a delegating proxy whose
-`fsync()` records the call and then invokes the real function. Do not mutate the
-shared `os` module object. Setting `atomicio.os.fsync` by attribute changes
-`os.fsync` for every importer in the process.
+Capture the real `os` module first, then replace both module bindings with
+separate delegating proxies:
+
+- `tests.setup_fixtures.os` observes direct helper calls, including any
+  accidental direct `fsync`, while delegating `open`, `write`, `close`,
+  `unlink`, and all other attributes to the real module;
+- `wingman.atomicio.os` observes atomic-writer `fsync` calls while delegating to
+  that same real module.
+
+Never set an attribute on either imported `os` object: Python importers share
+that object, so attribute mutation would alter process-wide behavior. Replace
+only each owning module's `os` binding, and make both proxies call the real
+operation rather than suppressing it.
 
 Using equivalent source-plus-recipient construction:
 
-- the default atomic path records exactly four fsync calls;
-- the explicit fresh-file path records zero fsync calls;
+- the default atomic path records exactly four fsync calls through the
+  `atomicio` proxy and zero through the `setup_fixtures` proxy;
+- the explicit fresh-file path records zero fsync calls through both proxies;
 - encoded bytes and all parity checks remain equal.
+
+The separate channels are load-bearing mutation evidence: adding `os.fsync`
+directly to the fresh helper must be detected by the `setup_fixtures` proxy,
+while delegating the helper to `atomicio.write_bytes_atomic` must be detected by
+the `atomicio` proxy. Qualify those two mutants independently; one detector may
+not stand in for the other.
 
 This is a work-count witness, not a duration benchmark. It must not assert an
 elapsed-time threshold.
@@ -341,20 +409,29 @@ review/create operation.
 
 The test must prove separately that:
 
-- fixture construction used the fast path and contributed zero fsync calls;
+- fixture construction used the fast path and contributed zero fsync calls on
+  both proxy channels;
 - the controller body subsequently invoked real atomic file persistence;
-- staged DAT copies remain atomic;
-- staged YAML/INI copies remain atomic;
-- both rewritten DATs remain atomic and revision guarded;
-- `profilecopy.publish_new()` performs the final publication;
-- selection persistence still runs after publication;
-- the created profile contains the expected complete bytes;
-- construction counts and body counts are reported/asserted as different
-  phases rather than merged into one total.
+- exactly two staged DAT copies use `copy_atomic`;
+- exactly two staged YAML/INI copies use `copy_atomic`;
+- exactly two rewritten DAT publications use `write_bytes_atomic` after normal
+  codec verification and revision checks;
+- exactly one selection-settings publication uses `write_atomic`;
+- the body therefore performs exactly seven categorized atomic fsyncs for the
+  unmodified representative flow;
+- `profilecopy.publish_new()` performs the final directory publication;
+- selection persistence runs after publication;
+- the operation completes successfully and the created profile contains the
+  expected complete bytes;
+- construction counts and body counts are phase-tagged rather than merged into
+  one total.
 
-The witness may wrap publication to observe it, but must delegate to the real
-publisher. It may instrument the atomic functions or the delegated `os` binding,
-but must not replace controller-body publishers with non-atomic writes.
+Observe categories by wrapping the relevant atomic functions/publish callbacks
+and delegating to the real functions. Account for the codec's definition-time
+publisher default explicitly rather than assuming a later module-attribute
+patch changes it. The witness may wrap `profilecopy.publish_new`, but it must
+delegate to the real publisher. No controller-body write may be replaced by a
+non-atomic write in the committed test.
 
 ### F. Existing failure and race coverage
 
@@ -387,26 +464,43 @@ A red test counts only when it fails at the intended assertion. An unrelated
 codec error, cleanup error, collection error, or later controller assertion is
 not sufficient.
 
-### 1. Make the fast publisher atomic
+### 1. Add direct fsync to the fresh helper
 
-Temporarily implement the fresh publisher by delegating to
-`atomicio.write_bytes_atomic()` or add an fsync to it.
+Temporarily call `os.fsync` from the fresh helper after writing and before
+close, without delegating to `atomicio`.
 
-Required result: the construction work-count witness fails because fast
-construction records nonzero fsync work. Byte parity is expected to remain
-green and does not qualify this mutant by itself.
+Required result: the comprehensive construction witness fails because the
+`tests.setup_fixtures.os` proxy records direct helper fsync work. The
+`atomicio.os` channel must remain zero. An atomic-channel failure or byte-parity
+failure does not qualify this mutant.
 
-### 2. Bypass a representative controller-body atomic publisher
+### 2. Delegate the fresh helper to the atomic writer
 
-Temporarily route one representative body write—preferably one rewritten staged
-DAT—through the fresh publisher or another non-atomic write while leaving
-fixture construction unchanged.
+Temporarily replace the helper body with
+`atomicio.write_bytes_atomic(path, data)`.
 
-Required result: the controller-body persistence witness fails in the body
-phase. The fixture work-count witness alone must not kill or qualify this
-mutant.
+Required result: the comprehensive construction witness fails because the
+`wingman.atomicio.os` proxy records atomic fsync work. The direct-helper channel
+must remain zero. The direct-fsync mutant and this delegation mutant require
+separate runs, intended assertions, and restoration records.
 
-### 3. Alter direct bytes, order, or line endings
+### 3. Bypass one rewritten body DAT atomically
+
+After the normal codec encode, signature check, readback verification, and
+revision checks, temporarily publish one rewritten staged DAT with a
+replacement-capable direct writer such as `Path.write_bytes(data)` instead of
+`write_bytes_atomic`. Do not use the exclusive fresh-file helper here: the
+staged DAT already exists, so that would stop at `FileExistsError` and would not
+exercise a completed non-atomic body operation.
+
+Required result: setup creation still completes and final profile publication
+still occurs, but the body witness fails its exact rewrite category/count:
+rewritten-DAT atomic publications fall from two to one and total categorized
+body fsyncs fall from seven to six. Failure through `FileExistsError`, codec
+verification, revision validation, or publication refusal does not qualify this
+mutant. The fixture construction count alone also does not qualify it.
+
+### 4. Alter direct bytes, order, or line endings
 
 Apply independent temporary defects to the fast construction path:
 
@@ -418,7 +512,7 @@ Required result: atomic-versus-fast byte parity, decoded document/type/order,
 content-revision, discovery, or manifest assertions fail at the specific
 boundary. A broad later controller failure is not the intended witness.
 
-### 4. Share or hardlink a template
+### 5. Share or hardlink a template
 
 Temporarily publish a DAT via a shared file or hardlink, or make two fast
 fixtures alias one on-disk source.
@@ -427,6 +521,20 @@ Required result: the isolation/link witness fails through `samefile`, link
 count, mutation isolation, or the no-template assertion. Byte equality alone
 must not allow this mutant to survive.
 
+### Mutation-to-witness mapping
+
+| Temporary mutant | Required witness identity | Intended failure |
+|---|---|---|
+| Direct helper `os.fsync` | Comprehensive publisher/parity/isolation/failure witness | `tests.setup_fixtures.os` channel changes from 0; atomic channel stays 0 |
+| Delegate helper to atomic writer | Comprehensive publisher/parity/isolation/failure witness | `wingman.atomicio.os` channel changes from 0; direct channel stays 0 |
+| Replacement-capable direct body DAT publication | Construction-versus-body persistence witness | operation publishes, rewritten atomic category changes `2 → 1`, body total `7 → 6` |
+| Alter bytes, type/order, or line endings | Comprehensive publisher/parity/isolation/failure witness | exact bytes/document/revision/discovery/manifest distinction fails |
+| Shared or hardlinked template | Comprehensive publisher/parity/isolation/failure witness | file identity/link/mutation-isolation assertion fails |
+
+The five direct publisher failure branches are executable contracts within the
+comprehensive witness, not extra parameter identities and not substitutes for
+the mutation ledger above.
+
 ## Identity and hosted acceptance
 
 ### Local identity contract
@@ -434,10 +542,16 @@ must not allow this mutant to survive.
 Before implementation, freeze the complete ordered 188-node controller
 inventory. After implementation require:
 
-- exactly 188 unique controller node IDs;
-- identical ordered IDs before and after;
-- no added, removed, renamed, or reordered controller case;
-- exactly 136 cases still using the `setup` fixture;
+- exactly 190 unique controller node IDs;
+- the baseline ordered 188 IDs are present byte-for-text, with no removal,
+  rename, or relative reorder;
+- because the two witnesses are appended, the baseline ordered 188 IDs remain
+  the exact prefix and the two approved witness IDs are the only suffix;
+- exactly two IDs are added: one comprehensive
+  publisher/parity/isolation/failure witness and one construction-versus-body
+  persistence witness;
+- neither witness is parameterized into multiple identities;
+- exactly the original 136 cases still use the pytest `setup` fixture;
 - no collection or runtime skip in the controller file;
 - the Node direct invocation remains executable with the unchanged wrapped
   fixture signature.
@@ -445,18 +559,35 @@ inventory. After implementation require:
 The structural calculation remains:
 
 ```text
-136 setup-fixture cases × 2 profiles × 2 DATs = 544 initial DAT publications
+136 existing setup-fixture cases × 2 profiles × 2 DATs = 544 initial DAT publications
+188 existing controller IDs + 2 bounded witnesses = 190 controller IDs
+16,605 hosted baseline IDs + 2 bounded witnesses = 16,607 intended full-suite IDs
 ```
 
+With unchanged platform skips, the full-suite pass-count projections are 16,593
+passed plus 14 skipped on Ubuntu and 16,540 passed plus 67 skipped on Windows.
+These are identity projections, not timing or runtime claims.
+
 The optimized path changes those 544 publications from fsynced atomic replace
-to exclusive fresh-file publication while preserving codec work. It does not
-change the number of testcases or controller operations.
+to exclusive fresh-file publication while preserving codec work. The two new
+witnesses disclose additional qualification work but do not alter the 136-case
+fixture calculation.
+
+Do not publish an anticipated controller or full-suite node-ID hash in the
+design or plan. During implementation, write actual collection-order node IDs,
+one complete ID per line with a final newline, and compute SHA-256 from those
+files for the 188-controller baseline, 190-controller result, 16,605 full-suite
+baseline, and actual full-suite result. Record the exact two-ID addition and
+zero removals/renames/reorders. A projected hash must not become a target that
+masks collection drift.
 
 ### Full local verification
 
 Run with Node available and the built release settings codec installed:
 
-- focused new parity, isolation, work-count, and body-persistence witnesses;
+- the two focused witnesses, including every direct publisher failure branch,
+  both independent fsync channels, exact seven-body-fsync categorization, and
+  successful publication;
 - `tests/test_ui_setup_controller.py`;
 - `tests/test_ui_setup_schema.py`;
 - `tests/test_ui_setup_profile.py`;
@@ -483,8 +614,16 @@ the pinned Stage 3 artifacts in `/tmp/wingman-stage3-{windows,ubuntu}` and
 record:
 
 - branch head, synthetic merge, base, workflow run, job IDs, and artifact IDs;
-- exact Windows and Ubuntu complete identity sets;
-- exact 188-controller identity sets and ordering;
+- exact Windows and Ubuntu complete identity sets, expected at 16,607 only if
+  the qualified implementation adds exactly the two approved witnesses;
+- proof that the complete 16,605-ID Stage 3 baseline set is a subset and the
+  after-minus-baseline set contains exactly those two witnesses;
+- the exact 190-controller identity list and proof that the ordered baseline
+  188 list is its unchanged prefix;
+- the exact two-ID addition, zero removals, zero renames, and no baseline
+  reorder;
+- hashes computed from actual implementation collections, never a design-time
+  projected node hash;
 - pass/failure/error counts;
 - each platform's normalized skip tuples compared with its Stage 3 tuples;
 - confirmation that controller tests have no skips;
@@ -498,8 +637,9 @@ record:
 
 Windows and Ubuntu complete identity sets must remain equal. Skip lists are
 compared within platform against the baseline, not forced to equal each other.
-Any new availability skip, failure, error, identity drift, or unexplained skip
-change is a stop.
+Any addition beyond the two approved witnesses, baseline identity
+removal/rename/reorder, new availability skip, failure, error, cross-platform
+identity difference, or unexplained skip change is a stop.
 
 No hosted timing result, favorable or unfavorable, may be described as a
 speedup from a single run. The accepted claim remains only the verified removal
@@ -587,34 +727,43 @@ stored default.
 
 Atomic replacement publishes a tempfile's metadata; direct exclusive creation
 publishes the destination file's metadata. Use an explicit creation mode
-compatible with the tempfile path and test regular-file/link properties. Do not
-claim preservation of unsupported timestamps or platform-specific birth time.
-The product contract for these synthetic fixtures is bytes, identity, regular
-file status, path, and isolation; any discovered permission or metadata
-difference that affects discovery, manifests, native codec behavior, or hosted
-Windows execution is a stop.
+compatible with the tempfile path and separately prove that fast files are
+ordinary, writable, single-link files whose stable metadata does not change
+through observation. Do not compare publication timestamps across paths.
+
+`tree.Profile.modified` is the profile directory's `st_mtime` and is expected
+to differ as files are created, so it is the one non-path field removed from
+discovery parity. No timestamp exists in `ProfileManifest`; its normalized
+comparison remains exact. Any other discovery or manifest difference, or any
+permission/metadata difference that affects native codec behavior or hosted
+Windows execution, is a stop.
 
 ### Partial writes and close failures
 
 `os.write()` may legally write fewer bytes than requested. A one-call publisher
 would risk truncated but apparently successful fixture files. Loop over a
 memory view until complete, reject zero progress, and include close in the
-success boundary. On failure, remove the partial destination where possible and
-preserve the original exception.
+success boundary. On write or close failure, use the module-level `os.close`
+and `os.unlink` cleanup path, remove the partial destination where possible,
+and preserve the original exception. The comprehensive witness executes
+partial success, zero progress, mid-write failure, and close failure directly;
+ordinary success tests are not substitutes.
 
 ### Exclusive creation assumptions
 
 The helper is unsafe for an existing destination by design. Keep it private to
-test fixtures, require `O_EXCL`, and test duplicate creation. It must never grow
-into a replacement helper.
+test fixtures and require `O_EXCL`. Test the helper itself against an existing
+file and assert unchanged bytes; the separate duplicate-profile `mkdir` refusal
+is insufficient. The helper must never grow into a replacement API.
 
 ### Monkeypatching the shared `os` module
 
-Python modules share the same `os` object. Patching `atomicio.os.fsync` by
-attribute mutates global `os.fsync` and can suppress or count unrelated writes.
-For instrumentation, replace only `atomicio`'s module binding with a delegating
-proxy. The proxy calls the real fsync and records calls; it does not alter the
-shared module.
+Python modules share the same `os` object. Patching either imported module's
+`os` attributes mutates global behavior and can suppress or count unrelated
+writes. Capture the real module, then replace `tests.setup_fixtures.os` and
+`wingman.atomicio.os` with separate delegating proxies. Both proxies invoke real
+operations; the first owns direct-helper evidence and the second owns atomic
+writer evidence.
 
 ### Node's direct wrapped-fixture invocation
 
@@ -638,20 +787,25 @@ Stop implementation and return to design review if any of these occurs:
 
 1. preserving codec encode/readback verification requires production changes;
 2. the fast publisher must support existing-file replacement;
-3. any caller other than `test_ui_setup_controller.setup` must opt in;
+3. any reusable fixture or existing caller other than
+   `test_ui_setup_controller.setup` must opt in, excluding only the two approved
+   direct qualification witnesses;
 4. a session/shared template, hardlink, reflink, or persistent cache is needed;
 5. controller-body atomic writes or selection persistence must be weakened;
 6. the fixture's `setup(tmp_path, monkeypatch)` signature must change;
-7. any of the 188 controller identities changes;
-8. mutation evidence requires another test module, Node fixture, or production
+7. any baseline controller identity is removed, renamed, or reordered, or more
+   than the two approved witness identities are added;
+8. helper failure branches require parameterization into additional identities;
+9. mutation evidence requires another test module, Node fixture, or production
    helper change;
-9. source/recipient bytes, line endings, CRC, order, revisions, discovery, or
-   normalized manifests differ;
-10. local or hosted Node/codec availability skips appear;
-11. Windows and Ubuntu complete identities diverge;
-12. a workflow, dependency, configuration, marker, selector, budget, or shard
+10. source/recipient bytes, line endings, CRC, order, revisions, discovery
+    fields other than normalized paths/`Profile.modified`, or exact normalized
+    manifests differ;
+11. local or hosted Node/codec availability skips appear;
+12. Windows and Ubuntu complete identities diverge;
+13. a workflow, dependency, configuration, marker, selector, budget, or shard
     change appears necessary;
-13. evidence can support only a duration assertion rather than the structural
+14. evidence can support only a duration assertion rather than the structural
     544-fsync work count.
 
 ## Required implementation self-review
@@ -660,16 +814,26 @@ Before publication, the results document must record a final review covering:
 
 - placeholder scan — no unfinished marker, omitted-body placeholder, debug
   output, or mutation-only note remains;
-- arithmetic — `136 × 4 = 544`, while total controller identities remain 188;
-- parity — atomic and fast bytes, documents, types/order, CRC, revisions,
-  paths, discovery, and normalized manifests agree;
+- arithmetic — `136 × 4 = 544`, `188 + 2 = 190`, and `16,605 + 2 = 16,607`;
+- identity — the baseline ordered 188 IDs are the exact after-collection prefix,
+  exactly two non-parameterized witnesses follow, and actual collection hashes
+  are recorded without a design-time projected hash;
+- parity — atomic and fast bytes, documents, types/order, CRC, revisions, paths,
+  all nonvolatile discovery fields, and exact timestamp-free normalized
+  manifests agree;
 - distinctions — source/recipient IDs and exact LF/CRLF preference bytes remain
   different as designed;
-- isolation — no shared file identity, hardlink, or template exists;
-- persistence — default seed construction records four fsyncs, fast records
-  zero, and controller-body atomic writes/publication remain observable;
-- mutation restoration — all four mutation classes fail at intended assertions
-  and every temporary edit is restored;
+- isolation/metadata — no shared identity, hardlink, or template exists and
+  fast files are ordinary, writable, single-link files with stable ordinary
+  metadata;
+- failure contracts — O_EXCL, partial writes, zero progress, mid-write failure,
+  and close failure all execute with exact byte/cleanup/exception assertions;
+- persistence — default construction records four atomic-channel fsyncs, fast
+  construction records zero on both channels, and the body records its exact
+  `2 + 2 + 2 + 1 = 7` atomic categories before publication;
+- mutation restoration — direct-fsync, atomic-delegation, replacement-capable
+  body bypass, bytes/order/line-ending, and shared-template mutants fail at
+  their intended assertions and every temporary edit is restored;
 - identity/skip consistency — local and hosted inventories and platform skip
   comparisons match their baselines;
 - scope — only the three approved documents and two approved test files are in
