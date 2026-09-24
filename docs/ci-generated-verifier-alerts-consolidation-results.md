@@ -17,7 +17,7 @@
 | Task | Status |
 |---|---|
 | Task 1 — freeze exact PR #286 baseline and comparator controls | COMPLETE — exact 522/66 inventories and hashes, disposable 502/46 projection, provenance, 67/14 skip tuples, and timing controls recorded |
-| Task 2 — qualify the generated candidate and shared helper | NOT STARTED — Task 2 owns this evidence |
+| Task 2 — qualify the generated candidate and shared helper | COMPLETE — 36 branch probes qualified the unchanged 22-case generated candidate; 16 worktree restorations and 20 disposable restorations passed |
 | Task 3 — qualify Alerts | NOT STARTED — Task 3 owns this evidence |
 | Task 4 — derive retained parameters and apply the sole executable edit | NOT STARTED — Task 4 owns this evidence and remains forbidden until Tasks 2–3 are approved |
 | Task 5 — complete local verification | NOT STARTED — Task 5 owns this evidence |
@@ -886,7 +886,2485 @@ Arithmetic controls:
 
 ## Generated mutation ledger
 
-NOT STARTED — Task 2 owns all generated-product and shared-helper control/mutant witnesses. Task 1 records no mutation result and authorizes no generated identity removal.
+### Task 2 decision and retained candidate
+
+- **Status:** COMPLETE.
+- **Generated candidate:** **QUALIFIED** without expansion or redesign.
+- The approved 22 retained generated IDs are unchanged. Their normalized SHA-256 is `85663fb82a5cdf4bf49df9cc89d26c7a88b43d66b5838800db696647a2cae2f6`.
+- Because no retained ID changed, the approved 46-ID combined-product hash remains `359da2ca8f13df995ac43ed76bd0aa19ba75cb4ec3b1fe1e4fb6c8e6a38d71f9`, and the projected 502-ID four-file hash remains `592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a`.
+- Fixture changes below are supplemental branch-input isolation only. Every qualifying red result includes a production/helper mutation. No fixture-only result is counted as sensitivity evidence.
+
+### Green controls and restoration totals
+
+- Exact future-retained generated set plus independent geometry matrix: **35 passed in 7.01s**.
+- Final worker/protocol/isolation/generated/geometry/walk gate: **57 passed in 12.49s**.
+- Worktree probes: 15 owner semantic/wiring rows plus one paired hidden row; **16/16 exact restoration audits passed**.
+- Disposable Block C probes: **20/20** control/mutant sequences passed their count-one guards and intended-assertion checks; each temporary archive was deleted by `TemporaryDirectory`.
+- Final protected temporary-path audit: `git diff --exit-code -- scripts/shoot_screens.py tests/fixtures/screenshot_pages.cjs` passed.
+- Original/restored SHA-256: `scripts/shoot_screens.py` `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4`; `tests/fixtures/screenshot_pages.cjs` `3ab46cb75d3dfa17fceabab9936dd1ecf8b534e0790acd5e98af73c7207fae6c`.
+
+### Complete mutation outcome summary
+
+| Probe | Retained witness | Control | Mutant result and intended assertion | Restoration |
+|---|---|---:|---|---:|
+| Wanderer absence | `missing-settings-wanderer-controls-narrow` | PASS | FAIL at `Object.throws` / `AssertionError: missing` | PASS |
+| Wanderer exact text | `wrong-text-settings-wanderer-controls-narrow` | PASS | FAIL at `Object.throws` / `AssertionError: wrong-text` | PASS |
+| Profiles absence | `missing-profiles-copy-scope` | PASS | FAIL at `Object.throws` / `AssertionError: missing` | PASS |
+| Profiles exact text | `wrong-text-profiles-copy-scope` | PASS | FAIL at `Object.throws` / `AssertionError: wrong-text` | PASS |
+| Fittings metadata absence | `missing-fittings-metadata-narrow` | PASS | FAIL at `Object.throws` / `AssertionError: missing` | PASS |
+| Fittings metadata exact text | `wrong-text-fittings-metadata-narrow` | PASS | FAIL at `Object.throws` / `AssertionError: wrong-text` | PASS |
+| Fittings preflight absence | `missing-fittings-copy-preflight-bottom-narrow` | PASS | FAIL at `Object.throws` / `AssertionError: missing` | PASS |
+| Fittings preflight exact text | `wrong-text-fittings-copy-preflight-bottom-narrow` | PASS | FAIL at `Object.throws` / `AssertionError: wrong-text` | PASS |
+| Fittings result absence | `missing-fittings-copy-result-bottom-narrow` | PASS | FAIL at `Object.throws` / `AssertionError: missing` | PASS |
+| Fittings result exact text | `wrong-text-fittings-copy-result-bottom-narrow` | PASS | FAIL at `Object.throws` / `AssertionError: wrong-text` | PASS |
+| Wanderer owner-to-`exposed()` wiring | `zero-area-settings-wanderer-controls-narrow` | PASS | FAIL at `Object.throws` / `AssertionError: zero-area` | PASS |
+| Profiles owner-to-`exposed()` wiring | `clipped-profiles-copy-scope` | PASS | FAIL at `Object.throws` / `AssertionError: clipped` | PASS |
+| Metadata owner-to-`exposed()` wiring | `clipped-fittings-metadata-narrow` | PASS | FAIL at `Object.throws` / `AssertionError: clipped` | PASS |
+| Preflight owner-to-`exposed()` wiring | `clipped-fittings-copy-preflight-bottom-narrow` | PASS | FAIL at `Object.throws` / `AssertionError: clipped` | PASS |
+| Result owner-to-`exposed()` wiring | `clipped-fittings-copy-result-bottom-narrow` | PASS | FAIL at `Object.throws` / `AssertionError: clipped` | PASS |
+| Hidden `parent.hidden` branch with supplemental client-rect fixture | `hidden-profiles-copy-scope` | fixture-only PASS | paired production mutant FAIL at `Object.throws` / `AssertionError: hidden` | source + fixture hash PASS |
+| Shared helper `width` | `zero-area-settings-wanderer-controls-narrow` | PASS | FAIL at `AssertionError: zero-area at Object.throws` | disposable archive PASS |
+| Shared helper `height`; supplemental fixture | `zero-area-settings-wanderer-controls-narrow` | PASS | FAIL at `AssertionError: zero-area at Object.throws` | disposable archive PASS |
+| Shared helper `edge-left` | `overflow-left` | PASS | FAIL at `AssertionError: overflow-left at Object.throws` | disposable archive PASS |
+| Shared helper `edge-right` | `overflow-right` | PASS | FAIL at `AssertionError: overflow-right at Object.throws` | disposable archive PASS |
+| Shared helper `edge-top` | `overflow-top` | PASS | FAIL at `AssertionError: overflow-top at Object.throws` | disposable archive PASS |
+| Shared helper `edge-bottom` | `overflow-bottom` | PASS | FAIL at `AssertionError: overflow-bottom at Object.throws` | disposable archive PASS |
+| Shared helper `tolerance-top` | `overflow-top` | PASS | FAIL at `AssertionError: overflow-top at Object.throws` | disposable archive PASS |
+| Shared helper `tolerance-right` | `overflow-right` | PASS | FAIL at `AssertionError: overflow-right at Object.throws` | disposable archive PASS |
+| Shared helper `tolerance-bottom` | `overflow-bottom` | PASS | FAIL at `AssertionError: overflow-bottom at Object.throws` | disposable archive PASS |
+| Shared helper `tolerance-left` | `overflow-left` | PASS | FAIL at `AssertionError: overflow-left at Object.throws` | disposable archive PASS |
+| Shared helper `point-0`; supplemental fixture | `covered-fittings-copy-result-bottom-narrow` | PASS | FAIL at `AssertionError: covered at Object.throws` | disposable archive PASS |
+| Shared helper `point-1`; supplemental fixture | `covered-fittings-copy-result-bottom-narrow` | PASS | FAIL at `AssertionError: covered at Object.throws` | disposable archive PASS |
+| Shared helper `point-2`; supplemental fixture | `covered-fittings-copy-result-bottom-narrow` | PASS | FAIL at `AssertionError: covered at Object.throws` | disposable archive PASS |
+| Shared helper `point-3`; supplemental fixture | `covered-fittings-copy-result-bottom-narrow` | PASS | FAIL at `AssertionError: covered at Object.throws` | disposable archive PASS |
+| Shared helper `point-4`; supplemental fixture | `covered-fittings-copy-result-bottom-narrow` | PASS | FAIL at `AssertionError: covered at Object.throws` | disposable archive PASS |
+| Shared helper `every`; supplemental fixture | `covered-fittings-copy-result-bottom-narrow` | PASS | FAIL at `AssertionError: covered at Object.throws` | disposable archive PASS |
+| Shared helper `null`; supplemental fixture | `covered-fittings-copy-result-bottom-narrow` | PASS | FAIL at `AssertionError: covered at Object.throws` | disposable archive PASS |
+| Shared helper `unrelated`; supplemental fixture | `covered-fittings-copy-result-bottom-narrow` | PASS | FAIL at `AssertionError: covered at Object.throws` | disposable archive PASS |
+| Shared helper `direct` | `settled-fittings-copy-result-bottom-narrow` | PASS | FAIL at `Screenshot content did not settle: fittings-copy-result-bottom-narrow at check` | disposable archive PASS |
+| Shared helper `descendant`; supplemental fixture | `settled-fittings-copy-result-bottom-narrow` | PASS | FAIL at `Screenshot content did not settle: fittings-copy-result-bottom-narrow at check` | disposable archive PASS |
+
+### Exact owner semantic and owner-to-helper probe evidence
+
+<details>
+<summary>Wanderer absence — <code>missing-settings-wanderer-controls-narrow</code></summary>
+
+Exact mutation diff:
+
+````diff
+diff --git a/scripts/shoot_screens.py b/scripts/shoot_screens.py
+index 88d841cf..fc0fbdee 100644
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1204,11 +1204,11 @@ var pane = WM.el('settings-previews-wanderer');
+ var note = WM.el('wanderer-save-note'), test = WM.el('wanderer-test'), remove = WM.el('wanderer-remove');
+ check(text(note, 'Test connection saves the map URL and token; it does not turn names on.')
+   && text(test, 'Test connection') && !test.disabled
+-  && text(remove, 'Remove connection') && !remove.disabled
++  && (!remove || (text(remove, 'Remove connection') && !remove.disabled))
+   && WM.el('wanderer-token').type === 'password' && WM.el('wanderer-token').value === ''
+   && WM.el('overlay').hidden);
+ note.scrollIntoView({block: 'start', behavior: 'instant'});
+-check([note, test, remove].every(function (node) { return exposed(node, pane); }));
++check([note, test].concat(remove ? [remove] : []).every(function (node) { return exposed(node, pane); }));
+ """
+     elif key == "profiles-copy-scope":
+         # Ordinary Profiles has no bounded screenshot owner. Preserve the live
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 1.81s
+````
+
+Mutant stdout/stderr (nonzero; intended `Object.throws` / `AssertionError: missing`):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'settings-wanderer-controls-narrow/missing': missing
+    AssertionError: missing
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'settings-wanderer-controls-narrow/missing': missing
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[missing-settings-wanderer-controls-narrow]
+1 failed in 1.75s
+````
+
+Guard/restoration evidence:
+
+````text
+{"before_count": 1, "after_count": 1, "target": "/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/scripts/shoot_screens.py"}
+{"before_count": 1, "after_count": 1, "original_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+{"restored_before_count": 1, "restored_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+exit=0
+````
+
+</details>
+
+<details>
+<summary>Wanderer exact text — <code>wrong-text-settings-wanderer-controls-narrow</code></summary>
+
+Exact mutation diff:
+
+````diff
+diff --git a/scripts/shoot_screens.py b/scripts/shoot_screens.py
+index 88d841cf..1ce66758 100644
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1204,7 +1204,7 @@ var pane = WM.el('settings-previews-wanderer');
+ var note = WM.el('wanderer-save-note'), test = WM.el('wanderer-test'), remove = WM.el('wanderer-remove');
+ check(text(note, 'Test connection saves the map URL and token; it does not turn names on.')
+   && text(test, 'Test connection') && !test.disabled
+-  && text(remove, 'Remove connection') && !remove.disabled
++  && remove && remove.textContent.length > 0 && !remove.disabled
+   && WM.el('wanderer-token').type === 'password' && WM.el('wanderer-token').value === ''
+   && WM.el('overlay').hidden);
+ note.scrollIntoView({block: 'start', behavior: 'instant'});
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 1.85s
+````
+
+Mutant stdout/stderr (nonzero; intended `Object.throws` / `AssertionError: wrong-text`):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'settings-wanderer-controls-narrow/wrong-text': wrong-text
+    AssertionError: wrong-text
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'settings-wanderer-controls-narrow/wrong-text': wrong-text
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[wrong-text-settings-wanderer-controls-narrow]
+1 failed in 1.80s
+````
+
+Guard/restoration evidence:
+
+````text
+{"before_count": 1, "after_count": 1, "target": "/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/scripts/shoot_screens.py"}
+{"before_count": 1, "after_count": 1, "original_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+{"restored_before_count": 1, "restored_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+exit=0
+````
+
+</details>
+
+<details>
+<summary>Profiles absence — <code>missing-profiles-copy-scope</code></summary>
+
+Exact mutation diff:
+
+````diff
+diff --git a/scripts/shoot_screens.py b/scripts/shoot_screens.py
+index 88d841cf..e4d3aebf 100644
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1217,16 +1217,16 @@ check([note, test, remove].every(function (node) { return exposed(node, pane); }
+ var pane = WM.el('es-work'), note = WM.el('es-copy-scope-note');
+ var scope = WM.el('es-copy-scope'), commit = WM.el('es-copy-scope-commit');
+ check(WM.current_route === 'evesettings' && WM.el('overlay').hidden
+-  && visible(WM.el('es-copy-options')) && visible(note) && scope && commit);
++  && visible(WM.el('es-copy-options')) && (!note || visible(note)) && scope && commit);
+ if (scope.hidden) {
+   check(text(note, 'Selective groups unavailable — the bundled settings codec is missing. Copy will replace the whole settings file for each selected target. Reinstall Wingman from its installer to restore the codec.')
+     && note.classList.contains('warn') && visible(commit) && text(commit, 'Whole settings file'));
+ } else {
+-  check(text(note, 'Checked groups are copied as a unit. Unchecked groups stay unchanged. Everything else is copied.')
+-    && !note.classList.contains('warn') && commit.hidden && WM.el('es-copy-scope-summary').textContent);
++  check(!note || (text(note, 'Checked groups are copied as a unit. Unchecked groups stay unchanged. Everything else is copied.')
++    && !note.classList.contains('warn') && commit.hidden && WM.el('es-copy-scope-summary').textContent));
+ }
+-note.scrollIntoView({block: 'center', behavior: 'instant'});
+-check(exposed(note, pane));
++if (note) note.scrollIntoView({block: 'center', behavior: 'instant'});
++check(!note || exposed(note, pane));
+ """
+     elif key == "fittings-metadata-narrow":
+         # The first guard proves the async reply rendered the named racks,
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 1.94s
+````
+
+Mutant stdout/stderr (nonzero; intended `Object.throws` / `AssertionError: missing`):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'profiles-copy-scope/missing': missing
+    AssertionError: missing
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'profiles-copy-scope/missing': missing
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[missing-profiles-copy-scope]
+1 failed in 1.86s
+````
+
+Guard/restoration evidence:
+
+````text
+{"before_count": 1, "after_count": 1, "target": "/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/scripts/shoot_screens.py"}
+{"before_count": 1, "after_count": 1, "original_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+{"restored_before_count": 1, "restored_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+exit=0
+````
+
+</details>
+
+<details>
+<summary>Profiles exact text — <code>wrong-text-profiles-copy-scope</code></summary>
+
+Exact mutation diff:
+
+````diff
+diff --git a/scripts/shoot_screens.py b/scripts/shoot_screens.py
+index 88d841cf..a66343a2 100644
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1222,7 +1222,7 @@ if (scope.hidden) {
+   check(text(note, 'Selective groups unavailable — the bundled settings codec is missing. Copy will replace the whole settings file for each selected target. Reinstall Wingman from its installer to restore the codec.')
+     && note.classList.contains('warn') && visible(commit) && text(commit, 'Whole settings file'));
+ } else {
+-  check(text(note, 'Checked groups are copied as a unit. Unchecked groups stay unchanged. Everything else is copied.')
++  check(note && note.textContent.length > 0
+     && !note.classList.contains('warn') && commit.hidden && WM.el('es-copy-scope-summary').textContent);
+ }
+ note.scrollIntoView({block: 'center', behavior: 'instant'});
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 1.82s
+````
+
+Mutant stdout/stderr (nonzero; intended `Object.throws` / `AssertionError: wrong-text`):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'profiles-copy-scope/wrong-text': wrong-text
+    AssertionError: wrong-text
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'profiles-copy-scope/wrong-text': wrong-text
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[wrong-text-profiles-copy-scope]
+1 failed in 1.80s
+````
+
+Guard/restoration evidence:
+
+````text
+{"before_count": 1, "after_count": 1, "target": "/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/scripts/shoot_screens.py"}
+{"before_count": 1, "after_count": 1, "original_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+{"restored_before_count": 1, "restored_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+exit=0
+````
+
+</details>
+
+<details>
+<summary>Fittings metadata absence — <code>missing-fittings-metadata-narrow</code></summary>
+
+Exact mutation diff:
+
+````diff
+diff --git a/scripts/shoot_screens.py b/scripts/shoot_screens.py
+index 88d841cf..c4152aff 100644
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1244,7 +1244,7 @@ var name = WM.el('fit-name-fit-rifter-solo'), description = WM.el('fit-desc-fit-
+ var save = WM.el('fit-metadata-save-fit-rifter-solo'), discard = WM.el('fit-metadata-discard-fit-rifter-solo');
+ check(editor && editor.tagName === 'DETAILS' && name && description
+   && name.value === expected.name && description.value === expected.description
+-  && text(save, 'Save') && save.disabled && discard && discard.hidden
++  && (!save || (text(save, 'Save') && save.disabled)) && discard && discard.hidden
+   && WM.el('overlay').hidden && WM.el('fittings-copy-overlay').hidden);
+ var management = editor.closest('.fit-detail-management');
+ var immediate = management && management.querySelector('.fit-immediate');
+@@ -1257,7 +1257,7 @@ var descriptionLabel = editor.querySelector('label[for="fit-desc-fit-rifter-solo
+ check(text(summary, 'Edit metadata…') && text(nameLabel, 'Name') && text(descriptionLabel, 'Description'));
+ editor.open = true;
+ editor.scrollIntoView({block: 'start', behavior: 'instant'});
+-check(editor.open && [summary, nameLabel, name, descriptionLabel, description, save].every(function (node) {
++check(editor.open && [summary, nameLabel, name, descriptionLabel, description].concat(save ? [save] : []).every(function (node) {
+   return exposed(node, pane);
+ }));
+ """
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 1.89s
+````
+
+Mutant stdout/stderr (nonzero; intended `Object.throws` / `AssertionError: missing`):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-metadata-narrow/missing': missing
+    AssertionError: missing
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-metadata-narrow/missing': missing
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[missing-fittings-metadata-narrow]
+1 failed in 1.81s
+````
+
+Guard/restoration evidence:
+
+````text
+{"before_count": 1, "after_count": 1, "target": "/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/scripts/shoot_screens.py"}
+{"before_count": 1, "after_count": 1, "original_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+{"restored_before_count": 1, "restored_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+exit=0
+````
+
+</details>
+
+<details>
+<summary>Fittings metadata exact text — <code>wrong-text-fittings-metadata-narrow</code></summary>
+
+Exact mutation diff:
+
+````diff
+diff --git a/scripts/shoot_screens.py b/scripts/shoot_screens.py
+index 88d841cf..fc4eb64a 100644
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1244,7 +1244,7 @@ var name = WM.el('fit-name-fit-rifter-solo'), description = WM.el('fit-desc-fit-
+ var save = WM.el('fit-metadata-save-fit-rifter-solo'), discard = WM.el('fit-metadata-discard-fit-rifter-solo');
+ check(editor && editor.tagName === 'DETAILS' && name && description
+   && name.value === expected.name && description.value === expected.description
+-  && text(save, 'Save') && save.disabled && discard && discard.hidden
++  && save && save.textContent.length > 0 && save.disabled && discard && discard.hidden
+   && WM.el('overlay').hidden && WM.el('fittings-copy-overlay').hidden);
+ var management = editor.closest('.fit-detail-management');
+ var immediate = management && management.querySelector('.fit-immediate');
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 1.90s
+````
+
+Mutant stdout/stderr (nonzero; intended `Object.throws` / `AssertionError: wrong-text`):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-metadata-narrow/wrong-text': wrong-text
+    AssertionError: wrong-text
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-metadata-narrow/wrong-text': wrong-text
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[wrong-text-fittings-metadata-narrow]
+1 failed in 1.83s
+````
+
+Guard/restoration evidence:
+
+````text
+{"before_count": 1, "after_count": 1, "target": "/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/scripts/shoot_screens.py"}
+{"before_count": 1, "after_count": 1, "original_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+{"restored_before_count": 1, "restored_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+exit=0
+````
+
+</details>
+
+<details>
+<summary>Fittings preflight absence — <code>missing-fittings-copy-preflight-bottom-narrow</code></summary>
+
+Exact mutation diff:
+
+````diff
+diff --git a/scripts/shoot_screens.py b/scripts/shoot_screens.py
+index 88d841cf..7137b042 100644
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1277,9 +1277,9 @@ var pairs = pane.querySelectorAll('.fit-copy-pair');
+ check(WM.current_route === 'fittings' && visible(WM.el('fittings-copy-overlay')) && WM.el('overlay').hidden
+   && text(WM.el('fittings-copy-title'), 'Copy 3 fittings to Eryn Voss')
+   && pairs.length === expected.pairs.length && pairs.length > 0
+-  && text(note, 'Enter an alternate name or select Skip for each conflict before reviewing changes.')
++  && (!note || text(note, 'Enter an alternate name or select Skip for each conflict before reviewing changes.'))
+   && text(review, 'Review changes') && !review.hidden && review.disabled
+-  && review.getAttribute('aria-describedby') === note.id && WM.el('fittings-copy-start').hidden);
++  && (!note || review.getAttribute('aria-describedby') === note.id) && WM.el('fittings-copy-start').hidden);
+ check(expected.pairs.every(function (pair, index) {
+   var status = pair.status === 'present' ? 'Already present' : pair.status === 'unavailable'
+     ? 'Unavailable' + (pair.error ? ' — ' + pair.error : '')
+@@ -1297,9 +1297,9 @@ check(text(summary, expected.write_count + ' additions planned · ' + counts.pre
+   + counts.conflict + ' conflict · ' + counts.unavailable + ' unavailable') && !pane.contains(summary));
+ check(visible(pane.firstElementChild)
+   && text(pane.firstElementChild, 'Copies only add fittings; existing fittings are kept.'));
+-note.scrollIntoView({block: 'end', behavior: 'instant'});
++if (note) note.scrollIntoView({block: 'end', behavior: 'instant'});
+ var dialog = WM.el('fittings-copy-dialog');
+-check(exposed(note, pane) && [review, WM.el('fittings-copy-close'), summary, WM.el('fittings-copy-title')].every(function (node) {
++check((!note || exposed(note, pane)) && [review, WM.el('fittings-copy-close'), summary, WM.el('fittings-copy-title')].every(function (node) {
+   return exposed(node, dialog);
+ }));
+ """
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 1.89s
+````
+
+Mutant stdout/stderr (nonzero; intended `Object.throws` / `AssertionError: missing`):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/missing': missing
+    AssertionError: missing
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/missing': missing
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[missing-fittings-copy-preflight-bottom-narrow]
+1 failed in 1.86s
+````
+
+Guard/restoration evidence:
+
+````text
+{"before_count": 1, "after_count": 1, "target": "/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/scripts/shoot_screens.py"}
+{"before_count": 1, "after_count": 1, "original_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+{"restored_before_count": 1, "restored_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+exit=0
+````
+
+</details>
+
+<details>
+<summary>Fittings preflight exact text — <code>wrong-text-fittings-copy-preflight-bottom-narrow</code></summary>
+
+Exact mutation diff:
+
+````diff
+diff --git a/scripts/shoot_screens.py b/scripts/shoot_screens.py
+index 88d841cf..be72bde4 100644
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1277,7 +1277,7 @@ var pairs = pane.querySelectorAll('.fit-copy-pair');
+ check(WM.current_route === 'fittings' && visible(WM.el('fittings-copy-overlay')) && WM.el('overlay').hidden
+   && text(WM.el('fittings-copy-title'), 'Copy 3 fittings to Eryn Voss')
+   && pairs.length === expected.pairs.length && pairs.length > 0
+-  && text(note, 'Enter an alternate name or select Skip for each conflict before reviewing changes.')
++  && note && note.textContent.length > 0
+   && text(review, 'Review changes') && !review.hidden && review.disabled
+   && review.getAttribute('aria-describedby') === note.id && WM.el('fittings-copy-start').hidden);
+ check(expected.pairs.every(function (pair, index) {
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 1.85s
+````
+
+Mutant stdout/stderr (nonzero; intended `Object.throws` / `AssertionError: wrong-text`):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/wrong-text': wrong-text
+    AssertionError: wrong-text
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/wrong-text': wrong-text
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[wrong-text-fittings-copy-preflight-bottom-narrow]
+1 failed in 1.79s
+````
+
+Guard/restoration evidence:
+
+````text
+{"before_count": 1, "after_count": 1, "target": "/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/scripts/shoot_screens.py"}
+{"before_count": 1, "after_count": 1, "original_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+{"restored_before_count": 1, "restored_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+exit=0
+````
+
+</details>
+
+<details>
+<summary>Fittings result absence — <code>missing-fittings-copy-result-bottom-narrow</code></summary>
+
+Exact mutation diff:
+
+````diff
+diff --git a/scripts/shoot_screens.py b/scripts/shoot_screens.py
+index 88d841cf..8681771f 100644
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1328,7 +1328,7 @@ check(row && expected.status === 'unattempted_throttle');
+ var name = row.querySelector('.fit-copy-pair-name'), character = row.querySelector('.fit-copy-character');
+ var status = row.querySelector('.fit-copy-result'), error = row.querySelector('.fit-copy-detail');
+ check(text(name, identity) && text(character, expected.character_name)
+-  && text(status, 'Not attempted: rate limit') && status.classList.contains(expected.status)
++  && (!status || (text(status, 'Not attempted: rate limit') && status.classList.contains(expected.status)))
+   && (expected.error ? text(error, expected.error) : !error));
+ // Shared recovery remains ordinary flow above the pairs, not an overlay.
+ // Verify presence and safety ordering; only retained context must stay exposed.
+@@ -1344,7 +1344,7 @@ var technical = WM.el('fittings-copy-technical');
+ var disclosure = technical && technical.querySelector('summary');
+ check(disclosure && pane.contains(disclosure) && visible(disclosure));
+ disclosure.scrollIntoView({block: 'end', behavior: 'instant'});
+-var requiredNodes = [name, character, status, disclosure];
++var requiredNodes = [name, character, disclosure]; if (status) requiredNodes.splice(2, 0, status);
+ if (expected.error) requiredNodes.push(error);
+ check(requiredNodes.every(function (node) { return exposed(node, pane); })
+   && [WM.el('fittings-copy-close'), WM.el('fittings-copy-summary'), WM.el('fittings-copy-title')].every(function (node) {
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 1.98s
+````
+
+Mutant stdout/stderr (nonzero; intended `Object.throws` / `AssertionError: missing`):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/missing': missing
+    AssertionError: missing
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/missing': missing
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[missing-fittings-copy-result-bottom-narrow]
+1 failed in 2.08s
+````
+
+Guard/restoration evidence:
+
+````text
+{"before_count": 1, "after_count": 1, "target": "/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/scripts/shoot_screens.py"}
+{"before_count": 1, "after_count": 1, "original_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+{"restored_before_count": 1, "restored_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+exit=0
+````
+
+</details>
+
+<details>
+<summary>Fittings result exact text — <code>wrong-text-fittings-copy-result-bottom-narrow</code></summary>
+
+Exact mutation diff:
+
+````diff
+diff --git a/scripts/shoot_screens.py b/scripts/shoot_screens.py
+index 88d841cf..68784f7d 100644
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1328,7 +1328,7 @@ check(row && expected.status === 'unattempted_throttle');
+ var name = row.querySelector('.fit-copy-pair-name'), character = row.querySelector('.fit-copy-character');
+ var status = row.querySelector('.fit-copy-result'), error = row.querySelector('.fit-copy-detail');
+ check(text(name, identity) && text(character, expected.character_name)
+-  && text(status, 'Not attempted: rate limit') && status.classList.contains(expected.status)
++  && status && status.textContent.length > 0 && status.classList.contains(expected.status)
+   && (expected.error ? text(error, expected.error) : !error));
+ // Shared recovery remains ordinary flow above the pairs, not an overlay.
+ // Verify presence and safety ordering; only retained context must stay exposed.
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 1.89s
+````
+
+Mutant stdout/stderr (nonzero; intended `Object.throws` / `AssertionError: wrong-text`):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/wrong-text': wrong-text
+    AssertionError: wrong-text
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/wrong-text': wrong-text
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[wrong-text-fittings-copy-result-bottom-narrow]
+1 failed in 1.86s
+````
+
+Guard/restoration evidence:
+
+````text
+{"before_count": 1, "after_count": 1, "target": "/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/scripts/shoot_screens.py"}
+{"before_count": 1, "after_count": 1, "original_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+{"restored_before_count": 1, "restored_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+exit=0
+````
+
+</details>
+
+<details>
+<summary>Wanderer owner-to-`exposed()` wiring — <code>zero-area-settings-wanderer-controls-narrow</code></summary>
+
+Exact mutation diff:
+
+````diff
+diff --git a/scripts/shoot_screens.py b/scripts/shoot_screens.py
+index 88d841cf..126730c8 100644
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1208,7 +1208,7 @@ check(text(note, 'Test connection saves the map URL and token; it does not turn
+   && WM.el('wanderer-token').type === 'password' && WM.el('wanderer-token').value === ''
+   && WM.el('overlay').hidden);
+ note.scrollIntoView({block: 'start', behavior: 'instant'});
+-check([note, test, remove].every(function (node) { return exposed(node, pane); }));
++check([note, test].every(function (node) { return exposed(node, pane); }));
+ """
+     elif key == "profiles-copy-scope":
+         # Ordinary Profiles has no bounded screenshot owner. Preserve the live
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 1.86s
+````
+
+Mutant stdout/stderr (nonzero; intended `Object.throws` / `AssertionError: zero-area`):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'settings-wanderer-controls-narrow/zero-area': zero-area
+    AssertionError: zero-area
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'settings-wanderer-controls-narrow/zero-area': zero-area
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[zero-area-settings-wanderer-controls-narrow]
+1 failed in 1.81s
+````
+
+Guard/restoration evidence:
+
+````text
+{"before_count": 1, "after_count": 1, "target": "/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/scripts/shoot_screens.py"}
+{"before_count": 1, "after_count": 1, "original_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+{"restored_before_count": 1, "restored_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+exit=0
+````
+
+</details>
+
+<details>
+<summary>Profiles owner-to-`exposed()` wiring — <code>clipped-profiles-copy-scope</code></summary>
+
+Exact mutation diff:
+
+````diff
+diff --git a/scripts/shoot_screens.py b/scripts/shoot_screens.py
+index 88d841cf..7cefc1b1 100644
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1226,7 +1226,7 @@ if (scope.hidden) {
+     && !note.classList.contains('warn') && commit.hidden && WM.el('es-copy-scope-summary').textContent);
+ }
+ note.scrollIntoView({block: 'center', behavior: 'instant'});
+-check(exposed(note, pane));
++check(true);
+ """
+     elif key == "fittings-metadata-narrow":
+         # The first guard proves the async reply rendered the named racks,
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 2.12s
+````
+
+Mutant stdout/stderr (nonzero; intended `Object.throws` / `AssertionError: clipped`):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'profiles-copy-scope/clipped': clipped
+    AssertionError: clipped
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'profiles-copy-scope/clipped': clipped
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[clipped-profiles-copy-scope]
+1 failed in 1.78s
+````
+
+Guard/restoration evidence:
+
+````text
+{"before_count": 1, "after_count": 1, "target": "/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/scripts/shoot_screens.py"}
+{"before_count": 1, "after_count": 1, "original_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+{"restored_before_count": 1, "restored_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+exit=0
+````
+
+</details>
+
+<details>
+<summary>Metadata owner-to-`exposed()` wiring — <code>clipped-fittings-metadata-narrow</code></summary>
+
+Exact mutation diff:
+
+````diff
+diff --git a/scripts/shoot_screens.py b/scripts/shoot_screens.py
+index 88d841cf..d3472781 100644
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1257,7 +1257,7 @@ var descriptionLabel = editor.querySelector('label[for="fit-desc-fit-rifter-solo
+ check(text(summary, 'Edit metadata…') && text(nameLabel, 'Name') && text(descriptionLabel, 'Description'));
+ editor.open = true;
+ editor.scrollIntoView({block: 'start', behavior: 'instant'});
+-check(editor.open && [summary, nameLabel, name, descriptionLabel, description, save].every(function (node) {
++check(editor.open && [summary, nameLabel, name, descriptionLabel, description].every(function (node) {
+   return exposed(node, pane);
+ }));
+ """
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 1.91s
+````
+
+Mutant stdout/stderr (nonzero; intended `Object.throws` / `AssertionError: clipped`):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-metadata-narrow/clipped': clipped
+    AssertionError: clipped
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-metadata-narrow/clipped': clipped
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[clipped-fittings-metadata-narrow]
+1 failed in 1.84s
+````
+
+Guard/restoration evidence:
+
+````text
+{"before_count": 1, "after_count": 1, "target": "/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/scripts/shoot_screens.py"}
+{"before_count": 1, "after_count": 1, "original_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+{"restored_before_count": 1, "restored_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+exit=0
+````
+
+</details>
+
+<details>
+<summary>Preflight owner-to-`exposed()` wiring — <code>clipped-fittings-copy-preflight-bottom-narrow</code></summary>
+
+Exact mutation diff:
+
+````diff
+diff --git a/scripts/shoot_screens.py b/scripts/shoot_screens.py
+index 88d841cf..289b432e 100644
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1299,7 +1299,7 @@ check(visible(pane.firstElementChild)
+   && text(pane.firstElementChild, 'Copies only add fittings; existing fittings are kept.'));
+ note.scrollIntoView({block: 'end', behavior: 'instant'});
+ var dialog = WM.el('fittings-copy-dialog');
+-check(exposed(note, pane) && [review, WM.el('fittings-copy-close'), summary, WM.el('fittings-copy-title')].every(function (node) {
++check([review, WM.el('fittings-copy-close'), summary, WM.el('fittings-copy-title')].every(function (node) {
+   return exposed(node, dialog);
+ }));
+ """
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 1.88s
+````
+
+Mutant stdout/stderr (nonzero; intended `Object.throws` / `AssertionError: clipped`):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/clipped': clipped
+    AssertionError: clipped
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/clipped': clipped
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[clipped-fittings-copy-preflight-bottom-narrow]
+1 failed in 1.80s
+````
+
+Guard/restoration evidence:
+
+````text
+{"before_count": 1, "after_count": 1, "target": "/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/scripts/shoot_screens.py"}
+{"before_count": 1, "after_count": 1, "original_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+{"restored_before_count": 1, "restored_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+exit=0
+````
+
+</details>
+
+<details>
+<summary>Result owner-to-`exposed()` wiring — <code>clipped-fittings-copy-result-bottom-narrow</code></summary>
+
+Exact mutation diff:
+
+````diff
+diff --git a/scripts/shoot_screens.py b/scripts/shoot_screens.py
+index 88d841cf..9ace5713 100644
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1344,7 +1344,7 @@ var technical = WM.el('fittings-copy-technical');
+ var disclosure = technical && technical.querySelector('summary');
+ check(disclosure && pane.contains(disclosure) && visible(disclosure));
+ disclosure.scrollIntoView({block: 'end', behavior: 'instant'});
+-var requiredNodes = [name, character, status, disclosure];
++var requiredNodes = [name, character, disclosure];
+ if (expected.error) requiredNodes.push(error);
+ check(requiredNodes.every(function (node) { return exposed(node, pane); })
+   && [WM.el('fittings-copy-close'), WM.el('fittings-copy-summary'), WM.el('fittings-copy-title')].every(function (node) {
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 4.41s
+````
+
+Mutant stdout/stderr (nonzero; intended `Object.throws` / `AssertionError: clipped`):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/clipped': clipped
+    AssertionError: clipped
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/clipped': clipped
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[clipped-fittings-copy-result-bottom-narrow]
+1 failed in 2.77s
+````
+
+Guard/restoration evidence:
+
+````text
+{"before_count": 1, "after_count": 1, "target": "/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/scripts/shoot_screens.py"}
+{"before_count": 1, "after_count": 1, "original_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+{"restored_before_count": 1, "restored_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4"}
+exit=0
+````
+
+</details>
+
+### Exact hidden-branch paired evidence
+
+<details>
+<summary>Hidden <code>parent.hidden</code> production branch — <code>hidden-profiles-copy-scope</code></summary>
+
+Exact paired source/fixture diff:
+
+````diff
+diff --git a/scripts/shoot_screens.py b/scripts/shoot_screens.py
+index 88d841cf..97ec47a9 100644
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1167,7 +1167,7 @@ def _framed_content_script(key: str, body: str) -> str:
+ function visible(node) {
+   if (!node || !node.getClientRects().length) return false;
+   for (var parent = node; parent; parent = parent.parentElement) {
+-    if (parent.hidden || window.getComputedStyle(parent).visibility === 'hidden') return false;
++    if (window.getComputedStyle(parent).visibility === 'hidden') return false;
+   }
+   return true;
+ }
+diff --git a/tests/fixtures/screenshot_pages.cjs b/tests/fixtures/screenshot_pages.cjs
+index c9d0da1c..56009fc0 100644
+--- a/tests/fixtures/screenshot_pages.cjs
++++ b/tests/fixtures/screenshot_pages.cjs
+@@ -703,7 +703,6 @@ async function gapRegression() {
+     const nativeRects = Element.prototype.getClientRects;
+     Element.prototype.getClientRects = function () {
+       for (let node = this; node; node = node.parentNode) {
+-        if (node.hidden) return [];
+         if (node.parentNode?.tagName === 'DETAILS' && !node.parentNode.open && node.tagName !== 'SUMMARY') return [];
+       }
+       return [this.getBoundingClientRect()];
+````
+
+Original-source green control:
+
+````text
+.                                                                        [100%]
+1 passed in 1.83s
+````
+
+Supplemental fixture-only control with original production (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 1.81s
+````
+
+Paired production mutant stdout/stderr (nonzero; intended <code>Object.throws</code> / <code>AssertionError: hidden</code>):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'profiles-copy-scope/hidden': hidden
+    AssertionError: hidden
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:752:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1291:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1388:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'profiles-copy-scope/hidden': hidden
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[hidden-profiles-copy-scope]
+1 failed in 1.76s
+````
+
+Count-one and hash restoration evidence:
+
+````text
+{"before_count": 1, "after_count": 1, "target": "/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/tests/fixtures/screenshot_pages.cjs"}
+{"before_count": 1, "after_count": 1, "target": "/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation/scripts/shoot_screens.py"}
+{"restored_before_count": 1, "restored_sha256": "3ab46cb75d3dfa17fceabab9936dd1ecf8b534e0790acd5e98af73c7207fae6c"}
+exit=0
+{
+  "original_source_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4",
+  "restored_source_sha256": "05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4",
+  "original_fixture_sha256": "3ab46cb75d3dfa17fceabab9936dd1ecf8b534e0790acd5e98af73c7207fae6c",
+  "restored_fixture_sha256": "3ab46cb75d3dfa17fceabab9936dd1ecf8b534e0790acd5e98af73c7207fae6c",
+  "fixture_only_control": "PASS",
+  "paired_mutant": "FAIL",
+  "intended": "AssertionError: hidden at Object.throws"
+}
+````
+
+</details>
+
+### Exact shared-helper Block C evidence
+
+<details>
+<summary>Shared helper <code>width</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[zero-area-settings-wanderer-controls-narrow]</code></summary>
+
+Exact disposable source/fixture diff:
+
+````diff
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1178,7 +1178,7 @@
+   // Scroll offsets can round while DOMRects retain fractions (measured 0.109375px).
+   // Allow at most one CSS pixel at an edge, never a covered hit-test point.
+   var tolerance = 1;
+-  if (r.width <= 0 || r.height <= 0
++  if (r.height <= 0
+       || r.left < Math.max(0, p.left) - tolerance || r.right > Math.min(innerWidth, p.right) + tolerance
+       || r.top < Math.max(0, p.top) - tolerance || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;
+   var inset = Math.min(4, r.width / 4, r.height / 4);
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 0.46s
+````
+
+Mutant stdout/stderr (nonzero; intended <code>AssertionError: zero-area at Object.throws</code>):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'settings-wanderer-controls-narrow/zero-area': zero-area
+    AssertionError: zero-area
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/tmp/stage3-width-f0y704rw/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'settings-wanderer-controls-narrow/zero-area': zero-area
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[zero-area-settings-wanderer-controls-narrow]
+1 failed in 0.29s
+````
+
+Count/restoration metadata:
+
+````json
+{
+  "name": "width",
+  "node": "tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[zero-area-settings-wanderer-controls-narrow]",
+  "control_exit": 0,
+  "mutant_exit": 1,
+  "intended": "AssertionError: zero-area at Object.throws",
+  "source_before_count": 1,
+  "source_after_count": 1,
+  "fixture_supplement": false,
+  "disposable_restored": true
+}
+````
+
+</details>
+
+<details>
+<summary>Shared helper <code>height</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[zero-area-settings-wanderer-controls-narrow]</code></summary>
+
+Exact disposable source/fixture diff:
+
+````diff
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1178,7 +1178,7 @@
+   // Scroll offsets can round while DOMRects retain fractions (measured 0.109375px).
+   // Allow at most one CSS pixel at an edge, never a covered hit-test point.
+   var tolerance = 1;
+-  if (r.width <= 0 || r.height <= 0
++  if (r.width <= 0
+       || r.left < Math.max(0, p.left) - tolerance || r.right > Math.min(innerWidth, p.right) + tolerance
+       || r.top < Math.max(0, p.top) - tolerance || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;
+   var inset = Math.min(4, r.width / 4, r.height / 4);
+--- a/tests/fixtures/screenshot_pages.cjs
++++ b/tests/fixtures/screenshot_pages.cjs
+@@ -690,7 +690,9 @@
+       // Recovery is ordinary flow above the lower results, not a sticky owner.
+       if (framed && this.closest('.fit-copy-recovery')) return rect(120, -250, 760, -200);
+       if (!framed) return rect(120, 700, 760, 730);
+-      const r = rect(120, 130, zero && this === target ? 120 : 760, 330);
++      const r = zero && this === target
++        ? rect(120, 130, 760, 130)
++        : rect(120, 130, 760, 330);
+       if (this === target && overrun) {
+         const bounds = this.id === 'fittings-copy-close'
+           ? {left: 80, top: 40, right: 820, bottom: 600} : {left: 100, top: 100, right: 800, bottom: 540};
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 0.45s
+````
+
+Mutant stdout/stderr (nonzero; intended <code>AssertionError: zero-area at Object.throws</code>):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'settings-wanderer-controls-narrow/zero-area': zero-area
+    AssertionError: zero-area
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:755:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1294:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1391:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/tmp/stage3-height-vtvv5_kp/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'settings-wanderer-controls-narrow/zero-area': zero-area
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[zero-area-settings-wanderer-controls-narrow]
+1 failed in 0.31s
+````
+
+Count/restoration metadata:
+
+````json
+{
+  "name": "height",
+  "node": "tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[zero-area-settings-wanderer-controls-narrow]",
+  "control_exit": 0,
+  "mutant_exit": 1,
+  "intended": "AssertionError: zero-area at Object.throws",
+  "source_before_count": 1,
+  "source_after_count": 1,
+  "fixture_supplement": true,
+  "disposable_restored": true
+}
+````
+
+</details>
+
+<details>
+<summary>Shared helper <code>edge-left</code> — <code>tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-left]</code></summary>
+
+Exact disposable source/fixture diff:
+
+````diff
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1179,7 +1179,7 @@
+   // Allow at most one CSS pixel at an edge, never a covered hit-test point.
+   var tolerance = 1;
+   if (r.width <= 0 || r.height <= 0
+-      || r.left < Math.max(0, p.left) - tolerance || r.right > Math.min(innerWidth, p.right) + tolerance
++      || r.right > Math.min(innerWidth, p.right) + tolerance
+       || r.top < Math.max(0, p.top) - tolerance || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;
+   var inset = Math.min(4, r.width / 4, r.height / 4);
+   return [[r.left + inset, r.top + inset], [r.right - inset, r.top + inset],
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 0.52s
+````
+
+Mutant stdout/stderr (nonzero; intended <code>AssertionError: overflow-left at Object.throws</code>):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/overflow-left': overflow-left
+    AssertionError: overflow-left
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/tmp/stage3-edge-left-1ajzbq_s/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/overflow-left': overflow-left
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-left]
+1 failed in 0.53s
+````
+
+Count/restoration metadata:
+
+````json
+{
+  "name": "edge-left",
+  "node": "tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-left]",
+  "control_exit": 0,
+  "mutant_exit": 1,
+  "intended": "AssertionError: overflow-left at Object.throws",
+  "source_before_count": 1,
+  "source_after_count": 1,
+  "fixture_supplement": false,
+  "disposable_restored": true
+}
+````
+
+</details>
+
+<details>
+<summary>Shared helper <code>edge-right</code> — <code>tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-right]</code></summary>
+
+Exact disposable source/fixture diff:
+
+````diff
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1179,7 +1179,7 @@
+   // Allow at most one CSS pixel at an edge, never a covered hit-test point.
+   var tolerance = 1;
+   if (r.width <= 0 || r.height <= 0
+-      || r.left < Math.max(0, p.left) - tolerance || r.right > Math.min(innerWidth, p.right) + tolerance
++      || r.left < Math.max(0, p.left) - tolerance
+       || r.top < Math.max(0, p.top) - tolerance || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;
+   var inset = Math.min(4, r.width / 4, r.height / 4);
+   return [[r.left + inset, r.top + inset], [r.right - inset, r.top + inset],
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 1.11s
+````
+
+Mutant stdout/stderr (nonzero; intended <code>AssertionError: overflow-right at Object.throws</code>):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/overflow-right': overflow-right
+    AssertionError: overflow-right
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/tmp/stage3-edge-right-o87k8g5q/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/overflow-right': overflow-right
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-right]
+1 failed in 0.37s
+````
+
+Count/restoration metadata:
+
+````json
+{
+  "name": "edge-right",
+  "node": "tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-right]",
+  "control_exit": 0,
+  "mutant_exit": 1,
+  "intended": "AssertionError: overflow-right at Object.throws",
+  "source_before_count": 1,
+  "source_after_count": 1,
+  "fixture_supplement": false,
+  "disposable_restored": true
+}
+````
+
+</details>
+
+<details>
+<summary>Shared helper <code>edge-top</code> — <code>tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-top]</code></summary>
+
+Exact disposable source/fixture diff:
+
+````diff
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1180,7 +1180,7 @@
+   var tolerance = 1;
+   if (r.width <= 0 || r.height <= 0
+       || r.left < Math.max(0, p.left) - tolerance || r.right > Math.min(innerWidth, p.right) + tolerance
+-      || r.top < Math.max(0, p.top) - tolerance || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;
++      || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;
+   var inset = Math.min(4, r.width / 4, r.height / 4);
+   return [[r.left + inset, r.top + inset], [r.right - inset, r.top + inset],
+     [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset],
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 0.50s
+````
+
+Mutant stdout/stderr (nonzero; intended <code>AssertionError: overflow-top at Object.throws</code>):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/overflow-top': overflow-top
+    AssertionError: overflow-top
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/tmp/stage3-edge-top-62qtg1ki/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/overflow-top': overflow-top
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-top]
+1 failed in 0.33s
+````
+
+Count/restoration metadata:
+
+````json
+{
+  "name": "edge-top",
+  "node": "tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-top]",
+  "control_exit": 0,
+  "mutant_exit": 1,
+  "intended": "AssertionError: overflow-top at Object.throws",
+  "source_before_count": 1,
+  "source_after_count": 1,
+  "fixture_supplement": false,
+  "disposable_restored": true
+}
+````
+
+</details>
+
+<details>
+<summary>Shared helper <code>edge-bottom</code> — <code>tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-bottom]</code></summary>
+
+Exact disposable source/fixture diff:
+
+````diff
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1180,7 +1180,7 @@
+   var tolerance = 1;
+   if (r.width <= 0 || r.height <= 0
+       || r.left < Math.max(0, p.left) - tolerance || r.right > Math.min(innerWidth, p.right) + tolerance
+-      || r.top < Math.max(0, p.top) - tolerance || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;
++      || r.top < Math.max(0, p.top) - tolerance) return false;
+   var inset = Math.min(4, r.width / 4, r.height / 4);
+   return [[r.left + inset, r.top + inset], [r.right - inset, r.top + inset],
+     [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset],
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 0.52s
+````
+
+Mutant stdout/stderr (nonzero; intended <code>AssertionError: overflow-bottom at Object.throws</code>):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/overflow-bottom': overflow-bottom
+    AssertionError: overflow-bottom
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/tmp/stage3-edge-bottom-nt3habrz/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/overflow-bottom': overflow-bottom
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-bottom]
+1 failed in 0.35s
+````
+
+Count/restoration metadata:
+
+````json
+{
+  "name": "edge-bottom",
+  "node": "tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-bottom]",
+  "control_exit": 0,
+  "mutant_exit": 1,
+  "intended": "AssertionError: overflow-bottom at Object.throws",
+  "source_before_count": 1,
+  "source_after_count": 1,
+  "fixture_supplement": false,
+  "disposable_restored": true
+}
+````
+
+</details>
+
+<details>
+<summary>Shared helper <code>tolerance-top</code> — <code>tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-top]</code></summary>
+
+Exact disposable source/fixture diff:
+
+````diff
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1177,7 +1177,7 @@
+   var p = pane.getBoundingClientRect(), r = node.getBoundingClientRect();
+   // Scroll offsets can round while DOMRects retain fractions (measured 0.109375px).
+   // Allow at most one CSS pixel at an edge, never a covered hit-test point.
+-  var tolerance = 1;
++  var tolerance = 1.01;
+   if (r.width <= 0 || r.height <= 0
+       || r.left < Math.max(0, p.left) - tolerance || r.right > Math.min(innerWidth, p.right) + tolerance
+       || r.top < Math.max(0, p.top) - tolerance || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 0.51s
+````
+
+Mutant stdout/stderr (nonzero; intended <code>AssertionError: overflow-top at Object.throws</code>):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/overflow-top': overflow-top
+    AssertionError: overflow-top
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/tmp/stage3-tolerance-top-ha7gtrup/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/overflow-top': overflow-top
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-top]
+1 failed in 0.39s
+````
+
+Count/restoration metadata:
+
+````json
+{
+  "name": "tolerance-top",
+  "node": "tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-top]",
+  "control_exit": 0,
+  "mutant_exit": 1,
+  "intended": "AssertionError: overflow-top at Object.throws",
+  "source_before_count": 1,
+  "source_after_count": 1,
+  "fixture_supplement": false,
+  "disposable_restored": true
+}
+````
+
+</details>
+
+<details>
+<summary>Shared helper <code>tolerance-right</code> — <code>tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-right]</code></summary>
+
+Exact disposable source/fixture diff:
+
+````diff
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1177,7 +1177,7 @@
+   var p = pane.getBoundingClientRect(), r = node.getBoundingClientRect();
+   // Scroll offsets can round while DOMRects retain fractions (measured 0.109375px).
+   // Allow at most one CSS pixel at an edge, never a covered hit-test point.
+-  var tolerance = 1;
++  var tolerance = 1.01;
+   if (r.width <= 0 || r.height <= 0
+       || r.left < Math.max(0, p.left) - tolerance || r.right > Math.min(innerWidth, p.right) + tolerance
+       || r.top < Math.max(0, p.top) - tolerance || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 0.63s
+````
+
+Mutant stdout/stderr (nonzero; intended <code>AssertionError: overflow-right at Object.throws</code>):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/overflow-right': overflow-right
+    AssertionError: overflow-right
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/tmp/stage3-tolerance-right-15jh3usr/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/overflow-right': overflow-right
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-right]
+1 failed in 0.44s
+````
+
+Count/restoration metadata:
+
+````json
+{
+  "name": "tolerance-right",
+  "node": "tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-right]",
+  "control_exit": 0,
+  "mutant_exit": 1,
+  "intended": "AssertionError: overflow-right at Object.throws",
+  "source_before_count": 1,
+  "source_after_count": 1,
+  "fixture_supplement": false,
+  "disposable_restored": true
+}
+````
+
+</details>
+
+<details>
+<summary>Shared helper <code>tolerance-bottom</code> — <code>tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-bottom]</code></summary>
+
+Exact disposable source/fixture diff:
+
+````diff
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1177,7 +1177,7 @@
+   var p = pane.getBoundingClientRect(), r = node.getBoundingClientRect();
+   // Scroll offsets can round while DOMRects retain fractions (measured 0.109375px).
+   // Allow at most one CSS pixel at an edge, never a covered hit-test point.
+-  var tolerance = 1;
++  var tolerance = 1.01;
+   if (r.width <= 0 || r.height <= 0
+       || r.left < Math.max(0, p.left) - tolerance || r.right > Math.min(innerWidth, p.right) + tolerance
+       || r.top < Math.max(0, p.top) - tolerance || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 0.55s
+````
+
+Mutant stdout/stderr (nonzero; intended <code>AssertionError: overflow-bottom at Object.throws</code>):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/overflow-bottom': overflow-bottom
+    AssertionError: overflow-bottom
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/tmp/stage3-tolerance-bottom-xpscwj6u/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/overflow-bottom': overflow-bottom
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-bottom]
+1 failed in 0.36s
+````
+
+Count/restoration metadata:
+
+````json
+{
+  "name": "tolerance-bottom",
+  "node": "tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-bottom]",
+  "control_exit": 0,
+  "mutant_exit": 1,
+  "intended": "AssertionError: overflow-bottom at Object.throws",
+  "source_before_count": 1,
+  "source_after_count": 1,
+  "fixture_supplement": false,
+  "disposable_restored": true
+}
+````
+
+</details>
+
+<details>
+<summary>Shared helper <code>tolerance-left</code> — <code>tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-left]</code></summary>
+
+Exact disposable source/fixture diff:
+
+````diff
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1177,7 +1177,7 @@
+   var p = pane.getBoundingClientRect(), r = node.getBoundingClientRect();
+   // Scroll offsets can round while DOMRects retain fractions (measured 0.109375px).
+   // Allow at most one CSS pixel at an edge, never a covered hit-test point.
+-  var tolerance = 1;
++  var tolerance = 1.01;
+   if (r.width <= 0 || r.height <= 0
+       || r.left < Math.max(0, p.left) - tolerance || r.right > Math.min(innerWidth, p.right) + tolerance
+       || r.top < Math.max(0, p.top) - tolerance || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 0.63s
+````
+
+Mutant stdout/stderr (nonzero; intended <code>AssertionError: overflow-left at Object.throws</code>):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/overflow-left': overflow-left
+    AssertionError: overflow-left
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:753:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/tmp/stage3-tolerance-left-p9cn39kh/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-preflight-bottom-narrow/overflow-left': overflow-left
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-left]
+1 failed in 0.37s
+````
+
+Count/restoration metadata:
+
+````json
+{
+  "name": "tolerance-left",
+  "node": "tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-left]",
+  "control_exit": 0,
+  "mutant_exit": 1,
+  "intended": "AssertionError: overflow-left at Object.throws",
+  "source_before_count": 1,
+  "source_after_count": 1,
+  "fixture_supplement": false,
+  "disposable_restored": true
+}
+````
+
+</details>
+
+<details>
+<summary>Shared helper <code>point-0</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]</code></summary>
+
+Exact disposable source/fixture diff:
+
+````diff
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1182,7 +1182,7 @@
+       || r.left < Math.max(0, p.left) - tolerance || r.right > Math.min(innerWidth, p.right) + tolerance
+       || r.top < Math.max(0, p.top) - tolerance || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;
+   var inset = Math.min(4, r.width / 4, r.height / 4);
+-  return [[r.left + inset, r.top + inset], [r.right - inset, r.top + inset],
++  return [[r.right - inset, r.top + inset],
+     [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset],
+     [(r.left + r.right) / 2, (r.top + r.bottom) / 2]].every(function (point) {
+       var hit = document.elementFromPoint(point[0], point[1]);
+--- a/tests/fixtures/screenshot_pages.cjs
++++ b/tests/fixtures/screenshot_pages.cjs
+@@ -713,8 +713,10 @@
+     let measured;
+     const box = Element.prototype.getBoundingClientRect;
+     Element.prototype.getBoundingClientRect = function () { measured = this; return box.call(this); };
+-    document.elementFromPoint = () => covered && (scenario !== 'covered-summary' || measured === target)
+-      ? document.body : measured;
++    const expectedTargetRect = rect(120, 130, 760, 330), expectedTargetInset = 4;
++    const expectedTargetPoints = [[124,134],[756,134],[124,326],[756,326],[440,230]];
++    const coveredTargetPoint = expectedTargetPoints[0]; assert.deepEqual(coveredTargetPoint,[124,134]);
++    document.elementFromPoint = (x,y) => { if (covered && measured === target) assert.deepEqual(box.call(target),expectedTargetRect); return covered && measured === target && x === coveredTargetPoint[0] && y === coveredTargetPoint[1] ? document.body : measured; };
+     verify();
+     assert.ok(framed, 'must frame the semantic anchor, not just click a control');
+     assert.equal(scrolls.at(-1).element, anchor);
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 0.52s
+````
+
+Mutant stdout/stderr (nonzero; intended <code>AssertionError: covered at Object.throws</code>):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/covered': covered
+    AssertionError: covered
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:755:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1294:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1391:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/tmp/stage3-point-0-gyofuj07/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/covered': covered
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]
+1 failed in 0.45s
+````
+
+Count/restoration metadata:
+
+````json
+{
+  "name": "point-0",
+  "node": "tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]",
+  "control_exit": 0,
+  "mutant_exit": 1,
+  "intended": "AssertionError: covered at Object.throws",
+  "source_before_count": 1,
+  "source_after_count": 1,
+  "fixture_supplement": true,
+  "disposable_restored": true
+}
+````
+
+</details>
+
+<details>
+<summary>Shared helper <code>point-1</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]</code></summary>
+
+Exact disposable source/fixture diff:
+
+````diff
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1182,7 +1182,7 @@
+       || r.left < Math.max(0, p.left) - tolerance || r.right > Math.min(innerWidth, p.right) + tolerance
+       || r.top < Math.max(0, p.top) - tolerance || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;
+   var inset = Math.min(4, r.width / 4, r.height / 4);
+-  return [[r.left + inset, r.top + inset], [r.right - inset, r.top + inset],
++  return [[r.left + inset, r.top + inset],
+     [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset],
+     [(r.left + r.right) / 2, (r.top + r.bottom) / 2]].every(function (point) {
+       var hit = document.elementFromPoint(point[0], point[1]);
+--- a/tests/fixtures/screenshot_pages.cjs
++++ b/tests/fixtures/screenshot_pages.cjs
+@@ -713,8 +713,10 @@
+     let measured;
+     const box = Element.prototype.getBoundingClientRect;
+     Element.prototype.getBoundingClientRect = function () { measured = this; return box.call(this); };
+-    document.elementFromPoint = () => covered && (scenario !== 'covered-summary' || measured === target)
+-      ? document.body : measured;
++    const expectedTargetRect = rect(120, 130, 760, 330), expectedTargetInset = 4;
++    const expectedTargetPoints = [[124,134],[756,134],[124,326],[756,326],[440,230]];
++    const coveredTargetPoint = expectedTargetPoints[1]; assert.deepEqual(coveredTargetPoint,[756,134]);
++    document.elementFromPoint = (x,y) => { if (covered && measured === target) assert.deepEqual(box.call(target),expectedTargetRect); return covered && measured === target && x === coveredTargetPoint[0] && y === coveredTargetPoint[1] ? document.body : measured; };
+     verify();
+     assert.ok(framed, 'must frame the semantic anchor, not just click a control');
+     assert.equal(scrolls.at(-1).element, anchor);
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 0.80s
+````
+
+Mutant stdout/stderr (nonzero; intended <code>AssertionError: covered at Object.throws</code>):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/covered': covered
+    AssertionError: covered
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:755:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1294:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1391:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/tmp/stage3-point-1-zrczktbg/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/covered': covered
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]
+1 failed in 0.48s
+````
+
+Count/restoration metadata:
+
+````json
+{
+  "name": "point-1",
+  "node": "tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]",
+  "control_exit": 0,
+  "mutant_exit": 1,
+  "intended": "AssertionError: covered at Object.throws",
+  "source_before_count": 1,
+  "source_after_count": 1,
+  "fixture_supplement": true,
+  "disposable_restored": true
+}
+````
+
+</details>
+
+<details>
+<summary>Shared helper <code>point-2</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]</code></summary>
+
+Exact disposable source/fixture diff:
+
+````diff
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1183,7 +1183,7 @@
+       || r.top < Math.max(0, p.top) - tolerance || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;
+   var inset = Math.min(4, r.width / 4, r.height / 4);
+   return [[r.left + inset, r.top + inset], [r.right - inset, r.top + inset],
+-    [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset],
++    [r.right - inset, r.bottom - inset],
+     [(r.left + r.right) / 2, (r.top + r.bottom) / 2]].every(function (point) {
+       var hit = document.elementFromPoint(point[0], point[1]);
+       return hit && (hit === node || node.contains(hit));
+--- a/tests/fixtures/screenshot_pages.cjs
++++ b/tests/fixtures/screenshot_pages.cjs
+@@ -713,8 +713,10 @@
+     let measured;
+     const box = Element.prototype.getBoundingClientRect;
+     Element.prototype.getBoundingClientRect = function () { measured = this; return box.call(this); };
+-    document.elementFromPoint = () => covered && (scenario !== 'covered-summary' || measured === target)
+-      ? document.body : measured;
++    const expectedTargetRect = rect(120, 130, 760, 330), expectedTargetInset = 4;
++    const expectedTargetPoints = [[124,134],[756,134],[124,326],[756,326],[440,230]];
++    const coveredTargetPoint = expectedTargetPoints[2]; assert.deepEqual(coveredTargetPoint,[124,326]);
++    document.elementFromPoint = (x,y) => { if (covered && measured === target) assert.deepEqual(box.call(target),expectedTargetRect); return covered && measured === target && x === coveredTargetPoint[0] && y === coveredTargetPoint[1] ? document.body : measured; };
+     verify();
+     assert.ok(framed, 'must frame the semantic anchor, not just click a control');
+     assert.equal(scrolls.at(-1).element, anchor);
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 0.57s
+````
+
+Mutant stdout/stderr (nonzero; intended <code>AssertionError: covered at Object.throws</code>):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/covered': covered
+    AssertionError: covered
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:755:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1294:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1391:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/tmp/stage3-point-2-owx3oe25/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/covered': covered
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]
+1 failed in 0.36s
+````
+
+Count/restoration metadata:
+
+````json
+{
+  "name": "point-2",
+  "node": "tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]",
+  "control_exit": 0,
+  "mutant_exit": 1,
+  "intended": "AssertionError: covered at Object.throws",
+  "source_before_count": 1,
+  "source_after_count": 1,
+  "fixture_supplement": true,
+  "disposable_restored": true
+}
+````
+
+</details>
+
+<details>
+<summary>Shared helper <code>point-3</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]</code></summary>
+
+Exact disposable source/fixture diff:
+
+````diff
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1183,7 +1183,7 @@
+       || r.top < Math.max(0, p.top) - tolerance || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;
+   var inset = Math.min(4, r.width / 4, r.height / 4);
+   return [[r.left + inset, r.top + inset], [r.right - inset, r.top + inset],
+-    [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset],
++    [r.left + inset, r.bottom - inset],
+     [(r.left + r.right) / 2, (r.top + r.bottom) / 2]].every(function (point) {
+       var hit = document.elementFromPoint(point[0], point[1]);
+       return hit && (hit === node || node.contains(hit));
+--- a/tests/fixtures/screenshot_pages.cjs
++++ b/tests/fixtures/screenshot_pages.cjs
+@@ -713,8 +713,10 @@
+     let measured;
+     const box = Element.prototype.getBoundingClientRect;
+     Element.prototype.getBoundingClientRect = function () { measured = this; return box.call(this); };
+-    document.elementFromPoint = () => covered && (scenario !== 'covered-summary' || measured === target)
+-      ? document.body : measured;
++    const expectedTargetRect = rect(120, 130, 760, 330), expectedTargetInset = 4;
++    const expectedTargetPoints = [[124,134],[756,134],[124,326],[756,326],[440,230]];
++    const coveredTargetPoint = expectedTargetPoints[3]; assert.deepEqual(coveredTargetPoint,[756,326]);
++    document.elementFromPoint = (x,y) => { if (covered && measured === target) assert.deepEqual(box.call(target),expectedTargetRect); return covered && measured === target && x === coveredTargetPoint[0] && y === coveredTargetPoint[1] ? document.body : measured; };
+     verify();
+     assert.ok(framed, 'must frame the semantic anchor, not just click a control');
+     assert.equal(scrolls.at(-1).element, anchor);
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 0.53s
+````
+
+Mutant stdout/stderr (nonzero; intended <code>AssertionError: covered at Object.throws</code>):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/covered': covered
+    AssertionError: covered
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:755:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1294:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1391:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/tmp/stage3-point-3-1r2mvsep/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/covered': covered
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]
+1 failed in 0.37s
+````
+
+Count/restoration metadata:
+
+````json
+{
+  "name": "point-3",
+  "node": "tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]",
+  "control_exit": 0,
+  "mutant_exit": 1,
+  "intended": "AssertionError: covered at Object.throws",
+  "source_before_count": 1,
+  "source_after_count": 1,
+  "fixture_supplement": true,
+  "disposable_restored": true
+}
+````
+
+</details>
+
+<details>
+<summary>Shared helper <code>point-4</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]</code></summary>
+
+Exact disposable source/fixture diff:
+
+````diff
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1183,8 +1183,7 @@
+       || r.top < Math.max(0, p.top) - tolerance || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;
+   var inset = Math.min(4, r.width / 4, r.height / 4);
+   return [[r.left + inset, r.top + inset], [r.right - inset, r.top + inset],
+-    [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset],
+-    [(r.left + r.right) / 2, (r.top + r.bottom) / 2]].every(function (point) {
++    [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset]].every(function (point) {
+       var hit = document.elementFromPoint(point[0], point[1]);
+       return hit && (hit === node || node.contains(hit));
+     });
+--- a/tests/fixtures/screenshot_pages.cjs
++++ b/tests/fixtures/screenshot_pages.cjs
+@@ -713,8 +713,10 @@
+     let measured;
+     const box = Element.prototype.getBoundingClientRect;
+     Element.prototype.getBoundingClientRect = function () { measured = this; return box.call(this); };
+-    document.elementFromPoint = () => covered && (scenario !== 'covered-summary' || measured === target)
+-      ? document.body : measured;
++    const expectedTargetRect = rect(120, 130, 760, 330), expectedTargetInset = 4;
++    const expectedTargetPoints = [[124,134],[756,134],[124,326],[756,326],[440,230]];
++    const coveredTargetPoint = expectedTargetPoints[4]; assert.deepEqual(coveredTargetPoint,[440,230]);
++    document.elementFromPoint = (x,y) => { if (covered && measured === target) assert.deepEqual(box.call(target),expectedTargetRect); return covered && measured === target && x === coveredTargetPoint[0] && y === coveredTargetPoint[1] ? document.body : measured; };
+     verify();
+     assert.ok(framed, 'must frame the semantic anchor, not just click a control');
+     assert.equal(scrolls.at(-1).element, anchor);
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 0.54s
+````
+
+Mutant stdout/stderr (nonzero; intended <code>AssertionError: covered at Object.throws</code>):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/covered': covered
+    AssertionError: covered
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:755:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1294:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1391:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/tmp/stage3-point-4-ktakbxx3/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/covered': covered
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]
+1 failed in 0.35s
+````
+
+Count/restoration metadata:
+
+````json
+{
+  "name": "point-4",
+  "node": "tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]",
+  "control_exit": 0,
+  "mutant_exit": 1,
+  "intended": "AssertionError: covered at Object.throws",
+  "source_before_count": 1,
+  "source_after_count": 1,
+  "fixture_supplement": true,
+  "disposable_restored": true
+}
+````
+
+</details>
+
+<details>
+<summary>Shared helper <code>every</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]</code></summary>
+
+Exact disposable source/fixture diff:
+
+````diff
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1184,7 +1184,7 @@
+   var inset = Math.min(4, r.width / 4, r.height / 4);
+   return [[r.left + inset, r.top + inset], [r.right - inset, r.top + inset],
+     [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset],
+-    [(r.left + r.right) / 2, (r.top + r.bottom) / 2]].every(function (point) {
++    [(r.left + r.right) / 2, (r.top + r.bottom) / 2]].some(function (point) {
+       var hit = document.elementFromPoint(point[0], point[1]);
+       return hit && (hit === node || node.contains(hit));
+     });
+--- a/tests/fixtures/screenshot_pages.cjs
++++ b/tests/fixtures/screenshot_pages.cjs
+@@ -713,8 +713,10 @@
+     let measured;
+     const box = Element.prototype.getBoundingClientRect;
+     Element.prototype.getBoundingClientRect = function () { measured = this; return box.call(this); };
+-    document.elementFromPoint = () => covered && (scenario !== 'covered-summary' || measured === target)
+-      ? document.body : measured;
++    const expectedTargetRect = rect(120, 130, 760, 330), expectedTargetInset = 4;
++    const expectedTargetPoints = [[124,134],[756,134],[124,326],[756,326],[440,230]];
++    const coveredTargetPoint = expectedTargetPoints[0]; assert.deepEqual(coveredTargetPoint,[124,134]);
++    document.elementFromPoint = (x,y) => { if (covered && measured === target) assert.deepEqual(box.call(target),expectedTargetRect); return covered && measured === target && x === coveredTargetPoint[0] && y === coveredTargetPoint[1] ? document.body : measured; };
+     verify();
+     assert.ok(framed, 'must frame the semantic anchor, not just click a control');
+     assert.equal(scrolls.at(-1).element, anchor);
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 0.52s
+````
+
+Mutant stdout/stderr (nonzero; intended <code>AssertionError: covered at Object.throws</code>):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/covered': covered
+    AssertionError: covered
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:755:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1294:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1391:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/tmp/stage3-every-x4g72esj/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/covered': covered
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]
+1 failed in 0.35s
+````
+
+Count/restoration metadata:
+
+````json
+{
+  "name": "every",
+  "node": "tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]",
+  "control_exit": 0,
+  "mutant_exit": 1,
+  "intended": "AssertionError: covered at Object.throws",
+  "source_before_count": 1,
+  "source_after_count": 1,
+  "fixture_supplement": true,
+  "disposable_restored": true
+}
+````
+
+</details>
+
+<details>
+<summary>Shared helper <code>null</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]</code></summary>
+
+Exact disposable source/fixture diff:
+
+````diff
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1186,7 +1186,7 @@
+     [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset],
+     [(r.left + r.right) / 2, (r.top + r.bottom) / 2]].every(function (point) {
+       var hit = document.elementFromPoint(point[0], point[1]);
+-      return hit && (hit === node || node.contains(hit));
++      return !hit || hit === node || node.contains(hit);
+     });
+ }
+ """ + body + "\n}())"
+--- a/tests/fixtures/screenshot_pages.cjs
++++ b/tests/fixtures/screenshot_pages.cjs
+@@ -713,8 +713,10 @@
+     let measured;
+     const box = Element.prototype.getBoundingClientRect;
+     Element.prototype.getBoundingClientRect = function () { measured = this; return box.call(this); };
+-    document.elementFromPoint = () => covered && (scenario !== 'covered-summary' || measured === target)
+-      ? document.body : measured;
++    const expectedTargetRect = rect(120, 130, 760, 330), expectedTargetInset = 4;
++    const expectedTargetPoints = [[124,134],[756,134],[124,326],[756,326],[440,230]];
++    const coveredTargetPoint = expectedTargetPoints[0]; assert.deepEqual(coveredTargetPoint,[124,134]);
++    document.elementFromPoint = (x,y) => { if (covered && measured === target) assert.deepEqual(box.call(target),expectedTargetRect); return covered && measured === target && x === coveredTargetPoint[0] && y === coveredTargetPoint[1] ? null : measured; };
+     verify();
+     assert.ok(framed, 'must frame the semantic anchor, not just click a control');
+     assert.equal(scrolls.at(-1).element, anchor);
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 0.61s
+````
+
+Mutant stdout/stderr (nonzero; intended <code>AssertionError: covered at Object.throws</code>):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/covered': covered
+    AssertionError: covered
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:755:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1294:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1391:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/tmp/stage3-null-gr6mkqss/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/covered': covered
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]
+1 failed in 0.35s
+````
+
+Count/restoration metadata:
+
+````json
+{
+  "name": "null",
+  "node": "tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]",
+  "control_exit": 0,
+  "mutant_exit": 1,
+  "intended": "AssertionError: covered at Object.throws",
+  "source_before_count": 1,
+  "source_after_count": 1,
+  "fixture_supplement": true,
+  "disposable_restored": true
+}
+````
+
+</details>
+
+<details>
+<summary>Shared helper <code>unrelated</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]</code></summary>
+
+Exact disposable source/fixture diff:
+
+````diff
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1186,7 +1186,7 @@
+     [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset],
+     [(r.left + r.right) / 2, (r.top + r.bottom) / 2]].every(function (point) {
+       var hit = document.elementFromPoint(point[0], point[1]);
+-      return hit && (hit === node || node.contains(hit));
++      return Boolean(hit);
+     });
+ }
+ """ + body + "\n}())"
+--- a/tests/fixtures/screenshot_pages.cjs
++++ b/tests/fixtures/screenshot_pages.cjs
+@@ -713,8 +713,10 @@
+     let measured;
+     const box = Element.prototype.getBoundingClientRect;
+     Element.prototype.getBoundingClientRect = function () { measured = this; return box.call(this); };
+-    document.elementFromPoint = () => covered && (scenario !== 'covered-summary' || measured === target)
+-      ? document.body : measured;
++    const expectedTargetRect = rect(120, 130, 760, 330), expectedTargetInset = 4;
++    const expectedTargetPoints = [[124,134],[756,134],[124,326],[756,326],[440,230]];
++    const coveredTargetPoint = expectedTargetPoints[0]; assert.deepEqual(coveredTargetPoint,[124,134]);
++    document.elementFromPoint = (x,y) => { if (covered && measured === target) assert.deepEqual(box.call(target),expectedTargetRect); return covered && measured === target && x === coveredTargetPoint[0] && y === coveredTargetPoint[1] ? document.body : measured; };
+     verify();
+     assert.ok(framed, 'must frame the semantic anchor, not just click a control');
+     assert.equal(scrolls.at(-1).element, anchor);
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 0.51s
+````
+
+Mutant stdout/stderr (nonzero; intended <code>AssertionError: covered at Object.throws</code>):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/covered': covered
+    AssertionError: covered
+        at Object.throws (screenshot_scenario_worker.cjs:111:26)
+        at gapRegression (screenshot_scenario_worker.cjs:755:71)
+        at async executeScenario (screenshot_scenario_worker.cjs:1294:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1391:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/tmp/stage3-unrelated-7ldfupgq/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/covered': covered
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]
+1 failed in 0.40s
+````
+
+Count/restoration metadata:
+
+````json
+{
+  "name": "unrelated",
+  "node": "tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]",
+  "control_exit": 0,
+  "mutant_exit": 1,
+  "intended": "AssertionError: covered at Object.throws",
+  "source_before_count": 1,
+  "source_after_count": 1,
+  "fixture_supplement": true,
+  "disposable_restored": true
+}
+````
+
+</details>
+
+<details>
+<summary>Shared helper <code>direct</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[settled-fittings-copy-result-bottom-narrow]</code></summary>
+
+Exact disposable source/fixture diff:
+
+````diff
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1186,7 +1186,7 @@
+     [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset],
+     [(r.left + r.right) / 2, (r.top + r.bottom) / 2]].every(function (point) {
+       var hit = document.elementFromPoint(point[0], point[1]);
+-      return hit && (hit === node || node.contains(hit));
++      return hit && hit !== node && node.contains(hit);
+     });
+ }
+ """ + body + "\n}())"
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 0.60s
+````
+
+Mutant stdout/stderr (nonzero; intended <code>Screenshot content did not settle: fittings-copy-result-bottom-narrow at check</code>):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/settled': Screenshot content did not settle: fittings-copy-result-bottom-narrow
+    Error: Screenshot content did not settle: fittings-copy-result-bottom-narrow
+        at check (eval at run (screenshot_scenario_worker.cjs:379:63), <anonymous>:9:37)
+        at eval (eval at run (screenshot_scenario_worker.cjs:379:63), <anonymous>:65:1)
+        at eval (eval at run (screenshot_scenario_worker.cjs:379:63), <anonymous>:70:2)
+        at eval (<anonymous>)
+        at run (screenshot_scenario_worker.cjs:379:63)
+        at verify (screenshot_scenario_worker.cjs:595:26)
+        at gapRegression (screenshot_scenario_worker.cjs:698:5)
+        at async executeScenario (screenshot_scenario_worker.cjs:1292:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1389:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/tmp/stage3-direct-tyle24p0/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/settled': Screenshot content did not settle: fittings-copy-result-bottom-narrow
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[settled-fittings-copy-result-bottom-narrow]
+1 failed in 0.34s
+````
+
+Count/restoration metadata:
+
+````json
+{
+  "name": "direct",
+  "node": "tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[settled-fittings-copy-result-bottom-narrow]",
+  "control_exit": 0,
+  "mutant_exit": 1,
+  "intended": "Screenshot content did not settle: fittings-copy-result-bottom-narrow at check",
+  "source_before_count": 1,
+  "source_after_count": 1,
+  "fixture_supplement": false,
+  "disposable_restored": true
+}
+````
+
+</details>
+
+<details>
+<summary>Shared helper <code>descendant</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[settled-fittings-copy-result-bottom-narrow]</code></summary>
+
+Exact disposable source/fixture diff:
+
+````diff
+--- a/scripts/shoot_screens.py
++++ b/scripts/shoot_screens.py
+@@ -1186,7 +1186,7 @@
+     [r.left + inset, r.bottom - inset], [r.right - inset, r.bottom - inset],
+     [(r.left + r.right) / 2, (r.top + r.bottom) / 2]].every(function (point) {
+       var hit = document.elementFromPoint(point[0], point[1]);
+-      return hit && (hit === node || node.contains(hit));
++      return hit && hit === node;
+     });
+ }
+ """ + body + "\n}())"
+--- a/tests/fixtures/screenshot_pages.cjs
++++ b/tests/fixtures/screenshot_pages.cjs
+@@ -713,8 +713,12 @@
+     let measured;
+     const box = Element.prototype.getBoundingClientRect;
+     Element.prototype.getBoundingClientRect = function () { measured = this; return box.call(this); };
+-    document.elementFromPoint = () => covered && (scenario !== 'covered-summary' || measured === target)
+-      ? document.body : measured;
++    const expectedTargetRect = rect(120, 130, 760, 330), expectedTargetInset = 4;
++    const expectedTargetPoints = [[124,134],[756,134],[124,326],[756,326],[440,230]];
++    const coveredTargetPoint = expectedTargetPoints[0]; assert.deepEqual(coveredTargetPoint,[124,134]);
++    const descendantHit = WM.make('span');
++    target.appendChild(descendantHit);
++    document.elementFromPoint = (x,y) => { if (measured === target) assert.deepEqual(box.call(target),expectedTargetRect); return measured === target && x === coveredTargetPoint[0] && y === coveredTargetPoint[1] ? descendantHit : measured; };
+     verify();
+     assert.ok(framed, 'must frame the semantic anchor, not just click a control');
+     assert.equal(scrolls.at(-1).element, anchor);
+````
+
+Control stdout/stderr (exit 0):
+
+````text
+.                                                                        [100%]
+1 passed in 0.61s
+````
+
+Mutant stdout/stderr (nonzero; intended <code>Screenshot content did not settle: fittings-copy-result-bottom-narrow at check</code>):
+
+````text
+F                                                                        [100%]
+=================================== FAILURES ===================================
+E   tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/settled': Screenshot content did not settle: fittings-copy-result-bottom-narrow
+    Error: Screenshot content did not settle: fittings-copy-result-bottom-narrow
+        at check (eval at run (screenshot_scenario_worker.cjs:379:63), <anonymous>:9:37)
+        at eval (eval at run (screenshot_scenario_worker.cjs:379:63), <anonymous>:65:1)
+        at eval (eval at run (screenshot_scenario_worker.cjs:379:63), <anonymous>:70:2)
+        at eval (<anonymous>)
+        at run (screenshot_scenario_worker.cjs:379:63)
+        at verify (screenshot_scenario_worker.cjs:595:26)
+        at gapRegression (screenshot_scenario_worker.cjs:702:5)
+        at async executeScenario (screenshot_scenario_worker.cjs:1296:19)
+        at async scenarioProgram (screenshot_scenario_worker.cjs:1393:5)
+        at async screenshot_scenario_worker.cjs:9:22
+/tmp/stage3-descendant-f59hqnoj/tests/node_scenario_worker.py:200: tests.node_scenario_worker.NodeScenarioFailure: Node scenario 'fittings-copy-result-bottom-narrow/settled': Screenshot content did not settle: fittings-copy-result-bottom-narrow
+=========================== short test summary info ============================
+FAILED tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[settled-fittings-copy-result-bottom-narrow]
+1 failed in 0.33s
+````
+
+Count/restoration metadata:
+
+````json
+{
+  "name": "descendant",
+  "node": "tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[settled-fittings-copy-result-bottom-narrow]",
+  "control_exit": 0,
+  "mutant_exit": 1,
+  "intended": "Screenshot content did not settle: fittings-copy-result-bottom-narrow at check",
+  "source_before_count": 1,
+  "source_after_count": 1,
+  "fixture_supplement": true,
+  "disposable_restored": true
+}
+````
+
+</details>
+
+### Complete 13-removal generated ledger
+
+Every row requires all three columns; no owner label is abbreviated to a family-only claim. `Restoration` means the exact worktree inverse replacement and path diff passed, while shared Block C evidence was destroyed with its disposable archive.
+
+| Removed generated identity | Same-owner semantic evidence and exact predicate mutants | Same-owner geometry/wiring evidence | Shared branch evidence and intended assertion | Restoration |
+|---|---|---|---|---|
+| `hidden-settings-wanderer-controls-narrow` | `missing-settings-wanderer-controls-narrow` + `wrong-text-settings-wanderer-controls-narrow`; Wanderer remove-existence chain + exact `Remove connection` text | `zero-area-settings-wanderer-controls-narrow`; remove `remove` from exposed list | paired hidden `parent.hidden` mutant; `hidden-profiles-copy-scope`; `Object.throws` / `AssertionError: hidden` | PASS |
+| `hidden-fittings-metadata-narrow` | `missing-fittings-metadata-narrow` + `wrong-text-fittings-metadata-narrow`; metadata Save existence + exact `Save` text | `clipped-fittings-metadata-narrow`; remove Save from exposed list | paired hidden `parent.hidden` mutant; `hidden-profiles-copy-scope`; `Object.throws` / `AssertionError: hidden` | PASS |
+| `hidden-fittings-copy-preflight-bottom-narrow` | `missing-fittings-copy-preflight-bottom-narrow` + `wrong-text-fittings-copy-preflight-bottom-narrow`; resolution-note existence + exact guidance | `clipped-fittings-copy-preflight-bottom-narrow`; remove note from final exposure check | paired hidden `parent.hidden` mutant; `hidden-profiles-copy-scope`; `Object.throws` / `AssertionError: hidden` | PASS |
+| `hidden-fittings-copy-result-bottom-narrow` | `missing-fittings-copy-result-bottom-narrow` + `wrong-text-fittings-copy-result-bottom-narrow`; terminal status existence + exact rate-limit text | `clipped-fittings-copy-result-bottom-narrow`; remove status from `requiredNodes` | paired hidden `parent.hidden` mutant; `hidden-profiles-copy-scope`; `Object.throws` / `AssertionError: hidden` | PASS |
+| `clipped-settings-wanderer-controls-narrow` | `missing-settings-wanderer-controls-narrow` + `wrong-text-settings-wanderer-controls-narrow`; Wanderer remove-existence chain + exact text | `zero-area-settings-wanderer-controls-narrow`; remove `remove` from exposed list | all four edge removals and four `1.01` tolerance probes; `overflow-*` at `Object.throws` | PASS |
+| `covered-settings-wanderer-controls-narrow` | `missing-settings-wanderer-controls-narrow` + `wrong-text-settings-wanderer-controls-narrow`; Wanderer remove-existence chain + exact text | `zero-area-settings-wanderer-controls-narrow`; remove `remove` from exposed list | five point removals, `.every`→`.some`, null/unrelated/direct/descendant probes; covered Result/shared helper | PASS |
+| `covered-profiles-copy-scope` | `missing-profiles-copy-scope` + `wrong-text-profiles-copy-scope`; note existence/visibility + exact healthy guidance | `clipped-profiles-copy-scope`; remove note exposure check | five point removals, `.every`→`.some`, null/unrelated/direct/descendant probes; covered Result/shared helper | PASS |
+| `covered-fittings-metadata-narrow` | `missing-fittings-metadata-narrow` + `wrong-text-fittings-metadata-narrow`; Save existence + exact text | `clipped-fittings-metadata-narrow`; remove Save from exposed list | five point removals, `.every`→`.some`, null/unrelated/direct/descendant probes; covered Result/shared helper | PASS |
+| `covered-fittings-copy-preflight-bottom-narrow` | `missing-fittings-copy-preflight-bottom-narrow` + `wrong-text-fittings-copy-preflight-bottom-narrow`; note existence + exact text | `clipped-fittings-copy-preflight-bottom-narrow`; remove note exposure check | five point removals, `.every`→`.some`, null/unrelated/direct/descendant probes; covered Result/shared helper | PASS |
+| `zero-area-profiles-copy-scope` | `missing-profiles-copy-scope` + `wrong-text-profiles-copy-scope`; note existence/visibility + exact healthy guidance | `clipped-profiles-copy-scope`; remove note exposure check | independent width and supplemental zero-height production mutants; `zero-area-settings-wanderer-controls-narrow`; `Object.throws` / `AssertionError: zero-area` | PASS |
+| `zero-area-fittings-metadata-narrow` | `missing-fittings-metadata-narrow` + `wrong-text-fittings-metadata-narrow`; Save existence + exact text | `clipped-fittings-metadata-narrow`; remove Save from exposed list | independent width and supplemental zero-height production mutants; `zero-area-settings-wanderer-controls-narrow`; `Object.throws` / `AssertionError: zero-area` | PASS |
+| `zero-area-fittings-copy-preflight-bottom-narrow` | `missing-fittings-copy-preflight-bottom-narrow` + `wrong-text-fittings-copy-preflight-bottom-narrow`; note existence + exact text | `clipped-fittings-copy-preflight-bottom-narrow`; remove note exposure check | independent width and supplemental zero-height production mutants; `zero-area-settings-wanderer-controls-narrow`; `Object.throws` / `AssertionError: zero-area` | PASS |
+| `zero-area-fittings-copy-result-bottom-narrow` | `missing-fittings-copy-result-bottom-narrow` + `wrong-text-fittings-copy-result-bottom-narrow`; status existence + exact text | `clipped-fittings-copy-result-bottom-narrow`; remove status from `requiredNodes` | independent width and supplemental zero-height production mutants; `zero-area-settings-wanderer-controls-narrow`; `Object.throws` / `AssertionError: zero-area` | PASS |
+
+### Task 2 conclusion
+
+No mutant survived or failed for a masked/unrelated reason. The expansion/redesign protocol was not triggered. Task 2 qualifies the exact approved generated candidate; Task 3 remains required before any executable reduction.
 
 ## Alerts mutation ledger
 
@@ -897,6 +3375,16 @@ NOT STARTED — Task 3 owns all Alerts control/mutant witnesses. Task 1 records 
 NOT STARTED — Task 4 owns the derived constants, sole executable edit, exact 20-row mapping, and after-edit collection proof. Task 1 records only the approved disposable projection and does not modify `tests/test_shoot_screens.py`.
 
 ## Local verification
+
+### Task 2
+
+- Exact 22 retained generated arguments plus the independent 13-case geometry function: `35 passed in 7.01s`.
+- Fifteen exact owner semantic/wiring worktree probe sequences: every green control passed; every mutant failed at the intended fixture `Object.throws` assertion; every exact inverse restoration and protected-path diff passed.
+- Hidden paired probe: original PASS, supplemental fixture-only control PASS, paired production mutant FAIL at `Object.throws` / `AssertionError: hidden`; both files restored to their original SHA-256 values.
+- Reproducibility Block C: 20 control/mutant sequences PASS/FAIL at their intended assertions, covering width, height, four edges, four tolerance attributions, five points, `.every()`, null, unrelated, direct-node, and descendant handling.
+- Final focused generated/protocol/isolation gate: `57 passed in 12.49s`.
+- `git diff --exit-code -- scripts/shoot_screens.py tests/fixtures/screenshot_pages.cjs`: PASS.
+- Candidate decision: `QUALIFIED`; no expansion and no redesign.
 
 ### Task 1
 
@@ -914,7 +3402,7 @@ NOT STARTED — Task 4 owns the derived constants, sole executable edit, exact 2
 
 ### Later tasks
 
-- NOT STARTED — Task 2 owns generated mutation verification.
+- COMPLETE — Task 2 generated mutation verification is recorded above.
 - NOT STARTED — Task 3 owns Alerts mutation verification.
 - NOT STARTED — Task 4 owns parameter-derivation verification.
 - NOT STARTED — Task 5 owns complete local endpoint verification.
@@ -932,7 +3420,7 @@ NOT STARTED — Task 6 owns Stage 3 publication and hosted candidate evidence. T
 - Artifact acquisition: both required PR #286 artifact roots already existed with exactly the two required files, so they were verified in place rather than downloaded again.
 - Discrepancies: none. Every source count/hash, disposable projection count/hash/diff, comparator tuple count, timing value, and run/job/checkout provenance value matched the approved requirements.
 - Expansions: none. Task 1 changed only this documentation path.
-- Concerns: none for the baseline freeze. Mutation qualification, executable acceptance, final local verification, and Stage 3 hosted comparison remain explicitly owned by later tasks.
+- Task 2 concerns: none. All generated owner and shared-helper mutants failed at the intended assertion; no survivor or masked failure triggered expansion/redesign. Executable acceptance, final local verification, and Stage 3 hosted comparison remain owned by later tasks.
 - No case was deleted and no executable file changed.
 
 ## Required self-review
@@ -945,3 +3433,10 @@ NOT STARTED — Task 6 owns Stage 3 publication and hosted candidate evidence. T
 - COMPLETE — checked every timing-table addition and minute/second conversion.
 - COMPLETE — reviewed the Task 1 diff for scope, placeholder markers, abbreviated future work, accidental executable edits, and case deletion.
 - REQUIRED BEFORE TASK 2 — a fresh reviewer independently reparses both collection reports and both comparator artifact sets, confirms all IDs/hashes/skip tuples/provenance, checks the timing arithmetic, and approves the Task 1 commit.
+
+- COMPLETE — Task 2 verified all ten owner semantic predicates and all five owner-to-helper wiring branches with exact temporary mutants.
+- COMPLETE — Task 2 verified hidden, positive width/height, four containment edges, exact one-pixel tolerance, all five hit-test points, `.every()`, null/unrelated rejection, and direct/descendant acceptance independently.
+- COMPLETE — fixture inputs were supplemental only; each qualifying result included a production/helper mutant.
+- COMPLETE — all 16 worktree mutation sequences restored exactly; all 20 Block C sequences were disposable; final protected-path diff was empty.
+- COMPLETE — audited all 13 removed generated identities against same-owner semantic evidence, same-owner wiring evidence, shared-helper evidence, intended assertions, and restoration proof.
+- COMPLETE — no candidate expansion, redesign, executable edit, or speedup claim was made in Task 2.
