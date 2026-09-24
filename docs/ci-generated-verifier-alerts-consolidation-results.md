@@ -21,7 +21,7 @@
 | Task 3 — qualify Alerts | COMPLETE — nine branch probes qualified the unchanged 24-case Alerts candidate; all nine exact restoration audits passed |
 | Task 4 — derive retained parameters and apply the sole executable edit | COMPLETE — Ruff-clean derived constants applied after Tasks 2–3 qualified; 220/90/91/101 = 502, exact 22+24 product, 20 removals, zero additions |
 | Task 5 — complete local verification | COMPLETE — fresh inventories, focused families, five 502-case orders, focused/full JUnit, exact 14-skip audit, independent gates, and scope/restoration audits passed |
-| Task 6 — polish, review, publication, and hosted evidence | COMPLETE THROUGH LOCAL EVIDENCE COMMIT — PR #287 rerun provenance/artifacts passed exact comparison against PR #286; bounded decision is GO for review of a separate later tranche only; evidence commit remains intentionally unpushed |
+| Task 6 — polish, review, publication, and hosted evidence | COMPLETE — PR #287 executable evidence passed exact comparison against PR #286; evidence commit `5d9a5bb1` was published and its exact evidence-head required checks passed; bounded decision remains GO for review of a separate later tranche only |
 
 ## Exact 522-ID baseline inventory
 
@@ -4497,9 +4497,23 @@ The current focused JUnit contains zero of the 20 published removed IDs. The fro
 - COMPLETE — Task 3 Alerts mutation verification is recorded above.
 - COMPLETE — Task 4 parameter derivation, exact collection delta, and affected-file verification are recorded above.
 - COMPLETE — Task 5 fresh local endpoint verification, JUnit/skip audit, independent gates, scope proof, and restoration/residue audits are recorded above.
-- COMPLETE — Task 6 local polish/review preparation, hosted PR #287 rerun provenance, exact PR #286 artifact comparison, bounded decision, and local evidence commit are recorded below. The evidence commit is intentionally not pushed, so no hosted evidence-head check is claimed.
+- COMPLETE — Task 6 local polish/review preparation, hosted PR #287 rerun provenance, exact PR #286 artifact comparison, bounded decision, evidence publication, and exact evidence-head required checks are recorded below. The later status-closing documentation commit is separate; after it is pushed, its own PR-head checks will be watched and are not claimed here.
 
 ## Hosted evidence
+
+### Publication and evidence-head validation
+
+Evidence commit `5d9a5bb108a5c1f6552686c278d8c6752f97f0f0` was pushed to `fork/ci-generated-verifier-alerts-consolidation` and became PR #287's documentation head. GitHub Actions run `35999122434` completed successfully on that exact head with every required job passing:
+
+| Required job | Job ID | Conclusion | Elapsed |
+|---|---:|---|---:|
+| `checks` | `107631131175` | success | 15s |
+| `test (ubuntu-latest)` | `107631131565` | success | 7m16s |
+| `test (windows-latest)` | `107631131451` | success | 13m13s |
+
+These elapsed values identify the evidence-head validation jobs only. Because the run validates the documentation head and unchanged executable checks, it is not a new hosted timing sample and is excluded from the testcase, Test-step, job-duration, regression, and improvement observations below.
+
+Task 6 publication and evidence-head validation are complete. The status-closing documentation commit that records this completion is a separate later PR head: it is committed locally by this task but is not pushed here. After a later push, its own PR-head checks will be watched; no result for that separate head is claimed in this record.
 
 ### Runs and attempt separation
 
@@ -4642,7 +4656,7 @@ The final execution used only these two temporary evidence-preserving substituti
 
 **GO — for review of a separate later tranche only.** Required rerun jobs passed; exact per-job provenance, merge parents, artifacts, cross-platform identities, skip tuples, 20 removals, zero additions, target hash, complete synthetic diff, and protected-path contracts all passed. The mixed one-run target timing observations above do not establish a material regression or an improvement.
 
-This GO does not authorize workflow selection, budget enforcement, sharding, cadence changes, dependency changes, lower Fittings work, or any Stage 3, suite, job, runner-efficiency, critical-path, speedup, or overall-runtime claim. The evidence commit remains intentionally unpushed, so required checks on that documentation head are not claimed.
+This GO does not authorize workflow selection, budget enforcement, sharding, cadence changes, dependency changes, lower Fittings work, or any Stage 3, suite, job, runner-efficiency, critical-path, speedup, or overall-runtime claim. Evidence commit `5d9a5bb1` was pushed and its exact documentation-head required checks passed in run `35999122434`. The later status-closing documentation commit is separate; its own PR-head checks will be watched after push and are not claimed here.
 
 ## Deviations, expansions, and concerns
 
@@ -4657,7 +4671,7 @@ This GO does not authorize workflow selection, budget enforcement, sharding, cad
 - Task 6 initial hosted attempt: Ubuntu failed only the unmodified Fleet submit-flood real-thread test; Windows failed that test plus the unmodified Fleet held-publication mailbox test. Failed-attempt artifacts are identified separately and excluded from passing evidence. The successful rerun passed both.
 - Task 6 collector compatibility: exact Block E exposed `gh` 2.100.0 cross-repository PR resolution and abbreviated-fetch incompatibilities. The final run used explicit PR #287 and the already-published full baseline SHA only; all evidence assertions otherwise ran unchanged.
 - Task 6 timing concern: Windows four-file/common-retained and all-case/Test/job observations are higher than the comparator while the product sums are lower. One run supports neither a regression attribution nor an improvement claim; no speedup or overall conclusion is made.
-- Task 6 publication boundary: the local evidence commit is intentionally not pushed. Hosted checks on the evidence-document head and the plan's final fresh-reviewer gate remain unclaimed.
+- Task 6 publication boundary: evidence commit `5d9a5bb1` was pushed and all required checks passed on that exact evidence head in run `35999122434`. This status-closing documentation commit is separate and is not pushed by this task; its own PR-head checks will be watched after push and are not claimed here. The plan's fresh-reviewer gate remains unclaimed under the explicit no-subagent boundary.
 
 ## Required self-review
 
@@ -4706,4 +4720,5 @@ This GO does not authorize workflow selection, budget enforcement, sharding, cad
 - COMPLETE — Task 6 reparsed both platforms: 16,605 equal identities, exact 14/67 comparator-matching skip tuples, zero failures/errors, `220 / 90 / 91 / 101 = 502`, hash `592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a`, exact 20 removals, and zero additions.
 - COMPLETE — Task 6 checked generated, Alerts, combined-product, per-file, four-file, all-case, removed-ID, and common-retained-ID testcase sums plus API Test-step/job observations without making a speedup or overall claim.
 - COMPLETE — Task 6 decision is bounded GO for review of a separate later tranche only; no workflow, budget, shard, cadence, dependency, lower-Fittings, or timing action is authorized.
-- NOT CLAIMED — the evidence commit is not pushed, so hosted checks on the exact documentation head and a fresh final reviewer approval remain outside this evidence record.
+- COMPLETE — evidence commit `5d9a5bb1` was pushed, PR #287 run `35999122434` targeted that exact head, and required jobs `107631131175`, `107631131565`, and `107631131451` all passed.
+- NOT CLAIMED — hosted checks on the separate later status-closing documentation commit; they will be watched after push. A fresh final reviewer approval also remains outside this evidence record under the explicit no-subagent boundary.
