@@ -8,8 +8,10 @@ case. The portable fixture is hand-authored independently of the DAT fixtures,
 not computed by a projection that could duplicate an adapter's mistakes.
 """
 
+import contextlib
 import copy
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -118,7 +120,34 @@ def install_lossless_codec(monkeypatch) -> None:
     monkeypatch.setattr(codec, "codec_available", lambda: True)
 
 
-def seed_profile(tmp_path, *, case="recipient", name="Base") -> ProfileFixture:
+def _publish_fresh_file(path: Path, data: bytes) -> None:
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        remaining = memoryview(data)
+        while remaining:
+            written = os.write(descriptor, remaining)
+            if written <= 0:
+                raise OSError("Fresh fixture write made no progress.")
+            remaining = remaining[written:]
+        os.close(descriptor)
+        descriptor = None
+    except BaseException:
+        if descriptor is not None:
+            with contextlib.suppress(BaseException):
+                os.close(descriptor)
+        with contextlib.suppress(BaseException):
+            os.unlink(path)
+        raise
+
+
+def seed_profile(
+    tmp_path,
+    *,
+    case="recipient",
+    name="Base",
+    initial_dat_publish=None,
+) -> ProfileFixture:
     """Seed test-only files through the real codec writer and atomic publication.
 
     Install the lossless transport first for portable tests. The YAML/INI are
@@ -134,7 +163,15 @@ def seed_profile(tmp_path, *, case="recipient", name="Base") -> ProfileFixture:
     character_path = profile / f"core_char_{character_id}.dat"
     for path, document in ((account_path, account), (character_path, character)):
         # These files do not exist yet; there is no previous content to back up.
-        codec.write_document(path, document, backup=lambda path: None)
+        if initial_dat_publish is None:
+            codec.write_document(path, document, backup=lambda path: None)
+        else:
+            codec.write_document(
+                path,
+                document,
+                backup=lambda path: None,
+                publish=initial_dat_publish,
+            )
     if case == "source":
         yaml_bytes = b"# synthetic source local preferences\nuiScale: 1.0\n"
         ini_bytes = b"; synthetic source local preferences\nmonitor=1\n"

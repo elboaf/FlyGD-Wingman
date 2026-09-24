@@ -11,12 +11,113 @@ Task 1 changes documentation only. No executable file or test identity changed.
 ## Task status
 
 - Task 1: **COMPLETE** — exact ordered inventories, actual newline-normalized hashes, comparator provenance and extracted-file integrity, complete normalized skip tuples, and timing observations are frozen below.
-- Task 2: **NOT STARTED — Task 2 owns fresh-publisher, optional seed seam, parity, isolation, and direct failure-contract evidence.**
+- Task 2: **COMPLETE** — the fresh test-only publisher, optional seed seam, comprehensive parity/isolation/failure witness, default atomic-path evidence, and restoration-safe mutation qualification are recorded below.
 - Task 3: **NOT STARTED — Task 3 owns controller-fixture opt-in and controller-body persistence evidence.**
 - Task 4: **NOT STARTED — Task 4 owns complete local endpoint verification.**
 - Task 5: **NOT STARTED — Task 5 owns final polish, whole review, publication stop, and hosted comparison.**
 
 Task 1 changed path: `docs/ci-setup-controller-fixture-construction-results.md` only.
+
+## Task 2 fresh-publisher qualification
+
+Task 2 adds `_publish_fresh_file(path: Path, data: bytes) -> None` only in
+`tests/setup_fixtures.py`. It claims a new destination with one
+`os.open(..., O_CREAT | O_EXCL | O_WRONLY | O_BINARY, 0o600)` call, writes until
+all bytes are consumed, performs no preflight or fsync, closes on success, and on
+any write/close failure retries close when needed, attempts to unlink the partial
+file, suppresses cleanup failures, and re-raises the original exception object.
+`seed_profile(..., initial_dat_publish=None)` omits the `publish` keyword when the
+seam is not supplied, so every existing caller keeps `codec.write_document`'s
+atomic default. YAML and INI publication is unchanged.
+
+### TDD and first witness identity
+
+- RED command:
+  `uv run --no-sync python -m pytest tests/test_ui_setup_controller.py::test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_failures -q`
+- RED result: `1 failed`; the first witness failed at its first helper call with
+  `AttributeError: module 'tests.setup_fixtures' has no attribute '_publish_fresh_file'`.
+- Minimal-helper GREEN result: `1 passed`.
+- Interim controller collection: `189` IDs, `189` unique, ordered SHA-256
+  `b1b231bb8632001473ff285a76772709a742a34607eb19067f396747de277149`.
+- The frozen Task 1 `188` IDs are the exact ordered prefix. The only suffix is
+  `tests/test_ui_setup_controller.py::test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_failures`.
+- Structural `setup` fixture users remain exactly the frozen `136` IDs, in the
+  same order.
+
+### Comprehensive witness evidence
+
+The non-parameterized witness passes all of these branches in one execution:
+
+- Default construction: two profiles and four DAT files produce exactly four
+  atomic-channel fsync calls, zero direct-channel fsync calls, and zero fresh
+  publisher opens.
+- Fresh construction: the first source/recipient pair performs exactly four
+  exclusive destination opens, each with flags
+  `O_CREAT | O_EXCL | O_WRONLY | O_BINARY` and mode `0o600`; both atomic and
+  direct fsync counts are zero and no descriptor remains tracked.
+- Parity: source and recipient inventories are byte-identical to atomic
+  construction before snapshot comparison; decoded documents, CRC state,
+  content revisions, JSON type/order, discovery, and captured manifests also
+  agree.
+- Distinctions: source DAT identities are `core_user_10.dat` and
+  `core_char_11.dat`, recipient identities are `core_user_20.dat` and
+  `core_char_30.dat`; source documents retain CRC while recipient documents do
+  not; invented private account markers and exact LF/CRLF preference bytes stay
+  distinct.
+- Isolation: separate source/recipient and repeated fixture roots are different
+  directories and inodes, all files are writable regular files with link count
+  one, observation does not change stable metadata, mutating one DAT does not
+  change the other fixture, no template path exists, and duplicate construction
+  refuses with `FileExistsError` without changing the existing recipient.
+- Direct success/refusal: no `Path` or `os.path` existence/stat preflight is
+  allowed; success writes exact bytes and closes once; an existing destination
+  remains `b"keep"` and is never unlinked.
+- Partial/failure contracts: partial writes complete; zero progress raises the
+  exact helper `OSError`; injected write and close exceptions retain object
+  identity; reported close failure causes the expected cleanup close retry;
+  cleanup-close and cleanup-unlink failures cannot mask the original write
+  exception; successful cleanup removes partials while cleanup-unlink failure
+  leaves exactly `b"ab"`.
+- Teardown: proxies track real descriptors immediately after open, discard only
+  after physical close, retry any genuinely tracked descriptors before file
+  cleanup, and finish with zero release failures, cleanup failures, or tracked
+  descriptors.
+
+Focused/default-path gate:
+
+```text
+5 passed
+```
+
+The command included the comprehensive witness and these four unchanged schema
+callers: real discovery/local-byte preservation, source distinctions, lossless
+revision/publication guards, and verification-before-publish. Their passing
+results independently show that omission of the new seam keeps ordinary calls
+on atomic publication.
+
+### Restoration-safe mutation qualification
+
+Every row ran independently through `/tmp/setup_fixture_mutation_probe.py`.
+Each mutant failed at its intended assertion, then restored exact target bytes,
+SHA-256, complete binary diff, and porcelain-v2 status. The common restored
+`tests/setup_fixtures.py` SHA-256 was
+`534c8d26b2afe2fcb25f1c4632013a362514312099b194f2de35963147f35639`.
+The committed witness passed immediately before and after the catalog.
+
+| Mutant | Intended and observed RED |
+|---|---|
+| `remove-o-excl` | `fresh open flags changed: 0x41 != 0xc1` before delegation |
+| `path-preflight` | `fresh publisher called Path.exists`; exclusive flags remained in the helper |
+| `direct-fsync` | `fast direct fsync count changed` |
+| `atomic-delegation` | `fast atomic fsync count changed` |
+| `extra-byte` | earliest `source byte inventory differs` |
+| `mapping-order` | earliest `source byte inventory differs` |
+| `line-endings` | `recipient byte inventory differs` |
+| `hardlink-template` | `fast-a link count changed` before byte equality could hide aliasing |
+
+Task 2 changes only `tests/setup_fixtures.py`,
+`tests/test_ui_setup_controller.py`, and this results ledger. Production code,
+unchanged schema/profile/integration tests, and the page fixture have zero diff.
 
 ## Exact 188-ID controller baseline
 
