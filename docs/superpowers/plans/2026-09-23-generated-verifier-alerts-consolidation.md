@@ -400,7 +400,7 @@ import hashlib,json,random,subprocess,sys
 W=Path('/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation'); P=W/'.venv/bin/python'; O=Path('/tmp/wingman-stage3-five-orders'); dry='--dry-run' in sys.argv
 F=('tests/test_shoot_screens.py','tests/test_new_screenshots.py','tests/test_current_screenshots.py','tests/test_fittings_page.py')
 def h(n): return hashlib.sha256(('\n'.join(n)+'\n').encode()).hexdigest()
-if dry: nodes=[x for x in Path('/tmp/wingman-stage3-inventory/candidate-502.txt').read_text().splitlines() if x.startswith('tests/')]
+if dry: nodes=[x for x in Path('/tmp/wingman-stage3-inventory/candidate-actual-502.txt').read_text().splitlines() if x.startswith('tests/')]
 else:
  r=subprocess.run([str(P),'-m','pytest',*F,'--collect-only','-q','-p','no:cacheprovider'],cwd=W,text=True,capture_output=True,check=True,timeout=180); nodes=[x for x in r.stdout.splitlines() if x.startswith('tests/')]
 assert len(nodes)==len(set(nodes))==502 and h(nodes)=='592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a'
