@@ -7,13 +7,15 @@ import io
 import json
 import logging
 import os
-from dataclasses import fields, replace
+import stat
+from collections import Counter
+from dataclasses import asdict, fields, replace
 from pathlib import Path
 from uuid import UUID
 
 import pytest
 
-from tests import fakes, test_setup_catalog
+from tests import fakes, setup_fixtures, test_setup_catalog
 from tests.setup_fixtures import (
     ProfileFixture,
     install_lossless_codec,
@@ -31,7 +33,9 @@ from wingman.evesettings import (
     setup_model,
     setup_profile,
     setup_sharing,
+    tree,
 )
+from wingman.evesettings import controller as controller_mod
 from wingman.evesettings.controller import _SetupReview
 from wingman.ui import api as api_mod
 
@@ -41,8 +45,16 @@ catalog_fixture = test_setup_catalog.catalog_fixture
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
     install_lossless_codec(monkeypatch)
-    source = seed_profile(tmp_path, case="source", name="Source")
-    base = seed_profile(tmp_path)
+    source = seed_profile(
+        tmp_path,
+        case="source",
+        name="Source",
+        initial_dat_publish=setup_fixtures._publish_fresh_file,
+    )
+    base = seed_profile(
+        tmp_path,
+        initial_dat_publish=setup_fixtures._publish_fresh_file,
+    )
     controller = build_controller(tmp_path)
     controller._settings["eve_settings"].update(
         root=str(source.root),
@@ -1989,3 +2001,642 @@ def test_file_save_rejects_non_json_destination_without_writing(tmp_path):
     result = controller.setup_save_file(setup_sharing.export_text(wire()))
     assert not result["ok"] and not result["cancelled"] and result["path"] == ""
     assert target.read_bytes() == b"keep"
+
+
+class _OSProxy:
+    def __init__(
+        self,
+        real,
+        *,
+        assert_fresh_open=False,
+        write_steps=(),
+        close_errors=(),
+        unlink_errors=(),
+    ):
+        self._real = real
+        self._assert_fresh_open = assert_fresh_open
+        self._write_steps = list(write_steps)
+        self._close_errors = list(close_errors)
+        self._unlink_errors = list(unlink_errors)
+        self.open_calls = []
+        self.open_descriptors = set()
+        self.write_calls = []
+        self.close_calls = []
+        self.unlink_calls = []
+        self.fsync_calls = []
+        self.fsync_categories = []
+        self.current_category = None
+        self.category_events = None
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def open(self, path, flags, mode=0o777):
+        call = (Path(path), flags, mode)
+        self.open_calls.append(call)
+        if self._assert_fresh_open:
+            expected = (
+                self._real.O_CREAT
+                | self._real.O_EXCL
+                | self._real.O_WRONLY
+                | getattr(self._real, "O_BINARY", 0)
+            )
+            assert flags == expected, (
+                f"fresh open flags changed: {flags:#x} != {expected:#x}"
+            )
+            assert mode == 0o600, f"fresh open mode changed: {mode:o}"
+        descriptor = self._real.open(path, flags, mode)
+        self.open_descriptors.add(descriptor)
+        return descriptor
+
+    def write(self, descriptor, data):
+        self.write_calls.append((descriptor, bytes(data)))
+        if self._write_steps:
+            step = self._write_steps.pop(0)
+            if isinstance(step, BaseException):
+                raise step
+            if step == 0:
+                return 0
+            return self._real.write(descriptor, data[:step])
+        return self._real.write(descriptor, data)
+
+    def close(self, descriptor):
+        self.close_calls.append(descriptor)
+        result = self._real.close(descriptor)
+        self.open_descriptors.discard(descriptor)
+        if self._close_errors:
+            raise self._close_errors.pop(0)
+        return result
+
+    def release_tracked(self):
+        failures = []
+        for descriptor in tuple(self.open_descriptors):
+            try:
+                self._real.close(descriptor)
+            except OSError as error:
+                failures.append((descriptor, error))
+            else:
+                self.open_descriptors.discard(descriptor)
+        return failures
+
+    def unlink(self, path):
+        self.unlink_calls.append(Path(path))
+        if self._unlink_errors:
+            raise self._unlink_errors.pop(0)
+        return self._real.unlink(path)
+
+    def fsync(self, descriptor):
+        self.fsync_calls.append(descriptor)
+        if self.current_category is not None:
+            self.fsync_categories.append(self.current_category)
+            if self.category_events is not None:
+                self.category_events.append(self.current_category)
+        return self._real.fsync(descriptor)
+
+    @contextlib.contextmanager
+    def category(self, name):
+        previous = self.current_category
+        self.current_category = name
+        try:
+            yield
+        finally:
+            self.current_category = previous
+
+
+class _PathProxy:
+    def __init__(self, real):
+        self._real = real
+
+    def __getattr__(self, name):
+        if name in {"exists", "lexists", "isfile", "isdir", "islink"}:
+            raise AssertionError(f"fresh publisher called os.path.{name}")
+        return getattr(self._real, name)
+
+
+class _ClockProxy:
+    def __init__(self, real, now):
+        self._real = real
+        self._now = now
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def time(self):
+        return self._now
+
+
+def _normalized_paths(value, root):
+    if isinstance(value, Path):
+        return value.relative_to(root).as_posix()
+    if isinstance(value, dict):
+        return {key: _normalized_paths(item, root) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_normalized_paths(item, root) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_normalized_paths(item, root) for item in value)
+    return value
+
+
+def _normalized_discovery(profile):
+    value = asdict(tree.discover(profile.root, profile.server, profile.profile))
+    for row in value["profiles"]:
+        row.pop("modified")
+    return _normalized_paths(value, profile.root)
+
+
+def _profile_manifest(profile):
+    found = tree.discover(profile.root, profile.server, profile.profile)
+    plan = profilecopy.prepare_copy(found, profile.profile, "new", "ManifestTarget")
+    return setup_profile.capture_manifest(plan)
+
+
+def _normalized_manifest(profile):
+    return _normalized_paths(asdict(_profile_manifest(profile)), profile.root)
+
+
+def _fixture_inventory(profile):
+    return {
+        path.relative_to(profile.profile).as_posix(): path.read_bytes()
+        for path in sorted(profile.profile.rglob("*"))
+        if path.is_file()
+    }
+
+
+def _fixture_files(profile):
+    return {
+        path.relative_to(profile.profile).as_posix(): path
+        for path in sorted(profile.profile.rglob("*"))
+        if path.is_file()
+    }
+
+
+def _stable_metadata(path):
+    info = path.stat()
+    return (
+        info.st_dev,
+        info.st_ino,
+        stat.S_IFMT(info.st_mode),
+        stat.S_IMODE(info.st_mode),
+        info.st_size,
+        info.st_nlink,
+    )
+
+
+def _seed_pair(root, publisher=None):
+    kwargs = {} if publisher is None else {"initial_dat_publish": publisher}
+    return (
+        seed_profile(root, case="source", name="Source", **kwargs),
+        seed_profile(root, **kwargs),
+    )
+
+
+def _snapshots(profile):
+    return (
+        codec.read_snapshot(profile.account_path),
+        codec.read_snapshot(profile.character_path),
+    )
+
+
+def test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_failures(
+    tmp_path, monkeypatch, request
+):
+    install_lossless_codec(monkeypatch)
+    real_os = os
+    expected_flags = (
+        real_os.O_CREAT
+        | real_os.O_EXCL
+        | real_os.O_WRONLY
+        | getattr(real_os, "O_BINARY", 0)
+    )
+    direct = _OSProxy(real_os, assert_fresh_open=True)
+    direct.path = _PathProxy(real_os.path)
+    atomic = _OSProxy(real_os)
+    proxies = [direct, atomic]
+    direct_root = tmp_path / "direct"
+
+    def make_proxy(**kwargs):
+        proxy = _OSProxy(real_os, assert_fresh_open=True, **kwargs)
+        proxies.append(proxy)
+        return proxy
+
+    def release_descriptors_and_files():
+        release_failures = []
+        for proxy in proxies:
+            release_failures.extend(proxy.release_tracked())
+        cleanup_failures = []
+        if direct_root.exists():
+            for path in direct_root.iterdir():
+                try:
+                    path.unlink()
+                except OSError as error:
+                    cleanup_failures.append((path, error))
+        assert release_failures == [], release_failures
+        assert cleanup_failures == [], cleanup_failures
+        assert all(not proxy.open_descriptors for proxy in proxies)
+
+    request.addfinalizer(release_descriptors_and_files)
+    monkeypatch.setattr(setup_fixtures, "os", direct)
+    monkeypatch.setattr(atomicio, "os", atomic)
+
+    atomic_source, atomic_recipient = _seed_pair(tmp_path / "atomic")
+    assert len(atomic.fsync_calls) == 4, "default construction fsync count changed"
+    assert direct.fsync_calls == [], "default construction used direct fsync channel"
+    assert direct.open_calls == [], "default construction used fresh publisher"
+
+    atomic.fsync_calls.clear()
+    fast_source, fast_recipient = _seed_pair(
+        tmp_path / "fast-a", setup_fixtures._publish_fresh_file
+    )
+    assert atomic.fsync_calls == [], "fast atomic fsync count changed"
+    assert direct.fsync_calls == [], "fast direct fsync count changed"
+    assert len(direct.open_calls) == 4, "fast destination open count changed"
+    assert direct.open_descriptors == set()
+    assert atomic.open_descriptors == set()
+    assert all(
+        flags == expected_flags and mode == 0o600
+        for _path, flags, mode in direct.open_calls
+    ), direct.open_calls
+
+    roles = (
+        ("source", atomic_source, fast_source),
+        ("recipient", atomic_recipient, fast_recipient),
+    )
+    for role, atomic_profile, fast_profile in roles:
+        assert _fixture_inventory(atomic_profile) == _fixture_inventory(fast_profile), (
+            f"{role} byte inventory differs"
+        )
+        atomic_snapshots = _snapshots(atomic_profile)
+        fast_snapshots = _snapshots(fast_profile)
+        assert atomic_snapshots == fast_snapshots, f"{role} snapshots differ"
+        assert [row.document.had_crc for row in atomic_snapshots] == [
+            row.document.had_crc for row in fast_snapshots
+        ]
+        assert [row.content_revision for row in atomic_snapshots] == [
+            row.content_revision for row in fast_snapshots
+        ]
+        assert [
+            json.dumps(row.document.doc, ensure_ascii=False) for row in atomic_snapshots
+        ] == [
+            json.dumps(row.document.doc, ensure_ascii=False) for row in fast_snapshots
+        ], f"{role} JSON type/order differs"
+        assert _normalized_discovery(atomic_profile) == _normalized_discovery(
+            fast_profile
+        ), f"{role} discovery differs"
+        assert _normalized_manifest(atomic_profile) == _normalized_manifest(
+            fast_profile
+        ), f"{role} manifest differs"
+
+    assert (fast_source.account_path.name, fast_source.character_path.name) == (
+        "core_user_10.dat",
+        "core_char_11.dat",
+    )
+    assert (fast_recipient.account_path.name, fast_recipient.character_path.name) == (
+        "core_user_20.dat",
+        "core_char_30.dat",
+    )
+    source_snapshots = _snapshots(fast_source)
+    recipient_snapshots = _snapshots(fast_recipient)
+    assert [row.document.had_crc for row in source_snapshots] == [True, True]
+    assert [row.document.had_crc for row in recipient_snapshots] == [False, False]
+    assert source_snapshots[0].document.doc["bytes:syntheticPrivate"] == {
+        "bytes:accountID": 10,
+        "bytes:marker": "utf8:Synthetic private source account",
+    }
+    assert recipient_snapshots[0].document.doc["bytes:syntheticPrivate"] == {
+        "bytes:accountID": 20,
+        "bytes:marker": "utf8:Synthetic private recipient account",
+    }
+    expected_preferences = {
+        "source": {
+            "core_public__.yaml": b"# synthetic source local preferences\nuiScale: 1.0\n",
+            "prefs.ini": b"; synthetic source local preferences\nmonitor=1\n",
+        },
+        "recipient": {
+            "core_public__.yaml": b"# synthetic recipient local preferences\r\nuiScale: 1.25\r\n",
+            "prefs.ini": b"; synthetic recipient local preferences\r\nmonitor=2\r\n",
+        },
+    }
+    for role, profile in (("source", fast_source), ("recipient", fast_recipient)):
+        assert {
+            name: (profile.profile / name).read_bytes()
+            for name in expected_preferences[role]
+        } == expected_preferences[role]
+
+    second_source, second_recipient = _seed_pair(
+        tmp_path / "fast-b", setup_fixtures._publish_fresh_file
+    )
+    assert fast_source.profile != fast_recipient.profile
+    assert not fast_source.profile.samefile(fast_recipient.profile)
+    first_files = _fixture_files(fast_source)
+    second_files = _fixture_files(second_source)
+    assert set(first_files) == set(second_files)
+    for name in first_files:
+        first = first_files[name]
+        second = second_files[name]
+        assert stat.S_ISREG(first.stat().st_mode) and stat.S_ISREG(
+            second.stat().st_mode
+        )
+        assert real_os.access(first, real_os.W_OK) and real_os.access(
+            second, real_os.W_OK
+        )
+        assert first.stat().st_nlink == 1, "fast-a link count changed"
+        assert second.stat().st_nlink == 1, "fast-b link count changed"
+        assert not first.samefile(second), "fast fixtures share inode"
+
+    metadata_before = {
+        name: _stable_metadata(path)
+        for name, path in _fixture_files(fast_recipient).items()
+    }
+    _snapshots(fast_recipient)
+    _normalized_discovery(fast_recipient)
+    _normalized_manifest(fast_recipient)
+    assert {
+        name: _stable_metadata(path)
+        for name, path in _fixture_files(fast_recipient).items()
+    } == metadata_before, "stable metadata changed during observation"
+
+    second_before = _fixture_inventory(second_source)
+    fast_source.account_path.write_bytes(fast_source.account_path.read_bytes() + b" ")
+    assert _fixture_inventory(second_source) == second_before, (
+        "fast fixtures share data"
+    )
+    assert not [path for path in tmp_path.rglob("*") if "template" in path.name.lower()]
+    before_duplicate = _fixture_inventory(fast_recipient)
+    with pytest.raises(FileExistsError):
+        seed_profile(
+            tmp_path / "fast-a",
+            initial_dat_publish=setup_fixtures._publish_fresh_file,
+        )
+    assert _fixture_inventory(fast_recipient) == before_duplicate
+    assert second_recipient.profile != fast_recipient.profile
+
+    def forbidden_path(name):
+        def forbidden(*_args, **_kwargs):
+            raise AssertionError(f"fresh publisher called Path.{name}")
+
+        return forbidden
+
+    def direct_call(path, payload, proxy, *, forbid_preflight=False):
+        proxy.path = _PathProxy(real_os.path)
+        error = None
+        with monkeypatch.context() as patch:
+            patch.setattr(setup_fixtures, "os", proxy)
+            if forbid_preflight:
+                for name in (
+                    "exists",
+                    "stat",
+                    "lstat",
+                    "is_file",
+                    "is_dir",
+                    "is_symlink",
+                ):
+                    patch.setattr(Path, name, forbidden_path(name))
+            try:
+                setup_fixtures._publish_fresh_file(path, payload)
+            except (AssertionError, OSError, RuntimeError) as caught:
+                error = caught
+        return error
+
+    direct_root.mkdir()
+    success = direct_root / "success.dat"
+    proxy = make_proxy()
+    assert direct_call(success, b"payload", proxy, forbid_preflight=True) is None
+    assert success.read_bytes() == b"payload"
+    assert proxy.open_calls == [(success, expected_flags, 0o600)]
+    assert len(proxy.close_calls) == 1 and proxy.fsync_calls == []
+
+    existing = direct_root / "existing.dat"
+    existing.write_bytes(b"keep")
+    proxy = make_proxy()
+    error = direct_call(existing, b"replace", proxy, forbid_preflight=True)
+    assert isinstance(error, FileExistsError)
+    assert proxy.open_calls == [(existing, expected_flags, 0o600)]
+    assert existing.read_bytes() == b"keep"
+
+    partial = direct_root / "partial.dat"
+    proxy = make_proxy(write_steps=(2, 1, 1))
+    assert direct_call(partial, b"abcdef", proxy) is None
+    assert partial.read_bytes() == b"abcdef"
+    assert len(proxy.write_calls) >= 4 and len(proxy.close_calls) == 1
+
+    write_failure = RuntimeError("write sentinel")
+    close_failure = RuntimeError("close sentinel")
+    cleanup_close_original = RuntimeError("original cleanup-close write failure")
+    cleanup_close = RuntimeError("cleanup close failure")
+    cleanup_unlink_original = RuntimeError("original cleanup-unlink write failure")
+    cleanup_unlink = RuntimeError("cleanup unlink failure")
+    failure_cases = [
+        {
+            "name": "zero-progress",
+            "path": direct_root / "zero.dat",
+            "proxy": make_proxy(write_steps=(2, 0)),
+            "original": None,
+            "fragment": "no progress",
+            "close_count": 1,
+            "remaining": None,
+        },
+        {
+            "name": "write-failure",
+            "path": direct_root / "write-failure.dat",
+            "proxy": make_proxy(write_steps=(2, write_failure)),
+            "original": write_failure,
+            "fragment": "",
+            "close_count": 1,
+            "remaining": None,
+        },
+        {
+            "name": "close-failure",
+            "path": direct_root / "close-failure.dat",
+            "proxy": make_proxy(close_errors=(close_failure,)),
+            "original": close_failure,
+            "fragment": "",
+            "close_count": 2,
+            "remaining": None,
+        },
+        {
+            "name": "cleanup-close-failure",
+            "path": direct_root / "cleanup-close.dat",
+            "proxy": make_proxy(
+                write_steps=(2, cleanup_close_original),
+                close_errors=(cleanup_close,),
+            ),
+            "original": cleanup_close_original,
+            "fragment": "",
+            "close_count": 1,
+            "remaining": None,
+        },
+        {
+            "name": "cleanup-unlink-failure",
+            "path": direct_root / "cleanup-unlink.dat",
+            "proxy": make_proxy(
+                write_steps=(2, cleanup_unlink_original),
+                unlink_errors=(cleanup_unlink,),
+            ),
+            "original": cleanup_unlink_original,
+            "fragment": "",
+            "close_count": 1,
+            "remaining": b"ab",
+        },
+    ]
+    for case in failure_cases:
+        error = direct_call(case["path"], b"abcdef", case["proxy"])
+        if case["original"] is None:
+            assert type(error) is OSError, case["name"]
+            assert case["fragment"] in str(error), case["name"]
+        else:
+            assert error is case["original"], f"{case['name']} masked original failure"
+        assert len(case["proxy"].close_calls) == case["close_count"], case["name"]
+        assert case["proxy"].unlink_calls == [case["path"]], case["name"]
+        if case["remaining"] is None:
+            assert not case["path"].exists(), case["name"]
+        else:
+            assert case["path"].read_bytes() == case["remaining"], case["name"]
+        assert case["proxy"].open_descriptors == set(), case["name"]
+
+
+def test_fast_fixture_construction_preserves_controller_body_atomic_persistence(
+    tmp_path, monkeypatch
+):
+    real_os = os
+    direct = _OSProxy(real_os, assert_fresh_open=True)
+    direct.path = _PathProxy(real_os.path)
+    atomic = _OSProxy(real_os)
+    monkeypatch.setattr(setup_fixtures, "os", direct)
+    monkeypatch.setattr(atomicio, "os", atomic)
+
+    controller, source, base = setup.__wrapped__(tmp_path, monkeypatch)
+    construction = {
+        "opens": list(direct.open_calls),
+        "direct_fsyncs": len(direct.fsync_calls),
+        "atomic_fsyncs": len(atomic.fsync_calls),
+    }
+    assert construction["opens"] and len(construction["opens"]) == 4
+    assert construction["direct_fsyncs"] == 0
+    assert construction["atomic_fsyncs"] == 0
+    assert direct.open_descriptors == set()
+    assert atomic.open_descriptors == set()
+    assert controller._settings["eve_settings"]["profile"] == str(source.profile)
+
+    direct.open_calls.clear()
+    direct.fsync_calls.clear()
+    atomic.fsync_calls.clear()
+    atomic.fsync_categories.clear()
+    events = []
+    atomic.category_events = events
+
+    real_copy_atomic = atomicio.copy_atomic
+    real_write_bytes_atomic = atomicio.write_bytes_atomic
+    real_write_atomic = atomicio.write_atomic
+    real_write_document = codec.write_document
+    real_publish_new = profilecopy.publish_new
+    real_clock = controller_mod.time
+    monkeypatch.setattr(controller_mod, "time", _ClockProxy(real_clock, 1000.0))
+
+    parsed = setup_sharing.parse_text(setup_sharing.export_text(wire()))
+    expected_account, expected_character = setup_documents.apply_setup(
+        codec.read_document(base.account_path),
+        codec.read_document(base.character_path),
+        parsed,
+        keep_ship_labels=False,
+        now=1000.0,
+    )
+
+    def expected_lossless(document):
+        envelope = {"had_crc": document.had_crc, "doc": document.doc}
+        return b"\x7d" + json.dumps(envelope, ensure_ascii=False).encode("utf-8")
+
+    def copy_atomic(source_path, target_path, *args, **kwargs):
+        category = (
+            "stage_dat_copy"
+            if Path(target_path).suffix == ".dat"
+            else "stage_local_copy"
+        )
+        with atomic.category(category):
+            return real_copy_atomic(source_path, target_path, *args, **kwargs)
+
+    def write_document(path, document, **kwargs):
+        target = Path(path)
+        if (
+            "publish" not in kwargs
+            and target.parent.name.startswith(profilecopy.STAGE_PREFIX)
+            and target.parent.name.endswith(profilecopy.STAGE_SUFFIX)
+        ):
+
+            def publish(rewrite_path, data):
+                with atomic.category("rewrite_dat"):
+                    return real_write_bytes_atomic(rewrite_path, data)
+
+            kwargs["publish"] = publish
+        return real_write_document(target, document, **kwargs)
+
+    def write_atomic(path, text, *args, **kwargs):
+        with atomic.category("selection"):
+            return real_write_atomic(path, text, *args, **kwargs)
+
+    publications = []
+
+    def publish_new(staged):
+        result = real_publish_new(staged)
+        publications.append(result)
+        events.append("directory_publish")
+        return result
+
+    monkeypatch.setattr(atomicio, "copy_atomic", copy_atomic)
+    monkeypatch.setattr(codec, "write_document", write_document)
+    monkeypatch.setattr(atomicio, "write_atomic", write_atomic)
+    monkeypatch.setattr(profilecopy, "publish_new", publish_new)
+
+    offer, queued = queue_create(controller, base)
+    queued.run_next()
+    done = assert_create_done(controller, offer, published=True)
+    assert done["selection_persisted"] is True and done["warning"] == ""
+    destination = offer.plan.destination
+    assert publications == [destination]
+
+    counts = Counter(atomic.fsync_categories)
+    expected_counts = Counter(
+        {
+            "stage_dat_copy": 2,
+            "stage_local_copy": 2,
+            "rewrite_dat": 2,
+            "selection": 1,
+        }
+    )
+    assert counts == expected_counts, f"body fsync categories changed: {counts}"
+    assert len(atomic.fsync_calls) == 7, "body fsync total changed"
+    assert events == [
+        "stage_dat_copy",
+        "stage_dat_copy",
+        "stage_local_copy",
+        "stage_local_copy",
+        "rewrite_dat",
+        "rewrite_dat",
+        "directory_publish",
+        "selection",
+    ], events
+    assert direct.open_calls == [] and direct.fsync_calls == []
+    assert direct.open_descriptors == set()
+    assert atomic.open_descriptors == set()
+
+    assert {path.name for path in destination.iterdir()} == {
+        base.account_path.name,
+        base.character_path.name,
+        "core_public__.yaml",
+        "prefs.ini",
+    }
+    assert (destination / base.account_path.name).read_bytes() == expected_lossless(
+        expected_account
+    )
+    assert (destination / base.character_path.name).read_bytes() == expected_lossless(
+        expected_character
+    )
+    assert (destination / "core_public__.yaml").read_bytes() == (
+        b"# synthetic recipient local preferences\r\nuiScale: 1.25\r\n"
+    )
+    assert (destination / "prefs.ini").read_bytes() == (
+        b"; synthetic recipient local preferences\r\nmonitor=2\r\n"
+    )
+    assert controller._settings["eve_settings"]["profile"] == str(destination)
+    assert not list(
+        base.server.glob(f"{profilecopy.STAGE_PREFIX}*{profilecopy.STAGE_SUFFIX}")
+    )
