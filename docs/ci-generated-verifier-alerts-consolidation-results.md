@@ -18,7 +18,7 @@
 |---|---|
 | Task 1 — freeze exact PR #286 baseline and comparator controls | COMPLETE — exact 522/66 inventories and hashes, disposable 502/46 projection, provenance, 67/14 skip tuples, and timing controls recorded |
 | Task 2 — qualify the generated candidate and shared helper | COMPLETE — 36 branch probes qualified the unchanged 22-case generated candidate; 16 worktree restorations and 20 disposable restorations passed |
-| Task 3 — qualify Alerts | NOT STARTED — Task 3 owns this evidence |
+| Task 3 — qualify Alerts | COMPLETE — nine branch probes qualified the unchanged 24-case Alerts candidate; all nine exact restoration audits passed |
 | Task 4 — derive retained parameters and apply the sole executable edit | NOT STARTED — Task 4 owns this evidence and remains forbidden until Tasks 2–3 are approved |
 | Task 5 — complete local verification | NOT STARTED — Task 5 owns this evidence |
 | Task 6 — polish, review, publication, and hosted evidence | NOT STARTED — Task 6 owns this evidence |
@@ -3404,13 +3404,305 @@ No mutant survived or failed for a masked/unrelated reason. The expansion/redesi
 
 ## Alerts mutation ledger
 
-NOT STARTED — Task 3 owns all Alerts control/mutant witnesses. Task 1 records no mutation result and authorizes no Alerts identity removal.
+### Task 3 decision and retained candidate
+
+- **Status:** COMPLETE.
+- **Alerts candidate:** **QUALIFIED** without expansion or redesign.
+- The approved 24 retained Alerts IDs are unchanged: all 15 base states; `missing-master`; `missing-health`; `hidden-master`; `invisible-health`; `display-none-master`; `clipped-master-top`; `clipped-master-right`; `clipped-health-bottom`; and `clipped-health-left`.
+- Because no retained ID changed, the approved Alerts 24-ID normalized SHA-256 remains `7a7fedcff8064e1190936bd7d52de3fabe524305c6bc2740837520d3085b425b`, the combined 46-ID product SHA-256 remains `359da2ca8f13df995ac43ed76bd0aa19ba75cb4ec3b1fe1e4fb6c8e6a38d71f9`, and the projected 502-ID four-file SHA-256 remains `592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a`.
+- The `hidden-master` fixture edit was supplemental input isolation only. Every qualifying red result included an exact production/helper mutation; no fixture-only result is counted as sensitivity evidence.
+
+### Green controls and restoration totals
+
+- Complete pre-probe Alerts/shared control gate: **46 passed in 6.54s** — all 31 Alerts cases, both walk cases, and all 13 shared geometry cases.
+- Initial future-retained Alerts/shared gate: **39 passed in 6.04s** — the exact 24 retained Alerts IDs, both walk cases, and all 13 shared geometry cases.
+- Fresh final retained gate: **39 passed in 5.96s**; fresh final complete gate: **46 passed in 6.67s**.
+- Nine production/helper probes ran after the complete control gate: two owner guards, three visibility mechanisms, and four exact edge comparisons. Every mutant failed at the intended fixture assertion.
+- **9/9 exact inverse restorations passed.** After every probe, `git diff --exit-code -- scripts/shoot_screens.py tests/fixtures/screenshot_alerts.cjs` passed.
+- Original/restored SHA-256: `scripts/shoot_screens.py` `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4`; `tests/fixtures/screenshot_alerts.cjs` `fb5dd2eb367c69e56cb8ace0101f7feb6b44f499a8bde39a3538ffc2b0cab3e1`.
+
+### Complete mutation outcome summary
+
+The common intended red location was the fixture's exact negative assertion:
+
+```javascript
+assert.throws(run, /Screenshot.*settings-alerts/, scenario + ' must refuse a misleading capture');
+```
+
+For every row below, Node exited with `AssertionError [ERR_ASSERTION]: Missing expected exception: <scenario> must refuse a misleading capture`; pytest then failed at `assert result.returncode == 0`. No row failed with `master.closest` `TypeError`, another scenario, a timeout, or a later generic framing error.
+
+| Probe | Exact retained witness | Exact production/helper mutation | Mutant assertion | Restoration |
+|---|---|---|---|---|
+| Master missing short circuit | `missing-master` | `if (!visible(master) || !exposed(...))` → `if (master && (!visible(master) || !exposed(...)))` | Missing expected exception: `missing-master must refuse a misleading capture` | [artifact:alerts-master-guard](#alerts-master-guard) |
+| Health missing short circuit | `missing-health` | `if (!health || !health.textContent.trim() || !exposed(...))` → `if (health && (!health.textContent.trim() || !exposed(...)))` | Missing expected exception: `missing-health must refuse a misleading capture` | [artifact:alerts-health-guard](#alerts-health-guard) |
+| Hidden ancestry | `hidden-master` | remove only `parent.hidden ||` from production `visible()`; supplemental fixture preserves client rects only for `hidden-master` | Missing expected exception: `hidden-master must refuse a misleading capture` | [artifact:alerts-hidden](#alerts-hidden) |
+| Computed visibility | `invisible-health` | `if (parent.hidden || window.getComputedStyle(parent).visibility === 'hidden')` → `if (parent.hidden)` | Missing expected exception: `invisible-health must refuse a misleading capture` | [artifact:alerts-computed-visibility](#alerts-computed-visibility) |
+| No client rect/display none | `display-none-master` | `if (!node || !node.getClientRects().length)` → `if (!node)` | Missing expected exception: `display-none-master must refuse a misleading capture` | [artifact:alerts-client-rects](#alerts-client-rects) |
+| Top containment comparison | `clipped-master-top` | remove only `r.top < Math.max(0, p.top) - tolerance` | Missing expected exception: `clipped-master-top must refuse a misleading capture` | [artifact:alerts-edge-top](#alerts-edge-top) |
+| Right containment comparison | `clipped-master-right` | remove only `r.right > Math.min(innerWidth, p.right) + tolerance` | Missing expected exception: `clipped-master-right must refuse a misleading capture` | [artifact:alerts-edge-right](#alerts-edge-right) |
+| Bottom containment comparison | `clipped-health-bottom` | remove only `r.bottom > Math.min(innerHeight, p.bottom) + tolerance` | Missing expected exception: `clipped-health-bottom must refuse a misleading capture` | [artifact:alerts-edge-bottom](#alerts-edge-bottom) |
+| Left containment comparison | `clipped-health-left` | remove only `r.left < Math.max(0, p.left) - tolerance` | Missing expected exception: `clipped-health-left must refuse a misleading capture` | [artifact:alerts-edge-left](#alerts-edge-left) |
+
+### Exact Alerts mutation artifacts
+
+<a id="alerts-master-guard"></a>
+<details>
+<summary>Master guard — <code>missing-master</code></summary>
+
+Exact temporary mutation:
+
+```diff
+-if (!visible(master) || !exposed(master.closest('label.check'), pane)) {
++if (master && (!visible(master) || !exposed(master.closest('label.check'), pane))) {
+```
+
+The complete control gate passed first. The focused mutant failed only because the weakened setup accepted the absent master:
+
+```text
+AssertionError [ERR_ASSERTION]: Missing expected exception: missing-master must refuse a misleading capture
+actual: undefined
+expected: /Screenshot.*settings-alerts/
+operator: throws
+```
+
+This was not a `master.closest` `TypeError`: the new `master &&` short circuit prevented that access. The exact inverse replacement restored the source; the protected-path diff and both SHA-256 checks passed.
+
+</details>
+
+<a id="alerts-health-guard"></a>
+<details>
+<summary>Health guard — <code>missing-health</code></summary>
+
+Exact temporary mutation:
+
+```diff
+-if (!health || !health.textContent.trim() || !exposed(health, pane)) {
++if (health && (!health.textContent.trim() || !exposed(health, pane))) {
+```
+
+Focused mutant result:
+
+```text
+AssertionError [ERR_ASSERTION]: Missing expected exception: missing-health must refuse a misleading capture
+actual: undefined
+expected: /Screenshot.*settings-alerts/
+operator: throws
+```
+
+The exact inverse replacement restored the source; the protected-path diff and both SHA-256 checks passed.
+
+</details>
+
+<a id="alerts-hidden"></a>
+<details>
+<summary>Hidden ancestry — <code>hidden-master</code></summary>
+
+Exact temporary production mutation:
+
+```diff
+-    if (parent.hidden || window.getComputedStyle(parent).visibility === 'hidden') return false;
++    if (window.getComputedStyle(parent).visibility === 'hidden') return false;
+```
+
+Exact supplemental fixture mutation, used only to stop the fixture's `getClientRects()` shim from independently rejecting this same hidden input:
+
+```diff
+-    if (node.hidden || node.style.display === 'none') return [];
++    if ((node.hidden && scenario !== 'hidden-master') || node.style.display === 'none') return [];
+```
+
+Focused paired-mutant result:
+
+```text
+AssertionError [ERR_ASSERTION]: Missing expected exception: hidden-master must refuse a misleading capture
+actual: undefined
+expected: /Screenshot.*settings-alerts/
+operator: throws
+```
+
+The fixture edit is not the qualification evidence; the production removal made the setup accept the hidden painted label. Exact inverse replacements restored both files; the protected-path diff and both SHA-256 checks passed.
+
+</details>
+
+<a id="alerts-computed-visibility"></a>
+<details>
+<summary>Computed visibility — <code>invisible-health</code></summary>
+
+Exact temporary mutation:
+
+```diff
+-    if (parent.hidden || window.getComputedStyle(parent).visibility === 'hidden') return false;
++    if (parent.hidden) return false;
+```
+
+Focused mutant result:
+
+```text
+AssertionError [ERR_ASSERTION]: Missing expected exception: invisible-health must refuse a misleading capture
+actual: undefined
+expected: /Screenshot.*settings-alerts/
+operator: throws
+```
+
+No fixture edit was used; computed visibility was the only rejecting production branch. The exact inverse replacement restored the source; the protected-path diff and both SHA-256 checks passed.
+
+</details>
+
+<a id="alerts-client-rects"></a>
+<details>
+<summary>No client rect/display none — <code>display-none-master</code></summary>
+
+Exact temporary mutation:
+
+```diff
+-  if (!node || !node.getClientRects().length) return false;
++  if (!node) return false;
+```
+
+Focused mutant result:
+
+```text
+AssertionError [ERR_ASSERTION]: Missing expected exception: display-none-master must refuse a misleading capture
+actual: undefined
+expected: /Screenshot.*settings-alerts/
+operator: throws
+```
+
+No fixture edit was used. The production `getClientRects()` branch was the killed branch; fixture display-none wiring merely supplied the input. The exact inverse replacement restored the source; the protected-path diff and both SHA-256 checks passed.
+
+</details>
+
+<a id="alerts-edge-top"></a>
+<details>
+<summary>Top comparison — <code>clipped-master-top</code></summary>
+
+Exact temporary mutation:
+
+```diff
+-      || r.top < Math.max(0, p.top) - tolerance || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;
++      || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;
+```
+
+Focused mutant result: `Missing expected exception: clipped-master-top must refuse a misleading capture`. The exact inverse replacement restored the source; the protected-path diff and both SHA-256 checks passed.
+
+</details>
+
+<a id="alerts-edge-right"></a>
+<details>
+<summary>Right comparison — <code>clipped-master-right</code></summary>
+
+Exact temporary mutation:
+
+```diff
+-      || r.left < Math.max(0, p.left) - tolerance || r.right > Math.min(innerWidth, p.right) + tolerance
++      || r.left < Math.max(0, p.left) - tolerance
+```
+
+Focused mutant result: `Missing expected exception: clipped-master-right must refuse a misleading capture`. The exact inverse replacement restored the source; the protected-path diff and both SHA-256 checks passed.
+
+</details>
+
+<a id="alerts-edge-bottom"></a>
+<details>
+<summary>Bottom comparison — <code>clipped-health-bottom</code></summary>
+
+Exact temporary mutation:
+
+```diff
+-      || r.top < Math.max(0, p.top) - tolerance || r.bottom > Math.min(innerHeight, p.bottom) + tolerance) return false;
++      || r.top < Math.max(0, p.top) - tolerance) return false;
+```
+
+Focused mutant result: `Missing expected exception: clipped-health-bottom must refuse a misleading capture`. The exact inverse replacement restored the source; the protected-path diff and both SHA-256 checks passed.
+
+</details>
+
+<a id="alerts-edge-left"></a>
+<details>
+<summary>Left comparison — <code>clipped-health-left</code></summary>
+
+Exact temporary mutation:
+
+```diff
+-      || r.left < Math.max(0, p.left) - tolerance || r.right > Math.min(innerWidth, p.right) + tolerance
++      || r.right > Math.min(innerWidth, p.right) + tolerance
+```
+
+Focused mutant result: `Missing expected exception: clipped-health-left must refuse a misleading capture`. The exact inverse replacement restored the source; the protected-path diff and both SHA-256 checks passed.
+
+</details>
+
+### Shared positive-area and hit-test attribution
+
+- `screen_setup_script()` returns `_framed_content_script(screen.key, ...)` directly for `settings-alerts`; the generated gap verifiers use that same `_framed_content_script()` implementation. Alerts does not bypass the Task 2-qualified helper.
+- `zero-health` remains one of the 15 unshrunk base states and supplies a zero-width Alerts health anchor.
+- Positive area is independently qualified by Task 2's exact [width](#width) and supplemental [height](#height) production mutants, each killed at `Object.throws` / `AssertionError: zero-area`.
+- Hit testing is independently qualified by Task 2's exact five-point removals ([point 0](#point-0), [point 1](#point-1), [point 2](#point-2), [point 3](#point-3), [point 4](#point-4)), [`.every()`](#every), [null](#null), [unrelated](#unrelated), [direct-node](#direct), and [descendant](#descendant) production mutants. Those are killed by the retained covered/settled Result witnesses at their intended assertions.
+- `document.elementFromPoint = () => measured` in `screenshot_alerts.cjs` is wiring context only. It is not counted as Alerts-specific or production hit-test sensitivity evidence.
+
+### All 15 base states and walk invariants remain
+
+No base state is removed or remapped. The unchanged 15-state sequence remains:
+
+```text
+settled-disabled, settled-enabled, wrong-route, wrong-section,
+inactive-route, inactive-section, missing-section, missing-pane,
+hidden-section, hidden-pane, hidden-card, wrong-owner, empty-health,
+zero-health, outside-viewport
+```
+
+The fixture and two walk cases continue to own these invariants:
+
+| Invariant | Unchanged evidence |
+|---|---|
+| Action-free staging | `actions` must remain `[]`; bridge, route/section entry, click, dispatch, and API calls are forbidden. |
+| Route, section, pane, and card ownership | The wrong/inactive/missing/hidden route/section/pane/card and `wrong-owner` states remain exact negative cases. |
+| Outer Settings scroll reset | Both settled states start from inherited `pane.scrollTop`, require reset to `0`, repeat from another offset, and pass again. |
+| Section-scroll preservation | Every scenario requires `section.scrollTop === 17`; staging resets the outer pane only. |
+| Master preference and Advanced disclosure preservation | `snapshot()` before/after remains identical for all inputs, including settled disabled/enabled. |
+| No anchor `scrollIntoView` | `scrolls` must remain `[]` after every scenario. |
+| Setup-before-capture order | The successful walk remains route → section → settle wait → setup → frame wait → capture. |
+| Fail-closed walk behavior | The failing walk records the setup error and never invokes capture. |
+
+### Complete seven-removal Alerts ledger
+
+Every row is self-contained: it names the exact owner witnesses, exact before→after production/helper branches, exact intended fixture assertions, and stable artifact links carrying the restoration proof. Neither owner evidence nor mechanism/edge evidence is sufficient alone.
+
+| Removed Alerts identity | Exact owner evidence | Exact mechanism/edge evidence | Exact restoration/artifact attribution |
+|---|---|---|---|
+| `hidden-health` | Retained `missing-health`: `if (!health || !health.textContent.trim() || !exposed(health, pane))` → `if (health && (!health.textContent.trim() || !exposed(health, pane)))`; fails at fixture `assert.throws` with `Missing expected exception: missing-health must refuse a misleading capture`. Retained `invisible-health`: `if (parent.hidden || window.getComputedStyle(parent).visibility === 'hidden') return false;` → `if (parent.hidden) return false;`; fails at `Missing expected exception: invisible-health must refuse a misleading capture`. | Retained `hidden-master`: remove only `parent.hidden ||` from production `visible()` while the supplemental fixture changes `if (node.hidden || node.style.display === 'none') return [];` → `if ((node.hidden && scenario !== 'hidden-master') || node.style.display === 'none') return [];`; the paired production mutant fails at `Missing expected exception: hidden-master must refuse a misleading capture`. | Exact artifacts: [artifact:alerts-health-guard](#alerts-health-guard), [artifact:alerts-computed-visibility](#alerts-computed-visibility), [artifact:alerts-hidden](#alerts-hidden). Each unique apply and exact inverse succeeded. Final protected-path diff passed; original/restored SHA-256 are source `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4` and fixture `fb5dd2eb367c69e56cb8ace0101f7feb6b44f499a8bde39a3538ffc2b0cab3e1`. |
+| `invisible-master` | Retained `hidden-master`: production `if (parent.hidden || window.getComputedStyle(parent).visibility === 'hidden') return false;` → `if (window.getComputedStyle(parent).visibility === 'hidden') return false;` while the supplemental fixture changes `if (node.hidden || node.style.display === 'none') return [];` → `if ((node.hidden && scenario !== 'hidden-master') || node.style.display === 'none') return [];`; fails at `Missing expected exception: hidden-master must refuse a misleading capture`. Retained `display-none-master`: `if (!node || !node.getClientRects().length) return false;` → `if (!node) return false;`; fails at `Missing expected exception: display-none-master must refuse a misleading capture`. | Retained `invisible-health`: remove only the computed-visibility rejection by changing `if (parent.hidden || window.getComputedStyle(parent).visibility === 'hidden') return false;` → `if (parent.hidden) return false;`; fails at `Missing expected exception: invisible-health must refuse a misleading capture`. | Exact artifacts: [artifact:alerts-hidden](#alerts-hidden), [artifact:alerts-client-rects](#alerts-client-rects), [artifact:alerts-computed-visibility](#alerts-computed-visibility). Each unique apply and exact inverse succeeded. Final protected-path diff passed; original/restored source and fixture SHA-256 are `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4` and `fb5dd2eb367c69e56cb8ace0101f7feb6b44f499a8bde39a3538ffc2b0cab3e1`. |
+| `display-none-health` | Retained `missing-health`: `if (!health || !health.textContent.trim() || !exposed(health, pane))` → `if (health && (!health.textContent.trim() || !exposed(health, pane)))`; fails at `Missing expected exception: missing-health must refuse a misleading capture`. Retained `invisible-health`: `if (parent.hidden || window.getComputedStyle(parent).visibility === 'hidden') return false;` → `if (parent.hidden) return false;`; fails at `Missing expected exception: invisible-health must refuse a misleading capture`. | Retained `display-none-master`: `if (!node || !node.getClientRects().length) return false;` → `if (!node) return false;`; no fixture mutation is used, and the production no-client-rect mutant fails at `Missing expected exception: display-none-master must refuse a misleading capture`. | Exact artifacts: [artifact:alerts-health-guard](#alerts-health-guard), [artifact:alerts-computed-visibility](#alerts-computed-visibility), [artifact:alerts-client-rects](#alerts-client-rects). Each unique apply and exact inverse succeeded. Final protected-path diff passed; original/restored source SHA-256 is `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4`. |
+| `clipped-master-bottom` | Retained `clipped-master-top`: remove only `r.top < Math.max(0, p.top) - tolerance`; fails at `Missing expected exception: clipped-master-top must refuse a misleading capture`. Retained `clipped-master-right`: remove only `r.right > Math.min(innerWidth, p.right) + tolerance`; fails at `Missing expected exception: clipped-master-right must refuse a misleading capture`. Together these pairwise mutants prove the painted master label remains wired to `exposed()`. | Retained `clipped-health-bottom`: remove only `r.bottom > Math.min(innerHeight, p.bottom) + tolerance`; fails at `Missing expected exception: clipped-health-bottom must refuse a misleading capture`, independently qualifying the bottom comparison. | Exact artifacts: [artifact:alerts-edge-top](#alerts-edge-top), [artifact:alerts-edge-right](#alerts-edge-right), [artifact:alerts-edge-bottom](#alerts-edge-bottom). Each unique apply and exact inverse succeeded. Final protected-path diff passed; original/restored source SHA-256 is `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4`. |
+| `clipped-master-left` | Retained `clipped-master-top`: remove only `r.top < Math.max(0, p.top) - tolerance`; fails at `Missing expected exception: clipped-master-top must refuse a misleading capture`. Retained `clipped-master-right`: remove only `r.right > Math.min(innerWidth, p.right) + tolerance`; fails at `Missing expected exception: clipped-master-right must refuse a misleading capture`. Together these pairwise mutants prove the painted master label remains wired to `exposed()`. | Retained `clipped-health-left`: remove only `r.left < Math.max(0, p.left) - tolerance`; fails at `Missing expected exception: clipped-health-left must refuse a misleading capture`, independently qualifying the left comparison. | Exact artifacts: [artifact:alerts-edge-top](#alerts-edge-top), [artifact:alerts-edge-right](#alerts-edge-right), [artifact:alerts-edge-left](#alerts-edge-left). Each unique apply and exact inverse succeeded. Final protected-path diff passed; original/restored source SHA-256 is `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4`. |
+| `clipped-health-top` | Retained `clipped-health-bottom`: remove only `r.bottom > Math.min(innerHeight, p.bottom) + tolerance`; fails at `Missing expected exception: clipped-health-bottom must refuse a misleading capture`. Retained `clipped-health-left`: remove only `r.left < Math.max(0, p.left) - tolerance`; fails at `Missing expected exception: clipped-health-left must refuse a misleading capture`. Together these pairwise mutants prove the health anchor remains wired to `exposed()`. | Retained `clipped-master-top`: remove only `r.top < Math.max(0, p.top) - tolerance`; fails at `Missing expected exception: clipped-master-top must refuse a misleading capture`, independently qualifying the top comparison. | Exact artifacts: [artifact:alerts-edge-bottom](#alerts-edge-bottom), [artifact:alerts-edge-left](#alerts-edge-left), [artifact:alerts-edge-top](#alerts-edge-top). Each unique apply and exact inverse succeeded. Final protected-path diff passed; original/restored source SHA-256 is `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4`. |
+| `clipped-health-right` | Retained `clipped-health-bottom`: remove only `r.bottom > Math.min(innerHeight, p.bottom) + tolerance`; fails at `Missing expected exception: clipped-health-bottom must refuse a misleading capture`. Retained `clipped-health-left`: remove only `r.left < Math.max(0, p.left) - tolerance`; fails at `Missing expected exception: clipped-health-left must refuse a misleading capture`. Together these pairwise mutants prove the health anchor remains wired to `exposed()`. | Retained `clipped-master-right`: remove only `r.right > Math.min(innerWidth, p.right) + tolerance`; fails at `Missing expected exception: clipped-master-right must refuse a misleading capture`, independently qualifying the right comparison. | Exact artifacts: [artifact:alerts-edge-bottom](#alerts-edge-bottom), [artifact:alerts-edge-left](#alerts-edge-left), [artifact:alerts-edge-right](#alerts-edge-right). Each unique apply and exact inverse succeeded. Final protected-path diff passed; original/restored source SHA-256 is `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4`. |
+
+### Task 3 conclusion
+
+No mutant survived or failed for a masked/unrelated reason. The expansion/redesign protocol was not triggered. Task 3 qualifies the exact approved 24-case Alerts candidate; Task 4 may now consume the independently qualified Task 2 and Task 3 ledgers, subject to fresh review approval.
 
 ## Parameter derivation and 20-row mapping
 
 NOT STARTED — Task 4 owns the derived constants, sole executable edit, exact 20-row mapping, and after-edit collection proof. Task 1 records only the approved disposable projection and does not modify `tests/test_shoot_screens.py`.
 
 ## Local verification
+
+### Task 3
+
+- Complete pre-probe Alerts/shared gate: `46 passed in 6.54s` — all 31 Alerts cases, both walk cases, and all 13 shared geometry cases.
+- Initial retained Alerts/shared gate: `39 passed in 6.04s` — exact 24 retained Alerts IDs, both walk cases, and all 13 shared geometry cases.
+- Fresh final retained gate: `39 passed in 5.96s`.
+- Fresh final complete gate: `46 passed in 6.67s`.
+- Nine exact production/helper mutants: every mutant failed at the intended fixture `assert.throws` with `Missing expected exception: <scenario> must refuse a misleading capture`.
+- Guard attribution: independent `missing-master` and `missing-health` short circuits; no `master.closest` `TypeError`.
+- Visibility attribution: `parent.hidden`, computed visibility, and `getClientRects()` each killed independently; only hidden ancestry used the permitted supplemental fixture input.
+- Edge attribution: top/right killed by their retained master witnesses; bottom/left killed by their retained health witnesses.
+- Base invariants: all 15 base states and both walk outcomes passed unchanged.
+- Shared attribution: the Alerts setup uses the same `_framed_content_script()` qualified by Task 2; positive area and hit testing rely only on the already-linked Task 2 production/helper evidence.
+- `9/9` exact inverse restorations and protected-path audits passed; original/restored hashes matched.
+- Mechanical evidence audit: PASS — nine unique stable Alerts artifact anchors, all section links resolved exactly once, seven exact self-contained removal rows, and recomputed 24-ID SHA-256 `7a7fedcff8064e1190936bd7d52de3fabe524305c6bc2740837520d3085b425b`.
+- Candidate decision: `QUALIFIED`; no expansion and no redesign.
 
 ### Task 2
 
@@ -3440,7 +3732,7 @@ NOT STARTED — Task 4 owns the derived constants, sole executable edit, exact 2
 ### Later tasks
 
 - COMPLETE — Task 2 generated mutation verification is recorded above.
-- NOT STARTED — Task 3 owns Alerts mutation verification.
+- COMPLETE — Task 3 Alerts mutation verification is recorded above.
 - NOT STARTED — Task 4 owns parameter-derivation verification.
 - NOT STARTED — Task 5 owns complete local endpoint verification.
 - NOT STARTED — Task 6 owns final fresh verification after polish/review.
@@ -3458,6 +3750,7 @@ NOT STARTED — Task 6 owns Stage 3 publication and hosted candidate evidence. T
 - Discrepancies: none. Every source count/hash, disposable projection count/hash/diff, comparator tuple count, timing value, and run/job/checkout provenance value matched the approved requirements.
 - Expansions: none. Task 1 changed only this documentation path.
 - Task 2 concerns: none. All generated owner and shared-helper mutants failed at the intended assertion; no survivor or masked failure triggered expansion/redesign. Executable acceptance, final local verification, and Stage 3 hosted comparison remain owned by later tasks.
+- Task 3 concerns: none. Both owner guards, all three visibility mechanisms, and all four pairwise edge comparisons failed at their intended fixture assertions; all 15 base states and both walk outcomes remained green; no survivor, masking, expansion, redesign, or persistent fixture/source change occurred.
 - No case was deleted and no executable file changed.
 
 ## Required self-review
@@ -3477,3 +3770,12 @@ NOT STARTED — Task 6 owns Stage 3 publication and hosted candidate evidence. T
 - COMPLETE — all 16 worktree mutation sequences restored exactly; all 20 Block C sequences were disposable; final protected-path diff was empty.
 - COMPLETE — audited all 13 removed generated identities against same-owner semantic evidence, same-owner wiring evidence, shared-helper evidence, intended assertions, and restoration proof.
 - COMPLETE — no candidate expansion, redesign, executable edit, or speedup claim was made in Task 2.
+
+- COMPLETE — Task 3 verified the master and health guards independently, including both missing short circuits and no `master.closest` `TypeError` masking.
+- COMPLETE — Task 3 verified `parent.hidden`, computed visibility, and no-client-rect/display-none rejection as separate production/helper branches; fixture input was supplemental only.
+- COMPLETE — Task 3 verified top, right, bottom, and left comparisons with their exact pairwise retained owner witnesses.
+- COMPLETE — all 15 base states and both walk cases retained action-free ownership, scroll, preference/disclosure, no-anchor-scroll, setup order, and fail-closed behavior.
+- COMPLETE — positive-area and hit-test claims resolve to the already-qualified Task 2 artifacts executing the same `_framed_content_script()`; the Alerts fixture hit-test shim is not counted as sensitivity evidence.
+- COMPLETE — all nine Task 3 mutation sequences restored exactly; the final protected-path diff was empty and both original hashes matched.
+- COMPLETE — audited all seven removed Alerts identities against owner evidence, mechanism/edge evidence, intended assertions, and linked restoration proof.
+- COMPLETE — no candidate expansion, redesign, executable edit, or speedup claim was made in Task 3.
