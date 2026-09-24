@@ -14,7 +14,7 @@ Task 1 changes documentation only. No executable file or test identity changed.
 - Task 2: **COMPLETE** — the fresh test-only publisher, optional seed seam, comprehensive parity/isolation/failure witness, default atomic-path evidence, and restoration-safe mutation qualification are recorded below.
 - Task 3: **COMPLETE** — only the controller fixture's two seed calls use the fresh publisher; the second witness proves construction has four direct opens and no fsync while a real create retains seven ordered atomic body fsyncs.
 - Task 4: **COMPLETE** — the exact local 190/136/16,607 endpoint, focused and full JUnit evidence, availability checks, independent gates, mutation restoration, and five-path scope are recorded below.
-- Task 5: **LOCAL/PRE-PUBLICATION IMPLEMENTER PORTION COMPLETE** — `polish-core --fix` found no safe correction to apply; fresh local verification passed on executable head `bb388893dac2fc2d3234af73eb0ecdae2162d37e`; the reviewer-facing explanation and publication checkpoint are recorded below. Independent controller review, authorization, publication, and hosted comparison remain pending.
+- Task 5: **FINAL-REVIEW FIX WAVE COMPLETE; FRESH POST-FIX APPROVAL PENDING** — `polish-core --fix` found no safe correction to apply and fresh local verification passed on executable head `bb388893dac2fc2d3234af73eb0ecdae2162d37e`. The subsequent independent review found only the two final-review issues recorded below: stale Task 1 status wording in this ledger and an unconditional atomic-publication docstring claim. This one allowed fix wave corrects both without behavior or test-identity changes. Publication authorization and hosted comparison remain pending.
 
 Task 1 changed path: `docs/ci-setup-controller-fixture-construction-results.md` only.
 
@@ -17453,7 +17453,7 @@ The JUnit testcase sums were reparsed directly and cross-checked against every p
 
 ## Fresh publisher and parity evidence
 
-**NOT STARTED — Task 2 owns this evidence.** Task 1 does not claim publisher qualification, atomic-versus-fast parity, isolation, metadata stability, partial-write handling, exclusive-create behavior, or direct failure-contract coverage.
+**TASK 1 SNAPSHOT (superseded): NOT STARTED — Task 2 owned this evidence.** This was the correct status when Task 1 froze the baseline. Task 2 later completed publisher qualification, atomic-versus-fast parity, isolation, metadata stability, partial-write handling, exclusive-create behavior, and direct failure-contract coverage; see `Task 2 fresh-publisher qualification` above and the completed Task 5 verification summary below.
 
 ## Controller-body persistence evidence
 
@@ -17557,7 +17557,7 @@ descriptor sets are empty.
 
 ## Mutation ledger and restoration
 
-**NOT STARTED — Tasks 2 and 3 own this evidence.** No executable mutation was applied in Task 1.
+**TASK 1 SNAPSHOT (superseded): NOT STARTED — Tasks 2 and 3 owned this evidence.** No executable mutation was applied in Task 1. Tasks 2 and 3 later completed the helper and controller-body mutation evidence recorded in their sections above and in the Task 4/5 restoration summaries below.
 
 ## Local endpoint verification
 
@@ -17892,10 +17892,10 @@ all staged work before directory publication and selection persistence after it.
 Reviewer focus should be the helper's close/unlink failure ordering, the
 `initial_dat_publish is None` omission that preserves definition-time codec
 defaults, the comprehensive witness's proxy fidelity, the exact seven-category
-event ordering, and the strict identity/scope assertions. The remaining local
-risk is platform validation: Windows/Ubuntu hosted parity has not been run for
-this head, and the controller's independent whole-branch review is still
-required.
+event ordering, and the strict identity/scope assertions. The independent
+whole-branch review produced the two final-review findings recorded below. The
+remaining local risk is platform validation: Windows/Ubuntu hosted parity has
+not been run for this head, and fresh post-fix approval is still required.
 
 ### Explicit publication stop
 
@@ -17910,12 +17910,36 @@ speedup is claimed.
 
 **STOP:** no push, PR creation, GitHub workflow dispatch, new-run artifact
 download, GitHub mutation API call, or hosted claim was performed. Publication
-requires explicit maintainer authorization after the controller's independent
-fresh-review gate.
+requires explicit maintainer authorization after fresh post-fix approval.
+
+## Final-review fix wave
+
+The independent whole-branch review produced two scoped findings, both resolved
+in the one allowed fix wave:
+
+1. The Task 1-era `NOT STARTED` and no-executable-change statements near the end
+   of this cumulative ledger are now explicitly labeled as superseded Task 1
+   snapshots and cross-reference the completed Task 2/3 evidence.
+2. `seed_profile()` now documents that publication is atomic by default and
+   that `initial_dat_publish` explicitly overrides publication of only the new
+   DAT files. Runtime behavior is unchanged.
+
+Fresh post-fix verification:
+
+- Both focused witnesses: `2 passed in 2.58s`.
+- Controller collection: `190` IDs, `190` unique, with the exact two approved
+  witnesses as the final two IDs.
+- `uv run --no-sync ruff check .`: `All checks passed!`.
+- `uv run --no-sync ruff format --check .`: `520 files already formatted`.
+- `git diff --check`: clean.
+
+No subagent, push, remote mutation, hosted run, test identity change, or runtime
+behavior change occurred. Fresh post-fix review approval, publication
+authorization, and hosted comparison remain pending.
 
 ## Hosted comparison
 
-**NOT STARTED — publication authorization and the independent controller review are pending.** The ledger still contains only the passing PR #287 attempt-2 comparator; it contains no implementation hosted result and makes no hosted speed claim.
+**NOT STARTED — publication authorization and fresh post-fix approval are pending.** The ledger still contains only the passing PR #287 attempt-2 comparator; it contains no implementation hosted result and makes no hosted speed claim.
 
 ## Deviations and concerns
 
@@ -17923,9 +17947,11 @@ fresh-review gate.
 - Dependency setup: `uv sync --locked --extra dev` succeeded with 56 packages resolved and 39 checked.
 - Node availability: `v26.5.0`.
 - Procedural harness note: Pi policy rejected one combined multiline shell invocation, so the prescribed checks were run individually with equivalent explicit `git -C` and `uv --project` targeting. Block A's exact Python was compiled and executed unchanged in effect. This did not alter evidence or scope.
-- No executable file or test identity changed.
+- **Task 1 snapshot:** No executable file or test identity had changed at that checkpoint. Tasks 2 and 3 later made the scoped test-only executable changes and added exactly the two recorded witness identities.
 
-## Required self-review
+## Required Task 1 self-review snapshot
+
+The checks below preserve the Task 1 baseline review. Current task status and the completed Task 2–5 implementation evidence are recorded in the sections above.
 
 - **Checkout and scope:** PASS — branch `ci-setup-fixture-construction`; `c23788e3` is an ancestor; the pre-documentation worktree was clean except approved planning history; Task 1's only repository path is this results document.
 - **Artifact presence and integrity:** PASS — both artifact roots contained exactly `pytest-result.xml` and `pytest-timing.json`; all four extracted hashes match the approved attempt-2 table; attempt 1 remains excluded.

@@ -148,8 +148,9 @@ def seed_profile(
     name="Base",
     initial_dat_publish=None,
 ) -> ProfileFixture:
-    """Seed test-only files through the real codec writer and atomic publication.
+    """Seed test-only files through the real codec writer, atomically by default.
 
+    Pass ``initial_dat_publish`` to override publication of the new DAT files only.
     Install the lossless transport first for portable tests. The YAML/INI are
     deliberately invented byte sentinels, not a claim about EVE's display schema.
     """
