@@ -45,8 +45,16 @@ catalog_fixture = test_setup_catalog.catalog_fixture
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
     install_lossless_codec(monkeypatch)
-    source = seed_profile(tmp_path, case="source", name="Source")
-    base = seed_profile(tmp_path)
+    source = seed_profile(
+        tmp_path,
+        case="source",
+        name="Source",
+        initial_dat_publish=setup_fixtures._publish_fresh_file,
+    )
+    base = seed_profile(
+        tmp_path,
+        initial_dat_publish=setup_fixtures._publish_fresh_file,
+    )
     controller = build_controller(tmp_path)
     controller._settings["eve_settings"].update(
         root=str(source.root),
@@ -2484,3 +2492,151 @@ def test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_fail
         else:
             assert case["path"].read_bytes() == case["remaining"], case["name"]
         assert case["proxy"].open_descriptors == set(), case["name"]
+
+
+def test_fast_fixture_construction_preserves_controller_body_atomic_persistence(
+    tmp_path, monkeypatch
+):
+    real_os = os
+    direct = _OSProxy(real_os, assert_fresh_open=True)
+    direct.path = _PathProxy(real_os.path)
+    atomic = _OSProxy(real_os)
+    monkeypatch.setattr(setup_fixtures, "os", direct)
+    monkeypatch.setattr(atomicio, "os", atomic)
+
+    controller, source, base = setup.__wrapped__(tmp_path, monkeypatch)
+    construction = {
+        "opens": list(direct.open_calls),
+        "direct_fsyncs": len(direct.fsync_calls),
+        "atomic_fsyncs": len(atomic.fsync_calls),
+    }
+    assert construction["opens"] and len(construction["opens"]) == 4
+    assert construction["direct_fsyncs"] == 0
+    assert construction["atomic_fsyncs"] == 0
+    assert direct.open_descriptors == set()
+    assert atomic.open_descriptors == set()
+    assert controller._settings["eve_settings"]["profile"] == str(source.profile)
+
+    direct.open_calls.clear()
+    direct.fsync_calls.clear()
+    atomic.fsync_calls.clear()
+    atomic.fsync_categories.clear()
+    events = []
+    atomic.category_events = events
+
+    real_copy_atomic = atomicio.copy_atomic
+    real_write_bytes_atomic = atomicio.write_bytes_atomic
+    real_write_atomic = atomicio.write_atomic
+    real_write_document = codec.write_document
+    real_publish_new = profilecopy.publish_new
+    real_clock = controller_mod.time
+    monkeypatch.setattr(controller_mod, "time", _ClockProxy(real_clock, 1000.0))
+
+    parsed = setup_sharing.parse_text(setup_sharing.export_text(wire()))
+    expected_account, expected_character = setup_documents.apply_setup(
+        codec.read_document(base.account_path),
+        codec.read_document(base.character_path),
+        parsed,
+        keep_ship_labels=False,
+        now=1000.0,
+    )
+
+    def expected_lossless(document):
+        envelope = {"had_crc": document.had_crc, "doc": document.doc}
+        return b"\x7d" + json.dumps(envelope, ensure_ascii=False).encode("utf-8")
+
+    def copy_atomic(source_path, target_path, *args, **kwargs):
+        category = (
+            "stage_dat_copy"
+            if Path(target_path).suffix == ".dat"
+            else "stage_local_copy"
+        )
+        with atomic.category(category):
+            return real_copy_atomic(source_path, target_path, *args, **kwargs)
+
+    def write_document(path, document, **kwargs):
+        target = Path(path)
+        if (
+            "publish" not in kwargs
+            and target.parent.name.startswith(profilecopy.STAGE_PREFIX)
+            and target.parent.name.endswith(profilecopy.STAGE_SUFFIX)
+        ):
+
+            def publish(rewrite_path, data):
+                with atomic.category("rewrite_dat"):
+                    return real_write_bytes_atomic(rewrite_path, data)
+
+            kwargs["publish"] = publish
+        return real_write_document(target, document, **kwargs)
+
+    def write_atomic(path, text, *args, **kwargs):
+        with atomic.category("selection"):
+            return real_write_atomic(path, text, *args, **kwargs)
+
+    publications = []
+
+    def publish_new(staged):
+        result = real_publish_new(staged)
+        publications.append(result)
+        events.append("directory_publish")
+        return result
+
+    monkeypatch.setattr(atomicio, "copy_atomic", copy_atomic)
+    monkeypatch.setattr(codec, "write_document", write_document)
+    monkeypatch.setattr(atomicio, "write_atomic", write_atomic)
+    monkeypatch.setattr(profilecopy, "publish_new", publish_new)
+
+    offer, queued = queue_create(controller, base)
+    queued.run_next()
+    done = assert_create_done(controller, offer, published=True)
+    assert done["selection_persisted"] is True and done["warning"] == ""
+    destination = offer.plan.destination
+    assert publications == [destination]
+
+    counts = Counter(atomic.fsync_categories)
+    expected_counts = Counter(
+        {
+            "stage_dat_copy": 2,
+            "stage_local_copy": 2,
+            "rewrite_dat": 2,
+            "selection": 1,
+        }
+    )
+    assert counts == expected_counts, f"body fsync categories changed: {counts}"
+    assert len(atomic.fsync_calls) == 7, "body fsync total changed"
+    assert events == [
+        "stage_dat_copy",
+        "stage_dat_copy",
+        "stage_local_copy",
+        "stage_local_copy",
+        "rewrite_dat",
+        "rewrite_dat",
+        "directory_publish",
+        "selection",
+    ], events
+    assert direct.open_calls == [] and direct.fsync_calls == []
+    assert direct.open_descriptors == set()
+    assert atomic.open_descriptors == set()
+
+    assert {path.name for path in destination.iterdir()} == {
+        base.account_path.name,
+        base.character_path.name,
+        "core_public__.yaml",
+        "prefs.ini",
+    }
+    assert (destination / base.account_path.name).read_bytes() == expected_lossless(
+        expected_account
+    )
+    assert (destination / base.character_path.name).read_bytes() == expected_lossless(
+        expected_character
+    )
+    assert (destination / "core_public__.yaml").read_bytes() == (
+        b"# synthetic recipient local preferences\r\nuiScale: 1.25\r\n"
+    )
+    assert (destination / "prefs.ini").read_bytes() == (
+        b"; synthetic recipient local preferences\r\nmonitor=2\r\n"
+    )
+    assert controller._settings["eve_settings"]["profile"] == str(destination)
+    assert not list(
+        base.server.glob(f"{profilecopy.STAGE_PREFIX}*{profilecopy.STAGE_SUFFIX}")
+    )

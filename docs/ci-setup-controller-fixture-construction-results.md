@@ -12,7 +12,7 @@ Task 1 changes documentation only. No executable file or test identity changed.
 
 - Task 1: **COMPLETE** — exact ordered inventories, actual newline-normalized hashes, comparator provenance and extracted-file integrity, complete normalized skip tuples, and timing observations are frozen below.
 - Task 2: **COMPLETE** — the fresh test-only publisher, optional seed seam, comprehensive parity/isolation/failure witness, default atomic-path evidence, and restoration-safe mutation qualification are recorded below.
-- Task 3: **NOT STARTED — Task 3 owns controller-fixture opt-in and controller-body persistence evidence.**
+- Task 3: **COMPLETE** — only the controller fixture's two seed calls use the fresh publisher; the second witness proves construction has four direct opens and no fsync while a real create retains seven ordered atomic body fsyncs.
 - Task 4: **NOT STARTED — Task 4 owns complete local endpoint verification.**
 - Task 5: **NOT STARTED — Task 5 owns final polish, whole review, publication stop, and hosted comparison.**
 
@@ -17457,7 +17457,103 @@ The JUnit testcase sums were reparsed directly and cross-checked against every p
 
 ## Controller-body persistence evidence
 
-**NOT STARTED — Task 3 owns this evidence.** Task 1 does not claim fixture opt-in, phase-separated fsync counts, staging categorization, final publication, or selection-persistence ordering.
+Task 3 preserves the exact `setup(tmp_path, monkeypatch)` fixture signature and
+changes only its two `seed_profile(...)` calls to pass
+`initial_dat_publish=setup_fixtures._publish_fresh_file`. No fixture argument,
+wrapper, autouse patch, module-wide publisher substitution, production change, or
+page-boundary change was introduced.
+
+### TDD and phase-separated witness
+
+The exact second witness was appended after the Task 2 witness. Before fixture
+opt-in, its RED run failed at `fast destination open count changed` with zero
+direct opens; the unchanged atomic fixture path had performed four fsyncs. After
+the two-call opt-in, the construction-only witness passed with exactly four
+direct exclusive opens, zero direct fsyncs, zero atomic fsyncs, and no tracked
+descriptors. The final witness then completed a real controller create while
+keeping construction and controller-body observations separate.
+
+The completed body records these exact fsync counts:
+
+- `stage_dat_copy`: `2`
+- `stage_local_copy`: `2`
+- `rewrite_dat`: `2`
+- `selection`: `1`
+- total: `7`
+
+The exact event order is:
+
+```text
+stage_dat_copy
+stage_dat_copy
+stage_local_copy
+stage_local_copy
+rewrite_dat
+rewrite_dat
+directory_publish
+selection
+```
+
+Thus all six staging/copy/rewrite fsync operations precede directory publication,
+and the one selection fsync follows publication. Every wrapper delegates to the
+real implementation. The codec wrapper accounts for the definition-time
+publisher default by supplying a categorized publisher only when the staged DAT
+rewrite did not explicitly receive one. The clock substitution replaces only
+`controller_mod.time` with a delegating proxy and does not mutate the shared
+`time` module.
+
+The real create completion was accepted and finished with `ok=True`,
+`operation="ui_setup_create"`, `request_id="create-1"`, `published=True`, the
+published destination path, `selection_persisted=True`, no error code, and an
+empty warning. Exactly one destination was published. Its inventory is the two
+recipient DAT names plus `core_public__.yaml` and `prefs.ini`; both DAT byte
+streams equal the expected lossless codec envelopes, and the local files equal
+these exact bytes:
+
+```text
+# synthetic recipient local preferences\r\nuiScale: 1.25\r\n
+; synthetic recipient local preferences\r\nmonitor=2\r\n
+```
+
+The controller selection points to the destination after completion, no stage
+directory remains, neither direct-channel body open/fsync occurs, and both proxy
+descriptor sets are empty.
+
+### Failure, race, Node, mutation, identity, and lint gates
+
+- Six selected controller failure/race families: `37 passed`.
+- Direct Node boundary scenarios `eve-unknown`, `malformed-text`, and
+  `stale-manifest`: `3 passed` through the unchanged
+  `setup.__wrapped__(Path(temp), patch)` call.
+- Final two-witness gate: `2 passed`.
+- `direct-fsync`: intended RED only at `fast direct fsync count changed`;
+  restored helper SHA-256
+  `534c8d26b2afe2fcb25f1c4632013a362514312099b194f2de35963147f35639`.
+- `atomic-delegation`: intended RED only at `fast atomic fsync count changed`;
+  restored the same helper bytes and hash.
+- `direct-body-write`: the exact unique
+  `written_account_revision = codec.write_document(...)` block was changed to a
+  direct `Path.write_bytes` publisher. Creation and directory publication
+  completed first, then the witness failed at `body fsync categories changed`
+  with `rewrite_dat` reduced from `2` to `1` and total body fsyncs from `7` to
+  `6`. Production `setup_profile.py` restored byte-exactly to SHA-256
+  `9a257521fb71286a34818a900cedffb8369e49e50e63061cc7feb6e146dbbb15`;
+  the mutation runner also proved pre/post complete binary diff and porcelain-v2
+  status equality.
+- Controller collection: `190` unique IDs, newline-terminated SHA-256
+  `ebf5f437078c0532caa477db71061153bdf5a06149e3cd191f197b22db4f84d4`.
+  The frozen `188` IDs are the exact ordered prefix and the exact suffix is the
+  Task 2 witness followed by
+  `test_fast_fixture_construction_preserves_controller_body_atomic_persistence`.
+- Structural `setup` users: unchanged exact `136`, SHA-256
+  `02f8ec20cd3ac604839e12a9523a157419cc6486b1cf4e1a9f66918409e940d2`.
+- Projected complete collection: `16,607` unique IDs, SHA-256
+  `788c629201704e4c72777aa64d169bb5af17db83c7c57059bb49a6f50cc1d491`,
+  with the same exact two-name suffix and no removals.
+- `uv run --extra dev ruff check .`: all checks passed.
+- `uv run --extra dev ruff format --check .`: `520 files already formatted`.
+- `git diff --check` passed; production, `tests/fixtures/ui_setup_page.cjs`, and
+  `tests/test_ui_setup_page.py` have zero diff.
 
 ## Mutation ledger and restoration
 
