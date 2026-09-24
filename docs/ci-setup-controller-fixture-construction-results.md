@@ -37,8 +37,8 @@ atomic default. YAML and INI publication is unchanged.
 - RED result: `1 failed`; the first witness failed at its first helper call with
   `AttributeError: module 'tests.setup_fixtures' has no attribute '_publish_fresh_file'`.
 - Minimal-helper GREEN result: `1 passed`.
-- Interim controller collection: `189` IDs, `189` unique, ordered SHA-256
-  `b1b231bb8632001473ff285a76772709a742a34607eb19067f396747de277149`.
+- Interim controller collection: `189` IDs, `189` unique, ordered newline-terminated SHA-256
+  `6c0df009cca6a07d57a7a562a9c3de3137d9a475f59e18111ff400a8e5fdd1eb`.
 - The frozen Task 1 `188` IDs are the exact ordered prefix. The only suffix is
   `tests/test_ui_setup_controller.py::test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_failures`.
 - Structural `setup` fixture users remain exactly the frozen `136` IDs, in the
