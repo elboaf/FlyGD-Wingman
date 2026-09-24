@@ -61,14 +61,15 @@ all_nodes = collect(
 normalized_hash = sha256(("\n".join(all_nodes) + "\n").encode()).hexdigest()
 ```
 
-Candidate generated formula:
+Candidate generated formula (Ruff-clean tuple unpacking preserves the exact derived order):
 
 ```python
-_GAP_CAPTURE_CASES = tuple(
-    (scenario, key)
-    for scenario in ("settled", "missing", "wrong-text")
-    for key in GAP_CAPTURES
-) + (
+_GAP_CAPTURE_CASES = (
+    *(
+        (scenario, key)
+        for scenario in ("settled", "missing", "wrong-text")
+        for key in GAP_CAPTURES
+    ),
     ("hidden", "profiles-copy-scope"),
     ("clipped", "profiles-copy-scope"),
     ("clipped", "fittings-metadata-narrow"),
@@ -79,13 +80,11 @@ _GAP_CAPTURE_CASES = tuple(
 )
 ```
 
-Candidate Alerts formula:
+Candidate Alerts formula (Ruff formatter output):
 
 ```python
 _ALERTS_CAPTURE_SCENARIOS = (
-    _ALERTS_BASE_SCENARIOS
-    + _ALERTS_ANCHOR_SCENARIOS
-    + _ALERTS_CLIPPED_SCENARIOS
+    _ALERTS_BASE_SCENARIOS + _ALERTS_ANCHOR_SCENARIOS + _ALERTS_CLIPPED_SCENARIOS
 )
 ```
 
@@ -129,11 +128,12 @@ GAP='''GAP_CAPTURES = {
 '''
 GAP_CASES='''
 
-_GAP_CAPTURE_CASES = tuple(
-    (scenario, key)
-    for scenario in ("settled", "missing", "wrong-text")
-    for key in GAP_CAPTURES
-) + (
+_GAP_CAPTURE_CASES = (
+    *(
+        (scenario, key)
+        for scenario in ("settled", "missing", "wrong-text")
+        for key in GAP_CAPTURES
+    ),
     ("hidden", "profiles-copy-scope"),
     ("clipped", "profiles-copy-scope"),
     ("clipped", "fittings-metadata-narrow"),
@@ -212,9 +212,7 @@ _ALERTS_CLIPPED_SCENARIOS = (
     "clipped-health-left",
 )
 _ALERTS_CAPTURE_SCENARIOS = (
-    _ALERTS_BASE_SCENARIOS
-    + _ALERTS_ANCHOR_SCENARIOS
-    + _ALERTS_CLIPPED_SCENARIOS
+    _ALERTS_BASE_SCENARIOS + _ALERTS_ANCHOR_SCENARIOS + _ALERTS_CLIPPED_SCENARIOS
 )
 
 
@@ -1064,14 +1062,15 @@ Expected for the unexpanded approved candidate: FAIL with 66 collected. If quali
 
 - [ ] **Step 3: Add the exact generated derived constant**
 
-Immediately after `GAP_CAPTURES`, add:
+Immediately after `GAP_CAPTURES`, add the Ruff-clean tuple-unpacking form:
 
 ```python
-_GAP_CAPTURE_CASES = tuple(
-    (scenario, key)
-    for scenario in ("settled", "missing", "wrong-text")
-    for key in GAP_CAPTURES
-) + (
+_GAP_CAPTURE_CASES = (
+    *(
+        (scenario, key)
+        for scenario in ("settled", "missing", "wrong-text")
+        for key in GAP_CAPTURES
+    ),
     ("hidden", "profiles-copy-scope"),
     ("clipped", "profiles-copy-scope"),
     ("clipped", "fittings-metadata-narrow"),
@@ -1128,13 +1127,11 @@ _ALERTS_CLIPPED_SCENARIOS = (
     "clipped-health-left",
 )
 _ALERTS_CAPTURE_SCENARIOS = (
-    _ALERTS_BASE_SCENARIOS
-    + _ALERTS_ANCHOR_SCENARIOS
-    + _ALERTS_CLIPPED_SCENARIOS
+    _ALERTS_BASE_SCENARIOS + _ALERTS_ANCHOR_SCENARIOS + _ALERTS_CLIPPED_SCENARIOS
 )
 ```
 
-Replace the inline list-comprehension decorator with:
+This is the required Ruff formatter output. Replace the inline list-comprehension decorator with:
 
 ```python
 @pytest.mark.parametrize("scenario", _ALERTS_CAPTURE_SCENARIOS)

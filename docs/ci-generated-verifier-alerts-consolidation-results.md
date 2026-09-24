@@ -19,7 +19,7 @@
 | Task 1 — freeze exact PR #286 baseline and comparator controls | COMPLETE — exact 522/66 inventories and hashes, disposable 502/46 projection, provenance, 67/14 skip tuples, and timing controls recorded |
 | Task 2 — qualify the generated candidate and shared helper | COMPLETE — 36 branch probes qualified the unchanged 22-case generated candidate; 16 worktree restorations and 20 disposable restorations passed |
 | Task 3 — qualify Alerts | COMPLETE — nine branch probes qualified the unchanged 24-case Alerts candidate; all nine exact restoration audits passed |
-| Task 4 — derive retained parameters and apply the sole executable edit | COMPLETE — exact derived constants applied after Tasks 2–3 qualified; 220/90/91/101 = 502, exact 22+24 product, 20 removals, zero additions |
+| Task 4 — derive retained parameters and apply the sole executable edit | COMPLETE — Ruff-clean derived constants applied after Tasks 2–3 qualified; 220/90/91/101 = 502, exact 22+24 product, 20 removals, zero additions |
 | Task 5 — complete local verification | NOT STARTED — Task 5 owns this evidence |
 | Task 6 — polish, review, publication, and hosted evidence | NOT STARTED — Task 6 owns this evidence |
 
@@ -3692,6 +3692,35 @@ The generated sequence is derived from `GAP_CAPTURES` insertion order: `settled`
 
 The Alerts sequence is the exact concatenation of 15 base scenarios, five anchor scenarios, and four clipped scenarios. No expansion tuple was required. The decorators consume only `_GAP_CAPTURE_CASES` and `_ALERTS_CAPTURE_SCENARIOS`; all test bodies, fixtures, scripts, and scenario implementations are unchanged.
 
+The controller quality-gate correction changed syntax only. Generated cases use Ruff-clean tuple unpacking while still deriving all 15 Cartesian-product identities from `GAP_CAPTURES`, then append the same seven witnesses:
+
+```python
+_GAP_CAPTURE_CASES = (
+    *(
+        (scenario, key)
+        for scenario in ("settled", "missing", "wrong-text")
+        for key in GAP_CAPTURES
+    ),
+    ("hidden", "profiles-copy-scope"),
+    ("clipped", "profiles-copy-scope"),
+    ("clipped", "fittings-metadata-narrow"),
+    ("clipped", "fittings-copy-preflight-bottom-narrow"),
+    ("clipped", "fittings-copy-result-bottom-narrow"),
+    ("covered", "fittings-copy-result-bottom-narrow"),
+    ("zero-area", "settings-wanderer-controls-narrow"),
+)
+```
+
+Alerts use the formatter-owned one-line concatenation:
+
+```python
+_ALERTS_CAPTURE_SCENARIOS = (
+    _ALERTS_BASE_SCENARIOS + _ALERTS_ANCHOR_SCENARIOS + _ALERTS_CLIPPED_SCENARIOS
+)
+```
+
+Reproducibility Block A's exact `GAP_CASES` and `ALERT_NEW` post-edit anchors were corrected to byte-match these forms. Its independent identity formulas remain unchanged.
+
 ### Exact after-edit collection proof
 
 | Evidence | Exact result |
@@ -4337,10 +4366,12 @@ The exact unexpanded candidate was applied only after both mutation ledgers qual
 - Protected source/fixture precondition: PASS — `git diff --exit-code -- scripts/shoot_screens.py tests/fixtures/screenshot_pages.cjs tests/fixtures/screenshot_alerts.cjs` produced no output.
 - Required pre-edit RED: PASS — the expected-46 assertion failed with exactly `66` collected identities.
 - Exact product collection: PASS — generated `22`, Alerts `24`, total `46`, ordered normalized SHA-256 `359da2ca8f13df995ac43ed76bd0aa19ba75cb4ec3b1fe1e4fb6c8e6a38d71f9`.
-- Product execution: PASS — fresh final run `46 passed in 7.08s`.
+- Product execution: PASS — fresh quality-gate run `46 passed in 7.13s`.
 - Direct four-file collection: PASS — `220 / 90 / 91 / 101 = 502`, all unique, ordered normalized SHA-256 `592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a`, exactly 20 removals and zero additions.
-- Whole affected file: PASS — fresh final run `220 passed in 30.97s`.
-- Reproducibility Block A post-edit mode: PASS — exact post-edit anchors recognized from committed `HEAD`; `actual_equals_projection: true`, exact 502/46 counts and hashes, 20 removals, zero additions, temporary checkouts cleaned.
+- Whole affected file: PASS — fresh quality-gate run `220 passed in 29.94s`.
+- Ruff lint: PASS — `uv run --extra dev ruff check tests/test_shoot_screens.py` reported `All checks passed!`.
+- Ruff format: PASS — `uv run --extra dev ruff format --check tests/test_shoot_screens.py` reported `1 file already formatted`.
+- Reproducibility Block A post-edit mode: PASS — corrected exact post-edit anchors recognized from committed `HEAD`; `actual_equals_projection: true`, exact 502/46 counts and hashes, 20 removals, zero additions, temporary checkouts cleaned.
 - Scope audit: PASS — no test body, scenario implementation, production script, fixture, or other test module changed.
 
 ### Task 3
@@ -4406,7 +4437,7 @@ NOT STARTED — Task 6 owns Stage 3 publication and hosted candidate evidence. T
 - Expansions: none. Task 1 changed only this documentation path.
 - Task 2 concerns: none. All generated owner and shared-helper mutants failed at the intended assertion; no survivor or masked failure triggered expansion/redesign. Executable acceptance, final local verification, and Stage 3 hosted comparison remain owned by later tasks.
 - Task 3 concerns: none. Both owner guards, all three visibility mechanisms, and all four pairwise edge comparisons failed at their intended fixture assertions; all 15 base states and both walk outcomes remained green; no survivor, masking, expansion, redesign, or persistent fixture/source change occurred.
-- Task 4 concerns: none. The approved unexpanded candidate was applied exactly after qualification; 20 redundant parameter identities were removed with zero additions, while test bodies, scenario semantics, scripts, fixtures, and all other test modules remained unchanged.
+- Task 4 concerns: none. The controller-approved quality-gate correction replaced tuple concatenation with tuple unpacking and accepted Ruff's Alerts formatting; exact identities, order, hashes, and 20/0 delta are unchanged. Test bodies, scenario semantics, scripts, fixtures, and all other test modules remain unchanged.
 
 ## Required self-review
 
@@ -4435,8 +4466,8 @@ NOT STARTED — Task 6 owns Stage 3 publication and hosted candidate evidence. T
 - COMPLETE — audited all seven removed Alerts identities against owner evidence, mechanism/edge evidence, intended assertions, and linked restoration proof.
 - COMPLETE — no candidate expansion, redesign, executable edit, or speedup claim was made in Task 3.
 
-- COMPLETE — independently derived `_GAP_CAPTURE_CASES` as 15 ordered Cartesian-product identities plus seven ordered witnesses, without hand-copying the five keys.
-- COMPLETE — independently derived Alerts as 15 base, five anchor, and four clipped identities in exact order.
+- COMPLETE — independently derived `_GAP_CAPTURE_CASES` as 15 ordered Cartesian-product identities plus seven ordered witnesses, without hand-copying the five keys; the final tuple-unpacking syntax passes Ruff.
+- COMPLETE — independently derived Alerts as 15 base, five anchor, and four clipped identities in exact order; the final concatenation is Ruff-formatted.
 - COMPLETE — verified exact 22+24 product identities and combined hash `359da2ca8f13df995ac43ed76bd0aa19ba75cb4ec3b1fe1e4fb6c8e6a38d71f9`.
 - COMPLETE — verified exact four-file counts `220 / 90 / 91 / 101 = 502`, hash `592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a`, exact 20 removals, and zero additions.
 - COMPLETE — verified every removed generated identity has semantic, wiring, and shared-helper evidence and every removed Alerts identity has owner and mechanism/edge evidence.

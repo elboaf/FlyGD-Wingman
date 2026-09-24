@@ -159,11 +159,12 @@ GAP_CAPTURES = {
     "fittings-copy-result-bottom-narrow": ("fittings", None, True),
 }
 
-_GAP_CAPTURE_CASES = tuple(
-    (scenario, key)
-    for scenario in ("settled", "missing", "wrong-text")
-    for key in GAP_CAPTURES
-) + (
+_GAP_CAPTURE_CASES = (
+    *(
+        (scenario, key)
+        for scenario in ("settled", "missing", "wrong-text")
+        for key in GAP_CAPTURES
+    ),
     ("hidden", "profiles-copy-scope"),
     ("clipped", "profiles-copy-scope"),
     ("clipped", "fittings-metadata-narrow"),
@@ -2608,9 +2609,7 @@ _ALERTS_CLIPPED_SCENARIOS = (
     "clipped-health-left",
 )
 _ALERTS_CAPTURE_SCENARIOS = (
-    _ALERTS_BASE_SCENARIOS
-    + _ALERTS_ANCHOR_SCENARIOS
-    + _ALERTS_CLIPPED_SCENARIOS
+    _ALERTS_BASE_SCENARIOS + _ALERTS_ANCHOR_SCENARIOS + _ALERTS_CLIPPED_SCENARIOS
 )
 
 
