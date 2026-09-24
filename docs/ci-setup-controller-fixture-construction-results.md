@@ -14,7 +14,7 @@ Task 1 changes documentation only. No executable file or test identity changed.
 - Task 2: **COMPLETE** — the fresh test-only publisher, optional seed seam, comprehensive parity/isolation/failure witness, default atomic-path evidence, and restoration-safe mutation qualification are recorded below.
 - Task 3: **COMPLETE** — only the controller fixture's two seed calls use the fresh publisher; the second witness proves construction has four direct opens and no fsync while a real create retains seven ordered atomic body fsyncs.
 - Task 4: **COMPLETE** — the exact local 190/136/16,607 endpoint, focused and full JUnit evidence, availability checks, independent gates, mutation restoration, and five-path scope are recorded below.
-- Task 5: **FINAL-REVIEW FIX WAVE COMPLETE; FRESH POST-FIX APPROVAL PENDING** — `polish-core --fix` found no safe correction to apply and fresh local verification passed on executable head `bb388893dac2fc2d3234af73eb0ecdae2162d37e`. The subsequent independent review found only the two final-review issues recorded below: stale Task 1 status wording in this ledger and an unconditional atomic-publication docstring claim. This one allowed fix wave corrects both without behavior or test-identity changes. Publication authorization and hosted comparison remain pending.
+- Task 5: **AUTHORIZED HOSTED PORTION COMPLETE; EVIDENCE COMMIT LOCAL ONLY** — `polish-core --fix` found no safe correction to apply, local verification passed, and the independent review's two documentation findings were resolved at executable head `9d60c726dbe0d74263e59d865723e9575831f7a9`. Authorized PR #288 run `36051546735` attempt 1 passed the complete Block D provenance, artifact, identity, skip, timing-agreement, and scope audit. The bounded decision accepts only the structural `544` fixture-fsync reduction; it supports no speedup or wall-clock conclusion. The hosted evidence commit is intentionally not pushed pending controller review.
 
 Task 1 changed path: `docs/ci-setup-controller-fixture-construction-results.md` only.
 
@@ -17894,8 +17894,9 @@ Reviewer focus should be the helper's close/unlink failure ordering, the
 defaults, the comprehensive witness's proxy fidelity, the exact seven-category
 event ordering, and the strict identity/scope assertions. The independent
 whole-branch review produced the two final-review findings recorded below. The
-remaining local risk is platform validation: Windows/Ubuntu hosted parity has
-not been run for this head, and fresh post-fix approval is still required.
+remaining local risk at that pre-publication checkpoint was platform validation.
+The authorized Windows/Ubuntu comparison that subsequently addressed it is
+recorded in `Hosted comparison` below.
 
 ### Explicit publication stop
 
@@ -17908,9 +17909,11 @@ two named witnesses with zero removals; `136` structural setup users are
 unchanged; only the structural `544` fixture-fsync reduction is claimed and no
 speedup is claimed.
 
-**STOP:** no push, PR creation, GitHub workflow dispatch, new-run artifact
-download, GitHub mutation API call, or hosted claim was performed. Publication
-requires explicit maintainer authorization after fresh post-fix approval.
+**PRE-AUTHORIZATION STOP (satisfied at that checkpoint):** no push, PR creation,
+GitHub workflow dispatch, new-run artifact download, GitHub mutation API call,
+or hosted claim was performed before authorization. The later authorized hosted
+read/collection is recorded below; pushing its evidence commit remains separately
+unauthorized.
 
 ## Final-review fix wave
 
@@ -17934,16 +17937,121 @@ Fresh post-fix verification:
 - `git diff --check`: clean.
 
 No subagent, push, remote mutation, hosted run, test identity change, or runtime
-behavior change occurred. Fresh post-fix review approval, publication
-authorization, and hosted comparison remain pending.
+behavior change occurred during that fix wave. Its then-pending publication
+authorization and hosted comparison were subsequently completed as recorded
+below; pushing the evidence commit remains pending controller review.
 
 ## Hosted comparison
 
-**NOT STARTED — publication authorization and fresh post-fix approval are pending.** The ledger still contains only the passing PR #287 attempt-2 comparator; it contains no implementation hosted result and makes no hosted speed claim.
+### Decision and authority
+
+**PASS — comparable hosted evidence; structural claim only.** Publication was authorized for PR #288. The collector used explicit `NEW_RUN=36051546735` and `PR_NUMBER=288`; no “latest” inference was used. Run attempt 1 completed successfully at head `9d60c726dbe0d74263e59d865723e9575831f7a9` against base `c23788e392bcd586dfc95b7390eaee18cb4ec224`. The run payload's `pull_requests` array was empty, so `run_pull_request_metadata` is recorded as `absent`, as allowed by the committed plan.
+
+Both `/tmp/setup_fixture_hosted_collect.sh` and `/tmp/setup_fixture_hosted_audit.py` were regenerated verbatim from committed Block D before collection. Their SHA-256 values were respectively `a87a124c47503ca661785fd3efe2f0ad75e09c8581452c7852ebb45738d93e4a` and `ffafd52a52b1f75c093c079c1934bca4da10a9997c521a02298e0f706db40677`; `bash -n` and `python -m py_compile` passed.
+
+### Primary checkout provenance and corroboration
+
+All three selected current-attempt checkout logs independently recorded the same triple:
+
+- Synthetic merge: `515c6185789fc0c67c8cd6247f57569bc8a45076`
+- Head: `9d60c726dbe0d74263e59d865723e9575831f7a9`
+- Base: `c23788e392bcd586dfc95b7390eaee18cb4ec224`
+
+Each log placed the full synthetic SHA immediately after its logged `git log -1 --format=%H` command. `git rev-list --parents -n 1` returned exactly synthetic, base, head in that order. Current PR #288 still reported the same head/base, and `refs/pull/288/merge` resolved to the same synthetic merge. The run `head_sha` also equaled the parsed head.
+
+The only current-attempt jobs were the three exact successful selections:
+
+| Role | Job ID | Attempt | Conclusion |
+|---|---:|---:|---|
+| checks | `107808061930` | 1 | success |
+| Ubuntu | `107808061903` | 1 | success |
+| Windows | `107808061529` | 1 | success |
+
+There were no prior attempts: `run-attempt-1.json` and `jobs-attempt-1.json` are the complete attempt history.
+
+### Exact synthetic diff and protected scope
+
+The comparator synthetic `ab2028f55f080e6067d7cc62002451f96171fa68` to candidate synthetic diff contains exactly these six paths:
+
+1. `docs/ci-generated-verifier-alerts-consolidation-results.md`
+2. `docs/ci-setup-controller-fixture-construction-results.md`
+3. `docs/superpowers/plans/2026-09-24-setup-controller-fixture-construction.md`
+4. `docs/superpowers/specs/2026-09-24-setup-controller-fixture-construction-design.md`
+5. `tests/setup_fixtures.py`
+6. `tests/test_ui_setup_controller.py`
+
+The first path is the known comparator-to-merged-baseline documentation change. The remaining five are the exact authored allowlist. No workflow, production, script, Node fixture, packaging, dependency, lockfile, configuration, or other test path changed.
+
+### Artifact identity and integrity
+
+| Platform | Artifact ID | API/archive digest | XML SHA-256 | Timing SHA-256 |
+|---|---:|---|---|---|
+| Ubuntu | `10830398935` | `sha256:2fe063a4448799e112f0518c938b9bc817f3078c67035daed7423293524116c0` | `b5b270d5435749cdc7bbc48af30654e2e43b8b93e3034cc0d7257901a5e74a0f` | `bb84eac161288793a8aac334172fec8c21b0025bf58961be07f86cfd88258e29` |
+| Windows | `10831516363` | `sha256:4516bded043e3436cb4aa41eda622324e448a3c9d90656062487cb0cf759e1f3` | `2402ed2b69bec471221ebdcae3c0cbcd55f648b441e0ae9edc61fee48a0a8c4d` | `91d5944207d8f3fdc450c6d582657a81304d8ba616964d254363dd888f40c519` |
+
+Each downloaded archive SHA-256 exactly matched its API digest. Both artifacts contained the required `pytest-result.xml` and `pytest-timing.json`. Timing JSON declared `16,607` cases on each platform; every per-file case count and summed duration agreed with JUnit within the parser's exact `1e-9` tolerance.
+
+### Identity, result, and skip acceptance
+
+- Complete identities: exactly `16,607` unique IDs on Ubuntu and Windows. The ordered files were equal cross-platform and had SHA-256 `788c629201704e4c72777aa64d169bb5af17db83c7c57059bb49a6f50cc1d491`.
+- Delta from PR #287: exactly the two approved witnesses below and zero removals:
+  1. `tests/test_ui_setup_controller.py::test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_failures`
+  2. `tests/test_ui_setup_controller.py::test_fast_fixture_construction_preserves_controller_body_atomic_persistence`
+- Controller identities: exactly `190` in identical cross-platform order, with the frozen `188` IDs as the exact prefix and the two witnesses as the exact suffix. Ordered SHA-256: `ebf5f437078c0532caa477db71061153bdf5a06149e3cd191f197b22db4f84d4`.
+- Structural setup users: the same `136` frozen IDs; neither new witness consumes fixture `setup`.
+- Ubuntu: `16,593` passed, `14` platform-local skips, zero failures/errors, zero controller skips.
+- Windows: `16,540` passed, `67` platform-local skips, zero failures/errors, zero controller skips.
+- The complete normalized Ubuntu and Windows skip tuples were respectively byte-for-value equal to PR #287. No resource, Node, or settings-codec availability skip occurred.
+
+### Timing observations, not a performance claim
+
+JUnit testcase sums:
+
+| Scope | PR #287 Ubuntu | PR #288 Ubuntu | PR #287 Windows | PR #288 Windows |
+|---|---:|---:|---:|---:|
+| Controller | 3.185s | 2.959s | 42.301s | 22.820s |
+| 136 setup users | 2.964s | 2.668s | 40.384s | 20.456s |
+| Other controller | 0.221s | 0.291s | 1.917s | 2.364s |
+| Two new witnesses | — | 0.065s | — | 0.552s |
+
+GitHub job/Test-step observations:
+
+| Platform/role | PR #287 job | PR #287 Test | PR #288 job | PR #288 Test |
+|---|---:|---:|---:|---:|
+| checks | 9s | — | 13s | — |
+| Ubuntu | 309s | 289s | 327s | 295s |
+| Windows | 907s | 839s | 877s | 757s |
+
+Comparator jobs were checks `107621272336`, Ubuntu `107621270623`, and Windows `107621270652`, all from passing attempt 2. Candidate jobs are listed above from attempt 1. These values are observations from one hosted comparator run and one hosted candidate run. They do not support a speedup, slowdown, regression attribution, runner-efficiency, critical-path, or wall-clock conclusion.
+
+Slowest retained controller observations in the candidate artifacts were:
+
+| Rank | Ubuntu | Seconds | Windows | Seconds |
+|---:|---|---:|---|---:|
+| 1 | `test_ambiguous_native_labels_require_explicit_keep_and_no_offer` | 0.089 | `test_create_is_new_only_correlated_and_single_use_even_before_start_reply` | 0.555 |
+| 2 | `test_create_is_new_only_correlated_and_single_use_even_before_start_reply` | 0.061 | `test_create_publication_survives_housekeeping_failures[status]` | 0.442 |
+| 3 | `test_create_start_failure_restores_only_still_valid_offer[None-spawn]` | 0.051 | `test_create_inline_completion_cannot_restore_or_double_release[False]` | 0.422 |
+| 4 | `test_create_inline_completion_cannot_restore_or_double_release[True]` | 0.051 | `test_create_start_failure_restores_only_still_valid_offer[None-start]` | 0.417 |
+| 5 | `test_create_publication_survives_housekeeping_failures[status]` | 0.050 | `test_create_inline_completion_cannot_restore_or_double_release[True]` | 0.414 |
+| 6 | `test_create_publication_survives_housekeeping_failures[selection-io]` | 0.050 | `test_create_start_failure_restores_only_still_valid_offer[None-spawn]` | 0.413 |
+| 7 | `test_create_publication_survives_housekeeping_failures[cleanup]` | 0.050 | `test_create_publication_survives_housekeeping_failures[selection-false]` | 0.412 |
+| 8 | `test_create_inline_completion_cannot_restore_or_double_release[False]` | 0.050 | `test_create_rechecks_authority_after_final_manifest_hashing[discovery-generation]` | 0.409 |
+| 9 | `test_create_rechecks_authority_after_final_manifest_hashing[discovery-generation]` | 0.049 | `test_create_publication_survives_housekeeping_failures[selection-io]` | 0.407 |
+| 10 | `test_create_publication_survives_housekeeping_failures[selection-raise]` | 0.049 | `test_create_publication_survives_housekeeping_failures[selection-raise]` | 0.405 |
+
+### Bounded conclusion
+
+The hosted audit verifies the structural reduction already established locally: `136` unchanged setup users × `4` initial DAT publications = `544` fixture-only fsync calls removed. The two new witnesses add qualification work, do not consume fixture `setup`, and therefore do not change `544`. No broader performance claim is made.
+
+The complete machine-readable evidence remains at `/tmp/wingman-setup-hosted-36051546735`, including `selected.json`, attempt/job metadata, all three logs, exact artifact archives/files, inventories, normalized skips, hashes, and `hosted-audit.json`.
 
 ## Deviations and concerns
 
 - Evidence discrepancies: none.
+- Hosted acceptance decision: PASS for provenance, comparability, exact identity/skip/scope contracts, and the structural `544` claim only.
+- Evidence publication: this documentation commit is local and must not be pushed without separate controller authorization.
+- Remaining review gate: the hosted evidence commit still requires the controller's fresh review of parents/logs, six-path diff, artifact IDs/digests, identity/skip sets, controller prefix/suffix, timing agreement, and claim wording.
+- Performance limitation: one hosted comparator/candidate pair supports no speedup, slowdown, runner-efficiency, critical-path, regression-attribution, or wall-clock conclusion.
 - Dependency setup: `uv sync --locked --extra dev` succeeded with 56 packages resolved and 39 checked.
 - Node availability: `v26.5.0`.
 - Procedural harness note: Pi policy rejected one combined multiline shell invocation, so the prescribed checks were run individually with equivalent explicit `git -C` and `uv --project` targeting. Block A's exact Python was compiled and executed unchanged in effect. This did not alter evidence or scope.
