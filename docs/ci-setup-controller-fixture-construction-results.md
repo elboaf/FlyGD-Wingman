@@ -14,7 +14,7 @@ Task 1 changes documentation only. No executable file or test identity changed.
 - Task 2: **COMPLETE** — the fresh test-only publisher, optional seed seam, comprehensive parity/isolation/failure witness, default atomic-path evidence, and restoration-safe mutation qualification are recorded below.
 - Task 3: **COMPLETE** — only the controller fixture's two seed calls use the fresh publisher; the second witness proves construction has four direct opens and no fsync while a real create retains seven ordered atomic body fsyncs.
 - Task 4: **COMPLETE** — the exact local 190/136/16,607 endpoint, focused and full JUnit evidence, availability checks, independent gates, mutation restoration, and five-path scope are recorded below.
-- Task 5: **AUTHORIZED HOSTED PORTION COMPLETE; EVIDENCE COMMIT LOCAL ONLY** — `polish-core --fix` found no safe correction to apply, local verification passed, and the independent review's two documentation findings were resolved at executable head `9d60c726dbe0d74263e59d865723e9575831f7a9`. Authorized PR #288 run `36051546735` attempt 1 passed the complete Block D provenance, artifact, identity, skip, timing-agreement, and scope audit. The bounded decision accepts only the structural `544` fixture-fsync reduction; it supports no speedup or wall-clock conclusion. The hosted evidence commit is intentionally not pushed pending controller review.
+- Task 5: **COMPLETE** — `polish-core --fix` found no safe correction to apply, local verification passed, and the independent review's two documentation findings were resolved at executable head `9d60c726dbe0d74263e59d865723e9575831f7a9`. Authorized PR #288 executable-evidence run `36051546735` attempt 1 passed the complete Block D provenance, artifact, identity, skip, timing-agreement, and scope audit. Evidence commit `a05331fc8ca6c857c6de49bb5b3a9f72ace504bb` was pushed, and its exact documentation-head run `36055429090` attempt 1 passed checks job `107821030625`, Ubuntu job `107821030290`, and Windows job `107821030619`. That later run is status evidence only; executable timing evidence remains run `36051546735` at head `9d60c726`. The bounded decision accepts only the structural `544` fixture-fsync reduction and supports no speedup or wall-clock conclusion. This status-closing documentation head's own checks will be watched after push and are not yet claimed.
 
 Task 1 changed path: `docs/ci-setup-controller-fixture-construction-results.md` only.
 
@@ -17912,8 +17912,8 @@ speedup is claimed.
 **PRE-AUTHORIZATION STOP (satisfied at that checkpoint):** no push, PR creation,
 GitHub workflow dispatch, new-run artifact download, GitHub mutation API call,
 or hosted claim was performed before authorization. The later authorized hosted
-read/collection is recorded below; pushing its evidence commit remains separately
-unauthorized.
+read/collection, evidence-commit publication, and documentation-head checks are
+recorded below.
 
 ## Final-review fix wave
 
@@ -17938,8 +17938,8 @@ Fresh post-fix verification:
 
 No subagent, push, remote mutation, hosted run, test identity change, or runtime
 behavior change occurred during that fix wave. Its then-pending publication
-authorization and hosted comparison were subsequently completed as recorded
-below; pushing the evidence commit remains pending controller review.
+authorization, hosted comparison, evidence-commit publication, and exact
+documentation-head checks were subsequently completed as recorded below.
 
 ## Hosted comparison
 
@@ -18045,12 +18045,24 @@ The hosted audit verifies the structural reduction already established locally: 
 
 The complete machine-readable evidence remains at `/tmp/wingman-setup-hosted-36051546735`, including `selected.json`, attempt/job metadata, all three logs, exact artifact archives/files, inventories, normalized skips, hashes, and `hosted-audit.json`.
 
+### Evidence-head required checks
+
+Evidence commit `a05331fc8ca6c857c6de49bb5b3a9f72ace504bb` was pushed. Its exact PR #288 run `36055429090`, attempt 1, passed all three required jobs:
+
+| Role | Job ID | Attempt | Conclusion |
+|---|---:|---:|---|
+| checks | `107821030625` | 1 | success |
+| Ubuntu | `107821030290` | 1 | success |
+| Windows | `107821030619` | 1 | success |
+
+This run establishes only that the hosted-evidence documentation head was green. It is not executable timing or behavior evidence and does not replace the executable-evidence run `36051546735` at head `9d60c726dbe0d74263e59d865723e9575831f7a9`. This status-closing documentation change is a later head; after it is pushed, its own required checks will be watched separately and are not claimed here.
+
 ## Deviations and concerns
 
 - Evidence discrepancies: none.
 - Hosted acceptance decision: PASS for provenance, comparability, exact identity/skip/scope contracts, and the structural `544` claim only.
-- Evidence publication: this documentation commit is local and must not be pushed without separate controller authorization.
-- Remaining review gate: the hosted evidence commit still requires the controller's fresh review of parents/logs, six-path diff, artifact IDs/digests, identity/skip sets, controller prefix/suffix, timing agreement, and claim wording.
+- Evidence publication: commit `a05331fc8ca6c857c6de49bb5b3a9f72ace504bb` was pushed and its exact documentation-head required checks passed in run `36055429090` attempt 1.
+- Remaining status gate: this later status-closing documentation head's own required checks will be watched after push; they have not run yet and are not claimed here.
 - Performance limitation: one hosted comparator/candidate pair supports no speedup, slowdown, runner-efficiency, critical-path, regression-attribution, or wall-clock conclusion.
 - Dependency setup: `uv sync --locked --extra dev` succeeded with 56 packages resolved and 39 checked.
 - Node availability: `v26.5.0`.
@@ -18073,3 +18085,12 @@ The checks below preserve the Task 1 baseline review. Current task status and th
 - **Placeholder/status discipline:** PASS — every later section has explicit ownership/status text; no section implies uncollected evidence exists.
 - **Claim discipline:** PASS — timing values are observations only; no performance claim is made.
 - **Executable/identity protection:** PASS — no executable file or test identity changed.
+
+## Task 5 closing self-review
+
+- **Task status:** PASS — local polish, independent review/fix wave, fresh verification, authorized hosted executable comparison, evidence publication, and exact evidence-head required checks are complete.
+- **Executable evidence authority:** PASS — run `36051546735` attempt 1 at executable head `9d60c726dbe0d74263e59d865723e9575831f7a9` remains the sole candidate timing, artifact, identity, skip, and behavior evidence.
+- **Documentation-head status evidence:** PASS — evidence commit `a05331fc8ca6c857c6de49bb5b3a9f72ace504bb` was pushed and run `36055429090` attempt 1 passed checks `107821030625`, Ubuntu `107821030290`, and Windows `107821030619`.
+- **Claim discipline:** PASS — the evidence-head run is not presented as executable timing evidence; the accepted conclusion remains only the structural `136 × 4 = 544` fixture-fsync reduction, with no speedup or wall-clock claim.
+- **Scope:** PASS — this status-closing repository change updates only this results document; no executable, workflow, dependency, test identity, or hosted evidence input changes.
+- **Next-head status:** OPEN BY DESIGN — this status-closing documentation head's own required checks will be watched after push and are not yet claimed.
