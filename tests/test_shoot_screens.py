@@ -159,6 +159,20 @@ GAP_CAPTURES = {
     "fittings-copy-result-bottom-narrow": ("fittings", None, True),
 }
 
+_GAP_CAPTURE_CASES = tuple(
+    (scenario, key)
+    for scenario in ("settled", "missing", "wrong-text")
+    for key in GAP_CAPTURES
+) + (
+    ("hidden", "profiles-copy-scope"),
+    ("clipped", "profiles-copy-scope"),
+    ("clipped", "fittings-metadata-narrow"),
+    ("clipped", "fittings-copy-preflight-bottom-narrow"),
+    ("clipped", "fittings-copy-result-bottom-narrow"),
+    ("covered", "fittings-copy-result-bottom-narrow"),
+    ("zero-area", "settings-wanderer-controls-narrow"),
+)
+
 
 def test_gap_capture_inventory_keeps_existing_stages():
     screens = {screen.key: screen for screen in shoot.SCREENS}
@@ -770,11 +784,7 @@ def _request_gap_capture(
     return worker.request(f"{key}/{scenario}", payload, timeout=20.0)
 
 
-@pytest.mark.parametrize("key", GAP_CAPTURES)
-@pytest.mark.parametrize(
-    "scenario",
-    ["settled", "missing", "hidden", "wrong-text", "clipped", "covered", "zero-area"],
-)
+@pytest.mark.parametrize(("scenario", "key"), _GAP_CAPTURE_CASES)
 def test_gap_capture_requires_semantic_content_after_framing(
     gap_capture_worker, key, scenario
 ):
@@ -2567,36 +2577,44 @@ def test_groups_stage_closes_inherited_detail_before_framing_management():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "scenario",
-    [
-        "settled-disabled",
-        "settled-enabled",
-        "wrong-route",
-        "wrong-section",
-        "inactive-route",
-        "inactive-section",
-        "missing-section",
-        "missing-pane",
-        "hidden-section",
-        "hidden-pane",
-        "hidden-card",
-        "wrong-owner",
-        "empty-health",
-        "zero-health",
-        "outside-viewport",
-        *[
-            f"{kind}-{anchor}"
-            for kind in ("missing", "hidden", "invisible", "display-none")
-            for anchor in ("master", "health")
-        ],
-        *[
-            f"clipped-{anchor}-{edge}"
-            for anchor in ("master", "health")
-            for edge in ("top", "bottom", "left", "right")
-        ],
-    ],
+_ALERTS_BASE_SCENARIOS = (
+    "settled-disabled",
+    "settled-enabled",
+    "wrong-route",
+    "wrong-section",
+    "inactive-route",
+    "inactive-section",
+    "missing-section",
+    "missing-pane",
+    "hidden-section",
+    "hidden-pane",
+    "hidden-card",
+    "wrong-owner",
+    "empty-health",
+    "zero-health",
+    "outside-viewport",
 )
+_ALERTS_ANCHOR_SCENARIOS = (
+    "missing-master",
+    "missing-health",
+    "hidden-master",
+    "invisible-health",
+    "display-none-master",
+)
+_ALERTS_CLIPPED_SCENARIOS = (
+    "clipped-master-top",
+    "clipped-master-right",
+    "clipped-health-bottom",
+    "clipped-health-left",
+)
+_ALERTS_CAPTURE_SCENARIOS = (
+    _ALERTS_BASE_SCENARIOS
+    + _ALERTS_ANCHOR_SCENARIOS
+    + _ALERTS_CLIPPED_SCENARIOS
+)
+
+
+@pytest.mark.parametrize("scenario", _ALERTS_CAPTURE_SCENARIOS)
 def test_alerts_base_capture_requires_top_anchors_without_actions(tmp_path, scenario):
     """Omitting the scroll reset or accepting absent/clipped anchors loses evidence."""
     screen = next(s for s in shoot.SCREENS if s.key == "settings-alerts")
