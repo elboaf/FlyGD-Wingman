@@ -547,13 +547,14 @@ Expected: 190 controller IDs with exact 188 prefix and exact two-ID suffix, unch
 
 ### Block D — authorized hosted run collection and complete audit
 
-Run this block only after Task 5's explicit publication authorization. `NEW_RUN` is mandatory and is the stable workflow-run ID; the collector reads `run_attempt` from the API, calls `gh run view --attempt`, stores every attempt's run/jobs metadata, and selects jobs/artifacts only from the current successful attempt. Earlier failed attempts remain documented but cannot enter passing evidence. GitHub's run `head_sha` is treated as the PR branch head and must equal `run.pull_requests[0].head.sha`; the exact base is `run.pull_requests[0].base.sha`. The synthetic merge is derived independently from each selected job's checkout log using the `HEAD is now at <short> Merge <full-head> into <full-base>` line and the full SHA immediately following `[command]...log -1 --format=%H`, matching the Linux and quoted-Windows formats observed in run `36001306188`. Artifact IDs are selected by exact name and current-attempt job time window, then downloaded by ID so duplicate names from reruns cannot silently select attempt 1.
+Run this block only after Task 5's explicit publication authorization. Both `NEW_RUN` (the stable workflow-run ID) and `PR_NUMBER` (the authorized final-head PR) are mandatory explicit inputs. The collector reads `run_attempt`, calls `gh run view --attempt`, stores every attempt's run/jobs metadata, selects current-attempt successful jobs, and downloads those logs before accepting provenance or downloading artifacts. Earlier failed attempts remain documented but cannot enter passing evidence. The three checkout logs are the primary run-time provenance: each independently supplies synthetic/head/base from `HEAD is now at <short> Merge <full-head> into <full-base>` plus the full SHA immediately following `[command]...log -1 --format=%H`, matching the Linux and quoted-Windows forms observed in run `36001306188`. All three triples must agree and parsed head must equal `run.head_sha`. `gh pr view "$PR_NUMBER"` is only final-head corroboration; current PR head/base and current merge ref must still equal parsed provenance or the collector stops as stale/moved. A missing `run.pull_requests` entry is recorded as `run_pull_request_metadata: absent`; one entry is validated where number/head/base fields are present; multiple or conflicting entries are rejected. Artifact IDs remain selected by exact name and current-attempt job time window, then downloaded by ID.
 
 ```bash
 cat > /tmp/setup_fixture_hosted_collect.sh <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 : "${NEW_RUN:?Set NEW_RUN to the authorized GitHub Actions workflow run ID}"
+: "${PR_NUMBER:?Set PR_NUMBER to the authorized final-head pull request number}"
 R="elboaf/FlyGD-Wingman"
 W="/mnt/c/dev/flygd-wingman/.worktrees/ci-windows-hotspot-audit"
 O="/tmp/wingman-setup-hosted-${NEW_RUN}"
@@ -563,9 +564,8 @@ cd "$W"
 
 gh api "repos/$R/actions/runs/$NEW_RUN" > "$O/run.json"
 ATTEMPT=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["run_attempt"])' "$O/run.json")
-PR=$(python -c 'import json,sys; r=json.load(open(sys.argv[1])); p=r["pull_requests"]; assert len(p)==1,p; assert r["head_sha"]==p[0]["head"]["sha"],(r["head_sha"],p[0]["head"]["sha"]); print(p[0]["number"])' "$O/run.json")
 gh run view "$NEW_RUN" -R "$R" --attempt "$ATTEMPT" --json databaseId,headSha,status,conclusion,url,jobs > "$O/run-view.json"
-gh pr view "$PR" -R "$R" --json number,url,headRefName,headRefOid,baseRefName,baseRefOid > "$O/pr.json"
+gh pr view "$PR_NUMBER" -R "$R" --json number,url,headRefName,headRefOid,baseRefName,baseRefOid > "$O/pr.json"
 for attempt in $(seq 1 "$ATTEMPT"); do
   gh api "repos/$R/actions/runs/$NEW_RUN/attempts/$attempt" > "$O/run-attempt-$attempt.json"
   gh api "repos/$R/actions/runs/$NEW_RUN/attempts/$attempt/jobs?per_page=100" > "$O/jobs-attempt-$attempt.json"
@@ -573,29 +573,21 @@ done
 cp "$O/jobs-attempt-$ATTEMPT.json" "$O/jobs.json"
 gh api --paginate "repos/$R/actions/runs/$NEW_RUN/artifacts?per_page=100" --slurp > "$O/artifact-pages.json"
 
-python - "$O" <<'PY'
+python - "$O" "$PR_NUMBER" <<'PY'
 from __future__ import annotations
 import json, sys
-from datetime import datetime
 from pathlib import Path
 
 out = Path(sys.argv[1])
+pr_number = int(sys.argv[2])
 run = json.loads((out / 'run.json').read_text())
 view = json.loads((out / 'run-view.json').read_text())
 pr = json.loads((out / 'pr.json').read_text())
 jobs = json.loads((out / 'jobs.json').read_text())['jobs']
-pages = json.loads((out / 'artifact-pages.json').read_text())
-artifacts = [row for page in pages for row in page['artifacts']]
 assert run['conclusion'] == view['conclusion'] == 'success'
 assert run['event'] == 'pull_request', run['event']
-run_prs = run['pull_requests']
-assert len(run_prs) == 1, run_prs
-run_pr = run_prs[0]
-run_head = run_pr['head']['sha']
-run_base = run_pr['base']['sha']
-assert run['head_sha'] == view['headSha'] == run_head
-assert pr['number'] == run_pr['number']
-assert pr['headRefOid'] == run_head, ('run is not for current final PR head', run_head, pr['headRefOid'])
+assert run['head_sha'] == view['headSha']
+assert pr['number'] == pr_number
 roles = {
     'checks': 'checks',
     'ubuntu': 'test (ubuntu-latest)',
@@ -610,56 +602,23 @@ for role, name in roles.items():
     assert job['conclusion'] == 'success', (role, job['conclusion'])
     selected[role] = job
 
-def stamp(value):
-    return datetime.fromisoformat(value.replace('Z', '+00:00'))
-
-selected_artifacts = {}
-for role, artifact_name in {
-    'ubuntu': 'pytest-evidence-ubuntu-latest',
-    'windows': 'pytest-evidence-windows-latest',
-}.items():
-    job = selected[role]
-    rows = [
-        artifact for artifact in artifacts
-        if artifact['name'] == artifact_name
-        and not artifact['expired']
-        and stamp(job['started_at']) <= stamp(artifact['created_at']) <= stamp(job['completed_at'])
-    ]
-    assert len(rows) == 1, (role, [(row['id'], row['created_at']) for row in rows])
-    selected_artifacts[role] = rows[0]
 metadata = {
     'run_id': run['id'],
     'run_attempt': run['run_attempt'],
-    'run_head': run_head,
-    'run_base': run_base,
-    'pr_number': run_pr['number'],
-    'run_head_ref': run_pr['head']['ref'],
-    'run_base_ref': run_pr['base']['ref'],
-    'current_pr_head': pr['headRefOid'],
-    'current_pr_base': pr['baseRefOid'],
+    'run_head_sha': run['head_sha'],
+    'explicit_pr_number': pr_number,
+    'current_pr': pr,
     'jobs': selected,
-    'artifacts': selected_artifacts,
 }
 (out / 'selection.json').write_text(json.dumps(metadata, sort_keys=True, indent=2) + '\n')
 for role, job in selected.items():
     (out / f'{role}-job-id').write_text(str(job['id']))
-for role, artifact in selected_artifacts.items():
-    (out / f'{role}-artifact-id').write_text(str(artifact['id']))
 PY
 
 for role in checks ubuntu windows; do
   JOB_ID=$(cat "$O/$role-job-id")
   gh api --allow-escape-sequences "repos/$R/actions/jobs/$JOB_ID/logs" > "$O/logs/$role.log"
 done
-for role in ubuntu windows; do
-  ARTIFACT_ID=$(cat "$O/$role-artifact-id")
-  gh api "repos/$R/actions/artifacts/$ARTIFACT_ID/zip" > "$O/artifacts/$role.zip"
-  mkdir -p "$O/artifacts/$role"
-  unzip -q "$O/artifacts/$role.zip" -d "$O/artifacts/$role"
-  test -f "$O/artifacts/$role/pytest-result.xml"
-  test -f "$O/artifacts/$role/pytest-timing.json"
-done
-
 python - "$O" <<'PY'
 from __future__ import annotations
 import json, re, sys
@@ -667,6 +626,8 @@ from pathlib import Path
 
 out = Path(sys.argv[1])
 metadata = json.loads((out / 'selection.json').read_text())
+run = json.loads((out / 'run.json').read_text())
+pr = json.loads((out / 'pr.json').read_text())
 merge_pattern = re.compile(
     r'HEAD is now at (?P<short>[0-9a-f]{7,40}) Merge '
     r'(?P<head>[0-9a-f]{40}) into (?P<base>[0-9a-f]{40})'
@@ -696,23 +657,51 @@ def checkout_evidence(path):
         'merge_base': merge.group('base'),
     }
 
+def present(value):
+    return value is not None and value != ''
+
 checkout = {
     role: checkout_evidence(out / f'logs/{role}.log')
     for role in ('checks', 'ubuntu', 'windows')
 }
-synthetics = {row['synthetic_merge'] for row in checkout.values()}
-assert len(synthetics) == 1, checkout
-for role, row in checkout.items():
-    assert row['merge_head'] == metadata['run_head'], (role, row)
-    assert row['merge_base'] == metadata['run_base'], (role, row)
-metadata['synthetic_merge'] = synthetics.pop()
-metadata['checkout'] = checkout
+provenance = {
+    (row['synthetic_merge'], row['merge_head'], row['merge_base'])
+    for row in checkout.values()
+}
+assert len(provenance) == 1, checkout
+synthetic, head, base = provenance.pop()
+assert head == run['head_sha'] == metadata['run_head_sha']
+assert pr['number'] == metadata['explicit_pr_number']
+run_prs = run.get('pull_requests') or []
+assert len(run_prs) <= 1, run_prs
+if not run_prs:
+    run_pr_metadata = 'absent'
+    run_pr_entry = None
+else:
+    run_pr_entry = run_prs[0]
+    if present(run_pr_entry.get('number')):
+        assert run_pr_entry['number'] == metadata['explicit_pr_number']
+    run_pr_head = run_pr_entry.get('head') or {}
+    run_pr_base = run_pr_entry.get('base') or {}
+    if present(run_pr_head.get('sha')):
+        assert run_pr_head['sha'] == head
+    if present(run_pr_base.get('sha')):
+        assert run_pr_base['sha'] == base
+    run_pr_metadata = 'present'
+metadata.update({
+    'head': head,
+    'base': base,
+    'synthetic_merge': synthetic,
+    'checkout': checkout,
+    'run_pull_request_metadata': run_pr_metadata,
+    'run_pull_request_entry': run_pr_entry,
+})
 (out / 'selected.json').write_text(json.dumps(metadata, sort_keys=True, indent=2) + '\n')
 PY
 
 SYNTHETIC=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["synthetic_merge"])' "$O/selected.json")
-HEAD_SHA=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["run_head"])' "$O/selected.json")
-BASE_SHA=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["run_base"])' "$O/selected.json")
+HEAD_SHA=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["head"])' "$O/selected.json")
+BASE_SHA=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["base"])' "$O/selected.json")
 git fetch --quiet --no-tags origin "$SYNTHETIC" "$HEAD_SHA" "$BASE_SHA"
 git cat-file -e "$SYNTHETIC^{commit}"
 git cat-file -e "$HEAD_SHA^{commit}"
@@ -722,11 +711,59 @@ test "$COMMIT" = "$SYNTHETIC"
 test "$PARENT_BASE" = "$BASE_SHA"
 test "$PARENT_HEAD" = "$HEAD_SHA"
 test -z "${EXTRA:-}"
-git fetch --quiet origin "+refs/pull/$PR/merge:refs/remotes/pull/$PR/merge"
-test "$(git rev-parse refs/remotes/pull/$PR/merge)" = "$SYNTHETIC"
+CURRENT_PR_HEAD=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["headRefOid"])' "$O/pr.json")
+CURRENT_PR_BASE=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["baseRefOid"])' "$O/pr.json")
+test "$CURRENT_PR_HEAD" = "$HEAD_SHA"
+test "$CURRENT_PR_BASE" = "$BASE_SHA"
+git fetch --quiet origin "+refs/pull/$PR_NUMBER/merge:refs/remotes/pull/$PR_NUMBER/merge"
+test "$(git rev-parse refs/remotes/pull/$PR_NUMBER/merge)" = "$SYNTHETIC"
+
+python - "$O" <<'PY'
+from __future__ import annotations
+import json, sys
+from datetime import datetime
+from pathlib import Path
+
+out = Path(sys.argv[1])
+metadata = json.loads((out / 'selected.json').read_text())
+pages = json.loads((out / 'artifact-pages.json').read_text())
+artifacts = [row for page in pages for row in page['artifacts']]
+
+def stamp(value):
+    return datetime.fromisoformat(value.replace('Z', '+00:00'))
+
+selected_artifacts = {}
+for role, artifact_name in {
+    'ubuntu': 'pytest-evidence-ubuntu-latest',
+    'windows': 'pytest-evidence-windows-latest',
+}.items():
+    job = metadata['jobs'][role]
+    rows = [
+        artifact for artifact in artifacts
+        if artifact['name'] == artifact_name
+        and not artifact['expired']
+        and stamp(job['started_at']) <= stamp(artifact['created_at']) <= stamp(job['completed_at'])
+    ]
+    assert len(rows) == 1, (role, [(row['id'], row['created_at']) for row in rows])
+    selected_artifacts[role] = rows[0]
+metadata['artifacts'] = selected_artifacts
+(out / 'selected.json').write_text(json.dumps(metadata, sort_keys=True, indent=2) + '\n')
+for role, artifact in selected_artifacts.items():
+    (out / f'{role}-artifact-id').write_text(str(artifact['id']))
+PY
+
+for role in ubuntu windows; do
+  ARTIFACT_ID=$(cat "$O/$role-artifact-id")
+  gh api "repos/$R/actions/artifacts/$ARTIFACT_ID/zip" > "$O/artifacts/$role.zip"
+  mkdir -p "$O/artifacts/$role"
+  unzip -q "$O/artifacts/$role.zip" -d "$O/artifacts/$role"
+  test -f "$O/artifacts/$role/pytest-result.xml"
+  test -f "$O/artifacts/$role/pytest-timing.json"
+done
+
 git cat-file -e "ab2028f55f080e6067d7cc62002451f96171fa68^{commit}"
 HOSTED_ROOT="$O" python /tmp/setup_fixture_hosted_audit.py
-printf 'HOSTED_ROOT=%s\nNEW_RUN=%s\nATTEMPT=%s\nPR=%s\nSYNTHETIC=%s\n' "$O" "$NEW_RUN" "$ATTEMPT" "$PR" "$SYNTHETIC"
+printf 'HOSTED_ROOT=%s\nNEW_RUN=%s\nATTEMPT=%s\nPR_NUMBER=%s\nSYNTHETIC=%s\n' "$O" "$NEW_RUN" "$ATTEMPT" "$PR_NUMBER" "$SYNTHETIC"
 SH
 bash -n /tmp/setup_fixture_hosted_collect.sh
 ```
@@ -878,23 +915,60 @@ def checkout_evidence(path):
     }
 
 
+def present(value):
+    return value is not None and value != ''
+
+
+def validate_run_pull_requests(run, pr_number, head, base):
+    run_prs = run.get('pull_requests') or []
+    assert len(run_prs) <= 1, run_prs
+    if not run_prs:
+        return 'absent', None
+    entry = run_prs[0]
+    if present(entry.get('number')):
+        assert entry['number'] == pr_number
+    entry_head = entry.get('head') or {}
+    entry_base = entry.get('base') or {}
+    if present(entry_head.get('sha')):
+        assert entry_head['sha'] == head
+    if present(entry_base.get('sha')):
+        assert entry_base['sha'] == base
+    return 'present', entry
+
+
 metadata = json.loads((O / 'selected.json').read_text())
 run = json.loads((O / 'run.json').read_text())
 pr = json.loads((O / 'pr.json').read_text())
-run_prs = run['pull_requests']
-assert len(run_prs) == 1, run_prs
-run_pr = run_prs[0]
-synthetic = metadata['synthetic_merge']
-head = metadata['run_head']
-base = metadata['run_base']
-assert run['head_sha'] == run_pr['head']['sha'] == head
-assert run_pr['base']['sha'] == base
-assert run_pr['number'] == metadata['pr_number'] == pr['number']
-assert pr['headRefOid'] == metadata['current_pr_head'] == head
-assert metadata['current_pr_base'] == pr['baseRefOid']
+checkout = {
+    role: checkout_evidence(O / f'logs/{role}.log')
+    for role in ('checks', 'ubuntu', 'windows')
+}
+provenance = {
+    (row['synthetic_merge'], row['merge_head'], row['merge_base'])
+    for row in checkout.values()
+}
+assert len(provenance) == 1, checkout
+synthetic, head, base = provenance.pop()
+assert metadata['synthetic_merge'] == synthetic
+assert metadata['head'] == run['head_sha'] == head
+assert metadata['base'] == base
+assert pr == metadata['current_pr']
+assert pr['number'] == metadata['explicit_pr_number']
+assert pr['headRefOid'] == head, ('stale or moved PR head', pr['headRefOid'], head)
+assert pr['baseRefOid'] == base, ('stale or moved PR base', pr['baseRefOid'], base)
+run_pr_status, run_pr_entry = validate_run_pull_requests(
+    run, metadata['explicit_pr_number'], head, base
+)
+assert metadata['run_pull_request_metadata'] == run_pr_status
+assert metadata['run_pull_request_entry'] == run_pr_entry
+for role, row in checkout.items():
+    assert row == metadata['checkout'][role], (role, row, metadata['checkout'][role])
 assert parents(synthetic) == [synthetic, base, head], parents(synthetic)
 merge_ref = subprocess.check_output(
-    ['git', '-C', str(W), 'rev-parse', f"refs/remotes/pull/{metadata['pr_number']}/merge"],
+    [
+        'git', '-C', str(W), 'rev-parse',
+        f"refs/remotes/pull/{metadata['explicit_pr_number']}/merge",
+    ],
     text=True,
 ).strip()
 assert merge_ref == synthetic, (merge_ref, synthetic)
@@ -909,16 +983,6 @@ assert not {
     if path.startswith('tests/')
     and path not in {'tests/setup_fixtures.py', 'tests/test_ui_setup_controller.py'}
 }
-
-checkout = {
-    role: checkout_evidence(O / f'logs/{role}.log')
-    for role in ('checks', 'ubuntu', 'windows')
-}
-assert {row['synthetic_merge'] for row in checkout.values()} == {synthetic}
-for role, row in checkout.items():
-    assert row == metadata['checkout'][role], (role, row, metadata['checkout'][role])
-    assert row['merge_head'] == head, (role, row)
-    assert row['merge_base'] == base, (role, row)
 
 baseline = {platform: parse_artifact(root) for platform, root in BASELINE_ROOTS.items()}
 candidate = {platform: parse_artifact(root) for platform, root in CANDIDATE_ROOTS.items()}
@@ -1019,7 +1083,7 @@ PY
 python -m py_compile /tmp/setup_fixture_hosted_audit.py
 ```
 
-The parser defines every helper it uses (`changed`, `parents`, `checkout_evidence`, identity/skip normalization, artifact parsing, duration and hash functions). It proves the run payload head equals the payload/current final PR head, takes the exact base from the run payload, independently re-extracts one identical synthetic merge from each of the three checkout logs, verifies each merge message names that run head/base, verifies parents `[base, head]`, and treats the current PR merge ref only as matching final-head corroboration. It then proves the exact six-path comparator-synthetic diff and protected paths, artifact hashes/IDs, timing-JSON agreement, full cross-platform identity equality, comparator+two exact additions and zero removals, 190 ordered controller IDs with 188 prefix/two suffix, platform-local skip equality, no controller/resource/Node/codec availability skip, pass/failure/error counts, retained setup/controller timing observations, and slowest retained Windows identities.
+The parser defines every helper it uses (`changed`, `parents`, `checkout_evidence`, `present`, `validate_run_pull_requests`, identity/skip normalization, artifact parsing, duration and hash functions). It independently re-extracts one identical synthetic/head/base triple from each checkout log, requires parsed head to equal `run.head_sha`, validates parents `[base, head]`, and treats explicit current PR head/base/merge-ref equality only as final-head corroboration. Zero run PR entries are valid and recorded as `absent`; one is validated where fields are present; multiple/conflicting entries stop. It then proves the exact six-path comparator-synthetic diff and protected paths, artifact hashes/IDs, timing-JSON agreement, full cross-platform identity equality, comparator+two exact additions and zero removals, 190 ordered controller IDs with 188 prefix/two suffix, platform-local skip equality, no controller/resource/Node/codec availability skip, pass/failure/error counts, retained setup/controller timing observations, and slowest retained Windows identities.
 
 ---
 
@@ -2404,21 +2468,25 @@ Do not push, open a PR, rerun GitHub workflows, or call a GitHub mutation API be
 
 - [ ] **Step 6: After authorization, identify the exact successful run**
 
-The maintainer supplies the workflow run ID explicitly; do not infer “latest”:
+The maintainer supplies both the workflow run ID and final-head PR number explicitly; do not infer either from “latest” or require the run payload to retain a PR entry:
 
 ```bash
 read -r -p 'Authorized GitHub Actions run ID: ' NEW_RUN
+read -r -p 'Authorized final-head PR number: ' PR_NUMBER
 test -n "$NEW_RUN"
-export NEW_RUN
+test -n "$PR_NUMBER"
+export NEW_RUN PR_NUMBER
 ```
 
-Before running the collector, inspect it explicitly:
+Before running the collector, inspect both explicitly:
 
 ```bash
 gh run view "$NEW_RUN" -R elboaf/FlyGD-Wingman --json databaseId,headSha,status,conclusion,url
+gh pr view "$PR_NUMBER" -R elboaf/FlyGD-Wingman \
+  --json number,state,headRefName,headRefOid,baseRefName,baseRefOid,url
 ```
 
-Expected: pull-request run for this branch. If the run was rerun, keep the same `NEW_RUN`; Block D reads the current `run_attempt`, records every prior attempt, and selects current-attempt jobs/artifacts by job ID and time window. A failed earlier attempt is provenance only and never passing evidence.
+Expected: a pull-request run and the authorized final-head PR. If the run was rerun, keep the same `NEW_RUN`; Block D reads the current `run_attempt`, records every prior attempt, and selects current-attempt jobs/artifacts by job ID and time window. A failed earlier attempt is provenance only and never passing evidence. The explicit PR is not used to infer run-time provenance; it is checked only after all three selected checkout logs agree.
 
 - [ ] **Step 7: Execute the self-contained hosted collector and audit**
 
@@ -2427,17 +2495,19 @@ Create both Block D files exactly, syntax-check them, then run:
 ```bash
 python -m py_compile /tmp/setup_fixture_hosted_audit.py
 bash -n /tmp/setup_fixture_hosted_collect.sh
-NEW_RUN="$NEW_RUN" bash /tmp/setup_fixture_hosted_collect.sh
+NEW_RUN="$NEW_RUN" PR_NUMBER="$PR_NUMBER" \
+  bash /tmp/setup_fixture_hosted_collect.sh
 ```
 
-Expected: the collector proves `run.head_sha == run.pull_requests[0].head.sha == current final PR head`, takes the base only from `run.pull_requests[0].base.sha`, extracts one identical synthetic merge SHA from checks/Ubuntu/Windows checkout logs, verifies each merge message names that head/base, fetches the exact synthetic/head/base objects, validates merge parents `[synthetic, base, head]`, and only then corroborates that the current final-head PR merge ref equals the extracted synthetic. It downloads logs by exact current-attempt job IDs and artifacts by exact IDs, records archive/XML/timing hashes, and writes `hosted-audit.json` beneath `/tmp/wingman-setup-hosted-$NEW_RUN`.
+Expected: the collector selects successful current-attempt jobs and downloads their logs first; extracts one identical synthetic/head/base triple from checks/Ubuntu/Windows; requires parsed head to equal `run.head_sha`; fetches all three exact commits; and validates merge parents `[synthetic, base, head]`. It then requires current explicit PR head/base and `refs/pull/$PR_NUMBER/merge` to match parsed provenance, stopping as stale/moved otherwise. Empty `run.pull_requests` records `run_pull_request_metadata: absent`; one compatible entry records `present`; multiple/conflicting entries stop. Only then are artifacts downloaded by exact ID, hashes and suite evidence recorded, and `hosted-audit.json` written beneath `/tmp/wingman-setup-hosted-$NEW_RUN`.
 
 - [ ] **Step 8: Inspect every hosted acceptance output**
 
 Read `selected.json`, all `run-attempt-*.json`/`jobs-attempt-*.json`, `hosted-audit.json`, both complete/controller inventories, normalized skip files, artifact hashes, and job logs. Require the parser's executable assertions to have proved:
 
 - exact six-path comparator-synthetic-to-candidate-synthetic allowlist and protected paths;
-- exact per-job checkout-log synthetic SHA immediately after the logged `git log -1 --format=%H` command, identical across checks/Ubuntu/Windows, with each `HEAD is now at` merge subject naming the run payload head/base;
+- exact per-job checkout-log synthetic SHA immediately after the logged `git log -1 --format=%H` command and one identical synthetic/head/base triple across checks/Ubuntu/Windows, with parsed head equal to `run.head_sha`;
+- explicit final-head PR number/head/base/merge-ref corroboration and `run_pull_request_metadata` recorded as `absent` or validated `present` without requiring a payload entry;
 - 16,607 complete identities on each platform with equal cross-platform sets;
 - exact two named additions and zero removals across the complete suite;
 - exact ordered 190 controller IDs with the 188 baseline prefix and two-name suffix;
@@ -2449,7 +2519,7 @@ Any assertion failure is a stop or `INCONCLUSIVE`; do not edit the parser to nor
 
 - [ ] **Step 9: Record hosted evidence with claim discipline**
 
-Record provenance, artifact identity, synthetic diff, identity/skip comparison, exact two additions/zero removals, controller order, testcase sums, slowest retained IDs, and Test/job observations. State explicitly:
+Record explicit `NEW_RUN`/`PR_NUMBER`, parsed per-job synthetic/head/base, run `head_sha`, optional `run_pull_request_metadata` status, current-PR/merge-ref corroboration, parents, artifact identity, synthetic diff, identity/skip comparison, exact two additions/zero removals, controller order, testcase sums, slowest retained IDs, and Test/job observations. State explicitly:
 
 - verified structural reduction: 136 existing setup users × 4 initial DATs = 544 fixture-only fsync calls removed;
 - two new witnesses add qualification work but do not consume fixture `setup` and do not change 544;
@@ -2486,5 +2556,5 @@ Push this evidence commit only if separately authorized, then wait for required 
 - **Original exception implementability:** helper retries/suppresses cleanup while a bare `raise` preserves the original write or reported-close sentinel object; cleanup-close reporting occurs after deterministic physical close and cannot mask the original write exception; existing-file open failure occurs before cleanup and cannot unlink the predecessor.
 - **Mutation exactness:** Block B requires one exact source match; snapshots/restores exact bytes, hash, binary diff, and status; and defines independent O_EXCL-removal, O_EXCL-retaining `Path.exists`/`Path.stat` preflight, direct fsync, atomic delegation, bytes, order, line-ending, hardlink, and body direct-write mutants with intended assertions.
 - **Identity hashes:** scripts compute actual hashes; the plan contains no projected node hash target.
-- **Hosted comparison:** run `head_sha` is branch head, never synthetic; the synthetic is independently extracted from all three checkout logs, checked against run-payload head/base and parents `[base, head]`, then used for the exact six-path comparator diff and platform-local skip comparison. Failed/incomparable evidence cannot be normalized away.
+- **Hosted comparison:** `NEW_RUN` and `PR_NUMBER` are explicit; logs are primary provenance; one synthetic/head/base triple must agree across all three jobs; parsed head must equal run `head_sha`; parents must be `[base, head]`; explicit current PR head/base/merge ref must match; and zero run PR payload entries are recorded rather than rejected. The parsed synthetic drives the exact six-path comparator diff and platform-local skip comparison. Failed/incomparable evidence cannot be normalized away.
 - **No placeholders or scope expansion:** every task contains exact files, interfaces, commands, code, expected outcomes, commit, implementer report, reviewer gate, and fix loop; no production or workflow implementation is authorized.
