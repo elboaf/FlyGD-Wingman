@@ -224,60 +224,234 @@ uv run --no-sync python /tmp/setup_fixture_baseline.py
 
 Expected: exact counts 188, 136, and 16,605; Ubuntu/Windows complete identity sets equal; no controller skips; 14/67 platform skips; zero failures/errors; the timing observations in the approved spec; actual hashes written to `summary.json`, not predicted in this plan.
 
-### Block B — match-once mutation apply and restore
+### Block B — exact mutants with byte/diff/status restoration
 
-Every repository mutation probe uses this driver. Each before and after body is supplied in named `/tmp` files by the owning task. `check`, `apply`, and `restore` all require an exact single match and the restore returns the original bytes.
+Every mutation is an exact unique replacement in this catalog. Before applying it, the runner captures the target bytes and SHA-256, the complete `git diff --binary HEAD -- .`, and NUL-delimited porcelain-v2 status. It runs pytest with `check=False`, validates an intended red assertion, and restores inside `finally`; shell `set -e` therefore cannot strand a mutation. Restoration requires byte equality, hash equality, binary-diff equality, and status equality with the pre-probe state. This is valid while implementation changes are uncommitted; `git diff --exit-code HEAD` is deliberately not used as the mutation oracle.
 
 ```bash
-cat > /tmp/setup_fixture_guarded_replace.py <<'PY'
+cat > /tmp/setup_fixture_mutation_probe.py <<'PY'
 from __future__ import annotations
-import argparse, hashlib, json
+import argparse, hashlib, json, subprocess
 from pathlib import Path
 
+W = Path('/mnt/c/dev/flygd-wingman/.worktrees/ci-windows-hotspot-audit')
+PYTEST = [str(W / '.venv/bin/python'), '-m', 'pytest']
+COMPREHENSIVE = 'tests/test_ui_setup_controller.py::test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_failures'
+BODY = 'tests/test_ui_setup_controller.py::test_fast_fixture_construction_preserves_controller_body_atomic_persistence'
+HELPER = '''def _publish_fresh_file(path: Path, data: bytes) -> None:
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        remaining = memoryview(data)
+        while remaining:
+            written = os.write(descriptor, remaining)
+            if written <= 0:
+                raise OSError("Fresh fixture write made no progress.")
+            remaining = remaining[written:]
+        os.close(descriptor)
+        descriptor = None
+    except BaseException:
+        if descriptor is not None:
+            with contextlib.suppress(BaseException):
+                os.close(descriptor)
+        with contextlib.suppress(BaseException):
+            os.unlink(path)
+        raise
+'''
+MUTATIONS = {
+    'remove-o-excl': {
+        'target': 'tests/setup_fixtures.py',
+        'before': '    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)\n',
+        'after': '    flags = os.O_CREAT | os.O_WRONLY | getattr(os, "O_BINARY", 0)\n',
+        'node': COMPREHENSIVE,
+        'expect': ('fresh open flags changed',),
+    },
+    'path-preflight': {
+        'target': 'tests/setup_fixtures.py',
+        'before': '    descriptor = os.open(path, flags, 0o600)\n',
+        'after': '    if path.name == "success.dat":\n        path.exists()\n        path.stat()\n    descriptor = os.open(path, flags, 0o600)\n',
+        'node': COMPREHENSIVE,
+        'expect': ('fresh publisher called Path.exists',),
+    },
+    'direct-fsync': {
+        'target': 'tests/setup_fixtures.py',
+        'before': '            remaining = remaining[written:]\n        os.close(descriptor)\n',
+        'after': '            remaining = remaining[written:]\n        os.fsync(descriptor)\n        os.close(descriptor)\n',
+        'node': COMPREHENSIVE,
+        'expect': ('fast direct fsync count changed',),
+    },
+    'atomic-delegation': {
+        'target': 'tests/setup_fixtures.py',
+        'before': HELPER,
+        'after': '''def _publish_fresh_file(path: Path, data: bytes) -> None:
+    codec.atomicio.write_bytes_atomic(path, data)
+''',
+        'node': COMPREHENSIVE,
+        'expect': ('fast atomic fsync count changed',),
+    },
+    'extra-byte': {
+        'target': 'tests/setup_fixtures.py',
+        'before': '        remaining = memoryview(data)\n',
+        'after': '        remaining = memoryview(data + b" ")\n',
+        'node': COMPREHENSIVE,
+        'expect': ('source byte inventory differs',),
+    },
+    'mapping-order': {
+        'target': 'tests/setup_fixtures.py',
+        'before': '    account, character = documents(case)\n    root = tmp_path / "EVE"\n',
+        'after': '''    account, character = documents(case)
+    if initial_dat_publish is not None:
+        rows = account.doc["bytes:overview"]["bytes:tabsettings_new"]["tuple"][1]
+        account.doc["bytes:overview"]["bytes:tabsettings_new"]["tuple"][1] = dict(
+            reversed(tuple(rows.items()))
+        )
+    root = tmp_path / "EVE"
+''',
+        'node': COMPREHENSIVE,
+        'expect': ('source byte inventory differs',),
+    },
+    'line-endings': {
+        'target': 'tests/setup_fixtures.py',
+        'before': '''    else:
+        yaml_bytes = b"# synthetic recipient local preferences\\r\\nuiScale: 1.25\\r\\n"
+        ini_bytes = b"; synthetic recipient local preferences\\r\\nmonitor=2\\r\\n"
+    (profile / "core_public__.yaml").write_bytes(yaml_bytes)
+''',
+        'after': '''    else:
+        yaml_bytes = b"# synthetic recipient local preferences\\r\\nuiScale: 1.25\\r\\n"
+        ini_bytes = b"; synthetic recipient local preferences\\r\\nmonitor=2\\r\\n"
+        if initial_dat_publish is not None:
+            yaml_bytes = yaml_bytes.replace(b"\\r\\n", b"\\n")
+            ini_bytes = ini_bytes.replace(b"\\r\\n", b"\\n")
+    (profile / "core_public__.yaml").write_bytes(yaml_bytes)
+''',
+        'node': COMPREHENSIVE,
+        'expect': ('recipient byte inventory differs',),
+    },
+    'hardlink-template': {
+        'target': 'tests/setup_fixtures.py',
+        'before': HELPER,
+        'after': '''_FRESH_FILE_TEMPLATES = {}
+
+
+def _publish_fresh_file(path: Path, data: bytes) -> None:
+    template = _FRESH_FILE_TEMPLATES.get(data)
+    if template is not None:
+        os.link(template, path)
+        return
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        remaining = memoryview(data)
+        while remaining:
+            written = os.write(descriptor, remaining)
+            if written <= 0:
+                raise OSError("Fresh fixture write made no progress.")
+            remaining = remaining[written:]
+        os.close(descriptor)
+        descriptor = None
+    except BaseException:
+        if descriptor is not None:
+            with contextlib.suppress(BaseException):
+                os.close(descriptor)
+        with contextlib.suppress(BaseException):
+            os.unlink(path)
+        raise
+    _FRESH_FILE_TEMPLATES[data] = path
+''',
+        'node': COMPREHENSIVE,
+        'expect': ('fast-a link count changed',),
+    },
+    'direct-body-write': {
+        'target': 'wingman/evesettings/setup_profile.py',
+        'before': '''        written_account_revision = codec.write_document(
+            staged_account_path,
+            updated_account,
+            backup=lambda _path: None,
+            expected_content_revision=account_revision,
+        )
+''',
+        'after': '''        written_account_revision = codec.write_document(
+            staged_account_path,
+            updated_account,
+            backup=lambda _path: None,
+            publish=lambda path, data: Path(path).write_bytes(data),
+            expected_content_revision=account_revision,
+        )
+''',
+        'node': BODY,
+        'expect': ('body fsync categories changed',),
+    },
+}
+
+
+def git_bytes(*args):
+    return subprocess.check_output(['git', '-C', str(W), *args])
+
+
+def run(name):
+    row = MUTATIONS[name]
+    target = W / row['target']
+    original = target.read_bytes()
+    original_hash = hashlib.sha256(original).hexdigest()
+    before_diff = git_bytes('diff', '--binary', 'HEAD', '--', '.')
+    before_status = git_bytes('status', '--porcelain=v2', '--untracked-files=all', '-z')
+    before = row['before'].encode()
+    after = row['after'].encode()
+    assert original.count(before) == 1, (name, 'before_count', original.count(before))
+    assert original.count(after) == 0, (name, 'after_already_present')
+    output = b''
+    problem = None
+    try:
+        target.write_bytes(original.replace(before, after, 1))
+        changed = target.read_bytes()
+        assert changed.count(after) == 1, (name, 'after_count', changed.count(after))
+        result = subprocess.run(
+            [*PYTEST, row['node'], '-q', '-p', 'no:cacheprovider'],
+            cwd=W, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False,
+        )
+        output = result.stdout
+        if result.returncode == 0:
+            problem = AssertionError(f'{name}: mutant unexpectedly passed')
+        else:
+            text = output.decode('utf-8', 'replace')
+            missing = [fragment for fragment in row['expect'] if fragment not in text]
+            if missing:
+                problem = AssertionError(
+                    f'{name}: wrong red; missing {missing}; output follows\n{text}'
+                )
+    except BaseException as error:
+        problem = error
+    finally:
+        target.write_bytes(original)
+        restored = target.read_bytes()
+        assert restored == original
+        assert hashlib.sha256(restored).hexdigest() == original_hash
+        assert git_bytes('diff', '--binary', 'HEAD', '--', '.') == before_diff
+        assert git_bytes('status', '--porcelain=v2', '--untracked-files=all', '-z') == before_status
+        out = Path('/tmp/wingman-setup-fixture-mutants')
+        out.mkdir(exist_ok=True)
+        (out / f'{name}.log').write_bytes(output)
+        (out / f'{name}.json').write_text(json.dumps({
+            'target': row['target'],
+            'original_sha256': original_hash,
+            'restored_sha256': hashlib.sha256(restored).hexdigest(),
+            'expected': row['expect'],
+        }, sort_keys=True, indent=2) + '\n')
+    if problem is not None:
+        raise problem
+    print(json.dumps({'mutant': name, 'result': 'intended-red', 'restored_sha256': original_hash}))
+
+
 parser = argparse.ArgumentParser()
-parser.add_argument('mode', choices=('check', 'apply', 'restore'))
-parser.add_argument('target', type=Path)
-parser.add_argument('before', type=Path)
-parser.add_argument('after', type=Path)
-parser.add_argument('backup', type=Path)
+parser.add_argument('mutant', choices=tuple(MUTATIONS))
 args = parser.parse_args()
-before = args.before.read_text(encoding='utf-8')
-after = args.after.read_text(encoding='utf-8')
-assert before and after and before != after
-if args.mode in ('check', 'apply'):
-    text = args.target.read_text(encoding='utf-8')
-    assert text.count(before) == 1, ('before_count', text.count(before))
-    changed = text.replace(before, after, 1)
-    assert changed.count(after) == 1, ('after_count', changed.count(after))
-    if args.mode == 'check':
-        print(json.dumps({'before_count': 1, 'after_count': 1}))
-    else:
-        assert not args.backup.exists()
-        args.backup.write_bytes(args.target.read_bytes())
-        args.target.write_text(changed, encoding='utf-8')
-        print(json.dumps({'original_sha256': hashlib.sha256(args.backup.read_bytes()).hexdigest()}))
-else:
-    assert args.backup.is_file()
-    text = args.target.read_text(encoding='utf-8')
-    assert text.count(after) == 1, ('after_count', text.count(after))
-    original = args.backup.read_bytes()
-    assert original.decode('utf-8').count(before) == 1
-    args.target.write_bytes(original)
-    args.backup.unlink()
-    print(json.dumps({'restored_sha256': hashlib.sha256(original).hexdigest()}))
+run(args.mutant)
 PY
-python -m py_compile /tmp/setup_fixture_guarded_replace.py
+python -m py_compile /tmp/setup_fixture_mutation_probe.py
 ```
 
-For every mutation row:
-
-```bash
-python /tmp/setup_fixture_guarded_replace.py check TARGET /tmp/before.txt /tmp/after.txt /tmp/MUTANT.backup
-python /tmp/setup_fixture_guarded_replace.py apply TARGET /tmp/before.txt /tmp/after.txt /tmp/MUTANT.backup
-# Run the exact witness command and save the intended assertion.
-python /tmp/setup_fixture_guarded_replace.py restore TARGET /tmp/before.txt /tmp/after.txt /tmp/MUTANT.backup
-git diff --exit-code -- TARGET
-```
+The `path-preflight` mutant deliberately retains `O_EXCL`; it adds both `Path.exists()` and `Path.stat()` only for the dedicated direct success path so the intended failure is the witness's no-preflight guard, not a missing file or open-flag assertion. `mapping-order` is expected to fail at the earlier exact source byte-inventory assertion because reordering changes verified encoded bytes before the later JSON-order assertion.
 
 ### Block C — final identity and scope audit
 
@@ -370,6 +544,375 @@ uv run --no-sync python /tmp/setup_fixture_endpoint_audit.py
 ```
 
 Expected: 190 controller IDs with exact 188 prefix and exact two-ID suffix, unchanged 136 structural setup users, 16,607 complete IDs, two additions, zero removals, and only the five approved paths.
+
+### Block D — authorized hosted run collection and complete audit
+
+Run this block only after Task 5's explicit publication authorization. `NEW_RUN` is mandatory and is the stable workflow-run ID; the collector reads `run_attempt` from the API, calls `gh run view --attempt`, stores every attempt's run/jobs metadata, and selects jobs/artifacts only from the current successful attempt. Earlier failed attempts remain documented but cannot enter passing evidence. Artifact IDs are selected by exact name and current-attempt job time window, then downloaded by ID so duplicate names from reruns cannot silently select attempt 1.
+
+```bash
+cat > /tmp/setup_fixture_hosted_collect.sh <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+: "${NEW_RUN:?Set NEW_RUN to the authorized GitHub Actions workflow run ID}"
+R="elboaf/FlyGD-Wingman"
+W="/mnt/c/dev/flygd-wingman/.worktrees/ci-windows-hotspot-audit"
+O="/tmp/wingman-setup-hosted-${NEW_RUN}"
+rm -rf "$O"
+mkdir -p "$O/logs" "$O/artifacts"
+cd "$W"
+
+gh api "repos/$R/actions/runs/$NEW_RUN" > "$O/run.json"
+ATTEMPT=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["run_attempt"])' "$O/run.json")
+PR=$(python -c 'import json,sys; p=json.load(open(sys.argv[1]))["pull_requests"]; assert len(p)==1,p; print(p[0]["number"])' "$O/run.json")
+gh run view "$NEW_RUN" -R "$R" --attempt "$ATTEMPT" --json databaseId,headSha,status,conclusion,url,jobs > "$O/run-view.json"
+gh pr view "$PR" -R "$R" --json number,url,headRefName,headRefOid,baseRefName,baseRefOid > "$O/pr.json"
+for attempt in $(seq 1 "$ATTEMPT"); do
+  gh api "repos/$R/actions/runs/$NEW_RUN/attempts/$attempt" > "$O/run-attempt-$attempt.json"
+  gh api "repos/$R/actions/runs/$NEW_RUN/attempts/$attempt/jobs?per_page=100" > "$O/jobs-attempt-$attempt.json"
+done
+cp "$O/jobs-attempt-$ATTEMPT.json" "$O/jobs.json"
+gh api --paginate "repos/$R/actions/runs/$NEW_RUN/artifacts?per_page=100" --slurp > "$O/artifact-pages.json"
+
+python - "$O" <<'PY'
+from __future__ import annotations
+import json, sys
+from datetime import datetime
+from pathlib import Path
+
+out = Path(sys.argv[1])
+run = json.loads((out / 'run.json').read_text())
+pr = json.loads((out / 'pr.json').read_text())
+jobs = json.loads((out / 'jobs.json').read_text())['jobs']
+pages = json.loads((out / 'artifact-pages.json').read_text())
+artifacts = [row for page in pages for row in page['artifacts']]
+assert run['conclusion'] == 'success', run['conclusion']
+assert run['event'] == 'pull_request', run['event']
+assert run['head_sha'] != pr['headRefOid'], (run['head_sha'], pr['headRefOid'])
+roles = {
+    'checks': 'checks',
+    'ubuntu': 'test (ubuntu-latest)',
+    'windows': 'test (windows-latest)',
+}
+selected = {}
+for role, name in roles.items():
+    rows = [job for job in jobs if job['name'] == name]
+    assert len(rows) == 1, (role, rows)
+    job = rows[0]
+    assert job['run_attempt'] == run['run_attempt']
+    assert job['conclusion'] == 'success', (role, job['conclusion'])
+    selected[role] = job
+
+def stamp(value):
+    return datetime.fromisoformat(value.replace('Z', '+00:00'))
+
+selected_artifacts = {}
+for role, artifact_name in {
+    'ubuntu': 'pytest-evidence-ubuntu-latest',
+    'windows': 'pytest-evidence-windows-latest',
+}.items():
+    job = selected[role]
+    rows = [
+        artifact for artifact in artifacts
+        if artifact['name'] == artifact_name
+        and not artifact['expired']
+        and stamp(job['started_at']) <= stamp(artifact['created_at']) <= stamp(job['completed_at'])
+    ]
+    assert len(rows) == 1, (role, [(row['id'], row['created_at']) for row in rows])
+    selected_artifacts[role] = rows[0]
+metadata = {
+    'run_id': run['id'],
+    'run_attempt': run['run_attempt'],
+    'synthetic_merge': run['head_sha'],
+    'pr_number': pr['number'],
+    'pr_head': pr['headRefOid'],
+    'base': pr['baseRefOid'],
+    'jobs': selected,
+    'artifacts': selected_artifacts,
+}
+(out / 'selected.json').write_text(json.dumps(metadata, sort_keys=True, indent=2) + '\n')
+for role, job in selected.items():
+    (out / f'{role}-job-id').write_text(str(job['id']))
+for role, artifact in selected_artifacts.items():
+    (out / f'{role}-artifact-id').write_text(str(artifact['id']))
+PY
+
+for role in checks ubuntu windows; do
+  JOB_ID=$(cat "$O/$role-job-id")
+  gh api "repos/$R/actions/jobs/$JOB_ID/logs" > "$O/logs/$role.log"
+done
+for role in ubuntu windows; do
+  ARTIFACT_ID=$(cat "$O/$role-artifact-id")
+  gh api "repos/$R/actions/artifacts/$ARTIFACT_ID/zip" > "$O/artifacts/$role.zip"
+  mkdir -p "$O/artifacts/$role"
+  unzip -q "$O/artifacts/$role.zip" -d "$O/artifacts/$role"
+  test -f "$O/artifacts/$role/pytest-result.xml"
+  test -f "$O/artifacts/$role/pytest-timing.json"
+done
+
+SYNTHETIC=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["synthetic_merge"])' "$O/selected.json")
+HEAD_SHA=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["pr_head"])' "$O/selected.json")
+BASE_SHA=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["base"])' "$O/selected.json")
+git fetch --quiet origin "+refs/pull/$PR/merge:refs/remotes/pull/$PR/merge"
+test "$(git rev-parse refs/remotes/pull/$PR/merge)" = "$SYNTHETIC"
+git fetch --quiet origin "$HEAD_SHA" "$BASE_SHA"
+git cat-file -e "$SYNTHETIC^{commit}"
+git cat-file -e "$HEAD_SHA^{commit}"
+git cat-file -e "$BASE_SHA^{commit}"
+git cat-file -e "ab2028f55f080e6067d7cc62002451f96171fa68^{commit}"
+HOSTED_ROOT="$O" python /tmp/setup_fixture_hosted_audit.py
+printf 'HOSTED_ROOT=%s\nNEW_RUN=%s\nATTEMPT=%s\nPR=%s\n' "$O" "$NEW_RUN" "$ATTEMPT" "$PR"
+SH
+bash -n /tmp/setup_fixture_hosted_collect.sh
+```
+
+Create the audit parser before running the collector:
+
+```bash
+cat > /tmp/setup_fixture_hosted_audit.py <<'PY'
+from __future__ import annotations
+import hashlib, json, os, re, subprocess
+import xml.etree.ElementTree as ET
+from collections import defaultdict
+from datetime import datetime
+from pathlib import Path
+
+W = Path('/mnt/c/dev/flygd-wingman/.worktrees/ci-windows-hotspot-audit')
+O = Path(os.environ['HOSTED_ROOT'])
+BASELINE_ROOTS = {
+    'ubuntu': Path('/tmp/wingman-stage3-ubuntu'),
+    'windows': Path('/tmp/wingman-stage3-windows'),
+}
+CANDIDATE_ROOTS = {
+    'ubuntu': O / 'artifacts/ubuntu',
+    'windows': O / 'artifacts/windows',
+}
+B = Path('/tmp/wingman-setup-fixture-baseline')
+E = Path('/tmp/wingman-setup-fixture-endpoint')
+CONTROLLER = 'tests/test_ui_setup_controller.py'
+ADDED = [
+    CONTROLLER + '::test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_failures',
+    CONTROLLER + '::test_fast_fixture_construction_preserves_controller_body_atomic_persistence',
+]
+COMPARATOR_SYNTHETIC = 'ab2028f55f080e6067d7cc62002451f96171fa68'
+MERGED_BASELINE = 'c23788e392bcd586dfc95b7390eaee18cb4ec224'
+KNOWN_POST_COMPARATOR = {'docs/ci-generated-verifier-alerts-consolidation-results.md'}
+AUTHORED = {
+    'docs/ci-setup-controller-fixture-construction-results.md',
+    'docs/superpowers/plans/2026-09-24-setup-controller-fixture-construction.md',
+    'docs/superpowers/specs/2026-09-24-setup-controller-fixture-construction-design.md',
+    'tests/setup_fixtures.py',
+    'tests/test_ui_setup_controller.py',
+}
+FULL_ALLOWED = KNOWN_POST_COMPARATOR | AUTHORED
+
+
+def sha_bytes(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def sha_nodes(nodes):
+    return sha_bytes(('\n'.join(nodes) + '\n').encode())
+
+
+def identity(case):
+    parts = case.get('classname', '').split('.')
+    assert len(parts) >= 2 and parts[0] == 'tests', parts
+    return '::'.join(('/'.join(parts[:2]) + '.py', *parts[2:], case.get('name', '')))
+
+
+def normalized_skip(text):
+    return re.sub(
+        r'pytest-of-[^/\s]+/pytest-\d+/[^\s:\"\']+',
+        'pytest-of-<USER>/pytest-<N>/<PYTEST_TMP>',
+        text.replace('\\', '/'),
+    )
+
+
+def parse_artifact(root):
+    cases = list(ET.parse(root / 'pytest-result.xml').getroot().iter('testcase'))
+    ids = [identity(case) for case in cases]
+    assert len(ids) == len(set(ids))
+    times = {}
+    skips = []
+    failures = errors = 0
+    file_counts = defaultdict(int)
+    file_seconds = defaultdict(float)
+    for node, case in zip(ids, cases, strict=True):
+        seconds = float(case.get('time', '0') or 0)
+        times[node] = seconds
+        file = node.split('::', 1)[0]
+        file_counts[file] += 1
+        file_seconds[file] += seconds
+        skipped = case.find('skipped')
+        if skipped is not None:
+            skips.append((node, normalized_skip(skipped.get('message') or skipped.text or '')))
+        failures += len(case.findall('failure'))
+        errors += len(case.findall('error'))
+    timing = json.loads((root / 'pytest-timing.json').read_text())
+    assert timing['case_count'] == len(ids)
+    for file, row in timing['files'].items():
+        assert row['cases'] == file_counts[file]
+        assert abs(row['seconds'] - file_seconds[file]) < 1e-9
+    return {
+        'ids': ids,
+        'set': set(ids),
+        'times': times,
+        'skips': skips,
+        'failures': failures,
+        'errors': errors,
+        'file_counts': dict(file_counts),
+        'file_seconds': dict(file_seconds),
+    }
+
+
+def changed(left, right):
+    return set(subprocess.check_output(
+        ['git', '-C', str(W), 'diff', '--name-only', f'{left}..{right}'], text=True
+    ).splitlines())
+
+
+def parents(commit):
+    return subprocess.check_output(
+        ['git', '-C', str(W), 'rev-list', '--parents', '-n', '1', commit], text=True
+    ).split()
+
+
+def seconds(start, end):
+    a = datetime.fromisoformat(start.replace('Z', '+00:00'))
+    b = datetime.fromisoformat(end.replace('Z', '+00:00'))
+    return (b - a).total_seconds()
+
+
+metadata = json.loads((O / 'selected.json').read_text())
+synthetic = metadata['synthetic_merge']
+head = metadata['pr_head']
+base = metadata['base']
+assert parents(synthetic) == [synthetic, base, head], parents(synthetic)
+assert changed(COMPARATOR_SYNTHETIC, MERGED_BASELINE) == KNOWN_POST_COMPARATOR
+assert changed(MERGED_BASELINE, head) == AUTHORED
+assert changed(COMPARATOR_SYNTHETIC, synthetic) == FULL_ALLOWED
+full = changed(COMPARATOR_SYNTHETIC, synthetic)
+assert not any(path.startswith(('.github/', 'wingman/', 'scripts/', 'tests/fixtures/', 'packaging/')) for path in full)
+assert not (full & {'pyproject.toml', 'uv.lock'})
+assert not {
+    path for path in full
+    if path.startswith('tests/')
+    and path not in {'tests/setup_fixtures.py', 'tests/test_ui_setup_controller.py'}
+}
+
+for role, log_path in {role: O / f'logs/{role}.log' for role in ('checks', 'ubuntu', 'windows')}.items():
+    text = log_path.read_text(errors='replace')
+    fetches = set(re.findall(
+        r'\+([0-9a-f]{40}):refs/remotes/pull/' + str(metadata['pr_number']) + r'/merge', text
+    ))
+    subjects = set(re.findall(
+        r'HEAD is now at [0-9a-f]+ Merge ([0-9a-f]{40}) into ([0-9a-f]{40})', text
+    ))
+    exact = set(re.findall(r'(?:^|\s)([0-9a-f]{40})$', text, re.M))
+    assert fetches == {synthetic}, (role, fetches)
+    assert subjects == {(head, base)}, (role, subjects)
+    assert synthetic in exact, (role, synthetic)
+
+baseline = {platform: parse_artifact(root) for platform, root in BASELINE_ROOTS.items()}
+candidate = {platform: parse_artifact(root) for platform, root in CANDIDATE_ROOTS.items()}
+assert baseline['ubuntu']['set'] == baseline['windows']['set']
+assert candidate['ubuntu']['set'] == candidate['windows']['set']
+baseline_ids = (B / 'complete-16605.txt').read_text().splitlines()
+baseline_controller = (B / 'controller-188.txt').read_text().splitlines()
+setup_users = (B / 'setup-users-136.txt').read_text().splitlines()
+assert len(baseline_ids) == 16605 and set(baseline_ids) == baseline['ubuntu']['set']
+assert len(baseline_controller) == 188
+assert len(setup_users) == 136
+expected_after = set(baseline_ids) | set(ADDED)
+report = {'provenance': metadata, 'platforms': {}, 'synthetic_paths': sorted(full)}
+for platform in ('ubuntu', 'windows'):
+    old = baseline[platform]
+    new = candidate[platform]
+    assert len(new['ids']) == len(new['set']) == 16607
+    assert new['set'] == expected_after
+    assert new['set'] - old['set'] == set(ADDED)
+    assert old['set'] - new['set'] == set()
+    controller = [node for node in new['ids'] if node.startswith(CONTROLLER + '::')]
+    assert controller == baseline_controller + ADDED
+    assert len(controller) == 190
+    assert not [row for row in new['skips'] if row[0].startswith(CONTROLLER + '::')]
+    assert new['skips'] == old['skips']
+    assert len(new['skips']) == {'ubuntu': 14, 'windows': 67}[platform]
+    assert new['failures'] == new['errors'] == 0
+    for node, reason in new['skips']:
+        lowered = reason.casefold()
+        assert not any(fragment in lowered for fragment in (
+            'node is not installed',
+            'settings codec not built',
+            'codec is not available',
+            'resource unavailable',
+            'resource module',
+        )), (node, reason)
+    expected_passed = {'ubuntu': 16593, 'windows': 16540}[platform]
+    assert len(new['ids']) - len(new['skips']) == expected_passed
+    controller_seconds = sum(new['times'][node] for node in controller)
+    setup_seconds = sum(new['times'][node] for node in setup_users)
+    other_seconds = sum(new['times'][node] for node in controller if node not in set(setup_users))
+    slowest_retained = sorted(
+        ((new['times'][node], node) for node in baseline_controller), reverse=True
+    )[:10]
+    artifact = metadata['artifacts'][platform]
+    archive = O / f'artifacts/{platform}.zip'
+    xml = CANDIDATE_ROOTS[platform] / 'pytest-result.xml'
+    timing = CANDIDATE_ROOTS[platform] / 'pytest-timing.json'
+    report['platforms'][platform] = {
+        'cases': len(new['ids']),
+        'passed': expected_passed,
+        'skips': len(new['skips']),
+        'controller_cases': len(controller),
+        'controller_seconds': controller_seconds,
+        'setup_user_cases': len(setup_users),
+        'setup_user_seconds': setup_seconds,
+        'other_controller_seconds': other_seconds,
+        'controller_sha256': sha_nodes(controller),
+        'complete_sha256': sha_nodes(new['ids']),
+        'added': ADDED,
+        'removed': [],
+        'slowest_retained_controller': slowest_retained,
+        'artifact_id': artifact['id'],
+        'artifact_archive_sha256': sha_bytes(archive.read_bytes()),
+        'xml_sha256': sha_bytes(xml.read_bytes()),
+        'timing_sha256': sha_bytes(timing.read_bytes()),
+    }
+    (O / f'{platform}-complete-16607.txt').write_text('\n'.join(new['ids']) + '\n')
+    (O / f'{platform}-controller-190.txt').write_text('\n'.join(controller) + '\n')
+    (O / f'{platform}-skips.json').write_text(json.dumps(new['skips'], indent=2) + '\n')
+
+assert [node for node in candidate['ubuntu']['ids'] if node.startswith(CONTROLLER + '::')] == [
+    node for node in candidate['windows']['ids'] if node.startswith(CONTROLLER + '::')
+]
+if (E / 'complete-16607.txt').is_file():
+    local_ids = (E / 'complete-16607.txt').read_text().splitlines()
+    assert set(local_ids) == candidate['ubuntu']['set']
+if (E / 'controller-190.txt').is_file():
+    local_controller = (E / 'controller-190.txt').read_text().splitlines()
+    assert local_controller == baseline_controller + ADDED
+
+job_observations = {}
+for role, job in metadata['jobs'].items():
+    test_steps = [step for step in job['steps'] if step['name'] == 'Test']
+    job_observations[role] = {
+        'job_id': job['id'],
+        'job_seconds': seconds(job['started_at'], job['completed_at']),
+        'test_step_seconds': (
+            seconds(test_steps[0]['started_at'], test_steps[0]['completed_at'])
+            if test_steps else None
+        ),
+    }
+report['job_observations'] = job_observations
+report['claim'] = 'structural only: 136 setup users x 4 fresh DATs = 544 fixture fsyncs removed'
+(O / 'hosted-audit.json').write_text(json.dumps(report, sort_keys=True, indent=2) + '\n')
+print(json.dumps(report, sort_keys=True))
+PY
+python -m py_compile /tmp/setup_fixture_hosted_audit.py
+```
+
+The parser defines every helper it uses (`changed`, `parents`, identity/skip normalization, artifact parsing, duration and hash functions). It proves run/PR/synthetic/base provenance, merge-parent order, exact six-path synthetic diff and protected paths, artifact hashes/IDs, timing-JSON agreement, full cross-platform identity equality, comparator+two exact additions and zero removals, 190 ordered controller IDs with 188 prefix/two suffix, platform-local skip equality, no controller/resource/Node/codec availability skip, pass/failure/error counts, retained setup/controller timing observations, and slowest retained Windows identities.
 
 ---
 
@@ -500,8 +1043,8 @@ Expected: only the results document is committed in this task.
 ### Task 2: Add and Qualify the Fresh Publisher, Optional Seed Seam, and Comprehensive Witness
 
 **Files:**
-- Modify: `tests/setup_fixtures.py:10-15,121-151`
-- Modify: `tests/test_ui_setup_controller.py:1-30` and append after the current last test
+- Modify: `tests/setup_fixtures.py` import block, immediately before `seed_profile`, and the exact `seed_profile` signature/DAT-write loop
+- Modify: `tests/test_ui_setup_controller.py` import block and append after `test_file_save_rejects_non_json_destination_without_writing`
 - Modify: `docs/ci-setup-controller-fixture-construction-results.md`
 - Test only: `tests/test_ui_setup_schema.py`, unchanged default-path caller
 
@@ -539,7 +1082,18 @@ Expected: FAIL with `AttributeError` because `_publish_fresh_file` does not exis
 
 - [ ] **Step 2: Implement the minimal helper with original-exception cleanup**
 
-Add `import contextlib` and `import os` to `tests/setup_fixtures.py`, then add this helper immediately before `seed_profile`:
+Use this complete stdlib import block in `tests/setup_fixtures.py`, preserving the existing `yaml` and codec imports below it:
+
+```python
+import contextlib
+import copy
+import json
+import os
+from dataclasses import dataclass
+from pathlib import Path
+```
+
+Then add this helper immediately before `seed_profile`:
 
 ```python
 def _publish_fresh_file(path: Path, data: bytes) -> None:
@@ -605,25 +1159,77 @@ Replace only the DAT write loop with an explicit branch that omits `publish` whe
 
 Do not bind an atomic function or `_publish_fresh_file` as the default argument. Do not move YAML/INI writes through this publisher.
 
-- [ ] **Step 4: Add robust module-binding proxies and exact normalizers**
+- [ ] **Step 4: Add the complete shared witness support**
 
-In `tests/test_ui_setup_controller.py`, add `from collections import Counter`, `from dataclasses import asdict, fields, replace`, `import stat`, `from tests import setup_fixtures`, and `from wingman.evesettings import tree`. Preserve existing imports.
+Replace the complete import block with this executable Ruff-ordered block:
 
-Add these test support definitions before the appended witness; they create no pytest identities:
+```python
+import contextlib
+import copy
+import errno
+import io
+import json
+import logging
+import os
+import stat
+from collections import Counter
+from dataclasses import asdict, fields, replace
+from pathlib import Path
+from uuid import UUID
+
+import pytest
+
+from tests import fakes, setup_fixtures, test_setup_catalog
+from tests.setup_fixtures import (
+    ProfileFixture,
+    install_lossless_codec,
+    seed_profile,
+    wire,
+)
+from tests.test_evesettings_controller import QueuedThreads, build_controller
+from tests.test_ui_setup_documents import value
+from wingman import atomicio
+from wingman.evesettings import (
+    codec,
+    profilecopy,
+    setup_catalog,
+    setup_documents,
+    setup_model,
+    setup_profile,
+    setup_sharing,
+    tree,
+)
+from wingman.evesettings import controller as controller_mod
+from wingman.evesettings.controller import _SetupReview
+from wingman.ui import api as api_mod
+```
+
+Append these complete helpers immediately before the first witness. They are shared only by the two approved witness tests and create no identities:
 
 ```python
 class _OSProxy:
-    def __init__(self, real, *, assert_fresh_open=False, write_steps=(), close_error=None):
+    def __init__(
+        self,
+        real,
+        *,
+        assert_fresh_open=False,
+        write_steps=(),
+        close_errors=(),
+        unlink_errors=(),
+    ):
         self._real = real
         self._assert_fresh_open = assert_fresh_open
         self._write_steps = list(write_steps)
-        self._close_error = close_error
-        self._close_error_raised = False
+        self._close_errors = list(close_errors)
+        self._unlink_errors = list(unlink_errors)
         self.open_calls = []
-        self.fsync_calls = []
-        self.close_calls = 0
+        self.write_calls = []
+        self.close_calls = []
         self.unlink_calls = []
-        self.preflight_calls = []
+        self.fsync_calls = []
+        self.fsync_categories = []
+        self.current_category = None
+        self.category_events = None
 
     def __getattr__(self, name):
         return getattr(self._real, name)
@@ -638,11 +1244,14 @@ class _OSProxy:
                 | self._real.O_WRONLY
                 | getattr(self._real, "O_BINARY", 0)
             )
-            assert flags == expected, f"fresh open flags changed: {flags:#x} != {expected:#x}"
+            assert flags == expected, (
+                f"fresh open flags changed: {flags:#x} != {expected:#x}"
+            )
             assert mode == 0o600, f"fresh open mode changed: {mode:o}"
         return self._real.open(path, flags, mode)
 
     def write(self, descriptor, data):
+        self.write_calls.append((descriptor, bytes(data)))
         if self._write_steps:
             step = self._write_steps.pop(0)
             if isinstance(step, BaseException):
@@ -653,31 +1262,33 @@ class _OSProxy:
         return self._real.write(descriptor, data)
 
     def close(self, descriptor):
-        self.close_calls += 1
-        if self._close_error is not None and not self._close_error_raised:
-            self._close_error_raised = True
-            raise self._close_error
+        self.close_calls.append(descriptor)
+        if self._close_errors:
+            raise self._close_errors.pop(0)
         return self._real.close(descriptor)
 
     def unlink(self, path):
         self.unlink_calls.append(Path(path))
+        if self._unlink_errors:
+            raise self._unlink_errors.pop(0)
         return self._real.unlink(path)
 
     def fsync(self, descriptor):
         self.fsync_calls.append(descriptor)
+        if self.current_category is not None:
+            self.fsync_categories.append(self.current_category)
+            if self.category_events is not None:
+                self.category_events.append(self.current_category)
         return self._real.fsync(descriptor)
 
-    def stat(self, *args, **kwargs):
-        self.preflight_calls.append("os.stat")
-        raise AssertionError("fresh publisher performed an os.stat preflight")
-
-    def lstat(self, *args, **kwargs):
-        self.preflight_calls.append("os.lstat")
-        raise AssertionError("fresh publisher performed an os.lstat preflight")
-
-    def access(self, *args, **kwargs):
-        self.preflight_calls.append("os.access")
-        raise AssertionError("fresh publisher performed an os.access preflight")
+    @contextlib.contextmanager
+    def category(self, name):
+        previous = self.current_category
+        self.current_category = name
+        try:
+            yield
+        finally:
+            self.current_category = previous
 
 
 class _PathProxy:
@@ -686,48 +1297,68 @@ class _PathProxy:
 
     def __getattr__(self, name):
         if name in {"exists", "lexists", "isfile", "isdir", "islink"}:
-            raise AssertionError(f"fresh publisher performed os.path.{name} preflight")
+            raise AssertionError(f"fresh publisher called os.path.{name}")
         return getattr(self._real, name)
 
 
-def _normalize_path(value, root):
+class _ClockProxy:
+    def __init__(self, real, now):
+        self._real = real
+        self._now = now
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def time(self):
+        return self._now
+
+
+def _normalized_paths(value, root):
     if isinstance(value, Path):
         return value.relative_to(root).as_posix()
     if isinstance(value, dict):
-        return {key: _normalize_path(item, root) for key, item in value.items()}
+        return {key: _normalized_paths(item, root) for key, item in value.items()}
     if isinstance(value, list):
-        return [_normalize_path(item, root) for item in value]
+        return [_normalized_paths(item, root) for item in value]
     if isinstance(value, tuple):
-        return tuple(_normalize_path(item, root) for item in value)
+        return tuple(_normalized_paths(item, root) for item in value)
     return value
 
 
 def _normalized_discovery(profile):
-    found = asdict(tree.discover(profile.root, profile.server, profile.profile))
-    for row in found["profiles"]:
+    value = asdict(tree.discover(profile.root, profile.server, profile.profile))
+    for row in value["profiles"]:
         row.pop("modified")
-    return _normalize_path(found, profile.root)
+    return _normalized_paths(value, profile.root)
 
 
-def _manifest(profile):
+def _profile_manifest(profile):
     found = tree.discover(profile.root, profile.server, profile.profile)
     plan = profilecopy.prepare_copy(found, profile.profile, "new", "ManifestTarget")
     return setup_profile.capture_manifest(plan)
 
 
 def _normalized_manifest(profile):
-    return _normalize_path(asdict(_manifest(profile)), profile.root)
+    return _normalized_paths(asdict(_profile_manifest(profile)), profile.root)
 
 
-def _inventory(profile):
+def _fixture_inventory(profile):
     return {
-        path.relative_to(profile.root).as_posix(): path.read_bytes()
-        for path in sorted(profile.root.rglob("*"))
+        path.relative_to(profile.profile).as_posix(): path.read_bytes()
+        for path in sorted(profile.profile.rglob("*"))
         if path.is_file()
     }
 
 
-def _stable_file_metadata(path):
+def _fixture_files(profile):
+    return {
+        path.relative_to(profile.profile).as_posix(): path
+        for path in sorted(profile.profile.rglob("*"))
+        if path.is_file()
+    }
+
+
+def _stable_metadata(path):
     info = path.stat()
     return (
         info.st_dev,
@@ -741,20 +1372,37 @@ def _stable_file_metadata(path):
 
 def _seed_pair(root, publisher=None):
     kwargs = {} if publisher is None else {"initial_dat_publish": publisher}
-    source = seed_profile(root, case="source", name="Source", **kwargs)
-    recipient = seed_profile(root, **kwargs)
-    return source, recipient
+    return (
+        seed_profile(root, case="source", name="Source", **kwargs),
+        seed_profile(root, **kwargs),
+    )
+
+
+def _snapshots(profile):
+    return (
+        codec.read_snapshot(profile.account_path),
+        codec.read_snapshot(profile.character_path),
+    )
 ```
 
-When installing a direct proxy, assign its `path` field to `_PathProxy(real_os.path)` before replacing `setup_fixtures.os`. Do not set attributes on the shared real `os` module.
+`_OSProxy` always delegates real operations and each owning module receives a distinct proxy. `_ClockProxy` replaces only `controller_mod.time` and delegates every member other than `time()`; it never mutates the shared stdlib `time` module.
 
-- [ ] **Step 5: Expand the single witness into atomic-versus-fast parity and construction-fsync evidence**
+- [ ] **Step 5: Replace the temporary RED body with the complete comprehensive witness**
 
-The witness constructs atomic and fast source/recipient pairs in separate roots. Capture `real_os = os` before monkeypatching. Replace only `setup_fixtures.os` and `atomicio.os` with separate proxies. The test must execute these exact assertions:
+Append this exact, non-parameterized test. The code executes parity bytes/documents/order/revisions/discovery/manifests, source/recipient distinctions, metadata/isolation/link/template/duplicate checks, exact open flags/mode/count, no-preflight guards, partial/zero writes, write and close failures, cleanup failures, and original-exception identity:
 
 ```python
+def test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_failures(
+    tmp_path, monkeypatch
+):
     install_lossless_codec(monkeypatch)
     real_os = os
+    expected_flags = (
+        real_os.O_CREAT
+        | real_os.O_EXCL
+        | real_os.O_WRONLY
+        | getattr(real_os, "O_BINARY", 0)
+    )
     direct = _OSProxy(real_os, assert_fresh_open=True)
     direct.path = _PathProxy(real_os.path)
     atomic = _OSProxy(real_os)
@@ -762,35 +1410,73 @@ The witness constructs atomic and fast source/recipient pairs in separate roots.
     monkeypatch.setattr(atomicio, "os", atomic)
 
     atomic_source, atomic_recipient = _seed_pair(tmp_path / "atomic")
-    assert len(atomic.fsync_calls) == 4
-    assert direct.fsync_calls == [] and direct.open_calls == []
+    assert len(atomic.fsync_calls) == 4, "default construction fsync count changed"
+    assert direct.fsync_calls == [], "default construction used direct fsync channel"
+    assert direct.open_calls == [], "default construction used fresh publisher"
 
     atomic.fsync_calls.clear()
     fast_source, fast_recipient = _seed_pair(
         tmp_path / "fast-a", setup_fixtures._publish_fresh_file
     )
-    assert atomic.fsync_calls == [] and direct.fsync_calls == []
-    assert len(direct.open_calls) == 4
-    assert all(flags == real_os.O_CREAT | real_os.O_EXCL | real_os.O_WRONLY |
-               getattr(real_os, "O_BINARY", 0) and mode == 0o600
-               for _path, flags, mode in direct.open_calls)
-    assert direct.preflight_calls == []
-```
+    assert atomic.fsync_calls == [], "fast atomic fsync count changed"
+    assert direct.fsync_calls == [], "fast direct fsync count changed"
+    assert len(direct.open_calls) == 4, "fast destination open count changed"
+    assert all(
+        flags == expected_flags and mode == 0o600
+        for _path, flags, mode in direct.open_calls
+    ), direct.open_calls
 
-Then compare, for both source and recipient:
+    roles = (
+        ("source", atomic_source, fast_source),
+        ("recipient", atomic_recipient, fast_recipient),
+    )
+    for role, atomic_profile, fast_profile in roles:
+        assert _fixture_inventory(atomic_profile) == _fixture_inventory(fast_profile), (
+            f"{role} byte inventory differs"
+        )
+        atomic_snapshots = _snapshots(atomic_profile)
+        fast_snapshots = _snapshots(fast_profile)
+        assert atomic_snapshots == fast_snapshots, f"{role} snapshots differ"
+        assert [row.document.had_crc for row in atomic_snapshots] == [
+            row.document.had_crc for row in fast_snapshots
+        ]
+        assert [row.content_revision for row in atomic_snapshots] == [
+            row.content_revision for row in fast_snapshots
+        ]
+        assert [
+            json.dumps(row.document.doc, ensure_ascii=False)
+            for row in atomic_snapshots
+        ] == [
+            json.dumps(row.document.doc, ensure_ascii=False)
+            for row in fast_snapshots
+        ], f"{role} JSON type/order differs"
+        assert _normalized_discovery(atomic_profile) == _normalized_discovery(
+            fast_profile
+        ), f"{role} discovery differs"
+        assert _normalized_manifest(atomic_profile) == _normalized_manifest(
+            fast_profile
+        ), f"{role} manifest differs"
 
-- full relative inventory and exact bytes;
-- `codec.read_snapshot()` documents, `had_crc`, revisions, and `json.dumps(document.doc, ensure_ascii=False)` without `sort_keys` so mapping/list order and JSON type spelling remain visible;
-- source IDs 10/11 and recipient IDs 20/30;
-- source LF and recipient CRLF YAML/INI bytes;
-- private sentinels;
-- `_normalized_discovery()` with only root paths and `Profile.modified` normalized;
-- `_normalized_manifest()` with only root paths normalized;
-- manifest file names, sizes, hashes, and order.
-
-Use exact preference expectations:
-
-```python
+    assert (fast_source.account_path.name, fast_source.character_path.name) == (
+        "core_user_10.dat",
+        "core_char_11.dat",
+    )
+    assert (fast_recipient.account_path.name, fast_recipient.character_path.name) == (
+        "core_user_20.dat",
+        "core_char_30.dat",
+    )
+    source_snapshots = _snapshots(fast_source)
+    recipient_snapshots = _snapshots(fast_recipient)
+    assert [row.document.had_crc for row in source_snapshots] == [True, True]
+    assert [row.document.had_crc for row in recipient_snapshots] == [False, False]
+    assert source_snapshots[0].document.doc["bytes:syntheticPrivate"] == {
+        "bytes:accountID": 10,
+        "bytes:marker": "utf8:Synthetic private source account",
+    }
+    assert recipient_snapshots[0].document.doc["bytes:syntheticPrivate"] == {
+        "bytes:accountID": 20,
+        "bytes:marker": "utf8:Synthetic private recipient account",
+    }
     expected_preferences = {
         "source": {
             "core_public__.yaml": b"# synthetic source local preferences\nuiScale: 1.0\n",
@@ -801,53 +1487,179 @@ Use exact preference expectations:
             "prefs.ini": b"; synthetic recipient local preferences\r\nmonitor=2\r\n",
         },
     }
-```
+    for role, profile in (("source", fast_source), ("recipient", fast_recipient)):
+        assert {
+            name: (profile.profile / name).read_bytes()
+            for name in expected_preferences[role]
+        } == expected_preferences[role]
 
-Expected: exact parity and default construction `4` atomic-channel fsyncs versus explicit fast construction `0` on both channels and four exact exclusive opens.
+    second_source, second_recipient = _seed_pair(
+        tmp_path / "fast-b", setup_fixtures._publish_fresh_file
+    )
+    assert fast_source.profile != fast_recipient.profile
+    assert not fast_source.profile.samefile(fast_recipient.profile)
+    first_files = _fixture_files(fast_source)
+    second_files = _fixture_files(second_source)
+    assert set(first_files) == set(second_files)
+    for name in first_files:
+        first = first_files[name]
+        second = second_files[name]
+        assert stat.S_ISREG(first.stat().st_mode) and stat.S_ISREG(second.stat().st_mode)
+        assert real_os.access(first, real_os.W_OK) and real_os.access(second, real_os.W_OK)
+        assert first.stat().st_nlink == 1, "fast-a link count changed"
+        assert second.stat().st_nlink == 1, "fast-b link count changed"
+        assert not first.samefile(second), "fast fixtures share inode"
 
-- [ ] **Step 6: Add isolation, metadata, duplicate, and no-template assertions in the same witness**
+    metadata_before = {
+        name: _stable_metadata(path) for name, path in _fixture_files(fast_recipient).items()
+    }
+    _snapshots(fast_recipient)
+    _normalized_discovery(fast_recipient)
+    _normalized_manifest(fast_recipient)
+    assert {
+        name: _stable_metadata(path) for name, path in _fixture_files(fast_recipient).items()
+    } == metadata_before, "stable metadata changed during observation"
 
-Create a second fast pair under `tmp_path / "fast-b"`. For every corresponding file:
-
-```python
-    assert first.is_file() and second.is_file()
-    assert os.access(first, os.W_OK) and os.access(second, os.W_OK)
-    assert first.stat().st_nlink == second.stat().st_nlink == 1
-    assert not first.samefile(second)
-```
-
-Capture `_stable_file_metadata()` for all `fast-a` files, then run codec readback, discovery, and manifest capture and assert metadata remains byte-for-tuple unchanged. Do not compare atomic and fast inode/timestamps and do not record access/change/birth timestamps.
-
-Save `fast-b` bytes, mutate one `fast-a` DAT with `write_bytes`, and assert all `fast-b` bytes remain unchanged. Assert no path whose name contains `template` exists under the witness root. Restore/rebuild any mutated fixture before later assertions.
-
-Attempt the duplicate profile:
-
-```python
-    before = _inventory(fast_recipient)
+    second_before = _fixture_inventory(second_source)
+    fast_source.account_path.write_bytes(fast_source.account_path.read_bytes() + b" ")
+    assert _fixture_inventory(second_source) == second_before, "fast fixtures share data"
+    assert not [path for path in tmp_path.rglob("*") if "template" in path.name.lower()]
+    before_duplicate = _fixture_inventory(fast_recipient)
     with pytest.raises(FileExistsError):
         seed_profile(
             tmp_path / "fast-a",
             initial_dat_publish=setup_fixtures._publish_fresh_file,
         )
-    assert _inventory(fast_recipient) == before
+    assert _fixture_inventory(fast_recipient) == before_duplicate
+    assert second_recipient.profile != fast_recipient.profile
+
+    def forbidden_path(name):
+        def forbidden(*_args, **_kwargs):
+            raise AssertionError(f"fresh publisher called Path.{name}")
+
+        return forbidden
+
+    def direct_call(path, payload, proxy, *, forbid_preflight=False):
+        proxy.path = _PathProxy(real_os.path)
+        error = None
+        with monkeypatch.context() as patch:
+            patch.setattr(setup_fixtures, "os", proxy)
+            if forbid_preflight:
+                for name in ("exists", "stat", "lstat", "is_file", "is_dir", "is_symlink"):
+                    patch.setattr(Path, name, forbidden_path(name))
+            try:
+                setup_fixtures._publish_fresh_file(path, payload)
+            except (AssertionError, OSError, RuntimeError) as caught:
+                error = caught
+        return error
+
+    direct_root = tmp_path / "direct"
+    direct_root.mkdir()
+    success = direct_root / "success.dat"
+    proxy = _OSProxy(real_os, assert_fresh_open=True)
+    assert direct_call(success, b"payload", proxy, forbid_preflight=True) is None
+    assert success.read_bytes() == b"payload"
+    assert proxy.open_calls == [(success, expected_flags, 0o600)]
+    assert len(proxy.close_calls) == 1 and proxy.fsync_calls == []
+
+    existing = direct_root / "existing.dat"
+    existing.write_bytes(b"keep")
+    proxy = _OSProxy(real_os, assert_fresh_open=True)
+    error = direct_call(existing, b"replace", proxy, forbid_preflight=True)
+    assert isinstance(error, FileExistsError)
+    assert proxy.open_calls == [(existing, expected_flags, 0o600)]
+    assert existing.read_bytes() == b"keep"
+
+    partial = direct_root / "partial.dat"
+    proxy = _OSProxy(real_os, assert_fresh_open=True, write_steps=(2, 1, 1))
+    assert direct_call(partial, b"abcdef", proxy) is None
+    assert partial.read_bytes() == b"abcdef"
+    assert len(proxy.write_calls) >= 4 and len(proxy.close_calls) == 1
+
+    write_failure = RuntimeError("write sentinel")
+    close_failure = RuntimeError("close sentinel")
+    cleanup_close_original = RuntimeError("original cleanup-close write failure")
+    cleanup_close = RuntimeError("cleanup close failure")
+    cleanup_unlink_original = RuntimeError("original cleanup-unlink write failure")
+    cleanup_unlink = RuntimeError("cleanup unlink failure")
+    failure_cases = [
+        {
+            "name": "zero-progress",
+            "path": direct_root / "zero.dat",
+            "proxy": _OSProxy(real_os, assert_fresh_open=True, write_steps=(2, 0)),
+            "original": None,
+            "fragment": "no progress",
+            "close_count": 1,
+            "remaining": None,
+        },
+        {
+            "name": "write-failure",
+            "path": direct_root / "write-failure.dat",
+            "proxy": _OSProxy(
+                real_os, assert_fresh_open=True, write_steps=(2, write_failure)
+            ),
+            "original": write_failure,
+            "fragment": "",
+            "close_count": 1,
+            "remaining": None,
+        },
+        {
+            "name": "close-failure",
+            "path": direct_root / "close-failure.dat",
+            "proxy": _OSProxy(
+                real_os, assert_fresh_open=True, close_errors=(close_failure,)
+            ),
+            "original": close_failure,
+            "fragment": "",
+            "close_count": 2,
+            "remaining": None,
+        },
+        {
+            "name": "cleanup-close-failure",
+            "path": direct_root / "cleanup-close.dat",
+            "proxy": _OSProxy(
+                real_os,
+                assert_fresh_open=True,
+                write_steps=(2, cleanup_close_original),
+                close_errors=(cleanup_close,),
+            ),
+            "original": cleanup_close_original,
+            "fragment": "",
+            "close_count": 1,
+            "remaining": None,
+        },
+        {
+            "name": "cleanup-unlink-failure",
+            "path": direct_root / "cleanup-unlink.dat",
+            "proxy": _OSProxy(
+                real_os,
+                assert_fresh_open=True,
+                write_steps=(2, cleanup_unlink_original),
+                unlink_errors=(cleanup_unlink,),
+            ),
+            "original": cleanup_unlink_original,
+            "fragment": "",
+            "close_count": 1,
+            "remaining": b"ab",
+        },
+    ]
+    for case in failure_cases:
+        error = direct_call(case["path"], b"abcdef", case["proxy"])
+        if case["original"] is None:
+            assert type(error) is OSError, case["name"]
+            assert case["fragment"] in str(error), case["name"]
+        else:
+            assert error is case["original"], f"{case['name']} masked original failure"
+        assert len(case["proxy"].close_calls) == case["close_count"], case["name"]
+        assert case["proxy"].unlink_calls == [case["path"]], case["name"]
+        if case["remaining"] is None:
+            assert not case["path"].exists(), case["name"]
+        else:
+            assert case["path"].read_bytes() == case["remaining"], case["name"]
+            real_os.unlink(case["path"])
 ```
 
-Expected: ordinary, writable, single-link files; no aliases or shared mutations; no template; duplicate directory creation refused with original bytes intact.
-
-- [ ] **Step 7: Execute every direct publisher contract inside the same witness**
-
-Use a small inner function that installs a fresh `_OSProxy` on `setup_fixtures.os`, calls the helper once, and returns proxy/path. Patch `Path.exists`, `Path.stat`, `Path.lstat`, `Path.is_file`, `Path.is_dir`, and `Path.is_symlink` to a failing function only around direct helper success/existing-file calls; restore through `monkeypatch.context()` before ordinary filesystem assertions. This catches `Path` preflights, while `_PathProxy` and proxy `stat/lstat/access` catch module-level preflights.
-
-Execute these cases with precise messages and no parametrization:
-
-1. Success: one open, exact flags/mode, payload exact, one close, no fsync.
-2. Existing destination: `FileExistsError`, one exact open attempt, bytes unchanged.
-3. Partial writes: `write_steps=(2, 1)` and payload `b"abcdef"`; complete bytes present before return.
-4. Zero progress: `write_steps=(2, 0)`; raises `OSError` matching `no progress`, descriptor cleanup attempted, destination absent.
-5. Mid-write sentinel: `write_steps=(2, sentinel)`; `caught.value is sentinel`, close attempted, destination absent.
-6. Close sentinel: `close_error=sentinel`; `caught.value is sentinel`, cleanup retries close, destination absent.
-
-Use a loop over named failure cases inside the test, with assertion messages containing the case name, so these branches do not become additional pytest identities.
+The earliest parity assertion is exact byte inventory. Therefore both `extra-byte` and `mapping-order` intentionally fail there; the later snapshot/JSON assertions remain executable independent evidence when bytes agree. All failure branches execute inside one named-case loop with per-case messages rather than pytest parametrization. The cleanup-close and cleanup-unlink rows prove cleanup failures cannot mask the original exception; unlink failure leaves the partial file only because removal was impossible, and the witness removes it through the captured real module.
 
 - [ ] **Step 8: Run focused GREEN and unchanged default callers**
 
@@ -864,30 +1676,37 @@ Expected: five passed. The four unchanged schema tests prove ordinary calls stil
 
 Collect controller IDs now and compare with Task 1. Expected: 189 IDs; the baseline 188 are the exact prefix; the comprehensive witness is the only suffix; exactly the original 136 IDs use fixture `setup`.
 
-- [ ] **Step 9: Qualify exact temporary mutants independently**
+- [ ] **Step 9: Run every exact Task 2 mutant through the restoration-safe catalog**
 
-For every row, run the witness green first, apply one match-once mutant with Block B, rerun only the comprehensive witness, require the named assertion, restore, and require empty diffs.
+Run the committed witness green, then execute each Block B row independently:
 
-| Mutant | Exact temporary edit | Intended failure |
-|---|---|---|
-| Remove `O_EXCL` | `os.O_CREAT | os.O_EXCL | os.O_WRONLY` → `os.O_CREAT | os.O_WRONLY` | proxy's exact flag assertion before real open |
-| Check-then-open/nonexclusive | insert `if path.exists(): raise FileExistsError(path)` and remove `O_EXCL` | patched `Path.exists` preflight assertion; no open/overwrite evidence substitutes |
-| Direct helper fsync | insert `os.fsync(descriptor)` after the write loop and before close | direct `setup_fixtures.os` fsync channel changes from zero; atomic channel remains zero |
-| Atomic delegation | replace helper body with `codec.atomicio.write_bytes_atomic(path, data)` | `wingman.atomicio.os` fsync channel changes from zero; direct channel remains zero |
-| Extra byte | `remaining = memoryview(data)` → `remaining = memoryview(data + b" ")` | exact file-byte/content-revision parity or direct payload assertion |
-| Mapping order | after `account, character = documents(case)`, reverse `bytes:tabsettings_new` only when `initial_dat_publish is not None` | unsorted JSON/order assertion; broad controller failure does not qualify |
-| Line endings | before preference writes, convert recipient CRLF to LF only when `initial_dat_publish is not None` | exact recipient YAML/INI byte assertion |
-| Hardlink template | temporarily cache the first destination per exact data payload and `os.link` it for the second fast fixture | `st_nlink`, `samefile`, mutation isolation, or no-template assertion |
-
-The hardlink mutant may add a temporary module dictionary immediately above the helper:
-
-```python
-_FRESH_FILE_TEMPLATES = {}
+```bash
+uv run --no-sync python -m pytest \
+  tests/test_ui_setup_controller.py::test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_failures -q
+for mutant in \
+  remove-o-excl path-preflight direct-fsync atomic-delegation \
+  extra-byte mapping-order line-endings hardlink-template
+do
+  python /tmp/setup_fixture_mutation_probe.py "$mutant"
+done
+uv run --no-sync python -m pytest \
+  tests/test_ui_setup_controller.py::test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_failures -q
 ```
 
-and use the original helper for the first payload, then `os.link(template, path)` for repeats. It must be restored completely, including the temporary dictionary.
+Expected exact mapping:
 
-Expected: each red run fails at the intended assertion and no mutation survives. A codec decode error, collection error, cleanup masking, or unrelated later failure is not qualifying evidence.
+| Catalog key | Intended red assertion |
+|---|---|
+| `remove-o-excl` | `fresh open flags changed` before delegation |
+| `path-preflight` | `fresh publisher called Path.exists`; `O_EXCL` remains present |
+| `direct-fsync` | `fast direct fsync count changed`; atomic channel remains zero |
+| `atomic-delegation` | `fast atomic fsync count changed`; direct channel is not the detector |
+| `extra-byte` | earliest `source byte inventory differs` |
+| `mapping-order` | earliest `source byte inventory differs` because encoded order changes bytes |
+| `line-endings` | `recipient byte inventory differs` |
+| `hardlink-template` | `fast-a link count changed` before byte equality can hide aliasing |
+
+Each command writes its captured red output and restoration hash under `/tmp/wingman-setup-fixture-mutants`. The runner itself proves restored bytes/hash and complete pre/post binary diff/status equality. A codec error, missing-file preflight error, collection error, or later controller failure is rejected as the wrong red.
 
 - [ ] **Step 10: Update results, review, and commit Task 2**
 
@@ -914,10 +1733,10 @@ git commit -m "test: qualify fresh setup fixture publisher"
 ### Task 3: Opt Only the Controller Fixture In and Prove Controller-Body Persistence
 
 **Files:**
-- Modify: `tests/test_ui_setup_controller.py:13-49` and append the second witness after the Task 2 witness
+- Modify: the exact two `seed_profile(...)` calls inside `tests/test_ui_setup_controller.py::setup`, then append the second witness after the Task 2 witness
 - Modify: `docs/ci-setup-controller-fixture-construction-results.md`
-- Temporarily modify and restore: `wingman/evesettings/setup_profile.py:206-221`
-- Verify unchanged: `tests/fixtures/ui_setup_page.cjs:312-329`
+- Temporarily modify and restore: the exact `written_account_revision = codec.write_document(...)` block in `wingman/evesettings/setup_profile.py::stage_setup`
+- Verify unchanged: the `setup.__wrapped__(Path(temp), patch)` boundary in `tests/fixtures/ui_setup_page.cjs`
 
 **Interfaces:**
 - Consumes: Task 2's `_publish_fresh_file`, optional `seed_profile` seam, `_OSProxy`, and existing `setup.__wrapped__`, `review`, `queue_create`, `assert_create_done` helpers.
@@ -927,15 +1746,22 @@ git commit -m "test: qualify fresh setup fixture publisher"
 
 - [ ] **Step 1: Append the second witness before changing `setup` and verify RED**
 
-Append the exact non-parameterized witness after Task 2's witness. It must call `setup.__wrapped__(tmp_path, monkeypatch)` directly, not request fixture `setup`.
-
-Install separate `setup_fixtures.os` and `atomicio.os` proxies before calling the wrapped fixture. Assert construction expectations:
+Append this exact non-parameterized RED body after Task 2's witness. It directly calls the wrapped fixture and never requests pytest fixture `setup`:
 
 ```python
-    controller, source, base = setup.__wrapped__(tmp_path, monkeypatch)
-    assert len(direct.open_calls) == 4
-    assert direct.fsync_calls == []
-    assert atomic.fsync_calls == []
+def test_fast_fixture_construction_preserves_controller_body_atomic_persistence(
+    tmp_path, monkeypatch
+):
+    real_os = os
+    direct = _OSProxy(real_os, assert_fresh_open=True)
+    direct.path = _PathProxy(real_os.path)
+    atomic = _OSProxy(real_os)
+    monkeypatch.setattr(setup_fixtures, "os", direct)
+    monkeypatch.setattr(atomicio, "os", atomic)
+    setup.__wrapped__(tmp_path, monkeypatch)
+    assert len(direct.open_calls) == 4, "fast destination open count changed"
+    assert direct.fsync_calls == [], "fast direct fsync count changed"
+    assert atomic.fsync_calls == [], "fast atomic fsync count changed"
 ```
 
 Run:
@@ -975,56 +1801,59 @@ Do not add a fixture argument, wrapper fixture, autouse patch, or module-wide pu
 
 Rerun the second witness's construction assertions. Expected: four exact direct opens, zero fsync on both channels.
 
-- [ ] **Step 3: Instrument real body persistence through delegating wrappers**
+- [ ] **Step 3: Replace the RED stub with the complete construction/body witness**
 
-Add `from wingman.evesettings import controller as controller_mod` to the controller test imports. Inside the second witness, capture real functions before patching:
+Use this exact final test. It phase-separates construction, delegates every wrapped write, accounts for the codec's definition-time publisher default, replaces only the controller module's `time` binding with a delegating clock proxy, completes a real create, and asserts exact output bytes and category order:
 
 ```python
+def test_fast_fixture_construction_preserves_controller_body_atomic_persistence(
+    tmp_path, monkeypatch
+):
+    real_os = os
+    direct = _OSProxy(real_os, assert_fresh_open=True)
+    direct.path = _PathProxy(real_os.path)
+    atomic = _OSProxy(real_os)
+    monkeypatch.setattr(setup_fixtures, "os", direct)
+    monkeypatch.setattr(atomicio, "os", atomic)
+
+    controller, source, base = setup.__wrapped__(tmp_path, monkeypatch)
+    construction = {
+        "opens": list(direct.open_calls),
+        "direct_fsyncs": len(direct.fsync_calls),
+        "atomic_fsyncs": len(atomic.fsync_calls),
+    }
+    assert construction["opens"] and len(construction["opens"]) == 4
+    assert construction["direct_fsyncs"] == 0
+    assert construction["atomic_fsyncs"] == 0
+    assert controller._settings["eve_settings"]["profile"] == str(source.profile)
+
+    direct.open_calls.clear()
+    direct.fsync_calls.clear()
+    atomic.fsync_calls.clear()
+    atomic.fsync_categories.clear()
+    events = []
+    atomic.category_events = events
+
     real_copy_atomic = atomicio.copy_atomic
     real_write_bytes_atomic = atomicio.write_bytes_atomic
     real_write_atomic = atomicio.write_atomic
     real_write_document = codec.write_document
     real_publish_new = profilecopy.publish_new
-```
+    real_clock = controller_mod.time
+    monkeypatch.setattr(controller_mod, "time", _ClockProxy(real_clock, 1000.0))
 
-Extend `_OSProxy` in Task 3 with exact category state. Add these fields in `__init__`:
+    parsed = setup_sharing.parse_text(setup_sharing.export_text(wire()))
+    expected_account, expected_character = setup_documents.apply_setup(
+        codec.read_document(base.account_path),
+        codec.read_document(base.character_path),
+        parsed,
+        keep_ship_labels=False,
+        now=1000.0,
+    )
 
-```python
-        self.current_category = None
-        self.fsync_categories = []
-        self.category_events = None
-```
-
-Add this method:
-
-```python
-    @contextlib.contextmanager
-    def category(self, name):
-        previous = self.current_category
-        self.current_category = name
-        try:
-            yield
-        finally:
-            self.current_category = previous
-```
-
-Extend `fsync` before delegating:
-
-```python
-    def fsync(self, descriptor):
-        self.fsync_calls.append(descriptor)
-        if self.current_category is not None:
-            self.fsync_categories.append(self.current_category)
-            if self.category_events is not None:
-                self.category_events.append(self.current_category)
-        return self._real.fsync(descriptor)
-```
-
-After fixture construction, install all body wrappers exactly as follows:
-
-```python
-    events = []
-    atomic.category_events = events
+    def expected_lossless(document):
+        envelope = {"had_crc": document.had_crc, "doc": document.doc}
+        return b"\x7d" + json.dumps(envelope, ensure_ascii=False).encode("utf-8")
 
     def copy_atomic(source_path, target_path, *args, **kwargs):
         category = (
@@ -1037,8 +1866,10 @@ After fixture construction, install all body wrappers exactly as follows:
 
     def write_document(path, document, **kwargs):
         target = Path(path)
-        if "publish" not in kwargs and target.parent.name.startswith(
-            profilecopy.STAGE_PREFIX
+        if (
+            "publish" not in kwargs
+            and target.parent.name.startswith(profilecopy.STAGE_PREFIX)
+            and target.parent.name.endswith(profilecopy.STAGE_SUFFIX)
         ):
 
             def publish(rewrite_path, data):
@@ -1052,8 +1883,11 @@ After fixture construction, install all body wrappers exactly as follows:
         with atomic.category("selection"):
             return real_write_atomic(path, text, *args, **kwargs)
 
+    publications = []
+
     def publish_new(staged):
         result = real_publish_new(staged)
+        publications.append(result)
         events.append("directory_publish")
         return result
 
@@ -1061,67 +1895,37 @@ After fixture construction, install all body wrappers exactly as follows:
     monkeypatch.setattr(codec, "write_document", write_document)
     monkeypatch.setattr(atomicio, "write_atomic", write_atomic)
     monkeypatch.setattr(profilecopy, "publish_new", publish_new)
-```
 
-The `write_document` wrapper explicitly handles the production codec's definition-time publisher default instead of assuming that monkeypatching `atomicio.write_bytes_atomic` changes the stored default. Every wrapper delegates to the real operation; no write is suppressed or replaced.
-
-- [ ] **Step 4: Phase-separate construction and body, run real review/create, and assert exact seven fsyncs**
-
-After the wrapped fixture returns, assert and store construction evidence, then clear direct/atomic counters and event lists. Patch `wingman.evesettings.controller.time.time` to `lambda: 1000.0` so expected rewritten DAT bytes are deterministic.
-
-Compute expected account/character documents from the original recipient snapshots using the real parser and adapter before the create worker runs:
-
-```python
-    parsed = setup_sharing.parse_text(setup_sharing.export_text(wire()))
-    expected_account, expected_character = setup_documents.apply_setup(
-        codec.read_document(base.account_path),
-        codec.read_document(base.character_path),
-        parsed,
-        keep_ship_labels=False,
-        now=1000.0,
-    )
-
-    def expected_lossless(document):
-        envelope = {"had_crc": document.had_crc, "doc": document.doc}
-        return b"\x7d" + json.dumps(envelope, ensure_ascii=False).encode("utf-8")
-```
-
-Patch the controller module's clock explicitly:
-
-```python
-    monkeypatch.setattr(controller_mod.time, "time", lambda: 1000.0)
-```
-
-Run the real operation:
-
-```python
     offer, queued = queue_create(controller, base)
     queued.run_next()
     done = assert_create_done(controller, offer, published=True)
-```
-
-Assert:
-
-```python
-    counts = Counter(atomic.fsync_categories)
-    assert counts == Counter({
-        "stage_dat_copy": 2,
-        "stage_local_copy": 2,
-        "rewrite_dat": 2,
-        "selection": 1,
-    })
-    assert len(atomic.fsync_categories) == 7
-    publish_index = events.index("directory_publish")
-    assert events[:publish_index].count("stage_dat_copy") == 2
-    assert events[:publish_index].count("stage_local_copy") == 2
-    assert events[:publish_index].count("rewrite_dat") == 2
-    assert events[publish_index + 1 :] == ["selection"]
-```
-
-Then assert exact final bytes:
-
-```python
+    assert done["selection_persisted"] is True and done["warning"] == ""
     destination = offer.plan.destination
+    assert publications == [destination]
+
+    counts = Counter(atomic.fsync_categories)
+    expected_counts = Counter(
+        {
+            "stage_dat_copy": 2,
+            "stage_local_copy": 2,
+            "rewrite_dat": 2,
+            "selection": 1,
+        }
+    )
+    assert counts == expected_counts, f"body fsync categories changed: {counts}"
+    assert len(atomic.fsync_calls) == 7, "body fsync total changed"
+    assert events == [
+        "stage_dat_copy",
+        "stage_dat_copy",
+        "stage_local_copy",
+        "stage_local_copy",
+        "rewrite_dat",
+        "rewrite_dat",
+        "directory_publish",
+        "selection",
+    ], events
+    assert direct.open_calls == [] and direct.fsync_calls == []
+
     assert {path.name for path in destination.iterdir()} == {
         base.account_path.name,
         base.character_path.name,
@@ -1141,19 +1945,21 @@ Then assert exact final bytes:
         b"; synthetic recipient local preferences\r\nmonitor=2\r\n"
     )
     assert controller._settings["eve_settings"]["profile"] == str(destination)
+    assert not list(
+        base.server.glob(f"{profilecopy.STAGE_PREFIX}*{profilecopy.STAGE_SUFFIX}")
+    )
 ```
 
-Also assert:
+The clock substitution is a module-binding proxy: `controller_mod.time` changes, but the shared `time` module object is never mutated. The body assertion occurs only after `assert_create_done(..., published=True)`, so the direct-body mutant qualifies only if creation and directory publication complete first.
 
-- construction counters remain separately stored at four opens/zero fsyncs;
-- `done["selection_persisted"] is True`;
-- destination inventory is exactly account DAT, character DAT, YAML, and INI;
-- destination preference bytes equal recipient CRLF bytes;
-- destination DAT bytes equal `expected_lossless()` for the two expected documents;
-- `profilecopy.publish_new()` delegated and the hidden stage no longer exists;
-- settings selection names the created destination.
+- [ ] **Step 4: Run the completed witness GREEN**
 
-Expected: operation completes and exact body count is seven: six categorized atomic fsyncs before directory publication and one selection fsync after publication.
+```bash
+uv run --no-sync python -m pytest \
+  tests/test_ui_setup_controller.py::test_fast_fixture_construction_preserves_controller_body_atomic_persistence -q
+```
+
+Expected: one pass; construction records four opens and zero fsyncs, body records exact categories `2 + 2 + 2 + 1 = 7`, directory publication precedes selection, and complete destination bytes match.
 
 - [ ] **Step 5: Run existing controller failure/race gates and the three direct Node scenarios**
 
@@ -1173,42 +1979,26 @@ uv run --no-sync python -m pytest \
 
 Expected: all selected controller cases pass; all three Node scenarios pass through the unchanged direct `setup.__wrapped__(Path(temp), patch)` boundary.
 
-- [ ] **Step 6: Qualify independent construction and body mutants**
+- [ ] **Step 6: Qualify independent construction and body mutants with exact restoration**
 
-Re-run Task 2's direct-fsync and atomic-delegation mutants against the comprehensive witness after fixture opt-in; require the same independent channel failures and exact restoration.
+The Block B catalog already contains unique before/after anchors and exact commands. Run:
 
-Then qualify the body mutant with Block B against `wingman/evesettings/setup_profile.py`. Replace only the staged account rewrite call:
-
-```python
-        written_account_revision = codec.write_document(
-            staged_account_path,
-            updated_account,
-            backup=lambda _path: None,
-            expected_content_revision=account_revision,
-        )
+```bash
+python /tmp/setup_fixture_mutation_probe.py direct-fsync
+python /tmp/setup_fixture_mutation_probe.py atomic-delegation
+python /tmp/setup_fixture_mutation_probe.py direct-body-write
+uv run --no-sync python -m pytest \
+  tests/test_ui_setup_controller.py::test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_failures \
+  tests/test_ui_setup_controller.py::test_fast_fixture_construction_preserves_controller_body_atomic_persistence -q
 ```
 
-with:
+Expected:
 
-```python
-        written_account_revision = codec.write_document(
-            staged_account_path,
-            updated_account,
-            backup=lambda _path: None,
-            publish=lambda path, data: Path(path).write_bytes(data),
-            expected_content_revision=account_revision,
-        )
-```
-
-Run only the second witness. Required result:
-
-- create operation and final directory publication complete;
-- rewritten DAT atomic category changes from `2` to `1`;
-- total categorized body fsyncs change from `7` to `6`;
-- the exact `Counter` assertion fails after completion;
-- no `FileExistsError`, codec verification failure, revision failure, or publication refusal qualifies.
-
-Restore `setup_profile.py` and require `git diff --exit-code -- wingman/evesettings/setup_profile.py`.
+- direct fsync fails only `fast direct fsync count changed`;
+- atomic delegation fails only `fast atomic fsync count changed`;
+- direct body write uses the exact `written_account_revision = codec.write_document(...)` block in `stage_setup`, preserves codec encode/signature/readback/revision work, completes `assert_create_done(..., published=True)`, then fails `body fsync categories changed` with rewrite `2 → 1` and total `7 → 6`;
+- every target's restored bytes/hash and complete binary diff/status equal its pre-probe snapshot;
+- final two-witness command passes.
 
 - [ ] **Step 7: Verify exact 190-ID endpoint and fixture-user count**
 
@@ -1323,11 +2113,21 @@ git diff --check
 
 Expected: Cargo passes; JS smoke passes; Ruff check/format pass; diff check is clean.
 
-- [ ] **Step 7: Re-run all temporary mutations and prove final restoration**
+- [ ] **Step 7: Re-run all exact temporary mutations and prove restoration**
 
-Re-run the eight Task 2 mutants, the two independent fsync-channel mutants, and the Task 3 direct body writer mutant against the final endpoint. Every red run must fail at its intended assertion and every restore must return the target's original SHA-256. Then run both witnesses green again.
+```bash
+for mutant in \
+  remove-o-excl path-preflight direct-fsync atomic-delegation \
+  extra-byte mapping-order line-endings hardlink-template direct-body-write
+do
+  python /tmp/setup_fixture_mutation_probe.py "$mutant"
+done
+uv run --no-sync python -m pytest \
+  tests/test_ui_setup_controller.py::test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_failures \
+  tests/test_ui_setup_controller.py::test_fast_fixture_construction_preserves_controller_body_atomic_persistence -q
+```
 
-Audit residue:
+Every catalog run independently compares restored bytes/hash and the entire binary diff/status to its own pre-probe snapshot, so uncommitted implementation changes are preserved rather than mistaken for mutation residue. Audit protected paths and temporary symbols separately:
 
 ```bash
 git diff --exit-code -- wingman .github tests/fixtures \
@@ -1335,11 +2135,11 @@ git diff --exit-code -- wingman .github tests/fixtures \
   tests/test_ui_setup_integration.py tests/test_evesettings_codec.py \
   tests/test_evesettings_profilecopy.py tests/test_atomicio.py \
   pyproject.toml uv.lock packaging
-grep -RInE 'MUTATION|Fresh fixture write made no progress.*MUTATION|_FRESH_FILE_TEMPLATES' \
+grep -RInE 'MUTATION|_FRESH_FILE_TEMPLATES' \
   tests/setup_fixtures.py tests/test_ui_setup_controller.py || true
 ```
 
-Expected: protected-path diff empty; no mutant dictionary/comment/debug residue.
+Expected: every intended red and restoration check passes, both witnesses return green, protected-path diff is empty, and no temporary symbol remains.
 
 - [ ] **Step 8: Audit exact scope and arithmetic**
 
@@ -1374,10 +2174,12 @@ Record actual inventory hashes, exact two-ID addition, zero removals/renames/reo
 ```bash
 git add docs/ci-setup-controller-fixture-construction-results.md
 git commit -m "docs: record setup fixture construction verification"
+git diff --exit-code HEAD -- .
+git diff --cached --exit-code
 git status --short --branch
 ```
 
-Expected: clean branch after a documentation-only Task 4 commit.
+Expected: clean branch after a documentation-only Task 4 commit. This is the final post-commit clean-diff check; mutation probes use their pre-probe snapshots instead.
 
 **Implementer report:** Commit SHA; actual 190/16,607 hashes and inventories; two additions/zero removals; 136 structural users; focused/full pass/skip counts; exact commands; native/Node/Cargo/JS/Ruff results; mutation restoration; scope; remaining risks. Do not state a speedup.
 
@@ -1456,65 +2258,50 @@ Present:
 
 Do not push, open a PR, rerun GitHub workflows, or call a GitHub mutation API before explicit authorization.
 
-- [ ] **Step 6: After authorization, collect exact hosted provenance and artifacts**
+- [ ] **Step 6: After authorization, identify the exact successful run**
 
-Resolve the PR and successful run from the reviewed branch head. Record branch head, base, synthetic merge, workflow run, checks/Ubuntu/Windows job IDs, artifact IDs/digests, checkout refs/subjects, Test-step seconds, and job seconds. Require merge parents `[synthetic, base, head]` in that order.
+The maintainer supplies the workflow run ID explicitly; do not infer “latest”:
 
-Download successful Ubuntu/Windows `pytest-evidence-*` artifacts into new roots, never overwrite `/tmp/wingman-stage3-{ubuntu,windows}`.
-
-- [ ] **Step 7: Enforce the synthetic-merge full-diff allowlist**
-
-Compare PR #287 synthetic merge `ab2028f55f080e6067d7cc62002451f96171fa68` to the new synthetic merge. The exact expected six-path union is:
-
-```text
-docs/ci-generated-verifier-alerts-consolidation-results.md
-docs/ci-setup-controller-fixture-construction-results.md
-docs/superpowers/plans/2026-09-24-setup-controller-fixture-construction.md
-docs/superpowers/specs/2026-09-24-setup-controller-fixture-construction-design.md
-tests/setup_fixtures.py
-tests/test_ui_setup_controller.py
+```bash
+read -r -p 'Authorized GitHub Actions run ID: ' NEW_RUN
+test -n "$NEW_RUN"
+export NEW_RUN
 ```
 
-The first path is the known post-PR-#287 merge delta from `ab2028...` to `c23788e3`; the remaining five are this tranche. Run:
+Before running the collector, inspect it explicitly:
 
-```python
-expected = {
-    'docs/ci-generated-verifier-alerts-consolidation-results.md',
-    'docs/ci-setup-controller-fixture-construction-results.md',
-    'docs/superpowers/plans/2026-09-24-setup-controller-fixture-construction.md',
-    'docs/superpowers/specs/2026-09-24-setup-controller-fixture-construction-design.md',
-    'tests/setup_fixtures.py',
-    'tests/test_ui_setup_controller.py',
-}
-full = changed('ab2028f55f080e6067d7cc62002451f96171fa68', new_synthetic)
-assert full == expected, {'missing': sorted(expected-full), 'unexpected': sorted(full-expected)}
-assert not any(path.startswith(('.github/', 'wingman/', 'scripts/', 'tests/fixtures/', 'packaging/')) for path in full)
-assert not (full & {'pyproject.toml', 'uv.lock'})
-assert not {path for path in full if path.startswith('tests/') and path not in {
-    'tests/setup_fixtures.py', 'tests/test_ui_setup_controller.py'}}
+```bash
+gh run view "$NEW_RUN" -R elboaf/FlyGD-Wingman --json databaseId,headSha,status,conclusion,url
 ```
 
-Any unexpected base movement/path makes comparison inconclusive; do not hand-pick only executable files.
+Expected: pull-request run for this branch. If the run was rerun, keep the same `NEW_RUN`; Block D reads the current `run_attempt`, records every prior attempt, and selects current-attempt jobs/artifacts by job ID and time window. A failed earlier attempt is provenance only and never passing evidence.
 
-- [ ] **Step 8: Parse hosted artifacts against the PR #287 baseline**
+- [ ] **Step 7: Execute the self-contained hosted collector and audit**
 
-The hosted parser must require, on both platforms:
+Create both Block D files exactly, syntax-check them, then run:
 
-- exact 16,607 unique complete identities;
-- Ubuntu/Windows complete identity sets equal;
-- PR #287's complete 16,605-ID set is a subset;
-- after-minus-baseline is exactly the two approved witness IDs in the documented order;
-- baseline-minus-after is empty;
-- exact 190 controller list whose first 188 equal Task 1 and whose suffix equals the two names;
-- zero controller skips;
-- zero failures/errors;
-- each platform's normalized skip tuples equal its PR #287 platform baseline exactly: Ubuntu 14, Windows 67;
-- observed pass counts 16,593/14 on Ubuntu and 16,540/67 on Windows if identities/skips match;
-- JUnit/timing JSON agreement for case counts and per-file sums;
-- controller testcase sum, the retained 136 setup-user sum where node timing permits, other-controller sum, and slowest retained controller identities;
-- Test-step/job durations as observations only.
+```bash
+python -m py_compile /tmp/setup_fixture_hosted_audit.py
+bash -n /tmp/setup_fixture_hosted_collect.sh
+NEW_RUN="$NEW_RUN" bash /tmp/setup_fixture_hosted_collect.sh
+```
 
-Write actual hosted controller/full hashes from newline-terminated lists. Compare local and hosted identities byte-for-set and controller order.
+Expected: the collector resolves PR head/base and run-head synthetic merge without an undefined variable; validates merge parents `[synthetic, base, head]`; downloads logs by exact current-attempt job IDs and artifacts by exact IDs; records archive/XML/timing hashes; and writes `hosted-audit.json` beneath `/tmp/wingman-setup-hosted-$NEW_RUN`.
+
+- [ ] **Step 8: Inspect every hosted acceptance output**
+
+Read `selected.json`, all `run-attempt-*.json`/`jobs-attempt-*.json`, `hosted-audit.json`, both complete/controller inventories, normalized skip files, artifact hashes, and job logs. Require the parser's executable assertions to have proved:
+
+- exact six-path comparator-synthetic-to-candidate-synthetic allowlist and protected paths;
+- checkout-log fetch ref, exact synthetic SHA, merge subject, and merge-parent provenance for checks/Ubuntu/Windows;
+- 16,607 complete identities on each platform with equal cross-platform sets;
+- exact two named additions and zero removals across the complete suite;
+- exact ordered 190 controller IDs with the 188 baseline prefix and two-name suffix;
+- zero controller skips/failures/errors and platform-local skip tuples equal to PR #287 (14 Ubuntu, 67 Windows);
+- no resource, Node, or codec availability skip;
+- JUnit/timing case/per-file agreement, actual inventory hashes, artifact IDs/digests, controller/setup-user/other-controller sums, slowest retained controller IDs, and Test/job observations.
+
+Any assertion failure is a stop or `INCONCLUSIVE`; do not edit the parser to normalize away evidence drift.
 
 - [ ] **Step 9: Record hosted evidence with claim discipline**
 
@@ -1553,7 +2340,7 @@ Push this evidence commit only if separately authorized, then wait for required 
 - **Signature consistency:** `_publish_fresh_file(path: Path, data: bytes) -> None`; `seed_profile(..., initial_dat_publish=None)`; fixture remains `setup(tmp_path, monkeypatch)`; both witnesses use `(tmp_path, monkeypatch)` and do not request `setup`.
 - **OS proxy safety:** both module bindings are replaced separately; no attribute on the shared real `os` module is mutated; exact flags include platform `O_BINARY`; exact mode is `0o600`; real operations delegate.
 - **Original exception implementability:** helper retries/suppresses cleanup while a bare `raise` preserves the write/close sentinel object; existing-file open failure occurs before cleanup and cannot unlink the predecessor.
-- **Mutation exactness:** Block B requires one exact source match and byte restoration; O_EXCL, check-then-open, direct fsync, atomic delegation, bytes, order, line endings, hardlink, and body direct-write mutants all name their intended assertions.
+- **Mutation exactness:** Block B requires one exact source match; snapshots/restores exact bytes, hash, binary diff, and status; and defines independent O_EXCL-removal, O_EXCL-retaining `Path.exists`/`Path.stat` preflight, direct fsync, atomic delegation, bytes, order, line-ending, hardlink, and body direct-write mutants with intended assertions.
 - **Identity hashes:** scripts compute actual hashes; the plan contains no projected node hash target.
 - **Hosted comparison:** comparator synthetic/full diff uses the exact six-path allowlist and platform-local skip comparison; failed/incomparable evidence cannot be normalized away.
 - **No placeholders or scope expansion:** every task contains exact files, interfaces, commands, code, expected outcomes, commit, implementer report, reviewer gate, and fix loop; no production or workflow implementation is authorized.
