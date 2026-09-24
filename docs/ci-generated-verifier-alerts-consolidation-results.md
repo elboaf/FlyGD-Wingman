@@ -946,6 +946,7 @@ Arithmetic controls:
 
 ### Exact owner semantic and owner-to-helper probe evidence
 
+<a id="semantic-wanderer-absence"></a>
 <details>
 <summary>Wanderer absence — <code>missing-settings-wanderer-controls-narrow</code></summary>
 
@@ -1008,6 +1009,7 @@ exit=0
 
 </details>
 
+<a id="semantic-wanderer-text"></a>
 <details>
 <summary>Wanderer exact text — <code>wrong-text-settings-wanderer-controls-narrow</code></summary>
 
@@ -1065,6 +1067,7 @@ exit=0
 
 </details>
 
+<a id="semantic-profiles-absence"></a>
 <details>
 <summary>Profiles absence — <code>missing-profiles-copy-scope</code></summary>
 
@@ -1135,6 +1138,7 @@ exit=0
 
 </details>
 
+<a id="semantic-profiles-text"></a>
 <details>
 <summary>Profiles exact text — <code>wrong-text-profiles-copy-scope</code></summary>
 
@@ -1192,6 +1196,7 @@ exit=0
 
 </details>
 
+<a id="semantic-metadata-absence"></a>
 <details>
 <summary>Fittings metadata absence — <code>missing-fittings-metadata-narrow</code></summary>
 
@@ -1258,6 +1263,7 @@ exit=0
 
 </details>
 
+<a id="semantic-metadata-text"></a>
 <details>
 <summary>Fittings metadata exact text — <code>wrong-text-fittings-metadata-narrow</code></summary>
 
@@ -1315,6 +1321,7 @@ exit=0
 
 </details>
 
+<a id="semantic-preflight-absence"></a>
 <details>
 <summary>Fittings preflight absence — <code>missing-fittings-copy-preflight-bottom-narrow</code></summary>
 
@@ -1387,6 +1394,7 @@ exit=0
 
 </details>
 
+<a id="semantic-preflight-text"></a>
 <details>
 <summary>Fittings preflight exact text — <code>wrong-text-fittings-copy-preflight-bottom-narrow</code></summary>
 
@@ -1444,6 +1452,7 @@ exit=0
 
 </details>
 
+<a id="semantic-result-absence"></a>
 <details>
 <summary>Fittings result absence — <code>missing-fittings-copy-result-bottom-narrow</code></summary>
 
@@ -1510,6 +1519,7 @@ exit=0
 
 </details>
 
+<a id="semantic-result-text"></a>
 <details>
 <summary>Fittings result exact text — <code>wrong-text-fittings-copy-result-bottom-narrow</code></summary>
 
@@ -1567,6 +1577,7 @@ exit=0
 
 </details>
 
+<a id="wiring-wanderer"></a>
 <details>
 <summary>Wanderer owner-to-`exposed()` wiring — <code>zero-area-settings-wanderer-controls-narrow</code></summary>
 
@@ -1624,6 +1635,7 @@ exit=0
 
 </details>
 
+<a id="wiring-profiles"></a>
 <details>
 <summary>Profiles owner-to-`exposed()` wiring — <code>clipped-profiles-copy-scope</code></summary>
 
@@ -1681,6 +1693,7 @@ exit=0
 
 </details>
 
+<a id="wiring-metadata"></a>
 <details>
 <summary>Metadata owner-to-`exposed()` wiring — <code>clipped-fittings-metadata-narrow</code></summary>
 
@@ -1738,6 +1751,7 @@ exit=0
 
 </details>
 
+<a id="wiring-preflight"></a>
 <details>
 <summary>Preflight owner-to-`exposed()` wiring — <code>clipped-fittings-copy-preflight-bottom-narrow</code></summary>
 
@@ -1795,6 +1809,7 @@ exit=0
 
 </details>
 
+<a id="wiring-result"></a>
 <details>
 <summary>Result owner-to-`exposed()` wiring — <code>clipped-fittings-copy-result-bottom-narrow</code></summary>
 
@@ -1854,6 +1869,7 @@ exit=0
 
 ### Exact hidden-branch paired evidence
 
+<a id="hidden-parent-hidden"></a>
 <details>
 <summary>Hidden <code>parent.hidden</code> production branch — <code>hidden-profiles-copy-scope</code></summary>
 
@@ -1941,6 +1957,7 @@ exit=0
 
 ### Exact shared-helper Block C evidence
 
+<a id="width"></a>
 <details>
 <summary>Shared helper <code>width</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[zero-area-settings-wanderer-controls-narrow]</code></summary>
 
@@ -2003,6 +2020,7 @@ Count/restoration metadata:
 
 </details>
 
+<a id="height"></a>
 <details>
 <summary>Shared helper <code>height</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[zero-area-settings-wanderer-controls-narrow]</code></summary>
 
@@ -2078,6 +2096,7 @@ Count/restoration metadata:
 
 </details>
 
+<a id="edge-left"></a>
 <details>
 <summary>Shared helper <code>edge-left</code> — <code>tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-left]</code></summary>
 
@@ -2140,6 +2159,7 @@ Count/restoration metadata:
 
 </details>
 
+<a id="edge-right"></a>
 <details>
 <summary>Shared helper <code>edge-right</code> — <code>tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-right]</code></summary>
 
@@ -2202,6 +2222,7 @@ Count/restoration metadata:
 
 </details>
 
+<a id="edge-top"></a>
 <details>
 <summary>Shared helper <code>edge-top</code> — <code>tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-top]</code></summary>
 
@@ -2264,6 +2285,7 @@ Count/restoration metadata:
 
 </details>
 
+<a id="edge-bottom"></a>
 <details>
 <summary>Shared helper <code>edge-bottom</code> — <code>tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-bottom]</code></summary>
 
@@ -2326,6 +2348,7 @@ Count/restoration metadata:
 
 </details>
 
+<a id="tolerance-top"></a>
 <details>
 <summary>Shared helper <code>tolerance-top</code> — <code>tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-top]</code></summary>
 
@@ -2388,6 +2411,7 @@ Count/restoration metadata:
 
 </details>
 
+<a id="tolerance-right"></a>
 <details>
 <summary>Shared helper <code>tolerance-right</code> — <code>tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-right]</code></summary>
 
@@ -2450,6 +2474,7 @@ Count/restoration metadata:
 
 </details>
 
+<a id="tolerance-bottom"></a>
 <details>
 <summary>Shared helper <code>tolerance-bottom</code> — <code>tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-bottom]</code></summary>
 
@@ -2512,6 +2537,7 @@ Count/restoration metadata:
 
 </details>
 
+<a id="tolerance-left"></a>
 <details>
 <summary>Shared helper <code>tolerance-left</code> — <code>tests/test_shoot_screens.py::test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-left]</code></summary>
 
@@ -2574,6 +2600,7 @@ Count/restoration metadata:
 
 </details>
 
+<a id="point-0"></a>
 <details>
 <summary>Shared helper <code>point-0</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]</code></summary>
 
@@ -2651,6 +2678,7 @@ Count/restoration metadata:
 
 </details>
 
+<a id="point-1"></a>
 <details>
 <summary>Shared helper <code>point-1</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]</code></summary>
 
@@ -2728,6 +2756,7 @@ Count/restoration metadata:
 
 </details>
 
+<a id="point-2"></a>
 <details>
 <summary>Shared helper <code>point-2</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]</code></summary>
 
@@ -2805,6 +2834,7 @@ Count/restoration metadata:
 
 </details>
 
+<a id="point-3"></a>
 <details>
 <summary>Shared helper <code>point-3</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]</code></summary>
 
@@ -2882,6 +2912,7 @@ Count/restoration metadata:
 
 </details>
 
+<a id="point-4"></a>
 <details>
 <summary>Shared helper <code>point-4</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]</code></summary>
 
@@ -2960,6 +2991,7 @@ Count/restoration metadata:
 
 </details>
 
+<a id="every"></a>
 <details>
 <summary>Shared helper <code>every</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]</code></summary>
 
@@ -3037,6 +3069,7 @@ Count/restoration metadata:
 
 </details>
 
+<a id="null"></a>
 <details>
 <summary>Shared helper <code>null</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]</code></summary>
 
@@ -3114,6 +3147,7 @@ Count/restoration metadata:
 
 </details>
 
+<a id="unrelated"></a>
 <details>
 <summary>Shared helper <code>unrelated</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[covered-fittings-copy-result-bottom-narrow]</code></summary>
 
@@ -3191,6 +3225,7 @@ Count/restoration metadata:
 
 </details>
 
+<a id="direct"></a>
 <details>
 <summary>Shared helper <code>direct</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[settled-fittings-copy-result-bottom-narrow]</code></summary>
 
@@ -3258,6 +3293,7 @@ Count/restoration metadata:
 
 </details>
 
+<a id="descendant"></a>
 <details>
 <summary>Shared helper <code>descendant</code> — <code>tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing[settled-fittings-copy-result-bottom-narrow]</code></summary>
 
@@ -3348,19 +3384,19 @@ Every row requires all three columns; no owner label is abbreviated to a family-
 
 | Removed generated identity | Same-owner semantic evidence and exact predicate mutants | Same-owner geometry/wiring evidence | Shared production/helper evidence and intended assertion | Exact restoration/artifact attribution |
 |---|---|---|---|---|
-| `hidden-settings-wanderer-controls-narrow` | Retained `missing-settings-wanderer-controls-narrow`: weaken the Wanderer `wanderer-remove` existence chain; retained `wrong-text-settings-wanderer-controls-narrow`: replace exact `text(remove, 'Remove connection')`. Each fails at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | Retained `zero-area-settings-wanderer-controls-narrow`: remove `remove` from `[note, test, remove]`; fails at fixture `Object.throws` / `AssertionError: zero-area`. | Retained `hidden-profiles-copy-scope`: remove only `parent.hidden` rejection from production `visible()` while the supplemental fixture preserves client rects; fixture-only control passes, paired mutant fails at `Object.throws` / `AssertionError: hidden`. | Embedded artifacts `semantic-wanderer-absence`, `semantic-wanderer-text`, `wiring-wanderer`, and `Hidden parent.hidden production branch`; their count-one apply/inverse logs and `git diff --exit-code` audit pass, and source/fixture restored SHA-256 values match. |
-| `hidden-fittings-metadata-narrow` | Retained `missing-fittings-metadata-narrow`: weaken metadata Save existence; retained `wrong-text-fittings-metadata-narrow`: replace exact `text(save, 'Save')`. Each fails at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | Retained `clipped-fittings-metadata-narrow`: remove `save` from `[summary, nameLabel, name, descriptionLabel, description, save]`; fails at fixture `Object.throws` / `AssertionError: clipped`. | Retained `hidden-profiles-copy-scope`: remove only `parent.hidden` rejection from production `visible()` with the supplemental client-rect fixture; fixture-only control passes, paired mutant fails at `Object.throws` / `AssertionError: hidden`. | Embedded artifacts `semantic-metadata-absence`, `semantic-metadata-text`, `wiring-metadata`, and `Hidden parent.hidden production branch`; count-one/inverse/path audits pass and restored hashes match. |
-| `hidden-fittings-copy-preflight-bottom-narrow` | Retained `missing-fittings-copy-preflight-bottom-narrow`: weaken all clauses in the resolution-note existence chain; retained `wrong-text-fittings-copy-preflight-bottom-narrow`: replace the exact conflict-guidance text predicate. Each fails at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | Retained `clipped-fittings-copy-preflight-bottom-narrow`: remove `exposed(note, pane)` from the final requirement; fails at fixture `Object.throws` / `AssertionError: clipped`. | Retained `hidden-profiles-copy-scope`: remove only `parent.hidden` rejection from production `visible()` with the supplemental client-rect fixture; fixture-only control passes, paired mutant fails at `Object.throws` / `AssertionError: hidden`. | Embedded artifacts `semantic-preflight-absence`, `semantic-preflight-text`, `wiring-preflight`, and `Hidden parent.hidden production branch`; count-one/inverse/path audits pass and restored hashes match. |
-| `hidden-fittings-copy-result-bottom-narrow` | Retained `missing-fittings-copy-result-bottom-narrow`: weaken terminal status existence and conditionally retain it in `requiredNodes`; retained `wrong-text-fittings-copy-result-bottom-narrow`: replace exact `text(status, 'Not attempted: rate limit')`. Each fails at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | Retained `clipped-fittings-copy-result-bottom-narrow`: remove `status` from `var requiredNodes = [name, character, status, disclosure]`; fails at fixture `Object.throws` / `AssertionError: clipped`. | Retained `hidden-profiles-copy-scope`: remove only `parent.hidden` rejection from production `visible()` with the supplemental client-rect fixture; fixture-only control passes, paired mutant fails at `Object.throws` / `AssertionError: hidden`. | Embedded artifacts `semantic-result-absence`, `semantic-result-text`, `wiring-result`, and `Hidden parent.hidden production branch`; count-one/inverse/path audits pass and restored hashes match. |
-| `clipped-settings-wanderer-controls-narrow` | Retained `missing-settings-wanderer-controls-narrow`: weaken the `wanderer-remove` existence chain; retained `wrong-text-settings-wanderer-controls-narrow`: replace exact `Remove connection` text. Each fails at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | Same-owner retained `zero-area-settings-wanderer-controls-narrow`: remove `remove` from the exposed list; fails at fixture `Object.throws` / `AssertionError: zero-area`. Retained product-level clipping witness `clipped-fittings-copy-preflight-bottom-narrow` independently keeps the shared `exposed()` path live and fails its note-wiring mutant at fixture `Object.throws` / `AssertionError: clipped`. | Exact independent nodes `test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-left]`, `test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-right]`, `test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-top]`, and `test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-bottom]`: remove the matching `r.left`, `r.right`, `r.top`, or `r.bottom` containment comparison, then separately change `var tolerance = 1` to `1.01`. Each edge-removal and tolerance mutant fails at `Object.throws` / `AssertionError: overflow-left`, `Object.throws` / `AssertionError: overflow-right`, `Object.throws` / `AssertionError: overflow-top`, or `Object.throws` / `AssertionError: overflow-bottom` respectively. | Embedded `semantic-wanderer-absence`, `semantic-wanderer-text`, `wiring-wanderer`, and `wiring-preflight` worktree artifacts pass inverse/path audits. Disposable Block C artifacts `edge-left`, `edge-right`, `edge-top`, `edge-bottom`, `tolerance-left`, `tolerance-right`, `tolerance-top`, and `tolerance-bottom` each record count-one before/after, exact diff/stdout, and `disposable_restored: true`. |
-| `covered-settings-wanderer-controls-narrow` | Retained `missing-settings-wanderer-controls-narrow`: weaken the `wanderer-remove` existence chain; retained `wrong-text-settings-wanderer-controls-narrow`: replace exact `Remove connection` text. Each fails at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | Retained same-owner `zero-area-settings-wanderer-controls-narrow`: remove `remove` from `[note, test, remove]`; fails at fixture `Object.throws` / `AssertionError: zero-area`. | Mechanism 1 — retained `covered-fittings-copy-result-bottom-narrow`: remove each exact coordinate `(124,134)`, `(756,134)`, `(124,326)`, `(756,326)`, `(440,230)` independently, change `.every` to `.some`, accept null, or accept unrelated `document.body`; each fails at `Object.throws` / `AssertionError: covered`. Mechanism 2 — retained `settled-fittings-copy-result-bottom-narrow`: reject direct-node hits or reject descendant hits; each fails at generated `check` / `Screenshot content did not settle: fittings-copy-result-bottom-narrow`. | Embedded `semantic-wanderer-absence`, `semantic-wanderer-text`, and `wiring-wanderer` artifacts pass inverse/path audits. Disposable Block C artifacts `point-0`, `point-1`, `point-2`, `point-3`, `point-4`, `every`, `null`, `unrelated`, `direct`, and `descendant` record exact diffs/stdout, count-one guards, and `disposable_restored: true`. |
-| `covered-profiles-copy-scope` | Retained `missing-profiles-copy-scope`: weaken the healthy `es-copy-scope-note` existence/visibility chain; retained `wrong-text-profiles-copy-scope`: replace exact healthy guidance. Each fails at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | Retained same-owner `clipped-profiles-copy-scope`: replace `check(exposed(note, pane))` with `check(true)`; fails at fixture `Object.throws` / `AssertionError: clipped`. | Mechanism 1 — retained `covered-fittings-copy-result-bottom-narrow`: remove `(124,134)`, `(756,134)`, `(124,326)`, `(756,326)`, or `(440,230)`, change `.every` to `.some`, accept null, or accept unrelated `document.body`; each fails at `Object.throws` / `AssertionError: covered`. Mechanism 2 — retained `settled-fittings-copy-result-bottom-narrow`: direct-node rejection and descendant rejection each fail at generated `check` / `Screenshot content did not settle: fittings-copy-result-bottom-narrow`. | Embedded `semantic-profiles-absence`, `semantic-profiles-text`, and `wiring-profiles` artifacts pass inverse/path audits. Disposable Block C artifacts `point-0`, `point-1`, `point-2`, `point-3`, `point-4`, `every`, `null`, `unrelated`, `direct`, and `descendant` record exact diffs/stdout, count-one guards, and `disposable_restored: true`. |
-| `covered-fittings-metadata-narrow` | Retained `missing-fittings-metadata-narrow`: weaken Save existence; retained `wrong-text-fittings-metadata-narrow`: replace exact Save text. Each fails at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | Retained same-owner `clipped-fittings-metadata-narrow`: remove `save` from the final exposed-node list; fails at fixture `Object.throws` / `AssertionError: clipped`. | Mechanism 1 — retained `covered-fittings-copy-result-bottom-narrow`: remove `(124,134)`, `(756,134)`, `(124,326)`, `(756,326)`, or `(440,230)`, change `.every` to `.some`, accept null, or accept unrelated `document.body`; each fails at `Object.throws` / `AssertionError: covered`. Mechanism 2 — retained `settled-fittings-copy-result-bottom-narrow`: direct-node rejection and descendant rejection each fail at generated `check` / `Screenshot content did not settle: fittings-copy-result-bottom-narrow`. | Embedded `semantic-metadata-absence`, `semantic-metadata-text`, and `wiring-metadata` artifacts pass inverse/path audits. Disposable Block C artifacts `point-0`, `point-1`, `point-2`, `point-3`, `point-4`, `every`, `null`, `unrelated`, `direct`, and `descendant` record exact diffs/stdout, count-one guards, and `disposable_restored: true`. |
-| `covered-fittings-copy-preflight-bottom-narrow` | Retained `missing-fittings-copy-preflight-bottom-narrow`: weaken resolution-note existence; retained `wrong-text-fittings-copy-preflight-bottom-narrow`: replace exact conflict guidance. Each fails at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | Retained same-owner `clipped-fittings-copy-preflight-bottom-narrow`: remove `exposed(note, pane)` from the final requirement; fails at fixture `Object.throws` / `AssertionError: clipped`. | Mechanism 1 — retained `covered-fittings-copy-result-bottom-narrow`: remove `(124,134)`, `(756,134)`, `(124,326)`, `(756,326)`, or `(440,230)`, change `.every` to `.some`, accept null, or accept unrelated `document.body`; each fails at `Object.throws` / `AssertionError: covered`. Mechanism 2 — retained `settled-fittings-copy-result-bottom-narrow`: direct-node rejection and descendant rejection each fail at generated `check` / `Screenshot content did not settle: fittings-copy-result-bottom-narrow`. | Embedded `semantic-preflight-absence`, `semantic-preflight-text`, and `wiring-preflight` artifacts pass inverse/path audits. Disposable Block C artifacts `point-0`, `point-1`, `point-2`, `point-3`, `point-4`, `every`, `null`, `unrelated`, `direct`, and `descendant` record exact diffs/stdout, count-one guards, and `disposable_restored: true`. |
-| `zero-area-profiles-copy-scope` | Retained `missing-profiles-copy-scope`: weaken healthy note existence/visibility; retained `wrong-text-profiles-copy-scope`: replace exact healthy guidance. Each fails at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | Retained same-owner `clipped-profiles-copy-scope`: replace `check(exposed(note, pane))` with `check(true)`; fails at fixture `Object.throws` / `AssertionError: clipped`. | Retained `zero-area-settings-wanderer-controls-narrow`: remove `r.width <= 0`; independently remove `r.height <= 0` with the exact supplemental zero-height fixture. Each production mutant fails at `Object.throws` / `AssertionError: zero-area`. | Embedded `semantic-profiles-absence`, `semantic-profiles-text`, and `wiring-profiles` artifacts pass inverse/path audits. Disposable Block C `width` and `height` artifacts contain exact source/fixture diffs/stdout, count-one guards, and `disposable_restored: true`. |
-| `zero-area-fittings-metadata-narrow` | Retained `missing-fittings-metadata-narrow`: weaken Save existence; retained `wrong-text-fittings-metadata-narrow`: replace exact Save text. Each fails at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | Retained same-owner `clipped-fittings-metadata-narrow`: remove Save from the final exposed-node list; fails at fixture `Object.throws` / `AssertionError: clipped`. | Retained `zero-area-settings-wanderer-controls-narrow`: remove `r.width <= 0`; independently remove `r.height <= 0` with the exact supplemental zero-height fixture. Each production mutant fails at `Object.throws` / `AssertionError: zero-area`. | Embedded `semantic-metadata-absence`, `semantic-metadata-text`, and `wiring-metadata` artifacts pass inverse/path audits. Disposable Block C `width` and `height` artifacts contain exact source/fixture diffs/stdout, count-one guards, and `disposable_restored: true`. |
-| `zero-area-fittings-copy-preflight-bottom-narrow` | Retained `missing-fittings-copy-preflight-bottom-narrow`: weaken resolution-note existence; retained `wrong-text-fittings-copy-preflight-bottom-narrow`: replace exact conflict guidance. Each fails at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | Retained same-owner `clipped-fittings-copy-preflight-bottom-narrow`: remove note exposure from the final requirement; fails at fixture `Object.throws` / `AssertionError: clipped`. | Retained `zero-area-settings-wanderer-controls-narrow`: remove `r.width <= 0`; independently remove `r.height <= 0` with the exact supplemental zero-height fixture. Each production mutant fails at `Object.throws` / `AssertionError: zero-area`. | Embedded `semantic-preflight-absence`, `semantic-preflight-text`, and `wiring-preflight` artifacts pass inverse/path audits. Disposable Block C `width` and `height` artifacts contain exact source/fixture diffs/stdout, count-one guards, and `disposable_restored: true`. |
-| `zero-area-fittings-copy-result-bottom-narrow` | Retained `missing-fittings-copy-result-bottom-narrow`: weaken status existence; retained `wrong-text-fittings-copy-result-bottom-narrow`: replace exact rate-limit status text. Each fails at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | Retained same-owner `clipped-fittings-copy-result-bottom-narrow`: remove status from `requiredNodes`; fails at fixture `Object.throws` / `AssertionError: clipped`. | Retained `zero-area-settings-wanderer-controls-narrow`: remove `r.width <= 0`; independently remove `r.height <= 0` with the exact supplemental zero-height fixture. Each production mutant fails at `Object.throws` / `AssertionError: zero-area`. | Embedded `semantic-result-absence`, `semantic-result-text`, and `wiring-result` artifacts pass inverse/path audits. Disposable Block C `width` and `height` artifacts contain exact source/fixture diffs/stdout, count-one guards, and `disposable_restored: true`. |
+| `hidden-settings-wanderer-controls-narrow` | [artifact:semantic-wanderer-absence](#semantic-wanderer-absence) exact absence replacements: `&& text(remove, 'Remove connection') && !remove.disabled` → `&& (!remove || (text(remove, 'Remove connection') && !remove.disabled))`; `[note, test, remove]` → `[note, test].concat(remove ? [remove] : [])`. [artifact:semantic-wanderer-text](#semantic-wanderer-text) exact text replacement: `text(remove, 'Remove connection')` → `remove && remove.textContent.length > 0`. Retained `missing-settings-wanderer-controls-narrow` / `wrong-text-settings-wanderer-controls-narrow` fail at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | [artifact:wiring-wanderer](#wiring-wanderer) exact wiring replacement: `[note, test, remove]` → `[note, test]`; retained same-owner `zero-area-settings-wanderer-controls-narrow` fails at fixture `Object.throws` / `AssertionError: zero-area`. | Retained `hidden-profiles-copy-scope`: remove only `parent.hidden` rejection from production `visible()` while the supplemental fixture preserves client rects; fixture-only control passes, paired mutant fails at `Object.throws` / `AssertionError: hidden`. | Exact embedded artifacts: [artifact:semantic-wanderer-absence](#semantic-wanderer-absence), [artifact:semantic-wanderer-text](#semantic-wanderer-text), [artifact:wiring-wanderer](#wiring-wanderer), [artifact:hidden-parent-hidden](#hidden-parent-hidden). Worktree artifacts target `scripts/shoot_screens.py`, record original/restored SHA-256 `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4`, count-one apply/inverse, and `exit=0`. Paired hidden artifact also targets `tests/fixtures/screenshot_pages.cjs` and records original/restored SHA-256 `3ab46cb75d3dfa17fceabab9936dd1ecf8b534e0790acd5e98af73c7207fae6c`. |
+| `hidden-fittings-metadata-narrow` | [artifact:semantic-metadata-absence](#semantic-metadata-absence) exact absence replacements: `&& text(save, 'Save') && save.disabled && discard` → `&& (!save || (text(save, 'Save') && save.disabled)) && discard`; `[summary, nameLabel, name, descriptionLabel, description, save]` → `[summary, nameLabel, name, descriptionLabel, description].concat(save ? [save] : [])`. [artifact:semantic-metadata-text](#semantic-metadata-text) exact text replacement: `text(save, 'Save')` → `save && save.textContent.length > 0`. Retained `missing-fittings-metadata-narrow` / `wrong-text-fittings-metadata-narrow` fail at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | [artifact:wiring-metadata](#wiring-metadata) exact wiring replacement: `[summary, nameLabel, name, descriptionLabel, description, save]` → `[summary, nameLabel, name, descriptionLabel, description]`; retained same-owner `clipped-fittings-metadata-narrow` fails at fixture `Object.throws` / `AssertionError: clipped`. | Retained `hidden-profiles-copy-scope`: remove only `parent.hidden` rejection from production `visible()` with the supplemental client-rect fixture; fixture-only control passes, paired mutant fails at `Object.throws` / `AssertionError: hidden`. | Exact embedded artifacts: [artifact:semantic-metadata-absence](#semantic-metadata-absence), [artifact:semantic-metadata-text](#semantic-metadata-text), [artifact:wiring-metadata](#wiring-metadata), [artifact:hidden-parent-hidden](#hidden-parent-hidden). Worktree artifacts target `scripts/shoot_screens.py`, record original/restored SHA-256 `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4`, count-one apply/inverse, and `exit=0`. Paired hidden artifact also targets `tests/fixtures/screenshot_pages.cjs` and records original/restored SHA-256 `3ab46cb75d3dfa17fceabab9936dd1ecf8b534e0790acd5e98af73c7207fae6c`. |
+| `hidden-fittings-copy-preflight-bottom-narrow` | [artifact:semantic-preflight-absence](#semantic-preflight-absence) exact absence replacements: `&& text(note, 'Enter an alternate name or select Skip for each conflict before reviewing changes.')` → `&& (!note || text(note, 'Enter an alternate name or select Skip for each conflict before reviewing changes.'))`; `review.getAttribute('aria-describedby') === note.id` → `(!note || review.getAttribute('aria-describedby') === note.id)`; `note.scrollIntoView({block: 'end', behavior: 'instant'});` → `if (note) note.scrollIntoView({block: 'end', behavior: 'instant'});`; `check(exposed(note, pane) &&` → `check((!note || exposed(note, pane)) &&`. [artifact:semantic-preflight-text](#semantic-preflight-text) exact text replacement: `text(note, 'Enter an alternate name or select Skip for each conflict before reviewing changes.')` → `note && note.textContent.length > 0`. Retained `missing-fittings-copy-preflight-bottom-narrow` / `wrong-text-fittings-copy-preflight-bottom-narrow` fail at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | [artifact:wiring-preflight](#wiring-preflight) exact wiring replacement: `check(exposed(note, pane) &&` → `check(`; retained same-owner `clipped-fittings-copy-preflight-bottom-narrow` fails at fixture `Object.throws` / `AssertionError: clipped`. | Retained `hidden-profiles-copy-scope`: remove only `parent.hidden` rejection from production `visible()` with the supplemental client-rect fixture; fixture-only control passes, paired mutant fails at `Object.throws` / `AssertionError: hidden`. | Exact embedded artifacts: [artifact:semantic-preflight-absence](#semantic-preflight-absence), [artifact:semantic-preflight-text](#semantic-preflight-text), [artifact:wiring-preflight](#wiring-preflight), [artifact:hidden-parent-hidden](#hidden-parent-hidden). Worktree artifacts target `scripts/shoot_screens.py`, record original/restored SHA-256 `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4`, count-one apply/inverse, and `exit=0`. Paired hidden artifact also targets `tests/fixtures/screenshot_pages.cjs` and records original/restored SHA-256 `3ab46cb75d3dfa17fceabab9936dd1ecf8b534e0790acd5e98af73c7207fae6c`. |
+| `hidden-fittings-copy-result-bottom-narrow` | [artifact:semantic-result-absence](#semantic-result-absence) exact absence replacements: `&& text(status, 'Not attempted: rate limit') && status.classList.contains(expected.status)` → `&& (!status || (text(status, 'Not attempted: rate limit') && status.classList.contains(expected.status)))`; `var requiredNodes = [name, character, status, disclosure];` → `var requiredNodes = [name, character, disclosure]; if (status) requiredNodes.splice(2, 0, status);`. [artifact:semantic-result-text](#semantic-result-text) exact text replacement: `text(status, 'Not attempted: rate limit')` → `status && status.textContent.length > 0`. Retained `missing-fittings-copy-result-bottom-narrow` / `wrong-text-fittings-copy-result-bottom-narrow` fail at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | [artifact:wiring-result](#wiring-result) exact wiring replacement: `var requiredNodes = [name, character, status, disclosure];` → `var requiredNodes = [name, character, disclosure];`; retained same-owner `clipped-fittings-copy-result-bottom-narrow` fails at fixture `Object.throws` / `AssertionError: clipped`. | Retained `hidden-profiles-copy-scope`: remove only `parent.hidden` rejection from production `visible()` with the supplemental client-rect fixture; fixture-only control passes, paired mutant fails at `Object.throws` / `AssertionError: hidden`. | Exact embedded artifacts: [artifact:semantic-result-absence](#semantic-result-absence), [artifact:semantic-result-text](#semantic-result-text), [artifact:wiring-result](#wiring-result), [artifact:hidden-parent-hidden](#hidden-parent-hidden). Worktree artifacts target `scripts/shoot_screens.py`, record original/restored SHA-256 `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4`, count-one apply/inverse, and `exit=0`. Paired hidden artifact also targets `tests/fixtures/screenshot_pages.cjs` and records original/restored SHA-256 `3ab46cb75d3dfa17fceabab9936dd1ecf8b534e0790acd5e98af73c7207fae6c`. |
+| `clipped-settings-wanderer-controls-narrow` | [artifact:semantic-wanderer-absence](#semantic-wanderer-absence) exact absence replacements: `&& text(remove, 'Remove connection') && !remove.disabled` → `&& (!remove || (text(remove, 'Remove connection') && !remove.disabled))`; `[note, test, remove]` → `[note, test].concat(remove ? [remove] : [])`. [artifact:semantic-wanderer-text](#semantic-wanderer-text) exact text replacement: `text(remove, 'Remove connection')` → `remove && remove.textContent.length > 0`. Retained `missing-settings-wanderer-controls-narrow` / `wrong-text-settings-wanderer-controls-narrow` fail at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | [artifact:wiring-wanderer](#wiring-wanderer) exact wiring replacement: `[note, test, remove]` → `[note, test]`; retained same-owner `zero-area-settings-wanderer-controls-narrow` fails at fixture `Object.throws` / `AssertionError: zero-area`. [artifact:wiring-preflight](#wiring-preflight) exact wiring replacement: `check(exposed(note, pane) &&` → `check(`; retained product-level clipping witness `clipped-fittings-copy-preflight-bottom-narrow` fails at fixture `Object.throws` / `AssertionError: clipped`. | Exact independent nodes `test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-left]`, `test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-right]`, `test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-top]`, and `test_gap_geometry_allows_only_one_pixel_rounding_and_still_hit_tests[overflow-bottom]`: remove the matching `r.left`, `r.right`, `r.top`, or `r.bottom` containment comparison, then separately change `var tolerance = 1` to `1.01`. Each edge-removal and tolerance mutant fails at `Object.throws` / `AssertionError: overflow-left`, `Object.throws` / `AssertionError: overflow-right`, `Object.throws` / `AssertionError: overflow-top`, or `Object.throws` / `AssertionError: overflow-bottom` respectively. | Exact embedded artifacts: [artifact:semantic-wanderer-absence](#semantic-wanderer-absence), [artifact:semantic-wanderer-text](#semantic-wanderer-text), [artifact:wiring-wanderer](#wiring-wanderer), [artifact:wiring-preflight](#wiring-preflight), [artifact:edge-left](#edge-left), [artifact:edge-right](#edge-right), [artifact:edge-top](#edge-top), [artifact:edge-bottom](#edge-bottom), [artifact:tolerance-left](#tolerance-left), [artifact:tolerance-right](#tolerance-right), [artifact:tolerance-top](#tolerance-top), [artifact:tolerance-bottom](#tolerance-bottom). Worktree artifacts target `scripts/shoot_screens.py`, record original/restored SHA-256 `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4`, count-one apply/inverse, and `exit=0`.  Block C artifacts target disposable `scripts/shoot_screens.py` / supplemental `tests/fixtures/screenshot_pages.cjs` where named and record count-one guards plus `disposable_restored: true`. |
+| `covered-settings-wanderer-controls-narrow` | [artifact:semantic-wanderer-absence](#semantic-wanderer-absence) exact absence replacements: `&& text(remove, 'Remove connection') && !remove.disabled` → `&& (!remove || (text(remove, 'Remove connection') && !remove.disabled))`; `[note, test, remove]` → `[note, test].concat(remove ? [remove] : [])`. [artifact:semantic-wanderer-text](#semantic-wanderer-text) exact text replacement: `text(remove, 'Remove connection')` → `remove && remove.textContent.length > 0`. Retained `missing-settings-wanderer-controls-narrow` / `wrong-text-settings-wanderer-controls-narrow` fail at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | [artifact:wiring-wanderer](#wiring-wanderer) exact wiring replacement: `[note, test, remove]` → `[note, test]`; retained same-owner `zero-area-settings-wanderer-controls-narrow` fails at fixture `Object.throws` / `AssertionError: zero-area`. | Mechanism 1 — retained `covered-fittings-copy-result-bottom-narrow`: remove each exact coordinate `(124,134)`, `(756,134)`, `(124,326)`, `(756,326)`, `(440,230)` independently, change `.every` to `.some`, accept null, or accept unrelated `document.body`; each fails at `Object.throws` / `AssertionError: covered`. Mechanism 2 — retained `settled-fittings-copy-result-bottom-narrow`: reject direct-node hits or reject descendant hits; each fails at generated `check` / `Screenshot content did not settle: fittings-copy-result-bottom-narrow`. | Exact embedded artifacts: [artifact:semantic-wanderer-absence](#semantic-wanderer-absence), [artifact:semantic-wanderer-text](#semantic-wanderer-text), [artifact:wiring-wanderer](#wiring-wanderer), [artifact:point-0](#point-0), [artifact:point-1](#point-1), [artifact:point-2](#point-2), [artifact:point-3](#point-3), [artifact:point-4](#point-4), [artifact:every](#every), [artifact:null](#null), [artifact:unrelated](#unrelated), [artifact:direct](#direct), [artifact:descendant](#descendant). Worktree artifacts target `scripts/shoot_screens.py`, record original/restored SHA-256 `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4`, count-one apply/inverse, and `exit=0`.  Block C artifacts target disposable `scripts/shoot_screens.py` / supplemental `tests/fixtures/screenshot_pages.cjs` where named and record count-one guards plus `disposable_restored: true`. |
+| `covered-profiles-copy-scope` | [artifact:semantic-profiles-absence](#semantic-profiles-absence) exact absence replacements: `&& visible(WM.el('es-copy-options')) && visible(note) && scope && commit);` → `&& visible(WM.el('es-copy-options')) && (!note || visible(note)) && scope && commit);`; `check(text(note, 'Checked groups are copied as a unit. Unchecked groups stay unchanged. Everything else is copied.') && !note.classList.contains('warn') && commit.hidden && WM.el('es-copy-scope-summary').textContent);` → `check(!note || (text(note, 'Checked groups are copied as a unit. Unchecked groups stay unchanged. Everything else is copied.') && !note.classList.contains('warn') && commit.hidden && WM.el('es-copy-scope-summary').textContent));`; `note.scrollIntoView({block: 'center', behavior: 'instant'});` → `if (note) note.scrollIntoView({block: 'center', behavior: 'instant'});`; `check(exposed(note, pane));` → `check(!note || exposed(note, pane));`. [artifact:semantic-profiles-text](#semantic-profiles-text) exact text replacement: `text(note, 'Checked groups are copied as a unit. Unchecked groups stay unchanged. Everything else is copied.')` → `note && note.textContent.length > 0`. Retained `missing-profiles-copy-scope` / `wrong-text-profiles-copy-scope` fail at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | [artifact:wiring-profiles](#wiring-profiles) exact wiring replacement: `check(exposed(note, pane));` → `check(true);`; retained same-owner `clipped-profiles-copy-scope` fails at fixture `Object.throws` / `AssertionError: clipped`. | Mechanism 1 — retained `covered-fittings-copy-result-bottom-narrow`: remove `(124,134)`, `(756,134)`, `(124,326)`, `(756,326)`, or `(440,230)`, change `.every` to `.some`, accept null, or accept unrelated `document.body`; each fails at `Object.throws` / `AssertionError: covered`. Mechanism 2 — retained `settled-fittings-copy-result-bottom-narrow`: direct-node rejection and descendant rejection each fail at generated `check` / `Screenshot content did not settle: fittings-copy-result-bottom-narrow`. | Exact embedded artifacts: [artifact:semantic-profiles-absence](#semantic-profiles-absence), [artifact:semantic-profiles-text](#semantic-profiles-text), [artifact:wiring-profiles](#wiring-profiles), [artifact:point-0](#point-0), [artifact:point-1](#point-1), [artifact:point-2](#point-2), [artifact:point-3](#point-3), [artifact:point-4](#point-4), [artifact:every](#every), [artifact:null](#null), [artifact:unrelated](#unrelated), [artifact:direct](#direct), [artifact:descendant](#descendant). Worktree artifacts target `scripts/shoot_screens.py`, record original/restored SHA-256 `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4`, count-one apply/inverse, and `exit=0`.  Block C artifacts target disposable `scripts/shoot_screens.py` / supplemental `tests/fixtures/screenshot_pages.cjs` where named and record count-one guards plus `disposable_restored: true`. |
+| `covered-fittings-metadata-narrow` | [artifact:semantic-metadata-absence](#semantic-metadata-absence) exact absence replacements: `&& text(save, 'Save') && save.disabled && discard` → `&& (!save || (text(save, 'Save') && save.disabled)) && discard`; `[summary, nameLabel, name, descriptionLabel, description, save]` → `[summary, nameLabel, name, descriptionLabel, description].concat(save ? [save] : [])`. [artifact:semantic-metadata-text](#semantic-metadata-text) exact text replacement: `text(save, 'Save')` → `save && save.textContent.length > 0`. Retained `missing-fittings-metadata-narrow` / `wrong-text-fittings-metadata-narrow` fail at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | [artifact:wiring-metadata](#wiring-metadata) exact wiring replacement: `[summary, nameLabel, name, descriptionLabel, description, save]` → `[summary, nameLabel, name, descriptionLabel, description]`; retained same-owner `clipped-fittings-metadata-narrow` fails at fixture `Object.throws` / `AssertionError: clipped`. | Mechanism 1 — retained `covered-fittings-copy-result-bottom-narrow`: remove `(124,134)`, `(756,134)`, `(124,326)`, `(756,326)`, or `(440,230)`, change `.every` to `.some`, accept null, or accept unrelated `document.body`; each fails at `Object.throws` / `AssertionError: covered`. Mechanism 2 — retained `settled-fittings-copy-result-bottom-narrow`: direct-node rejection and descendant rejection each fail at generated `check` / `Screenshot content did not settle: fittings-copy-result-bottom-narrow`. | Exact embedded artifacts: [artifact:semantic-metadata-absence](#semantic-metadata-absence), [artifact:semantic-metadata-text](#semantic-metadata-text), [artifact:wiring-metadata](#wiring-metadata), [artifact:point-0](#point-0), [artifact:point-1](#point-1), [artifact:point-2](#point-2), [artifact:point-3](#point-3), [artifact:point-4](#point-4), [artifact:every](#every), [artifact:null](#null), [artifact:unrelated](#unrelated), [artifact:direct](#direct), [artifact:descendant](#descendant). Worktree artifacts target `scripts/shoot_screens.py`, record original/restored SHA-256 `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4`, count-one apply/inverse, and `exit=0`.  Block C artifacts target disposable `scripts/shoot_screens.py` / supplemental `tests/fixtures/screenshot_pages.cjs` where named and record count-one guards plus `disposable_restored: true`. |
+| `covered-fittings-copy-preflight-bottom-narrow` | [artifact:semantic-preflight-absence](#semantic-preflight-absence) exact absence replacements: `&& text(note, 'Enter an alternate name or select Skip for each conflict before reviewing changes.')` → `&& (!note || text(note, 'Enter an alternate name or select Skip for each conflict before reviewing changes.'))`; `review.getAttribute('aria-describedby') === note.id` → `(!note || review.getAttribute('aria-describedby') === note.id)`; `note.scrollIntoView({block: 'end', behavior: 'instant'});` → `if (note) note.scrollIntoView({block: 'end', behavior: 'instant'});`; `check(exposed(note, pane) &&` → `check((!note || exposed(note, pane)) &&`. [artifact:semantic-preflight-text](#semantic-preflight-text) exact text replacement: `text(note, 'Enter an alternate name or select Skip for each conflict before reviewing changes.')` → `note && note.textContent.length > 0`. Retained `missing-fittings-copy-preflight-bottom-narrow` / `wrong-text-fittings-copy-preflight-bottom-narrow` fail at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | [artifact:wiring-preflight](#wiring-preflight) exact wiring replacement: `check(exposed(note, pane) &&` → `check(`; retained same-owner `clipped-fittings-copy-preflight-bottom-narrow` fails at fixture `Object.throws` / `AssertionError: clipped`. | Mechanism 1 — retained `covered-fittings-copy-result-bottom-narrow`: remove `(124,134)`, `(756,134)`, `(124,326)`, `(756,326)`, or `(440,230)`, change `.every` to `.some`, accept null, or accept unrelated `document.body`; each fails at `Object.throws` / `AssertionError: covered`. Mechanism 2 — retained `settled-fittings-copy-result-bottom-narrow`: direct-node rejection and descendant rejection each fail at generated `check` / `Screenshot content did not settle: fittings-copy-result-bottom-narrow`. | Exact embedded artifacts: [artifact:semantic-preflight-absence](#semantic-preflight-absence), [artifact:semantic-preflight-text](#semantic-preflight-text), [artifact:wiring-preflight](#wiring-preflight), [artifact:point-0](#point-0), [artifact:point-1](#point-1), [artifact:point-2](#point-2), [artifact:point-3](#point-3), [artifact:point-4](#point-4), [artifact:every](#every), [artifact:null](#null), [artifact:unrelated](#unrelated), [artifact:direct](#direct), [artifact:descendant](#descendant). Worktree artifacts target `scripts/shoot_screens.py`, record original/restored SHA-256 `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4`, count-one apply/inverse, and `exit=0`.  Block C artifacts target disposable `scripts/shoot_screens.py` / supplemental `tests/fixtures/screenshot_pages.cjs` where named and record count-one guards plus `disposable_restored: true`. |
+| `zero-area-profiles-copy-scope` | [artifact:semantic-profiles-absence](#semantic-profiles-absence) exact absence replacements: `&& visible(WM.el('es-copy-options')) && visible(note) && scope && commit);` → `&& visible(WM.el('es-copy-options')) && (!note || visible(note)) && scope && commit);`; `check(text(note, 'Checked groups are copied as a unit. Unchecked groups stay unchanged. Everything else is copied.') && !note.classList.contains('warn') && commit.hidden && WM.el('es-copy-scope-summary').textContent);` → `check(!note || (text(note, 'Checked groups are copied as a unit. Unchecked groups stay unchanged. Everything else is copied.') && !note.classList.contains('warn') && commit.hidden && WM.el('es-copy-scope-summary').textContent));`; `note.scrollIntoView({block: 'center', behavior: 'instant'});` → `if (note) note.scrollIntoView({block: 'center', behavior: 'instant'});`; `check(exposed(note, pane));` → `check(!note || exposed(note, pane));`. [artifact:semantic-profiles-text](#semantic-profiles-text) exact text replacement: `text(note, 'Checked groups are copied as a unit. Unchecked groups stay unchanged. Everything else is copied.')` → `note && note.textContent.length > 0`. Retained `missing-profiles-copy-scope` / `wrong-text-profiles-copy-scope` fail at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | [artifact:wiring-profiles](#wiring-profiles) exact wiring replacement: `check(exposed(note, pane));` → `check(true);`; retained same-owner `clipped-profiles-copy-scope` fails at fixture `Object.throws` / `AssertionError: clipped`. | Retained `zero-area-settings-wanderer-controls-narrow`: remove `r.width <= 0`; independently remove `r.height <= 0` with the exact supplemental zero-height fixture. Each production mutant fails at `Object.throws` / `AssertionError: zero-area`. | Exact embedded artifacts: [artifact:semantic-profiles-absence](#semantic-profiles-absence), [artifact:semantic-profiles-text](#semantic-profiles-text), [artifact:wiring-profiles](#wiring-profiles), [artifact:width](#width), [artifact:height](#height). Worktree artifacts target `scripts/shoot_screens.py`, record original/restored SHA-256 `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4`, count-one apply/inverse, and `exit=0`.  Block C artifacts target disposable `scripts/shoot_screens.py` / supplemental `tests/fixtures/screenshot_pages.cjs` where named and record count-one guards plus `disposable_restored: true`. |
+| `zero-area-fittings-metadata-narrow` | [artifact:semantic-metadata-absence](#semantic-metadata-absence) exact absence replacements: `&& text(save, 'Save') && save.disabled && discard` → `&& (!save || (text(save, 'Save') && save.disabled)) && discard`; `[summary, nameLabel, name, descriptionLabel, description, save]` → `[summary, nameLabel, name, descriptionLabel, description].concat(save ? [save] : [])`. [artifact:semantic-metadata-text](#semantic-metadata-text) exact text replacement: `text(save, 'Save')` → `save && save.textContent.length > 0`. Retained `missing-fittings-metadata-narrow` / `wrong-text-fittings-metadata-narrow` fail at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | [artifact:wiring-metadata](#wiring-metadata) exact wiring replacement: `[summary, nameLabel, name, descriptionLabel, description, save]` → `[summary, nameLabel, name, descriptionLabel, description]`; retained same-owner `clipped-fittings-metadata-narrow` fails at fixture `Object.throws` / `AssertionError: clipped`. | Retained `zero-area-settings-wanderer-controls-narrow`: remove `r.width <= 0`; independently remove `r.height <= 0` with the exact supplemental zero-height fixture. Each production mutant fails at `Object.throws` / `AssertionError: zero-area`. | Exact embedded artifacts: [artifact:semantic-metadata-absence](#semantic-metadata-absence), [artifact:semantic-metadata-text](#semantic-metadata-text), [artifact:wiring-metadata](#wiring-metadata), [artifact:width](#width), [artifact:height](#height). Worktree artifacts target `scripts/shoot_screens.py`, record original/restored SHA-256 `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4`, count-one apply/inverse, and `exit=0`.  Block C artifacts target disposable `scripts/shoot_screens.py` / supplemental `tests/fixtures/screenshot_pages.cjs` where named and record count-one guards plus `disposable_restored: true`. |
+| `zero-area-fittings-copy-preflight-bottom-narrow` | [artifact:semantic-preflight-absence](#semantic-preflight-absence) exact absence replacements: `&& text(note, 'Enter an alternate name or select Skip for each conflict before reviewing changes.')` → `&& (!note || text(note, 'Enter an alternate name or select Skip for each conflict before reviewing changes.'))`; `review.getAttribute('aria-describedby') === note.id` → `(!note || review.getAttribute('aria-describedby') === note.id)`; `note.scrollIntoView({block: 'end', behavior: 'instant'});` → `if (note) note.scrollIntoView({block: 'end', behavior: 'instant'});`; `check(exposed(note, pane) &&` → `check((!note || exposed(note, pane)) &&`. [artifact:semantic-preflight-text](#semantic-preflight-text) exact text replacement: `text(note, 'Enter an alternate name or select Skip for each conflict before reviewing changes.')` → `note && note.textContent.length > 0`. Retained `missing-fittings-copy-preflight-bottom-narrow` / `wrong-text-fittings-copy-preflight-bottom-narrow` fail at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | [artifact:wiring-preflight](#wiring-preflight) exact wiring replacement: `check(exposed(note, pane) &&` → `check(`; retained same-owner `clipped-fittings-copy-preflight-bottom-narrow` fails at fixture `Object.throws` / `AssertionError: clipped`. | Retained `zero-area-settings-wanderer-controls-narrow`: remove `r.width <= 0`; independently remove `r.height <= 0` with the exact supplemental zero-height fixture. Each production mutant fails at `Object.throws` / `AssertionError: zero-area`. | Exact embedded artifacts: [artifact:semantic-preflight-absence](#semantic-preflight-absence), [artifact:semantic-preflight-text](#semantic-preflight-text), [artifact:wiring-preflight](#wiring-preflight), [artifact:width](#width), [artifact:height](#height). Worktree artifacts target `scripts/shoot_screens.py`, record original/restored SHA-256 `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4`, count-one apply/inverse, and `exit=0`.  Block C artifacts target disposable `scripts/shoot_screens.py` / supplemental `tests/fixtures/screenshot_pages.cjs` where named and record count-one guards plus `disposable_restored: true`. |
+| `zero-area-fittings-copy-result-bottom-narrow` | [artifact:semantic-result-absence](#semantic-result-absence) exact absence replacements: `&& text(status, 'Not attempted: rate limit') && status.classList.contains(expected.status)` → `&& (!status || (text(status, 'Not attempted: rate limit') && status.classList.contains(expected.status)))`; `var requiredNodes = [name, character, status, disclosure];` → `var requiredNodes = [name, character, disclosure]; if (status) requiredNodes.splice(2, 0, status);`. [artifact:semantic-result-text](#semantic-result-text) exact text replacement: `text(status, 'Not attempted: rate limit')` → `status && status.textContent.length > 0`. Retained `missing-fittings-copy-result-bottom-narrow` / `wrong-text-fittings-copy-result-bottom-narrow` fail at fixture `Object.throws` with `AssertionError: missing` / `AssertionError: wrong-text`. | [artifact:wiring-result](#wiring-result) exact wiring replacement: `var requiredNodes = [name, character, status, disclosure];` → `var requiredNodes = [name, character, disclosure];`; retained same-owner `clipped-fittings-copy-result-bottom-narrow` fails at fixture `Object.throws` / `AssertionError: clipped`. | Retained `zero-area-settings-wanderer-controls-narrow`: remove `r.width <= 0`; independently remove `r.height <= 0` with the exact supplemental zero-height fixture. Each production mutant fails at `Object.throws` / `AssertionError: zero-area`. | Exact embedded artifacts: [artifact:semantic-result-absence](#semantic-result-absence), [artifact:semantic-result-text](#semantic-result-text), [artifact:wiring-result](#wiring-result), [artifact:width](#width), [artifact:height](#height). Worktree artifacts target `scripts/shoot_screens.py`, record original/restored SHA-256 `05e03a76374d16719568eb92b461ef1b50a7e5ff35ef2cd3944b97aa3d4453b4`, count-one apply/inverse, and `exit=0`.  Block C artifacts target disposable `scripts/shoot_screens.py` / supplemental `tests/fixtures/screenshot_pages.cjs` where named and record count-one guards plus `disposable_restored: true`. |
 
 ### Task 2 conclusion
 
@@ -3385,6 +3421,7 @@ NOT STARTED — Task 4 owns the derived constants, sole executable edit, exact 2
 - Final focused generated/protocol/isolation gate: `57 passed in 12.49s`.
 - `git diff --exit-code -- scripts/shoot_screens.py tests/fixtures/screenshot_pages.cjs`: PASS.
 - Candidate decision: `QUALIFIED`; no expansion and no redesign.
+- Round 2 mechanical ledger audit: PASS — parsed all 13 rows and 140 artifact references; all 36 unique artifact IDs resolve exactly once before the ledger to an exact diff/restoration block; each row's semantic cell contains the complete owner-specific before→after set (Wanderer 3, Profiles 5, Metadata 3, Preflight 5, Result 3), and each wiring cell contains its exact before→after branch and links its exact artifact.
 
 ### Task 1
 
