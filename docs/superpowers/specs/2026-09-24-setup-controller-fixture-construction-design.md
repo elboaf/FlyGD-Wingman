@@ -829,8 +829,9 @@ Before publication, the results document must record a final review covering:
 - failure contracts — O_EXCL, partial writes, zero progress, mid-write failure,
   and close failure all execute with exact byte/cleanup/exception assertions;
 - persistence — default construction records four atomic-channel fsyncs, fast
-  construction records zero on both channels, and the body records its exact
-  `2 + 2 + 2 + 1 = 7` atomic categories before publication;
+  construction records zero on both channels, and the body records six staging
+  fsyncs (`2 + 2 + 2`) before directory publication plus the seventh
+  selection-persistence fsync after publication;
 - mutation restoration — direct-fsync, atomic-delegation, replacement-capable
   body bypass, bytes/order/line-ending, and shared-template mutants fail at
   their intended assertions and every temporary edit is restored;
