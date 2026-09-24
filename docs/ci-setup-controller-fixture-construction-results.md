@@ -14,7 +14,7 @@ Task 1 changes documentation only. No executable file or test identity changed.
 - Task 2: **COMPLETE** — the fresh test-only publisher, optional seed seam, comprehensive parity/isolation/failure witness, default atomic-path evidence, and restoration-safe mutation qualification are recorded below.
 - Task 3: **COMPLETE** — only the controller fixture's two seed calls use the fresh publisher; the second witness proves construction has four direct opens and no fsync while a real create retains seven ordered atomic body fsyncs.
 - Task 4: **COMPLETE** — the exact local 190/136/16,607 endpoint, focused and full JUnit evidence, availability checks, independent gates, mutation restoration, and five-path scope are recorded below.
-- Task 5: **NOT STARTED — Task 5 owns final polish, whole review, publication stop, and hosted comparison.**
+- Task 5: **LOCAL/PRE-PUBLICATION IMPLEMENTER PORTION COMPLETE** — `polish-core --fix` found no safe correction to apply; fresh local verification passed on executable head `bb388893dac2fc2d3234af73eb0ecdae2162d37e`; the reviewer-facing explanation and publication checkpoint are recorded below. Independent controller review, authorization, publication, and hosted comparison remain pending.
 
 Task 1 changed path: `docs/ci-setup-controller-fixture-construction-results.md` only.
 
@@ -17775,9 +17775,147 @@ no matches. Task 4 adds only this documentation record. This endpoint is local
 evidence only: no branch was pushed, no remote state was mutated, no hosted
 result is claimed, and no speedup is stated.
 
+## Task 5 local/pre-publication implementer checkpoint
+
+### Polish outcome
+
+`polish-core` ran in fix mode over `c23788e3..HEAD` with the repository's
+Python rules and project conventions loaded. The analysis covered the complete
+five-path tranche, the current contents of both changed Python files, caller
+searches for `seed_profile`, `_publish_fresh_file`, and `initial_dat_publish`,
+and the spec/plan/results evidence. Per the task instruction, no subagents were
+used.
+
+No high-confidence safe correction and no reportable polish finding was found.
+Therefore no executable or polish-fix commit was created. No assertion was
+weakened, the exact five-path scope remained unchanged, and the polished
+executable head remained:
+
+```text
+bb388893dac2fc2d3234af73eb0ecdae2162d37e
+```
+
+This is the executable head presented for the controller's next independent
+fresh-review gate. This implementer checkpoint does not claim that independent
+review has occurred.
+
+### Fresh final local verification
+
+The release codec was rebuilt and installed before the final test pass. Its
+installed bytes matched the release output with SHA-256
+`4a4b57f48829002be1aff6eda8193f9e1fb8257a9bef5666dd26b0e225e815b4`;
+`codec.codec_available()` was true and Node was `v26.5.0`.
+
+The exact fresh commands and results on executable head `bb388893` were:
+
+- Both focused witnesses:
+  `uv run --no-sync python -m pytest tests/test_ui_setup_controller.py::test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_failures tests/test_ui_setup_controller.py::test_fast_fixture_construction_preserves_controller_body_atomic_persistence -q`
+  — `2 passed in 3.19s`.
+- Block C:
+  `uv run --no-sync python /tmp/setup_fixture_endpoint_audit.py` — run twice;
+  both runs returned controller `190` / SHA-256
+  `ebf5f437078c0532caa477db71061153bdf5a06149e3cd191f197b22db4f84d4`,
+  structural setup users `136` / SHA-256
+  `02f8ec20cd3ac604839e12a9523a157419cc6486b1cf4e1a9f66918409e940d2`,
+  and complete identities `16,607` / SHA-256
+  `788c629201704e4c72777aa64d169bb5af17db83c7c57059bb49a6f50cc1d491`.
+  The exact suffix remained the two named witnesses in order, with zero
+  removals, and changed paths remained exactly the approved five.
+- Complete controller/setup/default/native gate:
+  `uv run --no-sync python -m pytest tests/test_ui_setup_controller.py tests/test_ui_setup_schema.py tests/test_ui_setup_profile.py tests/test_ui_setup_integration.py tests/test_evesettings_codec.py tests/test_evesettings_profilecopy.py tests/test_atomicio.py -q -rs --durations=50 --junitxml=/tmp/wingman-setup-fixture-focused-task5.xml`
+  — `470 passed, 5 skipped in 35.89s`; all `190` controller cases passed with
+  zero controller skips/failures/errors, no availability skip occurred, and the
+  JUnit SHA-256 was
+  `b9a5b7a80b3360fd3d0b7a273a5635cfdb3af806051635e5e5cef65ad7c1d1ab`.
+  The five skips were the same real-Windows-junction cases recorded by Task 4.
+- Three direct Node scenarios plus worker reuse/isolation:
+  `uv run --no-sync python -m pytest 'tests/test_ui_setup_page.py::test_setup_page_runtime[eve-unknown]' 'tests/test_ui_setup_page.py::test_setup_page_runtime[malformed-text]' 'tests/test_ui_setup_page.py::test_setup_page_runtime[stale-manifest]' tests/test_ui_setup_page.py::test_setup_page_worker_protocol_reuses_process_and_correlates_unknown_scenario tests/test_ui_setup_page.py::test_setup_page_worker_isolation_sentinel -q`
+  — `5 passed in 11.41s`.
+- Full pytest:
+  `uv run --no-sync python -m pytest tests/ -q -rs --durations=50 --junitxml=/tmp/wingman-setup-fixture-full-task5.xml`
+  — `16,593 passed, 14 skipped in 516.79s`; JUnit contained exactly `16,607`
+  testcases, all `190` controller rows passed, no Node/settings-codec
+  availability skip occurred, the normalized skip tuples were the same fourteen
+  Linux platform skips recorded by Task 4, and JUnit SHA-256 was
+  `ad583924334d937335ab384414aa377bd761f3ebc8dc9ed1f11ec02a1c7d3cc3`.
+- `cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml` —
+  `1 passed; 0 failed`.
+- `node scripts/js_smoke.js` — `PASS every page module loaded`.
+- `uv run --no-sync ruff check .` — `All checks passed!`.
+- `uv run --no-sync ruff format --check .` — `520 files already formatted`.
+- Protected-path diff, temporary-symbol search, exact five-path equality,
+  arithmetic, and `git diff --check` all passed. Arithmetic remained
+  `136 × 4 = 544`, `188 + 2 = 190`, and `16,605 + 2 = 16,607`.
+
+Task 4's nine mutation records remain the qualification evidence: removal of
+`O_EXCL`, path preflight, direct fsync, atomic delegation, extra bytes, mapping
+order, line endings, hardlink/template reuse, and direct controller-body writes
+each failed at its intended assertion and restored bytes/hash/full diff/status.
+No polish edit required a new mutation wave; the fresh protected-path and
+symbol checks found no residue. The structural claim remains only that `136`
+existing setup users each avoid four fixture-only initial DAT fsync calls, for
+`544` structurally removed fixture fsync calls. No speedup, runner-efficiency,
+critical-path, regression-attribution, or wall-clock claim is made.
+
+### Reviewer-facing change explanation
+
+The repeated controller `setup(tmp_path, monkeypatch)` fixture now supplies one
+private test-only exclusive publisher for exactly four brand-new DAT files: the
+source account/character pair and recipient account/character pair. The helper
+claims each path with `O_CREAT | O_EXCL | O_WRONLY | O_BINARY` and mode `0o600`,
+writes until complete, performs no preflight or fsync, and removes a partial on
+failure. A bare re-raise preserves the original write or reported-close
+exception even if cleanup close/unlink also fails.
+
+`seed_profile(..., initial_dat_publish=None)` preserves every ordinary caller's
+atomic default by omitting the codec `publish` argument unless the caller
+explicitly opts in. Only the two fixture calls opt in. YAML/INI publication,
+codec encoding and verification, and all production paths are unchanged.
+
+The two appended non-parameterized test identities are exactly:
+
+```text
+tests/test_ui_setup_controller.py::test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_failures
+tests/test_ui_setup_controller.py::test_fast_fixture_construction_preserves_controller_body_atomic_persistence
+```
+
+The first proves exclusive-open flags/mode, no preflight, partial-write handling,
+original-exception cleanup behavior, byte/CRC/revision/type/order/discovery/
+manifest parity with atomic fixture construction, repeated-fixture isolation,
+metadata/link behavior, duplicate refusal, default atomic callers, and separate
+direct/atomic fsync channels. The second phase-separates fixture construction
+from a real controller create: construction has four direct opens and zero
+fsyncs, while body work retains the exact seven atomic categories
+`2 stage_dat_copy + 2 stage_local_copy + 2 rewrite_dat + 1 selection`, with
+all staged work before directory publication and selection persistence after it.
+
+Reviewer focus should be the helper's close/unlink failure ordering, the
+`initial_dat_publish is None` omission that preserves definition-time codec
+defaults, the comprehensive witness's proxy fidelity, the exact seven-category
+event ordering, and the strict identity/scope assertions. The remaining local
+risk is platform validation: Windows/Ubuntu hosted parity has not been run for
+this head, and the controller's independent whole-branch review is still
+required.
+
+### Explicit publication stop
+
+Proposed PR title: `Optimize setup controller fixture construction`.
+
+Proposed body summary: the setup-controller fixture exclusively publishes four
+fresh DATs per fixture while preserving codec verification, ordinary callers'
+atomic defaults, and controller-body persistence; the suite delta is exactly the
+two named witnesses with zero removals; `136` structural setup users are
+unchanged; only the structural `544` fixture-fsync reduction is claimed and no
+speedup is claimed.
+
+**STOP:** no push, PR creation, GitHub workflow dispatch, new-run artifact
+download, GitHub mutation API call, or hosted claim was performed. Publication
+requires explicit maintainer authorization after the controller's independent
+fresh-review gate.
+
 ## Hosted comparison
 
-**NOT STARTED — Task 5 owns this evidence.** This Task 1 ledger freezes the passing PR #287 attempt-2 comparator only; it contains no implementation hosted result and makes no hosted speed claim.
+**NOT STARTED — publication authorization and the independent controller review are pending.** The ledger still contains only the passing PR #287 attempt-2 comparator; it contains no implementation hosted result and makes no hosted speed claim.
 
 ## Deviations and concerns
 
