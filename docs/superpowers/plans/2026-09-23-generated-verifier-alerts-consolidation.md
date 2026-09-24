@@ -106,48 +106,152 @@ Preflight results:
 
 ## Reproducibility Blocks
 
-Every block writes only under `/tmp` unless a mutation is explicitly applied through Block B. The plan author syntax-checked every Python/Bash block, ran Block A, dry-ran Block D against the projected 502-ID inventory, parsed the PR #286 artifacts with Block F, and ran all Block C control/mutant sequences in disposable archives.
+Every block writes only under `/tmp` unless a mutation is explicitly applied through Block B. Execute hosted blocks in the documented order **F then E** so a clean `/tmp` contains the parser before the collector invokes it. The plan author syntax-checked every Python/Bash block, ran Block A against an actually edited disposable archive, dry-ran Block D against those actual 502 IDs, parsed the PR #286 artifacts with Block F, checked comparator parents/path deltas, and ran all Block C control/mutant sequences in disposable archives.
 
-### Reproducibility Block A — baseline/candidate inventory and report archive
+### Reproducibility Block A — actual disposable candidate collection and report archive
+
+This block always collects the frozen baseline from `8d5b9305`. It separately builds a projected list, then archives `HEAD` into a disposable checkout. If `tests/test_shoot_screens.py` is still pre-implementation, it applies the exact Task 4 constants/decorators with match-once guards; if Task 4 is already present, it requires the exact post-edit anchors. Any third source state is refused. Pytest runs from the disposable checkout with the current venv and `PYTHONPATH` set to that checkout. Actual collection must equal the separate projection byte-for-normalized-byte.
 
 ```bash
 cat > /tmp/stage3_inventory_audit.py <<'PY'
-from hashlib import sha256
+from __future__ import annotations
+import hashlib,io,json,os,shutil,subprocess,tarfile,tempfile
 from pathlib import Path
-import json, shutil, subprocess, tarfile
-W=Path('/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation'); P=W/'.venv/bin/python'
-O=Path('/tmp/wingman-stage3-inventory'); A=Path('/tmp/wingman-stage3-inventory.tar.gz')
-FILES=('tests/test_shoot_screens.py','tests/test_new_screenshots.py','tests/test_current_screenshots.py','tests/test_fittings_page.py')
-G='tests/test_shoot_screens.py::test_gap_capture_requires_semantic_content_after_framing['
-L='tests/test_shoot_screens.py::test_alerts_base_capture_requires_top_anchors_without_actions['
-def collect(args,name):
- r=subprocess.run([str(P),'-m','pytest',*args,'--collect-only','-q','-p','no:cacheprovider'],cwd=W,text=True,capture_output=True,check=True,timeout=180); (O/name).write_text(r.stdout); n=[x for x in r.stdout.splitlines() if x.startswith('tests/')]; assert len(n)==len(set(n)); return n
-def h(n): return sha256(('\n'.join(n)+'\n').encode()).hexdigest()
+W=Path('/mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation'); P=W/'.venv/bin/python'; O=Path('/tmp/wingman-stage3-inventory'); A=Path('/tmp/wingman-stage3-inventory.tar.gz')
+FILES=('tests/test_shoot_screens.py','tests/test_new_screenshots.py','tests/test_current_screenshots.py','tests/test_fittings_page.py'); PRODUCTS=(FILES[0]+'::test_gap_capture_requires_semantic_content_after_framing',FILES[0]+'::test_alerts_base_capture_requires_top_anchors_without_actions'); G=PRODUCTS[0]+'['; L=PRODUCTS[1]+'['
+GAP='''GAP_CAPTURES = {
+    "settings-wanderer-controls-narrow": ("settings", "previews", True),
+    "profiles-copy-scope": ("evesettings", None, False),
+    "fittings-metadata-narrow": ("fittings", None, True),
+    "fittings-copy-preflight-bottom-narrow": ("fittings", None, True),
+    "fittings-copy-result-bottom-narrow": ("fittings", None, True),
+}
+'''
+GAP_CASES='''
+
+_GAP_CAPTURE_CASES = tuple(
+    (scenario, key)
+    for scenario in ("settled", "missing", "wrong-text")
+    for key in GAP_CAPTURES
+) + (
+    ("hidden", "profiles-copy-scope"),
+    ("clipped", "profiles-copy-scope"),
+    ("clipped", "fittings-metadata-narrow"),
+    ("clipped", "fittings-copy-preflight-bottom-narrow"),
+    ("clipped", "fittings-copy-result-bottom-narrow"),
+    ("covered", "fittings-copy-result-bottom-narrow"),
+    ("zero-area", "settings-wanderer-controls-narrow"),
+)
+'''
+GAP_OLD='''@pytest.mark.parametrize("key", GAP_CAPTURES)
+@pytest.mark.parametrize(
+    "scenario",
+    ["settled", "missing", "hidden", "wrong-text", "clipped", "covered", "zero-area"],
+)
+'''; GAP_NEW='''@pytest.mark.parametrize(("scenario", "key"), _GAP_CAPTURE_CASES)
+'''
+ALERT_OLD='''@pytest.mark.parametrize(
+    "scenario",
+    [
+        "settled-disabled",
+        "settled-enabled",
+        "wrong-route",
+        "wrong-section",
+        "inactive-route",
+        "inactive-section",
+        "missing-section",
+        "missing-pane",
+        "hidden-section",
+        "hidden-pane",
+        "hidden-card",
+        "wrong-owner",
+        "empty-health",
+        "zero-health",
+        "outside-viewport",
+        *[
+            f"{kind}-{anchor}"
+            for kind in ("missing", "hidden", "invisible", "display-none")
+            for anchor in ("master", "health")
+        ],
+        *[
+            f"clipped-{anchor}-{edge}"
+            for anchor in ("master", "health")
+            for edge in ("top", "bottom", "left", "right")
+        ],
+    ],
+)
+'''
+ALERT_NEW='''_ALERTS_BASE_SCENARIOS = (
+    "settled-disabled",
+    "settled-enabled",
+    "wrong-route",
+    "wrong-section",
+    "inactive-route",
+    "inactive-section",
+    "missing-section",
+    "missing-pane",
+    "hidden-section",
+    "hidden-pane",
+    "hidden-card",
+    "wrong-owner",
+    "empty-health",
+    "zero-health",
+    "outside-viewport",
+)
+_ALERTS_ANCHOR_SCENARIOS = (
+    "missing-master",
+    "missing-health",
+    "hidden-master",
+    "invisible-health",
+    "display-none-master",
+)
+_ALERTS_CLIPPED_SCENARIOS = (
+    "clipped-master-top",
+    "clipped-master-right",
+    "clipped-health-bottom",
+    "clipped-health-left",
+)
+_ALERTS_CAPTURE_SCENARIOS = (
+    _ALERTS_BASE_SCENARIOS
+    + _ALERTS_ANCHOR_SCENARIOS
+    + _ALERTS_CLIPPED_SCENARIOS
+)
+
+
+@pytest.mark.parametrize("scenario", _ALERTS_CAPTURE_SCENARIOS)
+'''
+def h(v): return hashlib.sha256(('\n'.join(v)+'\n').encode()).hexdigest()
+def extract(commit,root):
+ raw=subprocess.check_output(['git','-C',str(W),'archive',commit])
+ with tarfile.open(fileobj=io.BytesIO(raw),mode='r:') as t: t.extractall(root,filter='data')
+def collect(root,args,name):
+ env=dict(os.environ,PYTHONPATH=str(root)); r=subprocess.run([str(P),'-m','pytest',*args,'--collect-only','-q','-p','no:cacheprovider'],cwd=root,env=env,text=True,capture_output=True,check=True,timeout=180); (O/name).write_text(r.stdout); v=[x for x in r.stdout.splitlines() if x.startswith('tests/')]; assert len(v)==len(set(v)); return v
+def once(text,before,after): assert text.count(before)==1,('before_count',text.count(before)); assert text.count(after)==0,('after_pre_count',text.count(after)); out=text.replace(before,after,1); assert out.count(after)==1,('after_count',out.count(after)); return out
 if O.exists(): shutil.rmtree(O)
 O.mkdir()
-base=collect(FILES,'baseline-collection.txt'); products=collect((G[:-1],L[:-1]),'baseline-products-collection.txt')
-keys=('settings-wanderer-controls-narrow','profiles-copy-scope','fittings-metadata-narrow','fittings-copy-preflight-bottom-narrow','fittings-copy-result-bottom-narrow')
-gen=[f'{G}{s}-{k}]' for s in ('settled','missing','wrong-text') for k in keys]+[f'{G}{x}]' for x in ('hidden-profiles-copy-scope','clipped-profiles-copy-scope','clipped-fittings-metadata-narrow','clipped-fittings-copy-preflight-bottom-narrow','clipped-fittings-copy-result-bottom-narrow','covered-fittings-copy-result-bottom-narrow','zero-area-settings-wanderer-controls-narrow')]
-alerts=[f'{L}{x}]' for x in ('settled-disabled','settled-enabled','wrong-route','wrong-section','inactive-route','inactive-section','missing-section','missing-pane','hidden-section','hidden-pane','hidden-card','wrong-owner','empty-health','zero-health','outside-viewport','missing-master','missing-health','hidden-master','invisible-health','display-none-master','clipped-master-top','clipped-master-right','clipped-health-bottom','clipped-health-left')]
-after=[]; emitted_g=emitted_l=False
-for node in base:
- if node.startswith(G):
-  if not emitted_g: after.extend(gen); emitted_g=True
- elif node.startswith(L):
-  if not emitted_l: after.extend(alerts); emitted_l=True
- else: after.append(node)
-retained=gen+alerts; removed=[x for x in base if x not in set(after)]; added=[x for x in after if x not in set(base)]
-counts=lambda nodes:[sum(x.startswith(f+'::') for x in nodes) for f in FILES]
-assert counts(base)==[240,90,91,101] and len(base)==522 and len(products)==66 and h(base)=='07c1e080c24157001c3aa936ac7c26ec6307e9f246973cfb65f92164c31a51e6'
-assert counts(after)==[220,90,91,101] and len(after)==502 and len(retained)==46 and len(removed)==20 and added==[]
-assert h(after)=='592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a' and h(retained)=='359da2ca8f13df995ac43ed76bd0aa19ba75cb4ec3b1fe1e4fb6c8e6a38d71f9'
-for name,nodes in {'baseline-522.txt':base,'baseline-products-66.txt':products,'candidate-502.txt':after,'candidate-products-46.txt':retained,'removed-20.txt':removed,'added-0.txt':added}.items(): (O/name).write_text('\n'.join(nodes)+('\n' if nodes else ''))
-summary={'baseline_counts':counts(base),'baseline_total':len(base),'baseline_hash':h(base),'baseline_product_total':len(products),'candidate_counts':counts(after),'candidate_total':len(after),'candidate_hash':h(after),'candidate_product_total':len(retained),'candidate_product_hash':h(retained),'removed':len(removed),'added':len(added)}
-(O/'summary.json').write_text(json.dumps(summary,sort_keys=True,indent=2)+'\n')
+with tempfile.TemporaryDirectory(prefix='wingman-stage3-base-') as d:
+ B=Path(d); extract('8d5b9305',B); baseline=collect(B,FILES,'baseline-collection.txt'); products=collect(B,PRODUCTS,'baseline-products-collection.txt')
+keys=('settings-wanderer-controls-narrow','profiles-copy-scope','fittings-metadata-narrow','fittings-copy-preflight-bottom-narrow','fittings-copy-result-bottom-narrow'); gen=[f'{G}{s}-{k}]' for s in ('settled','missing','wrong-text') for k in keys]+[f'{G}{x}]' for x in ('hidden-profiles-copy-scope','clipped-profiles-copy-scope','clipped-fittings-metadata-narrow','clipped-fittings-copy-preflight-bottom-narrow','clipped-fittings-copy-result-bottom-narrow','covered-fittings-copy-result-bottom-narrow','zero-area-settings-wanderer-controls-narrow')]; alerts=[f'{L}{x}]' for x in ('settled-disabled','settled-enabled','wrong-route','wrong-section','inactive-route','inactive-section','missing-section','missing-pane','hidden-section','hidden-pane','hidden-card','wrong-owner','empty-health','zero-health','outside-viewport','missing-master','missing-health','hidden-master','invisible-health','display-none-master','clipped-master-top','clipped-master-right','clipped-health-bottom','clipped-health-left')]
+projection=[]; eg=el=False
+for n in baseline:
+ if n.startswith(G):
+  if not eg: projection+=gen; eg=True
+ elif n.startswith(L):
+  if not el: projection+=alerts; el=True
+ else: projection.append(n)
+with tempfile.TemporaryDirectory(prefix='wingman-stage3-candidate-') as d:
+ C=Path(d); extract('HEAD',C); path=C/FILES[0]; text=path.read_text(); old=(text.count(GAP_CASES)==0 and text.count(GAP_OLD)==1 and text.count(ALERT_OLD)==1); new=(text.count(GAP_CASES)==1 and text.count(GAP_NEW)==1 and text.count(ALERT_NEW)==1); assert old ^ new,('source_state_refused',old,new)
+ if old:
+  text=once(text,GAP,GAP+GAP_CASES); text=once(text,GAP_OLD,GAP_NEW); text=once(text,ALERT_OLD,ALERT_NEW); path.write_text(text)
+ actual=collect(C,FILES,'candidate-collection.txt'); retained=collect(C,PRODUCTS,'candidate-products-collection.txt')
+assert actual==projection,('actual_candidate_differs_from_projection',[(i,a,b) for i,(a,b) in enumerate(zip(actual,projection)) if a!=b][:3]); counts=lambda v:[sum(n.startswith(f+'::') for n in v) for f in FILES]; removed=[n for n in baseline if n not in set(actual)]; added=[n for n in actual if n not in set(baseline)]
+assert counts(baseline)==[240,90,91,101] and len(baseline)==522 and len(products)==66 and h(baseline)=='07c1e080c24157001c3aa936ac7c26ec6307e9f246973cfb65f92164c31a51e6'; assert counts(actual)==[220,90,91,101] and len(actual)==502 and len(retained)==46 and len(removed)==20 and added==[] and h(actual)=='592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a' and h(retained)=='359da2ca8f13df995ac43ed76bd0aa19ba75cb4ec3b1fe1e4fb6c8e6a38d71f9'
+for name,v in {'baseline-522.txt':baseline,'baseline-products-66.txt':products,'projection-502.txt':projection,'candidate-actual-502.txt':actual,'candidate-products-46.txt':retained,'removed-20.txt':removed,'added-0.txt':added}.items(): (O/name).write_text('\n'.join(v)+('\n' if v else ''))
+summary={'baseline_counts':counts(baseline),'baseline_total':len(baseline),'baseline_product_total':len(products),'baseline_hash':h(baseline),'actual_candidate_counts':counts(actual),'actual_candidate_total':len(actual),'actual_candidate_hash':h(actual),'actual_equals_projection':actual==projection,'candidate_product_total':len(retained),'candidate_product_hash':h(retained),'removed':len(removed),'added':len(added)}; (O/'summary.json').write_text(json.dumps(summary,sort_keys=True,indent=2)+'\n')
 if A.exists(): A.unlink()
 with tarfile.open(A,'w:gz') as t:
  for p in sorted(O.iterdir()): t.add(p,arcname=p.name)
-print(json.dumps(summary,sort_keys=True)); print(f'report_archive={A}')
+print(json.dumps(summary,sort_keys=True)); print('temporary_checkouts_cleaned=true'); print(f'report_archive={A}')
 PY
 python -m py_compile /tmp/stage3_inventory_audit.py
 python /tmp/stage3_inventory_audit.py
@@ -317,34 +421,50 @@ python -m py_compile /tmp/stage3_five_orders.py
 python /tmp/stage3_five_orders.py
 ```
 
-### Reproducibility Block E — hosted API, logs, artifacts, and synthetic-merge blobs
+### Reproducibility Block E — per-job provenance, artifacts, merge parents, and complete synthetic diff
+
+Block F must run first on a clean `/tmp`; E refuses to start without the syntax-checked artifact parser.
 
 ```bash
 cat > /tmp/stage3_hosted_collect.sh <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 cd /mnt/c/dev/flygd-wingman/.worktrees/ci-generated-verifier-alerts-consolidation
-R=elboaf/FlyGD-Wingman; C=35882408360; D=/tmp/wingman-stage3-hosted; mkdir -p "$D"
+R=elboaf/FlyGD-Wingman; C=35882408360; D=/tmp/wingman-stage3-hosted; test -f /tmp/stage3_hosted_artifacts.py; python -m py_compile /tmp/stage3_hosted_artifacts.py; mkdir -p "$D"
 gh pr view -R "$R" --json number,headRefName,headRefOid,baseRefOid,url > "$D/pr.json"
 gh run list -R "$R" --workflow ci.yml --event pull_request --limit 100 --json databaseId,headSha,conclusion > "$D/runs.json"
 python - <<'PY'
 import json
 from pathlib import Path
-d=Path('/tmp/wingman-stage3-hosted'); p=json.loads((d/'pr.json').read_text()); r=json.loads((d/'runs.json').read_text()); m=[x for x in r if x['headSha']==p['headRefOid'] and x['conclusion']=='success']; assert len(m)==1,m; (d/'run-id').write_text(str(m[0]['databaseId']))
+d=Path('/tmp/wingman-stage3-hosted'); p=json.loads((d/'pr.json').read_text()); runs=json.loads((d/'runs.json').read_text()); m=[r for r in runs if r['headSha']==p['headRefOid'] and r['conclusion']=='success']; assert len(m)==1,m; (d/'run-id').write_text(str(m[0]['databaseId']))
 PY
 S=$(cat "$D/run-id"); gh api "repos/$R/actions/runs/$S" > "$D/run.json"; gh api --paginate --slurp "repos/$R/actions/runs/$S/jobs?per_page=100" > "$D/jobs.json"
-gh run view "$S" -R "$R" --log > "$D/stage3.log"; gh run view "$C" -R "$R" --log > "$D/comparator.log"
+python - <<'PY'
+import json
+from pathlib import Path
+d=Path('/tmp/wingman-stage3-hosted'); pages=json.loads((d/'jobs.json').read_text()); jobs=[j for page in pages for j in page['jobs']]; names={'checks':'checks','ubuntu':'test (ubuntu-latest)','windows':'test (windows-latest)'}; selected={}
+for role,name in names.items():
+ m=[j for j in jobs if j['name']==name]; assert len(m)==1,(role,m); assert m[0]['conclusion']=='success',m[0]; selected[role]=m[0]
+(d/'selected-jobs.json').write_text(json.dumps(selected,sort_keys=True,indent=2)+'\n')
+for role,j in selected.items(): (d/f'stage3-{role}-job-id').write_text(str(j['id']))
+PY
+for role in checks ubuntu windows; do gh run view "$S" -R "$R" --job "$(cat "$D/stage3-$role-job-id")" --log > "$D/stage3-$role.log"; done
+gh run view "$C" -R "$R" --job 107253913132 --log > "$D/comparator-checks.log"
+gh run view "$C" -R "$R" --job 107253913433 --log > "$D/comparator-ubuntu.log"
+gh run view "$C" -R "$R" --job 107253913529 --log > "$D/comparator-windows.log"
 python - <<'PY'
 import json,re
 from datetime import datetime
 from pathlib import Path
-d=Path('/tmp/wingman-stage3-hosted'); p=json.loads((d/'pr.json').read_text()); run=json.loads((d/'run.json').read_text()); pages=json.loads((d/'jobs.json').read_text()); jobs=[j for page in pages for j in page['jobs']]; req={'checks','test (ubuntu-latest)','test (windows-latest)'}; selected={j['name']:j for j in jobs if j['name'] in req}; assert set(selected)==req and all(j['conclusion']=='success' for j in selected.values()); assert run['head_sha']==p['headRefOid']
-t=(d/'stage3.log').read_text(errors='replace'); merges=set(re.findall(r'\+([0-9a-f]{40}):refs/remotes/pull/\d+/merge',t)); subjects=set(re.findall(r'HEAD is now at [0-9a-f]+ Merge ([0-9a-f]{40}) into ([0-9a-f]{40})',t)); assert len(merges)==1 and subjects=={(p['headRefOid'],p['baseRefOid'])}; merge=next(iter(merges)); assert t.count(merge)>=3
-c=(d/'comparator.log').read_text(errors='replace'); assert set(re.findall(r'\+([0-9a-f]{40}):refs/remotes/pull/286/merge',c))=={'c1ab289e4fdd31e7cc5be2c8322a2557c48e1a26'}; assert set(re.findall(r'HEAD is now at [0-9a-f]+ Merge ([0-9a-f]{40}) into ([0-9a-f]{40})',c))=={('0c785ce18193b5900f8d810a8a4dc7e0f10c9f1e','459c5d6b57f5f35c97d3076bee25a6f65ba515be')}
+d=Path('/tmp/wingman-stage3-hosted'); pr=json.loads((d/'pr.json').read_text()); run=json.loads((d/'run.json').read_text()); selected=json.loads((d/'selected-jobs.json').read_text()); assert run['head_sha']==pr['headRefOid']
+def checkout(path,number,head,base,merge=None):
+ t=path.read_text(errors='replace'); fetch=set(re.findall(r'\+([0-9a-f]{40}):refs/remotes/pull/'+str(number)+r'/merge',t)); subjects=set(re.findall(r'HEAD is now at [0-9a-f]+ Merge ([0-9a-f]{40}) into ([0-9a-f]{40})',t)); exact=set(re.findall(r'(?:^|\s)([0-9a-f]{40})$',t,re.M)); assert len(fetch)==1,fetch; found=next(iter(fetch)); assert merge is None or found==merge,(found,merge); assert subjects=={(head,base)},subjects; assert found in exact,(found,exact); return found
+stage={role:checkout(d/f'stage3-{role}.log',pr['number'],pr['headRefOid'],pr['baseRefOid']) for role in ('checks','ubuntu','windows')}; assert len(set(stage.values()))==1,stage; merge=stage['checks']
+for role in ('checks','ubuntu','windows'): checkout(d/f'comparator-{role}.log',286,'0c785ce18193b5900f8d810a8a4dc7e0f10c9f1e','459c5d6b57f5f35c97d3076bee25a6f65ba515be','c1ab289e4fdd31e7cc5be2c8322a2557c48e1a26')
 seconds=lambda a,b:(datetime.fromisoformat(b.replace('Z','+00:00'))-datetime.fromisoformat(a.replace('Z','+00:00'))).total_seconds(); observations={}
-for name,j in selected.items():
- test=[s for s in j['steps'] if s['name']=='Test']; observations[name]={'job_seconds':seconds(j['started_at'],j['completed_at']),'test_step_seconds':seconds(test[0]['started_at'],test[0]['completed_at']) if test else None}
-out={'pr':p['number'],'run':run['id'],'branch_head':p['headRefOid'],'synthetic_merge':merge,'base':p['baseRefOid'],'jobs':{n:selected[n]['id'] for n in sorted(req)},'observations':observations}; (d/'provenance.json').write_text(json.dumps(out,sort_keys=True,indent=2)+'\n'); print(json.dumps(out,sort_keys=True))
+for role,j in selected.items():
+ test=[s for s in j['steps'] if s['name']=='Test']; observations[role]={'job_id':j['id'],'job_seconds':seconds(j['started_at'],j['completed_at']),'test_step_seconds':seconds(test[0]['started_at'],test[0]['completed_at']) if test else None}
+out={'pr':pr['number'],'run':run['id'],'branch_head':pr['headRefOid'],'synthetic_merge':merge,'base':pr['baseRefOid'],'observations':observations}; (d/'provenance.json').write_text(json.dumps(out,sort_keys=True,indent=2)+'\n')
 PY
 python - <<'PY'
 import shutil
@@ -359,17 +479,27 @@ gh run download "$S" -R "$R" -n pytest-evidence-windows-latest -D /tmp/wingman-s
 python - <<'PY'
 import json,subprocess
 from pathlib import Path
-d=Path('/tmp/wingman-stage3-hosted'); p=json.loads((d/'provenance.json').read_text()); c='c1ab289e4fdd31e7cc5be2c8322a2557c48e1a26'; s=p['synthetic_merge']
-for x in (c,s,p['branch_head'],'8d5b9305'): subprocess.run(['git','fetch','--quiet','origin',x],check=True)
-paths=('.github/workflows/ci.yml','scripts','tests/fixtures','tests/conftest.py','tests/node_scenario_worker.py','tests/test_new_screenshots.py','tests/test_current_screenshots.py','tests/test_fittings_page.py','pyproject.toml','uv.lock','packaging'); blobs={}
-for path in paths:
- a=subprocess.check_output(['git','rev-parse',f'{c}:{path}'],text=True).strip(); b=subprocess.check_output(['git','rev-parse',f'{s}:{path}'],text=True).strip(); assert a==b,(path,a,b); blobs[path]=a
-assert subprocess.run(['git','merge-base','--is-ancestor','8d5b9305',p['branch_head']]).returncode==0; authored=set(subprocess.check_output(['git','diff','--name-only','8d5b9305..'+p['branch_head']],text=True).splitlines()); allowed={'docs/ci-generated-verifier-alerts-consolidation-results.md','docs/superpowers/plans/2026-09-23-generated-verifier-alerts-consolidation.md','docs/superpowers/specs/2026-09-23-generated-verifier-alerts-consolidation-design.md','tests/test_shoot_screens.py'}; assert authored<=allowed,sorted(authored-allowed)
-(d/'blob-comparison.json').write_text(json.dumps({'comparator_synthetic_merge':c,'stage3_synthetic_merge':s,'equal_exercised_blobs':blobs,'stage3_authored_head':p['branch_head'],'stage3_authored_paths':sorted(authored)},sort_keys=True,indent=2)+'\n')
+d=Path('/tmp/wingman-stage3-hosted'); p=json.loads((d/'provenance.json').read_text()); c='c1ab289e4fdd31e7cc5be2c8322a2557c48e1a26'; s=p['synthetic_merge']; head=p['branch_head']; base=p['base']
+for x in (c,s,head,base,'8d5b9305','0c785ce18193b5900f8d810a8a4dc7e0f10c9f1e'): subprocess.run(['git','fetch','--quiet','origin',x],check=True)
+def parents(commit): return subprocess.check_output(['git','rev-list','--parents','-n','1',commit],text=True).split()
+assert parents(c)==[c,'459c5d6b57f5f35c97d3076bee25a6f65ba515be','0c785ce18193b5900f8d810a8a4dc7e0f10c9f1e']; assert parents(s)==[s,base,head],parents(s)
+def changed(a,b): return set(subprocess.check_output(['git','diff','--name-only',a+'..'+b],text=True).splitlines())
+known_post={'docs/ci-current-owner-lifecycle-consolidation-results.md'}; assert changed(c,'8d5b9305')==known_post; assert changed(c,base)==known_post
+allowed_authored={'docs/ci-generated-verifier-alerts-consolidation-results.md','docs/superpowers/plans/2026-09-23-generated-verifier-alerts-consolidation.md','docs/superpowers/specs/2026-09-23-generated-verifier-alerts-consolidation-design.md','tests/test_shoot_screens.py'}; authored=changed('8d5b9305',head); assert authored==allowed_authored,authored
+full=changed(c,s); expected=known_post|allowed_authored; assert full==expected,{'missing':sorted(expected-full),'unexpected':sorted(full-expected)}
+protected=('.github/','wingman/','scripts/','tests/fixtures/','packaging/'); configs={'pyproject.toml','uv.lock'}; other_tests={x for x in full if x.startswith('tests/') and x!='tests/test_shoot_screens.py'}; assert not any(x.startswith(protected) for x in full); assert not(full&configs); assert not other_tests
+(d/'complete-diff.json').write_text(json.dumps({'comparator_synthetic':c,'stage3_synthetic':s,'comparator_parents':parents(c)[1:],'stage3_parents':parents(s)[1:],'known_post_comparator':sorted(known_post),'authored':sorted(authored),'full_synthetic_diff':sorted(full)},sort_keys=True,indent=2)+'\n')
 PY
 python /tmp/stage3_hosted_artifacts.py
 SH
 bash -n /tmp/stage3_hosted_collect.sh
+python - <<'PY'
+import subprocess
+c='c1ab289e4fdd31e7cc5be2c8322a2557c48e1a26'
+assert subprocess.check_output(['git','rev-list','--parents','-n','1',c],text=True).split()==[c,'459c5d6b57f5f35c97d3076bee25a6f65ba515be','0c785ce18193b5900f8d810a8a4dc7e0f10c9f1e']
+assert set(subprocess.check_output(['git','diff','--name-only',c+'..8d5b9305'],text=True).splitlines())=={'docs/ci-current-owner-lifecycle-consolidation-results.md'}
+print('comparator parents and post-comparator path set: PASS')
+PY
 bash /tmp/stage3_hosted_collect.sh
 ```
 
@@ -403,7 +533,11 @@ for p in ('ubuntu','windows'):
 Path('/tmp/wingman-stage3-hosted-audit.json').write_text(json.dumps(report,sort_keys=True,indent=2)+'\n'); print(json.dumps(report,sort_keys=True))
 PY
 python -m py_compile /tmp/stage3_hosted_artifacts.py
-python /tmp/stage3_hosted_artifacts.py --comparator-self-test
+if test -f /tmp/wingman-pr286-ubuntu/pytest-result.xml && test -f /tmp/wingman-pr286-windows/pytest-result.xml; then
+  python /tmp/stage3_hosted_artifacts.py --comparator-self-test
+else
+  echo 'artifact parser created; Block E will download comparator artifacts before invoking it'
+fi
 ```
 
 ### Task 1: Freeze the Exact PR #286 Baseline and Comparator Controls
@@ -441,9 +575,9 @@ Expected exact output fields: baseline counts `[240, 90, 91, 101]`, baseline tot
 
 - [ ] **Step 3: Recompute and archive the candidate in a disposable checkout**
 
-The same Block A applies the exact Task 4 derivation only inside a temporary `git archive`, collects the actual candidate, and asserts the order-sensitive hashes rather than set-filtering the baseline.
+The same Block A keeps the projected formula separate, archives `HEAD` into a temporary checkout, and then either applies the exact Task 4 constants/decorators with match-once guards or validates that the exact post-edit anchors are already present. It runs actual pytest collection from that checkout and requires the actual ordered IDs to equal the projection. This makes the same command valid before Task 4 and as its post-edit audit.
 
-Expected exact output fields: candidate counts `[220, 90, 91, 101]`, candidate total `502`, retained product total `46`, candidate hash `592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a`, retained-product hash `359da2ca8f13df995ac43ed76bd0aa19ba75cb4ec3b1fe1e4fb6c8e6a38d71f9`, 20 removals, and zero additions. The worktree remains unmodified.
+Expected exact output fields: `actual_candidate_counts` `[220, 90, 91, 101]`, `actual_candidate_total` `502`, `candidate_product_total` `46`, `actual_equals_projection` true, candidate hash `592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a`, retained-product hash `359da2ca8f13df995ac43ed76bd0aa19ba75cb4ec3b1fe1e4fb6c8e6a38d71f9`, 20 removals, and zero additions. The worktree remains unmodified.
 
 - [ ] **Step 4: Freeze exact PR #286 provenance and artifact integrity**
 
@@ -1032,6 +1166,8 @@ Expected: 46 passed if unexpanded.
 
 - [ ] **Step 6: Prove exact four-file collection and set diff**
 
+Rerun Block A first. In post-edit mode it must recognize only the exact Task 4 anchors, collect the actual edited archive without applying another patch, and report `actual_equals_projection: true`. Then collect the worktree directly:
+
 ```bash
 uv run --no-sync python -m pytest \
   tests/test_shoot_screens.py tests/test_new_screenshots.py \
@@ -1313,19 +1449,19 @@ The PR body states:
 
 - [ ] **Step 7: Derive exact Stage 3 hosted provenance from API and checkout logs**
 
-Run **Reproducibility Block E** exactly after authorization and a successful executable-head run. It derives the current PR and successful run from the reviewed branch head, fetches run/job API records, downloads every required job log, and parses checkout evidence.
+On a clean `/tmp`, run **Reproducibility Block F first** to create and syntax-check `/tmp/stage3_hosted_artifacts.py`; its comparator self-test runs immediately when comparator artifacts already exist, otherwise Block E downloads them before the final invocation. Then run **Reproducibility Block E** after authorization and a successful executable-head run. E refuses a missing parser, derives the current PR/run from the reviewed branch head, selects exact job IDs, fetches each log independently, downloads artifacts, and finally invokes the already-created parser.
 
-The parser requires one exact Stage 3 synthetic merge in every job log, requires every checkout subject’s full 40-character head and base to match the PR API head/base, and records PR, run, branch head, synthetic merge, base, and the three job IDs. It independently re-parses comparator logs and refuses anything other than comparator synthetic merge `c1ab289e4fdd31e7cc5be2c8322a2557c48e1a26`, head `0c785ce18193b5900f8d810a8a4dc7e0f10c9f1e`, and base `459c5d6b57f5f35c97d3076bee25a6f65ba515be`.
+The collector refuses duplicate/missing required jobs, fetches checks/Ubuntu/Windows logs by their exact API job IDs, and validates each log independently. Every log must contain the exact pull-merge fetch ref, exact 40-character checkout SHA, and exact `Merge head into base` subject. It then reads the merge objects directly: GitHub’s tested pull-ref merge is constructed by checking out the base and merging the PR head, so parent 1 must equal the API base and parent 2 must equal the API head. Comparator parents must be `459c5d6b...` then `0c785ce...`; Stage 3 parents must be its recorded API base then head. Any reversal or mismatch is refused rather than normalized away.
 
 Expected: all required jobs have `success`; Stage 3 provenance is written to `/tmp/wingman-stage3-hosted/provenance.json`; Windows and Ubuntu artifacts are downloaded with both evidence files present.
 
-- [ ] **Step 8: Compare exercised synthetic-merge blobs and hosted artifacts**
+- [ ] **Step 8: Compare the complete synthetic diff and hosted artifacts**
 
-Block E compares **comparator synthetic merge to Stage 3 synthetic merge**, not branch head to branch head, for the files actually exercised by Actions: `.github/workflows/ci.yml`, the complete `scripts`, `tests/fixtures`, `tests/conftest.py`, `tests/node_scenario_worker.py`, all three unchanged target tests, `pyproject.toml`, `uv.lock`, and complete `packaging`. Any unequal exercised control makes timing comparison inconclusive.
+Block E computes the **complete** `git diff --name-only c1ab289e..stage3Synthetic`. It derives the expected union from two independently checked sets: comparator synthetic to final merged Stage 2 baseline `8d5b9305` must be exactly `docs/ci-current-owner-lifecycle-consolidation-results.md`; `8d5b9305` to the Stage 3 branch head must be exactly the Stage 3 spec, plan, results, and `tests/test_shoot_screens.py`. The full synthetic diff must equal that union exactly—no hand-picked executable subset.
 
-Branch heads are handled separately: Block E compares source baseline `8d5b9305` to the Stage 3 authored branch head only for the four-path authored-diff allowlist. Comparator branch head is not used as a substitute for the comparator synthetic merge.
+The same script explicitly refuses any full-diff path under `.github/`, `wingman/`, `scripts/`, `tests/fixtures/`, or `packaging/`; refuses `pyproject.toml`/`uv.lock`; and refuses every other test path. Branch-head authored accounting remains separate from synthetic-merge comparison. Unexpected base movement or any other file makes the comparison inconclusive.
 
-Then run **Reproducibility Block F**. It directly parses Windows/Ubuntu JUnit and timing JSON, normalizes complete identities including class owners, normalizes skip path fragments, cross-checks JSON/JUnit counts and per-file sums, and requires:
+The parser created by Block F and invoked at the end of Block E directly parses Windows/Ubuntu JUnit and timing JSON, normalizes complete identities including class owners, normalizes skip path fragments, cross-checks JSON/JUnit counts and per-file sums, and requires:
 
 - equal Stage 3 platform identity and target sets;
 - `220 / 90 / 91 / 101 = 502`, generated 22, Alerts 24;
@@ -1379,8 +1515,10 @@ Before treating this plan as executable, the plan author performs these checks:
 - [x] **Claim discipline:** Structural process counts and durations are observations only; no Stage 3, whole-suite, job, runner-efficiency, or critical-path speedup is claimed.
 - [x] **Probe isolation:** All five hit probes require the exact Result target and exact derived `(x, y)` coordinate; no global counter or cross-node state determines coverage.
 - [x] **Unique anchors:** Width, height, edge, tolerance, every, null, unrelated, direct, descendant, and point-removal mutants replace one full `_framed_content_script` helper block whose source count is exactly one.
-- [x] **Script syntax:** All six embedded temporary scripts were extracted from this Markdown and passed `python -m py_compile` or `bash -n`; Blocks A and C ran read-only/disposable successfully, Block D dry-run reproduced all five hashes, and Block F comparator self-test parsed PR #286’s artifacts.
-- [x] **Provenance separation:** Exercised blobs compare synthetic merge to synthetic merge; branch heads are compared separately only for the Stage 3 authored diff.
+- [x] **Script syntax:** All six embedded temporary scripts were extracted from this Markdown and passed `python -m py_compile` or `bash -n`; Block A applied the exact Task 4 edit in a disposable archive and actual collection equaled projection, Block C ran every disposable probe, Block D dry-run reproduced all five hashes, and Block F comparator self-test parsed PR #286 artifacts.
+- [x] **Hosted ordering:** A clean `/tmp` execution creates and checks Block F’s parser before Block E invokes it.
+- [x] **Per-job provenance:** Required job names must each resolve to exactly one API job; each job log independently proves fetch SHA, checkout SHA, and merge subject; merge-object parents prove base/head order.
+- [x] **Complete synthetic accounting:** Full comparator-to-Stage3 synthetic diff must equal the explicit one-file post-comparator Stage 2 set union the exact four-file Stage 3 authored set. Protected paths are also refused explicitly; branch-head accounting remains separate.
 
 ## Execution Handoff
 
