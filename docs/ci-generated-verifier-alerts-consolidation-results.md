@@ -21,7 +21,7 @@
 | Task 3 — qualify Alerts | COMPLETE — nine branch probes qualified the unchanged 24-case Alerts candidate; all nine exact restoration audits passed |
 | Task 4 — derive retained parameters and apply the sole executable edit | COMPLETE — Ruff-clean derived constants applied after Tasks 2–3 qualified; 220/90/91/101 = 502, exact 22+24 product, 20 removals, zero additions |
 | Task 5 — complete local verification | COMPLETE — fresh inventories, focused families, five 502-case orders, focused/full JUnit, exact 14-skip audit, independent gates, and scope/restoration audits passed |
-| Task 6 — polish, review, publication, and hosted evidence | NOT STARTED — Task 6 owns this evidence |
+| Task 6 — polish, review, publication, and hosted evidence | COMPLETE THROUGH LOCAL EVIDENCE COMMIT — PR #287 rerun provenance/artifacts passed exact comparison against PR #286; bounded decision is GO for review of a separate later tranche only; evidence commit remains intentionally unpushed |
 
 ## Exact 522-ID baseline inventory
 
@@ -4497,13 +4497,152 @@ The current focused JUnit contains zero of the 20 published removed IDs. The fro
 - COMPLETE — Task 3 Alerts mutation verification is recorded above.
 - COMPLETE — Task 4 parameter derivation, exact collection delta, and affected-file verification are recorded above.
 - COMPLETE — Task 5 fresh local endpoint verification, JUnit/skip audit, independent gates, scope proof, and restoration/residue audits are recorded above.
-- NOT STARTED — Task 6 owns final fresh verification after polish/review.
+- COMPLETE — Task 6 local polish/review preparation, hosted PR #287 rerun provenance, exact PR #286 artifact comparison, bounded decision, and local evidence commit are recorded below. The evidence commit is intentionally not pushed, so no hosted evidence-head check is claimed.
 
 ## Hosted evidence
 
-Task 1 comparator evidence is COMPLETE for PR #286 run `35882408360`: checks `107253913132`, Ubuntu `107253913433`, and Windows `107253913529` all succeeded and checked out synthetic merge `c1ab289e4fdd31e7cc5be2c8322a2557c48e1a26` from run-scoped head `0c785ce18193b5900f8d810a8a4dc7e0f10c9f1e` and base `459c5d6b57f5f35c97d3076bee25a6f65ba515be`.
+### Runs and attempt separation
 
-NOT STARTED — Task 6 owns Stage 3 publication and hosted candidate evidence. Task 1 does not publish a branch, start a Stage 3 workflow, or make a hosted speedup claim.
+The authorized executable head was PR #287 head `db2185768b919331c54370d3532215e53d5583bd`. GitHub Actions run `35994945673` had two attempts. Attempt 1 is retained as failed evidence and is not used as a passing comparator. Attempt 2 is the successful hosted candidate evidence.
+
+| Attempt | Required job | Job ID | Conclusion | Pytest result |
+|---:|---|---:|---|---|
+| 1 | `checks` | `107617543470` | success | no Test step |
+| 1 | `test (ubuntu-latest)` | `107617543072` | failure | `16,590 passed, 14 skipped, 1 failed`; only `tests/test_fleetsharing_worker.py::test_preserved_real_thread_submit_flood_cannot_shorten_publish_retry` failed |
+| 1 | `test (windows-latest)` | `107617543320` | failure | `16,536 passed, 67 skipped, 2 failed`; the same submit-flood test plus `tests/test_fleetsharing_worker.py::test_preserved_real_thread_mailbox_publishes_latest_after_held_publication` failed |
+| 2 | `checks` | `107621272336` | success | no Test step |
+| 2 | `test (ubuntu-latest)` | `107621270623` | success | `16,591 passed, 14 skipped in 287.55s` |
+| 2 | `test (windows-latest)` | `107621270652` | success | `16,538 passed, 67 skipped in 835.02s` |
+
+Both failed tests are outside the Stage 3 authored diff and remained unmodified. Exact job-log API downloads, rather than `gh run view`'s rerun-selected output, established the attempt-1 failures. The successful rerun passed both tests. Failed-attempt artifacts are recorded separately below and were never supplied to the passing artifact parser.
+
+### Exact per-job merge provenance
+
+Every required successful job log independently contains the one exact pull-merge fetch ref, the full checkout SHA, and the exact merge subject shown here.
+
+| PR/run | Job | Exact fetch ref | Exact checkout SHA | Exact subject |
+|---|---:|---|---|---|
+| PR #286 / `35882408360` | checks `107253913132` | `+c1ab289e4fdd31e7cc5be2c8322a2557c48e1a26:refs/remotes/pull/286/merge` | `c1ab289e4fdd31e7cc5be2c8322a2557c48e1a26` | `Merge 0c785ce18193b5900f8d810a8a4dc7e0f10c9f1e into 459c5d6b57f5f35c97d3076bee25a6f65ba515be` |
+| PR #286 / `35882408360` | Ubuntu `107253913433` | `+c1ab289e4fdd31e7cc5be2c8322a2557c48e1a26:refs/remotes/pull/286/merge` | `c1ab289e4fdd31e7cc5be2c8322a2557c48e1a26` | `Merge 0c785ce18193b5900f8d810a8a4dc7e0f10c9f1e into 459c5d6b57f5f35c97d3076bee25a6f65ba515be` |
+| PR #286 / `35882408360` | Windows `107253913529` | `+c1ab289e4fdd31e7cc5be2c8322a2557c48e1a26:refs/remotes/pull/286/merge` | `c1ab289e4fdd31e7cc5be2c8322a2557c48e1a26` | `Merge 0c785ce18193b5900f8d810a8a4dc7e0f10c9f1e into 459c5d6b57f5f35c97d3076bee25a6f65ba515be` |
+| PR #287 / `35994945673` attempt 2 | checks `107621272336` | `+ab2028f55f080e6067d7cc62002451f96171fa68:refs/remotes/pull/287/merge` | `ab2028f55f080e6067d7cc62002451f96171fa68` | `Merge db2185768b919331c54370d3532215e53d5583bd into 8d5b93058d9de3def9c17d222ba2d665eb0ba87b` |
+| PR #287 / `35994945673` attempt 2 | Ubuntu `107621270623` | `+ab2028f55f080e6067d7cc62002451f96171fa68:refs/remotes/pull/287/merge` | `ab2028f55f080e6067d7cc62002451f96171fa68` | `Merge db2185768b919331c54370d3532215e53d5583bd into 8d5b93058d9de3def9c17d222ba2d665eb0ba87b` |
+| PR #287 / `35994945673` attempt 2 | Windows `107621270652` | `+ab2028f55f080e6067d7cc62002451f96171fa68:refs/remotes/pull/287/merge` | `ab2028f55f080e6067d7cc62002451f96171fa68` | `Merge db2185768b919331c54370d3532215e53d5583bd into 8d5b93058d9de3def9c17d222ba2d665eb0ba87b` |
+
+The API and merge objects agree:
+
+| PR | API base / parent 1 | API head / parent 2 | Synthetic merge |
+|---|---|---|---|
+| #286 | `459c5d6b57f5f35c97d3076bee25a6f65ba515be` | `0c785ce18193b5900f8d810a8a4dc7e0f10c9f1e` | `c1ab289e4fdd31e7cc5be2c8322a2557c48e1a26` |
+| #287 | `8d5b93058d9de3def9c17d222ba2d665eb0ba87b` | `db2185768b919331c54370d3532215e53d5583bd` | `ab2028f55f080e6067d7cc62002451f96171fa68` |
+
+### Complete synthetic diff and protected paths
+
+The complete comparator-synthetic-to-Stage-3-synthetic diff is exactly this five-path union:
+
+```text
+docs/ci-current-owner-lifecycle-consolidation-results.md
+docs/ci-generated-verifier-alerts-consolidation-results.md
+docs/superpowers/plans/2026-09-23-generated-verifier-alerts-consolidation.md
+docs/superpowers/specs/2026-09-23-generated-verifier-alerts-consolidation-design.md
+tests/test_shoot_screens.py
+```
+
+The independently checked components are exact:
+
+- comparator synthetic `c1ab289e...` to merged Stage 2 baseline `8d5b9305...`: only `docs/ci-current-owner-lifecycle-consolidation-results.md`;
+- `8d5b9305...` to PR #287 head `db218576...`: exactly the Stage 3 results, plan, spec, and `tests/test_shoot_screens.py`;
+- no full-diff path under `.github/`, `wingman/`, `scripts/`, `tests/fixtures/`, or `packaging/`;
+- no `pyproject.toml`, `uv.lock`, or other `tests/` path.
+
+### Exact artifact identity
+
+Each artifact below contains both `pytest-result.xml` and `pytest-timing.json`. GitHub exposed duplicate Stage 3 artifact names across rerun attempts, so passing evidence was pinned by artifact ID and archive digest. The files downloaded by Block E's name selection are byte-identical to the separately downloaded successful artifact IDs.
+
+| Evidence | Platform | Artifact ID | Archive digest | Extracted XML SHA-256 | Extracted timing SHA-256 | Use |
+|---|---|---:|---|---|---|---|
+| PR #286 run `35882408360` | Ubuntu | `10761309004` | `sha256:21b7e4429d1cc88c7c0f95da659f9cfd6fc996288d05a8d275fbef4d06d65803` | `8ee7d2cebdcbb18eb60713389f71f21a8cb7ded0eb0737509df82cccaac34848` | `dae37583f6297f34be9971f78df755f811596c8309482e1fcff195c7e5605cc0` | passing comparator |
+| PR #286 run `35882408360` | Windows | `10761886982` | `sha256:db44e49bcb719b0fec96e76e3c447f34c3a61685f1a92cb31561d76a8f36dadc` | `8506cfe751a57015e74d49c9e06d29d4700965a6f620843f78175ff379fac618` | `d1396ef801c4a8bc8663a7f2b7f4c7744cad3075d100fae616eb7504ec354c66` | passing comparator |
+| PR #287 attempt 1 | Ubuntu | `10806550092` | `sha256:c9ed696d35b47511a05b7b7a9a35e035f4d4c42052aa68364207f2921806a6ca` | `d4ef1682b33511e62e484f9820ffdd142c3794b5edfe53b3aef35ca158504503` | `bffd5c9e69f8d61f3de9a7e7888248e5dfd5f57f65728fcb16d2a6baa0febb86` | failed-attempt record only; excluded from passing evidence |
+| PR #287 attempt 1 | Windows | `10806360903` | `sha256:d01b9270463d1b369b3949c7d8c06f3fd62c28e31da82275d7c026adc19d4277` | `529ae69930f7056bbe728875e1015a54484759f3811e7e5167b5f6e7eee23e21` | `2e27e537796e068b1c1f6f83be6c59426f1a1266b5c965c60e536d8dd545163e` | failed-attempt record only; excluded from passing evidence |
+| PR #287 attempt 2 | Ubuntu | `10806746306` | `sha256:ae44499ef75418f94fc220351e30cd8bbba35709d89d8f76737cc0a7fef6a17f` | `40e3c887f72c1332cf0ebbcd31716c5bce63d60e776d6c8e0437a3b8ecb690ff` | `ece3c88211a0e00bc29fbcfa0d052c1a5e02296386984c75e65d9a4c5519157c` | passing Stage 3 evidence |
+| PR #287 attempt 2 | Windows | `10807115906` | `sha256:0249528a74786639791c9386c1dafe41cd93abb667682efd25b25de7e885606b` | `24875479dcd8d146251b605a44733d9afaf0656e64d16273aade3c56da31c8be` | `b8a929884c1550a92464124eabe0ade06f33202a0e00a117577acb12945b63ae` | passing Stage 3 evidence |
+
+Passing artifact roots are `/tmp/wingman-pr286-{ubuntu,windows}` and `/tmp/wingman-stage3-{ubuntu,windows}`. Separate pinned downloads under `/tmp/stage3-success-{ubuntu,windows}-id` proved the Stage 3 roots resolve to attempt-2 artifacts. Failed-attempt artifacts were parsed only under `/tmp/stage3-failed-{ubuntu,windows}-id` to document their failures; they were not used for any passing assertion.
+
+### Hosted identity, skip, and timing-json agreement
+
+The Block F parser passed against the pinned passing artifacts on both platforms:
+
+- Stage 3 Ubuntu and Windows complete identity sets are equal at 16,605 unique cases; target sets are equal at 502 unique cases.
+- Counts are exactly `220 / 90 / 91 / 101 = 502`; generated is 22, Alerts is 24, and combined product is 46.
+- Declared-file-order target SHA-256 is exactly `592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a` on both platforms.
+- Comparator minus Stage 3 is exactly the [published 20-ID removal set](#exact-20-removals-and-zero-additions); Stage 3 minus comparator is empty across the complete suite.
+- Ubuntu has 14 exact normalized skip tuples and Windows has 67; each Stage 3 ordered tuple list equals its platform's PR #286 comparator list exactly.
+- Failures/errors are zero/zero in both passing artifacts.
+- Timing JSON case counts and every per-file count/second sum agree with JUnit within the parser's `1e-9` bound.
+
+These identity and skip results yield the hosted pass counts actually observed in the successful logs: Ubuntu `16,591 passed, 14 skipped`; Windows `16,538 passed, 67 skipped`.
+
+### Hosted testcase-time sums
+
+All seconds below are JUnit testcase sums from one comparator execution and one successful Stage 3 rerun. They are observations only and are not a speedup, Stage 3 runtime, overall-runtime, runner-efficiency, job-duration, or critical-path claim.
+
+| Platform | Scope | PR #286 cases / seconds | PR #287 cases / seconds |
+|---|---|---:|---:|
+| Ubuntu | generated product | 35 / 4.923s | 22 / 2.568s |
+| Ubuntu | Alerts product | 31 / 2.454s | 24 / 1.428s |
+| Ubuntu | combined product | 66 / 7.377s | 46 / 3.996s |
+| Ubuntu | `tests/test_shoot_screens.py` | 240 / 23.304s | 220 / 16.900s |
+| Ubuntu | `tests/test_new_screenshots.py` | 90 / 16.237s | 90 / 12.891s |
+| Ubuntu | `tests/test_current_screenshots.py` | 91 / 11.901s | 91 / 9.149s |
+| Ubuntu | `tests/test_fittings_page.py` | 101 / 19.826s | 101 / 13.256s |
+| Ubuntu | four-file target | 522 / 71.268s | 502 / 52.196s |
+| Ubuntu | common retained target IDs | 502 / 68.989s | 502 / 52.196s |
+| Ubuntu | removed target IDs | 20 / 2.279s | — |
+| Ubuntu | all cases | 16,625 / 341.717s | 16,605 / 270.006s |
+| Windows | generated product | 35 / 6.155s | 22 / 4.310s |
+| Windows | Alerts product | 31 / 3.552s | 24 / 2.912s |
+| Windows | combined product | 66 / 9.707s | 46 / 7.222s |
+| Windows | `tests/test_shoot_screens.py` | 240 / 30.799s | 220 / 29.859s |
+| Windows | `tests/test_new_screenshots.py` | 90 / 20.145s | 90 / 20.109s |
+| Windows | `tests/test_current_screenshots.py` | 91 / 17.042s | 91 / 17.978s |
+| Windows | `tests/test_fittings_page.py` | 101 / 22.330s | 101 / 24.073s |
+| Windows | four-file target | 522 / 90.316s | 502 / 92.019s |
+| Windows | common retained target IDs | 502 / 87.385s | 502 / 92.019s |
+| Windows | removed target IDs | 20 / 2.931s | — |
+| Windows | all cases | 16,625 / 656.277s | 16,605 / 799.874s |
+
+### API Test-step and job observations
+
+| Evidence | Job | Test step | Job |
+|---|---:|---:|---:|
+| PR #286 | checks `107253913132` | — | 16s |
+| PR #286 | Ubuntu `107253913433` | 375s | 414s |
+| PR #286 | Windows `107253913529` | 698s | 754s |
+| PR #287 attempt 1 | checks `107617543470` | — | 9s |
+| PR #287 attempt 1 | Ubuntu `107617543072` | 369s | 415s |
+| PR #287 attempt 1 | Windows `107617543320` | 617s | 675s |
+| PR #287 attempt 2 | checks `107621272336` | — | 9s |
+| PR #287 attempt 2 | Ubuntu `107621270623` | 289s | 309s |
+| PR #287 attempt 2 | Windows `107621270652` | 839s | 907s |
+
+The Windows successful-rerun four-file target observation is 1.703s above the comparator, and its common-retained target observation is 4.634s above the comparator; generated, Alerts, and combined-product sums are lower. This one-run mixed observation is not treated as an unexplained material target regression and supports no timing conclusion. The larger Windows all-case/Test-step/job observations are disclosed but are outside the target comparison and likewise support no overall claim.
+
+### Reproducibility execution notes
+
+Block F was extracted first onto clean hosted-output paths, syntax-checked, and reported that Block E would download comparator artifacts. The plan's Block E then encountered two local tool-compatibility stops, both before any passing conclusion:
+
+1. exact invocation stopped at `gh pr view -R ...` because installed `gh` 2.100.0 requires an explicit PR argument for a cross-repository branch;
+2. after substituting explicit PR `287`, execution stopped at `git fetch origin 8d5b9305` because Git cannot fetch an abbreviated object ID.
+
+The final execution used only these two temporary evidence-preserving substitutions: explicit PR `287`, whose API head equals the reviewed branch head, and the plan-published full baseline SHA `8d5b93058d9de3def9c17d222ba2d665eb0ba87b` in the fetch tuple. All provenance, merge-parent, complete-diff, protected-path, artifact, identity, skip, hash, and timing assertions otherwise ran unchanged and passed. Neither compatibility copy changed the repository.
+
+### Bounded next decision
+
+**GO — for review of a separate later tranche only.** Required rerun jobs passed; exact per-job provenance, merge parents, artifacts, cross-platform identities, skip tuples, 20 removals, zero additions, target hash, complete synthetic diff, and protected-path contracts all passed. The mixed one-run target timing observations above do not establish a material regression or an improvement.
+
+This GO does not authorize workflow selection, budget enforcement, sharding, cadence changes, dependency changes, lower Fittings work, or any Stage 3, suite, job, runner-efficiency, critical-path, speedup, or overall-runtime claim. The evidence commit remains intentionally unpushed, so required checks on that documentation head are not claimed.
 
 ## Deviations, expansions, and concerns
 
@@ -4514,7 +4653,11 @@ NOT STARTED — Task 6 owns Stage 3 publication and hosted candidate evidence. T
 - Task 2 concerns: none. All generated owner and shared-helper mutants failed at the intended assertion; no survivor or masked failure triggered expansion/redesign. Executable acceptance, final local verification, and Stage 3 hosted comparison remain owned by later tasks.
 - Task 3 concerns: none. Both owner guards, all three visibility mechanisms, and all four pairwise edge comparisons failed at their intended fixture assertions; all 15 base states and both walk outcomes remained green; no survivor, masking, expansion, redesign, or persistent fixture/source change occurred.
 - Task 4 concerns: none. The controller-approved quality-gate correction replaced tuple concatenation with tuple unpacking and accepted Ruff's Alerts formatting; exact identities, order, hashes, and 20/0 delta are unchanged. Test bodies, scenario semantics, scripts, fixtures, and all other test modules remain unchanged.
-- Task 5 concerns: local evidence is complete and matches the unchanged-environment projection exactly. Remaining work is deliberately limited to Task 6 fresh review and, only after explicit authorization, hosted Windows/Ubuntu evidence and publication. Local testcase and wall timings are observations from one Linux run and support no speedup claim.
+- Task 5 concerns: local evidence is complete and matches the unchanged-environment projection exactly. Local testcase and wall timings are observations from one Linux run and support no speedup claim.
+- Task 6 initial hosted attempt: Ubuntu failed only the unmodified Fleet submit-flood real-thread test; Windows failed that test plus the unmodified Fleet held-publication mailbox test. Failed-attempt artifacts are identified separately and excluded from passing evidence. The successful rerun passed both.
+- Task 6 collector compatibility: exact Block E exposed `gh` 2.100.0 cross-repository PR resolution and abbreviated-fetch incompatibilities. The final run used explicit PR #287 and the already-published full baseline SHA only; all evidence assertions otherwise ran unchanged.
+- Task 6 timing concern: Windows four-file/common-retained and all-case/Test/job observations are higher than the comparator while the product sums are lower. One run supports neither a regression attribution nor an improvement claim; no speedup or overall conclusion is made.
+- Task 6 publication boundary: the local evidence commit is intentionally not pushed. Hosted checks on the evidence-document head and the plan's final fresh-reviewer gate remain unclaimed.
 
 ## Required self-review
 
@@ -4556,4 +4699,11 @@ NOT STARTED — Task 6 owns Stage 3 publication and hosted candidate evidence. T
 - COMPLETE — Task 5 mutation/restoration review found no surviving protected-path edit; all mutation evidence remains attributed to Tasks 2–3 and no witness-only change was committed.
 - COMPLETE — Task 5 whole-branch scope is exactly the approved four-path allowlist; protected production, script, fixture, workflow, dependency, configuration, packaging, marker, budget, and shard paths are unchanged.
 - COMPLETE — Task 5 claim discipline records counts and timings only as observations and makes no Stage 3, suite, job, runner-efficiency, critical-path, or overall speedup claim.
-- COMPLETE — Task 5 staged boundary remains closed: Task 6 publication/hosted comparison requires explicit authorization, and Stage 4 lower Fittings plus workflow/budget/sharding work remain STOP.
+- COMPLETE — Task 5 staged boundary remained closed until explicit publication authorization; Stage 4 lower Fittings plus workflow/budget/sharding work remain STOP.
+
+- COMPLETE — Task 6 independently validated all six successful comparator/candidate checkout logs, both merge objects and parent order, and the complete five-path synthetic diff.
+- COMPLETE — Task 6 pinned duplicate-name rerun artifacts by API ID/digest, proved Block E's downloads equal the successful attempt-2 files, and kept failed-attempt artifacts separate from passing evidence.
+- COMPLETE — Task 6 reparsed both platforms: 16,605 equal identities, exact 14/67 comparator-matching skip tuples, zero failures/errors, `220 / 90 / 91 / 101 = 502`, hash `592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a`, exact 20 removals, and zero additions.
+- COMPLETE — Task 6 checked generated, Alerts, combined-product, per-file, four-file, all-case, removed-ID, and common-retained-ID testcase sums plus API Test-step/job observations without making a speedup or overall claim.
+- COMPLETE — Task 6 decision is bounded GO for review of a separate later tranche only; no workflow, budget, shard, cadence, dependency, lower-Fittings, or timing action is authorized.
+- NOT CLAIMED — the evidence commit is not pushed, so hosted checks on the exact documentation head and a fresh final reviewer approval remain outside this evidence record.
