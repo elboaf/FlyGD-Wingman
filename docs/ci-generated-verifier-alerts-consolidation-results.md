@@ -20,7 +20,7 @@
 | Task 2 — qualify the generated candidate and shared helper | COMPLETE — 36 branch probes qualified the unchanged 22-case generated candidate; 16 worktree restorations and 20 disposable restorations passed |
 | Task 3 — qualify Alerts | COMPLETE — nine branch probes qualified the unchanged 24-case Alerts candidate; all nine exact restoration audits passed |
 | Task 4 — derive retained parameters and apply the sole executable edit | COMPLETE — Ruff-clean derived constants applied after Tasks 2–3 qualified; 220/90/91/101 = 502, exact 22+24 product, 20 removals, zero additions |
-| Task 5 — complete local verification | NOT STARTED — Task 5 owns this evidence |
+| Task 5 — complete local verification | COMPLETE — fresh inventories, focused families, five 502-case orders, focused/full JUnit, exact 14-skip audit, independent gates, and scope/restoration audits passed |
 | Task 6 — polish, review, publication, and hosted evidence | NOT STARTED — Task 6 owns this evidence |
 
 ## Exact 522-ID baseline inventory
@@ -4360,6 +4360,82 @@ The exact unexpanded candidate was applied only after both mutation ledgers qual
 
 ## Local verification
 
+### Task 5
+
+Task 5 was run from clean executable endpoint `839039be`. All timings below are single-run observations only; they do not support a Stage 3, suite, job, runner-efficiency, or critical-path speedup claim.
+
+#### Fresh inventory and focused mutation-owned families
+
+- Reproducibility Block A: PASS — baseline `240 / 90 / 91 / 101 = 522`, baseline product `66`, baseline hash `07c1e080c24157001c3aa936ac7c26ec6307e9f246973cfb65f92164c31a51e6`; candidate `220 / 90 / 91 / 101 = 502`, retained product `22 + 24 = 46`, actual/projection equality true, candidate hash `592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a`, product hash `359da2ca8f13df995ac43ed76bd0aa19ba75cb4ec3b1fe1e4fb6c8e6a38d71f9`, exactly 20 removals, zero additions, and temporary checkouts cleaned.
+- Exact focused mutation-owned families: PASS — `136 passed in 20.58s`.
+
+#### Five exact four-file orders
+
+| Order | Exact ordered IDs | SHA-256 | Result |
+|---|---:|---|---|
+| Normal file | 502 | `592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a` | `502 passed in 72.08s` |
+| Reverse file | 502 | `ac515f4df98d8036bf5248d64a5a3645491cfe1c596f133f965056b5d6e24e79` | `502 passed in 72.88s` |
+| Forward node | 502 | `592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a` | `502 passed in 70.12s` |
+| Reverse node | 502 | `411ca8b2d5b3bae72340dcbdd672ae473af53123fd924dcfdc8e0268d88ef14f` | `502 passed in 70.14s` |
+| Shuffled node, seed `0x8d5b9305` | 502 | `ba282ea09921c2f6edb13c0e7b2946b858a584bd2593360d6d7f919a037a23ee` | `502 passed in 70.14s` |
+
+Block D passed every node as a distinct argument for explicit-node orders, refused any collection other than the published 502 identities, and wrote the ordered lists and pytest outputs under `/tmp/wingman-stage3-five-orders`.
+
+#### Release codec and focused four-file JUnit
+
+- Release codec build: PASS — `cargo build --locked --release` completed in `5.20s`; the built binary was copied to `packaging/bin`, and `codec.codec_available()` returned true.
+- Focused four-file pytest: PASS — `502 passed in 72.42s`, zero skipped, failures, or errors; JUnit `/tmp/wingman-stage3-focused.xml` contains 502 unique cases and the exact four-file hash.
+
+| Focused JUnit testcase sum | Cases | Testcase seconds |
+|---|---:|---:|
+| `tests/test_shoot_screens.py` | 220 | 28.118s |
+| `tests/test_new_screenshots.py` | 90 | 14.212s |
+| `tests/test_current_screenshots.py` | 91 | 11.926s |
+| `tests/test_fittings_page.py` | 101 | 11.433s |
+| Generated retained product | 22 | 2.869s |
+| Alerts retained product | 24 | 2.283s |
+| Combined retained product | 46 | 5.152s |
+| **Four-file total** | **502** | **65.689s** |
+
+The current focused JUnit contains zero of the 20 published removed IDs. The frozen removed-ID projection reconciles `502 + 20 = 522`. The actual selected candidate structure is 28 process starts: four persistent family workers plus 24 one-shot Alerts processes; the frozen baseline structure was 35. These are structural counts, not a timing or speedup claim.
+
+#### Complete pytest and skip audit
+
+- Full pytest: PASS — `16,591 passed, 14 skipped in 562.10s`; JUnit `/tmp/wingman-stage3-full.xml` contains 16,605 unique cases, zero failures/errors, and a 520.742s testcase-time sum.
+- Identity audit against the Task 1 Ubuntu comparator artifact: PASS — baseline 16,625 identities minus the exact published 20 removals equals the actual 16,605 identities; zero identities were added.
+- Skip audit: PASS — the actual 14 ordered normalized tuples equal the Task 1 local baseline byte-for-text. No Node, codec, or unexplained native-contract availability skip appeared.
+
+| # | Actual test identity | Actual normalized reason |
+|---:|---|---|
+| 1 | `tests/test_clipserve.py::test_a_live_reader_does_not_block_deletion` | `delete-while-open is a Windows sharing rule` |
+| 2 | `tests/test_evesettings_profilecopy.py::test_prepare_copy_rejects_a_real_windows_server_junction_outside_the_root` | `requires a real Windows junction` |
+| 3 | `tests/test_evesettings_profilecopy.py::test_prepare_copy_rejects_a_real_windows_profile_junction_outside_the_server` | `requires a real Windows junction` |
+| 4 | `tests/test_evesettings_profilecopy.py::test_cleanup_refuses_a_stage_shaped_windows_junction_rather_than_following_it` | `requires a real Windows junction` |
+| 5 | `tests/test_eveskills_dpapi.py::test_round_trips_on_windows` | `requires real DPAPI` |
+| 6 | `tests/test_eveskills_dpapi.py::test_crypt32_binding_is_cached` | `requires real WinDLL` |
+| 7 | `tests/test_preview_host.py::test_stop_from_another_thread_really_exits_the_pump` | `needs a real message pump and window station` |
+| 8 | `tests/test_preview_win32.py::test_every_used_function_is_declared` | `binds user32/gdi32/dwmapi` |
+| 9 | `tests/test_preview_win32.py::test_pointer_sized_returns_are_not_left_at_the_c_int_default` | `binds user32/gdi32/dwmapi` |
+| 10 | `tests/test_preview_win32.py::test_bind_is_cached_so_declarations_are_applied_once` | `binds user32/gdi32/dwmapi` |
+| 11 | `tests/test_tray.py::test_adapter_loads_against_the_pinned_pystray_windows_backend` | `pystray Windows backend` |
+| 12 | `tests/test_ui_setup_profile.py::test_recognized_file_shaped_junction_refuses[core_char_31.dat]` | `requires real Windows junction` |
+| 13 | `tests/test_ui_setup_profile.py::test_recognized_file_shaped_junction_refuses[prefs.ini]` | `requires real Windows junction` |
+| 14 | `tests/test_wanderer_integration.py::test_real_windows_credential_document_roundtrip_replace_binding_and_remove` | `real Windows user-bound DPAPI required` |
+
+#### Independent gates, scope, restoration, and residue
+
+- `node scripts/js_smoke.js`: PASS — every page module loaded.
+- `node --test tests/fixtures/screenshot_dom.test.cjs`: PASS — 35 passed; zero failed, cancelled, skipped, or todo.
+- `cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml`: PASS — one passed; zero failed/ignored/measured/filtered.
+- `uv run --no-sync ruff check .`: PASS — `All checks passed!`.
+- `uv run --no-sync ruff format --check .`: PASS — 520 files already formatted.
+- `git diff --check`: PASS — no output.
+- Whole-branch allowlist: PASS — exact paths were `docs/ci-generated-verifier-alerts-consolidation-results.md`, `docs/superpowers/plans/2026-09-23-generated-verifier-alerts-consolidation.md`, `docs/superpowers/specs/2026-09-23-generated-verifier-alerts-consolidation-design.md`, and `tests/test_shoot_screens.py`.
+- Protected-path audit: PASS — the explicit diff over `wingman`, `.github`, `scripts`, `tests/fixtures`, `packaging`, `pyproject.toml`, and `uv.lock` was empty.
+- Temporary-mutant restoration: PASS — `scripts/shoot_screens.py`, `tests/fixtures/screenshot_pages.cjs`, and `tests/fixtures/screenshot_alerts.cjs` have no worktree diff.
+- Executable added-line scan: PASS — no mutation/witness-only marker, debug output, or unresolved placeholder word.
+- Changed-path placeholder audit: PASS — the sole uppercase placeholder-word occurrence is the design's policy sentence defining the required scan; approved code/provenance ellipses are syntax or an explicit SHA abbreviation, not unresolved work.
+
 ### Task 4
 
 - Qualification precondition: PASS — Tasks 2 and 3 were both approved `QUALIFIED` without expansion before any parameter was removed.
@@ -4420,7 +4496,7 @@ The exact unexpanded candidate was applied only after both mutation ledgers qual
 - COMPLETE — Task 2 generated mutation verification is recorded above.
 - COMPLETE — Task 3 Alerts mutation verification is recorded above.
 - COMPLETE — Task 4 parameter derivation, exact collection delta, and affected-file verification are recorded above.
-- NOT STARTED — Task 5 owns complete local endpoint verification.
+- COMPLETE — Task 5 fresh local endpoint verification, JUnit/skip audit, independent gates, scope proof, and restoration/residue audits are recorded above.
 - NOT STARTED — Task 6 owns final fresh verification after polish/review.
 
 ## Hosted evidence
@@ -4438,6 +4514,7 @@ NOT STARTED — Task 6 owns Stage 3 publication and hosted candidate evidence. T
 - Task 2 concerns: none. All generated owner and shared-helper mutants failed at the intended assertion; no survivor or masked failure triggered expansion/redesign. Executable acceptance, final local verification, and Stage 3 hosted comparison remain owned by later tasks.
 - Task 3 concerns: none. Both owner guards, all three visibility mechanisms, and all four pairwise edge comparisons failed at their intended fixture assertions; all 15 base states and both walk outcomes remained green; no survivor, masking, expansion, redesign, or persistent fixture/source change occurred.
 - Task 4 concerns: none. The controller-approved quality-gate correction replaced tuple concatenation with tuple unpacking and accepted Ruff's Alerts formatting; exact identities, order, hashes, and 20/0 delta are unchanged. Test bodies, scenario semantics, scripts, fixtures, and all other test modules remain unchanged.
+- Task 5 concerns: local evidence is complete and matches the unchanged-environment projection exactly. Remaining work is deliberately limited to Task 6 fresh review and, only after explicit authorization, hosted Windows/Ubuntu evidence and publication. Local testcase and wall timings are observations from one Linux run and support no speedup claim.
 
 ## Required self-review
 
@@ -4472,3 +4549,11 @@ NOT STARTED — Task 6 owns Stage 3 publication and hosted candidate evidence. T
 - COMPLETE — verified exact four-file counts `220 / 90 / 91 / 101 = 502`, hash `592c3cd0c7d93d595b25eeb04d7d5adf2029bfeb8de6695f2ddc68d8eb37aa3a`, exact 20 removals, and zero additions.
 - COMPLETE — verified every removed generated identity has semantic, wiring, and shared-helper evidence and every removed Alerts identity has owner and mechanism/edge evidence.
 - COMPLETE — verified only `tests/test_shoot_screens.py` and this results document changed; no test body, scenario implementation, script, fixture, or other test module changed.
+
+- COMPLETE — Task 5 placeholder review found no unresolved placeholder, mutation/witness-only marker, or debug residue in executable added lines; the one uppercase documentation match is the design's own scan policy.
+- COMPLETE — Task 5 arithmetic reconciles `22 + 24 = 46`, `220 + 90 + 91 + 101 = 502`, `502 + 20 = 522`, `16,591 + 14 = 16,605`, `16,625 - 20 = 16,605`, and structural `4 + 24 = 28` versus frozen baseline `4 + 31 = 35`.
+- COMPLETE — Task 5 identity evidence agrees across fresh Block A, all five ordered executions, focused JUnit, full JUnit, the exact 20-ID baseline delta, hashes, and zero-addition proof.
+- COMPLETE — Task 5 mutation/restoration review found no surviving protected-path edit; all mutation evidence remains attributed to Tasks 2–3 and no witness-only change was committed.
+- COMPLETE — Task 5 whole-branch scope is exactly the approved four-path allowlist; protected production, script, fixture, workflow, dependency, configuration, packaging, marker, budget, and shard paths are unchanged.
+- COMPLETE — Task 5 claim discipline records counts and timings only as observations and makes no Stage 3, suite, job, runner-efficiency, critical-path, or overall speedup claim.
+- COMPLETE — Task 5 staged boundary remains closed: Task 6 publication/hosted comparison requires explicit authorization, and Stage 4 lower Fittings plus workflow/budget/sharding work remain STOP.
