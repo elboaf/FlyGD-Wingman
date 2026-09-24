@@ -547,7 +547,7 @@ Expected: 190 controller IDs with exact 188 prefix and exact two-ID suffix, unch
 
 ### Block D — authorized hosted run collection and complete audit
 
-Run this block only after Task 5's explicit publication authorization. `NEW_RUN` is mandatory and is the stable workflow-run ID; the collector reads `run_attempt` from the API, calls `gh run view --attempt`, stores every attempt's run/jobs metadata, and selects jobs/artifacts only from the current successful attempt. Earlier failed attempts remain documented but cannot enter passing evidence. Artifact IDs are selected by exact name and current-attempt job time window, then downloaded by ID so duplicate names from reruns cannot silently select attempt 1.
+Run this block only after Task 5's explicit publication authorization. `NEW_RUN` is mandatory and is the stable workflow-run ID; the collector reads `run_attempt` from the API, calls `gh run view --attempt`, stores every attempt's run/jobs metadata, and selects jobs/artifacts only from the current successful attempt. Earlier failed attempts remain documented but cannot enter passing evidence. GitHub's run `head_sha` is treated as the PR branch head and must equal `run.pull_requests[0].head.sha`; the exact base is `run.pull_requests[0].base.sha`. The synthetic merge is derived independently from each selected job's checkout log using the `HEAD is now at <short> Merge <full-head> into <full-base>` line and the full SHA immediately following `[command]...log -1 --format=%H`, matching the Linux and quoted-Windows formats observed in run `36001306188`. Artifact IDs are selected by exact name and current-attempt job time window, then downloaded by ID so duplicate names from reruns cannot silently select attempt 1.
 
 ```bash
 cat > /tmp/setup_fixture_hosted_collect.sh <<'SH'
@@ -563,7 +563,7 @@ cd "$W"
 
 gh api "repos/$R/actions/runs/$NEW_RUN" > "$O/run.json"
 ATTEMPT=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["run_attempt"])' "$O/run.json")
-PR=$(python -c 'import json,sys; p=json.load(open(sys.argv[1]))["pull_requests"]; assert len(p)==1,p; print(p[0]["number"])' "$O/run.json")
+PR=$(python -c 'import json,sys; r=json.load(open(sys.argv[1])); p=r["pull_requests"]; assert len(p)==1,p; assert r["head_sha"]==p[0]["head"]["sha"],(r["head_sha"],p[0]["head"]["sha"]); print(p[0]["number"])' "$O/run.json")
 gh run view "$NEW_RUN" -R "$R" --attempt "$ATTEMPT" --json databaseId,headSha,status,conclusion,url,jobs > "$O/run-view.json"
 gh pr view "$PR" -R "$R" --json number,url,headRefName,headRefOid,baseRefName,baseRefOid > "$O/pr.json"
 for attempt in $(seq 1 "$ATTEMPT"); do
@@ -581,13 +581,21 @@ from pathlib import Path
 
 out = Path(sys.argv[1])
 run = json.loads((out / 'run.json').read_text())
+view = json.loads((out / 'run-view.json').read_text())
 pr = json.loads((out / 'pr.json').read_text())
 jobs = json.loads((out / 'jobs.json').read_text())['jobs']
 pages = json.loads((out / 'artifact-pages.json').read_text())
 artifacts = [row for page in pages for row in page['artifacts']]
-assert run['conclusion'] == 'success', run['conclusion']
+assert run['conclusion'] == view['conclusion'] == 'success'
 assert run['event'] == 'pull_request', run['event']
-assert run['head_sha'] != pr['headRefOid'], (run['head_sha'], pr['headRefOid'])
+run_prs = run['pull_requests']
+assert len(run_prs) == 1, run_prs
+run_pr = run_prs[0]
+run_head = run_pr['head']['sha']
+run_base = run_pr['base']['sha']
+assert run['head_sha'] == view['headSha'] == run_head
+assert pr['number'] == run_pr['number']
+assert pr['headRefOid'] == run_head, ('run is not for current final PR head', run_head, pr['headRefOid'])
 roles = {
     'checks': 'checks',
     'ubuntu': 'test (ubuntu-latest)',
@@ -622,14 +630,17 @@ for role, artifact_name in {
 metadata = {
     'run_id': run['id'],
     'run_attempt': run['run_attempt'],
-    'synthetic_merge': run['head_sha'],
-    'pr_number': pr['number'],
-    'pr_head': pr['headRefOid'],
-    'base': pr['baseRefOid'],
+    'run_head': run_head,
+    'run_base': run_base,
+    'pr_number': run_pr['number'],
+    'run_head_ref': run_pr['head']['ref'],
+    'run_base_ref': run_pr['base']['ref'],
+    'current_pr_head': pr['headRefOid'],
+    'current_pr_base': pr['baseRefOid'],
     'jobs': selected,
     'artifacts': selected_artifacts,
 }
-(out / 'selected.json').write_text(json.dumps(metadata, sort_keys=True, indent=2) + '\n')
+(out / 'selection.json').write_text(json.dumps(metadata, sort_keys=True, indent=2) + '\n')
 for role, job in selected.items():
     (out / f'{role}-job-id').write_text(str(job['id']))
 for role, artifact in selected_artifacts.items():
@@ -638,7 +649,7 @@ PY
 
 for role in checks ubuntu windows; do
   JOB_ID=$(cat "$O/$role-job-id")
-  gh api "repos/$R/actions/jobs/$JOB_ID/logs" > "$O/logs/$role.log"
+  gh api --allow-escape-sequences "repos/$R/actions/jobs/$JOB_ID/logs" > "$O/logs/$role.log"
 done
 for role in ubuntu windows; do
   ARTIFACT_ID=$(cat "$O/$role-artifact-id")
@@ -649,18 +660,73 @@ for role in ubuntu windows; do
   test -f "$O/artifacts/$role/pytest-timing.json"
 done
 
+python - "$O" <<'PY'
+from __future__ import annotations
+import json, re, sys
+from pathlib import Path
+
+out = Path(sys.argv[1])
+metadata = json.loads((out / 'selection.json').read_text())
+merge_pattern = re.compile(
+    r'HEAD is now at (?P<short>[0-9a-f]{7,40}) Merge '
+    r'(?P<head>[0-9a-f]{40}) into (?P<base>[0-9a-f]{40})'
+)
+full_pattern = re.compile(r'(?P<sha>[0-9a-f]{40})\s*$')
+
+def checkout_evidence(path):
+    lines = path.read_text(errors='replace').splitlines()
+    merges = [merge_pattern.search(line) for line in lines]
+    merges = [match for match in merges if match]
+    commands = [
+        index for index, line in enumerate(lines)
+        if '[command]' in line and 'log -1 --format=%H' in line
+    ]
+    assert len(merges) == len(commands) == 1, (path, len(merges), commands)
+    command = commands[0]
+    assert command + 1 < len(lines), path
+    full = full_pattern.search(lines[command + 1])
+    assert full, (path, lines[command + 1])
+    merge = merges[0]
+    synthetic = full.group('sha')
+    assert synthetic.startswith(merge.group('short')), (path, synthetic, merge.group('short'))
+    return {
+        'synthetic_merge': synthetic,
+        'short': merge.group('short'),
+        'merge_head': merge.group('head'),
+        'merge_base': merge.group('base'),
+    }
+
+checkout = {
+    role: checkout_evidence(out / f'logs/{role}.log')
+    for role in ('checks', 'ubuntu', 'windows')
+}
+synthetics = {row['synthetic_merge'] for row in checkout.values()}
+assert len(synthetics) == 1, checkout
+for role, row in checkout.items():
+    assert row['merge_head'] == metadata['run_head'], (role, row)
+    assert row['merge_base'] == metadata['run_base'], (role, row)
+metadata['synthetic_merge'] = synthetics.pop()
+metadata['checkout'] = checkout
+(out / 'selected.json').write_text(json.dumps(metadata, sort_keys=True, indent=2) + '\n')
+PY
+
 SYNTHETIC=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["synthetic_merge"])' "$O/selected.json")
-HEAD_SHA=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["pr_head"])' "$O/selected.json")
-BASE_SHA=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["base"])' "$O/selected.json")
-git fetch --quiet origin "+refs/pull/$PR/merge:refs/remotes/pull/$PR/merge"
-test "$(git rev-parse refs/remotes/pull/$PR/merge)" = "$SYNTHETIC"
-git fetch --quiet origin "$HEAD_SHA" "$BASE_SHA"
+HEAD_SHA=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["run_head"])' "$O/selected.json")
+BASE_SHA=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["run_base"])' "$O/selected.json")
+git fetch --quiet --no-tags origin "$SYNTHETIC" "$HEAD_SHA" "$BASE_SHA"
 git cat-file -e "$SYNTHETIC^{commit}"
 git cat-file -e "$HEAD_SHA^{commit}"
 git cat-file -e "$BASE_SHA^{commit}"
+read -r COMMIT PARENT_BASE PARENT_HEAD EXTRA <<< "$(git rev-list --parents -n 1 "$SYNTHETIC")"
+test "$COMMIT" = "$SYNTHETIC"
+test "$PARENT_BASE" = "$BASE_SHA"
+test "$PARENT_HEAD" = "$HEAD_SHA"
+test -z "${EXTRA:-}"
+git fetch --quiet origin "+refs/pull/$PR/merge:refs/remotes/pull/$PR/merge"
+test "$(git rev-parse refs/remotes/pull/$PR/merge)" = "$SYNTHETIC"
 git cat-file -e "ab2028f55f080e6067d7cc62002451f96171fa68^{commit}"
 HOSTED_ROOT="$O" python /tmp/setup_fixture_hosted_audit.py
-printf 'HOSTED_ROOT=%s\nNEW_RUN=%s\nATTEMPT=%s\nPR=%s\n' "$O" "$NEW_RUN" "$ATTEMPT" "$PR"
+printf 'HOSTED_ROOT=%s\nNEW_RUN=%s\nATTEMPT=%s\nPR=%s\nSYNTHETIC=%s\n' "$O" "$NEW_RUN" "$ATTEMPT" "$PR" "$SYNTHETIC"
 SH
 bash -n /tmp/setup_fixture_hosted_collect.sh
 ```
@@ -783,11 +849,55 @@ def seconds(start, end):
     return (b - a).total_seconds()
 
 
+def checkout_evidence(path):
+    lines = path.read_text(errors='replace').splitlines()
+    merge_pattern = re.compile(
+        r'HEAD is now at (?P<short>[0-9a-f]{7,40}) Merge '
+        r'(?P<head>[0-9a-f]{40}) into (?P<base>[0-9a-f]{40})'
+    )
+    full_pattern = re.compile(r'(?P<sha>[0-9a-f]{40})\s*$')
+    merges = [merge_pattern.search(line) for line in lines]
+    merges = [match for match in merges if match]
+    commands = [
+        index for index, line in enumerate(lines)
+        if '[command]' in line and 'log -1 --format=%H' in line
+    ]
+    assert len(merges) == len(commands) == 1, (path, len(merges), commands)
+    command = commands[0]
+    assert command + 1 < len(lines), path
+    full = full_pattern.search(lines[command + 1])
+    assert full, (path, lines[command + 1])
+    merge = merges[0]
+    synthetic = full.group('sha')
+    assert synthetic.startswith(merge.group('short')), (path, synthetic, merge.group('short'))
+    return {
+        'synthetic_merge': synthetic,
+        'short': merge.group('short'),
+        'merge_head': merge.group('head'),
+        'merge_base': merge.group('base'),
+    }
+
+
 metadata = json.loads((O / 'selected.json').read_text())
+run = json.loads((O / 'run.json').read_text())
+pr = json.loads((O / 'pr.json').read_text())
+run_prs = run['pull_requests']
+assert len(run_prs) == 1, run_prs
+run_pr = run_prs[0]
 synthetic = metadata['synthetic_merge']
-head = metadata['pr_head']
-base = metadata['base']
+head = metadata['run_head']
+base = metadata['run_base']
+assert run['head_sha'] == run_pr['head']['sha'] == head
+assert run_pr['base']['sha'] == base
+assert run_pr['number'] == metadata['pr_number'] == pr['number']
+assert pr['headRefOid'] == metadata['current_pr_head'] == head
+assert metadata['current_pr_base'] == pr['baseRefOid']
 assert parents(synthetic) == [synthetic, base, head], parents(synthetic)
+merge_ref = subprocess.check_output(
+    ['git', '-C', str(W), 'rev-parse', f"refs/remotes/pull/{metadata['pr_number']}/merge"],
+    text=True,
+).strip()
+assert merge_ref == synthetic, (merge_ref, synthetic)
 assert changed(COMPARATOR_SYNTHETIC, MERGED_BASELINE) == KNOWN_POST_COMPARATOR
 assert changed(MERGED_BASELINE, head) == AUTHORED
 assert changed(COMPARATOR_SYNTHETIC, synthetic) == FULL_ALLOWED
@@ -800,18 +910,15 @@ assert not {
     and path not in {'tests/setup_fixtures.py', 'tests/test_ui_setup_controller.py'}
 }
 
-for role, log_path in {role: O / f'logs/{role}.log' for role in ('checks', 'ubuntu', 'windows')}.items():
-    text = log_path.read_text(errors='replace')
-    fetches = set(re.findall(
-        r'\+([0-9a-f]{40}):refs/remotes/pull/' + str(metadata['pr_number']) + r'/merge', text
-    ))
-    subjects = set(re.findall(
-        r'HEAD is now at [0-9a-f]+ Merge ([0-9a-f]{40}) into ([0-9a-f]{40})', text
-    ))
-    exact = set(re.findall(r'(?:^|\s)([0-9a-f]{40})$', text, re.M))
-    assert fetches == {synthetic}, (role, fetches)
-    assert subjects == {(head, base)}, (role, subjects)
-    assert synthetic in exact, (role, synthetic)
+checkout = {
+    role: checkout_evidence(O / f'logs/{role}.log')
+    for role in ('checks', 'ubuntu', 'windows')
+}
+assert {row['synthetic_merge'] for row in checkout.values()} == {synthetic}
+for role, row in checkout.items():
+    assert row == metadata['checkout'][role], (role, row, metadata['checkout'][role])
+    assert row['merge_head'] == head, (role, row)
+    assert row['merge_base'] == base, (role, row)
 
 baseline = {platform: parse_artifact(root) for platform, root in BASELINE_ROOTS.items()}
 candidate = {platform: parse_artifact(root) for platform, root in CANDIDATE_ROOTS.items()}
@@ -912,7 +1019,7 @@ PY
 python -m py_compile /tmp/setup_fixture_hosted_audit.py
 ```
 
-The parser defines every helper it uses (`changed`, `parents`, identity/skip normalization, artifact parsing, duration and hash functions). It proves run/PR/synthetic/base provenance, merge-parent order, exact six-path synthetic diff and protected paths, artifact hashes/IDs, timing-JSON agreement, full cross-platform identity equality, comparator+two exact additions and zero removals, 190 ordered controller IDs with 188 prefix/two suffix, platform-local skip equality, no controller/resource/Node/codec availability skip, pass/failure/error counts, retained setup/controller timing observations, and slowest retained Windows identities.
+The parser defines every helper it uses (`changed`, `parents`, `checkout_evidence`, identity/skip normalization, artifact parsing, duration and hash functions). It proves the run payload head equals the payload/current final PR head, takes the exact base from the run payload, independently re-extracts one identical synthetic merge from each of the three checkout logs, verifies each merge message names that run head/base, verifies parents `[base, head]`, and treats the current PR merge ref only as matching final-head corroboration. It then proves the exact six-path comparator-synthetic diff and protected paths, artifact hashes/IDs, timing-JSON agreement, full cross-platform identity equality, comparator+two exact additions and zero removals, 190 ordered controller IDs with 188 prefix/two suffix, platform-local skip equality, no controller/resource/Node/codec availability skip, pass/failure/error counts, retained setup/controller timing observations, and slowest retained Windows identities.
 
 ---
 
@@ -1223,6 +1330,7 @@ class _OSProxy:
         self._close_errors = list(close_errors)
         self._unlink_errors = list(unlink_errors)
         self.open_calls = []
+        self.open_descriptors = set()
         self.write_calls = []
         self.close_calls = []
         self.unlink_calls = []
@@ -1248,7 +1356,9 @@ class _OSProxy:
                 f"fresh open flags changed: {flags:#x} != {expected:#x}"
             )
             assert mode == 0o600, f"fresh open mode changed: {mode:o}"
-        return self._real.open(path, flags, mode)
+        descriptor = self._real.open(path, flags, mode)
+        self.open_descriptors.add(descriptor)
+        return descriptor
 
     def write(self, descriptor, data):
         self.write_calls.append((descriptor, bytes(data)))
@@ -1263,9 +1373,22 @@ class _OSProxy:
 
     def close(self, descriptor):
         self.close_calls.append(descriptor)
+        result = self._real.close(descriptor)
+        self.open_descriptors.discard(descriptor)
         if self._close_errors:
             raise self._close_errors.pop(0)
-        return self._real.close(descriptor)
+        return result
+
+    def release_tracked(self):
+        failures = []
+        for descriptor in tuple(self.open_descriptors):
+            try:
+                self._real.close(descriptor)
+            except OSError as error:
+                failures.append((descriptor, error))
+            else:
+                self.open_descriptors.discard(descriptor)
+        return failures
 
     def unlink(self, path):
         self.unlink_calls.append(Path(path))
@@ -1385,7 +1508,7 @@ def _snapshots(profile):
     )
 ```
 
-`_OSProxy` always delegates real operations and each owning module receives a distinct proxy. `_ClockProxy` replaces only `controller_mod.time` and delegates every member other than `time()`; it never mutates the shared stdlib `time` module.
+`_OSProxy` records each real descriptor after `os.open`. Its `close` delegates to the real close first, removes the descriptor only after physical close succeeds, and only then raises an injected sentinel. A real close failure therefore leaves the descriptor tracked for teardown. `release_tracked()` retries only still-tracked real descriptors. Each owning module receives a distinct proxy. `_ClockProxy` replaces only `controller_mod.time` and delegates every member other than `time()`; it never mutates the shared stdlib `time` module.
 
 - [ ] **Step 5: Replace the temporary RED body with the complete comprehensive witness**
 
@@ -1393,7 +1516,7 @@ Append this exact, non-parameterized test. The code executes parity bytes/docume
 
 ```python
 def test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_failures(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, request
 ):
     install_lossless_codec(monkeypatch)
     real_os = os
@@ -1406,6 +1529,30 @@ def test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_fail
     direct = _OSProxy(real_os, assert_fresh_open=True)
     direct.path = _PathProxy(real_os.path)
     atomic = _OSProxy(real_os)
+    proxies = [direct, atomic]
+    direct_root = tmp_path / "direct"
+
+    def make_proxy(**kwargs):
+        proxy = _OSProxy(real_os, assert_fresh_open=True, **kwargs)
+        proxies.append(proxy)
+        return proxy
+
+    def release_descriptors_and_files():
+        release_failures = []
+        for proxy in proxies:
+            release_failures.extend(proxy.release_tracked())
+        cleanup_failures = []
+        if direct_root.exists():
+            for path in direct_root.iterdir():
+                try:
+                    path.unlink()
+                except OSError as error:
+                    cleanup_failures.append((path, error))
+        assert release_failures == [], release_failures
+        assert cleanup_failures == [], cleanup_failures
+        assert all(not proxy.open_descriptors for proxy in proxies)
+
+    request.addfinalizer(release_descriptors_and_files)
     monkeypatch.setattr(setup_fixtures, "os", direct)
     monkeypatch.setattr(atomicio, "os", atomic)
 
@@ -1421,6 +1568,8 @@ def test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_fail
     assert atomic.fsync_calls == [], "fast atomic fsync count changed"
     assert direct.fsync_calls == [], "fast direct fsync count changed"
     assert len(direct.open_calls) == 4, "fast destination open count changed"
+    assert direct.open_descriptors == set()
+    assert atomic.open_descriptors == set()
     assert all(
         flags == expected_flags and mode == 0o600
         for _path, flags, mode in direct.open_calls
@@ -1553,10 +1702,9 @@ def test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_fail
                 error = caught
         return error
 
-    direct_root = tmp_path / "direct"
     direct_root.mkdir()
     success = direct_root / "success.dat"
-    proxy = _OSProxy(real_os, assert_fresh_open=True)
+    proxy = make_proxy()
     assert direct_call(success, b"payload", proxy, forbid_preflight=True) is None
     assert success.read_bytes() == b"payload"
     assert proxy.open_calls == [(success, expected_flags, 0o600)]
@@ -1564,14 +1712,14 @@ def test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_fail
 
     existing = direct_root / "existing.dat"
     existing.write_bytes(b"keep")
-    proxy = _OSProxy(real_os, assert_fresh_open=True)
+    proxy = make_proxy()
     error = direct_call(existing, b"replace", proxy, forbid_preflight=True)
     assert isinstance(error, FileExistsError)
     assert proxy.open_calls == [(existing, expected_flags, 0o600)]
     assert existing.read_bytes() == b"keep"
 
     partial = direct_root / "partial.dat"
-    proxy = _OSProxy(real_os, assert_fresh_open=True, write_steps=(2, 1, 1))
+    proxy = make_proxy(write_steps=(2, 1, 1))
     assert direct_call(partial, b"abcdef", proxy) is None
     assert partial.read_bytes() == b"abcdef"
     assert len(proxy.write_calls) >= 4 and len(proxy.close_calls) == 1
@@ -1586,7 +1734,7 @@ def test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_fail
         {
             "name": "zero-progress",
             "path": direct_root / "zero.dat",
-            "proxy": _OSProxy(real_os, assert_fresh_open=True, write_steps=(2, 0)),
+            "proxy": make_proxy(write_steps=(2, 0)),
             "original": None,
             "fragment": "no progress",
             "close_count": 1,
@@ -1595,9 +1743,7 @@ def test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_fail
         {
             "name": "write-failure",
             "path": direct_root / "write-failure.dat",
-            "proxy": _OSProxy(
-                real_os, assert_fresh_open=True, write_steps=(2, write_failure)
-            ),
+            "proxy": make_proxy(write_steps=(2, write_failure)),
             "original": write_failure,
             "fragment": "",
             "close_count": 1,
@@ -1606,9 +1752,7 @@ def test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_fail
         {
             "name": "close-failure",
             "path": direct_root / "close-failure.dat",
-            "proxy": _OSProxy(
-                real_os, assert_fresh_open=True, close_errors=(close_failure,)
-            ),
+            "proxy": make_proxy(close_errors=(close_failure,)),
             "original": close_failure,
             "fragment": "",
             "close_count": 2,
@@ -1617,9 +1761,7 @@ def test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_fail
         {
             "name": "cleanup-close-failure",
             "path": direct_root / "cleanup-close.dat",
-            "proxy": _OSProxy(
-                real_os,
-                assert_fresh_open=True,
+            "proxy": make_proxy(
                 write_steps=(2, cleanup_close_original),
                 close_errors=(cleanup_close,),
             ),
@@ -1631,9 +1773,7 @@ def test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_fail
         {
             "name": "cleanup-unlink-failure",
             "path": direct_root / "cleanup-unlink.dat",
-            "proxy": _OSProxy(
-                real_os,
-                assert_fresh_open=True,
+            "proxy": make_proxy(
                 write_steps=(2, cleanup_unlink_original),
                 unlink_errors=(cleanup_unlink,),
             ),
@@ -1656,10 +1796,10 @@ def test_fresh_initial_dat_publisher_preserves_fixture_parity_isolation_and_fail
             assert not case["path"].exists(), case["name"]
         else:
             assert case["path"].read_bytes() == case["remaining"], case["name"]
-            real_os.unlink(case["path"])
+        assert case["proxy"].open_descriptors == set(), case["name"]
 ```
 
-The earliest parity assertion is exact byte inventory. Therefore both `extra-byte` and `mapping-order` intentionally fail there; the later snapshot/JSON assertions remain executable independent evidence when bytes agree. All failure branches execute inside one named-case loop with per-case messages rather than pytest parametrization. The cleanup-close and cleanup-unlink rows prove cleanup failures cannot mask the original exception; unlink failure leaves the partial file only because removal was impossible, and the witness removes it through the captured real module.
+The earliest parity assertion is exact byte inventory. Therefore both `extra-byte` and `mapping-order` intentionally fail there; the later snapshot/JSON assertions remain executable independent evidence when bytes agree. All failure branches execute inside one named-case loop with per-case messages rather than pytest parametrization. Injected close failure occurs only after the real descriptor has been physically closed and untracked; the helper's retry therefore sees an already-closed descriptor without leaking a Windows handle. The cleanup-close row proves the original write exception survives an injected cleanup-close report after physical close. The cleanup-unlink row separately proves the exact partial-file contract. The registered finalizer retries any genuinely still-tracked real descriptors first, then removes direct-test files, and requires zero release, cleanup, or descriptor residue.
 
 - [ ] **Step 8: Run focused GREEN and unchanged default callers**
 
@@ -1722,9 +1862,9 @@ git add tests/setup_fixtures.py tests/test_ui_setup_controller.py \
 git commit -m "test: qualify fresh setup fixture publisher"
 ```
 
-**Implementer report:** Commit SHA; exact helper/signature; 189-ID and 136-user evidence; direct open flags/mode/count; 4-vs-0 construction fsyncs; parity/isolation/failure results; mutation ledger; restoration proof; changed paths; concerns.
+**Implementer report:** Commit SHA; exact helper/signature; 189-ID and 136-user evidence; direct open flags/mode/count; descriptor tracking/release proof including reported-close and cleanup-close cases; 4-vs-0 construction fsyncs; parity/isolation/failure results; mutation ledger; restoration proof; changed paths; concerns.
 
-**Fresh reviewer gate:** Review helper cleanup line-by-line, prove no preflight or shared backing, re-run the witness and every mutant, inspect exact failure locations, confirm default calls omit `publish`, compare 188-prefix/one-suffix identities, and approve before Task 3.
+**Fresh reviewer gate:** Review helper cleanup line-by-line, prove no preflight or shared backing, verify injected close errors occur after physical close, force-review the finalizer's real-close-before-unlink order and zero tracked descriptors, re-run the witness and every mutant, inspect exact failure locations, confirm default calls omit `publish`, compare 188-prefix/one-suffix identities, and approve before Task 3.
 
 **Fix loop:** Restore all mutants first. Any helper, parity, direct-contract, mutation, identity, or default-path issue returns to RED/GREEN in this task. Add only the smallest correction in the two authorized test files/results, rerun every affected mutant and unchanged schema checks, commit a fix, and repeat fresh review.
 
@@ -1825,6 +1965,8 @@ def test_fast_fixture_construction_preserves_controller_body_atomic_persistence(
     assert construction["opens"] and len(construction["opens"]) == 4
     assert construction["direct_fsyncs"] == 0
     assert construction["atomic_fsyncs"] == 0
+    assert direct.open_descriptors == set()
+    assert atomic.open_descriptors == set()
     assert controller._settings["eve_settings"]["profile"] == str(source.profile)
 
     direct.open_calls.clear()
@@ -1925,6 +2067,8 @@ def test_fast_fixture_construction_preserves_controller_body_atomic_persistence(
         "selection",
     ], events
     assert direct.open_calls == [] and direct.fsync_calls == []
+    assert direct.open_descriptors == set()
+    assert atomic.open_descriptors == set()
 
     assert {path.name for path in destination.iterdir()} == {
         base.account_path.name,
@@ -2286,14 +2430,14 @@ bash -n /tmp/setup_fixture_hosted_collect.sh
 NEW_RUN="$NEW_RUN" bash /tmp/setup_fixture_hosted_collect.sh
 ```
 
-Expected: the collector resolves PR head/base and run-head synthetic merge without an undefined variable; validates merge parents `[synthetic, base, head]`; downloads logs by exact current-attempt job IDs and artifacts by exact IDs; records archive/XML/timing hashes; and writes `hosted-audit.json` beneath `/tmp/wingman-setup-hosted-$NEW_RUN`.
+Expected: the collector proves `run.head_sha == run.pull_requests[0].head.sha == current final PR head`, takes the base only from `run.pull_requests[0].base.sha`, extracts one identical synthetic merge SHA from checks/Ubuntu/Windows checkout logs, verifies each merge message names that head/base, fetches the exact synthetic/head/base objects, validates merge parents `[synthetic, base, head]`, and only then corroborates that the current final-head PR merge ref equals the extracted synthetic. It downloads logs by exact current-attempt job IDs and artifacts by exact IDs, records archive/XML/timing hashes, and writes `hosted-audit.json` beneath `/tmp/wingman-setup-hosted-$NEW_RUN`.
 
 - [ ] **Step 8: Inspect every hosted acceptance output**
 
 Read `selected.json`, all `run-attempt-*.json`/`jobs-attempt-*.json`, `hosted-audit.json`, both complete/controller inventories, normalized skip files, artifact hashes, and job logs. Require the parser's executable assertions to have proved:
 
 - exact six-path comparator-synthetic-to-candidate-synthetic allowlist and protected paths;
-- checkout-log fetch ref, exact synthetic SHA, merge subject, and merge-parent provenance for checks/Ubuntu/Windows;
+- exact per-job checkout-log synthetic SHA immediately after the logged `git log -1 --format=%H` command, identical across checks/Ubuntu/Windows, with each `HEAD is now at` merge subject naming the run payload head/base;
 - 16,607 complete identities on each platform with equal cross-platform sets;
 - exact two named additions and zero removals across the complete suite;
 - exact ordered 190 controller IDs with the 188 baseline prefix and two-name suffix;
@@ -2337,10 +2481,10 @@ Push this evidence commit only if separately authorized, then wait for required 
 - **Spec coverage:** Task 1 owns exact baseline/provenance/timing/skips/results ledger; Task 2 owns helper/default seam/parity/isolation/direct failures and all helper mutants; Task 3 owns sole fixture opt-in, unchanged signature, body categories/order and direct body mutant; Task 4 owns complete local endpoint and scope; Task 5 owns polish/review/change explanation/publication stop/hosted comparison.
 - **Names and ordering:** The exact two witness names are defined once in Global Constraints, Block C, Tasks 2–3, and hosted acceptance; Task 2 appends the first, Task 3 appends the second, preserving the 188 prefix.
 - **Counts and arithmetic:** `136 × 4 = 544`, `188 + 2 = 190`, `16,605 + 2 = 16,607`, Ubuntu projection `16,593 + 14`, Windows projection `16,540 + 67`.
-- **Signature consistency:** `_publish_fresh_file(path: Path, data: bytes) -> None`; `seed_profile(..., initial_dat_publish=None)`; fixture remains `setup(tmp_path, monkeypatch)`; both witnesses use `(tmp_path, monkeypatch)` and do not request `setup`.
-- **OS proxy safety:** both module bindings are replaced separately; no attribute on the shared real `os` module is mutated; exact flags include platform `O_BINARY`; exact mode is `0o600`; real operations delegate.
-- **Original exception implementability:** helper retries/suppresses cleanup while a bare `raise` preserves the write/close sentinel object; existing-file open failure occurs before cleanup and cannot unlink the predecessor.
+- **Signature consistency:** `_publish_fresh_file(path: Path, data: bytes) -> None`; `seed_profile(..., initial_dat_publish=None)`; fixture remains `setup(tmp_path, monkeypatch)`; the comprehensive witness uses `(tmp_path, monkeypatch, request)` only for descriptor/file finalization, the body witness uses `(tmp_path, monkeypatch)`, and neither requests `setup`.
+- **OS proxy safety:** both module bindings are replaced separately; no attribute on the shared real `os` module is mutated; exact flags include platform `O_BINARY`; exact mode is `0o600`; every opened real descriptor is tracked, injected close failures occur only after real close, real close failures remain tracked, and finalization requires no descriptor/file residue.
+- **Original exception implementability:** helper retries/suppresses cleanup while a bare `raise` preserves the original write or reported-close sentinel object; cleanup-close reporting occurs after deterministic physical close and cannot mask the original write exception; existing-file open failure occurs before cleanup and cannot unlink the predecessor.
 - **Mutation exactness:** Block B requires one exact source match; snapshots/restores exact bytes, hash, binary diff, and status; and defines independent O_EXCL-removal, O_EXCL-retaining `Path.exists`/`Path.stat` preflight, direct fsync, atomic delegation, bytes, order, line-ending, hardlink, and body direct-write mutants with intended assertions.
 - **Identity hashes:** scripts compute actual hashes; the plan contains no projected node hash target.
-- **Hosted comparison:** comparator synthetic/full diff uses the exact six-path allowlist and platform-local skip comparison; failed/incomparable evidence cannot be normalized away.
+- **Hosted comparison:** run `head_sha` is branch head, never synthetic; the synthetic is independently extracted from all three checkout logs, checked against run-payload head/base and parents `[base, head]`, then used for the exact six-path comparator diff and platform-local skip comparison. Failed/incomparable evidence cannot be normalized away.
 - **No placeholders or scope expansion:** every task contains exact files, interfaces, commands, code, expected outcomes, commit, implementer report, reviewer gate, and fix loop; no production or workflow implementation is authorized.
