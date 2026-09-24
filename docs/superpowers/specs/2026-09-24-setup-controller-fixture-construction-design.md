@@ -141,16 +141,21 @@ atomic I/O API.
 Its contract is exact:
 
 - the destination must not exist;
-- open it with exclusive creation (`O_CREAT | O_EXCL | O_WRONLY`, plus
-  `O_BINARY` where available);
+- make exactly one destination-creation call through the module-level `os`
+  binding, with the exact shape
+  `os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0), 0o600)`;
+- include `O_BINARY` when the platform provides it, include no append or
+  truncation semantics, and use exactly `0o600`, matching the atomic
+  temporary-file path's intended creation mode where mode bits are meaningful;
+- place the entire state-exclusivity guarantee in that one `os.open` call;
+  `Path.exists()`, `stat()`, access checks, or any other check-then-open
+  preflight are neither permitted substitutes nor evidence of exclusivity;
 - use a regular standalone file, never a hardlink, reflink, symlink, copied
   session template, or shared backing object;
 - use the module-level `os` binding in `tests.setup_fixtures` for `os.open`,
   `os.write`, `os.close`, and cleanup through `os.unlink` so behavior and
   failure paths are directly observable without mutating the shared `os`
   module object;
-- use a mode consistent with the atomic temporary-file path where the platform
-  exposes meaningful mode bits;
 - loop until every byte has been written, handling legal partial writes;
 - treat a zero-byte write as failure rather than looping forever;
 - close the descriptor before returning;
@@ -355,28 +360,39 @@ Create at least two fast fixtures under independent directories and prove:
 In the same comprehensive witness, call the fresh publisher directly with
 module-level `os` proxies and exercise all of these executable contracts:
 
-1. an existing destination is refused by `O_EXCL` and its bytes are unchanged;
-2. repeated partial `os.write` results are looped until the complete payload is
+1. the `tests.setup_fixtures.os` proxy captures every `os.open(path, flags,
+   mode)` tuple, and each publisher invocation makes exactly one such call for
+   its destination; before delegating, the proxy asserts that `flags` equal
+   exactly `O_CREAT | O_EXCL | O_WRONLY`, plus `O_BINARY` where available, and
+   that `mode == 0o600`, so append, truncation, missing exclusivity, extra open
+   calls, and mode drift fail at the creation boundary;
+2. an existing destination is refused by that exclusive `os.open` and its
+   bytes are unchanged; preservation remains required but is not sufficient
+   evidence without the exact open-call assertion;
+3. repeated partial `os.write` results are looped until the complete payload is
    present before close;
-3. zero write progress raises, closes the descriptor, and removes the partial
+4. zero write progress raises, closes the descriptor, and removes the partial
    destination;
-4. a sentinel exception after an earlier partial write closes and removes the
+5. a sentinel exception after an earlier partial write closes and removes the
    partial destination while preserving that original exception;
-5. a sentinel close exception removes the destination and preserves that
+6. a sentinel close exception removes the destination and preserves that
    original close exception.
 
-For failure cleanup, assert both path absence and the exact original exception
-identity or sentinel. The duplicate-profile `mkdir` refusal is not evidence for
-any of these publisher-level branches.
+A `Path.exists()`, `stat()`, or similar absence preflight earns no acceptance
+credit: exclusivity must be visible in the one captured destination-creation
+call. For failure cleanup, assert both path absence and the exact original
+exception identity or sentinel. The duplicate-profile `mkdir` refusal is not
+evidence for any of these publisher-level branches.
 
 ### D. Construction fsync witness
 
 Capture the real `os` module first, then replace both module bindings with
 separate delegating proxies:
 
-- `tests.setup_fixtures.os` observes direct helper calls, including any
-  accidental direct `fsync`, while delegating `open`, `write`, `close`,
-  `unlink`, and all other attributes to the real module;
+- `tests.setup_fixtures.os` observes direct helper calls, captures every
+  `os.open(path, flags, mode)` tuple, and observes any accidental direct
+  `fsync`, while delegating `open`, `write`, `close`, `unlink`, and all other
+  attributes to the real module;
 - `wingman.atomicio.os` observes atomic-writer `fsync` calls while delegating to
   that same real module.
 
@@ -388,8 +404,11 @@ operation rather than suppressing it.
 Using equivalent source-plus-recipient construction:
 
 - the default atomic path records exactly four fsync calls through the
-  `atomicio` proxy and zero through the `setup_fixtures` proxy;
-- the explicit fresh-file path records zero fsync calls through both proxies;
+  `atomicio` proxy, zero through the `setup_fixtures` proxy, and zero
+  `setup_fixtures.os.open` calls;
+- the explicit fresh-file path records zero fsync calls through both proxies
+  and exactly four `setup_fixtures.os.open` calls, one for each intended DAT
+  destination, each with the exact exclusive flags and `0o600` mode above;
 - encoded bytes and all parity checks remain equal.
 
 The separate channels are load-bearing mutation evidence: adding `os.fsync`
@@ -464,7 +483,18 @@ A red test counts only when it fails at the intended assertion. An unrelated
 codec error, cleanup error, collection error, or later controller assertion is
 not sufficient.
 
-### 1. Add direct fsync to the fresh helper
+### 1. Remove only `O_EXCL` from the fresh helper
+
+Temporarily remove only `O_EXCL` from the helper's `os.open` flags, leaving its
+other flags, mode, write loop, close, and cleanup behavior unchanged.
+
+Required result: the comprehensive witness fails at the proxy's exact
+open-flag assertion before the proxy delegates to the real `os.open`. A later
+existing-file overwrite, byte-parity difference, cleanup observation, or
+controller failure does not qualify this mutant. A path absence/existence
+preflight cannot substitute for the missing syscall-level exclusivity.
+
+### 2. Add direct fsync to the fresh helper
 
 Temporarily call `os.fsync` from the fresh helper after writing and before
 close, without delegating to `atomicio`.
@@ -474,7 +504,7 @@ Required result: the comprehensive construction witness fails because the
 `atomicio.os` channel must remain zero. An atomic-channel failure or byte-parity
 failure does not qualify this mutant.
 
-### 2. Delegate the fresh helper to the atomic writer
+### 3. Delegate the fresh helper to the atomic writer
 
 Temporarily replace the helper body with
 `atomicio.write_bytes_atomic(path, data)`.
@@ -484,7 +514,7 @@ Required result: the comprehensive construction witness fails because the
 must remain zero. The direct-fsync mutant and this delegation mutant require
 separate runs, intended assertions, and restoration records.
 
-### 3. Bypass one rewritten body DAT atomically
+### 4. Bypass one rewritten body DAT atomically
 
 After the normal codec encode, signature check, readback verification, and
 revision checks, temporarily publish one rewritten staged DAT with a
@@ -500,7 +530,7 @@ body fsyncs fall from seven to six. Failure through `FileExistsError`, codec
 verification, revision validation, or publication refusal does not qualify this
 mutant. The fixture construction count alone also does not qualify it.
 
-### 4. Alter direct bytes, order, or line endings
+### 5. Alter direct bytes, order, or line endings
 
 Apply independent temporary defects to the fast construction path:
 
@@ -512,7 +542,7 @@ Required result: atomic-versus-fast byte parity, decoded document/type/order,
 content-revision, discovery, or manifest assertions fail at the specific
 boundary. A broad later controller failure is not the intended witness.
 
-### 5. Share or hardlink a template
+### 6. Share or hardlink a template
 
 Temporarily publish a DAT via a shared file or hardlink, or make two fast
 fixtures alias one on-disk source.
@@ -525,15 +555,16 @@ must not allow this mutant to survive.
 
 | Temporary mutant | Required witness identity | Intended failure |
 |---|---|---|
+| Remove only helper `O_EXCL` | Comprehensive publisher/parity/isolation/failure witness | exact captured open flags fail before delegation; no later overwrite/parity/cleanup failure qualifies |
 | Direct helper `os.fsync` | Comprehensive publisher/parity/isolation/failure witness | `tests.setup_fixtures.os` channel changes from 0; atomic channel stays 0 |
 | Delegate helper to atomic writer | Comprehensive publisher/parity/isolation/failure witness | `wingman.atomicio.os` channel changes from 0; direct channel stays 0 |
 | Replacement-capable direct body DAT publication | Construction-versus-body persistence witness | operation publishes, rewritten atomic category changes `2 → 1`, body total `7 → 6` |
 | Alter bytes, type/order, or line endings | Comprehensive publisher/parity/isolation/failure witness | exact bytes/document/revision/discovery/manifest distinction fails |
 | Shared or hardlinked template | Comprehensive publisher/parity/isolation/failure witness | file identity/link/mutation-isolation assertion fails |
 
-The five direct publisher failure branches are executable contracts within the
-comprehensive witness, not extra parameter identities and not substitutes for
-the mutation ledger above.
+The six direct publisher contracts are executable within the comprehensive
+witness, not extra parameter identities and not substitutes for the six-entry
+mutation ledger above.
 
 ## Identity and hosted acceptance
 
@@ -585,9 +616,9 @@ masks collection drift.
 
 Run with Node available and the built release settings codec installed:
 
-- the two focused witnesses, including every direct publisher failure branch,
-  both independent fsync channels, exact seven-body-fsync categorization, and
-  successful publication;
+- the two focused witnesses, including every direct publisher contract, exact
+  `os.open` flags/mode/count evidence, both independent fsync channels, exact
+  seven-body-fsync categorization, and successful publication;
 - `tests/test_ui_setup_controller.py`;
 - `tests/test_ui_setup_schema.py`;
 - `tests/test_ui_setup_profile.py`;
@@ -752,9 +783,16 @@ ordinary success tests are not substitutes.
 ### Exclusive creation assumptions
 
 The helper is unsafe for an existing destination by design. Keep it private to
-test fixtures and require `O_EXCL`. Test the helper itself against an existing
-file and assert unchanged bytes; the separate duplicate-profile `mkdir` refusal
-is insufficient. The helper must never grow into a replacement API.
+test fixtures and put exclusivity in its single destination-creation call:
+exactly `O_CREAT | O_EXCL | O_WRONLY`, plus `O_BINARY` where available, with no
+append/truncation semantics and mode `0o600`. The delegating proxy must capture
+and assert that exact `os.open(path, flags, mode)` tuple before calling the real
+operation. A `Path.exists()`, `stat()`, or similar preflight is check-then-open
+and earns no exclusivity evidence. Test the helper itself against an existing
+file and assert unchanged bytes, but treat that preservation only as supporting
+evidence; the exact open tuple is decisive. The separate duplicate-profile
+`mkdir` refusal is also insufficient. The helper must never grow into a
+replacement API.
 
 ### Monkeypatching the shared `os` module
 
@@ -826,15 +864,20 @@ Before publication, the results document must record a final review covering:
 - isolation/metadata — no shared identity, hardlink, or template exists and
   fast files are ordinary, writable, single-link files with stable ordinary
   metadata;
-- failure contracts — O_EXCL, partial writes, zero progress, mid-write failure,
-  and close failure all execute with exact byte/cleanup/exception assertions;
+- creation/failure contracts — every delegated `os.open(path, flags, mode)` is
+  captured; each publisher call has exactly one destination open with exact
+  `O_CREAT | O_EXCL | O_WRONLY` plus platform `O_BINARY`, no append/truncation
+  semantics, and mode `0o600`; existing-file preservation remains supporting
+  evidence, and partial writes, zero progress, mid-write failure, and close
+  failure execute with exact byte/cleanup/exception assertions;
 - persistence — default construction records four atomic-channel fsyncs, fast
   construction records zero on both channels, and the body records six staging
   fsyncs (`2 + 2 + 2`) before directory publication plus the seventh
   selection-persistence fsync after publication;
-- mutation restoration — direct-fsync, atomic-delegation, replacement-capable
-  body bypass, bytes/order/line-ending, and shared-template mutants fail at
-  their intended assertions and every temporary edit is restored;
+- mutation restoration — O_EXCL-removal, direct-fsync, atomic-delegation,
+  replacement-capable body bypass, bytes/order/line-ending, and shared-template
+  mutants fail at their intended assertions and every temporary edit is
+  restored;
 - identity/skip consistency — local and hosted inventories and platform skip
   comparisons match their baselines;
 - scope — only the three approved documents and two approved test files are in
