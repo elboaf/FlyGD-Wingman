@@ -3,28 +3,30 @@
 ## Status
 
 Approved design. Implementation is test-instrumentation only and requires a
-separate reviewed plan. It replaces Windows `tracemalloc` around the Fleet
-maximum-response resource subprocess with the current process's native peak
-working set. It does not change product code, test selection, workflow topology,
-or any pass/fail memory ceiling.
+separate reviewed plan. It replaces test-owned Windows `tracemalloc`
+instrumentation around the Fleet maximum-response resource subprocess with the
+current process's native peak working set. It does not change product code, test
+selection, workflow topology, or any pass/fail memory ceiling.
 
 ## Purpose
 
 The Fleet transport resource case constructs and decodes the maximum legal
 response through the actual signed client, response reader, wire decoder, and
-DTO parser in a subprocess. On Windows, its current memory observation uses
-`tracemalloc`. That instrumentation measures traced Python allocations rather
-than process memory and surrounds the full 47,022,137-byte decode. This tranche
-removes that instrumentation without attributing a runtime change to it.
+DTO parser in a subprocess. On Windows, its current memory observation starts
+`tracemalloc`, which measures traced Python allocations rather than process
+memory and surrounds the full 47,022,137-byte decode.
 
-Replace that Windows-only observation with
+Replace that test-owned Windows observation with
 `K32GetProcessMemoryInfo(GetCurrentProcess(), ...)` and report
 `PROCESS_MEMORY_COUNTERS.PeakWorkingSetSize` as
-`process_peak_working_set_bytes`.
+`process_peak_working_set_bytes`. If tracing was enabled externally before the
+Windows decode, fail before decoding rather than stop someone else's tracer or
+publish misleading native-only evidence.
 
-The intended claim is structural only: the maximum Windows decode no longer
-runs under `tracemalloc`. Hosted timing remains observational. This design does
-not claim an overall, suite, job, runner, or case speedup.
+The intended claim is structural only: under the accepted environment, the
+test no longer starts or uses `tracemalloc` instrumentation around the maximum
+Windows decode. Hosted timing remains observational. This design does not claim
+an overall, suite, job, runner, or case speedup.
 
 ## Authority and current state
 
@@ -85,8 +87,41 @@ The resource test must preserve all current maximum-boundary behavior exactly:
 
 The memory change must not replace the real client with a direct parser call,
 stream a smaller fixture, reduce rows or observations, change the read amount,
-remove signing/binding verification, omit closure, or move the decode into the
-parent process.
+omit closure, or move the decode into the parent process.
+
+### Independent decoder and parser crossings
+
+Output cardinality cannot independently prove that the real wire decoder and
+DTO parser were called: a bypass could fabricate the same result. During
+`measure_response()`, install permanent low-overhead, child-local counting
+wrappers around these exact module attributes:
+
+- `protocol.decode_wire_json`;
+- `protocol.parse_snapshot`.
+
+Each wrapper increments its own integer counter and delegates all arguments and
+the return value unchanged to the saved original. Install the wrappers only for
+the measured client call, restore both original attributes in a `finally` block,
+and then require exactly one call to each. Restoration is mandatory on success
+and failure. The wrappers live only in the resource child and add no JUnit
+property, pytest identity, production hook, or parent-process state.
+
+The exact-one assertions independently reject bypass and duplicate decode or
+parse work while the existing result/cardinality, read-amount, and closure
+assertions retain their own contracts.
+
+### Success-header boundary
+
+The resource transport supplies valid content, cache, and request-binding
+headers and continues through the actual client success path. It does not
+independently own the negative or mutation semantics of
+`client._validate_success_headers`: all supplied headers are valid, so bypassing
+that validator can produce the same resource result.
+
+Unchanged focused client tests continue to own success-header validation. The
+five-path scope and production diff audit prove that this instrumentation change
+does not alter that production path. This resource case must not claim that a
+`_validate_success_headers` mutant is killed.
 
 ### Platform metric selection
 
@@ -130,9 +165,10 @@ loader, last-error, and `WinError` seams are evaluated only when the matching
 branch or failure path needs them. Tests can therefore exercise Windows
 selection and ABI declarations on Linux without accessing a real Windows DLL.
 
-Injected fake exports must be callable objects that accept assignment to
-`argtypes` and `restype`. Plain functions or lambdas without signature
-attributes are insufficient test doubles for this boundary.
+Injected fake exports must be callable objects that permit writable `argtypes`
+and `restype` attributes. Python function and lambda objects can satisfy that
+contract because callers may attach those attributes; a wrapper class is
+optional, not mandatory.
 
 ### Exact structure layout
 
@@ -156,6 +192,19 @@ width while the portable unit tests execute on Linux. Fixed-width DWORD fields
 use `c_uint32`; pointer-sized counters and handles use `c_size_t` and
 `c_void_p` as appropriate.
 
+The success test must pin all layout evidence, not merely field names:
+
+- exact field names, types, and order above;
+- `cb.offset == 0` and `PageFaultCount.offset == 4`;
+- the eight `c_size_t` fields have offsets
+  `8 + index * ctypes.sizeof(ctypes.c_size_t)` for indexes zero through seven;
+- `ctypes.sizeof(PROCESS_MEMORY_COUNTERS)` equals
+  `8 + 8 * ctypes.sizeof(ctypes.c_size_t)`, which is 40 on a 32-bit width and
+  72 on a 64-bit width;
+- `ctypes.alignment(PROCESS_MEMORY_COUNTERS)` equals
+  `ctypes.alignment(ctypes.c_size_t)` and is exactly 4 or 8;
+- `_pack_` is not defined on the structure.
+
 Each native sample must:
 
 1. create a fresh `PROCESS_MEMORY_COUNTERS` instance;
@@ -165,8 +214,17 @@ Each native sample must:
    structure, and the same exact structure size;
 5. return `counters.PeakWorkingSetSize` as a Python integer.
 
-The value must not come from `WorkingSetSize`. A value above 32 bits must survive
-without truncation.
+The value must not come from `WorkingSetSize`. Value evidence is conditional on
+the interpreter's native `c_size_t` width:
+
+- when `ctypes.sizeof(ctypes.c_size_t) == 8`, use a peak above `2**32` and a
+  distinct current value, then require the full peak to survive;
+- when `ctypes.sizeof(ctypes.c_size_t) == 4`, use distinct peak/current values
+  high in the unsigned 32-bit range and require the peak to survive exactly
+  without signed or narrower truncation.
+
+A 32-bit interpreter is supported, not skipped or rejected for lacking a value
+above its native width.
 
 ### Function signatures
 
@@ -198,9 +256,24 @@ Python or native work between the zero return and `get_last_error()`, and do not
 call `WinError()` without the captured code. The comprehensive failure test must
 prove that the exact saved code reaches `WinError`.
 
-None of these failures may start `tracemalloc`, return `traced_peak_bytes`,
-return zero, reuse a stale structure, or silently fall through to the generic
-non-Windows branch.
+None of these failures may start or stop `tracemalloc`, return
+`traced_peak_bytes`, return zero, reuse a stale structure, or silently fall
+through to the generic non-Windows branch.
+
+### Pre-existing tracing guard
+
+On the Windows child path, `measure_response()` imports `tracemalloc` and checks
+`tracemalloc.is_tracing()` before the client decode. If it is already true, the
+child fails before decoding or publishing evidence. The guard never calls
+`tracemalloc.stop()`: externally enabled tracing is owned by its caller, and
+silently disabling it would corrupt that caller's instrumentation.
+
+When the guard passes, neither native setup, sampling, decode, nor cleanup calls
+`tracemalloc.start()` or `tracemalloc.stop()`. The comprehensive success and
+failure identities instrument both methods and require zero calls. The failure
+identity also exercises the trace-active guard with an injected tracing seam so
+this contract adds no pytest identity and does not run the 47 MB decode in an
+ordinary unit test.
 
 ## Measurement semantics and data lifecycle
 
@@ -266,38 +339,41 @@ working set, must prove all of the following together:
 - both required exports receive explicit `argtypes` and `restype` declarations;
 - the `GetCurrentProcess` pseudo-handle is passed unchanged to the memory API;
 - no close function is resolved or called;
-- the structure has the exact ten fields, types, order, natural offsets, and
-  natural total size implied by `c_uint32` and `c_size_t`;
+- the structure has the exact ten fields, types, order, natural offsets, exact
+  size, and natural alignment specified above;
+- `_pack_` is absent and `ctypes.alignment(PROCESS_MEMORY_COUNTERS)` is exactly 4
+  or 8 as dictated by `c_size_t`;
 - every sample receives a fresh structure rather than reusing one whose fields
   could retain old data;
 - `cb` equals `ctypes.sizeof(PROCESS_MEMORY_COUNTERS)` on every sample;
 - the API byte-size argument equals that same exact size;
 - repeated probe calls perform repeated native samples;
 - the returned value is `PeakWorkingSetSize`, not `WorkingSetSize`;
-- a `PeakWorkingSetSize` value above `2**32` is returned intact;
-- current and peak values can differ without ambiguity;
-- `tracemalloc.start()` is never called.
+- on a 64-bit `c_size_t`, a distinct peak above `2**32` is returned intact;
+- on a 32-bit `c_size_t`, distinct high unsigned peak/current values survive
+  exactly within native width;
+- `tracemalloc.start()` and `tracemalloc.stop()` are never called.
 
-The fake DLL exports must behave like ctypes function objects, including mutable
-signature attributes. The fake memory API fills the received pointed-to
-structure and records structure identities, handles, `cb`, and byte-size
-arguments.
+The fake DLL exports are callables with writable signature attributes; a Python
+function, lambda, or wrapper object is acceptable. The fake memory API fills the
+received pointed-to structure and records structure identities, handles, `cb`,
+and byte-size arguments.
 
 ### 2. Native fail-closed contract
 
-One comprehensive identity loops over these scenarios without pytest
+One comprehensive identity loops over these native scenarios without pytest
 parameterization:
 
 1. DLL load failure;
 2. missing export failure;
 3. API zero return with a known saved error.
 
-For every scenario it must prove:
+For every native scenario it must prove:
 
 - the failure escapes rather than selecting another metric;
 - no probe value is returned;
 - no `resource`/tracing fallback is consulted;
-- `tracemalloc.start()` is never called.
+- `tracemalloc.start()` and `tracemalloc.stop()` are never called.
 
 For the API-zero scenario it must additionally prove:
 
@@ -305,6 +381,10 @@ For the API-zero scenario it must additionally prove:
 - the exact saved error is supplied to the fake `WinError` constructor;
 - the resulting exception is raised;
 - a current or peak field written by the fake cannot be returned after failure.
+
+The same identity exercises the Windows child tracing guard with
+`is_tracing() == True`. It must fail before decode, call neither `start()` nor
+`stop()`, and leave the externally owned tracer active.
 
 State is reset between loop iterations so one failure mode cannot satisfy
 another through stale calls.
@@ -339,12 +419,16 @@ Temporarily:
 
 - allow the Windows branch to fall through to `resource`;
 - allow the Windows branch to fall through to `tracemalloc`;
-- call `tracemalloc.start()` before or during native sampling;
+- call `tracemalloc.start()` or `tracemalloc.stop()` from native setup,
+  sampling, or cleanup;
+- ignore a true `is_tracing()` result and continue to decode;
 - report the wrong metric name.
 
-The success or fail-closed identity must fail at the branch, no-trace, or metric
-assertion. The resource parent assertion must independently reject a real child
-reporting a non-native metric on `win32`.
+The success or fail-closed identity must fail at the branch, no-start/no-stop,
+trace-active guard, or metric assertion. A temporary child invocation with
+tracing pre-enabled must fail before decode and emit no resource evidence. The
+resource parent assertion must independently reject a real child reporting a
+non-native metric on `win32`.
 
 ### ABI and value mutants
 
@@ -353,13 +437,17 @@ Temporarily:
 - return `WorkingSetSize` instead of `PeakWorkingSetSize`;
 - omit or corrupt `cb`;
 - pass the wrong structure byte size;
-- truncate the returned value to 32 bits;
+- on a 64-bit width, truncate the returned value to 32 bits;
+- on either width, coerce the result through a signed or narrower type;
 - reuse one structure across samples;
 - omit an explicit function signature;
-- alter a structure field type, order, packing, or natural layout;
+- alter a structure field type, order, offset, total size, `_pack_`, or natural
+  alignment;
 - close or replace the current-process pseudo-handle.
 
-The comprehensive success identity must fail at the exact owned assertion.
+The comprehensive success identity must fail at the exact owned assertion. The
+width-conditional value mutant must not reject a supported 32-bit interpreter
+merely because it cannot represent a value above `2**32`.
 
 ### Failure mutant
 
@@ -376,10 +464,18 @@ Temporarily alter one boundary at a time:
 - exact raw payload size;
 - `read(67_108_865)` request;
 - response closure;
-- actual signed client/reader/wire decoder/DTO parser crossing.
+- bypass or duplicate `protocol.decode_wire_json`;
+- bypass or duplicate `protocol.parse_snapshot`.
 
-The unchanged maximum-response resource assertions must remain red for those
-mutants. The exact original values and path are restored before any commit.
+The exact output/cardinality, read, and closure assertions remain the witnesses
+for their boundaries. The permanent child-local counters must reject decoder or
+parser bypass and duplicate calls by requiring exactly one call each. Restore
+both wrapped attributes in `finally`, and restore every temporary mutant before
+any commit.
+
+Do not include a `_validate_success_headers` mutation in this resource mapping.
+Valid headers make that mutant observationally equivalent here; unchanged
+focused client tests plus production diff/scope audit own that path.
 
 ## Compatibility
 
@@ -388,7 +484,9 @@ mutants. The exact original values and path are restored before any commit.
 The module must continue to import and run ordinary tests on Linux. No Windows
 symbol is touched at import time. Portable fake DLLs and error seams provide
 ordinary cross-platform contract coverage, while the hosted Windows resource
-case owns the real ABI crossing.
+case owns the real ABI crossing. The tests branch on `ctypes.sizeof(c_size_t)`
+and support both 32-bit and 64-bit interpreters; they do not skip or reject the
+32-bit case for lacking an above-32-bit value.
 
 The design uses only Python's standard library. No package, lockfile, build,
 codec, or runtime dependency changes.
@@ -447,10 +545,12 @@ Only the existing six fields are promoted to JUnit resource properties. No new
 property or schema change is needed.
 
 The implementation results may report hosted Windows and Ubuntu timing as
-observations. They may make only this structural performance statement:
+observations. They may make only this structural instrumentation statement:
 
-> The maximum Windows Fleet response decode no longer runs under
-> `tracemalloc`.
+> Under the accepted environment, the test no longer starts or uses
+> `tracemalloc` instrumentation around the maximum Windows Fleet response
+> decode. Pre-existing external tracing fails the contract before decode rather
+> than being silently stopped or producing native-only evidence.
 
 They must not attribute an overall runtime reduction, suite speedup, job
 speedup, runner-efficiency improvement, critical-path reduction, or stable case
@@ -496,9 +596,10 @@ contract benefit for this test-only probe.
 ### Retain Windows tracing as a fallback
 
 Rejected. A native probe failure followed by `tracemalloc` would silently change
-measurement classes and could reintroduce the very instrumentation cost this
-tranche removes. Windows either reports native process peak working set or
-fails loudly.
+measurement classes and could reintroduce the instrumentation this tranche
+removes. Windows either reports native process peak working set or fails loudly.
+Likewise, a tracer enabled before the child decode is not a fallback: the child
+fails before decode and never stops the externally owned tracer.
 
 ### Assert a working-set ceiling
 
@@ -564,11 +665,22 @@ portable fakes:
   `process_peak_working_set_bytes`;
 - the maximum response passes with 47,022,137 bytes, 8,192 rows, and 155,648
   observations;
+- child-local assertions require exactly one call each to
+  `protocol.decode_wire_json` and `protocol.parse_snapshot`, and both originals
+  are restored in `finally`;
 - the response read amount and closure assertions pass;
 - all six JUnit resource properties are present;
 - the subprocess remains within timeout 300 and wall budget 75;
-- the two ordinary native binding tests pass;
+- the two ordinary native binding tests pass on the interpreter's actual
+  `c_size_t` width;
+- exact field order, offsets, size, and alignment are proved;
+- the accepted Windows child starts with `tracemalloc.is_tracing() == False` and
+  test-owned code calls neither `start()` nor `stop()`;
 - no trace fallback or native-availability skip appears.
+
+Success-header validation is accepted through unchanged focused client tests and
+the production diff/scope audit, not through a claimed resource-case mutation
+witness.
 
 Record branch head, synthetic merge, base, workflow run, job IDs, artifact IDs,
 platform/Python provenance, exact identities, normalized skips, resource
@@ -588,8 +700,10 @@ DLL/export/calling-convention crossing.
 
 A packed structure, a `c_uint32` pointer-sized counter, or a `wintypes` alias
 whose Linux width differs can appear to work under fakes while corrupting real
-calls. Pin exact fields, natural offsets, total size, `c_size_t` counters,
-`c_void_p` handle, and values above 32 bits.
+calls. Pin exact fields, order, offsets, total size, natural alignment,
+`c_size_t` counters, and the `c_void_p` handle. Use above-32-bit value evidence
+only when `c_size_t` is 64 bits; use exact high unsigned values within width on a
+32-bit interpreter.
 
 ### Last error can be overwritten
 
@@ -603,17 +717,33 @@ Payload construction precedes the first sample, and process lifetime may contain
 an even earlier peak. Document both samples as absolute high-water marks, never
 subtract them, and make no memory-ceiling or decode-attribution claim.
 
-### A fallback can hide native breakage
+### A fallback or external tracer can hide native evidence
 
 Any Windows fallback would allow green resource evidence with the wrong metric.
 The failure identity forbids tracing/resource recovery, and the parent resource
-test pins the metric when the child reports `win32`.
+test pins the metric when the child reports `win32`. A pre-existing tracer would
+also make a native-only result ambiguous, so the child fails before decode and
+does not stop that external owner.
+
+### A valid result can hide parser bypass
+
+Exact rows and observations alone do not prove the production wire decoder or
+DTO parser ran. The permanent low-overhead child wrappers count each exact
+module attribute and require one call, while `finally` restoration prevents the
+instrumentation from leaking into later child work.
+
+Success-header validation has the opposite boundary: all resource headers are
+valid, so this case cannot independently distinguish validation from bypass.
+Keep that contract with unchanged focused client tests and the production
+scope/diff audit rather than claiming a false mutation witness.
 
 ### Structural runtime improvement can be overclaimed
 
-Removing tracing is a concrete instrumentation change, but hosted durations are
-noisy and the process still builds and parses the full maximum payload. Report
-only that tracing no longer surrounds the Windows maximum decode.
+Removing test-owned tracing is a concrete instrumentation change, but hosted
+durations are noisy and the process still builds and parses the full maximum
+payload. Report only that, under the accepted environment, the test no longer
+starts or uses `tracemalloc` around the Windows maximum decode; external tracing
+fails before decode.
 
 ## Stopping rules
 
@@ -622,11 +752,12 @@ Stop implementation and return to design review if any of these occurs:
 1. `K32GetProcessMemoryInfo` cannot be bound from `kernel32` on supported hosted
    Windows;
 2. a Windows trace or `resource` fallback appears necessary;
-3. the exact natural `PROCESS_MEMORY_COUNTERS` layout cannot be represented with
-   `c_uint32` and `c_size_t`;
+3. the exact natural `PROCESS_MEMORY_COUNTERS` layout, including alignment,
+   cannot be represented with `c_uint32` and `c_size_t` on either supported
+   native width;
 4. preserving the maximum response requires changing bytes, rows,
-   observations, read amount, closure, real decode path, subprocess timeout, or
-   wall budget;
+   observations, read amount, closure, exact-one decoder/parser crossings,
+   subprocess timeout, or wall budget;
 5. any existing JUnit resource property must be removed or renamed;
 6. more than two test identities are required;
 7. an existing test identity must be renamed, removed, reordered, or
@@ -636,7 +767,8 @@ Stop implementation and return to design review if any of these occurs:
 9. any committed path outside the exact five-path allowlist is required;
 10. hosted Windows cannot prove the native metric without a skip;
 11. evidence supports only a memory ceiling, delta, or runtime-speedup claim
-    rather than the approved structural no-tracing claim.
+    rather than the approved structural test-owned no-tracing claim under the
+    accepted environment.
 
 ## Required implementation self-review
 
@@ -646,19 +778,27 @@ Before publication, the results document must record a final review covering:
   output, or mutation-only support remains;
 - identity arithmetic — target module `3 + 2 = 5` and complete collection
   `16,607 + 2 = 16,609`;
-- ABI — exact ten fields, natural layout, pointer widths, signatures, handle,
-  `cb`, byte size, fresh structures, and no close;
-- metric — exact Windows name and `PeakWorkingSetSize`, including an above-32-bit
-  value distinct from current working set;
+- ABI — exact ten fields, order, offsets, natural size and 4-or-8 alignment,
+  pointer widths, signatures, handle, `cb`, API byte size, fresh structures, no
+  `_pack_`, and no close;
+- metric — exact Windows name and `PeakWorkingSetSize`; above-32-bit distinct
+  peak/current evidence on a 64-bit `c_size_t`, or exact high unsigned distinct
+  values within width on a 32-bit `c_size_t`;
 - failure — DLL, export, and zero-return cases fail loudly, preserve saved error,
-  and never trace;
+  and call neither tracing start nor stop;
 - fallback — the existing trace fallback is explicitly non-Windows and remains
   green;
+- tracing ownership — Windows fails before decode when tracing is already active,
+  never stops an external tracer, and accepted execution neither starts nor
+  stops a tracer;
 - maximum contract — exact bytes, rows, observations, read amount, closure,
-  signed client, reader, wire decoder, DTO parser, timeout, budget, and six JUnit
-  properties;
-- mutation restoration — every selection, trace, current/peak, `cb`, size,
-  failure, metric, and maximum-boundary mutant is restored exactly;
+  signed client, reader, exactly one wire-decoder call, exactly one DTO-parser
+  call, timeout, budget, and six JUnit properties;
+- header boundary — success-header validation remains owned by unchanged focused
+  client tests and scope/diff evidence, with no unsupported resource mutant;
+- mutation restoration — every selection, trace, current/peak, layout,
+  alignment, `cb`, size, failure, metric, decoder/parser, and maximum-boundary
+  mutant is restored exactly, as are both permanent wrappers in `finally`;
 - compatibility — Linux import/tests, macOS/Linux metrics, and hosted Windows
   native execution remain valid;
 - scope — only the approved spec, plan, results, current-state paragraph, and
@@ -670,9 +810,12 @@ Before publication, the results document must record a final review covering:
 
 ## Follow-up boundary
 
-Successful implementation proves only that the Windows maximum Fleet response
-resource subprocess observes native process-lifetime peak working set without
-starting `tracemalloc`, while preserving the full maximum decode contract and
-existing evidence schema. It does not authorize resource-schema expansion,
-memory ceilings, test-tier changes, workflow edits, broader Windows profiling,
-or further CI runtime claims.
+Successful implementation proves only that, under the accepted environment,
+the Windows maximum Fleet response resource subprocess observes native
+process-lifetime peak working set without starting or using test-owned
+`tracemalloc` instrumentation, executes the real wire decoder and DTO parser
+exactly once, and preserves the remaining maximum decode contract and evidence
+schema. Externally active tracing fails before decode and is never stopped. This
+does not authorize resource-schema expansion, memory ceilings, test-tier
+changes, workflow edits, broader Windows profiling, or further CI runtime
+claims.
