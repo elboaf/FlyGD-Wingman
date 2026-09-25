@@ -14,7 +14,7 @@ Task 1 changes only this results ledger. No executable file, workflow, dependenc
 - Task 2: **COMPLETE** — the exact first ordinary suffix identity, lazy native Windows success path, natural ABI layout, platform selection, trace guard, portable fallback, exact 4/16,608 inventories, and 17 restoration-safe success/ABI mutants are qualified below.
 - Task 3: **COMPLETE** — fail-closed native errors, active-trace refusal, protocol-crossing restoration, immediate parent metric gating, exact final inventories, unchanged six-property evidence, and the full 36-mutant restoration catalog are qualified below.
 - Task 4: **COMPLETE** — the complete local endpoint, full maximum execution, generic JUnit summarization, exact 16,609-outcome suite, normalized skips, independent gates, five-path scope, and 36-mutant restoration are qualified below.
-- Task 5: **LOCAL PRE-PUBLICATION CHECKPOINT COMPLETE; CONTROLLER REVIEW AND HOSTED ACCEPTANCE PENDING** — `polish-core --fix` found no safe edit to apply, fresh local target/tool/scope gates passed, the reviewer-facing explanation and publication stop are recorded below, and no push, PR, workflow, or new hosted-artifact action has occurred.
+- Task 5: **AUTHORIZED HOSTED ACCEPTANCE PASS; EVIDENCE PUSH STOPPED PENDING CONTROLLER REVIEW** — the exact Block D collector/audit accepted PR `#289`, run `36147950569` attempt `2`, the passing current Windows artifact, exact cross-platform `16,609` identities, and the native Windows resource evidence. Attempt `1`'s unrelated real-thread timing failure and failed Windows artifact remain explicit provenance and were not mixed into acceptance.
 
 ## Exact three-ID target baseline
 
@@ -17559,3 +17559,195 @@ Fresh post-restoration verification:
 - `uv run --no-sync python -m pytest tests/test_documentation.py -q`: `7 passed in 1.05s`;
 - `git diff --check`: exit `0`;
 - final fix-wave paths before commit: only this results ledger and the approved plan.
+
+## Task 5 authorized hosted acceptance
+
+### Authorized inputs and current PR state
+
+The explicit authorized inputs were copied literally rather than inferred:
+
+```text
+NEW_RUN=36147950569
+PR_NUMBER=289
+```
+
+Before collection, `gh pr view 289 -R elboaf/FlyGD-Wingman` confirmed that the pull request remains open, unmerged, and targets `main`; its current head/base are exactly:
+
+```text
+head = 599940d147960ef8088212df38d3dd86cc028360
+base = cc48c887ac3a140a2baf87d4bdcc3f6e916c02c9
+```
+
+The run is the `pull_request` CI run at `https://github.com/elboaf/FlyGD-Wingman/actions/runs/36147950569`; the PR is `https://github.com/elboaf/FlyGD-Wingman/pull/289`. The run payload's `pull_requests` array is empty, recorded as `absent`. Explicit run/PR inputs, current PR metadata, and the three checkout logs therefore remain authoritative; no latest-run or run-payload PR inference was used.
+
+Both `/tmp/windows_memory_hosted_collect.sh` and `/tmp/windows_memory_hosted_audit.py` were regenerated from the current committed Block D, compared byte-for-byte with that block, and passed `bash -n` / `python -m py_compile` before execution. The collector completed with:
+
+```text
+HOSTED_ROOT=/tmp/wingman-windows-memory-hosted-36147950569
+NEW_RUN=36147950569
+ATTEMPT=2
+PR_NUMBER=289
+SYNTHETIC=8df553b271fbf0027c73f19bc0df0068d6dc139d
+```
+
+### Attempt history, known flake, and rerun semantics
+
+The complete retained attempt history is:
+
+| Attempt | Run result | Checks job | Ubuntu job | Windows job |
+|---:|---|---|---|---|
+| `1` | `failure` | `108113710977`, success, `14:30:40Z`–`14:30:55Z` | `108113710626`, success, `14:30:39Z`–`14:36:27Z` | `108113711236`, failure, `14:30:40Z`–`14:48:54Z` |
+| `2` | `success` | `108120750881`, success, `14:30:40Z`–`14:30:55Z` | `108120706191`, success, `14:30:39Z`–`14:36:27Z` | `108120703895`, success, `14:49:20Z`–`15:00:50Z` |
+
+GitHub's failed-job rerun representation is intentionally not normalized away. Attempt `2` exposes new attempt-2 job IDs for the already-successful checks and Ubuntu jobs while retaining their attempt-1 execution timestamps, which precede attempt `2`'s `14:49:16Z` run start. The Windows row is the actual rerun execution. Block D selected the current successful rows by exact job name from the attempt-2 jobs endpoint, then selected artifacts by exact name and each selected row's retained time window.
+
+Attempt `1` failed only this unmodified real-thread capacity case:
+
+```text
+tests/test_fleetsharing_capacity.py::test_real_thread_preserves_inflight_start_and_queued_off_stop_through_io_failure[same-source]
+```
+
+Its eight-second wait ended with `Failed: terminal progress not externally witnessed`; attempt `1` summarized `1 failed, 16541 passed, 67 skipped in 872.42s`. The same identity passed on attempt `2` in `9.403s`. The exact five-path diff excludes `tests/test_fleetsharing_capacity.py`; this is retained as the authorized known timing flake, not erased from provenance and not attributed to this change.
+
+All run artifacts remain visible in provenance:
+
+| Artifact role | Artifact ID | Created | API digest | Selection |
+|---|---:|---|---|---|
+| Ubuntu reused successful execution | `10869653565` | `14:36:21Z` | `sha256:d757b877ad9f300f53629e4b94b1a9d6b8e838ca956ba788d6549bfa2e4513a2` | selected by the retained Ubuntu job window |
+| Windows failed attempt `1` | `10871046469` | `14:48:50Z` | `sha256:c4dd48e753460f7dd8e0ecda9fe55e8b697a0ba541e953577740cb532740221a` | retained as failed-attempt provenance; not downloaded or audited as acceptance evidence |
+| Windows passing attempt `2` | `10871003945` | `15:00:39Z` | `sha256:efe34b18fc7760b6a41ac211adfbbfacc10abbbcd8aaacf95dc090b6ade97129` | selected by the rerun Windows job window |
+
+The selected Windows archive is therefore the passing attempt-2 artifact even though its numeric ID is lower than the failed attempt-1 artifact. Selection is by exact name and job time, not artifact ordering or ID.
+
+### Logs-primary provenance and exact merge identity
+
+Each selected job log contains exactly one checkout merge line and one logged full `git log -1 --format=%H` result. Checks, Ubuntu, and Windows independently agree on:
+
+```text
+synthetic = 8df553b271fbf0027c73f19bc0df0068d6dc139d
+head      = 599940d147960ef8088212df38d3dd86cc028360
+base      = cc48c887ac3a140a2baf87d4bdcc3f6e916c02c9
+```
+
+The fetched synthetic commit has exactly the ordered parent vector:
+
+```text
+8df553b271fbf0027c73f19bc0df0068d6dc139d
+cc48c887ac3a140a2baf87d4bdcc3f6e916c02c9
+599940d147960ef8088212df38d3dd86cc028360
+```
+
+The current PR head/base equal the logged head/base, and `refs/pull/289/merge` resolves exactly to the same synthetic merge. Current PR metadata therefore corroborates, but does not replace, logs-primary provenance.
+
+Hosted interpreter provenance from the selected logs is:
+
+- Ubuntu: CPython `3.11.16`; pytest session `platform linux -- Python 3.11.16`.
+- Windows: CPython `3.11.9` from `C:\hostedtoolcache\windows\Python\3.11.9\x64\python.exe`; pytest session `platform win32 -- Python 3.11.9`.
+
+### Selected artifact integrity
+
+Only artifacts `10869653565` and `10871003945` were downloaded for acceptance. For each platform the ZIP member set is exactly `pytest-result.xml` and `pytest-timing.json`; every member is byte-for-byte equal to its extracted file. Downloaded ZIP SHA-256 equals the API digest:
+
+| Platform | Artifact | ZIP/API SHA-256 | XML SHA-256 | Timing SHA-256 |
+|---|---:|---|---|---|
+| Ubuntu | `10869653565` | `d757b877ad9f300f53629e4b94b1a9d6b8e838ca956ba788d6549bfa2e4513a2` | `61fc4cc13c6f69ad3b9eabbbe7897ad8b3a594315fb81069a10b1c571fe20138` | `fd9c8a91ad691a81674e1d7c536943d6c5134269d6896b20474d7e87b7ec27ba` |
+| Windows | `10871003945` | `efe34b18fc7760b6a41ac211adfbbfacc10abbbcd8aaacf95dc090b6ade97129` | `35d8c08b30ff4f762c2a0f72017602e0c38811dda775ade891b005cefdca914d` | `5732ec92765c5b98249a259e4ec47296d5a4535a3c0f402251fae643fd386947` |
+
+Timing JSON reports `16,609` cases on each platform, and every per-file case count and testcase-duration sum agrees with JUnit within `1e-9`.
+
+### Exact complete and target identities
+
+Ubuntu and Windows each contain exactly `16,609` unique identities. The order is the exact Task 1 `16,607` baseline with these two suffix identities inserted immediately after the baseline target anchor:
+
+```text
+tests/test_fleetsharing_transport_resources.py::test_windows_memory_probe_reports_peak_working_set_without_tracing
+tests/test_fleetsharing_transport_resources.py::test_windows_memory_probe_fails_closed_and_restores_crossings
+```
+
+All `16,607` baseline identities retain relative order; additions/removals are exactly `+2/0`. The two complete inventories are byte-identical and have final-newline ordered SHA-256:
+
+```text
+f468ba1954d3ff0ab693dd721ff8a7a4d12266e16d8568035de4245a6c616100
+```
+
+The target module order is exactly:
+
+```text
+tests/test_fleetsharing_transport_resources.py::test_maximum_put_uses_actual_default_escaping_under_512k
+tests/test_fleetsharing_transport_resources.py::test_memory_probe_falls_back_without_resource
+tests/test_fleetsharing_transport_resources.py::test_maximum_legal_response_actual_reader_and_codec_in_subprocess
+tests/test_fleetsharing_transport_resources.py::test_windows_memory_probe_reports_peak_working_set_without_tracing
+tests/test_fleetsharing_transport_resources.py::test_windows_memory_probe_fails_closed_and_restores_crossings
+```
+
+All five target outcomes are explicitly `passed` on both platforms, including both new native identities. Target arithmetic is exactly `5` total, `4` ordinary, `1` resource; only the maximum-response identity carries `resource.*` properties. The target ordered SHA-256 remains `62fae7a4bec52e1e87c423388e960f2c0799cd4d6d8c5be07e8e5f9eff377cb1`.
+
+Selected complete-suite outcomes are:
+
+| Platform | Passed | Skipped | Failures | Errors | Total |
+|---|---:|---:|---:|---:|---:|
+| Ubuntu | `16,595` | `14` | `0` | `0` | `16,609` |
+| Windows | `16,542` | `67` | `0` | `0` | `16,609` |
+
+The hosted normalized skip arrays are data- and order-equal to the complete Task 1 tuples already recorded under **Complete normalized Ubuntu skip tuples** and **Complete normalized Windows skip tuples**. Their exact JSON SHA-256 values remain Ubuntu `14f1511f840fb2fdc1680123dde29a7143405829af97141d62c5099aa4f265af` and Windows `75e13b6d8a81b4682f62f28925b5c68ce94492fd9dff3d0f670a8b8e0b38bcba`. No skip mentions missing Node, an unbuilt/unavailable settings codec, `K32GetProcessMemoryInfo`, or unavailable `resource`.
+
+### Resource evidence and unchanged maximum contract
+
+The sole resource row carries exactly six properties on each platform:
+
+| Property | Ubuntu | Windows |
+|---|---|---|
+| `resource.subprocess_wall_seconds` | `4.345707559999994` | `6.243191400000001` |
+| `resource.memory_metric` | `process_peak_rss_kib` | `process_peak_working_set_bytes` |
+| `resource.memory_peak` | `453440` | `308035584` |
+| `resource.raw_bytes` | `47022137` | `47022137` |
+| `resource.rows` | `8192` | `8192` |
+| `resource.observations` | `155648` | `155648` |
+
+Windows therefore crossed the real native probe with a positive process-lifetime peak working set, full `47,022,137`-byte / `8,192`-row / `155,648`-observation cardinality, and child wall below the unchanged `75s` budget. Ubuntu retains the existing `process_peak_rss_kib` metric. The subprocess timeout remains `300s` in the executable head.
+
+The selected Windows log contains `process_peak_working_set_bytes`, contains no resource-relevant `traced_peak_bytes`, contains no `requires tracemalloc to be disabled` failure, and has no native availability skip. This supports only the approved structural conclusion: under the accepted hosted environment, the maximum Windows Fleet response test does not start or use test-owned `tracemalloc` instrumentation around decode; externally active tracing fails before decode and is not stopped.
+
+### Timing observations only
+
+| Observation | Checks | Ubuntu | Windows |
+|---|---:|---:|---:|
+| Job wall | `15s` | `348s` | `690s` |
+| `Test` step wall | n/a | `325s` | `631s` |
+| Pytest reported suite wall | n/a | `321.76s` | `626.57s` |
+| JUnit testcase sum | n/a | `298.438s` | `591.903s` |
+| Target testcase sum | n/a | `5.291s` | `8.091s` |
+
+Target testcase observations are:
+
+| Identity suffix | Ubuntu | Windows |
+|---|---:|---:|
+| `test_maximum_put_uses_actual_default_escaping_under_512k` | `0.028s` | `0.039s` |
+| `test_memory_probe_falls_back_without_resource` | `0.004s` | `0.015s` |
+| `test_maximum_legal_response_actual_reader_and_codec_in_subprocess` | `4.347s` | `6.246s` |
+| `test_windows_memory_probe_reports_peak_working_set_without_tracing` | `0.001s` | `0.002s` |
+| `test_windows_memory_probe_fails_closed_and_restores_crossings` | `0.911s` | `1.789s` |
+
+The resource child walls are the exact six-property values above. All values are single-run observations. They support no speedup, slowdown, runner-efficiency, critical-path, memory-ceiling, decode-delta, or cross-platform/cross-metric numerical claim. The reused Ubuntu/check attempt-2 rows also retain original attempt-1 timing metadata and are reported as such.
+
+### Exact scope and bounded decision
+
+Both `base..head` and `base..synthetic` contain exactly these five paths:
+
+```text
+docs/ci-test-budget-redesign.md
+docs/ci-windows-resource-memory-probe-results.md
+docs/superpowers/plans/2026-09-24-windows-resource-memory-probe.md
+docs/superpowers/specs/2026-09-24-windows-resource-memory-probe-design.md
+tests/test_fleetsharing_transport_resources.py
+```
+
+Block D accepted run/event/current-job success, logs-primary provenance, exact merge parents/current PR merge, artifact selection and integrity, exact complete/target identity order, `+2/0`, cross-platform equality, exact skips, zero selected failures/errors, one resource owner, all six properties, positive native Windows peak, full maximum cardinality, unchanged Ubuntu RSS metric, no availability skip, the `75s` wall bound, and exact five-path scope.
+
+The bounded decision is:
+
+- **PASS** — authorized hosted structural acceptance for executable head `599940d147960ef8088212df38d3dd86cc028360` on PR `#289`, run `36147950569`, attempt `2`.
+- **INCONCLUSIVE** — performance improvement, memory improvement/ceiling/delta, cross-metric comparison, and the root cause of the unrelated attempt-1 timing flake. Native process-lifetime peak working set is not numerically comparable to the former traced-allocation peak.
+- **STOP** — commit this evidence locally, but do not push the evidence head, request another rerun, or begin evidence-head/final-head status-closing publication until controller review and separate authorization.
+
+No adaptation/stopping-rule trigger occurred: the real Windows export was available, no fallback or availability skip was needed, the exact identity/property/maximum contracts held, and no sixth or protected path changed.
