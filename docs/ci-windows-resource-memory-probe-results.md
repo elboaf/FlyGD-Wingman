@@ -14,7 +14,7 @@ Task 1 changes only this results ledger. No executable file, workflow, dependenc
 - Task 2: **COMPLETE** — the exact first ordinary suffix identity, lazy native Windows success path, natural ABI layout, platform selection, trace guard, portable fallback, exact 4/16,608 inventories, and 17 restoration-safe success/ABI mutants are qualified below.
 - Task 3: **COMPLETE** — fail-closed native errors, active-trace refusal, protocol-crossing restoration, immediate parent metric gating, exact final inventories, unchanged six-property evidence, and the full 36-mutant restoration catalog are qualified below.
 - Task 4: **COMPLETE** — the complete local endpoint, full maximum execution, generic JUnit summarization, exact 16,609-outcome suite, normalized skips, independent gates, five-path scope, and 36-mutant restoration are qualified below.
-- Task 5: **NOT STARTED** — polish and authorized hosted publication remain outside Task 4 scope.
+- Task 5: **LOCAL PRE-PUBLICATION CHECKPOINT COMPLETE; CONTROLLER REVIEW AND HOSTED ACCEPTANCE PENDING** — `polish-core --fix` found no safe edit to apply, fresh local target/tool/scope gates passed, the reviewer-facing explanation and publication stop are recorded below, and no push, PR, workflow, or new hosted-artifact action has occurred.
 
 ## Exact three-ID target baseline
 
@@ -17424,3 +17424,102 @@ Because subagents were prohibited, the required fresh review was an independent 
 - The native success/failure contract and child refusal are qualified locally through portable fakes and subprocesses; real hosted Windows ABI/resource evidence remains explicitly assigned to Task 5 after publication authorization.
 - The PR #288 run payload has absent pull-request metadata; the explicit run selection and three matching checkout logs remain the accepted baseline provenance path.
 - All timing and memory values are single-run observations only. They support the approved structural no-test-owned-tracing statement, not a performance, memory-ceiling, decode-delta, or cross-metric claim.
+
+## Task 5 local polish checkpoint
+
+`polish-core --fix` inspected `cc48c887..bdf5fcd6` across the exact five allowed paths. The pass loaded the repository conventions and Python polish rules, inspected the executable test module and its surrounding contracts, checked the current design/plan/results documentation for unfinished markers and claim drift, and confirmed the exact scope against repository references. It found no high-confidence behavior-preserving auto-fix and made no edit. It also found no correctness-critical issue requiring a sixth path or a product, workflow, summarizer, timing-test, dependency, configuration, marker, selector, budget, or shard change. Subagents were not used, and Task 5's separate independent-review step was not performed or locally substituted because the controller explicitly owns that next checkpoint.
+
+Because polish changed no executable code, Task 5 did not rerun the complete suite or 36-mutant catalog. Their Task 4 results remain prior evidence, not fresh Task 5 evidence.
+
+## Task 5 fresh local verification
+
+The verified pre-edit branch head was `bdf5fcd6996e96a3156c9e3082dbe412a9cddcf8` (`docs: record local Windows memory probe verification`). Fresh commands and literal results were:
+
+| Command | Fresh result |
+|---|---|
+| `uv run --no-sync python -m pytest tests/test_fleetsharing_transport_resources.py -q -rs --durations=0 --junitxml=/tmp/windows-memory-polished-target.xml` | `5 passed in 9.99s`; slow calls `5.72s` resource and `2.01s` fail-closed; JUnit 5 cases, 0 failures/errors/skips, testcase sum `7.801s` |
+| `uv run --no-sync python /tmp/windows_memory_endpoint.py` | exit `0`; target/ordinary/resource/complete `5/4/1/16609`; additions/removals `+2/0`; target hash `62fae7a4bec52e1e87c423388e960f2c0799cd4d6d8c5be07e8e5f9eff377cb1`; complete hash `f468ba1954d3ff0ab693dd721ff8a7a4d12266e16d8568035de4245a6c616100` |
+| `node scripts/js_smoke.js` | `PASS every page module loaded` |
+| `cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml` | exit `0`; `1 passed; 0 failed`; test-profile build `4.84s` |
+| `uv run --extra dev ruff check .` | `All checks passed!` |
+| `uv run --extra dev ruff format --check .` | `520 files already formatted` |
+| `git diff --check cc48c887..HEAD` plus exact allowlist/protected-path assertions | exit `0`; exactly five allowed paths; protected path list empty |
+
+The polished target JUnit SHA-256 is `7b7581799cd2ed9b9be5b328ab40ede6cb263fd54d05ceed4029e5c98a95aef6`. Its one resource row retained exactly six properties:
+
+```text
+resource.subprocess_wall_seconds = 5.7196111920056865
+resource.memory_metric = process_peak_rss_kib
+resource.memory_peak = 303360
+resource.raw_bytes = 47022137
+resource.rows = 8192
+resource.observations = 155648
+```
+
+These Linux values are one fresh observation only. The parent wall remains below `75` seconds, the endpoint remains exactly `5/4/1/16609`, and no hosted Windows conclusion is made.
+
+## Task 5 change explanation
+
+### What changed
+
+The target resource-test module now selects a native Windows process-memory probe instead of starting test-owned `tracemalloc` around the maximum Fleet response decode. It adds exactly two ordinary identities that pin the native success/ABI contract and fail-closed/tracing/restoration behavior. The current CI budget design documents the native lifetime-peak semantics; the approved spec, executable plan, and results ledger preserve the exact five-path tranche and evidence trail.
+
+### How it works
+
+On `win32`, the test lazily loads `kernel32` with last-error support, declares `GetCurrentProcess` and `K32GetProcessMemoryInfo`, fills a naturally aligned `PROCESS_MEMORY_COUNTERS`, and reports `PeakWorkingSetSize` as `process_peak_working_set_bytes`. Each sample uses a fresh structure, exact `cb` and byte size, and the current-process pseudo-handle without closing it. The maximum child checks for an externally active tracer before building the payload or decoding. The real signed-client read runs while a test-private helper wraps the exact wire-decoder and DTO-parser attributes, delegates unchanged, counts each crossing, and restores both original objects in `finally`; successful execution requires exactly one call to each.
+
+The parent parses child JSON and, when the child reports Windows, immediately requires the native metric before adding parent wall evidence, publishing any `resource.*` property, or evaluating the wall budget. A wrong Windows metric therefore fails with zero resource properties.
+
+### Important decisions
+
+Windows has no `resource` or tracing fallback: a DLL load failure, missing named export, zero native return, or pre-existing active tracer fails loudly rather than changing measurement class. The reported native value is process-lifetime peak working set, not current working set, a decode-only allocation peak, a before/after delta, or a value comparable to the earlier traced-allocation peak. The six-property schema, maximum bytes/rows/observations, read amount, closure, timeout, wall budget, client path, and platform-local non-Windows behavior remain unchanged.
+
+### Deviations and discoveries
+
+Polish applied no source or documentation fix. The complete suite and mutation catalog were therefore not repeated in Task 5; the fresh target/tool/scope gates above supplement, but do not replace, Task 4's complete local evidence. The final independent review is deliberately pending for the controller and no hosted evidence was collected.
+
+### Edge cases and failure behavior
+
+The portable tests distinguish 32-bit and 64-bit pointer widths, preserve unsigned peak values, prove exact natural structure layout and native signatures, retain exact loader/export exception objects, capture saved error immediately after a zero return, and forbid pseudo-handle closure. The tracing guard leaves an externally owned tracer active. The crossing helper restores exact original objects and propagates the original sentinel when the measured operation fails, without claiming successful crossing counts.
+
+### Verification actually performed
+
+Task 5 freshly ran the complete five-case target with JUnit, the exact endpoint collector, executable JavaScript smoke, Cargo regression, Ruff lint and formatting checks, diff whitespace validation, exact five-path equality, and protected-path emptiness. Their literal results are recorded above. No full-suite, mutation, hosted Windows/Ubuntu, PR-status, or final-head check was run in this checkpoint.
+
+### Reviewer focus
+
+Review should concentrate on real hosted Windows export availability/calling behavior, natural layout on the hosted pointer width, immediate saved-error capture, no-fallback and external-tracer ownership, exact decoder/parser restoration and one-call assertions, parent zero-property ordering, the unchanged six-property/maximum contract, and structural-only claim discipline.
+
+### Knowledge check
+
+1. Why must a Windows native-probe failure stop the test instead of selecting `resource` or `tracemalloc`?
+2. What makes `PeakWorkingSetSize` observationally different from both current working set and the prior traced-allocation peak?
+3. Which ordering in the parent guarantees that a wrong Windows metric publishes zero `resource.*` properties?
+4. How does the crossing helper prove both successful exact-one execution and failure-path restoration without adding another maximum decode?
+5. Which exact boundaries remain unchanged despite the Windows instrumentation replacement?
+
+## Task 5 scope and publication stop
+
+The tranche remains exactly:
+
+```text
+docs/ci-test-budget-redesign.md
+docs/ci-windows-resource-memory-probe-results.md
+docs/superpowers/plans/2026-09-24-windows-resource-memory-probe.md
+docs/superpowers/specs/2026-09-24-windows-resource-memory-probe-design.md
+tests/test_fleetsharing_transport_resources.py
+```
+
+No production, workflow, summarizer, timing-test, dependency, configuration, marker, selector, budget, shard, packaging, or sixth-path edit is present. The accepted local conclusion remains structural only: under the accepted environment, the maximum Windows Fleet response test does not start or use test-owned `tracemalloc` instrumentation around decode; externally active tracing fails before decode and is not stopped. No speedup, memory ceiling, decode delta, critical-path, runner-efficiency, or cross-metric numerical claim is made.
+
+PRE-AUTHORIZATION STOP: do not push, create or update a pull request, dispatch or rerun GitHub Actions, download a new-run artifact, or make a hosted acceptance claim until the maintainer explicitly authorizes publication of the verified executable head.
+
+No publication or hosted action was performed at this checkpoint.
+
+## Task 5 remaining concerns
+
+- The controller's independent review is still pending by explicit instruction; this local checkpoint does not claim that review has passed.
+- Real Windows ABI/resource acceptance remains unproven until an explicitly authorized hosted run executes the native crossing without an availability skip.
+- Fresh Task 5 timing and memory values are single-sample Linux observations and support no performance attribution.
+- Native process-lifetime peak working set is not numerically comparable to the prior test-owned traced-allocation peak.
+- The PR #288 baseline's absent `run.pull_requests` metadata still requires the approved explicit run/PR and logs-primary provenance path if hosted collection is later authorized.
