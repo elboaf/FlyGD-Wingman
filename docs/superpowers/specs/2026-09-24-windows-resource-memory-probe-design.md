@@ -83,6 +83,10 @@ The resource test must preserve all current maximum-boundary behavior exactly:
 - retain the parent subprocess timeout of 300 seconds;
 - retain the parent wall budget of 75 seconds;
 - retain the six JUnit resource properties listed above;
+- immediately after parsing the child JSON, gate a reported Windows platform on
+  the exact native metric before any JUnit property publication or wall-budget
+  assertion;
+- publish zero `resource.*` properties when that Windows metric gate fails;
 - retain exact assertions for payload bytes and row cardinality.
 
 The memory change must not replace the real client with a direct parser call,
@@ -92,23 +96,38 @@ omit closure, or move the decode into the parent process.
 ### Independent decoder and parser crossings
 
 Output cardinality cannot independently prove that the real wire decoder and
-DTO parser were called: a bypass could fabricate the same result. During
-`measure_response()`, install permanent low-overhead, child-local counting
-wrappers around these exact module attributes:
+DTO parser were called: a bypass could fabricate the same result. Factor one
+test-private crossing helper and use it from `measure_response()`. The helper
+wraps these exact module attributes only while it invokes an injected measured
+operation:
 
 - `protocol.decode_wire_json`;
 - `protocol.parse_snapshot`.
 
 Each wrapper increments its own integer counter and delegates all arguments and
-the return value unchanged to the saved original. Install the wrappers only for
-the measured client call, restore both original attributes in a `finally` block,
-and then require exactly one call to each. Restoration is mandatory on success
-and failure. The wrappers live only in the resource child and add no JUnit
-property, pytest identity, production hook, or parent-process state.
+the return value unchanged to the saved original. The helper saves the exact
+original attribute objects, installs both wrappers, invokes the operation, and
+restores both originals in a `finally` block. On successful return it exposes
+the two counts to its caller. If the operation raises, the helper re-raises the
+original exception object unchanged and makes no successful crossing-count
+claim.
 
-The exact-one assertions independently reject bypass and duplicate decode or
-parse work while the existing result/cardinality, read-amount, and closure
-assertions retain their own contracts.
+`measure_response()` passes the actual signed-client call as the operation and,
+only after that operation succeeds, requires exactly one decoder call and
+exactly one parser call. The existing non-parameterized native fail-closed
+identity also exercises the helper without constructing the 47 MB payload: a
+tiny injected operation touches both currently wrapped protocol attributes and
+then raises a preconstructed sentinel. That identity requires both attributes
+to be restored by object identity and the caught exception to be the original
+sentinel object. It does not assert exact-one success counts for the failed
+operation.
+
+The wrappers remain test-private; during resource measurement they live only in
+the child. They add no JUnit property, pytest identity, production hook,
+parent-process state, or second maximum-response execution.
+The successful exact-one assertions independently reject bypass and duplicate
+decode or parse work while the existing result/cardinality, read-amount, and
+closure assertions retain their own contracts.
 
 ### Success-header boundary
 
@@ -245,8 +264,10 @@ not be passed to `CloseHandle`, and this test module must not resolve or call
 The Windows branch fails closed:
 
 - missing `kernel32` DLL — propagate a loud loader failure;
-- missing `GetCurrentProcess` or `K32GetProcessMemoryInfo` export — propagate a
-  loud export failure;
+- missing `GetCurrentProcess` export — propagate that exact loud export
+  failure;
+- missing `K32GetProcessMemoryInfo` export — propagate that exact loud export
+  failure;
 - `K32GetProcessMemoryInfo` returning zero — immediately capture the saved
   error through the injected `get_last_error` seam and raise the matching
   injected `WinError(saved_error)`.
@@ -308,16 +329,26 @@ properties.
 
 ## Parent-process selection assertion
 
-After decoding the child's JSON evidence, the parent resource test must assert:
+The metric selection check is an evidence-publication gate, not a late
+consistency assertion. The parent resource test must make the conditional
+assertion the next executable branch after parsing the child JSON, before even
+adding parent-derived evidence:
 
 ```text
+evidence = json.loads(result.stdout)
 if evidence["platform"] == "win32":
-    evidence["memory_metric"] == "process_peak_working_set_bytes"
+    assert evidence["memory_metric"] == "process_peak_working_set_bytes"
 ```
+
+This assertion must run before any `record_property(...)` call, direct append to
+`request.node.user_properties`, helper that publishes a JUnit property, or
+75-second wall-budget assertion. If a child reports `platform == "win32"` with
+any other metric, the test fails at this gate and publishes zero `resource.*`
+properties. Budget failure and already-published evidence must not obscure the
+wrong measurement class.
 
 This pins real hosted Windows execution to the native metric. It does not infer
 Windows from the parent process or replace the child's reported platform.
-
 Non-Windows resource executions retain their current metric behavior. No parent
 assertion may force macOS, Linux, or generic fallback executions to report the
 Windows metric.
@@ -365,15 +396,23 @@ One comprehensive identity loops over these native scenarios without pytest
 parameterization:
 
 1. DLL load failure;
-2. missing export failure;
-3. API zero return with a known saved error.
+2. missing `GetCurrentProcess` export;
+3. missing `K32GetProcessMemoryInfo` export;
+4. API zero return with a known saved error.
 
 For every native scenario it must prove:
 
-- the failure escapes rather than selecting another metric;
+- the exact loader, named-export, or API failure escapes rather than selecting
+  another metric;
 - no probe value is returned;
-- no `resource`/tracing fallback is consulted;
+- no `resource` or tracing fallback is consulted;
 - `tracemalloc.start()` and `tracemalloc.stop()` are never called.
+
+The two missing-export iterations are separate and reset their fake DLL state;
+each leaves the other required export available so the named missing lookup,
+rather than a shared generic export failure, is the observed cause. Each lookup
+raises its own preconstructed exception sentinel, and the identity requires that
+exact object to escape while tracing and `resource` fallback remain untouched.
 
 For the API-zero scenario it must additionally prove:
 
@@ -386,8 +425,17 @@ The same identity exercises the Windows child tracing guard with
 `is_tracing() == True`. It must fail before decode, call neither `start()` nor
 `stop()`, and leave the externally owned tracer active.
 
-State is reset between loop iterations so one failure mode cannot satisfy
-another through stale calls.
+The same identity also runs the tiny crossing-helper failure operation described
+above. It requires `protocol.decode_wire_json` and `protocol.parse_snapshot` to
+be restored to the exact saved objects and requires the original sentinel
+exception object to escape. Because the operation fails, this branch makes no
+successful exact-one count claim and does not construct or decode the 47 MB
+maximum response.
+
+State is reset between native loop iterations and helper/guard branches so one
+failure mode cannot satisfy another through stale calls. These additions remain
+inside this one existing new identity; they add no parameterized case or third
+ordinary identity.
 
 ### Existing fallback identity
 
@@ -427,8 +475,11 @@ Temporarily:
 The success or fail-closed identity must fail at the branch, no-start/no-stop,
 trace-active guard, or metric assertion. A temporary child invocation with
 tracing pre-enabled must fail before decode and emit no resource evidence. The
-resource parent assertion must independently reject a real child reporting a
-non-native metric on `win32`.
+resource parent gate must independently reject a real child reporting a
+non-native metric on `win32` immediately after JSON parsing, before adding
+parent-derived evidence, the wall budget, or any `record_property`,
+`user_properties`, or equivalent publication. The rejected testcase's generated
+JUnit output must contain zero `resource.*` properties.
 
 ### ABI and value mutants
 
@@ -449,11 +500,20 @@ The comprehensive success identity must fail at the exact owned assertion. The
 width-conditional value mutant must not reject a supported 32-bit interpreter
 merely because it cannot represent a value above `2**32`.
 
-### Failure mutant
+### Failure and restoration mutants
 
-Temporarily ignore a zero return, lose the saved error, call `WinError` with a
-fresh/implicit error, or recover through tracing. The fail-closed identity must
-fail at the return, error-pairing, or no-trace assertion.
+Temporarily collapse the two missing-export cases, tolerate either named export
+being absent, ignore a zero return, lose the saved error, call `WinError` with a
+fresh/implicit error, or recover through `resource` or tracing. The fail-closed
+identity must fail at the exact named-export cause, return, error-pairing,
+no-fallback, or no-trace assertion.
+
+Temporarily omit `finally` restoration in the crossing helper, restore an
+equivalent replacement instead of the saved attribute object, wrap or replace
+the operation's sentinel exception, or assert success counts after that
+operation fails. The same ordinary fail-closed identity must reject the mutant
+using only its tiny injected operation. It must not run a duplicate maximum
+response or add another identity.
 
 ### Maximum-response tripwires
 
@@ -468,10 +528,12 @@ Temporarily alter one boundary at a time:
 - bypass or duplicate `protocol.parse_snapshot`.
 
 The exact output/cardinality, read, and closure assertions remain the witnesses
-for their boundaries. The permanent child-local counters must reject decoder or
-parser bypass and duplicate calls by requiring exactly one call each. Restore
-both wrapped attributes in `finally`, and restore every temporary mutant before
-any commit.
+for their boundaries. On successful measured-client return, the child-local
+counters must reject decoder or parser bypass and duplicate calls by requiring
+exactly one call each. The tiny ordinary failure branch owns exception
+transparency and identity restoration, without making a successful-count claim.
+Restore both wrapped attributes in `finally`, and restore every temporary mutant
+before any commit.
 
 Do not include a `_validate_success_headers` mutation in this resource mapping.
 Valid headers make that mutant observationally equivalent here; unchanged
@@ -496,7 +558,9 @@ codec, or runtime dependency changes.
 The six JUnit property names and value-string behavior remain unchanged.
 `resource.memory_metric` changes value only for Windows child processes, from
 `traced_peak_bytes` to `process_peak_working_set_bytes`. Existing Linux and
-macOS metric names remain stable.
+macOS metric names remain stable. A Windows child reporting any other metric is
+rejected before publication, so that failed execution contributes zero
+`resource.*` JUnit properties rather than a mixed or misleading set.
 
 Because the `resource.*` schema is open and the summarizer already preserves
 arbitrary properties, no `tests/test_ci_timing.py` or
@@ -541,8 +605,10 @@ The child JSON continues to include:
 - exact payload, row, and observation counts;
 - client and reader timing observations.
 
-Only the existing six fields are promoted to JUnit resource properties. No new
-property or schema change is needed.
+Only the existing six fields are promoted to JUnit resource properties. Their
+publication occurs only after the immediate post-parse Windows metric gate; a
+wrong Windows metric publishes none of them. No new property or schema change
+is needed.
 
 The implementation results may report hosted Windows and Ubuntu timing as
 observations. They may make only this structural instrumentation statement:
@@ -581,7 +647,8 @@ Explicitly forbidden without a new design review:
 
 If implementation requires any sixth path, workflow change, parser/schema
 change, product change, or dependency/configuration change, stop and redesign
-rather than broadening scope.
+rather than broadening scope. These review clarifications preserve the approved
+two added identities and exact five-path implementation allowlist.
 
 ## Alternatives rejected
 
@@ -641,6 +708,9 @@ Run:
 
 - both new ordinary Windows-probe tests on the non-Windows local host;
 - the existing explicit non-Windows tracing fallback test;
+- the native failure identity's separate missing-`GetCurrentProcess` and
+  missing-`K32GetProcessMemoryInfo` loop iterations, plus its tiny
+  crossing-helper restoration/sentinel branch;
 - the complete target module with `-m "not resource"`;
 - the resource case with JUnit output;
 - the complete Fleet transport test area;
@@ -661,13 +731,18 @@ A successful hosted Windows run must prove the real ABI rather than only the
 portable fakes:
 
 - the resource child reports `platform == "win32"`;
+- the parent checks `memory_metric` immediately after JSON parsing and before
+  any JUnit publication or wall-budget assertion;
 - `resource.memory_metric` is exactly
-  `process_peak_working_set_bytes`;
+  `process_peak_working_set_bytes`, and a wrong metric would publish zero
+  `resource.*` properties;
 - the maximum response passes with 47,022,137 bytes, 8,192 rows, and 155,648
   observations;
-- child-local assertions require exactly one call each to
-  `protocol.decode_wire_json` and `protocol.parse_snapshot`, and both originals
-  are restored in `finally`;
+- after successful client return, child-local assertions require exactly one
+  call each to `protocol.decode_wire_json` and `protocol.parse_snapshot`;
+- the factored helper restores both originals in `finally`, while the ordinary
+  failure identity independently proves restoration by object identity and
+  propagation of the original sentinel without a successful-count claim;
 - the response read amount and closure assertions pass;
 - all six JUnit resource properties are present;
 - the subprocess remains within timeout 300 and wall budget 75;
@@ -720,17 +795,22 @@ subtract them, and make no memory-ceiling or decode-attribution claim.
 ### A fallback or external tracer can hide native evidence
 
 Any Windows fallback would allow green resource evidence with the wrong metric.
-The failure identity forbids tracing/resource recovery, and the parent resource
-test pins the metric when the child reports `win32`. A pre-existing tracer would
-also make a native-only result ambiguous, so the child fails before decode and
-does not stop that external owner.
+The failure identity separately forbids recovery when either named export is
+missing, as well as tracing/resource recovery for every native failure. The
+parent resource test pins the metric when the child reports `win32` and does so
+before budget evaluation or property publication, preventing a wrong metric
+from leaving plausible partial JUnit evidence. A pre-existing tracer would also
+make a native-only result ambiguous, so the child fails before decode and does
+not stop that external owner.
 
 ### A valid result can hide parser bypass
 
 Exact rows and observations alone do not prove the production wire decoder or
-DTO parser ran. The permanent low-overhead child wrappers count each exact
-module attribute and require one call, while `finally` restoration prevents the
-instrumentation from leaking into later child work.
+DTO parser ran. The factored test-private wrappers count each exact module
+attribute and require one call after successful client return. The tiny failure
+operation proves that `finally` restores the exact original objects and
+preserves the original exception even when both wrapped attributes were touched;
+it adds neither a second 47 MB decode nor another identity.
 
 Success-header validation has the opposite boundary: all resource headers are
 valid, so this case cannot independently distinguish validation from bypass.
@@ -758,7 +838,9 @@ Stop implementation and return to design review if any of these occurs:
 4. preserving the maximum response requires changing bytes, rows,
    observations, read amount, closure, exact-one decoder/parser crossings,
    subprocess timeout, or wall budget;
-5. any existing JUnit resource property must be removed or renamed;
+5. any existing JUnit resource property must be removed or renamed, or the
+   Windows metric cannot be gated immediately after JSON parsing and before
+   budget/property publication with zero properties on rejection;
 6. more than two test identities are required;
 7. an existing test identity must be renamed, removed, reordered, or
    parameterized;
@@ -784,21 +866,32 @@ Before publication, the results document must record a final review covering:
 - metric — exact Windows name and `PeakWorkingSetSize`; above-32-bit distinct
   peak/current evidence on a 64-bit `c_size_t`, or exact high unsigned distinct
   values within width on a 32-bit `c_size_t`;
-- failure — DLL, export, and zero-return cases fail loudly, preserve saved error,
-  and call neither tracing start nor stop;
+- failure — DLL load, missing `GetCurrentProcess`, missing
+  `K32GetProcessMemoryInfo`, and zero-return cases are separate inner-loop
+  scenarios, fail with their exact cause, preserve saved error where applicable,
+  consult no fallback, and call neither tracing start nor stop;
 - fallback — the existing trace fallback is explicitly non-Windows and remains
   green;
 - tracing ownership — Windows fails before decode when tracing is already active,
   never stops an external tracer, and accepted execution neither starts nor
   stops a tracer;
 - maximum contract — exact bytes, rows, observations, read amount, closure,
-  signed client, reader, exactly one wire-decoder call, exactly one DTO-parser
-  call, timeout, budget, and six JUnit properties;
+  signed client, reader, exactly one wire-decoder call and one DTO-parser call
+  after success, timeout, budget, and six JUnit properties;
+- parent evidence gate — the Windows metric assertion is the first validation
+  after child JSON parsing, precedes budget and every `record_property` or
+  `user_properties` write, and publishes zero `resource.*` properties on
+  rejection;
 - header boundary — success-header validation remains owned by unchanged focused
   client tests and scope/diff evidence, with no unsupported resource mutant;
+- crossing restoration — the factored helper is used by `measure_response()`;
+  the existing failure identity touches both wrapped attributes with a tiny
+  operation, then proves exact-object restoration and the original sentinel,
+  with no successful-count claim, duplicate 47 MB run, or new identity;
 - mutation restoration — every selection, trace, current/peak, layout,
-  alignment, `cb`, size, failure, metric, decoder/parser, and maximum-boundary
-  mutant is restored exactly, as are both permanent wrappers in `finally`;
+  alignment, `cb`, size, named-export, failure, metric, decoder/parser,
+  restoration, sentinel, and maximum-boundary mutant is restored exactly, as
+  are both wrapped protocol attributes in `finally`;
 - compatibility — Linux import/tests, macOS/Linux metrics, and hosted Windows
   native execution remain valid;
 - scope — only the approved spec, plan, results, current-state paragraph, and
