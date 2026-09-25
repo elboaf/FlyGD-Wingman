@@ -17111,7 +17111,7 @@ Reproducibility Block B1 passed with the baseline three target identities follow
 
 ## Task 2 success/ABI mutation qualification
 
-The Task 2 subset of Reproducibility Block C completed with aggregate exit `0`: all `17/17` applicable recipes reached their owned intended-red assertion. Every recipe restored exact source bytes, SHA-256, binary diff, and porcelain-v2 status before the runner continued. The target source SHA-256 before and after every Task 2 recipe was `09c4317a6c63e4f58ea9d1cb04fdc5d4580615f3019e73cb5d0726260c51f3c6`.
+The Task 2 subset of Reproducibility Block C originally completed with aggregate exit `0`, but final review found that the original `replace-pseudo-handle` recipe only changed Python representation at the declared `c_void_p` boundary. The corrected recipe changes the pointer-width-safe HANDLE value with `process = get_current_process() ^ 1` and was rerun against the actual final target through the same exact-restoration runner. Its intended RED reached the exact `assert samples ==` handle-forwarding witness. Combined with the 16 unaffected Task 2 records, all `17/17` applicable catalog rows now have behaviorally qualifying evidence. The original Task 2 target source SHA-256 was `09c4317a6c63e4f58ea9d1cb04fdc5d4580615f3019e73cb5d0726260c51f3c6`; the final-target correction and restoration evidence is recorded below.
 
 | Mutant | Intended red witness | Restoration |
 |---|---|---|
@@ -17130,7 +17130,7 @@ The Task 2 subset of Reproducibility Block C completed with aggregate exit `0`: 
 | `field-order` | exact `_fields_` order | exact |
 | `reuse-structure` | exact fresh-structure identity assertion | exact |
 | `omit-signature` | exact `K32GetProcessMemoryInfo.restype` assertion | exact |
-| `replace-pseudo-handle` | exact raw pseudo-handle sample records | exact |
+| `replace-pseudo-handle` | exact forwarded pseudo-handle value in sample records | exact |
 | `close-pseudo-handle` | exact no-`CloseHandle` assertion | exact |
 
 The independent 32-bit counter simulation also exited `0`: `ctypes.c_uint16` remains distinct from `ctypes.c_uint32`, and `0xF1234567` truncates to `0x4567`, so the `field-type` recipe cannot become an equivalent 32-bit alias. `width-truncation` was applicable on this 64-bit interpreter; the catalog records it as not applicable only on a 32-bit interpreter, where `signed-coercion` still qualifies unsigned width.
@@ -17194,7 +17194,7 @@ Reproducibility Block B passed with the baseline three target identities followe
 
 ## Task 3 complete mutation qualification
 
-The full Reproducibility Block C aggregate exited `0`: all `36/36` applicable recipes reported `intended-red`. Every recipe restored exact pre-probe bytes, SHA-256, binary diff, and porcelain-v2 status before the next recipe. The 31 test-module probes restored SHA-256 `743540524a55a508245f65602d0649e9429ac0913cdf53fac053897ea5aec22d`; the five temporary `wingman/fleetsharing/client.py` probes restored SHA-256 `d17b257a1311eb90908bc85b7371bffcf7132e17500fb7e494817d99532c0d46`. Final status contains no production diff.
+The original full Reproducibility Block C aggregate exited `0`, but final review invalidated only the representation-only `replace-pseudo-handle` witness. The corrected recipe changes the HANDLE value with `process = get_current_process() ^ 1` and was rerun against the actual final target through the exact-restoration runner, reaching the intended `assert samples ==` forwarding assertion. The other 35 mutation records are unaffected; together with the corrected artifact, all `36/36` applicable recipes now have behaviorally qualifying intended-red evidence. Every recipe restored exact pre-probe bytes, SHA-256, binary diff, and porcelain-v2 status. The 31 test-module probes restore SHA-256 `743540524a55a508245f65602d0649e9429ac0913cdf53fac053897ea5aec22d`; the five temporary `wingman/fleetsharing/client.py` probes restore SHA-256 `d17b257a1311eb90908bc85b7371bffcf7132e17500fb7e494817d99532c0d46`. Final status contains no production diff.
 
 | Mutant | Intended red witness | Restoration |
 |---|---|---|
@@ -17213,7 +17213,7 @@ The full Reproducibility Block C aggregate exited `0`: all `36/36` applicable re
 | `field-order` | exact `_fields_` order | exact |
 | `reuse-structure` | fresh-structure identity | exact |
 | `omit-signature` | exact native `restype` assertion | exact |
-| `replace-pseudo-handle` | exact raw-handle records | exact |
+| `replace-pseudo-handle` | exact forwarded pseudo-handle value | exact |
 | `close-pseudo-handle` | no-`CloseHandle` assertion | exact |
 | `ignore-active-trace` | required active-trace exception | exact |
 | `collapse-missing-exports` | exact missing-export sentinel identity | exact |
@@ -17394,7 +17394,7 @@ Scope and protected-path audits passed before the ledger edit:
 - protected command over `wingman`, `.github`, `scripts`, `tests/test_ci_timing.py`, `pyproject.toml`, `uv.lock`, and `packaging`: no output;
 - pre-ledger-edit status: clean.
 
-The complete Block C aggregate then reran all 36 recipes and exited `0`; every row reported `intended-red`. All 36 JSON records have `problem=null` and `restoration_problem=null`; their sorted concatenation SHA-256 is `009fe4900ac5be0b8ea1f8d880a9dfbdf78d92cf3822e1e575ddde6de5721e79`. The 31 test-module probes restored SHA-256 `743540524a55a508245f65602d0649e9429ac0913cdf53fac053897ea5aec22d`; the five temporary client probes restored SHA-256 `d17b257a1311eb90908bc85b7371bffcf7132e17500fb7e494817d99532c0d46`. The wrong-child-metric mutant's JUnit had exactly zero `resource.*` properties. Post-mutation `git diff --check`, status, and the binary production diff were empty.
+The original complete Block C aggregate reran all 36 recipes and exited `0`, but final review found the old `replace-pseudo-handle` edit behaviorally equivalent at the declared `c_void_p` boundary. The other 35 artifacts remain qualifying. The corrected final-target rerun changed the integer HANDLE value with `process = get_current_process() ^ 1`, reported `intended-red`, and failed at the exact `assert samples ==` forwarding witness. All 36 JSON records now again have `problem=null` and `restoration_problem=null`; because the record schema, expected regex, source hash, and null outcomes are unchanged, their sorted concatenation remains SHA-256 `009fe4900ac5be0b8ea1f8d880a9dfbdf78d92cf3822e1e575ddde6de5721e79`. The corrected JUnit SHA-256 is `e3b1a8debc7934422f6ad73d8edad8b2d78414bc11158f0b4894fbeca649f5fb`; corrected pytest log SHA-256 is `4b6f262c03806254bfbb81ac048b7f0511cc2f03ae4a09ffe4cabf61d03d6727`; runner-output log SHA-256 is `6811499b46557d4ea9ba04e5dbe410f8d8950858e6f6d321b1dae7b2a9e7ae58`; and the unchanged corrected JSON record SHA-256 is `66e139587649eb5514e3e45364800b316ec7c9658837dd8362fb25e057915570`. The 31 test-module probes restore SHA-256 `743540524a55a508245f65602d0649e9429ac0913cdf53fac053897ea5aec22d`; the five temporary client probes restore SHA-256 `d17b257a1311eb90908bc85b7371bffcf7132e17500fb7e494817d99532c0d46`. The wrong-child-metric mutant's JUnit had exactly zero `resource.*` properties. Post-mutation target binary diff was empty, and porcelain status matched the pre-probe plan-only edit exactly.
 
 ## Task 4 required self-review
 
@@ -17411,7 +17411,7 @@ The complete Block C aggregate then reran all 36 recipes and exited `0`; every r
 | Parent metric gate | PASS | first validation after JSON parse; precedes parent wall insertion, all six properties, and budget; wrong metric publishes zero properties |
 | Success-header boundary | PASS | unchanged 535-case focused transport area owns it; no unsupported resource mutant or production edit |
 | Crossing restoration | PASS | helper restores both exact objects in `finally`; tiny failure re-raises the original sentinel and makes no successful-count claim |
-| Mutation restoration | PASS | `36/36` intended-red; exact bytes/hash/binary diff/porcelain restoration; no production residue |
+| Mutation restoration | PASS | 35 unaffected prior records plus the corrected HANDLE-value rerun complete `36/36` intended-red; exact bytes/hash/binary diff/porcelain restoration; no production residue |
 | Linux/macOS compatibility | PASS | Linux full suite passes with `process_peak_rss_kib`; source retains macOS `process_peak_rss_bytes` and generic non-Windows trace fallback |
 | Scope/protected paths | PASS | exact five-path tranche; no production/workflow/summarizer/timing-test/dependency/configuration/marker/selector/budget/shard change |
 | Claim discipline | PASS | observations only; no memory ceiling, before/after delta, traced/native comparison, case/suite/job/runner speedup, or critical-path attribution |
@@ -17523,3 +17523,39 @@ No publication or hosted action was performed at this checkpoint.
 - Fresh Task 5 timing and memory values are single-sample Linux observations and support no performance attribution.
 - Native process-lifetime peak working set is not numerically comparable to the prior test-owned traced-allocation peak.
 - The PR #288 baseline's absent `run.pull_requests` metadata still requires the approved explicit run/PR and logs-primary provenance path if hosted collection is later authorized.
+
+## Final-review mutation correction
+
+Final review found that the original `replace-pseudo-handle` recipe changed an integer HANDLE to `ctypes.c_void_p(process)`. That is behaviorally equivalent at the declared `c_void_p` native boundary; the portable fake rejected only a Python representation difference. The baseline executable test remains byte-identical. The plan catalog now mutates the actual pointer-width-safe value instead:
+
+```python
+process = get_current_process() ^ 1
+```
+
+The exact target text `        process = get_current_process()\n` occurred once and the replacement was absent before mutation. The corrected runner command was:
+
+```text
+uv run --no-sync python /tmp/windows_memory_mutation.py replace-pseudo-handle
+```
+
+It exited `0` and reported `{"mutant": "replace-pseudo-handle", "result": "intended-red"}`. The focused pytest failure reached the intended forwarding witness at `assert samples ==`: the fake recorded HANDLE `4294967294`, while the returned pseudo-handle and expected forwarded value were `4294967295`. This is a value change, not a wrapper/representation comparison.
+
+Exact corrected artifacts:
+
+| Evidence | SHA-256 |
+|---|---|
+| corrected JUnit | `e3b1a8debc7934422f6ad73d8edad8b2d78414bc11158f0b4894fbeca649f5fb` |
+| corrected pytest log | `4b6f262c03806254bfbb81ac048b7f0511cc2f03ae4a09ffe4cabf61d03d6727` |
+| runner-output log | `6811499b46557d4ea9ba04e5dbe410f8d8950858e6f6d321b1dae7b2a9e7ae58` |
+| mutation JSON record | `66e139587649eb5514e3e45364800b316ec7c9658837dd8362fb25e057915570` |
+
+The exact-restoration runner restored target bytes and SHA-256 `743540524a55a508245f65602d0649e9429ac0913cdf53fac053897ea5aec22d`, reproduced the pre-probe binary diff and NUL-delimited porcelain-v2 status, and left no target or production diff. The artifact directory contains 36 JSON records; all 36 have `problem=null` and `restoration_problem=null`. The sorted JSON concatenation remains SHA-256 `009fe4900ac5be0b8ea1f8d880a9dfbdf78d92cf3822e1e575ddde6de5721e79` because the record schema, expected regex, source hash, and null outcomes did not change. The 35 unaffected prior artifacts plus this corrected artifact therefore complete the `36/36` qualification claim.
+
+Fresh post-restoration verification:
+
+- native success/failure identities: `2 passed in 3.80s`; JUnit 2 cases, 0 failures/errors/skips, SHA-256 `8b3274f38354c11c6cf41fb6d1a1f1c0b9f54bc12c1ed49e242aa05142327160`;
+- `uv run --extra dev ruff check .`: `All checks passed!`;
+- `uv run --extra dev ruff format --check .`: `520 files already formatted`;
+- `uv run --no-sync python -m pytest tests/test_documentation.py -q`: `7 passed in 1.05s`;
+- `git diff --check`: exit `0`;
+- final fix-wave paths before commit: only this results ledger and the approved plan.
