@@ -999,34 +999,168 @@ candidate transition is:
 | Fresh durable equality loads | `0` | `119` |
 
 Instrumentation identified exactly the six original-phase IDs above and measured
-each at twelve turns. The post-Task-3 rerun reproduced `682/921/802/1409/119`
-and the exact `105/4/9/1` categories against candidate source SHA-256
+each at twelve turns. The post-Task-3 rerun and Task 4 final-tree rerun both
+reproduced `682/921/802/1409/119` and the exact `105/4/9/1` categories against
+candidate source SHA-256
 `3e2a33f5549d834c113cbcf832391f65f62bcf7311bed2de92b4c43c60f3363c`.
+The Task 4 instrumentation command was
+`uv run --no-sync python /tmp/source_readiness_instrument_run.py candidate`; it
+completed in `17.09s` wall time. This is a single local observation, not a
+performance claim.
 
 ## Identity and order verification
 
-The post-Task-3 focused module run produced `120 passed in 7.25s`. Block E then
-proved source `120 / 120` and complete `16,609 / 16,609` collection remain
+The Task 4 focused command was:
+
+```text
+uv run --no-sync python -m pytest tests/test_fleetsharing_source_admission.py -q -rs --durations=30 --junitxml=/tmp/source-readiness-final-120.xml
+```
+
+It produced `120 passed in 7.29s` (`9.81s` observed wall time), no skips, a
+`7.284s` JUnit suite duration, and a `4.759s` testcase sum. The ordered identity
+hash remained
+`b79e5648f77c4e9af985085209b66a3b306c2ec56635a4b2a7586de21713a488`.
+
+The one-shot Block E command was
+`uv run --no-sync python /tmp/source_readiness_endpoint.py`. It completed in
+`108.47s` observed wall time and proved source `120 / 120` and complete
+`16,609 / 16,609` collection remain
 ordered-equal to the frozen baseline, all 39 AST test shapes remain exact, and
 both protected callers retain the baseline byte hashes. The three-file endpoint
-remains exactly 167 unique, non-skipped identities. All four one-shot order runs
-passed without retries:
+remains exactly 167 unique, non-skipped identities. No order was retried:
 
-| Order | Observed SHA-256 | Task 3 result |
-|---|---|---|
-| Normal | `7b9e3644793a89952f132df22b1131c699530c41357b0f92fe4f80873faae89d` | `167 passed` |
-| Reverse file | `8890f6fe56c31201dfddc19054f51de8e8beb6be06ae94d63d98945e148c3a9b` | `167 passed` |
-| Reverse node | `8acc488cd820e8f289dfaf003c2900fa5f4b63f0d52eb9653af8067d4978c809` | `167 passed` |
-| Seed-`20260925` shuffle | `2c8be0cd05e8cfb3e1ce5fa4f650cc7049dabf1069d2a95af861317911fd0a0a` | `167 passed` |
+| Order | Observed SHA-256 | Result | JUnit suite / testcase sum |
+|---|---|---|---:|
+| Normal | `7b9e3644793a89952f132df22b1131c699530c41357b0f92fe4f80873faae89d` | `167 passed` | `15.670s / 12.511s` |
+| Reverse file | `8890f6fe56c31201dfddc19054f51de8e8beb6be06ae94d63d98945e148c3a9b` | `167 passed` | `15.670s / 12.507s` |
+| Reverse node | `8acc488cd820e8f289dfaf003c2900fa5f4b63f0d52eb9653af8067d4978c809` | `167 passed` | `15.698s / 12.535s` |
+| Seed-`20260925` shuffle | `2c8be0cd05e8cfb3e1ce5fa4f650cc7049dabf1069d2a95af861317911fd0a0a` | `167 passed` | `15.613s / 12.439s` |
 
 ## Complete local verification
 
-Task 3 verified the exact source module and three-file endpoint rather than the
-complete executable suite. The complete 16,609 collection was checked, but no
-new 16,609-case execution, Node/codec/Cargo gate, or hosted candidate comparison
-is claimed; those remain Task 4 work. Final Task 3 verification also runs focused
-Ruff check/format, `git diff --check`, production/protected-caller diffs,
-staged-path, and status checks.
+### Prerequisites and relevant Fleet selection
+
+| Exact command | Result | Observed wall |
+|---|---|---:|
+| `uv sync --locked --extra dev` | resolved 56 packages; checked 39 | `0.41s` |
+| `node --version` | `v26.5.0` | `0.00s` |
+| `cargo build --locked --release --manifest-path packaging/settings-codec/Cargo.toml --target-dir packaging/settings-codec/target` | release build passed | `4.73s` |
+| release-codec copy/availability command below | copied the release codec; `codec.codec_available()` passed | `0.51s` |
+
+```text
+uv run --no-sync python -c "import os, pathlib, shutil; from wingman.evesettings import codec; name = 'wingman-settings-codec' + ('.exe' if os.name == 'nt' else ''); source = pathlib.Path('packaging/settings-codec/target/release') / name; target = pathlib.Path('packaging/bin') / name; target.parent.mkdir(parents=True, exist_ok=True); shutil.copy2(source, target); assert codec.codec_available(), 'Native integration tests require the built codec'"
+```
+
+The exact Fleet selection command was:
+
+```text
+uv run --no-sync python -m pytest \
+  tests/test_fleetsharing_source_admission.py \
+  tests/test_fleetsharing_remote_worker.py \
+  tests/test_fleetsharing_worker_fix1.py \
+  tests/test_fleetsharing_worker.py \
+  tests/test_fleetsharing_worker_timing.py \
+  tests/test_fleetsharing_worker_revision.py \
+  tests/test_fleetsharing_state.py \
+  tests/test_fleetsharing_state4.py \
+  tests/test_fleetsharing_timing.py \
+  tests/test_fleetsharing_timing_publisher.py \
+  tests/test_fleetsharing_client.py \
+  tests/test_fleetsharing_scheduling.py \
+  tests/test_fleetsharing_crypto.py \
+  -q -rs --durations=50 --junitxml=/tmp/source-readiness-fleet.xml
+```
+
+It produced `632 passed in 60.74s` (`63.35s` observed wall), no skips, a
+`60.715s` JUnit suite duration, and a `41.309s` testcase sum.
+
+### Complete suite and exact identities
+
+The exact complete-suite command was:
+
+```text
+uv run --no-sync python -m pytest tests/ -q -rs --durations=50 --junitxml=/tmp/source-readiness-full.xml
+```
+
+It produced exactly `16,595 passed, 14 skipped in 466.68s` (`472.34s` observed
+wall). The exact summarizer command
+`uv run --no-sync python scripts/summarize_pytest_junit.py
+/tmp/source-readiness-full.xml /tmp/source-readiness-full.json` reported
+`case_count = 16609`, a `427.210s` testcase sum, source file `120` cases, and
+source testcase sum
+`4.754s`. A separate exact audit serialized the JUnit order with a final newline
+and compared it byte-for-text with the frozen ledgers:
+
+| Inventory | Exact equality | Ordered SHA-256 |
+|---|---|---|
+| Complete `16,609` | `/tmp/source-readiness-full-identities.txt` equals `complete-16609.txt` | `f468ba1954d3ff0ab693dd721ff8a7a4d12266e16d8568035de4245a6c616100` |
+| Source `120` | filtered JUnit identities equal `source-120.txt` | `b79e5648f77c4e9af985085209b66a3b306c2ec56635a4b2a7586de21713a488` |
+
+The exact ordered local skip tuples equal the frozen Ubuntu array:
+
+| # | Node ID | Normalized reason |
+|---:|---|---|
+| `1` | `tests/test_clipserve.py::test_a_live_reader_does_not_block_deletion` | `delete-while-open is a Windows sharing rule` |
+| `2` | `tests/test_evesettings_profilecopy.py::test_prepare_copy_rejects_a_real_windows_server_junction_outside_the_root` | `requires a real Windows junction` |
+| `3` | `tests/test_evesettings_profilecopy.py::test_prepare_copy_rejects_a_real_windows_profile_junction_outside_the_server` | `requires a real Windows junction` |
+| `4` | `tests/test_evesettings_profilecopy.py::test_cleanup_refuses_a_stage_shaped_windows_junction_rather_than_following_it` | `requires a real Windows junction` |
+| `5` | `tests/test_eveskills_dpapi.py::test_round_trips_on_windows` | `requires real DPAPI` |
+| `6` | `tests/test_eveskills_dpapi.py::test_crypt32_binding_is_cached` | `requires real WinDLL` |
+| `7` | `tests/test_preview_host.py::test_stop_from_another_thread_really_exits_the_pump` | `needs a real message pump and window station` |
+| `8` | `tests/test_preview_win32.py::test_every_used_function_is_declared` | `binds user32/gdi32/dwmapi` |
+| `9` | `tests/test_preview_win32.py::test_pointer_sized_returns_are_not_left_at_the_c_int_default` | `binds user32/gdi32/dwmapi` |
+| `10` | `tests/test_preview_win32.py::test_bind_is_cached_so_declarations_are_applied_once` | `binds user32/gdi32/dwmapi` |
+| `11` | `tests/test_tray.py::test_adapter_loads_against_the_pinned_pystray_windows_backend` | `pystray Windows backend` |
+| `12` | `tests/test_ui_setup_profile.py::test_recognized_file_shaped_junction_refuses[core_char_31.dat]` | `requires real Windows junction` |
+| `13` | `tests/test_ui_setup_profile.py::test_recognized_file_shaped_junction_refuses[prefs.ini]` | `requires real Windows junction` |
+| `14` | `tests/test_wanderer_integration.py::test_real_windows_credential_document_roundtrip_replace_binding_and_remove` | `real Windows user-bound DPAPI required` |
+
+No Node, codec, or unexpected native-availability skip occurred.
+
+### Independent local gates
+
+| Exact command | Result | Observed wall |
+|---|---|---:|
+| `node scripts/js_smoke.js` | `PASS every page module loaded` | `0.18s` |
+| `cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml` | `1 passed; 0 failed` | `5.76s` |
+| `uv run --extra dev ruff check .` | `All checks passed!` | `2.00s` |
+| `uv run --extra dev ruff format --check .` | `520 files already formatted` | `2.77s` |
+| `git diff --check f6e8ecd5..HEAD` | no output | `0.20s` |
+
+All six Block A–E helper scripts passed `python -m py_compile`, one combined
+`ruff check` (`All checks passed!`), and one combined `ruff format --check`
+(`6 files already formatted`) against their final Task 4 bytes:
+
+| Script | SHA-256 |
+|---|---|
+| `/tmp/source_readiness_collection_plugin.py` | `335f509a68a1943cab8fa60707ac3775bfef62461be10d43c0776541597816bd` |
+| `/tmp/source_readiness_baseline.py` | `29e62100223ac5fd35229ff46c841471f033aa081f5a014d9a1c75720c2b1bee` |
+| `/tmp/source_readiness_instrument_edit.py` | `a26cefdd62cdbe0a9dccde35b436a25601b389110a4a832cc2588f9cdb625e02` |
+| `/tmp/source_readiness_instrument_run.py` | `6817648e3cdd3fee1d71a98212ce5116838de6fae90c124d4557be4f6feb309b` |
+| `/tmp/source_readiness_mutations.py` | `9ea6604a05723530b6391414dfe923f941fea3ecc23c6b2d57adaf2c74ecaec9` |
+| `/tmp/source_readiness_endpoint.py` | `b9efde61635135830dd751d3d4423d015bfb499028f986f49a5a38145530ad58` |
+
+### Final mutation and restoration rerun
+
+The complete final-tree Block D command
+`uv run --no-sync python /tmp/source_readiness_mutations.py --all` ran all
+recipes once, in insertion order, in `496.80s` observed wall time:
+
+| Category | Recipes | Selected JUnit cases | Exact result |
+|---|---:|---:|---|
+| Production | `18` | `22` | all `intended-red` at the required non-bootstrap boundary |
+| Readiness fault | `5` | `5` | all `intended-red` |
+| One-turn-short bound | `4` | `4` | all `intended-red` |
+| Equivalent deletion | `14` | `14` | all `reviewed-valid-flow-equivalent` |
+| **Total** | **`41`** | **`45`** | **no execution or restoration problem** |
+
+The detailed 41-row table above remains the exact mutation/fault authority. The
+rerun repeated every qualification, including the isolated line-71
+save-before-transport witness, all seven ordered fence differences, exact
+watch identities, retry sample/row/effect pins, and one-turn-short boundaries.
+Every JSON artifact has `problem = null` and `restoration_problem = null`.
+Post-matrix `git diff --check`, `git diff --exit-code -- wingman`, and
+`git status --short` all produced no output.
 
 ## Hosted comparison
 
@@ -1040,37 +1174,44 @@ is claimed.
 
 ## Scope, restoration, reviews, and concerns
 
-- Task 3 changes only `tests/test_fleetsharing_source_admission.py` and this
-  results ledger. Production, workflows, dependencies, configuration, markers,
+- `git diff --name-only f6e8ecd5..HEAD -- .` is exactly these four approved
+  paths: the source-admission test, this results ledger, and the approved plan
+  and design. Production, workflows, dependencies, configuration, markers,
   selectors, budgets, shards, packaging, and protected callers are unchanged.
-- Every one of the 41 matrix recipes restored exact target bytes and SHA-256,
-  complete binary diff, and NUL-delimited porcelain-v2 status before the next
-  recipe. Candidate instrumentation separately restored the exact test bytes,
-  source hash, binary diff, and status. Final `git diff --exit-code -- wingman`
-  was clean.
-- The pre-probe production hashes were
-  `83ed5da6327ae71d7b8e7dcb74595217bf4068a01ee07db4138f37b3f9e6f81b`
-  for `worker.py` and
-  `0b09ec89d47b803089015a6e21f80604219ec1b619909ca400e5e7e7d9520901`
-  for `timing.py`; the final test pre-probe hash was
-  `3e2a33f5549d834c113cbcf832391f65f62bcf7311bed2de92b4c43c60f3363c`.
+- `git diff --exit-code f6e8ecd5..HEAD -- wingman .github pyproject.toml uv.lock
+  packaging` and the equivalent protected-caller command both produced no
+  output.
+- Final protected hashes are source-admission
+  `3e2a33f5549d834c113cbcf832391f65f62bcf7311bed2de92b4c43c60f3363c`,
+  remote worker
+  `d77a1fa8c0919de4cca443f5f823407ce46461fb5104352853a90df9a25205b7`,
+  worker fix1
+  `cc3dfe364f8754ebb34d7bedfc16a0eee64349391406161e680f08a7be444b25`,
+  production worker
+  `83ed5da6327ae71d7b8e7dcb74595217bf4068a01ee07db4138f37b3f9e6f81b`,
+  and timing
+  `0b09ec89d47b803089015a6e21f80604219ec1b619909ca400e5e7e7d9520901`.
+- Candidate instrumentation and all 41 final-tree recipes restored exact target
+  bytes and SHA-256, complete binary diff, and NUL-delimited porcelain-v2 status.
+  The release codec under `packaging/bin` and Cargo targets are ignored local
+  prerequisites, not scope changes.
 - The immutable `/tmp/wingman-source-readiness-baseline` ledgers remain the
-  source/full identity and AST-shape authority. Task 3 evidence is retained in
-  `/tmp/source-readiness-candidate-instrument-summary.json`, the four order
-  JUnits, and the 41 JSON/log/JUnit triples under
-  `/tmp/wingman-source-readiness-mutants/` and `/tmp/`.
-- Self-review checks mutation isolation, exact selected IDs, proof competing
-  deadlines, the session-current-cache injection, the isolated effect-only drop,
-  masked/timeout rejection, all seven fence fields, watch identities, common
-  postconditions, six original-phase IDs, unchanged callers, restoration, Ruff,
-  diff, staged scope, and status.
-- Independent Task 3 review found one P2 evidence defect: the former broad
-  save-before-transport mutation failed bootstrap durability rather than the
-  transport boundary. The correction above isolates publication reservation,
-  requires the line-71 disk/header assertion, rejects every production bootstrap
-  readiness/postcondition signature, and reruns all 41 recipes plus affected
-  permanent/count/order/Ruff checks. Complete executable-suite and hosted
-  candidate evidence remain Task 4/5 work. Timings here are observations only.
+  source/full identity and AST-shape authority. Final local evidence is retained
+  in `/tmp/source-readiness-final-120.xml`, `/tmp/source-readiness-fleet.xml`,
+  `/tmp/source-readiness-full.xml`, `/tmp/source-readiness-full.json`, the four
+  order JUnits, the candidate instrumentation summary, and the 41 JSON/log/JUnit
+  triples under `/tmp/wingman-source-readiness-mutants/` and `/tmp/`.
+- Self-review checked exact scope and identities, fixture interface and readiness
+  predicate, durable/common postconditions, exactly six original-phase IDs,
+  independent deadlines, structural arithmetic, lifecycle seams, retry keys and
+  pin identity, mutation qualification, order independence, no placeholder or
+  debug residue, and claim discipline.
+- The direct no-subagent instruction prevented a new independent Task 4 agent
+  review. No independent Task 4 review is claimed. Task 3's independent review
+  and correction remain recorded above; this Task 4 pass adds deterministic
+  full-suite, identity, scope, hash, and restoration audits.
+
+LOCAL CONCLUSION: the implementation preserves every source-admission and complete-suite identity while reducing real fixture bootstrap turns and saves to the approved structural counts. Local and hosted timings are observations only; no speedup is claimed.
 
 ## Appendix A — exact ordered source-admission identities
 
