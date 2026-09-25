@@ -13,7 +13,8 @@ Task 1 changes only this results ledger. No executable file, workflow, dependenc
 - Task 1: **COMPLETE** — the exact three-ID target, exact ordered 16,607-ID complete inventory, one-marker ownership, PR #288 logs-primary provenance, selected jobs/artifacts, ZIP-member equality, artifact hashes, complete normalized skip tuples, resource properties, and timing observations are frozen below.
 - Task 2: **COMPLETE** — the exact first ordinary suffix identity, lazy native Windows success path, natural ABI layout, platform selection, trace guard, portable fallback, exact 4/16,608 inventories, and 17 restoration-safe success/ABI mutants are qualified below.
 - Task 3: **COMPLETE** — fail-closed native errors, active-trace refusal, protocol-crossing restoration, immediate parent metric gating, exact final inventories, unchanged six-property evidence, and the full 36-mutant restoration catalog are qualified below.
-- Tasks 4–5: **NOT STARTED** — full local qualification and hosted publication remain outside Task 3 scope.
+- Task 4: **COMPLETE** — the complete local endpoint, full maximum execution, generic JUnit summarization, exact 16,609-outcome suite, normalized skips, independent gates, five-path scope, and 36-mutant restoration are qualified below.
+- Task 5: **NOT STARTED** — polish and authorized hosted publication remain outside Task 4 scope.
 
 ## Exact three-ID target baseline
 
@@ -17162,7 +17163,7 @@ The exact second suffix identity and its first `os` use were appended before imp
 
 ## Task 3 maximum resource evidence
 
-The final resource-only command produced `1 passed, 4 deselected in 7.87s`; the testcase call was `5.70s`, and the child-reported wall was `5.702792872034479s`. The generic summarizer preserved one resource-evidence row without modification.
+The final resource-only command produced `1 passed, 4 deselected in 7.87s`; the testcase call was `5.70s`, and the parent-measured subprocess wall was `5.702792872034479s`. The generic summarizer preserved one resource-evidence row without modification.
 
 - `resource.subprocess_wall_seconds = 5.702792872034479`
 - `resource.memory_metric = process_peak_rss_kib`
@@ -17240,11 +17241,186 @@ Only the current Transport resources paragraph changed. It now states that Windo
 
 A fresh standalone source review passed. It checked saved-error adjacency, unsuppressed loader/export lookup, no fallback or trace ownership violation, first-line guard placement, helper `finally`, exact-object restoration and sentinel identity coverage, successful exact-one crossings, independent maximum assertions, immediate parent ordering, zero-property rejection, and the explicit success-header boundary. No finding remained.
 
+## Task 4 local environment and prerequisites
+
+Task 4 ran from the clean linked worktree `/mnt/c/dev/flygd-wingman/.worktrees/ci-windows-resource-memory-probe` on branch `ci-windows-resource-memory-probe`, consuming Task 3 head `cf8f64b20cfef836679bce33ed9ad67c1c629d1a`. The host was Linux `6.6.87.2-microsoft-standard-WSL2` x86-64 with Python `3.11.15`, 64-bit pointers, uv `0.11.3`, Node `v26.5.0`, Cargo/Rust `1.91.0`, and Git `2.55.0`.
+
+Mandatory prerequisites were rebuilt rather than inferred:
+
+- `uv sync --locked --extra dev`: exit `0`, 56 packages resolved and 39 checked.
+- `node --version`: `v26.5.0`; executable `/home/tng/.local/share/mise/installs/node/26.5.0/bin/node`.
+- release codec build: exit `0` in `4.87s`.
+- installed codec availability assertion: exit `0`; `packaging/bin/wingman-settings-codec` exists, is `713040` bytes, and matches the release binary at SHA-256 `4a4b57f48829002be1aff6eda8193f9e1fb8257a9bef5666dd26b0e225e815b4`.
+
+The exact prerequisite commands were:
+
+```text
+uv sync --locked --extra dev
+node --version
+cargo build --locked --release --manifest-path packaging/settings-codec/Cargo.toml --target-dir packaging/settings-codec/target
+uv run --no-sync python -c "import os, pathlib, shutil; from wingman.evesettings import codec; name = 'wingman-settings-codec' + ('.exe' if os.name == 'nt' else ''); source = pathlib.Path('packaging/settings-codec/target/release') / name; target = pathlib.Path('packaging/bin') / name; target.parent.mkdir(parents=True, exist_ok=True); shutil.copy2(source, target); assert codec.codec_available(), 'Native integration tests require the built codec'"
+```
+
+## Task 4 endpoint, target, and complete-suite execution
+
+Exact commands and results:
+
+| Command | Result |
+|---|---|
+| `uv run --no-sync python /tmp/windows_memory_endpoint.py` | exit `0`; target `5`, ordinary `4`, resource `1`, complete `16,609`, additions/removals `+2/0` |
+| target `-m "not resource" -q -rs --junitxml=/tmp/windows-memory-ordinary.xml` | `4 passed, 1 deselected in 4.25s`; JUnit 4 passed, no properties |
+| complete target `-q -rs --durations=0 --junitxml=/tmp/windows-memory-target.xml` | `5 passed in 9.93s`; JUnit testcase sum `7.792s` |
+| resource target `-m resource -q -s --durations=0 --junitxml=/tmp/windows-memory-resource-final.xml` | `1 passed, 4 deselected in 7.92s`; JUnit testcase `5.783s` |
+| generic resource summarizer | exit `0`; one case, one six-property resource row, total `5.783s` |
+| complete Fleet transport area | `535 passed in 16.67s`; no skips; JUnit testcase sum `9.425s` |
+| full `tests/` suite with JUnit | `16,595 passed, 14 skipped in 512.38s`; exactly `16,609` outcomes |
+| generic full-suite summarizer | `case_count=16609`; JUnit testcase sum `471.729s`; target file 5 cases / `7.737s`; one six-property resource row |
+
+The full exact test commands were:
+
+```text
+uv run --no-sync python -m pytest tests/test_fleetsharing_transport_resources.py -m "not resource" -q -rs --junitxml=/tmp/windows-memory-ordinary.xml
+uv run --no-sync python -m pytest tests/test_fleetsharing_transport_resources.py -q -rs --durations=0 --junitxml=/tmp/windows-memory-target.xml
+uv run --no-sync python -m pytest tests/test_fleetsharing_transport_resources.py -m resource -q -s --durations=0 --junitxml=/tmp/windows-memory-resource-final.xml
+uv run --no-sync python scripts/summarize_pytest_junit.py /tmp/windows-memory-resource-final.xml /tmp/windows-memory-resource-final.json
+uv run --no-sync python -m pytest tests/test_fleetsharing_client.py tests/test_fleetsharing_transport_resources.py tests/test_fleetsharing_transport_v2.py tests/test_fleetsharing_wire_json.py -q -rs --durations=30 --junitxml=/tmp/windows-memory-fleet-transport.xml
+uv run --no-sync python -m pytest tests/ -q -rs --durations=50 --junitxml=/tmp/windows-memory-full.xml
+uv run --no-sync python scripts/summarize_pytest_junit.py /tmp/windows-memory-full.xml /tmp/windows-memory-full.json
+```
+
+The endpoint hashes remain:
+
+- target ordered final-newline SHA-256: `62fae7a4bec52e1e87c423388e960f2c0799cd4d6d8c5be07e8e5f9eff377cb1`;
+- complete ordered final-newline SHA-256: `f468ba1954d3ff0ab693dd721ff8a7a4d12266e16d8568035de4245a6c616100`;
+- endpoint summary SHA-256: `f1848e4d7fa694e36d57d03f09e58f0899c281b14da46eb0d8162b12e138ca03`.
+
+Both approved suffix identities passed in the target JUnit and in the full-suite JUnit. The original three-ID prefix and exact two-ID suffix order are unchanged, and the sole `resource` owner remains the maximum-response identity.
+
+## Task 4 resource and generic-summarizer evidence
+
+The fixed fresh resource JUnit carried exactly these six properties:
+
+```text
+resource.subprocess_wall_seconds = 5.774205072026234
+resource.memory_metric = process_peak_rss_kib
+resource.memory_peak = 302564
+resource.raw_bytes = 47022137
+resource.rows = 8192
+resource.observations = 155648
+```
+
+`resource.subprocess_wall_seconds` is measured by the parent around `subprocess.run`; it is not child-reported. This also corrects the minor attribution wording in the Task 3 result above without changing its value or evidence.
+
+The full-suite resource row independently reported parent-measured wall `5.7017916909535415s`, Linux metric `process_peak_rss_kib`, positive peak `427460`, and the same exact bytes/rows/observations. The maximum ran once in the 535-case Fleet area and once in the full suite, stayed below the 75-second budget, and retained the 300-second subprocess timeout. The open-schema summarizer required no change and preserved the six strings in both summaries.
+
+Evidence hashes:
+
+| Evidence | SHA-256 |
+|---|---|
+| ordinary JUnit | `acb889dfd20a3f8fe4095cf702afade37d1cd5c833b3acf765b3d40dfaa55514` |
+| target JUnit | `4e63b8a2c5ef6ee2e877fa42a5a47c0a85226a169c64c28de76f41da739b352a` |
+| fixed resource JUnit | `b9dc3513b32426dc2a267503ccf4bb902c3bcbbd584d66446e9983da6190f7ed` |
+| fixed resource summary | `84292f82b6307601b2170125e0882e6e12fdacfc6c13c92ae994c253c0835bf8` |
+| Fleet transport JUnit | `478259a5b0f02f90055e1c3b5fd442fafb11d2d8672308f45d871a7634f8cbef` |
+| full-suite JUnit | `cae66d6316a06e537b932d3a3a90ccd71bf524494db70b33ea9204ab16ee65ed` |
+| full-suite summary | `3ad1155dd33556e670a964b2add8fca788a91589265bcc2753d5cf47449560cd` |
+| local audit JSON | `571e66e2ea8bf6637d16d52887757bd0d6614fef0caf486982ee22d9d95015de` |
+
+## Task 4 exact local audit and skips
+
+Reproducibility Block B3 compiled and exited `0`. Its exact JSON was:
+
+```json
+{
+  "changed_paths": [
+    "docs/ci-test-budget-redesign.md",
+    "docs/ci-windows-resource-memory-probe-results.md",
+    "docs/superpowers/plans/2026-09-24-windows-resource-memory-probe.md",
+    "docs/superpowers/specs/2026-09-24-windows-resource-memory-probe-design.md",
+    "tests/test_fleetsharing_transport_resources.py"
+  ],
+  "complete_count": 16609,
+  "complete_sha256": "f468ba1954d3ff0ab693dd721ff8a7a4d12266e16d8568035de4245a6c616100",
+  "new_passed": [
+    "tests/test_fleetsharing_transport_resources.py::test_windows_memory_probe_reports_peak_working_set_without_tracing",
+    "tests/test_fleetsharing_transport_resources.py::test_windows_memory_probe_fails_closed_and_restores_crossings"
+  ],
+  "passed": 16595,
+  "resource_properties": {
+    "resource.memory_metric": "process_peak_rss_kib",
+    "resource.memory_peak": "302564",
+    "resource.observations": "155648",
+    "resource.raw_bytes": "47022137",
+    "resource.rows": "8192",
+    "resource.subprocess_wall_seconds": "5.774205072026234"
+  },
+  "skips": [
+    ["tests/test_clipserve.py::test_a_live_reader_does_not_block_deletion", "delete-while-open is a Windows sharing rule"],
+    ["tests/test_evesettings_profilecopy.py::test_prepare_copy_rejects_a_real_windows_server_junction_outside_the_root", "requires a real Windows junction"],
+    ["tests/test_evesettings_profilecopy.py::test_prepare_copy_rejects_a_real_windows_profile_junction_outside_the_server", "requires a real Windows junction"],
+    ["tests/test_evesettings_profilecopy.py::test_cleanup_refuses_a_stage_shaped_windows_junction_rather_than_following_it", "requires a real Windows junction"],
+    ["tests/test_eveskills_dpapi.py::test_round_trips_on_windows", "requires real DPAPI"],
+    ["tests/test_eveskills_dpapi.py::test_crypt32_binding_is_cached", "requires real WinDLL"],
+    ["tests/test_preview_host.py::test_stop_from_another_thread_really_exits_the_pump", "needs a real message pump and window station"],
+    ["tests/test_preview_win32.py::test_every_used_function_is_declared", "binds user32/gdi32/dwmapi"],
+    ["tests/test_preview_win32.py::test_pointer_sized_returns_are_not_left_at_the_c_int_default", "binds user32/gdi32/dwmapi"],
+    ["tests/test_preview_win32.py::test_bind_is_cached_so_declarations_are_applied_once", "binds user32/gdi32/dwmapi"],
+    ["tests/test_tray.py::test_adapter_loads_against_the_pinned_pystray_windows_backend", "pystray Windows backend"],
+    ["tests/test_ui_setup_profile.py::test_recognized_file_shaped_junction_refuses[core_char_31.dat]", "requires real Windows junction"],
+    ["tests/test_ui_setup_profile.py::test_recognized_file_shaped_junction_refuses[prefs.ini]", "requires real Windows junction"],
+    ["tests/test_wanderer_integration.py::test_real_windows_credential_document_roundtrip_replace_binding_and_remove", "real Windows user-bound DPAPI required"]
+  ],
+  "target_count": 5,
+  "target_sha256": "62fae7a4bec52e1e87c423388e960f2c0799cd4d6d8c5be07e8e5f9eff377cb1"
+}
+```
+
+The normalized skip tuples are byte-for-data and order-equal to Task 1's Ubuntu baseline. All 14 are expected Windows-only/native-environment skips. There is no Node, codec, `K32GetProcessMemoryInfo`, `resource unavailable`, or other unexpected availability skip. Node and codec availability were also directly confirmed before the suite.
+
+## Task 4 independent gates, scope, and restoration
+
+Independent gates all passed:
+
+- `node scripts/js_smoke.js`: `PASS every page module loaded`.
+- `cargo test --locked --manifest-path packaging/settings-codec/Cargo.toml`: `1 passed; 0 failed` in `0.00s` after a `6.74s` test-profile build.
+- `uv run --extra dev ruff check .`: `All checks passed!`.
+- `uv run --extra dev ruff format --check .`: `520 files already formatted`.
+- `uv run --no-sync python -m pytest tests/test_documentation.py -q`: `7 passed in 1.92s`.
+
+Scope and protected-path audits passed before the ledger edit:
+
+- `git diff --check cc48c887..HEAD`: no output;
+- exact set comparison: the tranche diff is exactly the five approved paths;
+- protected command over `wingman`, `.github`, `scripts`, `tests/test_ci_timing.py`, `pyproject.toml`, `uv.lock`, and `packaging`: no output;
+- pre-ledger-edit status: clean.
+
+The complete Block C aggregate then reran all 36 recipes and exited `0`; every row reported `intended-red`. All 36 JSON records have `problem=null` and `restoration_problem=null`; their sorted concatenation SHA-256 is `009fe4900ac5be0b8ea1f8d880a9dfbdf78d92cf3822e1e575ddde6de5721e79`. The 31 test-module probes restored SHA-256 `743540524a55a508245f65602d0649e9429ac0913cdf53fac053897ea5aec22d`; the five temporary client probes restored SHA-256 `d17b257a1311eb90908bc85b7371bffcf7132e17500fb7e494817d99532c0d46`. The wrong-child-metric mutant's JUnit had exactly zero `resource.*` properties. Post-mutation `git diff --check`, status, and the binary production diff were empty.
+
+## Task 4 required self-review
+
+| Review item | Result | Evidence |
+|---|---|---|
+| Unfinished markers/debug output | PASS | no `TODO`, `TBD`, `PENDING`, omitted body, or new print/debug call in the executable diff; the retained resource evidence print predates the tranche and is intentional |
+| Identity arithmetic | PASS | target `3 + 2 = 5`; complete `16,607 + 2 = 16,609`; endpoint hashes exact |
+| ABI | PASS | exact ten fields/order/types, offsets `0/4/8..64`, size `72`, alignment `8` on this 64-bit host, signatures, raw pseudo-handle, exact `cb`/size, fresh structures, no `_pack_`, no close |
+| Metric/value selection | PASS | exact Windows metric and `PeakWorkingSetSize`; distinct current/pagefile witnesses; above-32-bit peak witnesses on native 64-bit width |
+| Four native failures | PASS | loader, missing `GetCurrentProcess`, missing `K32GetProcessMemoryInfo`, and zero return each retain their exact cause; saved error `1234` is paired explicitly |
+| Non-Windows fallback | PASS | existing explicitly Linux no-`resource` fallback passed and owns/stops only its own tracer |
+| Tracing ownership | PASS | active external trace refuses before payload/decode; accepted native path records zero test-owned start/stop |
+| Maximum contract | PASS | bytes `47,022,137`; rows `8,192`; observations `155,648`; read `67,108,865`; closure; signed client/reader; exact-one decoder/parser; timeout `300s`; budget `75s` |
+| Parent metric gate | PASS | first validation after JSON parse; precedes parent wall insertion, all six properties, and budget; wrong metric publishes zero properties |
+| Success-header boundary | PASS | unchanged 535-case focused transport area owns it; no unsupported resource mutant or production edit |
+| Crossing restoration | PASS | helper restores both exact objects in `finally`; tiny failure re-raises the original sentinel and makes no successful-count claim |
+| Mutation restoration | PASS | `36/36` intended-red; exact bytes/hash/binary diff/porcelain restoration; no production residue |
+| Linux/macOS compatibility | PASS | Linux full suite passes with `process_peak_rss_kib`; source retains macOS `process_peak_rss_bytes` and generic non-Windows trace fallback |
+| Scope/protected paths | PASS | exact five-path tranche; no production/workflow/summarizer/timing-test/dependency/configuration/marker/selector/budget/shard change |
+| Claim discipline | PASS | observations only; no memory ceiling, before/after delta, traced/native comparison, case/suite/job/runner speedup, or critical-path attribution |
+
+Because subagents were prohibited, the required fresh review was an independent standalone local review of the complete diff from `cc48c887`, the approved spec, endpoint/audit JSON, all named JUnit/timing files, tool outputs, and all 36 mutation logs. It found no correctness or maintainability issue. Endpoint collection and `git diff --check` were rerun after review before commit.
+
 ## Concerns
 
-- Task 3 evidence discrepancies: none.
-- The native success/failure contract and child refusal are qualified locally through portable fakes and subprocesses; hosted real-Windows ABI evidence remains a later-task acceptance item.
-- Evidence discrepancies: none.
-- The PR #288 run payload has absent pull-request metadata; the explicit run selection and three matching checkout logs provide the accepted provenance path.
-- A single hosted run is observational and supports no performance claim.
-- No executable identity change is accepted or implied by Task 1.
+- Task 4 local evidence discrepancies: none.
+- The native success/failure contract and child refusal are qualified locally through portable fakes and subprocesses; real hosted Windows ABI/resource evidence remains explicitly assigned to Task 5 after publication authorization.
+- The PR #288 run payload has absent pull-request metadata; the explicit run selection and three matching checkout logs remain the accepted baseline provenance path.
+- All timing and memory values are single-run observations only. They support the approved structural no-test-owned-tracing statement, not a performance, memory-ceiling, decode-delta, or cross-metric claim.
