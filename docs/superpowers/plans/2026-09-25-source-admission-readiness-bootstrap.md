@@ -32,8 +32,8 @@
 - `tests/test_fleetsharing_remote_worker.py` and `tests/test_fleetsharing_worker_fix1.py` stay byte-for-byte unchanged. Their baseline SHA-256 values are `d77a1fa8c0919de4cca443f5f823407ce46461fb5104352853a90df9a25205b7` and `cc3dfe364f8754ebb34d7bedfc16a0eee64349391406161e680f08a7be444b25`.
 - The three-file selection remains exactly 167 identities. Normal, reverse-file, reverse-node, and deterministic seed-`20260925` shuffle ordered hashes are respectively `7b9e3644793a89952f132df22b1131c699530c41357b0f92fe4f80873faae89d`, `8890f6fe56c31201dfddc19054f51de8e8beb6be06ae94d63d98945e148c3a9b`, `8acc488cd820e8f289dfaf003c2900fa5f4b63f0d52eb9653af8067d4978c809`, and `2c8be0cd05e8cfb3e1ce5fa4f650cc7049dabf1069d2a95af861317911fd0a0a`.
 - Every temporary edit captures exact target bytes and SHA-256, `git diff --binary HEAD -- .`, and NUL-delimited `git status --porcelain=v2 --untracked-files=all -z`; restoration must reproduce all four. A restoration mismatch stops the matrix immediately.
-- A mutation qualifies only if every selected permanent identity fails at the intended assertion. Reject bootstrap-readiness failures, setup/collection failures, unrelated `_Obsolete`, barrier/thread timeout, and generic later failures.
-- Guard deletions that are equivalent under all valid flows are recorded as non-killing review evidence, not forced into compound mutations. Exact-response, full-fence, and durable-equality strength comes from the explicit fault probes.
+- Qualification recipes are classified as production, readiness-fault, bound, or equivalent. Every selected JUnit testcase must independently match its intended boundary and lack its category's forbidden competing-expiry, barrier, thread-timeout, setup, and collection signatures. The exact bounded bootstrap diagnostic is permitted only for intended readiness-fault and bound probes; it is forbidden masking for production mutations.
+- Guard deletions that are equivalent under all valid flows are recorded as non-killing review evidence, not forced into compound mutations. Exact-response, broad full-fence, timing-only fence, timing-field comparison, and durable-equality strength comes from explicit fault probes.
 - Full local verification requires Node on `PATH` and the built release settings codec installed in `packaging/bin`; Node, codec, or unexpected native-availability skips invalidate complete-suite evidence.
 - Exact complete local outcome is `16,595 passed + 14 skipped`; inspect all 14 skips.
 - Exact committed tranche scope is four paths, not five:
@@ -121,7 +121,7 @@ def publication_rig(
 
 1. Task 1 freezes the merged `f6e8ecd5`/PR #289 baseline and creates the results ledger with exact identities, families, provenance, skips, and real structural instrumentation.
 2. Task 2 performs TDD for the readiness helper, original-phase option, six exact identities, common postconditions, and independent proof-boundary preconditions; then runs readiness faults, one-turn-short probes, orders, and candidate structural instrumentation.
-3. Task 3 strengthens the two retry identities and runs the complete production/readiness mutation matrix with exact restoration, intended assertion checks, and no masked/timeout kills.
+3. Task 3 strengthens the two retry identities and runs all 41 classified qualification recipes—18 production, 5 readiness-fault, 4 bound, and 14 equivalent—with exact restoration, per-ID JUnit assertion checks, and no masked/timeout kills.
 4. Task 4 completes the local endpoint: exact identity/order/scope audits, relevant Fleet tests, complete suite, Node/native codec/Cargo/JS/Ruff, restoration, and results.
 5. Task 5 runs polish/final review/change explanation, records the pre-publication stop, and only after separate authorization performs a rerun-aware hosted comparison against PR #289 with exact identities/skips and no speedup claim.
 
@@ -802,62 +802,89 @@ Call `assert_proof_boundary_is_independent()` again inside `with source._lock:` 
 
 ### Exact sample/row/effect retry keys and pins
 
-In `test_original_measurement_retry_retains_wire_origins_across_reauthentication`, construct and derive the immutable source evidence exactly:
+Replace the complete existing retry test, from its decorator through the `finally` block, with this exact Ruff-formatted block. This replacement is intentionally complete: it removes the legacy `assert all(... for pin in original_pins)` that would iterate dict keys after `original_pins` becomes a mapping.
 
 ```python
-effect = EffectObservation("POINT", mono[0] + 28, (LIFETIME, 9001), "Retry hunter")
-source = ticket(mono[0], outgoing=7, effects=(effect,))
-snapshot = source.snapshot
-row = snapshot.rows[0]
-activity = row.combat
-assert activity is not None and activity.observation_id is not None
-assert len(activity.observations) == 1
-accepted_effect = activity.observations[0]
-character_id = next(
-    character.character_id
-    for character in worker._catalogue.characters
-    if character.character_name == row.character
-)
-sample_key = (snapshot.activation_generation, Fraction(snapshot.sampled_at_mono))
-row_key = (
-    character_id,
-    activity.observation_id[0],
-    "row",
-    activity.observation_id,
-)
-effect_key = (
-    character_id,
-    accepted_effect.observation_id[0],
-    (accepted_effect.kind, accepted_effect.name),
-    accepted_effect.observation_id,
-)
-expected_keys = frozenset((sample_key, row_key, effect_key))
-```
-
-After the first failed attempt, replace the tuple-of-values capture with:
-
-```python
-context = worker._timing_context
-associations = context._publisher.associations
-assert frozenset(associations) == expected_keys
-assert len(associations) == 3
-original_pins = {
-    sample_key: associations[sample_key],
-    row_key: associations[row_key],
-    effect_key: associations[effect_key],
-}
-original_floor = context._next_stage_at
-```
-
-After the retry's existing exact repeated-body, context, cadence-floor, session-change, and latest-source assertions, add:
-
-```python
-associations = context._publisher.associations
-assert frozenset(associations) == expected_keys
-assert len(associations) == 3
-assert associations[sample_key] is original_pins[sample_key]
-assert associations[row_key] is original_pins[row_key]
-assert associations[effect_key] is original_pins[effect_key]
+@pytest.mark.parametrize("restart", ["thread", "session"])
+def test_original_measurement_retry_retains_wire_origins_across_reauthentication(
+    tmp_path, restart
+):
+    worker, client, mono = publication_rig(tmp_path)
+    effect = EffectObservation(
+        "POINT", mono[0] + 28, (LIFETIME, 9001), "Retry hunter"
+    )
+    source = ticket(mono[0], outgoing=7, effects=(effect,))
+    snapshot = source.snapshot
+    row = snapshot.rows[0]
+    activity = row.combat
+    assert activity is not None and activity.observation_id is not None
+    assert len(activity.observations) == 1
+    accepted_effect = activity.observations[0]
+    character_id = next(
+        character.character_id
+        for character in worker._catalogue.characters
+        if character.character_name == row.character
+    )
+    assert snapshot.sampled_at_mono is not None
+    sample_key = (
+        snapshot.activation_generation,
+        Fraction(snapshot.sampled_at_mono),
+    )
+    row_key = (
+        character_id,
+        activity.observation_id[0],
+        "row",
+        activity.observation_id,
+    )
+    effect_key = (
+        character_id,
+        accepted_effect.observation_id[0],
+        (accepted_effect.kind, accepted_effect.name),
+        accepted_effect.observation_id,
+    )
+    expected_keys = frozenset((sample_key, row_key, effect_key))
+    work, fence = selected_publication(worker, mono, source)
+    original_session = s.load(client.path).session_id
+    client.put_error = (
+        (401, "unauthorized") if restart == "session" else (500, "server_error")
+    )
+    worker._execute(work, fence)
+    assert len(client.puts) == 1
+    first = client.puts[0]
+    context = worker._timing_context
+    associations = context._publisher.associations
+    assert frozenset(associations) == expected_keys
+    assert len(associations) == 3
+    original_pins = {
+        sample_key: associations[sample_key],
+        row_key: associations[row_key],
+        effect_key: associations[effect_key],
+    }
+    original_floor = context._next_stage_at
+    client.put_error = None
+    if restart == "thread":
+        assert worker.stop() and worker.start()
+    try:
+        for _ in range(60):
+            wait, _ = worker._iterate()
+            if len(client.puts) > 1 or mono[0] >= source.snapshot.sampled_at_mono + 5:
+                break
+            mono[0] += wait  # Honor actual owner cadence, not a post-call500ms sleep.
+        assert len(client.puts) == 2, worker.status()
+        assert client.puts[-1] == first
+        assert worker._timing_context is context
+        assert context._next_stage_at >= original_floor
+        associations = context._publisher.associations
+        assert frozenset(associations) == expected_keys
+        assert len(associations) == 3
+        assert associations[sample_key] is original_pins[sample_key]
+        assert associations[row_key] is original_pins[row_key]
+        assert associations[effect_key] is original_pins[effect_key]
+        if restart == "session":
+            assert s.load(client.path).session_id != original_session
+        assert worker._latest is source
+    finally:
+        assert worker.stop()
 ```
 
 ---
@@ -1294,7 +1321,7 @@ Expected literal structural transition: `1428 -> 682` turns, `1469 -> 921` boots
 
 ## Reproducibility Block D — restoration-safe guard, fault, and production mutation matrix
 
-This runner was dry-validated against the disposable candidate assembly. Each production/readiness mutant failed at the named assertion; each valid-flow guard deletion passed and is explicitly classified as equivalent/non-discriminating rather than a kill. The runner rejects collection/setup errors, readiness-bootstrap masking, barrier/thread timeouts, and any failure outside the exact selected IDs.
+This runner contains exactly 41 recipes: 18 production mutations, 5 readiness-fault probes, 4 one-turn-short bounds, and 14 equivalent valid-flow deletions. Every selected JUnit testcase is checked independently against its intended boundary; stdout is supplemental only. The exact bounded bootstrap diagnostic is accepted for readiness-fault/bound probes and rejected as masking for production mutations. Competing-expiry preconditions, barrier/thread failures, timeouts, collection/setup errors, and failures outside the exact selected IDs never qualify. Every valid-flow deletion remains explicitly equivalent/non-discriminating rather than a kill.
 
 ```bash
 cat > /tmp/source_readiness_mutations.py <<'PY'
@@ -1306,6 +1333,7 @@ import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -1313,28 +1341,60 @@ W = Path("/mnt/c/dev/flygd-wingman/.worktrees/ci-source-admission-readiness")
 TEST = "tests/test_fleetsharing_source_admission.py"
 WORKER = "wingman/fleetsharing/worker.py"
 TIMING = "wingman/fleetsharing/timing.py"
-MASKED = (
-    "publication bootstrap readiness missed",
-    "timed out",
-    "not released",
-    "never reached",
-    "collection error",
+BOOTSTRAP_DIAGNOSTIC = r"publication bootstrap readiness missed"
+COMPETING_EXPIRY = (
+    r"MAX_SNAPSHOT_AGE_S",
+    r"work\.payload\.session_deadline >",
+    r"worker\._expires_at >",
+    r"anchor_lifetime_ms",
+    r"expires_at_mono\) >",
 )
+BARRIER_OR_TIMEOUT = (
+    r"(?i)\b(?:timed out|timeout|not released|never reached|not reached)\b",
+    r"assert not thread\.is_alive\(\)",
+    r"assert [A-Za-z0-9_.]+\.wait\(",
+)
+SETUP_OR_COLLECTION = (
+    r"(?i)collection error",
+    r"(?i)error at setup",
+    r"(?i)fixture .* failed",
+)
+FORBIDDEN_BY_CATEGORY = {
+    "production": (
+        BOOTSTRAP_DIAGNOSTIC,
+        *COMPETING_EXPIRY,
+        *BARRIER_OR_TIMEOUT,
+        *SETUP_OR_COLLECTION,
+    ),
+    "readiness-fault": (
+        *COMPETING_EXPIRY,
+        *BARRIER_OR_TIMEOUT,
+        *SETUP_OR_COLLECTION,
+    ),
+    "bound": (
+        *COMPETING_EXPIRY,
+        *BARRIER_OR_TIMEOUT,
+        *SETUP_OR_COLLECTION,
+    ),
+    "equivalent": (),
+}
 
 
 @dataclass(frozen=True)
 class Recipe:
+    category: str
     edits: tuple[tuple[str, str, str], ...]
     nodes: tuple[str, ...]
     regex: str
-    expect_fail: bool = True
 
 
 RECIPES: dict[str, Recipe] = {}
 
 
-def add(name, edits, nodes, regex, *, expect_fail=True):
-    RECIPES[name] = Recipe(tuple(edits), tuple(nodes), regex, expect_fail)
+def add(name, edits, nodes, regex, *, category="production"):
+    assert category in FORBIDDEN_BY_CATEGORY
+    assert name not in RECIPES
+    RECIPES[name] = Recipe(category, tuple(edits), tuple(nodes), regex)
 
 
 add(
@@ -1583,19 +1643,40 @@ semantic_observe = (
     """            observation = observe()\n            if observation[\"ready\"]:\n"""
 )
 object_probe = """            proof = worker._eligibility_proof\n            if proof is None:\n                observation = observe()\n            else:\n                worker._eligibility_proof = replace(\n                    proof, response=replace(worker._eligibility)\n                )\n                try:\n                    observation = observe()\n                finally:\n                    worker._eligibility_proof = proof\n            if observation[\"ready\"]:\n"""
-fence_probe = """            proof = worker._eligibility_proof\n            if proof is None:\n                observation = observe()\n            else:\n                current = worker._fence()\n                stale = replace(\n                    current,\n                    lifecycle=current.lifecycle - 1,\n                    timing=current.timing - 1,\n                )\n                worker._eligibility_proof = replace(proof, fence=stale)\n                try:\n                    observation = observe()\n                finally:\n                    worker._eligibility_proof = proof\n            if observation[\"ready\"]:\n"""
+timing_fence_probe = """            proof = worker._eligibility_proof\n            if proof is None:\n                observation = observe()\n            else:\n                current = worker._fence()\n                stale = replace(current, timing=current.timing - 1)\n                worker._eligibility_proof = replace(proof, fence=stale)\n                try:\n                    observation = observe()\n                finally:\n                    worker._eligibility_proof = proof\n            if observation[\"ready\"]:\n"""
+broad_fence_probe = """            proof = worker._eligibility_proof\n            if proof is None:\n                observation = observe()\n            else:\n                current = worker._fence()\n                stale = replace(\n                    current,\n                    lifecycle=current.lifecycle - 1,\n                    identity=current.identity - 1,\n                    session=None if current.session is not None else \"stale\",\n                    participation=current.participation - 1,\n                    source=current.source + ((\"__stale__\", -1),),\n                    automatic=current.automatic - 1,\n                    timing=current.timing - 1,\n                )\n                worker._eligibility_proof = replace(proof, fence=stale)\n                try:\n                    observation = observe()\n                finally:\n                    worker._eligibility_proof = proof\n            if observation[\"ready\"]:\n"""
+timing_comparison_probe = """            proof = worker._eligibility_proof\n            if proof is None:\n                observation = observe()\n            else:\n                current = worker._fence()\n                stale = replace(current, timing=current.timing - 1)\n                worker._eligibility_proof = replace(proof, fence=stale)\n                try:\n                    observation = observe()\n                finally:\n                    worker._eligibility_proof = proof\n            if observation[\"ready\"]:\n                pytest.fail(\"timing-only stale fence was accepted\")\n"""
 ordinary = TEST + "::test_leaf_wait_crossing_original_sample_expiry_sends_nothing"
 add(
     "readiness-exact-object",
     [(TEST, semantic_observe, object_probe)],
     [ordinary],
-    r"'exact_response': False|readiness missed",
+    r"publication bootstrap readiness missed after 12/12 turns;[\s\S]*'exact_response': False",
+    category="readiness-fault",
 )
 add(
-    "readiness-full-fence",
-    [(TEST, semantic_observe, fence_probe)],
+    "readiness-timing-fence",
+    [(TEST, semantic_observe, timing_fence_probe)],
     [ordinary],
-    r"fence_differences=\('lifecycle', 'timing'\)|'exact_fence': False",
+    r"fence_differences=\('timing',\)",
+    category="readiness-fault",
+)
+add(
+    "readiness-broad-fence",
+    [(TEST, semantic_observe, broad_fence_probe)],
+    [ordinary],
+    r"fence_differences=\('lifecycle', 'identity', 'session', 'participation', 'source', 'automatic', 'timing'\)",
+    category="readiness-fault",
+)
+add(
+    "readiness-drop-timing-comparison",
+    [
+        (TEST, '        "timing",\n', ""),
+        (TEST, semantic_observe, timing_comparison_probe),
+    ],
+    [ordinary],
+    r"timing-only stale fence was accepted",
+    category="readiness-fault",
 )
 add(
     "readiness-durable-mismatch",
@@ -1608,6 +1689,7 @@ add(
     ],
     [ordinary],
     r"bootstrap state is not durable",
+    category="readiness-fault",
 )
 for name, bound, node in (
     ("ordinary", 4, ordinary),
@@ -1640,7 +1722,8 @@ for name, bound, node in (
             )
         ],
         [node],
-        rf"after {bound}/12 turns|readiness missed",
+        rf"publication bootstrap readiness missed after {bound}/12 turns;",
+        category="bound",
     )
 
 # These valid-flow deletions are expected to pass. Record them as equivalent or
@@ -1683,7 +1766,7 @@ for name, old, node in (
         ordinary,
     ),
 ):
-    add(name, [(TEST, old, "")], [node], r"1 passed", expect_fail=False)
+    add(name, [(TEST, old, "")], [node], r"1 passed", category="equivalent")
 watch_node = (
     TEST
     + "::test_actual_publication_barriers_fence_before_start_and_late_completion[unwrap-source]"
@@ -1699,7 +1782,7 @@ add(
     ],
     [watch_node],
     r"1 passed",
-    expect_fail=False,
+    category="equivalent",
 )
 add(
     "guard-watch-automatic",
@@ -1712,8 +1795,19 @@ add(
     ],
     [watch_node],
     r"1 passed",
-    expect_fail=False,
+    category="equivalent",
 )
+
+EXPECTED_RECIPE_COUNTS = {
+    "production": 18,
+    "readiness-fault": 5,
+    "bound": 4,
+    "equivalent": 14,
+}
+assert Counter(recipe.category for recipe in RECIPES.values()) == Counter(
+    EXPECTED_RECIPE_COUNTS
+)
+assert len(RECIPES) == 41
 
 
 class RestorationError(RuntimeError):
@@ -1729,6 +1823,14 @@ def junit_id(case: ET.Element) -> str:
     return "::".join(("/".join(parts[:2]) + ".py", *parts[2:], case.get("name", "")))
 
 
+def junit_failure_text(case: ET.Element) -> str:
+    failure = case.find("failure")
+    assert failure is not None
+    return "\n".join(
+        part for part in (failure.get("message", ""), failure.text or "") if part
+    )
+
+
 def run_recipe(name: str) -> dict[str, object]:
     recipe = RECIPES[name]
     originals: dict[Path, bytes] = {}
@@ -1736,6 +1838,8 @@ def run_recipe(name: str) -> dict[str, object]:
     before_diff = git_bytes("diff", "--binary", "HEAD", "--", ".")
     before_status = git_bytes("status", "--porcelain=v2", "--untracked-files=all", "-z")
     output = ""
+    result = "failed"
+    boundary_evidence: dict[str, str] = {}
     problem = None
     restoration_problem = None
     try:
@@ -1767,22 +1871,44 @@ def run_recipe(name: str) -> dict[str, object]:
         )
         output = run.stdout + "\n" + run.stderr
         cases = list(ET.parse(junit).getroot().iter("testcase"))
-        failures = {
-            junit_id(case) for case in cases if case.find("failure") is not None
-        }
-        errors = {junit_id(case) for case in cases if case.find("error") is not None}
-        skips = {junit_id(case) for case in cases if case.find("skipped") is not None}
-        assert not errors and not skips, (name, errors, skips, output)
-        if recipe.expect_fail:
-            assert run.returncode == 1, (name, run.returncode, output)
-            assert failures == set(recipe.nodes), (name, failures, recipe.nodes, output)
-            assert re.search(recipe.regex, output), (name, recipe.regex, output)
-            assert not any(marker in output for marker in MASKED), (name, output)
-            result = "intended-red"
-        else:
+        case_ids = [junit_id(case) for case in cases]
+        assert case_ids == list(recipe.nodes), (name, case_ids, recipe.nodes, output)
+        assert not any(case.find("error") is not None for case in cases), output
+        assert not any(case.find("skipped") is not None for case in cases), output
+        if recipe.category == "equivalent":
             assert run.returncode == 0, (name, run.returncode, output)
-            assert not failures and re.search(recipe.regex, output), (name, output)
+            assert not any(case.find("failure") is not None for case in cases), output
+            assert re.search(recipe.regex, output), (name, recipe.regex, output)
             result = "reviewed-valid-flow-equivalent"
+        else:
+            assert run.returncode == 1, (name, run.returncode, output)
+            for node, case in zip(recipe.nodes, cases, strict=True):
+                text = junit_failure_text(case)
+                assert re.search(recipe.regex, text), (
+                    name,
+                    node,
+                    recipe.regex,
+                    text,
+                    output,
+                )
+                forbidden = tuple(
+                    pattern
+                    for pattern in FORBIDDEN_BY_CATEGORY[recipe.category]
+                    if re.search(pattern, text)
+                )
+                assert not forbidden, (name, node, forbidden, text, output)
+                if re.search(BOOTSTRAP_DIAGNOSTIC, text):
+                    assert recipe.category in ("readiness-fault", "bound"), (
+                        name,
+                        node,
+                        recipe.category,
+                        text,
+                    )
+                boundary_evidence[node] = text
+            # Supplemental console evidence must agree, but JUnit per-ID text is
+            # the qualification authority.
+            assert re.search(recipe.regex, output), (name, recipe.regex, output)
+            result = "intended-red"
     except subprocess.TimeoutExpired as error:
         problem = AssertionError(f"{name}: timeout is not qualification: {error}")
         result = "invalid-timeout"
@@ -1823,9 +1949,11 @@ def run_recipe(name: str) -> dict[str, object]:
             json.dumps(
                 {
                     "name": name,
+                    "category": recipe.category,
                     "nodes": recipe.nodes,
                     "result": result,
                     "regex": recipe.regex,
+                    "junit_boundaries": boundary_evidence,
                     "target_sha256": hashes,
                     "problem": None if problem is None else repr(problem),
                     "restoration_problem": None
@@ -1842,12 +1970,19 @@ def run_recipe(name: str) -> dict[str, object]:
         raise RestorationError(str(restoration_problem))
     if problem is not None:
         raise problem
-    return {"name": name, "result": result, "nodes": recipe.nodes}
+    return {
+        "name": name,
+        "category": recipe.category,
+        "result": result,
+        "nodes": recipe.nodes,
+    }
 
 
 def main(argv: list[str]) -> int:
+    names = tuple(RECIPES) if argv == ["--all"] else tuple(argv)
+    assert names and not (set(names) - set(RECIPES)), names
     failures = []
-    for name in argv:
+    for name in names:
         try:
             report = run_recipe(name)
         except RestorationError:
@@ -1859,6 +1994,15 @@ def main(argv: list[str]) -> int:
     if failures:
         print(json.dumps({"failures": failures}, sort_keys=True), file=sys.stderr)
         return 1
+    print(
+        json.dumps(
+            {
+                "recipes": len(names),
+                "categories": dict(Counter(RECIPES[name].category for name in names)),
+            },
+            sort_keys=True,
+        )
+    )
     return 0
 
 
@@ -1870,32 +2014,22 @@ uv run --extra dev ruff check /tmp/source_readiness_mutations.py
 uv run --extra dev ruff format --check /tmp/source_readiness_mutations.py
 ```
 
-Run the complete matrix in one aggregate invocation:
+Run all 41 recipes in insertion order in one aggregate invocation:
 
 ```bash
-uv run --no-sync python /tmp/source_readiness_mutations.py \
-  final-source-admission original-completion post-save-401 \
-  held-approved_capabilities held-session_approved_capabilities \
-  held-acknowledged_capabilities proof-deadline save-before-transport \
-  anchor-deadline sample-deadline session-original-deadline \
-  row-deadline effect-deadline uncertainty retry-context \
-  retry-sample-pin retry-row-pin retry-effect-pin \
-  readiness-exact-object readiness-full-fence readiness-durable-mismatch \
-  one-turn-short-ordinary one-turn-short-ack one-turn-short-watch \
-  one-turn-short-near-expiry \
-  guard-catalogue guard-eligibility guard-anchor guard-proof \
-  guard-exact-response guard-exact-fence guard-watch-source \
-  guard-watch-automatic post-durable post-device post-puts \
-  post-last-published post-associations post-next-stage
+uv run --no-sync python /tmp/source_readiness_mutations.py --all
 ```
 
 Expected:
 
-- every production/fault/bound recipe reports `intended-red` at every exact selected ID;
+- the summary is exactly `41` recipes classified as production `18`, readiness-fault `5`, bound `4`, and equivalent `14`;
+- every production/readiness-fault/bound recipe reports `intended-red`, and every selected JUnit testcase independently matches the recipe's intended boundary regex;
+- only readiness-fault/bound recipes may contain the exact bounded bootstrap diagnostic; any production bootstrap miss is rejected as masking;
+- every selected failure lacks its category's competing-expiry, barrier/thread, timeout, setup, and collection signatures;
+- the timing-only fence fault names exactly `fence_differences=('timing',)`, the broad fence fault names all seven fields in order, and deleting the timing comparison is killed by `timing-only stale fence was accepted`;
 - both retry rows fail for sample, row, and isolated effect-pin drops at their exact identity assertion;
 - the session recipe removes only the selected-original session guard and makes the competing current cache later, so the held session identity fails at the session refusal rather than another deadline;
-- guard/postcondition deletions report `reviewed-valid-flow-equivalent`; do not call them kills;
-- no output contains a readiness bootstrap miss for production mutations, a timeout, or a held-barrier safety failure;
+- all 14 guard/postcondition deletions report `reviewed-valid-flow-equivalent`; do not call them kills;
 - every recipe restores bytes, hashes, full binary diff, and NUL status exactly.
 
 ---
@@ -2088,7 +2222,7 @@ Expected: exact source `120`, complete `16609`, unchanged AST decorators/signatu
 
 ## Reproducibility Block F — explicit, rerun-aware hosted collector and audit
 
-Run this block only after the Task 5 authorization stop is explicitly lifted. `NEW_RUN` and `PR_NUMBER` are mandatory; the script never infers “latest”. It records every attempt, selects successful current-attempt jobs, treats checkout logs as primary synthetic/head/base evidence, permits an empty run `pull_requests` array only with explicit current PR corroboration, selects artifacts by exact name/head/time window, and compares exact identities/skips with Task 1.
+Run this block only after the Task 5 authorization stop is explicitly lifted. `REVIEWED_HEAD`, `NEW_RUN`, and `PR_NUMBER` are mandatory literal inputs; the script never infers “latest” or silently substitutes the current remote head. It requires a clean local worktree at the frozen reviewed commit, binds the PR head, run head, job heads, checkout-log executable head, and artifact heads to that exact SHA, records every attempt, treats checkout logs as primary synthetic/head/base evidence, permits an empty run `pull_requests` array only with explicit current PR corroboration, selects artifacts by exact name/head/time window, and compares exact identities/skips with Task 1.
 
 ```bash
 cat > /tmp/source_readiness_hosted.py <<'PY'
@@ -2107,6 +2241,7 @@ from pathlib import Path
 R = "elboaf/FlyGD-Wingman"
 W = Path("/mnt/c/dev/flygd-wingman/.worktrees/ci-source-admission-readiness")
 B = Path("/tmp/wingman-source-readiness-baseline")
+REVIEWED_HEAD = os.environ["REVIEWED_HEAD"]
 RUN_ID = int(os.environ["NEW_RUN"])
 PR_NUMBER = int(os.environ["PR_NUMBER"])
 OUT = Path(f"/tmp/wingman-source-readiness-hosted-{RUN_ID}")
@@ -2126,6 +2261,25 @@ EXPECTED_PATHS = {
 
 def command(*args: str, text=True) -> str | bytes:
     return subprocess.check_output(args, text=text)
+
+
+assert re.fullmatch(r"[0-9a-f]{40}", REVIEWED_HEAD)
+assert (
+    command("git", "-C", str(W), "rev-parse", "HEAD", text=True).strip()
+    == REVIEWED_HEAD
+)
+assert (
+    command(
+        "git",
+        "-C",
+        str(W),
+        "status",
+        "--porcelain=v2",
+        "--untracked-files=all",
+        text=True,
+    )
+    == ""
+)
 
 
 def gh_json(*args: str):
@@ -2281,6 +2435,7 @@ pr = gh_json(
 )
 assert pr["number"] == PR_NUMBER and pr["baseRefName"] == "main"
 assert pr["state"] == "OPEN" and pr["mergedAt"] is None
+assert pr["headRefOid"] == run["head_sha"] == REVIEWED_HEAD
 (OUT / "pr.json").write_text(json.dumps(pr, indent=2) + "\n", encoding="utf-8")
 roles = {
     "checks": "checks",
@@ -2295,7 +2450,7 @@ for role, name in roles.items():
     job = rows[0]
     assert job["run_attempt"] == attempt
     assert job["status"] == "completed" and job["conclusion"] == "success"
-    assert job["head_sha"] == run["head_sha"] == pr["headRefOid"]
+    assert job["head_sha"] == run["head_sha"] == pr["headRefOid"] == REVIEWED_HEAD
     log = command(
         "gh",
         "run",
@@ -2313,7 +2468,7 @@ for role, name in roles.items():
     jobs[role] = job
 assert len(checkout) == 1
 synthetic, head, base = checkout.pop()
-assert head == run["head_sha"] == pr["headRefOid"]
+assert head == run["head_sha"] == pr["headRefOid"] == REVIEWED_HEAD
 assert base == pr["baseRefOid"]
 run_prs = run.get("pull_requests") or []
 if run_prs:
@@ -2437,6 +2592,7 @@ report = {
         str(number): value["conclusion"] for number, value in attempts.items()
     },
     "pr": PR_NUMBER,
+    "reviewed_head": REVIEWED_HEAD,
     "synthetic": synthetic,
     "head": head,
     "base": base,
@@ -2477,18 +2633,19 @@ uv run --extra dev ruff check /tmp/source_readiness_hosted.py
 uv run --extra dev ruff format --check /tmp/source_readiness_hosted.py
 ```
 
-After explicit authorization supplies literal inputs:
+After explicit authorization supplies the literal frozen SHA printed by Task 5 plus the literal run and PR numbers:
 
 ```bash
-read -r NEW_RUN PR_NUMBER
-export NEW_RUN PR_NUMBER
+read -r REVIEWED_HEAD NEW_RUN PR_NUMBER
+export REVIEWED_HEAD NEW_RUN PR_NUMBER
 cd /mnt/c/dev/flygd-wingman/.worktrees/ci-source-admission-readiness
 uv run --no-sync python /tmp/source_readiness_hosted.py
 ```
 
 Expected hosted acceptance:
 
-- current run/attempt and all three required jobs pass; every prior attempt conclusion remains recorded;
+- the local worktree is clean at the exact 40-character `REVIEWED_HEAD` frozen after the final local commit;
+- PR, run, all three required jobs, checkout-log executable head, and artifact heads bind to that exact reviewed SHA; every prior attempt conclusion remains recorded;
 - checkout logs agree on synthetic/head/base; synthetic parents are exact base/head;
 - empty run PR metadata is recorded as `absent` rather than guessed, while explicit current PR metadata is authoritative;
 - synthetic diff is exactly the four committed paths;
@@ -2644,12 +2801,13 @@ Materialize Block D and run only:
 
 ```bash
 uv run --no-sync python /tmp/source_readiness_mutations.py \
-  readiness-exact-object readiness-full-fence readiness-durable-mismatch \
+  readiness-exact-object readiness-timing-fence readiness-broad-fence \
+  readiness-drop-timing-comparison readiness-durable-mismatch \
   one-turn-short-ordinary one-turn-short-ack one-turn-short-watch \
   one-turn-short-near-expiry
 ```
 
-Expected: exact-object diagnostic names `exact_response=False`; full-fence diagnostic names `lifecycle` and `timing`; durable mismatch fails the fresh equality assertion after exact file-byte restoration; bounds `4/5/8/9` fail representatives whose true first-ready turns are `5/6/9/10`.
+Expected: exact-object diagnostic names `exact_response=False`; the timing-only fault names exactly `fence_differences=('timing',)`; the separate broad fault names all seven fence fields; deleting only the timing comparison fails at `timing-only stale fence was accepted`; durable mismatch fails the fresh equality assertion after exact file-byte restoration; bounds `4/5/8/9` fail representatives whose true first-ready turns are `5/6/9/10`. Every selected JUnit testcase independently matches that intended boundary and contains no category-forbidden competing expiry, barrier/thread, timeout, setup, or collection signature.
 
 - [ ] **Step 6: Run valid-flow guard deletion review**
 
@@ -2711,7 +2869,19 @@ Expected staged paths: only the source-admission test and results ledger.
 
 - [ ] **Step 1: Establish RED for the named effect and exact keys**
 
-Add the named effect/key derivation from Block B and the exact key-set/cardinality assertions immediately after the first failed attempt, but temporarily leave `expected_keys` containing a deliberately wrong effect key `(character_id, lifetime, (kind, None), observation_id)`. Run both retry rows:
+Apply the complete retry replacement from Block B, but for the RED run change only the effect name component by defining this concrete accepted-effect-derived tuple and using it in `expected_keys`:
+
+```python
+wrong_effect_key = (
+    character_id,
+    accepted_effect.observation_id[0],
+    (accepted_effect.kind, None),
+    accepted_effect.observation_id,
+)
+expected_keys = frozenset((sample_key, row_key, wrong_effect_key))
+```
+
+Do not use free `lifetime`, `kind`, or `observation_id` identifiers. Run both retry rows:
 
 ```bash
 uv run --no-sync python -m pytest \
@@ -2719,7 +2889,7 @@ uv run --no-sync python -m pytest \
   -q --tb=short
 ```
 
-Expected: both fail at `frozenset(associations) == expected_keys`, proving the assertion reads the accepted named-effect key. Restore the exact `(accepted_effect.kind, accepted_effect.name)` key immediately.
+Expected: both fail at `frozenset(associations) == expected_keys`, proving the assertion reads the accepted named-effect key. Restore `expected_keys = frozenset((sample_key, row_key, effect_key))` immediately; no other tuple component changes.
 
 - [ ] **Step 2: Add exact retained pin identity and run GREEN**
 
@@ -2755,11 +2925,13 @@ Expected: all scripts compile and both Ruff commands pass without changes. Any f
 
 - [ ] **Step 4: Run the complete Block D matrix**
 
-Run the exact aggregate command from Block D. Expected:
+Run the exact `--all` aggregate command from Block D. Expected:
 
+- exactly 41 recipes run with category counts `18/5/4/14`;
 - final source admission, original completion, post-save 401, all three rights, proof deadline, save-before-transport, anchor/sample/session/row/effect deadlines, uncertainty, retained context, and sample/row/effect retry pins all report `intended-red`;
 - both retry rows fail specifically for the isolated effect drop;
-- no production mutation dies during bootstrap, through another deadline, through a timeout, or at collection/setup;
+- timing-only and broad fence faults remain separate, and deleting the timing comparison is killed at its exact sentinel;
+- every selected JUnit testcase independently matches the intended boundary and lacks its category's forbidden bootstrap/competing-expiry/barrier/timeout/setup/collection signatures;
 - valid-flow guard deletions remain separately classified;
 - every edit restores exact bytes/hash/diff/status.
 
@@ -2938,13 +3110,13 @@ Expected staged path: only the results ledger.
 ### Task 5: Polish, Final Review, Publication Stop, and Authorized Hosted Comparison
 
 **Files:**
-- Modify only if evidence changes: `docs/ci-source-admission-readiness-bootstrap-results.md`
-- Review: exact four committed paths
-- Hosted read: an explicitly authorized run/PR only
+- Modify only within the exact four-path tranche if polish/review requires changes: approved spec, this plan, results ledger, and source-admission test
+- Review and commit: exact four allowed paths, including any executable polish
+- Hosted read: an explicitly authorized run/PR bound to the frozen reviewed SHA only
 
 **Interfaces:**
 - Consumes: Task 4 locally verified four-path tranche.
-- Produces: polished/final-reviewed local head, reviewer-facing explanation, explicit publication stop, and—only after separate authorization—hosted exact-identity comparison to PR #289.
+- Produces: polished/final-reviewed changes committed inside the exact four paths, a clean worktree and frozen reviewed executable SHA, reviewer-facing explanation, explicit publication stop, and—only after separate authorization naming that SHA—hosted exact-identity comparison to PR #289.
 
 - [ ] **Step 1: Run `polish-core --fix` and inspect every edit**
 
@@ -2960,6 +3132,8 @@ uv run --no-sync python /tmp/source_readiness_endpoint.py
 uv run --no-sync python /tmp/source_readiness_instrument_run.py candidate
 uv run --extra dev ruff check tests/test_fleetsharing_source_admission.py
 uv run --extra dev ruff format --check tests/test_fleetsharing_source_admission.py
+git diff --check
+git diff --cached --check
 git diff --check f6e8ecd5..HEAD
 ```
 
@@ -2973,31 +3147,9 @@ Use `requesting-code-review` against the approved spec, this plan, full diff, fi
 
 Use the `change-explainer` skill and record a concise reviewer-facing section in the results ledger covering what changed, how readiness works, why six cases retain phase, how deadline/pin strength was qualified, exact verification, deviations (none unless recorded), edge cases, and reviewer focus.
 
-- [ ] **Step 5: Inspect final diff and exact scope**
+- [ ] **Step 5: Record the publication stop in the committed ledger**
 
-```bash
-git status --short
-git log --oneline f6e8ecd5..HEAD
-git diff --stat f6e8ecd5..HEAD
-git diff --check f6e8ecd5..HEAD
-python - <<'PY'
-import subprocess
-expected = {
-    "docs/superpowers/specs/2026-09-25-source-admission-readiness-bootstrap-design.md",
-    "docs/superpowers/plans/2026-09-25-source-admission-readiness-bootstrap.md",
-    "docs/ci-source-admission-readiness-bootstrap-results.md",
-    "tests/test_fleetsharing_source_admission.py",
-}
-actual = set(subprocess.check_output(["git", "diff", "--name-only", "f6e8ecd5..HEAD"], text=True).splitlines())
-assert actual == expected, sorted(actual ^ expected)
-PY
-```
-
-Expected: exactly four paths. The spec and plan may have earlier documentation commits; the implementation/results commits do not broaden scope.
-
-- [ ] **Step 6: Record and obey the publication stop**
-
-Add this exact text to the results ledger and stop:
+Add this exact text to the results ledger before the final local commit:
 
 ```text
 PRE-AUTHORIZATION STOP: do not push, create or update a pull request, dispatch or rerun GitHub Actions, download a new-run artifact, or make a hosted acceptance claim until the maintainer explicitly authorizes publication of the verified executable head.
@@ -3005,15 +3157,84 @@ PRE-AUTHORIZATION STOP: do not push, create or update a pull request, dispatch o
 
 The current planning request authorizes none of those actions.
 
-- [ ] **Step 7: Only after separate authorization, verify PR state before publication**
+- [ ] **Step 6: Audit committed and uncommitted scope, commit polish, and freeze the reviewed SHA**
 
-Run `gh pr view` and `git log` as required by repository policy. Confirm the PR targets `elboaf/FlyGD-Wingman` `main`, the exact executable head is the reviewed head, and no reviewed PR is already merged. Never use `--no-verify`.
+```bash
+git status --short
+git log --oneline f6e8ecd5..HEAD
+git diff --stat f6e8ecd5..HEAD
+git diff --check
+git diff --cached --check
+git diff --check f6e8ecd5..HEAD
+python - <<'PY'
+import subprocess
 
-- [ ] **Step 8: Collect the explicitly authorized hosted run**
+allowed = {
+    "docs/superpowers/specs/2026-09-25-source-admission-readiness-bootstrap-design.md",
+    "docs/superpowers/plans/2026-09-25-source-admission-readiness-bootstrap.md",
+    "docs/ci-source-admission-readiness-bootstrap-results.md",
+    "tests/test_fleetsharing_source_admission.py",
+}
 
-Materialize/compile/Ruff-check Block F, enter the literal authorized run and PR numbers, and execute it once. Do not infer latest and do not rerun a failed order or artifact audit to green without recording the failed attempt.
+def paths(*args):
+    return set(subprocess.check_output(args, text=True).splitlines())
 
-- [ ] **Step 9: Update hosted evidence without a speedup claim**
+committed = paths("git", "diff", "--name-only", "f6e8ecd5..HEAD", "--", ".")
+unstaged = paths("git", "diff", "--name-only", "--", ".")
+staged = paths("git", "diff", "--cached", "--name-only", "--", ".")
+untracked = paths("git", "ls-files", "--others", "--exclude-standard")
+uncommitted = unstaged | staged | untracked
+assert committed | uncommitted == allowed, sorted((committed | uncommitted) ^ allowed)
+assert uncommitted <= allowed, sorted(uncommitted - allowed)
+print({"committed": sorted(committed), "uncommitted": sorted(uncommitted)})
+PY
+git add \
+  docs/superpowers/specs/2026-09-25-source-admission-readiness-bootstrap-design.md \
+  docs/superpowers/plans/2026-09-25-source-admission-readiness-bootstrap.md \
+  docs/ci-source-admission-readiness-bootstrap-results.md \
+  tests/test_fleetsharing_source_admission.py
+python - <<'PY'
+import subprocess
+allowed = {
+    "docs/superpowers/specs/2026-09-25-source-admission-readiness-bootstrap-design.md",
+    "docs/superpowers/plans/2026-09-25-source-admission-readiness-bootstrap.md",
+    "docs/ci-source-admission-readiness-bootstrap-results.md",
+    "tests/test_fleetsharing_source_admission.py",
+}
+staged = set(subprocess.check_output(
+    ["git", "diff", "--cached", "--name-only", "--", "."],
+    text=True,
+).splitlines())
+assert staged and staged <= allowed, sorted(staged - allowed)
+print(sorted(staged))
+PY
+git commit -m "test: finalize source admission readiness verification"
+test -z "$(git status --porcelain=v2 --untracked-files=all)"
+git diff --exit-code
+git diff --cached --exit-code
+REVIEWED_HEAD=$(git rev-parse HEAD)
+case "$REVIEWED_HEAD" in
+  ""|*[!0-9a-f]*) exit 1 ;;
+esac
+test "${#REVIEWED_HEAD}" -eq 40
+printf 'REVIEWED_HEAD=%s\n' "$REVIEWED_HEAD"
+```
+
+Expected: the pre-commit uncommitted union is a subset of the exact four paths; every polish/executable/docs change is committed; the post-commit tree, index, and untracked inventory are clean; `f6e8ecd5..HEAD` is exactly the four allowed paths; and the printed 40-character `REVIEWED_HEAD` is the frozen reviewed executable head used by every later publication and hosted check.
+
+- [ ] **Step 7: Obey the publication stop**
+
+Stop after reporting the frozen `REVIEWED_HEAD`. Do not push, create/update a PR, dispatch/rerun Actions, download new-run artifacts, or claim hosted acceptance. Separate authorization must identify this exact reviewed SHA; authorization for another SHA does not transfer.
+
+- [ ] **Step 8: Only after separate authorization, verify PR state and frozen-head binding before publication**
+
+Run `gh pr view` and `git log` as required by repository policy. Confirm the PR targets `elboaf/FlyGD-Wingman` `main`, the local tree is still clean at the literal authorized `REVIEWED_HEAD`, the PR/run will use that exact executable head, and no reviewed PR is already merged. Never use `--no-verify`.
+
+- [ ] **Step 9: Collect the explicitly authorized hosted run**
+
+Materialize/compile/Ruff-check Block F, enter the literal frozen `REVIEWED_HEAD` plus the authorized run and PR numbers, and execute it once. The collector must reject any local, PR, run, job, checkout-log, or artifact head that does not equal the frozen reviewed SHA. Do not infer latest and do not rerun a failed order or artifact audit to green without recording the failed attempt.
+
+- [ ] **Step 10: Update hosted evidence without a speedup claim**
 
 Append exact run/attempt/attempt history, PR, synthetic/head/base, jobs, artifacts/digests, path scope, complete/source/three-file hashes and counts, normalized skips, source/three-file/job/Test-step timings, and structural local counts. State exact identity changes `+0/0` and this conclusion only:
 
@@ -3021,7 +3242,7 @@ Append exact run/attempt/attempt history, PR, synthetic/head/base, jobs, artifac
 HOSTED CONCLUSION: the candidate preserves the exact PR #289 source-admission and complete-suite identities and normalized skips on both platforms. Structural turns/saves/loads match the approved local instrumentation. Hosted durations are single-run observations only; no speedup is claimed.
 ```
 
-- [ ] **Step 10: Commit hosted evidence, then stop again unless separately authorized**
+- [ ] **Step 11: Commit hosted evidence, then stop again unless separately authorized**
 
 ```bash
 git add docs/ci-source-admission-readiness-bootstrap-results.md
@@ -3030,15 +3251,15 @@ git commit -m "docs: record hosted source admission readiness evidence"
 
 Do not push this evidence head unless a second explicit authorization covers it. If pushed, verify all three required checks on the documentation head and record their literal URLs/conclusions before final completion.
 
-- [ ] **Step 11: Final completion report**
+- [ ] **Step 12: Final completion report**
 
 Return:
 
-- exact plan, implementation, local-evidence, hosted-evidence (if authorized), and final commit SHAs/subjects;
+- exact plan, implementation, local-evidence, frozen reviewed executable, hosted-evidence (if authorized), and final commit SHAs/subjects;
 - every focused/order/subsystem/full/tool/mutation/hosted command actually run and literal outcome;
 - exact source 120/full 16609/three-file 167 identity results and skip comparisons;
 - exact `1428 -> 682`, `1469 -> 921`, `1350 -> 802`, `1928 -> 1409`, `0 -> 119` structural evidence;
-- exact four committed paths and protected-path audit;
+- exact four committed paths, pre-commit uncommitted-scope audit, clean-tree proof, frozen `REVIEWED_HEAD`, and hosted head binding;
 - no-speedup conclusion;
 - remaining concerns: private-field coupling is intentional test authority, hosted timing is noisy/single-sample, and valid-flow guard deletions are non-discriminating but retained for diagnostics/postconditions.
 
