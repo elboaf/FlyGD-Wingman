@@ -4,6 +4,7 @@ The subprocess exercises actual client framing/read/codec work. In-memory delive
 is not network latency, a Windows result or proof of a usable <=5s clock anchor.
 """
 
+import ctypes
 import io
 import json
 import subprocess
@@ -21,6 +22,22 @@ from wingman.fleetsharing import client, protocol
 
 LIMITS = combatprofile.LIMITS
 MAXIMUM_RESPONSE_RESOURCE_BUDGET_S = 75.0
+_MISSING = object()
+
+
+class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+    _fields_ = [
+        ("cb", ctypes.c_uint32),
+        ("PageFaultCount", ctypes.c_uint32),
+        ("PeakWorkingSetSize", ctypes.c_size_t),
+        ("WorkingSetSize", ctypes.c_size_t),
+        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+        ("PagefileUsage", ctypes.c_size_t),
+        ("PeakPagefileUsage", ctypes.c_size_t),
+    ]
 
 
 def maximum_row(index, *, read=False):
@@ -108,21 +125,83 @@ def test_maximum_put_uses_actual_default_escaping_under_512k():
     assert len(compact(maximum_row(0, read=True))) == 5739
 
 
-def memory_probe():
-    # resource is absent on Windows. Keep that CI run executable without a new
-    # dependency; traced allocations are a different metric, not process RSS.
-    try:
-        import resource
-    except ImportError:
-        import tracemalloc
+def _windows_memory_probe(*, win_dll=None, get_last_error=None, win_error=None):
+    if win_dll is None:
+        win_dll = ctypes.WinDLL
+    kernel32 = win_dll("kernel32", use_last_error=True)
+    get_current_process = kernel32.GetCurrentProcess
+    get_process_memory_info = kernel32.K32GetProcessMemoryInfo
+    get_current_process.argtypes = []
+    get_current_process.restype = ctypes.c_void_p
+    get_process_memory_info.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(PROCESS_MEMORY_COUNTERS),
+        ctypes.c_uint32,
+    ]
+    get_process_memory_info.restype = ctypes.c_int
+    if get_last_error is None:
+        get_last_error = ctypes.get_last_error
+    if win_error is None:
+        win_error = ctypes.WinError
+    structure_size = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
 
-        tracemalloc.start()
-        return "traced_peak_bytes", lambda: tracemalloc.get_traced_memory()[1]
-    unit = "bytes" if sys.platform == "darwin" else "kib"
+    def sample():
+        counters = PROCESS_MEMORY_COUNTERS()
+        counters.cb = structure_size
+        process = get_current_process()
+        if not get_process_memory_info(process, ctypes.byref(counters), structure_size):
+            raise RuntimeError("K32GetProcessMemoryInfo failed.")
+        return int(counters.PeakWorkingSetSize)
+
+    return "process_peak_working_set_bytes", sample
+
+
+def memory_probe(
+    *,
+    platform=None,
+    win_dll=None,
+    get_last_error=None,
+    win_error=None,
+    resource_module=_MISSING,
+    tracemalloc_module=_MISSING,
+):
+    platform = sys.platform if platform is None else platform
+    if platform == "win32":
+        return _windows_memory_probe(
+            win_dll=win_dll,
+            get_last_error=get_last_error,
+            win_error=win_error,
+        )
+    if resource_module is _MISSING:
+        try:
+            import resource as resource_module
+        except ImportError:
+            resource_module = None
+    if resource_module is None:
+        if tracemalloc_module is _MISSING:
+            import tracemalloc as tracemalloc_module
+        tracemalloc_module.start()
+        return (
+            "traced_peak_bytes",
+            lambda: tracemalloc_module.get_traced_memory()[1],
+        )
+    unit = "bytes" if platform == "darwin" else "kib"
     return (
         f"process_peak_rss_{unit}",
-        lambda: resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+        lambda: resource_module.getrusage(resource_module.RUSAGE_SELF).ru_maxrss,
     )
+
+
+def _require_untraced_windows_decode(*, platform=None, tracemalloc_module=None):
+    platform = sys.platform if platform is None else platform
+    if platform != "win32":
+        return
+    if tracemalloc_module is None:
+        import tracemalloc as tracemalloc_module
+    if tracemalloc_module.is_tracing():
+        raise RuntimeError(
+            "Windows maximum-response measurement requires tracemalloc to be disabled."
+        )
 
 
 def measure_response():
@@ -216,7 +295,7 @@ def test_memory_probe_falls_back_without_resource(monkeypatch):
     import tracemalloc
 
     monkeypatch.setitem(sys.modules, "resource", None)
-    metric, probe = memory_probe()
+    metric, probe = memory_probe(platform="linux")
     try:
         assert metric == "traced_peak_bytes"
         before = probe()
@@ -255,6 +334,200 @@ def test_maximum_legal_response_actual_reader_and_codec_in_subprocess(request):
     print(evidence)
     assert evidence["raw_bytes"] == 47022137
     assert evidence["rows"] == LIMITS["get_rows"]
+
+
+class _FakeExport:
+    def __init__(self, callback):
+        self._callback = callback
+        self.argtypes = None
+        self.restype = None
+        self.calls = []
+
+    def __call__(self, *args):
+        self.calls.append(args)
+        return self._callback(*args)
+
+
+class _FakeKernel32:
+    def __init__(self, exports):
+        self._exports = exports
+        self.lookups = []
+
+    def __getattr__(self, name):
+        self.lookups.append(name)
+        value = self._exports[name]
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
+
+class _TraceSeam:
+    def __init__(self, *, active=False):
+        self.active = active
+        self.is_tracing_calls = 0
+        self.starts = 0
+        self.stops = 0
+
+    def is_tracing(self):
+        self.is_tracing_calls += 1
+        return self.active
+
+    def start(self):
+        self.starts += 1
+        self.active = True
+
+    def stop(self):
+        self.stops += 1
+        self.active = False
+
+    def get_traced_memory(self):
+        return (0, 0)
+
+
+class _ResourceSeam:
+    RUSAGE_SELF = object()
+
+    def __init__(self):
+        self.accesses = []
+
+    def getrusage(self, who):
+        self.accesses.append(who)
+        return type("Usage", (), {"ru_maxrss": 123})()
+
+
+class _WinErrorSeam:
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    def __call__(self, *args):
+        self.calls.append(args)
+        return self.result
+
+
+def test_windows_memory_probe_reports_peak_working_set_without_tracing(monkeypatch):
+    pointer_size = ctypes.sizeof(ctypes.c_size_t)
+    if pointer_size == 8:
+        peaks = [(1 << 32) + 12_345, (1 << 32) + 67_890]
+        currents = [345_678_901, 456_789_012]
+        pagefiles = [234_567_890, 123_456_789]
+    else:
+        peaks = [0xF1234567, 0xE2345678]
+        currents = [0x71234567, 0x62345678]
+        pagefiles = [0x51234567, 0x42345678]
+    pseudo_handle = 0xFFFF_FFFF
+    structures = []
+    samples = []
+
+    def current_process():
+        return pseudo_handle
+
+    def memory_info(handle, counters_pointer, byte_size):
+        counters = counters_pointer._obj
+        sample_index = len(samples)
+        structures.append(counters)
+        samples.append(
+            {
+                "handle": handle,
+                "cb": counters.cb,
+                "byte_size": byte_size,
+            }
+        )
+        counters.PeakWorkingSetSize = peaks[sample_index]
+        counters.WorkingSetSize = currents[sample_index]
+        counters.PagefileUsage = pagefiles[sample_index]
+        counters.PeakPagefileUsage = pagefiles[sample_index] - 1
+        return 1
+
+    get_current_process = _FakeExport(current_process)
+    get_process_memory_info = _FakeExport(memory_info)
+    close_handle = _FakeExport(lambda _handle: 1)
+    kernel32 = _FakeKernel32(
+        {
+            "GetCurrentProcess": get_current_process,
+            "K32GetProcessMemoryInfo": get_process_memory_info,
+            "CloseHandle": close_handle,
+        }
+    )
+    loads = []
+
+    def load_library(name, **kwargs):
+        loads.append((name, kwargs))
+        return kernel32
+
+    tracing = _TraceSeam()
+    resource = _ResourceSeam()
+    monkeypatch.setitem(sys.modules, "tracemalloc", tracing)
+
+    def unused_error_seam(*_args):
+        raise AssertionError("success path consulted an error seam")
+
+    metric, probe = memory_probe(
+        platform="win32",
+        win_dll=load_library,
+        get_last_error=unused_error_seam,
+        win_error=unused_error_seam,
+        resource_module=resource,
+    )
+    _require_untraced_windows_decode(platform="win32")
+
+    assert metric == "process_peak_working_set_bytes"
+    assert loads == [("kernel32", {"use_last_error": True})]
+    assert get_current_process.argtypes == []
+    assert get_current_process.restype is ctypes.c_void_p
+    assert get_process_memory_info.argtypes == [
+        ctypes.c_void_p,
+        ctypes.POINTER(PROCESS_MEMORY_COUNTERS),
+        ctypes.c_uint32,
+    ]
+    assert get_process_memory_info.restype is ctypes.c_int
+    assert PROCESS_MEMORY_COUNTERS._fields_ == [
+        ("cb", ctypes.c_uint32),
+        ("PageFaultCount", ctypes.c_uint32),
+        ("PeakWorkingSetSize", ctypes.c_size_t),
+        ("WorkingSetSize", ctypes.c_size_t),
+        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+        ("PagefileUsage", ctypes.c_size_t),
+        ("PeakPagefileUsage", ctypes.c_size_t),
+    ]
+    assert PROCESS_MEMORY_COUNTERS.cb.offset == 0
+    assert PROCESS_MEMORY_COUNTERS.PageFaultCount.offset == 4
+    pointer_fields = [
+        "PeakWorkingSetSize",
+        "WorkingSetSize",
+        "QuotaPeakPagedPoolUsage",
+        "QuotaPagedPoolUsage",
+        "QuotaPeakNonPagedPoolUsage",
+        "QuotaNonPagedPoolUsage",
+        "PagefileUsage",
+        "PeakPagefileUsage",
+    ]
+    assert [
+        getattr(PROCESS_MEMORY_COUNTERS, name).offset for name in pointer_fields
+    ] == [8 + index * pointer_size for index in range(8)]
+    assert ctypes.sizeof(PROCESS_MEMORY_COUNTERS) == 8 + 8 * pointer_size
+    assert ctypes.alignment(PROCESS_MEMORY_COUNTERS) == ctypes.alignment(
+        ctypes.c_size_t
+    )
+    assert ctypes.alignment(PROCESS_MEMORY_COUNTERS) in (4, 8)
+    assert not hasattr(PROCESS_MEMORY_COUNTERS, "_pack_")
+
+    assert [probe(), probe()] == peaks
+    assert close_handle.calls == []
+    assert kernel32.lookups == ["GetCurrentProcess", "K32GetProcessMemoryInfo"]
+    assert len(structures) == 2 and structures[0] is not structures[1]
+    expected_size = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
+    assert samples == [
+        {"handle": pseudo_handle, "cb": expected_size, "byte_size": expected_size},
+        {"handle": pseudo_handle, "cb": expected_size, "byte_size": expected_size},
+    ]
+    assert resource.accesses == []
+    assert tracing.is_tracing_calls == 1
+    monkeypatch.undo()
+    assert tracing.starts == tracing.stops == 0
 
 
 if __name__ == "__main__":

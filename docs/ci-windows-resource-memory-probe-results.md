@@ -11,7 +11,8 @@ Task 1 changes only this results ledger. No executable file, workflow, dependenc
 ## Task status
 
 - Task 1: **COMPLETE** — the exact three-ID target, exact ordered 16,607-ID complete inventory, one-marker ownership, PR #288 logs-primary provenance, selected jobs/artifacts, ZIP-member equality, artifact hashes, complete normalized skip tuples, resource properties, and timing observations are frozen below.
-- Tasks 2–5: **NOT STARTED** — this baseline accepts no implementation or executable identity change.
+- Task 2: **COMPLETE** — the exact first ordinary suffix identity, lazy native Windows success path, natural ABI layout, platform selection, trace guard, portable fallback, exact 4/16,608 inventories, and 17 restoration-safe success/ABI mutants are qualified below.
+- Tasks 3–5: **NOT STARTED** — fail-closed native error handling, protocol crossings, resource integration, full local qualification, and publication remain out of Task 2 scope.
 
 ## Exact three-ID target baseline
 
@@ -17070,8 +17071,79 @@ A fresh self-review parser was used because this task explicitly prohibited suba
 - **Timing agreement:** PASS — timing JSON case counts and every per-file case count/sum agree with JUnit within `1e-9`; resource testcase and target-file sums match the exact values above.
 - **Executable/identity protection:** PASS — repository scope is this ledger only; no executable file or test identity changed.
 
+## Task 2 TDD RED/GREEN
+
+The first appended identity was added before implementation with the five portable fake classes and the existing fallback identity was explicitly pinned to the non-Windows branch. No real Windows DLL was resolved on Linux.
+
+- **RED:** `uv run --no-sync python -m pytest tests/test_fleetsharing_transport_resources.py::test_windows_memory_probe_reports_peak_working_set_without_tracing -q` produced `1 failed`; the earliest owned failure was `TypeError: memory_probe() got an unexpected keyword argument 'platform'`.
+- **GREEN:** the first appended identity plus the adapted fallback produced `2 passed in 3.09s`.
+- **Ordinary target gate:** `tests/test_fleetsharing_transport_resources.py -m "not resource"` produced `3 passed, 1 deselected in 2.30s`.
+- **Ruff/boundary gate:** `ruff check` passed, `ruff format --check` reported the file already formatted, and the exact boundary assertions confirmed no `os` import, no `_measure_protocol_crossings`, and no second appended identity.
+
+## Task 2 native ABI, values, selection, and tracing
+
+The Task 2 endpoint adds `_MISSING`, `PROCESS_MEMORY_COUNTERS`, lazy `_windows_memory_probe()`, injectable `memory_probe()`, and `_require_untraced_windows_decode()` without integrating the guard into `measure_response()`.
+
+- **Natural layout:** fields are `cb`, `PageFaultCount`, then eight pointer-sized counters in native order. On this 64-bit interpreter the offsets are `0`, `4`, `8`, `16`, `24`, `32`, `40`, `48`, `56`, `64`; structure size is `72`, alignment is `8`, and `_pack_` is absent. The identity also encodes the corresponding pointer-width formula for 32-bit interpreters.
+- **Signatures:** `GetCurrentProcess` uses `argtypes=[]` and `restype=ctypes.c_void_p`; `K32GetProcessMemoryInfo` uses `(ctypes.c_void_p, POINTER(PROCESS_MEMORY_COUNTERS), ctypes.c_uint32)` and `restype=ctypes.c_int`.
+- **Lazy native setup:** `kernel32` is loaded only inside the selected Windows branch as `win_dll("kernel32", use_last_error=True)`. The Linux-hosted success identity uses only fake exports.
+- **Values:** each sample allocates a fresh structure, sets `cb` to the exact structure size, preserves the raw pseudo-handle, passes the exact API size, and returns unsigned pointer-width `PeakWorkingSetSize`. The 64-bit witnesses are `2^32 + 12,345` and `2^32 + 67,890`; the 32-bit witnesses are high unsigned values `0xF1234567` and `0xE2345678`.
+- **Metric and ownership:** Windows returns only `process_peak_working_set_bytes`; current working set and pagefile values are deliberately distinct witnesses. The pseudo-handle is never passed to `CloseHandle`.
+- **Platform selection and fallback:** Windows is selected before the usable resource seam. The existing explicitly Linux fallback still selects `traced_peak_bytes`, starts its own tracer, samples it, and stops it in `finally`.
+- **Tracing guard:** the actual fake object installed in `sys.modules["tracemalloc"]` remains installed through native setup, guard, two samples, and assertions. The guard performs one `is_tracing()` call; native setup/sampling/cleanup performs no trace start or stop.
+- **Interim zero return:** Task 2 intentionally raises `RuntimeError("K32GetProcessMemoryInfo failed.")`; saved last-error/`WinError` pairing belongs to Task 3.
+
+## Task 2 exact interim inventory
+
+Reproducibility Block B1 passed with the baseline three target identities followed by exactly the first suffix identity.
+
+- Target count/uniqueness: `4 / 4`
+- Target final-newline ordered SHA-256: `85f6578b682541743ef2e6729262018996f398efb4d58451cbcb56b99a8425ab`
+- Complete count/uniqueness: `16,608 / 16,608`
+- Complete final-newline ordered SHA-256: `dd592b0e9fa027e99bdcef66098362bbbd16b0af614ccf1e415961c3ed9fba47`
+- Additions/removals: `+1 / 0`
+- Added identity: `tests/test_fleetsharing_transport_resources.py::test_windows_memory_probe_reports_peak_working_set_without_tracing`
+- Resource marker owners: exactly `1`, unchanged from Task 1.
+- All 16,607 baseline identities retain their relative order; the new identity is inserted immediately after the baseline target anchor.
+- Block B1 scope: exactly the already-authorized spec, plan, results ledger, and target test differ from `cc48c887`.
+
+## Task 2 success/ABI mutation qualification
+
+The Task 2 subset of Reproducibility Block C completed with aggregate exit `0`: all `17/17` applicable recipes reached their owned intended-red assertion. Every recipe restored exact source bytes, SHA-256, binary diff, and porcelain-v2 status before the runner continued. The target source SHA-256 before and after every Task 2 recipe was `09c4317a6c63e4f58ea9d1cb04fdc5d4580615f3019e73cb5d0726260c51f3c6`.
+
+| Mutant | Intended red witness | Restoration |
+|---|---|---|
+| `windows-to-resource` | exact Windows metric assertion after usable resource selection | exact |
+| `windows-to-tracing` | active-tracer guard after real import of the installed fake module | exact |
+| `start-tracing` | active-tracer guard | exact |
+| `stop-tracing` | exact no-stop assertion | exact |
+| `current-working-set` | exact repeated peak values | exact |
+| `width-truncation` | exact repeated values above 32 bits | exact |
+| `signed-coercion` | exact high unsigned repeated values | exact |
+| `wrong-native-metric` | exact metric string | exact |
+| `omit-cb` | exact `cb`/sample records | exact |
+| `wrong-api-size` | exact API byte-size records | exact |
+| `packed-layout` | exact natural-alignment assertion | exact |
+| `field-type` | exact `_fields_` identity | exact |
+| `field-order` | exact `_fields_` order | exact |
+| `reuse-structure` | exact fresh-structure identity assertion | exact |
+| `omit-signature` | exact `K32GetProcessMemoryInfo.restype` assertion | exact |
+| `replace-pseudo-handle` | exact raw pseudo-handle sample records | exact |
+| `close-pseudo-handle` | exact no-`CloseHandle` assertion | exact |
+
+The independent 32-bit counter simulation also exited `0`: `ctypes.c_uint16` remains distinct from `ctypes.c_uint32`, and `0xF1234567` truncates to `0x4567`, so the `field-type` recipe cannot become an equivalent 32-bit alias. `width-truncation` was applicable on this 64-bit interpreter; the catalog records it as not applicable only on a 32-bit interpreter, where `signed-coercion` still qualifies unsigned width.
+
+## Task 2 review and scope
+
+A fresh standalone self-review was used because subagents were explicitly prohibited. It independently imported the test module without executing the child entry point and checked the exact field list/order/types, offsets, size formula, alignment, absence of `_pack_`, lazy `WinDLL` location, both native signatures, fresh structure allocation, `PeakWorkingSetSize` return, no production `CloseHandle` lookup, no `os` import, and absence of Task 3 helpers/identity. It passed with source SHA-256 `09c4317a6c63e4f58ea9d1cb04fdc5d4580615f3019e73cb5d0726260c51f3c6`.
+
+Task 2 changes only `tests/test_fleetsharing_transport_resources.py` and this results ledger relative to the Task 1 commit. It adds no `os` import, second identity, protocol-crossing helper, resource-test integration, workflow edit, dependency, or production module change.
+
 ## Concerns
 
+- Task 2 evidence discrepancies: none.
+- The native success path is structurally and portably qualified on Linux fakes; a real Windows resource subprocess is deliberately deferred to later tasks.
+- The direct zero-return `RuntimeError` is intentionally interim and must be replaced by saved last-error/`WinError` handling in Task 3.
 - Evidence discrepancies: none.
 - The PR #288 run payload has absent pull-request metadata; the explicit run selection and three matching checkout logs provide the accepted provenance path.
 - A single hosted run is observational and supports no performance claim.
