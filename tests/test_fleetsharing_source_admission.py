@@ -2011,7 +2011,37 @@ def test_original_measurement_retry_retains_wire_origins_across_reauthentication
     tmp_path, restart
 ):
     worker, client, mono = publication_rig(tmp_path)
-    source = ticket(mono[0], outgoing=7)
+    effect = EffectObservation("POINT", mono[0] + 28, (LIFETIME, 9001), "Retry hunter")
+    source = ticket(mono[0], outgoing=7, effects=(effect,))
+    snapshot = source.snapshot
+    row = snapshot.rows[0]
+    activity = row.combat
+    assert activity is not None and activity.observation_id is not None
+    assert len(activity.observations) == 1
+    accepted_effect = activity.observations[0]
+    character_id = next(
+        character.character_id
+        for character in worker._catalogue.characters
+        if character.character_name == row.character
+    )
+    assert snapshot.sampled_at_mono is not None
+    sample_key = (
+        snapshot.activation_generation,
+        Fraction(snapshot.sampled_at_mono),
+    )
+    row_key = (
+        character_id,
+        activity.observation_id[0],
+        "row",
+        activity.observation_id,
+    )
+    effect_key = (
+        character_id,
+        accepted_effect.observation_id[0],
+        (accepted_effect.kind, accepted_effect.name),
+        accepted_effect.observation_id,
+    )
+    expected_keys = frozenset((sample_key, row_key, effect_key))
     work, fence = selected_publication(worker, mono, source)
     original_session = s.load(client.path).session_id
     client.put_error = (
@@ -2021,7 +2051,14 @@ def test_original_measurement_retry_retains_wire_origins_across_reauthentication
     assert len(client.puts) == 1
     first = client.puts[0]
     context = worker._timing_context
-    original_pins = tuple(context._publisher.associations.values())
+    associations = context._publisher.associations
+    assert frozenset(associations) == expected_keys
+    assert len(associations) == 3
+    original_pins = {
+        sample_key: associations[sample_key],
+        row_key: associations[row_key],
+        effect_key: associations[effect_key],
+    }
     original_floor = context._next_stage_at
     client.put_error = None
     if restart == "thread":
@@ -2036,10 +2073,12 @@ def test_original_measurement_retry_retains_wire_origins_across_reauthentication
         assert client.puts[-1] == first
         assert worker._timing_context is context
         assert context._next_stage_at >= original_floor
-        assert all(
-            context._publisher.associations[pin.evidence.key] is pin
-            for pin in original_pins
-        )
+        associations = context._publisher.associations
+        assert frozenset(associations) == expected_keys
+        assert len(associations) == 3
+        assert associations[sample_key] is original_pins[sample_key]
+        assert associations[row_key] is original_pins[row_key]
+        assert associations[effect_key] is original_pins[effect_key]
         if restart == "session":
             assert s.load(client.path).session_id != original_session
         assert worker._latest is source

@@ -810,19 +810,34 @@ Task 1 does not claim those candidate values as executed evidence.
 
 ## Implementation and TDD evidence
 
-Task 2 added the bounded semantic-readiness bootstrap only; the retry-effect
-strengthening remains unmodified for Task 3. A disposable archived `f6e8ecd5`
-assembly first received every Block B snippet, including the later retry block,
-and passed `py_compile`, Ruff check/format, and all 120 source-admission cases
-(`120 passed in 5.61s`). No file or cache from that assembly was copied into the
-worktree.
+Task 2 added the bounded semantic-readiness bootstrap. A disposable archived
+`f6e8ecd5` assembly first received every Block B snippet and passed `py_compile`,
+Ruff check/format, and all 120 source-admission cases (`120 passed in 5.61s`).
+No file or cache from that assembly was copied into the worktree.
 
-The literal RED changed only the fixture signature/delegation and four
+The Task 2 literal RED changed only the fixture signature/delegation and four
 original-phase call expressions. The prescribed five identities all failed at
 `NameError: _drive_publication_bootstrap is not defined`; their collection IDs
 and test signatures were unchanged. After adding the helper, imports, and common
 postconditions, the same command passed all five (`5 passed in 2.90s`). The
 six-case original-phase/proof command then passed (`6 passed in 2.93s`).
+
+Task 3 replaced only the existing parameterized retry body. Its RED used the
+accepted effect's character, lifetime, kind, and observation ID but deliberately
+set the effect-name component to `None`. Both unchanged retry identities failed
+at the first `frozenset(associations) == expected_keys` assertion, which showed
+that the assertion reads the accepted named-effect key. Restoring only
+`expected_keys = frozenset((sample_key, row_key, effect_key))` made both rows
+pass (`2 passed in 2.62s`). The source now carries one named `POINT` effect and
+derives immutable sample, row, and effect keys from the accepted snapshot. Both
+before and after retry it requires exactly those three keys, cardinality three,
+and identical pin objects under all three keys. The repeated wire body, timing
+context, cadence floor, latest source, and durable session-change assertions
+remain.
+
+All six temporary scripts were rematerialized directly from the plan. They
+compiled together and passed Ruff check and format-check without changes before
+the Task 3 matrix.
 
 `publication_rig(tmp_path, *, configure=None, original_phase=False, **rights)`
 keeps `original_phase` keyword-only, rejects values whose exact type is not
@@ -886,9 +901,72 @@ barrier/thread, timeout, setup, collection, or wrong-ID failure:
   whose measured first-ready turns remain `5/6/9/10`.
 
 All fourteen valid-flow guard/postcondition deletions reported
-`reviewed-valid-flow-equivalent`; none is classified as a kill. Task 2 did not
-run or claim the 18 production mutations, and no file under `wingman/` was
-modified even temporarily by its selected probes.
+`reviewed-valid-flow-equivalent`; none is classified as a kill. Task 3 then ran
+the exact Block D aggregate in insertion order: all 18 production mutations,
+all five readiness faults, and all four bounds reported `intended-red`; the 14
+equivalent deletions retained their non-killing classification. Every selected
+JUnit testcase independently matched its intended regex and lacked its
+category's forbidden bootstrap masking, competing-expiry, barrier/thread,
+timeout, setup, and collection signatures. Both retry rows failed at the exact
+sample, row, and isolated effect-pin identity assertions. No masked or timeout
+result was accepted.
+
+The table below records each recipe's exact changed expression, deleted row, or
+injected block. Every `exact` restoration result means target bytes and SHA-256,
+the complete
+`git diff --binary HEAD -- .`, and NUL-delimited porcelain-v2 status all matched
+the pre-probe capture, with `problem=null` and `restoration_problem=null` in the
+recipe artifact.
+
+Target labels below are exact pre-probe authorities:
+`T = tests/test_fleetsharing_source_admission.py @ 3e2a33f5549d834c113cbcf832391f65f62bcf7311bed2de92b4c43c60f3363c`,
+`W = wingman/fleetsharing/worker.py @ 83ed5da6327ae71d7b8e7dcb74595217bf4068a01ee07db4138f37b3f9e6f81b`,
+and
+`G = wingman/fleetsharing/timing.py @ 0b09ec89d47b803089015a6e21f80604219ec1b619909ca400e5e7e7d9520901`.
+
+| Recipe | Category | Exact edit | Exact selected permanent ID(s) | Literal assertion / regex | Result class | Target SHA-256 | Restoration |
+|---|---|---|---|---|---|---|---|
+| `final-source-admission` | production | `elif selected.source.admit_start(validate_publication) is not True: raise _Obsolete` → `elif False: raise _Obsolete` | `tests/test_fleetsharing_source_admission.py::test_actual_publication_barriers_fence_before_start_and_late_completion[signing-source]` | `assert len\(client\.puts\) ==` | `intended-red` | `W` | exact |
+| `original-completion` | production | `elif source.admit_start(install) is not True: raise _Obsolete` → `else: install()` | `tests/test_fleetsharing_source_admission.py::test_original_source_guards_actual_completion_install[publication-None-True]` | `obsolete source acknowledged publication` / `isinstance(errors[0], _Obsolete)` | `intended-red` | `W` | exact |
+| `post-save-401` | production | `self._with_publication_source_locked(work, install)` → `install()` | `tests/test_fleetsharing_source_admission.py::test_original_source_guards_post_save_401_reset[publication-reset_acquisition-True]` | `obsolete source reset catalogue` / `isinstance(errors[0], _Obsolete)` | `intended-red` | `W` | exact |
+| `held-approved_capabilities` | production | delete exact `state.approved_capabilities,` row from the three-rights loop | `tests/test_fleetsharing_source_admission.py::test_final_held_disclosure_and_applicable_withdrawal_rights[approved_capabilities-combat]` | `DID NOT RAISE` | `intended-red` | `W` | exact |
+| `held-session_approved_capabilities` | production | delete exact `state.session_approved_capabilities,` row from the three-rights loop | `tests/test_fleetsharing_source_admission.py::test_final_held_disclosure_and_applicable_withdrawal_rights[session_approved_capabilities-combat]` | `DID NOT RAISE` | `intended-red` | `W` | exact |
+| `held-acknowledged_capabilities` | production | delete exact `state.acknowledged_capabilities,` row from the three-rights loop | `tests/test_fleetsharing_source_admission.py::test_final_held_disclosure_and_applicable_withdrawal_rights[acknowledged_capabilities-combat]` | `DID NOT RAISE` | `intended-red` | `W` | exact |
+| `proof-deadline` | production | `or any(now >= deadline for deadline in selected.member_deadlines)` → `or False` | `tests/test_fleetsharing_source_admission.py::test_cached_permission_deadline_expires_after_signing_without_utc_renewal`<br>`tests/test_fleetsharing_source_admission.py::test_independent_deadlines_are_checked_after_real_leaf_wait[proof-False]` | `DID NOT RAISE` / `assert client.puts == []` / `isinstance(errors[0], _Obsolete)` | `intended-red` | `W` | exact |
+| `save-before-transport` | production | `self._persist(candidate, fence, work=work)` → `self._state = candidate` | `tests/test_fleetsharing_source_admission.py::test_original_source_reaches_real_signed_combat_put[0-0]` | `x-fleet-revision` / `last_revision` | `intended-red` | `W` | exact |
+| `anchor-deadline` | production | `or not 0 <= 1000 * (now - anchor.received_at) <= LIMITS["anchor_lifetime_ms"]` → `or 1000 * (now - anchor.received_at) < 0` | `tests/test_fleetsharing_source_admission.py::test_independent_deadlines_are_checked_after_real_leaf_wait[anchor_over-False]` | `isinstance(errors[0], _Obsolete)` / `assert client.puts == []` | `intended-red` | `G` | exact |
+| `sample-deadline` | production | `not 0 <= 1000 * (now - m) < LIMITS["input_age_ms"]` → `1000 * (now - m) < 0` | `tests/test_fleetsharing_source_admission.py::test_leaf_wait_crossing_original_sample_expiry_sends_nothing` | `isinstance(errors[0], _Obsolete)` / `assert client.puts == []` | `intended-red` | `G` | exact |
+| `row-deadline` | production | `pin.evidence.horizon <= now` → `False` in the exact pin guard | `tests/test_fleetsharing_source_admission.py::test_independent_deadlines_are_checked_after_real_leaf_wait[row-False]` | `isinstance(errors[0], _Obsolete)` / `assert client.puts == []` | `intended-red` | `G` | exact |
+| `effect-deadline` | production | `pin.evidence.horizon <= now` → `False` in the exact pin guard | `tests/test_fleetsharing_source_admission.py::test_independent_deadlines_are_checked_after_real_leaf_wait[effect-False]` | `isinstance(errors[0], _Obsolete)` / `assert client.puts == []` | `intended-red` | `G` | exact |
+| `session-original-deadline` | production | `or now >= selected.session_deadline` → `or False`; inject only `worker._expires_at = Fraction(target) + 60` for the session row | `tests/test_fleetsharing_source_admission.py::test_independent_deadlines_are_checked_after_real_leaf_wait[session-False]` | `isinstance(errors[0], _Obsolete)` / `assert client.puts == []` | `intended-red` | `T + W` | exact |
+| `uncertainty` | production | `if len(resolved) != len(snapshot.rows) or any(row.combat is None or (row.dps is None and row.incoming_dps is None) for _, row in resolved): return None` → `if False: return None` | `tests/test_fleetsharing_source_admission.py::test_any_uncertain_member_prevents_whole_inactivity_withdrawal[legacy-False-True]` | `destructive empty PUT` / `client.puts` | `intended-red` | `W` | exact |
+| `retry-context` | production | after `_restart_requested = True`, inject `replacement = TimingContext.__new__(TimingContext); replacement.__dict__ = dict(self._timing_context.__dict__); self._timing_context = replacement` | `tests/test_fleetsharing_source_admission.py::test_original_measurement_retry_retains_wire_origins_across_reauthentication[thread]` | `worker._timing_context is context` | `intended-red` | `W` | exact |
+| `retry-sample-pin` | production | recovery filter `pin.evidence.horizon > now` → same plus `and len(key) != 2` | `tests/test_fleetsharing_source_admission.py::test_original_measurement_retry_retains_wire_origins_across_reauthentication[thread]`<br>`tests/test_fleetsharing_source_admission.py::test_original_measurement_retry_retains_wire_origins_across_reauthentication[session]` | `associations[sample_key] is original_pins[sample_key]` | `intended-red` | `G` | exact |
+| `retry-row-pin` | production | recovery filter → same plus `and not (len(key) == 4 and key[2] == "row")` | `tests/test_fleetsharing_source_admission.py::test_original_measurement_retry_retains_wire_origins_across_reauthentication[thread]`<br>`tests/test_fleetsharing_source_admission.py::test_original_measurement_retry_retains_wire_origins_across_reauthentication[session]` | `associations[row_key] is original_pins[row_key]` | `intended-red` | `G` | exact |
+| `retry-effect-pin` | production | recovery filter → same plus `and not (len(key) == 4 and isinstance(key[2], tuple))` | `tests/test_fleetsharing_source_admission.py::test_original_measurement_retry_retains_wire_origins_across_reauthentication[thread]`<br>`tests/test_fleetsharing_source_admission.py::test_original_measurement_retry_retains_wire_origins_across_reauthentication[session]` | `associations[effect_key] is original_pins[effect_key]` | `intended-red` | `G` | exact |
+| `readiness-exact-object` | readiness-fault | before each readiness evaluation, install `replace(proof, response=replace(worker._eligibility))`, observe, then restore in `finally` | `tests/test_fleetsharing_source_admission.py::test_leaf_wait_crossing_original_sample_expiry_sends_nothing` | `publication bootstrap readiness missed after 12/12 turns;[\s\S]*'exact_response': False` | `intended-red` | `T` | exact |
+| `readiness-timing-fence` | readiness-fault | before each evaluation, install `replace(proof, fence=replace(current, timing=current.timing - 1))`, observe, then restore | `tests/test_fleetsharing_source_admission.py::test_leaf_wait_crossing_original_sample_expiry_sends_nothing` | `fence_differences=('timing',)` | `intended-red` | `T` | exact |
+| `readiness-broad-fence` | readiness-fault | install a fence stale in `lifecycle/identity/session/participation/source/automatic/timing`, observe, then restore | `tests/test_fleetsharing_source_admission.py::test_leaf_wait_crossing_original_sample_expiry_sends_nothing` | `fence_differences=('lifecycle', 'identity', 'session', 'participation', 'source', 'automatic', 'timing')` | `intended-red` | `T` | exact |
+| `readiness-drop-timing-comparison` | readiness-fault | delete exact fence-field row `"timing",`; inject the timing-only stale fence and `pytest.fail("timing-only stale fence was accepted")` | `tests/test_fleetsharing_source_admission.py::test_leaf_wait_crossing_original_sample_expiry_sends_nothing` | `timing-only stale fence was accepted` | `intended-red` | `T` | exact |
+| `readiness-durable-mismatch` | readiness-fault | replace durable assertion with save of `replace(worker._state, last_revision=worker._state.last_revision + 1)`, assert, and byte restore in `finally` | `tests/test_fleetsharing_source_admission.py::test_leaf_wait_crossing_original_sample_expiry_sends_nothing` | `bootstrap state is not durable` | `intended-red` | `T` | exact |
+| `one-turn-short-ordinary` | bound | `range(1, 13)` → `range(1, 5)` | `tests/test_fleetsharing_source_admission.py::test_leaf_wait_crossing_original_sample_expiry_sends_nothing` | `publication bootstrap readiness missed after 4/12 turns;` | `intended-red` | `T` | exact |
+| `one-turn-short-ack` | bound | `range(1, 13)` → `range(1, 6)` | `tests/test_fleetsharing_source_admission.py::test_ack_uses_only_canonical_approved_intersection[device_caps0-session_caps0-want0]` | `publication bootstrap readiness missed after 5/12 turns;` | `intended-red` | `T` | exact |
+| `one-turn-short-watch` | bound | `range(1, 13)` → `range(1, 9)` | `tests/test_fleetsharing_source_admission.py::test_actual_publication_barriers_fence_before_start_and_late_completion[unwrap-source]` | `publication bootstrap readiness missed after 8/12 turns;` | `intended-red` | `T` | exact |
+| `one-turn-short-near-expiry` | bound | `range(1, 13)` → `range(1, 10)` | `tests/test_fleetsharing_source_admission.py::test_independent_deadlines_are_checked_after_real_leaf_wait[session-False]` | `publication bootstrap readiness missed after 9/12 turns;` | `intended-red` | `T` | exact |
+| `guard-catalogue` | equivalent | delete exact ready-list row `"catalogue",` | `tests/test_fleetsharing_source_admission.py::test_leaf_wait_crossing_original_sample_expiry_sends_nothing` | `1 passed` | `reviewed-valid-flow-equivalent` | `T` | exact |
+| `guard-eligibility` | equivalent | delete exact ready-list row `"eligibility",` | `tests/test_fleetsharing_source_admission.py::test_leaf_wait_crossing_original_sample_expiry_sends_nothing` | `1 passed` | `reviewed-valid-flow-equivalent` | `T` | exact |
+| `guard-anchor` | equivalent | delete exact ready-list row `"anchor",` | `tests/test_fleetsharing_source_admission.py::test_leaf_wait_crossing_original_sample_expiry_sends_nothing` | `1 passed` | `reviewed-valid-flow-equivalent` | `T` | exact |
+| `guard-proof` | equivalent | delete exact ready-list row `"proof",` | `tests/test_fleetsharing_source_admission.py::test_leaf_wait_crossing_original_sample_expiry_sends_nothing` | `1 passed` | `reviewed-valid-flow-equivalent` | `T` | exact |
+| `guard-exact-response` | equivalent | delete exact ready-list row `"exact_response",` | `tests/test_fleetsharing_source_admission.py::test_leaf_wait_crossing_original_sample_expiry_sends_nothing` | `1 passed` | `reviewed-valid-flow-equivalent` | `T` | exact |
+| `guard-exact-fence` | equivalent | delete exact ready-list row `"exact_fence",` | `tests/test_fleetsharing_source_admission.py::test_leaf_wait_crossing_original_sample_expiry_sends_nothing` | `1 passed` | `reviewed-valid-flow-equivalent` | `T` | exact |
+| `post-durable` | equivalent | delete exact `assert s.load(path) == worker._state, "bootstrap state is not durable"` | `tests/test_fleetsharing_source_admission.py::test_leaf_wait_crossing_original_sample_expiry_sends_nothing` | `1 passed` | `reviewed-valid-flow-equivalent` | `T` | exact |
+| `post-device` | equivalent | delete exact `assert worker._needs_device is False, "device bootstrap is incomplete"` | `tests/test_fleetsharing_source_admission.py::test_leaf_wait_crossing_original_sample_expiry_sends_nothing` | `1 passed` | `reviewed-valid-flow-equivalent` | `T` | exact |
+| `post-puts` | equivalent | delete exact `assert client.puts == [], "bootstrap accepted a publication"` | `tests/test_fleetsharing_source_admission.py::test_leaf_wait_crossing_original_sample_expiry_sends_nothing` | `1 passed` | `reviewed-valid-flow-equivalent` | `T` | exact |
+| `post-last-published` | equivalent | delete exact `assert worker._last_published == (), "bootstrap installed publication state"` | `tests/test_fleetsharing_source_admission.py::test_leaf_wait_crossing_original_sample_expiry_sends_nothing` | `1 passed` | `reviewed-valid-flow-equivalent` | `T` | exact |
+| `post-associations` | equivalent | delete exact `assert worker._timing_context._publisher.associations == {}, ("bootstrap allocated publication evidence")` block | `tests/test_fleetsharing_source_admission.py::test_leaf_wait_crossing_original_sample_expiry_sends_nothing` | `1 passed` | `reviewed-valid-flow-equivalent` | `T` | exact |
+| `post-next-stage` | equivalent | delete exact `assert worker._timing_context._next_stage_at is None, ("bootstrap allocated a publication stage floor")` block | `tests/test_fleetsharing_source_admission.py::test_leaf_wait_crossing_original_sample_expiry_sends_nothing` | `1 passed` | `reviewed-valid-flow-equivalent` | `T` | exact |
+| `guard-watch-source` | equivalent | delete exact watch rows `"source_observation"/"status_source"/"source_identity"` | `tests/test_fleetsharing_source_admission.py::test_actual_publication_barriers_fence_before_start_and_late_completion[unwrap-source]` | `1 passed` | `reviewed-valid-flow-equivalent` | `T` | exact |
+| `guard-watch-automatic` | equivalent | delete exact watch rows `"automatic_observation"/"status_automatic"/"automatic_identity"` | `tests/test_fleetsharing_source_admission.py::test_actual_publication_barriers_fence_before_start_and_late_completion[unwrap-source]` | `1 passed` | `reviewed-valid-flow-equivalent` | `T` | exact |
 
 ## Structural instrumentation
 
@@ -907,19 +985,20 @@ candidate transition is:
 | Fresh durable equality loads | `0` | `119` |
 
 Instrumentation identified exactly the six original-phase IDs above and measured
-each at twelve turns. Its candidate source SHA-256 was
-`3ada7319bae242a8d17d511dd13f437853357717f7e3cd0e6dad1b989f83cdf1`.
+each at twelve turns. The post-Task-3 rerun reproduced `682/921/802/1409/119`
+and the exact `105/4/9/1` categories against candidate source SHA-256
+`3e2a33f5549d834c113cbcf832391f65f62bcf7311bed2de92b4c43c60f3363c`.
 
 ## Identity and order verification
 
-The focused candidate module run produced `120 passed in 7.63s` and JUnit at
-`/tmp/source-readiness-task2.xml`. Block E then proved source `120 / 120` and
-complete `16,609 / 16,609` collection remain ordered-equal to the frozen
-baseline, all 39 AST test shapes remain exact, and both protected callers retain
-the baseline byte hashes. The three-file endpoint remains exactly 167 unique,
-non-skipped identities. All four one-shot order runs passed without retries:
+The post-Task-3 focused module run produced `120 passed in 7.25s`. Block E then
+proved source `120 / 120` and complete `16,609 / 16,609` collection remain
+ordered-equal to the frozen baseline, all 39 AST test shapes remain exact, and
+both protected callers retain the baseline byte hashes. The three-file endpoint
+remains exactly 167 unique, non-skipped identities. All four one-shot order runs
+passed without retries:
 
-| Order | Observed SHA-256 | Task 2 result |
+| Order | Observed SHA-256 | Task 3 result |
 |---|---|---|
 | Normal | `7b9e3644793a89952f132df22b1131c699530c41357b0f92fe4f80873faae89d` | `167 passed` |
 | Reverse file | `8890f6fe56c31201dfddc19054f51de8e8beb6be06ae94d63d98945e148c3a9b` | `167 passed` |
@@ -928,12 +1007,12 @@ non-skipped identities. All four one-shot order runs passed without retries:
 
 ## Complete local verification
 
-Task 2 verified the exact source module and three-file endpoint rather than the
+Task 3 verified the exact source module and three-file endpoint rather than the
 complete executable suite. The complete 16,609 collection was checked, but no
 new 16,609-case execution, Node/codec/Cargo gate, or hosted candidate comparison
-is claimed; those remain Task 4 work. Final Task 2 verification also runs focused
-Ruff check/format, `git diff --check`, protected-caller diff, staged-path, and
-status checks.
+is claimed; those remain Task 4 work. Final Task 3 verification also runs focused
+Ruff check/format, `git diff --check`, production/protected-caller diffs,
+staged-path, and status checks.
 
 ## Hosted comparison
 
@@ -947,26 +1026,35 @@ is claimed.
 
 ## Scope, restoration, reviews, and concerns
 
-- Task 2 changes only `tests/test_fleetsharing_source_admission.py` and this
+- Task 3 changes only `tests/test_fleetsharing_source_admission.py` and this
   results ledger. Production, workflows, dependencies, configuration, markers,
   selectors, budgets, shards, packaging, and protected callers are unchanged.
-- The retry test remains byte-for-byte at its Task 1 implementation; Task 3 owns
-  the effect/key/pin strengthening.
-- Each of the 23 selected mutation runs restored exact bytes and SHA-256, the
-  complete binary diff, and NUL-delimited porcelain-v2 status. Candidate
-  instrumentation separately restored exact source bytes/hash, diff, and status.
+- Every one of the 41 matrix recipes restored exact target bytes and SHA-256,
+  complete binary diff, and NUL-delimited porcelain-v2 status before the next
+  recipe. Candidate instrumentation separately restored the exact test bytes,
+  source hash, binary diff, and status. Final `git diff --exit-code -- wingman`
+  was clean.
+- The pre-probe production hashes were
+  `83ed5da6327ae71d7b8e7dcb74595217bf4068a01ee07db4138f37b3f9e6f81b`
+  for `worker.py` and
+  `0b09ec89d47b803089015a6e21f80604219ec1b619909ca400e5e7e7d9520901`
+  for `timing.py`; the final test pre-probe hash was
+  `3e2a33f5549d834c113cbcf832391f65f62bcf7311bed2de92b4c43c60f3363c`.
 - The immutable `/tmp/wingman-source-readiness-baseline` ledgers remain the
-  source/full identity and AST-shape authority. Task 2 evidence is retained in
-  `/tmp/source-readiness-candidate-instrument-summary.json`,
-  `/tmp/source-readiness-task2.xml`, the four order JUnits, and
-  `/tmp/wingman-source-readiness-mutants/`.
-- Self-review checks the complete seven-field fence, watch authority identities,
-  all common postconditions, exact six original-phase IDs/timestamps, absence of
-  helper `_work()`/`_publication()` calls, unchanged callers, restoration, Ruff,
+  source/full identity and AST-shape authority. Task 3 evidence is retained in
+  `/tmp/source-readiness-candidate-instrument-summary.json`, the four order
+  JUnits, and the 41 JSON/log/JUnit triples under
+  `/tmp/wingman-source-readiness-mutants/` and `/tmp/`.
+- Self-review checks mutation isolation, exact selected IDs, proof competing
+  deadlines, the session-current-cache injection, the isolated effect-only drop,
+  masked/timeout rejection, all seven fence fields, watch identities, common
+  postconditions, six original-phase IDs, unchanged callers, restoration, Ruff,
   diff, staged scope, and status.
 - The explicit no-subagent instruction prevents the plan's independent review.
-  Deterministic probes and self-review provide no independent-agent conclusion;
-  that remains a process concern rather than an observed code or evidence defect.
+  Deterministic per-ID probes and self-review provide no independent-agent
+  conclusion; that remains a process concern rather than an observed code or
+  evidence defect. Complete executable-suite and hosted candidate evidence
+  remain Task 4/5 work. Timings here are observations only.
 
 ## Appendix A — exact ordered source-admission identities
 
