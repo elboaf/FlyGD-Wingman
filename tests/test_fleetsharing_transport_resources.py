@@ -7,6 +7,7 @@ is not network latency, a Windows result or proof of a usable <=5s clock anchor.
 import ctypes
 import io
 import json
+import os
 import subprocess
 import sys
 import time
@@ -150,7 +151,8 @@ def _windows_memory_probe(*, win_dll=None, get_last_error=None, win_error=None):
         counters.cb = structure_size
         process = get_current_process()
         if not get_process_memory_info(process, ctypes.byref(counters), structure_size):
-            raise RuntimeError("K32GetProcessMemoryInfo failed.")
+            saved_error = get_last_error()
+            raise win_error(saved_error)
         return int(counters.PeakWorkingSetSize)
 
     return "process_peak_working_set_bytes", sample
@@ -204,7 +206,31 @@ def _require_untraced_windows_decode(*, platform=None, tracemalloc_module=None):
         )
 
 
+def _measure_protocol_crossings(operation):
+    original_decode = protocol.decode_wire_json
+    original_parse = protocol.parse_snapshot
+    calls = {"decode": 0, "parse": 0}
+
+    def counted_decode(*args, **kwargs):
+        calls["decode"] += 1
+        return original_decode(*args, **kwargs)
+
+    def counted_parse(*args, **kwargs):
+        calls["parse"] += 1
+        return original_parse(*args, **kwargs)
+
+    protocol.decode_wire_json = counted_decode
+    protocol.parse_snapshot = counted_parse
+    try:
+        result = operation()
+    finally:
+        protocol.decode_wire_json = original_decode
+        protocol.parse_snapshot = original_parse
+    return result, calls["decode"], calls["parse"]
+
+
 def measure_response():
+    _require_untraced_windows_decode()
     buffer = io.BytesIO()
     buffer.write(b'{"protocol":2,"server_time_ms":9007199254740991,"rows":[')
     for index in range(LIMITS["get_rows"]):
@@ -213,7 +239,7 @@ def measure_response():
         buffer.write(compact(maximum_row(index, read=True)))
     buffer.write(b"]}")
     raw = buffer.getvalue()
-    assert len(raw) == 47022137
+    assert len(raw) == 47_022_137, "maximum raw payload size changed"
     buffer.close()
     observations = LIMITS["get_rows"] * LIMITS["observations_per_row"]
     responses = []
@@ -260,23 +286,28 @@ def measure_response():
     metric, probe = memory_probe()
     before = probe()
     start = time.perf_counter()
-    result = client.FleetRelayClient(
-        "https://relay.example.test", transport=transport
-    ).read_snapshot(
-        session_id="A" * 43,
-        private_key=bytes(32),
-        revision=7,
-        now=datetime(2026, 1, 1, tzinfo=UTC),
+    result, decode_calls, parse_calls = _measure_protocol_crossings(
+        lambda: client.FleetRelayClient(
+            "https://relay.example.test", transport=transport
+        ).read_snapshot(
+            session_id="A" * 43,
+            private_key=bytes(32),
+            revision=7,
+            now=datetime(2026, 1, 1, tzinfo=UTC),
+        )
     )
     elapsed = time.perf_counter() - start
     peak = probe()
     assert result.server_time_ms == protocol.JS_SAFE_MAX
-    assert len(result.rows) == LIMITS["get_rows"]
+    assert len(result.rows) == LIMITS["get_rows"], "maximum row cardinality changed"
     assert (
         sum(len(effect.observations) for row in result.rows for effect in row.effects)
         == observations
-    )
-    assert responses[0].closed and responses[0].reads == [67108865]
+    ), "maximum observation cardinality changed"
+    assert responses[0].closed, "maximum response was not closed"
+    assert responses[0].reads == [67_108_865], "maximum response read amount changed"
+    assert decode_calls == 1, "wire decoder crossing count changed"
+    assert parse_calls == 1, "snapshot parser crossing count changed"
     return {
         "raw_bytes": len(raw),
         "rows": len(result.rows),
@@ -317,6 +348,8 @@ def test_maximum_legal_response_actual_reader_and_codec_in_subprocess(request):
     wall_seconds = time.perf_counter() - started
     assert result.returncode == 0, result.stderr
     evidence = json.loads(result.stdout)
+    if evidence["platform"] == "win32":
+        assert evidence["memory_metric"] == "process_peak_working_set_bytes"
     evidence["subprocess_wall_seconds"] = wall_seconds
     for name in (
         "subprocess_wall_seconds",
@@ -528,6 +561,154 @@ def test_windows_memory_probe_reports_peak_working_set_without_tracing(monkeypat
     assert tracing.is_tracing_calls == 1
     monkeypatch.undo()
     assert tracing.starts == tracing.stops == 0
+
+
+def test_windows_memory_probe_fails_closed_and_restores_crossings(monkeypatch):
+    def assert_no_fallback(resource, tracing):
+        assert resource.accesses == []
+        assert tracing.starts == tracing.stops == 0
+
+    def unexpected_last_error():
+        raise AssertionError("native failure consulted last error too early")
+
+    loader_error = OSError("kernel32 load failed")
+    loader_win_error = _WinErrorSeam(OSError("unused loader WinError"))
+
+    def failed_loader(_name, **_kwargs):
+        raise loader_error
+
+    resource = _ResourceSeam()
+    tracing = _TraceSeam()
+    monkeypatch.setitem(sys.modules, "tracemalloc", tracing)
+    with pytest.raises(OSError) as caught:
+        memory_probe(
+            platform="win32",
+            win_dll=failed_loader,
+            get_last_error=unexpected_last_error,
+            win_error=loader_win_error,
+            resource_module=resource,
+        )
+    assert caught.value is loader_error
+    assert loader_win_error.calls == []
+    assert_no_fallback(resource, tracing)
+
+    for missing_name in ("GetCurrentProcess", "K32GetProcessMemoryInfo"):
+        missing_error = AttributeError(f"missing {missing_name}")
+        exports = {
+            "GetCurrentProcess": _FakeExport(lambda: 123),
+            "K32GetProcessMemoryInfo": _FakeExport(lambda *_args: 1),
+        }
+        exports[missing_name] = missing_error
+        kernel32 = _FakeKernel32(exports)
+        resource = _ResourceSeam()
+        tracing = _TraceSeam()
+        named_win_error = _WinErrorSeam(OSError("unused named-export WinError"))
+        monkeypatch.setitem(sys.modules, "tracemalloc", tracing)
+        try:
+            memory_probe(
+                platform="win32",
+                win_dll=lambda _name, **_kwargs: kernel32,
+                get_last_error=unexpected_last_error,
+                win_error=named_win_error,
+                resource_module=resource,
+            )
+        except AttributeError as error:
+            caught_error = error
+        else:
+            caught_error = None
+        assert caught_error is missing_error
+        assert kernel32.lookups[-1] == missing_name
+        assert named_win_error.calls == []
+        assert_no_fallback(resource, tracing)
+
+    events = []
+    saved_error = 1_234
+    win_error_result = OSError("native memory query failed")
+
+    def failed_memory_info(_handle, counters_pointer, _byte_size):
+        events.append("api")
+        counters_pointer._obj.PeakWorkingSetSize = 999_999
+        counters_pointer._obj.WorkingSetSize = 888_888
+        return 0
+
+    def get_last_error():
+        events.append("get_last_error")
+        return saved_error
+
+    kernel32 = _FakeKernel32(
+        {
+            "GetCurrentProcess": _FakeExport(lambda: 123),
+            "K32GetProcessMemoryInfo": _FakeExport(failed_memory_info),
+        }
+    )
+    resource = _ResourceSeam()
+    tracing = _TraceSeam()
+    win_error = _WinErrorSeam(win_error_result)
+    monkeypatch.setitem(sys.modules, "tracemalloc", tracing)
+    metric, probe = memory_probe(
+        platform="win32",
+        win_dll=lambda _name, **_kwargs: kernel32,
+        get_last_error=get_last_error,
+        win_error=win_error,
+        resource_module=resource,
+    )
+    assert metric == "process_peak_working_set_bytes"
+    with pytest.raises(OSError) as caught:
+        probe()
+    assert caught.value is win_error_result
+    assert events == ["api", "get_last_error"]
+    assert win_error.calls == [(saved_error,)]
+    assert_no_fallback(resource, tracing)
+
+    active_trace = _TraceSeam(active=True)
+    monkeypatch.setitem(sys.modules, "tracemalloc", active_trace)
+    with pytest.raises(RuntimeError, match="requires tracemalloc to be disabled"):
+        _require_untraced_windows_decode(platform="win32")
+    assert active_trace.active
+    assert active_trace.is_tracing_calls == 1
+    assert active_trace.starts == active_trace.stops == 0
+
+    if sys.platform == "win32":
+        child_command = [sys.executable, __file__, "--measure"]
+    else:
+        child_code = (
+            "import json, runpy, sys; "
+            f"sys.argv = [{__file__!r}, '--measure']; "
+            f"scope = runpy.run_path({__file__!r}, run_name='memory_probe_child'); "
+            "sys.platform = 'win32'; "
+            "print(json.dumps(scope['measure_response']()))"
+        )
+        child_command = [sys.executable, "-c", child_code]
+    child = subprocess.run(
+        child_command,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={**os.environ, "PYTHONTRACEMALLOC": "1"},
+    )
+    assert child.returncode != 0
+    assert child.stdout == ""
+    assert "requires tracemalloc to be disabled" in child.stderr
+
+    original_decode = protocol.decode_wire_json
+    original_parse = protocol.parse_snapshot
+    sentinel = RuntimeError("crossing sentinel")
+
+    def failed_operation():
+        decoded = protocol.decode_wire_json(
+            b'{"protocol":2,"server_time_ms":0,"rows":[]}'
+        )
+        protocol.parse_snapshot(decoded)
+        raise sentinel
+
+    with pytest.raises(RuntimeError) as caught:
+        _measure_protocol_crossings(failed_operation)
+    assert caught.value is sentinel
+    assert protocol.decode_wire_json is original_decode
+    assert protocol.parse_snapshot is original_parse
+    monkeypatch.undo()
+    assert active_trace.active
+    assert active_trace.starts == active_trace.stops == 0
 
 
 if __name__ == "__main__":

@@ -264,12 +264,15 @@ in required or complete product verification.
   no existing case owns that seam.
 
 The 47 MB gate owns successful decoding of the maximum supported response through
-the real reader and codec, including exact byte and row counts. It does not own a
-stable peak-allocation ceiling: Windows `tracemalloc` peak is retained as
-observability, not a pass/fail metric. Its initial Windows case budget is 75
-seconds, reviewed after the comparable-run sample; the complete product gate's
-600-second ceiling remains authoritative. A wall-time over the case budget fails
-with the recorded elapsed and peak values.
+the real reader and codec, including exact byte and row counts. On Windows it
+reports `K32GetProcessMemoryInfo`'s native process-lifetime peak working set as
+`process_peak_working_set_bytes`; Linux and macOS retain their existing
+`ru_maxrss` metric semantics. An externally active Windows tracer fails the test
+before payload construction or decode and is never stopped. These values are
+observability, not a pass/fail memory ceiling, decode-only allocation peak, or
+before/after delta. The initial Windows case budget remains 75 seconds; the
+complete product gate's 600-second ceiling remains authoritative. A wall-time
+over the case budget fails with the recorded elapsed and peak values.
 
 ## Broader consolidation
 

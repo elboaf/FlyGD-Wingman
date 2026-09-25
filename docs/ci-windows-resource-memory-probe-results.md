@@ -12,7 +12,8 @@ Task 1 changes only this results ledger. No executable file, workflow, dependenc
 
 - Task 1: **COMPLETE** — the exact three-ID target, exact ordered 16,607-ID complete inventory, one-marker ownership, PR #288 logs-primary provenance, selected jobs/artifacts, ZIP-member equality, artifact hashes, complete normalized skip tuples, resource properties, and timing observations are frozen below.
 - Task 2: **COMPLETE** — the exact first ordinary suffix identity, lazy native Windows success path, natural ABI layout, platform selection, trace guard, portable fallback, exact 4/16,608 inventories, and 17 restoration-safe success/ABI mutants are qualified below.
-- Tasks 3–5: **NOT STARTED** — fail-closed native error handling, protocol crossings, resource integration, full local qualification, and publication remain out of Task 2 scope.
+- Task 3: **COMPLETE** — fail-closed native errors, active-trace refusal, protocol-crossing restoration, immediate parent metric gating, exact final inventories, unchanged six-property evidence, and the full 36-mutant restoration catalog are qualified below.
+- Tasks 4–5: **NOT STARTED** — full local qualification and hosted publication remain outside Task 3 scope.
 
 ## Exact three-ID target baseline
 
@@ -17139,11 +17140,110 @@ A fresh standalone self-review was used because subagents were explicitly prohib
 
 Task 2 changes only `tests/test_fleetsharing_transport_resources.py` and this results ledger relative to the Task 1 commit. It adds no `os` import, second identity, protocol-crossing helper, resource-test integration, workflow edit, dependency, or production module change.
 
+## Task 3 TDD RED/GREEN
+
+The exact second suffix identity and its first `os` use were appended before implementation. The corrected worktree RED did not construct the 47 MB response.
+
+- **RED:** `uv run --no-sync python -m pytest tests/test_fleetsharing_transport_resources.py::test_windows_memory_probe_fails_closed_and_restores_crossings -q` produced `1 failed in 3.19s`; the earliest owned failure was the Task 2 interim `RuntimeError("K32GetProcessMemoryInfo failed.")` at the zero-return branch.
+- **GREEN:** the same identity produced `1 passed in 4.52s` after exact saved-error handling, crossing restoration, and the pre-payload trace guard were implemented.
+- **Both suffix identities:** the two ordinary Windows-probe identities produced `2 passed in 4.20s`.
+- **Ordinary target gate:** `tests/test_fleetsharing_transport_resources.py -m "not resource"` produced `4 passed, 1 deselected in 4.27s` after the complete mutation run.
+
+## Task 3 failure, tracing, crossing, and parent evidence
+
+- **Loader failure:** the preconstructed `OSError("kernel32 load failed")` escapes by object identity; explicit last-error and `_WinErrorSeam` seams are present but untouched; no resource access or trace start/stop occurs.
+- **Named exports:** separate loop iterations leave the other export usable and require the exact preconstructed missing-`GetCurrentProcess` and missing-`K32GetProcessMemoryInfo` `AttributeError` objects. Both loader/export lookups remain unsuppressed, with no recovery or fallback.
+- **Zero return:** the API records `"api"`, then `get_last_error()` records `"get_last_error"`; saved code `1234` reaches `_WinErrorSeam` exactly as `[(1234,)]`; the returned `OSError("native memory query failed")` escapes by identity despite populated current/peak fields.
+- **Active tracer:** the installed active fake remains active, records one `is_tracing()` call, and records zero `start()`/`stop()` calls. The actual externally traced child returns `1`, emits exactly empty stdout, and ends stderr with `RuntimeError: Windows maximum-response measurement requires tracemalloc to be disabled.` The trace-child JSON SHA-256 is `5fb21356435cd44d3a906ddaea870831c2a946a73d962d9dd5d797b1498bf3c9`.
+- **Crossing helper:** `_measure_protocol_crossings()` saves the exact `protocol.decode_wire_json` and `protocol.parse_snapshot` objects, installs delegating counters, and restores both in `finally`. The tiny failing operation touches both wrappers, re-raises the original `RuntimeError("crossing sentinel")` object, makes no successful-count claim, and proves both original identities are restored.
+- **Maximum integration:** `measure_response()` calls `_require_untraced_windows_decode()` as its first executable line, constructs/closes the full payload only afterward, keeps `memory_before_client` and `memory_peak` absolute, invokes the real signed client through the crossing helper, then requires exactly one decoder and one parser call after successful return while retaining independent raw/cardinality/read/closure assertions.
+- **Parent gate:** direct source review proved that `json.loads(result.stdout)` is immediately followed by the conditional Windows metric assertion. Parent wall evidence, all `user_properties` publication, and the 75-second budget occur only afterward. The `child-wrong-metric` mutant failed at that assertion and its JUnit contained zero `resource.*` properties.
+- **Unsupported boundary:** no `_validate_success_headers` mutant was added; unchanged focused client tests and the production scope audit continue to own that seam.
+
+## Task 3 maximum resource evidence
+
+The final resource-only command produced `1 passed, 4 deselected in 7.87s`; the testcase call was `5.70s`, and the child-reported wall was `5.702792872034479s`. The generic summarizer preserved one resource-evidence row without modification.
+
+- `resource.subprocess_wall_seconds = 5.702792872034479`
+- `resource.memory_metric = process_peak_rss_kib`
+- `resource.memory_peak = 303272`
+- `resource.raw_bytes = 47022137`
+- `resource.rows = 8192`
+- `resource.observations = 155648`
+
+Direct XML inspection proved exactly one testcase and exactly the same six property names, with positive memory peak and wall no greater than 75 seconds. The final JUnit SHA-256 is `7202efe45560d68cbb2f0dbd42367067ccf70c4334e3df6cbd759ebac975a8a5`; summarized JSON SHA-256 is `a1ac342dba2b9f195414a977238d6558c7ab5fc78f72eacb1de847208d6500e2`.
+
+## Task 3 exact final inventory and identities
+
+Reproducibility Block B passed with the baseline three target identities followed by the exact ordered two-ID suffix.
+
+- Target count/uniqueness: `5 / 5`
+- Ordinary/resource: `4 / 1`
+- Target final-newline ordered SHA-256: `62fae7a4bec52e1e87c423388e960f2c0799cd4d6d8c5be07e8e5f9eff377cb1`
+- Complete count/uniqueness: `16,609 / 16,609`
+- Complete final-newline ordered SHA-256: `f468ba1954d3ff0ab693dd721ff8a7a4d12266e16d8568035de4245a6c616100`
+- Endpoint summary SHA-256: `f1848e4d7fa694e36d57d03f09e58f0899c281b14da46eb0d8162b12e138ca03`
+- Additions/removals: `+2 / 0`
+- Exact suffix order:
+  1. `tests/test_fleetsharing_transport_resources.py::test_windows_memory_probe_reports_peak_working_set_without_tracing`
+  2. `tests/test_fleetsharing_transport_resources.py::test_windows_memory_probe_fails_closed_and_restores_crossings`
+- Sole resource owner: `tests/test_fleetsharing_transport_resources.py::test_maximum_legal_response_actual_reader_and_codec_in_subprocess`
+- All 16,607 baseline identities retain relative order; the suffix is inserted immediately after the baseline target anchor.
+- Exact tranche path set relative to `cc48c887`: approved spec, approved plan, results ledger, current budget-design doc, and target test only.
+
+## Task 3 complete mutation qualification
+
+The full Reproducibility Block C aggregate exited `0`: all `36/36` applicable recipes reported `intended-red`. Every recipe restored exact pre-probe bytes, SHA-256, binary diff, and porcelain-v2 status before the next recipe. The 31 test-module probes restored SHA-256 `743540524a55a508245f65602d0649e9429ac0913cdf53fac053897ea5aec22d`; the five temporary `wingman/fleetsharing/client.py` probes restored SHA-256 `d17b257a1311eb90908bc85b7371bffcf7132e17500fb7e494817d99532c0d46`. Final status contains no production diff.
+
+| Mutant | Intended red witness | Restoration |
+|---|---|---|
+| `windows-to-resource` | exact Windows metric assertion after resource selection | exact |
+| `windows-to-tracing` | active-tracer guard | exact |
+| `start-tracing` | active-tracer guard | exact |
+| `stop-tracing` | exact no-stop assertion | exact |
+| `current-working-set` | repeated peak-value assertion | exact |
+| `width-truncation` | repeated above-32-bit peak assertion | exact |
+| `signed-coercion` | repeated high unsigned peak assertion | exact |
+| `wrong-native-metric` | exact native metric assertion | exact |
+| `omit-cb` | exact `cb` sample records | exact |
+| `wrong-api-size` | exact API byte-size records | exact |
+| `packed-layout` | natural-alignment assertion | exact |
+| `field-type` | exact `_fields_` identity | exact |
+| `field-order` | exact `_fields_` order | exact |
+| `reuse-structure` | fresh-structure identity | exact |
+| `omit-signature` | exact native `restype` assertion | exact |
+| `replace-pseudo-handle` | exact raw-handle records | exact |
+| `close-pseudo-handle` | no-`CloseHandle` assertion | exact |
+| `ignore-active-trace` | required active-trace exception | exact |
+| `collapse-missing-exports` | exact missing-export sentinel identity | exact |
+| `ignore-zero-return` | required zero-return exception | exact |
+| `implicit-winerror` | exact `win_error.calls == [(saved_error,)]` | exact |
+| `omit-crossing-finally` | original decoder object identity | exact |
+| `equivalent-crossing-restoration` | exact, not equivalent, decoder identity | exact |
+| `replace-sentinel` | original sentinel exception identity | exact |
+| `failure-success-counts` | failed operation may not return success counts | exact |
+| `raw-size` | maximum raw payload size | exact |
+| `row-count` | maximum row cardinality after preserved raw size | exact |
+| `observation-data` | independent observation cardinality after preserved raw size | exact |
+| `read-amount` | exact `67_108_865` read request | exact |
+| `response-closure` | response closure assertion | exact |
+| `decoder-bypass` | exactly one decoder crossing | exact |
+| `decoder-duplicate` | exactly one decoder crossing | exact |
+| `parser-bypass` | exactly one parser crossing | exact |
+| `parser-duplicate` | exactly one parser crossing | exact |
+| `budget-zero` | resource wall-budget assertion | exact |
+| `child-wrong-metric` | immediate parent native-metric gate and zero properties | exact |
+
+## Task 3 current documentation and review
+
+Only the current Transport resources paragraph changed. It now states that Windows reports `K32GetProcessMemoryInfo` process-lifetime peak working set as `process_peak_working_set_bytes`, Linux/macOS retain `ru_maxrss`, externally active Windows tracing fails before payload/decode and is never stopped, memory evidence is not a ceiling/delta/decode-only peak, and the 75/600-second budgets remain authoritative. The historical 44.6-second row and every other section are unchanged. The current budget-design document SHA-256 is `6aedc07e2b1edbf7bc686572baddfc20a8b8e72e8994aeb02ab22db2ff3a5425`.
+
+A fresh standalone source review passed. It checked saved-error adjacency, unsuppressed loader/export lookup, no fallback or trace ownership violation, first-line guard placement, helper `finally`, exact-object restoration and sentinel identity coverage, successful exact-one crossings, independent maximum assertions, immediate parent ordering, zero-property rejection, and the explicit success-header boundary. No finding remained.
+
 ## Concerns
 
-- Task 2 evidence discrepancies: none.
-- The native success path is structurally and portably qualified on Linux fakes; a real Windows resource subprocess is deliberately deferred to later tasks.
-- The direct zero-return `RuntimeError` is intentionally interim and must be replaced by saved last-error/`WinError` handling in Task 3.
+- Task 3 evidence discrepancies: none.
+- The native success/failure contract and child refusal are qualified locally through portable fakes and subprocesses; hosted real-Windows ABI evidence remains a later-task acceptance item.
 - Evidence discrepancies: none.
 - The PR #288 run payload has absent pull-request metadata; the explicit run selection and three matching checkout logs provide the accepted provenance path.
 - A single hosted run is observational and supports no performance claim.
