@@ -23,7 +23,8 @@
 - Windows reports only `process_peak_working_set_bytes` from `PeakWorkingSetSize`. It never reports current working set, pagefile usage, traced allocations, a delta, or a memory ceiling.
 - macOS with `resource` keeps `process_peak_rss_bytes`; Linux and other `resource` platforms keep `process_peak_rss_kib`; generic non-Windows without `resource` keeps `traced_peak_bytes`.
 - Windows native load, named-export lookup, or API-call failure is loud. No Windows fallback to `resource` or `tracemalloc` is permitted.
-- A pre-existing Windows tracer fails before decode and is never stopped. Accepted Windows execution calls neither `tracemalloc.start()` nor `tracemalloc.stop()`.
+- A pre-existing Windows tracer fails at the first line of `measure_response()`, before payload construction, native setup, sampling, or decode, and is never stopped. Accepted Windows execution calls neither `tracemalloc.start()` nor `tracemalloc.stop()`.
+- Ordinary native tests install `_TraceSeam` as the actual `sys.modules["tracemalloc"]` entry throughout native setup, guard, repeated sampling, and test cleanup. The seam records `is_tracing()`, `start()`, and `stop()`; mutations that perform a real `import tracemalloc` cannot escape the witness.
 - `ctypes.WinDLL`, `ctypes.get_last_error`, and `ctypes.WinError` are resolved only inside the selected Windows branch. Importing and running ordinary tests on Linux must not touch them.
 - `PROCESS_MEMORY_COUNTERS` uses natural `ctypes.Structure` layout with no `_pack_`, exact ten fields/order, fixed-width `c_uint32` DWORDs, pointer-width `c_size_t` counters, and `c_void_p` handle signatures. Do not import or use `ctypes.wintypes`.
 - The exact decoder and parser attributes are wrapped only during the injected measured operation; both originals are restored in `finally` by object identity. A failed operation re-raises the original exception object and makes no successful crossing-count claim.
@@ -41,7 +42,7 @@
 - The structural claim is only: under the accepted environment, the maximum Windows Fleet response decode no longer starts or uses test-owned `tracemalloc`; externally active tracing fails before decode and is not stopped.
 - Do not claim a case, suite, job, runner, critical-path, or overall speedup; do not compare native peak working set numerically with the earlier traced-allocation peak.
 - Each task receives a fresh independent review against the spec and this plan. Record findings and fixes in the results ledger before the task commit.
-- Temporary mutants are never committed. Every mutation probe captures pre-probe target bytes, SHA-256, `git diff --binary HEAD -- .`, and NUL-delimited porcelain-v2 status; restoration must reproduce all four exactly.
+- Temporary mutants are never committed. Every mutation probe captures pre-probe target bytes, SHA-256, `git diff --binary HEAD -- .`, and NUL-delimited porcelain-v2 status; restoration must reproduce all four exactly. The aggregate runner executes every requested recipe, records every command/regex failure, and exits nonzero if any recipe fails; an unsafe restoration failure stops subsequent mutation.
 - Stop and return to design review if implementation needs a sixth path, more than two identities, any existing identity change, a Windows fallback, a metric/schema/budget change, a production/workflow/dependency edit, or weakening of any maximum-response boundary.
 
 ## File Structure and Ownership
@@ -74,7 +75,7 @@
 
 ## Reproducibility Block A — merged baseline and PR #288 artifact audit
 
-This block is run in Task 1. It extracts `cc48c887` to a disposable directory, collects source identities with a plugin, verifies the one resource owner, parses the existing PR #288 artifacts, checks JUnit/timing agreement, normalizes only pytest temporary-root fragments in skips, verifies logs-primary provenance, and emits machine-readable evidence plus Markdown appendices. It writes only under `/tmp`.
+This block is run in Task 1. It extracts `cc48c887` to a disposable directory, collects source identities with a plugin, verifies the one resource owner, parses the existing PR #288 artifacts, checks JUnit/timing agreement, normalizes only pytest temporary-root fragments in skips, independently reparses logs-primary synthetic/head/base from all three checkout logs, and verifies extracted JUnit/timing bytes equal the corresponding ZIP members when both forms exist. It emits machine-readable evidence plus Markdown appendices and writes only under `/tmp`.
 
 ```bash
 cat > /tmp/windows_memory_baseline_plugin.py <<'PY'
@@ -117,10 +118,10 @@ from pathlib import Path
 
 W = Path("/mnt/c/dev/flygd-wingman/.worktrees/ci-windows-resource-memory-probe")
 P = Path(sys.executable)
-ART = Path(os.environ.get(
-    "PR288_ARTIFACT_ROOT", "/tmp/wingman-setup-hosted-36051546735"
-))
-O = Path("/tmp/wingman-windows-memory-baseline")
+ART = Path(
+    os.environ.get("PR288_ARTIFACT_ROOT", "/tmp/wingman-setup-hosted-36051546735")
+)
+OUTPUT = Path("/tmp/wingman-windows-memory-baseline")
 BASE = "cc48c887ac3a140a2baf87d4bdcc3f6e916c02c9"
 TARGET = "tests/test_fleetsharing_transport_resources.py"
 TARGET_IDS = [
@@ -194,12 +195,20 @@ def parse_artifact(platform: str) -> dict[str, object]:
     archive = ART / "artifacts" / f"{platform}.zip"
     if not (root / "pytest-result.xml").is_file():
         assert archive.is_file(), (platform, root, archive)
-        root = O / "extracted-artifacts" / platform
+        root = OUTPUT / "extracted-artifacts" / platform
         root.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(archive) as package:
             package.extractall(root)
     xml_path = root / "pytest-result.xml"
     timing_path = root / "pytest-timing.json"
+    if archive.is_file() and (ART / "artifacts" / platform).is_dir():
+        with zipfile.ZipFile(archive) as package:
+            assert set(package.namelist()) == {
+                "pytest-result.xml",
+                "pytest-timing.json",
+            }
+            assert package.read("pytest-result.xml") == xml_path.read_bytes()
+            assert package.read("pytest-timing.json") == timing_path.read_bytes()
     cases = list(ET.parse(xml_path).getroot().iter("testcase"))
     ids = [identity(case) for case in cases]
     assert len(ids) == len(set(ids)) == 16607
@@ -257,12 +266,14 @@ def parse_artifact(platform: str) -> dict[str, object]:
     }
 
 
-O.mkdir(exist_ok=True)
-with tempfile.TemporaryDirectory(prefix="wingman-windows-memory-baseline-") as directory:
+OUTPUT.mkdir(exist_ok=True)
+with tempfile.TemporaryDirectory(
+    prefix="wingman-windows-memory-baseline-"
+) as directory:
     root = Path(directory)
     extract(BASE, root)
-    target_rows = collect(root, [TARGET], O / "target-collection.json")
-    complete_rows = collect(root, ["tests"], O / "complete-collection.json")
+    target_rows = collect(root, [TARGET], OUTPUT / "target-collection.json")
+    complete_rows = collect(root, ["tests"], OUTPUT / "complete-collection.json")
 target_ids = [str(row["nodeid"]) for row in target_rows]
 complete_ids = [str(row["nodeid"]) for row in complete_rows]
 assert target_ids == TARGET_IDS
@@ -277,12 +288,50 @@ source = {
     "resource_id": RESOURCE_ID,
 }
 selected = json.loads((ART / "selected.json").read_text(encoding="utf-8"))
+merge_pattern = re.compile(
+    r"HEAD is now at (?P<short>[0-9a-f]{7,40}) Merge "
+    r"(?P<head>[0-9a-f]{40}) into (?P<base>[0-9a-f]{40})"
+)
+full_pattern = re.compile(r"(?P<sha>[0-9a-f]{40})\s*$")
+
+
+def checkout_evidence(path):
+    lines = path.read_text(errors="replace").splitlines()
+    merges = [match for line in lines if (match := merge_pattern.search(line))]
+    commands = [
+        index
+        for index, line in enumerate(lines)
+        if "[command]" in line and "log -1 --format=%H" in line
+    ]
+    assert len(merges) == len(commands) == 1, (path, merges, commands)
+    full = full_pattern.search(lines[commands[0] + 1])
+    assert full, (path, lines[commands[0] + 1])
+    synthetic = full.group("sha")
+    assert synthetic.startswith(merges[0].group("short"))
+    return synthetic, merges[0].group("head"), merges[0].group("base")
+
+
+log_provenance = {
+    checkout_evidence(ART / "logs" / f"{role}.log")
+    for role in ("checks", "ubuntu", "windows")
+}
+assert len(log_provenance) == 1
+log_synthetic, log_head, log_base = log_provenance.pop()
 assert selected["run_id"] == 36051546735
 assert selected["run_attempt"] == 1
 assert selected["synthetic_merge"] == "515c6185789fc0c67c8cd6247f57569bc8a45076"
 assert selected["head"] == "9d60c726dbe0d74263e59d865723e9575831f7a9"
 assert selected["base"] == "c23788e392bcd586dfc95b7390eaee18cb4ec224"
 assert selected["run_pull_request_metadata"] == "absent"
+assert (
+    log_synthetic,
+    log_head,
+    log_base,
+) == (
+    selected["synthetic_merge"],
+    selected["head"],
+    selected["base"],
+)
 assert selected["jobs"]["checks"]["id"] == 107808061930
 assert selected["jobs"]["ubuntu"]["id"] == 107808061903
 assert selected["jobs"]["windows"]["id"] == 107808061529
@@ -291,7 +340,10 @@ assert selected["artifacts"]["windows"]["id"] == 10831516363
 platforms = {name: parse_artifact(name) for name in ("ubuntu", "windows")}
 for name in ("ubuntu", "windows"):
     if platforms[name]["archive_sha256"] is not None:
-        assert "sha256:" + platforms[name]["archive_sha256"] == selected["artifacts"][name]["digest"]
+        assert (
+            "sha256:" + platforms[name]["archive_sha256"]
+            == selected["artifacts"][name]["digest"]
+        )
 assert platforms["ubuntu"]["complete_sha256"] == source["complete_sha256"]
 assert platforms["windows"]["complete_sha256"] == source["complete_sha256"]
 assert platforms["ubuntu"]["target"][2]["properties"] == {
@@ -321,6 +373,11 @@ summary = {
         "head": selected["head"],
         "base": selected["base"],
         "run_pull_request_metadata": selected["run_pull_request_metadata"],
+        "logs_primary": {
+            "synthetic": log_synthetic,
+            "head": log_head,
+            "base": log_base,
+        },
         "jobs": {role: selected["jobs"][role]["id"] for role in selected["jobs"]},
         "artifacts": {
             role: {
@@ -332,14 +389,16 @@ summary = {
     },
     "platforms": platforms,
 }
-(O / "target-3.txt").write_text("\n".join(target_ids) + "\n", encoding="utf-8")
-(O / "complete-16607.txt").write_text("\n".join(complete_ids) + "\n", encoding="utf-8")
+(OUTPUT / "target-3.txt").write_text("\n".join(target_ids) + "\n", encoding="utf-8")
+(OUTPUT / "complete-16607.txt").write_text(
+    "\n".join(complete_ids) + "\n", encoding="utf-8"
+)
 for platform in ("ubuntu", "windows"):
-    (O / f"{platform}-skips.json").write_text(
+    (OUTPUT / f"{platform}-skips.json").write_text(
         json.dumps(platforms[platform]["skips"], ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-(O / "summary.json").write_text(
+(OUTPUT / "summary.json").write_text(
     json.dumps(summary, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
     encoding="utf-8",
 )
@@ -350,7 +409,7 @@ cd /mnt/c/dev/flygd-wingman/.worktrees/ci-windows-resource-memory-probe
 uv run --extra dev python /tmp/windows_memory_baseline.py
 ```
 
-Expected literal endpoint: target count `3`, complete count `16607`, exactly one resource owner, zero failures/errors, Ubuntu `16593 passed + 14 skipped`, Windows `16540 passed + 67 skipped`, Ubuntu resource `process_peak_rss_kib=455040` with child wall `4.133140558999997` and testcase `4.134`, Windows resource `traced_peak_bytes=282144272` with child wall `45.94401130000006` and testcase `45.946`, and the exact provenance/jobs/artifacts above.
+Expected literal endpoint: target count `3`, complete count `16607`, exactly one resource owner, zero failures/errors, Ubuntu `16593 passed + 14 skipped`, Windows `16540 passed + 67 skipped`, Ubuntu resource `process_peak_rss_kib=455040` with child wall `4.133140558999997` and testcase `4.134`, Windows resource `traced_peak_bytes=282144272` with child wall `45.94401130000006` and testcase `45.946`, all three logs yielding synthetic `515c6185789fc0c67c8cd6247f57569bc8a45076` / head `9d60c726dbe0d74263e59d865723e9575831f7a9` / base `c23788e392bcd586dfc95b7390eaee18cb4ec224`, ZIP-member byte equality, and the exact jobs/artifacts above.
 
 ---
 
@@ -360,10 +419,13 @@ The implementation is incremental across Tasks 2 and 3, but the final code must 
 
 ### Imports, sentinel, native structure, and platform probe
 
+Use these Ruff-formatted imports in the existing import group:
+
 ```python
 import ctypes
 import io
 import json
+import os
 import subprocess
 import sys
 import time
@@ -462,7 +524,7 @@ Task 2 may initially raise a direct `RuntimeError` on a zero native return so it
 
 ### Tracing guard and crossing helper
 
-Insert before `measure_response()` in Task 3:
+Add `_require_untraced_windows_decode()` in Task 2 because the first identity and tracing mutations depend on it. Add `_measure_protocol_crossings()` in Task 3. Both final definitions are:
 
 ```python
 def _require_untraced_windows_decode(*, platform=None, tracemalloc_module=None):
@@ -502,10 +564,17 @@ def _measure_protocol_crossings(operation):
 
 ### `measure_response()` integration
 
-Retain payload construction and transport headers unchanged. Replace only the measurement/client section with:
+Make the trace guard the first executable line, so an externally traced child fails before constructing the 47 MB payload:
 
 ```python
+def measure_response():
     _require_untraced_windows_decode()
+    buffer = io.BytesIO()
+```
+
+Retain the remaining payload construction and transport headers unchanged. Replace the measurement/client section with:
+
+```python
     metric, probe = memory_probe()
     before = probe()
     start = time.perf_counter()
@@ -567,7 +636,7 @@ No statement may appear between JSON parsing and the conditional metric gate.
 
 ### Portable fakes used by both appended identities
 
-Append these support classes immediately before the two new suffix tests:
+Append these Ruff-formatted support classes immediately before the two new suffix tests. `_ResourceSeam` is deliberately usable so a Windows-to-resource mutant reaches the exact metric assertion; `_WinErrorSeam` accepts any positional arguments, records them, and returns the preconstructed exception sentinel:
 
 ```python
 class _FakeExport:
@@ -598,10 +667,12 @@ class _FakeKernel32:
 class _TraceSeam:
     def __init__(self, *, active=False):
         self.active = active
+        self.is_tracing_calls = 0
         self.starts = 0
         self.stops = 0
 
     def is_tracing(self):
+        self.is_tracing_calls += 1
         return self.active
 
     def start(self):
@@ -616,20 +687,31 @@ class _TraceSeam:
         return (0, 0)
 
 
-class _ForbiddenFallback:
-    def __init__(self, label):
-        self.label = label
+class _ResourceSeam:
+    RUSAGE_SELF = object()
+
+    def __init__(self):
         self.accesses = []
 
-    def __getattr__(self, name):
-        self.accesses.append(name)
-        raise AssertionError(f"{self.label} fallback was consulted: {name}")
+    def getrusage(self, who):
+        self.accesses.append(who)
+        return type("Usage", (), {"ru_maxrss": 123})()
+
+
+class _WinErrorSeam:
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    def __call__(self, *args):
+        self.calls.append(args)
+        return self.result
 ```
 
 ### Exact first appended identity
 
 ```python
-def test_windows_memory_probe_reports_peak_working_set_without_tracing():
+def test_windows_memory_probe_reports_peak_working_set_without_tracing(monkeypatch):
     pointer_size = ctypes.sizeof(ctypes.c_size_t)
     if pointer_size == 8:
         peaks = [(1 << 32) + 12_345, (1 << 32) + 67_890]
@@ -665,10 +747,12 @@ def test_windows_memory_probe_reports_peak_working_set_without_tracing():
 
     get_current_process = _FakeExport(current_process)
     get_process_memory_info = _FakeExport(memory_info)
+    close_handle = _FakeExport(lambda _handle: 1)
     kernel32 = _FakeKernel32(
         {
             "GetCurrentProcess": get_current_process,
             "K32GetProcessMemoryInfo": get_process_memory_info,
+            "CloseHandle": close_handle,
         }
     )
     loads = []
@@ -678,7 +762,8 @@ def test_windows_memory_probe_reports_peak_working_set_without_tracing():
         return kernel32
 
     tracing = _TraceSeam()
-    resource = _ForbiddenFallback("resource")
+    resource = _ResourceSeam()
+    monkeypatch.setitem(sys.modules, "tracemalloc", tracing)
 
     def unused_error_seam(*_args):
         raise AssertionError("success path consulted an error seam")
@@ -689,16 +774,11 @@ def test_windows_memory_probe_reports_peak_working_set_without_tracing():
         get_last_error=unused_error_seam,
         win_error=unused_error_seam,
         resource_module=resource,
-        tracemalloc_module=tracing,
     )
-    _require_untraced_windows_decode(
-        platform="win32", tracemalloc_module=tracing
-    )
+    _require_untraced_windows_decode(platform="win32")
 
     assert metric == "process_peak_working_set_bytes"
-    assert [probe(), probe()] == peaks
     assert loads == [("kernel32", {"use_last_error": True})]
-    assert kernel32.lookups == ["GetCurrentProcess", "K32GetProcessMemoryInfo"]
     assert get_current_process.argtypes == []
     assert get_current_process.restype is ctypes.c_void_p
     assert get_process_memory_info.argtypes == [
@@ -731,15 +811,19 @@ def test_windows_memory_probe_reports_peak_working_set_without_tracing():
         "PagefileUsage",
         "PeakPagefileUsage",
     ]
-    assert [getattr(PROCESS_MEMORY_COUNTERS, name).offset for name in pointer_fields] == [
-        8 + index * pointer_size for index in range(8)
-    ]
+    assert [
+        getattr(PROCESS_MEMORY_COUNTERS, name).offset for name in pointer_fields
+    ] == [8 + index * pointer_size for index in range(8)]
     assert ctypes.sizeof(PROCESS_MEMORY_COUNTERS) == 8 + 8 * pointer_size
     assert ctypes.alignment(PROCESS_MEMORY_COUNTERS) == ctypes.alignment(
         ctypes.c_size_t
     )
     assert ctypes.alignment(PROCESS_MEMORY_COUNTERS) in (4, 8)
     assert not hasattr(PROCESS_MEMORY_COUNTERS, "_pack_")
+
+    assert [probe(), probe()] == peaks
+    assert close_handle.calls == []
+    assert kernel32.lookups == ["GetCurrentProcess", "K32GetProcessMemoryInfo"]
     assert len(structures) == 2 and structures[0] is not structures[1]
     expected_size = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
     assert samples == [
@@ -747,32 +831,41 @@ def test_windows_memory_probe_reports_peak_working_set_without_tracing():
         {"handle": pseudo_handle, "cb": expected_size, "byte_size": expected_size},
     ]
     assert resource.accesses == []
+    assert tracing.is_tracing_calls == 1
+    monkeypatch.undo()
     assert tracing.starts == tracing.stops == 0
 ```
 
 ### Exact second appended identity
 
 ```python
-def test_windows_memory_probe_fails_closed_and_restores_crossings():
+def test_windows_memory_probe_fails_closed_and_restores_crossings(monkeypatch):
     def assert_no_fallback(resource, tracing):
         assert resource.accesses == []
         assert tracing.starts == tracing.stops == 0
 
+    def unexpected_last_error():
+        raise AssertionError("native failure consulted last error too early")
+
     loader_error = OSError("kernel32 load failed")
+    loader_win_error = _WinErrorSeam(OSError("unused loader WinError"))
 
     def failed_loader(_name, **_kwargs):
         raise loader_error
 
-    resource = _ForbiddenFallback("resource")
+    resource = _ResourceSeam()
     tracing = _TraceSeam()
+    monkeypatch.setitem(sys.modules, "tracemalloc", tracing)
     with pytest.raises(OSError) as caught:
         memory_probe(
             platform="win32",
             win_dll=failed_loader,
+            get_last_error=unexpected_last_error,
+            win_error=loader_win_error,
             resource_module=resource,
-            tracemalloc_module=tracing,
         )
     assert caught.value is loader_error
+    assert loader_win_error.calls == []
     assert_no_fallback(resource, tracing)
 
     for missing_name in ("GetCurrentProcess", "K32GetProcessMemoryInfo"):
@@ -783,17 +876,25 @@ def test_windows_memory_probe_fails_closed_and_restores_crossings():
         }
         exports[missing_name] = missing_error
         kernel32 = _FakeKernel32(exports)
-        resource = _ForbiddenFallback("resource")
+        resource = _ResourceSeam()
         tracing = _TraceSeam()
-        with pytest.raises(AttributeError) as caught:
+        named_win_error = _WinErrorSeam(OSError("unused named-export WinError"))
+        monkeypatch.setitem(sys.modules, "tracemalloc", tracing)
+        try:
             memory_probe(
                 platform="win32",
                 win_dll=lambda _name, **_kwargs: kernel32,
+                get_last_error=unexpected_last_error,
+                win_error=named_win_error,
                 resource_module=resource,
-                tracemalloc_module=tracing,
             )
-        assert caught.value is missing_error
+        except AttributeError as error:
+            caught_error = error
+        else:
+            caught_error = None
+        assert caught_error is missing_error
         assert kernel32.lookups[-1] == missing_name
+        assert named_win_error.calls == []
         assert_no_fallback(resource, tracing)
 
     events = []
@@ -810,40 +911,60 @@ def test_windows_memory_probe_fails_closed_and_restores_crossings():
         events.append("get_last_error")
         return saved_error
 
-    def win_error(code):
-        events.append(("WinError", code))
-        return win_error_result
-
     kernel32 = _FakeKernel32(
         {
             "GetCurrentProcess": _FakeExport(lambda: 123),
             "K32GetProcessMemoryInfo": _FakeExport(failed_memory_info),
         }
     )
-    resource = _ForbiddenFallback("resource")
+    resource = _ResourceSeam()
     tracing = _TraceSeam()
+    win_error = _WinErrorSeam(win_error_result)
+    monkeypatch.setitem(sys.modules, "tracemalloc", tracing)
     metric, probe = memory_probe(
         platform="win32",
         win_dll=lambda _name, **_kwargs: kernel32,
         get_last_error=get_last_error,
         win_error=win_error,
         resource_module=resource,
-        tracemalloc_module=tracing,
     )
     assert metric == "process_peak_working_set_bytes"
     with pytest.raises(OSError) as caught:
         probe()
     assert caught.value is win_error_result
-    assert events == ["api", "get_last_error", ("WinError", saved_error)]
+    assert events == ["api", "get_last_error"]
+    assert win_error.calls == [(saved_error,)]
     assert_no_fallback(resource, tracing)
 
     active_trace = _TraceSeam(active=True)
+    monkeypatch.setitem(sys.modules, "tracemalloc", active_trace)
     with pytest.raises(RuntimeError, match="requires tracemalloc to be disabled"):
-        _require_untraced_windows_decode(
-            platform="win32", tracemalloc_module=active_trace
-        )
+        _require_untraced_windows_decode(platform="win32")
     assert active_trace.active
+    assert active_trace.is_tracing_calls == 1
     assert active_trace.starts == active_trace.stops == 0
+
+    if sys.platform == "win32":
+        child_command = [sys.executable, __file__, "--measure"]
+    else:
+        child_code = (
+            "import json, runpy, sys; "
+            f"sys.argv = [{__file__!r}, '--measure']; "
+            f"scope = runpy.run_path({__file__!r}, run_name='memory_probe_child'); "
+            "sys.platform = 'win32'; "
+            "print(json.dumps(scope['measure_response']()))"
+        )
+        child_command = [sys.executable, "-c", child_code]
+    child = subprocess.run(
+        child_command,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={**os.environ, "PYTHONTRACEMALLOC": "1"},
+    )
+    assert child.returncode != 0
+    assert child.stdout == ""
+    assert "requires tracemalloc to be disabled" in child.stderr
 
     original_decode = protocol.decode_wire_json
     original_parse = protocol.parse_snapshot
@@ -861,11 +982,14 @@ def test_windows_memory_probe_fails_closed_and_restores_crossings():
     assert caught.value is sentinel
     assert protocol.decode_wire_json is original_decode
     assert protocol.parse_snapshot is original_parse
+    monkeypatch.undo()
+    assert active_trace.active
+    assert active_trace.starts == active_trace.stops == 0
 ```
 
 ### Existing fallback identity edit
 
-Keep its name and behavior, but force the portable non-Windows branch:
+Apply this adaptation in Task 2, before its GREEN run. Keep the existing name and behavior, but force the portable non-Windows branch:
 
 ```python
 def test_memory_probe_falls_back_without_resource(monkeypatch):
@@ -884,9 +1008,118 @@ def test_memory_probe_falls_back_without_resource(monkeypatch):
 
 ---
 
+## Reproducibility Block B1 — executable Task 2 interim identity/scope audit
+
+Create this script before Task 2 qualification. It proves the exact ordered `16,608` inventory by inserting the first suffix immediately after the baseline target anchor, preserves every baseline ID in relative order, retains exactly one resource marker, hashes and writes the complete inventory, and requires the exact four-path Task 2 diff.
+
+```bash
+cat > /tmp/windows_memory_interim.py <<'PY'
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+W = Path("/mnt/c/dev/flygd-wingman/.worktrees/ci-windows-resource-memory-probe")
+P = Path(sys.executable)
+B = Path("/tmp/wingman-windows-memory-baseline")
+OUTPUT = Path("/tmp/wingman-windows-memory-interim")
+TARGET = "tests/test_fleetsharing_transport_resources.py"
+FIRST = TARGET + "::test_windows_memory_probe_reports_peak_working_set_without_tracing"
+EXPECTED_PATHS = {
+    "docs/superpowers/specs/2026-09-24-windows-resource-memory-probe-design.md",
+    "docs/superpowers/plans/2026-09-24-windows-resource-memory-probe.md",
+    "docs/ci-windows-resource-memory-probe-results.md",
+    TARGET,
+}
+
+
+def digest(nodes):
+    return hashlib.sha256(("\n".join(nodes) + "\n").encode()).hexdigest()
+
+
+def collect(args, output):
+    env = dict(os.environ, PYTHONPATH=f"{W}:/tmp", WINGMAN_COLLECTION_OUT=str(output))
+    run = subprocess.run(
+        [
+            str(P),
+            "-m",
+            "pytest",
+            *args,
+            "--collect-only",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "windows_memory_baseline_plugin",
+        ],
+        cwd=W,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=300,
+        check=False,
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    return json.loads(output.read_text(encoding="utf-8"))
+
+
+OUTPUT.mkdir(exist_ok=True)
+baseline_target = (B / "target-3.txt").read_text(encoding="utf-8").splitlines()
+baseline_complete = (B / "complete-16607.txt").read_text(encoding="utf-8").splitlines()
+target_rows = collect([TARGET], OUTPUT / "target.json")
+complete_rows = collect(["tests"], OUTPUT / "complete.json")
+target = [row["nodeid"] for row in target_rows]
+complete = [row["nodeid"] for row in complete_rows]
+anchor = baseline_complete.index(baseline_target[-1]) + 1
+expected_complete = [*baseline_complete[:anchor], FIRST, *baseline_complete[anchor:]]
+assert target == [*baseline_target, FIRST]
+assert len(target) == len(set(target)) == 4
+assert [row["nodeid"] for row in target_rows if row["resource"]] == [
+    baseline_target[-1]
+]
+assert complete == expected_complete
+assert len(complete) == len(set(complete)) == 16_608
+assert [node for node in complete if node not in set(baseline_complete)] == [FIRST]
+assert all(node in complete for node in baseline_complete)
+assert sum(bool(row["resource"]) for row in complete_rows) == 1
+changed = set(
+    subprocess.check_output(
+        ["git", "-C", str(W), "diff", "--name-only", "cc48c887", "--", "."],
+        text=True,
+    ).splitlines()
+)
+assert changed == EXPECTED_PATHS, sorted(changed ^ EXPECTED_PATHS)
+summary = {
+    "target_count": len(target),
+    "target_sha256": digest(target),
+    "complete_count": len(complete),
+    "complete_sha256": digest(complete),
+    "added": [FIRST],
+    "removed": [],
+    "resource_count": sum(bool(row["resource"]) for row in target_rows),
+    "changed_paths": sorted(changed),
+}
+(OUTPUT / "target-4.txt").write_text("\n".join(target) + "\n", encoding="utf-8")
+(OUTPUT / "complete-16608.txt").write_text("\n".join(complete) + "\n", encoding="utf-8")
+(OUTPUT / "summary.json").write_text(
+    json.dumps(summary, sort_keys=True, indent=2) + "\n"
+)
+print(json.dumps(summary, sort_keys=True))
+PY
+python -m py_compile /tmp/windows_memory_interim.py
+```
+
+Expected Task 2 endpoint: exact target order `baseline three + first suffix`, target `4`, complete `16,608`, additions/removals `+1/0`, resource markers `1`, and changed paths exactly spec, plan, results, and target test.
+
+---
+
 ## Reproducibility Block B — exact endpoint identity/scope audit
 
-Create this in Task 3 and rerun it in Tasks 4 and 5. It compares actual collection with Block A and refuses any suffix/order/count/scope drift.
+Create this in Task 3 and rerun it in Tasks 4 and 5. It derives the exact complete order by inserting the two suffix IDs immediately after the baseline target anchor, preserves every baseline ID in relative order, hashes and writes the complete inventory, and refuses any suffix/order/count/scope drift.
 
 ```bash
 cat > /tmp/windows_memory_endpoint.py <<'PY'
@@ -902,13 +1135,13 @@ from pathlib import Path
 W = Path("/mnt/c/dev/flygd-wingman/.worktrees/ci-windows-resource-memory-probe")
 P = Path(sys.executable)
 B = Path("/tmp/wingman-windows-memory-baseline")
-O = Path("/tmp/wingman-windows-memory-endpoint")
+OUTPUT = Path("/tmp/wingman-windows-memory-endpoint")
 TARGET = "tests/test_fleetsharing_transport_resources.py"
 SUFFIX = [
     TARGET + "::test_windows_memory_probe_reports_peak_working_set_without_tracing",
     TARGET + "::test_windows_memory_probe_fails_closed_and_restores_crossings",
 ]
-ALLOWED = {
+EXPECTED_PATHS = {
     "docs/superpowers/specs/2026-09-24-windows-resource-memory-probe-design.md",
     "docs/superpowers/plans/2026-09-24-windows-resource-memory-probe.md",
     "docs/ci-windows-resource-memory-probe-results.md",
@@ -947,29 +1180,32 @@ def collect(args, output):
     return json.loads(output.read_text(encoding="utf-8"))
 
 
-O.mkdir(exist_ok=True)
+OUTPUT.mkdir(exist_ok=True)
 baseline_target = (B / "target-3.txt").read_text(encoding="utf-8").splitlines()
 baseline_complete = (B / "complete-16607.txt").read_text(encoding="utf-8").splitlines()
-target_rows = collect([TARGET], O / "target.json")
-complete_rows = collect(["tests"], O / "complete.json")
+target_rows = collect([TARGET], OUTPUT / "target.json")
+complete_rows = collect(["tests"], OUTPUT / "complete.json")
 target = [row["nodeid"] for row in target_rows]
 complete = [row["nodeid"] for row in complete_rows]
+anchor = baseline_complete.index(baseline_target[-1]) + 1
+expected_complete = baseline_complete[:anchor] + SUFFIX + baseline_complete[anchor:]
+assert target == baseline_target + SUFFIX
 assert len(target) == len(set(target)) == 5
-assert target[:3] == baseline_target
-assert target[3:] == SUFFIX
-assert [row["nodeid"] for row in target_rows if row["resource"]] == [baseline_target[-1]]
-assert len(complete) == len(set(complete)) == 16609
-assert set(complete) - set(baseline_complete) == set(SUFFIX)
-assert set(baseline_complete) - set(complete) == set()
+assert [row["nodeid"] for row in target_rows if row["resource"]] == [
+    baseline_target[-1]
+]
+assert complete == expected_complete
+assert len(complete) == len(set(complete)) == 16_609
 assert [node for node in complete if node not in set(baseline_complete)] == SUFFIX
+assert all(node in complete for node in baseline_complete)
+assert sum(bool(row["resource"]) for row in complete_rows) == 1
 changed = set(
     subprocess.check_output(
-        ["git", "-C", str(W), "diff", "--name-only", "cc48c887..HEAD"],
+        ["git", "-C", str(W), "diff", "--name-only", "cc48c887", "--", "."],
         text=True,
     ).splitlines()
 )
-assert changed <= ALLOWED, sorted(changed - ALLOWED)
-assert TARGET in changed
+assert changed == EXPECTED_PATHS, sorted(changed ^ EXPECTED_PATHS)
 summary = {
     "target_count": len(target),
     "target_sha256": digest(target),
@@ -981,9 +1217,11 @@ summary = {
     "removed": [],
     "changed_paths": sorted(changed),
 }
-(O / "target-5.txt").write_text("\n".join(target) + "\n", encoding="utf-8")
-(O / "complete-16609.txt").write_text("\n".join(complete) + "\n", encoding="utf-8")
-(O / "summary.json").write_text(json.dumps(summary, sort_keys=True, indent=2) + "\n")
+(OUTPUT / "target-5.txt").write_text("\n".join(target) + "\n", encoding="utf-8")
+(OUTPUT / "complete-16609.txt").write_text("\n".join(complete) + "\n", encoding="utf-8")
+(OUTPUT / "summary.json").write_text(
+    json.dumps(summary, sort_keys=True, indent=2) + "\n"
+)
 print(json.dumps(summary, sort_keys=True))
 PY
 python -m py_compile /tmp/windows_memory_endpoint.py
@@ -993,23 +1231,186 @@ Expected final endpoint: target `5`, ordinary `4`, resource `1`, complete `16609
 
 ---
 
+## Reproducibility Block B3 — exact local JUnit, skip, inventory, and scope audit
+
+Create this script in Task 4 after producing the named JUnit and timing files. It compares the full ordered inventory byte-for-byte with Block B, proves both new identities passed rather than skipped, compares normalized Linux skips with the exact Task 1 Ubuntu tuples, directly validates all six resource properties, cross-checks the generic timing summary, returns inventory hashes, and enforces the exact five-path set.
+
+```bash
+cat > /tmp/windows_memory_local_audit.py <<'PY'
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import subprocess
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+W = Path("/mnt/c/dev/flygd-wingman/.worktrees/ci-windows-resource-memory-probe")
+B = Path("/tmp/wingman-windows-memory-baseline")
+E = Path("/tmp/wingman-windows-memory-endpoint")
+TARGET = "tests/test_fleetsharing_transport_resources.py"
+NEW_IDS = [
+    TARGET + "::test_windows_memory_probe_reports_peak_working_set_without_tracing",
+    TARGET + "::test_windows_memory_probe_fails_closed_and_restores_crossings",
+]
+EXPECTED_PATHS = {
+    "docs/superpowers/specs/2026-09-24-windows-resource-memory-probe-design.md",
+    "docs/superpowers/plans/2026-09-24-windows-resource-memory-probe.md",
+    "docs/ci-windows-resource-memory-probe-results.md",
+    "docs/ci-test-budget-redesign.md",
+    TARGET,
+}
+PROPERTY_NAMES = {
+    "resource.subprocess_wall_seconds",
+    "resource.memory_metric",
+    "resource.memory_peak",
+    "resource.raw_bytes",
+    "resource.rows",
+    "resource.observations",
+}
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def identity(case):
+    parts = case.get("classname", "").split(".")
+    assert len(parts) >= 2 and parts[0] == "tests", parts
+    return "::".join(("/".join(parts[:2]) + ".py", *parts[2:], case.get("name", "")))
+
+
+def normalized_skip(text):
+    return re.sub(
+        r"pytest-of-[^/\s]+/pytest-\d+/[^\s:\"']+",
+        "pytest-of-<USER>/pytest-<N>/<PYTEST_TMP>",
+        text.replace("\\", "/"),
+    )
+
+
+def parse(path):
+    cases = list(ET.parse(path).getroot().iter("testcase"))
+    ids = [identity(case) for case in cases]
+    assert len(ids) == len(set(ids))
+    rows = []
+    for node, case in zip(ids, cases, strict=True):
+        skipped = case.find("skipped")
+        failures = case.findall("failure")
+        errors = case.findall("error")
+        outcome = (
+            "skipped"
+            if skipped is not None
+            else "failed"
+            if failures or errors
+            else "passed"
+        )
+        rows.append(
+            {
+                "nodeid": node,
+                "outcome": outcome,
+                "skip": None
+                if skipped is None
+                else normalized_skip(skipped.get("message") or skipped.text or ""),
+                "properties": {
+                    prop.get("name", ""): prop.get("value", "")
+                    for prop in case.findall("./properties/property")
+                    if prop.get("name", "").startswith("resource.")
+                },
+            }
+        )
+    return ids, rows
+
+
+expected_complete = (E / "complete-16609.txt").read_text(encoding="utf-8").splitlines()
+expected_target = (E / "target-5.txt").read_text(encoding="utf-8").splitlines()
+baseline_skips = json.loads((B / "ubuntu-skips.json").read_text(encoding="utf-8"))
+full_ids, full_rows = parse(Path("/tmp/windows-memory-full.xml"))
+target_ids, target_rows = parse(Path("/tmp/windows-memory-target.xml"))
+resource_ids, resource_rows = parse(Path("/tmp/windows-memory-resource-final.xml"))
+assert full_ids == expected_complete
+assert target_ids == expected_target
+assert len(full_ids) == 16_609
+assert all(row["outcome"] == "passed" for row in target_rows)
+assert all(
+    next(row for row in full_rows if row["nodeid"] == node)["outcome"] == "passed"
+    for node in NEW_IDS
+)
+full_skips = [
+    [row["nodeid"], row["skip"]] for row in full_rows if row["outcome"] == "skipped"
+]
+assert full_skips == baseline_skips
+assert len(full_skips) == 14
+assert sum(row["outcome"] == "passed" for row in full_rows) == 16_595
+assert resource_ids == [
+    TARGET + "::test_maximum_legal_response_actual_reader_and_codec_in_subprocess"
+]
+resource = resource_rows[0]
+assert resource["outcome"] == "passed"
+assert set(resource["properties"]) == PROPERTY_NAMES
+assert resource["properties"]["resource.memory_metric"] == "process_peak_rss_kib"
+assert resource["properties"]["resource.raw_bytes"] == "47022137"
+assert resource["properties"]["resource.rows"] == "8192"
+assert resource["properties"]["resource.observations"] == "155648"
+assert int(resource["properties"]["resource.memory_peak"]) > 0
+assert float(resource["properties"]["resource.subprocess_wall_seconds"]) <= 75
+summary = json.loads(Path("/tmp/windows-memory-full.json").read_text(encoding="utf-8"))
+assert summary["case_count"] == 16_609
+assert len(summary["resource_evidence"]) == 1
+assert set(summary["resource_evidence"][0]["properties"]) == PROPERTY_NAMES
+changed = set(
+    subprocess.check_output(
+        ["git", "-C", str(W), "diff", "--name-only", "cc48c887", "--", "."],
+        text=True,
+    ).splitlines()
+)
+assert changed == EXPECTED_PATHS, sorted(changed ^ EXPECTED_PATHS)
+report = {
+    "complete_count": len(full_ids),
+    "complete_sha256": digest(("\n".join(full_ids) + "\n").encode()),
+    "target_count": len(target_ids),
+    "target_sha256": digest(("\n".join(target_ids) + "\n").encode()),
+    "passed": 16_595,
+    "skips": full_skips,
+    "new_passed": NEW_IDS,
+    "resource_properties": resource["properties"],
+    "changed_paths": sorted(changed),
+}
+Path("/tmp/windows-memory-local-audit.json").write_text(
+    json.dumps(report, sort_keys=True, indent=2) + "\n"
+)
+print(json.dumps(report, sort_keys=True))
+PY
+python -m py_compile /tmp/windows_memory_local_audit.py
+```
+
+---
+
 ## Reproducibility Block C — restoration-safe mutation runner
 
-Create this after Task 3's final source shape. Every catalog entry is an exact match-once mutation. The runner captures and restores pre-probe bytes, SHA-256, binary diff, and porcelain-v2 status in `finally`. Product mutants are permitted only here and must leave no diff.
+Create and compile this runner in Task 2; its success/ABI subset matches the Task 2 source, and Task 3 enables the remaining recipes after adding the failure/crossing/resource code. Every catalog entry is exact match-once. The aggregate command runs all requested recipes even after ordinary command/regex failures, exits nonzero if any failed, and restores pre-probe bytes, SHA-256, binary diff, and porcelain-v2 status in `finally`. Product mutants are permitted only here and must leave no diff.
 
 ```bash
 cat > /tmp/windows_memory_mutation.py <<'PY'
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import json
+import os
+import re
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-W = Path("/mnt/c/dev/flygd-wingman/.worktrees/ci-windows-resource-memory-probe")
+W = Path(
+    os.environ.get(
+        "WINDOWS_MEMORY_WORKTREE",
+        "/mnt/c/dev/flygd-wingman/.worktrees/ci-windows-resource-memory-probe",
+    )
+)
 P = Path(sys.executable)
 TEST = "tests/test_fleetsharing_transport_resources.py"
 SUCCESS = TEST + "::test_windows_memory_probe_reports_peak_working_set_without_tracing"
@@ -1019,188 +1420,398 @@ RESOURCE = TEST + "::test_maximum_legal_response_actual_reader_and_codec_in_subp
 MUTATIONS = {
     "windows-to-resource": {
         "target": TEST,
-        "edits": [("    if platform == \"win32\":\n", "    if platform == \"never-win32\":\n")],
+        "edits": [
+            ('    if platform == "win32":\n', '    if platform == "never-win32":\n')
+        ],
         "node": SUCCESS,
-        "expect": ("resource fallback was consulted",),
+        "expect_regex": r'assert metric == "process_peak_working_set_bytes"',
     },
     "windows-to-tracing": {
         "target": TEST,
-        "edits": [(
-            "        return _windows_memory_probe(\n            win_dll=win_dll,\n            get_last_error=get_last_error,\n            win_error=win_error,\n        )\n",
-            "        tracemalloc_module.start()\n        return \"traced_peak_bytes\", lambda: 0\n",
-        )],
+        "edits": [
+            (
+                "        return _windows_memory_probe(\n            win_dll=win_dll,\n            get_last_error=get_last_error,\n            win_error=win_error,\n        )\n",
+                '        import tracemalloc\n        tracemalloc.start()\n        return "traced_peak_bytes", lambda: 0\n',
+            )
+        ],
         "node": SUCCESS,
-        "expect": ("process_peak_working_set_bytes",),
-    },
-    "current-working-set": {
-        "target": TEST,
-        "edits": [("        return int(counters.PeakWorkingSetSize)\n", "        return int(counters.WorkingSetSize)\n")],
-        "node": SUCCESS,
-        "expect": ("assert [probe(), probe()] == peaks",),
-    },
-    "wrong-native-metric": {
-        "target": TEST,
-        "edits": [("    return \"process_peak_working_set_bytes\", sample\n", "    return \"traced_peak_bytes\", sample\n")],
-        "node": SUCCESS,
-        "expect": ("process_peak_working_set_bytes",),
-    },
-    "omit-cb": {
-        "target": TEST,
-        "edits": [("        counters.cb = structure_size\n", "        counters.cb = 0\n")],
-        "node": SUCCESS,
-        "expect": ("'cb': 72", "'cb': 40"),
-        "expect_any": True,
-    },
-    "wrong-api-size": {
-        "target": TEST,
-        "edits": [(
-            "        if not get_process_memory_info(process, ctypes.byref(counters), structure_size):\n",
-            "        if not get_process_memory_info(process, ctypes.byref(counters), structure_size - 1):\n",
-        )],
-        "node": SUCCESS,
-        "expect": ("byte_size",),
-    },
-    "packed-layout": {
-        "target": TEST,
-        "edits": [("class PROCESS_MEMORY_COUNTERS(ctypes.Structure):\n    _fields_ = [\n", "class PROCESS_MEMORY_COUNTERS(ctypes.Structure):\n    _pack_ = 1\n    _fields_ = [\n")],
-        "node": SUCCESS,
-        "expect": ("alignment", "_pack_"),
-        "expect_any": True,
-    },
-    "reuse-structure": {
-        "target": TEST,
-        "edits": [(
-            "    def sample():\n        counters = PROCESS_MEMORY_COUNTERS()\n",
-            "    counters = PROCESS_MEMORY_COUNTERS()\n\n    def sample():\n",
-        )],
-        "node": SUCCESS,
-        "expect": ("structures[0] is not structures[1]",),
-    },
-    "omit-signature": {
-        "target": TEST,
-        "edits": [("    get_process_memory_info.restype = ctypes.c_int\n", "    get_process_memory_info.restype = None\n")],
-        "node": SUCCESS,
-        "expect": ("get_process_memory_info.restype is ctypes.c_int",),
+        "expect_regex": r"requires tracemalloc to be disabled",
     },
     "start-tracing": {
         "target": TEST,
-        "edits": [("    if platform == \"win32\":\n        return _windows_memory_probe(\n", "    if platform == \"win32\":\n        tracemalloc_module.start()\n        return _windows_memory_probe(\n")],
+        "edits": [
+            (
+                '    kernel32 = win_dll("kernel32", use_last_error=True)\n',
+                '    import tracemalloc\n    tracemalloc.start()\n    kernel32 = win_dll("kernel32", use_last_error=True)\n',
+            )
+        ],
         "node": SUCCESS,
-        "expect": ("tracing.starts == tracing.stops == 0",),
+        "expect_regex": r"requires tracemalloc to be disabled",
+    },
+    "stop-tracing": {
+        "target": TEST,
+        "edits": [
+            (
+                '    kernel32 = win_dll("kernel32", use_last_error=True)\n',
+                '    import tracemalloc\n    tracemalloc.stop()\n    kernel32 = win_dll("kernel32", use_last_error=True)\n',
+            )
+        ],
+        "node": SUCCESS,
+        "expect_regex": r"assert tracing.starts == tracing.stops == 0",
+    },
+    "current-working-set": {
+        "target": TEST,
+        "edits": [
+            (
+                "        return int(counters.PeakWorkingSetSize)\n",
+                "        return int(counters.WorkingSetSize)\n",
+            )
+        ],
+        "node": SUCCESS,
+        "expect_regex": r"assert \[probe\(\), probe\(\)\] == peaks",
+    },
+    "width-truncation": {
+        "target": TEST,
+        "edits": [
+            (
+                "        return int(counters.PeakWorkingSetSize)\n",
+                "        return int(ctypes.c_uint32(counters.PeakWorkingSetSize).value)\n",
+            )
+        ],
+        "node": SUCCESS,
+        "expect_regex": r"assert \[probe\(\), probe\(\)\] == peaks",
+        "requires_pointer_size": 8,
+    },
+    "signed-coercion": {
+        "target": TEST,
+        "edits": [
+            (
+                "        return int(counters.PeakWorkingSetSize)\n",
+                "        return int(ctypes.c_int32(counters.PeakWorkingSetSize).value)\n",
+            )
+        ],
+        "node": SUCCESS,
+        "expect_regex": r"assert \[probe\(\), probe\(\)\] == peaks",
+    },
+    "wrong-native-metric": {
+        "target": TEST,
+        "edits": [
+            (
+                '    return "process_peak_working_set_bytes", sample\n',
+                '    return "traced_peak_bytes", sample\n',
+            )
+        ],
+        "node": SUCCESS,
+        "expect_regex": r'assert metric == "process_peak_working_set_bytes"',
+    },
+    "omit-cb": {
+        "target": TEST,
+        "edits": [
+            ("        counters.cb = structure_size\n", "        counters.cb = 0\n")
+        ],
+        "node": SUCCESS,
+        "expect_regex": r"assert samples ==",
+    },
+    "wrong-api-size": {
+        "target": TEST,
+        "edits": [
+            (
+                "        if not get_process_memory_info(process, ctypes.byref(counters), structure_size):\n",
+                "        if not get_process_memory_info(process, ctypes.byref(counters), structure_size - 1):\n",
+            )
+        ],
+        "node": SUCCESS,
+        "expect_regex": r"assert samples ==",
+    },
+    "packed-layout": {
+        "target": TEST,
+        "edits": [
+            (
+                "class PROCESS_MEMORY_COUNTERS(ctypes.Structure):\n    _fields_ = [\n",
+                "class PROCESS_MEMORY_COUNTERS(ctypes.Structure):\n    _pack_ = 1\n    _fields_ = [\n",
+            )
+        ],
+        "node": SUCCESS,
+        "expect_regex": r"PROCESS_MEMORY_COUNTERS\._fields_",
+    },
+    "field-type": {
+        "target": TEST,
+        "edits": [
+            (
+                'class PROCESS_MEMORY_COUNTERS(ctypes.Structure):\n    _fields_ = [\n        ("cb", ctypes.c_uint32),\n        ("PageFaultCount", ctypes.c_uint32),\n        ("PeakWorkingSetSize", ctypes.c_size_t),\n',
+                'class PROCESS_MEMORY_COUNTERS(ctypes.Structure):\n    _fields_ = [\n        ("cb", ctypes.c_uint32),\n        ("PageFaultCount", ctypes.c_uint32),\n        ("PeakWorkingSetSize", ctypes.c_uint32),\n',
+            )
+        ],
+        "node": SUCCESS,
+        "expect_regex": r"PROCESS_MEMORY_COUNTERS\._fields_",
+    },
+    "field-order": {
+        "target": TEST,
+        "edits": [
+            (
+                'class PROCESS_MEMORY_COUNTERS(ctypes.Structure):\n    _fields_ = [\n        ("cb", ctypes.c_uint32),\n        ("PageFaultCount", ctypes.c_uint32),\n        ("PeakWorkingSetSize", ctypes.c_size_t),\n        ("WorkingSetSize", ctypes.c_size_t),\n',
+                'class PROCESS_MEMORY_COUNTERS(ctypes.Structure):\n    _fields_ = [\n        ("cb", ctypes.c_uint32),\n        ("PageFaultCount", ctypes.c_uint32),\n        ("WorkingSetSize", ctypes.c_size_t),\n        ("PeakWorkingSetSize", ctypes.c_size_t),\n',
+            )
+        ],
+        "node": SUCCESS,
+        "expect_regex": r"PROCESS_MEMORY_COUNTERS\._fields_",
+    },
+    "reuse-structure": {
+        "target": TEST,
+        "edits": [
+            (
+                "    def sample():\n        counters = PROCESS_MEMORY_COUNTERS()\n",
+                "    counters = PROCESS_MEMORY_COUNTERS()\n\n    def sample():\n",
+            )
+        ],
+        "node": SUCCESS,
+        "expect_regex": r"structures\[0\] is not structures\[1\]",
+    },
+    "omit-signature": {
+        "target": TEST,
+        "edits": [
+            (
+                "    get_process_memory_info.restype = ctypes.c_int\n",
+                "    get_process_memory_info.restype = None\n",
+            )
+        ],
+        "node": SUCCESS,
+        "expect_regex": r"get_process_memory_info\.restype is ctypes\.c_int",
+    },
+    "replace-pseudo-handle": {
+        "target": TEST,
+        "edits": [
+            (
+                "        if not get_process_memory_info(process, ctypes.byref(counters), structure_size):\n",
+                "        if not get_process_memory_info(ctypes.c_void_p(process), ctypes.byref(counters), structure_size):\n",
+            )
+        ],
+        "node": SUCCESS,
+        "expect_regex": r"assert samples ==",
+    },
+    "close-pseudo-handle": {
+        "target": TEST,
+        "edits": [
+            (
+                "        process = get_current_process()\n        if not get_process_memory_info(process, ctypes.byref(counters), structure_size):\n",
+                "        process = get_current_process()\n        close_handle = kernel32.CloseHandle\n        close_handle(process)\n        if not get_process_memory_info(process, ctypes.byref(counters), structure_size):\n",
+            )
+        ],
+        "node": SUCCESS,
+        "expect_regex": r"assert close_handle\.calls == \[\]",
     },
     "ignore-active-trace": {
         "target": TEST,
-        "edits": [("    if tracemalloc_module.is_tracing():\n", "    if False and tracemalloc_module.is_tracing():\n")],
+        "edits": [
+            (
+                "    if tracemalloc_module.is_tracing():\n",
+                "    if False and tracemalloc_module.is_tracing():\n",
+            )
+        ],
         "node": FAILURE,
-        "expect": ("DID NOT RAISE",),
+        "expect_regex": r"DID NOT RAISE",
     },
     "collapse-missing-exports": {
         "target": TEST,
-        "edits": [("    get_process_memory_info = kernel32.K32GetProcessMemoryInfo\n", "    get_process_memory_info = kernel32.GetCurrentProcess\n")],
+        "edits": [
+            (
+                "    get_process_memory_info = kernel32.K32GetProcessMemoryInfo\n",
+                "    get_process_memory_info = kernel32.GetCurrentProcess\n",
+            )
+        ],
         "node": FAILURE,
-        "expect": ("DID NOT RAISE",),
+        "expect_regex": r"assert caught_error is missing_error",
     },
     "ignore-zero-return": {
         "target": TEST,
-        "edits": [("        if not get_process_memory_info(process, ctypes.byref(counters), structure_size):\n", "        if False and not get_process_memory_info(process, ctypes.byref(counters), structure_size):\n")],
+        "edits": [
+            (
+                "        if not get_process_memory_info(process, ctypes.byref(counters), structure_size):\n",
+                "        if False and not get_process_memory_info(process, ctypes.byref(counters), structure_size):\n",
+            )
+        ],
         "node": FAILURE,
-        "expect": ("DID NOT RAISE",),
+        "expect_regex": r"DID NOT RAISE",
     },
     "implicit-winerror": {
         "target": TEST,
-        "edits": [("            raise win_error(saved_error)\n", "            raise win_error()\n")],
+        "edits": [
+            (
+                "            raise win_error(saved_error)\n",
+                "            raise win_error()\n",
+            )
+        ],
         "node": FAILURE,
-        "expect": ("win_error() missing",),
+        "expect_regex": r"assert win_error\.calls == \[\(saved_error,\)\]",
     },
     "omit-crossing-finally": {
         "target": TEST,
-        "edits": [(
-            "    try:\n        result = operation()\n    finally:\n        protocol.decode_wire_json = original_decode\n        protocol.parse_snapshot = original_parse\n",
-            "    result = operation()\n    protocol.decode_wire_json = original_decode\n    protocol.parse_snapshot = original_parse\n",
-        )],
+        "edits": [
+            (
+                "    try:\n        result = operation()\n    finally:\n        protocol.decode_wire_json = original_decode\n        protocol.parse_snapshot = original_parse\n",
+                "    result = operation()\n    protocol.decode_wire_json = original_decode\n    protocol.parse_snapshot = original_parse\n",
+            )
+        ],
         "node": FAILURE,
-        "expect": ("protocol.decode_wire_json is original_decode",),
+        "expect_regex": r"protocol\.decode_wire_json is original_decode",
+    },
+    "equivalent-crossing-restoration": {
+        "target": TEST,
+        "edits": [
+            (
+                "        protocol.decode_wire_json = original_decode\n",
+                "        protocol.decode_wire_json = lambda *args, **kwargs: original_decode(*args, **kwargs)\n",
+            )
+        ],
+        "node": FAILURE,
+        "expect_regex": r"protocol\.decode_wire_json is original_decode",
     },
     "replace-sentinel": {
         "target": TEST,
-        "edits": [("        result = operation()\n", "        try:\n            result = operation()\n        except RuntimeError:\n            raise RuntimeError(\"replacement\")\n")],
+        "edits": [
+            (
+                "        result = operation()\n",
+                '        try:\n            result = operation()\n        except RuntimeError:\n            raise RuntimeError("replacement")\n',
+            )
+        ],
         "node": FAILURE,
-        "expect": ("caught.value is sentinel",),
+        "expect_regex": r"caught\.value is sentinel",
+    },
+    "failure-success-counts": {
+        "target": TEST,
+        "edits": [
+            (
+                "    try:\n        result = operation()\n    finally:\n",
+                '    try:\n        try:\n            result = operation()\n        except BaseException:\n            return None, calls["decode"], calls["parse"]\n    finally:\n',
+            )
+        ],
+        "node": FAILURE,
+        "expect_regex": r"DID NOT RAISE",
     },
     "raw-size": {
         "target": TEST,
-        "edits": [("    buffer.write(b\"]}\")\n    raw = buffer.getvalue()\n", "    buffer.write(b\"]} \" )\n    raw = buffer.getvalue()\n")],
+        "edits": [('    buffer.write(b"]}")\n', '    buffer.write(b"]} ")\n')],
         "node": RESOURCE,
-        "expect": ("maximum raw payload size changed",),
+        "expect_regex": r"maximum raw payload size changed",
     },
     "row-count": {
         "target": TEST,
         "edits": [
-            ("    for index in range(LIMITS[\"get_rows\"]):\n", "    for index in range(LIMITS[\"get_rows\"] - 1):\n"),
-            ("    raw = buffer.getvalue()\n    assert len(raw) == 47_022_137, \"maximum raw payload size changed\"\n", "    raw = buffer.getvalue()\n    raw += b\" \" * (47_022_137 - len(raw))\n    assert len(raw) == 47_022_137, \"maximum raw payload size changed\"\n"),
+            (
+                '    for index in range(LIMITS["get_rows"]):\n',
+                '    for index in range(LIMITS["get_rows"] - 1):\n',
+            ),
+            (
+                '    raw = buffer.getvalue()\n    assert len(raw) == 47_022_137, "maximum raw payload size changed"\n',
+                '    raw = buffer.getvalue()\n    raw += b" " * (47_022_137 - len(raw))\n    assert len(raw) == 47_022_137, "maximum raw payload size changed"\n',
+            ),
         ],
         "node": RESOURCE,
-        "expect": ("maximum row cardinality changed",),
+        "expect_regex": r"maximum row cardinality changed",
     },
-    "observation-count": {
+    "observation-data": {
         "target": TEST,
-        "edits": [("    observations = LIMITS[\"get_rows\"] * LIMITS[\"observations_per_row\"]\n", "    observations = LIMITS[\"get_rows\"] * LIMITS[\"observations_per_row\"] + 1\n")],
+        "edits": [
+            (
+                '            else [{"name": name, "age_ms": LIMITS["activity_ms"] - 1} for name in names]\n',
+                '            else [{"name": name, "age_ms": LIMITS["activity_ms"] - 1} for name in names[:-1]]\n',
+            ),
+            (
+                '    raw = buffer.getvalue()\n    assert len(raw) == 47_022_137, "maximum raw payload size changed"\n',
+                '    raw = buffer.getvalue()\n    raw += b" " * (47_022_137 - len(raw))\n    assert len(raw) == 47_022_137, "maximum raw payload size changed"\n',
+            ),
+        ],
         "node": RESOURCE,
-        "expect": ("maximum observation cardinality changed",),
+        "expect_regex": r"maximum observation cardinality changed",
     },
     "read-amount": {
         "target": "wingman/fleetsharing/client.py",
-        "edits": [("                    (bound if status == 200 else MAX_RESPONSE_BYTES) + 1\n", "                    (bound if status == 200 else MAX_RESPONSE_BYTES) + 2\n")],
+        "edits": [
+            (
+                "                    (bound if status == 200 else MAX_RESPONSE_BYTES) + 1\n",
+                "                    (bound if status == 200 else MAX_RESPONSE_BYTES) + 2\n",
+            )
+        ],
         "node": RESOURCE,
-        "expect": ("maximum response read amount changed",),
+        "expect_regex": r"maximum response read amount changed",
     },
     "response-closure": {
         "target": TEST,
-        "edits": [("        def read(self, amount=-1):\n", "        def __exit__(self, *_args):\n            return False\n\n        def read(self, amount=-1):\n")],
+        "edits": [
+            (
+                "        def read(self, amount=-1):\n",
+                "        def __exit__(self, *_args):\n            return False\n\n        def read(self, amount=-1):\n",
+            )
+        ],
         "node": RESOURCE,
-        "expect": ("maximum response was not closed",),
+        "expect_regex": r"maximum response was not closed",
     },
     "decoder-bypass": {
         "target": "wingman/fleetsharing/client.py",
-        "edits": [("    parsed = _parse(protocol.decode_wire_json, raw)\n", "    parsed = json.loads(raw)\n")],
+        "edits": [
+            (
+                "    parsed = _parse(protocol.decode_wire_json, raw)\n",
+                "    parsed = json.loads(raw)\n",
+            )
+        ],
         "node": RESOURCE,
-        "expect": ("wire decoder crossing count changed",),
+        "expect_regex": r"wire decoder crossing count changed",
     },
     "decoder-duplicate": {
         "target": "wingman/fleetsharing/client.py",
-        "edits": [("    parsed = _parse(protocol.decode_wire_json, raw)\n", "    protocol.decode_wire_json(raw)\n    parsed = _parse(protocol.decode_wire_json, raw)\n")],
+        "edits": [
+            (
+                "    parsed = _parse(protocol.decode_wire_json, raw)\n",
+                "    protocol.decode_wire_json(raw)\n    parsed = _parse(protocol.decode_wire_json, raw)\n",
+            )
+        ],
         "node": RESOURCE,
-        "expect": ("wire decoder crossing count changed",),
+        "expect_regex": r"wire decoder crossing count changed",
     },
     "parser-bypass": {
         "target": "wingman/fleetsharing/client.py",
-        "edits": [(
-            "        return _parse(\n            protocol.parse_snapshot,\n            self._send_signed(\n                SNAPSHOT_PATH,\n                \"GET\",\n                b\"\",\n                session_id,\n                private_key,\n                revision,\n                now,\n                before_send=before_send,\n            ),\n        )\n",
-            "        value = self._send_signed(\n            SNAPSHOT_PATH,\n            \"GET\",\n            b\"\",\n            session_id,\n            private_key,\n            revision,\n            now,\n            before_send=before_send,\n        )\n        return protocol.CombatSnapshot(\n            server_time_ms=value[\"server_time_ms\"],\n            rows=tuple(protocol._combat_read_row(row) for row in value[\"rows\"]),\n        )\n",
-        )],
+        "edits": [
+            (
+                '        return _parse(\n            protocol.parse_snapshot,\n            self._send_signed(\n                SNAPSHOT_PATH,\n                "GET",\n                b"",\n                session_id,\n                private_key,\n                revision,\n                now,\n                before_send=before_send,\n            ),\n        )\n',
+                '        value = self._send_signed(\n            SNAPSHOT_PATH,\n            "GET",\n            b"",\n            session_id,\n            private_key,\n            revision,\n            now,\n            before_send=before_send,\n        )\n        return protocol.CombatSnapshot(\n            server_time_ms=value["server_time_ms"],\n            rows=tuple(protocol._combat_read_row(row) for row in value["rows"]),\n        )\n',
+            )
+        ],
         "node": RESOURCE,
-        "expect": ("snapshot parser crossing count changed",),
+        "expect_regex": r"snapshot parser crossing count changed",
     },
     "parser-duplicate": {
         "target": "wingman/fleetsharing/client.py",
-        "edits": [(
-            "        return _parse(\n            protocol.parse_snapshot,\n            self._send_signed(\n                SNAPSHOT_PATH,\n                \"GET\",\n                b\"\",\n                session_id,\n                private_key,\n                revision,\n                now,\n                before_send=before_send,\n            ),\n        )\n",
-            "        value = self._send_signed(\n            SNAPSHOT_PATH,\n            \"GET\",\n            b\"\",\n            session_id,\n            private_key,\n            revision,\n            now,\n            before_send=before_send,\n        )\n        protocol.parse_snapshot(value)\n        return _parse(protocol.parse_snapshot, value)\n",
-        )],
+        "edits": [
+            (
+                '        return _parse(\n            protocol.parse_snapshot,\n            self._send_signed(\n                SNAPSHOT_PATH,\n                "GET",\n                b"",\n                session_id,\n                private_key,\n                revision,\n                now,\n                before_send=before_send,\n            ),\n        )\n',
+                '        value = self._send_signed(\n            SNAPSHOT_PATH,\n            "GET",\n            b"",\n            session_id,\n            private_key,\n            revision,\n            now,\n            before_send=before_send,\n        )\n        protocol.parse_snapshot(value)\n        return _parse(protocol.parse_snapshot, value)\n',
+            )
+        ],
         "node": RESOURCE,
-        "expect": ("snapshot parser crossing count changed",),
+        "expect_regex": r"snapshot parser crossing count changed",
     },
     "budget-zero": {
         "target": TEST,
-        "edits": [("MAXIMUM_RESPONSE_RESOURCE_BUDGET_S = 75.0\n", "MAXIMUM_RESPONSE_RESOURCE_BUDGET_S = 0.0\n")],
+        "edits": [
+            (
+                "MAXIMUM_RESPONSE_RESOURCE_BUDGET_S = 75.0\n",
+                "MAXIMUM_RESPONSE_RESOURCE_BUDGET_S = 0.0\n",
+            )
+        ],
         "node": RESOURCE,
-        "expect": ("maximum response resource budget exceeded",),
+        "expect_regex": r"maximum response resource budget exceeded",
     },
-    "parent-wrong-metric": {
+    "child-wrong-metric": {
         "target": TEST,
-        "edits": [("    evidence = json.loads(result.stdout)\n    if evidence[\"platform\"] == \"win32\":\n", "    evidence = json.loads(result.stdout)\n    evidence[\"platform\"] = \"win32\"\n    evidence[\"memory_metric\"] = \"traced_peak_bytes\"\n    if evidence[\"platform\"] == \"win32\":\n")],
+        "edits": [
+            (
+                '        "memory_metric": metric,\n',
+                '        "memory_metric": "traced_peak_bytes",\n',
+            ),
+            ('        "platform": sys.platform,\n', '        "platform": "win32",\n'),
+        ],
         "node": RESOURCE,
-        "expect": ("process_peak_working_set_bytes",),
+        "expect_regex": r"process_peak_working_set_bytes",
         "junit_zero_resource": True,
     },
 }
@@ -1210,26 +1821,32 @@ def git_bytes(*args):
     return subprocess.check_output(["git", "-C", str(W), *args])
 
 
-def run(name):
+def run_recipe(name):
     row = MUTATIONS[name]
+    required_size = row.get("requires_pointer_size")
+    if required_size is not None and ctypes.sizeof(ctypes.c_size_t) != required_size:
+        return None, {"mutant": name, "result": "not-applicable-native-width"}
     target = W / row["target"]
     original = target.read_bytes()
     original_hash = hashlib.sha256(original).hexdigest()
     before_diff = git_bytes("diff", "--binary", "HEAD", "--", ".")
-    before_status = git_bytes(
-        "status", "--porcelain=v2", "--untracked-files=all", "-z"
-    )
+    before_status = git_bytes("status", "--porcelain=v2", "--untracked-files=all", "-z")
     mutated = original
-    for before_text, after_text in row["edits"]:
-        before = before_text.encode()
-        after = after_text.encode()
-        assert mutated.count(before) == 1, (name, before_text, mutated.count(before))
-        assert mutated.count(after) == 0, (name, "replacement already present")
-        mutated = mutated.replace(before, after, 1)
     output = b""
-    problem = None
     junit = Path(f"/tmp/windows-memory-mutant-{name}.xml")
+    problem = None
+    restoration_problem = None
     try:
+        for before_text, after_text in row["edits"]:
+            before = before_text.encode()
+            after = after_text.encode()
+            if mutated.count(before) != 1:
+                raise AssertionError(
+                    (name, "match-count", mutated.count(before), before_text)
+                )
+            if mutated.count(after) != 0:
+                raise AssertionError((name, "replacement-already-present", after_text))
+            mutated = mutated.replace(before, after, 1)
         target.write_bytes(mutated)
         result = subprocess.run(
             [
@@ -1243,6 +1860,7 @@ def run(name):
                 f"--junitxml={junit}",
             ],
             cwd=W,
+            env={**os.environ, "PYTHONPATH": str(W)},
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             check=False,
@@ -1252,18 +1870,10 @@ def run(name):
         text = output.decode("utf-8", "replace")
         if result.returncode == 0:
             problem = AssertionError(f"{name}: mutant unexpectedly passed")
-        else:
-            expected = row["expect"]
-            matched = [fragment for fragment in expected if fragment in text]
-            if row.get("expect_any"):
-                if not matched:
-                    problem = AssertionError(
-                        f"{name}: wrong red; expected one of {expected}; output follows\n{text}"
-                    )
-            elif len(matched) != len(expected):
-                problem = AssertionError(
-                    f"{name}: wrong red; missing {set(expected) - set(matched)}; output follows\n{text}"
-                )
+        elif re.search(row["expect_regex"], text) is None:
+            problem = AssertionError(
+                f"{name}: intended regex {row['expect_regex']!r} absent; output follows\n{text}"
+            )
         if row.get("junit_zero_resource"):
             root = ET.parse(junit).getroot()
             properties = [
@@ -1273,19 +1883,27 @@ def run(name):
             ]
             if properties:
                 problem = AssertionError(
-                    f"{name}: rejected metric published resource properties {properties}"
+                    f"{name}: rejected child evidence published {properties}"
                 )
-    except BaseException as error:
+    except Exception as error:  # noqa: BLE001 -- report any recipe failure after restoration.
         problem = error
     finally:
-        target.write_bytes(original)
-        restored = target.read_bytes()
-        assert restored == original
-        assert hashlib.sha256(restored).hexdigest() == original_hash
-        assert git_bytes("diff", "--binary", "HEAD", "--", ".") == before_diff
-        assert git_bytes(
-            "status", "--porcelain=v2", "--untracked-files=all", "-z"
-        ) == before_status
+        try:
+            target.write_bytes(original)
+            restored = target.read_bytes()
+            if restored != original:
+                raise AssertionError(f"{name}: restored bytes differ")
+            if hashlib.sha256(restored).hexdigest() != original_hash:
+                raise AssertionError(f"{name}: restored hash differs")
+            if git_bytes("diff", "--binary", "HEAD", "--", ".") != before_diff:
+                raise AssertionError(f"{name}: restored binary diff differs")
+            if (
+                git_bytes("status", "--porcelain=v2", "--untracked-files=all", "-z")
+                != before_status
+            ):
+                raise AssertionError(f"{name}: restored status differs")
+        except Exception as error:  # noqa: BLE001 -- restoration failures are fatal evidence.
+            restoration_problem = error
         out = Path("/tmp/wingman-windows-memory-mutants")
         out.mkdir(exist_ok=True)
         (out / f"{name}.log").write_bytes(output)
@@ -1294,23 +1912,57 @@ def run(name):
                 {
                     "target": row["target"],
                     "original_sha256": original_hash,
-                    "restored_sha256": hashlib.sha256(restored).hexdigest(),
-                    "expected": row["expect"],
+                    "expect_regex": row["expect_regex"],
+                    "problem": None if problem is None else repr(problem),
+                    "restoration_problem": None
+                    if restoration_problem is None
+                    else repr(restoration_problem),
                 },
                 sort_keys=True,
                 indent=2,
             )
             + "\n"
         )
-    if problem is not None:
-        raise problem
-    print(json.dumps({"mutant": name, "result": "intended-red"}))
+    if restoration_problem is not None:
+        raise restoration_problem
+    return problem, {
+        "mutant": name,
+        "result": "intended-red" if problem is None else "failed",
+    }
 
 
-parser = argparse.ArgumentParser()
-parser.add_argument("mutant", choices=tuple(MUTATIONS))
-args = parser.parse_args()
-run(args.mutant)
+def main(argv=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("mutants", nargs="+", choices=tuple(MUTATIONS))
+    args = parser.parse_args(argv)
+    failures = []
+    for name in args.mutants:
+        try:
+            problem, report = run_recipe(name)
+        except Exception as error:  # noqa: BLE001 -- aggregate recipe and restoration failures.
+            failures.append((name, error))
+            print(
+                json.dumps(
+                    {
+                        "mutant": name,
+                        "result": "restoration-failed",
+                        "error": repr(error),
+                    }
+                )
+            )
+            break
+        print(json.dumps(report, sort_keys=True))
+        if problem is not None:
+            failures.append((name, problem))
+    if failures:
+        for name, error in failures:
+            print(f"{name}: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 PY
 python -m py_compile /tmp/windows_memory_mutation.py
 ```
@@ -1347,7 +1999,7 @@ git log -5 --oneline
 git show -s --format='%H%n%s%n%P' cc48c887
 ```
 
-Expected: branch `ci-windows-resource-memory-probe`; only the three approved design commits above `cc48c887`; no uncommitted files; baseline subject `Optimize setup controller fixture construction (#288)` with parent `c23788e392bcd586dfc95b7390eaee18cb4ec224`.
+Expected after this review correction is committed: branch `ci-windows-resource-memory-probe`; the four approved design/plan commits that existed at review time plus `docs: make Windows memory plan executable` above `cc48c887`; no uncommitted files; baseline subject `Optimize setup controller fixture construction (#288)` with parent `c23788e392bcd586dfc95b7390eaee18cb4ec224`.
 
 - [ ] **Step 2: Run Reproducibility Block A**
 
@@ -1429,7 +2081,7 @@ git commit -m "docs: freeze Windows memory probe baseline"
 
 - [ ] **Step 1: Append the exact first test and portable fakes before implementation**
 
-Add `ctypes` import, the four fake classes, and exactly `test_windows_memory_probe_reports_peak_working_set_without_tracing` from the Intended Final Test-Module Interfaces. Do not add the second identity, crossing helper, trace guard, or resource integration yet.
+Add `ctypes` and `os` imports, the five fake classes, exactly `test_windows_memory_probe_reports_peak_working_set_without_tracing`, and the explicit non-Windows fallback adaptation from the Intended Final Test-Module Interfaces. The first identity must accept `monkeypatch`, install `_TraceSeam` as the actual `sys.modules["tracemalloc"]`, and retain that module through native setup, guard, repeated samples, and final assertions. Do not add the second identity, crossing helper, or resource integration yet.
 
 - [ ] **Step 2: Run the first identity and verify RED**
 
@@ -1441,7 +2093,7 @@ uv run --no-sync python -m pytest \
   -q
 ```
 
-Expected: `1 failed`; earliest owned failure is missing `PROCESS_MEMORY_COUNTERS`, the new `memory_probe` seams, or `_require_untraced_windows_decode`. It must not fail from importing a real Windows DLL on Linux.
+Expected: `1 failed`; earliest owned failure is missing `PROCESS_MEMORY_COUNTERS`, the new `memory_probe` seams, or `_require_untraced_windows_decode`. The adapted fallback identity remains collected under its original ID. The RED must not resolve or import a real Windows DLL on Linux.
 
 - [ ] **Step 3: Implement the structure, lazy native success path, and platform selection**
 
@@ -1452,7 +2104,7 @@ Add `_MISSING`, `PROCESS_MEMORY_COUNTERS`, `_windows_memory_probe`, and the new 
             raise RuntimeError("K32GetProcessMemoryInfo failed.")
 ```
 
-Add `_require_untraced_windows_decode` exactly as shown so the first identity can prove the inactive guard calls neither tracing start nor stop. Do not integrate the guard into `measure_response()` until Task 3.
+Add `_require_untraced_windows_decode` exactly as shown so the first identity imports the actual fake `sys.modules["tracemalloc"]`, records one `is_tracing()` call, and proves native setup/sampling/cleanup call neither tracing start nor stop. Do not integrate the guard into `measure_response()` until Task 3.
 
 - [ ] **Step 4: Run focused GREEN and portable fallback coverage**
 
@@ -1465,11 +2117,17 @@ uv run --no-sync python -m pytest \
   -q
 ```
 
-Expected: `2 passed`; the success test executes on Linux entirely through fakes, and the existing fallback still reports `traced_peak_bytes`.
+Expected: `2 passed`; the success test executes on Linux entirely through fake native exports plus the actual fake `tracemalloc` module, and the existing explicitly non-Windows fallback still reports `traced_peak_bytes` and stops its own tracer in `finally`.
 
 - [ ] **Step 5: Prove exact interim inventory `3 -> 4` and suite `16,607 -> 16,608`**
 
-Use the Block A collection plugin against the current checkout and compare with baseline files. Expected target order is the exact three baseline IDs followed by the first suffix ID; complete additions are exactly that one ID; marker ownership remains exactly one.
+Materialize and compile Reproducibility Block B1, then run:
+
+```bash
+uv run --no-sync python /tmp/windows_memory_interim.py
+```
+
+Expected: exact target order is the baseline three followed by the first suffix ID; the complete ordered inventory equals the 16,607 baseline with that ID inserted immediately after the baseline target anchor; exact additions/removals are `+1/0`; count/hash is `16,608`; all baseline IDs retain relative order; marker ownership remains exactly one; and the exact Task 2 path set is enforced.
 
 Run the ordinary target selection:
 
@@ -1483,22 +2141,17 @@ Expected: `3 passed, 1 deselected`.
 
 - [ ] **Step 6: Qualify success/ABI mutations and restore each one**
 
-After the final Task 3 source shape exists the complete Block C catalog is authoritative. For Task 2, run equivalent exact match-once probes for these entries against the interim source, updating only the zero-return text when necessary:
+Materialize and compile Block C now, then invoke its Task 2 subset in one aggregate command:
 
-```text
-windows-to-resource
-windows-to-tracing
-current-working-set
-wrong-native-metric
-omit-cb
-wrong-api-size
-packed-layout
-reuse-structure
-omit-signature
-start-tracing
+```bash
+uv run --no-sync python /tmp/windows_memory_mutation.py \
+  windows-to-resource windows-to-tracing start-tracing stop-tracing \
+  current-working-set width-truncation signed-coercion wrong-native-metric \
+  omit-cb wrong-api-size packed-layout field-type field-order reuse-structure \
+  omit-signature replace-pseudo-handle close-pseudo-handle
 ```
 
-Each must fail at its owned assertion: selection/no-fallback, metric, peak-vs-current/pagefile, exact `cb`, exact API byte size, natural layout/alignment/no `_pack_`, fresh structures, explicit signatures, or zero tracing start/stop. The 64-bit branch must preserve a peak above `2**32`; the 32-bit branch must preserve exact high unsigned values without being skipped.
+Expected: one `intended-red` record per applicable recipe and aggregate exit `0`. `windows-to-resource` reaches the exact metric assertion through the usable resource seam. `windows-to-tracing` and `start-tracing` perform a real `import tracemalloc`, activate the installed fake module, and fail at the active-tracer guard; `stop-tracing` fails the exact no-stop assertion. Remaining recipes fail their owned value, width, signedness, field type/order, `cb`, byte-size, layout/alignment/no-pack, fresh-structure, signature, pseudo-handle identity, or no-`CloseHandle` assertion. `width-truncation` is explicitly reported not-applicable only on a 32-bit interpreter; the signed-coercion recipe still qualifies that width. Every recipe restores exact bytes/hash/binary diff/status before the aggregate runner continues.
 
 - [ ] **Step 7: Record Task 2 evidence and run an independent review**
 
@@ -1573,11 +2226,11 @@ Do no unrelated work between the zero return and `get_last_error()`. Keep loader
 
 Add `_measure_protocol_crossings` exactly as specified. In `measure_response()`:
 
-1. finish constructing and closing the complete payload;
-2. call `_require_untraced_windows_decode()` before `memory_probe()` and before the client call;
+1. call `_require_untraced_windows_decode()` as the first executable line, before payload construction, native setup, sampling, or decode;
+2. construct and close the complete payload only after the guard passes;
 3. keep `memory_before_client` and `memory_peak` as absolute samples;
 4. invoke the actual signed client through `_measure_protocol_crossings`;
-5. require exact-one decoder and parser calls after successful return;
+5. require exact-one decoder and parser calls only after successful return;
 6. retain exact result/cardinality/read/closure assertions.
 
 Use the exact code and assertion messages from the interface section.
@@ -1586,17 +2239,17 @@ Use the exact code and assertion messages from the interface section.
 
 Use the exact parent ordering block. Verify by direct source inspection that `json.loads(result.stdout)` is followed immediately by the conditional Windows metric assertion, then only after that by parent-derived wall evidence, property publication, and budget evaluation.
 
-- [ ] **Step 6: Make the existing fallback explicitly non-Windows**
+- [ ] **Step 6: Prove actual externally traced child refusal without another identity**
 
-Apply the exact existing fallback edit. Run:
+Keep the child invocation inside the second ordinary identity exactly as shown. It sets `PYTHONTRACEMALLOC=1`, carries `--measure` in `sys.argv`, and on non-Windows hosts uses a `runpy` bootstrap only to select `sys.platform == "win32"` after portable imports. Run:
 
 ```bash
 uv run --no-sync python -m pytest \
-  tests/test_fleetsharing_transport_resources.py::test_memory_probe_falls_back_without_resource \
+  tests/test_fleetsharing_transport_resources.py::test_windows_memory_probe_fails_closed_and_restores_crossings \
   -q
 ```
 
-Expected: `1 passed`; tracing is stopped in `finally`.
+Expected: `1 passed`; the nested child exits nonzero at the pre-payload/pre-decode guard, stdout is exactly empty, stderr contains `requires tracemalloc to be disabled`, and the installed active fake remains active with zero `start()`/`stop()` calls. On hosted Windows the same identity uses the real direct `--measure` child path.
 
 - [ ] **Step 7: Run both new ordinary tests and verify GREEN**
 
@@ -1609,7 +2262,7 @@ uv run --no-sync python -m pytest \
   -q
 ```
 
-Expected: `2 passed`. The failure identity must cover, inside one ID: loader sentinel, distinct missing-`GetCurrentProcess`, distinct missing-`K32GetProcessMemoryInfo`, zero return with exact saved code, no fallback, no trace start/stop, active external tracer left active, tiny decoder/parser touch, exact original restoration, and original sentinel identity.
+Expected: `2 passed`. The failure identity must cover, inside one ID: loader sentinel, distinct missing-`GetCurrentProcess`, distinct missing-`K32GetProcessMemoryInfo`, explicit last-error/WinError seams in every native scenario, zero return with exact saved code, `_WinErrorSeam.calls == [(saved_error,)]`, no fallback, no trace start/stop, active external tracer left active, the real traced child refusal, tiny decoder/parser touch, exact original restoration, and original sentinel identity.
 
 - [ ] **Step 8: Run the full maximum subprocess with JUnit evidence**
 
@@ -1624,20 +2277,69 @@ uv run --no-sync python scripts/summarize_pytest_junit.py \
   /tmp/windows-memory-resource.xml /tmp/windows-memory-resource.json
 ```
 
-Expected on Linux: `1 passed, 4 deselected`; exact six resource properties; `resource.memory_metric=process_peak_rss_kib`; exact bytes `47022137`, rows `8192`, observations `155648`; positive memory peak; wall at or below `75`; one resource-evidence row. No summarizer edit is permitted.
+Directly assert the XML properties rather than relying only on summarized output:
+
+```bash
+python - <<'PY'
+import xml.etree.ElementTree as ET
+
+root = ET.parse("/tmp/windows-memory-resource.xml").getroot()
+cases = list(root.iter("testcase"))
+assert len(cases) == 1
+properties = {
+    prop.get("name"): prop.get("value")
+    for prop in cases[0].findall("./properties/property")
+    if prop.get("name", "").startswith("resource.")
+}
+assert set(properties) == {
+    "resource.subprocess_wall_seconds",
+    "resource.memory_metric",
+    "resource.memory_peak",
+    "resource.raw_bytes",
+    "resource.rows",
+    "resource.observations",
+}
+assert properties["resource.memory_metric"] == "process_peak_rss_kib"
+assert properties["resource.raw_bytes"] == "47022137"
+assert properties["resource.rows"] == "8192"
+assert properties["resource.observations"] == "155648"
+assert int(properties["resource.memory_peak"]) > 0
+assert float(properties["resource.subprocess_wall_seconds"]) <= 75
+PY
+```
+
+Expected on Linux: `1 passed, 4 deselected`; the direct assertions pass; one generic summarizer resource-evidence row is preserved without a summarizer edit.
 
 - [ ] **Step 9: Update only the current Transport resources paragraph**
 
-In `docs/ci-test-budget-redesign.md`, replace only the current statement that Windows `tracemalloc` peak is retained. The new paragraph must state:
+In `docs/ci-test-budget-redesign.md`, replace this exact current paragraph:
 
-- Windows resource execution observes native process-lifetime peak working set through `K32GetProcessMemoryInfo`;
-- the value is observability, not a pass/fail ceiling or decode delta;
-- externally active tracing fails before decode and is not stopped;
-- Linux/macOS keep existing RSS semantics;
-- 75 seconds remains the only case performance budget;
-- the historical 44.6-second reference row remains unchanged.
+```markdown
+The 47 MB gate owns successful decoding of the maximum supported response through
+the real reader and codec, including exact byte and row counts. It does not own a
+stable peak-allocation ceiling: Windows `tracemalloc` peak is retained as
+observability, not a pass/fail metric. Its initial Windows case budget is 75
+seconds, reviewed after the comparable-run sample; the complete product gate's
+600-second ceiling remains authoritative. A wall-time over the case budget fails
+with the recorded elapsed and peak values.
+```
 
-Do not edit the historical table row or any other section.
+with this exact paragraph:
+
+```markdown
+The 47 MB gate owns successful decoding of the maximum supported response through
+the real reader and codec, including exact byte and row counts. On Windows it
+reports `K32GetProcessMemoryInfo`'s native process-lifetime peak working set as
+`process_peak_working_set_bytes`; Linux and macOS retain their existing
+`ru_maxrss` metric semantics. An externally active Windows tracer fails the test
+before payload construction or decode and is never stopped. These values are
+observability, not a pass/fail memory ceiling, decode-only allocation peak, or
+before/after delta. The initial Windows case budget remains 75 seconds; the
+complete product gate's 600-second ceiling remains authoritative. A wall-time
+over the case budget fails with the recorded elapsed and peak values.
+```
+
+Do not edit the historical 44.6-second reference row or any other section.
 
 - [ ] **Step 10: Prove exact final inventory and scope**
 
@@ -1651,22 +2353,22 @@ Expected: target `5`, ordinary `4`, resource `1`, suite `16609`, exact suffix or
 
 - [ ] **Step 11: Run the complete mutation catalog**
 
-Compile Block C, then run every catalog entry independently:
+Recompile Block C and run the complete catalog in one aggregate invocation:
 
 ```bash
-for mutant in \
-  windows-to-resource windows-to-tracing current-working-set wrong-native-metric \
-  omit-cb wrong-api-size packed-layout reuse-structure omit-signature start-tracing \
-  ignore-active-trace collapse-missing-exports ignore-zero-return implicit-winerror \
-  omit-crossing-finally replace-sentinel raw-size row-count observation-count \
-  read-amount response-closure decoder-bypass decoder-duplicate parser-bypass \
-  parser-duplicate budget-zero parent-wrong-metric
-do
-  uv run --no-sync python /tmp/windows_memory_mutation.py "$mutant"
-done
+uv run --no-sync python /tmp/windows_memory_mutation.py \
+  windows-to-resource windows-to-tracing start-tracing stop-tracing \
+  current-working-set width-truncation signed-coercion wrong-native-metric \
+  omit-cb wrong-api-size packed-layout field-type field-order reuse-structure \
+  omit-signature replace-pseudo-handle close-pseudo-handle ignore-active-trace \
+  collapse-missing-exports ignore-zero-return implicit-winerror \
+  omit-crossing-finally equivalent-crossing-restoration replace-sentinel \
+  failure-success-counts raw-size row-count observation-data read-amount \
+  response-closure decoder-bypass decoder-duplicate parser-bypass \
+  parser-duplicate budget-zero child-wrong-metric
 ```
 
-Expected: every row reports `intended-red`; every target restores exact pre-probe bytes/hash/diff/status. The parent wrong-metric JUnit must contain zero `resource.*` properties. Do not add a `_validate_success_headers` mutant; unchanged focused client tests and scope audit own that boundary.
+Expected: every applicable row reports `intended-red`, the aggregate command exits `0`, and every target restores exact pre-probe bytes/hash/binary diff/status. `collapse-missing-exports` uses explicit last-error and `_WinErrorSeam` arguments and fails `assert caught_error is missing_error`, so it cannot fail through absent Linux `ctypes` members. `implicit-winerror` still raises the original sentinel but fails the exact `win_error.calls == [(saved_error,)]` assertion. `equivalent-crossing-restoration` fails exact object identity, and `failure-success-counts` fails because a failed operation may not return successful counts. `observation-data` changes generated names, pads only trailing JSON whitespace to preserve raw bytes, and therefore reaches the independent observation-cardinality assertion. `child-wrong-metric` changes child-reported platform/metric while leaving the parent untouched; its JUnit contains zero `resource.*` properties. Do not add a `_validate_success_headers` mutant; unchanged focused client tests and scope audit own that boundary.
 
 - [ ] **Step 12: Record Task 3 evidence and independently review**
 
@@ -1743,20 +2445,19 @@ Expected: endpoint `5/4/1/16609`; ordinary `4 passed, 1 deselected`; full target
 
 - [ ] **Step 3: Re-run the full maximum subprocess and inspect all six properties**
 
-Run the Task 3 resource command again with fresh `/tmp/windows-memory-resource-final.{xml,json}` paths. Parse the XML directly and assert the property-name set is exactly:
+Run the full subprocess again with fixed fresh paths:
 
-```python
-{
-    "resource.subprocess_wall_seconds",
-    "resource.memory_metric",
-    "resource.memory_peak",
-    "resource.raw_bytes",
-    "resource.rows",
-    "resource.observations",
-}
+```bash
+uv run --no-sync python -m pytest \
+  tests/test_fleetsharing_transport_resources.py \
+  -m resource -q -s --durations=0 \
+  --junitxml=/tmp/windows-memory-resource-final.xml
+uv run --no-sync python scripts/summarize_pytest_junit.py \
+  /tmp/windows-memory-resource-final.xml \
+  /tmp/windows-memory-resource-final.json
 ```
 
-Expected Linux metric remains `process_peak_rss_kib`; cardinalities and budget remain exact.
+Expected: `1 passed, 4 deselected`; Linux metric remains `process_peak_rss_kib`; exact six properties, cardinalities, positive peak, and 75-second budget are later re-read directly by Block B3 rather than inferred from console text.
 
 - [ ] **Step 4: Run the complete Fleet transport area**
 
@@ -1787,9 +2488,15 @@ uv run --no-sync python scripts/summarize_pytest_junit.py \
 
 Expected: exactly `16595 passed, 14 skipped` for `16609` outcomes; no Node, codec, or unexpected native-availability skip; timing JSON `case_count=16609`; target file `5` cases; one resource-evidence row with six properties; Linux metric unchanged.
 
-- [ ] **Step 6: Inspect and record the exact 14 local skips**
+- [ ] **Step 6: Run the exact local evidence audit and record skips**
 
-Normalize only pytest temporary-root fragments and compare with Task 1 Ubuntu skip tuples. Expected: exact tuple equality and no new skip. Record the complete list in the results ledger.
+Materialize and compile Block B3, then run:
+
+```bash
+uv run --no-sync python /tmp/windows_memory_local_audit.py
+```
+
+Expected: complete ordered inventory equals Block B's `complete-16609.txt`; target order equals `target-5.txt`; both new IDs are `passed`; full outcome is exactly `16,595 passed + 14 skipped`; normalized skip tuples equal Task 1's Ubuntu baseline byte-for-data and in order; direct resource XML has exactly six properties and Linux RSS; timing JSON has `case_count=16609` and one matching resource row; complete/target hashes are returned; changed paths equal the exact five-path set. Record the complete normalized skip list and audit JSON in the results ledger.
 
 - [ ] **Step 7: Run independent gates**
 
@@ -1897,6 +2604,7 @@ python - "$O" "$PR_NUMBER" <<'PY'
 from __future__ import annotations
 import json, sys
 from pathlib import Path
+
 out = Path(sys.argv[1])
 pr_number = int(sys.argv[2])
 run = json.loads((out / "run.json").read_text())
@@ -1920,14 +2628,21 @@ for role, name in roles.items():
     assert job["run_attempt"] == run["run_attempt"]
     assert job["conclusion"] == "success"
     selected[role] = job
-(out / "selection.json").write_text(json.dumps({
-    "run_id": run["id"],
-    "run_attempt": run["run_attempt"],
-    "run_head_sha": run["head_sha"],
-    "explicit_pr_number": pr_number,
-    "current_pr": pr,
-    "jobs": selected,
-}, sort_keys=True, indent=2) + "\n")
+(out / "selection.json").write_text(
+    json.dumps(
+        {
+            "run_id": run["id"],
+            "run_attempt": run["run_attempt"],
+            "run_head_sha": run["head_sha"],
+            "explicit_pr_number": pr_number,
+            "current_pr": pr,
+            "jobs": selected,
+        },
+        sort_keys=True,
+        indent=2,
+    )
+    + "\n"
+)
 for role, job in selected.items():
     (out / f"{role}-job-id").write_text(str(job["id"]))
 PY
@@ -1941,6 +2656,7 @@ python - "$O" <<'PY'
 from __future__ import annotations
 import json, re, sys
 from pathlib import Path
+
 out = Path(sys.argv[1])
 metadata = json.loads((out / "selection.json").read_text())
 run = json.loads((out / "run.json").read_text())
@@ -1951,10 +2667,15 @@ merge_pattern = re.compile(
 )
 full_pattern = re.compile(r"(?P<sha>[0-9a-f]{40})\s*$")
 
+
 def checkout(path):
     lines = path.read_text(errors="replace").splitlines()
     merges = [m for line in lines if (m := merge_pattern.search(line))]
-    commands = [i for i, line in enumerate(lines) if "[command]" in line and "log -1 --format=%H" in line]
+    commands = [
+        i
+        for i, line in enumerate(lines)
+        if "[command]" in line and "log -1 --format=%H" in line
+    ]
     assert len(merges) == len(commands) == 1, (path, merges, commands)
     full = full_pattern.search(lines[commands[0] + 1])
     assert full
@@ -1965,8 +2686,15 @@ def checkout(path):
         "merge_head": merges[0].group("head"),
         "merge_base": merges[0].group("base"),
     }
-rows = {role: checkout(out / f"logs/{role}.log") for role in ("checks", "ubuntu", "windows")}
-triples = {(row["synthetic_merge"], row["merge_head"], row["merge_base"]) for row in rows.values()}
+
+
+rows = {
+    role: checkout(out / f"logs/{role}.log") for role in ("checks", "ubuntu", "windows")
+}
+triples = {
+    (row["synthetic_merge"], row["merge_head"], row["merge_base"])
+    for row in rows.values()
+}
 assert len(triples) == 1
 synthetic, head, base = triples.pop()
 assert head == run["head_sha"] == metadata["run_head_sha"]
@@ -1981,15 +2709,19 @@ if run_prs:
         assert entry["head"]["sha"] == head
     if (entry.get("base") or {}).get("sha"):
         assert entry["base"]["sha"] == base
-metadata.update({
-    "synthetic_merge": synthetic,
-    "head": head,
-    "base": base,
-    "checkout": rows,
-    "run_pull_request_metadata": run_pr_metadata,
-    "run_pull_request_entry": run_prs[0] if run_prs else None,
-})
-(out / "selected.json").write_text(json.dumps(metadata, sort_keys=True, indent=2) + "\n")
+metadata.update(
+    {
+        "synthetic_merge": synthetic,
+        "head": head,
+        "base": base,
+        "checkout": rows,
+        "run_pull_request_metadata": run_pr_metadata,
+        "run_pull_request_entry": run_prs[0] if run_prs else None,
+    }
+)
+(out / "selected.json").write_text(
+    json.dumps(metadata, sort_keys=True, indent=2) + "\n"
+)
 PY
 
 SYNTHETIC=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["synthetic_merge"])' "$O/selected.json")
@@ -2013,23 +2745,38 @@ from __future__ import annotations
 import json, sys
 from datetime import datetime
 from pathlib import Path
+
 out = Path(sys.argv[1])
 metadata = json.loads((out / "selected.json").read_text())
 pages = json.loads((out / "artifact-pages.json").read_text())
 artifacts = [row for page in pages for row in page["artifacts"]]
+
+
 def stamp(value):
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 selected = {}
 for role, name in {
     "ubuntu": "pytest-evidence-ubuntu-latest",
     "windows": "pytest-evidence-windows-latest",
 }.items():
     job = metadata["jobs"][role]
-    rows = [artifact for artifact in artifacts if artifact["name"] == name and not artifact["expired"] and stamp(job["started_at"]) <= stamp(artifact["created_at"]) <= stamp(job["completed_at"])]
+    rows = [
+        artifact
+        for artifact in artifacts
+        if artifact["name"] == name
+        and not artifact["expired"]
+        and stamp(job["started_at"])
+        <= stamp(artifact["created_at"])
+        <= stamp(job["completed_at"])
+    ]
     assert len(rows) == 1, (role, rows)
     selected[role] = rows[0]
 metadata["artifacts"] = selected
-(out / "selected.json").write_text(json.dumps(metadata, sort_keys=True, indent=2) + "\n")
+(out / "selected.json").write_text(
+    json.dumps(metadata, sort_keys=True, indent=2) + "\n"
+)
 for role, artifact in selected.items():
     (out / f"{role}-artifact-id").write_text(str(artifact["id"]))
 PY
@@ -2060,12 +2807,14 @@ import os
 import re
 import subprocess
 import xml.etree.ElementTree as ET
+import zipfile
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
 W = Path("/mnt/c/dev/flygd-wingman/.worktrees/ci-windows-resource-memory-probe")
-O = Path(os.environ["HOSTED_ROOT"])
+OUTPUT = Path(os.environ["HOSTED_ROOT"])
+BASELINE = Path("/tmp/wingman-windows-memory-baseline")
 TARGET = "tests/test_fleetsharing_transport_resources.py"
 BASE_IDS = [
     TARGET + "::test_maximum_put_uses_actual_default_escaping_under_512k",
@@ -2106,7 +2855,7 @@ def normalized_skip(text):
 
 
 def parse(platform):
-    root = O / "artifacts" / platform
+    root = OUTPUT / "artifacts" / platform
     cases = list(ET.parse(root / "pytest-result.xml").getroot().iter("testcase"))
     ids = [identity(case) for case in cases]
     assert len(ids) == len(set(ids)) == 16609
@@ -2121,27 +2870,56 @@ def parse(platform):
         counts[file_name] += 1
         seconds[file_name] += duration
         skipped = case.find("skipped")
+        case_failures = case.findall("failure")
+        case_errors = case.findall("error")
         if skipped is not None:
-            skips.append((node, normalized_skip(skipped.get("message") or skipped.text or "")))
-        failures += len(case.findall("failure"))
-        errors += len(case.findall("error"))
+            skips.append(
+                (node, normalized_skip(skipped.get("message") or skipped.text or ""))
+            )
+        failures += len(case_failures)
+        errors += len(case_errors)
         if file_name == TARGET:
-            target.append({
-                "nodeid": node,
-                "seconds": duration,
-                "properties": {
-                    prop.get("name", ""): prop.get("value", "")
-                    for prop in case.findall("./properties/property")
-                    if prop.get("name", "").startswith("resource.")
-                },
-            })
+            target.append(
+                {
+                    "nodeid": node,
+                    "seconds": duration,
+                    "outcome": "skipped"
+                    if skipped is not None
+                    else "failed"
+                    if case_failures or case_errors
+                    else "passed",
+                    "properties": {
+                        prop.get("name", ""): prop.get("value", "")
+                        for prop in case.findall("./properties/property")
+                        if prop.get("name", "").startswith("resource.")
+                    },
+                }
+            )
     timing = json.loads((root / "pytest-timing.json").read_text())
     assert timing["case_count"] == len(ids)
     for file_name, row in timing["files"].items():
         assert row["cases"] == counts[file_name]
         assert abs(row["seconds"] - seconds[file_name]) < 1e-9
     assert failures == errors == 0
+    baseline_target = (
+        (BASELINE / "target-3.txt").read_text(encoding="utf-8").splitlines()
+    )
+    baseline_complete = (
+        (BASELINE / "complete-16607.txt").read_text(encoding="utf-8").splitlines()
+    )
+    anchor = baseline_complete.index(baseline_target[-1]) + 1
+    expected_complete = [
+        *baseline_complete[:anchor],
+        *SUFFIX,
+        *baseline_complete[anchor:],
+    ]
+    assert ids == expected_complete
     assert [row["nodeid"] for row in target] == EXPECTED_TARGET
+    assert all(row["outcome"] == "passed" for row in target)
+    assert all(
+        next(row for row in target if row["nodeid"] == node)["outcome"] == "passed"
+        for node in SUFFIX
+    )
     assert not any(row["nodeid"] in SUFFIX and row["properties"] for row in target)
     resource = next(row for row in target if row["nodeid"] == RESOURCE_ID)
     assert set(resource["properties"]) == {
@@ -2162,21 +2940,29 @@ def parse(platform):
         "windows": "process_peak_working_set_bytes",
     }[platform]
     assert resource["properties"]["resource.memory_metric"] == expected_metric
-    expected_skips = {"ubuntu": 14, "windows": 67}[platform]
-    assert len(skips) == expected_skips
+    expected_skips = json.loads(
+        (BASELINE / f"{platform}-skips.json").read_text(encoding="utf-8")
+    )
+    assert [list(row) for row in skips] == expected_skips
+    assert len(skips) == {"ubuntu": 14, "windows": 67}[platform]
     passed = len(ids) - len(skips)
     assert passed == {"ubuntu": 16595, "windows": 16542}[platform]
     for node, reason in skips:
         lowered = reason.casefold()
-        assert not any(fragment in lowered for fragment in (
-            "node is not installed",
-            "settings codec not built",
-            "codec is not available",
-            "k32getprocessmemoryinfo",
-            "resource unavailable",
-        )), (node, reason)
+        assert not any(
+            fragment in lowered
+            for fragment in (
+                "node is not installed",
+                "settings codec not built",
+                "codec is not available",
+                "k32getprocessmemoryinfo",
+                "resource unavailable",
+            )
+        ), (node, reason)
     return {
         "cases": len(ids),
+        "complete_ids": ids,
+        "complete_sha256": digest(("\n".join(ids) + "\n").encode()),
         "passed": passed,
         "skips": skips,
         "target": target,
@@ -2188,54 +2974,76 @@ def parse(platform):
 
 
 def changed(left, right):
-    return set(subprocess.check_output(
-        ["git", "-C", str(W), "diff", "--name-only", f"{left}..{right}"],
-        text=True,
-    ).splitlines())
+    return set(
+        subprocess.check_output(
+            ["git", "-C", str(W), "diff", "--name-only", f"{left}..{right}"],
+            text=True,
+        ).splitlines()
+    )
 
 
 def job_seconds(job):
-    start = datetime.fromisoformat(job["started_at"].replace("Z", "+00:00"))
-    end = datetime.fromisoformat(job["completed_at"].replace("Z", "+00:00"))
+    start = datetime.fromisoformat(job["started_at"])
+    end = datetime.fromisoformat(job["completed_at"])
     return (end - start).total_seconds()
 
 
 def step_seconds(job, name):
     row = next(step for step in job["steps"] if step["name"] == name)
-    start = datetime.fromisoformat(row["started_at"].replace("Z", "+00:00"))
-    end = datetime.fromisoformat(row["completed_at"].replace("Z", "+00:00"))
+    start = datetime.fromisoformat(row["started_at"])
+    end = datetime.fromisoformat(row["completed_at"])
     return (end - start).total_seconds()
 
 
-metadata = json.loads((O / "selected.json").read_text())
-run = json.loads((O / "run.json").read_text())
-pr = json.loads((O / "pr.json").read_text())
+metadata = json.loads((OUTPUT / "selected.json").read_text())
+run = json.loads((OUTPUT / "run.json").read_text())
+pr = json.loads((OUTPUT / "pr.json").read_text())
 assert metadata["run_id"] == run["id"]
 assert metadata["head"] == run["head_sha"] == pr["headRefOid"]
 assert metadata["base"] == pr["baseRefOid"]
 parents = subprocess.check_output(
-    ["git", "-C", str(W), "rev-list", "--parents", "-n", "1", metadata["synthetic_merge"]],
+    [
+        "git",
+        "-C",
+        str(W),
+        "rev-list",
+        "--parents",
+        "-n",
+        "1",
+        metadata["synthetic_merge"],
+    ],
     text=True,
 ).split()
 assert parents == [metadata["synthetic_merge"], metadata["base"], metadata["head"]]
 assert changed(metadata["base"], metadata["head"]) == ALLOWED
 assert changed(metadata["base"], metadata["synthetic_merge"]) == ALLOWED
 platforms = {platform: parse(platform) for platform in ("ubuntu", "windows")}
+assert platforms["ubuntu"]["complete_ids"] == platforms["windows"]["complete_ids"]
+assert platforms["ubuntu"]["complete_sha256"] == platforms["windows"]["complete_sha256"]
 assert [row["nodeid"] for row in platforms["ubuntu"]["target"]] == [
     row["nodeid"] for row in platforms["windows"]["target"]
 ]
 for platform in ("ubuntu", "windows"):
-    archive = O / "artifacts" / f"{platform}.zip"
+    archive = OUTPUT / "artifacts" / f"{platform}.zip"
+    extracted = OUTPUT / "artifacts" / platform
     expected_digest = metadata["artifacts"][platform]["digest"]
     assert expected_digest == "sha256:" + digest(archive.read_bytes())
+    with zipfile.ZipFile(archive) as package:
+        assert set(package.namelist()) == {"pytest-result.xml", "pytest-timing.json"}
+        for name in package.namelist():
+            assert package.read(name) == (extracted / name).read_bytes()
+    (OUTPUT / f"{platform}-complete-16609.txt").write_text(
+        "\n".join(platforms[platform]["complete_ids"]) + "\n", encoding="utf-8"
+    )
 logs = {
-    role: (O / "logs" / f"{role}.log").read_text(errors="replace")
+    role: (OUTPUT / "logs" / f"{role}.log").read_text(errors="replace")
     for role in ("checks", "ubuntu", "windows")
 }
 assert "platform win32 -- Python" in logs["windows"]
 assert "process_peak_working_set_bytes" in logs["windows"]
 assert "traced_peak_bytes" not in "\n".join(
-    line for line in logs["windows"].splitlines()
+    line
+    for line in logs["windows"].splitlines()
     if "test_maximum_legal_response_actual_reader_and_codec_in_subprocess" in line
     or "resource.memory_metric" in line
 )
@@ -2250,13 +3058,17 @@ report = {
         role: {
             "job_id": job["id"],
             "job_seconds": job_seconds(job),
-            "test_step_seconds": step_seconds(job, "Test") if role != "checks" else None,
+            "test_step_seconds": step_seconds(job, "Test")
+            if role != "checks"
+            else None,
         }
         for role, job in metadata["jobs"].items()
     },
     "claim": "structural instrumentation change only; no speedup attribution",
 }
-(O / "hosted-audit.json").write_text(json.dumps(report, sort_keys=True, indent=2) + "\n")
+(OUTPUT / "hosted-audit.json").write_text(
+    json.dumps(report, sort_keys=True, indent=2) + "\n"
+)
 print(json.dumps(report, sort_keys=True))
 PY
 python -m py_compile /tmp/windows_memory_hosted_audit.py
@@ -2353,9 +3165,9 @@ Expected acceptance:
 - empty `run.pull_requests` is recorded as `absent`, while explicit PR/run and current PR head/base remain authoritative;
 - synthetic parents are exact base/head;
 - exactly five synthetic diff paths, matching the allowlist;
-- Ubuntu and Windows each contain exactly `16,609` unique identities, exact target order, exact two-ID suffix, zero removals;
-- Ubuntu `16,595 passed + 14 skipped`; Windows `16,542 passed + 67 skipped`;
-- target module `5`, ordinary `4`, resource `1`; both new native tests pass on hosted Windows;
+- Ubuntu and Windows each contain the exact complete ordered inventory obtained by inserting the two suffix IDs after the baseline target anchor; all 16,607 baseline IDs retain relative order, exact additions/removals are `+2/0`, both platform inventories and SHA-256 hashes agree, and each complete inventory is written to the hosted evidence root;
+- Ubuntu `16,595 passed + 14 skipped` with normalized skip tuples exactly equal to the Task 1 Ubuntu baseline; Windows `16,542 passed + 67 skipped` with tuples exactly equal to its Task 1 Windows baseline;
+- target module order is exact baseline three plus exact suffix two, all five outcomes are `passed`, ordinary/resource counts are `4/1`, and both new native IDs are explicitly passed rather than inferred from absence of failure;
 - Windows resource metric `process_peak_working_set_bytes`; Ubuntu `process_peak_rss_kib`;
 - Windows log has no resource `traced_peak_bytes`, no trace-active failure, and no native availability skip;
 - six properties and maximum bytes/rows/observations/read/closure/exact-one crossings remain accepted;
@@ -2426,9 +3238,12 @@ Before committing this plan, verify:
 - final local outcome is `16,595 passed + 14 skipped`; hosted Windows projection is `16,542 passed + 67 skipped`;
 - structure fields/types/order, offset formula, size formula, alignment, signatures, handle, `cb`, fresh samples, no pack, no `ctypes.wintypes`, and no close are explicit;
 - value evidence distinguishes peak, current, pagefile, signed/narrower truncation, and native widths;
-- loader, each named export, zero return, saved error, no fallback, and no trace start/stop are explicit;
-- active trace, exact crossing restoration, original sentinel, and no failed-operation success-count claim are explicit;
-- maximum rows/observations/raw/read/closure/decoder/parser/budget/wrong-metric mutations are exact and restoration-safe;
+- loader, each named export, zero return, explicit last-error/WinError seams, exact saved-error call tuple, no fallback, and no trace start/stop are explicit;
+- the actual `sys.modules["tracemalloc"]` fake spans setup/sampling/cleanup, real-import start/stop mutants are killed, and an actual `PYTHONTRACEMALLOC=1` child fails before payload/decode with empty stdout;
+- active trace, exact/equivalent-object crossing restoration, original sentinel, and no failed-operation success-count claim are explicit;
+- maximum rows/generated observations/raw/read/closure/decoder/parser/budget/child-wrong-metric mutations are exact and restoration-safe;
+- interim, final, local, and hosted audits compare complete ordered inventories, exact additions/removals, target outcomes, baseline-relative order, complete hashes, and platform-local normalized skip tuples;
+- the mutation runner aggregates every command/regex failure, returns nonzero on any failure, and verifies exact bytes/hash/binary-diff/status restoration in `finally`;
 - parent ordering and zero-property rejection are explicit;
 - all scripts are self-contained and have compile or shell-syntax checks;
 - no changes to timing tests, summarizer, workflow, product, dependencies, configuration, markers, selectors, budgets, shards, or historical evidence are planned;
