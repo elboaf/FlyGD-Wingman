@@ -1342,6 +1342,14 @@ TEST = "tests/test_fleetsharing_source_admission.py"
 WORKER = "wingman/fleetsharing/worker.py"
 TIMING = "wingman/fleetsharing/timing.py"
 BOOTSTRAP_DIAGNOSTIC = r"publication bootstrap readiness missed"
+BOOTSTRAP_POSTCONDITIONS = (
+    r"bootstrap state is not durable",
+    r"device bootstrap is incomplete",
+    r"bootstrap accepted a publication",
+    r"bootstrap installed publication state",
+    r"bootstrap allocated publication evidence",
+    r"bootstrap allocated a publication stage floor",
+)
 COMPETING_EXPIRY = (
     r"MAX_SNAPSHOT_AGE_S",
     r"work\.payload\.session_deadline >",
@@ -1350,7 +1358,9 @@ COMPETING_EXPIRY = (
     r"expires_at_mono\) >",
 )
 BARRIER_OR_TIMEOUT = (
-    r"(?i)\b(?:timed out|timeout|not released|never reached|not reached)\b",
+    r"(?i)\b(?:timed out|not released|never reached|not reached)\b",
+    r"(?im)^E\s+.*\btimeout\b",
+    r"(?i)(?:AssertionError|Failed):[^\n]*\btimeout\b",
     r"assert not thread\.is_alive\(\)",
     r"assert [A-Za-z0-9_.]+\.wait\(",
 )
@@ -1362,6 +1372,7 @@ SETUP_OR_COLLECTION = (
 FORBIDDEN_BY_CATEGORY = {
     "production": (
         BOOTSTRAP_DIAGNOSTIC,
+        *BOOTSTRAP_POSTCONDITIONS,
         *COMPETING_EXPIRY,
         *BARRIER_OR_TIMEOUT,
         *SETUP_OR_COLLECTION,
@@ -1486,11 +1497,14 @@ add(
         (
             WORKER,
             """                self._persist(candidate, fence, work=work)\n                args = {\n""",
-            """                self._state = candidate\n                args = {\n""",
+            """                if operation == "publish_snapshot":\n                    self._state = candidate\n                else:\n                    self._persist(candidate, fence, work=work)\n                args = {\n""",
         )
     ],
-    [TEST + "::test_original_source_reaches_real_signed_combat_put[0-0]"],
-    r"x-fleet-revision|last_revision",
+    [TEST + "::test_new_mailbox_does_not_replace_selected_current_ticket"],
+    (
+        r"assert s\.load\(self\.path\)\.last_revision == "
+        r'int\(headers\["x-fleet-revision"\]\)'
+    ),
 )
 add(
     "anchor-deadline",
@@ -2024,7 +2038,8 @@ Expected:
 
 - the summary is exactly `41` recipes classified as production `18`, readiness-fault `5`, bound `4`, and equivalent `14`;
 - every production/readiness-fault/bound recipe reports `intended-red`, and every selected JUnit testcase independently matches the recipe's intended boundary regex;
-- only readiness-fault/bound recipes may contain the exact bounded bootstrap diagnostic; any production bootstrap miss is rejected as masking;
+- only readiness-fault/bound recipes may contain the exact bounded bootstrap diagnostic; any production bootstrap readiness diagnostic or common postcondition failure is rejected as masking;
+- `save-before-transport` changes only the `publish_snapshot` reservation, retains `_persist` for every other signed operation, and fails at `PublicationClient.transport`'s fresh-disk `last_revision` versus `x-fleet-revision` assertion;
 - every selected failure lacks its category's competing-expiry, barrier/thread, timeout, setup, and collection signatures;
 - the timing-only fence fault names exactly `fence_differences=('timing',)`, the broad fence fault names all seven fields in order, and deleting the timing comparison is killed by `timing-only stale fence was accepted`;
 - both retry rows fail for sample, row, and isolated effect-pin drops at their exact identity assertion;
@@ -2931,7 +2946,8 @@ Run the exact `--all` aggregate command from Block D. Expected:
 - final source admission, original completion, post-save 401, all three rights, proof deadline, save-before-transport, anchor/sample/session/row/effect deadlines, uncertainty, retained context, and sample/row/effect retry pins all report `intended-red`;
 - both retry rows fail specifically for the isolated effect drop;
 - timing-only and broad fence faults remain separate, and deleting the timing comparison is killed at its exact sentinel;
-- every selected JUnit testcase independently matches the intended boundary and lacks its category's forbidden bootstrap/competing-expiry/barrier/timeout/setup/collection signatures;
+- every selected JUnit testcase independently matches the intended boundary and lacks its category's forbidden bootstrap readiness/postcondition, competing-expiry, barrier/timeout, setup, and collection signatures;
+- the save-before-transport row fails specifically at the fresh durable revision versus outgoing `x-fleet-revision` assertion, not at fixture bootstrap;
 - valid-flow guard deletions remain separately classified;
 - every edit restores exact bytes/hash/diff/status.
 

@@ -901,15 +901,29 @@ barrier/thread, timeout, setup, collection, or wrong-ID failure:
   whose measured first-ready turns remain `5/6/9/10`.
 
 All fourteen valid-flow guard/postcondition deletions reported
-`reviewed-valid-flow-equivalent`; none is classified as a kill. Task 3 then ran
-the exact Block D aggregate in insertion order: all 18 production mutations,
-all five readiness faults, and all four bounds reported `intended-red`; the 14
-equivalent deletions retained their non-killing classification. Every selected
-JUnit testcase independently matched its intended regex and lacked its
-category's forbidden bootstrap masking, competing-expiry, barrier/thread,
-timeout, setup, and collection signatures. Both retry rows failed at the exact
-sample, row, and isolated effect-pin identity assertions. No masked or timeout
-result was accepted.
+`reviewed-valid-flow-equivalent`; none is classified as a kill. Independent
+review then found that the original save-before-transport recipe skipped
+persistence for every signed operation and was therefore masked by the common
+`bootstrap state is not durable` postcondition. That earlier row is not accepted
+evidence.
+
+The corrected recipe skips persistence only for `publish_snapshot`; every other
+signed operation retains `_persist`. Its direct permanent identity reached
+`PublicationClient.transport` line 71 and compared a fresh disk revision `10`
+with outgoing `x-fleet-revision` `11`. The runner now forbids every common
+bootstrap readiness/postcondition signature for production recipes. A negative
+probe using the former broad mutation was rejected for
+`bootstrap state is not durable` and restored exactly.
+
+The corrected exact Block D aggregate ran in insertion order: all 18 production
+mutations, all five readiness faults, and all four bounds reported
+`intended-red`; the 14 equivalent deletions retained their non-killing
+classification. Its 41 recipes produced 45 selected per-ID JUnit cases. Every
+selected testcase independently matched its intended regex and lacked its
+category's forbidden bootstrap readiness/postcondition, competing-expiry,
+barrier/thread, timeout, setup, and collection signatures. Both retry rows failed
+at the exact sample, row, and isolated effect-pin identity assertions. No masked
+or timeout result was accepted.
 
 The table below records each recipe's exact changed expression, deleted row, or
 injected block. Every `exact` restoration result means target bytes and SHA-256,
@@ -933,7 +947,7 @@ and
 | `held-session_approved_capabilities` | production | delete exact `state.session_approved_capabilities,` row from the three-rights loop | `tests/test_fleetsharing_source_admission.py::test_final_held_disclosure_and_applicable_withdrawal_rights[session_approved_capabilities-combat]` | `DID NOT RAISE` | `intended-red` | `W` | exact |
 | `held-acknowledged_capabilities` | production | delete exact `state.acknowledged_capabilities,` row from the three-rights loop | `tests/test_fleetsharing_source_admission.py::test_final_held_disclosure_and_applicable_withdrawal_rights[acknowledged_capabilities-combat]` | `DID NOT RAISE` | `intended-red` | `W` | exact |
 | `proof-deadline` | production | `or any(now >= deadline for deadline in selected.member_deadlines)` → `or False` | `tests/test_fleetsharing_source_admission.py::test_cached_permission_deadline_expires_after_signing_without_utc_renewal`<br>`tests/test_fleetsharing_source_admission.py::test_independent_deadlines_are_checked_after_real_leaf_wait[proof-False]` | `DID NOT RAISE` / `assert client.puts == []` / `isinstance(errors[0], _Obsolete)` | `intended-red` | `W` | exact |
-| `save-before-transport` | production | `self._persist(candidate, fence, work=work)` → `self._state = candidate` | `tests/test_fleetsharing_source_admission.py::test_original_source_reaches_real_signed_combat_put[0-0]` | `x-fleet-revision` / `last_revision` | `intended-red` | `W` | exact |
+| `save-before-transport` | production | publication reservation only: `self._persist(candidate, fence, work=work)` → `if operation == "publish_snapshot": self._state = candidate; else: self._persist(candidate, fence, work=work)` | `tests/test_fleetsharing_source_admission.py::test_new_mailbox_does_not_replace_selected_current_ticket` | line 71: `assert s.load(self.path).last_revision == int(headers["x-fleet-revision"])` (`10 != 11`) | `intended-red` | `W` | exact |
 | `anchor-deadline` | production | `or not 0 <= 1000 * (now - anchor.received_at) <= LIMITS["anchor_lifetime_ms"]` → `or 1000 * (now - anchor.received_at) < 0` | `tests/test_fleetsharing_source_admission.py::test_independent_deadlines_are_checked_after_real_leaf_wait[anchor_over-False]` | `isinstance(errors[0], _Obsolete)` / `assert client.puts == []` | `intended-red` | `G` | exact |
 | `sample-deadline` | production | `not 0 <= 1000 * (now - m) < LIMITS["input_age_ms"]` → `1000 * (now - m) < 0` | `tests/test_fleetsharing_source_admission.py::test_leaf_wait_crossing_original_sample_expiry_sends_nothing` | `isinstance(errors[0], _Obsolete)` / `assert client.puts == []` | `intended-red` | `G` | exact |
 | `row-deadline` | production | `pin.evidence.horizon <= now` → `False` in the exact pin guard | `tests/test_fleetsharing_source_admission.py::test_independent_deadlines_are_checked_after_real_leaf_wait[row-False]` | `isinstance(errors[0], _Obsolete)` / `assert client.puts == []` | `intended-red` | `G` | exact |
@@ -1050,11 +1064,13 @@ is claimed.
   masked/timeout rejection, all seven fence fields, watch identities, common
   postconditions, six original-phase IDs, unchanged callers, restoration, Ruff,
   diff, staged scope, and status.
-- The explicit no-subagent instruction prevents the plan's independent review.
-  Deterministic per-ID probes and self-review provide no independent-agent
-  conclusion; that remains a process concern rather than an observed code or
-  evidence defect. Complete executable-suite and hosted candidate evidence
-  remain Task 4/5 work. Timings here are observations only.
+- Independent Task 3 review found one P2 evidence defect: the former broad
+  save-before-transport mutation failed bootstrap durability rather than the
+  transport boundary. The correction above isolates publication reservation,
+  requires the line-71 disk/header assertion, rejects every production bootstrap
+  readiness/postcondition signature, and reruns all 41 recipes plus affected
+  permanent/count/order/Ruff checks. Complete executable-suite and hosted
+  candidate evidence remain Task 4/5 work. Timings here are observations only.
 
 ## Appendix A — exact ordered source-admission identities
 
