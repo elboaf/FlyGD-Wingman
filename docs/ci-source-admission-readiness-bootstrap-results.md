@@ -810,49 +810,134 @@ Task 1 does not claim those candidate values as executed evidence.
 
 ## Implementation and TDD evidence
 
-Task 1 is documentation-only baseline work. No readiness helper, fixture
-interface, original-phase call, deadline precondition, or retry assertion has
-been implemented yet, and no RED/GREEN implementation result is claimed. The
-exact 39 family signatures/decorators and 120 identities frozen here are the
-comparison authority for later TDD.
+Task 2 added the bounded semantic-readiness bootstrap only; the retry-effect
+strengthening remains unmodified for Task 3. A disposable archived `f6e8ecd5`
+assembly first received every Block B snippet, including the later retry block,
+and passed `py_compile`, Ruff check/format, and all 120 source-admission cases
+(`120 passed in 5.61s`). No file or cache from that assembly was copied into the
+worktree.
+
+The literal RED changed only the fixture signature/delegation and four
+original-phase call expressions. The prescribed five identities all failed at
+`NameError: _drive_publication_bootstrap is not defined`; their collection IDs
+and test signatures were unchanged. After adding the helper, imports, and common
+postconditions, the same command passed all five (`5 passed in 2.90s`). The
+six-case original-phase/proof command then passed (`6 passed in 2.93s`).
+
+`publication_rig(tmp_path, *, configure=None, original_phase=False, **rights)`
+keeps `original_phase` keyword-only, rejects values whose exact type is not
+`bool`, and delegates through `_drive_publication_bootstrap`. Ordinary bootstrap
+runs one real `drive(..., 1)` turn at a time and fails after twelve; preserved
+original-phase cases run exactly twelve turns. Readiness requires catalogue,
+eligibility, anchor, proof, the exact eligibility response object, and equality
+of all seven proof/current fence fields: lifecycle, identity, session,
+participation, source, automatic, and timing. A requested source watch also
+requires the worker/status source object identity and worker/status automatic
+object identity. The bounded diagnostic includes every check, both fences,
+ordered fence differences, status, and the last 32 operation names.
+
+Every successful fixture construction performs these common postconditions:
+
+- a fresh `s.load(path)` equals the installed worker state;
+- device bootstrap is complete;
+- no PUT or `_last_published` state exists;
+- timing-publisher associations are empty; and
+- no publication stage floor exists.
+
+Exactly these six identities preserve the original twelve-turn phase:
+
+```text
+tests/test_fleetsharing_source_admission.py::test_original_source_reaches_real_signed_combat_put[0-0]
+tests/test_fleetsharing_source_admission.py::test_original_source_reaches_real_signed_combat_put[None-0]
+tests/test_fleetsharing_source_admission.py::test_original_source_reaches_real_signed_combat_put[7-None]
+tests/test_fleetsharing_source_admission.py::test_new_mailbox_does_not_replace_selected_current_ticket
+tests/test_fleetsharing_source_admission.py::test_cached_permission_deadline_expires_after_signing_without_utc_renewal
+tests/test_fleetsharing_source_admission.py::test_independent_deadlines_are_checked_after_real_leaf_wait[proof-False]
+```
+
+The first three still assert the complete original body with
+`sampled_at_ms == 1788782405800`; the mailbox case independently asserts that
+same timestamp and original outgoing value. Before signing advances monotonic
+time, the cached-permission case proves the sample, session payload, current
+session cache, anchor, every row/effect, and member deadline isolate the proof
+boundary at exact `Fraction(1008)`. The held-leaf proof case proves the same
+competing authorities both after selection and under the source lock immediately
+before advancing time. Both permission refusals still raise `_Obsolete` and send
+no PUT.
 
 ## Guard deletions, fault probes, and production mutations
 
-No guard deletion, readiness fault, one-turn-short bound, or production mutation
-was run in Task 1. Those qualification recipes belong to Tasks 2 and 3. No file
-under `wingman/` was modified, even temporarily, by baseline collection or
-instrumentation.
+All five readiness-fault probes and all four one-turn-short bounds reported
+`intended-red`. Per-test JUnit text, rather than aggregate stdout, matched each
+intended boundary and contained no category-forbidden competing-expiry,
+barrier/thread, timeout, setup, collection, or wrong-ID failure:
+
+- exact-object substitution reached the bounded diagnostic with
+  `exact_response=False`;
+- the timing-only stale proof reported exactly
+  `fence_differences=('timing',)`;
+- the broad stale proof reported exactly lifecycle, identity, session,
+  participation, source, automatic, and timing in that order;
+- deleting only the timing comparison failed at
+  `timing-only stale fence was accepted`;
+- a durable revision mismatch failed at `bootstrap state is not durable`, after
+  which exact file bytes were restored; and
+- bounds `4/5/8/9` failed their ordinary/ACK/watch/near-expiry representatives,
+  whose measured first-ready turns remain `5/6/9/10`.
+
+All fourteen valid-flow guard/postcondition deletions reported
+`reviewed-valid-flow-equivalent`; none is classified as a kill. Task 2 did not
+run or claim the 18 production mutations, and no file under `wingman/` was
+modified even temporarily by its selected probes.
+
+## Structural instrumentation
+
+Restoration-safe candidate instrumentation ran all 120 cases and observed exact
+category arithmetic `105 + 4 + 9 + 1 = 119` rigs. The first-ready triples stayed
+ordinary `5/7/6`, ACK `6/9/8`, source watch `9/12/11`, and near-expiry session
+`10/12/11` for turns/real saves/delegated worker saves. The exact baseline to
+candidate transition is:
+
+| Measure | Baseline | Task 2 candidate |
+|---|---:|---:|
+| Bootstrap turns | `1,428` | `682` |
+| Bootstrap real saves, including seed | `1,469` | `921` |
+| Bootstrap worker save delegations | `1,350` | `802` |
+| Whole-file real saves | `1,928` | `1,409` |
+| Fresh durable equality loads | `0` | `119` |
+
+Instrumentation identified exactly the six original-phase IDs above and measured
+each at twelve turns. Its candidate source SHA-256 was
+`3ada7319bae242a8d17d511dd13f437853357717f7e3cd0e6dad1b989f83cdf1`.
 
 ## Identity and order verification
 
-Block A proved source collection, Ubuntu JUnit, and Windows JUnit are all exactly
-ordered-equal for the 120 source-admission identities and complete 16,609-outcome
-inventory, with the hashes in the first section. It also proved both protected
-caller byte hashes and all 39 AST family shapes.
+The focused candidate module run produced `120 passed in 7.63s` and JUnit at
+`/tmp/source-readiness-task2.xml`. Block E then proved source `120 / 120` and
+complete `16,609 / 16,609` collection remain ordered-equal to the frozen
+baseline, all 39 AST test shapes remain exact, and both protected callers retain
+the baseline byte hashes. The three-file endpoint remains exactly 167 unique,
+non-skipped identities. All four one-shot order runs passed without retries:
 
-The plan-pinned future three-file endpoint is 167 identities. Its expected
-one-shot ordered hashes are:
-
-| Order | Pinned SHA-256 | Task 1 execution status |
+| Order | Observed SHA-256 | Task 2 result |
 |---|---|---|
-| Normal | `7b9e3644793a89952f132df22b1131c699530c41357b0f92fe4f80873faae89d` | Not run; Block E belongs to Task 2 |
-| Reverse file | `8890f6fe56c31201dfddc19054f51de8e8beb6be06ae94d63d98945e148c3a9b` | Not run; Block E belongs to Task 2 |
-| Reverse node | `8acc488cd820e8f289dfaf003c2900fa5f4b63f0d52eb9653af8067d4978c809` | Not run; Block E belongs to Task 2 |
-| Seed-`20260925` shuffle | `2c8be0cd05e8cfb3e1ce5fa4f650cc7049dabf1069d2a95af861317911fd0a0a` | Not run; Block E belongs to Task 2 |
+| Normal | `7b9e3644793a89952f132df22b1131c699530c41357b0f92fe4f80873faae89d` | `167 passed` |
+| Reverse file | `8890f6fe56c31201dfddc19054f51de8e8beb6be06ae94d63d98945e148c3a9b` | `167 passed` |
+| Reverse node | `8acc488cd820e8f289dfaf003c2900fa5f4b63f0d52eb9653af8067d4978c809` | `167 passed` |
+| Seed-`20260925` shuffle | `2c8be0cd05e8cfb3e1ce5fa4f650cc7049dabf1069d2a95af861317911fd0a0a` | `167 passed` |
 
 ## Complete local verification
 
-Task 1 did not run a new complete local suite and makes no such claim. It ran the
-exact Block A source/full collection against an archived
-`f6e8ecd5b09889e79aa169ce103b2eb9681cec9f` tree and audited both exact hosted
-complete-suite artifacts. It then ran the entire current 120-case source module
-through restoration-safe Block C instrumentation; all 120 cases passed as a
-precondition of the exact structural report. Full local Node, codec, Cargo, JS,
-Ruff, and 16,609-outcome verification remains Task 4 work.
+Task 2 verified the exact source module and three-file endpoint rather than the
+complete executable suite. The complete 16,609 collection was checked, but no
+new 16,609-case execution, Node/codec/Cargo gate, or hosted candidate comparison
+is claimed; those remain Task 4 work. Final Task 2 verification also runs focused
+Ruff check/format, `git diff --check`, protected-caller diff, staged-path, and
+status checks.
 
 ## Hosted comparison
 
-PR #289 run `36147950569` attempt `2` is the frozen hosted baseline, not a
+PR #289 run `36147950569` attempt `2` remains the frozen hosted baseline, not a
 candidate comparison. No branch was pushed, no pull request was changed, no
 workflow was dispatched or rerun, and no hosted mutation was made. A future
 candidate comparison requires separate authorization and exact reviewed-head
@@ -862,32 +947,26 @@ is claimed.
 
 ## Scope, restoration, reviews, and concerns
 
-- Task 1's repository change is only this results ledger. The approved plan and
-  spec were already present in branch history; tests, production, workflows,
-  dependencies, configuration, markers, selectors, budgets, shards, and
-  packaging were unchanged.
-- Baseline instrumentation started and ended with source SHA-256
-  `24b10ccdb5a40fe89872df088e9e2cffaa8b4bfe257d5851236ec138ecaf4dca`.
-  Its restoration runner asserted exact source bytes/hash, full
-  `git diff --binary HEAD -- .`, and NUL-delimited porcelain-v2 status equality.
-- The immutable `/tmp/wingman-source-readiness-baseline` ledgers contain the
-  source/full identity lists, family shapes, normalized platform skips, and
-  summary. The instrumentation report is
-  `/tmp/source-readiness-baseline-instrument-summary.json`.
-- A deterministic read-only evidence audit and a separate manual self-review
-  checked rerun provenance, empty PR metadata handling, logs-primary checkout
-  identity, ordered hashes, 39 families, 119 rigs, category arithmetic, skip
-  normalization, ZIP/API digests, member/extraction byte equality, restoration,
-  scope, and no-speedup claim discipline.
-- The retained evidence snapshot does not contain the `hosted-audit.json` path
-  named in the Task 1 read list. It does contain `selected.json`, both attempt
-  records, the PR record, all three current logs, exact ZIPs, and exact
-  extractions; exact Block A successfully reconstructed and asserted the audit.
-  No substitute file was invented or added to the persistent evidence.
-- The instruction prohibiting subagents prevented an agent-independent reviewer
-  invocation. The deterministic audit and self-review found no evidence
-  discrepancy; an independent reviewer remains a process concern rather than a
-  data discrepancy.
+- Task 2 changes only `tests/test_fleetsharing_source_admission.py` and this
+  results ledger. Production, workflows, dependencies, configuration, markers,
+  selectors, budgets, shards, packaging, and protected callers are unchanged.
+- The retry test remains byte-for-byte at its Task 1 implementation; Task 3 owns
+  the effect/key/pin strengthening.
+- Each of the 23 selected mutation runs restored exact bytes and SHA-256, the
+  complete binary diff, and NUL-delimited porcelain-v2 status. Candidate
+  instrumentation separately restored exact source bytes/hash, diff, and status.
+- The immutable `/tmp/wingman-source-readiness-baseline` ledgers remain the
+  source/full identity and AST-shape authority. Task 2 evidence is retained in
+  `/tmp/source-readiness-candidate-instrument-summary.json`,
+  `/tmp/source-readiness-task2.xml`, the four order JUnits, and
+  `/tmp/wingman-source-readiness-mutants/`.
+- Self-review checks the complete seven-field fence, watch authority identities,
+  all common postconditions, exact six original-phase IDs/timestamps, absence of
+  helper `_work()`/`_publication()` calls, unchanged callers, restoration, Ruff,
+  diff, staged scope, and status.
+- The explicit no-subagent instruction prevents the plan's independent review.
+  Deterministic probes and self-review provide no independent-agent conclusion;
+  that remains a process concern rather than an observed code or evidence defect.
 
 ## Appendix A — exact ordered source-admission identities
 

@@ -6,6 +6,7 @@ import time
 import urllib.request
 from dataclasses import asdict, replace
 from datetime import timedelta
+from fractions import Fraction
 from itertools import count
 from math import inf, nextafter
 
@@ -23,11 +24,12 @@ from tests.test_fleetsharing_worker import (
     _worker,
     drive,
 )
+from wingman.combatprofile import LIMITS
 from wingman.fleetsharing import crypto
 from wingman.fleetsharing import protocol as p
 from wingman.fleetsharing import state as s
 from wingman.fleetsharing.client import FleetRelayClient, FleetRelayError
-from wingman.fleetsharing.worker import _Obsolete
+from wingman.fleetsharing.worker import MAX_SNAPSHOT_AGE_S, _Obsolete
 from wingman.telemetry.model import (
     CombatActivity,
     EffectObservation,
@@ -115,7 +117,135 @@ class PublicationClient(FakeRelayClient):
         )
 
 
-def publication_rig(tmp_path, *, configure=None, **rights):
+def _drive_publication_bootstrap(
+    worker,
+    client,
+    mono,
+    path,
+    *,
+    original_phase,
+):
+    fence_fields = (
+        "lifecycle",
+        "identity",
+        "session",
+        "participation",
+        "source",
+        "automatic",
+        "timing",
+    )
+    watch_requested = worker._watch
+
+    def observe():
+        status = worker.status()
+        proof = worker._eligibility_proof
+        current_fence = worker._fence()
+        proof_fence = proof.fence if proof is not None else None
+        fence_differences = tuple(
+            name
+            for name in fence_fields
+            if proof_fence is None
+            or getattr(proof_fence, name) != getattr(current_fence, name)
+        )
+        checks = {
+            "catalogue": worker._catalogue is not None,
+            "eligibility": worker._eligibility is not None,
+            "anchor": worker._timing_context._state.anchor is not None,
+            "proof": proof is not None,
+            "exact_response": proof is not None
+            and worker._eligibility is not None
+            and proof.response is worker._eligibility,
+            "exact_fence": proof_fence is not None and not fence_differences,
+            "source_observation": worker._sources is not None,
+            "status_source": status.sources is not None,
+            "source_identity": worker._sources is not None
+            and status.sources is worker._sources,
+            "automatic_observation": worker._automatic_observation is not None,
+            "status_automatic": status.automatic_status is not None,
+            "automatic_identity": worker._automatic_observation is not None
+            and status.automatic_status is worker._automatic_observation,
+        }
+        ready = all(
+            checks[name]
+            for name in (
+                "catalogue",
+                "eligibility",
+                "anchor",
+                "proof",
+                "exact_response",
+                "exact_fence",
+            )
+        ) and (
+            not watch_requested
+            or all(
+                checks[name]
+                for name in (
+                    "source_observation",
+                    "status_source",
+                    "source_identity",
+                    "automatic_observation",
+                    "status_automatic",
+                    "automatic_identity",
+                )
+            )
+        )
+        return {
+            "ready": ready,
+            "checks": checks,
+            "proof_fence": proof_fence,
+            "current_fence": current_fence,
+            "fence_differences": fence_differences,
+            "status": status,
+        }
+
+    def fail(turns, observation):
+        operations = tuple(call[0] for call in client.calls[-32:])
+        pytest.fail(
+            "publication bootstrap readiness missed "
+            f"after {turns}/12 turns; checks={observation['checks']!r}; "
+            f"watch_requested={watch_requested!r}; "
+            f"proof_fence={observation['proof_fence']!r}; "
+            f"current_fence={observation['current_fence']!r}; "
+            f"fence_differences={observation['fence_differences']!r}; "
+            f"status={observation['status']!r}; operations={operations!r}"
+        )
+
+    if original_phase:
+        turns = 12
+        drive(worker, mono, turns)
+        observation = observe()
+        if not observation["ready"]:
+            fail(turns, observation)
+    else:
+        for turns in range(1, 13):
+            drive(worker, mono, 1)
+            observation = observe()
+            if observation["ready"]:
+                break
+        else:
+            fail(turns, observation)
+
+    assert s.load(path) == worker._state, "bootstrap state is not durable"
+    assert worker._needs_device is False, "device bootstrap is incomplete"
+    assert client.puts == [], "bootstrap accepted a publication"
+    assert worker._last_published == (), "bootstrap installed publication state"
+    assert worker._timing_context._publisher.associations == {}, (
+        "bootstrap allocated publication evidence"
+    )
+    assert worker._timing_context._next_stage_at is None, (
+        "bootstrap allocated a publication stage floor"
+    )
+
+
+def publication_rig(
+    tmp_path,
+    *,
+    configure=None,
+    original_phase=False,
+    **rights,
+):
+    if type(original_phase) is not bool:
+        raise TypeError("original_phase must be a bool")
     path = tmp_path / "sharing.json"
     s.save(path, PAIRED_STATE)
     mono = [1000.0]
@@ -135,9 +265,13 @@ def publication_rig(tmp_path, *, configure=None, **rights):
     worker._save_state = lambda state: s.save(path, state)
     if configure is not None:
         configure(worker, client, mono)
-    drive(worker, mono, 12)
-    assert worker._catalogue is not None and worker._eligibility is not None
-    assert worker._timing_context._state.anchor is not None
+    _drive_publication_bootstrap(
+        worker,
+        client,
+        mono,
+        path,
+        original_phase=original_phase,
+    )
     return worker, client, mono
 
 
@@ -162,7 +296,7 @@ def ticket(m, *, outgoing=0, incoming=0, effects=()):
 
 @pytest.mark.parametrize("outgoing,incoming", [(0, 0), (None, 0), (7, None)])
 def test_original_source_reaches_real_signed_combat_put(tmp_path, outgoing, incoming):
-    worker, client, mono = publication_rig(tmp_path)
+    worker, client, mono = publication_rig(tmp_path, original_phase=True)
     m = mono[0]
     source = ticket(
         m,
@@ -258,7 +392,7 @@ def test_leaf_wait_crossing_original_sample_expiry_sends_nothing(tmp_path):
 
 
 def test_new_mailbox_does_not_replace_selected_current_ticket(tmp_path):
-    worker, client, mono = publication_rig(tmp_path)
+    worker, client, mono = publication_rig(tmp_path, original_phase=True)
     original = ticket(mono[0], outgoing=7)
     work, fence = selected_publication(worker, mono, original)
     mono[0] += 0.25
@@ -358,9 +492,30 @@ def test_cached_permission_deadline_expires_after_signing_without_utc_renewal(
 
         client.fetch_eligibility = short_proof
 
-    worker, client, mono = publication_rig(tmp_path, configure=configure)
+    worker, client, mono = publication_rig(
+        tmp_path, configure=configure, original_phase=True
+    )
     worker._utc_clock = lambda: NOW - timedelta(days=1)
-    work, fence = selected_publication(worker, mono, ticket(mono[0]))
+    source = ticket(mono[0])
+    work, fence = selected_publication(worker, mono, source)
+    target = Fraction(1008)
+    snapshot = source.snapshot
+    anchor = worker._timing_context._state.anchor
+    assert snapshot.sampled_at_mono is not None
+    assert (
+        0 <= target - Fraction(snapshot.sampled_at_mono) < Fraction(MAX_SNAPSHOT_AGE_S)
+    )
+    assert work.payload.session_deadline > target
+    assert worker._expires_at > target
+    assert anchor is not None
+    assert 0 <= 1000 * (target - anchor.received_at) <= LIMITS["anchor_lifetime_ms"]
+    for row in snapshot.rows:
+        assert row.combat is not None and Fraction(row.combat.expires_at_mono) > target
+        assert all(
+            Fraction(effect.expires_at_mono) > target
+            for effect in row.combat.observations
+        )
+    assert work.payload.member_deadlines == (target,)
     sign = crypto.sign_request
 
     def expired(*args, **kwargs):
@@ -2181,7 +2336,11 @@ def test_independent_deadlines_are_checked_after_real_leaf_wait(
                 500, "server_error", "renewal unavailable"
             )
 
-    worker, client, mono = publication_rig(tmp_path, configure=configure)
+    worker, client, mono = publication_rig(
+        tmp_path,
+        configure=configure,
+        original_phase=boundary == "proof",
+    )
     if boundary.startswith("anchor"):
         anchor = worker._timing_context._state.anchor
         mono[0] = float(anchor.received_at) + 59
@@ -2212,6 +2371,37 @@ def test_independent_deadlines_are_checked_after_real_leaf_wait(
     for key in worker._due:
         worker._due[key] = mono[0] + 60
     work, fence = selected_publication(worker, mono, source)
+
+    def assert_proof_boundary_is_independent():
+        if boundary != "proof":
+            return
+        boundary_time = Fraction(target)
+        snapshot = source.snapshot
+        anchor = worker._timing_context._state.anchor
+        assert snapshot.sampled_at_mono is not None
+        assert (
+            0
+            <= boundary_time - Fraction(snapshot.sampled_at_mono)
+            < Fraction(MAX_SNAPSHOT_AGE_S)
+        )
+        assert work.payload.session_deadline > boundary_time
+        assert worker._expires_at > boundary_time
+        assert anchor is not None
+        assert (
+            0
+            <= 1000 * (boundary_time - anchor.received_at)
+            <= LIMITS["anchor_lifetime_ms"]
+        )
+        for row in snapshot.rows:
+            assert row.combat is not None
+            assert Fraction(row.combat.expires_at_mono) > boundary_time
+            assert all(
+                Fraction(effect.expires_at_mono) > boundary_time
+                for effect in row.combat.observations
+            )
+        assert work.payload.member_deadlines == (boundary_time,)
+
+    assert_proof_boundary_is_independent()
     entered, proceed, leaf = threading.Event(), threading.Event(), threading.Event()
     errors = []
     unwrap, admit = worker._unwrap_private_key, source.admit_start
@@ -2242,6 +2432,7 @@ def test_independent_deadlines_are_checked_after_real_leaf_wait(
         with source._lock:
             proceed.set()
             assert leaf.wait(5), "actual before_send did not wait for source leaf"
+            assert_proof_boundary_is_independent()
             assert mono[0] <= target
             mono[0] = target
     finally:
