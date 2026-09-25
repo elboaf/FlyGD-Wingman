@@ -1532,14 +1532,14 @@ MUTATIONS = {
             )
         ],
         "node": SUCCESS,
-        "expect_regex": r"PROCESS_MEMORY_COUNTERS\._fields_",
+        "expect_regex": r"ctypes\.alignment\(PROCESS_MEMORY_COUNTERS\) == ctypes\.alignment",
     },
     "field-type": {
         "target": TEST,
         "edits": [
             (
                 'class PROCESS_MEMORY_COUNTERS(ctypes.Structure):\n    _fields_ = [\n        ("cb", ctypes.c_uint32),\n        ("PageFaultCount", ctypes.c_uint32),\n        ("PeakWorkingSetSize", ctypes.c_size_t),\n',
-                'class PROCESS_MEMORY_COUNTERS(ctypes.Structure):\n    _fields_ = [\n        ("cb", ctypes.c_uint32),\n        ("PageFaultCount", ctypes.c_uint32),\n        ("PeakWorkingSetSize", ctypes.c_uint32),\n',
+                'class PROCESS_MEMORY_COUNTERS(ctypes.Structure):\n    _fields_ = [\n        ("cb", ctypes.c_uint32),\n        ("PageFaultCount", ctypes.c_uint32),\n        ("PeakWorkingSetSize", ctypes.c_uint16),\n',
             )
         ],
         "node": SUCCESS,
@@ -1999,7 +1999,7 @@ git log -5 --oneline
 git show -s --format='%H%n%s%n%P' cc48c887
 ```
 
-Expected after this review correction is committed: branch `ci-windows-resource-memory-probe`; the four approved design/plan commits that existed at review time plus `docs: make Windows memory plan executable` above `cc48c887`; no uncommitted files; baseline subject `Optimize setup controller fixture construction (#288)` with parent `c23788e392bcd586dfc95b7390eaee18cb4ec224`.
+Expected after the remaining review correction is committed: branch `ci-windows-resource-memory-probe`; the four approved design/plan commits that existed at first review plus `docs: make Windows memory plan executable` and `docs: close Windows memory plan review` above `cc48c887`; no uncommitted files; baseline subject `Optimize setup controller fixture construction (#288)` with parent `c23788e392bcd586dfc95b7390eaee18cb4ec224`.
 
 - [ ] **Step 2: Run Reproducibility Block A**
 
@@ -2081,7 +2081,7 @@ git commit -m "docs: freeze Windows memory probe baseline"
 
 - [ ] **Step 1: Append the exact first test and portable fakes before implementation**
 
-Add `ctypes` and `os` imports, the five fake classes, exactly `test_windows_memory_probe_reports_peak_working_set_without_tracing`, and the explicit non-Windows fallback adaptation from the Intended Final Test-Module Interfaces. The first identity must accept `monkeypatch`, install `_TraceSeam` as the actual `sys.modules["tracemalloc"]`, and retain that module through native setup, guard, repeated samples, and final assertions. Do not add the second identity, crossing helper, or resource integration yet.
+Add only the `ctypes` import, the five fake classes, exactly `test_windows_memory_probe_reports_peak_working_set_without_tracing`, and the explicit non-Windows fallback adaptation from the Intended Final Test-Module Interfaces. Do not import `os` in Task 2; no Task 2 code uses it. The first identity must accept `monkeypatch`, install `_TraceSeam` as the actual `sys.modules["tracemalloc"]`, and retain that module through native setup, guard, repeated samples, and final assertions. Do not add the second identity, crossing helper, or resource integration yet.
 
 - [ ] **Step 2: Run the first identity and verify RED**
 
@@ -2119,6 +2119,25 @@ uv run --no-sync python -m pytest \
 
 Expected: `2 passed`; the success test executes on Linux entirely through fake native exports plus the actual fake `tracemalloc` module, and the existing explicitly non-Windows fallback still reports `traced_peak_bytes` and stops its own tracer in `finally`.
 
+Before inventory or mutation qualification, prove this independently assembled Task 2 endpoint is ordinary Ruff-clean and still has no `os` import or Task 3 code:
+
+```bash
+uv run --extra dev ruff check tests/test_fleetsharing_transport_resources.py
+uv run --extra dev ruff format --check tests/test_fleetsharing_transport_resources.py
+python - <<'PY'
+from pathlib import Path
+
+source = Path("tests/test_fleetsharing_transport_resources.py").read_text(
+    encoding="utf-8"
+)
+assert "\nimport os\n" not in source
+assert "def _measure_protocol_crossings" not in source
+assert "test_windows_memory_probe_fails_closed_and_restores_crossings" not in source
+PY
+```
+
+Expected: Ruff reports success/already formatted and all three Task 2 boundary assertions pass.
+
 - [ ] **Step 5: Prove exact interim inventory `3 -> 4` and suite `16,607 -> 16,608`**
 
 Materialize and compile Reproducibility Block B1, then run:
@@ -2151,7 +2170,45 @@ uv run --no-sync python /tmp/windows_memory_mutation.py \
   omit-signature replace-pseudo-handle close-pseudo-handle
 ```
 
-Expected: one `intended-red` record per applicable recipe and aggregate exit `0`. `windows-to-resource` reaches the exact metric assertion through the usable resource seam. `windows-to-tracing` and `start-tracing` perform a real `import tracemalloc`, activate the installed fake module, and fail at the active-tracer guard; `stop-tracing` fails the exact no-stop assertion. Remaining recipes fail their owned value, width, signedness, field type/order, `cb`, byte-size, layout/alignment/no-pack, fresh-structure, signature, pseudo-handle identity, or no-`CloseHandle` assertion. `width-truncation` is explicitly reported not-applicable only on a 32-bit interpreter; the signed-coercion recipe still qualifies that width. Every recipe restores exact bytes/hash/binary diff/status before the aggregate runner continues.
+Also prove the field-type recipe cannot become an equivalent alias on a 32-bit pointer-width model:
+
+```bash
+python - <<'PY'
+import ctypes
+
+
+class Native32(ctypes.Structure):
+    _fields_ = [
+        ("cb", ctypes.c_uint32),
+        ("PageFaultCount", ctypes.c_uint32),
+        ("PeakWorkingSetSize", ctypes.c_uint32),
+        ("WorkingSetSize", ctypes.c_uint32),
+    ]
+
+
+class Mutant32(ctypes.Structure):
+    _fields_ = [
+        ("cb", ctypes.c_uint32),
+        ("PageFaultCount", ctypes.c_uint32),
+        ("PeakWorkingSetSize", ctypes.c_uint16),
+        ("WorkingSetSize", ctypes.c_uint32),
+    ]
+
+
+assert ctypes.sizeof(ctypes.c_uint16) == 2
+assert ctypes.sizeof(ctypes.c_uint32) == 4
+assert Native32._fields_ != Mutant32._fields_
+peak = 0xF1234567
+mutant = Mutant32()
+mutant.PeakWorkingSetSize = peak
+assert mutant.PeakWorkingSetSize == 0x4567
+assert mutant.PeakWorkingSetSize != peak
+PY
+```
+
+Expected: the simulation exits `0`, proving distinct field identity and high unsigned value truncation for a 32-bit counter model.
+
+Expected aggregate result: one `intended-red` record per applicable recipe and aggregate exit `0`. `windows-to-resource` reaches the exact metric assertion through the usable resource seam. `windows-to-tracing` and `start-tracing` perform a real `import tracemalloc`, activate the installed fake module, and fail at the active-tracer guard; `stop-tracing` fails the exact no-stop assertion. `field-type` replaces `PeakWorkingSetSize` with `ctypes.c_uint16`, which is non-equivalent to pointer-sized storage on both 32-bit and 64-bit interpreters and fails the exact `_fields_` assertion with no applicability skip. `packed-layout` fails the exact `ctypes.alignment(PROCESS_MEMORY_COUNTERS) == ctypes.alignment(...)` assertion and its regex names that line, rather than relying on incidental traceback context from `_fields_`. Remaining recipes fail their owned value, width, signedness, field order, `cb`, byte-size, fresh-structure, signature, pseudo-handle identity, or no-`CloseHandle` assertion. `width-truncation` is explicitly reported not-applicable only on a 32-bit interpreter; the signed-coercion recipe still qualifies that width. Every recipe restores exact bytes/hash/binary diff/status before the aggregate runner continues.
 
 - [ ] **Step 7: Record Task 2 evidence and run an independent review**
 
@@ -2196,7 +2253,7 @@ git commit -m "test: add Windows peak working set probe"
 
 - [ ] **Step 1: Append the exact second test before implementation**
 
-Append exactly `test_windows_memory_probe_fails_closed_and_restores_crossings` from the final interface block after the first suffix identity. Do not parameterize it.
+Add `import os` to the existing stdlib import group in the same edit that appends exactly `test_windows_memory_probe_fails_closed_and_restores_crossings` from the final interface block after the first suffix identity. The traced child environment is the first `os` use, so the import belongs in Task 3 and nowhere earlier. Do not parameterize the identity.
 
 - [ ] **Step 2: Run the second identity and verify RED**
 
@@ -3237,13 +3294,13 @@ Before committing this plan, verify:
 - target arithmetic is `3 -> 4 -> 5`; suite arithmetic is `16,607 -> 16,608 -> 16,609`;
 - final local outcome is `16,595 passed + 14 skipped`; hosted Windows projection is `16,542 passed + 67 skipped`;
 - structure fields/types/order, offset formula, size formula, alignment, signatures, handle, `cb`, fresh samples, no pack, no `ctypes.wintypes`, and no close are explicit;
-- value evidence distinguishes peak, current, pagefile, signed/narrower truncation, and native widths;
+- value evidence distinguishes peak, current, pagefile, signed/narrower truncation, and native widths; the field-type mutant uses `c_uint16`, remains non-equivalent on simulated/native 32-bit and 64-bit widths, and is never applicability-skipped;
 - loader, each named export, zero return, explicit last-error/WinError seams, exact saved-error call tuple, no fallback, and no trace start/stop are explicit;
 - the actual `sys.modules["tracemalloc"]` fake spans setup/sampling/cleanup, real-import start/stop mutants are killed, and an actual `PYTHONTRACEMALLOC=1` child fails before payload/decode with empty stdout;
 - active trace, exact/equivalent-object crossing restoration, original sentinel, and no failed-operation success-count claim are explicit;
 - maximum rows/generated observations/raw/read/closure/decoder/parser/budget/child-wrong-metric mutations are exact and restoration-safe;
 - interim, final, local, and hosted audits compare complete ordered inventories, exact additions/removals, target outcomes, baseline-relative order, complete hashes, and platform-local normalized skip tuples;
-- the mutation runner aggregates every command/regex failure, returns nonzero on any failure, and verifies exact bytes/hash/binary-diff/status restoration in `finally`;
+- the packed-layout recipe matches the owned natural-alignment assertion rather than incidental source context; the mutation runner aggregates every command/regex failure, returns nonzero on any failure, and verifies exact bytes/hash/binary-diff/status restoration in `finally`;
 - parent ordering and zero-property rejection are explicit;
 - all scripts are self-contained and have compile or shell-syntax checks;
 - no changes to timing tests, summarizer, workflow, product, dependencies, configuration, markers, selectors, budgets, shards, or historical evidence are planned;
