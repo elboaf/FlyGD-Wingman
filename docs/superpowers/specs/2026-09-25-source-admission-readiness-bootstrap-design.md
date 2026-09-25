@@ -7,9 +7,11 @@ plan. This document authorizes no production, workflow, dependency,
 configuration, marker, selector, budget, or shard change.
 
 The change is limited to replacing unconditional fixture warm-up in
-`tests/test_fleetsharing_source_admission.py` with bounded semantic readiness.
-All 120 existing testcase identities, their order, parameters, markers, and test
-function signatures remain unchanged.
+`tests/test_fleetsharing_source_admission.py` with bounded semantic readiness,
+adding competing-deadline preconditions to two existing permission refusals, and
+strengthening the two existing retry parameter identities. All 120 existing
+testcase identities, their order, parameters, markers, and test function
+signatures remain unchanged.
 
 ## Purpose
 
@@ -27,8 +29,11 @@ the original exact 12-turn warm-up.
 This design makes a structural work claim only until hosted evidence exists:
 
 - worker bootstrap turns change from `1428` to `682` (`−746`);
-- bootstrap saves change from `1469` to `921` (`−548`);
-- whole-file saves change from `1928` to `1409` (`−519`);
+- real bootstrap `s.save()` calls, including 119 fixture seed writes, change
+  from `1469` to `921` (`−548`);
+- worker `_save_state` delegations within bootstrap change from `1350` to `802`
+  (`−548`);
+- whole-file real `s.save()` calls change from `1928` to `1409` (`−519`);
 - 119 additional real `s.load(path)` equality checks are introduced;
 - the file remains 120 cases built from 119 `publication_rig()` constructions.
 
@@ -84,19 +89,23 @@ that the eligibility proof belongs to the exact accepted eligibility object and
 current fence, and watch-enabled rigs do not explicitly require their source and
 automatic observations.
 
-The investigation classified the first readiness point for all 119 rigs:
+The investigation classified the first readiness point for all 119 rigs. Save
+counts here are real `s.save()` calls and include each rig's one seed write; the
+parenthesized number is the worker `_save_state` delegation count:
 
-| Category | Rigs | Readiness turn | Saves at readiness |
+| Category | Rigs | Readiness turn | Real saves at readiness |
 |---|---:|---:|---:|
-| Ordinary | 105 | 5 | 7 |
-| Capability ACK | 4 | 6 | 9 |
-| Source watch | 9 | 9 | 12 |
-| Near-expiry session | 1 | 10 | 12 |
+| Ordinary | 105 | 5 | 7 (6 delegated) |
+| Capability ACK | 4 | 6 | 9 (8 delegated) |
+| Source watch | 9 | 9 | 12 (11 delegated) |
+| Near-expiry session | 1 | 10 | 12 (11 delegated) |
 
-If every rig stopped at those points, bootstrap would consume 640 turns and 891
-saves. Six ordinary rigs deliberately retain the original phase and continue
-from turn 5/save 7 to turn 12/save 12. That produces the approved candidate
-counts of 682 turns and 921 bootstrap saves.
+If every rig stopped at those points, bootstrap would consume 640 turns, 891
+real saves, and 772 worker save delegations. Six ordinary rigs deliberately
+retain the original phase and continue from turn 5/save 7 to turn 12/save 12,
+adding five real and five delegated saves each. That produces the approved
+candidate counts of 682 turns, 921 real bootstrap saves, and 802 worker save
+delegations.
 
 ## Design
 
@@ -192,6 +201,14 @@ The exact-object and exact-fence requirements prevent a stale proof from making
 an equal replacement eligibility payload appear current. The watch conditions
 prevent catalogue/eligibility readiness from returning before the work that a
 watch-enabled caller explicitly requested.
+
+The named existence checks remain explicit for diagnostics even when a later
+identity check logically implies them. In particular, exact proof-response
+identity implies both proof and eligibility existence, and exact fence matching
+implies proof existence. Watched presence checks are not dropped because a bare
+identity expression could otherwise accept `None is None`. These redundancies
+are intentional diagnostic structure, not a claim that deleting every named
+check must change behavior on a valid production flow.
 
 Implement the fence comparison in a small local expression or helper that names
 all `_Fence` fields. Do not rely on `_Fence.__eq__`, because its `timing` field is
@@ -301,6 +318,41 @@ therefore be owned independently by the permission guard.
 Do not change the target timestamps, move the refusal to a different phase, or
 weaken the exact UTC-rollback premise.
 
+### 8. Strengthen the two existing retry identities
+
+Strengthen only the existing parameterized identities
+`test_original_measurement_retry_retains_wire_origins_across_reauthentication[thread]`
+and
+`test_original_measurement_retry_retains_wire_origins_across_reauthentication[session]`.
+Do not rename the test, change its signature, alter the `restart` parameter
+values or IDs, or add a witness test.
+
+Give the submitted source one representative named `EffectObservation` in
+addition to its existing sample and row evidence. Before retry, derive the exact
+sample, row, and effect association keys from that immutable source. The expected
+shapes are the sample `(activation_generation, sampled_at_mono)` key, the row
+`(character_id, lifetime, "row", observation_id)` key, and the effect
+`(character_id, lifetime, (kind, name), observation_id)` key; use the exact
+`Fraction`/accepted ID values carried by the source rather than reconstructed
+rounded values. Then assert:
+
+- the publisher association key set is exactly those three keys;
+- association cardinality is exactly three;
+- the captured sample, row, and effect pins are the exact objects stored under
+  their corresponding keys.
+
+After the retry completes—both across worker-thread restart and session
+reauthentication—assert the same exact key set and cardinality and assert, key by
+key, that every retained association is the identical captured pin object. The
+existing exact repeated wire body, retained timing-context identity, cadence
+floor, latest-source, and session-change assertions remain.
+
+Qualify this strength with a temporary production mutation that drops only the
+effect pin during recovery while leaving sample and row pins intact. Both
+existing parameter identities must fail at the exact retained key-set,
+cardinality, or effect-pin identity assertion; a changed body, generic retry
+failure, or timeout is not the intended failure.
+
 ## Preserved lifecycle and test strength
 
 The optimization changes only how long the test fixture waits for accepted
@@ -334,16 +386,20 @@ implementation plan:
 | Structural measure | Current | Candidate | Change |
 |---|---:|---:|---:|
 | Bootstrap turns | 1,428 | 682 | −746 |
-| Bootstrap saves | 1,469 | 921 | −548 |
-| Whole-file saves | 1,928 | 1,409 | −519 |
+| Real bootstrap `s.save()` calls, including 119 seeds | 1,469 | 921 | −548 |
+| Bootstrap worker `_save_state` delegations | 1,350 | 802 | −548 |
+| Whole-file real `s.save()` calls | 1,928 | 1,409 | −519 |
 | Fresh post-bootstrap equality loads | 0 | 119 | +119 |
 | `publication_rig()` constructions | 119 | 119 | 0 |
 | Source-admission pytest cases | 120 | 120 | 0 |
 
-The readiness-category ledger remains `105 @ 5 turns/7 saves`, `4 @ 6/9`,
-`9 @ 9/12`, and `1 @ 10/12`. The six original-phase cases are six of the 105
-ordinary-readiness rigs; continuing each from readiness at turn 5/save 7 to the
-original turn 12/save 12 accounts for the candidate totals of 682 and 921.
+The readiness-category ledger remains `105 @ 5 turns/7 real saves`,
+`4 @ 6/9`, `9 @ 9/12`, and `1 @ 10/12`; each real-save figure includes one seed.
+The corresponding worker-delegation ledger is `105 @ 6`, `4 @ 8`, `9 @ 11`,
+and `1 @ 11`. The six original-phase cases are six of the 105 ordinary-readiness
+rigs; continuing each from readiness at turn 5/save 7 to the original turn
+12/save 12 accounts for the candidate totals of 682 turns, 921 real bootstrap
+saves, and 802 delegated worker saves.
 
 Implementation must reproduce these numbers with temporary delegated
 instrumentation, then remove that instrumentation. The counts are structural
@@ -366,7 +422,11 @@ Preserve exactly:
 - complete collection membership of 16,609 outcomes.
 
 No witness test is added. Qualification is performed through temporary
-instrumentation and temporary mutations against the existing 120 identities.
+instrumentation, guard mutations, and invalid-authority fault probes against the
+existing 120 identities. Assertion-strength expansion outside the bootstrap
+helper and its six existing phase-sensitive call sites is limited to the two
+existing permission-refusal identities and the two existing thread/session retry
+parameter identities described above.
 
 ### Unchanged external callers
 
@@ -385,40 +445,49 @@ The helper remains importable under its existing name. Adding the keyword-only
 option must not require any caller update outside
 `tests/test_fleetsharing_source_admission.py`.
 
-## Mutation qualification
+## Qualification matrix: guard mutations and fault probes
 
-All mutation probes are temporary and uncommitted. Restore each edit exactly
-before the next probe, record the test and intended assertion, and verify the
-final diff contains no mutation support or altered production source.
+All qualification edits are temporary and uncommitted. Restore each source edit
+and each injected runtime authority exactly before the next probe, record the
+permanent test identity and intended assertion, and verify the final diff
+contains no mutation support, fault hook, or altered production source.
 
-A mutation kill qualifies only when the intended boundary assertion fails.
-Bootstrap timeout, another expiry, a later generic `_Obsolete`, an unrelated
-barrier wait, collection failure, or thread timeout does not qualify.
+A guard mutation removes or weakens a check and asks whether an existing valid
+flow exposes the loss. A fault probe keeps the check and injects an invalid
+state at the observation boundary. They are different evidence and must not be
+reported interchangeably. Exact-object, exact-fence, and durable-equality guard
+deletions can be equivalent under all valid flows in this file; their strength
+is qualified by the explicit fault probes below, not by claiming an artificial
+mutation kill. Likewise, the deliberately redundant existence labels described
+in the readiness section need not each have an independent kill.
+
+A kill or fault detection qualifies only when the intended boundary assertion
+or bounded diagnostic fails. Another expiry, a later generic `_Obsolete`, an
+unrelated barrier wait, collection failure, or thread timeout does not qualify.
+No `_work()` inspection may be added to force a result.
 
 ### Bootstrap predicate and postconditions
 
-Independently weaken or remove:
+Use this matrix:
 
-- catalogue readiness;
-- eligibility readiness;
-- anchor readiness;
-- proof existence;
-- exact proof-response object identity;
-- each current-fence component, including timing generation;
-- watched source observation/current status identity;
-- watched automatic observation/current status identity;
-- durable equality;
-- device-complete state;
-- zero accepted publication;
-- empty publisher associations;
-- `_next_stage_at is None`.
+| Boundary | Qualification type | Intended evidence |
+|---|---|---|
+| Catalogue, anchor, watched source, watched automatic, device completion, zero publication, empty publisher associations, and no next-stage floor | Independent guard mutations where the existing flow is discriminating | Named readiness diagnostic or common postcondition fails; document any check proved redundant instead of forcing a kill. |
+| Eligibility/proof existence | Review plus any naturally discriminating guard mutation | Preserve their named diagnostic booleans even where exact response/fence checks imply existence; no every-check kill claim. |
+| Exact proof-response identity | Per-turn invalid-authority fault probe | After every real turn for which a proof exists, temporarily install a proof whose response is equal to but not identical with current eligibility immediately before readiness evaluation. Readiness stays false through the bound and the diagnostic names exact-response identity false. |
+| Exact full current fence | Per-turn invalid-authority fault probe | After every real turn for which a proof exists, temporarily install a proof carrying a known stale complete `_Fence`; compare and report every field, including a stale timing generation. Readiness stays false through the bound and the diagnostic names the differing fields. |
+| Fresh durable equality | Postcondition invalid-authority fault probe | After readiness stops but before the common invariant, temporarily place a valid state on disk that is unequal to `worker._state`. The fresh real `s.load(path) == worker._state` assertion fails. |
+| First-ready thresholds | One-turn-short bound mutation per category | Ordinary, ACK, watch, and near-expiry representatives fail at bounds `4/5/8/9`, establishing first readiness at `5/6/9/10`. |
 
-Each probe must fail at the named readiness/post-bootstrap assertion or its
-bounded diagnostic. No `_work()` inspection may be added to make a mutant fail.
-
-Also qualify a one-turn-short bound for each readiness category so ordinary,
-ACK, watch, and near-expiry cases demonstrate the recorded `5/6/9/10` first-ready
-turns rather than passing through incidental later assertions.
+For each per-turn authority probe, capture the exact proof and related authority,
+inject only for the predicate evaluation and final diagnostic, and restore in a
+`finally` path before another scheduler turn or probe. The equal replacement
+must be a distinct object, not an inequality payload. The stale fence must be a
+complete fence from an earlier generation and must be stale in timing as well as
+any other changed fields; a synthetic string or partial tuple is not accepted.
+For the durable mismatch, preserve the original file bytes/state and restore
+them exactly after the expected assertion. Fault-probe saves and restorations
+are diagnostic-only and excluded from structural counts.
 
 ### Retained publication authority
 
@@ -437,11 +506,16 @@ assertions for:
 - anchor, sample, session, row, and effect deadline checks;
 - uncertain-member prevention of destructive whole-fleet withdrawal;
 - retry preservation of original anchor/sample/session/row/effect origins
-  across thread and session reauthentication.
+  across thread and session reauthentication;
+- effect-pin retention specifically, by dropping only the effect association in
+  recovery and requiring both existing thread/session retry identities to fail
+  at their exact three-key/cardinality/identity assertions.
 
 The exact retained tests may be grouped in the future plan, but each mutation
 record must name the permanent existing identity and the assertion that went
-red. Mutating multiple guards at once to force a failure is not acceptable.
+red. Mutating multiple guards at once to force a failure is not acceptable. The
+effect-pin-drop probe is one isolated mutation and may not also drop sample or
+row associations.
 
 ## Verification
 
@@ -459,19 +533,22 @@ The future implementation must run and record:
 2. the exact six original-phase cases, proving all use 12 turns and the first
    four retain exact wire timestamps;
 3. representative ordinary, ACK, watch, and near-expiry rigs, proving first
-   readiness at turns `5`, `6`, `9`, and `10` and saves `7`, `9`, `12`, and
-   `12`;
+   readiness at turns `5`, `6`, `9`, and `10`, real save totals `7`, `9`, `12`,
+   and `12` including one seed each, and delegated worker saves `6`, `8`, `11`,
+   and `11`;
 4. the cached-permission and held-leaf proof cases with competing-deadline
    preconditions;
-5. the 167-case selection consisting of source admission plus the unchanged
+5. both existing thread/session retry identities with exact sample/row/effect
+   pin keys, cardinality, and retained object identity;
+6. the 167-case selection consisting of source admission plus the unchanged
    remote-worker and worker-fix1 callers;
-6. the same 167 identities in normal, reverse-file, reverse-node, and recorded
+7. the same 167 identities in normal, reverse-file, reverse-node, and recorded
    deterministic shuffled orders;
-7. relevant Fleet worker, state, timing, client, scheduling, crypto, and remote
+8. relevant Fleet worker, state, timing, client, scheduling, crypto, and remote
    publication tests;
-8. the complete `tests/` suite with exact 16,609 outcomes and skip inspection;
-9. executable JavaScript smoke, settings-codec Cargo test, Ruff check, Ruff
-   format check, `git diff --check`, and changed-path/protected-path audits.
+9. the complete `tests/` suite with exact 16,609 outcomes and skip inspection;
+10. executable JavaScript smoke, settings-codec Cargo test, Ruff check, Ruff
+    format check, `git diff --check`, and changed-path/protected-path audits.
 
 Order runs must use the same identities; no order-specific skip, retry-to-green,
 or process restart is accepted.
@@ -481,15 +558,22 @@ or process restart is accepted.
 Temporary delegated instrumentation must count without replacing real work:
 
 - each call that advances one scheduler turn;
-- each real `_save_state` delegation during bootstrap and over the whole file;
+- every real `s.save()` call in the file, including the 119 fixture seed writes,
+  classified as bootstrap or later test work;
+- each worker `_save_state` delegation during bootstrap, counted separately from
+  seed writes;
 - each fresh post-bootstrap `s.load(path)` equality check;
-- readiness category and first-ready turn/save count per rig;
+- readiness category and first-ready turn/real-save/delegated-save count per rig;
 - exact original-phase opt-ins.
 
-It must reproduce `1428 → 682`, `1469 → 921`, `1928 → 1409`, and `+119` loads.
-Instrumentation delegates to real saves and loads and is removed before commit.
-A count obtained by replacing the file store, suppressing fsync, or reading only
-fake-client call logs is not accepted.
+It must reproduce `1428 → 682` turns, `1469 → 921` real bootstrap saves,
+`1350 → 802` bootstrap worker delegations, `1928 → 1409` whole-file real saves,
+and `+119` loads. Instrument `s.save()` itself and delegate to the real function;
+wrapping only `_save_state` is insufficient because it misses the 119 seed
+writes and cannot substantiate real-save totals. Instrumentation delegates to
+real saves and loads and is removed before commit. A count obtained by replacing
+the file store, suppressing fsync, or reading only fake-client call logs is not
+accepted.
 
 ### Hosted verification
 
@@ -648,8 +732,9 @@ Stop implementation and return to design review if any of these occurs:
    `_next_stage_at is None` fails when the bootstrap loop stops;
 7. source-watch readiness cannot establish both source and automatic accepted
    observations and their current status identities;
-8. the structural inventory does not reproduce `682` turns, `921` bootstrap
-   saves, `1409` total saves, `119` equality loads, and the `105/4/9/1`
+8. the structural inventory does not reproduce `682` turns, `921` real
+   bootstrap saves including 119 seeds, `802` bootstrap worker delegations,
+   `1409` whole-file real saves, `119` equality loads, and the `105/4/9/1`
    readiness categories;
 9. any of the 120 source-admission IDs, their order, parameters, markers, or
    signatures changes;
@@ -657,12 +742,13 @@ Stop implementation and return to design review if any of these occurs:
     order-dependent under normal, reverse, or deterministic shuffled runs;
 11. complete collection is not exactly 16,609 outcomes, or Windows and Ubuntu
     identities diverge;
-12. an intended mutation can be killed only by bootstrap failure, another
-    expiry, a generic later refusal, barrier timeout, or thread timeout;
+12. an intended guard mutation or fault probe can be detected only by another
+    expiry, a generic later refusal, barrier timeout, or thread timeout, or an
+    equivalent valid-flow guard deletion is misreported as a required kill;
 13. a mutation of final source admission, original-source completion, post-save
     401, any held right, proof deadline, save-before-transport, independent
-    deadline, uncertainty withdrawal, or retry origins survives its permanent
-    retained identity;
+    deadline, uncertainty withdrawal, retry origins, or isolated effect-pin
+    retention survives its permanent retained identity;
 14. preserving coverage requires cached prepared state, an in-memory store,
     private metadata seeding, fixture sharing, or suppression of real
     save/load/fsync/signing work;
@@ -682,6 +768,13 @@ The complete future tranche may commit only:
 - a future implementation plan under `docs/superpowers/plans/`;
 - a future results document under `docs/`;
 - `tests/test_fleetsharing_source_admission.py`.
+
+Within the source-admission test, permanent edits are limited to
+`publication_rig()` and its new bootstrap helper, the six explicit
+`original_phase` selections, competing-deadline preconditions in the two
+existing permission-refusal identities, and sample/row/effect pin assertions in
+the two existing retry identities. Temporary instrumentation, guard mutations,
+fault injections, and production mutations are never committed.
 
 `tests/test_fleetsharing_remote_worker.py` and
 `tests/test_fleetsharing_worker_fix1.py` are mandatory unchanged verification
@@ -722,13 +815,18 @@ covering:
 - **Deadline independence:** cached-proof and held-leaf proof refusals establish
   every competing deadline as admissible.
 - **Structural arithmetic:** `119 × 12 = 1428`; readiness thresholds total 640
-  turns/891 saves; six ordinary cases add 42 turns/30 saves; candidate totals
-  are 682/921; whole-file saves are 1,409; equality loads are 119.
+  turns/891 real saves including 119 seeds and 772 worker delegations; six
+  ordinary cases add 42 turns/30 saves and delegations; candidate totals are
+  682/921/802; whole-file real saves are 1,409; equality loads are 119.
 - **Lifecycle strength:** real file save/load/fsync, revision-before-client,
   scheduler deadlines/due work, authorities, pins, threads/barriers/recovery,
-  and original origins remain exercised.
-- **Mutation quality:** every temporary probe fails at its intended assertion,
-  no timeout or competing refusal is counted, and all edits are restored.
+  and original origins remain exercised; both retry identities retain the exact
+  sample/row/effect pin objects under the exact three keys.
+- **Qualification quality:** guard mutations and invalid-authority fault probes
+  are reported separately; each discriminating probe fails at its intended
+  assertion, equivalent/redundant deletions are documented rather than forced,
+  no timeout or competing refusal is counted, and all edits/authorities are
+  restored.
 - **Order independence:** normal, reverse-file, reverse-node, and deterministic
   shuffled 167-case runs are green without retries.
 - **Claim discipline:** hosted timings are reported as observations only; no
