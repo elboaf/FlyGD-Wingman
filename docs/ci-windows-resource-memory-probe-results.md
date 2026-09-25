@@ -14,7 +14,7 @@ Task 1 changes only this results ledger. No executable file, workflow, dependenc
 - Task 2: **COMPLETE** — the exact first ordinary suffix identity, lazy native Windows success path, natural ABI layout, platform selection, trace guard, portable fallback, exact 4/16,608 inventories, and 17 restoration-safe success/ABI mutants are qualified below.
 - Task 3: **COMPLETE** — fail-closed native errors, active-trace refusal, protocol-crossing restoration, immediate parent metric gating, exact final inventories, unchanged six-property evidence, and the full 36-mutant restoration catalog are qualified below.
 - Task 4: **COMPLETE** — the complete local endpoint, full maximum execution, generic JUnit summarization, exact 16,609-outcome suite, normalized skips, independent gates, five-path scope, and 36-mutant restoration are qualified below.
-- Task 5: **AUTHORIZED HOSTED ACCEPTANCE PASS; EVIDENCE PUSH STOPPED PENDING CONTROLLER REVIEW** — the exact Block D collector/audit accepted PR `#289`, run `36147950569` attempt `2`, the passing current Windows artifact, exact cross-platform `16,609` identities, and the native Windows resource evidence. Attempt `1`'s unrelated real-thread timing failure and failed Windows artifact remain explicit provenance and were not mixed into acceptance.
+- Task 5: **COMPLETE THROUGH EVIDENCE-HEAD STATUS; STATUS-CLOSING HEAD CHECKS PENDING** — the exact Block D collector/audit accepted PR `#289`, executable-authority run `36147950569` attempt `2` at head `599940d147960ef8088212df38d3dd86cc028360`, the passing current Windows artifact, exact cross-platform `16,609` identities, and the native Windows resource evidence. Evidence commit `835d1a6e3fda49963aec6516eade646fd8700757` was pushed, and documentation-head run `36154334900` attempt `1` passed all three required jobs. Attempt `1` of the executable run remains explicit failed provenance and was not mixed into acceptance. This later status-closing documentation head's own checks will be watched after push and are not claimed here.
 
 ## Exact three-ID target baseline
 
@@ -17476,7 +17476,7 @@ Windows has no `resource` or tracing fallback: a DLL load failure, missing named
 
 ### Deviations and discoveries
 
-Polish applied no source or documentation fix. The complete suite and mutation catalog were therefore not repeated in Task 5; the fresh target/tool/scope gates above supplement, but do not replace, Task 4's complete local evidence. The final independent review is deliberately pending for the controller and no hosted evidence was collected.
+Polish applied no source or documentation fix. The complete suite and mutation catalog were therefore not repeated in this local Task 5 checkpoint; the fresh target/tool/scope gates above supplement, but do not replace, Task 4's complete local evidence. At that checkpoint, final review remained with the controller and hosted evidence had not yet been collected. The later final-review correction and authorized hosted evidence are recorded below.
 
 ### Edge cases and failure behavior
 
@@ -17498,7 +17498,7 @@ Review should concentrate on real hosted Windows export availability/calling beh
 4. How does the crossing helper prove both successful exact-one execution and failure-path restoration without adding another maximum decode?
 5. Which exact boundaries remain unchanged despite the Windows instrumentation replacement?
 
-## Task 5 scope and publication stop
+## Task 5 local publication-stop checkpoint
 
 The tranche remains exactly:
 
@@ -17516,13 +17516,13 @@ PRE-AUTHORIZATION STOP: do not push, create or update a pull request, dispatch o
 
 No publication or hosted action was performed at this checkpoint.
 
-## Task 5 remaining concerns
+## Task 5 local-checkpoint concerns and later resolution
 
-- The controller's independent review is still pending by explicit instruction; this local checkpoint does not claim that review has passed.
-- Real Windows ABI/resource acceptance remains unproven until an explicitly authorized hosted run executes the native crossing without an availability skip.
-- Fresh Task 5 timing and memory values are single-sample Linux observations and support no performance attribution.
-- Native process-lifetime peak working set is not numerically comparable to the prior test-owned traced-allocation peak.
-- The PR #288 baseline's absent `run.pull_requests` metadata still requires the approved explicit run/PR and logs-primary provenance path if hosted collection is later authorized.
+- At the local checkpoint, controller review was still pending. The later final-review fix wave found and corrected the non-qualifying pseudo-handle mutation recipe without changing the executable test.
+- At the local checkpoint, real Windows ABI/resource acceptance was still unproven. Executable-authority run `36147950569` attempt `2` later executed the native crossing without an availability skip and satisfied Block D.
+- Fresh local Task 5 timing and memory values remain single-sample Linux observations and support no performance attribution.
+- Native process-lifetime peak working set remains numerically incomparable to the prior test-owned traced-allocation peak.
+- The approved explicit run/PR and logs-primary provenance path was used for hosted collection because the run payload's `pull_requests` metadata was absent.
 
 ## Final-review mutation correction
 
@@ -17744,10 +17744,45 @@ tests/test_fleetsharing_transport_resources.py
 
 Block D accepted run/event/current-job success, logs-primary provenance, exact merge parents/current PR merge, artifact selection and integrity, exact complete/target identity order, `+2/0`, cross-platform equality, exact skips, zero selected failures/errors, one resource owner, all six properties, positive native Windows peak, full maximum cardinality, unchanged Ubuntu RSS metric, no availability skip, the `75s` wall bound, and exact five-path scope.
 
-The bounded decision is:
+The bounded decision at the executable-evidence checkpoint was:
 
 - **PASS** — authorized hosted structural acceptance for executable head `599940d147960ef8088212df38d3dd86cc028360` on PR `#289`, run `36147950569`, attempt `2`.
 - **INCONCLUSIVE** — performance improvement, memory improvement/ceiling/delta, cross-metric comparison, and the root cause of the unrelated attempt-1 timing flake. Native process-lifetime peak working set is not numerically comparable to the former traced-allocation peak.
-- **STOP** — commit this evidence locally, but do not push the evidence head, request another rerun, or begin evidence-head/final-head status-closing publication until controller review and separate authorization.
+- **CHECKPOINT STOP** — commit the evidence locally, but do not push the evidence head, request another rerun, or begin evidence-head/final-head status-closing publication until controller review and separate authorization.
 
-No adaptation/stopping-rule trigger occurred: the real Windows export was available, no fallback or availability skip was needed, the exact identity/property/maximum contracts held, and no sixth or protected path changed.
+No adaptation/stopping-rule trigger occurred: the real Windows export was available, no fallback or availability skip was needed, the exact identity/property/maximum contracts held, and no sixth or protected path changed. Separate authorization subsequently released the checkpoint stop for the evidence commit only.
+
+### Evidence-head required checks
+
+Evidence commit `835d1a6e3fda49963aec6516eade646fd8700757` was pushed. Its exact PR #289 documentation-head run [`36154334900`](https://github.com/elboaf/FlyGD-Wingman/actions/runs/36154334900), attempt `1`, passed all three required jobs:
+
+| Role | Job ID | Attempt | Conclusion |
+|---|---:|---:|---|
+| checks | `108135080830` | `1` | success |
+| Ubuntu | `108135081381` | `1` | success |
+| Windows | `108135081154` | `1` | success |
+
+This run establishes only that the hosted-evidence documentation head was green. It is not executable, native-resource, artifact, identity, skip, behavior, or timing authority and does not replace executable run `36147950569` attempt `2` at head `599940d147960ef8088212df38d3dd86cc028360`. All executable timing observations and the bounded structural conclusion remain attached only to that executable-authority run.
+
+This status-closing documentation change is a later head. It is committed locally but is not pushed by this task. After a later push, its own required checks will be watched separately; no result for that new head is claimed here.
+
+## Task 5 closing concerns
+
+- Evidence discrepancies: none.
+- Evidence-head status: documentation-head run `36154334900` attempt `1` passed checks `108135080830`, Ubuntu `108135081381`, and Windows `108135081154` at exact evidence head `835d1a6e3fda49963aec6516eade646fd8700757`.
+- Executable authority: run `36147950569` attempt `2` at `599940d147960ef8088212df38d3dd86cc028360` remains the sole hosted executable/native/timing authority; the documentation-head run adds no new executable claim.
+- Failed-attempt provenance: executable run attempt `1` and its failed Windows artifact remain recorded and excluded from passing acceptance evidence.
+- Performance limitation: every hosted timing and memory value remains a single-run observation. No speedup, slowdown, runner-efficiency, critical-path, memory-ceiling, decode-delta, regression-attribution, cross-platform, or cross-metric numerical conclusion is supported.
+- Metric limitation: native process-lifetime peak working set is not numerically comparable to the former test-owned traced-allocation peak.
+- Remaining status gate: this status-closing documentation head's own required checks will be watched after push; they have not run and are not claimed here.
+
+## Task 5 closing self-review
+
+- **Task status:** PASS — local polish, final review/fix wave, fresh verification, authorized hosted executable acceptance, evidence publication, and exact evidence-head required checks are complete.
+- **Executable evidence authority:** PASS — run `36147950569` attempt `2` at executable head `599940d147960ef8088212df38d3dd86cc028360` remains the sole behavior, native-resource, artifact, identity, skip, and timing authority.
+- **Documentation-head status evidence:** PASS — evidence commit `835d1a6e3fda49963aec6516eade646fd8700757` was pushed and run `36154334900` attempt `1` passed checks `108135080830`, Ubuntu `108135081381`, and Windows `108135081154`.
+- **Claim discipline:** PASS — the documentation-head run is not presented as executable or timing evidence; the accepted conclusion remains only the structural no-test-owned-tracing statement, with no performance or cross-metric numerical claim.
+- **Attempt separation:** PASS — executable attempt `1`'s unrelated real-thread timing failure and failed Windows artifact remain explicit provenance and are not mixed into attempt `2` acceptance.
+- **Scope:** PASS — this status-closing repository change updates only this results ledger; no executable, workflow, dependency, configuration, test identity, evidence input, or historical document changes.
+- **Review mode:** PASS — no subagent was used; stale current-status, local-checkpoint, and self-review wording was reconciled directly against the ledger and supplied exact hosted status evidence.
+- **Next-head status:** OPEN BY DESIGN — this status-closing documentation head's own required checks will be watched after push and are not yet claimed.
