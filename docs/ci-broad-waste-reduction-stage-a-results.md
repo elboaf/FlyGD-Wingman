@@ -1,10 +1,11 @@
 # Broad CI waste reduction — Stage A results
 
-This ledger is cumulative. This first entry freezes the merged PR #290 baseline
-for Stage A. Candidate implementation, mutation, local endpoint, and candidate
-hosted fields intentionally remain unfilled until their owning tasks execute.
-Elapsed values below are observations only; none is a speedup, lower bound, p95,
-throughput, job, or critical-path claim.
+This ledger is cumulative. Task 1 freezes the merged PR #290 baseline, Task 2
+records the Preview observer, and Task 3 records the bounded timing oracle and
+focused screenshot walks. The complete local endpoint and candidate hosted fields
+remain unfilled until their owning tasks execute. Elapsed values below are
+observations only; none is a speedup, lower bound, p95, throughput, job, or
+critical-path claim.
 
 ## Authority and exact source identities
 
@@ -202,8 +203,19 @@ The prescribed temporary plugin ran that unchanged identity once and it passed
 
 Thus the baseline performs `2,101` production candidates, `2,101` commits,
 `2,101` independent oracle calls, and exactly `2,208,151` oracle membership
-checks (`2101 * 2102 / 2`). The future bounded-oracle candidate result is not
-prefilled here.
+checks (`2101 * 2102 / 2`).
+
+Task 3 changed only the rolling test's oracle input. The expected slice is
+independently derived as `exchanges[max(0, second - 95):]` from the literal
+inclusive 95-second protocol rule and the trace's fixed one-second request-start
+cadence; it does not read candidate state, production timing constants, or a
+production cutoff. Fresh GREEN instrumentation reported exactly `2,101`
+candidates, `2,101` commits, `2,101` oracle calls, and `197,136` membership
+checks. The complete timing module passed all `41` identities in frozen order,
+with hash `f4fe35e78a92078c923fd894382c38924501fe6d1f3a4e56a8f8839c0382e37a`.
+The rolling test still checks every exact vector and interval, detached state,
+commit, 96-record bound, final server value `2202100`, and clear inconsistency
+latch.
 
 ## Screenshot baseline and focused-walk evidence
 
@@ -235,6 +247,34 @@ screens, `14` `at_floor` screens, and `13` screens whose route is `fittings`.
 The inventory order is fixed by the protected source hash above. Production
 `shoot.walk()` and `shoot.SCREENS` were not replaced or edited.
 
+Task 3 froze those original `Screen` objects and the exact 61-key order in the
+test module, then selected only the owning rows for seven formerly broad tests.
+The exact eight identities passed with ordered hash
+`d42ecdf5d0c82bdd29e86f43c9553eefee50dfdd8fceee1e65430dad589c9774`.
+Instrumentation observed five real walks and `78` visits with exact selector
+lengths `2/61/1/shared-1/13`: both Preview setup rows, the complete production
+inventory, the Preview success row, one immutable Preview failure receipt shared
+by four consumers, and every Fittings row in production order. The complete walk
+separately proved all 61 ordered keys and `error is None` for every shot; its 14
+floor set/clear pairs each contained a successful capture between set and clear.
+All 13 Fittings visits injected the fixture, and every later stage began with the
+reset script before its action assertion.
+
+The four failure-receipt consumers passed together (`4 passed`) with exactly one
+module fixture construction, one real walk, and one visit. Each same node also
+passed alone in a separate pytest process. The receipt contains only read-only
+shot mappings, a tuple of operations, and the final boolean override state, and
+returns after its bounded monkeypatch context exits.
+
+Normal, reverse-within-fifteen, and seed-`20260926`-shuffle-within-fifteen orders
+each passed the exact 35 unique identities with their frozen respective hashes.
+Each lifetime-safe run constructed one receipt and performed exactly 32 real
+walks and 105 visits, with sorted walk lengths `[1] * 29 + [2, 13, 61]` and one
+exact full, Fittings, and two-Preview visit list. The separate round-robin
+cross-module order passed the exact same identity set; its observed four receipt
+constructions, 35 walks, and 108 visits are diagnostics only and are not used as
+lifetime evidence across module teardown and re-entry.
+
 The three affected Windows areas remain separate observations:
 
 | Area | Identities | Windows testcase observation |
@@ -264,6 +304,18 @@ the original mutable `r.states`, and added the exception-safe trigger observer.
 The same frozen four IDs passed. Static and dynamic gates then proved the exact
 four call sites, one invocation per target, unchanged predicates, zero old
 disconnected waits in those bodies, and unchanged `eve_on()`.
+
+Task 3 established its timing RED with the baseline instrumentation still
+wrapping the real candidate, commit, and oracle calls. A temporary final-oracle
+assertion required `oracle_checks == 197136`; the unchanged rolling body failed
+in the call phase at exact actual value `2,208,151`, after `2,101` candidate and
+oracle calls. The final assertion deliberately prevented the last commit, so the
+RED report recorded `2,100` commits. The temporary assertion was external and
+was not committed. After bounding only the expected oracle slice, the same
+instrumentation passed with exact counts `2,101/2,101/2,101/197,136` for
+candidates, commits, oracle calls, and membership checks. The screenshot changes
+then passed their existing eight identities and the mutation qualification below
+without adding or renaming a test.
 
 ## Mutation and fault qualification
 
@@ -300,9 +352,52 @@ probes, matching `[partial]`, stale-target, trigger-error, and sequential cases
 all passed again. Every mutation restored exact bytes, SHA-256, binary diff, and
 NUL-delimited status before the next row.
 
+Task 3 applied nine production timing mutations independently. Each exact
+selected JUnit row failed in the call phase at its intended retained assertion,
+with no timeout, collection, fixture, setup/teardown, or later defensive-overflow
+masking:
+
+| Timing defect | Exact owning witness |
+|---|---|
+| Exclusive 95-second boundary | binary-ratio `[95.0-2]` vector comparison |
+| Receipt time substituted for request start | request-start retention vector comparison |
+| Pruning removed | rolling first expired-prefix vector comparison |
+| 94-second window | binary-ratio `[95.0-2]` vector comparison |
+| 96-second window | binary-ratio `[95.00000000000001-1]` vector comparison |
+| Capacity changed to 95 | rolling `prepared is not None` edge assertion |
+| Server time stalled | rolling final `last_server_time_ms == 2202100` assertion |
+| Legal recurrence latched | rolling candidate-presence assertion |
+| Candidate base committed instead of candidate state | rolling vector comparison |
+
+Task 3 also applied 14 screenshot defects or test-double faults independently.
+Every selected JUnit identity failed in the call phase at the named assertion,
+not during setup, collection, or a timeout:
+
+| Screenshot defect | Exact owning witness |
+|---|---|
+| First production screen omitted | full traversal exact 61-key assertion |
+| First two production screens reordered | full traversal exact 61-key assertion |
+| Ordinary `uploader` capture failed | exact keys passed, then the separate all-shot `error is None` assertion failed |
+| Every non-early floor override omitted | focused Preview success-order lookup for `set:840x625` |
+| Only `fittings-narrow` floor override omitted | full traversal `floor set count mismatch` |
+| Twelfth floor set deferred until after capture | full traversal `floor capture did not occur between set and clear` |
+| Preview group setup skipped | exact two-row test's group error assertion |
+| Preview narrow setup skipped | exact two-row test's narrow error assertion |
+| Verifier moved after screenshot | focused Preview postcondition `captures == []` assertion |
+| Screenshot call replaced with bytes | shared attempt-order consumer's `screenshot_attempt` assertion |
+| Final clear omitted | shared clear/inactive consumer's clear assertion |
+| Cleanup evaluation omitted | selected new/current cleanup identities each failed their cleanup assertion |
+| Fittings injection moved after reset/preparation | Fittings `stage[0]` reset-order assertion |
+| Fittings selector omitted `fittings-unfiled` | exact 13-key tuple assertion |
+
+All 23 Task 3 mutations restored exact target bytes and SHA-256, binary diff from
+`HEAD`, and NUL-delimited porcelain status before the next row. Unmutated timing,
+screenshot, and receipt-consumer reruns remained green after restoration.
+
 ## Identity, order, and structure verification
 
-The five in-scope source files are byte-equal to merged `463bccb0`:
+At the Task 1 baseline, the five in-scope source files were byte-equal to merged
+`463bccb0`:
 
 | Baseline in-scope test file | SHA-256 | Test functions |
 |---|---|---:|
@@ -320,8 +415,8 @@ AST has SHA-256
 The corresponding 313 collected `[nodeid, sorted marker names]` records have
 SHA-256 `a47c53c5c62e994c94411aea01276d3477651dd0186e5793d7f0a6c782112ea8`.
 Parameterized IDs are retained in the decorator AST and in collected node IDs.
-Current names, signatures, decorators, markers, and collected order are exact
-baseline data, with zero current signature differences.
+Those names, signatures, decorators, markers, and collected order are the exact
+baseline data, with zero differences at Task 1.
 
 Task 2 reran the identity/signature gate against a fresh `463bccb0` archive.
 All `313` five-file identities and sorted marker rows are exactly equal with
@@ -332,28 +427,57 @@ unchanged. The Preview consumer JUnit independently confirms the frozen `388`
 identity order/hash. Only the intended three Preview test files differ among the
 eight `runtime_pump` consumers.
 
-The future endpoint gate must permit exactly four—and only four—signature
-substitutions in `tests/test_shoot_screens.py`, each from
-`(tmp_path, monkeypatch)` to `(preview_narrow_failure_walk)`:
+The Task 3 identity/signature gate retained all `313` five-file identities and
+sorted markers in exact order, with frozen hash
+`a21d48abcdfaeb9b2b33ab5e1b089f5da4e692f01bebe94c104908728235eaef`.
+It found exactly four—and only four—signature substitutions in
+`tests/test_shoot_screens.py`, each from `(tmp_path, monkeypatch)` to
+`(preview_narrow_failure_walk)`:
 
 - `test_walk_clears_device_metrics_even_when_narrow_screenshot_fails`;
 - `test_walk_narrow_setup_runs_inside_device_metrics_override_on_failure`;
 - `test_walk_failure_path_records_set_eval_attempt_clear_in_order`;
 - `test_walk_failure_path_records_attempt_before_clear_not_only_clear`.
 
-An empty, missing, or fifth candidate change will fail that future comparison.
+An empty, missing, or fifth candidate change fails that comparison. A fresh
+seven-file relevant run passed all `494` identities in exact frozen order with
+hash `ad677b5f7f9b2667401ccfc39295de021c8a320498d59a3679b05497491b229e`.
+This includes complete `220`-, `90`-, and `91`-identity runs for
+`test_shoot_screens.py`, `test_new_screenshots.py`, and
+`test_current_screenshots.py`. The executable screenshot worker tests passed
+`12` identities, and `node --test tests/fixtures/screenshot_dom.test.cjs` passed
+all `35` cases with zero failures, skips, cancellations, or todos.
 
 ## Complete local endpoint
 
-Not run in Task 1. The locked development environment was synchronized only
-after the existing worktree environment lacked pytest. Source collection,
-artifact parsing, the exact Preview four, rolling-one instrumentation, and the
-normal 35 screenshot operation set are green. The retained PR #290 artifacts,
-not a new local full-suite invocation, establish the frozen complete baseline.
-Task 4 owns fresh Node, release-codec, full pytest, Cargo, Ruff, documentation,
-and complete endpoint evidence; no candidate endpoint outcome is prefilled.
+Not run through Task 3. The locked development environment is present, and the
+Task 3 timing, screenshot, executable worker/DOM, identity, 494-case relevant,
+Ruff, and protected-path gates are green. The retained PR #290 artifacts, not a
+new local full-suite invocation, establish the frozen complete baseline. Task 4
+still owns the fresh release-codec build, complete pytest endpoint, Cargo, global
+Ruff, documentation, and full scope audit; no candidate complete-suite or hosted
+outcome is prefilled.
 
 ## Reviews, scope, restoration, and leftovers
+
+Task 3 self-review additionally confirms:
+
+- only `tests/test_fleetsharing_timing.py`, `tests/test_shoot_screens.py`, and
+  this results ledger are modified relative to the Task 2 commit;
+- the implementation is byte-for-byte equal to the plan-qualified Task 3
+  candidate after Ruff formatting;
+- the timing bound is test-premise-derived and leaves every production candidate,
+  detached-state check, commit, capacity, and final-state assertion intact;
+- `_walk_screens()` returns original import-time production objects in requested
+  order; the sole full traversal owns exact inventory, all-shot success, and all
+  14 floor branches;
+- the failure receipt is frozen and detached, with no CDP, path, mutable operation
+  list, or live monkeypatch retained;
+- focused Ruff check and format check passed; local polish in fix mode found no
+  safe correction or review finding, and no subagents were used as requested;
+- production timing and screenshot source, unchanged new/current screenshot
+  tests, fixtures, generated JUnit/JSON, and temporary mutation scripts are not
+  staged or tracked.
 
 Task 2 self-review additionally confirms:
 

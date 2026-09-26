@@ -12,7 +12,10 @@ import pathlib
 import re
 import shutil
 import subprocess
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
@@ -38,6 +41,83 @@ def _load():
 
 
 shoot = _load()
+
+_PRODUCTION_SCREENS = tuple(shoot.SCREENS)
+_EXPECTED_FULL_SCREEN_KEYS = (
+    "uploader",
+    "settings-uploading",
+    "settings-uploading-recording",
+    "settings-uploading-integrations",
+    "settings-uploading-webhook",
+    "settings-companions",
+    "settings-companions-populated",
+    "settings-companions-detail-narrow",
+    "settings-companions-add",
+    "settings-companions-source-narrow",
+    "settings-characters",
+    "settings-characters-waiting",
+    "settings-characters-partial-cleanup",
+    "settings-characters-narrow",
+    "settings-bookmarks",
+    "settings-bookmarks-windows",
+    "settings-bookmarks-sigbar",
+    "settings-previews",
+    "settings-previews-middle",
+    "settings-previews-table",
+    "settings-previews-sticky-conflict",
+    "settings-previews-detail",
+    "settings-previews-copy",
+    "settings-previews-groups",
+    "settings-previews-narrow",
+    "settings-previews-crop-narrow",
+    "settings-wanderer",
+    "settings-wanderer-narrow",
+    "settings-wanderer-controls-narrow",
+    "settings-fleet",
+    "settings-fleet-characters-narrow",
+    "settings-fleet-sharing",
+    "settings-fleet-sharing-details",
+    "settings-fleet-sharing-history-narrow",
+    "settings-alerts",
+    "settings-alerts-advanced",
+    "settings-alerts-custom-narrow",
+    "settings-general",
+    "profiles",
+    "profiles-copy-scope",
+    "profiles-account-identity",
+    "profiles-backups",
+    "profiles-formations",
+    "profiles-formations-import",
+    "profiles-setup-share",
+    "profiles-setup-import",
+    "skills",
+    "fittings",
+    "fittings-unfiled",
+    "fittings-superseded",
+    "fittings-alliance",
+    "fittings-detail",
+    "fittings-metadata-narrow",
+    "fittings-narrow",
+    "fittings-copy-preflight",
+    "fittings-copy-preflight-bottom-narrow",
+    "fittings-copy-limit",
+    "fittings-copy-progress",
+    "fittings-copy-result",
+    "fittings-copy-result-bottom-narrow",
+    "dialog",
+)
+_SCREEN_BY_KEY = {screen.key: screen for screen in _PRODUCTION_SCREENS}
+assert len(_SCREEN_BY_KEY) == len(_PRODUCTION_SCREENS)
+assert tuple(screen.key for screen in _PRODUCTION_SCREENS) == (
+    _EXPECTED_FULL_SCREEN_KEYS
+)
+
+
+def _walk_screens(*keys):
+    assert len(keys) == len(set(keys)), keys
+    selected = tuple(_SCREEN_BY_KEY[key] for key in keys)
+    assert tuple(screen.key for screen in selected) == keys
+    return selected
 
 
 def test_gate_on_shoots_every_screen():
@@ -1578,6 +1658,11 @@ def test_walk_records_setup_failure_as_failed_shot(tmp_path, monkeypatch):
     → walk() catches it and records error='...' for that shot key.
     """
     monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        shoot,
+        "SCREENS",
+        _walk_screens("settings-previews-groups", "settings-previews-narrow"),
+    )
 
     class _SetupFailCDP:
         """CDP that raises TargetError on any evaluate() call containing 'setup'."""
@@ -1653,6 +1738,7 @@ class _TrackedCDP:
         if self._fail_narrow and self._override_active:
             # Simulate a CDP capture failure while the narrow override is set.
             raise RuntimeError("screenshot failed during narrow override")
+        self._ops.append("capture_success")
         # Minimal valid PNG header so write_bytes() succeeds.
         import base64 as _b64
 
@@ -1685,6 +1771,8 @@ def test_walk_applies_and_clears_device_metrics_for_narrow_screen(
 
     assert eve_shown is True
     assert not skipped
+    assert tuple(shot["key"] for shot in shots) == _EXPECTED_FULL_SCREEN_KEYS
+    assert all(shot["error"] is None for shot in shots), shots
 
     # The existing Preview floor stage must still succeed.
     narrow = next((s for s in shots if s["key"] == "settings-previews-narrow"), None)
@@ -1692,18 +1780,28 @@ def test_walk_applies_and_clears_device_metrics_for_narrow_screen(
     assert narrow["error"] is None, f"narrow screen failed: {narrow['error']}"
 
     floor_count = sum(screen.at_floor for screen in shoot.SCREENS)
-    assert cdp._ops.count("set:840x625") == floor_count, cdp._ops
-    assert cdp._ops.count("clear") == floor_count, cdp._ops
+    assert cdp._ops.count("set:840x625") == floor_count, (
+        "floor set count mismatch",
+        cdp._ops,
+    )
+    assert cdp._ops.count("clear") == floor_count, (
+        "floor clear count mismatch",
+        cdp._ops,
+    )
     for set_index, clear_index in zip(
         [i for i, op in enumerate(cdp._ops) if op == "set:840x625"],
         [i for i, op in enumerate(cdp._ops) if op == "clear"],
         strict=True,
     ):
-        assert set_index < clear_index, cdp._ops
+        assert set_index < clear_index, ("floor clear preceded set", cdp._ops)
+        assert "capture_success" in cdp._ops[set_index + 1 : clear_index], (
+            "floor capture did not occur between set and clear",
+            cdp._ops,
+        )
 
 
 def test_walk_clears_device_metrics_even_when_narrow_screenshot_fails(
-    tmp_path, monkeypatch
+    preview_narrow_failure_walk,
 ):
     """clear_device_metrics_override() must be called even if the narrow
     screenshot raises an exception (finally-safe ordering).
@@ -1712,9 +1810,7 @@ def test_walk_clears_device_metrics_even_when_narrow_screenshot_fails(
     in the same session, which is silently wrong and harder to diagnose
     than a single recorded failure.
     """
-    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
-    cdp = _TrackedCDP(fail_narrow_screenshot=True)
-    shots, _skipped, _eve_shown = shoot.walk(cdp, tmp_path, settle_ms=0)
+    shots = preview_narrow_failure_walk.shots
 
     # The narrow screen should be recorded as failed, not silently absent.
     narrow = next((s for s in shots if s["key"] == "settings-previews-narrow"), None)
@@ -1724,12 +1820,12 @@ def test_walk_clears_device_metrics_even_when_narrow_screenshot_fails(
     )
 
     # Clearing must still have happened despite the screenshot failure.
-    assert "clear" in cdp._ops, (
+    assert "clear" in preview_narrow_failure_walk.operations, (
         "clear_device_metrics_override() must run in a finally block "
         "even when the narrow screenshot raises an exception"
     )
     # The override must not still be active after walk() returns.
-    assert not cdp._override_active, (
+    assert not preview_narrow_failure_walk.override_active, (
         "device metrics override must be inactive after walk() returns"
     )
 
@@ -1960,6 +2056,11 @@ def test_walk_applies_device_metrics_before_narrow_setup_script(tmp_path, monkey
     Preview narrow stage's setup script (which injects the fixture and scrolls).
     """
     monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        shoot,
+        "SCREENS",
+        _walk_screens("settings-previews-narrow"),
+    )
     cdp = _OrderedCDP()
     shots, _skipped, _eve_shown = shoot.walk(cdp, tmp_path, settle_ms=0)
 
@@ -1994,25 +2095,24 @@ def test_walk_applies_device_metrics_before_narrow_setup_script(tmp_path, monkey
 
 
 def test_walk_narrow_setup_runs_inside_device_metrics_override_on_failure(
-    tmp_path, monkeypatch
+    preview_narrow_failure_walk,
 ):
     """Even when the Preview narrow screenshot fails the ordering must hold:
     set:840x625 -> eval:setup -> (screenshot raises) -> clear.
     """
-    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
-    cdp = _OrderedCDP(fail_narrow_screenshot=True)
-    shots, _skipped, _eve_shown = shoot.walk(cdp, tmp_path, settle_ms=0)
+    shots = preview_narrow_failure_walk.shots
 
     narrow = next((s for s in shots if s["key"] == "settings-previews-narrow"), None)
     assert narrow is not None and narrow["error"] is not None, (
         "narrow screen must be recorded as failed"
     )
 
-    set_idx = _preview_narrow_set_index(cdp._ops)
-    post_set_ops = cdp._ops[set_idx + 1 :]
+    operations = list(preview_narrow_failure_walk.operations)
+    set_idx = _preview_narrow_set_index(operations)
+    post_set_ops = operations[set_idx + 1 :]
     assert "eval:setup" in post_set_ops, (
         f"eval:setup must still occur after set:840x625 even on failure.\n"
-        f"Full ops: {cdp._ops}"
+        f"Full ops: {operations}"
     )
     assert "clear" in post_set_ops, (
         "clear must run even when the narrow screenshot fails (finally-safe)"
@@ -2207,8 +2307,39 @@ class _FailOnceCDP(_OrderedCDP):
         return _TrackedCDP.screenshot(self)
 
 
+@dataclass(frozen=True)
+class PreviewFailureReceipt:
+    shots: tuple[Mapping[str, object], ...]
+    operations: tuple[str, ...]
+    override_active: bool
+
+
+@pytest.fixture(scope="module")
+def preview_narrow_failure_walk(tmp_path_factory):
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            shoot,
+            "SCREENS",
+            _walk_screens("settings-previews-narrow"),
+        )
+        patch.setattr(shoot.time, "sleep", lambda _: None)
+        cdp = _FailOnceCDP(fail_narrow_screenshot=True)
+        shots, skipped, eve_shown = shoot.walk(
+            cdp,
+            tmp_path_factory.mktemp("preview-narrow-failure"),
+            settle_ms=0,
+        )
+        assert eve_shown is True
+        assert not skipped
+        assert tuple(shot["key"] for shot in shots) == ("settings-previews-narrow",)
+        detached_shots = tuple(MappingProxyType(dict(shot)) for shot in shots)
+        operations = tuple(cdp._ops)
+        override_active = cdp._override_active
+    return PreviewFailureReceipt(detached_shots, operations, override_active)
+
+
 def test_walk_failure_path_records_set_eval_attempt_clear_in_order(
-    tmp_path, monkeypatch
+    preview_narrow_failure_walk,
 ):
     """When the narrow screenshot raises the CDP call sequence must prove:
         set:840x625  →  eval:setup  →  screenshot_attempt  →  clear
@@ -2222,28 +2353,26 @@ def test_walk_failure_path_records_set_eval_attempt_clear_in_order(
     because it asserts the entire ordered sequence, not just that set and clear
     both appeared somewhere.
     """
-    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
-    cdp = _FailOnceCDP(fail_narrow_screenshot=True)
-    shots, _skipped, _eve_shown = shoot.walk(cdp, tmp_path, settle_ms=0)
+    shots = preview_narrow_failure_walk.shots
 
     narrow = next((s for s in shots if s["key"] == "settings-previews-narrow"), None)
     assert narrow is not None and narrow["error"] is not None, (
         "narrow screen must be recorded as failed"
     )
 
-    ops = cdp._ops
-    set_idx = _preview_narrow_set_index(ops)
-    assert ops[set_idx : set_idx + 4] == [
+    ops = preview_narrow_failure_walk.operations
+    set_idx = _preview_narrow_set_index(list(ops))
+    assert ops[set_idx : set_idx + 4] == (
         "set:840x625",
         "eval:setup",
         "screenshot_attempt",
         "clear",
-    ], f"narrow failure sequence was incomplete or out of order: {ops!r}"
+    ), f"narrow failure sequence was incomplete or out of order: {ops!r}"
     assert ops[set_idx + 3] == "clear"
 
 
 def test_walk_failure_path_records_attempt_before_clear_not_only_clear(
-    tmp_path, monkeypatch
+    preview_narrow_failure_walk,
 ):
     """A version of the failure-path test that specifically catches an
     implementation that skips the screenshot attempt and goes straight to clear.
@@ -2252,11 +2381,7 @@ def test_walk_failure_path_records_attempt_before_clear_not_only_clear(
     checking a flag) and jumps to the finally block, clear would appear in
     the ops but screenshot_attempt would not.  This test catches that case.
     """
-    monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
-    cdp = _FailOnceCDP(fail_narrow_screenshot=True)
-    shoot.walk(cdp, tmp_path, settle_ms=0)
-
-    ops = cdp._ops
+    ops = preview_narrow_failure_walk.operations
     assert "screenshot_attempt" in ops, (
         "screenshot_attempt must appear in ops -- walk() must ATTEMPT the screenshot "
         "before reaching the finally/except block that clears the override.\n"
@@ -2266,7 +2391,7 @@ def test_walk_failure_path_records_attempt_before_clear_not_only_clear(
     # Find the Preview narrow override and verify the attempt/clear ordering
     # within that segment. _FailOnceCDP records ALL screenshots, so we anchor
     # to the floor override whose segment contains eval:setup.
-    narrow_set_idx = _preview_narrow_set_index(ops)
+    narrow_set_idx = _preview_narrow_set_index(list(ops))
     post_set = ops[narrow_set_idx + 1 :]
     assert "screenshot_attempt" in post_set, (
         f"screenshot_attempt must appear after the narrow set:840x625, got ops: {ops!r}\n"
@@ -2423,6 +2548,25 @@ def test_fittings_stage_generator_uses_an_explicit_row_action():
 
 def test_walk_injects_fittings_fixture_before_stage_actions(tmp_path, monkeypatch):
     monkeypatch.setattr(shoot.time, "sleep", lambda _: None)
+    fitting_keys = tuple(
+        screen.key for screen in _PRODUCTION_SCREENS if screen.route == "fittings"
+    )
+    assert fitting_keys == (
+        "fittings",
+        "fittings-unfiled",
+        "fittings-superseded",
+        "fittings-alliance",
+        "fittings-detail",
+        "fittings-metadata-narrow",
+        "fittings-narrow",
+        "fittings-copy-preflight",
+        "fittings-copy-preflight-bottom-narrow",
+        "fittings-copy-limit",
+        "fittings-copy-progress",
+        "fittings-copy-result",
+        "fittings-copy-result-bottom-narrow",
+    )
+    monkeypatch.setattr(shoot, "SCREENS", _walk_screens(*fitting_keys))
 
     class RecordingCDP(_TrackedCDP):
         def evaluate(self, expression: str):
@@ -2430,14 +2574,16 @@ def test_walk_injects_fittings_fixture_before_stage_actions(tmp_path, monkeypatc
             return super().evaluate(expression)
 
     cdp = RecordingCDP()
-    shoot.walk(cdp, tmp_path, settle_ms=0)
+    shots, skipped, eve_shown = shoot.walk(cdp, tmp_path, settle_ms=0)
+    assert eve_shown is True
+    assert not skipped
+    assert tuple(shot["key"] for shot in shots) == fitting_keys
     injections = [
         index
         for index, expression in enumerate(cdp._ops)
         if expression == shoot.fittings_fixture_setup_script()
     ]
-    fitting_screens = [screen for screen in shoot.SCREENS if screen.route == "fittings"]
-    assert len(injections) == len(fitting_screens)
+    assert len(injections) == 13
     for stage_number, index in enumerate(injections):
         following = cdp._ops[index + 1 :]
         next_injection = next(
@@ -2451,6 +2597,7 @@ def test_walk_injects_fittings_fixture_before_stage_actions(tmp_path, monkeypatc
         stage = following[:next_injection]
         assert stage
         if stage_number:
+            assert stage[0] == shoot._fittings_reset_script()
             assert any("var openToggle" in expression for expression in stage)
 
 
