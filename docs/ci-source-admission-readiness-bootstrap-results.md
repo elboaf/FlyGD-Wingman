@@ -1339,9 +1339,60 @@ and Windows
 | Ubuntu | `2.835s` | `2.029s` | `10.086s` | `9.170s` |
 | Windows | `14.150s` | `16.454s` | `23.463s` | `27.052s` |
 
-These are single JUnit/timing-JSON testcase-sum observations. They support no
-speedup, slowdown, overall-runtime, critical-path, runner-efficiency, or timing
-attribution claim. Structural authority remains the real local instrumentation:
+The candidate's 20 slowest source-admission testcase observations on Ubuntu are:
+
+| Rank | Testcase identity | Observed time |
+|---:|---|---:|
+| 1 | `tests/test_fleetsharing_source_admission.py::test_authoritative_eligibility_loss_withdraws_without_local_ticket` | `0.099s` |
+| 2 | `tests/test_fleetsharing_source_admission.py::test_submit_and_planning_flood_allocate_no_pins_before_paced_selection` | `0.068s` |
+| 3 | `tests/test_fleetsharing_source_admission.py::test_original_measurement_retry_retains_wire_origins_across_reauthentication[session]` | `0.028s` |
+| 4 | `tests/test_fleetsharing_source_admission.py::test_publication_401_durable_loss_cannot_reset_after_replacement[off-after_save-new_intent]` | `0.024s` |
+| 5 | `tests/test_fleetsharing_source_admission.py::test_original_measurement_retry_retains_wire_origins_across_reauthentication[thread]` | `0.024s` |
+| 6 | `tests/test_fleetsharing_source_admission.py::test_original_source_reaches_real_signed_combat_put[None-0]` | `0.023s` |
+| 7 | `tests/test_fleetsharing_source_admission.py::test_explicit_off_withdraws_when_source_and_timing_are_closed` | `0.022s` |
+| 8 | `tests/test_fleetsharing_source_admission.py::test_publication_error_install_rechecks_original_authority_atomically[off-error3-shared_rights]` | `0.022s` |
+| 9 | `tests/test_fleetsharing_source_admission.py::test_original_source_guards_post_save_401_reset[publication-during_save-True]` | `0.022s` |
+| 10 | `tests/test_fleetsharing_source_admission.py::test_any_uncertain_member_prevents_whole_inactivity_withdrawal[one_direction_available-True-True]` | `0.022s` |
+| 11 | `tests/test_fleetsharing_source_admission.py::test_original_source_reaches_real_signed_combat_put[7-None]` | `0.019s` |
+| 12 | `tests/test_fleetsharing_source_admission.py::test_publication_401_durable_loss_cannot_reset_after_replacement[off-during_save-lifecycle]` | `0.019s` |
+| 13 | `tests/test_fleetsharing_source_admission.py::test_original_source_reaches_real_signed_combat_put[0-0]` | `0.018s` |
+| 14 | `tests/test_fleetsharing_source_admission.py::test_off_completion_retains_original_applicable_authority[True-deadline_over]` | `0.018s` |
+| 15 | `tests/test_fleetsharing_source_admission.py::test_off_completion_retains_original_applicable_authority[False-deadline_extended]` | `0.018s` |
+| 16 | `tests/test_fleetsharing_source_admission.py::test_off_completion_retains_original_applicable_authority[False-approved_capabilities]` | `0.018s` |
+| 17 | `tests/test_fleetsharing_source_admission.py::test_off_completion_retains_original_applicable_authority[False-session_approved_capabilities]` | `0.018s` |
+| 18 | `tests/test_fleetsharing_source_admission.py::test_off_completion_retains_original_applicable_authority[False-new_intent]` | `0.018s` |
+| 19 | `tests/test_fleetsharing_source_admission.py::test_publication_error_install_rechecks_original_authority_atomically[off-error5-new_intent]` | `0.018s` |
+| 20 | `tests/test_fleetsharing_source_admission.py::test_current_publication_error_captures_effects_before_unlocked_notifications[error1-off]` | `0.018s` |
+
+The candidate's 20 slowest source-admission testcase observations on Windows are:
+
+| Rank | Testcase identity | Observed time |
+|---:|---|---:|
+| 1 | `tests/test_fleetsharing_source_admission.py::test_original_measurement_retry_retains_wire_origins_across_reauthentication[session]` | `0.334s` |
+| 2 | `tests/test_fleetsharing_source_admission.py::test_explicit_off_withdraws_when_source_and_timing_are_closed` | `0.234s` |
+| 3 | `tests/test_fleetsharing_source_admission.py::test_authoritative_eligibility_loss_withdraws_without_local_ticket` | `0.232s` |
+| 4 | `tests/test_fleetsharing_source_admission.py::test_original_measurement_retry_retains_wire_origins_across_reauthentication[thread]` | `0.220s` |
+| 5 | `tests/test_fleetsharing_source_admission.py::test_actual_publication_barriers_fence_before_start_and_late_completion[after_start-source]` | `0.200s` |
+| 6 | `tests/test_fleetsharing_source_admission.py::test_completion_leaf_lock_order_and_nonconsuming_costs[inactive-error3]` | `0.198s` |
+| 7 | `tests/test_fleetsharing_source_admission.py::test_publication_401_durable_loss_cannot_reset_after_replacement[off-after_save-new_intent]` | `0.191s` |
+| 8 | `tests/test_fleetsharing_source_admission.py::test_actual_publication_barriers_fence_before_start_and_late_completion[unwrap-source]` | `0.190s` |
+| 9 | `tests/test_fleetsharing_source_admission.py::test_any_uncertain_member_prevents_whole_inactivity_withdrawal[legacy-False-True]` | `0.185s` |
+| 10 | `tests/test_fleetsharing_source_admission.py::test_committed_source_control_retires_selection_from_same_queue_generation` | `0.181s` |
+| 11 | `tests/test_fleetsharing_source_admission.py::test_off_completion_retains_original_applicable_authority[False-deadline_extended]` | `0.180s` |
+| 12 | `tests/test_fleetsharing_source_admission.py::test_d_consumer_held_real_put_keeps_test_source_delivery_nonblocking` | `0.180s` |
+| 13 | `tests/test_fleetsharing_source_admission.py::test_independent_deadlines_are_checked_after_real_leaf_wait[session-False]` | `0.180s` |
+| 14 | `tests/test_fleetsharing_source_admission.py::test_off_completion_retains_original_applicable_authority[False-deadline_equal]` | `0.178s` |
+| 15 | `tests/test_fleetsharing_source_admission.py::test_publication_success_status_install_keeps_original_intent[off_refused-True]` | `0.176s` |
+| 16 | `tests/test_fleetsharing_source_admission.py::test_any_uncertain_member_prevents_whole_inactivity_withdrawal[one_direction_available-True-True]` | `0.173s` |
+| 17 | `tests/test_fleetsharing_source_admission.py::test_original_source_reaches_real_signed_combat_put[None-0]` | `0.170s` |
+| 18 | `tests/test_fleetsharing_source_admission.py::test_submit_and_planning_flood_allocate_no_pins_before_paced_selection` | `0.170s` |
+| 19 | `tests/test_fleetsharing_source_admission.py::test_publication_error_install_rechecks_original_authority_atomically[off-error5-new_intent]` | `0.167s` |
+| 20 | `tests/test_fleetsharing_source_admission.py::test_original_source_reaches_real_signed_combat_put[0-0]` | `0.165s` |
+
+The sums and rankings are single-run JUnit/timing-JSON observations. Ties retain
+JUnit order. They support no speedup, slowdown, overall-runtime, critical-path,
+runner-efficiency, per-identity attribution, or timing attribution claim.
+Structural authority remains the real local instrumentation:
 bootstrap turns `1,428 -> 682`, bootstrap real saves `1,469 -> 921`, bootstrap
 worker-save delegations `1,350 -> 802`, whole-file real saves `1,928 -> 1,409`,
 and fresh durable equality loads `0 -> 119`.
