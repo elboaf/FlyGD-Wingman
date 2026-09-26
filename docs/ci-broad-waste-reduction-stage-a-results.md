@@ -1,11 +1,10 @@
 # Broad CI waste reduction — Stage A results
 
 This ledger is cumulative. Task 1 freezes the merged PR #290 baseline, Task 2
-records the Preview observer, and Task 3 records the bounded timing oracle and
-focused screenshot walks. The complete local endpoint and candidate hosted fields
-remain unfilled until their owning tasks execute. Elapsed values below are
-observations only; none is a speedup, lower bound, p95, throughput, job, or
-critical-path claim.
+records the Preview observer, Task 3 records the bounded timing oracle and focused
+screenshot walks, and Task 4 records the complete local endpoint. Candidate hosted
+fields remain unfilled. Elapsed values below are observations only; none is a
+speedup, lower bound, p95, throughput, job, or critical-path claim.
 
 ## Authority and exact source identities
 
@@ -462,15 +461,125 @@ all `35` cases with zero failures, skips, cancellations, or todos.
 
 ## Complete local endpoint
 
-Not run through Task 3. The locked development environment is present, and the
-Task 3 timing, screenshot, executable worker/DOM, identity, 494-case relevant,
-Ruff, and protected-path gates are green. The retained PR #290 artifacts, not a
-new local full-suite invocation, establish the frozen complete baseline. Task 4
-still owns the fresh release-codec build, complete pytest endpoint, Cargo, global
-Ruff, documentation, and full scope audit; no candidate complete-suite or hosted
-outcome is prefilled.
+Task 4 rebuilt the locked development environment (`56` packages resolved, `39`
+checked), found Node `v26.5.0`, built the settings codec with Cargo's locked release
+profile, copied it to `packaging/bin/wingman-settings-codec`, and observed
+`codec.codec_available() is True` before pytest.
+
+Fresh focused verification passed on its first execution; no failed order was
+retried:
+
+- the exact Preview four passed with one trigger-helper call per identity, and the
+  complete eight-file Preview consumer selection passed all `388` exact ordered
+  identities;
+- the external observer file collected and passed its exact `18` identities; its
+  parser used the observed classname/name map and confirmed waiter interruption
+  identity, owned restoration, legitimate-replacement preservation,
+  cleanup-failure cause chaining, and no current marked wrapper;
+- the rolling identity passed with exactly `2,101` candidate calls, `2,101`
+  commits, `2,101` oracle calls, and `197,136` oracle checks; all `41` timing
+  identities then passed in frozen order;
+- the changed screenshot eight passed with one receipt construction, five walks,
+  and `78` visits; the contiguous fifteen passed with one construction, `12`
+  walks, and `85` visits;
+- normal, reverse-within-fifteen, and seed-`20260926`-shuffle-within-fifteen
+  orders each passed the exact `35` identities with their frozen hashes, one
+  receipt construction, `32` walks, and `105` visits. The mixed order passed the
+  same exact identity set; its observed four constructions, `35` walks, and `108`
+  visits remain diagnostics only and are not lifecycle acceptance evidence;
+- the seven-file relevant selection passed all `494` exact ordered identities;
+  static and dynamic checks again found exactly four trigger-helper calls, no
+  fifth call, unchanged predicates, zero old waits in those target bodies, and
+  the exact unchanged `eve_on()` hash.
+
+The required Api/protocol/isolation/lifecycle command passed `1,793` tests with
+zero skips, failures, or errors. The complete codec-backed local run then passed
+exactly `16,595` and skipped the expected `14`, totaling `16,609`; it completed in
+`434.67s`, while the JUnit testcase sum was `395.550s`. The JUnit identities equal
+fresh source collection byte-for-order with final-newline SHA-256
+`f468ba1954d3ff0ab693dd721ff8a7a4d12266e16d8568035de4245a6c616100`.
+The normalized ordered skip array equals Appendix B exactly and hashes to
+`14f1511f840fb2fdc1680123dde29a7143405829af97141d62c5099aa4f265af`.
+There were zero failures/errors and no Node, codec, or unexpected native skip.
+All five targeted test-file subsequences retained their frozen identity order.
+
+Independent gates passed: every page module loaded under `node scripts/js_smoke.js`;
+the direct screenshot DOM fixture passed `35/35`; Cargo passed its one codec test;
+global Ruff check passed; Ruff format reported `520 files already formatted`;
+documentation passed `7/7`; and the baseline-range diff check passed. All `23`
+temporary runners/plugins/tests used by Task 4 passed `py_compile`, Ruff check,
+and Ruff format check.
+
+The final-tree fault pass reran all `31` required mutations: all eight observer,
+nine timing, and fourteen screenshot defects failed at their exact intended
+call-phase identities without timeout or later masking. The observer runner also
+reran nine unmutated cleanup/race cases after every row. The literal four-ID RED,
+external-JUnit parser self-test, signature exception gate, and disposable
+restoration-failure simulation passed. Every mutation row restored exact bytes,
+SHA-256, binary diff from `HEAD`, and NUL-delimited porcelain status before the
+next row. Post-mutation Preview, timing, and structural-order instruments passed
+again from the restored tree.
+
+LOCAL CONCLUSION: Stage A preserves the exact ordered 16,609 identities and local outcomes while removing the approved same-identity deterministic work. Structural callback completion, 2,101 transitions/197,136 oracle checks, and 32 walks/105 visits are acceptance evidence. All elapsed values are observations only; no speedup, lower bound, p95, job, or critical-path claim is made.
 
 ## Reviews, scope, restoration, and leftovers
+
+Task 4 required implementation self-review confirms:
+
+- **Scope:** exactly the consented spec, plan, results ledger, and five in-scope
+  tests differ from `463bccb0`. Presentation differs only by the trigger-helper
+  import and two named EVE conversions; geometry differs only by that import, the
+  retained-drag EVE conversion, and companions `[True]` conversion. All `13`
+  protected hashes match, and the protected production/workflow/configuration/
+  packaging/fixture range diff is empty.
+- **Identity:** complete collection and JUnit retain exact `16,609` order/hash and
+  `+0/-0`; all targeted orders match, markers and parameters are unchanged, and
+  the signature gate admits exactly the four named receipt-consumer substitutions
+  from `(tmp_path, monkeypatch)` to `(preview_narrow_failure_walk)`.
+- **Preview observer:** the test-local helper atomically arms before the trigger,
+  rejects an already-true target, captures the actual callback, separates
+  successful completions from errors, delegates before completion, preserves
+  exact return and exception objects, gives the first matching or nonmatching
+  callback error precedence, and exposes that same object to the waiter and
+  production-style catch. It does not replay or wake production state, rejects a
+  marked concurrent wrapper before trigger, and restores only an observer it owns
+  while preserving a legitimate replacement. The supplied predicate and literal
+  five-second bound are unchanged.
+- **Preview structure:** the old captured/running-callback unsafe return remains
+  reproduced by the external legacy witnesses. `eve_on()` is byte-for-byte
+  unchanged; exactly the four named disconnected transitions use
+  `trigger_and_wait_state()`, with no fifth use and structurally zero old timeout
+  waits. The retained hosted `20.275s` value is an observation only.
+- **Timing:** the rolling case retains all `2,101` candidates and commits, derives
+  its independent expected input from the literal inclusive 95-second rule and
+  fixed one-second cadence, performs exactly `197,136` oracle checks, and retains
+  exact vectors/intervals, the `<= 96` bound, final `2202100`, and clear
+  inconsistency latch.
+- **Screenshots:** all exact eight IDs and selectors/lists pass. One complete
+  traversal proves all `61` ordered screens, all-shot success, and all `14` floor
+  branches; the two Preview setup failures, one success order, immutable
+  module-scoped failure receipt, all `13` Fittings screens, and all `27` existing
+  focused walks remain covered. Each lifetime-safe order proves one construction,
+  `32` walks, and `105` visits; mixed order is outcome-only evidence.
+- **Mutations:** every observer, timing, and screenshot mutant fails its intended
+  assertion. Matching no/partial reconciliation and nonmatching callback errors
+  preserve exact objects; the ordinary failed shot retains its key and fails the
+  separate all-shot assertion. No timeout or later failure is credited, and every
+  temporary edit restores exactly.
+- **Order:** Preview transitions are trigger-armed. Normal, reverse, and
+  deterministic-shuffle contiguous screenshot orders passed without retry; the
+  mixed cross-module order passed without a singleton, walk-count, or visit-count
+  acceptance claim.
+- **Prerequisites/gates:** Node, the release codec, full pytest and exact skips,
+  JS smoke, direct DOM fixture, Cargo, global Ruff check/format, documentation,
+  diff, exact scope, narrow-diff, and protected-hash gates are fresh and green.
+- **Claims:** retained `646.538s`, `680s`, and `42.502s` values and fresh local
+  `434.67s`/`395.550s` values are observations only. No speedup, lower bound, p95,
+  job, throughput, or critical-path conclusion is drawn.
+- **Leftovers:** no overlay, scratch/report, XML/JSON/ZIP evidence, mutation,
+  counter, debug output, mutable receipt, unfinished marker, local `/tmp` path,
+  disabled assertion, zero workflow budget, or Stage B/C implementation is
+  tracked or staged. The requested Task 4 report remains outside the worktree.
 
 Task 3 self-review additionally confirms:
 
@@ -524,12 +633,11 @@ Task 1 self-review confirms:
 - no subagent or independent review was used, as explicitly required for this
   task.
 
-Task 1 concern: the worktree initially lacked pytest, so
-`uv sync --locked --extra dev` installed the locked development environment
-before collection. The release codec remains absent and no local complete suite
-is claimed. This is not a baseline defect because both retained platform
-artifact arrays have exact outcomes and no codec skip; Task 4 must build/install
-the codec before its fresh full-suite endpoint.
+Task 1 concern was historical: the worktree initially lacked pytest and the
+release codec, so Task 1 made no fresh local complete-suite claim. Task 4 closed
+that prerequisite gap by rerunning locked synchronization, building and installing
+the release codec, asserting codec availability, and completing the exact local
+endpoint above.
 
 ## Publication stop and hosted evidence
 
