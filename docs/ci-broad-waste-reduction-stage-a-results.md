@@ -160,7 +160,26 @@ def eve_on(r, revision=1):
     r.wait_state(lambda state: state.eve == "active")
 ```
 
-No observer candidate is present in the versioned tree at this baseline.
+Task 2 adds the test-local trigger observer while leaving the production runtime
+unchanged. A fresh archive of `463bccb0` received every permanent Task 2 and
+Task 3 test snippet before any repository test edit; its exact seven-file
+relevant selection passed all `494` identities. The repository candidate then
+passed the four target IDs, and dynamic instrumentation observed exactly one
+`trigger_and_wait_state()` call in each target. AST inspection found exactly four
+calls total—two presentation EVE transitions, one geometry EVE transition, and
+the companions `[True]` transition—with their original predicates unchanged,
+no fifth call, and zero legacy `r.wait_state()` calls in those target bodies.
+The companions `[False]` row remains untriggered. `eve_on()` remains byte-for-byte
+unchanged at SHA-256
+`685f6f1b8950c70c811b3eebc0213ad1bf547488acc214a207ef4b9cd6526f47`.
+
+The complete eight-file `runtime_pump` consumer selection then passed all `388`
+identities in frozen order, with ordered final-newline SHA-256
+`36e61c70b9d081f2302bd2928f2b83e2c8d6e9032fe2c9fa8dd0c2eeee0d784f`.
+The other five consumer files are byte-for-byte unchanged from `463bccb0`.
+Production `wingman/preview/runtime.py`, `wingman/ui/api.py`, and
+`wingman/ui/fleetpresentation.py` retain their protected hashes. These are
+structural callback-completion results; no elapsed-time saving is claimed.
 
 ## Timing baseline and bounded-oracle evidence
 
@@ -231,15 +250,55 @@ claim.
 
 ## TDD RED/GREEN record
 
-Task 1 is baseline capture only. No candidate implementation, RED mutation, or
-GREEN candidate run has occurred. Tasks 2 and 3 own these entries and must append
-literal observed outcomes rather than anticipated results.
+Task 2 used literal collectable RED before the permanent edit. A temporary stub
+raising `AssertionError("trigger wait not implemented")` was installed with only
+the four intended import/call conversions. The frozen four IDs collected in their
+exact order and each produced a call-phase `failure`; every traceback contained
+exactly `AssertionError: trigger wait not implemented`, with no import, name,
+collection, setup, skip, or timeout failure. The three files were restored in a
+`finally` block and exact bytes, SHA-256, binary diff, and NUL-delimited status
+were all reproduced before GREEN was written. RED was not committed.
+
+GREEN replaced the fixture wait closure with the exact two-mode helper, retained
+the original mutable `r.states`, and added the exception-safe trigger observer.
+The same frozen four IDs passed. Static and dynamic gates then proved the exact
+four call sites, one invocation per target, unchanged predicates, zero old
+disconnected waits in those bodies, and unchanged `eve_on()`.
 
 ## Mutation and fault qualification
 
-Not run in Task 1. No production or test mutation was made. Tasks 2 through 4 own
-the observer, timing, screenshot, parser, and restoration-failure matrices; no
-candidate or mutation outcome is prefilled.
+Task 2 materialized the external in-memory runtime qualification suite under
+`/tmp`. Its exact-ID collection plugin observed the prescribed `18` unique IDs in
+order. The one-component-classname JUnit parser mapped those collected IDs
+without guessing, and all `18` outcomes were `passed`. The probes covered direct
+and composed legacy snapshot semantics, arm-before-trigger, delegate blocking,
+terminal error precedence, exact state/return/error identity, current-snapshot
+equality, matching no/partial reconciliation failures, nonmatching-first error
+precedence, replacement preservation, sequential depth one, concurrent rejection
+before trigger, stale-target rejection, exact trigger-error cleanup, exact
+waiter-side `BaseException` identity, owned cleanup, replacement-safe cleanup,
+and exact cleanup-failure `__cause__`; no current marked wrapper remained.
+
+Each observer mutant was applied separately and failed only its exact selected
+external ID in the call phase at the required unique assertion:
+
+| Mutant | Exact owning failure |
+|---|---|
+| Missing delegation | `test_delegate_is_called_once_with_exact_state_and_return` — `captured delegate did not receive the exact state once` |
+| Premature notify | `test_wait_condition_cannot_complete_before_blocked_delegate` — `wait condition returned before delegate completion` |
+| Callback error counted as success | `test_matching_callback_error_is_exact_and_never_successful[none]` — `DID NOT RAISE ValueError` |
+| First error ignored | `test_nonmatching_error_precedes_later_matching_success` — `DID NOT RAISE RuntimeError` |
+| Terminal-race error ignored | `test_terminal_finalization_prioritizes_error_before_owned_disarm` — `DID NOT RAISE RuntimeError` |
+| Unconditional restore | `test_replacement_during_delegate_is_not_overwritten` — `replacement callback was overwritten` |
+| Wrapper accumulation | `test_concurrent_wait_is_rejected_before_its_trigger_runs` — `concurrent trigger ran` |
+| Exceptional cleanup deleted | `test_wait_baseexception_restores_owned_observer` — `owned exceptional cleanup did not restore delegate` |
+
+Every mutant run rejected timeout, wait-probe-release, collection, fixture,
+setup/teardown, and competing observer failures. After each exact restoration,
+the terminal race, premature-completion probe, all three interruption/cleanup
+probes, matching `[partial]`, stale-target, trigger-error, and sequential cases
+all passed again. Every mutation restored exact bytes, SHA-256, binary diff, and
+NUL-delimited status before the next row.
 
 ## Identity, order, and structure verification
 
@@ -264,6 +323,15 @@ Parameterized IDs are retained in the decorator AST and in collected node IDs.
 Current names, signatures, decorators, markers, and collected order are exact
 baseline data, with zero current signature differences.
 
+Task 2 reran the identity/signature gate against a fresh `463bccb0` archive.
+All `313` five-file identities and sorted marker rows are exactly equal with
+ordered hash
+`a21d48abcdfaeb9b2b33ab5e1b089f5da4e692f01bebe94c104908728235eaef`;
+all current test names, signatures, decorators, parameters, IDs, and markers are
+unchanged. The Preview consumer JUnit independently confirms the frozen `388`
+identity order/hash. Only the intended three Preview test files differ among the
+eight `runtime_pump` consumers.
+
 The future endpoint gate must permit exactly four—and only four—signature
 substitutions in `tests/test_shoot_screens.py`, each from
 `(tmp_path, monkeypatch)` to `(preview_narrow_failure_walk)`:
@@ -286,6 +354,23 @@ Task 4 owns fresh Node, release-codec, full pytest, Cargo, Ruff, documentation,
 and complete endpoint evidence; no candidate endpoint outcome is prefilled.
 
 ## Reviews, scope, restoration, and leftovers
+
+Task 2 self-review additionally confirms:
+
+- the implementation is byte-for-byte equal to the plan-qualified Task 2
+  candidate;
+- observer installation, terminal selection, and owned disarm occur under the
+  runtime condition, while the local completion condition never takes the
+  runtime condition;
+- one outer `BaseException` boundary covers trigger, wait, predicate/snapshot,
+  callback, timeout, and final cleanup paths; the original body exception remains
+  primary and a cleanup failure is exposed as its explicit cause;
+- restoration never invokes the production setter, resets `_published`, wakes or
+  republishes runtime state, or overwrites a legitimate replacement;
+- focused Ruff check and Ruff format check passed for all three modified test
+  files, and `git diff --check` passed;
+- no production, other Preview test, XML, JSON, cache, probe, or mutation script
+  is staged or tracked.
 
 Task 1 self-review confirms:
 
