@@ -12,8 +12,8 @@ from tests.test_preview_host import crop_pump as crop_pump
 from tests.test_preview_layout_batch import batch_host as batch_host
 from tests.test_preview_layout_batch import roster
 from tests.test_preview_layout_batch import writer as writer
-from tests.test_preview_runtime_review import eve_on
 from tests.test_preview_runtime_review import runtime_pump as runtime_pump
+from tests.test_preview_runtime_review import trigger_and_wait_state
 from wingman import __main__ as main_mod
 from wingman.preview.geometry import Rect
 from wingman.preview.host import PreviewHost
@@ -56,7 +56,11 @@ def test_main_adapters_never_present_on_pump_and_coalesce_while_page_blocked(
     api = main_api(r, tmp_path, monkeypatch)
     entered, release, delivered, crops_delivered = Event(), Event(), Event(), Event()
     calls = []
-    eve_on(r)
+    trigger_and_wait_state(
+        r,
+        lambda state: state.eve == "active",
+        lambda: r.runtime.set_eve(True, 1),
+    )
     pump = r.call(get_ident)
     blocking = Event()
 
@@ -189,7 +193,11 @@ def test_identified_capture_through_main_while_old_delivery_is_blocked(
 ):
     r = batch_host
     api = main_api(r, tmp_path, monkeypatch)
-    eve_on(r)
+    trigger_and_wait_state(
+        r,
+        lambda state: state.eve == "active",
+        lambda: r.runtime.set_eve(True, 1),
+    )
     entered, release, newest = Event(), Event(), Event()
     seen = []
 

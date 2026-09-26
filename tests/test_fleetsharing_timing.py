@@ -220,7 +220,11 @@ def test_rolling_diagnostic_allows_legal_one_ms_per_second_drift_for_2101_prefix
         exchanges.append(exchange)
         before = ctx._state
         prepared = candidate(ctx, exchange)
-        assert_candidate_matches_oracle(prepared, exchanges)
+        # The protocol retains request starts no older than 95 seconds. This
+        # trace has fixed one-second request-start cadence.
+        first_retained = max(0, second - 95)
+        expected = exchanges[first_retained:]
+        assert_candidate_matches_oracle(prepared, expected)
         assert ctx._state is before
         assert ctx._commit_diagnostic(prepared)
         assert len(ctx._state.exchanges) <= 96
