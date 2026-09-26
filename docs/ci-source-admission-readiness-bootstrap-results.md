@@ -1267,13 +1267,107 @@ PRE-AUTHORIZATION STOP: do not push, create or update a pull request, dispatch o
 
 ## Hosted comparison
 
-PR #289 run `36147950569` attempt `2` remains the frozen hosted baseline, not a
-candidate comparison. No branch was pushed, no pull request was changed, no
-workflow was dispatched or rerun, and no hosted mutation was made. A future
-candidate comparison requires separate authorization and exact reviewed-head
-binding. Every timing above is a single-run observation only; no speedup,
-slowdown, runtime attribution, memory conclusion, or cross-platform projection
-is claimed.
+The maintainer separately authorized one hosted comparison for frozen reviewed
+executable head `3523dd0873493c8ecac0599b7c2daaf4d44d5902`, PR `#290`, and
+successful run `36208309831` attempt `1`. The exact Block F script was
+materialized byte-for-byte from the plan (`12,916` bytes), compiled, and passed
+Ruff check and format-check before its single execution. No workflow was
+rerun. The run and its only attempt both concluded `success`; the run's empty
+`pull_requests` array is recorded as `absent`, while the explicit current PR
+record proves open PR `#290`, target `main`, head
+`3523dd0873493c8ecac0599b7c2daaf4d44d5902`, and base
+`f6e8ecd5b09889e79aa169ce103b2eb9681cec9f`.
+
+### Hosted provenance, jobs, and exact synthetic scope
+
+Local `HEAD`, PR head, run head, every required job head, all three checkout-log
+heads, and both artifact workflow heads equal the frozen reviewed executable
+SHA. Logs are primary checkout authority: checks, Ubuntu, and Windows each
+independently yield synthetic merge
+`26428a687ad24f99cb21f8ff9f18628023c71799`, executable head
+`3523dd0873493c8ecac0599b7c2daaf4d44d5902`, and base
+`f6e8ecd5b09889e79aa169ce103b2eb9681cec9f`. The synthetic parents are exactly
+base then head. Its diff is exactly these four paths and no others:
+
+```text
+docs/ci-source-admission-readiness-bootstrap-results.md
+docs/superpowers/plans/2026-09-25-source-admission-readiness-bootstrap.md
+docs/superpowers/specs/2026-09-25-source-admission-readiness-bootstrap-design.md
+tests/test_fleetsharing_source_admission.py
+```
+
+| Role | Exact job ID | Conclusion | Job wall observation | `Test` step observation |
+|---|---:|---|---:|---:|
+| Checks | `108309461453` | `success` | `9s` | n/a |
+| Ubuntu | `108309461358` | `success` | `307s` | `287s` |
+| Windows | `108309461427` | `success` | `741s` | `680s` |
+
+For context only, the PR #289 baseline job/Test observations were checks `15s` /
+n/a, Ubuntu `348s` / `325s`, and Windows `690s` / `631s`. These are job and
+step observations, not overall-runtime or critical-path evidence.
+
+### Hosted artifacts, identities, and skips
+
+| Platform | Exact artifact ID | API/ZIP SHA-256 | Created | JUnit XML SHA-256 | Timing JSON SHA-256 |
+|---|---:|---|---|---|---|
+| Ubuntu | `10894627359` | `3670232e32405fd1342e45eef655c7640f8650d5e52dacc29383715196faa15e` | `2026-09-26T01:29:28Z` | `44474a56fc90e93d267df3f11318d12acf0a4515bc71e0c9db2f02bfcd0d8d1b` | `bd208ba1e6a502b553e0f00e7e8914fb925073a21b3329a26d96af447d46d4f7` |
+| Windows | `10894793997` | `f7afad089e74456e76e1b3133a0a55c8d5f296c5a557af16b1009e80c6f6300f` | `2026-09-26T01:36:38Z` | `1b993ea2dcf7245fceec7fb7213d4212d6a77f94925cc4c7274eaf3d0a62acdb` | `cde109559e59aa89cc9ddba2dff0c8c796aad77735defd1c7fd62614b9d88c12` |
+
+Each API digest equals the independently downloaded ZIP digest. Each ZIP has
+exactly `pytest-result.xml` and `pytest-timing.json`; all four ZIP members are
+byte-equal to their extracted files. The complete and target orders are equal
+to PR #289 and the frozen baseline on both platforms:
+
+| Inventory | Exact count / uniqueness | Ordered final-newline SHA-256 | Change from PR #289 |
+|---|---:|---|---:|
+| Complete suite | `16,609 / 16,609` | `f468ba1954d3ff0ab693dd721ff8a7a4d12266e16d8568035de4245a6c616100` | `+0/-0` |
+| Source admission | `120 / 120` | `b79e5648f77c4e9af985085209b66a3b306c2ec56635a4b2a7586de21713a488` | `+0/-0` |
+| Three-file full-suite subset | `167 / 167` | `ff0ed5f9cae2b38f920cb4006161309012c8ffaf365155255c70fadf44892079` | `+0/-0` |
+
+All 120 source-admission cases passed on both platforms. Ubuntu is exactly
+`16,595 passed + 14 skipped`; Windows is exactly `16,542 passed + 67 skipped`;
+there are zero failures and errors. Both complete normalized skip arrays are
+data- and order-equal to PR #289. Their frozen JSON SHA-256 values remain Ubuntu
+`14f1511f840fb2fdc1680123dde29a7143405829af97141d62c5099aa4f265af`
+and Windows
+`41a767f45f49215310104dc611a4e9b60e4cb251e90f850b80a6f3b1cd9bcfb6`.
+
+### Hosted timing observations and resource contract
+
+| Platform | PR #289 source `120` | Candidate source `120` | PR #289 three-file `167` | Candidate three-file `167` |
+|---|---:|---:|---:|---:|
+| Ubuntu | `2.835s` | `2.029s` | `10.086s` | `9.170s` |
+| Windows | `14.150s` | `16.454s` | `23.463s` | `27.052s` |
+
+These are single JUnit/timing-JSON testcase-sum observations. They support no
+speedup, slowdown, overall-runtime, critical-path, runner-efficiency, or timing
+attribution claim. Structural authority remains the real local instrumentation:
+bootstrap turns `1,428 -> 682`, bootstrap real saves `1,469 -> 921`, bootstrap
+worker-save delegations `1,350 -> 802`, whole-file real saves `1,928 -> 1,409`,
+and fresh durable equality loads `0 -> 119`.
+
+The unrelated maximum-response resource row remains passed and carries the same
+six-property schema, metric selection, and static contract as PR #289 on each
+platform. Raw bytes, rows, and observations remain exactly `47,022,137`,
+`8,192`, and `155,648`; Ubuntu still reports `process_peak_rss_kib` and Windows
+still reports `process_peak_working_set_bytes`. Candidate memory-peak/wall
+observations are Ubuntu `450020` / `3.9247524169999792s` and Windows
+`307720192` / `5.832289500000002s`; these dynamic values are observations only.
+No production, workflow, resource test, timeout, or budget path changed.
+
+### Bounded hosted decision
+
+- **PASS — hosted contract acceptance:** exact reviewed-head binding,
+  logs-primary provenance, synthetic parents and four-path scope, artifact
+  digests/member equality, ordered `16,609/120/167` identities, platform
+  outcomes, normalized skips, and local structural counts all match their
+  approved authorities.
+- **INCONCLUSIVE — elapsed-time attribution:** one candidate observation per
+  platform cannot establish a timing effect. No repeat was requested or run.
+- **STOP — not triggered:** no hosted identity, skip, provenance, artifact,
+  scope, or structural contract failed.
+
+HOSTED CONCLUSION: the candidate preserves the exact PR #289 source-admission and complete-suite identities and normalized skips on both platforms. Structural turns/saves/loads match the approved local instrumentation. Hosted durations are single-run observations only; no speedup is claimed.
 
 ## Scope, restoration, reviews, and concerns
 
