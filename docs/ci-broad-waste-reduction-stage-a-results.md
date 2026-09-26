@@ -320,6 +320,16 @@ itself pin the selected output order. The correction added the exact
 `groups`-then-`narrow` key tuple immediately after `shoot.walk()` without changing
 those error assertions or any identity/signature.
 
+Task 5 polish found that the full traversal's nth-set/nth-clear pairing did not
+prove interval ownership: a temporary delegating wrapper queued every real clear
+until `walk()` returned, preserving all 14 set and clear counts, and the old test
+still passed (`1 passed`). After replacing the pairing with the exact operation
+state machine, that same mutation failed in the call phase at the unique
+`floor metrics interval captured more than once` assertion. The wrapper then
+restored exact test bytes, SHA-256, binary diff, and NUL-delimited status; the
+unmutated identity passed again. This RED changes no identity, signature, screen
+selection, or production behavior.
+
 ## Mutation and fault qualification
 
 Task 2 materialized the external in-memory runtime qualification suite under
@@ -392,6 +402,18 @@ not during setup, collection, or a timeout:
 | Cleanup evaluation omitted | selected new/current cleanup identities each failed their cleanup assertion |
 | Fittings injection moved after reset/preparation | Fittings `stage[0]` reset-order assertion |
 | Fittings selector omitted `fittings-unfiled` | exact 13-key tuple assertion |
+
+Task 5 reran those 14 original screenshot mutations against the strengthened
+final-tree test and added the deferred-all-clears fault above as a fifteenth
+qualification row. All 15 failed at their intended call-phase assertions without
+timeout, collection, fixture, setup, or teardown masking. In particular, omitting
+only the non-Preview `fittings-narrow` set still failed `floor set count mismatch`;
+deferring its set until after capture still failed at the state machine's
+`floor metrics clear before successful capture`; and omitting the failure-path
+clear still failed the shared clear/inactive consumer. The new all-clears-deferred
+fault retained exact counts and old nth-pair ordering but failed on the first
+second capture inside an active floor interval. Every row restored exact bytes,
+SHA-256, binary diff from `HEAD`, and NUL-delimited status.
 
 The review correction received its own RED: temporarily reversing the real
 `screens_for_gate(True)` result made the setup-failure identity fail in the call
@@ -510,15 +532,31 @@ documentation passed `7/7`; and the baseline-range diff check passed. All `23`
 temporary runners/plugins/tests used by Task 4 passed `py_compile`, Ruff check,
 and Ruff format check.
 
-The final-tree fault pass reran all `31` required mutations: all eight observer,
-nine timing, and fourteen screenshot defects failed at their exact intended
-call-phase identities without timeout or later masking. The observer runner also
+Task 4's pre-polish fault pass reran all `31` then-required mutations: all eight
+observer, nine timing, and fourteen screenshot defects failed at their exact
+intended call-phase identities without timeout or later masking. The observer runner also
 reran nine unmutated cleanup/race cases after every row. The literal four-ID RED,
 external-JUnit parser self-test, signature exception gate, and disposable
 restoration-failure simulation passed. Every mutation row restored exact bytes,
 SHA-256, binary diff from `HEAD`, and NUL-delimited porcelain status before the
 next row. Post-mutation Preview, timing, and structural-order instruments passed
 again from the restored tree.
+
+Task 5's screenshot-state-machine correction then passed the complete
+`test_shoot_screens.py` inventory (`220 passed`) and the exact ordered relevant
+selection (`494 passed`, hash
+`ad677b5f7f9b2667401ccfc39295de021c8a320498d59a3679b05497491b229e`).
+The normal, reverse-within-fifteen, and seed-`20260926` shuffle orders each passed
+35 identities with their frozen hashes and exactly one receipt construction,
+32 walks, and 105 visits. The mixed order passed all 35 identities; its observed
+four constructions, 35 walks, and 108 visits remain diagnostics only. The
+14 original screenshot mutations plus the deferred-all-clears mutation passed
+the exact-failure/restoration runner (`15` rows). Together with the unchanged
+eight observer and nine timing rows, the final mutation catalog is exactly `32`
+rows (`8 + 9 + 15`); all 32 reran with exact intended failures and restoration
+from the correction tree. Focused Ruff check and format check passed for the
+changed test, documentation passed, and the exact scope,
+protected hashes, and diff checks remained green.
 
 LOCAL CONCLUSION: Stage A preserves the exact ordered 16,609 identities and local outcomes while removing the approved same-identity deterministic work. Structural callback completion, 2,101 transitions/197,136 oracle checks, and 32 walks/105 visits are acceptance evidence. All elapsed values are observations only; no speedup, lower bound, p95, job, or critical-path claim is made.
 
@@ -557,13 +595,17 @@ Task 4 required implementation self-review confirms:
   inconsistency latch.
 - **Screenshots:** all exact eight IDs and selectors/lists pass. One complete
   traversal proves all `61` ordered screens, all-shot success, and all `14` floor
-  branches; the two Preview setup failures, one success order, immutable
-  module-scoped failure receipt, all `13` Fittings screens, and all `27` existing
-  focused walks remain covered. Each lifetime-safe order proves one construction,
-  `32` walks, and `105` visits; mixed order is outcome-only evidence.
-- **Mutations:** every observer, timing, and screenshot mutant fails its intended
-  assertion. Matching no/partial reconciliation and nonmatching callback errors
-  preserve exact objects; the ordinary failed shot retains its key and fails the
+  branches through an exact inactive → set → one capture → clear → inactive
+  state machine that rejects nested sets, second captures, stray clears, and a
+  live interval at traversal end; the two Preview setup failures, one success
+  order, immutable module-scoped failure receipt, all `13` Fittings screens, and
+  all `27` existing focused walks remain covered. Each lifetime-safe order proves
+  one construction, `32` walks, and `105` visits; mixed order is outcome-only
+  evidence.
+- **Mutations:** the exact final catalog is `32` rows—eight observer, nine timing,
+  and fifteen screenshot—and every mutant fails its intended assertion. Matching
+  no/partial reconciliation and nonmatching callback errors preserve exact
+  objects; the ordinary failed shot retains its key and fails the
   separate all-shot assertion. No timeout or later failure is credited, and every
   temporary edit restores exactly.
 - **Order:** Preview transitions are trigger-armed. Normal, reverse, and
@@ -646,6 +688,8 @@ only. It did not push, update a PR, dispatch/rerun Actions, download a new
 artifact, or mutate any remote. There is no Stage A candidate hosted outcome.
 Candidate publication and hosted comparison remain stopped pending separate
 explicit authorization.
+
+PRE-AUTHORIZATION STOP: do not push, create or update a pull request, dispatch or rerun GitHub Actions, download a candidate-run artifact, or make a hosted acceptance claim until the maintainer explicitly authorizes publication of the frozen reviewed executable head.
 
 ## Appendix A — exact targeted identity lists
 

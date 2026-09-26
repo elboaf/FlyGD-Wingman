@@ -1792,16 +1792,37 @@ def test_walk_applies_and_clears_device_metrics_for_narrow_screen(
         "floor clear count mismatch",
         cdp._ops,
     )
-    for set_index, clear_index in zip(
-        [i for i, op in enumerate(cdp._ops) if op == "set:840x625"],
-        [i for i, op in enumerate(cdp._ops) if op == "clear"],
-        strict=True,
-    ):
-        assert set_index < clear_index, ("floor clear preceded set", cdp._ops)
-        assert "capture_success" in cdp._ops[set_index + 1 : clear_index], (
-            "floor capture did not occur between set and clear",
-            cdp._ops,
-        )
+    floor_active = False
+    floor_captured = False
+    for operation in cdp._ops:
+        if operation == "set:840x625":
+            assert not floor_active, (
+                "floor metrics set nested before prior clear",
+                cdp._ops,
+            )
+            floor_active = True
+            floor_captured = False
+        elif operation == "capture_success" and floor_active:
+            assert not floor_captured, (
+                "floor metrics interval captured more than once",
+                cdp._ops,
+            )
+            floor_captured = True
+        elif operation == "clear":
+            assert floor_active, (
+                "floor metrics clear without active set",
+                cdp._ops,
+            )
+            assert floor_captured, (
+                "floor metrics clear before successful capture",
+                cdp._ops,
+            )
+            floor_active = False
+            floor_captured = False
+    assert not floor_active, (
+        "floor metrics interval remained active at traversal end",
+        cdp._ops,
+    )
 
 
 def test_walk_clears_device_metrics_even_when_narrow_screenshot_fails(

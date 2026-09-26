@@ -485,7 +485,7 @@ contracts:
 | Exact identity | Windows observation | Current assertion owned |
 |---|---:|---|
 | `test_walk_records_setup_failure_as_failed_shot` | `0.874s` | Preview group and narrow setup failures are attempted and recorded |
-| `test_walk_applies_and_clears_device_metrics_for_narrow_screen` | `2.257s` | complete inventory succeeds; every floor override is set before its clear |
+| `test_walk_applies_and_clears_device_metrics_for_narrow_screen` | `2.257s` | complete inventory succeeds; every floor override encloses exactly one capture and closes before any later capture or set |
 | `test_walk_clears_device_metrics_even_when_narrow_screenshot_fails` | `0.783s` | failed Preview narrow capture records an error and clears/deactivates override |
 | `test_walk_applies_device_metrics_before_narrow_setup_script` | `1.525s` | successful Preview narrow order is set → setup → screenshot → clear |
 | `test_walk_narrow_setup_runs_inside_device_metrics_override_on_failure` | `0.578s` | failed Preview narrow setup/capture remains inside override and clears |
@@ -635,9 +635,14 @@ dialog
 ```
 
 This one identity retains complete screen reachability, ordinary/floor branch
-crossing, all 14 current floor screens, override count parity, set-before-clear
-ordering, explicit all-shot success, and exact inventory order. The two traversal
-assertions are not merged or replaced by `len(shots) == 61`.
+crossing, all 14 current floor screens, override count parity, explicit all-shot
+success, and exact inventory order. Its operation state machine requires each
+`set:840x625` to open while inactive, exactly one `capture_success` while active,
+and `clear` only after that capture; clear closes the interval. Nested sets,
+second captures, stray clears, and an active interval at traversal end all fail.
+This proves each floor override is cleared before any subsequent floor or
+non-floor capture. The two traversal assertions are not merged or replaced by
+`len(shots) == 61`.
 
 ### Exact focused selectors and expected visits
 
@@ -796,7 +801,7 @@ bounded test-double fault injections at the intended assertion:
 |---|---|---|
 | Complete inventory | omit or reorder one `screens_for_gate(True)` result | sole 61-screen traversal's exact visited list |
 | Ordinary all-shot success | make a specific ordinary, non-floor, non-Preview capture such as `uploader` raise; production `walk()` catches it and retains its key | exact ordered keys still pass, then the complete traversal fails specifically at `all(shot["error"] is None for shot in shots)` |
-| Floor traversal | omit an override/clear or reverse one pair | full traversal's 14-floor counts and pair ordering |
+| Floor traversal | omit an override/clear, move a set after capture, or defer clears until later screens have captured | full traversal's 14-floor counts and exact inactive → set → one capture → clear → inactive state machine |
 | Both Preview setup failures | stop attempting either group or narrow setup | exact two-shot setup-failure identity |
 | Metrics before setup | omit or move the narrow override after setup | success-order identity and shared failure receipt cannot locate set → setup |
 | Verification before capture | move verifier after screenshot | existing focused `test_walk_refuses_capture_when_postcondition_fails` records a capture and fails |
@@ -1222,7 +1227,9 @@ Stop implementation and return to design review if any of these occurs:
 14. the eight full-walk IDs, 27 focused IDs, their parameters, markers, or
     assertion contracts change;
 15. the sole complete traversal does not assert both exact ordered 61-screen keys
-    and `error is None` for every shot, or does not cover all 14 floor screens;
+    and `error is None` for every shot, does not cover all 14 floor screens, or
+    does not reject nested sets, second captures, stray clears, clear-before-capture,
+    and an active floor interval at traversal end;
 16. an ordinary non-floor/non-Preview capture error retains its key and escapes
     the complete traversal's all-shot assertion;
 17. either Preview setup-failure screen, successful order, exact failure order,
@@ -1305,10 +1312,11 @@ Before publication, the results document must explicitly confirm:
   197,136 oracle checks, exact vectors/intervals, `<= 96`, final `2202100`, and
   clear inconsistency latch.
 - **Screenshots:** exact eight IDs, exact selectors/lists, one 61-screen/14-floor
-  traversal with separate exact-key and every-shot-success assertions, two
-  Preview setup failures, one success order, one module-scoped immutable failure
-  receipt, all 13 Fittings screens, and all 27 focused walks; each lifetime-safe
-  contiguous-file order proves one construction/32 walks/105 visits, while mixed
+  traversal with separate exact-key and every-shot-success assertions plus the
+  exact inactive → set → one capture → clear → inactive operation state machine,
+  two Preview setup failures, one success order, one module-scoped immutable
+  failure receipt, all 13 Fittings screens, and all 27 focused walks; each
+  lifetime-safe contiguous-file order proves one construction/32 walks/105 visits, while mixed
   cross-module order proves identities/outcomes only.
 - **Mutations:** every observer, timing, and walk mutant fails at its intended
   assertion; matching partial/no-reconciliation callback failures and

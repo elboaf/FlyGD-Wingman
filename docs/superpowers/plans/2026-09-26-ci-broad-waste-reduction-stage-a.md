@@ -1327,17 +1327,43 @@ assert tuple(shot["key"] for shot in shots) == _EXPECTED_FULL_SCREEN_KEYS
 assert all(shot["error"] is None for shot in shots), shots
 ```
 
-  In `_TrackedCDP.screenshot()`, append `"capture_success"` only after the failure branch, immediately before returning PNG bytes. Keep exact floor set/clear counts, and strengthen every paired floor segment:
+  In `_TrackedCDP.screenshot()`, append `"capture_success"` only after the failure branch, immediately before returning PNG bytes. Keep exact floor set/clear counts, then consume the complete operation trace as a state machine:
 
 ```python
-assert set_index < clear_index, ("floor clear preceded set", cdp._ops)
-assert "capture_success" in cdp._ops[set_index + 1 : clear_index], (
-    "floor capture did not occur between set and clear",
+floor_active = False
+floor_captured = False
+for operation in cdp._ops:
+    if operation == "set:840x625":
+        assert not floor_active, (
+            "floor metrics set nested before prior clear",
+            cdp._ops,
+        )
+        floor_active = True
+        floor_captured = False
+    elif operation == "capture_success" and floor_active:
+        assert not floor_captured, (
+            "floor metrics interval captured more than once",
+            cdp._ops,
+        )
+        floor_captured = True
+    elif operation == "clear":
+        assert floor_active, (
+            "floor metrics clear without active set",
+            cdp._ops,
+        )
+        assert floor_captured, (
+            "floor metrics clear before successful capture",
+            cdp._ops,
+        )
+        floor_active = False
+        floor_captured = False
+assert not floor_active, (
+    "floor metrics interval remained active at traversal end",
     cdp._ops,
 )
 ```
 
-  Give the set/clear count assertions unique messages `"floor set count mismatch"` and `"floor clear count mismatch"`. This makes the retained full traversal—not the Preview-focused row—own omission and reversal for every non-Preview floor branch as well as all 14 floor visits.
+  Give the set/clear count assertions unique messages `"floor set count mismatch"` and `"floor clear count mismatch"`. This makes the retained full traversal—not the Preview-focused row—own omission and exact ordering for every non-Preview floor branch as well as all 14 floor visits. It rejects a nested set, second floor or non-floor capture before clear, stray clear, clear before capture, and an active interval at traversal end.
 - Successful Preview order ID monkeypatches exactly `_walk_screens("settings-previews-narrow")` and retains set → setup → screenshot → clear.
 - Fittings ID derives keys only from `_PRODUCTION_SCREENS if screen.route == "fittings"`, asserts the exact 13-key tuple, monkeypatches `_walk_screens(*fitting_keys)`, asserts exact visits and 13 injections, and for every stage after the first requires `stage[0] == shoot._fittings_reset_script()` before the existing reset/action assertion.
 
@@ -1383,7 +1409,7 @@ Convert the four failure-order IDs to consume this fixture. Keep each assertion 
 
 - [ ] **Step 8: Run exact eight screenshot IDs and each receipt consumer directly**
 
-Require all eight existing IDs pass, exact selectors are `2/61/1/shared-1/13`, the full traversal has 14 floor pairs and all errors `None`, Preview success/failure order is exact, and all 13 Fittings screens/injections are exact. No ID or parameter changes.
+Require all eight existing IDs pass, exact selectors are `2/61/1/shared-1/13`, the full traversal has 14 floor intervals that each contain exactly one successful capture and close before any later capture or set, all errors are `None`, Preview success/failure order is exact, and all 13 Fittings screens/injections are exact. No ID or parameter changes.
 
 Then run this unmutated four-consumer selection as its own command and require `4 passed` with one module receipt construction:
 
@@ -1407,7 +1433,7 @@ Use the Task 1 walk plugin and exact 35-ID blocks. Execute separate pytest proce
 
 For each of the first three require exact identity hash shown above, 35 passing unique IDs, one receipt construction, 32 real walks, and 105 visits with lengths `[1] * 29 + [2, 13, 61]`. Require one exact full list, one exact Fittings list, and one exact two-Preview list. For mixed order require only the exact 35 identity set and all passing outcomes; record observed counts only as diagnostics. Never claim singleton/32/105 across module teardown/re-entry.
 
-- [ ] **Step 10: Run 14 screenshot mutants/faults**
+- [ ] **Step 10: Run the 14 original screenshot mutants/faults plus the deferred-clear polish mutation**
 
 Apply and restore each independently. Require per-ID JUnit intended failures:
 
@@ -1418,7 +1444,8 @@ Apply and restore each independently. Require per-ID JUnit intended failures:
 | first ordinary `_TrackedCDP` capture (`uploader`) raises | exact keys still hold; separate all-errors assertion fails |
 | omit every non-early floor override | Preview success-order cannot find `set:840x625` |
 | omit only non-Preview `fittings-narrow` override | retained full traversal fails `floor set count mismatch` |
-| defer only the 12th floor set (`fittings-narrow`) until after `capture_success` but before clear | retained full traversal keeps set/clear parity yet fails `floor capture did not occur between set and clear` |
+| defer only the 12th floor set (`fittings-narrow`) until after `capture_success` but before clear | retained full traversal keeps set/clear parity yet fails `floor metrics clear before successful capture` |
+| defer every clear until after `walk()` returns, preserving all counts and nth set/clear ordering | old pairing assertion passes before the edit; the exact state machine fails `floor metrics interval captured more than once` after the edit |
 | skip group setup | exact two-shot setup-failure ID fails group error assertion |
 | skip narrow setup | same ID fails narrow error assertion |
 | verifier after screenshot | focused Preview postcondition ID records capture and fails `captures == []` |
@@ -1544,7 +1571,7 @@ The Python relevant-suite command above executes the existing screenshot worker 
 
 - [ ] **Step 6: Re-run every mutation/fault probe from the final tree**
 
-Compile and Ruff-check all temporary scripts, then run all 8 observer, 9 timing, and 14 screenshot mutants plus the unmutated 18 observer cases, literal four-ID RED, external-JUnit parser self-test, signature exception gate, restoration-failure simulation, and structural plugins. Require exact JUnit ownership, no masking/timeouts, and restoration exact bytes/hash/binary diff/NUL status after every row.
+Compile and Ruff-check all temporary scripts, then run all 8 observer, 9 timing, the 14 original screenshot mutants, and the deferred-clear polish mutant plus the unmutated 18 observer cases, literal four-ID RED, external-JUnit parser self-test, signature exception gate, restoration-failure simulation, and structural plugins. Require exact JUnit ownership, no masking/timeouts, and restoration exact bytes/hash/binary diff/NUL status after every row.
 
 - [ ] **Step 7: Audit exact versioned scope and protected hashes**
 
@@ -1632,7 +1659,7 @@ At minimum rerun Preview four/388, timing one/41 with exact counts, screenshot e
 
 First run the complete checklist below yourself. Then, only if the implementation authorization permits subagents, call the configured `subagent` tool once with `subagent_type="review"`, `run_in_background=false`, a 3–5 word description, and a self-contained read-only prompt naming the approved spec, exact `463bccb0..HEAD` diff, results ledger, local JUnit/JSON, mutation reports, and this checklist. Do not let the reviewer edit files. If a review subagent/tool is unavailable or not authorized, stop before freezing/publishing and request explicit maintainer review of the same artifacts; do not substitute self-certification or silently skip the gate.
 
-The review must check atomic arm, false precondition, current callback capture, delegate-first completion, atomic terminal error/success decision plus owned disarm, terminal-race precedence, exact return/error identity, outer `try/finally` coverage across trigger and the complete wait loop, exact waiter-side `BaseException` preservation, owned exceptional cleanup, replacement-safe cleanup, visible cleanup-failure chaining, no current marked wrapper, current-state equality, replacement/no accumulation, five-second bound, exactly four calls, unchanged `eve_on()`, 2,101/197,136 timing structure, one 61/14 traversal, non-Preview floor omission/reversal, exact 13 Fittings, immutable receipt/direct consumers, 32/105 safe-order structure, mixed-order claim discipline, exact identity/signature exceptions/skips/eight-path scope, restoration, and no unfinished markers.
+The review must check atomic arm, false precondition, current callback capture, delegate-first completion, atomic terminal error/success decision plus owned disarm, terminal-race precedence, exact return/error identity, outer `try/finally` coverage across trigger and the complete wait loop, exact waiter-side `BaseException` preservation, owned exceptional cleanup, replacement-safe cleanup, visible cleanup-failure chaining, no current marked wrapper, current-state equality, replacement/no accumulation, five-second bound, exactly four calls, unchanged `eve_on()`, 2,101/197,136 timing structure, one 61/14 traversal, its exact inactive → set → one capture → clear → inactive state machine, non-Preview floor omission/reversal and deferred-clear qualification, exact 13 Fittings, immutable receipt/direct consumers, 32/105 safe-order structure, mixed-order claim discipline, exact identity/signature exceptions/skips/eight-path scope, restoration, and no unfinished markers.
 
 - [ ] **Step 4: Run `change-explainer` and update reviewer-facing results**
 
@@ -1853,7 +1880,7 @@ Before committing this plan, confirm:
 - exact IDs, counts, hashes, selectors, inventories, arithmetic, observations, and protected hashes are internally consistent;
 - legacy/trigger Preview contracts, error precedence, current-state completion, replacement, sequential/concurrent cleanup, outer exceptional-exit coverage, exact `BaseException` identity, cleanup-failure chaining, no marked-wrapper leak, and exact five-second bound are explicit;
 - timing expected input is independent and all nine mutations have intended witnesses;
-- screenshot selector, 61 keys, 14 floors, 13 Fittings, immutable receipt, 35-ID orders, and 14 mutations are explicit;
+- screenshot selector, 61 keys, 14 exact floor intervals, 13 Fittings, immutable receipt, 35-ID orders, 14 original mutations, and the deferred-clear mutation are explicit;
 - JUnit per-ID intended-failure parsing rejects masking and timeouts;
 - restoration compares bytes/hash/binary diff/NUL status;
 - complete prerequisites/tests/Node/Cargo/Ruff/docs/scope commands are explicit;
