@@ -10,6 +10,16 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-26-ci-broad-waste-reduction-stage-a-design.md`
 
+**Execution status:** Tasks 1–4 and Task 5's local Steps 1–7 are complete.
+The frozen reviewed executable head is
+`83bd018b6eeb29e159741258e8d979c7481d7d01`; the final local commit records
+approved documentation evidence only. The maintainer's exact later statement
+`authorize remaining steps` satisfies the publication authorization gate, but
+Steps 8–10 remain deliberately unexecuted until parent final review as required
+by the current instruction. The procedural checkboxes in Tasks 1–4 below are
+retained as the original execution recipe; the cumulative results ledger is the
+authoritative completion record.
+
 ## Global Constraints
 
 - Source baseline is merged `main` commit `463bccb07077325e64b6ad7f7ce4e9c100d2fcd6` (`Stop Fleet source bootstrap at accepted readiness (#290)`).
@@ -26,7 +36,7 @@
   - `tests/test_preview_geometry_publication.py`;
   - `tests/test_fleetsharing_timing.py`;
   - `tests/test_shoot_screens.py`.
-- User authorization covers versioning the Stage A spec, plan, results, and evidence. It does not authorize a push, PR, Actions dispatch/rerun, Stage B/C, or unrelated Superpowers artifacts.
+- User authorization covers versioning the Stage A spec, plan, results, and evidence. The later exact statement `authorize remaining steps` also covers the remaining publication and hosted-evidence sequence; the current instruction nevertheless holds all remote action until parent final review. Stage B/C and unrelated Superpowers artifacts remain unauthorized.
 - No permanent file under `wingman/`, `.github/`, `packaging/`, `scripts/`, `tests/fixtures/`, `tests/test_new_screenshots.py`, or `tests/test_current_screenshots.py` changes.
 - Node on `PATH` and the built release settings codec in `packaging/bin` remain mandatory complete-suite prerequisites. Node/codec/unexpected native-availability skips invalidate acceptance.
 - The Preview bound and every supplied predicate remain literal five seconds and byte-for-behavior unchanged. `eve_on()` remains byte-for-byte unchanged.
@@ -1641,41 +1651,53 @@ git commit -m "docs: record Stage A local verification"
 
 **Files:**
 - Modify only within the exact eight-path tranche if polish/review requires it
-- Hosted reads/evidence only after separate explicit push/publication authorization
+- Hosted reads/evidence only after publication authorization and release of the current parent-review hold
 
 **Interfaces:**
 - Consumes: fully green Task 4 tree and complete results.
-- Produces: polished reviewed executable commit, frozen SHA, clean tree, change explanation, explicit STOP, and—only if later authorized—logs-primary hosted contract evidence.
+- Produces: polished reviewed executable commit, frozen SHA, clean tree, change explanation, explicit local hold, and—after parent final review—logs-primary hosted contract evidence.
 
-- [ ] **Step 1: Run `polish-core --fix` and inspect every edit**
+- [x] **Step 1: Run `polish-core --fix` and inspect every edit**
 
 Review `463bccb0..HEAD`. Accept only high-confidence edits within the exact eight paths. Reject any production, helper, fixture, workflow, dependency, configuration, marker, selector, shard, timeout, packaging, or Stage B/C edit. Inspect polish changes rather than trusting the tool.
 
-- [ ] **Step 2: Run fresh verification after polish**
+- [x] **Step 2: Run fresh verification after polish**
 
 At minimum rerun Preview four/388, timing one/41 with exact counts, screenshot eight/35 plus three structural orders and mixed outcomes, the 494-case relevant selection, all mutation probes if executable tests changed, Ruff on five test files, documentation tests, exact scope/protected hashes, and `git diff --check`. If polish changes behavior-bearing test code, rerun the complete suite and all tool gates.
 
-- [ ] **Step 3: Perform final self-review and one independent review**
+- [x] **Step 3: Perform final self-review and one independent review**
 
 First run the complete checklist below yourself. Then, only if the implementation authorization permits subagents, call the configured `subagent` tool once with `subagent_type="review"`, `run_in_background=false`, a 3–5 word description, and a self-contained read-only prompt naming the approved spec, exact `463bccb0..HEAD` diff, results ledger, local JUnit/JSON, mutation reports, and this checklist. Do not let the reviewer edit files. If a review subagent/tool is unavailable or not authorized, stop before freezing/publishing and request explicit maintainer review of the same artifacts; do not substitute self-certification or silently skip the gate.
 
+Execution used the already completed independent review: it found the floor-interval
+gap, the correction landed in `83bd018b`, and re-review approved it. The current
+instruction forbids new subagents, so this final evidence pass dispatched none.
+
 The review must check atomic arm, false precondition, current callback capture, delegate-first completion, atomic terminal error/success decision plus owned disarm, terminal-race precedence, exact return/error identity, outer `try/finally` coverage across trigger and the complete wait loop, exact waiter-side `BaseException` preservation, owned exceptional cleanup, replacement-safe cleanup, visible cleanup-failure chaining, no current marked wrapper, current-state equality, replacement/no accumulation, five-second bound, exactly four calls, unchanged `eve_on()`, 2,101/197,136 timing structure, one 61/14 traversal, its exact inactive → set → one capture → clear → inactive state machine, non-Preview floor omission/reversal and deferred-clear qualification, exact 13 Fittings, immutable receipt/direct consumers, 32/105 safe-order structure, mixed-order claim discipline, exact identity/signature exceptions/skips/eight-path scope, restoration, and no unfinished markers.
 
-- [ ] **Step 4: Run `change-explainer` and update reviewer-facing results**
+- [x] **Step 4: Run `change-explainer` and update reviewer-facing results**
 
 Record what changed, how each seam works, why private test coupling is intentional, edge/failure behavior, mutation qualification, exact verification, deviations (none unless literal), reviewer focus, and remaining risks. Do not reference local workflow scratch documents in a PR description.
 
-- [ ] **Step 5: Add the publication stop**
+- [x] **Step 5: Reconcile the publication stop and later authorization**
 
-Add this exact text to results before the final local commit:
+The exact pre-authorization stop was recorded in commit `83bd018b` while that
+boundary still applied. The maintainer's later exact statement `authorize
+remaining steps` superseded that stop and authorized the remaining publication,
+hosted-evidence, and approved artifact-versioning steps. The current instruction
+adds a narrower operational hold: no remote action before parent final review.
+The results ledger records both facts without treating this document as a source
+of permission.
 
-```text
-PRE-AUTHORIZATION STOP: do not push, create or update a pull request, dispatch or rerun GitHub Actions, download a candidate-run artifact, or make a hosted acceptance claim until the maintainer explicitly authorizes publication of the frozen reviewed executable head.
-```
+- [x] **Step 6: Freeze the executable SHA, then commit local evidence**
 
-- [ ] **Step 6: Commit all reviewed local changes and freeze SHA**
+The approved polish correction is the executable authority. Freeze it before the
+evidence-only commit, then stage only the three approved documentation artifacts:
 
 ```bash
+FROZEN_EXECUTABLE_HEAD=$(git rev-parse HEAD)
+test "$FROZEN_EXECUTABLE_HEAD" = \
+  "83bd018b6eeb29e159741258e8d979c7481d7d01"
 git status --short
 git diff --check
 git diff --cached --check
@@ -1683,33 +1705,42 @@ git diff --check 463bccb0..HEAD
 git add \
   docs/superpowers/specs/2026-09-26-ci-broad-waste-reduction-stage-a-design.md \
   docs/superpowers/plans/2026-09-26-ci-broad-waste-reduction-stage-a.md \
-  docs/ci-broad-waste-reduction-stage-a-results.md \
-  tests/test_preview_runtime_review.py \
-  tests/test_preview_presentation.py \
-  tests/test_preview_geometry_publication.py \
-  tests/test_fleetsharing_timing.py \
-  tests/test_shoot_screens.py
+  docs/ci-broad-waste-reduction-stage-a-results.md
 git diff --cached --name-only
 git commit -m "test: finalize broad CI waste reduction Stage A"
 test -z "$(git status --porcelain=v2 --untracked-files=all)"
-REVIEWED_HEAD=$(git rev-parse HEAD)
-test "${#REVIEWED_HEAD}" -eq 40
-printf 'REVIEWED_HEAD=%s\n' "$REVIEWED_HEAD"
+EVIDENCE_HEAD=$(git rev-parse HEAD)
+test "${#EVIDENCE_HEAD}" -eq 40
+printf 'FROZEN_EXECUTABLE_HEAD=%s\nEVIDENCE_HEAD=%s\n' \
+  "$FROZEN_EXECUTABLE_HEAD" "$EVIDENCE_HEAD"
 ```
 
-Before commit, assert staged paths are a nonempty subset of the exact eight and total `463bccb0..HEAD` paths equal the exact eight. The printed SHA is the only head eligible for later publication.
+Before commit, assert staged paths are exactly the three documentation paths,
+a nonempty subset of the eight-path tranche; total `463bccb0..HEAD` paths remain
+exactly the eight approved paths. The frozen executable SHA is the implementation
+authority. A later publication uses the final evidence head while separately
+proving that its five executable test paths are byte-identical to the frozen
+executable head.
 
-- [ ] **Step 7: STOP**
+- [x] **Step 7: STOP**
 
-Return the frozen `REVIEWED_HEAD`, commits, exact checks, structural results, scope, and concerns. Do not push, open/update a PR, dispatch/rerun Actions, or download candidate artifacts. The current implementation authorization does not imply publication authorization.
+Return the frozen executable SHA, evidence commit, exact checks, structural
+results, scope, and concerns. Do not push, open/update a PR, query or mutate
+remote state, dispatch/rerun Actions, or download candidate artifacts until the
+parent final reviewer completes review. Publication is authorized but held by the
+current instruction.
 
-- [ ] **Step 8: Only after separate explicit authorization, verify remote state before acting**
+- [ ] **Step 8: After parent final review, verify remote state before acting**
 
-Use explicit runtime inputs in every command:
+Publication authorization is already present, but the current hold must first be
+released. Use explicit runtime inputs in every command. Here `REVIEWED_HEAD` is
+the final evidence head actually published; retain the separate frozen executable
+SHA and require the five executable test paths to be byte-identical between them.
 
 ```bash
 REPOSITORY=elboaf/FlyGD-Wingman
-: "${REVIEWED_HEAD:?literal authorized 40-character head is required}"
+: "${FROZEN_EXECUTABLE_HEAD:?literal frozen executable head is required}"
+: "${REVIEWED_HEAD:?literal authorized 40-character publication head is required}"
 : "${RUN_ID:?literal authorized workflow run ID is required}"
 : "${PR_NUMBER:?literal authorized pull request number is required}"
 test "$(git rev-parse HEAD)" = "$REVIEWED_HEAD"

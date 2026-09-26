@@ -2,8 +2,13 @@
 
 ## Status
 
-Reviewed architecture and specification. Implementation requires a separate
-reviewed plan.
+Implemented, polished, independently reviewed, and locally verified through the
+Task 5 pre-publication boundary. The frozen reviewed executable head is
+`83bd018b6eeb29e159741258e8d979c7481d7d01`; the following local evidence commit
+changes approved documentation only. The maintainer's later exact statement
+`authorize remaining steps` authorizes publication and hosted evidence, but the
+current execution instruction holds every remote action until parent final
+review.
 
 Stage A changes test architecture only. It preserves every current test identity,
 production behavior, public interface, workflow, dependency, cadence, marker,
@@ -13,12 +18,14 @@ production edit.
 ### External versioning authorization
 
 In this session, the user explicitly granted consent to version this Stage A
-specification, its future implementation plan, its results ledger, and subsequent
-evidence-only updates on this branch. This section records that external user
-authorization; the document does not grant, extend, or substitute for permission.
-The consent does not cover local scratch files, review reports, disposable probes,
-generated evidence, or any other Superpowers artifact, all of which remain
-unversioned.
+specification, its implementation plan, its results ledger, and subsequent
+evidence-only updates on this branch. The later exact statement `authorize
+remaining steps` also authorizes the remaining publication and hosted-evidence
+sequence. This section records that external user authorization; the document
+does not grant, extend, or substitute for permission. The current instruction
+still forbids remote action until parent final review. Consent does not cover
+local scratch files, review reports, disposable probes, generated evidence, or
+any other Superpowers artifact, all of which remain unversioned.
 
 The staged sequence is:
 

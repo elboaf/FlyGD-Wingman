@@ -681,15 +681,171 @@ that prerequisite gap by rerunning locked synchronization, building and installi
 the release codec, asserting codec availability, and completing the exact local
 endpoint above.
 
-## Publication stop and hosted evidence
+## Task 5 reviewer-facing result
 
-This task reads already retained, previously authorized PR #290 baseline evidence
-only. It did not push, update a PR, dispatch/rerun Actions, download a new
-artifact, or mutate any remote. There is no Stage A candidate hosted outcome.
-Candidate publication and hosted comparison remain stopped pending separate
-explicit authorization.
+### Design and what changed
 
-PRE-AUTHORIZATION STOP: do not push, create or update a pull request, dispatch or rerun GitHub Actions, download a candidate-run artifact, or make a hosted acceptance claim until the maintainer explicitly authorizes publication of the frozen reviewed executable head.
+Stage A changes test architecture only. The Preview tests now observe completion
+through the callback actually installed by `Api`; the rolling timing test bounds
+only its independent expected-input slice; and screenshot tests retain one exact
+complete traversal while selecting original production `Screen` objects for
+narrower contracts and sharing one detached immutable failure receipt.
+Production code, workflow configuration, dependencies, packaging, selectors,
+markers, timeouts, and the 61-screen inventory are unchanged.
+
+The initial `polish-core --fix` pass reported no safe edit. Independent review then
+found one contract gap in the complete screenshot traversal: pairing the nth
+metrics set with the nth clear did not prove that each screen cleared its own
+interval. Commit `83bd018b6eeb29e159741258e8d979c7481d7d01` replaces that
+pairing with an exact operation state machine, updates the approved design/plan/
+results contract, adds the deferred-all-clears mutation, and was approved on
+re-review. This is the frozen reviewed executable head before the final
+results-only evidence commit:
+
+```text
+FROZEN_EXECUTABLE_HEAD=83bd018b6eeb29e159741258e8d979c7481d7d01
+```
+
+### How the seams work
+
+- The Preview trigger helper acquires the runtime condition, rejects an already
+  satisfied predicate or an existing marked observer, captures the current
+  callback, installs one marked observer, and only then invokes the trigger. A
+  state is successful only after delegated callback completion and equality with
+  the current snapshot. The first callback error wins; owned cleanup restores the
+  captured callback without replaying state or overwriting a legitimate
+  replacement.
+- The timing case still builds and commits all `2,101` candidates. Its expected
+  slice is independently derived from the inclusive 95-second protocol rule and
+  fixed one-second request-start cadence, while the unchanged oracle validates
+  exact vectors and intervals over `197,136` membership checks.
+- Screenshot selection freezes the original production objects and key order.
+  One traversal still covers all 61 screens and 14 floor intervals; focused tests
+  select the exact two Preview setup rows, one Preview success row, all 13
+  Fittings rows, or consume one immutable Preview failure receipt. The floor
+  state machine requires inactive → set → exactly one successful capture → clear
+  → inactive for every interval.
+
+### Important decisions
+
+Private Preview callback coupling is intentional and confined to tests: the defect
+was caused by `Api` replacing the fixture callback, and only the fixture can arm
+around that exact private owner without changing production's single-callback
+contract. The helper preserves legacy snapshot-only behavior for all unaffected
+callers and leaves `eve_on()` byte-for-byte unchanged.
+
+The timing bound comes from test premises, not production constants or candidate
+state. Screenshot selectors return the original `Screen` instances rather than a
+copied inventory. Cross-module mixed order proves only identity and outcome;
+module-lifetime singleton, 32-walk, and 105-visit claims come only from the three
+contiguous lifetime-safe orders.
+
+### Edge cases and failure behavior
+
+The Preview helper covers false precondition, concurrent-wrapper rejection,
+delegate-first completion, nonmatching and matching callback failures, terminal
+error/success races, trigger and waiter `BaseException`, replacement-safe owned
+cleanup, and cleanup-error chaining under the unchanged five-second safety bound.
+The screenshot state machine rejects missing or nested sets, second captures,
+stray clears, clear before capture, deferred clears, and an interval left active
+at traversal end. The immutable failure receipt retains no path, CDP object,
+mutable operation list, or live monkeypatch.
+
+The final 32-row mutation catalog is `8` Preview observer + `9` timing + `15`
+screenshot rows. Each row failed at its intended exact call-phase assertion and
+restored exact bytes, SHA-256, binary diff, and NUL-delimited porcelain status.
+No timeout, setup, collection, or later generic failure was credited.
+
+### Deviations and discoveries
+
+There is one approved deviation from the pre-polish implementation: the complete
+traversal's nth-pair assertion was strengthened to the operation state machine,
+and the screenshot mutation catalog grew from 14 to 15 rows. No identity,
+signature, screen selection, production behavior, or eight-path scope changed.
+No other implementation deviation or unresolved local blocker was found.
+
+The plan originally froze the post-results commit as `REVIEWED_HEAD`. The later
+maintainer instruction instead requires the executable head to be frozen before
+this evidence-only commit. The value above is therefore the executable authority;
+the following local commit changes approved documentation only.
+
+### Fresh post-polish verification
+
+All commands below ran from the clean `83bd018b` tree after the correction:
+
+- Preview: exact target four passed; static/dynamic instrumentation found exactly
+  four helper calls, zero old waits in target bodies, unchanged predicates and
+  unchanged `eve_on()`; exact ordered 388 consumers passed with hash
+  `36e61c70b9d081f2302bd2928f2b83e2c8d6e9032fe2c9fa8dd0c2eeee0d784f`.
+- Timing: the rolling identity passed with exactly `2,101` candidates, commits,
+  and oracle calls plus `197,136` checks; all 41 timing identities passed in exact
+  order with hash
+  `f4fe35e78a92078c923fd894382c38924501fe6d1f3a4e56a8f8839c0382e37a`.
+- Screenshots: the exact changed eight passed with one receipt, five walks, and
+  78 visits. Normal, reverse-within-fifteen, and seed-`20260926` shuffle orders
+  each passed 35 identities with their frozen hash, one receipt, 32 walks, and
+  105 visits. Mixed order passed all 35; its four receipts, 35 walks, and 108
+  visits remain diagnostic only.
+- Relevant selection: exact ordered `494 passed`, hash
+  `ad677b5f7f9b2667401ccfc39295de021c8a320498d59a3679b05497491b229e`.
+- Mutation matrix: `8/8`, `9/9`, and `15/15` intended failures with exact
+  restoration; the worktree and index were clean immediately afterward.
+- Complete suite: exact `16,595 passed + 14 skipped = 16,609`; ordered identity
+  hash `f468ba1954d3ff0ab693dd721ff8a7a4d12266e16d8568035de4245a6c616100`,
+  normalized skip hash
+  `14f1511f840fb2fdc1680123dde29a7143405829af97141d62c5099aa4f265af`,
+  zero failures/errors, and no Node, codec, or unexpected native skip.
+- Independent gates: JavaScript smoke passed every page module; the direct
+  screenshot DOM fixture passed `35/35`; Cargo passed `1/1`; global Ruff check
+  passed; Ruff format reported 520 files already formatted; documentation passed
+  `7/7`.
+- Identity and scope: all 313 five-file identities/markers retained hash
+  `a21d48abcdfaeb9b2b33ab5e1b089f5da4e692f01bebe94c104908728235eaef`
+  with only the four authorized signature substitutions. The range contains
+  exactly eight approved paths, all 13 protected hashes match, the protected-tree
+  diff is empty, and working/staged/baseline-range diff checks passed.
+
+Elapsed values from these executions are observations only. They establish no
+speedup, slowdown, lower bound, p95, throughput, runner-efficiency, job, or
+critical-path conclusion.
+
+### Reviewer focus and remaining risks
+
+Review should concentrate on lock ordering and exact exception identity in the
+Preview observer, the timing slice's independence from production state, the
+screenshot interval state machine and immutable receipt lifetime, and the strict
+scope/identity claims. The remaining risks are bounded: test code intentionally
+couples to private callback state, Linux cannot establish the later Windows
+hosted outcome, and single-run elapsed observations cannot establish an effect.
+No production path changed.
+
+### Knowledge check
+
+1. Why must the Preview observer be installed while holding the runtime condition
+   before the trigger executes?
+2. Why is current-snapshot equality required in addition to a matching completed
+   callback state?
+3. Which test premises derive the rolling oracle's 96-record expected slice?
+4. Why do only the normal, reverse, and deterministic-shuffle orders support the
+   one-receipt/32-walk/105-visit structural claim?
+5. Which deferred-clear behavior passed the old nth-pair check but fails the new
+   floor-interval state machine?
+
+## Publication authorization and current hold
+
+The original pre-authorization stop was satisfied by the maintainer's later exact
+statement, `authorize remaining steps`. Together with the earlier explicit
+artifact consent and the current instruction to commit final approved artifact
+updates, this authorizes versioning the Stage A specification, plan, results, and
+evidence updates and authorizes the remaining publication/hosted-evidence steps.
+The document records that external authorization; it does not create or extend
+it.
+
+The current execution instruction imposes a narrower operational hold: do not
+push, create or update a pull request, query or mutate remote state, dispatch or
+rerun Actions, or download candidate artifacts until the parent final reviewer
+has completed review. No such action occurred in this local pass. There is no
+Stage A candidate hosted outcome yet, and no hosted acceptance claim is made.
 
 ## Appendix A — exact targeted identity lists
 
