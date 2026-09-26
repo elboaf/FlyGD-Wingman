@@ -2,15 +2,25 @@
 
 ## Status
 
-Approved architecture and specification. Implementation requires a separate
+Reviewed architecture and specification. Implementation requires a separate
 reviewed plan.
 
 Stage A changes test architecture only. It preserves every current test identity,
 production behavior, public interface, workflow, dependency, cadence, marker,
-workflow test selector, shard, timeout, and release gate. It authorizes no
+workflow test selector, shard, timeout, and release gate. It includes no
 production edit.
 
-The approved sequence is:
+### External versioning authorization
+
+In this session, the user explicitly granted consent to version this Stage A
+specification, its future implementation plan, its results ledger, and subsequent
+evidence-only updates on this branch. This section records that external user
+authorization; the document does not grant, extend, or substitute for permission.
+The consent does not cover local scratch files, review reports, disposable probes,
+generated evidence, or any other Superpowers artifact, all of which remain
+unversioned.
+
+The staged sequence is:
 
 - **Stage A — this design:** remove same-identity deterministic waste in one
   Preview readiness fixture, one rolling timing oracle, and eight screenshot
@@ -21,7 +31,7 @@ The approved sequence is:
   identities.
 - **Stage C — later and separately reviewed:** mutation-qualified deletion or
   consolidation of mapped low-value tests. The current discovery estimate is
-  about 346 candidates, not an authorized deletion list or count target.
+  about 346 candidates, not a deletion list or count target.
 
 `PRODUCT.md` and `DESIGN.md` do not govern this tranche because it changes no
 product behavior or rendered screen. The CI redesign, completed CI tranches,
@@ -31,9 +41,11 @@ current test helpers, and exact production APIs are the authorities.
 
 Implement three bounded corrections:
 
-1. repair the test-local Preview readiness observer so it follows the sole
-   callback that `Api` actually installed instead of waiting five seconds on a
-   callback that `Api` replaced;
+1. add a dedicated test-local, arm-before-trigger Preview readiness observer for
+   only the four post-Api transitions whose fixture callback `Api` replaced;
+   delegated callback errors fail the waiter with the exact error object, while
+   the shared `eve_on()` definition and all non-target caller behavior remain
+   unchanged;
 2. bound only the 2,101-prefix rolling test's independent expected timing window
    from the explicit 95-second protocol rule and its fixed one-second cadence;
 3. focus eight full 61-screen screenshot walks while retaining one complete
@@ -71,7 +83,7 @@ accepted readiness (#290)`). Relevant authorities inspected for this design are:
   `wingman/fleetsharing/timing.py`;
 - `tests/test_shoot_screens.py` and `scripts/shoot_screens.py`.
 
-The existing completed screenshot consolidations authorize measured later
+The existing completed screenshot consolidations support measured later
 review, not automatic deletion. The latest source-readiness results likewise
 preserve claim discipline: structural work may be stated exactly; one hosted
 run does not establish an elapsed-time effect.
@@ -141,17 +153,24 @@ Every implementation decision is subordinate to these invariants:
 4. production source/helper behavior, public interfaces, workflows,
    dependencies, configuration, packaging, cadence, markers, workflow test
    selectors, budgets, shards, and timeouts do not change;
-5. the Preview wait bound remains exactly five seconds and its final predicate
-   remains unchanged;
-6. the rolling timing test still constructs, prepares, checks, and commits all
+5. the Preview wait bound remains exactly five seconds and each supplied state
+   predicate remains unchanged; any delegated callback error observed while a
+   trigger wait is armed takes precedence over state readiness;
+6. the existing `eve_on()` definition and behavior remain unchanged; exactly
+   three post-Api EVE call sites move from it to the new trigger helper, the
+   companions `[True]` transition also uses that helper, and every other
+   `runtime_pump` consumer retains byte-for-byte behavior;
+7. the rolling timing test still constructs, prepares, checks, and commits all
    2,101 production transitions;
-7. `diagnostic_oracle()` remains unchanged for its full-vector and all other
+8. `diagnostic_oracle()` remains unchanged for its full-vector and all other
    callers;
-8. production `shoot.walk()` and the 61-entry `SCREENS` inventory remain
+9. production `shoot.walk()` and the 61-entry `SCREENS` inventory remain
    unchanged;
-9. Node and the built release settings codec remain mandatory full-suite
-   prerequisites;
-10. elapsed timings are observational; acceptance is identity, structure,
+10. the retained complete screenshot traversal proves both exact ordered keys and
+    `error is None` for every shot;
+11. Node and the built release settings codec remain mandatory full-suite
+    prerequisites;
+12. elapsed timings are observational; acceptance is identity, structure,
     mutation sensitivity, order independence, and contract preservation.
 
 ## 1. Preview readiness observer
@@ -186,42 +205,46 @@ The `[False]` companion row does not wait for a runtime transition. No other
 identity in the two files has this disconnected callback shape. The hosted four
 sum is `20.275s`, observationally.
 
-### Test-local interface and two wait modes
+### Test-local interfaces and two wait modes
 
-Extend only the fixture interface in `tests/test_preview_runtime_review.py`:
+Extend the fixture seam in `tests/test_preview_runtime_review.py` and add one
+explicit post-Api entry point:
 
 ```text
 wait_state(predicate, *, trigger=None)
 _wait_for_runtime_state(runtime, predicate, states, trigger) -> None
+trigger_and_wait_state(rig, predicate, trigger) -> None
 ```
 
-The two modes have different and explicit contracts.
+The two wait modes have different and explicit contracts.
 
 **Legacy snapshot mode** is `wait_state(predicate)` with no trigger. Its code
-path remains the existing fixture condition/current-snapshot wait for unaffected
-callers whose fixture `publish` callback still owns delivery, either directly or
-as the explicit tail of a known composed callback. It asks only whether
-`predicate(runtime.snapshot())` becomes true within the existing five-second
-bound. The fixture condition is a wakeup aid, not a callback-completion fence:
-runtime state is visible before callback invocation, and a callback may already
-be captured or running before direct `publish` acquires that condition or before
-a composed callback reaches its `publish(state)` tail. The waiter may therefore
-return from snapshot truth before either direct or composed callback delivery
-finishes.
+path remains the existing fixture condition/current-snapshot wait for every
+unaffected caller. It asks only whether `predicate(runtime.snapshot())` becomes
+true within the existing five-second bound. The fixture condition is a wakeup
+aid, not a callback-completion fence: runtime state is visible before callback
+invocation, and a callback may already be captured or running before direct
+`publish` acquires that condition or before a composed callback reaches its
+`publish(state)` tail. The waiter may therefore return from snapshot truth before
+either direct or composed callback delivery finishes.
 
 Legacy mode installs no observer, delegates no callback, and makes no guarantee
 about callback effects, return, exception identity, or completion. It is never
 acceptance evidence for delegated callback completion. `layout_api` remains the
 established composition example—it captures `publish` and installs a callback
 that calls Api first and `publish(state)` second—but Stage A does not change that
-fixture or any other legacy caller. The exact four post-`main_api` transitions
-need callback-completion evidence, so they alone move to trigger-driven mode.
+fixture or any other legacy caller. In particular, the `eve_on()` definition and
+its behavior remain exactly unchanged; only the three named post-`main_api` EVE
+call sites stop using it. Those three transitions and the named companions
+transition are the only calls to `trigger_and_wait_state()`.
 
-**Trigger-driven mode** is `wait_state(predicate, trigger=callable)`. It owns the
-transition and must arm before invoking it. It never accepts an already-visible
-target as success. Its behavior is exact:
+**Trigger-driven mode** is the path reached through
+`trigger_and_wait_state(rig, predicate, trigger)`. It owns the transition and
+must arm before invoking it. It never accepts an already-visible target as
+success. Its behavior is exact:
 
-1. create a fresh local `Condition` and completed-delivery list;
+1. create a fresh local `Condition`, a successful-completion list, and a callback
+   error list;
 2. acquire `runtime._condition` before the trigger can run;
 3. require `predicate(runtime._snapshot())` to be false; a true predicate means
    the transition was triggered too early or the test supplied a stale target,
@@ -234,50 +257,65 @@ target as success. Its behavior is exact:
    using `set_state_callback()`;
 7. release `runtime._condition`, then invoke the trigger exactly once;
 8. for every state delivered to the observer, call the exact captured delegate
-   once with the exact state object and return its exact result;
-9. if the delegate raises, capture that same exception object for diagnostics,
-   record completion/notify in `finally`, and use a bare re-raise so
-   `PreviewRuntime._publish()` receives the original object and retains its
-   existing catch/log behavior;
-10. only after the delegate returns or raises, append that exact delivered state
-    as completed and notify the local condition;
-11. admit success only when a completed delivered state satisfies `predicate`
-    **and equals the current `runtime.snapshot()`**; snapshot truth without a
-    matching completed delivery is never sufficient;
-12. keep the literal five-second safety bound and include detached fixture
-    states, current snapshot, completed states, and captured callback errors in
-    timeout diagnostics;
-13. if the trigger itself raises, propagate its exact exception after the same
+   once with the exact state object;
+9. if the delegate returns, append that exact state to successful completions,
+   notify the local condition, and return the delegate's exact result;
+10. if the delegate raises an `Exception`, append that exact exception object to
+    callback errors, notify the local condition, do **not** record the state as a
+    successful completion, and use a bare re-raise so `PreviewRuntime._publish()`
+    receives the same object and retains its existing catch/log behavior;
+11. after the trigger returns, wait until either a callback error exists or a
+    successfully completed state satisfies `predicate` **and equals the current
+    `runtime.snapshot()`**;
+12. while holding the local condition, check callback errors before considering
+    a matching successful completion; raise the first observed callback error
+    object itself, not a wrapper or copied exception;
+13. fail on every delegated callback error observed during the armed lifetime,
+    whether its delivered state matches the target or not; a later matching
+    success cannot erase an earlier nonmatching delivery failure;
+14. keep the literal five-second safety bound and include detached fixture
+    states, current snapshot, successful completions, and captured callback
+    errors in timeout diagnostics;
+15. if the trigger itself raises, propagate its exact exception after the same
     owned-only cleanup;
-14. in `finally`, reacquire `runtime._condition` and restore `delegate` by direct
+16. in `finally`, reacquire `runtime._condition` and restore `delegate` by direct
     assignment only when `runtime._callback is observer`;
-15. if Api, close, the delegate, or another owner replaced the callback during
+17. if Api, close, the delegate, or another owner replaced the callback during
     the wait, do not overwrite that newer callback;
-16. restoration never calls the production setter, resets `_published`, wakes
+18. restoration never calls the production setter, resets `_published`, wakes
     the worker, republishes state, or invokes either callback.
 
-The equality requirement binds readiness to completion of the callback for the
-currently visible state. An earlier matching delivery cannot admit a newer
-matching snapshot whose callback is still running. Delegate-first completion is
-load-bearing: Api's Companion/EVE reconciliation effects and callback error
-observability must finish at the callback boundary before the wait can return.
+The equality requirement binds readiness to successful completion of the
+callback for the currently visible state. An earlier matching delivery cannot
+admit a newer matching snapshot whose callback is still running. A matching
+callback that raises after partial or no reconciliation can never satisfy
+readiness. Error priority is intentionally broader than the target predicate:
+the captured delegate is Api's sole runtime-state reconciliation callback, and
+repository behavior supplies no safe class of transient or nonmatching callback
+failure to ignore. Any such failure means required delivery failed during the
+owned transition, even if the runtime later reaches a matching state.
 
-Change `eve_on` to call trigger-driven mode so the observer is armed before
-`runtime.set_eve(True, revision)`. Change the exact `[True]` companions branch in
-`test_off_apply_refreshes_retained_geometry_without_eve_start` to arm before
-`runtime.set_companions(True, 1)`. Those are the only call-site changes required
-for the four disconnected waits. Existing no-trigger waits remain legacy only
-while the fixture callback owns delivery.
+`trigger_and_wait_state()` is used exactly four times:
 
-The four old identities therefore retain the five-second safety bound but have
-**zero expected disconnected timeout waits** after Stage A: three enter through
-the trigger-driven `eve_on`, and the companions `[True]` row enters through its
-explicit trigger. This is a structural expectation, not an elapsed-time claim.
+| Existing identity | Trigger owned by the helper |
+|---|---|
+| `test_main_adapters_never_present_on_pump_and_coalesce_while_page_blocked` | `runtime.set_eve(True, 1)` |
+| `test_identified_capture_through_main_while_old_delivery_is_blocked` | `runtime.set_eve(True, 1)` |
+| `test_retained_drag_and_commit_notify_distinct_authorities` | `runtime.set_eve(True, 1)` |
+| `test_off_apply_refreshes_retained_geometry_without_eve_start[True]` | `runtime.set_companions(True, 1)` |
 
-The fixture API is serialized. A marked observer already present is a test
-misuse, not permission to build a callback chain. Fixture teardown remains the
-existing `runtime.shutdown(5)` over every opened rig; the helper adds no worker,
-timer, or persistent subscriber.
+The first two call sites are in `tests/test_preview_presentation.py`; the last
+two are in `tests/test_preview_geometry_publication.py`. No call inside
+`tests/test_preview_runtime_review.py`, no other `eve_on()` caller, and the
+companions `[False]` row changes behavior. The four identities retain the
+five-second safety bound but have **zero expected disconnected timeout waits**
+after Stage A. This is a structural expectation, not an elapsed-time claim.
+
+The trigger-helper API is serialized. A marked observer already present is a
+test misuse, not permission to build a callback chain. Fixture teardown remains
+the existing `runtime.shutdown(5)` over every opened rig; the helper adds no
+worker, timer, or persistent subscriber. Successful states and callback errors
+are retained only for that one armed call.
 
 ### Preserved contracts and exact file scope
 
@@ -289,14 +327,17 @@ The change does not alter:
 - Companion `runtime_changed()` delivery;
 - EVE runtime authorization/reconciliation;
 - runtime state publication equality suppression;
-- callback exception identity/logging in `_publish()`;
+- callback exception identity/logging in `_publish()`; the test observer's bare
+  re-raise reaches the existing production catch with the same object;
 - any five-second safety bound, state predicate, native epoch, admission,
   cleanup, or final shutdown assertion.
 
-`tests/test_preview_presentation.py` remains an unchanged consumer of the
-trigger-driven `eve_on`. `tests/test_preview_geometry_publication.py` receives
-only the exact companions `[True]` call-site conversion described above.
-No permanent edit is needed in `wingman/preview/runtime.py`, `wingman/ui/api.py`,
+`tests/test_preview_presentation.py` changes only its import and the two named
+post-Api EVE call sites. `tests/test_preview_geometry_publication.py` changes
+only its import, the named retained-drag EVE call site, and the exact companions
+`[True]` call site. `tests/test_preview_runtime_review.py` adds the observer seam
+and helper but leaves `eve_on()` unchanged. No permanent edit is needed in
+`wingman/preview/runtime.py`, `wingman/ui/api.py`,
 `wingman/ui/fleetpresentation.py`, or any other Preview test.
 
 ### Qualification witnesses
@@ -311,20 +352,26 @@ Each probe must restore exact bytes/state before the next:
 | Blocked delegated callback | let the trigger make the snapshot active while the actual delegate remains barrier-held | waiter remains blocked until the delegate returns and matching completion is recorded |
 | Missing delegation | omit `delegate(state)` | actual callback effect list remains empty and qualification fails even though snapshot is active |
 | Premature completion | record/notify before calling a barrier-held delegate | waiter returns while delegate is held; blocked-callback witness fails |
-| Exception identity | have the delegate raise one sentinel exception under a production-style catch | the exact same object reaches that catch; completion notifies and owned cleanup still occurs |
+| Matching callback failure | make the snapshot active, let the delegate perform partial or no reconciliation, then raise one sentinel exception | the delivered state is absent from successful completions; the waiter raises the exact sentinel object and never passes from active snapshot truth; the production-style catch receives that same object |
+| Nonmatching callback failure | make the delegate raise one sentinel on a nonmatching state, then optionally deliver a successful matching state before the waiter reacquires the condition | the waiter raises the exact first error object before considering the later matching completion; silently continuing fails qualification |
 | Replacement during delegation | have the delegate install a legitimate replacement callback | candidate leaves the replacement installed; unconditional restoration fails |
 | Sequential waits | execute two trigger waits against the same underlying callback | exact callback identity is restored after each and callback depth remains one |
 | Concurrent waits | hold the first marked observer and attempt a second with a false target | second fails before its trigger runs; removing the marker check admits a second layer and fails qualification |
 | Trigger already satisfied | begin trigger-driven mode with its predicate true | helper fails before wrapper installation or trigger invocation; it never fast-returns success |
-| Trigger/callback cleanup | make trigger or delegate raise | `finally` restores only an observer it still owns and leaves no marked wrapper |
+| Trigger/callback cleanup | make the trigger raise, and separately make a matching or nonmatching delegate raise | `finally` restores only an observer it still owns, leaves no marked wrapper, and does not republish or accumulate callbacks |
 | Legacy snapshot-only semantics | capture a direct or composed callback, expose the target runtime snapshot, and hold callback delivery before direct `publish` acquires the fixture condition or before the composition reaches its `publish(state)` tail | no-trigger mode may return while callback delivery is incomplete; this is expected legacy behavior and cannot witness delegated completion |
 
-The exact four hosted identities must each invoke trigger-driven mode once in
-focused qualification. Expected old disconnected timeout waits after the change
-are exactly zero. A timeout that eventually finds the predicate true is not
-acceptance evidence.
+The exact four hosted identities must each invoke
+`trigger_and_wait_state()` once in focused qualification; static instrumentation
+must find no fifth call and must prove `eve_on()` is textually unchanged. Expected
+old disconnected timeout waits after the change are exactly zero. A timeout that
+eventually finds the predicate true, or a matching state whose delegate raised,
+is not acceptance evidence.
 
 ## 2. Bounded rolling timing oracle
+
+The accepted independent review changes no timing requirement, interface,
+arithmetic, witness, scope, or verification gate in this section.
 
 ### Existing cost and contract
 
@@ -486,17 +533,21 @@ Current structural visits are `8 × 61 + 27 = 515`.
 ### Derived selector
 
 Capture the production inventory as a tuple of existing `Screen` objects at
-module import and add one test-local selector:
+module import, freeze the expected complete key contract, and add one test-local
+selector:
 
 ```text
+_PRODUCTION_SCREENS = tuple(shoot.SCREENS)
+_EXPECTED_FULL_SCREEN_KEYS = (<the exact 61-key tuple below>)
 _walk_screens(*keys) -> tuple of original Screen objects
 ```
 
-It derives a key index from the captured production inventory, asserts inventory
-keys are unique, looks up every requested key exactly, preserves caller order,
-and returns those original objects. It does not copy screen fields or create a
-second hand-maintained inventory. Missing, duplicate, or reordered selected keys
-fail immediately.
+At import, assert that `_PRODUCTION_SCREENS` has unique keys and that its ordered
+keys equal `_EXPECTED_FULL_SCREEN_KEYS`. `_walk_screens()` derives its key index
+from `_PRODUCTION_SCREENS`, looks up every requested key exactly, preserves caller
+order, and returns those original objects. It does not copy screen fields or
+create a second `Screen` inventory. Missing, duplicate, or reordered selected
+keys fail immediately.
 
 Each focused test uses `monkeypatch` or a bounded `pytest.MonkeyPatch.context()`
 to replace `shoot.SCREENS` only for one walk. Restoration occurs before the test
@@ -506,8 +557,18 @@ or shared fixture receipt is exposed. Production `screens_for_gate()` and
 ### Exact full traversal
 
 `test_walk_applies_and_clears_device_metrics_for_narrow_screen` remains the sole
-complete walk. It must assert the visited shot keys equal this exact derived
-production order, in addition to all existing floor assertions:
+complete walk. It must make both independent assertions below, in addition to
+all existing floor assertions:
+
+```python
+assert tuple(shot["key"] for shot in shots) == _EXPECTED_FULL_SCREEN_KEYS
+assert all(shot["error"] is None for shot in shots), shots
+```
+
+`walk()` catches an ordinary screen failure and still appends that screen's key,
+so exact key order alone does not prove successful traversal. Conversely,
+all-shot success does not pin inventory membership or order.
+`_EXPECTED_FULL_SCREEN_KEYS` is the following exact frozen production order:
 
 ```text
 uploader
@@ -575,7 +636,8 @@ dialog
 
 This one identity retains complete screen reachability, ordinary/floor branch
 crossing, all 14 current floor screens, override count parity, set-before-clear
-ordering, all-shot success, and exact inventory order.
+ordering, explicit all-shot success, and exact inventory order. The two traversal
+assertions are not merged or replaced by `len(shots) == 61`.
 
 ### Exact focused selectors and expected visits
 
@@ -721,18 +783,19 @@ tear down `test_shoot_screens.py` when execution leaves its module and construct
 the module fixture again if execution later re-enters it. Therefore no singleton
 construction, walk-count, or visit-count invariant is asserted for arbitrary
 cross-module interleavings. Direct selection in separate pytest invocations may
-likewise construct one receipt per invocation. Session scope is not authorized:
+likewise construct one receipt per invocation. Session scope is out of scope:
 the bounded module receipt already gives isolation and cleanup without extending
 a monkeypatch-derived artifact across module environments.
 
 ### Preserved walk contracts and mutation witnesses
 
-The focused set must still kill these temporary production mutations at the
-intended assertion:
+The focused set must still kill these temporary production mutations and
+bounded test-double fault injections at the intended assertion:
 
 | Contract | Temporary defect | Witness |
 |---|---|---|
 | Complete inventory | omit or reorder one `screens_for_gate(True)` result | sole 61-screen traversal's exact visited list |
+| Ordinary all-shot success | make a specific ordinary, non-floor, non-Preview capture such as `uploader` raise; production `walk()` catches it and retains its key | exact ordered keys still pass, then the complete traversal fails specifically at `all(shot["error"] is None for shot in shots)` |
 | Floor traversal | omit an override/clear or reverse one pair | full traversal's 14-floor counts and pair ordering |
 | Both Preview setup failures | stop attempting either group or narrow setup | exact two-shot setup-failure identity |
 | Metrics before setup | omit or move the narrow override after setup | success-order identity and shared failure receipt cannot locate set → setup |
@@ -754,12 +817,14 @@ teardown boundary.
 
 ## Disposable design qualification
 
-No repository implementation was made while preparing or hardening this design.
-A disposable archive whose executable source is `463bccb0` was created under
-`/tmp/wingman-stage-a-overlay` and received only disposable candidate edits. The
-source worktree remained documentation-only.
+No repository implementation was made while preparing, hardening, or correcting
+this design. The initial disposable archive used executable source `463bccb0`
+under `/tmp/wingman-stage-a-overlay`. The accepted-review corrections were
+requalified from the same commit in `/tmp/wingman-stage-a-review-current`. Both
+received only disposable candidate/probe edits; the source worktree remained
+documentation-only, and neither local path is in versioning scope.
 
-The hardened qualification established:
+The initial qualification plus the accepted-review requalification established:
 
 - the seven relevant modules collect 494 unique identities before and after;
   the ordered lists are byte-for-text equal with zero additions/removals;
@@ -768,11 +833,15 @@ The hardened qualification established:
   presentation/geometry selection passed 32 tests;
 - all 388 tests in the complete set of modules that consume `runtime_pump`—runtime
   review, runtime boundaries, layout batch, layout admission, polish fixes,
-  presentation, geometry publication, and wiring—passed with the two-mode
-  contract; this includes every importer of the changed `eve_on` helper;
-- focused instrumentation recorded exactly the four named post-Api identities
-  entering trigger-driven mode once each, so expected old disconnected timeout
-  waits are structurally zero while the five-second bound remains;
+  presentation, geometry publication, and wiring—passed again with the corrected
+  two-mode contract;
+- static requalification found exactly four `trigger_and_wait_state()` call
+  sites—the two presentation EVE transitions, retained-drag EVE transition, and
+  companions `[True]` transition—and proved the body of `eve_on()` exactly
+  unchanged from the baseline;
+- the exact four named post-Api identities passed with one trigger-helper call
+  each, so expected old disconnected timeout waits are structurally zero while
+  the five-second bound remains;
 - an independent legacy probe demonstrated both direct and composed fixture
   callbacks can remain incomplete after no-trigger mode returns from snapshot
   truth;
@@ -780,11 +849,20 @@ The hardened qualification established:
   callback was already captured/running, then proved the trigger-driven waiter
   remained blocked with an active snapshot until its delegated callback
   returned;
-- the observer probe also passed missing-delegation effects, exact exception
-  identity through a production-style catch, legitimate callback replacement,
-  owned-only restoration, two sequential waits, and concurrent-wrapper
-  rejection; missing-delegation, premature-completion, unconditional-restore,
-  and wrapper-accumulation mutations all failed that probe;
+- the observer probe also passed missing-delegation effects, legitimate callback
+  replacement, owned-only restoration, two sequential waits, and
+  concurrent-wrapper rejection; missing-delegation, premature-completion,
+  unconditional-restore, and wrapper-accumulation mutations all failed that
+  probe;
+- the corrected seven-case observer requalification proved a matching callback
+  failure after both no reconciliation and partial reconciliation leaves the
+  snapshot active but never records successful readiness; in each case the
+  waiter and production-style catch received the exact same sentinel object;
+- that requalification also proved a nonmatching callback error remains fatal
+  even when a later matching callback succeeds before the waiter resumes, plus
+  delegate-result preservation, blocked-delegate ordering, replacement-safe
+  cleanup, sequential depth one, concurrent rejection, stale-target rejection,
+  and exact trigger-error propagation;
 - the rolling case executed exactly 2,101 candidates and 2,101 commits while
   counting exactly 197,136 oracle membership checks; the current formula is
   exactly 2,208,151;
@@ -801,10 +879,14 @@ The hardened qualification established:
 - metrics-before-setup omission, verification-after-capture,
   capture-attempt omission, cleanup omission, and Fittings injection-after-action
   mutations all failed their intended retained identities;
-- focused Ruff check and format-check passed for the four disposable candidate
-  test files;
-- every temporary production mutation was restored byte-for-byte in a `finally`
-  path.
+- a corrected full-traversal probe passed normally; when the ordinary,
+  non-floor, non-Preview `uploader` capture alone raised, its key remained in the
+  exact ordered list and the retained identity failed specifically at the
+  all-shot `error is None` assertion; restoring that test-double mutation made
+  the same identity pass again;
+- focused Ruff check and format-check passed for the disposable candidate test
+  files;
+- every temporary production or test-double mutation was restored exactly.
 
 The local durations from this disposable Linux/WSL exercise are diagnostic only.
 They support neither a local nor hosted speedup claim and are not acceptance
@@ -825,12 +907,18 @@ identities.
 4. Document direct/composed fixture-owned legacy mode as snapshot-only with no
    callback-completion guarantee; add the trigger precondition and marked-wrapper
    assertions only to trigger-driven mode without changing legacy callers.
-5. Convert `eve_on` and only the exact companions `[True]` call to arm before
-   their triggers.
-6. Instrument the exact four identities: four trigger-driven calls and zero old
-   disconnected timeout waits are required structurally.
-7. Run the complete runtime-review/presentation/geometry selection and every
-   observer guard mutation with exact restoration.
+5. Add `trigger_and_wait_state()` without changing `eve_on()`, and convert only
+   the two named presentation EVE calls plus the named geometry EVE and
+   companions `[True]` calls.
+6. Make successful completions and callback errors disjoint; check the first
+   observed error before matching readiness, including after matching and
+   nonmatching deliveries.
+7. Instrument the exact four identities: exactly four trigger-helper calls, no
+   fifth use, unchanged `eve_on()`, and zero old disconnected timeout waits are
+   required structurally.
+8. Run the complete 388-test consumer set and every observer guard mutation,
+   including matching partial/no-reconciliation errors and a nonmatching error
+   followed by matching success, with exact restoration.
 
 ### Timing
 
@@ -848,14 +936,17 @@ identities.
 
 1. Instrument production `walk()` calls without replacing them; current selected
    identities must report 515 visits.
-2. Add the derived selector and exact expected-list assertions.
-3. Introduce the one immutable module-scoped Preview failure receipt.
-4. Keep the 15 `test_shoot_screens.py` target IDs contiguous and run their normal,
+2. Add the derived selector, exact expected-key assertion, and separate
+   every-shot-`error is None` assertion to the retained complete traversal.
+3. Prove an ordinary non-floor/non-Preview failure retains its key but fails the
+   all-shot assertion, then restore the mutation exactly.
+4. Introduce the one immutable module-scoped Preview failure receipt.
+5. Keep the 15 `test_shoot_screens.py` target IDs contiguous and run their normal,
    reverse, and deterministic shuffle orders; each full structural command must
    report one receipt construction, 32 walks, and 105 visits.
-5. Run a separate mixed/interleaved 35-ID command for identity/outcome evidence
+6. Run a separate mixed/interleaved 35-ID command for identity/outcome evidence
    only; do not assert lifecycle-dependent counts across module re-entry.
-6. Apply each walk mutation separately and restore production source exactly.
+7. Apply each walk mutation separately and restore production source exactly.
 
 Temporary counters, plugins, mutation scripts, receipt debug output, and generated
 JUnit/timing evidence remain outside the tracked tree and are removed or retained
@@ -869,8 +960,9 @@ The implementation results must record:
 
 1. exact four Preview hotspot IDs, then complete runtime review, runtime
    boundaries, layout batch, layout admission, polish fixes, presentation,
-   geometry publication, and wiring files—the full set that consumes
-   `runtime_pump` and includes every changed-`eve_on` importer;
+   geometry publication, and wiring files—the full 388-test set that consumes
+   `runtime_pump`; also record exactly four trigger-helper call sites, no fifth
+   use, and byte-for-byte equality of the `eve_on()` definition;
 2. exact rolling timing ID, then complete `test_fleetsharing_timing.py`;
 3. exact eight screenshot IDs;
 4. exact 35 screenshot walk IDs, including all 27 unchanged focused identities;
@@ -883,7 +975,12 @@ The implementation results must record:
    `test_current_screenshots.py`;
 8. relevant Preview runtime, Api/presentation, Fleet timing, screenshot worker,
    protocol, isolation, and lifecycle files;
-9. exact structural counters and all temporary mutation witnesses.
+9. observer witnesses for matching partial/no-reconciliation errors, a
+   nonmatching error followed by matching success, exact waiter/production-catch
+   exception identity, and owned-only cleanup;
+10. the ordinary non-floor/non-Preview screenshot fault whose key remains while
+    the complete traversal fails at the separate all-shot assertion;
+11. exact structural counters and all temporary mutation witnesses.
 
 ### Complete local verification
 
@@ -936,10 +1033,10 @@ elapsed result.
 ## Data lifecycle
 
 - The Preview observer exists only around one trigger-driven `wait_state` call.
-  It temporarily holds the exact callback object, completed immutable runtime
-  states, and exact exception objects for diagnostics; it persists none of them
-  and restores only its own slot. Runtime and native teardown remain fixture
-  owned.
+  It temporarily holds the exact callback object, successfully completed
+  immutable runtime states, and exact callback-error objects in separate lists;
+  it persists none of them and restores only its own slot. Runtime and native
+  teardown remain fixture owned.
 - The rolling timing test retains its existing in-memory 2,101 constructed
   exchanges. The expected slice is bounded for oracle work only; production
   state and all commits remain real. Nothing is persisted.
@@ -952,14 +1049,17 @@ elapsed result.
 
 ## Failure behavior and observability
 
-- Preview readiness remains fail-closed after five seconds with the unchanged
-  final predicate and stronger callback/current-state diagnostics. Callback
-  exceptions retain production logging and exact identity.
+- Preview readiness retains the unchanged five-second bound and supplied state
+  predicate. It succeeds only from a current, successfully delivered matching
+  state. Any matching or nonmatching delegated callback error observed while
+  armed fails the waiter first with the exact object, while the observer's bare
+  re-raise preserves production logging of that same object.
 - Timing mismatches fail on the first wrong retained vector, interval, detached
   state, commit, capacity, final server time, or inconsistency assertion.
 - Screenshot selection fails immediately on missing/duplicate keys. Every walk
   still records per-screen setup, verification, capture, and cleanup errors
-  through production `walk()`.
+  through production `walk()`. The retained complete traversal separately fails
+  if any recorded shot has a non-`None` error, even when all ordered keys remain.
 - Structural counters are qualification evidence only. No permanent logging,
   metric, JUnit property, workflow summary, timeout, or budget is added.
 
@@ -993,8 +1093,8 @@ Rejected. A shorter bound hides the disconnected observer and weakens deadlock
 protection. Polling adds scheduling noise. Pre-signalling or snapshot truth can
 pass before Api callback effects. Arming after the trigger cannot intercept a
 callback already captured by `_publish()`. Trigger-driven mode arms atomically
-first, rejects an already-true target, and keeps the five-second bound and final
-predicate exact.
+first, rejects an already-true target, and keeps the five-second bound and
+supplied state predicate exact while treating callback errors as failure.
 
 ### Use `set_state_callback()` to install/restore the observer
 
@@ -1022,7 +1122,7 @@ changing production API or behavior.
 ### Run seven independent focused replacements
 
 Rejected. Four failure IDs assert overlapping facts about one exact walk trace.
-Independent one-screen reruns would yield 108 visits, not the approved 105, and
+Independent one-screen reruns would yield 108 visits, not the specified 105, and
 would retain deterministic duplicate work. One immutable receipt preserves all
 four assertions and direct selection.
 
@@ -1046,8 +1146,10 @@ Qualify a delegate that installs a replacement.
 
 ### Observer notification races ahead of Api effects
 
-Mitigation: delegate first and notify only in `finally` after return/raise.
-Qualify with a barrier-held callback.
+Mitigation: delegate first. Record and notify successful completion only after
+return; on raise, record and notify the exact error without recording successful
+completion, then use a bare re-raise. Qualify both paths with a barrier-held or
+sentinel-raising callback.
 
 ### Callback replay changes behavior
 
@@ -1077,9 +1179,9 @@ receipt.
 
 ### Focused screens hide full-inventory behavior
 
-Mitigation: retain one complete 61-screen traversal and exact derived order, all
-14 floor screens, both Preview setup failures, all 13 Fittings screens, and all
-27 existing focused walks.
+Mitigation: retain one complete 61-screen traversal with separate exact-order
+and all-shot-success assertions, all 14 floor screens, both Preview setup
+failures, all 13 Fittings screens, and all 27 existing focused walks.
 
 ### Timing observations are overinterpreted
 
@@ -1092,108 +1194,127 @@ Stop implementation and return to design review if any of these occurs:
 
 1. the Preview wait requires a production callback/subscriber change;
 2. readiness requires shortening five seconds, polling, sleeping, pre-signalling,
-   or weakening a final predicate;
+   or weakening a supplied state predicate;
 3. trigger-driven mode cannot arm before its transition, or can return from
-   snapshot truth without a matching completed delivery through the captured
-   callback;
-4. the helper cannot delegate the exact current callback once and preserve its
-   effects, return/exception identity, and production logging;
-5. a callback replacement can be overwritten by cleanup, sequential waits
+   snapshot truth without a matching successfully completed delivery through the
+   captured callback;
+4. a matching callback that raises can satisfy readiness, or a matching or
+   nonmatching delegated callback error can be ignored, wrapped, copied, or
+   hidden from the existing production catch;
+5. the helper cannot delegate the exact current callback once and preserve its
+   effects, exact return, exception identity, and production logging;
+6. a callback replacement can be overwritten by cleanup, sequential waits
    accumulate wrappers, or a concurrent wrapper reaches its trigger;
-6. any target Preview identity needs a source edit outside
-   `tests/test_preview_runtime_review.py` and the exact companions call in
-   `tests/test_preview_geometry_publication.py`;
-7. the rolling test cannot execute exactly 2,101 candidates and 2,101 commits;
-8. independent oracle work is not exactly 197,136 checks or depends on production
+7. the `eve_on()` definition changes, the trigger helper has other than the exact
+   four named uses, or a target Preview edit extends beyond
+   `tests/test_preview_runtime_review.py`, `tests/test_preview_presentation.py`,
+   and `tests/test_preview_geometry_publication.py`;
+8. the rolling test cannot execute exactly 2,101 candidates and 2,101 commits;
+9. independent oracle work is not exactly 197,136 checks or depends on production
    candidate output;
-9. `diagnostic_oracle()` or another timing test must change;
-10. any pruning, request-start, 95/96, commit, final-server, or inconsistency
+10. `diagnostic_oracle()` or another timing test must change;
+11. any pruning, request-start, 95/96, commit, final-server, or inconsistency
     mutant survives its intended witness;
-11. screenshot visits are not exactly 515 before and 105 after in the defined
+12. screenshot visits are not exactly 515 before and 105 after in the defined
     lifetime-safe structural commands;
-12. any cross-module interleaving is reported as proving singleton construction,
+13. any cross-module interleaving is reported as proving singleton construction,
     32 walks, or 105 visits across a module teardown/re-entry boundary;
-13. the eight full-walk IDs, 27 focused IDs, their parameters, markers, or
+14. the eight full-walk IDs, 27 focused IDs, their parameters, markers, or
     assertion contracts change;
-14. the sole complete traversal is not exactly all 61 screens and all 14 floor
-    screens in production order;
-15. either Preview setup-failure screen, successful order, exact failure order,
+15. the sole complete traversal does not assert both exact ordered 61-screen keys
+    and `error is None` for every shot, or does not cover all 14 floor screens;
+16. an ordinary non-floor/non-Preview capture error retains its key and escapes
+    the complete traversal's all-shot assertion;
+17. either Preview setup-failure screen, successful order, exact failure order,
     or any of 13 Fittings screens is omitted;
-16. the shared receipt retains live/mutable state, leaks a monkeypatch, or changes
+18. the shared receipt retains live/mutable state, leaks a monkeypatch, or changes
     while the 15 file-local target IDs remain contiguous;
-17. metrics-before-setup, verification-before-capture, attempt-before-clear,
+19. metrics-before-setup, verification-before-capture, attempt-before-clear,
     cleanup-after-failure, or Fittings injection-order mutations survive;
-18. complete collection differs from exact ordered 16,609 or platform identities
+20. complete collection differs from exact ordered 16,609 or platform identities
     diverge;
-19. normalized skip tuples change or Node/codec availability skips appear;
-20. any production, workflow, dependency, configuration, cadence, marker,
+21. normalized skip tuples change or Node/codec availability skips appear;
+22. any production, workflow, dependency, configuration, cadence, marker,
     workflow test selector, budget, shard, timeout, packaging, or unrelated test
     change appears necessary;
-21. temporary mutation/instrumentation cannot restore exact bytes, binary diff,
+23. temporary mutation/instrumentation cannot restore exact bytes, binary diff,
     and status;
-22. evidence supports only an elapsed-time claim and cannot reproduce the exact
+24. evidence supports only an elapsed-time claim and cannot reproduce the exact
     callback, transition/check, and visit contracts.
 
 ## Exact implementation scope
 
-The complete future Stage A tranche may commit only:
+When implementation is separately requested, the complete Stage A tranche is
+restricted to these versioned paths:
 
-- this design;
-- a future reviewed Stage A implementation plan under `docs/superpowers/plans/`;
-- a future Stage A results document under `docs/`;
+- this design, its future reviewed implementation plan under
+  `docs/superpowers/plans/`, its future results ledger under `docs/`, and later
+  evidence-only updates to those Stage A artifacts;
 - `tests/test_preview_runtime_review.py`;
-- `tests/test_preview_geometry_publication.py` (only the exact companions
-  trigger call);
+- `tests/test_preview_presentation.py` (only the helper import and two named EVE
+  call-site conversions);
+- `tests/test_preview_geometry_publication.py` (only the helper import, named
+  retained-drag EVE conversion, and companions `[True]` conversion);
 - `tests/test_fleetsharing_timing.py`;
 - `tests/test_shoot_screens.py`.
 
-`tests/test_preview_presentation.py` is an unchanged verification consumer.
-`tests/test_new_screenshots.py` and `tests/test_current_screenshots.py` are
-unchanged focused-walk verification consumers. No other permanent presentation
-or geometry test edit is necessary.
+This path list is a scope constraint, not permission. Versioning consent for the
+Stage A specification, future plan, results ledger, and evidence-only updates
+comes only from the user's external authorization recorded in this session.
+`tests/test_new_screenshots.py` and `tests/test_current_screenshots.py` remain
+unchanged focused-walk verification consumers. No other permanent Preview test
+edit is necessary.
 
-Explicitly forbidden without a new design review:
+Out of scope without a new design review and external request:
 
 - any file under `wingman/`;
 - `scripts/shoot_screens.py` or any Node/CJS fixture;
-- any test file beyond the four authorized Stage A files;
+- any test file beyond the five in-scope Stage A test files;
 - `.github/`, dependencies, `pyproject.toml`, `uv.lock`, packaging, pytest
   configuration, markers, workflow test selectors, budgets, shard manifests, or
   timeout values;
 - test deletion, addition, rename, reorder, signature-driven identity change,
   parameter/ID change, or cadence change;
 - persistent workers, saved-layout receipt bundling, or broad consolidation;
-- generated evidence, permanent benchmark/mutation tooling, debug output, or
-  placeholders.
+- local scratch files, review reports, generated evidence, permanent
+  benchmark/mutation tooling, debug output, or placeholders.
 
 ## Required implementation self-review
 
 Before publication, the results document must explicitly confirm:
 
-- **Scope:** only the approved spec/plan/results and four authorized test files
-  changed; the geometry file contains only the exact companions trigger call and
-  all protected paths are unchanged.
+- **Scope:** only the externally consented Stage A spec/plan/results/evidence
+  artifacts and five in-scope test files changed; presentation contains only its
+  helper import and two named EVE conversions, geometry contains only its helper
+  import plus the named EVE and companions conversions, and all protected paths
+  are unchanged.
 - **Identity:** exact 16,609 order/hash, exact targeted file orders, `+0/-0`, and
   unchanged parameters/markers.
 - **Preview observer:** atomic arm-before-trigger, false-target precondition,
-  actual callback capture, delegate-first matching completion, exact return and
-  exception identity, no replay/wake, marked no-accumulation, concurrent
-  rejection before trigger, owned-only restoration, and unchanged five-second
-  safety bound/current-state predicate.
+  actual callback capture, separate successful-completion/error tracking,
+  delegate-first completion, exact return, first-error precedence for matching
+  and nonmatching deliveries, exact waiter/production-catch exception identity,
+  no replay/wake, marked no-accumulation, concurrent rejection before trigger,
+  owned-only restoration, and unchanged five-second bound/supplied predicate.
 - **Preview structure:** the old captured/running-callback unsafe return is
-  reproduced; exactly the four named disconnected waits enter trigger-driven
-  mode; expected old timeout waits are zero; the hosted `20.275s` observation is
+  reproduced; `eve_on()` is byte-for-byte unchanged; exactly the four named
+  disconnected transitions use `trigger_and_wait_state()` with no fifth use;
+  expected old timeout waits are zero; the hosted `20.275s` observation is
   reported without a saving claim.
 - **Timing:** all 2,101 candidates/commits, independent literal 95-second bound,
   197,136 oracle checks, exact vectors/intervals, `<= 96`, final `2202100`, and
   clear inconsistency latch.
 - **Screenshots:** exact eight IDs, exact selectors/lists, one 61-screen/14-floor
-  traversal, two Preview setup failures, one success order, one module-scoped
-  immutable failure receipt, all 13 Fittings screens, and all 27 focused walks;
-  each lifetime-safe contiguous-file order proves one construction/32 walks/105
-  visits, while mixed cross-module order proves identities/outcomes only.
+  traversal with separate exact-key and every-shot-success assertions, two
+  Preview setup failures, one success order, one module-scoped immutable failure
+  receipt, all 13 Fittings screens, and all 27 focused walks; each lifetime-safe
+  contiguous-file order proves one construction/32 walks/105 visits, while mixed
+  cross-module order proves identities/outcomes only.
 - **Mutations:** every observer, timing, and walk mutant fails at its intended
-  assertion; no timeout/later failure is misreported; every edit is restored.
+  assertion; matching partial/no-reconciliation callback failures and
+  nonmatching callback failures raise their exact objects; an ordinary failed
+  shot retains its key but fails the all-shot assertion; no timeout/later failure
+  is misreported; every edit is restored.
 - **Order:** Preview waits are trigger-armed; the 15 contiguous file-local
   screenshot IDs are green under required normal/reverse/deterministic-shuffle
   orders; the mixed cross-module order is green without a count claim or retry.
@@ -1201,16 +1322,16 @@ Before publication, the results document must explicitly confirm:
   Cargo, Ruff check/format, documentation tests, and diff/scope audits are fresh.
 - **Claims:** `646.538s`, `680s`, `42.502s`, and all candidate timings are labeled
   observations; no speedup, lower bound, p95, job, or critical-path claim appears.
-- **Leftovers:** no overlay, generated artifact, mutation, counter, debug output,
-  mutable shared receipt, unfinished placeholder marker, or Stage B/C
-  implementation remains.
+- **Leftovers:** no overlay, local scratch/report, generated artifact, mutation,
+  counter, debug output, mutable shared receipt, unfinished placeholder marker,
+  or Stage B/C implementation enters the tracked or staged diff.
 
 ## Follow-up boundary
 
 Successful Stage A implementation proves only that these same identities can
 avoid disconnected waits, unbounded test-oracle history, and unrelated screenshot
-walks while preserving their contracts. It does not authorize Stage B persistent
-page workers or a saved-layout receipt bundle. It does not authorize any Stage C
-test deletion/consolidation, including any of the roughly 346 discovery
-candidates. Each later stage requires its own evidence-based design, plan,
-mutation qualification, scope, and hosted decision.
+walks while preserving their contracts. It does not include Stage B persistent
+page workers or a saved-layout receipt bundle, nor any Stage C test
+deletion/consolidation, including any of the roughly 346 discovery candidates.
+Each later stage requires its own evidence-based design, plan, mutation
+qualification, scope, external request, and hosted decision.
