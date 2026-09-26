@@ -13,8 +13,8 @@ from tests.test_preview_layout_batch import batch_host as batch_host
 from tests.test_preview_layout_batch import roster
 from tests.test_preview_layout_batch import writer as writer
 from tests.test_preview_presentation import main_api
-from tests.test_preview_runtime_review import eve_on
 from tests.test_preview_runtime_review import runtime_pump as runtime_pump
+from tests.test_preview_runtime_review import trigger_and_wait_state
 from wingman import settings
 from wingman.preview.geometry import Rect
 from wingman.preview.layout import Entry
@@ -169,7 +169,11 @@ def test_retained_drag_and_commit_notify_distinct_authorities(
 ):
     r = batch_host
     api = main_api(r, tmp_path, monkeypatch)
-    eve_on(r)
+    trigger_and_wait_state(
+        r,
+        lambda state: state.eve == "active",
+        lambda: r.runtime.set_eve(True, 1),
+    )
     roster(r, 1, client())
     r.layouts.replace("Alice", Entry(Rect(1, 2, 500, 300)))
     r.host.sync_layout("Alice", Entry(Rect(1, 2, 500, 300)))
@@ -203,8 +207,11 @@ def test_off_apply_refreshes_retained_geometry_without_eve_start(
     r = batch_host
     api = main_api(r, tmp_path, monkeypatch)
     if companions:
-        r.runtime.set_companions(True, 1)
-        r.wait_state(lambda state: state.companions == "active")
+        trigger_and_wait_state(
+            r,
+            lambda state: state.companions == "active",
+            lambda: r.runtime.set_companions(True, 1),
+        )
     api._preview_layout_store.replace("Alice", Entry(Rect(1, 2, 500, 300)))
     r.host.sync_layout("Alice", Entry(Rect(1, 2, 500, 300)))
     saved = api.create_preview_layout("Off")

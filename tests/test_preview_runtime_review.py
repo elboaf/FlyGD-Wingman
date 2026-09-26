@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
 from threading import Condition, Event
+from time import monotonic
 
 import pytest
 
@@ -34,11 +35,13 @@ def runtime_pump(crop_pump):
                 states.append(state)
                 changed.notify_all()
 
-        def wait(predicate):
-            with changed:
-                assert changed.wait_for(lambda: predicate(runtime.snapshot()), 5), (
-                    states
-                )
+        def wait(predicate, *, trigger=None):
+            _wait_for_runtime_state(
+                runtime,
+                predicate,
+                (changed, states),
+                trigger,
+            )
 
         runtime.set_state_callback(publish)
         r.runtime, r.states, r.wait_state = runtime, states, wait
@@ -51,6 +54,114 @@ def runtime_pump(crop_pump):
     yield make
     results = [r.runtime.shutdown(5) for r in opened]
     assert all(results), "Preview runtime cleanup did not finish"
+
+
+def _wait_for_runtime_state(runtime, predicate, states, trigger) -> None:
+    changed, fixture_states = states
+    if trigger is None:
+        with changed:
+            assert changed.wait_for(lambda: predicate(runtime.snapshot()), 5), (
+                fixture_states
+            )
+        return
+
+    completed = Condition()
+    successful_states = []
+    callback_errors = []
+    observer_marker = "_wingman_trigger_wait_observer"
+
+    with runtime._condition:
+        current = runtime._snapshot()
+        assert not predicate(current), (
+            "trigger target was already satisfied",
+            fixture_states,
+            current,
+        )
+        delegate = runtime._callback
+        assert delegate is not None, "trigger wait requires a current callback"
+        assert not getattr(delegate, observer_marker, False), (
+            "concurrent trigger waits are unsupported"
+        )
+
+        def observer(state):
+            try:
+                result = delegate(state)
+            except Exception as error:
+                with completed:
+                    callback_errors.append(error)
+                    completed.notify_all()
+                raise
+            with completed:
+                successful_states.append(state)
+                completed.notify_all()
+            return result
+
+        setattr(observer, observer_marker, True)
+        runtime._callback = observer
+
+    body_error = None
+    body_tb = None
+    try:
+        trigger()
+        deadline = monotonic() + 5
+        observed = 0
+        while True:
+            with completed:
+                completed.wait_for(
+                    lambda: callback_errors or len(successful_states) > observed,
+                    max(0, deadline - monotonic()),
+                )
+            with runtime._condition, completed:
+                error = callback_errors[0] if callback_errors else None
+                current = runtime._snapshot()
+                ready = error is None and any(
+                    predicate(state) and state == current for state in successful_states
+                )
+                timed_out = error is None and not ready and monotonic() >= deadline
+                if error is not None or ready or timed_out:
+                    if runtime._callback is observer:
+                        runtime._callback = delegate
+                    terminal = (error, ready)
+                    diagnostics = (
+                        fixture_states,
+                        current,
+                        tuple(successful_states),
+                        tuple(callback_errors),
+                    )
+                else:
+                    observed = len(successful_states)
+                    terminal = None
+            if terminal is None:
+                continue
+            error, ready = terminal
+            if error is not None:
+                raise error
+            if ready:
+                return
+            raise AssertionError(
+                ("preview runtime trigger did not complete", *diagnostics)
+            )
+    except BaseException as error:  # noqa: BLE001 -- cleanup covers every exit.
+        body_error = error
+        body_tb = error.__traceback__
+    finally:
+        try:
+            with runtime._condition:
+                if runtime._callback is observer:
+                    runtime._callback = delegate
+                assert runtime._callback is not observer, (
+                    "preview trigger observer cleanup left wrapper installed"
+                )
+        except BaseException as cleanup_error:
+            if body_error is None:
+                raise
+            raise body_error.with_traceback(body_tb) from cleanup_error
+        if body_error is not None:
+            raise body_error.with_traceback(body_tb)
+
+
+def trigger_and_wait_state(rig, predicate, trigger) -> None:
+    rig.wait_state(predicate, trigger=trigger)
 
 
 @contextmanager
