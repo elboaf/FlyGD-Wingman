@@ -1698,6 +1698,10 @@ def test_walk_records_setup_failure_as_failed_shot(tmp_path, monkeypatch):
 
     cdp = _SetupFailCDP()
     shots, _skipped, _eve_shown = shoot.walk(cdp, tmp_path, settle_ms=0)
+    assert tuple(shot["key"] for shot in shots) == (
+        "settings-previews-groups",
+        "settings-previews-narrow",
+    )
 
     # The group and narrow stages both use setup scripts; they must fail.
     group_shot = next(

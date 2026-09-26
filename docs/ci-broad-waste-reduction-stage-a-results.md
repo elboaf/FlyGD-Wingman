@@ -315,7 +315,11 @@ was not committed. After bounding only the expected oracle slice, the same
 instrumentation passed with exact counts `2,101/2,101/2,101/197,136` for
 candidates, commits, oracle calls, and membership checks. The screenshot changes
 then passed their existing eight identities and the mutation qualification below
-without adding or renaming a test.
+without adding or renaming a test. Independent review found that the two-row
+Preview setup-failure test retained both per-shot error assertions but did not
+itself pin the selected output order. The correction added the exact
+`groups`-then-`narrow` key tuple immediately after `shoot.walk()` without changing
+those error assertions or any identity/signature.
 
 ## Mutation and fault qualification
 
@@ -390,9 +394,17 @@ not during setup, collection, or a timeout:
 | Fittings injection moved after reset/preparation | Fittings `stage[0]` reset-order assertion |
 | Fittings selector omitted `fittings-unfiled` | exact 13-key tuple assertion |
 
-All 23 Task 3 mutations restored exact target bytes and SHA-256, binary diff from
-`HEAD`, and NUL-delimited porcelain status before the next row. Unmutated timing,
-screenshot, and receipt-consumer reruns remained green after restoration.
+The review correction received its own RED: temporarily reversing the real
+`screens_for_gate(True)` result made the setup-failure identity fail in the call
+phase at the new tuple assertion, with actual `narrow`-then-`groups` versus
+expected `groups`-then-`narrow`. It did not reach either retained per-shot error
+assertion. The production script was then restored with exact bytes, SHA-256,
+binary diff, and NUL-delimited status.
+
+All 23 original Task 3 mutations restored exact target bytes and SHA-256, binary
+diff from `HEAD`, and NUL-delimited porcelain status before the next row. The
+additional review-correction RED used the same restoration guarantees. Unmutated
+timing, screenshot, and receipt-consumer reruns remained green after restoration.
 
 ## Identity, order, and structure verification
 
@@ -474,7 +486,8 @@ Task 3 self-review additionally confirms:
 - the failure receipt is frozen and detached, with no CDP, path, mutable operation
   list, or live monkeypatch retained;
 - focused Ruff check and format check passed; local polish in fix mode found no
-  safe correction or review finding, and no subagents were used as requested;
+  safe correction, and independent review's one medium missing-order assertion
+  was corrected with a dedicated RED and fresh Task 3 verification;
 - production timing and screenshot source, unchanged new/current screenshot
   tests, fixtures, generated JUnit/JSON, and temporary mutation scripts are not
   staged or tracked.
