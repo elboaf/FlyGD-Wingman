@@ -1162,6 +1162,109 @@ Every JSON artifact has `problem = null` and `restoration_problem = null`.
 Post-matrix `git diff --check`, `git diff --exit-code -- wingman`, and
 `git status --short` all produced no output.
 
+## Final local review and reviewer guide
+
+### What changed and how it works
+
+This test-only tranche replaces every unconditional twelve-turn
+`publication_rig()` warm-up with a bounded semantic bootstrap. The helper drives
+the real worker one scheduler turn at a time and stops only when catalogue,
+eligibility, timing anchor, proof, exact proof-response object, and all seven
+current fence fields are ready. Watch-enabled rigs additionally require exact
+accepted source and automatic-observation identities through `worker.status()`.
+Every successful stop freshly reloads the real state file and proves device
+completion, zero publication, empty timing associations, and no stage floor.
+The fixture interface and tuple result are unchanged except for the keyword-only
+strict boolean `original_phase=False`; production code and external callers are
+unchanged.
+
+Exactly six cases retain twelve turns because their assertions own the original
+scheduler phase rather than merely metadata readiness: the three
+`test_original_source_reaches_real_signed_combat_put` parameter rows preserve
+the complete signed body and `sampled_at_ms == 1788782405800`; the mailbox case
+preserves its selected-ticket body and the same timestamp; the cached-permission
+case preserves its post-signing proof boundary; and only the `[proof-False]`
+held-leaf row preserves the original proof phase. No seventh identity opts in.
+
+### Strength, edge cases, and failure behavior
+
+The two proof-deadline refusals prove that sample, selected and current session,
+anchor, row, and effect deadlines remain admissible before the proof boundary is
+crossed, so another expiry cannot mask the refusal. Retry qualification adds one
+named effect and requires the exact immutable sample/row/effect key set,
+cardinality three, and identical pin objects before and after both worker-thread
+restart and session reauthentication. The isolated effect-only recovery
+mutation makes both existing retry rows fail at the effect-pin identity rather
+than at a changed body or timeout.
+
+Readiness fails closed after twelve turns with named check results, both fences,
+ordered fence differences, status, and a bounded operation-name summary. Equal
+but non-identical eligibility, a timing-only stale fence, a broadly stale fence,
+and a durable disk/RAM mismatch were each rejected at their intended boundary.
+One-turn-short probes establish first readiness at turns `5/6/9/10`; watch rigs
+cannot return before both requested observations are accepted. The private-field
+coupling is intentional test authority: the helper reads accepted worker state
+but never seeds it or calls `_work()`, `_publication()`, planning, sleeps, or a
+fallback drive.
+
+### Deviations, reviews, and verification
+
+There is no deviation from the approved permanent design or four-path scope.
+The earlier Task 3 review discovery that the first save-before-transport mutant
+was masked by bootstrap durability was corrected in `d7a8b783`; the accepted
+witness now fails at the real transport disk/header revision assertion. The
+external polish report at
+`/mnt/c/dev/flygd-wingman/.superpowers/sdd/2026-09-25-source-admission-readiness-bootstrap/polish-report.md`
+records fix-mode review of `f6e8ecd5..9cec8933`, zero edits, zero findings, and
+focused `120 passed`; it was inspected before this final pass. The Task 5
+handoff also reports two sibling reviews with no findings and green source-120
+and endpoint-167 checks. Those reports are review inputs; the fresh checks below
+were run again by the final local executor.
+
+Fresh Task 5 verification against executable head `9cec8933` produced:
+
+- `uv run --no-sync python -m pytest tests/test_fleetsharing_source_admission.py
+  -q -rs` — `120 passed in 7.47s`, no skips (`10.29s` wall);
+- `uv run --no-sync python /tmp/source_readiness_endpoint.py` — source `120`,
+  complete collection `16,609`, and all four one-shot `167` orders with frozen
+  hashes `7b9e3644…`, `8890f6fe…`, `8acc488c…`, and `2c8be0cd…` (`115.49s`
+  wall);
+- `uv run --no-sync python /tmp/source_readiness_instrument_run.py candidate` —
+  exact `119` rigs, categories `105/4/9/1`, exactly six original-phase IDs, and
+  `682/921/802/1409/119` turns/bootstrap saves/delegations/whole-file
+  saves/equality loads (`17.87s` wall), followed by exact source/diff/status
+  restoration;
+- focused Ruff check and format-check passed; all three diff checks passed; the
+  pre-edit scope audit found exactly the four approved committed paths with no
+  uncommitted path; and, after adding this results-only reviewer guide,
+  `tests/test_documentation.py` passed `7` tests while the scope audit found only
+  this unstaged results ledger and no staged or untracked path.
+
+Polish changed no executable test code. Therefore the complete suite and Block D
+matrix were not rerun in Task 5; the final-tree Task 4 evidence remains the
+applicable full/matrix authority: `16,595 passed + 14 skipped = 16,609`, and all
+41 recipes/45 selected cases qualified with exact restoration. This is not a
+claim that Task 5 reran those commands. Timings remain observations only; no
+speedup is claimed.
+
+Reviewer focus should be the exact seven-field fence comparison (especially the
+non-comparing timing generation), watched worker/status object identity, the
+fresh durable equality postcondition, the four explicit call expressions that
+produce exactly six original-phase identities, proof-deadline independence,
+and exact sample/row/effect retry pin identity. Also confirm that valid-flow
+guard deletions remain described as non-discriminating diagnostic/postcondition
+coverage rather than mutation kills.
+
+### Knowledge check
+
+1. Why is `_Fence` dataclass equality insufficient for bootstrap readiness?
+2. Which accepted identities are additionally required when source watch is requested?
+3. Why do exactly six cases retain the original twelve-turn phase?
+4. How do the proof-boundary preconditions exclude competing deadline refusals?
+5. What proves that retry recovery retains the named effect's original pin object?
+
+PRE-AUTHORIZATION STOP: do not push, create or update a pull request, dispatch or rerun GitHub Actions, download a new-run artifact, or make a hosted acceptance claim until the maintainer explicitly authorizes publication of the verified executable head.
+
 ## Hosted comparison
 
 PR #289 run `36147950569` attempt `2` remains the frozen hosted baseline, not a
