@@ -198,18 +198,24 @@ _wait_for_runtime_state(runtime, predicate, states, trigger) -> None
 The two modes have different and explicit contracts.
 
 **Legacy snapshot mode** is `wait_state(predicate)` with no trigger. Its code
-path remains the existing fixture condition/current-snapshot wait. It is allowed
-only where the fixture's `publish` callback still owns delivery, either directly
-or as the explicit tail of a known composed callback. `publish` appends its
-detached state and notifies while holding the same fixture condition used by the
-waiter, so a callback that was already captured cannot be mistaken for completed
-delivery: the waiter cannot acquire that condition until `publish` returns.
-`layout_api` is the established composition example—it captures `publish` and
-installs a callback that calls Api first and `publish(state)` second. No-trigger
-mode retains the existing current-snapshot predicate and five-second bound. It
-is not permitted after an unchained owner such as `main_api` replaces `publish`.
-This ownership rule is a documented fixture contract rather than an unsafe
-identity guess: a legitimate composite callback is not identical to `publish`.
+path remains the existing fixture condition/current-snapshot wait for unaffected
+callers whose fixture `publish` callback still owns delivery, either directly or
+as the explicit tail of a known composed callback. It asks only whether
+`predicate(runtime.snapshot())` becomes true within the existing five-second
+bound. The fixture condition is a wakeup aid, not a callback-completion fence:
+runtime state is visible before callback invocation, and a callback may already
+be captured or running before direct `publish` acquires that condition or before
+a composed callback reaches its `publish(state)` tail. The waiter may therefore
+return from snapshot truth before either direct or composed callback delivery
+finishes.
+
+Legacy mode installs no observer, delegates no callback, and makes no guarantee
+about callback effects, return, exception identity, or completion. It is never
+acceptance evidence for delegated callback completion. `layout_api` remains the
+established composition example—it captures `publish` and installs a callback
+that calls Api first and `publish(state)` second—but Stage A does not change that
+fixture or any other legacy caller. The exact four post-`main_api` transitions
+need callback-completion evidence, so they alone move to trigger-driven mode.
 
 **Trigger-driven mode** is `wait_state(predicate, trigger=callable)`. It owns the
 transition and must arm before invoking it. It never accepts an already-visible
@@ -311,7 +317,7 @@ Each probe must restore exact bytes/state before the next:
 | Concurrent waits | hold the first marked observer and attempt a second with a false target | second fails before its trigger runs; removing the marker check admits a second layer and fails qualification |
 | Trigger already satisfied | begin trigger-driven mode with its predicate true | helper fails before wrapper installation or trigger invocation; it never fast-returns success |
 | Trigger/callback cleanup | make trigger or delegate raise | `finally` restores only an observer it still owns and leaves no marked wrapper |
-| Legacy ownership boundary | compare direct/composed `publish` delivery with an unchained replacement | direct/composed delivery completes under the fixture condition; the unchained old pattern reproduces the unsafe return and must use trigger-driven mode |
+| Legacy snapshot-only semantics | capture a direct or composed callback, expose the target runtime snapshot, and hold callback delivery before direct `publish` acquires the fixture condition or before the composition reaches its `publish(state)` tail | no-trigger mode may return while callback delivery is incomplete; this is expected legacy behavior and cannot witness delegated completion |
 
 The exact four hosted identities must each invoke trigger-driven mode once in
 focused qualification. Expected old disconnected timeout waits after the change
@@ -767,6 +773,9 @@ The hardened qualification established:
 - focused instrumentation recorded exactly the four named post-Api identities
   entering trigger-driven mode once each, so expected old disconnected timeout
   waits are structurally zero while the five-second bound remains;
+- an independent legacy probe demonstrated both direct and composed fixture
+  callbacks can remain incomplete after no-trigger mode returns from snapshot
+  truth;
 - an independent observer probe reproduced the old unsafe return after a target
   callback was already captured/running, then proved the trigger-driven waiter
   remained blocked with an active snapshot until its delegated callback
@@ -813,9 +822,9 @@ identities.
    captured/running and snapshot truth returns before callback completion.
 3. Add trigger-driven arming and require the blocked-callback witness to remain
    blocked even while the runtime snapshot is active.
-4. Separate documented direct/composed fixture-owned snapshot mode from
-   trigger-driven mode; add the trigger precondition and marked-wrapper
-   assertions without guessing callback identity through legitimate composites.
+4. Document direct/composed fixture-owned legacy mode as snapshot-only with no
+   callback-completion guarantee; add the trigger precondition and marked-wrapper
+   assertions only to trigger-driven mode without changing legacy callers.
 5. Convert `eve_on` and only the exact companions `[True]` call to arm before
    their triggers.
 6. Instrument the exact four identities: four trigger-driven calls and zero old
