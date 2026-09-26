@@ -419,7 +419,7 @@ def pytest_collection_finish(session) -> None:
         }
         for item in session.items
     ]
-    assert len(rows) == 15, rows
+    assert len(rows) == 18, rows
     keys = [(row["classname"], row["name"]) for row in rows]
     nodeids = [row["nodeid"] for row in rows]
     assert len(keys) == len(set(keys))
@@ -430,7 +430,7 @@ def pytest_collection_finish(session) -> None:
     )
 ```
 
-Before any observer mutation, collect and run all 15 cases through literal files:
+Before any observer mutation, collect and run all 18 cases through literal files:
 
 ```bash
 STAGE_A_EXTERNAL_IDS=/tmp/stage-a-observer-ids.json \
@@ -442,7 +442,7 @@ PYTHONPATH="$PWD:/tmp" python -m pytest \
   --junitxml=/tmp/stage-a-observer.xml
 ```
 
-Load the generated map, require that `parse_junit()` returns those exact collected IDs in order with 15 `passed` outcomes, and reject duplicate/unmapped identities. This is the literal parser self-test for one-component classnames.
+Load the generated map, require that `parse_junit()` returns those exact collected IDs in order with 18 `passed` outcomes, and reject duplicate/unmapped identities. This is the literal parser self-test for one-component classnames.
 
 For every mutation, an eventual failure is insufficient: each selected JUnit node must be exact, outcome must be call-phase `failure` rather than setup/teardown `error` or `skipped`, the unique sentinel/assertion regex must occur in preserved message plus traceback, and the parser must reject timeout, setup, collection, unrelated callback, competing timing-window, or later generic failures.
 
@@ -775,7 +775,7 @@ Expected staged path: only the results ledger. All tests remain baseline green.
 
 **Interfaces:**
 - Consumes: `PreviewRuntime._condition`, `_snapshot()`, `snapshot()`, `_callback`, the existing fixture `Condition`/state list, and Api's installed callback.
-- Produces: `wait_state(predicate, *, trigger=None)`, `_wait_for_runtime_state(runtime, predicate, states, trigger) -> None`, and `trigger_and_wait_state(rig, predicate, trigger) -> None`.
+- Produces: `wait_state(predicate, *, trigger=None)`, `_wait_for_runtime_state(runtime, predicate, states, trigger) -> None`, and `trigger_and_wait_state(rig, predicate, trigger) -> None`; trigger mode has one outer exceptional-exit boundary that preserves exception identity and performs owned-only callback cleanup under `runtime._condition`.
 
 - [ ] **Step 1: Assemble the complete candidate in a disposable archive first**
 
@@ -856,58 +856,76 @@ def _wait_for_runtime_state(runtime, predicate, states, trigger) -> None:
         setattr(observer, observer_marker, True)
         runtime._callback = observer
 
+    body_error = None
+    body_tb = None
     try:
         trigger()
-    except BaseException:
-        with runtime._condition:
-            if runtime._callback is observer:
-                runtime._callback = delegate
-        raise
-
-    deadline = monotonic() + 5
-    observed = 0
-    while True:
-        with completed:
-            completed.wait_for(
-                lambda: callback_errors or len(successful_states) > observed,
-                max(0, deadline - monotonic()),
+        deadline = monotonic() + 5
+        observed = 0
+        while True:
+            with completed:
+                completed.wait_for(
+                    lambda: callback_errors or len(successful_states) > observed,
+                    max(0, deadline - monotonic()),
+                )
+            with runtime._condition, completed:
+                error = callback_errors[0] if callback_errors else None
+                current = runtime._snapshot()
+                ready = error is None and any(
+                    predicate(state) and state == current for state in successful_states
+                )
+                timed_out = error is None and not ready and monotonic() >= deadline
+                if error is not None or ready or timed_out:
+                    if runtime._callback is observer:
+                        runtime._callback = delegate
+                    terminal = (error, ready)
+                    diagnostics = (
+                        fixture_states,
+                        current,
+                        tuple(successful_states),
+                        tuple(callback_errors),
+                    )
+                else:
+                    observed = len(successful_states)
+                    terminal = None
+            if terminal is None:
+                continue
+            error, ready = terminal
+            if error is not None:
+                raise error
+            if ready:
+                return
+            raise AssertionError(
+                ("preview runtime trigger did not complete", *diagnostics)
             )
-        with runtime._condition, completed:
-            error = callback_errors[0] if callback_errors else None
-            current = runtime._snapshot()
-            ready = error is None and any(
-                predicate(state) and state == current
-                for state in successful_states
-            )
-            timed_out = error is None and not ready and monotonic() >= deadline
-            if error is not None or ready or timed_out:
+    except BaseException as error:  # noqa: BLE001 -- cleanup covers every exit.
+        body_error = error
+        body_tb = error.__traceback__
+    finally:
+        try:
+            with runtime._condition:
                 if runtime._callback is observer:
                     runtime._callback = delegate
-                terminal = (error, ready)
-                diagnostics = (
-                    fixture_states,
-                    current,
-                    tuple(successful_states),
-                    tuple(callback_errors),
+                assert runtime._callback is not observer, (
+                    "preview trigger observer cleanup left wrapper installed"
                 )
-            else:
-                observed = len(successful_states)
-                terminal = None
-        if terminal is None:
-            continue
-        error, ready = terminal
-        if error is not None:
-            raise error
-        if ready:
-            return
-        raise AssertionError(("preview runtime trigger did not complete", *diagnostics))
+        except BaseException as cleanup_error:
+            if body_error is None:
+                raise
+            raise body_error.with_traceback(body_tb) from cleanup_error
+        if body_error is not None:
+            raise body_error.with_traceback(body_tb)
 
 
 def trigger_and_wait_state(rig, predicate, trigger) -> None:
     rig.wait_state(predicate, trigger=trigger)
 ```
 
-This is intentionally private-field test coupling. Installation and every terminal error/success/timeout decision use direct assignment under `runtime._condition`; final error selection, current-snapshot comparison, ownership check, and owned disarm occur in the same critical section. A callback error appended to `callback_errors` before that section relinquishes observer ownership therefore wins over readiness. The fresh `completed` condition never acquires `runtime._condition`; finalization uses the one lock order `runtime._condition` → `completed`, avoiding inversion. The helper never calls `set_state_callback()`, resets `_published`, calls `_wake()`, notifies the production condition, replays state, or invokes a callback during restoration. Trigger exceptions retain their approved exact-object/bare-reraise cleanup path.
+This is intentionally private-field test coupling. Installation and every terminal error/success/timeout decision use direct assignment under `runtime._condition`; final error selection, current-snapshot comparison, ownership check, and owned disarm occur in the same critical section. A callback error appended to `callback_errors` before that section relinquishes observer ownership therefore wins over readiness. The fresh `completed` condition never acquires `runtime._condition`; finalization uses the one lock order `runtime._condition` → `completed`, avoiding inversion.
+
+The outer `try/finally` begins immediately before `trigger()` and encloses the entire wait/finalization loop. Therefore trigger failures, `KeyboardInterrupt`, any other `BaseException`, a local `Condition.wait_for()` failure, predicate/snapshot failure, and terminal callback/timeout errors all reach the same owned-only cleanup. Cleanup reacquires `runtime._condition`, restores `delegate` only while `runtime._callback is observer`, and asserts that the marked observer is no longer current; a legitimate replacement is never overwritten. A terminal path that already disarmed makes this final cleanup a no-op. The helper never calls `set_state_callback()`, resets `_published`, calls `_wake()`, notifies the production condition, republishes state, or invokes either callback during restoration.
+
+Exception precedence is exact: after successful cleanup, the original body exception object is re-raised with its captured traceback retained. If cleanup itself raises while another exception is active, that original object remains the raised/primary exception and the cleanup exception is attached as its explicit `__cause__`; neither is silently lost. If cleanup alone fails during a normal return, its exact exception propagates. A cleanup failure means restoration cannot be claimed and is a stopping failure. The cleanup-failure probe arranges a legitimate replacement before lock reacquisition fails, so it can still require that no marked observer is current. This intentionally differs from the disposable mutation runner: the runtime-test helper preserves the interrupted operation as required by the spec, while the mutation runner makes a restoration mismatch primary because invalid restored test evidence must stop the matrix.
 
 - [ ] **Step 5: Convert exactly two presentation calls/imports**
 
@@ -949,9 +967,9 @@ The `[False]` row performs no trigger wait. No other geometry byte changes.
 
 Run the exact four IDs and require `4 passed`. AST-scan calls and require exactly four `trigger_and_wait_state()` call expressions: two presentation, one geometry EVE, one geometry companions. Require no fifth call, unchanged predicates, each dynamic call count exactly one, and exact `eve_on()` source/hash `685f6f...`. Expected old disconnected timeout waits are structurally zero; do not replace that statement with an elapsed threshold.
 
-- [ ] **Step 8: Qualify legacy, waiter, and terminal races with temporary tests**
+- [ ] **Step 8: Qualify legacy, waiter, terminal, and exceptional cleanup paths with temporary tests**
 
-Materialize `/tmp/test_stage_a_preview_observer.py` with an in-memory runtime double exposing `_condition`, `_callback`, `_snapshot()`, and `snapshot()`. It must collect these exact 15 IDs:
+Materialize `/tmp/test_stage_a_preview_observer.py` with an in-memory runtime double exposing `_condition`, `_callback`, `_snapshot()`, and `snapshot()`. It must collect these exact 18 IDs:
 
 ```text
 test_stage_a_preview_observer.py::test_legacy_snapshot_can_return_while_callback_is_blocked[direct]
@@ -959,6 +977,9 @@ test_stage_a_preview_observer.py::test_legacy_snapshot_can_return_while_callback
 test_stage_a_preview_observer.py::test_trigger_wait_arms_before_trigger_and_waits_for_exact_delegate_result
 test_stage_a_preview_observer.py::test_wait_condition_cannot_complete_before_blocked_delegate
 test_stage_a_preview_observer.py::test_terminal_finalization_prioritizes_error_before_owned_disarm
+test_stage_a_preview_observer.py::test_wait_baseexception_restores_owned_observer
+test_stage_a_preview_observer.py::test_wait_baseexception_preserves_legitimate_replacement
+test_stage_a_preview_observer.py::test_cleanup_failure_is_chained_without_masking_wait_baseexception
 test_stage_a_preview_observer.py::test_delegate_is_called_once_with_exact_state_and_return
 test_stage_a_preview_observer.py::test_matching_completion_must_equal_the_current_snapshot
 test_stage_a_preview_observer.py::test_matching_callback_error_is_exact_and_never_successful[none]
@@ -974,6 +995,53 @@ test_stage_a_preview_observer.py::test_trigger_error_is_exact_and_restores_owned
 Use real `Condition`, `Event`, `Thread`, and barriers. The runtime double's production-style catch stores the exact exception object. For the waiter and terminal races, monkeypatch only the helper module's fresh `Condition` constructor to return this temporary instrumented condition; the runtime double keeps a real independent condition:
 
 ```python
+class WaitInterrupted(BaseException):
+    pass
+
+
+class InterruptingWaitCondition:
+    """Compose a real condition but interrupt the wait with one exact object."""
+
+    def __init__(self, sentinel):
+        self._condition = ThreadCondition()
+        self._sentinel = sentinel
+        self.calls = 0
+
+    def __enter__(self):
+        self._condition.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self._condition.release()
+
+    def notify_all(self):
+        self._condition.notify_all()
+
+    def wait_for(self, predicate, timeout=None):
+        self.calls += 1
+        raise self._sentinel
+
+
+class FailingEntryCondition:
+    """Compose a real condition and raise on one selected acquisition."""
+
+    def __init__(self, sentinel, fail_on):
+        self._condition = ThreadCondition()
+        self._sentinel = sentinel
+        self._fail_on = fail_on
+        self.entries = 0
+
+    def __enter__(self):
+        self.entries += 1
+        if self.entries == self._fail_on:
+            raise self._sentinel
+        self._condition.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self._condition.release()
+
+
 class WaitProbeCondition:
     def __init__(self):
         self._condition = ThreadCondition()
@@ -1018,11 +1086,105 @@ The premature-completion witness must prove, in order: trigger returned (`trigge
 
 The terminal-race witness first delivers a successful matching state, pauses the waiter at `probe.matched` after readiness wake but before atomic finalization, invokes the already-captured observer with a nonmatching state whose delegate raises `RuntimeError("terminal nonmatching callback error")`, confirms production catch identity, and then releases the waiter. The waiter must raise that exact object, and owned disarm must restore the delegate. This deterministically proves an armed error recorded before ownership relinquishment wins over the earlier readiness wake.
 
+Add these three deterministic exceptional-exit probes using `InterruptingWaitCondition` and `FailingEntryCondition`. They monkeypatch only the helper's local `Condition`; the runtime's own `_condition` remains a real independent condition:
+
+```python
+def test_wait_baseexception_restores_owned_observer(monkeypatch):
+    sentinel = WaitInterrupted("condition wait interrupted while observer owned")
+    completed = InterruptingWaitCondition(sentinel)
+    monkeypatch.setattr(review, "Condition", lambda: completed)
+
+    def delegate(state):
+        return state
+
+    runtime = RuntimeDouble(delegate)
+    installed = []
+
+    def trigger():
+        installed.append(runtime._callback)
+        assert getattr(installed[0], "_wingman_trigger_wait_observer", False)
+
+    with pytest.raises(WaitInterrupted) as caught:
+        wait(runtime, lambda state: state.active, trigger)
+    assert caught.value is sentinel
+    assert completed.calls == 1
+    assert runtime._callback is delegate, (
+        "owned exceptional cleanup did not restore delegate"
+    )
+    assert runtime._callback is not installed[0]
+    assert not getattr(runtime._callback, "_wingman_trigger_wait_observer", False)
+
+
+def test_wait_baseexception_preserves_legitimate_replacement(monkeypatch):
+    sentinel = WaitInterrupted("condition wait interrupted after replacement")
+    completed = InterruptingWaitCondition(sentinel)
+    monkeypatch.setattr(review, "Condition", lambda: completed)
+
+    def delegate(state):
+        return state
+
+    def replacement(state):
+        return state
+
+    runtime = RuntimeDouble(delegate)
+    installed = []
+
+    def trigger():
+        with runtime._condition:
+            installed.append(runtime._callback)
+            assert getattr(installed[0], "_wingman_trigger_wait_observer", False)
+            runtime._callback = replacement
+
+    with pytest.raises(WaitInterrupted) as caught:
+        wait(runtime, lambda state: state.active, trigger)
+    assert caught.value is sentinel
+    assert completed.calls == 1
+    assert runtime._callback is replacement, (
+        "exceptional cleanup overwrote legitimate replacement"
+    )
+    assert runtime._callback is not installed[0]
+    assert not getattr(runtime._callback, "_wingman_trigger_wait_observer", False)
+
+
+def test_cleanup_failure_is_chained_without_masking_wait_baseexception(monkeypatch):
+    body_sentinel = WaitInterrupted("condition wait interrupted before cleanup")
+    cleanup_sentinel = RuntimeError("runtime condition failed during cleanup")
+    completed = InterruptingWaitCondition(body_sentinel)
+    monkeypatch.setattr(review, "Condition", lambda: completed)
+
+    def delegate(state):
+        return state
+
+    def replacement(state):
+        return state
+
+    runtime = RuntimeDouble(delegate)
+    runtime._condition = FailingEntryCondition(cleanup_sentinel, fail_on=3)
+    installed = []
+
+    def trigger():
+        with runtime._condition:
+            installed.append(runtime._callback)
+            assert getattr(installed[0], "_wingman_trigger_wait_observer", False)
+            runtime._callback = replacement
+
+    with pytest.raises(WaitInterrupted) as caught:
+        wait(runtime, lambda state: state.active, trigger)
+    assert caught.value is body_sentinel
+    assert caught.value.__cause__ is cleanup_sentinel
+    assert runtime._condition.entries == 3
+    assert runtime._callback is replacement
+    assert runtime._callback is not installed[0]
+    assert not getattr(runtime._callback, "_wingman_trigger_wait_observer", False)
+```
+
+The first proves a unique non-`Exception` interruption from `Condition.wait_for()` escapes as the exact object and owned cleanup restores the original delegate. The second installs a legitimate replacement before the same interruption and proves `finally` preserves it. The third makes the cleanup lock acquisition itself fail after a legitimate replacement: the exact wait interruption remains primary, the exact cleanup failure is its `__cause__`, and the replacement remains current. All three assert that no marked observer remains current. Their JUnit outcomes must be `passed`; an uncaught `WaitInterrupted` is an `error`, not acceptable evidence. Do not weaken these boundaries to `Exception`, generic failure text, or final callback inequality alone.
+
 The two legacy rows separately prove: direct fixture `publish` can remain blocked before acquiring its condition after snapshot truth, and a composed Api-first/publish-second callback can remain blocked before its publish tail. Both no-trigger waits may return while `callback_complete` is false, `fixture_states` is empty, and composed Api effects are absent; neither row is callback-completion evidence.
 
-Collect the external file through the exact-ID plugin, run all 15 with JUnit, parse through the explicit one-component classname map, and require `15 passed`. Also prove exact state/delegate result/error identity, matching no/partial reconciliation failure, nonmatching-first error precedence, current-state equality, replacement preservation, sequential depth one, concurrent rejection before trigger, stale-target rejection, and exact trigger-error cleanup.
+Collect the external file through the exact-ID plugin, run all 18 with JUnit, parse through the explicit one-component classname map, and require `18 passed`. Also prove exact state/delegate result/error identity, matching no/partial reconciliation failure, nonmatching-first error precedence, current-state equality, replacement preservation, sequential depth one, concurrent rejection before trigger, stale-target rejection, exact trigger-error cleanup, exact waiter-side `BaseException` identity, owned exceptional cleanup, replacement-safe exceptional cleanup, exact cleanup-failure `__cause__`, and no current marked wrapper.
 
-- [ ] **Step 9: Run observer mutants with exact per-ID JUnit ownership**
+- [ ] **Step 9: Run eight observer mutants with exact per-ID JUnit ownership**
 
 Apply each mutation separately with the `finally`-safe wrapper. Every row runs exactly one selected external node, requires call-phase `failure`, preserves traceback, matches only its unique regex below, and forbids `Timeout`, `timed out`, `wait probe was not released`, fixture setup, collection error, setup/teardown error, or another observer assertion:
 
@@ -1035,8 +1197,9 @@ Apply each mutation separately with the `finally`-safe wrapper. Every row runs e
 | terminal-race error ignored | the same isolated edit in a separately restored run | `test_terminal_finalization_prioritizes_error_before_owned_disarm` | `DID NOT RAISE RuntimeError` |
 | unconditional restore | terminal owned check → `if True:` | `test_replacement_during_delegate_is_not_overwritten` | `replacement callback was overwritten` |
 | wrapper accumulation | delete the marked-delegate assertion | `test_concurrent_wait_is_rejected_before_its_trigger_runs` | `concurrent trigger ran` |
+| exceptional cleanup deleted | remove only the owned `runtime._callback = delegate` branch inside the outer `finally` | `test_wait_baseexception_restores_owned_observer` | `owned exceptional cleanup did not restore delegate` |
 
-After every mutation, rerun the unmutated terminal race, premature-completion, matching `[partial]`, stale-target, trigger-error, and sequential cases. Aggregate ordinary intended failures; restoration mismatch is fatal and stops the matrix.
+After every mutation, rerun the unmutated terminal race, premature-completion, all three wait-interruption/cleanup-failure cases, matching `[partial]`, stale-target, trigger-error, and sequential cases. Aggregate ordinary intended failures; restoration mismatch is fatal and stops the matrix.
 
 - [ ] **Step 10: Run complete Preview consumer verification**
 
@@ -1076,7 +1239,7 @@ git diff --cached --name-only
 git commit -m "test: observe Preview trigger readiness"
 ```
 
-Expected staged paths: exactly those four. Results record literal sentinel RED/GREEN, exact four calls, 15 probe outcomes, 7 exact-ID mutant failures, external-JUnit parser self-test, exact restoration, 388 green, and no timing claim.
+Expected staged paths: exactly those four. Results record literal sentinel RED/GREEN, exact four calls, 18 probe outcomes, 8 exact-ID mutant failures, external-JUnit parser self-test, exact restoration, 388 green, and no timing claim.
 
 ---
 
@@ -1315,6 +1478,7 @@ uv run --no-sync python -c "import os, pathlib, shutil; from wingman.evesettings
 Require:
 
 - Preview four and Preview 388 exact identities/order;
+- all 18 temporary observer IDs pass with exact waiter-interruption identity, owned restoration, legitimate-replacement preservation, cleanup-failure cause chaining, and no current marked wrapper;
 - rolling one and timing 41 exact identities/order;
 - screenshot eight, 15, 35, and three structural orders exact;
 - mixed 35 outcome-only green;
@@ -1380,7 +1544,7 @@ The Python relevant-suite command above executes the existing screenshot worker 
 
 - [ ] **Step 6: Re-run every mutation/fault probe from the final tree**
 
-Compile and Ruff-check all temporary scripts, then run all 7 observer, 9 timing, and 14 screenshot mutants plus the unmutated 15 observer cases, literal four-ID RED, external-JUnit parser self-test, signature exception gate, restoration-failure simulation, and structural plugins. Require exact JUnit ownership, no masking/timeouts, and restoration exact bytes/hash/binary diff/NUL status after every row.
+Compile and Ruff-check all temporary scripts, then run all 8 observer, 9 timing, and 14 screenshot mutants plus the unmutated 18 observer cases, literal four-ID RED, external-JUnit parser self-test, signature exception gate, restoration-failure simulation, and structural plugins. Require exact JUnit ownership, no masking/timeouts, and restoration exact bytes/hash/binary diff/NUL status after every row.
 
 - [ ] **Step 7: Audit exact versioned scope and protected hashes**
 
@@ -1468,7 +1632,7 @@ At minimum rerun Preview four/388, timing one/41 with exact counts, screenshot e
 
 First run the complete checklist below yourself. Then, only if the implementation authorization permits subagents, call the configured `subagent` tool once with `subagent_type="review"`, `run_in_background=false`, a 3–5 word description, and a self-contained read-only prompt naming the approved spec, exact `463bccb0..HEAD` diff, results ledger, local JUnit/JSON, mutation reports, and this checklist. Do not let the reviewer edit files. If a review subagent/tool is unavailable or not authorized, stop before freezing/publishing and request explicit maintainer review of the same artifacts; do not substitute self-certification or silently skip the gate.
 
-The review must check atomic arm, false precondition, current callback capture, delegate-first completion, atomic terminal error/success decision plus owned disarm, terminal-race precedence, exact return/error identity, current-state equality, replacement/no accumulation, five-second bound, exactly four calls, unchanged `eve_on()`, 2,101/197,136 timing structure, one 61/14 traversal, non-Preview floor omission/reversal, exact 13 Fittings, immutable receipt/direct consumers, 32/105 safe-order structure, mixed-order claim discipline, exact identity/signature exceptions/skips/eight-path scope, restoration, and no unfinished markers.
+The review must check atomic arm, false precondition, current callback capture, delegate-first completion, atomic terminal error/success decision plus owned disarm, terminal-race precedence, exact return/error identity, outer `try/finally` coverage across trigger and the complete wait loop, exact waiter-side `BaseException` preservation, owned exceptional cleanup, replacement-safe cleanup, visible cleanup-failure chaining, no current marked wrapper, current-state equality, replacement/no accumulation, five-second bound, exactly four calls, unchanged `eve_on()`, 2,101/197,136 timing structure, one 61/14 traversal, non-Preview floor omission/reversal, exact 13 Fittings, immutable receipt/direct consumers, 32/105 safe-order structure, mixed-order claim discipline, exact identity/signature exceptions/skips/eight-path scope, restoration, and no unfinished markers.
 
 - [ ] **Step 4: Run `change-explainer` and update reviewer-facing results**
 
@@ -1646,10 +1810,10 @@ This plan was assembled and exercised against a disposable archive of `463bccb0`
 - the relevant selection passed all `494` unchanged identities;
 - the eight `runtime_pump` consumer files passed all `388` identities;
 - the focused presentation/geometry/timing/shoot selection passed `293` identities;
-- all 15 temporary observer cases passed, including direct/composed legacy semantics, deterministic waiter-side premature-notify control, and the terminal error/disarm race;
+- all 18 temporary observer cases passed, including direct/composed legacy semantics, deterministic waiter-side premature-notify control, the terminal error/disarm race, owned cleanup after wait interruption, replacement preservation after wait interruption, and explicit cleanup-failure chaining;
 - literal RED collected the exact four production IDs and failed each only at `trigger wait not implemented`, with no import/collection error;
-- 7 observer mutants, 9 timing mutants, and 14 screenshot mutants each failed their exact intended ID/assertion and restored bytes/hash/binary diff/NUL status; the screenshot set includes non-Preview `fittings-narrow` floor omission and delayed-set reversal witnesses owned by the full traversal;
-- the external JUnit parser resolved all 15 one-component-classname observer IDs through an explicit collection map and preserved outcome/phase/message/traceback without duplicates;
+- 8 observer mutants, 9 timing mutants, and 14 screenshot mutants each failed their exact intended ID/assertion and restored bytes/hash/binary diff/NUL status; the screenshot set includes non-Preview `fittings-narrow` floor omission and delayed-set reversal witnesses owned by the full traversal;
+- the external JUnit parser resolved all 18 one-component-classname observer IDs through an explicit collection map and preserved outcome/phase/message/traceback without duplicates;
 - the identity/signature gate preserved all 313 IDs/markers/decorators and allowed exactly the four named receipt-consumer substitutions;
 - restoration simulation proved a restored probe rethrows its original sentinel and a deliberate restoration mismatch stops the matrix while chaining that sentinel;
 - timing instrumentation observed baseline `2,101/2,101/2,208,151` and candidate `2,101/2,101/197,136` candidate/commit/check counts;
@@ -1668,7 +1832,7 @@ These are plan qualification facts, not implementation acceptance or elapsed-per
 Stop and return to design review if any approved-spec stopping rule triggers, especially if:
 
 1. production callback semantics, production timing, `shoot.walk()`, `SCREENS`, workflow/config/dependencies, or a sixth test file must change;
-2. Preview cannot arm atomically before trigger, preserve exact delegate return/error identity, prioritize every armed error, or restore owned-only without replay;
+2. Preview cannot arm atomically before trigger, preserve exact delegate return/error identity, prioritize every armed error, restore owned-only without replay on every trigger/wait/terminal `BaseException` exit, or expose cleanup failure without replacing the original body exception;
 3. `eve_on()` changes or trigger-helper calls differ from exactly four;
 4. timing transitions/commits differ from 2,101 or oracle checks differ from 197,136;
 5. any timing mutant survives or fails only at defensive overflow/later masking;
@@ -1687,7 +1851,7 @@ Before committing this plan, confirm:
 - exactly five tasks exist and map every approved spec section;
 - permanent snippets use current symbols/imports and exact four call sites;
 - exact IDs, counts, hashes, selectors, inventories, arithmetic, observations, and protected hashes are internally consistent;
-- legacy/trigger Preview contracts, error precedence, current-state completion, replacement, sequential/concurrent cleanup, and exact five-second bound are explicit;
+- legacy/trigger Preview contracts, error precedence, current-state completion, replacement, sequential/concurrent cleanup, outer exceptional-exit coverage, exact `BaseException` identity, cleanup-failure chaining, no marked-wrapper leak, and exact five-second bound are explicit;
 - timing expected input is independent and all nine mutations have intended witnesses;
 - screenshot selector, 61 keys, 14 floors, 13 Fittings, immutable receipt, 35-ID orders, and 14 mutations are explicit;
 - JUnit per-ID intended-failure parsing rejects masking and timeouts;
