@@ -16,8 +16,8 @@
 - Hosted reference is PR #290 run `36208309831`, attempt `1`, executable head `3523dd0873493c8ecac0599b7c2daaf4d44d5902`, synthetic merge `26428a687ad24f99cb21f8ff9f18628023c71799`, and base `f6e8ecd5b09889e79aa169ce103b2eb9681cec9f`.
 - Preserve exactly 16,609 unique ordered identities with final-newline SHA-256 `f468ba1954d3ff0ab693dd721ff8a7a4d12266e16d8568035de4245a6c616100`.
 - Preserve Ubuntu `16,595 passed + 14 skipped` and Windows `16,542 passed + 67 skipped`; normalized ordered skip hashes remain Ubuntu `14f1511f840fb2fdc1680123dde29a7143405829af97141d62c5099aa4f265af` and Windows `41a767f45f49215310104dc611a4e9b60e4cb251e90f850b80a6f3b1cd9bcfb6`.
-- Preserve all names, parameters, IDs, decorators, markers, signatures, order, cadence, workflow selectors, shards, timeout values, release gates, dependencies, configuration, and packaging.
-- Exact versioned tranche scope is only:
+- Preserve all names, parameters, IDs, decorators, markers, order, cadence, workflow selectors, shards, timeout values, release gates, dependencies, configuration, and packaging. Preserve every test signature except the four exact screenshot receipt-consumer substitutions listed below.
+- Exact versioned tranche scope is eight total paths only—spec + plan + results + five tests:
   - `docs/superpowers/specs/2026-09-26-ci-broad-waste-reduction-stage-a-design.md`;
   - this plan;
   - `docs/ci-broad-waste-reduction-stage-a-results.md`;
@@ -67,7 +67,7 @@ All hashes below are SHA-256 over exact ordered node IDs joined with `"\n"` and 
 |---|---:|---|
 | complete `tests/` | 16,609 | `f468ba1954d3ff0ab693dd721ff8a7a4d12266e16d8568035de4245a6c616100` |
 | five in-scope test files | 313 | `a21d48abcdfaeb9b2b33ab5e1b089f5da4e692f01bebe94c104908728235eaef` |
-| seven relevant changed/consumer files | 494 | `ad677b5f7f9b2667401ccfc39295de021c8a320498d59a3679b05497491b229e` |
+| relevant changed/consumer selection | 494 | `ad677b5f7f9b2667401ccfc39295de021c8a320498d59a3679b05497491b229e` |
 | eight `runtime_pump` consumer files | 388 | `36e61c70b9d081f2302bd2928f2b83e2c8d6e9032fe2c9fa8dd0c2eeee0d784f` |
 | `test_preview_runtime_review.py` | 20 | `dfb34888c52b3db0c6b70b35ae033b7a45e9a77c75e6e29448d86a43ef50691e` |
 | `test_preview_presentation.py` | 15 | `582d30ccfa1102d8128fe9e365abccfa9bd2181be752096e576c6a3fe4701df2` |
@@ -286,17 +286,14 @@ _EXPECTED_FITTINGS_KEYS = (
 
 ### Identity/JUnit parser
 
-Use this module for collection, JUnit order, per-ID failure ownership, and masking rejection. It resolves nested test classes by the longest existing module prefix rather than assuming every classname has two components.
+Use this module for collection, JUnit order, per-ID failure ownership, and masking rejection. It resolves nested repository test classes by the longest existing module prefix. External `/tmp/test_stage_a_preview_observer.py` cases have a one-component classname, so their collection plugin must supply an exact `(classname, item.name) -> item.nodeid` map; guessing a path from JUnit is forbidden.
 
 ```python
 from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
-import subprocess
-import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -307,13 +304,40 @@ def ordered_hash(nodes: list[str]) -> str:
     return hashlib.sha256(("\n".join(nodes) + "\n").encode()).hexdigest()
 
 
-def junit_id(case: ET.Element) -> str:
-    parts = case.get("classname", "").split(".")
-    for end in range(len(parts), 1, -1):
+def skip_payload(pairs: list[list[str]]) -> bytes:
+    # This exact serialization defines both normalized platform skip hashes.
+    return (json.dumps(pairs, indent=2) + "\n").encode("utf-8")
+
+
+def load_exact_id_map(path: Path) -> dict[tuple[str, str], str]:
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    mapping = {}
+    nodeids = []
+    for row in rows:
+        key = (str(row["classname"]), str(row["name"]))
+        assert key not in mapping, key
+        nodeid = str(row["nodeid"])
+        mapping[key] = nodeid
+        nodeids.append(nodeid)
+    assert len(nodeids) == len(set(nodeids)), nodeids
+    return mapping
+
+
+def junit_id(
+    case: ET.Element,
+    exact_id_map: dict[tuple[str, str], str] | None = None,
+) -> str:
+    classname = case.get("classname", "")
+    name = case.get("name", "")
+    key = (classname, name)
+    if exact_id_map is not None and key in exact_id_map:
+        return exact_id_map[key]
+    parts = classname.split(".") if classname else []
+    for end in range(len(parts), 0, -1):
         path = "/".join(parts[:end]) + ".py"
         if (ROOT / path).is_file():
-            return "::".join((path, *parts[end:], case.get("name", "")))
-    raise AssertionError(case.attrib)
+            return "::".join((path, *parts[end:], name))
+    raise AssertionError(("unmapped JUnit identity", key))
 
 
 def normalized_skip(text: str) -> str:
@@ -324,44 +348,103 @@ def normalized_skip(text: str) -> str:
     )
 
 
-def parse_junit(path: Path) -> list[dict[str, object]]:
+def parse_junit(
+    path: Path,
+    exact_id_map: dict[tuple[str, str], str] | None = None,
+) -> list[dict[str, object]]:
     rows = []
     for case in ET.parse(path).getroot().iter("testcase"):
-        children = [child for child in case if child.tag in ("failure", "error", "skipped")]
+        children = [
+            child
+            for child in case
+            if child.tag in ("failure", "error", "skipped")
+        ]
         assert len(children) <= 1, case.attrib
         child = children[0] if children else None
+        outcome = child.tag if child is not None else "passed"
         rows.append(
             {
-                "nodeid": junit_id(case),
-                "outcome": child.tag if child is not None else "passed",
-                "message": "" if child is None else (child.get("message") or child.text or ""),
+                "nodeid": junit_id(case, exact_id_map),
+                "outcome": outcome,
+                "phase": {
+                    "failure": "call",
+                    "error": "setup-or-teardown",
+                    "skipped": "skip",
+                    "passed": "passed",
+                }[outcome],
+                "type": "" if child is None else (child.get("type") or ""),
+                "message": "" if child is None else (child.get("message") or ""),
+                "traceback": "" if child is None else (child.text or ""),
                 "seconds": float(case.get("time", "0") or 0),
             }
         )
+    nodeids = [str(row["nodeid"]) for row in rows]
+    assert len(nodeids) == len(set(nodeids)), nodeids
     return rows
 
 
 def require_intended_failure(
     junit: Path,
-    expected_nodes: list[str],
+    exact_id_map: dict[tuple[str, str], str],
+    expected_node: str,
     intended: str,
-    forbidden: tuple[str, ...] = (
-        "Timeout",
-        "timed out",
-        "fixture setup failed",
-        "collection error",
-    ),
+    forbidden: tuple[str, ...],
 ) -> None:
-    rows = parse_junit(junit)
-    assert [row["nodeid"] for row in rows] == expected_nodes
-    assert all(row["outcome"] in ("failure", "error") for row in rows)
-    for row in rows:
-        message = str(row["message"])
-        assert re.search(intended, message), (row["nodeid"], message)
-        assert not any(value in message for value in forbidden), (row["nodeid"], message)
+    rows = parse_junit(junit, exact_id_map)
+    assert len(rows) == 1, rows
+    row = rows[0]
+    assert row["nodeid"] == expected_node, row
+    assert row["outcome"] == "failure" and row["phase"] == "call", row
+    detail = str(row["message"]) + "\n" + str(row["traceback"])
+    assert re.search(intended, detail), (expected_node, detail)
+    assert not any(value in detail for value in forbidden), (expected_node, detail)
 ```
 
-For every mutation, an eventual failure is insufficient: each selected JUnit node must fail at the named retained assertion, and the parser must reject timeout, setup, collection, unrelated callback, competing timing-window, or later generic failures.
+Materialize `/tmp/stage_a_external_collection_plugin.py` exactly as follows so external IDs are observed rather than reconstructed:
+
+```python
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+
+
+def pytest_collection_finish(session) -> None:
+    rows = [
+        {
+            "classname": item.module.__name__,
+            "name": item.name,
+            "nodeid": item.nodeid,
+        }
+        for item in session.items
+    ]
+    assert len(rows) == 15, rows
+    keys = [(row["classname"], row["name"]) for row in rows]
+    nodeids = [row["nodeid"] for row in rows]
+    assert len(keys) == len(set(keys))
+    assert len(nodeids) == len(set(nodeids))
+    Path(os.environ["STAGE_A_EXTERNAL_IDS"]).write_text(
+        json.dumps(rows, indent=2) + "\n",
+        encoding="utf-8",
+    )
+```
+
+Before any observer mutation, collect and run all 15 cases through literal files:
+
+```bash
+STAGE_A_EXTERNAL_IDS=/tmp/stage-a-observer-ids.json \
+PYTHONPATH="$PWD:/tmp" python -m pytest \
+  /tmp/test_stage_a_preview_observer.py --collect-only -q \
+  -p stage_a_external_collection_plugin
+PYTHONPATH="$PWD:/tmp" python -m pytest \
+  /tmp/test_stage_a_preview_observer.py -q \
+  --junitxml=/tmp/stage-a-observer.xml
+```
+
+Load the generated map, require that `parse_junit()` returns those exact collected IDs in order with 15 `passed` outcomes, and reject duplicate/unmapped identities. This is the literal parser self-test for one-component classnames.
+
+For every mutation, an eventual failure is insufficient: each selected JUnit node must be exact, outcome must be call-phase `failure` rather than setup/teardown `error` or `skipped`, the unique sentinel/assertion regex must occur in preserved message plus traceback, and the parser must reject timeout, setup, collection, unrelated callback, competing timing-window, or later generic failures.
 
 ### Exact restoration wrapper
 
@@ -373,6 +456,7 @@ from __future__ import annotations
 import hashlib
 import subprocess
 from pathlib import Path
+from types import TracebackType
 
 W = Path("/mnt/c/dev/flygd-wingman/.worktrees/ci-broad-waste-stage-a")
 
@@ -390,21 +474,36 @@ def mutate_once(path: Path, old: str, new: str, probe) -> None:
     )
     text = original.decode("utf-8")
     assert text.count(old) == 1, (path, text.count(old), old)
+    probe_error: BaseException | None = None
+    probe_tb: TracebackType | None = None
+    restoration_error: BaseException | None = None
     try:
         path.write_text(text.replace(old, new, 1), encoding="utf-8")
         probe()
+    except BaseException as error:  # noqa: BLE001 -- restore before rethrowing probe.
+        probe_error = error
+        probe_tb = error.__traceback__
     finally:
-        path.write_bytes(original)
-    assert path.read_bytes() == original
-    assert hashlib.sha256(path.read_bytes()).hexdigest() == original_sha
-    assert git_bytes("diff", "--binary", "HEAD", "--", ".") == before_diff
-    assert (
-        git_bytes("status", "--porcelain=v2", "--untracked-files=all", "-z")
-        == before_status
-    )
+        try:
+            path.write_bytes(original)
+            assert path.read_bytes() == original
+            assert hashlib.sha256(path.read_bytes()).hexdigest() == original_sha
+            assert git_bytes("diff", "--binary", "HEAD", "--", ".") == before_diff
+            assert (
+                git_bytes(
+                    "status", "--porcelain=v2", "--untracked-files=all", "-z"
+                )
+                == before_status
+            )
+        except BaseException as error:  # noqa: BLE001 -- restoration must win.
+            restoration_error = error
+    if restoration_error is not None:
+        raise restoration_error from probe_error
+    if probe_error is not None:
+        raise probe_error.with_traceback(probe_tb)
 ```
 
-Never run the next probe after a restoration assertion fails.
+All byte/hash/binary-diff/NUL-status restoration assertions execute inside `finally`, even when the probe itself raises. A successful restoration rethrows the original probe object with its traceback; a restoration mismatch is raised chained from the probe and stops the matrix. Before real mutations, test this wrapper in a disposable temporary Git repository twice: a sentinel probe plus exact restore must rethrow the sentinel after proving clean state, while a deliberately broken restore must raise `RestorationError("restoration bytes mismatch")` with the original sentinel as `__cause__` and must prevent a second probe.
 
 ---
 
@@ -465,7 +564,7 @@ Materialize the Identity/JUnit parser as `/tmp/stage_a_identity.py`; compile/Ruf
 
 - both platform ID arrays equal source collection exactly and hash to the frozen 16,609 hash;
 - zero failures/errors, no target skip, no Node/codec/unexpected native skip;
-- Ubuntu `16,595/14`, Windows `16,542/67`, exact normalized skip arrays and hashes;
+- Ubuntu `16,595/14`, Windows `16,542/67`, exact normalized skip arrays and hashes; construct each array as JSON-compatible `[nodeid, normalized_message]` lists and hash exactly `(json.dumps(pairs, indent=2) + "\n").encode("utf-8")`—no sorting, `ensure_ascii` override, tuple repr, or alternate separators;
 - timing JSON `case_count` and each file count/sum agree with XML within `1e-9`;
 - Windows testcase sum `646.538s`, XML suite time `675.274s`, Test-step observation `680s`, and job observation `741s` remain distinct measures;
 - Ubuntu job/Test observations are `307s/287s`; checks job is `9s`.
@@ -474,9 +573,48 @@ Record the four exact Preview observations `5.150 + 5.009 + 5.057 + 5.059 = 20.2
 
 - [ ] **Step 4: Collect exact source identities/orders and source shapes**
 
-Use a `pytest_collection_finish` plugin that writes `item.nodeid` and sorted marker names. Collect complete, five-file, seven-file, eight-runtime-consumer, Preview-four, rolling-one, changed-eight, contiguous-15, new-eight, and current-12 selections. Require every count/hash in the Frozen Identity and Hash Ledger.
+Use a `pytest_collection_finish` plugin that writes `item.nodeid` and sorted marker names. Collect complete, five-file, 494-case relevant, eight-runtime-consumer, Preview-four, rolling-one, changed-eight, contiguous-15, new-eight, and current-12 selections. Require every count/hash in the Frozen Identity and Hash Ledger.
 
-Also AST-record every test function signature/decorator in the five in-scope files. The endpoint must compare these structures before/after so a parameter, marker, signature, or identity change cannot hide behind an equal count.
+AST-record every test function signature/decorator in the five in-scope files. Require identical function-name sets, decorators, parameterized IDs, markers, and collected node order. The only allowed signature changes are these four exact substitutions in `tests/test_shoot_screens.py`:
+
+```text
+test_walk_clears_device_metrics_even_when_narrow_screenshot_fails:
+    (tmp_path, monkeypatch) -> (preview_narrow_failure_walk)
+test_walk_narrow_setup_runs_inside_device_metrics_override_on_failure:
+    (tmp_path, monkeypatch) -> (preview_narrow_failure_walk)
+test_walk_failure_path_records_set_eval_attempt_clear_in_order:
+    (tmp_path, monkeypatch) -> (preview_narrow_failure_walk)
+test_walk_failure_path_records_attempt_before_clear_not_only_clear:
+    (tmp_path, monkeypatch) -> (preview_narrow_failure_walk)
+```
+
+For every other `test_*` function require exact `args`, `posonlyargs`, `kwonlyargs`, `vararg`, `kwarg`, and decorator AST equality. The endpoint identity script includes this explicit exception gate:
+
+```python
+ALLOWED_SIGNATURES = {
+    "test_walk_clears_device_metrics_even_when_narrow_screenshot_fails",
+    "test_walk_narrow_setup_runs_inside_device_metrics_override_on_failure",
+    "test_walk_failure_path_records_set_eval_attempt_clear_in_order",
+    "test_walk_failure_path_records_attempt_before_clear_not_only_clear",
+}
+changed = set()
+for key in baseline_shapes:
+    if baseline_shapes[key] == candidate_shapes[key]:
+        continue
+    filename, name = key
+    assert filename == "tests/test_shoot_screens.py"
+    assert name in ALLOWED_SIGNATURES
+    old = baseline_shapes[key]
+    new = candidate_shapes[key]
+    assert old["args"] == ["tmp_path", "monkeypatch"]
+    assert new["args"] == ["preview_narrow_failure_walk"]
+    for field in ("posonlyargs", "kwonlyargs", "vararg", "kwarg", "decorators"):
+        assert old[field] == new[field], (key, field)
+    changed.add(name)
+assert changed == ALLOWED_SIGNATURES
+```
+
+An empty, missing, or fifth changed-signature set fails the gate.
 
 - [ ] **Step 5: Instrument baseline timing work without replacing production**
 
@@ -641,11 +779,18 @@ Expected staged path: only the results ledger. All tests remain baseline green.
 
 - [ ] **Step 1: Assemble the complete candidate in a disposable archive first**
 
-Extract `463bccb0` into a fresh `/tmp/wingman-stage-a-candidate`; apply every permanent snippet in Tasks 2–3; Ruff-format only the five candidate test files; compile and run the seven relevant files. Require `494 passed` before writing repository tests. Never copy caches, XML, scripts, or generated evidence into the worktree.
+Extract `463bccb0` into a fresh `/tmp/wingman-stage-a-candidate`; apply every permanent snippet in Tasks 2–3; Ruff-format only the five candidate test files; compile and run the 494-case relevant selection. Require `494 passed` before writing repository tests. Never copy caches, XML, scripts, or generated evidence into the worktree.
 
-- [ ] **Step 2: Establish RED on the exact four existing identities**
+- [ ] **Step 2: Establish collectable RED on the exact four existing identities**
 
-Add the trigger-helper imports and convert only the four calls, but do not define `trigger_and_wait_state` yet. Run the exact Preview-four selection. Require four failures with `ImportError`/`NameError` for the missing helper and unchanged node IDs. Record RED in the results ledger; revert any accidental generated file. Do not commit RED.
+Capture original bytes/hash/binary diff/NUL status for the three Preview files. Add the helper imports and convert only the four calls, and add this temporary collectable stub in `test_preview_runtime_review.py`:
+
+```python
+def trigger_and_wait_state(rig, predicate, trigger) -> None:
+    raise AssertionError("trigger wait not implemented")
+```
+
+Run the exact Preview-four nodes with `--junitxml=/tmp/stage-a-preview-red.xml`. Require all four IDs collect in their frozen order, each outcome is call-phase `failure`, and each traceback contains exactly `AssertionError: trigger wait not implemented`; reject `ImportError`, `NameError`, collection/setup error, skip, or timeout. In a `finally`, restore all three files and prove exact bytes/hash/binary diff/NUL status before continuing. Then apply the same imports/call conversions for GREEN and replace the stub with the real helper. RED is never committed.
 
 - [ ] **Step 3: Replace only the fixture wait closure**
 
@@ -665,7 +810,7 @@ Keep `r.states` as the original mutable fixture list and keep `eve_on()` byte-fo
 
 - [ ] **Step 4: Add the exact two-mode helper**
 
-Insert before `parked()`:
+Add `from time import monotonic`, then insert before `parked()`:
 
 ```python
 def _wait_for_runtime_state(runtime, predicate, states, trigger) -> None:
@@ -713,35 +858,56 @@ def _wait_for_runtime_state(runtime, predicate, states, trigger) -> None:
 
     try:
         trigger()
-        with completed:
-            ready = completed.wait_for(
-                lambda: callback_errors
-                or any(
-                    predicate(state) and state == runtime.snapshot()
-                    for state in successful_states
-                ),
-                5,
-            )
-            assert ready, (
-                "preview runtime trigger did not complete",
-                fixture_states,
-                runtime.snapshot(),
-                successful_states,
-                callback_errors,
-            )
-            if callback_errors:
-                raise callback_errors[0]
-    finally:
+    except BaseException:
         with runtime._condition:
             if runtime._callback is observer:
                 runtime._callback = delegate
+        raise
+
+    deadline = monotonic() + 5
+    observed = 0
+    while True:
+        with completed:
+            completed.wait_for(
+                lambda: callback_errors or len(successful_states) > observed,
+                max(0, deadline - monotonic()),
+            )
+        with runtime._condition, completed:
+            error = callback_errors[0] if callback_errors else None
+            current = runtime._snapshot()
+            ready = error is None and any(
+                predicate(state) and state == current
+                for state in successful_states
+            )
+            timed_out = error is None and not ready and monotonic() >= deadline
+            if error is not None or ready or timed_out:
+                if runtime._callback is observer:
+                    runtime._callback = delegate
+                terminal = (error, ready)
+                diagnostics = (
+                    fixture_states,
+                    current,
+                    tuple(successful_states),
+                    tuple(callback_errors),
+                )
+            else:
+                observed = len(successful_states)
+                terminal = None
+        if terminal is None:
+            continue
+        error, ready = terminal
+        if error is not None:
+            raise error
+        if ready:
+            return
+        raise AssertionError(("preview runtime trigger did not complete", *diagnostics))
 
 
 def trigger_and_wait_state(rig, predicate, trigger) -> None:
     rig.wait_state(predicate, trigger=trigger)
 ```
 
-This is intentionally private-field test coupling. Installation/restoration use direct assignment under `runtime._condition`; they never call `set_state_callback()`, reset `_published`, call `_wake()`, notify the production condition, replay state, or invoke a callback during restoration.
+This is intentionally private-field test coupling. Installation and every terminal error/success/timeout decision use direct assignment under `runtime._condition`; final error selection, current-snapshot comparison, ownership check, and owned disarm occur in the same critical section. A callback error appended to `callback_errors` before that section relinquishes observer ownership therefore wins over readiness. The fresh `completed` condition never acquires `runtime._condition`; finalization uses the one lock order `runtime._condition` → `completed`, avoiding inversion. The helper never calls `set_state_callback()`, resets `_published`, calls `_wake()`, notifies the production condition, replays state, or invokes a callback during restoration. Trigger exceptions retain their approved exact-object/bare-reraise cleanup path.
 
 - [ ] **Step 5: Convert exactly two presentation calls/imports**
 
@@ -783,49 +949,94 @@ The `[False]` row performs no trigger wait. No other geometry byte changes.
 
 Run the exact four IDs and require `4 passed`. AST-scan calls and require exactly four `trigger_and_wait_state()` call expressions: two presentation, one geometry EVE, one geometry companions. Require no fifth call, unchanged predicates, each dynamic call count exactly one, and exact `eve_on()` source/hash `685f6f...`. Expected old disconnected timeout waits are structurally zero; do not replace that statement with an elapsed threshold.
 
-- [ ] **Step 8: Qualify legacy and trigger modes with temporary tests**
+- [ ] **Step 8: Qualify legacy, waiter, and terminal races with temporary tests**
 
-Materialize `/tmp/test_stage_a_preview_observer.py` with an in-memory runtime double exposing `_condition`, `_callback`, `_snapshot()`, and `snapshot()`. It must contain these 12 temporary cases:
+Materialize `/tmp/test_stage_a_preview_observer.py` with an in-memory runtime double exposing `_condition`, `_callback`, `_snapshot()`, and `snapshot()`. It must collect these exact 15 IDs:
 
 ```text
-test_legacy_snapshot_can_return_while_captured_callback_is_blocked
-test_trigger_wait_arms_before_trigger_and_waits_for_exact_delegate_result
-test_delegate_is_called_once_with_exact_state_and_return
-test_matching_completion_must_equal_the_current_snapshot
-test_matching_callback_error_is_exact_and_never_successful[none]
-test_matching_callback_error_is_exact_and_never_successful[partial]
-test_nonmatching_error_precedes_later_matching_success
-test_replacement_during_delegate_is_not_overwritten
-test_sequential_waits_restore_exact_callback_without_accumulation
-test_concurrent_wait_is_rejected_before_its_trigger_runs
-test_already_satisfied_target_fails_before_install_or_trigger
-test_trigger_error_is_exact_and_restores_owned_observer
+test_stage_a_preview_observer.py::test_legacy_snapshot_can_return_while_callback_is_blocked[direct]
+test_stage_a_preview_observer.py::test_legacy_snapshot_can_return_while_callback_is_blocked[composed]
+test_stage_a_preview_observer.py::test_trigger_wait_arms_before_trigger_and_waits_for_exact_delegate_result
+test_stage_a_preview_observer.py::test_wait_condition_cannot_complete_before_blocked_delegate
+test_stage_a_preview_observer.py::test_terminal_finalization_prioritizes_error_before_owned_disarm
+test_stage_a_preview_observer.py::test_delegate_is_called_once_with_exact_state_and_return
+test_stage_a_preview_observer.py::test_matching_completion_must_equal_the_current_snapshot
+test_stage_a_preview_observer.py::test_matching_callback_error_is_exact_and_never_successful[none]
+test_stage_a_preview_observer.py::test_matching_callback_error_is_exact_and_never_successful[partial]
+test_stage_a_preview_observer.py::test_nonmatching_error_precedes_later_matching_success
+test_stage_a_preview_observer.py::test_replacement_during_delegate_is_not_overwritten
+test_stage_a_preview_observer.py::test_sequential_waits_restore_exact_callback_without_accumulation
+test_stage_a_preview_observer.py::test_concurrent_wait_is_rejected_before_its_trigger_runs
+test_stage_a_preview_observer.py::test_already_satisfied_target_fails_before_install_or_trigger
+test_stage_a_preview_observer.py::test_trigger_error_is_exact_and_restores_owned_observer
 ```
 
-Use real `Condition`, `Event`, `Thread`, and barriers. The runtime double's production-style catch stores the exact exception object. Require `12 passed`; specifically prove:
+Use real `Condition`, `Event`, `Thread`, and barriers. The runtime double's production-style catch stores the exact exception object. For the waiter and terminal races, monkeypatch only the helper module's fresh `Condition` constructor to return this temporary instrumented condition; the runtime double keeps a real independent condition:
 
-- an old callback captured before Api replacement can expose active snapshot while legacy mode returns and Api effects remain absent;
-- trigger mode installs first, snapshot becomes active, and waiter remains blocked while the exact delegate is held;
-- exact state object, delegate return object, waiter exception object, and production-catch exception object preserve identity;
-- matching no/partial reconciliation errors never become successful completions;
-- a nonmatching first error beats a later matching success;
-- current snapshot equality blocks an earlier matching completion while a newer matching callback is held;
-- replacement survives, sequential depth remains one, concurrent trigger never runs, stale target never installs/triggers, and trigger error cleans up exactly.
+```python
+class WaitProbeCondition:
+    def __init__(self):
+        self._condition = ThreadCondition()
+        self.evaluated = Event()
+        self.matched = Event()
+        self.resume = Event()
+        self.returned = Event()
+        self._first = True
 
-- [ ] **Step 9: Run observer mutants with per-ID JUnit ownership**
+    def __enter__(self):
+        self._condition.acquire()
+        return self
 
-Apply each mutation separately with `mutate_once`, run the named temporary node, and require its intended assertion—not a timeout:
+    def __exit__(self, *exc):
+        self._condition.release()
 
-| Mutant | Exact match-once change | Intended temporary witness |
-|---|---|---|
-| missing delegation | `result = delegate(state)` → `result = None` | exact effects/result case |
-| premature notify | move successful append/notify before `delegate(state)` | blocked-delegate case fails at `not outcome.done()` |
-| callback error counted as success | append to `successful_states` instead of `callback_errors` in `except` | matching `[none]` reports DID NOT RAISE |
-| first error ignored | guard `if callback_errors:` with `False and` | nonmatching-then-matching reports DID NOT RAISE |
-| unconditional restore | `if runtime._callback is observer:` → `if True:` | replacement identity assertion |
-| wrapper accumulation | delete the marked-delegate assertion | concurrent case reaches a sentinel `LookupError("concurrent trigger ran")`, proving forbidden trigger execution |
+    def notify_all(self):
+        self._condition.notify_all()
 
-Also run matching `[partial]`, stale target, trigger error, and sequential cases unmutated after every restoration. Aggregate ordinary assertion failures; restoration mismatch is fatal.
+    def wait_for(self, predicate, timeout=None):
+        if self._first:
+            self._first = False
+            result = predicate()
+            self.evaluated.set()
+            if result:
+                self.matched.set()
+            self._condition.release()
+            try:
+                assert self.resume.wait(5), "wait probe was not released"
+            finally:
+                self._condition.acquire()
+            if result:
+                self.returned.set()
+                return True
+        result = self._condition.wait_for(predicate, timeout)
+        if result:
+            self.returned.set()
+        return result
+```
+
+The premature-completion witness must prove, in order: trigger returned (`trigger_complete` set), delegate is still barrier-held, the waiter evaluated its local wait predicate, and `probe.returned` plus the future remain unset. It then opens `probe.resume`, waits one second for the explicit `returned` event, and fails only with `"wait condition returned before delegate completion"` if the notify-before-delegate mutant escapes; only afterward does it release the delegate.
+
+The terminal-race witness first delivers a successful matching state, pauses the waiter at `probe.matched` after readiness wake but before atomic finalization, invokes the already-captured observer with a nonmatching state whose delegate raises `RuntimeError("terminal nonmatching callback error")`, confirms production catch identity, and then releases the waiter. The waiter must raise that exact object, and owned disarm must restore the delegate. This deterministically proves an armed error recorded before ownership relinquishment wins over the earlier readiness wake.
+
+The two legacy rows separately prove: direct fixture `publish` can remain blocked before acquiring its condition after snapshot truth, and a composed Api-first/publish-second callback can remain blocked before its publish tail. Both no-trigger waits may return while `callback_complete` is false, `fixture_states` is empty, and composed Api effects are absent; neither row is callback-completion evidence.
+
+Collect the external file through the exact-ID plugin, run all 15 with JUnit, parse through the explicit one-component classname map, and require `15 passed`. Also prove exact state/delegate result/error identity, matching no/partial reconciliation failure, nonmatching-first error precedence, current-state equality, replacement preservation, sequential depth one, concurrent rejection before trigger, stale-target rejection, and exact trigger-error cleanup.
+
+- [ ] **Step 9: Run observer mutants with exact per-ID JUnit ownership**
+
+Apply each mutation separately with the `finally`-safe wrapper. Every row runs exactly one selected external node, requires call-phase `failure`, preserves traceback, matches only its unique regex below, and forbids `Timeout`, `timed out`, `wait probe was not released`, fixture setup, collection error, setup/teardown error, or another observer assertion:
+
+| Mutant | Exact match-once change | Exact selected ID suffix | Required unique regex |
+|---|---|---|---|
+| missing delegation | `result = delegate(state)` → `result = None` | `test_delegate_is_called_once_with_exact_state_and_return` | `captured delegate did not receive the exact state once` |
+| premature notify | move successful append/notify before `delegate(state)` | `test_wait_condition_cannot_complete_before_blocked_delegate` | `wait condition returned before delegate completion` |
+| callback error counted as success | append to `successful_states` instead of `callback_errors` in `except` | `test_matching_callback_error_is_exact_and_never_successful[none]` | `DID NOT RAISE ValueError` |
+| first error ignored | `error = callback_errors[0] if callback_errors else None` → `error = None` | `test_nonmatching_error_precedes_later_matching_success` | `DID NOT RAISE RuntimeError` |
+| terminal-race error ignored | the same isolated edit in a separately restored run | `test_terminal_finalization_prioritizes_error_before_owned_disarm` | `DID NOT RAISE RuntimeError` |
+| unconditional restore | terminal owned check → `if True:` | `test_replacement_during_delegate_is_not_overwritten` | `replacement callback was overwritten` |
+| wrapper accumulation | delete the marked-delegate assertion | `test_concurrent_wait_is_rejected_before_its_trigger_runs` | `concurrent trigger ran` |
+
+After every mutation, rerun the unmutated terminal race, premature-completion, matching `[partial]`, stale-target, trigger-error, and sequential cases. Aggregate ordinary intended failures; restoration mismatch is fatal and stops the matrix.
 
 - [ ] **Step 10: Run complete Preview consumer verification**
 
@@ -865,7 +1076,7 @@ git diff --cached --name-only
 git commit -m "test: observe Preview trigger readiness"
 ```
 
-Expected staged paths: exactly those four. Results record RED/GREEN, exact four calls, 12 probe outcomes, six mutant failures, exact restoration, 388 green, and no timing claim.
+Expected staged paths: exactly those four. Results record literal sentinel RED/GREEN, exact four calls, 15 probe outcomes, 7 exact-ID mutant failures, external-JUnit parser self-test, exact restoration, 388 green, and no timing claim.
 
 ---
 
@@ -953,6 +1164,17 @@ assert tuple(shot["key"] for shot in shots) == _EXPECTED_FULL_SCREEN_KEYS
 assert all(shot["error"] is None for shot in shots), shots
 ```
 
+  In `_TrackedCDP.screenshot()`, append `"capture_success"` only after the failure branch, immediately before returning PNG bytes. Keep exact floor set/clear counts, and strengthen every paired floor segment:
+
+```python
+assert set_index < clear_index, ("floor clear preceded set", cdp._ops)
+assert "capture_success" in cdp._ops[set_index + 1 : clear_index], (
+    "floor capture did not occur between set and clear",
+    cdp._ops,
+)
+```
+
+  Give the set/clear count assertions unique messages `"floor set count mismatch"` and `"floor clear count mismatch"`. This makes the retained full traversal—not the Preview-focused row—own omission and reversal for every non-Preview floor branch as well as all 14 floor visits.
 - Successful Preview order ID monkeypatches exactly `_walk_screens("settings-previews-narrow")` and retains set → setup → screenshot → clear.
 - Fittings ID derives keys only from `_PRODUCTION_SCREENS if screen.route == "fittings"`, asserts the exact 13-key tuple, monkeypatches `_walk_screens(*fitting_keys)`, asserts exact visits and 13 injections, and for every stage after the first requires `stage[0] == shoot._fittings_reset_script()` before the existing reset/action assertion.
 
@@ -996,9 +1218,20 @@ def preview_narrow_failure_walk(tmp_path_factory):
 
 Convert the four failure-order IDs to consume this fixture. Keep each assertion owner: failed shot/error, clear and inactive override, setup inside override, exact tuple `("set:840x625", "eval:setup", "screenshot_attempt", "clear")`, and attempt between set/clear. Tuple slices compare with tuples. The fixture returns only after the monkeypatch context exits and retains no CDP/path/mutable operations/live patch.
 
-- [ ] **Step 8: Run exact eight screenshot IDs**
+- [ ] **Step 8: Run exact eight screenshot IDs and each receipt consumer directly**
 
 Require all eight existing IDs pass, exact selectors are `2/61/1/shared-1/13`, the full traversal has 14 floor pairs and all errors `None`, Preview success/failure order is exact, and all 13 Fittings screens/injections are exact. No ID or parameter changes.
+
+Then run this unmutated four-consumer selection as its own command and require `4 passed` with one module receipt construction:
+
+```text
+tests/test_shoot_screens.py::test_walk_clears_device_metrics_even_when_narrow_screenshot_fails
+tests/test_shoot_screens.py::test_walk_narrow_setup_runs_inside_device_metrics_override_on_failure
+tests/test_shoot_screens.py::test_walk_failure_path_records_set_eval_attempt_clear_in_order
+tests/test_shoot_screens.py::test_walk_failure_path_records_attempt_before_clear_not_only_clear
+```
+
+Run each of those four node IDs again in a separate pytest invocation and require `1 passed` each. Direct-selection executions may construct one receipt per process; do not combine those four construction counts into the structural singleton claim.
 
 - [ ] **Step 9: Run lifetime-safe structural orders**
 
@@ -1011,7 +1244,7 @@ Use the Task 1 walk plugin and exact 35-ID blocks. Execute separate pytest proce
 
 For each of the first three require exact identity hash shown above, 35 passing unique IDs, one receipt construction, 32 real walks, and 105 visits with lengths `[1] * 29 + [2, 13, 61]`. Require one exact full list, one exact Fittings list, and one exact two-Preview list. For mixed order require only the exact 35 identity set and all passing outcomes; record observed counts only as diagnostics. Never claim singleton/32/105 across module teardown/re-entry.
 
-- [ ] **Step 10: Run 12 screenshot mutants/faults**
+- [ ] **Step 10: Run 14 screenshot mutants/faults**
 
 Apply and restore each independently. Require per-ID JUnit intended failures:
 
@@ -1020,7 +1253,9 @@ Apply and restore each independently. Require per-ID JUnit intended failures:
 | omit first `screens_for_gate(True)` result | full exact 61 keys |
 | reorder first two results | full exact 61 keys |
 | first ordinary `_TrackedCDP` capture (`uploader`) raises | exact keys still hold; separate all-errors assertion fails |
-| omit non-early floor override | Preview success-order cannot find `set:840x625` |
+| omit every non-early floor override | Preview success-order cannot find `set:840x625` |
+| omit only non-Preview `fittings-narrow` override | retained full traversal fails `floor set count mismatch` |
+| defer only the 12th floor set (`fittings-narrow`) until after `capture_success` but before clear | retained full traversal keeps set/clear parity yet fails `floor capture did not occur between set and clear` |
 | skip group setup | exact two-shot setup-failure ID fails group error assertion |
 | skip narrow setup | same ID fails narrow error assertion |
 | verifier after screenshot | focused Preview postcondition ID records capture and fails `captures == []` |
@@ -1030,11 +1265,11 @@ Apply and restore each independently. Require per-ID JUnit intended failures:
 | move Fittings injection after reset/preparation | Fittings ID fails `stage[0]` reset ordering |
 | derive Fittings selector while omitting `fittings-unfiled` | exact 13-key assertion fails |
 
-The ordinary uploader probe must explicitly report that ordered keys passed and failure occurred at `all(shot["error"] is None for shot in shots)`. Restore all source/test-double bytes before the next row.
+The ordinary uploader probe must explicitly report that ordered keys passed and failure occurred at `all(shot["error"] is None for shot in shots)`. Every row requires exact selected JUnit IDs, call-phase failure, the named unique assertion/traceback, and no setup/collection/timeout masking. Restore all source/test-double bytes before the next row.
 
 - [ ] **Step 11: Run relevant suites and commit Task 3**
 
-Run all 41 timing tests; exact eight and 35 screenshot selections; complete `test_shoot_screens.py`, `test_new_screenshots.py`, and `test_current_screenshots.py`; executable screenshot DOM/worker tests; and the seven-file 494 selection. Then:
+Run all 41 timing tests; exact eight and 35 screenshot selections; complete `test_shoot_screens.py`, `test_new_screenshots.py`, and `test_current_screenshots.py`; executable screenshot DOM/worker tests; and the 494-case relevant selection. Then:
 
 ```bash
 uv run --extra dev ruff check tests/test_fleetsharing_timing.py tests/test_shoot_screens.py
@@ -1083,7 +1318,7 @@ Require:
 - rolling one and timing 41 exact identities/order;
 - screenshot eight, 15, 35, and three structural orders exact;
 - mixed 35 outcome-only green;
-- seven relevant files exact 494;
+- the relevant selection exact 494;
 - all target IDs invoke the intended helper/walk exactly as recorded, with no fifth trigger call and unchanged `eve_on()`.
 
 Do not retry an order to green. A failed first run is evidence and must be investigated/recorded.
@@ -1145,7 +1380,7 @@ The Python relevant-suite command above executes the existing screenshot worker 
 
 - [ ] **Step 6: Re-run every mutation/fault probe from the final tree**
 
-Compile and Ruff-check all temporary scripts, then run all six observer, nine timing, and 12 screenshot mutants plus the unmutated 12 observer cases and structural plugins. Require exact JUnit ownership, no masking/timeouts, and restoration exact bytes/hash/binary diff/NUL status after every row.
+Compile and Ruff-check all temporary scripts, then run all 7 observer, 9 timing, and 14 screenshot mutants plus the unmutated 15 observer cases, literal four-ID RED, external-JUnit parser self-test, signature exception gate, restoration-failure simulation, and structural plugins. Require exact JUnit ownership, no masking/timeouts, and restoration exact bytes/hash/binary diff/NUL status after every row.
 
 - [ ] **Step 7: Audit exact versioned scope and protected hashes**
 
@@ -1227,11 +1462,13 @@ Review `463bccb0..HEAD`. Accept only high-confidence edits within the exact eigh
 
 - [ ] **Step 2: Run fresh verification after polish**
 
-At minimum rerun Preview four/388, timing one/41 with exact counts, screenshot eight/35 plus three structural orders and mixed outcomes, seven-file 494, all mutation probes if executable tests changed, Ruff on five test files, documentation tests, exact scope/protected hashes, and `git diff --check`. If polish changes behavior-bearing test code, rerun the complete suite and all tool gates.
+At minimum rerun Preview four/388, timing one/41 with exact counts, screenshot eight/35 plus three structural orders and mixed outcomes, the 494-case relevant selection, all mutation probes if executable tests changed, Ruff on five test files, documentation tests, exact scope/protected hashes, and `git diff --check`. If polish changes behavior-bearing test code, rerun the complete suite and all tool gates.
 
-- [ ] **Step 3: Perform final self-review and independent-model review without subagent dispatch**
+- [ ] **Step 3: Perform final self-review and one independent review**
 
-Use the available review model/tool directly, not a delegated implementation agent. Check atomic arm, false precondition, current callback capture, delegate-first completion, exact return/error identity, first-error precedence, current-state equality, owned restoration/replacement, no accumulation, five-second bound, exactly four calls, unchanged `eve_on()`, 2,101/197,136 timing structure, one 61/14 traversal, exact 13 Fittings, immutable receipt, 32/105 safe-order structure, mixed-order claim discipline, exact identity/skips/scope, restoration, and no placeholders.
+First run the complete checklist below yourself. Then, only if the implementation authorization permits subagents, call the configured `subagent` tool once with `subagent_type="review"`, `run_in_background=false`, a 3–5 word description, and a self-contained read-only prompt naming the approved spec, exact `463bccb0..HEAD` diff, results ledger, local JUnit/JSON, mutation reports, and this checklist. Do not let the reviewer edit files. If a review subagent/tool is unavailable or not authorized, stop before freezing/publishing and request explicit maintainer review of the same artifacts; do not substitute self-certification or silently skip the gate.
+
+The review must check atomic arm, false precondition, current callback capture, delegate-first completion, atomic terminal error/success decision plus owned disarm, terminal-race precedence, exact return/error identity, current-state equality, replacement/no accumulation, five-second bound, exactly four calls, unchanged `eve_on()`, 2,101/197,136 timing structure, one 61/14 traversal, non-Preview floor omission/reversal, exact 13 Fittings, immutable receipt/direct consumers, 32/105 safe-order structure, mixed-order claim discipline, exact identity/signature exceptions/skips/eight-path scope, restoration, and no unfinished markers.
 
 - [ ] **Step 4: Run `change-explainer` and update reviewer-facing results**
 
@@ -1277,22 +1514,104 @@ Return the frozen `REVIEWED_HEAD`, commits, exact checks, structural results, sc
 
 - [ ] **Step 8: Only after separate explicit authorization, verify remote state before acting**
 
-Run `gh pr view -R elboaf/FlyGD-Wingman` and `git log`; never amend an already merged PR. Require a clean local tree at the literal authorized SHA, PR target `main`, PR head equal to that SHA, and no inferred “latest” run. Never use `--no-verify`.
+Use explicit runtime inputs in every command:
+
+```bash
+REPOSITORY=elboaf/FlyGD-Wingman
+: "${REVIEWED_HEAD:?literal authorized 40-character head is required}"
+: "${RUN_ID:?literal authorized workflow run ID is required}"
+: "${PR_NUMBER:?literal authorized pull request number is required}"
+test "$(git rev-parse HEAD)" = "$REVIEWED_HEAD"
+test -z "$(git status --porcelain=v2 --untracked-files=all)"
+git log -5 --oneline --decorate
+gh pr view "$PR_NUMBER" -R "$REPOSITORY" \
+  --json number,state,mergedAt,headRefOid,baseRefOid,headRefName,baseRefName,url
+gh api "repos/$REPOSITORY/actions/runs/$RUN_ID"
+```
+
+Never amend an already merged PR. Require target `main`, PR head equal to `REVIEWED_HEAD`, and no inferred “latest” run. Never use `--no-verify`.
 
 - [ ] **Step 9: Collect hosted evidence with logs-primary synthetic binding**
 
-The hosted collector takes mandatory literal `REVIEWED_HEAD`, `RUN_ID`, and `PR_NUMBER`. It must:
+The hosted collector takes mandatory literal `REVIEWED_HEAD`, `RUN_ID`, and `PR_NUMBER` and begins with this executable binding—no default, current branch, or latest-run inference:
+
+```python
+import json
+import os
+import re
+import subprocess
+from pathlib import Path
+
+REPOSITORY = "elboaf/FlyGD-Wingman"
+W = Path("/mnt/c/dev/flygd-wingman/.worktrees/ci-broad-waste-stage-a")
+REVIEWED_HEAD = os.environ["REVIEWED_HEAD"]
+RUN_ID = int(os.environ["RUN_ID"])
+PR_NUMBER = int(os.environ["PR_NUMBER"])
+assert re.fullmatch(r"[0-9a-f]{40}", REVIEWED_HEAD)
+
+
+def command(*args: str) -> str:
+    return subprocess.check_output(args, text=True).strip()
+
+
+def gh_json(*args: str):
+    return json.loads(command("gh", *args))
+
+
+assert command("git", "-C", str(W), "rev-parse", "HEAD") == REVIEWED_HEAD
+assert command(
+    "git", "-C", str(W), "status", "--porcelain=v2", "--untracked-files=all"
+) == ""
+run = gh_json("api", f"repos/{REPOSITORY}/actions/runs/{RUN_ID}")
+pr = gh_json(
+    "pr",
+    "view",
+    str(PR_NUMBER),
+    "-R",
+    REPOSITORY,
+    "--json",
+    "number,state,mergedAt,headRefOid,baseRefOid,headRefName,baseRefName,url",
+)
+assert pr["number"] == PR_NUMBER
+assert pr["state"] == "OPEN" and pr["mergedAt"] is None
+assert pr["headRefOid"] == run["head_sha"] == REVIEWED_HEAD
+assert pr["baseRefName"] == "main"
+```
+
+It must then:
 
 1. fetch run JSON and every attempt JSON; record failures/reruns rather than replacing history;
 2. require event `pull_request`, completed success, run head and PR `headRefOid` equal `REVIEWED_HEAD`;
 3. select exactly checks, Ubuntu, and Windows jobs for the selected attempt and require each job head equal the reviewed SHA;
 4. download each job log and parse exactly one checkout line `HEAD is now at <synthetic-short> Merge <head40> into <base40>` plus the subsequent `git log -1 --format=%H`; require all three logs agree;
-5. fetch the synthetic commit and require parents `[synthetic, base, head]` in that order;
+5. fetch the synthetic commit and execute this exact parent assertion (the `rev-list --parents` output includes the commit itself):
+
+```python
+SYNTHETIC, HEAD, BASE = checkout_log_tuple
+assert HEAD == REVIEWED_HEAD
+subprocess.run(
+    ["git", "-C", str(W), "fetch", "--quiet", "--no-tags", "origin", SYNTHETIC, BASE, REVIEWED_HEAD],
+    check=True,
+)
+parents = command(
+    "git",
+    "-C",
+    str(W),
+    "rev-list",
+    "--parents",
+    "-n",
+    "1",
+    SYNTHETIC,
+).split()
+assert parents == [SYNTHETIC, BASE, REVIEWED_HEAD], parents
+```
+
+   If an implementation instead calls `git show --format=%P`, that parent-only array must equal `[BASE, REVIEWED_HEAD]`; never compare a parent-only array with the three-element `rev-list` form;
 6. permit empty run `pull_requests` metadata only when explicit current PR data corroborates number/head/base; record it as `absent`, never guess;
 7. select each artifact by exact name, run ID, reviewed head, job start/completion time window, non-expired status, and unique match;
 8. verify API digest, ZIP SHA-256, exact two-member set, and extracted/member byte equality;
 9. parse JUnit with the longest-module-prefix parser and require exact baseline 16,609 order/hash, `+0/-0` globally and per targeted file, exact platform outcomes/skips/hashes, and no failure/error/availability skip;
-10. require exact Preview four, rolling one, changed eight, focused 27, 35-set, five-file 313, seven-file 494, and platform identity order;
+10. require exact Preview four, rolling one, changed eight, focused 27, 35-set, five-file 313, relevant 494, and platform identity order;
 11. audit synthetic diff as exactly the eight allowed paths and all protected paths unchanged;
 12. report targeted testcase sums, complete testcase sums, XML suite times, Test-step and job observations separately.
 
@@ -1324,17 +1643,22 @@ Do not push that evidence commit without a second explicit authorization coverin
 
 This plan was assembled and exercised against a disposable archive of `463bccb0` at `/tmp/wingman-stage-a-plan-candidate`; no candidate implementation was written to the repository worktree.
 
-- the seven relevant files passed all `494` unchanged identities;
+- the relevant selection passed all `494` unchanged identities;
 - the eight `runtime_pump` consumer files passed all `388` identities;
 - the focused presentation/geometry/timing/shoot selection passed `293` identities;
-- all 12 temporary observer cases passed;
-- six observer mutants, nine timing mutants, and 12 screenshot mutants each failed their intended witness and restored exact bytes;
+- all 15 temporary observer cases passed, including direct/composed legacy semantics, deterministic waiter-side premature-notify control, and the terminal error/disarm race;
+- literal RED collected the exact four production IDs and failed each only at `trigger wait not implemented`, with no import/collection error;
+- 7 observer mutants, 9 timing mutants, and 14 screenshot mutants each failed their exact intended ID/assertion and restored bytes/hash/binary diff/NUL status; the screenshot set includes non-Preview `fittings-narrow` floor omission and delayed-set reversal witnesses owned by the full traversal;
+- the external JUnit parser resolved all 15 one-component-classname observer IDs through an explicit collection map and preserved outcome/phase/message/traceback without duplicates;
+- the identity/signature gate preserved all 313 IDs/markers/decorators and allowed exactly the four named receipt-consumer substitutions;
+- restoration simulation proved a restored probe rethrows its original sentinel and a deliberate restoration mismatch stops the matrix while chaining that sentinel;
 - timing instrumentation observed baseline `2,101/2,101/2,208,151` and candidate `2,101/2,101/197,136` candidate/commit/check counts;
 - baseline screenshot instrumentation observed 35 walks/515 visits;
 - candidate normal, reverse-block, and seed-`20260926` orders each observed 35 passing IDs, one receipt construction, 32 walks, and 105 visits with exact hashes;
+- the four immutable-receipt consumers passed together (`4 passed`) and each passed in its own separate direct-selection process;
 - the mixed order passed all 35 IDs and observed four fixture constructions/35 walks/108 visits, retained only as diagnostic confirmation that cross-module counts are not acceptance evidence;
 - static inspection found trigger-helper calls exactly at presentation lines 59/196 and geometry lines 172/210 in the disposable formatted candidate, with unchanged `eve_on()` hash;
-- all eight disposable assembly/probe/instrumentation scripts passed `py_compile`, Ruff check, and Ruff format check;
+- all disposable assembly/probe/instrumentation scripts passed `py_compile`, Ruff check, and Ruff format check;
 - the five candidate test files passed Ruff check/format; repository documentation tests passed `7` cases.
 
 These are plan qualification facts, not implementation acceptance or elapsed-performance evidence. Tasks 1–5 rerun every applicable gate from the actual committed implementation.
@@ -1365,9 +1689,9 @@ Before committing this plan, confirm:
 - exact IDs, counts, hashes, selectors, inventories, arithmetic, observations, and protected hashes are internally consistent;
 - legacy/trigger Preview contracts, error precedence, current-state completion, replacement, sequential/concurrent cleanup, and exact five-second bound are explicit;
 - timing expected input is independent and all nine mutations have intended witnesses;
-- screenshot selector, 61 keys, 14 floors, 13 Fittings, immutable receipt, 35-ID orders, and 12 mutations are explicit;
+- screenshot selector, 61 keys, 14 floors, 13 Fittings, immutable receipt, 35-ID orders, and 14 mutations are explicit;
 - JUnit per-ID intended-failure parsing rejects masking and timeouts;
 - restoration compares bytes/hash/binary diff/NUL status;
 - complete prerequisites/tests/Node/Cargo/Ruff/docs/scope commands are explicit;
 - hosted collection is explicit-input, rerun-aware, logs-primary, synthetic-parent-bound, artifact-windowed, and exact-identity/skip scoped;
-- no placeholder, projected speedup, Stage B/C work, implementation, subagent dispatch, or push is included in this planning commit.
+- no placeholder, projected speedup, Stage B/C work, implementation, actual subagent dispatch, or push occurred while revising this planning commit; the future review fallback is explicitly authorization-gated.
