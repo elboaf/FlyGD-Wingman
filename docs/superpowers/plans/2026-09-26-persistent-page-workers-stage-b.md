@@ -32,7 +32,7 @@
 - Timing values are single-run observations only. Do not claim speedup, slowdown, lower bound, p95, runner efficiency, throughput, job impact, or critical-path causation.
 - The user authorized versioning the Stage B spec, plan, results, and evidence. This does not authorize a push, PR, workflow dispatch, rerun, or hosted artifact collection from an unspecified run.
 - Every temporary edit runs in disposable space or a bounded restoration wrapper and proves original bytes, SHA-256, binary diff, and NUL-delimited porcelain status in `finally`.
-- One immutable 71-recipe registry is the sole mutation authority. Tasks 3/4/5 reference its canonical names only; each recipe owns phase, typed probe kind, exact pytest IDs or non-pytest labels, one unique literal sentinel and anchored regex, kind-appropriate forbidden masking, match-once edits, and mutated/restored probes. The one property-cardinality recipe owns both missing and duplicate-identical variants internally.
+- One immutable 71-recipe registry is the sole mutation authority. Tasks 3/4/5 reference its canonical names only; each recipe owns phase, typed probe kind, exact pytest IDs or non-pytest labels, one unique canonical sentinel and anchored regex, kind-appropriate forbidden masking, match-once edits, and mutated/restored probes. Approved internal variants remain inside that recipe count and own their exact edit, sentinel/regex, and restoration cycle. The property-cardinality recipe owns missing and duplicate-identical variants; the native-error-stack recipe owns stack-omission and encoded-envelope-bound variants.
 - TDD RED must collect the intended IDs and fail in the call phase at its unique assertion. Undefined imports, a missing worker file, collection/setup errors, skips, timeouts, or later generic failures do not count as RED.
 - Task 1 materializes and runs collection/JUnit parsing first, freezes the actual 217-ID baseline, and binds `BASELINE_COLLECTED_IDS` before it imports or runs registry/restoration tooling. Its registry run is metadata/owner/schema smoke only; real edit qualification begins after each implementation phase exists.
 - Task 1 also freezes the exact expected Task 2 relevant-225 and complete-16,617 orders. Task 2 compares fresh actual collections byte-for-byte with those expected files; Task 5 compares final collection byte-for-byte with the frozen actual Task 2 order.
@@ -1226,8 +1226,9 @@ lists or disposable placeholder edits. It must prove before Task 3:
 
 1. registry keys, `recipe.name`, and the concatenated phase references are the
    same 71-name set, with every reference count exactly one;
-2. all names and sentinels are unique, with the property variants contained
-   inside their one canonical recipe;
+2. all canonical names and sentinels are unique, with property and native-error
+   variants contained inside their respective canonical recipe and every
+   variant-specific sentinel/regex exact and non-masking;
 3. every anchored regex full-matches its own sentinel, and no sentinel
    full-matches any other recipe's regex;
 4. every recipe's typed `pytest_ids` or singleton `probe_label` equals its
@@ -2292,15 +2293,19 @@ its closure has already captured the pristine VM `Error` prototype,
 `Object.prototype.isPrototypeOf`, `Reflect.get`, descriptor, string-slice, and
 scalar encoding operations. Native Error fields are read independently through
 the captured `Reflect.get`, including inherited and accessor-backed
-`name/message/stack`; each field is bounded and a throwing accessor becomes its
-own unreadable placeholder. Ordinary messages and stack frames are preserved,
-while the captured native-error prototype/name mapping prevents later prototype
-or global constructor poison from forging the stack heading. Non-Error hostile
-objects and throwing proxies stay on the guarded own-data-descriptor path. The
-serializer emits bounded manual primitive JSON and deletes each temporary reason
-slot in its own `finally`; the host removes the serializer slot after the request
-listener is detached. No host getter/coercion touches the reason; no raw reason or
-promise enters an array or retained closure. Timer dispatch catches and
+`name/message/stack`; each field is bounded to the named limits 256/8192/32768
+and a throwing accessor becomes its own unreadable placeholder. The encoded JSON
+envelope has its own 247331-character ceiling—six times the sum of those field
+limits plus the asserted 35-character object syntax—rather than incorrectly
+reusing the decoded stack limit. Ordinary messages and stack frames are
+preserved, while the captured native-error prototype/name mapping prevents later
+prototype or global constructor poison from forging the stack heading. Non-Error
+hostile objects and throwing proxies stay on the guarded own-data-descriptor
+path. The serializer emits bounded manual primitive JSON and deletes each
+temporary reason slot in its own `finally`; the host removes the serializer slot
+after the request listener is detached. An envelope beyond its derived maximum
+is fatal before parsing. No host getter/coercion touches the reason; no raw reason
+or promise enters an array or retained closure. Timer dispatch catches and
 serializes in the same realm immediately.
 
 Before/boundary rejection records replace success with `ok:false` and same-PID
@@ -2371,22 +2376,33 @@ PASS does not appear in diagnostics.
 message and stack frame, native Error own accessors, hostile native accessors,
 primitive, null, hostile getters, throwing Proxy, invalid recognized business
 input, before-settlement rejection, the original timer-boundary rejection, and a
-three-level nested final-timer `Promise.reject`. Any poll that dispatches a due
-timer must return `null` and reset its completion boundary; the next host turn
-captures the rejection and the next poll consumes it before publication. The
-nested rejection is therefore an `ok:false` business failure followed by clean
-same-PID recovery. One fatal request and the separate late post-success rejection
-retain their existing process-crash ownership. After every retainable failure,
-assert a clean request in the same PID. This permanent identity exercises exactly one representative fatal request: a
-family-valid scenario whose payload object is missing the required `input` key.
-Process A (worker start 1) serves all retainable failures and dies on that fatal
-without replay; a separate call starts process B (start 2), whose
-successful `S` schedules the late exit; `T` observes B's exit, fails with
-`.scenario == T`, exact `before the next request`, and prior `S`/request `N`
-without starting or executing a replacement; only the following recovery call
-starts process C (start 3), uses ID `N+2`, and succeeds. Assert and publish
-`stage_b.qualification.worker_starts == 3` from these three observed PIDs—no
-other fatal variant runs inside this identity.
+three-level nested final-timer `Promise.reject`. It also recursively constructs a
+native TypeError with an over-limit escaped message and escaped/newline/control-
+heavy stack, rejects it before completion, and requires the detached message and
+stack to reach their respective 8192/32768 limits while retaining a real frame.
+The next clean request must use the same PID. Any poll that dispatches a due timer
+must return `null` and reset its completion boundary; the next host turn captures
+the rejection and the next poll consumes it before publication. The nested
+rejection is therefore an `ok:false` business failure followed by clean same-PID
+recovery. One fatal request and the separate late post-success rejection retain
+their existing process-crash ownership. After every retainable failure, assert a
+clean request in the same PID. This permanent identity exercises exactly one
+representative fatal request on its property-counted worker: a family-valid
+scenario whose payload object is missing the required `input` key. Process A
+(worker start 1) serves all retainable failures and dies on that fatal without
+replay; a separate call starts process B (start 2), whose successful `S`
+schedules the late exit; `T` observes B's exit, fails with `.scenario == T`,
+exact `before the next request`, and prior `S`/request `N` without starting or
+executing a replacement; only the following recovery call starts process C
+(start 3), uses ID `N+2`, and succeeds. Assert and publish
+`stage_b.qualification.worker_starts == 3` from these three observed PIDs.
+
+A dedicated worker in the same qualification identity replaces the private
+serializer with a bounded 300000-character hostile envelope. The host rejects it
+against the derived 247331 ceiling, emits no reply, reports bounded fatal stderr,
+and recovers only in a new process. Those dedicated starts are fault-injection
+overhead and are excluded from the permanent three-start property, like the
+existing cleanup-failure workers in the success identity.
 
 Malformed NDJSON, wrong-family label, unknown protocol, and unknown scenario are
 qualified later by four independent `/tmp` variant probes. Each gets a fresh
@@ -2485,15 +2501,23 @@ or collection error stops before commit and before any Task 3 registry consumer.
 The post-implementation runtime review found three concrete defects: a poll could
 publish in the same call that dispatched a due timer, native Error stack accessors
 were rejected by the own-data-only extractor, and diagnostic native Errors were
-detached as empty objects. The correction gives every dispatched due callback a
-fresh host-turn/mailbox boundary, captures pristine native-Error operations and
-bounded fields, and applies that detachment to all five diagnostic methods.
+detached as empty objects. A final bound review then found that the host applied
+the 32768 decoded-stack ceiling to the larger escaped JSON envelope. The
+corrections give every dispatched due callback a fresh host-turn/mailbox boundary,
+capture pristine native-Error operations and bounded fields, apply that detachment
+to all five diagnostic methods, and separate decoded field bounds from the
+derived encoded-envelope bound.
+
 Three superseded Task 2 registry entries were replaced by
 `rejection-final-timer-drain`, `failure-native-error-stack`, and
-`diagnostics-native-error-detachment`; the canonical partition remains
-`14/16/41`, all 14 Task 2 mutations fail at their exact sentinel and restore
-exactly, and the seven collected qualification identities are unchanged. Exact
-commands, counts, hashes, and limitations are recorded in the results ledger.
+`diagnostics-native-error-detachment`. The native-stack recipe now owns two
+ordered pytest variants: omit the detached stack, then shrink the encoded
+envelope ceiling back to the stack ceiling. The second variant must fail only at
+its dedicated long-stack same-PID sentinel. The canonical partition remains
+`14/16/41`; all 14 recipes (15 mutation executions) fail at their exact sentinel
+and restore exactly, and the seven collected qualification identities are
+unchanged. Exact commands, counts, hashes, and limitations are recorded in the
+results ledger.
 
 ---
 

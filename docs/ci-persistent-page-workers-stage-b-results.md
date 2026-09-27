@@ -162,11 +162,11 @@ The seven qualification IDs were then collected before GREEN and executed one at
 a time against a runnable unsafe worker/receipt seam. All seven failed in the
 call phase at their unique approved sentinel; no collection, import, fixture,
 timeout, or framing failure satisfied RED. The unsafe seam was replaced rather
-than retained. After the runtime-review corrections, fresh focused outcomes are
-`13 passed in 3.33s`, `7 passed in 7.14s`, and a combined `20 passed in 12.63s`;
-the preserved baseline selection also passed `217/217 in 42.64s` with no skip,
-failure, or error. The two cleanup identities were rerun together as the direct
-reviewer probe and passed `2/2 in 6.85s`.
+than retained. After the final bound correction, fresh focused outcomes are
+`13 passed in 3.29s`, `7 passed in 7.44s`, and a combined `20 passed in 12.88s`.
+The preserved target selection passed `205/205 in 38.87s` with no skip, failure,
+or error. An independent wrapper repeated the long escaped native-Error failure,
+field lengths, retained frame, and same-PID recovery and passed `1/1 in 5.03s`.
 
 ## Worker schema, VM, cleanup, and recovery qualification
 
@@ -186,12 +186,18 @@ data descriptors and scalar quoting rather than mutable `JSON.stringify` or
 `toJSON`. Failure serialization additionally captures the pristine VM Error
 prototype, `isPrototypeOf`, `Reflect.get`, standard native Error prototypes, and
 bounded string operations. Native inherited, own, and accessor-backed
-`name/message/stack` fields are read independently; ordinary messages and frames
-survive, poisoned Error/Reflect globals cannot forge the heading, and hostile
-accessors or Proxy traps become bounded unreadable placeholders. Diagnostics use
-the same native-Error detachment, so each of `log/info/debug/warn/error` retains a
-primitive TypeError `{name,message,stack}` argument and rendered message/frame,
-while hostile accessor and Proxy controls remain unserializable.
+`name/message/stack` fields are read independently and capped at named limits
+256/8192/32768. The encoded envelope has the separately derived and asserted
+247331-character maximum: six times the sum of all three decoded limits plus the
+35-character JSON object syntax. `parseBoundedFailureJson` therefore accepts the
+worst-case escaped bounded fields without treating the stack limit as an envelope
+limit, while rejecting anything larger before parsing. Ordinary messages and
+frames survive, poisoned Error/Reflect globals cannot forge the heading, and
+hostile accessors or Proxy traps become bounded unreadable placeholders.
+Diagnostics use the same native-Error detachment, so each of
+`log/info/debug/warn/error` retains a primitive TypeError
+`{name,message,stack}` argument and rendered message/frame, while hostile
+accessor and Proxy controls remain unserializable.
 
 The request rejection listener is active before VM launch. Every poll that
 dispatches at least one due timer now resets the completion boundary and returns
@@ -213,10 +219,16 @@ listener and timer removal exceptions are fatal before reply and that a later
 call, not the failing call, starts recovery. Cleanup failure covered ordinary and
 accessor-backed native Errors, hostile native accessors, poisoned Error/Reflect
 intrinsics, primitive, null, hostile object getters, Proxy, semantic business
-input, before/boundary/nested-final-timer rejection, one fatal missing-input
-request, and late post-success exit. Its observed sequence remained exactly three
-process starts, with the attempted `T` attributed to `before the next request`
-and recovery using request `N+2`.
+input, before/boundary/nested-final-timer rejection, a recursively built native
+TypeError whose escaped 8192-character message and escaped/newline/control-heavy
+32768-character stack retain a real frame, one fatal missing-input request, and
+late post-success exit. The long failure and its next clean request use the same
+PID. Its primary observed sequence remained exactly three process starts, with
+the attempted `T` attributed to `before the next request` and recovery using
+request `N+2`. A dedicated uncounted fault-injection worker replaces the private
+serializer with a 300000-character value; the host rejects that over-limit
+envelope fatally without a reply, keeps stderr bounded, and recovers only in a
+new process.
 
 ## Saved-layout receipt and family conversion
 
@@ -248,14 +260,16 @@ four-process evidence remain pending Tasks 3 and 4.
 
 `/tmp/stage-b-baseline/mutations.py` contains one literal, ordered 71-recipe
 registry partitioned exactly `14/16/41` across Tasks 3/4/5. Every recipe has one
-unique literal sentinel and anchored regex, exact typed pytest/external/synthetic
-owner, kind-specific masking rules, a literal edit with an explicit root, frozen
-mutated/restored expectations, and an explicit `available_from_task`. The six
+unique canonical sentinel and anchored regex, exact typed
+pytest/external/synthetic owner, kind-specific masking rules, one or more literal
+edits with an explicit root, frozen mutated/restored expectations, and an
+explicit `available_from_task`. Ordered internal variants carry their own exact
+sentinel/regex and restoration cycle without increasing the recipe count. The six
 corrected owner mappings and three restored-only helper IDs are pinned explicitly.
 The deterministic registry manifest SHA-256 is
-`1ddfbda7d01b568c75b8d093e96a317458921850f255d6221056128d45679866`.
+`b4cf86421baef2f0d95f104e8c929817a14b5c3f61bafbb6a35809e81c8c7189`.
 The regenerated recursive artifact manifest is
-`8f1a55ecd125beef19201ae328512fe593cc88bc1d3fc1b348b95a425ff5699f`,
+`77089e961062761daa0b9a20b64eb03fcd07447a09e4d9944ee5135b875db4d7`,
 and the refreshed Task 2 identity-gate record is
 `7ccf650d6af664a7087345cab21d182a8e36b05aaab6919db3efb904409ee515`.
 It also freezes the read-only external adapter at SHA-256
@@ -316,17 +330,20 @@ Task 2 additionally activated the canonical 14-name first implementation slice
 from the corrected registry. Runtime review replaced three superseded synthetic
 realm recipes with real regressions: suppressing the post-dispatch final drain,
 dropping a native Error stack, and reverting native Error diagnostic arguments
-to ordinary object detachment. The remaining realm recipes perform real context
-cache/reuse, source-result reuse, and host-parsed input injection. The receipt
-recipes alter the actual pending capture, production ID source, durable read,
-`os.fsync` delegation, writer/environment restoration, reader ownership, and
-once-provider construction; no recipe inverts its own assertion or uses a
-mutation-only worker flag. The partition remains exactly `14/16/41`. All 14
-Task 2 edits ran through the typed dispatcher: 13 pytest probes and the external
-receipt-count probe each produced their exact sentinel, rejected masking,
+to ordinary object detachment. The native-stack recipe now owns two ordered
+pytest variants: stack omission and shrinking the encoded envelope ceiling to
+the decoded stack ceiling. The latter reaches only the dedicated long-stack
+same-PID sentinel. The remaining realm recipes perform real context cache/reuse,
+source-result reuse, and host-parsed input injection. The receipt recipes alter
+the actual pending capture, production ID source, durable read, `os.fsync`
+delegation, writer/environment restoration, reader ownership, and once-provider
+construction; no recipe inverts its own assertion or uses a mutation-only worker
+flag. The partition remains exactly `14/16/41`. All 14 Task 2 recipes ran through
+the typed dispatcher as 15 mutation executions: 14 pytest executions and the
+external receipt-count probe. Each produced its exact sentinel, rejected masking,
 restored exact bytes/hash/diff/status, and passed the registered restored probe.
 The ordered result file is `/tmp/stage-b-task2-mutations.json`, SHA-256
-`e982d5276cb1d94c75097b724e3a1ecf6f113f044e47346cad2837c7b3b27b71`.
+`aefe90925275ee0a2a17795dd99f1f49e400e7d24358b5f50166977abb32c464`.
 The provider's `pending_receipt` literal is unique, so no unconverted business
 caller needed a temporary source edit.
 
@@ -362,16 +379,17 @@ Task 2 self-review found only its six original approved implementation/result
 paths plus the authoritative plan correction: strict helper and helper contract,
 shared worker, seven-ID qualification module, receipt provider added without
 converting a business caller, this ledger, and the corrected Task 2 plan text.
-The follow-up runtime review found and closed three defects in the worker's
+The follow-up runtime reviews found and closed four defects in the worker's
 completion/detachment boundary: same-poll publication after a due callback,
-native Error stacks lost as accessors, and diagnostic Error objects reduced to
-`{}`. Its commit changes only the worker, qualification module, plan, and this
-ledger. No production, web, workflow, dependency, lockfile, configuration,
-packaging, existing CJS adapter, or `screenshot_dom.cjs` byte changed. Protected
-hashes, Ruff, formatting, docs, syntax, focused tests, baseline 217, collection
-gates, diff checks, and canonical restoration were rerun before the Task 2
-follow-up commit. Final Stage B review, real-family conversion, executable head,
-and evidence head remain pending.
+native Error stacks lost as accessors, diagnostic Error objects reduced to `{}`,
+and an encoded-envelope parser ceiling incorrectly equal to the smaller decoded
+stack ceiling. The corrections change only the worker, qualification module,
+plan, and this ledger. No production, web, workflow, dependency, lockfile,
+configuration, packaging, existing CJS adapter, or `screenshot_dom.cjs` byte
+changed. Protected hashes, Ruff, formatting, docs, syntax, focused tests, target
+205, collection gates, diff checks, and canonical restoration were rerun before
+the final Task 2 correction commit. Final Stage B review, real-family conversion,
+executable head, and evidence head remain pending.
 
 ## Publication stop and hosted evidence
 

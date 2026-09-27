@@ -19,6 +19,15 @@ const hostNumberIsFinite = Number.isFinite.bind(Number);
 const hostHasOwn = Function.call.bind(Object.prototype.hasOwnProperty);
 const hostSetImmediate = setImmediate;
 const hostString = String;
+const FAILURE_NAME_LIMIT = 256;
+const FAILURE_MESSAGE_LIMIT = 8192;
+const FAILURE_STACK_LIMIT = 32768;
+const FAILURE_ENVELOPE_SYNTAX_LENGTH = '{"name":"","message":"","stack":""}'.length;
+const FAILURE_ENCODED_ENVELOPE_LIMIT = 6 * (
+  FAILURE_NAME_LIMIT + FAILURE_MESSAGE_LIMIT + FAILURE_STACK_LIMIT
+) + FAILURE_ENVELOPE_SYNTAX_LENGTH;
+assert.equal(FAILURE_ENVELOPE_SYNTAX_LENGTH, 35);
+assert.equal(FAILURE_ENCODED_ENVELOPE_LIMIT, 247331);
 
 function hostJsonStringify(value) {
   const seen = new Set();
@@ -168,7 +177,8 @@ const SCENARIOS_BY_PROTOCOL = Object.freeze({
 });
 const QUALIFICATION_MODES = new Set([
   'realm', 'clean', 'resources', 'inventory', 'error', 'accessor-error',
-  'hostile-native-error', 'primitive', 'null', 'hostile', 'proxy',
+  'hostile-native-error', 'long-stack-rejection',
+  'hostile-oversized-serialization', 'primitive', 'null', 'hostile', 'proxy',
   'invalid-business', 'before-rejection', 'boundary-rejection',
   'nested-boundary-rejection', 'late-success', 'async-timer', 'diagnostics',
   'completion-forge', 'hostile-completion', 'cleanup-listener-poison',
@@ -352,6 +362,34 @@ if (data.mode === 'hostile-native-error') {
   });
   throw hostileError;
 }
+if (data.mode === 'long-stack-rejection') {
+  const longMessage = 'synthetic long failure ' + '"'.repeat(9000);
+  function buildDeepNativeError(depth) {
+    if (depth === 0) return new TypeError(longMessage);
+    return buildDeepNativeError(depth - 1);
+  }
+  const longError = buildDeepNativeError(32);
+  const originalStack = longError.stack;
+  const firstFrame = originalStack.indexOf('\n');
+  const stackUnit = String.fromCharCode(0, 34, 92, 10);
+  longError.stack = 'TypeError: ' + longMessage.slice(0, 8192)
+    + originalStack.slice(firstFrame)
+    + '\n    at retainedLongStackFrame (qualification.cjs:1:1)\n'
+    + stackUnit.repeat(20000);
+  Promise.reject(longError);
+  completion = new Promise(resolve => setTimeout(() => resolve(result), 1));
+}
+if (data.mode === 'hostile-oversized-serialization') {
+  const serializerSlot = Reflect.ownKeys(globalThis).find(
+    key => typeof key === 'string' && key.startsWith('__wingmanFailureSerializer_')
+  );
+  Object.defineProperty(globalThis, serializerSlot, {
+    configurable: true,
+    value() { return 'x'.repeat(300000); }
+  });
+  Promise.reject(new Error('oversized hostile serializer'));
+  completion = new Promise(resolve => setTimeout(() => resolve(result), 1));
+}
 if (data.mode === 'primitive') throw 'synthetic primitive failure';
 if (data.mode === 'null') throw null;
 if (data.mode === 'hostile') {
@@ -529,6 +567,16 @@ const BOOTSTRAP = String.raw`
   const safeIsPrototypeOf = Function.call.bind(Object.prototype.isPrototypeOf);
   const safeReflectGet = Reflect.get.bind(Reflect);
   const SafeError = Error;
+  const FAILURE_NAME_LIMIT = 256;
+  const FAILURE_MESSAGE_LIMIT = 8192;
+  const FAILURE_STACK_LIMIT = 32768;
+  const FAILURE_ENVELOPE_SYNTAX_LENGTH = '{"name":"","message":"","stack":""}'.length;
+  const FAILURE_ENCODED_ENVELOPE_LIMIT = 6 * (
+    FAILURE_NAME_LIMIT + FAILURE_MESSAGE_LIMIT + FAILURE_STACK_LIMIT
+  ) + FAILURE_ENVELOPE_SYNTAX_LENGTH;
+  if (FAILURE_ENCODED_ENVELOPE_LIMIT !== 247331) {
+    throw new SafeError('failure envelope limit mismatch');
+  }
   const safeErrorPrototype = SafeError.prototype;
   const safeAggregateErrorPrototype = AggregateError.prototype;
   const safeEvalErrorPrototype = EvalError.prototype;
@@ -743,7 +791,7 @@ const BOOTSTRAP = String.raw`
     const newline = safeStringIndexOf(stack, '\n');
     const frames = newline === -1 ? '' : safeStringSlice(stack, newline);
     const header = message ? name + ': ' + message : name;
-    return safeStringSlice(header + frames, 0, 32768);
+    return safeStringSlice(header + frames, 0, FAILURE_STACK_LIMIT);
   }
 
   function failure(reason) {
@@ -754,18 +802,24 @@ const BOOTSTRAP = String.raw`
     }
     if (typeof reason !== 'object' && typeof reason !== 'function') {
       out.name = 'Error';
-      try { out.message = safeStringSlice(safeString(reason), 0, 8192); }
+      try {
+        out.message = safeStringSlice(safeString(reason), 0, FAILURE_MESSAGE_LIMIT);
+      }
       catch (_error) { out.message = '<unreadable failure>'; }
       out.stack = '';
       return out;
     }
     const nativeName = nativeErrorName(reason);
-    out.name = failureField(reason, 'name', 'Error', nativeName, 256);
+    out.name = failureField(
+      reason, 'name', 'Error', nativeName, FAILURE_NAME_LIMIT
+    );
     out.message = failureField(
       reason, 'message', nativeName === null ? '<unreadable failure>' : '',
-      nativeName, 8192
+      nativeName, FAILURE_MESSAGE_LIMIT
     );
-    out.stack = failureField(reason, 'stack', '', nativeName, 32768);
+    out.stack = failureField(
+      reason, 'stack', '', nativeName, FAILURE_STACK_LIMIT
+    );
     if (nativeName !== null) {
       out.stack = normalizeNativeStack(out.stack, out.name, out.message);
     }
@@ -1099,7 +1153,10 @@ function validateRequest(request) {
 }
 
 function parseBoundedFailureJson(serialized) {
-  if (typeof serialized !== 'string' || serialized.length > 32768) throw new TypeError('failure serialization exceeded boundary');
+  if (typeof serialized !== 'string' ||
+      serialized.length > FAILURE_ENCODED_ENVELOPE_LIMIT) {
+    throw new TypeError('failure serialization exceeded boundary');
+  }
   const value = hostJsonParse(serialized);
   if (!value || !exactKeys(value, ['name', 'message', 'stack']) ||
       !hostObjectKeys(value).every(key => typeof value[key] === 'string')) {

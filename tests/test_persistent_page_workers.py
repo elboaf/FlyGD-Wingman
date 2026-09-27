@@ -44,6 +44,8 @@ ZERO_CLEANUP = {
     "pending_rejection_records": 0,
     "retained_realms": 0,
 }
+FAILURE_MESSAGE_LIMIT = 8192
+FAILURE_STACK_LIMIT = 32768
 REALM_SENTINELS = {
     "saved-layouts": "stage-b qualification realm saved-layouts: fresh execution violated",
     "fleet-sharing": "stage-b qualification realm fleet-sharing: fresh execution violated",
@@ -59,6 +61,7 @@ MUTATION_SENTINELS = {
     "promise": "stage-b mutation realm-saved-promise-completion",
     "final-drain": "stage-b mutation rejection-final-timer-drain",
     "native-stack": "stage-b mutation failure-native-error-stack",
+    "long-stack": "stage-b mutation failure-native-error-long-stack-envelope",
     "diagnostic-error": "stage-b mutation diagnostics-native-error-detachment",
     "pending": "stage-b mutation receipt-pending-first-apply",
     "identity": "stage-b mutation receipt-production-identity",
@@ -853,10 +856,45 @@ def _assert_final_timer_failure(worker: NodeScenarioWorker) -> None:
     )
 
 
+def _assert_long_stack_failure(worker: NodeScenarioWorker) -> None:
+    process = worker._proc
+    try:
+        _qualification_request(worker, "saved-layouts", "long-stack-rejection")
+    except NodeScenarioFailure as failure:
+        reply = failure.reply
+        _assert_mutation(
+            reply is not None
+            and len(str(reply["error"])) == FAILURE_MESSAGE_LIMIT
+            and str(reply["error"]).startswith("synthetic long failure ")
+            and len(failure.stack) == FAILURE_STACK_LIMIT
+            and failure.stack.startswith("TypeError: synthetic long failure ")
+            and "retainedLongStackFrame" in failure.stack
+            and "\x00" in failure.stack,
+            "long-stack",
+        )
+    except NodeScenarioCrash:
+        worker._discard_process(reason="long failure envelope was rejected")
+        _fail_mutation("long-stack")
+    else:
+        worker._discard_process(reason="long failure unexpectedly succeeded")
+        _fail_mutation("long-stack")
+    _assert_mutation(
+        process is not None
+        and worker._proc is not None
+        and worker._proc.pid == process.pid,
+        "long-stack",
+    )
+    clean = _qualification_request(worker, "saved-layouts", "clean")
+    _assert_mutation(clean["cleanup"] == ZERO_CLEANUP, "long-stack")
+    _assert_mutation(
+        worker._proc is not None and worker._proc.pid == process.pid,
+        "long-stack",
+    )
+
+
 def test_request_cleanup_after_business_failure(
     page_worker_factory, qualification_inputs, request
 ):
-    del qualification_inputs
     worker = page_worker_factory("saved-layouts")
     ordinary = _assert_business_failure(
         worker, "error", expected="synthetic Error failure"
@@ -896,6 +934,8 @@ def test_request_cleanup_after_business_failure(
         )
 
     _assert_final_timer_failure(worker)
+    assert worker._proc is not None and worker._proc.pid == process_a.pid
+    _assert_long_stack_failure(worker)
     assert worker._proc is not None and worker._proc.pid == process_a.pid
     poisoned = _assert_business_failure(
         worker, "poisoned-error", expected="protected poisoned Error failure"
@@ -942,6 +982,47 @@ def test_request_cleanup_after_business_failure(
     assert recovered["id"] == late_id + 2
     assert fatal_id < late_id
     assert recovered["cleanup"] == ZERO_CLEANUP
+
+    node = shutil.which("node")
+    assert node is not None
+    oversized_worker = NodeScenarioWorker(
+        [
+            node,
+            str(WORKER),
+            "--worker",
+            "saved-layouts",
+            str(WEB),
+            str(qualification_inputs.manifest_for("saved-layouts")),
+        ],
+        cwd=ROOT,
+    )
+    try:
+        oversized_worker._ensure_started(
+            "qualification/saved-layouts/hostile-oversized-serialization"
+        )
+        oversized_process = oversized_worker._proc
+        assert oversized_process is not None
+        with pytest.raises(NodeScenarioCrash) as oversized:
+            _qualification_request(
+                oversized_worker,
+                "saved-layouts",
+                "hostile-oversized-serialization",
+            )
+        assert oversized.value.reply is None
+        assert "failure serialization exceeded boundary" in str(oversized.value)
+        assert oversized_worker._proc is None
+        stderr_lines = oversized.value.stderr.splitlines()
+        assert len(stderr_lines) <= 40
+        assert all(len(line) <= 400 for line in stderr_lines)
+        oversized_recovery = _qualification_request(
+            oversized_worker, "saved-layouts", "clean"
+        )
+        assert oversized_worker._proc is not None
+        assert oversized_worker._proc.pid != oversized_process.pid
+        assert oversized_recovery["cleanup"] == ZERO_CLEANUP
+    finally:
+        oversized_worker.close()
+
     _record_qualification(request, worker_starts=3, fsync_calls=0)
 
 
