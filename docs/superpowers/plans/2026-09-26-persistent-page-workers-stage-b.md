@@ -32,6 +32,7 @@
 - Timing values are single-run observations only. Do not claim speedup, slowdown, lower bound, p95, runner efficiency, throughput, job impact, or critical-path causation.
 - The user authorized versioning the Stage B spec, plan, results, and evidence. This does not authorize a push, PR, workflow dispatch, rerun, or hosted artifact collection from an unspecified run.
 - Every temporary edit runs in disposable space or a bounded restoration wrapper and proves original bytes, SHA-256, binary diff, and NUL-delimited porcelain status in `finally`.
+- One immutable 71-recipe registry is the sole mutation authority. Tasks 3/4/5 reference its canonical names only; each recipe owns phase, exact IDs, one unique literal sentinel and anchored regex, forbidden masking, match-once edits, and mutated/restored probes. The one property-cardinality recipe owns both missing and duplicate-identical variants internally.
 - TDD RED must collect the intended IDs and fail in the call phase at its unique assertion. Undefined imports, collection/setup errors, skips, timeouts, or later generic failures do not count as RED.
 - Every intermediate implementation commit is green for its changed component and all already-converted consumers.
 
@@ -217,7 +218,7 @@ fold the qualification `4` into 33 or 62.
 **Files:**
 - Create: `docs/ci-persistent-page-workers-stage-b-results.md`
 - Read: `/mnt/c/dev/flygd-wingman/tmp/stage-a-hosted-36258907685/**`
-- Materialize outside the repository: `/tmp/stage-b-baseline/collect.py`, `probe_plugin.py`, `hosted.py`, `restore.py`, `test_restore.py`, ID/map/shape JSON, one-shot NDJSON, fsync JSON, JUnit XML, and hash manifests
+- Materialize outside the repository: `/tmp/stage-b-baseline/collect.py`, `probe_plugin.py`, `hosted.py`, `restore.py`, `test_restore.py`, `mutations.py`, `test_mutations.py`, ID/map/shape JSON, one-shot NDJSON, fsync JSON, JUnit XML, and hash manifests
 
 **Interfaces:**
 - Consumes: merged base `203d2068787cb3457916db6005afda0a7ce7a43a`, approved spec, current source, and accepted Stage A run `36258907685` attempt `1`.
@@ -308,20 +309,40 @@ from __future__ import annotations
 import hashlib
 import re
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 from types import TracebackType
-from typing import Callable
+from typing import Literal
+
+Phase = Literal["task3", "task4", "task5"]
+
+
+@dataclass(frozen=True)
+class LiteralEdit:
+    path: Path
+    old: bytes
+    new: bytes
+
+
+@dataclass(frozen=True)
+class MutationProbe:
+    kind: Literal["pytest-junit", "external-process", "synthetic-audit"]
+    argv: tuple[str, ...]
+    restored_argv: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class MutationRecipe:
     name: str
-    path: Path
-    old: bytes
-    new: bytes
-    nodeid: str
+    phase: Phase
+    selected_ids: tuple[str, ...]
+    sentinel: str
     failure_regex: str
+    forbidden_masking: tuple[str, ...]
+    edits: tuple[LiteralEdit, ...]
+    probe: MutationProbe
 
 
 def git_bytes(worktree: Path, *args: str) -> bytes:
@@ -329,15 +350,49 @@ def git_bytes(worktree: Path, *args: str) -> bytes:
 
 
 def validate_recipe(recipe: MutationRecipe, worktree: Path) -> None:
-    assert not recipe.path.is_absolute(), f"{recipe.name}: path was absolute"
-    source = (worktree / recipe.path).read_bytes()
-    assert recipe.old, f"{recipe.name}: empty old literal"
-    assert recipe.new, f"{recipe.name}: empty new literal"
-    assert recipe.old != recipe.new, f"{recipe.name}: unchanged recipe"
-    assert source.count(recipe.old) == 1, (
-        f"{recipe.name}: old literal cardinality was {source.count(recipe.old)}"
+    assert recipe.name
+    assert recipe.phase in ("task3", "task4", "task5")
+    assert recipe.selected_ids
+    assert recipe.sentinel
+    compiled = re.compile(recipe.failure_regex)
+    assert recipe.failure_regex.startswith(r"\A")
+    assert recipe.failure_regex.endswith(r"\Z")
+    assert compiled.fullmatch(recipe.sentinel)
+    assert recipe.forbidden_masking
+    assert recipe.probe.argv and recipe.probe.restored_argv
+    assert recipe.edits or recipe.probe.kind == "synthetic-audit"
+    for path in {edit.path for edit in recipe.edits}:
+        assert not path.is_absolute(), f"{recipe.name}: path was absolute"
+        source = (worktree / path).read_bytes()
+        spans = []
+        for edit in (item for item in recipe.edits if item.path == path):
+            assert edit.old, f"{recipe.name}: empty old literal"
+            assert edit.new, f"{recipe.name}: empty new literal"
+            assert edit.old != edit.new, f"{recipe.name}: unchanged recipe"
+            assert source.count(edit.old) == 1, (
+                f"{recipe.name}: old literal cardinality was {source.count(edit.old)}"
+            )
+            start = source.index(edit.old)
+            spans.append((start, start + len(edit.old)))
+        ordered = sorted(spans)
+        assert all(left[1] <= right[0] for left, right in pairwise(ordered)), (
+            f"{recipe.name}: overlapping edits in {path}"
+        )
+
+
+def apply_literal_edits(original: bytes, edits: tuple[LiteralEdit, ...]) -> bytes:
+    replacements = sorted(
+        (
+            original.index(edit.old),
+            original.index(edit.old) + len(edit.old),
+            edit.new,
+        )
+        for edit in edits
     )
-    re.compile(recipe.failure_regex)
+    mutated = original
+    for start, end, replacement in reversed(replacements):
+        mutated = mutated[:start] + replacement + mutated[end:]
+    return mutated
 
 
 def mutate_once(
@@ -345,10 +400,13 @@ def mutate_once(
     recipe: MutationRecipe,
     probe: Callable[[], None],
 ) -> None:
-    path = worktree / recipe.path
     validate_recipe(recipe, worktree)
-    original = path.read_bytes()
-    original_hash = hashlib.sha256(original).hexdigest()
+    originals = {
+        edit.path: (worktree / edit.path).read_bytes() for edit in recipe.edits
+    }
+    original_hashes = {
+        path: hashlib.sha256(content).hexdigest() for path, content in originals.items()
+    }
     before_diff = git_bytes(worktree, "diff", "--binary", "HEAD", "--", ".")
     before_status = git_bytes(
         worktree, "status", "--porcelain=v2", "--untracked-files=all", "-z"
@@ -357,21 +415,31 @@ def mutate_once(
     probe_tb: TracebackType | None = None
     restore_error: BaseException | None = None
     try:
-        mutated = original.replace(recipe.old, recipe.new, 1)
-        assert mutated != original, f"{recipe.name}: mutation changed no bytes"
-        path.write_bytes(mutated)
-        assert path.read_bytes() == mutated
+        for relative, original in originals.items():
+            path = worktree / relative
+            edits = tuple(edit for edit in recipe.edits if edit.path == relative)
+            mutated = apply_literal_edits(original, edits)
+            assert mutated != original, f"{recipe.name}: mutation changed no bytes"
+            path.write_bytes(mutated)
+            assert path.read_bytes() == mutated
         probe()
     except BaseException as error:  # noqa: BLE001 -- restore before rethrow.
         probe_error = error
         probe_tb = error.__traceback__
     finally:
         try:
-            path.write_bytes(original)
+            for relative, original in originals.items():
+                (worktree / relative).write_bytes(original)
             checks = {
-                "file bytes": path.read_bytes() == original,
-                "SHA-256": hashlib.sha256(path.read_bytes()).hexdigest()
-                == original_hash,
+                "file bytes": all(
+                    (worktree / path).read_bytes() == original
+                    for path, original in originals.items()
+                ),
+                "SHA-256": all(
+                    hashlib.sha256((worktree / path).read_bytes()).hexdigest()
+                    == original_hashes[path]
+                    for path in originals
+                ),
                 "binary diff": git_bytes(
                     worktree, "diff", "--binary", "HEAD", "--", "."
                 )
@@ -387,11 +455,12 @@ def mutate_once(
             }
             mismatches = [name for name, matched in checks.items() if not matched]
             if mismatches:
-                raise AssertionError(
-                    "restoration bytes mismatch: " + ", ".join(mismatches)
-                )
+                mismatch = AssertionError("restoration bytes mismatch")
+                mismatch.add_note(", ".join(mismatches))
+                raise mismatch
         except BaseException as error:  # noqa: BLE001 -- restoration wins.
-            restore_error = AssertionError(f"restoration bytes mismatch: {error}")
+            restore_error = AssertionError("restoration bytes mismatch")
+            restore_error.add_note(str(error))
     if restore_error is not None:
         raise restore_error from probe_error
     if probe_error is not None:
@@ -403,9 +472,10 @@ On top of that exact restoration primitive, `restore.py` must contain:
 - longest-existing-module-prefix reconstruction of exact pytest node IDs;
 - raw external JUnit parsing that preserves `<property>` elements as a list;
 - `run_expected_failure(recipe, command, xml_path)`, which runs a fresh external
-  pytest process, requires nonzero exit, exactly one selected testcase, exactly
-  one call-phase `<failure>` and no setup/teardown `<error>` or `<skipped>`, and
-  requires `recipe.failure_regex` in message plus traceback;
+  pytest process, requires nonzero exit, exactly the recipe's selected testcases,
+  exactly one intended call-phase `<failure>` and no setup/teardown `<error>` or
+  `<skipped>`, then requires exactly one extracted assertion-message line to
+  full-match `recipe.failure_regex`;
 - rejection of `ImportError`, `ModuleNotFoundError`, collection/fixture errors,
   `NodeScenarioTimeout`, timeout text, and every other registered mutation
   sentinel;
@@ -418,22 +488,326 @@ On top of that exact restoration primitive, `restore.py` must contain:
   raises an error containing the exact sentinel `restoration bytes mismatch`.
 
 The runner never parses pytest terminal prose as an outcome and never imports a
-test module into its own process. Literal recipes are Python `bytes` values, not
-line numbers, ellipses, pseudocode, search-only descriptions, or regex
-substitutions. Each later mutation table row must name one `MutationRecipe`, one
-exact node or explicitly independent process probe, and one mode-specific
-compiled failure regex before the mutation is allowed to run. The only permitted
-shared regex is the required exact `stage_b property cardinality` sentinel for
-the separate missing-property and duplicate-identical-property recipes.
+test module into its own process. It extracts call-phase assertion-message lines
+from raw external JUnit, requires exactly one line to `fullmatch()` the recipe's
+anchored regex, and rejects setup/teardown/collection outcomes structurally.
+Literal edits are Python `bytes`, not line numbers, ellipses, pseudocode,
+search-only descriptions, or regex substitutions.
 
-Create `/tmp/stage-b-baseline/test_restore.py` and run it now in a disposable
-Git repository. Its external child pytest samples must prove: restoration after
-an intended probe failure; detection of zero-match and two-match literals;
-detection of bytes/hash/diff/status mismatch with the exact restoration
-sentinel; exact-node mismatch rejection; longest-prefix parsing of a real
-external pass, call failure, setup error, and parametrized node; duplicate JUnit
-property preservation; sentinel mismatch rejection; and restored GREEN parsing.
-Only after these self-tests pass may Tasks 3–5 use the runner.
+#### One canonical mutation registry
+
+Task 1 also creates `/tmp/stage-b-baseline/mutations.py` and
+`test_mutations.py`. `mutations.py` is the only mutation authority for the rest
+of the plan. Each of its exactly **71** `MutationRecipe` objects contains its
+literal name, earliest execution phase, exact selected pytest node IDs (or an
+exact `external::...` probe ID), literal sentinel, anchored regex, forbidden
+masking rules, match-once byte edits, and complete mutated/restored probe argv.
+No Task 3/4/5 prose table may restate an owner, sentinel, regex, edit, or probe.
+Those tasks invoke only the phase tuples below by recipe name.
+
+The registry declares exact node-ID constants rather than aliases such as
+"saved realm row":
+
+```python
+NUMERIC_ID = "tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration"
+MISSING_FIELDS_ID = "tests/test_node_scenario_worker.py::test_invalid_reply_schema_discards_process_with_context_and_restarts[missing-fields]"
+REALM_SAVED_ID = "tests/test_persistent_page_workers.py::test_request_realm_is_fresh_and_program_is_reexecuted[saved-layouts]"
+REALM_SHARING_ID = "tests/test_persistent_page_workers.py::test_request_realm_is_fresh_and_program_is_reexecuted[fleet-sharing]"
+REALM_GROUP_ID = "tests/test_persistent_page_workers.py::test_request_realm_is_fresh_and_program_is_reexecuted[group-backward]"
+REALM_MARKER_ID = "tests/test_persistent_page_workers.py::test_request_realm_is_fresh_and_program_is_reexecuted[label-markers]"
+CLEANUP_SUCCESS_ID = "tests/test_persistent_page_workers.py::test_request_cleanup_after_success"
+CLEANUP_FAILURE_ID = "tests/test_persistent_page_workers.py::test_request_cleanup_after_business_failure"
+RECEIPT_ID = "tests/test_persistent_page_workers.py::test_saved_layout_receipt_is_durable_and_detached"
+SAVED_REVERSED_ID = "tests/test_preview_savedlayouts_page.py::test_saved_layout_page_ordering[reversed]"
+SHARING_REJECT_ID = "tests/test_fleetsharing_hydration.py::test_sharing_watch_runtime[reject]"
+SHARING_SOURCE_REJECTION_ID = "tests/test_fleetsharing_hydration.py::test_sharing_watch_runtime[bridge-source-rejection]"
+GROUP_DIALOG_OWNERS_ID = "tests/test_preview_group_backward.py::test_group_backward_page[focus-dialog-owners]"
+GROUP_OWN_DIALOG_ID = "tests/test_preview_group_backward.py::test_group_backward_page[focus-own-dialog]"
+MARKER_DEFERRED_ID = "tests/test_preview_labelmarkers_page.py::test_marker_page_ownership[screenshot-deferred]"
+```
+
+External selected IDs are exact strings under `external::fatal/*`,
+`external::inventory/node-165`, `external::saved-main/receipt-count-55`,
+`external::junit/property-cardinality`, and `external::runner/restoration`.
+Registry construction fails for any other
+non-pytest selected ID. The exact phase contract is:
+
+```python
+ALLOWED_PHASES_BY_ID = {
+    NUMERIC_ID: frozenset({"task5"}),
+    MISSING_FIELDS_ID: frozenset({"task5"}),
+    REALM_SAVED_ID: frozenset({"task3", "task4", "task5"}),
+    REALM_SHARING_ID: frozenset({"task4", "task5"}),
+    REALM_GROUP_ID: frozenset({"task4", "task5"}),
+    REALM_MARKER_ID: frozenset({"task4", "task5"}),
+    CLEANUP_SUCCESS_ID: frozenset({"task5"}),
+    CLEANUP_FAILURE_ID: frozenset({"task4", "task5"}),
+    RECEIPT_ID: frozenset({"task3"}),
+    SAVED_REVERSED_ID: frozenset({"task3"}),
+    SHARING_REJECT_ID: frozenset({"task4"}),
+    SHARING_SOURCE_REJECTION_ID: frozenset({"task4"}),
+    GROUP_DIALOG_OWNERS_ID: frozenset({"task4"}),
+    GROUP_OWN_DIALOG_ID: frozenset({"task4"}),
+    MARKER_DEFERRED_ID: frozenset({"task4"}),
+    "external::fatal/malformed-ndjson": frozenset({"task4"}),
+    "external::fatal/wrong-family": frozenset({"task4"}),
+    "external::fatal/unknown-protocol": frozenset({"task4"}),
+    "external::fatal/unknown-scenario": frozenset({"task4"}),
+    "external::inventory/node-165": frozenset({"task4"}),
+    "external::saved-main/receipt-count-55": frozenset({"task3"}),
+    "external::junit/property-cardinality": frozenset({"task5"}),
+    "external::runner/restoration": frozenset({"task5"}),
+}
+```
+
+`test_mutations.py` checks every recipe's selected ID against this map. A
+restored argv may include an additional anti-mask ID from the map, but
+`selected_ids` contains only the testcases expected in the mutated JUnit result.
+
+Owner assignment is canonical in `REGISTRY`: the six leading Task 3 realm
+recipes select `REALM_SAVED_ID`; the seven receipt-contract recipes select
+`RECEIPT_ID`; `receipt-once-construction` selects only
+`external::saved-main/receipt-count-55`, whose probe runs all 55 main rows and
+parses their raw JUnit while its restored argv includes `RECEIPT_ID` and
+`SAVED_REVERSED_ID`. Task 4 adapter/source recipes select
+the corresponding exact realm constant; business retention and fatal no-replay
+select `CLEANUP_FAILURE_ID`; the four fatal variants select their exact
+`external::fatal/...` IDs; diagnostics, group matrices, marker deferred, and
+inventory select the exact constants above or `external::inventory/node-165`.
+Task 5 schema recipes select `NUMERIC_ID` or `MISSING_FIELDS_ID`; realm recipes
+select their exact family ID; source retention and cleanup recipes select
+`CLEANUP_SUCCESS_ID`; failure/rejection/fatal/late recipes select
+`CLEANUP_FAILURE_ID`; and the final two recipes select the exact JUnit and
+restoration external IDs. No recipe stores an owner nickname.
+
+The three phase tuples partition the registry—each recipe name occurs here
+exactly once:
+
+```python
+TASK3_RECIPES = (
+    "realm-saved-context-reuse",
+    "realm-saved-source-reexecution",
+    "realm-saved-input-detachment",
+    "realm-saved-prior-reply-detachment",
+    "realm-saved-module-export-isolation",
+    "realm-saved-promise-completion",
+    "receipt-pending-first-apply",
+    "receipt-production-identity",
+    "receipt-durable-readback",
+    "receipt-atomic-writer-fsync",
+    "receipt-writer-restoration",
+    "receipt-environment-restoration",
+    "receipt-reader-release",
+    "receipt-once-construction",
+)
+
+TASK4_RECIPES = (
+    "adapter-saved-program-selection",
+    "adapter-sharing-dom-isolation",
+    "realm-group-source-reexecution",
+    "adapter-marker-root-release",
+    "business-failure-process-retention",
+    "protocol-fatal-no-replay",
+    "protocol-malformed-ndjson",
+    "protocol-wrong-family",
+    "protocol-unknown-protocol",
+    "protocol-unknown-scenario",
+    "diagnostics-sharing-reject",
+    "diagnostics-sharing-source-order",
+    "group-dialog-owner-matrix",
+    "group-own-dialog-matrix",
+    "marker-deferred-roster",
+    "inventory-node-165",
+)
+
+TASK5_RECIPES = (
+    "schema-bool-id-rejected",
+    "schema-bool-id-terminated",
+    "schema-bool-id-discarded",
+    "schema-bool-id-new-pid",
+    "schema-bool-duration-rejected",
+    "schema-bool-duration-discarded",
+    "schema-negative-duration-rejected",
+    "schema-nan-duration-rejected",
+    "schema-positive-infinity-rejected",
+    "schema-negative-infinity-rejected",
+    "schema-zero-duration-accepted",
+    "schema-float-duration-accepted",
+    "schema-missing-fields-protocol-error",
+    "schema-missing-fields-discarded",
+    "realm-saved-host-isolation",
+    "realm-sharing-host-isolation",
+    "realm-group-host-isolation",
+    "realm-marker-host-isolation",
+    "source-target-not-host-required",
+    "realm-sharing-module-export-isolation",
+    "realm-group-module-export-isolation",
+    "realm-marker-module-export-isolation",
+    "realm-sharing-context-reuse",
+    "realm-group-context-reuse",
+    "realm-marker-context-reuse",
+    "realm-sharing-source-reexecution",
+    "realm-marker-source-reexecution",
+    "realm-saved-pristine-intrinsics",
+    "failure-hostile-error-detachment",
+    "failure-primitive-detachment",
+    "cleanup-timer-cancellation",
+    "cleanup-listener-release",
+    "cleanup-unresolved-promise-release",
+    "rejection-before-settlement",
+    "rejection-boundary-turn",
+    "rejection-raw-reference-release",
+    "cleanup-before-reply",
+    "protocol-fatal-no-reply",
+    "late-rejection-attribution",
+    "junit-property-cardinality",
+    "restoration-byte-integrity",
+)
+
+assert len(TASK3_RECIPES) == 14
+assert len(TASK4_RECIPES) == 16
+assert len(TASK5_RECIPES) == 41
+assert len(TASK3_RECIPES + TASK4_RECIPES + TASK5_RECIPES) == 71
+```
+
+Every recipe stores its own literal sentinel and its separately spelled literal
+anchored regex; neither is derived at probe time. For example, the canonical
+property regex is `\Astage_b\ property\ cardinality\Z` and the restoration regex
+is `\Arestoration\ bytes\ mismatch\Z`. All recipe sentinels are unique. The
+single `junit-property-cardinality` recipe internally runs both
+missing-property and duplicate-identical-property variants against its one
+canonical sentinel/regex, exactly `stage_b property cardinality`; it is one
+registry object and one phase reference, not two recipes. The other frozen
+non-prefixed sentinels are the mode-qualified `numeric-schema ...` messages from
+the helper—including exact `numeric-schema bool-id: rejected process was not
+terminated`—and exact `restoration bytes mismatch`. Every remaining registry
+entry stores the fully expanded literal `stage-b mutation ` followed by its
+canonical name; angle-bracket or generated placeholders are forbidden. Owning
+test/probe assertions use only that canonical text; no legacy sentinel alias is
+retained.
+
+The 14 schema entries preserve these exact helper messages as their sentinels:
+`numeric-schema bool-id: invalid reply was accepted`, `numeric-schema bool-id:
+rejected process was not terminated`, `numeric-schema bool-id: process was not
+discarded`, `numeric-schema bool-id: recovery reused discarded PID`,
+`numeric-schema bool-duration: invalid reply was accepted`, `numeric-schema
+bool-duration: process was not discarded`, `numeric-schema negative: invalid
+reply was accepted`, `numeric-schema nan: invalid reply was accepted`,
+`numeric-schema positive-infinity: invalid reply was accepted`, `numeric-schema
+negative-infinity: invalid reply was accepted`, `numeric-schema zero: valid
+duration rejected`, `numeric-schema float: valid duration rejected`,
+`missing-fields reply did not use _ProtocolError`, and `missing-fields process
+was not discarded`. These literals occur only in `REGISTRY` and their owning
+assertions; no shorter numeric regex is accepted.
+
+The exact masking tuple is stored unchanged on every recipe:
+
+```python
+FORBIDDEN_MASKING = (
+    r"\bImportError\b",
+    r"\bModuleNotFoundError\b",
+    r"\bNodeScenarioTimeout\b",
+    r"\bDID NOT RAISE\b",
+    r"fixture ['\"][^'\"]+['\"] not found",
+    r"ERROR collecting",
+    r"(?i:\btime(?:d)? out\b|\btimeout\b)",
+)
+```
+
+The JUnit parser separately requires the intended call phase and rejects
+setup/teardown `<error>` elements. No generic failure, timeout, missing exception,
+fixture error, or collection failure can satisfy a recipe. `REGISTRY` is a
+literal dict in exact `TASK3_RECIPES + TASK4_RECIPES + TASK5_RECIPES` insertion
+order; every value is a fully spelled `MutationRecipe(...)`, not a factory output
+or later override.
+
+`validate_registry()` is the mandatory preflight:
+
+```python
+def validate_registry(worktree: Path, phase: Phase | None = None) -> None:
+    references = TASK3_RECIPES + TASK4_RECIPES + TASK5_RECIPES
+    assert len(references) == 71
+    assert len(set(references)) == 71
+    assert tuple(REGISTRY) == references
+    assert all(name == recipe.name for name, recipe in REGISTRY.items())
+    assert len({recipe.sentinel for recipe in REGISTRY.values()}) == 71
+
+    for recipe in REGISTRY.values():
+        assert recipe.phase in ALLOWED_PHASES_BY_ID[recipe.selected_ids[0]]
+        assert all(
+            selected in ALLOWED_PHASES_BY_ID
+            and recipe.phase in ALLOWED_PHASES_BY_ID[selected]
+            for selected in recipe.selected_ids
+        )
+        assert recipe.forbidden_masking == FORBIDDEN_MASKING
+        assert re.fullmatch(recipe.failure_regex, recipe.sentinel)
+        assert sum(
+            bool(re.fullmatch(other.failure_regex, recipe.sentinel))
+            for other in REGISTRY.values()
+        ) == 1
+        assert not any(
+            re.search(mask, recipe.sentinel) or re.search(mask, recipe.failure_regex)
+            for mask in FORBIDDEN_MASKING
+        )
+    if phase is not None:
+        expected = {
+            "task3": TASK3_RECIPES,
+            "task4": TASK4_RECIPES,
+            "task5": TASK5_RECIPES,
+        }[phase]
+        selected = tuple(
+            recipe
+            for recipe in REGISTRY.values()
+            if recipe.phase == phase
+        )
+        assert tuple(recipe.name for recipe in selected) == expected
+        for recipe in selected:
+            validate_recipe(recipe, worktree)
+```
+
+For recipes whose future phase edits are not present yet, Task 1 runs the full
+structural/cross-match checks and validates representative disposable literal
+edits; the exact-phase `validate_registry()` call is the first operation after
+that phase's GREEN implementation and requires every real old literal to match
+once before any mutation. This does not permit changing registry metadata after
+its Task 1 manifest hash is frozen.
+
+`test_mutations.py` must prove before Task 3:
+
+1. registry keys, `recipe.name`, and the concatenated phase references are the
+   same 71-name set, with every reference count exactly one;
+2. all names and sentinels are unique, with the property variants contained
+   inside their one canonical recipe;
+3. every anchored regex full-matches its own sentinel, and no sentinel
+   full-matches any other recipe's regex;
+4. every exact selected ID exists in the frozen collection or external-ID
+   allowlist and permits that recipe's phase;
+5. every recipe carries the complete forbidden-masking tuple, an exact probe,
+   and either literal match-once edits or the one synthetic property audit;
+6. no sentinel or regex contains a placeholder, generic timeout/setup/
+   collection text, or `DID NOT RAISE`; and
+7. representative numeric-discard, fresh-realm, fatal-protocol, receipt, JUnit
+   cardinality, and restoration recipes mutate literal disposable fixtures,
+   fail only at their own sentinel in the intended phase, restore, and pass
+   cleanly, with zero cross-matches.
+
+Serialize the complete registry deterministically with names, phases, exact IDs,
+sentinels, regexes, forbidden rules, edit paths plus old/new byte SHA-256 values,
+and probe argv; write `mutation-registry.json` and its SHA-256 beside the Task 1
+artifacts. The Python module, JSON manifest, phase tuples, and hash are frozen
+together before Task 3. Later tasks may populate result records but may not add,
+rename, alias, or locally reconstruct a recipe; an edit that cannot match the
+implemented bytes is a stop-and-correct-registry event, not permission for an
+ad hoc mutation.
+
+Create `/tmp/stage-b-baseline/test_restore.py` and run both tooling suites now in
+a disposable Git repository. They must additionally prove restoration after an
+intended probe failure; zero-match and two-match literal rejection; detection of
+bytes/hash/diff/status mismatch at exact `restoration bytes mismatch`; exact-node
+mismatch rejection; longest-prefix parsing of a real external pass, call
+failure, setup error, and parametrized node; property-list preservation;
+sentinel mismatch rejection; and restored GREEN parsing. Only after both suites
+pass may Task 3 execute a registry recipe.
 
 Add a `pytest_collection_finish` plugin in the same file that writes exact
 `item.nodeid` and sorted marker names to the path in
@@ -649,8 +1023,8 @@ invented values.
 - [ ] **Step 8: Verify and commit Task 1**
 
 ```bash
-python -m py_compile /tmp/stage-b-baseline/collect.py /tmp/stage-b-baseline/probe_plugin.py /tmp/stage-b-baseline/hosted.py /tmp/stage-b-baseline/restore.py /tmp/stage-b-baseline/test_restore.py
-uv run --no-sync python -m pytest /tmp/stage-b-baseline/test_restore.py -q
+python -m py_compile /tmp/stage-b-baseline/collect.py /tmp/stage-b-baseline/probe_plugin.py /tmp/stage-b-baseline/hosted.py /tmp/stage-b-baseline/restore.py /tmp/stage-b-baseline/test_restore.py /tmp/stage-b-baseline/mutations.py /tmp/stage-b-baseline/test_mutations.py
+uv run --no-sync python -m pytest /tmp/stage-b-baseline/test_restore.py /tmp/stage-b-baseline/test_mutations.py -q
 uv run --no-sync ruff check /tmp/stage-b-baseline/*.py
 uv run --no-sync ruff format --check /tmp/stage-b-baseline/*.py
 uv run --no-sync python -m pytest tests/test_documentation.py -q
@@ -725,10 +1099,20 @@ def test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration
             )
         else:
             pytest.fail(f"numeric-schema {mode}: invalid reply was accepted")
-        process.wait(timeout=5)
-        assert process.poll() is not None, (
-            f"numeric-schema {mode}: rejected process was not terminated"
-        )
+        termination_failure: AssertionError | None = None
+        try:
+            assert process.poll() is not None, (
+                f"numeric-schema {mode}: rejected process was not terminated"
+            )
+        except AssertionError as error:
+            termination_failure = error
+        finally:
+            # A discard mutant must fail immediately at poll(), not become a
+            # five-second timeout, but the synthetic child still cannot leak.
+            if process.poll() is None:
+                node_worker._stop_process(process)
+        if termination_failure is not None:
+            raise termination_failure
         assert node_worker._proc is None, (
             f"numeric-schema {mode}: process was not discarded"
         )
@@ -773,7 +1157,12 @@ call-phase sentinel `numeric-schema bool-id: invalid reply was accepted` rather
 than malformed JSON or ID mismatch. GREEN must reject and discard that process,
 restart with request ID 2 and a distinct PID, accept integer zero and float 1.5,
 and repeat the mode-qualified discard/restart proof for all five invalid
-durations.
+durations. The shared `rejected()` path inspects `poll()` immediately after
+`request()` returns—there is no preceding `wait()`—and captures that assertion
+before bounded cleanup in `finally`; therefore a discard mutant fails at exact
+sentinel `numeric-schema bool-id: rejected process was not terminated` without a
+five-second delay or leaked child. Every invalid schema mode uses this same
+nonblocking termination pattern.
 
 Also strengthen the unchanged existing `missing-fields` parameter case without
 adding an ID: require exact crash text `reply missing 'id'`, then use explicit
@@ -1399,29 +1788,16 @@ shuffle hash only after writing the exact final-newline list.
 
 - [ ] **Step 6: Run the saved/receipt/realm mutation slice**
 
-Use the already self-tested Task 1 restoration/JUnit runner and literal
-match-once `MutationRecipe` entries with these exact witnesses:
-
-| Temporary defect | Exact selected owner | Required call-phase regex |
-|---|---|---|
-| reuse one saved VM context | realm qualification `[saved-layouts]` | `saved-layouts realm poison crossed request boundary` |
-| skip second saved source evaluation | realm qualification `[saved-layouts]` | `saved-layouts source execution count was not one` |
-| assign host-parsed input directly | realm qualification `[saved-layouts]` | `saved-layouts input mutation escaped detachment` |
-| retain prior result object | realm qualification `[saved-layouts]` | `saved-layouts prior reply mutation returned` |
-| expose host module/export | realm qualification `[saved-layouts]` | `saved-layouts module export escaped request realm` |
-| finish through mutable `Promise.prototype.then` | realm qualification `[saved-layouts]` | `saved-layouts Promise.then poison reached completion` |
-| omit pending first-Apply sample | receipt qualification | `first Apply pending observation was lost` |
-| synthesize created ID or revision | receipt qualification | `production layout identity continuity changed` |
-| detach before durable readback | receipt qualification | `durable settings JSON was not validated` |
-| replace real atomic writer | receipt qualification | `receipt fsync count: expected 19` |
-| let `_save_locked` patch escape | receipt qualification | `settings writer was not restored` |
-| leak `LOCALAPPDATA` or `_use_legacy` | receipt qualification | `saved-layout receipt environment was not restored` |
-| retain committed reader/Api | receipt qualification | `committed Preview reader registry changed` |
-| rebuild receipt per main row | saved main `reversed` plus 55-row count audit | `saved-layout receipt was constructed more than once` |
-| omit owner/capture/dev mapping | 165-inventory audit | `saved-layout family mapping differed` |
-
-After each mutant, restore bytes/hash/diff/status and rerun the unmutated selected
-ID plus saved `reversed`.
+Load the canonical Task 1 registry and execute `TASK3_RECIPES` in its declared
+order. This phase references recipe names only; exact selected IDs, literal
+sentinels/anchored regexes, forbidden masking, byte edits, mutated probes, and
+restored probes come exclusively from `REGISTRY`. Before the first mutation,
+require `validate_registry(worktree, phase="task3")` to match every Task 3 old
+literal exactly once. After each recipe, restore bytes/hash/diff/status and run
+its registry-owned restored probe; the saved `reversed` anti-mask case is already
+part of the relevant `MutationProbe.restored_argv`, not a second prose recipe.
+Write one result per canonical name and reject a missing, duplicate, or extra
+Task 3 result.
 
 - [ ] **Step 7: Commit the independently green saved family**
 
@@ -1621,35 +1997,19 @@ cross-module IDs re-enter it.
 
 - [ ] **Step 7: Run per-family isolation, fatal-request, and business mutations**
 
-Apply one literal mutation recipe at a time with the self-tested Task 1 runner,
-exact selected JUnit owner, and restoration:
+Load the same immutable registry and execute `TASK4_RECIPES` in its declared
+order. Do not restate or alias a Task 3 recipe: group source re-execution,
+business-failure retention, fatal no-replay, the four independent fatal variants,
+and the exact 165 inventory each have one canonical Task 4 name. Require
+`validate_registry(worktree, phase="task4")` before execution and one result per
+canonical name afterward.
 
-| Family defect | Owner | Required regex |
-|---|---|---|
-| saved protocol mapped to capture program | saved realm qualification | `saved-main selected the wrong fixture source` |
-| sharing adapter retains specialized DOM | sharing realm qualification | `fleet-sharing DOM poison crossed request boundary` |
-| group reuses lexical dev declarations | group realm qualification | `group-backward source execution count was not one` |
-| marker retains focused/listener DOM root | marker realm qualification | `label-markers retained listener or realm state` |
-| convert recognized business invalidity to fatal | cleanup-business-failure | `business failure changed the worker PID` |
-| replay the one permanent representative fatal automatically | cleanup-business-failure | `representative fatal request executed more than once` |
-| return a reply for malformed NDJSON | independent `/tmp` malformed-NDJSON variant | `fatal variant malformed-ndjson: valid reply observed` |
-| accept wrong family label | independent `/tmp` wrong-family variant | `fatal variant wrong-family: process survived` |
-| accept unknown protocol | independent `/tmp` unknown-protocol variant | `fatal variant unknown-protocol: process survived` |
-| accept unknown scenario | independent `/tmp` unknown-scenario variant | `fatal variant unknown-scenario: process survived` |
-| drop sharing reject diagnostic | sharing `reject` business ID | `fleet_sharing_watch controlled diagnostic count` |
-| reverse source-rejection diagnostics | sharing `bridge-source-rejection` business ID | `Start/Stop controlled diagnostic order` |
-| omit a group dialog owner | group `focus-dialog-owners` business ID | `dialog owner matrix count: expected 132` |
-| omit own-dialog combinations | group `focus-own-dialog` business ID | `own dialog matrix count: expected 12` |
-| remove marker deferred branch | marker `screenshot-deferred` business ID | the existing `snapshot retains deferred live roster` assertion |
-| map only 158 obvious page rows | 165 mapping audit | `expected 165 Node-owning identities` |
-
-Each restored business-family run includes the selected business ID, its realm
-qualification, cleanup-success, and cleanup-business-failure. Each independent
-fatal variant instead launches and closes only its own mutated process and one
-fresh recovery process, records those starts under mutation overhead, restores
-bytes/hash/diff/status, and reruns its unmutated variant. It never runs inside the
-permanent cleanup-failure identity and never claims that its starts are part of
-that identity's exact value `3`.
+The external fatal recipes launch and close only the processes in their
+registry-owned probes, record those starts as mutation overhead, restore, and run
+their registry-owned recovery argv. They never run inside the permanent
+cleanup-failure identity and never claim that their starts are part of that
+identity's exact value `3`. All other selected IDs and restored companions are
+read from their `MutationProbe`; no owner shorthand or local regex is allowed.
 
 - [ ] **Step 8: Commit the independently green four-family conversion**
 
@@ -1708,10 +2068,7 @@ def properties(case):
 
 def unique_property(case, owner, name):
     matches = [value for key, value in properties(case) if key == name]
-    assert len(matches) == 1, (
-        "stage_b property cardinality: "
-        f"owner={owner!r} property={name!r} values={matches!r}"
-    )
+    assert len(matches) == 1, "stage_b property cardinality"
     return matches[0]
 ```
 
@@ -1742,97 +2099,30 @@ eight listed above.
 
 - [ ] **Step 3: Run the complete restoration-safe mutation matrix**
 
-Use the complete, compiled, Ruff-clean Task 1 `restore.py` runner unchanged.
-Before execution, materialize the final literal recipe tuple and call
-`validate_recipe()` for every row as one batch. Require unique recipe names and
-mode-specific failure regexes (except the two property-cardinality recipes,
-which deliberately share exact `stage_b property cardinality`); nonempty,
-different old/new `bytes`; exactly one old-literal
-match in the intended final file; exact node IDs or one explicitly named
-independent fatal-variant process; and no `TODO`, `TBD`, `<family>`, `<scenario>`,
-ellipsis, line-number-only, or pseudocode placeholder in a recipe. Store the
-literal recipe manifest and its SHA-256 under `/tmp/stage-b-final`; do not track
-it.
+Use the complete, compiled, Ruff-clean Task 1 registry and runner unchanged.
+First audit all 71 recipes as one immutable set, compare its SHA-256 with the
+Task 1 registry manifest, and require exactly 14 Task 3 plus 16 Task 4 result
+records with no missing, duplicate, or extra canonical name. Then call
+`validate_registry(worktree, phase="task5")` and execute `TASK5_RECIPES` in its
+declared order. This task references recipe names only through that tuple; it
+must not reconstruct a defect, owner, sentinel, regex, edit, or probe locally.
 
-For each mutation, run one exact node with JUnit; require one case, call-phase
-`failure`, the table's unique regex in message+traceback, and absence of
-`ImportError`, `ModuleNotFoundError`, collection error, fixture lookup error,
-`NodeScenarioTimeout`, timeout text, setup/teardown error, or another matrix
-sentinel. Re-run the unmutated owner immediately after restoration.
+For each Task 5 recipe, require its exact selected IDs and intended call phase,
+exactly one assertion-message line matching only its own anchored regex, complete
+forbidden-masking rejection, literal match-once edits, restoration, and its
+registry-owned GREEN probe. The canonical `junit-property-cardinality` recipe
+runs missing and duplicate-identical property variants internally and both must
+produce exact `stage_b property cardinality`; there is no second property recipe
+or second phase reference. The canonical `restoration-byte-integrity` recipe
+likewise owns exact `restoration bytes mismatch`.
 
-Execute every Task 3/4 row plus these runtime/helper rows:
-
-| Exact match-once defect | Exact owner | Required regex |
-|---|---|---|
-| accept bool ID while keeping its emitted duration `0` valid | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema bool-id: invalid reply was accepted` |
-| leave the rejected bool-ID process alive | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema bool-id: rejected process was not terminated` |
-| retain the process after bool-ID rejection | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema bool-id: process was not discarded` |
-| reuse the rejected bool-ID PID on recovery | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema bool-id: recovery reused discarded PID` |
-| accept bool duration | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema bool-duration: invalid reply was accepted` |
-| retain the process after bool-duration rejection | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema bool-duration: process was not discarded` |
-| accept negative duration | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema negative: invalid reply was accepted` |
-| accept raw `NaN` only | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema nan: invalid reply was accepted` |
-| accept raw positive `Infinity` only | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema positive-infinity: invalid reply was accepted` |
-| accept raw negative `Infinity` only | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema negative-infinity: invalid reply was accepted` |
-| reject valid integer zero | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema zero: valid duration rejected` |
-| reject valid float 1.5 | `tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration` | `numeric-schema float: valid duration rejected` |
-| index `id` before completing required-key checks | existing `missing-fields` helper ID | `missing-fields reply did not use _ProtocolError` |
-| retain the process after missing-fields rejection | existing `missing-fields` helper ID | `missing-fields process was not discarded` |
-| inject host DOM and host Promise for saved layouts | saved realm row | `saved-layouts host realm was poisoned` |
-| inject host DOM and host Promise for Fleet Sharing | sharing realm row | `fleet-sharing host realm was poisoned` |
-| inject host DOM and host Promise for group backward | group realm row | `group-backward host realm was poisoned` |
-| inject host DOM and host Promise for label markers | marker realm row | `label-markers host realm was poisoned` |
-| host-require then cache-delete a target | cleanup-success | `target remained in module.children` |
-| reuse saved VM-owned module/export object | saved realm row | `saved-layouts module export escaped request realm` |
-| reuse sharing VM-owned module/export object | sharing realm row | `fleet-sharing module export escaped request realm` |
-| reuse group VM-owned module/export object | group realm row | `group-backward module export escaped request realm` |
-| reuse marker VM-owned module/export object | marker realm row | `label-markers module export escaped request realm` |
-| reuse one saved VM context | saved realm row | `saved-layouts realm poison crossed request boundary` |
-| reuse one sharing VM context | sharing realm row | `fleet-sharing realm poison crossed request boundary` |
-| reuse one group VM context | group realm row | `group-backward realm poison crossed request boundary` |
-| reuse one marker VM context | marker realm row | `label-markers realm poison crossed request boundary` |
-| skip second saved source evaluation | saved realm row | `saved-layouts source execution count was not one` |
-| skip second sharing source evaluation | sharing realm row | `fleet-sharing source execution count was not one` |
-| skip second group source evaluation | group realm row | `group-backward source execution count was not one` |
-| skip second marker source evaluation | marker realm row | `label-markers source execution count was not one` |
-| inject host-parsed payload object | saved realm row | `input mutation escaped detachment` |
-| retain prior VM result | saved realm row | `prior reply mutation returned` |
-| use mutable global JSON/String/Object/Reflect/Error | saved realm row | `pristine intrinsic serializer was not used` |
-| finish with `.then` | saved realm row | `Promise.then poison reached completion` |
-| read hostile error fields in host | cleanup-business-failure | `hostile failure escaped its originating realm` |
-| assume Error-shaped throws | cleanup-business-failure | `primitive failure was not detached` |
-| omit timer cancellation | cleanup-success | `host_timer_handles.*expected 0` |
-| retain DOM/window listener root | cleanup-success | `active listener or retained realm remained` |
-| await/retain unresolved promise | cleanup-success | `unresolved promise blocked or retained request` |
-| ignore captured rejection record | cleanup-business-failure | `rejection before settlement was published as success` |
-| query before zero-delay boundary | cleanup-business-failure | `boundary rejection was published as success` |
-| retain raw reason/promise/listener | cleanup-business-failure | `raw rejection or active listener remained` |
-| send success before cleanup | cleanup-success | `success reply preceded zero cleanup receipt` |
-| reply to the one representative fatal request | cleanup-business-failure | `representative fatal request produced a valid reply` |
-| retry the representative fatal request | cleanup-business-failure | `representative fatal request executed more than once` |
-| make malformed NDJSON produce a reply | independent `/tmp` malformed-NDJSON variant | `fatal variant malformed-ndjson: valid reply observed` |
-| let wrong-family input survive | independent `/tmp` wrong-family variant | `fatal variant wrong-family: process survived` |
-| let unknown protocol survive | independent `/tmp` unknown-protocol variant | `fatal variant unknown-protocol: process survived` |
-| let unknown scenario survive | independent `/tmp` unknown-scenario variant | `fatal variant unknown-scenario: process survived` |
-| discard process on business failure | cleanup-business-failure | `business failure changed the worker PID` |
-| charge late rejection to T or execute T | cleanup-business-failure | `late rejection did not fail before T execution` |
-| omit one JUnit property | `/tmp` synthetic property audit | `stage_b property cardinality` |
-| duplicate one JUnit property with the same value | `/tmp` synthetic property audit | `stage_b property cardinality` |
-| leave mutation installed after intended failure | disposable restoration self-test | `restoration bytes mismatch` |
-
-Every row above is backed by a literal match-once old/new byte recipe; rows that
-share an owner still have distinct mode-qualified sentinels, so one defect cannot
-masquerade as another. The four fatal-variant rows use the independent process
-runner, require exact mutated evidence plus unmutated recovery, and report their
-starts separately; they do not alter the permanent cleanup-failure property's
-exact three starts. The two property mutants exercise missing and duplicate-
-identical values separately and must both reach the exact
-`stage_b property cardinality` text from `unique_property()`.
-
-The late-rejection run additionally checks `.scenario == T`, prior `S`, request
-`N`, and exact `before the next request`. Rerun the unchanged helper wait-discovery
-ID and retain its exact `before replying to the next request` phase. Retain the
-broken-write and close exact phases.
+The `late-rejection-attribution` probe additionally checks `.scenario == T`,
+prior `S`, request `N`, and exact `before the next request`. Its restored argv
+also runs the unchanged helper wait-discovery ID with exact
+`before replying to the next request`, plus the broken-write and close phase
+witnesses. The four fatal variants remain Task 4 registry results with separately
+reported overhead and cannot inflate the permanent cleanup-failure property's
+exact three starts.
 
 - [ ] **Step 4: Run direct CLI, syntax, DOM, and previous-worker gates**
 
@@ -2152,12 +2442,16 @@ Fresh checks performed while authoring this plan:
   failed in the call phase at exactly `numeric-schema bool-id: invalid reply was
   accepted`; the bool-ID reply contained valid `duration_ms: 0`, so malformed
   JSON, a duration defect, and ID mismatch could not mask RED;
-- applying only the planned `_validate_reply` edit to that disposable copy made
-  all 13 helper identities pass (`13 passed in 3.61s`, repeated after Ruff
-  formatting as `13 passed in 3.65s`); integer `0` and float `1.5` were accepted,
-  boolean ID/duration plus negative/NaN/positive-infinity/negative-infinity were
-  rejected, every bad process was discarded, and every recovery used a distinct
-  PID with a monotonic ID;
+- applying only the planned `_validate_reply` edit to the revised disposable
+  helper made all 13 identities pass (`13 passed in 3.62s`); integer `0` and
+  float `1.5` were accepted, boolean ID/duration plus negative/NaN/positive-
+  infinity/negative-infinity were rejected, every bad process was discarded,
+  and every recovery used a distinct PID with a monotonic ID;
+- a discard mutant that raised the protocol crash without stopping or clearing
+  the child failed at exact call-phase sentinel `numeric-schema bool-id:
+  rejected process was not terminated` (`1 failed in 1.77s`), with no preceding
+  `wait()`, timeout, or leaked child; restoring the validator immediately made
+  the selected helper pass (`1 passed in 0.34s`);
 - all seven target sources were read as UTF-8, compiled under explicit VM
   CommonJS wrappers, left zero target cache/child entries, and kept export poison
   in its originating realm; the manifest hashes matched the approved spec;
@@ -2193,13 +2487,19 @@ Fresh checks performed while authoring this plan:
 - measured components reproduce candidate arithmetic `19 + 10 + 4 = 33` and
   `33 + 29 = 62`; the executor still must obtain integrated raw-JUnit evidence
   from the final implementation before claiming acceptance;
-- the disposable plan checker compiled and passed Ruff check/format, found six
-  task headings, compiled 86 mutation-table regex cells, exercised valid,
-  missing, and duplicate-identical property lists with the exact
-  `stage_b property cardinality` sentinel, regenerated all 165 round-robin IDs
-  and the hash above, and rejected the removed runner forward reference; the
-  helper and fatal-variant disposable scripts also compiled, passed Ruff, and
-  their CJS passed `node --check`;
+- the disposable canonical-registry checker compiled and passed Ruff
+  check/format, loaded exactly 71 recipes partitioned `14/16/41`, proved 71
+  unique names and 71 unique literal sentinels, full-matched every sentinel only
+  to its own anchored regex, audited match-once/restoration literals for all 71,
+  and ran seven representative mutation variants (numeric discard, saved realm,
+  fatal protocol, receipt, both property-cardinality variants, and restoration)
+  with zero cross-matches;
+- the general plan checker found six task headings, exercised valid, missing,
+  and duplicate-identical property lists with exact
+  `stage_b property cardinality`, regenerated all 165 round-robin IDs and the
+  hash above, and rejected stale duplicate mutation tables, aliases, and the
+  removed runner forward reference; the helper and fatal-variant disposable
+  scripts also compiled, passed Ruff, and their CJS passed `node --check`;
 - placeholder/count review found no unresolved implementation value presented as
   fact: candidate full-suite hashes remain explicitly deferred, while IDs,
   outcomes, process/fsync arithmetic, six tasks, literal-recipe requirements,
@@ -2259,6 +2559,11 @@ condition triggers, especially if:
 - **Process/fsync arithmetic:** `62 + 65 + 17 + 21 = 165`; candidate saved
   `19 + 10 + 4 = 33`; candidate all `33 + 29 = 62`; baseline saved
   `1,045 + 10 + 4 = 1,059`; baseline all `1,059 + 29 = 1,088`.
+- **Mutation registry:** exactly 71 canonical recipes are partitioned once as
+  Task 3/4/5 `14/16/41`; names, phases, exact selected IDs, literal sentinels,
+  anchored regexes, forbidden masking, literal edits, and probes have one owner.
+  No later task duplicates a regex table or alias, and property cardinality is
+  one recipe with two internal variants.
 - **No placeholders:** unknown candidate full-order/JUnit hashes are explicitly
   derived and frozen only after the candidate exists; no fabricated hash or
   timing value appears.
