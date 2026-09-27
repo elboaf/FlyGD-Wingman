@@ -45,10 +45,13 @@ Implement four independent persistent page-worker families:
 Each family owns one session-scoped `NodeScenarioWorker` process for the whole
 pytest session, including when an explicit execution order leaves and later
 re-enters its defining module. The common process implementation is one new
-hardened CommonJS worker. Every request gets a new VM-owned realm, production
-script execution, DOM, intrinsics, promises, errors, callbacks, listeners, and
-virtual timers. A process may cache only primitive source and markup text.
-There is no reusable page object, VM context, parsed payload, result object,
+hardened CommonJS worker. At startup it uses `fs.readFileSync(..., "utf8")` to
+load all six target fixture programs and `screenshot_dom.cjs` as primitive
+source text; it never host-`require`s those seven files. Every request gets a new
+VM-owned realm, explicit CommonJS wrappers, production script execution, DOM,
+intrinsics, promises, errors, callbacks, listeners, and virtual timers. A
+process may cache only primitive source and markup text. There is no reusable
+page object, VM context, parsed payload, module/export object, result object,
 callback, timer handle, promise, error, or assertion object.
 
 The 55 `test_saved_layout_page_ordering` rows consume one real production
@@ -395,11 +398,14 @@ Every implementation decision is subordinate to these invariants:
    family, from the current 165 one-shot launches;
 5. the four request timeouts remain saved `25s`, Fleet Sharing `20s`, group
    backward `30s`, and label markers `30s`;
-6. each request executes in a newly created VM realm and re-executes its family
-   program and production web source; only primitive source/markup text may be
+6. each request executes in a newly created VM realm and re-evaluates its
+   fixture program, `screenshot_dom.cjs` where used, and production web source
+   from primitive UTF-8 startup text; only primitive source/markup text may be
    cached across requests;
-7. no host constructor, promise, error, callback, DOM object, timer handle, or
-   mutable result/input object is reachable from request code;
+7. the persistent host never `require`s a target fixture or
+   `screenshot_dom.cjs`, and no host module, constructor, promise, error,
+   callback, DOM object, timer handle, or mutable result/input object is
+   reachable from request code;
 8. every request completes cleanup before a reply is published; timeout or
    protocol failure destroys the entire process;
 9. business failure does not poison or restart the process, while protocol
@@ -417,8 +423,10 @@ Every implementation decision is subordinate to these invariants:
 14. an active request owns rejection capture through its realm, never retains a
     raw reason or promise, and cannot publish success before its rejection and
     timer-dispatch boundary is drained;
-15. one-shot invocation of every existing CJS program remains supported with
-    the same argv order, exit behavior, exact PASS text, and diagnostics;
+15. one-shot invocation of every existing CJS program remains supported through
+    direct subprocess execution of that existing script, with the same argv
+    order, malformed-argv/failure exit behavior, exact PASS text, and stream
+    diagnostics; the persistent path instead evaluates source text;
 16. no production, web, workflow, dependency, lockfile, configuration,
     packaging, cadence, marker, timeout, or Stage C behavior changes;
 17. Node and the release settings codec remain mandatory full-suite
@@ -451,40 +459,61 @@ The process command is:
 node tests/fixtures/page_scenario_worker.cjs --worker FAMILY WEB_ROOT MANIFEST_PATH
 ```
 
-The manifest is generated once with `tmp_path_factory`, encoded UTF-8 with
+The page manifest is generated once with `tmp_path_factory`, encoded UTF-8 with
 `allow_nan=False`, and contains only versioned JSON markup trees. The worker
-reads it and relevant source files at startup as primitive text. It never caches
-a parsed page.
+reads it and relevant production web sources at startup as primitive text. It
+never caches a parsed page.
 
-Family source caches are exact unions of existing reads:
+Every family process also reads this exact seven-path source manifest at startup
+with the host's built-in `fs.readFileSync(path, "utf8")` and retains only the
+resulting strings:
 
-| Family | Programs | Production JS text |
+```text
+tests/fixtures/preview_savedlayouts.cjs
+tests/fixtures/preview_capture_sessions.cjs
+tests/fixtures/preview_dev_capture.cjs
+tests/fixtures/fleetsharing_page.cjs
+tests/fixtures/preview_group_backward.cjs
+tests/fixtures/preview_labelmarkers.cjs
+tests/fixtures/screenshot_dom.cjs
+```
+
+The persistent host may `require` only Node builtins needed to implement
+transport, source reads, and VM creation. It must not `require` any path in that manifest,
+obtain `DOM_FACTORY_SOURCE` through a host module export, or delete a target from
+`require.cache` after transient loading. Before and after startup and requests,
+none of the seven absolute target paths may occur in the host's `require.cache`
+or `module.children`, and no function exported by one may be retained by the
+host. If direct one-shot compatibility needs a fixture's ordinary CommonJS
+`require` behavior, that happens only in the separate one-shot subprocess.
+
+The selected fixture and `screenshot_dom.cjs` where applicable are evaluated on
+every request through explicit CommonJS wrappers created inside the fresh VM.
+Their `module`, `exports`, and `require` are VM-owned. The substitute `require`
+recognizes only the fixture's exact imports and returns VM-owned, primitive-safe
+adapters: assertion helpers; read-only source/input lookup returning primitive
+text; same-realm production-script evaluation; and the fresh VM evaluation of
+`screenshot_dom.cjs`. It exposes no host module or host function. Fleet
+Sharing's specialized DOM classes are likewise constructed inside each request
+VM. The family selection and production source unions remain:
+
+| Family | Selected fixture text | Production JS text |
 |---|---|---|
 | saved layouts | saved layouts, capture sessions, dev capture | `app.js`, `previews.js`, `fleetsharing.js`, `panel.js`, `dev.js` |
 | Fleet Sharing | Fleet Sharing page | `app.js`, `fleetsharing.js`, `dev.js` |
 | group backward | group backward | `app.js`, `previews.js`, `panel.js`, `dev.js` |
 | label markers | label markers | `app.js`, `previews.js`, `panel.js` |
 
-The worker also copies `DOM_FACTORY_SOURCE` from `screenshot_dom.cjs` as a
-primitive string where needed, then releases the host module object. The Fleet
-Sharing program retains its specialized DOM semantics, but those classes are
-constructed inside each request VM rather than the worker host.
+### Source-text execution and one-shot compatibility
 
-### Program extraction and one-shot compatibility
+The six existing CJS files remain the authoritative direct CLI programs. The
+persistent worker does not import, call, or share an exported runner with them;
+it reads their exact UTF-8 source and evaluates that text under the VM-owned
+CommonJS substitutes above. Direct compatibility executes the existing script
+paths themselves in separate one-shot Node processes, where their normal
+CommonJS loading cannot enter or contaminate a persistent host.
 
-Each of the six existing CJS files is split internally into:
-
-- a primitive `PROGRAM_SOURCE` string containing its request-realm entry;
-- a guarded current CLI path; and
-- no persistent host object or callback export.
-
-The persistent worker copies only the primitive source string and drops the
-transient module export and `require.cache` entry. It does not invoke a
-host-realm fixture function. The CLI guard delegates one input to the same
-hardened single-request runner and renders its detached output/diagnostics to
-the current streams.
-
-These existing forms remain exact:
+These existing positional forms remain exact:
 
 ```text
 preview_savedlayouts.cjs DATA WEB_ROOT
@@ -495,9 +524,7 @@ preview_group_backward.cjs DATA WEB_ROOT
 preview_labelmarkers.cjs DATA WEB_ROOT
 ```
 
-A one-shot business failure sets a nonzero exit and emits its detached stack as
-before. Successful one-shot stdout and stderr are exact, not merely substring
-compatible:
+Successful direct stdout and stderr are exact, not merely substring compatible:
 
 | Adapter | Exact terminal stdout line |
 |---|---|
@@ -509,12 +536,40 @@ compatible:
 | `group-backward` | `PASS group backward <scenario>` |
 | `label-markers` | `PASS marker page <scenario>` |
 
+`test_request_cleanup_after_success` owns the direct-subprocess compatibility
+matrix as internal subcases; this adds no collection identity. It invokes all
+six existing script paths, not the persistent worker or a replacement CLI:
+
+| Entrypoint | Representative successful direct input |
+|---|---|
+| `preview_savedlayouts.cjs` | `reversed`, plus `owner-controls` to cover its second terminal form |
+| `preview_capture_sessions.cjs` | `reversed` |
+| `preview_dev_capture.cjs` | `dev` |
+| `fleetsharing_page.cjs` | `missing-worker` |
+| `preview_group_backward.cjs` | `dev` |
+| `preview_labelmarkers.cjs` | `hydration` |
+
+For each entrypoint the matrix proves the exact positional argv reaches the
+existing script, the process exits zero, and the terminal line has the exact
+family prefix above. It also invokes the script with missing required argv and
+requires nonzero exit, no PASS/stdout, and the usage/load diagnostic on stderr;
+Node-version-specific internal stack wording is not frozen. Finally it runs a
+minimally corrupted copy of the representative input so an existing fixture
+assertion or load failure exits nonzero, emits no terminal PASS, and routes the
+failure diagnostic/stack to stderr rather than worker NDJSON. Any ordinary logs
+emitted before a dev failure remain on stdout.
+
 Except for the two dev cases below, successful one-shot programs emit exactly
-that one stdout line. Their stderr is empty; Fleet Sharing's controlled bridge
-errors remain captured assertions and do not leak to stderr. Worker mode prints
-no diagnostic text to stdout because every stdout line is NDJSON. Its detached
-`output` field is exactly the terminal line from this table, without a trailing
-newline; PASS is not duplicated into `diagnostics`.
+one stdout line and empty stderr; Fleet Sharing's controlled bridge errors
+remain captured assertions and do not leak to stderr. The matrix pins all 21
+saved-dev stdout lines, its terminal `PASS dev`, and its one known theme error on
+stderr, plus all five group-dev stdout lines, its terminal PASS, and empty
+stderr. Worker mode prints no diagnostic text to stdout because every stdout
+line is NDJSON. Its detached `output` field is exactly the terminal line from
+the table without a trailing newline; PASS is not duplicated into
+`diagnostics`. The frozen 165-case direct-CLI baseline inventory remains the
+parity authority for every migrated worker scenario; the representative matrix
+adds direct post-refactor coverage, not a replacement subset.
 
 ### Existing Python worker contract
 
@@ -535,12 +590,19 @@ In particular:
 - malformed JSON/schema, wrong ID/scenario, EOF, write failure, timeout, and
   process death discard the process and raise `NodeScenarioCrash` or
   `NodeScenarioTimeout`;
-- the failed request is not replayed;
-- a later request starts a new process only after the failure has been surfaced;
+- the failed call is not replayed;
 - a valid `ok:false` reply raises `NodeScenarioFailure` with detached stack and
   reply while retaining the process;
-- an exit after a successful reply is attributed to that successful request at
-  the next request or close, not silently replaced; and
+- if an exit after successful scenario `S`/request `N` is discovered while
+  starting or waiting for the next requested scenario `T`, that call fails
+  before `T`'s business scenario executes, `NodeScenarioCrash.scenario` is `T`,
+  and its message names `S`, request `N`, and the frozen phase `before the next
+  request` or `before replying to the next request` (the existing broken-write
+  branch similarly says `while sending the next request`);
+- that process is discarded with no automatic retry, and only a subsequent
+  separate call starts a new PID using the next monotonic request ID; an exit
+  found by `close()` instead keeps the successful scenario and phase `before
+  close`; and
 - stderr remains bounded to 40 lines of at most 400 characters.
 
 No other change to this class is anticipated. If Stage B needs a different
@@ -726,11 +788,14 @@ properties, constructs all helpers in the VM, parses input there, constructs a
 new DOM there, and indirectly evaluates the selected family and production
 sources there.
 
-Request code receives no `require`, `process`, `module`, `exports`, `Buffer`,
-host `Promise`, host `Error`, Node assert object, host DOM instance, host
-function, or native timer. Assertions, `CustomEvent`, `URLSearchParams`, console,
-and the fixture-specific DOM are VM-owned implementations. Production scripts
-execute in that same fresh realm; there is no nested host-created page context.
+Request code receives no host `require`, host `process`, host `module`, host
+`exports`, `Buffer`, host `Promise`, host `Error`, Node assert object, host DOM
+instance, host function, or native timer. It receives only the explicit
+VM-owned CommonJS `module`/`exports`/limited `require` and minimal VM-owned
+`process` substitutes needed by the source text. Assertions, `CustomEvent`,
+`URLSearchParams`, console, and the fixture-specific DOM are VM-owned
+implementations. Production scripts execute in that same fresh realm; there is
+no nested host-created page context.
 
 The initial VM bootstrap returns one VM-owned poll function to the host. The
 host calls it only with a primitive monotonic timestamp and primitive JSON for
@@ -796,22 +861,38 @@ listener is removed and the realm is released before reply publication.
 A process-level fail-fast backstop owns any rejection observed with no active
 request. The serial read loop includes a post-reply turn before admitting the
 next line. Therefore a rejection after a published success is a protocol/late-
-exit defect: it emits no second reply, exits the process, and is attributed by
-`NodeScenarioWorker` to the prior successful request on the next request or
-`close()`. It is never converted into a business failure for, or otherwise
-charged to, the next request. After that crash is surfaced, a subsequent request
-may start one clean process under the existing no-retry contract.
+exit defect: it emits no second reply and exits the process. If the exit is
+discovered at `_ensure_started(T)`, `NodeScenarioCrash.scenario` is the newly
+requested `T` and the diagnostic says `before the next request` after successful
+reply for prior scenario `S` `(request N)`. If the process looked live at start
+and EOF is discovered while waiting, the same `T` is the exception scenario and
+the diagnostic phase is `before replying to the next request`; the Stage B
+worker must not execute `T`'s business scenario in either branch. The dead
+process is discarded, `T` is not retried, and only a separate following call
+starts a new PID with monotonic ID `N+2`. A `close()` discovery instead uses `S`
+and phase `before close`. These are the frozen helper semantics, not a Stage B
+reinterpretation.
 
 Permanent witnesses cover: a rejection before business settlement; a rejection
 at the final timer boundary; omission/ignoring of captured records; querying one
 turn too early; retaining a request listener or its realm/reason; and a late
-post-success rejection followed by a next-request probe. The first two
-business-fail and recover in the same PID. The late case returns the original
-success, then produces the existing prior-request late-exit error without
-executing the next scenario. Disposable mutants for ignored records and an early
-query must fail those exact witnesses. `current_screenshot_pages.cjs` is the
-reviewed model for VM-side serialization and primitive completion; it is not the
-Stage B runner and is not modified by this tranche.
+post-success rejection followed by two calls. The first two business-fail and
+recover in the same PID. The Stage B late-rejection subcase coordinates the
+start-discovery branch: request `N` for `S` succeeds, the test observes that old
+PID exit, and the next call for `T` raises `NodeScenarioCrash` with `.scenario ==
+T`, exact phase `before the next request`, and prior `S`/request `N` in the
+message without executing `T`; a third, separate call starts a different PID,
+uses request ID `N+2`, and succeeds. The unchanged
+`test_immediate_request_after_ok_reports_late_eof_context_and_recovers` supplies
+the complementary wait-discovery witness with `.scenario ==
+"echo-after-restart"`, prior `"ok-then-exit-on-next-eof" (request 1)`, exact
+phase `before replying to the next request`, no execution of the attempted echo,
+and recovered request ID `3` in a new PID. The existing broken-write and close
+witnesses retain their exact `while sending the next request` and `before close`
+phases. Disposable mutants for ignored records and an early query must fail
+those exact witnesses. `current_screenshot_pages.cjs` is the reviewed model for
+VM-side serialization and primitive completion; it is not the Stage B runner
+and is not modified by this tranche.
 
 ### Defensive detachment
 
@@ -1056,15 +1137,24 @@ The four realm rows use exact representative business scenarios:
 Each performs A-poison-A in one process. A executes the real family program. The
 poison request also executes the real program, then mutates global state,
 Object/Array/Promise/Error and DOM prototypes, `Promise.prototype.then`, decoded
-input, a returned nested object, console arguments, and a cached-result
-sentinel. The final A proves all poison absent, the source execution counter is
-one in the new realm, the normal output/diagnostics are exact, and a Python-side
+input, a returned nested object, console arguments, VM-owned `module.exports`,
+and a cached-result sentinel. The final A proves all poison absent—including
+fixture and `screenshot_dom.cjs` exports—the source execution counter is one in
+the new realm, the normal output/diagnostics are exact, and a Python-side
 mutation of the earlier reply did not return. Each row records one PID.
 
 `test_request_cleanup_after_success` registers timeout/interval/immediate
 callbacks, DOM/window listeners, and an unresolved promise, then returns
 success. The reply is withheld until cleanup is zero. A later clean request in
 the same PID proves no callback fires and no listener/timer/result is retained.
+The same identity, using internal subcases rather than parametrization, also
+owns the seven-path source-manifest/host-module structural witness and the full
+six-entrypoint direct CLI compatibility matrix specified above. It inspects the
+persistent process's `require.cache` and `module.children` evidence before and
+after real requests, requires no target child/cache entry or retained target
+function, proves module-export poison cannot cross a fresh realm, then launches
+the six existing scripts directly for representative success, malformed-argv,
+and assertion/load-failure cases with exact terminal and stream assertions.
 
 `test_request_cleanup_after_business_failure` repeats cleanup with, as internal
 non-parametrized subcases, an Error, thrown primitive, object with hostile
@@ -1073,12 +1163,16 @@ unhandled rejection before settlement, and an unhandled rejection at the final
 request-timer boundary. It proves detached message/stack behavior and a clean
 business request after every business failure in the same PID. It then induces
 one ordinary protocol/process failure and one late post-success rejection. Each
-trigger is surfaced without retry; the late rejection is attributed to the
-prior success rather than charged to or executed as the next scenario; and only
-the request after the surfaced crash starts exactly one new PID and succeeds.
-The success/failure cleanup identities also pin the listener baseline, zero raw
-rejection/promise retention, zero retained realm, and query-before-success
-receipt.
+trigger is surfaced without retry. For the Stage B late witness, successful
+`S`/request `N` returns first and the test waits for that PID to exit after the
+late rejection; the following call requests `T`, fails before `T`'s business
+scenario executes, and raises `NodeScenarioCrash` with `.scenario == T` while
+the message names `S`, request `N`, and exact phase `before the next request`.
+The process is discarded. Only a third, separate call starts a different PID,
+uses monotonic request ID `N+2`, and succeeds. The unchanged helper-contract test
+above independently pins the exact wait-discovery phase. The success/failure
+cleanup identities also pin the listener baseline, zero raw rejection/promise
+retention, zero retained realm, and query-before-success receipt.
 
 `test_saved_layout_receipt_is_durable_and_detached` imports and calls the
 saved-layout module's plain private once-provider with its `tmp_path_factory`.
@@ -1121,6 +1215,8 @@ installed is not evidence.
 | Boundary | Temporary defect | Required witness and anti-masking check |
 |---|---|---|
 | Host leakage | inject a host DOM object and host `Promise` into a reused VM | mutation reaches host `Object.prototype`/`Promise.prototype`, reproducing the naïve defect; delete both properties and prove host pristine before candidate run |
+| CommonJS host retention | host-`require` a target and then delete its `require.cache` entry | structural receipt still finds the target in `module.children` or a retained export; restored startup reads all seven manifest entries as UTF-8 text and finds zero target cache/child modules or functions before and after requests |
+| VM module isolation | pass a host module/function through `require` or reuse VM exports | module-export poison reaches the host or final A; restored VM-owned wrappers and limited adapters leave the host pristine and final A clean |
 | Fresh realm | reuse one context for A-poison-A | each family realm ID/prototype assertion fails; restore fresh construction and the same A-poison-A passes |
 | Program execution | cache A output or skip second source evaluation | execution counter is not one/fresh and representative assertion fails; restored implementation passes normal, reverse, and A-B-A |
 | Input detachment | assign parsed host payload directly into VM | VM mutation changes host/Python-visible nested input or next request; restored stringify/fresh-parse preserves both originals |
@@ -1135,13 +1231,13 @@ installed is not evidence.
 | Rejection ignored | discard a captured primitive rejection record | before/boundary rejection incorrectly succeeds; restored runner business-fails the owning request |
 | Rejection query too early | query before the request-owned timer turn | boundary rejection incorrectly succeeds; restored boundary witness fails before success completion |
 | Rejection raw retention | append raw reason/promise or keep listener/realm after cleanup | hostile getter/Proxy or listener/retained-realm witness exposes the leak; restored record is primitive and cleanup zero |
-| Rejection next-charge | leave a late rejection for the next active listener | next scenario runs or receives `ok:false`; restored runner exits after prior success and existing late-exit attribution fires before next execution |
+| Late rejection ownership | leave a late rejection for the next active listener | `T` executes or receives `ok:false`; restored worker exits after prior `S` success, and the next call fails before `T` executes with `.scenario == T` plus prior `S`/`N` and exact phase context |
 | Invalid request | reply to malformed NDJSON/schema, wrong family/protocol, or unknown scenario | valid reply is observed or process survives; restored runner emits no reply and closes |
 | Invalid business payload | make recognized semantic invalidity fatal | PID changes; restored adapter returns detached `ok:false` and the clean next request retains PID |
-| Protocol recovery | retry the crashing request automatically | side-effect/request counter exceeds one; restored contract raises once and only the following request restarts |
+| Protocol recovery | retry the crashing request automatically | side-effect/request counter exceeds one; restored contract raises once and only the following separate call restarts with a new PID and monotonic ID |
 | Business recovery | discard process on `ok:false` | PID changes after detached failure; restored Error/primitive/Proxy/rejection/business-input matrix retains PID |
-| Late exit | silently restart after valid reply | existing `test_node_scenario_worker.py` late-exit attribution fails; no Stage B masking wrapper is allowed |
-| Diagnostics | merge console error into global failure or omit it | dev/reject/source-rejection count/order/text assertions fail; restored one-shot and worker forms both pass |
+| Late exit | silently restart after valid reply or report prior `S` as `.scenario` for the next call | existing start/wait/broken-write late-exit contracts and Stage B late-rejection witness fail; no Stage B masking wrapper is allowed |
+| Diagnostics | merge console error into global failure or omit it | dev/reject/source-rejection count/order/text assertions fail; restored direct one-shot and worker forms both pass |
 | Saved mapping | omit owner/capture cases (the 158-case subset) | exact 165 inventory/hash and per-program counts fail |
 | Receipt sequence | omit/reorder one real operation or synthesize ID/revision | exact 22-key receipt and existing 55 scenario assertions fail at the owning branch |
 | Pending observation | sample only final Apply state | `pending.operation.pending` witness fails although final receipt persists; restored blocked boundary captures both |
@@ -1149,9 +1245,10 @@ installed is not evidence.
 | Failure patch | let `_save_locked` patch escape | identity restoration assertion fails before receipt exposure; subsequent clean save is the anti-mask |
 | Environment | leak `LOCALAPPDATA` or `_use_legacy` | baseline equality and post-fixture real path assertions fail; context/finally restoration passes |
 | Reader lifetime | expose Api/reader or retain registry entry | weak registry differs after GC/shutdown; restored detached text leaves baseline keys |
-| Worker count | use per-case or per-program process | JUnit properties for the healthy 165 rows differ from four family/PID pairs or request counts `62/65/17/21` |
-| Fsync count | rebuild main receipt per row | deduplicated receipt plus per-case JUnit evidence differs from target-165 `33` or full-205 `62`; baseline comparators remain `1,059` and `1,088` |
-| One-shot CLI | remove guarded CLI or alter argv/streams | six direct CJS invocations fail their existing PASS and diagnostic contracts |
+| Worker count | use per-case or per-program process | raw JUnit properties for the healthy 165 rows differ from four family/PID pairs or request counts `62/65/17/21` |
+| Fsync count | rebuild main receipt per row | the uniquely owned receipt property plus per-case raw JUnit evidence differs from target-165 `33` or full-205 `62`; baseline comparators remain `1,059` and `1,088` |
+| One-shot CLI | replace a direct script with the worker, alter argv/streams, or lose failure exit | the six-entrypoint success/argv/failure matrix inside `test_request_cleanup_after_success` fails, while the frozen all-165 parity inventory remains independent |
+| JUnit authority | duplicate a property, omit its owner, or rely only on a terminal print | raw-artifact ownership/cardinality audit fails even if a human log looks correct; restored unique testcase properties pass without terminal output |
 | Order | retain request state | reverse, shuffle, repeat, A-B-A, or cross-family order differs from collected order |
 
 ## Order and structural qualification
@@ -1182,40 +1279,49 @@ For each of the first four healthy 165-case orders require:
   205-case selection, exactly 62 fsyncs; and
 - exact output/diagnostic equivalence with the one-shot baseline.
 
-No workflow edit is needed to make those counts hosted evidence. The target test
-modules append these exact testcase JUnit properties through
-`request.node.user_properties`:
+### Authoritative hosted properties
 
-```text
-stage_b.worker_family = saved-layouts|fleet-sharing|group-backward|label-markers
-stage_b.worker_pid = <positive integer>
-stage_b.worker_request = <1-based family request ordinal>
-stage_b.direct_fsync_calls = <nonnegative integer>
-stage_b.receipt_build = saved-layout-main-v1:19
-```
+No workflow edit is needed to make those counts hosted evidence. Raw uploaded
+`pytest-result.xml` testcase properties are the sole authoritative Stage B
+artifact source. Each owner appends through `request.node.user_properties`; the
+canonical ownership identity is the exact pytest node ID reconstructed from the
+JUnit testcase `classname` and `name`. Within one testcase every `stage_b.*`
+property name occurs exactly once. The audit reads the property elements as a
+list and rejects a missing key, a duplicate key—even with an identical
+value—an unexpected owner, or an unexpected extra `stage_b.*` key before doing
+any aggregate arithmetic.
 
-Every one of the 165 Node-owning cases records the first three. Every one of the
-205 existing target cases records `stage_b.direct_fsync_calls`; the 55 main saved
-rows also record the literal receipt build value above. Test-local wrappers
-delegate to the captured real `os.fsync` and each defining module asserts its
-frozen per-case counts; the once-provider separately asserts one construction
-and 19 calls. A JUnit audit requires four `(family,pid)` pairs with request
-ordinals exactly `1..62`, `1..65`, `1..17`, and `1..21`; the receipt value on all
-55 main rows, counted once as 19; direct fsync sums of 14 for the 165 set and 43
-for the 205 set; and therefore candidate totals 33 and 62. The same assertions
-print this exact compact, sorted-key line for the complete 205 selection as a
-human log fallback:
+The exact property ownership is:
 
-```text
-STAGE_B_EVIDENCE {"fsync_full_205":62,"fsync_node_165":33,"fsync_receipt":19,"requests":{"fleet-sharing":65,"group-backward":17,"label-markers":21,"saved-layouts":62},"worker_starts":4}
-```
+| Owner identities | Unique property | Value |
+|---|---|---|
+| each of the exact 165 Node-owning IDs | `stage_b.worker_family` | that row's one frozen family label |
+| each of the exact 165 Node-owning IDs | `stage_b.worker_pid` | that row's positive decimal PID |
+| each of the exact 165 Node-owning IDs | `stage_b.worker_request` | that row's 1-based decimal family request ordinal |
+| each of the exact 205 existing target IDs | `stage_b.direct_fsync_calls` | that row's nonnegative decimal direct-call count |
+| only `tests/test_preview_savedlayouts_page.py::test_saved_layout_page_ordering[reversed]` | `stage_b.receipt_build` | `saved-layout-main-v1` |
+| only that same `reversed` owner | `stage_b.receipt_fsync_calls` | `19` |
+| each of the exact seven qualification IDs | `stage_b.qualification.worker_starts` | that qualification's observed nonnegative decimal count |
+| each of the exact seven qualification IDs | `stage_b.qualification.fsync_calls` | that qualification's observed nonnegative decimal count |
 
-Qualification cases use only
-`stage_b.qualification.worker_starts` and
-`stage_b.qualification.fsync_calls`, report their observed integer values, and
-never share the healthy receipt value or sums. The existing workflow already
-uploads `pytest-result.xml`, so `.github/workflows/ci.yml` and the timing
-summarizer stay unchanged.
+Thus an evidence item is uniquely addressed by `(exact node ID, property name)`;
+there is one value at that address and no repeated aggregate receipt property.
+Test-local wrappers delegate to the captured real `os.fsync` and each defining
+module asserts its frozen per-case counts; the once-provider separately asserts
+one construction and 19 calls. The raw-JUnit audit requires four
+`(family,pid)` pairs with request ordinals exactly `1..62`, `1..65`, `1..17`,
+and `1..21`; one receipt identity and value; direct fsync sums of 14 for the 165
+set and 43 for the 205 set; and therefore candidate totals 33 and 62.
+Qualification values are reported and audited only by their named owners and
+are never folded into healthy worker, receipt, or fsync sums.
+
+Ordinary `print` output and human logs are not an evidence fallback. An optional
+`terminalreporter` summary may repeat diagnostics for local convenience, but it
+is non-authoritative, is not required, and must not be needed by tests or the
+hosted audit. The hosted audit downloads and parses each platform's raw
+`pytest-result.xml` artifact directly. The existing timing summarizer selects
+only `resource.*` properties, so it is expected not to retain or report
+`stage_b.*`; neither it nor `.github/workflows/ci.yml` needs to change.
 
 The seed-shuffle input itself is frozen by final-newline SHA-256
 `44823cd4ec00d5e92da597845ac3c2e16b8de6c0edf3cac521b7dc4605fbe39c`.
@@ -1275,18 +1381,31 @@ The completed probes established:
 - malformed NDJSON, request/family/protocol/scenario defects closed the
   disposable process without a valid reply, while recognized semantic input
   failure returned `ok:false` and retained its PID;
-- one protocol crash was surfaced without retry and only the next request
-  started a distinct PID; a separate late-rejection probe returned success,
-  exited with prior-request context before the next scenario executed, then
-  restarted cleanly on the following call with no retained listener;
+- one protocol crash was surfaced without retry and only the following separate
+  call started a distinct PID; the frozen helper late-exit tests passed and
+  confirmed that the intervening call increments the ID, fails before its
+  business scenario executes, exposes that newly requested scenario through
+  `NodeScenarioCrash.scenario`, names the prior successful scenario/request plus
+  exact discovery phase in the message, discards the process, and lets only the
+  next separate call restart with the next monotonic ID;
 - direct baseline probing confirmed the current helper accepts `id: true` and
   negative, `NaN`, and infinite durations; a disposable strict-helper copy
   rejected those plus boolean duration, discarded after each invalid reply, and
   restarted cleanly without changing the repository helper;
-- current one-shot diagnostics were observed directly: saved dev has 21 DEV
-  stdout lines plus PASS and one `onTheme handler failed` stderr event; group dev
-  has five DEV lines plus PASS and no stderr; controlled Fleet Sharing errors
-  remain internal asserted diagnostics; and
+- a disposable seven-path source probe read all six fixtures and
+  `screenshot_dom.cjs` as primitive UTF-8, compiled explicit CommonJS wrappers
+  in fresh VMs, evaluated `screenshot_dom.cjs` with VM-owned
+  `module`/`exports`/`require`, and found zero target `require.cache` entries,
+  zero target `module.children`, and no export poison in a second realm;
+- six representative existing pytest cases passed through all six direct CLI
+  entrypoints. Separate direct invocations confirmed each representative exact
+  PASS terminal, missing-argv nonzero/stderr-only behavior, and corrupted-input
+  nonzero/stderr failure with no PASS; saved dev had 21 ordinary DEV stdout
+  lines plus PASS and its one known `onTheme handler failed` stderr event, while
+  group dev had five DEV lines plus PASS and empty stderr;
+- a disposable pytest/JUnit probe retained one `stage_b.*` user property exactly
+  once in raw XML, while the unchanged timing summarizer intentionally omitted
+  it because that tool selects only `resource.*`; and
 - every temporary host mutation was deleted and every disposable process was
   closed.
 
@@ -1300,23 +1419,28 @@ performance claim.
 2. Add the one helper-contract ID and harden only numeric reply validation;
    prove invalid schema discard/restart while all 12 existing helper IDs remain.
 3. Add the seven Stage B qualification IDs and make them fail against an unsafe
-   reusable/host-owned realm, ignored/early rejection boundaries, retained
-   listeners, and invalid request handling while preserving existing collection.
-4. Add `page_scenario_worker.cjs` with primitive startup caches, fresh VM
-   bootstrap, poll-driven VM timers, immediate origin-realm rejection
-   serialization, pre-success boundary drain/query, fatal invalid-request paths,
-   defensive detachment, diagnostics, cleanup, and the exact NDJSON schema.
-5. Refactor the six fixture programs to primitive request-realm entries while
-   retaining each guarded one-shot CLI and all scenario assertions.
+   reusable/host-owned realm, target-module retention, ignored/early rejection
+   boundaries, retained listeners, invalid request handling, and direct-CLI
+   regressions while preserving existing collection.
+4. Add `page_scenario_worker.cjs`; require only Node builtins, read all seven
+   target CJS files as primitive UTF-8 startup text, and implement fresh
+   VM-owned CommonJS wrappers/adapters, poll-driven VM timers, immediate
+   origin-realm rejection serialization, pre-success boundary drain/query,
+   fatal invalid-request paths, defensive detachment, diagnostics, cleanup, and
+   the exact NDJSON schema. Never host-`require` or cache-evict a target.
+5. Keep the six fixture programs as the authoritative direct CLIs and preserve
+   all scenario assertions; persistent execution consumes their source text,
+   while direct compatibility runs each existing script in a separate process.
 6. Add each module-local session manifest/worker fixture and convert only its
    mapped subprocess calls, retaining literal timeouts and exact PASS assertions.
 7. Build the one real saved-layout receipt under bounded isolation, detach it,
    and switch only the 55 main rows to fresh decodes.
-8. Add test-owned JUnit worker/PID/request/fsync properties and their selected-set
-   assertions without changing workflow or timing-summary code.
-9. Run focused realm, poison, rejection-boundary, invalid-request,
-   cleanup, failure/restart, one-shot, diagnostics, receipt, worker-count, fsync,
-   and order witnesses after each family.
+8. Add uniquely owned test-case JUnit worker/PID/request/fsync/receipt properties
+   and raw-artifact assertions without changing workflow or timing-summary code.
+9. Run focused realm, module-retention/poison, rejection-boundary/late-exit,
+   invalid-request, cleanup, failure/restart, six-CLI success/argv/failure,
+   diagnostics, receipt, worker-count, fsync, JUnit-ownership, and order
+   witnesses after each family.
 10. Run the complete verification matrix, inspect skips and final diff, then
     write the separately authorized results ledger with evidence actually
     observed.
@@ -1344,11 +1468,16 @@ uv run --extra dev ruff format --check .
 cargo test --manifest-path packaging/settings-codec/Cargo.toml
 ```
 
-Also run the existing DOM/helper tests used by the four modules, all six direct
-one-shot CLIs, and the instrumented order/mutation matrix. Syntax checks do not
-replace execution. A plain-browser/web smoke pass is not required because no
-production web source changes, but the executable JS smoke gate remains
-mandatory.
+Also run the existing DOM/helper tests used by the four modules and the
+instrumented order/mutation matrix. The existing
+`test_request_cleanup_after_success` identity—not a new parameter or test ID—must
+execute the six direct CLI entrypoints for representative success,
+malformed-argv, and assertion/load failure and inspect exact dev diagnostics.
+Structural checks must inspect the persistent host's seven-path source manifest,
+`require.cache`, and `module.children` before and after requests and perform
+module-export poison/fresh-realm recovery. Syntax checks do not replace
+execution. A plain-browser/web smoke pass is not required because no production
+web source changes, but the executable JS smoke gate remains mandatory.
 
 ### Complete local suite
 
@@ -1377,8 +1506,14 @@ jobs, logs, and artifacts as Stage A did. Acceptance requires:
 - normalized existing skip arrays unchanged;
 - no target, qualification, Node, codec, or unexpected native skip;
 - exact source scope and protected-file hashes;
-- instrumented four-worker/receipt/fsync evidence from both platforms; and
+- the authoritative uniquely owned `stage_b.*` worker/receipt/fsync and
+  qualification evidence parsed directly from both platforms' raw
+  `pytest-result.xml` artifacts, including duplicate-key rejection; and
 - all elapsed values labeled single-run observations with no timing attribution.
+
+Terminal output is not an evidence substitute. A terminalreporter diagnostic is
+optional and non-authoritative. It is expected that the unchanged timing
+summarizer omits `stage_b.*`; the hosted audit reads the raw JUnit properties.
 
 The implementation results ledger freezes candidate full-order hashes only
 after collection; this design does not invent them.
@@ -1421,12 +1556,18 @@ the user's external authorization.
   process owner.
 - **Reuse one VM/DOM per family:** rejected because request-order dependence is
   the primary safety risk this design must remove.
-- **A generic wrapper around unchanged CJS programs:** rejected. Disposable
-  inspection confirmed the current fixtures create/inject host-realm DOM,
-  Promise, timer, and callback objects. A naïve reusable context lets request
-  code poison host intrinsics.
-- **Cache parsed markup, payloads, receipts, or results:** rejected because
-  mutable identity would cross cases. Only primitive text is reusable.
+- **Host-import fixture adapters:** rejected. Requiring a target in the
+  persistent host and deleting its `require.cache` entry does not remove parent
+  `module.children` or prove exported functions unreachable. The accepted
+  wrapper is created inside each fresh VM from primitive source text and uses
+  only VM-owned CommonJS substitutes.
+- **A generic host-object wrapper around unchanged CJS programs:** rejected.
+  Disposable inspection confirmed the current fixtures create/inject DOM,
+  Promise, timer, and callback objects. Passing those from the host into a
+  reusable context lets request code poison host intrinsics.
+- **Cache parsed markup, payloads, receipts, modules, exports, or results:**
+  rejected because mutable identity would cross cases. Only primitive text is
+  reusable.
 - **Use the 158 obvious page rows:** rejected because it omits the three owner
   and four capture/dev cases that also launch Node. The approved boundary is all
   165.
@@ -1435,8 +1576,9 @@ the user's external authorization.
   default. The approved change is limited to exact-type, finite, nonnegative
   reply validation plus its one contract identity; lifecycle broadening remains
   rejected.
-- **Change `screenshot_dom.cjs`:** rejected because Stage B can evaluate its
-  existing primitive factory source inside each fresh realm.
+- **Change `screenshot_dom.cjs`:** rejected because Stage B can read its existing
+  file as primitive UTF-8 and evaluate its CommonJS wrapper inside each fresh
+  realm; the persistent host never requires its exports.
 - **Add a dependency, workflow cache, xdist, or new CI shard:** rejected as
   unnecessary and out of scope.
 - **Combine Stage C deletion/consolidation:** rejected. Persistent execution
@@ -1452,16 +1594,22 @@ Stop and request explicit scope/design review rather than silently expanding if:
 - `tests/conftest.py`, a production/web module, workflow, dependency, lockfile,
   config, packaging file, or `screenshot_dom.cjs` appears necessary;
 - `NodeScenarioWorker` needs any change beyond the exact numeric reply
-  validation above, or its existing lifecycle semantics must change;
+  validation above, or its existing lifecycle semantics—including new-scenario
+  ownership of a next-call late-exit exception—must change;
 - any of the 205 existing IDs, parameters, markers, assertions, internal
-  matrices, timeouts, or one-shot contracts must change;
+  matrices, timeouts, frozen 165-case parity inventory, or direct one-shot
+  contracts must change;
 - the healthy 165-case run cannot stay at exactly four processes;
-- a host constructor/callback/promise/error/timer handle must enter a request
-  realm;
+- the persistent host must `require` or retain a target fixture or
+  `screenshot_dom.cjs`, depend on cache eviction for isolation, or pass a host
+  module/function/constructor/promise/error/timer handle into a request realm;
 - cleanup cannot complete before reply or a business failure cannot recover in
   the same process;
 - the real receipt cannot be detached after exactly one 19-fsync construction
   with environment, writer, legacy flag, and readers restored;
+- authoritative hosted evidence cannot be expressed as one uniquely owned
+  `stage_b.*` value per raw-JUnit `(node ID, property name)` without duplicate or
+  print-log fallback ambiguity;
 - any platform gains a Node, codec, target, qualification, or unexplained native
   skip;
 - the seven Stage B qualification IDs are insufficient, a second new helper ID
@@ -1492,12 +1640,20 @@ The accepted review corrections reconcile as follows:
   no valid reply, while recognized semantic business-input failures are
   retainable `ok:false` replies;
 - pre-boundary unhandled rejections belong to and business-fail the active
-  request; late post-success rejections terminate the process and retain prior-
-  request late-exit attribution rather than contaminating a next request;
-- all one-shot PASS strings and dev/controlled diagnostic counts, order, and
-  stable prefixes are explicit; and
-- hosted worker/fsync evidence is emitted by test-owned JUnit properties and
-  assertions, so the workflow and timing summarizer remain outside scope.
+  request; a late post-success rejection makes the next call fail before its
+  business scenario runs, with that new scenario on `NodeScenarioCrash`, prior
+  successful scenario/request plus exact phase in the diagnostic, no retry, and
+  restart only on the following separate call with a new PID/monotonic ID;
+- every persistent host reads all six fixtures plus `screenshot_dom.cjs` as
+  primitive UTF-8, never host-requires or cache-evicts them, and evaluates
+  VM-owned CommonJS wrappers whose module-export poison cannot cross requests;
+- all six existing scripts remain authoritative direct CLIs; the existing
+  cleanup-success qualification identity contains their representative
+  success/argv/failure matrix, while the frozen all-165 parity inventory stays
+  intact and all PASS/dev/controlled diagnostic contracts are explicit; and
+- raw JUnit `stage_b.*` properties have exact owner/key cardinality and are the
+  sole hosted worker/fsync evidence; print output is non-authoritative, and the
+  unchanged timing summarizer is expected to omit those properties.
 
 Stage B is complete only when the exact scoped implementation, seven Stage B
 qualification IDs, one helper-contract ID, full local suite, mutation/order
