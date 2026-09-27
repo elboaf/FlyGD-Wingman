@@ -31,9 +31,13 @@ The 13 source authorities matched their approved SHA-256 values:
 decorators, collected markers, CJS argv/PASS sites, and the 15 protected
 read-only hashes from the plan. Its SHA-256 is
 `2930fc121405abab6c45048dde5da0bec3d661c262e55a2d2df0d40bab376dc7`.
-No executable or protected source byte was changed in Task 1. The complete
-51-file external evidence inventory is `/tmp/stage-b-baseline/artifact-manifest.json`
-(SHA-256 `34054dd902fe8016fa134b09219b9046a550044e8e6b16bb607ad3e8bdaf5644`).
+No executable or protected source byte was changed in Task 1. The corrected,
+recursive 56-file external evidence inventory is
+`/tmp/stage-b-baseline/artifact-manifest.json` (SHA-256
+`eb5b832a73965e1d653c34ed881d42e3ef50a7f5eddd40ddd28b078dc82e4db5`).
+It includes the three canonical files under `scratch-fixtures/` by relative path
+and content hash. Manifest generation is an explicit freeze command; subsequent
+verification is read-only and byte-compares the existing JSON and hash authority.
 
 ## Accepted Stage A provenance and artifact hashes
 
@@ -145,8 +149,9 @@ were not run in this task.
 ## TDD RED and GREEN record
 
 Task 1 executed no Stage B implementation RED or GREEN. The exact 217-row source
-baseline passed (`217 passed`, no skip/failure/error); its JUnit SHA-256 is
-`c32c8e1f3c571a6abbe9d142dc1fe2be248e7b0cbc424359b036bc4e0d7bccef`.
+baseline passed again (`217 passed`, no skip/failure/error); its refreshed JUnit
+SHA-256 is
+`8917e2a3b9a13bbefd2193616b6ab3e818b680b0b8d577bf9dfde9d7bdc6eb1d`.
 Task 2 RED/GREEN remains **not run in this task**.
 
 ## Worker schema, VM, cleanup, and recovery qualification
@@ -170,26 +175,50 @@ remains at the one-shot baseline.
 `/tmp/stage-b-baseline/mutations.py` contains one literal, ordered 71-recipe
 registry partitioned exactly `14/16/41` across Tasks 3/4/5. Every recipe has one
 unique literal sentinel and anchored regex, exact typed pytest/external/synthetic
-owner, kind-specific masking rules, a literal edit with an explicit root, and
-complete mutated/restored expectations. The six corrected owner mappings and
-three restored-only helper IDs are pinned explicitly. The deterministic registry
-manifest SHA-256 is
-`a77140327852d1a622a535bd592d400ed52c30a16dedd09d8fc1c8b1c2dbde20`.
+owner, kind-specific masking rules, a literal edit with an explicit root, frozen
+mutated/restored expectations, and an explicit `available_from_task`. The six
+corrected owner mappings and three restored-only helper IDs are pinned explicitly.
+The deterministic registry manifest SHA-256 is
+`798f9d6e2fb91b7c1f4d8578e08b3477b21f43a82a4b246e2bcd21b7d9a6a7cb`.
 
-The collector suite passed 18 checks and the registry/restoration suite passed
-26 checks (44 total). They covered exact restoration after probe failure;
-zero/two-match rejection; bytes/hash/diff/NUL-status detection;
-longest-module-prefix JUnit IDs; call failure, setup error, parametrization,
-property-list preservation, traceback/sentinel and exact-node rejection;
-external byte-exact streams; synthetic result/exception dispatch; and restored
-GREEN parsing. This is tooling and registry metadata coverage only. All 71 real
-mutations and the seven representative executions are **not run in this task**.
+Task 1 validates match-once cardinality only for the inputs available now:
+`inventory-node-165`, `junit-property-cardinality`, and
+`restoration-byte-integrity`. The inventory probe mutates and compares a real
+copy of the frozen 165-ID input. The property probe parses a real JUnit XML file
+through the shared unique-property auditor. The restoration probe checks exact
+fixture bytes. Generic dispatcher tests execute real scratch subprocesses or
+real JSON/XML parsing functions; no probe accepts a sentinel through argv or
+turns a synthetic on/off flag directly into the expected message.
+
+Restored pytest validation now requires the complete registered restored-ID list
+in exact order—selected IDs plus any recipe-owned restored-only IDs—once each,
+with no wrong, missing, extra, duplicate, skipped, error, or failed row.
+Dedicated tests cover every mismatch.
+
+All future implementation recipes remain pending until their
+`available_from_task` boundary. In particular, `receipt-once-construction`
+targets the future once-provider assignment in
+`tests/test_preview_savedlayouts_page.py`; it is not validated against a scratch
+file, and the Task 3 hard gate must find that literal exactly once. The
+negative-infinity edit is isolated to accepting `-Infinity` while still rejecting
+finite negatives, NaN, and positive infinity; an in-memory validator mutant test
+pins that distinction.
+
+The corrected tooling suites pass 52 checks: 19 collector/identity checks, 31
+registry/restoration/dispatcher checks, and two recursive-manifest checks.
+
+This is dispatcher, parser, restoration, inventory, and manifest-integrity
+evidence—not final persistent-worker defect qualification. The future Stage B
+implementation recipes and their representative candidate executions are **not
+run in this task**.
 
 ## JUnit property ownership
 
-Not run in this task. Task 1 preserved raw JUnit property elements as a list and
-proved duplicate-identical properties remain observable; Stage B property
-producers do not exist yet.
+No candidate `stage_b.*` properties were produced in this task. Task 1 preserved
+raw JUnit property elements as a list and exercised the actual unique-property
+auditor against valid, missing, and duplicate-identical properties. A temporary
+always-accepting auditor mutation fails at exact `stage_b property cardinality`.
+Stage B property producers do not exist yet.
 
 ## Complete local endpoint
 
@@ -221,6 +250,6 @@ for 165. They establish no speedup, slowdown, lower bound, throughput, runner
 efficiency, job effect, or critical-path causation.
 
 Task 1 proves baseline identity, source, stream, launch, persistence, provenance,
-artifact, and tooling contracts. It does not prove the future persistent-worker
-implementation, any mutation against future bytes, candidate properties, final
-scope, complete-suite outcome, or hosted acceptance.
+artifact, and evidence-tooling contracts. It does not prove the future
+persistent-worker implementation, any recipe before its activation task,
+candidate properties, final scope, complete-suite outcome, or hosted acceptance.
