@@ -34,7 +34,7 @@ read-only hashes from the plan. Its SHA-256 is
 No executable or protected source byte was changed in Task 1. The corrected,
 recursive 58-file external evidence inventory is
 `/tmp/stage-b-baseline/artifact-manifest.json` (SHA-256
-`7de6f9afc355e9f495ed9074b4d5248a639e0fc422be27ff34ef45a87b9af7a1`).
+`0dc19626d5b7278d5e051154734c21240ca952a0504a43953aaec16497896286`).
 It includes the five canonical files under `scratch-fixtures/` by relative path
 and content hash, including the worker-compatible fatal-probe program and request
 fixture. Manifest generation is an explicit freeze command; subsequent
@@ -152,7 +152,7 @@ were not run in this task.
 Task 1 executed no Stage B implementation RED or GREEN. The exact 217-row source
 baseline passed again (`217 passed`, no skip/failure/error); its refreshed JUnit
 SHA-256 is
-`008f257b0fe8e8e5b578c99b817e75c30a9ff4c965ea355da56af7ee0370e997`.
+`ccee3a92ccfc109ec73cb69921c6ffa09c56c1fd639a6aa2cca2f16a0d2ef0f4`.
 Task 2 RED/GREEN remains **not run in this task**.
 
 ## Worker schema, VM, cleanup, and recovery qualification
@@ -180,7 +180,9 @@ owner, kind-specific masking rules, a literal edit with an explicit root, frozen
 mutated/restored expectations, and an explicit `available_from_task`. The six
 corrected owner mappings and three restored-only helper IDs are pinned explicitly.
 The deterministic registry manifest SHA-256 is
-`4af640d5d4ec0439c848bddc0b699a05ced7b5fc9d0464dd7b768acc8251edf5`.
+`3c2a1bf7e361f93a513de800865f81628d7865bbb980ae46c8f1aaee922c8cd3`.
+It also freezes the read-only external adapter at SHA-256
+`fb26c59c39029b5cebed6db086c8ca1bc1d9e1864081f169ab146e56ab50ca5c`.
 
 Task 1 validates match-once cardinality only for the inputs available now:
 `inventory-node-165`, `junit-property-cardinality`, and
@@ -191,18 +193,32 @@ independent edit/probe/restoration cycles: duplicate then missing, recording
 mutated cardinalities `[2, 0]` and restored cardinalities `[1, 1]` with exact
 owner/key/value checks. The restoration probe checks exact fixture bytes.
 
-External probe argv is a frozen template containing exactly one
-`{mutation_root}` token, substituted by the typed runner on every mutated and
-restored invocation. The receipt probe imports and calls the once-provider from
-that root 55 times through a measured builder. Fatal protocol probes launch that
-root's `page_scenario_worker.cjs`, inject the named invalid request, require a
-fatal close with no valid reply, then launch a distinct recovery process and
-require one valid reply. Task 1 countertests use a scratch worker with the same
-interface and prove each guard mutation yields `[mutated=1, restored=0]`; a
-static command independent of the mutation root is rejected. Generic dispatcher
-tests likewise execute real scratch subprocesses or real JSON/XML parsing
-functions. No probe accepts a sentinel through argv or turns a synthetic on/off
-flag directly into the expected message.
+External probe argv is one frozen, phase-identical template containing exactly
+one `{mutation_root}` token, substituted by the typed runner on every mutated and
+restored invocation. Each registry entry declares the exact target paths. The
+adapter hashes deterministic path/length/bytes records for the files it opens;
+the runner independently recomputes the phase-specific digest from the supplied
+root and rejects missing or mismatched evidence. Adapter path, mode, target-list
+position, and remaining mode-specific arguments are allowlisted.
+
+The receipt probe imports and calls the once-provider from that root 55 times
+through a measured builder and covers its owning Python file in the root digest.
+Fatal protocol probes launch that root's `page_scenario_worker.cjs` with pipes,
+write and flush one invalid request, and deliberately keep stdin open. A passing
+worker must exit from fatal handling within one second; only after that observed
+exit are streams read and reaped. Timeout is the intended mutant failure and its
+finally path terminates or kills and reaps the child before reporting. The probe
+then launches a distinct recovery process and requires one valid reply.
+
+Task 1 countertests use a scratch worker with the same interface and prove each
+guard mutation yields `[mutated=1, restored=0]`. A separate EOF-dependent worker
+mutation sets only `exitCode`, stays alive while stdin remains open, and is
+rejected and reaped. An arbitrary static command is rejected even when its argv
+contains `{mutation_root}`; allowlisted fabricated adapters with missing or wrong
+root digests are also rejected and restore exact bytes. Generic dispatcher tests
+likewise execute real scratch subprocesses or real JSON/XML parsing functions.
+No probe accepts a sentinel through argv or turns a synthetic on/off flag
+directly into the expected message.
 
 Restored pytest validation now requires the complete registered restored-ID list
 in exact order—selected IDs plus any recipe-owned restored-only IDs—once each,
@@ -218,7 +234,7 @@ negative-infinity edit is isolated to accepting `-Infinity` while still rejectin
 finite negatives, NaN, and positive infinity; an in-memory validator mutant test
 pins that distinction.
 
-The corrected tooling suites pass 57 checks: 19 collector/identity checks, 36
+The corrected tooling suites pass 60 checks: 19 collector/identity checks, 39
 registry/restoration/dispatcher checks, and two recursive-manifest checks.
 
 This is dispatcher, parser, restoration, inventory, and manifest-integrity
