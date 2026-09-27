@@ -331,7 +331,6 @@ const SYNTHETIC_PROGRAM = String.raw`
 'use strict';
 const fs = require('node:fs');
 const data = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-globalThis.__wingmanSourceExecutions = (globalThis.__wingmanSourceExecutions || 0) + 1;
 const result = {
   source_execution_count: globalThis.__wingmanSourceExecutions,
   promise_completion: true,
@@ -592,6 +591,8 @@ const BOOTSTRAP = String.raw`
   const localManifestJson = manifestJson;
   const localPageSelector = pageSelector;
   const localProgramSource = programSource;
+  const localProtocol = protocol;
+  const localQualificationSource = qualificationSource;
   const localRequestId = requestId;
   const localRequestScenario = requestScenario;
   const localRequestToken = requestToken;
@@ -624,7 +625,8 @@ const BOOTSTRAP = String.raw`
     'argvJson', 'cachedFixtureOutputJson', 'domFactoryFilename', 'domFactorySource',
     'failureSerializerSlot', 'fixtureFilename', 'hostModule', 'hostParsedInput',
     'inputJson', 'manifestJson',
-    'pageSelector', 'previousReplyJson', 'programSource', 'replyJson', 'requestId',
+    'pageSelector', 'previousReplyJson', 'programSource', 'protocol',
+    'qualificationSource', 'replyJson', 'requestId',
     'requestScenario', 'requestToken', 'sourceRegistryJson', 'startTime',
     'webSourcesJson'
   ]) delete globalThis[key];
@@ -892,9 +894,41 @@ const BOOTSTRAP = String.raw`
     return runner.next(source).value;
   }
 
+  function deeplyEqual(actual, expected) {
+    if (actual === expected) return true;
+    if (safeArrayIsArray(actual) || safeArrayIsArray(expected)) {
+      if (!safeArrayIsArray(actual) || !safeArrayIsArray(expected)
+          || actual.length !== expected.length) return false;
+      for (let index = 0; index < actual.length; index++) {
+        if (!deeplyEqual(actual[index], expected[index])) return false;
+      }
+      return true;
+    }
+    if (!actual || !expected || typeof actual !== 'object'
+        || typeof expected !== 'object') return false;
+    const actualKeys = safeKeys(actual);
+    const expectedKeys = safeKeys(expected);
+    if (actualKeys.length !== expectedKeys.length) return false;
+    for (const key of actualKeys) {
+      if (!safeHasOwn(expected, key) || !deeplyEqual(actual[key], expected[key])) {
+        return false;
+      }
+    }
+    return true;
+  }
   const assertFacade = Object.freeze({
     equal(actual, expected, message) {
       if (actual !== expected) throw new SafeError(message || 'values were not equal');
+    },
+    deepEqual(actual, expected, message) {
+      if (!deeplyEqual(actual, expected)) {
+        throw new SafeError(message || 'values were not deeply equal');
+      }
+    },
+    match(actual, expected, message) {
+      if (!expected.test(safeString(actual))) {
+        throw new SafeError(message || 'value did not match');
+      }
     },
     ok(value, message) {
       if (!value) throw new SafeError(message || 'value was not truthy');
@@ -916,6 +950,10 @@ const BOOTSTRAP = String.raw`
   function runCommonJS(source, filename, requireFn) {
     const localModule = {exports: {}};
     moduleWasIsolated = injectedHostModule === null || localModule !== injectedHostModule;
+    if (filename === localFixtureFilename) {
+      globalThis.__wingmanSourceExecutions =
+        (globalThis.__wingmanSourceExecutions || 0) + 1;
+    }
     const wrapper = Function(
       'require', 'module', 'exports', '__filename', '__dirname', source
     );
@@ -967,10 +1005,29 @@ const BOOTSTRAP = String.raw`
     warn(...args) { recordDiagnostic('warn', args); },
     error(...args) { recordDiagnostic('error', args); }
   });
+  globalThis.URLSearchParams = class {
+    constructor(search) {
+      this.values = safeCreate(null);
+      const query = safeString(search || '').replace(/^\?/, '');
+      for (const part of query.split('&')) {
+        if (!part) continue;
+        const separator = part.indexOf('=');
+        const key = separator === -1 ? part : part.slice(0, separator);
+        const value = separator === -1 ? '' : part.slice(separator + 1);
+        this.values[decodeURIComponent(key)] = decodeURIComponent(value);
+      }
+    }
+    get(name) { return safeHasOwn(this.values, name) ? this.values[name] : null; }
+    has(name) { return safeHasOwn(this.values, name); }
+  };
+  globalThis.Event = class {
+    constructor(type) { this.type = type; }
+  };
   globalThis.process = {argv: safeParse(localArgvJson), exitCode: 0};
 
   const requestManifest = safeParse(localManifestJson);
   const page = requestManifest.pages[localPageSelector];
+  decodedInput.page = detachJson(page);
   const dom = createDOM(page);
   const document = dom.document;
   const Element = dom.Element;
@@ -1001,22 +1058,54 @@ const BOOTSTRAP = String.raw`
       const fixtureExports = runCommonJS(
         localProgramSource, localFixtureFilename, localRequire
       );
+      if (localProtocol !== 'qualification'
+          && (!fixtureExports || typeof fixtureExports.then !== 'function')) {
+        throw new SafeError('business source did not export completion');
+      }
       const fixtureCompletion = fixtureExports;
       const completion = await fixtureCompletion;
-      const detachedCompletion = detachJson(completion);
-      const out = safeCreate(null);
-      for (const key of safeKeys(detachedCompletion)) out[key] = detachedCompletion[key];
-      out.source_execution_count = globalThis.__wingmanSourceExecutions || 0;
-      out.serialization_safe = true;
-      out.realm_token = localRequestToken;
-      out.prior_reply_detached = detachedReply !== previousReply;
-      out.module_export_isolated = moduleWasIsolated;
-      out.realm_pristine = objectWasPristine && arrayWasPristine && errorWasPristine;
-      out.dom_pristine = domWasPristine;
-      out.poison_absent = !globalThis.__wingmanRealmPoison;
-      out.decoded_input_value = decodedInput.nested ? decodedInput.nested.value : null;
-      out.prior_reply_value = previousReply.nested ? previousReply.nested.value : null;
-      completionValue = out;
+      let terminalOutput = null;
+      if (localProtocol !== 'qualification') {
+        const terminal = diagnostics.length ? diagnostics[diagnostics.length - 1] : null;
+        const passCount = diagnostics.filter(
+          row => row.level === 'log' && safeStringStartsWith(row.rendered, 'PASS ')
+        ).length;
+        if (!terminal || terminal.level !== 'log'
+            || !safeStringStartsWith(terminal.rendered, 'PASS ')
+            || passCount !== 1) {
+          throw new SafeError('business source did not emit one terminal PASS');
+        }
+        terminalOutput = terminal.rendered;
+        safeArrayPop(diagnostics);
+      }
+      let qualificationCompletion = completion;
+      if (localProtocol !== 'qualification' && decodedInput.mode === 'realm') {
+        const qualificationExports = runCommonJS(
+          localQualificationSource,
+          localFixtureFilename + '.qualification',
+          localRequire
+        );
+        qualificationCompletion = await qualificationExports;
+      }
+      if (localProtocol === 'qualification' || decodedInput.mode === 'realm') {
+        const detachedCompletion = detachJson(qualificationCompletion);
+        const out = safeCreate(null);
+        for (const key of safeKeys(detachedCompletion)) out[key] = detachedCompletion[key];
+        if (terminalOutput !== null) out.business_output = terminalOutput;
+        out.source_execution_count = globalThis.__wingmanSourceExecutions || 0;
+        out.serialization_safe = true;
+        out.realm_token = localRequestToken;
+        out.prior_reply_detached = detachedReply !== previousReply;
+        out.module_export_isolated = moduleWasIsolated;
+        out.realm_pristine = objectWasPristine && arrayWasPristine && errorWasPristine;
+        out.dom_pristine = domWasPristine;
+        out.poison_absent = !globalThis.__wingmanRealmPoison;
+        out.decoded_input_value = decodedInput.nested ? decodedInput.nested.value : null;
+        out.prior_reply_value = previousReply.nested ? previousReply.nested.value : null;
+        completionValue = out;
+      } else {
+        completionValue = terminalOutput;
+      }
     } catch (error) {
       completionFailure = failure(error);
     }
@@ -1034,13 +1123,14 @@ const BOOTSTRAP = String.raw`
     if (timers.size || listenerRoots.length) {
       throw new SafeError('request cleanup retained resources');
     }
-    if (completionValue !== null) {
+    if (completionValue !== null && typeof completionValue === 'object') {
       completionValue.registered_timer_handles = registeredTimerHandles;
       completionValue.registered_listeners = registeredListeners;
     }
     for (const key of [
       'clearImmediate', 'clearInterval', 'clearTimeout', 'console', 'document',
-      'process', 'setImmediate', 'setInterval', 'setTimeout', '__adapterInput',
+      'Event', 'process', 'setImmediate', 'setInterval', 'setTimeout',
+      'URLSearchParams', '__adapterInput',
       '__priorReply', '__unresolved', '__wingmanElement'
     ]) delete globalThis[key];
     const receipt = safeCreate(null);
@@ -1239,6 +1329,8 @@ async function executeRequest(request) {
     pageSelector,
     previousReplyJson,
     programSource,
+    protocol,
+    qualificationSource: SYNTHETIC_PROGRAM,
     replyJson,
     requestId: request.id,
     requestScenario: request.scenario,

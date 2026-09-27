@@ -28,6 +28,7 @@ from tests.test_fleetsharing_hydration import SharingPageTree
 from tests.test_fleetsharing_worker import drive
 from tests.test_preview_owner_eligibility import owner_api
 from tests.test_preview_savedlayouts_page import (
+    SAVED_DEV_LINES,
     SavedLayoutReceiptEvidence,
     _saved_layout_receipt_once,
 )
@@ -67,29 +68,6 @@ MUTATION_SENTINELS = {
     "identity": "stage-b mutation receipt-production-identity",
     "durable": "stage-b mutation receipt-durable-readback",
 }
-SAVED_DEV_LINES = (
-    "DEV api.get_preview_hotkey_state()",
-    "DEV api.get_preview_hotkey_state()",
-    "DEV api.list_rows()",
-    "DEV api.get_settings()",
-    "DEV api.theme_state()",
-    "DEV api.set_bind_capture(true)",
-    "DEV api.set_bind_capture(false)",
-    "DEV api.get_preview_hotkey_state()",
-    "DEV api.set_bind_capture(true)",
-    "DEV api.set_bind_capture(false)",
-    "DEV api.set_bind_capture(true)",
-    "DEV api.set_bind_capture(true)",
-    "DEV api.set_bind_capture(false)",
-    "DEV api.set_bind_capture(false)",
-    "DEV api.set_bind_capture(false)",
-    "DEV api.get_preview_hotkey_state()",
-    "DEV api.set_bind_capture(false)",
-    "DEV api.set_bind_capture(true)",
-    "DEV api.get_settings()",
-    "DEV api.get_preview_hotkey_state()",
-    "DEV api.get_preview_hotkey_state()",
-)
 
 
 @dataclass(frozen=True)
@@ -424,6 +402,31 @@ def _qualification_request(
     )
 
 
+def _realm_request(
+    worker: NodeScenarioWorker,
+    family: str,
+    inputs: QualificationInputs,
+    run: str,
+) -> dict[str, object]:
+    if family != "saved-layouts":
+        return _qualification_request(
+            worker, family, "realm", run=run, nested={"value": "clean"}
+        )
+    input_payload = json.loads(inputs.receipt.receipt_json)
+    input_payload.update(
+        scenario="reversed",
+        page="text",
+        mode="realm",
+        run=run,
+        nested={"value": "clean"},
+    )
+    return worker.request(
+        "preview-saved-layouts/page/reversed",
+        {"protocol": "saved-main", "input": input_payload},
+        timeout=25.0,
+    )
+
+
 def _record_qualification(
     request: pytest.FixtureRequest, *, worker_starts: int, fsync_calls: int
 ) -> None:
@@ -467,26 +470,23 @@ def _assert_finite_json(value: object) -> None:
 def test_request_realm_is_fresh_and_program_is_reexecuted(
     family, page_worker_factory, qualification_inputs, request
 ):
-    del qualification_inputs
     worker = page_worker_factory(family)
     try:
-        first = _qualification_request(
-            worker, family, "realm", run="A", nested={"value": "clean"}
-        )
+        first = _realm_request(worker, family, qualification_inputs, "A")
     except NodeScenarioCrash as error:
         if "retained a target module" in str(error):
             _fail_mutation("module")
+        raise
+    except NodeScenarioFailure as error:
+        if family == "saved-layouts" and "business source" in str(error):
+            _fail_mutation("source")
         raise
     process = worker._proc
     assert first["output"].get("serialization_safe") is True, REALM_SENTINELS[family]
     first["output"]["nested_python_poison"] = True
     try:
-        poison = _qualification_request(
-            worker, family, "realm", run="poison", nested={"value": "clean"}
-        )
-        final = _qualification_request(
-            worker, family, "realm", run="A", nested={"value": "clean"}
-        )
+        poison = _realm_request(worker, family, qualification_inputs, "poison")
+        final = _realm_request(worker, family, qualification_inputs, "A")
     except NodeScenarioCrash as error:
         if "retained a target module" in str(error):
             _fail_mutation("module")
@@ -498,6 +498,8 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
             _fail_mutation("context")
         raise
     except NodeScenarioFailure as error:
+        if family == "saved-layouts" and "business source" in str(error):
+            _fail_mutation("source")
         if "poisoned" in str(error):
             _fail_mutation("context")
         raise
@@ -547,6 +549,11 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
     _assert_mutation(poison["output"]["promise_completion"] is True, "promise")
     assert poison["output"]["serialization_safe"] is True
     assert poison["output"]["mode"] == "realm"
+    if family == "saved-layouts":
+        assert all(
+            reply["output"]["business_output"] == "PASS reversed"
+            for reply in (first, poison, final)
+        )
     assert poison["output"].get("output") != "forged"
     assert poison["diagnostics"] == [
         {

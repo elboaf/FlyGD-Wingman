@@ -27,7 +27,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const bind = name => Array.from(document.querySelectorAll('#preview-binds .lab')).find(el => el.title === name).parentNode.querySelector('.bindbtn');
 const key = () => document.dispatchEvent({type: 'keydown', key: 'F8', code: 'F8', ctrlKey: true});
 const native = (session, gesture = 'Ctrl+F8') => window.onPreviewBindCaptured({session, gesture});
-(async () => {
+const scenarioCompletion = (async () => {
   await tick();
   bind('Alice').click();
   const a = arms.at(-1);
@@ -74,4 +74,9 @@ const native = (session, gesture = 'Ctrl+F8') => window.onPreviewBindCaptured({s
     assert.deepEqual(Array.from(arms.at(-1).args), [false, b.args[1]]);
   }
   console.log('PASS ' + data.scenario);
-})().catch(error => {console.error(error); process.exitCode = 1;});
+})();
+if (require.main === module) {
+  scenarioCompletion.catch(error => {console.error(error); process.exitCode = 1;});
+} else {
+  module.exports = scenarioCompletion;
+}

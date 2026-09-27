@@ -244,17 +244,43 @@ used exactly 19 fsync calls, preserved production ID/revision continuity, captur
 the first Apply as pending, and retained the later persisted Apply. Fifty-five
 independent decodes had no alias.
 
-No saved business row was converted in Task 2. The original 55 per-row receipt
-builds and all 165 one-shot Node calls remain until Tasks 3 and 4; candidate
-`33/62` production-case fsync totals are therefore not claimed here. The
-qualification-only owner/capture setup observed exactly four fsync calls.
+Task 3 converted all 62 saved-family rows to one session-scoped worker. The 55
+main rows now decode immutable receipt bytes afresh and no longer construct
+state, Api objects, page trees, input files, or subprocesses. The three owner
+rows and four capture/dev rows retain their per-case production setup and
+assertions. Their direct fsync counts remain `10 + 4 = 14`; combined with the
+once receipt's 19 calls, the saved-family candidate total is exactly 33 instead
+of the baseline 1,059. Raw JUnit proves the healthy family used one positive PID
+and request ordinals `1..62`, reducing its business Node starts from 62 to one.
+The qualification-only owner/capture setup remains a separately owned four
+fsync calls.
 
 ## Remaining family conversion and order evidence
 
-Fleet Sharing, group backward, label-marker, and saved-layout business callers
-remain on their original one-shot paths. Task 2 adds only the shared worker
-foundation and synthetic qualification interfaces; real-family acceptance and
-four-process evidence remain pending Tasks 3 and 4.
+Saved layouts now execute all four real programs through `saved-main`,
+`saved-owner`, `saved-capture`, and `saved-dev`. The unchanged one-shot entrypoints
+also pass the seven-case direct matrix, including both saved main terminal forms,
+missing-argv failures, corrupt-input failures, 21 ordered saved-dev log lines,
+and the one expected detached theme error. The saved realm qualification now
+runs real `saved-main/reversed` before its poison and on final A; every execution
+reports source count one and stays in one PID.
+
+The exact 62-ID normal, reverse, and seed-`20260926` shuffle files passed in fresh
+pytest processes. Their final-newline SHA-256 values are respectively
+`6f11fa999a776f3861f3ae7495ddfd5ed00516127189d7b6268f1ad7817c7726`,
+`f1aac69a97ca0db28adaf793a20d6171df275ebb9a0d496394fce08f220ff1e2`,
+and `6d0a4a3a2868b89bf8e8a6717b12ef1807d937f6d6348f3e9ef1db1dcca95a30`.
+Each run passed 62 rows with one PID, request ordinals `1..62`, zero cleanup,
+and 33 total saved-family fsyncs. Fresh single-process invocations of main,
+owner, capture, and dev each passed with request ordinal one. Separate repeated
+A-A and `main/reversed -> owner/saved -> capture/boundary -> dev/dev ->
+main/reversed` checks stayed in one PID, reported source execution count one for
+every request, zero cleanup, and stable A output apart from the deliberately
+fresh realm token.
+
+Fleet Sharing, group backward, and label-marker business callers remain on their
+original one-shot paths. Their real-family conversion and the final four-process
+evidence remain pending Task 4.
 
 ## Mutation and restoration matrix
 
@@ -347,8 +373,14 @@ The ordered result file is `/tmp/stage-b-task2-mutations.json`, SHA-256
 The provider's `pending_receipt` literal is unique, so no unconverted business
 caller needed a temporary source edit.
 
-This is real foundation/receipt defect qualification, not real-family conversion
-acceptance. The later 16/41 slices and final 71-recipe aggregate remain pending.
+Task 3 revalidated the exact current 14-name `TASK3_RECIPES` partition after the
+real saved conversion, then ran all 14 names in declared order (15 mutation
+executions because the native-stack recipe owns two variants). Every mutation
+failed at its registry-owned sentinel, rejected masking, restored exact
+bytes/SHA-256/binary diff/NUL-delimited status, and passed its registered restored
+probe. The ordered result is `/tmp/stage-b-task3-mutations.json`, SHA-256
+`0a1d51a573972f09bc04d7bad2157deadf79d6873cb2456cb2024dbb8028c9d2`.
+The later 16/41 slices and final 71-recipe aggregate remain pending.
 
 ## JUnit property ownership
 
@@ -356,7 +388,14 @@ The combined 20-ID JUnit contains exactly two qualification properties on each
 of the seven qualification owners and none on helper IDs. Worker starts are
 `1/1/1/1/1/3/0`; qualification fsync values are `0/0/0/0/4/0/0`, in declared ID
 order. Each `(node ID, property name)` occurs once. Qualification values are not
-folded into baseline or future candidate production-case arithmetic.
+folded into baseline or production-case arithmetic.
+
+The Task 3 saved-family JUnit contains exactly one worker family, PID, request,
+and direct-fsync property on each of 62 rows. It has one positive PID, request
+ordinals `1..62`, direct fsync sum 14, and exactly one receipt owner: saved main
+`reversed` with build `saved-layout-main-v1` and receipt fsync value 19. The
+candidate saved total is therefore exactly 33. Normal, reverse, and shuffle
+artifacts all passed the same cardinality and aggregate audit.
 
 ## Complete local endpoint
 
@@ -370,8 +409,14 @@ The actual structured collection hashes are
 and `2131c640d9377e3ccf86c331ea677d5f3afc38a964d3e58f142f28164e3f4408`.
 `verify_task2_identities.py` passed exact owner, marker, insertion-order,
 baseline-subsequence, frozen-subset/hash, report/ID agreement, and empty
-symmetric-difference checks. This task did not run or claim the complete
-16,617-case outcome; that remains Task 5.
+symmetric-difference checks. Task 3 reran fresh relevant and complete collection
+before editing: exact counts remained 225/16,617, and the actual ID files matched
+both frozen actual and expected files byte-for-byte with hashes
+`bf6e8470cc470cd747015f2772d243e90b064b756984b09d2f0076fde1c6fffe` and
+`d04dff36b8cb278dac3c410bca86e271e17899ce16272c9062886a48f28220c3`.
+The 62 saved IDs and their decorator ASTs remained exact after conversion; only
+the three approved saved-function signature substitutions occurred. Task 3 did
+not run or claim the complete 16,617-case outcome; that remains Task 5.
 
 ## Reviews, final scope, and frozen heads
 
@@ -383,13 +428,16 @@ The follow-up runtime reviews found and closed four defects in the worker's
 completion/detachment boundary: same-poll publication after a due callback,
 native Error stacks lost as accessors, diagnostic Error objects reduced to `{}`,
 and an encoded-envelope parser ceiling incorrectly equal to the smaller decoded
-stack ceiling. The corrections change only the worker, qualification module,
-plan, and this ledger. No production, web, workflow, dependency, lockfile,
-configuration, packaging, existing CJS adapter, or `screenshot_dom.cjs` byte
-changed. Protected hashes, Ruff, formatting, docs, syntax, focused tests, target
-205, collection gates, diff checks, and canonical restoration were rerun before
-the final Task 2 correction commit. Final Stage B review, real-family conversion,
-executable head, and evidence head remain pending.
+stack ceiling. Task 3 then activated the already-declared real saved adapters:
+the worker replaces primitive page selectors with fresh VM-side manifest
+decodes, provides the VM-owned assertion and dev URL/Event seams used by the
+existing programs, requires an exported completion, extracts exactly one
+terminal PASS from diagnostics, and exposes real-program realm evidence for the
+saved qualification. The three saved fixture files changed only at their
+CommonJS completion wrappers; their scenario bodies and assertions are
+unchanged. No production, web, workflow, dependency, lockfile, configuration,
+packaging, or `screenshot_dom.cjs` byte changed. Final Stage B review, the other
+three real-family conversions, executable head, and evidence head remain pending.
 
 ## Publication stop and hosted evidence
 
@@ -409,6 +457,8 @@ efficiency, job effect, or critical-path causation.
 Task 1 proves baseline identity, source, stream, launch, persistence, provenance,
 artifact, and evidence-tooling contracts. Task 2 proves the strict helper,
 synthetic shared-worker foundation, detached receipt, qualification properties,
-and exact post-creation identity orders. It does not prove real execution for any
-of the four business families, the healthy four-process/33/62-fsync endpoint,
-the complete-suite outcome, final Stage B scope, or hosted acceptance.
+and exact post-creation identity orders. Task 3 additionally proves real saved-
+family execution, one healthy saved PID, 62 requests, and the saved `1,059 -> 33`
+fsync endpoint. It does not yet prove the other three real families, the final
+four-process/all-205 62-fsync endpoint, the complete-suite outcome, final Stage B
+scope, or hosted acceptance.

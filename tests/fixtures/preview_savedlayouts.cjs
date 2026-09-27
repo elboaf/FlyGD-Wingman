@@ -84,7 +84,7 @@ function change(name, checked) {
   control.checked = checked; control.dispatchEvent({type: 'change'});
   return writes.at(-1);
 }
-(async () => {
+const scenarioCompletion = (async () => {
   if (data.scenario === 'early') {
     push(data.hidden);
     getters.shift()(clone(data.initial)); await tick();
@@ -654,4 +654,12 @@ function change(name, checked) {
     assert.equal(box('Alice').checked, false, 'latest live state is restored on exit');
   }
   console.log('PASS ' + data.scenario);
-})().catch(error => { console.error(error); process.exitCode = 1; });
+})();
+if (require.main === module) {
+  scenarioCompletion.catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+} else {
+  module.exports = scenarioCompletion;
+}
