@@ -822,8 +822,8 @@ ALLOWED_PHASES_BY_ID = {
     REALM_SHARING_ID: frozenset({"task4", "task5"}),
     REALM_GROUP_ID: frozenset({"task4", "task5"}),
     REALM_MARKER_ID: frozenset({"task4", "task5"}),
-    CLEANUP_SUCCESS_ID: frozenset({"task5"}),
-    CLEANUP_FAILURE_ID: frozenset({"task4", "task5"}),
+    CLEANUP_SUCCESS_ID: frozenset({"task3", "task5"}),
+    CLEANUP_FAILURE_ID: frozenset({"task3", "task4", "task5"}),
     RECEIPT_ID: frozenset({"task3"}),
     SAVED_REVERSED_ID: frozenset({"task3"}),
     SHARING_REJECT_ID: frozenset({"task4"}),
@@ -860,9 +860,9 @@ TASK3_RECIPES = (
     "realm-saved-context-reuse",
     "realm-saved-source-reexecution",
     "realm-saved-input-detachment",
-    "realm-saved-prior-reply-detachment",
-    "realm-saved-module-export-isolation",
-    "realm-saved-promise-completion",
+    "rejection-final-timer-drain",
+    "failure-native-error-stack",
+    "diagnostics-native-error-detachment",
     "receipt-pending-first-apply",
     "receipt-production-identity",
     "receipt-durable-readback",
@@ -945,9 +945,9 @@ EXPECTED_OWNERS = {
     "realm-saved-context-reuse": (REALM_SAVED_ID,),
     "realm-saved-source-reexecution": (REALM_SAVED_ID,),
     "realm-saved-input-detachment": (REALM_SAVED_ID,),
-    "realm-saved-prior-reply-detachment": (REALM_SAVED_ID,),
-    "realm-saved-module-export-isolation": (REALM_SAVED_ID,),
-    "realm-saved-promise-completion": (REALM_SAVED_ID,),
+    "rejection-final-timer-drain": (CLEANUP_FAILURE_ID,),
+    "failure-native-error-stack": (CLEANUP_FAILURE_ID,),
+    "diagnostics-native-error-detachment": (CLEANUP_SUCCESS_ID,),
     "receipt-pending-first-apply": (RECEIPT_ID,),
     "receipt-production-identity": (RECEIPT_ID,),
     "receipt-durable-readback": (RECEIPT_ID,),
@@ -2247,13 +2247,18 @@ strings; it exposes no stdout, stderr, environment, native handles, or exit
 function.
 
 The bootstrap returns one VM-owned `poll(now, mailboxJson)` function. No host
-function remains in the VM after bootstrap. `poll` dispatches due virtual timers
-inside the VM, consumes only primitive rejection/dispatch records, advances the
-post-business microtask plus one-zero-delay-turn boundary, cancels all virtual
-handles/listeners, serializes with captured intrinsics, and returns either `null`
-or one primitive reply JSON string. The host calls it with `performance.now()`
-and primitive mailbox JSON, yielding with host `setImmediate`; it never receives
-a VM callback and never injects a native timer handle.
+function remains in the VM after bootstrap. `poll` first consumes primitive
+rejection/dispatch records and dispatches due virtual timers inside the VM. If
+it dispatches any due callback, it resets the completion boundary and returns
+`null` for that poll; the host then yields one `setImmediate` turn so a rejection
+from that callback reaches the active request mailbox, and the next poll consumes
+that mailbox before publication. Future timers that are not due do not hold the
+request open and remain subject to ordinary cleanup. Only a poll that dispatched
+no due callback may advance the post-business boundary, cancel all virtual
+handles/listeners, serialize with captured intrinsics, and return one primitive
+reply JSON string. The host calls it with `performance.now()` and primitive
+mailbox JSON; it never receives a VM callback and never injects a native timer
+handle.
 
 - [ ] **Step 8: Implement rejection ownership and defensive detachment**
 
@@ -2283,13 +2288,20 @@ const captureRejection = reason => {
 ```
 
 The bootstrap installs the randomly named serializer before source execution;
-its closure has already captured the pristine VM descriptor and scalar encoding
-operations. It reads only own data descriptors for `name/message/stack`, emits
-bounded manual primitive JSON, and deletes each temporary reason slot in its own
-`finally`; the host removes the serializer slot after the request listener is
-detached. No host getter/coercion touches the reason; no raw reason or promise
-enters an array or retained closure. Timer dispatch catches and serializes in the
-same realm immediately.
+its closure has already captured the pristine VM `Error` prototype,
+`Object.prototype.isPrototypeOf`, `Reflect.get`, descriptor, string-slice, and
+scalar encoding operations. Native Error fields are read independently through
+the captured `Reflect.get`, including inherited and accessor-backed
+`name/message/stack`; each field is bounded and a throwing accessor becomes its
+own unreadable placeholder. Ordinary messages and stack frames are preserved,
+while the captured native-error prototype/name mapping prevents later prototype
+or global constructor poison from forging the stack heading. Non-Error hostile
+objects and throwing proxies stay on the guarded own-data-descriptor path. The
+serializer emits bounded manual primitive JSON and deletes each temporary reason
+slot in its own `finally`; the host removes the serializer slot after the request
+listener is detached. No host getter/coercion touches the reason; no raw reason or
+promise enters an array or retained closure. Timer dispatch catches and
+serializes in the same realm immediately.
 
 Before/boundary rejection records replace success with `ok:false` and same-PID
 recovery. After cleanup set the active request to null before publishing. The
@@ -2334,9 +2346,13 @@ sentinel; assert source execution counter `1` in each fresh realm.
 `test_request_cleanup_after_success` runs timer/interval/immediate, DOM/window
 listener, unresolved-promise, source-manifest/cache/children/export-poison,
 request-global survival across a real Promise/timer await, all five structured
-console methods, completion `toJSON` forgery, and listener/timer cleanup failures
-that must publish no reply and restart only on the next call, plus six direct-CLI
-internal subcases. For every existing CJS script run:
+console methods, and all five methods again with a native `TypeError`, hostile
+accessor object, and throwing Proxy. Native diagnostic arguments detach to
+primitive `{name,message,stack}` records and render the TypeError message/frame;
+hostile controls remain unreadable and cannot forge output. It also covers
+completion `toJSON` forgery and listener/timer cleanup failures that must publish
+no reply and restart only on the next call, plus six direct-CLI internal
+subcases. For every existing CJS script run:
 
 1. representative success with exact argv, exit zero, exact terminal, and exact
    stdout/stderr contract;
@@ -2351,11 +2367,17 @@ Fleet reject/source-rejection diagnostic count/order/method/message, and zero
 controlled errors elsewhere. Persistent output is the terminal without newline;
 PASS does not appear in diagnostics.
 
-`test_request_cleanup_after_business_failure` runs Error, primitive, null,
-hostile getters, throwing Proxy, invalid recognized business input, before
-settlement rejection, timer-boundary rejection, one fatal request, and one late
-post-success rejection. After every retainable failure, assert a clean request in
-the same PID. This permanent identity exercises exactly one representative fatal request: a
+`test_request_cleanup_after_business_failure` runs ordinary Error with its
+message and stack frame, native Error own accessors, hostile native accessors,
+primitive, null, hostile getters, throwing Proxy, invalid recognized business
+input, before-settlement rejection, the original timer-boundary rejection, and a
+three-level nested final-timer `Promise.reject`. Any poll that dispatches a due
+timer must return `null` and reset its completion boundary; the next host turn
+captures the rejection and the next poll consumes it before publication. The
+nested rejection is therefore an `ok:false` business failure followed by clean
+same-PID recovery. One fatal request and the separate late post-success rejection
+retain their existing process-crash ownership. After every retainable failure,
+assert a clean request in the same PID. This permanent identity exercises exactly one representative fatal request: a
 family-valid scenario whose payload object is missing the required `input` key.
 Process A (worker start 1) serves all retainable failures and dies on that fatal
 without replay; a separate call starts process B (start 2), whose
@@ -2457,6 +2479,21 @@ A future ID may be absent only during the Task 1 declaration check. After Task 2
 all eight must be actually collectable exactly once and in frozen order. A typo,
 missing ID, duplicate, wrong owner/parameter, insertion-order drift, count drift,
 or collection error stops before commit and before any Task 3 registry consumer.
+
+#### Task 2 runtime-review closure
+
+The post-implementation runtime review found three concrete defects: a poll could
+publish in the same call that dispatched a due timer, native Error stack accessors
+were rejected by the own-data-only extractor, and diagnostic native Errors were
+detached as empty objects. The correction gives every dispatched due callback a
+fresh host-turn/mailbox boundary, captures pristine native-Error operations and
+bounded fields, and applies that detachment to all five diagnostic methods.
+Three superseded Task 2 registry entries were replaced by
+`rejection-final-timer-drain`, `failure-native-error-stack`, and
+`diagnostics-native-error-detachment`; the canonical partition remains
+`14/16/41`, all 14 Task 2 mutations fail at their exact sentinel and restore
+exactly, and the seven collected qualification identities are unchanged. Exact
+commands, counts, hashes, and limitations are recorded in the results ledger.
 
 ---
 

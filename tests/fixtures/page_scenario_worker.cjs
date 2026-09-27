@@ -167,9 +167,10 @@ const SCENARIOS_BY_PROTOCOL = Object.freeze({
   ])
 });
 const QUALIFICATION_MODES = new Set([
-  'realm', 'clean', 'resources', 'inventory', 'error', 'primitive', 'null',
-  'hostile', 'proxy', 'invalid-business', 'before-rejection',
-  'boundary-rejection', 'late-success', 'async-timer', 'diagnostics',
+  'realm', 'clean', 'resources', 'inventory', 'error', 'accessor-error',
+  'hostile-native-error', 'primitive', 'null', 'hostile', 'proxy',
+  'invalid-business', 'before-rejection', 'boundary-rejection',
+  'nested-boundary-rejection', 'late-success', 'async-timer', 'diagnostics',
   'completion-forge', 'hostile-completion', 'cleanup-listener-poison',
   'cleanup-removal-failure', 'cleanup-timer-failure', 'poisoned-error'
 ]);
@@ -330,6 +331,27 @@ const result = {
 };
 let completion = Promise.resolve(result);
 if (data.mode === 'error') throw new Error('synthetic Error failure');
+if (data.mode === 'accessor-error') {
+  const accessorError = new TypeError('unused accessor message');
+  Object.defineProperties(accessorError, {
+    name: {get() { return 'AccessorTypeError'; }},
+    message: {get() { return 'synthetic accessor failure'; }},
+    stack: {get() {
+      return 'AccessorTypeError: synthetic accessor failure\n'
+        + '    at syntheticAccessorFrame (qualification.cjs:1:1)';
+    }}
+  });
+  throw accessorError;
+}
+if (data.mode === 'hostile-native-error') {
+  const hostileError = new TypeError('unused hostile message');
+  Object.defineProperties(hostileError, {
+    name: {get() { throw new Error('native name getter escaped'); }},
+    message: {get() { throw new Error('native message getter escaped'); }},
+    stack: {get() { throw new Error('native stack getter escaped'); }}
+  });
+  throw hostileError;
+}
 if (data.mode === 'primitive') throw 'synthetic primitive failure';
 if (data.mode === 'null') throw null;
 if (data.mode === 'hostile') {
@@ -348,15 +370,20 @@ if (data.mode === 'invalid-business' && data.business_value !== 'valid') {
   throw new TypeError('synthetic invalid business input');
 }
 if (data.mode === 'poisoned-error') {
+  const protectedError = new Error('protected poisoned Error failure');
   Object.prototype.toJSON = function() {
     return {ok: true, output: 'forged poisoned failure'};
   };
+  Object.prototype.isPrototypeOf = function() { return false; };
   JSON.stringify = function() {
     return '{"ok":true,"output":"forged poisoned failure"}';
   };
+  Reflect.get = function() { return 'forged reflected failure'; };
+  Error.prototype.isPrototypeOf = function() { return false; };
   Error.prototype.name = 'ForgedError';
   Error.prototype.message = 'forged poisoned failure';
-  throw new Error('protected poisoned Error failure');
+  globalThis.Error = function ForgedError() {};
+  throw protectedError;
 }
 if (data.mode === 'before-rejection') {
   Promise.reject(new Error('synthetic before-settlement rejection'));
@@ -364,6 +391,12 @@ if (data.mode === 'before-rejection') {
 }
 if (data.mode === 'boundary-rejection') {
   setTimeout(() => Promise.reject(new Error('synthetic timer-boundary rejection')), 0);
+}
+if (data.mode === 'nested-boundary-rejection') {
+  setTimeout(() => setTimeout(() => setTimeout(
+    () => Promise.reject(new Error('synthetic nested timer-boundary rejection')),
+    0
+  ), 0), 0);
 }
 if (data.mode === 'resources' || data.mode === 'cleanup-listener-poison'
     || data.mode === 'cleanup-removal-failure'
@@ -407,6 +440,18 @@ if (data.mode === 'diagnostics') {
   console.warn('warn diagnostic', {index: 4});
   console.error('expected diagnostic', {kind: 'controlled'});
   argument.nested.value = 'after';
+  const nativeError = new TypeError('synthetic diagnostic TypeError');
+  const hostileAccessor = {};
+  Object.defineProperty(hostileAccessor, 'forged', {
+    enumerable: true,
+    get() { throw new Error('diagnostic getter escaped'); }
+  });
+  const hostileProxy = new Proxy({}, {
+    ownKeys() { throw new Error('diagnostic proxy trap escaped'); }
+  });
+  for (const level of ['log', 'info', 'debug', 'warn', 'error']) {
+    console[level](level + ' native diagnostic', nativeError, hostileAccessor, hostileProxy);
+  }
 }
 if (data.mode === 'completion-forge') {
   const inherited = {toJSON() {
@@ -466,8 +511,12 @@ const BOOTSTRAP = String.raw`
   const safeParse = JSON.parse.bind(JSON);
   const scalarStringify = JSON.stringify.bind(JSON);
   const safeString = String;
+  const safeStringSlice = Function.call.bind(String.prototype.slice);
+  const safeStringStartsWith = Function.call.bind(String.prototype.startsWith);
+  const safeStringIndexOf = Function.call.bind(String.prototype.indexOf);
   const safeKeys = Object.keys.bind(Object);
   const safeGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor.bind(Object);
+  const safeGetPrototypeOf = Object.getPrototypeOf.bind(Object);
   const safeDefineProperty = Object.defineProperty.bind(Object);
   const safeCreate = Object.create.bind(Object);
   const safeArrayIsArray = Array.isArray.bind(Array);
@@ -477,7 +526,17 @@ const BOOTSTRAP = String.raw`
   const safeArrayPop = Function.call.bind(Array.prototype.pop);
   const safeNumberIsFinite = Number.isFinite.bind(Number);
   const safeHasOwn = Function.call.bind(Object.prototype.hasOwnProperty);
+  const safeIsPrototypeOf = Function.call.bind(Object.prototype.isPrototypeOf);
+  const safeReflectGet = Reflect.get.bind(Reflect);
   const SafeError = Error;
+  const safeErrorPrototype = SafeError.prototype;
+  const safeAggregateErrorPrototype = AggregateError.prototype;
+  const safeEvalErrorPrototype = EvalError.prototype;
+  const safeRangeErrorPrototype = RangeError.prototype;
+  const safeReferenceErrorPrototype = ReferenceError.prototype;
+  const safeSyntaxErrorPrototype = SyntaxError.prototype;
+  const safeTypeErrorPrototype = TypeError.prototype;
+  const safeUriErrorPrototype = URIError.prototype;
   const localArgvJson = argvJson;
   const localDomFactoryFilename = domFactoryFilename;
   const localDomFactorySource = domFactorySource;
@@ -613,21 +672,78 @@ const BOOTSTRAP = String.raw`
     return '{' + safeArrayJoin(parts, ',') + '}';
   }
 
-  function failureField(reason, name, fallback) {
+  function nativeErrorName(reason) {
+    try {
+      if (!safeIsPrototypeOf(safeErrorPrototype, reason)) return null;
+      if (safeIsPrototypeOf(safeAggregateErrorPrototype, reason)) {
+        return 'AggregateError';
+      }
+      if (safeIsPrototypeOf(safeEvalErrorPrototype, reason)) return 'EvalError';
+      if (safeIsPrototypeOf(safeRangeErrorPrototype, reason)) return 'RangeError';
+      if (safeIsPrototypeOf(safeReferenceErrorPrototype, reason)) {
+        return 'ReferenceError';
+      }
+      if (safeIsPrototypeOf(safeSyntaxErrorPrototype, reason)) return 'SyntaxError';
+      if (safeIsPrototypeOf(safeTypeErrorPrototype, reason)) return 'TypeError';
+      if (safeIsPrototypeOf(safeUriErrorPrototype, reason)) return 'URIError';
+      return 'Error';
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function directNativeErrorName(reason) {
+    let prototype;
+    try { prototype = safeGetPrototypeOf(reason); }
+    catch (_error) { return null; }
+    if (prototype === safeAggregateErrorPrototype) return 'AggregateError';
+    if (prototype === safeEvalErrorPrototype) return 'EvalError';
+    if (prototype === safeRangeErrorPrototype) return 'RangeError';
+    if (prototype === safeReferenceErrorPrototype) return 'ReferenceError';
+    if (prototype === safeSyntaxErrorPrototype) return 'SyntaxError';
+    if (prototype === safeTypeErrorPrototype) return 'TypeError';
+    if (prototype === safeUriErrorPrototype) return 'URIError';
+    if (prototype === safeErrorPrototype) return 'Error';
+    return null;
+  }
+
+  function failureField(reason, name, fallback, nativeName, limit) {
     let descriptor;
     try { descriptor = safeGetOwnPropertyDescriptor(reason, name); }
     catch (_error) { return '<unreadable ' + name + '>'; }
-    if (!descriptor) return fallback;
-    if (!safeHasOwn(descriptor, 'value')) return '<unreadable ' + name + '>';
-    const value = descriptor.value;
+    if (nativeName === null) {
+      if (!descriptor) return fallback;
+      if (!safeHasOwn(descriptor, 'value')) return '<unreadable ' + name + '>';
+    }
+    let value;
+    try {
+      value = nativeName === null
+        ? descriptor.value
+        : safeReflectGet(reason, name, reason);
+    } catch (_error) {
+      return '<unreadable ' + name + '>';
+    }
+    if (nativeName !== null && !descriptor) {
+      const directName = directNativeErrorName(reason);
+      if (directName !== null && name === 'name') value = directName;
+      if (directName !== null && name === 'message') value = '';
+    }
     if (value === null || value === undefined) return fallback;
     const kind = typeof value;
     if (kind !== 'string' && kind !== 'number' && kind !== 'boolean'
         && kind !== 'bigint') {
       return '<unreadable ' + name + '>';
     }
-    try { return safeString(value).slice(0, 8192); }
+    try { return safeStringSlice(safeString(value), 0, limit); }
     catch (_error) { return '<unreadable ' + name + '>'; }
+  }
+
+  function normalizeNativeStack(stack, name, message) {
+    if (!stack || safeStringStartsWith(stack, '<unreadable ')) return stack;
+    const newline = safeStringIndexOf(stack, '\n');
+    const frames = newline === -1 ? '' : safeStringSlice(stack, newline);
+    const header = message ? name + ': ' + message : name;
+    return safeStringSlice(header + frames, 0, 32768);
   }
 
   function failure(reason) {
@@ -638,26 +754,48 @@ const BOOTSTRAP = String.raw`
     }
     if (typeof reason !== 'object' && typeof reason !== 'function') {
       out.name = 'Error';
-      try { out.message = safeString(reason).slice(0, 8192); }
+      try { out.message = safeStringSlice(safeString(reason), 0, 8192); }
       catch (_error) { out.message = '<unreadable failure>'; }
       out.stack = '';
       return out;
     }
-    out.name = failureField(reason, 'name', 'Error');
-    out.message = failureField(reason, 'message', '<unreadable failure>');
-    out.stack = failureField(reason, 'stack', '');
+    const nativeName = nativeErrorName(reason);
+    out.name = failureField(reason, 'name', 'Error', nativeName, 256);
+    out.message = failureField(
+      reason, 'message', nativeName === null ? '<unreadable failure>' : '',
+      nativeName, 8192
+    );
+    out.stack = failureField(reason, 'stack', '', nativeName, 32768);
+    if (nativeName !== null) {
+      out.stack = normalizeNativeStack(out.stack, out.name, out.message);
+    }
     return out;
   }
 
-  function renderDiagnostic(value) {
-    if (typeof value === 'string') return value.slice(0, 8192);
+  function detachedDiagnostic(value) {
+    if (nativeErrorName(value) !== null) return failure(value);
+    return detachJson(value);
+  }
+
+  function renderDiagnostic(value, detached) {
+    if (typeof value === 'string') return safeStringSlice(value, 0, 8192);
     const kind = typeof value;
     if (value === null || kind === 'number' || kind === 'boolean'
         || kind === 'undefined' || kind === 'bigint') {
-      try { return safeString(value).slice(0, 8192); }
+      try { return safeStringSlice(safeString(value), 0, 8192); }
       catch (_error) { return '<unreadable>'; }
     }
-    try { return encodeJson(detachJson(value)).slice(0, 8192); }
+    if (nativeErrorName(value) !== null) {
+      const renderedFailure = failure(value);
+      const renderedError = renderedFailure.stack || (
+        renderedFailure.message
+          ? renderedFailure.name + ': ' + renderedFailure.message
+          : renderedFailure.name
+      );
+      return safeStringSlice(renderedError, 0, 8192);
+    }
+    if (detached === '<unserializable>') return detached;
+    try { return safeStringSlice(encodeJson(detached), 0, 8192); }
     catch (_error) { return '<unserializable>'; }
   }
 
@@ -665,9 +803,11 @@ const BOOTSTRAP = String.raw`
     const detachedArgs = [];
     const rendered = [];
     for (const value of safeArraySlice(args, 0, 32)) {
-      try { safeArrayPush(detachedArgs, detachJson(value)); }
-      catch (_error) { safeArrayPush(detachedArgs, '<unserializable>'); }
-      safeArrayPush(rendered, renderDiagnostic(value));
+      let detached;
+      try { detached = detachedDiagnostic(value); }
+      catch (_error) { detached = '<unserializable>'; }
+      safeArrayPush(detachedArgs, detached);
+      safeArrayPush(rendered, renderDiagnostic(value, detached));
     }
     const record = safeCreate(null);
     record.level = level;
@@ -867,12 +1007,18 @@ const BOOTSTRAP = String.raw`
     for (const entry of timers.entries()) {
       if (entry[1].due <= now) safeArrayPush(due, entry);
     }
+    let dispatchedDueTimer = false;
     for (const [id, timer] of due) {
       if (!timers.has(id)) continue;
+      dispatchedDueTimer = true;
       if (timer.interval) timer.due = now + timer.interval;
       else timers.delete(id);
       try { timer.callback(); }
       catch (error) { completionFailure ||= failure(error); }
+    }
+    if (dispatchedDueTimer) {
+      boundaryTurns = 0;
+      return null;
     }
     if (!settled) return null;
     boundaryTurns += 1;

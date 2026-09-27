@@ -162,9 +162,11 @@ The seven qualification IDs were then collected before GREEN and executed one at
 a time against a runnable unsafe worker/receipt seam. All seven failed in the
 call phase at their unique approved sentinel; no collection, import, fixture,
 timeout, or framing failure satisfied RED. The unsafe seam was replaced rather
-than retained. Final focused outcomes are `13 passed`, `7 passed`, and a combined
-`20 passed`; the preserved baseline selection also passed `217/217` with no
-skip, failure, or error.
+than retained. After the runtime-review corrections, fresh focused outcomes are
+`13 passed in 3.33s`, `7 passed in 7.14s`, and a combined `20 passed in 12.63s`;
+the preserved baseline selection also passed `217/217 in 42.64s` with no skip,
+failure, or error. The two cleanup identities were rerun together as the direct
+reviewer probe and passed `2/2 in 6.85s`.
 
 ## Worker schema, VM, cleanup, and recovery qualification
 
@@ -179,16 +181,27 @@ request-installed globals survive real Promise/timer awaits and are removed only
 during cleanup. Malformed protocol is fatal with no reply; detached business
 failure retains the process.
 
-Reply, diagnostic, and failure serialization now use bounded manual walks over
-captured own data descriptors and scalar quoting rather than mutable
-`JSON.stringify` or `toJSON`. The permanent witnesses poison Object, Array,
-Error, Promise, and JSON behavior, attempt completion-envelope forgery, and use
-hostile getters/Proxy traps without changing the reply or escaping a raw reason.
-The request rejection listener is active before VM launch. Real
-`Promise.reject` calls before settlement and at the final timer boundary become
-the current request's business failure; the actual post-success rejection exits
-70, emits no second reply, and remains attributed to the prior request when the
-next call observes it.
+Reply and ordinary JSON serialization use bounded manual walks over captured own
+data descriptors and scalar quoting rather than mutable `JSON.stringify` or
+`toJSON`. Failure serialization additionally captures the pristine VM Error
+prototype, `isPrototypeOf`, `Reflect.get`, standard native Error prototypes, and
+bounded string operations. Native inherited, own, and accessor-backed
+`name/message/stack` fields are read independently; ordinary messages and frames
+survive, poisoned Error/Reflect globals cannot forge the heading, and hostile
+accessors or Proxy traps become bounded unreadable placeholders. Diagnostics use
+the same native-Error detachment, so each of `log/info/debug/warn/error` retains a
+primitive TypeError `{name,message,stack}` argument and rendered message/frame,
+while hostile accessor and Proxy controls remain unserializable.
+
+The request rejection listener is active before VM launch. Every poll that
+dispatches at least one due timer now resets the completion boundary and returns
+without a reply. The host turn can therefore capture its rejection, and the next
+poll consumes that mailbox before publication; future timers that are not due
+remain canceled by normal cleanup. Real `Promise.reject` calls before settlement,
+at the original timer boundary, and from a three-level nested final timer become
+the current request's business failure and recover in the same PID. The separate
+actual post-success rejection still exits 70, emits no second reply, and remains
+attributed to the prior request when the next call observes it.
 
 The four A-poison-A realm rows passed in one PID each with fresh execution count
 one, clean host and DOM prototypes, input/prior-reply/module-export isolation,
@@ -197,11 +210,13 @@ immediate, listener, unresolved-promise, async-global survival, all five console
 methods, seven-source retention, and all six existing direct CJS paths (including
 both saved-main terminal forms). Dedicated cleanup-failure workers proved
 listener and timer removal exceptions are fatal before reply and that a later
-call, not the failing call, starts recovery. Cleanup failure covered Error,
-poisoned Error, primitive, null, hostile getters, Proxy, semantic business input,
-before/boundary rejection, one fatal missing-input request, and late post-success
-exit. Its observed sequence was exactly three process starts, with the attempted
-`T` attributed to `before the next request` and recovery using request `N+2`.
+call, not the failing call, starts recovery. Cleanup failure covered ordinary and
+accessor-backed native Errors, hostile native accessors, poisoned Error/Reflect
+intrinsics, primitive, null, hostile object getters, Proxy, semantic business
+input, before/boundary/nested-final-timer rejection, one fatal missing-input
+request, and late post-success exit. Its observed sequence remained exactly three
+process starts, with the attempted `T` attributed to `before the next request`
+and recovery using request `N+2`.
 
 ## Saved-layout receipt and family conversion
 
@@ -238,9 +253,9 @@ owner, kind-specific masking rules, a literal edit with an explicit root, frozen
 mutated/restored expectations, and an explicit `available_from_task`. The six
 corrected owner mappings and three restored-only helper IDs are pinned explicitly.
 The deterministic registry manifest SHA-256 is
-`77803e6959f3d3e85b2a7ff2bb894bb91642d330c2d84f2981079fa76f9b2b24`.
+`1ddfbda7d01b568c75b8d093e96a317458921850f255d6221056128d45679866`.
 The regenerated recursive artifact manifest is
-`58939eb6cbd9fe83d2f19427762b3da4bb1eac5eaa3e21a22ae639152f5eae33`,
+`8f1a55ecd125beef19201ae328512fe593cc88bc1d3fc1b348b95a425ff5699f`,
 and the refreshed Task 2 identity-gate record is
 `7ccf650d6af664a7087345cab21d182a8e36b05aaab6919db3efb904409ee515`.
 It also freezes the read-only external adapter at SHA-256
@@ -298,19 +313,22 @@ The corrected tooling suites pass 60 checks: 19 collector/identity checks, 39
 registry/restoration/dispatcher checks, and two recursive-manifest checks.
 
 Task 2 additionally activated the canonical 14-name first implementation slice
-from the corrected registry. The six realm recipes now perform real context
-cache/reuse, source-result reuse, host-parsed input injection, prior-reply alias,
-host `require`/module injection, and mutable Promise completion. The receipt
-recipes now alter the actual pending capture, production ID source, durable read,
+from the corrected registry. Runtime review replaced three superseded synthetic
+realm recipes with real regressions: suppressing the post-dispatch final drain,
+dropping a native Error stack, and reverting native Error diagnostic arguments
+to ordinary object detachment. The remaining realm recipes perform real context
+cache/reuse, source-result reuse, and host-parsed input injection. The receipt
+recipes alter the actual pending capture, production ID source, durable read,
 `os.fsync` delegation, writer/environment restoration, reader ownership, and
 once-provider construction; no recipe inverts its own assertion or uses a
-mutation-only worker flag. All 14 edits ran through the typed dispatcher: 13
-pytest probes and the external receipt-count probe each produced their exact
-sentinel, rejected masking, restored exact bytes/hash/diff/status, and passed the
-registered restored probe. The ordered result file is
-`/tmp/stage-b-task2-mutations.json`, SHA-256
-`b76dd920aab5014c43ab70783d8c6f727dede106aaced7df74be403c881a78f5`. The provider's `pending_receipt` literal is unique, so no
-unconverted business caller needed a temporary source edit.
+mutation-only worker flag. The partition remains exactly `14/16/41`. All 14
+Task 2 edits ran through the typed dispatcher: 13 pytest probes and the external
+receipt-count probe each produced their exact sentinel, rejected masking,
+restored exact bytes/hash/diff/status, and passed the registered restored probe.
+The ordered result file is `/tmp/stage-b-task2-mutations.json`, SHA-256
+`e982d5276cb1d94c75097b724e3a1ecf6f113f044e47346cad2837c7b3b27b71`.
+The provider's `pending_receipt` literal is unique, so no unconverted business
+caller needed a temporary source edit.
 
 This is real foundation/receipt defect qualification, not real-family conversion
 acceptance. The later 16/41 slices and final 71-recipe aggregate remain pending.
@@ -343,12 +361,17 @@ symmetric-difference checks. This task did not run or claim the complete
 Task 2 self-review found only its six original approved implementation/result
 paths plus the authoritative plan correction: strict helper and helper contract,
 shared worker, seven-ID qualification module, receipt provider added without
-converting a business caller, this ledger, and the corrected Task 2 plan text. No production, web,
-workflow, dependency, lockfile, configuration, packaging, existing CJS adapter,
-or `screenshot_dom.cjs` byte changed. Protected hashes, Ruff, formatting, docs,
-syntax, focused tests, baseline 217, collection gates, diff checks, and canonical
-restoration were rerun before the Task 2 commit. Final Stage B review,
-real-family conversion, executable head, and evidence head remain pending.
+converting a business caller, this ledger, and the corrected Task 2 plan text.
+The follow-up runtime review found and closed three defects in the worker's
+completion/detachment boundary: same-poll publication after a due callback,
+native Error stacks lost as accessors, and diagnostic Error objects reduced to
+`{}`. Its commit changes only the worker, qualification module, plan, and this
+ledger. No production, web, workflow, dependency, lockfile, configuration,
+packaging, existing CJS adapter, or `screenshot_dom.cjs` byte changed. Protected
+hashes, Ruff, formatting, docs, syntax, focused tests, baseline 217, collection
+gates, diff checks, and canonical restoration were rerun before the Task 2
+follow-up commit. Final Stage B review, real-family conversion, executable head,
+and evidence head remain pending.
 
 ## Publication stop and hosted evidence
 

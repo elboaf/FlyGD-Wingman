@@ -57,6 +57,9 @@ MUTATION_SENTINELS = {
     "reply": "stage-b mutation realm-saved-prior-reply-detachment",
     "module": "stage-b mutation realm-saved-module-export-isolation",
     "promise": "stage-b mutation realm-saved-promise-completion",
+    "final-drain": "stage-b mutation rejection-final-timer-drain",
+    "native-stack": "stage-b mutation failure-native-error-stack",
+    "diagnostic-error": "stage-b mutation diagnostics-native-error-detachment",
     "pending": "stage-b mutation receipt-pending-first-apply",
     "identity": "stage-b mutation receipt-production-identity",
     "durable": "stage-b mutation receipt-durable-readback",
@@ -714,7 +717,8 @@ def test_request_cleanup_after_success(
         cleanup_failure_worker.close()
 
     diagnostics = _qualification_request(worker, "saved-layouts", "diagnostics")
-    assert diagnostics["diagnostics"] == [
+    diagnostic_rows = diagnostics["diagnostics"]
+    assert diagnostic_rows[:5] == [
         {
             "level": "log",
             "rendered": 'ordinary diagnostic 7 {"nested":{"value":"before"}}',
@@ -741,6 +745,38 @@ def test_request_cleanup_after_success(
             "args": ["expected diagnostic", {"kind": "controlled"}],
         },
     ]
+    native_rows = diagnostic_rows[5:]
+    _assert_mutation(
+        [row["level"] for row in native_rows]
+        == ["log", "info", "debug", "warn", "error"],
+        "diagnostic-error",
+    )
+    _assert_mutation(len(native_rows) == 5, "diagnostic-error")
+    for level, row in zip(
+        ("log", "info", "debug", "warn", "error"), native_rows, strict=True
+    ):
+        detached_error = row["args"][1]
+        _assert_mutation(
+            isinstance(detached_error, dict)
+            and detached_error.get("name") == "TypeError"
+            and detached_error.get("message") == "synthetic diagnostic TypeError"
+            and detached_error.get("stack", "").startswith(
+                "TypeError: synthetic diagnostic TypeError"
+            )
+            and "\n    at " in detached_error.get("stack", ""),
+            "diagnostic-error",
+        )
+        assert row["args"] == [
+            f"{level} native diagnostic",
+            detached_error,
+            "<unserializable>",
+            "<unserializable>",
+        ]
+        assert row["rendered"].startswith(
+            f"{level} native diagnostic TypeError: synthetic diagnostic TypeError"
+        )
+        assert "\n    at " in row["rendered"]
+        assert row["rendered"].endswith("<unserializable> <unserializable>")
     forged = _qualification_request(worker, "saved-layouts", "completion-forge")
     assert forged["ok"] is True
     assert forged["output"]["own_value"] == "preserved"
@@ -772,7 +808,7 @@ def test_request_cleanup_after_success(
 
 def _assert_business_failure(
     worker: NodeScenarioWorker, mode: str, *, expected: str
-) -> None:
+) -> NodeScenarioFailure:
     process = worker._proc
     with pytest.raises(NodeScenarioFailure) as failure:
         _qualification_request(worker, "saved-layouts", mode)
@@ -785,6 +821,36 @@ def _assert_business_failure(
     assert worker._proc is not None
     if process is not None:
         assert worker._proc.pid == process.pid
+    return failure.value
+
+
+def _assert_final_timer_failure(worker: NodeScenarioWorker) -> None:
+    process = worker._proc
+    try:
+        _qualification_request(worker, "saved-layouts", "nested-boundary-rejection")
+    except NodeScenarioFailure as failure:
+        _assert_mutation(
+            "synthetic nested timer-boundary rejection" in str(failure),
+            "final-drain",
+        )
+    except NodeScenarioCrash:
+        worker._discard_process(reason="final timer rejection escaped")
+        _fail_mutation("final-drain")
+    else:
+        worker._discard_process(reason="final timer rejection was missed")
+        _fail_mutation("final-drain")
+    _assert_mutation(
+        process is not None
+        and worker._proc is not None
+        and worker._proc.pid == process.pid,
+        "final-drain",
+    )
+    clean = _qualification_request(worker, "saved-layouts", "clean")
+    _assert_mutation(clean["cleanup"] == ZERO_CLEANUP, "final-drain")
+    _assert_mutation(
+        worker._proc is not None and worker._proc.pid == process.pid,
+        "final-drain",
+    )
 
 
 def test_request_cleanup_after_business_failure(
@@ -792,16 +858,34 @@ def test_request_cleanup_after_business_failure(
 ):
     del qualification_inputs
     worker = page_worker_factory("saved-layouts")
-    _assert_business_failure(worker, "error", expected="synthetic Error failure")
+    ordinary = _assert_business_failure(
+        worker, "error", expected="synthetic Error failure"
+    )
+    _assert_mutation(
+        ordinary.stack.startswith("Error: synthetic Error failure")
+        and "\n    at " in ordinary.stack,
+        "native-stack",
+    )
     process_a = worker._proc
     assert process_a is not None
+    accessor = _assert_business_failure(
+        worker, "accessor-error", expected="synthetic accessor failure"
+    )
+    _assert_mutation(
+        accessor.stack == "AccessorTypeError: synthetic accessor failure\n"
+        "    at syntheticAccessorFrame (qualification.cjs:1:1)",
+        "native-stack",
+    )
+    hostile_native = _assert_business_failure(
+        worker, "hostile-native-error", expected="<unreadable message>"
+    )
+    _assert_mutation(hostile_native.stack == "<unreadable stack>", "native-stack")
     for mode, expected in (
         ("primitive", "synthetic primitive failure"),
         ("null", "null"),
         ("hostile", "<unreadable message>"),
         ("proxy", "<unreadable message>"),
         ("hostile-completion", "JSON object keys were unreadable"),
-        ("poisoned-error", "protected poisoned Error failure"),
         ("invalid-business", "synthetic invalid business input"),
         ("before-rejection", "synthetic before-settlement rejection"),
         ("boundary-rejection", "synthetic timer-boundary rejection"),
@@ -811,6 +895,18 @@ def test_request_cleanup_after_business_failure(
             "stage-b qualification cleanup-failure: process retention violated"
         )
 
+    _assert_final_timer_failure(worker)
+    assert worker._proc is not None and worker._proc.pid == process_a.pid
+    poisoned = _assert_business_failure(
+        worker, "poisoned-error", expected="protected poisoned Error failure"
+    )
+    _assert_mutation(
+        poisoned.stack.startswith("Error: protected poisoned Error failure")
+        and "\n    at " in poisoned.stack
+        and "ForgedError" not in poisoned.stack
+        and "forged reflected failure" not in poisoned.stack,
+        "native-stack",
+    )
     fatal_id = worker._next_id
     with pytest.raises(NodeScenarioCrash) as fatal:
         worker.request(
