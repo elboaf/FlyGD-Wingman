@@ -149,27 +149,67 @@ were not run in this task.
 
 ## TDD RED and GREEN record
 
-Task 1 executed no Stage B implementation RED or GREEN. The exact 217-row source
-baseline passed again (`217 passed`, no skip/failure/error); its refreshed JUnit
-SHA-256 is
-`ccee3a92ccfc109ec73cb69921c6ffa09c56c1fd639a6aa2cca2f16a0d2ef0f4`.
-Task 2 RED/GREEN remains **not run in this task**.
+Task 1 executed no Stage B implementation RED or GREEN. Task 2 first added the
+one helper identity and ran it against the old validator in an isolated pytest
+process. It collected normally and failed in the call phase at exactly
+`numeric-schema bool-id: invalid reply was accepted`; malformed JSON, setup,
+collection, and absent-scenario failures were excluded. After changing only
+`_validate_reply`, all 13 helper identities passed. The missing-fields row now
+pins exact `_ProtocolError` text and process discard, while the existing four
+late-exit phase witnesses remain unchanged.
+
+The seven qualification IDs were then collected before GREEN and executed one at
+a time against a runnable unsafe worker/receipt seam. All seven failed in the
+call phase at their unique approved sentinel; no collection, import, fixture,
+timeout, or framing failure satisfied RED. The unsafe seam was replaced rather
+than retained. Final focused outcomes are `13 passed`, `7 passed`, and a combined
+`20 passed`; the preserved baseline selection also passed `217/217` with no
+skip, failure, or error.
 
 ## Worker schema, VM, cleanup, and recovery qualification
 
-Not run in this task. Task 1 froze the eight planned identity owners and the
-worker/schema/cleanup mutation metadata without executing a future recipe.
+`page_scenario_worker.cjs` now validates exact startup argv, family, manifest,
+request envelope, protocol, and scenario ownership; reads all seven target CJS
+files as UTF-8 source before service; and retains no target entry in
+`require.cache` or `module.children`. Qualification requests execute synthetic
+source, DOM, CommonJS, timers, listeners, promises, errors, and assertions in a
+fresh VM context. The host receives only the VM poll function and primitive JSON
+completion. Malformed protocol is fatal with no reply; detached business failure
+retains the process.
+
+The four A-poison-A realm rows passed in one PID each with fresh execution count
+one, clean host and DOM prototypes, input/prior-reply/module-export isolation,
+and Promise-then poison survival. Cleanup success covered timeout, interval,
+immediate, listener, unresolved-promise, seven-source retention, and all six
+existing direct CLIs (including both saved-main terminal forms). Cleanup failure
+covered Error, primitive, null, hostile getters, Proxy, semantic business input,
+before/boundary rejection, one fatal missing-input request, and late post-success
+exit. Its observed sequence was exactly three process starts, with the attempted
+`T` attributed to `before the next request` and recovery using request `N+2`.
 
 ## Saved-layout receipt and family conversion
 
-Not run in this task. The 55 current saved-main rows and their 1,045 fsync calls
-are baseline observations only; no receipt provider or persistent family worker
-exists yet.
+The process-local once-provider builds one detached 22-key receipt through the
+existing production Api/controller/store/settings/atomicio sequence. It isolates
+`LOCALAPPDATA` with a session temporary root, forces and restores `_use_legacy`,
+delegates every `os.fsync`, restores `_save_locked`, validates durable strict
+UTF-8 JSON and the committed reader, shuts both Api objects down, clears created
+owners, runs GC, and proves no newly retained reader remains. The observed build
+used exactly 19 fsync calls, preserved production ID/revision continuity, captured
+the first Apply as pending, and retained the later persisted Apply. Fifty-five
+independent decodes had no alias.
+
+No saved business row was converted in Task 2. The original 55 per-row receipt
+builds and all 165 one-shot Node calls remain until Tasks 3 and 4; candidate
+`33/62` production-case fsync totals are therefore not claimed here. The
+qualification-only owner/capture setup observed exactly four fsync calls.
 
 ## Remaining family conversion and order evidence
 
-Not run in this task. Fleet Sharing, group backward, and label marker behavior
-remains at the one-shot baseline.
+Fleet Sharing, group backward, label-marker, and saved-layout business callers
+remain on their original one-shot paths. Task 2 adds only the shared worker
+foundation and synthetic qualification interfaces; real-family acceptance and
+four-process evidence remain pending Tasks 3 and 4.
 
 ## Mutation and restoration matrix
 
@@ -225,44 +265,65 @@ in exact order—selected IDs plus any recipe-owned restored-only IDs—once eac
 with no wrong, missing, extra, duplicate, skipped, error, or failed row.
 Dedicated tests cover every mismatch.
 
-All future implementation recipes remain pending until their
-`available_from_task` boundary. In particular, `receipt-once-construction`
-targets the future once-provider assignment in
-`tests/test_preview_savedlayouts_page.py`; it is not validated against a scratch
-file, and the Task 3 hard gate must find that literal exactly once. The
-negative-infinity edit is isolated to accepting `-Infinity` while still rejecting
-finite negatives, NaN, and positive infinity; an in-memory validator mutant test
-pins that distinction.
+At the end of Task 1 every implementation recipe remained pending until its
+real target existed. Task 2 materialized the shared worker and once-provider, so
+the first 14-name slice could be activated as recorded below. The
+negative-infinity edit remains isolated to accepting `-Infinity` while still
+rejecting finite negatives, NaN, and positive infinity; its helper execution is
+reserved for the later schema slice.
 
 The corrected tooling suites pass 60 checks: 19 collector/identity checks, 39
 registry/restoration/dispatcher checks, and two recursive-manifest checks.
 
-This is dispatcher, parser, restoration, inventory, and manifest-integrity
-evidence—not final persistent-worker defect qualification. The future Stage B
-implementation recipes and their representative candidate executions are **not
-run in this task**.
+Task 2 additionally activated the canonical 14-name first implementation slice
+from the frozen registry without changing registry metadata. All 14 real edits
+ran through the typed dispatcher: 13 pytest probes and the external receipt-count
+probe each produced their exact sentinel, rejected masking, restored exact
+bytes/hash/diff/status, and passed the registered restored probe. The ordered
+result file is `/tmp/stage-b-task2-mutations.json`, SHA-256
+`10e7a2f951efca246a1d7f7bf4c506243976a49b437159199e2d0e7c0b859ace`.
+Because the unconverted baseline saved test still contains its own identical
+`pending = pending_states[-1]` line, activation temporarily expressed only that
+old caller line with an equivalent indexed form so the canonical provider edit
+remained match-once; the caller bytes were restored immediately afterward. No
+canonical recipe, owner, sentinel, regex, probe, or registry hash changed.
+
+This is real foundation/receipt defect qualification, not real-family conversion
+acceptance. The later 16/41 slices and final 71-recipe aggregate remain pending.
 
 ## JUnit property ownership
 
-No candidate `stage_b.*` properties were produced in this task. Task 1 preserved
-raw JUnit property elements as a list and exercised the actual unique-property
-auditor against valid, missing, and duplicate-identical properties. A temporary
-always-accepting auditor mutation fails at exact `stage_b property cardinality`.
-Stage B property producers do not exist yet.
+The combined 20-ID JUnit contains exactly two qualification properties on each
+of the seven qualification owners and none on helper IDs. Worker starts are
+`1/1/1/1/1/3/0`; qualification fsync values are `0/0/0/0/4/0/0`, in declared ID
+order. Each `(node ID, property name)` occurs once. Qualification values are not
+folded into baseline or future candidate production-case arithmetic.
 
 ## Complete local endpoint
 
-Not run in this task. No 16,617-case candidate collection or suite result is
-claimed. The accepted 16,609 order was frozen only as an input for Task 2's
-expected-order gate.
+Task 2 collected the actual relevant selection as exactly 225 unique IDs and the
+complete suite as exactly 16,617 unique IDs. Both ID files are byte-for-byte
+equal to the frozen expected orders. Their final-newline hashes are respectively
+`bf6e8470cc470cd747015f2772d243e90b064b756984b09d2f0076fde1c6fffe`
+and `d04dff36b8cb278dac3c410bca86e271e17899ce16272c9062886a48f28220c3`.
+The actual structured collection hashes are
+`6578618090ba75bd3ae672ba630f7f7786ff4de096d213737d2e5b2b5bebaa7c`
+and `2131c640d9377e3ccf86c331ea677d5f3afc38a964d3e58f142f28164e3f4408`.
+`verify_task2_identities.py` passed exact owner, marker, insertion-order,
+baseline-subsequence, frozen-subset/hash, report/ID agreement, and empty
+symmetric-difference checks. This task did not run or claim the complete
+16,617-case outcome; that remains Task 5.
 
 ## Reviews, final scope, and frozen heads
 
-Task 1 self-review found one tracked change: this results ledger. The approved
-specification and repaired plan remained byte-unchanged. All source, test,
-fixture, production, web, workflow, dependency, configuration, packaging, and
-lockfile bytes remained unchanged. Final Stage B review, executable head, and
-evidence head are **not run/frozen in this task**.
+Task 2 self-review found only its six approved paths: strict helper and helper
+contract, shared worker, seven-ID qualification module, receipt provider added
+without converting a business caller, and this ledger. No production, web,
+workflow, dependency, lockfile, configuration, packaging, existing CJS adapter,
+or `screenshot_dom.cjs` byte changed. Protected hashes, Ruff, formatting, docs,
+syntax, focused tests, baseline 217, collection gates, diff checks, and canonical
+restoration were rerun before the Task 2 commit. Final Stage B review,
+real-family conversion, executable head, and evidence head remain pending.
 
 ## Publication stop and hosted evidence
 
@@ -280,6 +341,8 @@ for 165. They establish no speedup, slowdown, lower bound, throughput, runner
 efficiency, job effect, or critical-path causation.
 
 Task 1 proves baseline identity, source, stream, launch, persistence, provenance,
-artifact, and evidence-tooling contracts. It does not prove the future
-persistent-worker implementation, any recipe before its activation task,
-candidate properties, final scope, complete-suite outcome, or hosted acceptance.
+artifact, and evidence-tooling contracts. Task 2 proves the strict helper,
+synthetic shared-worker foundation, detached receipt, qualification properties,
+and exact post-creation identity orders. It does not prove real execution for any
+of the four business families, the healthy four-process/33/62-fsync endpoint,
+the complete-suite outcome, final Stage B scope, or hosted acceptance.
