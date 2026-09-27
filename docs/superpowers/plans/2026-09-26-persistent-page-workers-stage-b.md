@@ -524,7 +524,27 @@ SHARING_SOURCE_REJECTION_ID = "tests/test_fleetsharing_hydration.py::test_sharin
 GROUP_DIALOG_OWNERS_ID = "tests/test_preview_group_backward.py::test_group_backward_page[focus-dialog-owners]"
 GROUP_OWN_DIALOG_ID = "tests/test_preview_group_backward.py::test_group_backward_page[focus-own-dialog]"
 MARKER_DEFERRED_ID = "tests/test_preview_labelmarkers_page.py::test_marker_page_ownership[screenshot-deferred]"
+
+RESTORED_ONLY_IDS = frozenset({
+    "tests/test_node_scenario_worker.py::test_immediate_request_after_ok_reports_late_eof_context_and_recovers",
+    "tests/test_node_scenario_worker.py::test_broken_write_after_ok_reaps_status_and_prior_context",
+    "tests/test_node_scenario_worker.py::test_close_reports_exit_after_last_ok_reply_and_worker_remains_recoverable",
+})
+RESTORED_ONLY_BY_RECIPE = {
+    "late-rejection-attribution": (
+        "tests/test_node_scenario_worker.py::test_immediate_request_after_ok_reports_late_eof_context_and_recovers",
+        "tests/test_node_scenario_worker.py::test_broken_write_after_ok_reaps_status_and_prior_context",
+        "tests/test_node_scenario_worker.py::test_close_reports_exit_after_last_ok_reply_and_worker_remains_recoverable",
+    ),
+}
 ```
+
+These three helper IDs are not selected failure owners and are not members of
+`EXPECTED_SELECTED_IDS["late-rejection-attribution"]`. They run only after the
+recipe's bytes/hash/diff/status restoration has succeeded; each must produce one
+passed JUnit testcase with no failure/error/skip. The registry runner never
+feeds them to `run_expected_failure()` and never searches them for the mutation
+sentinel.
 
 External selected IDs are exact strings under `external::fatal/*`,
 `external::inventory/node-165`, `external::saved-main/receipt-count-55`,
@@ -564,21 +584,9 @@ ALLOWED_PHASES_BY_ID = {
 restored argv may include an additional anti-mask ID from the map, but
 `selected_ids` contains only the testcases expected in the mutated JUnit result.
 
-Owner assignment is canonical in `REGISTRY`: the six leading Task 3 realm
-recipes select `REALM_SAVED_ID`; the seven receipt-contract recipes select
-`RECEIPT_ID`; `receipt-once-construction` selects only
-`external::saved-main/receipt-count-55`, whose probe runs all 55 main rows and
-parses their raw JUnit while its restored argv includes `RECEIPT_ID` and
-`SAVED_REVERSED_ID`. Task 4 adapter/source recipes select
-the corresponding exact realm constant; business retention and fatal no-replay
-select `CLEANUP_FAILURE_ID`; the four fatal variants select their exact
-`external::fatal/...` IDs; diagnostics, group matrices, marker deferred, and
-inventory select the exact constants above or `external::inventory/node-165`.
-Task 5 schema recipes select `NUMERIC_ID` or `MISSING_FIELDS_ID`; realm recipes
-select their exact family ID; source retention and cleanup recipes select
-`CLEANUP_SUCCESS_ID`; failure/rejection/fatal/late recipes select
-`CLEANUP_FAILURE_ID`; and the final two recipes select the exact JUnit and
-restoration external IDs. No recipe stores an owner nickname.
+The selected failure owner is defined only by the exhaustive
+`EXPECTED_SELECTED_IDS` map below; no recipe stores an owner nickname or relies
+on prefix inference.
 
 The three phase tuples partition the registry—each recipe name occurs here
 exactly once:
@@ -668,7 +676,100 @@ assert len(TASK3_RECIPES) == 14
 assert len(TASK4_RECIPES) == 16
 assert len(TASK5_RECIPES) == 41
 assert len(TASK3_RECIPES + TASK4_RECIPES + TASK5_RECIPES) == 71
+
+EXPECTED_SELECTED_IDS = {
+    "realm-saved-context-reuse": (REALM_SAVED_ID,),
+    "realm-saved-source-reexecution": (REALM_SAVED_ID,),
+    "realm-saved-input-detachment": (REALM_SAVED_ID,),
+    "realm-saved-prior-reply-detachment": (REALM_SAVED_ID,),
+    "realm-saved-module-export-isolation": (REALM_SAVED_ID,),
+    "realm-saved-promise-completion": (REALM_SAVED_ID,),
+    "receipt-pending-first-apply": (RECEIPT_ID,),
+    "receipt-production-identity": (RECEIPT_ID,),
+    "receipt-durable-readback": (RECEIPT_ID,),
+    "receipt-atomic-writer-fsync": (RECEIPT_ID,),
+    "receipt-writer-restoration": (RECEIPT_ID,),
+    "receipt-environment-restoration": (RECEIPT_ID,),
+    "receipt-reader-release": (RECEIPT_ID,),
+    "receipt-once-construction": ("external::saved-main/receipt-count-55",),
+    "adapter-saved-program-selection": (REALM_SAVED_ID,),
+    "adapter-sharing-dom-isolation": (REALM_SHARING_ID,),
+    "realm-group-source-reexecution": (REALM_GROUP_ID,),
+    "adapter-marker-root-release": (REALM_MARKER_ID,),
+    "business-failure-process-retention": (CLEANUP_FAILURE_ID,),
+    "protocol-fatal-no-replay": (CLEANUP_FAILURE_ID,),
+    "protocol-malformed-ndjson": ("external::fatal/malformed-ndjson",),
+    "protocol-wrong-family": ("external::fatal/wrong-family",),
+    "protocol-unknown-protocol": ("external::fatal/unknown-protocol",),
+    "protocol-unknown-scenario": ("external::fatal/unknown-scenario",),
+    "diagnostics-sharing-reject": (SHARING_REJECT_ID,),
+    "diagnostics-sharing-source-order": (SHARING_SOURCE_REJECTION_ID,),
+    "group-dialog-owner-matrix": (GROUP_DIALOG_OWNERS_ID,),
+    "group-own-dialog-matrix": (GROUP_OWN_DIALOG_ID,),
+    "marker-deferred-roster": (MARKER_DEFERRED_ID,),
+    "inventory-node-165": ("external::inventory/node-165",),
+    "schema-bool-id-rejected": (NUMERIC_ID,),
+    "schema-bool-id-terminated": (NUMERIC_ID,),
+    "schema-bool-id-discarded": (NUMERIC_ID,),
+    "schema-bool-id-new-pid": (NUMERIC_ID,),
+    "schema-bool-duration-rejected": (NUMERIC_ID,),
+    "schema-bool-duration-discarded": (NUMERIC_ID,),
+    "schema-negative-duration-rejected": (NUMERIC_ID,),
+    "schema-nan-duration-rejected": (NUMERIC_ID,),
+    "schema-positive-infinity-rejected": (NUMERIC_ID,),
+    "schema-negative-infinity-rejected": (NUMERIC_ID,),
+    "schema-zero-duration-accepted": (NUMERIC_ID,),
+    "schema-float-duration-accepted": (NUMERIC_ID,),
+    "schema-missing-fields-protocol-error": (MISSING_FIELDS_ID,),
+    "schema-missing-fields-discarded": (MISSING_FIELDS_ID,),
+    "realm-saved-host-isolation": (REALM_SAVED_ID,),
+    "realm-sharing-host-isolation": (REALM_SHARING_ID,),
+    "realm-group-host-isolation": (REALM_GROUP_ID,),
+    "realm-marker-host-isolation": (REALM_MARKER_ID,),
+    "source-target-not-host-required": (CLEANUP_SUCCESS_ID,),
+    "realm-sharing-module-export-isolation": (REALM_SHARING_ID,),
+    "realm-group-module-export-isolation": (REALM_GROUP_ID,),
+    "realm-marker-module-export-isolation": (REALM_MARKER_ID,),
+    "realm-sharing-context-reuse": (REALM_SHARING_ID,),
+    "realm-group-context-reuse": (REALM_GROUP_ID,),
+    "realm-marker-context-reuse": (REALM_MARKER_ID,),
+    "realm-sharing-source-reexecution": (REALM_SHARING_ID,),
+    "realm-marker-source-reexecution": (REALM_MARKER_ID,),
+    "realm-saved-pristine-intrinsics": (REALM_SAVED_ID,),
+    "failure-hostile-error-detachment": (CLEANUP_FAILURE_ID,),
+    "failure-primitive-detachment": (CLEANUP_FAILURE_ID,),
+    "cleanup-timer-cancellation": (CLEANUP_SUCCESS_ID,),
+    "cleanup-listener-release": (CLEANUP_SUCCESS_ID,),
+    "cleanup-unresolved-promise-release": (CLEANUP_SUCCESS_ID,),
+    "rejection-before-settlement": (CLEANUP_FAILURE_ID,),
+    "rejection-boundary-turn": (CLEANUP_FAILURE_ID,),
+    "rejection-raw-reference-release": (CLEANUP_FAILURE_ID,),
+    "cleanup-before-reply": (CLEANUP_SUCCESS_ID,),
+    "protocol-fatal-no-reply": (CLEANUP_FAILURE_ID,),
+    "late-rejection-attribution": (CLEANUP_FAILURE_ID,),
+    "junit-property-cardinality": ("external::junit/property-cardinality",),
+    "restoration-byte-integrity": ("external::runner/restoration",),
+}
+assert len(EXPECTED_SELECTED_IDS) == 71
+assert set(EXPECTED_SELECTED_IDS) == set(
+    TASK3_RECIPES + TASK4_RECIPES + TASK5_RECIPES
+)
+
+REPRESENTATIVE_EVIDENCE_RECIPES = (
+    "schema-bool-id-terminated",
+    "realm-saved-context-reuse",
+    "protocol-malformed-ndjson",
+    "receipt-pending-first-apply",
+    "junit-property-cardinality",
+    "restoration-byte-integrity",
+)
+assert set(REPRESENTATIVE_EVIDENCE_RECIPES) <= set(EXPECTED_SELECTED_IDS)
 ```
+
+These six canonical recipes produce seven actual defect executions because
+`junit-property-cardinality` owns two internal variants. They run at their own
+registered phases—not during plan authoring—and are called out as the bounded
+representative evidence subset after all seven mutated/restored results exist.
 
 Every recipe stores its own literal sentinel and its separately spelled literal
 anchored regex; neither is derived at probe time. For example, the canonical
@@ -724,7 +825,14 @@ or later override.
 `validate_registry()` is the mandatory preflight:
 
 ```python
-def validate_registry(worktree: Path, phase: Phase | None = None) -> None:
+from collections import Counter
+
+
+def validate_registry(
+    worktree: Path,
+    known_pytest_ids: frozenset[str],
+    phase: Phase | None = None,
+) -> None:
     references = TASK3_RECIPES + TASK4_RECIPES + TASK5_RECIPES
     assert len(references) == 71
     assert len(set(references)) == 71
@@ -733,10 +841,12 @@ def validate_registry(worktree: Path, phase: Phase | None = None) -> None:
     assert len({recipe.sentinel for recipe in REGISTRY.values()}) == 71
 
     for recipe in REGISTRY.values():
+        assert recipe.selected_ids == EXPECTED_SELECTED_IDS[recipe.name]
         assert recipe.phase in ALLOWED_PHASES_BY_ID[recipe.selected_ids[0]]
         assert all(
             selected in ALLOWED_PHASES_BY_ID
             and recipe.phase in ALLOWED_PHASES_BY_ID[selected]
+            and (selected.startswith("external::") or selected in known_pytest_ids)
             for selected in recipe.selected_ids
         )
         assert recipe.forbidden_masking == FORBIDDEN_MASKING
@@ -749,6 +859,24 @@ def validate_registry(worktree: Path, phase: Phase | None = None) -> None:
             re.search(mask, recipe.sentinel) or re.search(mask, recipe.failure_regex)
             for mask in FORBIDDEN_MASKING
         )
+
+    restored_references = Counter(
+        nodeid
+        for nodeids in RESTORED_ONLY_BY_RECIPE.values()
+        for nodeid in nodeids
+    )
+    assert set(RESTORED_ONLY_BY_RECIPE) == {"late-rejection-attribution"}
+    assert set(restored_references) == set(RESTORED_ONLY_IDS)
+    assert all(count == 1 for count in restored_references.values())
+    assert all(nodeid in known_pytest_ids for nodeid in RESTORED_ONLY_IDS)
+    for recipe_name, nodeids in RESTORED_ONLY_BY_RECIPE.items():
+        recipe = REGISTRY[recipe_name]
+        assert set(nodeids).isdisjoint(recipe.selected_ids)
+        mutated_argv = Counter(recipe.probe.argv)
+        restored_argv = Counter(recipe.probe.restored_argv)
+        assert all(mutated_argv[nodeid] == 0 for nodeid in nodeids)
+        assert all(restored_argv[nodeid] == 1 for nodeid in nodeids)
+
     if phase is not None:
         expected = {
             "task3": TASK3_RECIPES,
@@ -766,13 +894,15 @@ def validate_registry(worktree: Path, phase: Phase | None = None) -> None:
 ```
 
 For recipes whose future phase edits are not present yet, Task 1 runs the full
-structural/cross-match checks and validates representative disposable literal
-edits; the exact-phase `validate_registry()` call is the first operation after
+structural/cross-match checks and only a generic disposable runner-restoration
+smoke test; the exact-phase `validate_registry()` call is the first operation after
 that phase's GREEN implementation and requires every real old literal to match
 once before any mutation. This does not permit changing registry metadata after
 its Task 1 manifest hash is frozen.
 
-`test_mutations.py` must prove before Task 3:
+`test_mutations.py` imports and validates the actual `REGISTRY` objects and
+serialized manifest; it must not construct a shadow registry from the phase-name
+lists or disposable placeholder edits. It must prove before Task 3:
 
 1. registry keys, `recipe.name`, and the concatenated phase references are the
    same 71-name set, with every reference count exactly one;
@@ -780,21 +910,34 @@ its Task 1 manifest hash is frozen.
    inside their one canonical recipe;
 3. every anchored regex full-matches its own sentinel, and no sentinel
    full-matches any other recipe's regex;
-4. every exact selected ID exists in the frozen collection or external-ID
-   allowlist and permits that recipe's phase;
-5. every recipe carries the complete forbidden-masking tuple, an exact probe,
-   and either literal match-once edits or the one synthetic property audit;
+4. all 71 `selected_ids` tuples equal `EXPECTED_SELECTED_IDS` exactly; every
+   selected ID exists in the frozen collection or external-ID allowlist and
+   permits that recipe's phase, with explicit assertions for the corrected
+   receipt-count, two sharing-diagnostic, two group-matrix, and marker-deferred
+   owners;
+5. every recipe carries the complete forbidden-masking tuple, exact mutated and
+   restored probe commands, and either literal real-target match-once edits or
+   the one synthetic property audit—generated `before:<name>`/`after:<name>`
+   bytes, fake argv, no-op probes, and placeholder paths are rejected;
 6. no sentinel or regex contains a placeholder, generic timeout/setup/
-   collection text, or `DID NOT RAISE`; and
-7. representative numeric-discard, fresh-realm, fatal-protocol, receipt, JUnit
-   cardinality, and restoration recipes mutate literal disposable fixtures,
-   fail only at their own sentinel in the intended phase, restore, and pass
-   cleanly, with zero cross-matches.
+   collection text, or `DID NOT RAISE`;
+7. all three `RESTORED_ONLY_IDS` exist in the frozen collection exactly once,
+   are disjoint from selected failure IDs, occur once only in
+   `late-rejection-attribution`'s restored argv, and are absent from its mutated
+   argv; and
+8. the six corrected mappings are literal equality checks:
+   `receipt-once-construction -> external::saved-main/receipt-count-55`,
+   `diagnostics-sharing-reject -> SHARING_REJECT_ID`,
+   `diagnostics-sharing-source-order -> SHARING_SOURCE_REJECTION_ID`,
+   `group-dialog-owner-matrix -> GROUP_DIALOG_OWNERS_ID`,
+   `group-own-dialog-matrix -> GROUP_OWN_DIALOG_ID`, and
+   `marker-deferred-roster -> MARKER_DEFERRED_ID`.
 
 Serialize the complete registry deterministically with names, phases, exact IDs,
 sentinels, regexes, forbidden rules, edit paths plus old/new byte SHA-256 values,
-and probe argv; write `mutation-registry.json` and its SHA-256 beside the Task 1
-artifacts. The Python module, JSON manifest, phase tuples, and hash are frozen
+probe argv, `RESTORED_ONLY_IDS`, and `RESTORED_ONLY_BY_RECIPE`; write
+`mutation-registry.json` and its SHA-256 beside the Task 1 artifacts. The Python
+module, JSON manifest, phase tuples, restored-only mapping, and hash are frozen
 together before Task 3. Later tasks may populate result records but may not add,
 rename, alias, or locally reconstruct a recipe; an edit that cannot match the
 implemented bytes is a stop-and-correct-registry event, not permission for an
@@ -802,12 +945,21 @@ ad hoc mutation.
 
 Create `/tmp/stage-b-baseline/test_restore.py` and run both tooling suites now in
 a disposable Git repository. They must additionally prove restoration after an
-intended probe failure; zero-match and two-match literal rejection; detection of
-bytes/hash/diff/status mismatch at exact `restoration bytes mismatch`; exact-node
-mismatch rejection; longest-prefix parsing of a real external pass, call
-failure, setup error, and parametrized node; property-list preservation;
-sentinel mismatch rejection; and restored GREEN parsing. Only after both suites
-pass may Task 3 execute a registry recipe.
+intended generic probe failure; zero-match and two-match literal rejection;
+detection of bytes/hash/diff/status mismatch at exact `restoration bytes
+mismatch`; exact-node mismatch rejection; longest-prefix parsing of a real
+external pass, call failure, setup error, and parametrized node; property-list
+preservation; sentinel mismatch rejection; and restored GREEN parsing.
+
+This Task 1 evidence is **schema/name/regex/reference/owner smoke coverage for all
+71**, plus generic runner restoration coverage. The generic disposable fixture
+is not a registry edit/probe and is never reported as a Stage B defect. Task 1
+does not execute any future implementation recipe. The actual bounded
+representative recipes execute at their registered Task 3/4/5 phases once each
+phase's real targets exist; all 71 real recipes likewise run only in Tasks 3–5.
+Task 3 may not start until both Task 1 smoke suites pass, and Task 5 does not
+report representative evidence until all seven actual subset variants have run
+and restored successfully.
 
 Add a `pytest_collection_finish` plugin in the same file that writes exact
 `item.nodeid` and sorted marker names to the path in
@@ -1792,7 +1944,7 @@ Load the canonical Task 1 registry and execute `TASK3_RECIPES` in its declared
 order. This phase references recipe names only; exact selected IDs, literal
 sentinels/anchored regexes, forbidden masking, byte edits, mutated probes, and
 restored probes come exclusively from `REGISTRY`. Before the first mutation,
-require `validate_registry(worktree, phase="task3")` to match every Task 3 old
+require `validate_registry(worktree, frozen_pytest_ids, phase="task3")` to match every Task 3 old
 literal exactly once. After each recipe, restore bytes/hash/diff/status and run
 its registry-owned restored probe; the saved `reversed` anti-mask case is already
 part of the relevant `MutationProbe.restored_argv`, not a second prose recipe.
@@ -2001,7 +2153,7 @@ Load the same immutable registry and execute `TASK4_RECIPES` in its declared
 order. Do not restate or alias a Task 3 recipe: group source re-execution,
 business-failure retention, fatal no-replay, the four independent fatal variants,
 and the exact 165 inventory each have one canonical Task 4 name. Require
-`validate_registry(worktree, phase="task4")` before execution and one result per
+`validate_registry(worktree, frozen_pytest_ids, phase="task4")` before execution and one result per
 canonical name afterward.
 
 The external fatal recipes launch and close only the processes in their
@@ -2103,14 +2255,21 @@ Use the complete, compiled, Ruff-clean Task 1 registry and runner unchanged.
 First audit all 71 recipes as one immutable set, compare its SHA-256 with the
 Task 1 registry manifest, and require exactly 14 Task 3 plus 16 Task 4 result
 records with no missing, duplicate, or extra canonical name. Then call
-`validate_registry(worktree, phase="task5")` and execute `TASK5_RECIPES` in its
+`validate_registry(worktree, frozen_pytest_ids, phase="task5")` and execute `TASK5_RECIPES` in its
 declared order. This task references recipe names only through that tuple; it
 must not reconstruct a defect, owner, sentinel, regex, edit, or probe locally.
 
 For each Task 5 recipe, require its exact selected IDs and intended call phase,
 exactly one assertion-message line matching only its own anchored regex, complete
 forbidden-masking rejection, literal match-once edits, restoration, and its
-registry-owned GREEN probe. The canonical `junit-property-cardinality` recipe
+registry-owned GREEN probe. Afterward, read the completed Task 3/4/5 result
+records for `REPRESENTATIVE_EVIDENCE_RECIPES` and require seven actual defect
+executions: their real registry edits/probes, intended selected IDs/phases,
+canonical sentinels, bytes/SHA-256/binary-diff/NUL-status restoration, restored
+GREEN commands, and zero cross-matches. This is the bounded representative
+execution report; the complete matrix remains all 71 canonical recipes.
+
+The canonical `junit-property-cardinality` recipe
 runs missing and duplicate-identical property variants internally and both must
 produce exact `stage_b property cardinality`; there is no second property recipe
 or second phase reference. The canonical `restoration-byte-integrity` recipe
@@ -2487,13 +2646,22 @@ Fresh checks performed while authoring this plan:
 - measured components reproduce candidate arithmetic `19 + 10 + 4 = 33` and
   `33 + 29 = 62`; the executor still must obtain integrated raw-JUnit evidence
   from the final implementation before claiming acceptance;
-- the disposable canonical-registry checker compiled and passed Ruff
-  check/format, loaded exactly 71 recipes partitioned `14/16/41`, proved 71
-  unique names and 71 unique literal sentinels, full-matched every sentinel only
-  to its own anchored regex, audited match-once/restoration literals for all 71,
-  and ran seven representative mutation variants (numeric discard, saved realm,
-  fatal protocol, receipt, both property-cardinality variants, and restoration)
-  with zero cross-matches;
+- the disposable canonical-registry **schema checker** compiled and passed Ruff
+  check/format, loaded the exact 71-name `14/16/41` partition, proved unique
+  names/sentinels and zero regex cross-matches, and compared all 71
+  `EXPECTED_SELECTED_IDS` entries; explicit assertions covered the corrected
+  receipt-count, two sharing-diagnostic, two group-matrix, and marker-deferred
+  owners, while the three `RESTORED_ONLY_IDS` were separately exact, unique, and
+  disjoint from all selected failure owners (`PASS registry-schema=71 owners=71
+  phases=71 corrected-owners=6 restored-only=3 cross-matches=0
+  generic-restoration=1`);
+- its literal-file loop checked only the registry runner's generic match-once and
+  restoration mechanics against disposable fixtures. It did **not** contain the
+  future Stage B implementation's real old/new bytes or probe commands, did not
+  execute real Stage B defects, and is not representative mutation evidence;
+  the seven actual representative executions named by
+  `REPRESENTATIVE_EVIDENCE_RECIPES`, and the full 71-recipe run, remain future
+  Tasks 3–5 evidence;
 - the general plan checker found six task headings, exercised valid, missing,
   and duplicate-identical property lists with exact
   `stage_b property cardinality`, regenerated all 165 round-robin IDs and the
@@ -2560,8 +2728,9 @@ condition triggers, especially if:
   `19 + 10 + 4 = 33`; candidate all `33 + 29 = 62`; baseline saved
   `1,045 + 10 + 4 = 1,059`; baseline all `1,059 + 29 = 1,088`.
 - **Mutation registry:** exactly 71 canonical recipes are partitioned once as
-  Task 3/4/5 `14/16/41`; names, phases, exact selected IDs, literal sentinels,
-  anchored regexes, forbidden masking, literal edits, and probes have one owner.
+  Task 3/4/5 `14/16/41`; names, phases, all 71 expected selected-ID tuples,
+  literal sentinels, anchored regexes, forbidden masking, literal real edits,
+  and probe commands have one owner. Restored-only IDs are validated separately.
   No later task duplicates a regex table or alias, and property cardinality is
   one recipe with two internal variants.
 - **No placeholders:** unknown candidate full-order/JUnit hashes are explicitly
