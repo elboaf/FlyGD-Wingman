@@ -708,15 +708,6 @@ Its stderr is empty.
   `bridge: fleet_sharing_stop_source failed`, and messages
   `controlled Start failure` and `controlled Stop failure`; and
 - every other Fleet Sharing scenario retains zero controlled bridge errors.
-- Fleet Sharing `reject` retains exactly one `error` diagnostic with rendered
-  prefix `bridge: fleet_sharing_watch failed` and message
-  `controlled bridge failure`;
-- Fleet Sharing `bridge-source-rejection` retains exactly two `error`
-  diagnostics, in order, with rendered prefixes
-  `bridge: fleet_sharing_start_source failed` and
-  `bridge: fleet_sharing_stop_source failed`, and messages
-  `controlled Start failure` and `controlled Stop failure`; and
-- every other Fleet Sharing scenario retains zero controlled bridge errors.
 
 The worker diagnostics preserve level, order, rendered text, and detached
 primitive arguments. One-shot rendering preserves the existing stdout/stderr
