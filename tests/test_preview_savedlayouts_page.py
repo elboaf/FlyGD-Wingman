@@ -56,9 +56,14 @@ def _saved_layout_receipt_once(
         return _SAVED_LAYOUT_RECEIPT
 
 
-def _build_saved_layout_receipt(
+def _construct_saved_layout_receipt(
     tmp_path_factory: pytest.TempPathFactory,
-) -> SavedLayoutReceiptEvidence:
+) -> tuple[
+    SavedLayoutReceiptEvidence,
+    tuple[weakref.ReferenceType[object], ...],
+    frozenset[int],
+    object | None,
+]:
     state_root = tmp_path_factory.mktemp("saved-layout-receipt")
     had_localappdata = "LOCALAPPDATA" in os.environ
     original_localappdata = os.environ.get("LOCALAPPDATA")
@@ -69,6 +74,7 @@ def _build_saved_layout_receipt(
         key: weakref.ref(value) for key, value in settings._COMMITTED_PREVIEWS.items()
     }
     fsync_calls = 0
+    delegated_fsync_calls = 0
     api = None
     empty_api = None
     owned_refs: list[weakref.ReferenceType[object]] = []
@@ -76,9 +82,10 @@ def _build_saved_layout_receipt(
     evidence = None
 
     def counting_fsync(fd: int) -> None:
-        nonlocal fsync_calls
+        nonlocal fsync_calls, delegated_fsync_calls
         fsync_calls += 1
         original_fsync(fd)
+        delegated_fsync_calls += 1
 
     try:
         with pytest.MonkeyPatch.context() as patch:
@@ -129,7 +136,7 @@ def _build_saved_layout_receipt(
                     api._preview_layouts._ports, apply=apply_pending
                 )
                 bulk = api.apply_preview_layout(record["id"], record["revision"])
-                pending = pending_states[-1]
+                pending_receipt = pending_states[-1]
                 lease = api._preview_layout_admission.try_begin(exclusive=True)
                 refused = api.set_preview_excluded("Alice", False)
                 api._preview_layout_admission.finish(lease)
@@ -195,7 +202,7 @@ def _build_saved_layout_receipt(
                     "both": both,
                     "visible": visible,
                     "bulk": bulk,
-                    "pending": pending,
+                    "pending": pending_receipt,
                     "refused": refused,
                     "retry": retry,
                     "created": created,
@@ -230,7 +237,7 @@ def _build_saved_layout_receipt(
                 assert (
                     isinstance(durable_preview, dict) and committed == durable_preview
                 ), _RECEIPT_MUTATION_SENTINELS["durable"]
-                pending_operation = pending.get("operation", {})
+                pending_operation = pending_receipt.get("operation", {})
                 assert pending_operation.get("action") == "apply", (
                     _RECEIPT_MUTATION_SENTINELS["pending"]
                 )
@@ -239,6 +246,7 @@ def _build_saved_layout_receipt(
                 )
                 assert geometry_apply["persisted"] is True
                 assert fsync_calls == 19, _RECEIPT_MUTATION_SENTINELS["fsync"]
+                assert delegated_fsync_calls == 19, _RECEIPT_MUTATION_SENTINELS["fsync"]
                 evidence = SavedLayoutReceiptEvidence(
                     receipt_json=receipt_json,
                     durable_json=durable_json,
@@ -251,6 +259,7 @@ def _build_saved_layout_receipt(
                     pending_action=pending_operation["action"],
                     pending_was_true=pending_operation["pending"],
                 )
+                retained_stage_b_owner = None
             finally:
                 if api is not None:
                     api.shutdown_previews()
@@ -273,14 +282,6 @@ def _build_saved_layout_receipt(
                 api = None
                 empty_api = None
                 gc.collect()
-                retained_stage_b_readers = {
-                    key: settings._COMMITTED_PREVIEWS.get(key)
-                    for key in reader_keys
-                    if settings._COMMITTED_PREVIEWS.get(key) is not None
-                }
-                assert not retained_stage_b_readers, _RECEIPT_MUTATION_SENTINELS[
-                    "reader"
-                ]
     finally:
         paths._use_legacy = original_use_legacy
 
@@ -300,6 +301,31 @@ def _build_saved_layout_receipt(
         and settings._COMMITTED_PREVIEWS.get(key) is not value
     }
     assert evidence is not None
+    return (
+        evidence,
+        tuple(owned_refs),
+        frozenset(reader_keys),
+        retained_stage_b_owner,
+    )
+
+
+def _build_saved_layout_receipt(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> SavedLayoutReceiptEvidence:
+    evidence, owned_refs, reader_keys, retained_stage_b_owner = (
+        _construct_saved_layout_receipt(tmp_path_factory)
+    )
+    gc.collect()
+    retained_stage_b_readers = {
+        key: settings._COMMITTED_PREVIEWS.get(key)
+        for key in reader_keys
+        if settings._COMMITTED_PREVIEWS.get(key) is not None
+    }
+    assert not retained_stage_b_readers, _RECEIPT_MUTATION_SENTINELS["reader"]
+    assert retained_stage_b_owner is None, _RECEIPT_MUTATION_SENTINELS["reader"]
+    assert all(reference() is None for reference in owned_refs), (
+        _RECEIPT_MUTATION_SENTINELS["reader"]
+    )
     return evidence
 
 

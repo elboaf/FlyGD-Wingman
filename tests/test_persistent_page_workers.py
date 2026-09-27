@@ -433,6 +433,10 @@ def _assert_mutation(condition: object, key: str) -> None:
     assert condition, MUTATION_SENTINELS[key]
 
 
+def _fail_mutation(key: str) -> None:
+    raise AssertionError(MUTATION_SENTINELS[key]) from None
+
+
 def _assert_finite_json(value: object) -> None:
     if value is None or isinstance(value, (str, bool)):
         return
@@ -459,21 +463,42 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
 ):
     del qualification_inputs
     worker = page_worker_factory(family)
-    first = _qualification_request(
-        worker, family, "realm", run="A", nested={"value": "clean"}
-    )
+    try:
+        first = _qualification_request(
+            worker, family, "realm", run="A", nested={"value": "clean"}
+        )
+    except NodeScenarioCrash as error:
+        if "retained a target module" in str(error):
+            _fail_mutation("module")
+        raise
     process = worker._proc
-    assert first["output"]["fresh_execution"] is True, REALM_SENTINELS[family]
+    assert first["output"].get("serialization_safe") is True, REALM_SENTINELS[family]
     first["output"]["nested_python_poison"] = True
-    poison = _qualification_request(
-        worker, family, "realm", run="poison", nested={"value": "clean"}
-    )
-    final = _qualification_request(
-        worker, family, "realm", run="A", nested={"value": "clean"}
-    )
+    try:
+        poison = _qualification_request(
+            worker, family, "realm", run="poison", nested={"value": "clean"}
+        )
+        final = _qualification_request(
+            worker, family, "realm", run="A", nested={"value": "clean"}
+        )
+    except NodeScenarioCrash as error:
+        if "retained a target module" in str(error):
+            _fail_mutation("module")
+        if (
+            "poisoned" in str(error)
+            or "already been declared" in str(error)
+            or "JSON at position" in str(error)
+        ):
+            _fail_mutation("context")
+        raise
+    except NodeScenarioFailure as error:
+        if "poisoned" in str(error):
+            _fail_mutation("context")
+        raise
 
     assert process is not None and worker._proc is not None
     assert worker._proc.pid == process.pid
+    _assert_mutation(final["output"]["realm_pristine"] is True, "context")
     _assert_mutation(
         len(
             {
@@ -494,7 +519,7 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
     )
     _assert_mutation(
         all(
-            reply["output"]["input_detached"] is True
+            reply["output"]["host_input_clean"] is True
             for reply in (first, poison, final)
         ),
         "input",
@@ -514,10 +539,20 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
         "module",
     )
     _assert_mutation(poison["output"]["promise_completion"] is True, "promise")
+    assert poison["output"]["serialization_safe"] is True
+    assert poison["output"]["mode"] == "realm"
+    assert poison["output"].get("output") != "forged"
+    assert poison["diagnostics"] == [
+        {
+            "level": "warn",
+            "rendered": 'realm poison {"nested":{"value":"before"}}',
+            "args": ["realm poison", {"nested": {"value": "before"}}],
+        }
+    ]
     assert final["output"]["host_prototypes_clean"] is True
+    assert final["output"]["realm_pristine"] is True
     assert final["output"]["dom_pristine"] is True
     assert final["output"]["poison_absent"] is True
-    assert final["output"]["cached_output_absent"] is True
     assert final["output"]["decoded_input_value"] == "clean"
     assert final["output"]["prior_reply_value"] == "clean"
     assert "nested_python_poison" not in final["output"]
@@ -557,12 +592,28 @@ def _run_direct_cli_matrix(inputs: QualificationInputs) -> None:
                 )
             elif case.name == "group-backward":
                 assert len(stdout_lines) == 6
-                generated = [
-                    re.search(r"DEV api\.[^(]+\( ([^ ]+) ", line)
-                    for line in stdout_lines[1:3] + stdout_lines[4:5]
-                ]
-                assert all(match is not None for match in generated)
-                assert len({match.group(1) for match in generated if match}) == 1
+                assert stdout_lines[0] == (
+                    "DEV api.create_preview_cycle_group( Backward test )"
+                )
+                forward = re.fullmatch(
+                    r"DEV api\.set_preview_cycle_group_bind\( ([^ ]+) Ctrl\+F2 \)",
+                    stdout_lines[1],
+                )
+                backward = re.fullmatch(
+                    r"DEV api\.set_preview_cycle_group_prev_bind\( ([^ ]+) Ctrl\+F3 \)",
+                    stdout_lines[2],
+                )
+                assert stdout_lines[3] == (
+                    "DEV api.set_preview_cycle_group_prev_bind( stale Ctrl+F4 )"
+                )
+                cleared = re.fullmatch(
+                    r"DEV api\.set_preview_cycle_group_prev_bind\( ([^ ]+)  \)",
+                    stdout_lines[4],
+                )
+                assert (
+                    forward is not None and backward is not None and cleared is not None
+                )
+                assert forward.group(1) == backward.group(1) == cleared.group(1)
                 assert success.stderr == ""
             else:
                 assert stdout_lines == [case.terminal]
@@ -604,9 +655,96 @@ def test_request_cleanup_after_success(
     worker = page_worker_factory("saved-layouts")
     resources = _qualification_request(worker, "saved-layouts", "resources")
     process = worker._proc
+    assert resources["output"]["registered_timer_handles"] >= 2
+    assert resources["output"]["registered_listeners"] == 1
     assert resources["cleanup"] == ZERO_CLEANUP, (
         "stage-b qualification cleanup-success: retained resources"
     )
+    asynchronous = _qualification_request(worker, "saved-layouts", "async-timer")
+    assert asynchronous["output"]["async_globals"] is True
+    assert asynchronous["diagnostics"] == [
+        {
+            "level": "info",
+            "rendered": 'async timer complete {"ready":true}',
+            "args": ["async timer complete", {"ready": True}],
+        }
+    ]
+    listener_poison = _qualification_request(
+        worker, "saved-layouts", "cleanup-listener-poison"
+    )
+    assert listener_poison["output"]["registered_listeners"] == 1
+    assert listener_poison["cleanup"] == ZERO_CLEANUP
+
+    node = shutil.which("node")
+    assert node is not None
+    cleanup_failure_worker = NodeScenarioWorker(
+        [
+            node,
+            str(WORKER),
+            "--worker",
+            "saved-layouts",
+            str(WEB),
+            str(qualification_inputs.manifest_for("saved-layouts")),
+        ],
+        cwd=ROOT,
+    )
+    try:
+        with pytest.raises(NodeScenarioCrash) as cleanup_failure:
+            _qualification_request(
+                cleanup_failure_worker,
+                "saved-layouts",
+                "cleanup-removal-failure",
+            )
+        assert "synthetic listener removal failure" in str(cleanup_failure.value)
+        assert cleanup_failure_worker._proc is None
+        with pytest.raises(NodeScenarioCrash) as timer_failure:
+            _qualification_request(
+                cleanup_failure_worker,
+                "saved-layouts",
+                "cleanup-timer-failure",
+            )
+        assert "synthetic timer cleanup failure" in str(timer_failure.value)
+        assert cleanup_failure_worker._proc is None
+        cleanup_recovery = _qualification_request(
+            cleanup_failure_worker, "saved-layouts", "clean"
+        )
+        assert cleanup_recovery["cleanup"] == ZERO_CLEANUP
+        assert cleanup_failure_worker._proc is not None
+    finally:
+        cleanup_failure_worker.close()
+
+    diagnostics = _qualification_request(worker, "saved-layouts", "diagnostics")
+    assert diagnostics["diagnostics"] == [
+        {
+            "level": "log",
+            "rendered": 'ordinary diagnostic 7 {"nested":{"value":"before"}}',
+            "args": ["ordinary diagnostic", 7, {"nested": {"value": "before"}}],
+        },
+        {
+            "level": "info",
+            "rendered": 'info diagnostic {"index":2}',
+            "args": ["info diagnostic", {"index": 2}],
+        },
+        {
+            "level": "debug",
+            "rendered": 'debug diagnostic {"index":3}',
+            "args": ["debug diagnostic", {"index": 3}],
+        },
+        {
+            "level": "warn",
+            "rendered": 'warn diagnostic {"index":4}',
+            "args": ["warn diagnostic", {"index": 4}],
+        },
+        {
+            "level": "error",
+            "rendered": 'expected diagnostic {"kind":"controlled"}',
+            "args": ["expected diagnostic", {"kind": "controlled"}],
+        },
+    ]
+    forged = _qualification_request(worker, "saved-layouts", "completion-forge")
+    assert forged["ok"] is True
+    assert forged["output"]["own_value"] == "preserved"
+    assert forged["output"].get("output") != "forged"
     clean = _qualification_request(worker, "saved-layouts", "clean")
     assert worker._proc is not None and process is not None
     assert worker._proc.pid == process.pid
@@ -654,10 +792,6 @@ def test_request_cleanup_after_business_failure(
 ):
     del qualification_inputs
     worker = page_worker_factory("saved-layouts")
-    retention = _qualification_request(worker, "saved-layouts", "clean")
-    assert retention["output"]["process_retainable"] is True, (
-        "stage-b qualification cleanup-failure: process retention violated"
-    )
     _assert_business_failure(worker, "error", expected="synthetic Error failure")
     process_a = worker._proc
     assert process_a is not None
@@ -666,6 +800,8 @@ def test_request_cleanup_after_business_failure(
         ("null", "null"),
         ("hostile", "<unreadable message>"),
         ("proxy", "<unreadable message>"),
+        ("hostile-completion", "JSON object keys were unreadable"),
+        ("poisoned-error", "protected poisoned Error failure"),
         ("invalid-business", "synthetic invalid business input"),
         ("before-rejection", "synthetic before-settlement rejection"),
         ("boundary-rejection", "synthetic timer-boundary rejection"),
@@ -698,6 +834,7 @@ def test_request_cleanup_after_business_failure(
         _qualification_request(worker, "saved-layouts", "clean")
     rendered = str(late_crash.value)
     assert late_crash.value.scenario == "qualification/saved-layouts/clean"
+    assert "status 70" in rendered
     assert "before the next request" in rendered
     assert "qualification/saved-layouts/late-success" in rendered
     assert f"request {late_id}" in rendered
@@ -750,7 +887,12 @@ def test_saved_layout_receipt_is_durable_and_detached(tmp_path_factory, request)
     created = receipt["created"]["state"]["layouts"][0]
     updated = receipt["updated"]["state"]["layouts"][0]
     renamed = receipt["renamed"]["state"]["layouts"][0]
-    _assert_mutation(created["id"] == evidence.created_id, "identity")
+    _assert_mutation(
+        created["id"] == evidence.created_id
+        and len(created["id"]) == 32
+        and all(character in "0123456789abcdef" for character in created["id"]),
+        "identity",
+    )
     assert created["revision"] == evidence.created_revision
     assert updated["id"] == created["id"]
     assert updated["revision"] == evidence.updated_revision

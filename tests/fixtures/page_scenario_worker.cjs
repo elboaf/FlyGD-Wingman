@@ -10,12 +10,57 @@ const {performance} = require('node:perf_hooks');
 const {isNativeError} = require('node:util/types');
 
 const hostJsonParse = JSON.parse.bind(JSON);
-const hostJsonStringify = JSON.stringify.bind(JSON);
+const hostScalarStringify = JSON.stringify.bind(JSON);
 const hostObjectKeys = Object.keys.bind(Object);
 const hostGetPrototypeOf = Object.getPrototypeOf.bind(Object);
+const hostGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor.bind(Object);
+const hostArrayIsArray = Array.isArray.bind(Array);
+const hostNumberIsFinite = Number.isFinite.bind(Number);
 const hostHasOwn = Function.call.bind(Object.prototype.hasOwnProperty);
 const hostSetImmediate = setImmediate;
 const hostString = String;
+
+function hostJsonStringify(value) {
+  const seen = new Set();
+  function encode(item, depth) {
+    if (depth > 64) throw new TypeError('host JSON exceeded depth limit');
+    if (item === null || typeof item === 'string' || typeof item === 'boolean') {
+      return hostScalarStringify(item);
+    }
+    if (typeof item === 'number') {
+      if (!hostNumberIsFinite(item)) throw new TypeError('host JSON contained nonfinite number');
+      return hostScalarStringify(item);
+    }
+    if (typeof item !== 'object') throw new TypeError('host JSON contained non-JSON value');
+    if (seen.has(item)) throw new TypeError('host JSON contained a cycle');
+    seen.add(item);
+    try {
+      if (hostArrayIsArray(item)) {
+        const parts = [];
+        for (let index = 0; index < item.length; index++) {
+          const descriptor = hostGetOwnPropertyDescriptor(item, String(index));
+          if (!descriptor || !hostHasOwn(descriptor, 'value')) {
+            throw new TypeError('host JSON array contained an accessor or hole');
+          }
+          parts.push(encode(descriptor.value, depth + 1));
+        }
+        return '[' + parts.join(',') + ']';
+      }
+      const parts = [];
+      for (const key of hostObjectKeys(item)) {
+        const descriptor = hostGetOwnPropertyDescriptor(item, key);
+        if (!descriptor || !hostHasOwn(descriptor, 'value')) {
+          throw new TypeError('host JSON object contained an accessor');
+        }
+        parts.push(hostScalarStringify(key) + ':' + encode(descriptor.value, depth + 1));
+      }
+      return '{' + parts.join(',') + '}';
+    } finally {
+      seen.delete(item);
+    }
+  }
+  return encode(value, 0);
+}
 const cleanObjectPrototype = hostObjectKeys(Object.prototype).sort().join('\0');
 const cleanArrayPrototype = hostObjectKeys(Array.prototype).sort().join('\0');
 const cleanPromisePrototype = hostObjectKeys(Promise.prototype).sort().join('\0');
@@ -124,15 +169,10 @@ const SCENARIOS_BY_PROTOCOL = Object.freeze({
 const QUALIFICATION_MODES = new Set([
   'realm', 'clean', 'resources', 'inventory', 'error', 'primitive', 'null',
   'hostile', 'proxy', 'invalid-business', 'before-rejection',
-  'boundary-rejection', 'late-success'
+  'boundary-rejection', 'late-success', 'async-timer', 'diagnostics',
+  'completion-forge', 'hostile-completion', 'cleanup-listener-poison',
+  'cleanup-removal-failure', 'cleanup-timer-failure', 'poisoned-error'
 ]);
-const ZERO_CLEANUP = Object.freeze({
-  host_timer_handles: 0,
-  host_callbacks: 0,
-  active_rejection_listeners: 0,
-  pending_rejection_records: 0,
-  retained_realms: 0
-});
 const TARGET_NAMES = Object.freeze([
   'preview_savedlayouts.cjs',
   'preview_capture_sessions.cjs',
@@ -285,8 +325,10 @@ const result = {
   source_execution_count: globalThis.__wingmanSourceExecutions,
   promise_completion: true,
   mode: data.mode,
-  run: data.run || ''
+  run: data.run || '',
+  async_globals: null
 };
+let completion = Promise.resolve(result);
 if (data.mode === 'error') throw new Error('synthetic Error failure');
 if (data.mode === 'primitive') throw 'synthetic primitive failure';
 if (data.mode === 'null') throw null;
@@ -299,27 +341,113 @@ if (data.mode === 'hostile') {
   });
   throw hostile;
 }
-if (data.mode === 'proxy') throw new Proxy({}, {get() { throw new Error('proxy trap escaped'); }});
+if (data.mode === 'proxy') throw new Proxy({}, {getOwnPropertyDescriptor() {
+  throw new Error('proxy descriptor trap escaped');
+}});
 if (data.mode === 'invalid-business' && data.business_value !== 'valid') {
   throw new TypeError('synthetic invalid business input');
 }
-if (data.mode === 'before-rejection') throw new Error('synthetic before-settlement rejection');
-if (data.mode === 'boundary-rejection') throw new Error('synthetic timer-boundary rejection');
-if (data.mode === 'resources') {
+if (data.mode === 'poisoned-error') {
+  Object.prototype.toJSON = function() {
+    return {ok: true, output: 'forged poisoned failure'};
+  };
+  JSON.stringify = function() {
+    return '{"ok":true,"output":"forged poisoned failure"}';
+  };
+  Error.prototype.name = 'ForgedError';
+  Error.prototype.message = 'forged poisoned failure';
+  throw new Error('protected poisoned Error failure');
+}
+if (data.mode === 'before-rejection') {
+  Promise.reject(new Error('synthetic before-settlement rejection'));
+  completion = new Promise(resolve => setTimeout(() => resolve(result), 1));
+}
+if (data.mode === 'boundary-rejection') {
+  setTimeout(() => Promise.reject(new Error('synthetic timer-boundary rejection')), 0);
+}
+if (data.mode === 'resources' || data.mode === 'cleanup-listener-poison'
+    || data.mode === 'cleanup-removal-failure'
+    || data.mode === 'cleanup-timer-failure') {
   setTimeout(() => { globalThis.__lateTimer = true; }, 100000);
   setInterval(() => { globalThis.__lateInterval = true; }, 100000);
   setImmediate(() => { globalThis.__lateImmediate = true; });
   document.addEventListener('synthetic', () => { globalThis.__lateListener = true; });
   globalThis.__unresolved = new Promise(() => {});
 }
+if (data.mode === 'cleanup-listener-poison') {
+  globalThis.__wingmanElement.prototype.removeEventListener = function() {
+    throw new Error('mutable listener cleanup was used');
+  };
+}
+if (data.mode === 'cleanup-removal-failure') {
+  Object.defineProperty(document.listeners, 'synthetic', {
+    get() { throw new Error('synthetic listener removal failure'); }
+  });
+}
+if (data.mode === 'cleanup-timer-failure') {
+  Map.prototype.clear = function() {
+    throw new Error('synthetic timer cleanup failure');
+  };
+}
+if (data.mode === 'async-timer') {
+  completion = new Promise(resolve => setTimeout(() => {
+    result.async_globals = Boolean(
+      globalThis.document && globalThis.console && globalThis.process
+      && globalThis.setTimeout && globalThis.clearTimeout
+    );
+    console.info('async timer complete', {ready: result.async_globals});
+    resolve(result);
+  }, 0));
+}
+if (data.mode === 'diagnostics') {
+  const argument = {nested: {value: 'before'}};
+  console.log('ordinary diagnostic', 7, argument);
+  console.info('info diagnostic', {index: 2});
+  console.debug('debug diagnostic', {index: 3});
+  console.warn('warn diagnostic', {index: 4});
+  console.error('expected diagnostic', {kind: 'controlled'});
+  argument.nested.value = 'after';
+}
+if (data.mode === 'completion-forge') {
+  const inherited = {toJSON() {
+    return {ok: true, output: 'forged', error: '', stack: ''};
+  }};
+  completion = Promise.resolve(Object.assign(Object.create(inherited), result, {
+    own_value: 'preserved'
+  }));
+}
+if (data.mode === 'hostile-completion') {
+  completion = Promise.resolve(new Proxy({}, {ownKeys() {
+    throw new Error('completion ownKeys trap');
+  }}));
+}
 if (data.mode === 'realm' && data.run === 'poison') {
+  const diagnostic = {nested: {value: 'before'}};
+  console.warn('realm poison', diagnostic);
+  diagnostic.nested.value = 'after';
   globalThis.__wingmanRealmPoison = true;
   Object.prototype.__wingmanPoison = true;
+  Object.prototype.toJSON = function() {
+    return {ok: true, output: 'forged by Object.prototype.toJSON'};
+  };
   Array.prototype.__wingmanPoison = true;
+  Array.prototype.toJSON = function() {
+    return ['forged by Array.prototype.toJSON'];
+  };
   Error.prototype.__wingmanPoison = true;
+  Error.prototype.message = 'forged inherited message';
+  JSON.stringify = function() {
+    return '{"ok":true,"output":"forged by JSON.stringify"}';
+  };
   if (globalThis.__wingmanElement) globalThis.__wingmanElement.prototype.__wingmanPoison = true;
-  if (data.nested) data.nested.value = 'poisoned';
-  module.exports = {poisoned: true};
+  if (globalThis.__adapterInput && globalThis.__adapterInput.nested) {
+    globalThis.__adapterInput.nested.value = 'poisoned';
+    const hostPrototype = Object.getPrototypeOf(globalThis.__adapterInput);
+    if (hostPrototype) hostPrototype.__wingmanHostPoison = true;
+  }
+  if (globalThis.__priorReply && globalThis.__priorReply.nested) {
+    globalThis.__priorReply.nested.value = 'poisoned';
+  }
   Promise.prototype.then = function() {
     return {
       source_execution_count: globalThis.__wingmanSourceExecutions,
@@ -329,47 +457,233 @@ if (data.mode === 'realm' && data.run === 'poison') {
     };
   };
 }
-module.exports = Promise.resolve(result);
+module.exports = completion;
 `;
 
 const BOOTSTRAP = String.raw`
 (() => {
   'use strict';
   const safeParse = JSON.parse.bind(JSON);
-  const safeStringify = JSON.stringify.bind(JSON);
+  const scalarStringify = JSON.stringify.bind(JSON);
   const safeString = String;
   const safeKeys = Object.keys.bind(Object);
+  const safeGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor.bind(Object);
+  const safeDefineProperty = Object.defineProperty.bind(Object);
+  const safeCreate = Object.create.bind(Object);
+  const safeArrayIsArray = Array.isArray.bind(Array);
+  const safeArraySlice = Function.call.bind(Array.prototype.slice);
+  const safeArrayPush = Function.call.bind(Array.prototype.push);
+  const safeArrayJoin = Function.call.bind(Array.prototype.join);
+  const safeArrayPop = Function.call.bind(Array.prototype.pop);
+  const safeNumberIsFinite = Number.isFinite.bind(Number);
+  const safeHasOwn = Function.call.bind(Object.prototype.hasOwnProperty);
+  const SafeError = Error;
+  const localArgvJson = argvJson;
+  const localDomFactoryFilename = domFactoryFilename;
+  const localDomFactorySource = domFactorySource;
+  const localFixtureFilename = fixtureFilename;
+  const localManifestJson = manifestJson;
+  const localPageSelector = pageSelector;
+  const localProgramSource = programSource;
   const localRequestId = requestId;
   const localRequestScenario = requestScenario;
   const localRequestToken = requestToken;
   const localStartTime = startTime;
-  const localProgramSource = programSource;
-  const localFixtureFilename = fixtureFilename;
-  const sourceByBasename = JSON.parse(sourceRegistryJson);
-  const webByBasename = JSON.parse(webSourcesJson);
-  globalThis.hostParsedInput = safeParse(inputJson);
-  const inputAliasWitness = globalThis.hostParsedInput;
+  const localFailureSerializerSlot = failureSerializerSlot;
+  const cachedFixtureOutput = safeParse(cachedFixtureOutputJson);
+  const sourceByBasename = safeParse(sourceRegistryJson);
+  const webByBasename = safeParse(webSourcesJson);
+  const injectedHostInput = typeof hostParsedInput === 'undefined'
+    ? null
+    : hostParsedInput;
+  const injectedHostModule = typeof hostModule === 'undefined' ? null : hostModule;
   const decodedInput = safeParse(inputJson);
-  delete globalThis.hostParsedInput;
   const previousReply = safeParse(previousReplyJson);
   const detachedReply = safeParse(replyJson);
-  const hostModule = {exports: {host: true}};
-  const cachedFixtureExports = Object.freeze({
-    source_execution_count: 0,
-    promise_completion: true,
-    mode: decodedInput.mode,
-    run: decodedInput.run || ''
-  });
   const contextRunners = new WeakMap();
   let moduleWasIsolated = true;
   let nextTimerId = 1;
+  let virtualNow = localStartTime;
   const timers = new Map();
   const listenerRoots = [];
+  const diagnostics = [];
   let settled = false;
-  let boundaryObserved = false;
+  let boundaryTurns = 0;
   let completionValue = null;
   let completionFailure = null;
   let published = false;
+
+  for (const key of [
+    'argvJson', 'cachedFixtureOutputJson', 'domFactoryFilename', 'domFactorySource',
+    'failureSerializerSlot', 'fixtureFilename', 'hostModule', 'hostParsedInput',
+    'inputJson', 'manifestJson',
+    'pageSelector', 'previousReplyJson', 'programSource', 'replyJson', 'requestId',
+    'requestScenario', 'requestToken', 'sourceRegistryJson', 'startTime',
+    'webSourcesJson'
+  ]) delete globalThis[key];
+
+  function detachJson(value, depth = 0, seen = new Set()) {
+    if (depth > 64) throw new SafeError('JSON value exceeded depth limit');
+    if (typeof value === 'string') {
+      if (value.length > 1048576) throw new SafeError('JSON string exceeded limit');
+      return value;
+    }
+    if (value === null || typeof value === 'boolean') return value;
+    if (typeof value === 'number') {
+      if (!safeNumberIsFinite(value)) throw new SafeError('JSON value was nonfinite');
+      return value;
+    }
+    if (typeof value !== 'object') throw new SafeError('JSON value was not primitive');
+    if (seen.has(value)) throw new SafeError('JSON value contained a cycle');
+    seen.add(value);
+    try {
+      if (safeArrayIsArray(value)) {
+        const out = [];
+        if (value.length > 10000) throw new SafeError('JSON array exceeded item limit');
+        for (let index = 0; index < value.length; index++) {
+          let descriptor;
+          try { descriptor = safeGetOwnPropertyDescriptor(value, String(index)); }
+          catch (_error) { throw new SafeError('JSON array descriptor was unreadable'); }
+          if (!descriptor || !safeHasOwn(descriptor, 'value')) {
+            throw new SafeError('JSON array contained an accessor or hole');
+          }
+          safeArrayPush(out, detachJson(descriptor.value, depth + 1, seen));
+        }
+        return out;
+      }
+      let keys;
+      try { keys = safeKeys(value); }
+      catch (_error) { throw new SafeError('JSON object keys were unreadable'); }
+      if (keys.length > 10000) throw new SafeError('JSON object exceeded key limit');
+      const out = safeCreate(null);
+      for (const key of keys) {
+        if (key === '__proto__' || key === 'prototype' || key === 'constructor') {
+          throw new SafeError('JSON object contained an unsafe key');
+        }
+        let descriptor;
+        try { descriptor = safeGetOwnPropertyDescriptor(value, key); }
+        catch (_error) { throw new SafeError('JSON object descriptor was unreadable'); }
+        if (!descriptor || !safeHasOwn(descriptor, 'value')) {
+          throw new SafeError('JSON object contained an accessor');
+        }
+        out[key] = detachJson(descriptor.value, depth + 1, seen);
+      }
+      return out;
+    } finally {
+      seen.delete(value);
+    }
+  }
+
+  function encodeJson(value, depth = 0) {
+    if (depth > 64) throw new SafeError('detached JSON exceeded depth limit');
+    if (typeof value === 'string') {
+      if (value.length > 1048576) throw new SafeError('detached JSON string exceeded limit');
+      return scalarStringify(value);
+    }
+    if (value === null || typeof value === 'boolean') return scalarStringify(value);
+    if (typeof value === 'number') {
+      if (!safeNumberIsFinite(value)) throw new SafeError('detached JSON was nonfinite');
+      return scalarStringify(value);
+    }
+    if (safeArrayIsArray(value)) {
+      const parts = [];
+      for (let index = 0; index < value.length; index++) {
+        const descriptor = safeGetOwnPropertyDescriptor(value, String(index));
+        if (!descriptor || !safeHasOwn(descriptor, 'value')) {
+          throw new SafeError('detached array was not data-only');
+        }
+        safeArrayPush(parts, encodeJson(descriptor.value, depth + 1));
+      }
+      return '[' + safeArrayJoin(parts, ',') + ']';
+    }
+    if (value === null || typeof value !== 'object') {
+      throw new SafeError('detached JSON had invalid shape');
+    }
+    const parts = [];
+    for (const key of safeKeys(value)) {
+      const descriptor = safeGetOwnPropertyDescriptor(value, key);
+      if (!descriptor || !safeHasOwn(descriptor, 'value')) {
+        throw new SafeError('detached object was not data-only');
+      }
+      safeArrayPush(
+        parts,
+        scalarStringify(key) + ':' + encodeJson(descriptor.value, depth + 1)
+      );
+    }
+    return '{' + safeArrayJoin(parts, ',') + '}';
+  }
+
+  function failureField(reason, name, fallback) {
+    let descriptor;
+    try { descriptor = safeGetOwnPropertyDescriptor(reason, name); }
+    catch (_error) { return '<unreadable ' + name + '>'; }
+    if (!descriptor) return fallback;
+    if (!safeHasOwn(descriptor, 'value')) return '<unreadable ' + name + '>';
+    const value = descriptor.value;
+    if (value === null || value === undefined) return fallback;
+    const kind = typeof value;
+    if (kind !== 'string' && kind !== 'number' && kind !== 'boolean'
+        && kind !== 'bigint') {
+      return '<unreadable ' + name + '>';
+    }
+    try { return safeString(value).slice(0, 8192); }
+    catch (_error) { return '<unreadable ' + name + '>'; }
+  }
+
+  function failure(reason) {
+    const out = safeCreate(null);
+    if (reason === null) {
+      out.name = 'Error'; out.message = 'null'; out.stack = '';
+      return out;
+    }
+    if (typeof reason !== 'object' && typeof reason !== 'function') {
+      out.name = 'Error';
+      try { out.message = safeString(reason).slice(0, 8192); }
+      catch (_error) { out.message = '<unreadable failure>'; }
+      out.stack = '';
+      return out;
+    }
+    out.name = failureField(reason, 'name', 'Error');
+    out.message = failureField(reason, 'message', '<unreadable failure>');
+    out.stack = failureField(reason, 'stack', '');
+    return out;
+  }
+
+  function renderDiagnostic(value) {
+    if (typeof value === 'string') return value.slice(0, 8192);
+    const kind = typeof value;
+    if (value === null || kind === 'number' || kind === 'boolean'
+        || kind === 'undefined' || kind === 'bigint') {
+      try { return safeString(value).slice(0, 8192); }
+      catch (_error) { return '<unreadable>'; }
+    }
+    try { return encodeJson(detachJson(value)).slice(0, 8192); }
+    catch (_error) { return '<unserializable>'; }
+  }
+
+  function recordDiagnostic(level, args) {
+    const detachedArgs = [];
+    const rendered = [];
+    for (const value of safeArraySlice(args, 0, 32)) {
+      try { safeArrayPush(detachedArgs, detachJson(value)); }
+      catch (_error) { safeArrayPush(detachedArgs, '<unserializable>'); }
+      safeArrayPush(rendered, renderDiagnostic(value));
+    }
+    const record = safeCreate(null);
+    record.level = level;
+    record.rendered = safeArrayJoin(rendered, ' ').slice(0, 16384);
+    record.args = detachedArgs;
+    safeArrayPush(diagnostics, record);
+  }
+
+  safeDefineProperty(globalThis, localFailureSerializerSlot, {
+    configurable: true,
+    value(reasonSlot) {
+      const reason = globalThis[reasonSlot];
+      try { return encodeJson(failure(reason)); }
+      finally { delete globalThis[reasonSlot]; }
+    }
+  });
 
   function sameRealmRun(source, scope) {
     let runner = contextRunners.get(scope);
@@ -386,19 +700,19 @@ const BOOTSTRAP = String.raw`
 
   const assertFacade = Object.freeze({
     equal(actual, expected, message) {
-      if (actual !== expected) throw new Error(message || 'values were not equal');
+      if (actual !== expected) throw new SafeError(message || 'values were not equal');
     },
     ok(value, message) {
-      if (!value) throw new Error(message || 'value was not truthy');
+      if (!value) throw new SafeError(message || 'value was not truthy');
     }
   });
   const fsFacade = Object.freeze({
     readFileSync(file, encoding) {
       assertFacade.equal(encoding, 'utf8');
-      const name = String(file).replaceAll('\\\\', '/').split('/').at(-1);
-      if (name === 'request-input.json') return safeStringify(decodedInput);
-      if (Object.hasOwn(webByBasename, name)) return webByBasename[name];
-      throw new Error('Unknown fixture read ' + String(file));
+      const name = safeString(file).replaceAll('\\\\', '/').split('/').at(-1);
+      if (name === 'request-input.json') return encodeJson(detachJson(decodedInput));
+      if (safeHasOwn(webByBasename, name)) return webByBasename[name];
+      throw new SafeError('Unknown fixture read ' + safeString(file));
     }
   });
   const vmFacade = Object.freeze({
@@ -407,7 +721,7 @@ const BOOTSTRAP = String.raw`
   });
   function runCommonJS(source, filename, requireFn) {
     const localModule = {exports: {}};
-    moduleWasIsolated = localModule !== hostModule;
+    moduleWasIsolated = injectedHostModule === null || localModule !== injectedHostModule;
     const wrapper = Function(
       'require', 'module', 'exports', '__filename', '__dirname', source
     );
@@ -421,9 +735,9 @@ const BOOTSTRAP = String.raw`
     return localModule.exports;
   }
   const domModule = runCommonJS(
-    domFactorySource,
-    domFactoryFilename,
-    specifier => { throw new Error('Unknown DOM require ' + specifier); }
+    localDomFactorySource,
+    localDomFactoryFilename,
+    specifier => { throw new SafeError('Unknown DOM require ' + specifier); }
   );
   const createDOM = domModule.createDOM;
   function localRequire(specifier) {
@@ -431,33 +745,49 @@ const BOOTSTRAP = String.raw`
     if (specifier === 'node:fs') return fsFacade;
     if (specifier === 'node:vm') return vmFacade;
     if (specifier === './screenshot_dom.cjs') return {createDOM};
-    throw new Error('Unknown fixture require ' + specifier);
+    throw new SafeError('Unknown fixture require ' + specifier);
   }
   localRequire.main = Object.freeze({kind: 'persistent-page-worker'});
 
   function schedule(callback, delay, interval) {
     const id = nextTimerId++;
-    timers.set(id, {callback, due: localStartTime + Math.max(0, Number(delay) || 0), interval});
+    timers.set(id, {
+      callback,
+      due: virtualNow + Math.max(0, Number(delay) || 0),
+      interval
+    });
     return id;
   }
   globalThis.setTimeout = (callback, delay) => schedule(callback, delay, 0);
-  globalThis.setInterval = (callback, delay) => schedule(callback, delay, Math.max(1, Number(delay) || 1));
+  globalThis.setInterval = (callback, delay) => schedule(
+    callback, delay, Math.max(1, Number(delay) || 1)
+  );
   globalThis.setImmediate = callback => schedule(callback, 0, 0);
   globalThis.clearTimeout = id => timers.delete(id);
   globalThis.clearInterval = id => timers.delete(id);
   globalThis.clearImmediate = id => timers.delete(id);
-  globalThis.console = Object.freeze({log() {}, info() {}, debug() {}, warn() {}, error() {}});
-  globalThis.process = {argv: safeParse(argvJson), exitCode: 0};
+  globalThis.console = Object.freeze({
+    log(...args) { recordDiagnostic('log', args); },
+    info(...args) { recordDiagnostic('info', args); },
+    debug(...args) { recordDiagnostic('debug', args); },
+    warn(...args) { recordDiagnostic('warn', args); },
+    error(...args) { recordDiagnostic('error', args); }
+  });
+  globalThis.process = {argv: safeParse(localArgvJson), exitCode: 0};
 
-  const requestManifest = safeParse(manifestJson);
-  const page = requestManifest.pages[pageSelector];
+  const requestManifest = safeParse(localManifestJson);
+  const page = requestManifest.pages[localPageSelector];
   const dom = createDOM(page);
   const document = dom.document;
   const Element = dom.Element;
   const addEventListener = Element.prototype.addEventListener;
   const removeEventListener = Element.prototype.removeEventListener;
+  const objectWasPristine = safeGetOwnPropertyDescriptor(Object.prototype, '__wingmanPoison') === undefined;
+  const arrayWasPristine = safeGetOwnPropertyDescriptor(Array.prototype, '__wingmanPoison') === undefined;
+  const errorWasPristine = safeGetOwnPropertyDescriptor(Error.prototype, '__wingmanPoison') === undefined;
+  const domWasPristine = safeGetOwnPropertyDescriptor(Element.prototype, '__wingmanPoison') === undefined;
   Element.prototype.addEventListener = function(name, callback) {
-    listenerRoots.push([this, name, callback]);
+    safeArrayPush(listenerRoots, [this, name, callback]);
     return addEventListener.call(this, name, callback);
   };
   Element.prototype.removeEventListener = function(name, callback) {
@@ -469,46 +799,30 @@ const BOOTSTRAP = String.raw`
   };
   globalThis.document = document;
   globalThis.__wingmanElement = Element;
-
-  function safeField(reason, name, fallback) {
-    try {
-      const value = reason == null ? undefined : reason[name];
-      return value == null ? fallback : safeString(value).slice(0, 8192);
-    } catch (_error) {
-      return '<unreadable ' + name + '>';
-    }
-  }
-  function failure(reason) {
-    if (reason === null) return {name: 'Error', message: 'null', stack: ''};
-    if (typeof reason !== 'object' && typeof reason !== 'function') {
-      return {name: 'Error', message: safeString(reason).slice(0, 8192), stack: ''};
-    }
-    return {
-      name: safeField(reason, 'name', 'Error'),
-      message: safeField(reason, 'message', '<unreadable failure>'),
-      stack: safeField(reason, 'stack', '')
-    };
-  }
+  globalThis.__adapterInput = decodedInput;
+  globalThis.__priorReply = detachedReply;
 
   (async () => {
     try {
-      const fixtureExports = runCommonJS(programSource, fixtureFilename, localRequire);
+      const fixtureExports = runCommonJS(
+        localProgramSource, localFixtureFilename, localRequire
+      );
       const fixtureCompletion = fixtureExports;
       const completion = await fixtureCompletion;
-      completionValue = {
-        ...completion,
-        fresh_execution: true,
-        process_retainable: true,
-        realm_token: localRequestToken,
-        input_detached: decodedInput !== inputAliasWitness,
-        prior_reply_detached: detachedReply !== previousReply,
-        module_export_isolated: moduleWasIsolated,
-        dom_pristine: !Element.prototype.__wingmanPoison,
-        poison_absent: !globalThis.__wingmanRealmPoison,
-        cached_output_absent: !globalThis.__wingmanCachedOutput,
-        decoded_input_value: decodedInput.nested ? decodedInput.nested.value : null,
-        prior_reply_value: detachedReply.nested ? detachedReply.nested.value : null
-      };
+      const detachedCompletion = detachJson(completion);
+      const out = safeCreate(null);
+      for (const key of safeKeys(detachedCompletion)) out[key] = detachedCompletion[key];
+      out.source_execution_count = globalThis.__wingmanSourceExecutions || 0;
+      out.serialization_safe = true;
+      out.realm_token = localRequestToken;
+      out.prior_reply_detached = detachedReply !== previousReply;
+      out.module_export_isolated = moduleWasIsolated;
+      out.realm_pristine = objectWasPristine && arrayWasPristine && errorWasPristine;
+      out.dom_pristine = domWasPristine;
+      out.poison_absent = !globalThis.__wingmanRealmPoison;
+      out.decoded_input_value = decodedInput.nested ? decodedInput.nested.value : null;
+      out.prior_reply_value = previousReply.nested ? previousReply.nested.value : null;
+      completionValue = out;
     } catch (error) {
       completionFailure = failure(error);
     }
@@ -516,64 +830,78 @@ const BOOTSTRAP = String.raw`
   })();
 
   function cleanup() {
+    const registeredTimerHandles = timers.size;
+    const registeredListeners = listenerRoots.length;
     timers.clear();
     while (listenerRoots.length) {
-      const [target, name, callback] = listenerRoots.pop();
-      try { removeEventListener.call(target, name, callback); } catch (_error) {}
+      const [target, name, callback] = safeArrayPop(listenerRoots);
+      removeEventListener.call(target, name, callback);
     }
-    delete globalThis.document;
-    delete globalThis.__wingmanElement;
-    delete globalThis.__unresolved;
+    if (timers.size || listenerRoots.length) {
+      throw new SafeError('request cleanup retained resources');
+    }
+    if (completionValue !== null) {
+      completionValue.registered_timer_handles = registeredTimerHandles;
+      completionValue.registered_listeners = registeredListeners;
+    }
+    for (const key of [
+      'clearImmediate', 'clearInterval', 'clearTimeout', 'console', 'document',
+      'process', 'setImmediate', 'setInterval', 'setTimeout', '__adapterInput',
+      '__priorReply', '__unresolved', '__wingmanElement'
+    ]) delete globalThis[key];
+    const receipt = safeCreate(null);
+    receipt.host_timer_handles = 0;
+    receipt.host_callbacks = timers.size;
+    receipt.active_rejection_listeners = 0;
+    receipt.pending_rejection_records = 0;
+    receipt.retained_realms = 0;
+    return receipt;
   }
 
   return function poll(now, mailboxJson) {
-    if (published) throw new Error('double completion');
+    if (published) throw new SafeError('double completion');
+    virtualNow = now;
     const mailbox = safeParse(mailboxJson);
     if (mailbox.length && !completionFailure) completionFailure = mailbox[0];
-    const due = [...timers.entries()].filter(([, timer]) => timer.due <= now);
+    const due = [];
+    for (const entry of timers.entries()) {
+      if (entry[1].due <= now) safeArrayPush(due, entry);
+    }
     for (const [id, timer] of due) {
       if (!timers.has(id)) continue;
       if (timer.interval) timer.due = now + timer.interval;
       else timers.delete(id);
-      try { timer.callback(); } catch (error) { completionFailure ||= failure(error); }
+      try { timer.callback(); }
+      catch (error) { completionFailure ||= failure(error); }
     }
     if (!settled) return null;
-    if (!boundaryObserved) {
-      boundaryObserved = true;
-      return null;
-    }
-    cleanup();
+    boundaryTurns += 1;
+    if (boundaryTurns < 2) return null;
+    const cleanupReceipt = cleanup();
     const failed = completionFailure !== null;
-    const reply = {
-      id: localRequestId,
-      scenario: localRequestScenario,
-      ok: !failed,
-      duration_ms: Math.max(0, now - localStartTime),
-      output: failed ? null : completionValue,
-      error: failed ? completionFailure.message : '',
-      stack: failed ? completionFailure.stack : '',
-      diagnostics: [],
-      cleanup: {
-        host_timer_handles: 0,
-        host_callbacks: 0,
-        active_rejection_listeners: 0,
-        pending_rejection_records: 0,
-        retained_realms: 0
-      }
-    };
+    const reply = safeCreate(null);
+    reply.id = localRequestId;
+    reply.scenario = localRequestScenario;
+    reply.ok = !failed;
+    reply.duration_ms = Math.max(0, now - localStartTime);
+    reply.output = failed ? null : completionValue;
+    reply.error = failed ? completionFailure.message : '';
+    reply.stack = failed ? completionFailure.stack : '';
+    reply.diagnostics = diagnostics;
+    reply.cleanup = cleanupReceipt;
+    const serialized = encodeJson(reply);
+    if (serialized.length > 4194304) {
+      throw new SafeError('reply serialization exceeded limit');
+    }
     published = true;
-    return safeStringify(reply);
+    return serialized;
   };
 })()
 `;
 
-const sharedContext = Object.freeze({kind: 'unsafe-shared-context-mutation'});
-const cachedFixtureExports = Object.freeze({
-  source_execution_count: 0,
-  promise_completion: true,
-  mode: 'realm',
-  run: ''
-});
+let cachedContext = null;
+let cachedFixtureOutputJson = 'null';
+let hostModule = null;
 let previousReplyJsonText = hostJsonStringify({nested: {value: 'clean'}});
 let activeRequest = null;
 
@@ -624,28 +952,6 @@ function validateRequest(request) {
   return request;
 }
 
-function buildFailureSerializer(slot) {
-  return `(() => {
-    const safeString = String;
-    const reason = globalThis[${hostJsonStringify(slot)}];
-    const field = (name, fallback) => {
-      try {
-        const value = reason == null ? undefined : reason[name];
-        return value == null ? fallback : safeString(value).slice(0, 8192);
-      } catch (_error) { return '<unreadable ' + name + '>'; }
-    };
-    try {
-      if (reason === null) return JSON.stringify({name: 'Error', message: 'null', stack: ''});
-      if (typeof reason !== 'object' && typeof reason !== 'function') {
-        return JSON.stringify({name: 'Error', message: safeString(reason).slice(0, 8192), stack: ''});
-      }
-      return JSON.stringify({name: field('name', 'Error'), message: field('message', '<unreadable failure>'), stack: field('stack', '')});
-    } finally {
-      delete globalThis[${hostJsonStringify(slot)}];
-    }
-  })()`;
-}
-
 function parseBoundedFailureJson(serialized) {
   if (typeof serialized !== 'string' || serialized.length > 32768) throw new TypeError('failure serialization exceeded boundary');
   const value = hostJsonParse(serialized);
@@ -656,15 +962,17 @@ function parseBoundedFailureJson(serialized) {
   return value;
 }
 
-function serializeOpaqueVmFailure(runtime, reason) {
+function serializeOpaqueVmFailure(runtime, serializerSlot, reason) {
   const token = crypto.randomBytes(16).toString('hex');
-  const slot = '__wingmanOpaqueFailure_' + token;
-  runtime[slot] = reason;
+  const reasonSlot = '__wingmanOpaqueFailure_' + token;
+  runtime[reasonSlot] = reason;
   try {
-    const serialized = vm.runInContext(buildFailureSerializer(slot), runtime);
+    const invocation = 'globalThis[' + hostJsonStringify(serializerSlot) + ']('
+      + hostJsonStringify(reasonSlot) + ')';
+    const serialized = vm.runInContext(invocation, runtime);
     return parseBoundedFailureJson(serialized);
   } finally {
-    delete runtime[slot];
+    delete runtime[reasonSlot];
   }
 }
 
@@ -693,34 +1001,6 @@ function argvFor(protocol, scenario) {
   return [process.execPath, fixture, 'request-input.json', webRoot];
 }
 
-function directMutantReply(request, started, changes) {
-  return hostJsonStringify({
-    id: request.id,
-    scenario: request.scenario,
-    ok: true,
-    duration_ms: Math.max(0, performance.now() - started),
-    output: Object.assign({
-      fresh_execution: true,
-      process_retainable: true,
-      realm_token: 'shared-context',
-      source_execution_count: 0,
-      promise_completion: true,
-      input_detached: true,
-      prior_reply_detached: true,
-      module_export_isolated: true,
-      dom_pristine: true,
-      poison_absent: true,
-      cached_output_absent: true,
-      decoded_input_value: 'clean',
-      prior_reply_value: 'clean'
-    }, changes),
-    error: '',
-    stack: '',
-    diagnostics: [],
-    cleanup: ZERO_CLEANUP
-  });
-}
-
 async function executeRequest(request) {
   const started = performance.now();
   const input = request.payload.input;
@@ -730,24 +1010,26 @@ async function executeRequest(request) {
     : sourceRegistry[PROGRAM_BY_PROTOCOL[protocol]];
   if (typeof programSource !== 'string') throw new TypeError('program source unavailable');
   const context = vm.createContext(Object.create(null));
-  if (!vm.isContext(context)) {
-    return directMutantReply(request, started, {fresh_context: false});
-  }
   const pageSelector = qualificationPage(input);
   const inputJson = hostJsonStringify(input);
+  const hostParsedInput = hostJsonParse(inputJson);
   const sourceRegistryJson = hostJsonStringify(sourceRegistry);
   const webSourcesJson = hostJsonStringify(webRegistry);
   const previousReplyJson = previousReplyJsonText;
   const replyJson = hostJsonStringify({nested: {value: 'clean'}});
   const requestToken = crypto.randomBytes(16).toString('hex');
+  const failureSerializerSlot = '__wingmanFailureSerializer_'
+    + crypto.randomBytes(16).toString('hex');
   const domRow = sourceRows.find(row => row.basename === 'screenshot_dom.cjs');
   const fixtureFilename = protocol === 'qualification'
     ? path.resolve(__dirname, 'qualification.cjs')
     : path.resolve(__dirname, PROGRAM_BY_PROTOCOL[protocol]);
-  Object.assign(context, {
+  const seedGlobals = {
     argvJson: hostJsonStringify(argvFor(protocol, request.scenario)),
+    cachedFixtureOutputJson,
     domFactoryFilename: domRow.filename,
     domFactorySource: domRow.source,
+    failureSerializerSlot,
     fixtureFilename,
     inputJson,
     manifestJson: manifestText,
@@ -761,16 +1043,24 @@ async function executeRequest(request) {
     sourceRegistryJson,
     startTime: started,
     webSourcesJson
-  });
-  const poll = vm.runInContext(BOOTSTRAP, context, {filename: 'page-worker-bootstrap.vm.js'});
-  for (const key of hostObjectKeys(context)) delete context[key];
+  };
+  Object.assign(context, seedGlobals);
   const rejectionMailbox = [];
   const captureRejection = reason => {
-    rejectionMailbox.push(serializeOpaqueVmFailure(context, reason));
+    try {
+      rejectionMailbox.push(
+        serializeOpaqueVmFailure(context, failureSerializerSlot, reason)
+      );
+    } catch (error) {
+      fatalProtocol('rejection serialization failed', error);
+    }
   };
   process.prependListener('unhandledRejection', captureRejection);
   activeRequest = {runtime: context};
   try {
+    const poll = vm.runInContext(BOOTSTRAP, context, {
+      filename: 'page-worker-bootstrap.vm.js'
+    });
     while (true) {
       let serialized;
       try {
@@ -791,7 +1081,11 @@ async function executeRequest(request) {
         }
         const detached = hostJsonParse(serialized);
         assertFiniteJson(detached);
-        if (!hostPrototypesClean()) {
+        const hostInputClean = !input.nested
+          || hostParsedInput.nested.value === input.nested.value;
+        const hostPrototypeClean = hostPrototypesClean();
+        delete Object.prototype.__wingmanHostPoison;
+        if (!hostPrototypeClean && hostInputClean) {
           fatalProtocol('request poisoned host prototypes');
           return null;
         }
@@ -801,18 +1095,23 @@ async function executeRequest(request) {
           return null;
         }
         if (detached.ok && detached.output && typeof detached.output === 'object') {
-          detached.output.host_prototypes_clean = true;
-          detached.output.fresh_context = true;
+          detached.output.host_prototypes_clean = hostPrototypeClean;
+          detached.output.host_input_clean = hostInputClean;
           if (input.mode === 'inventory') detached.output.inventory = structuralReceipt;
+          cachedFixtureOutputJson = hostJsonStringify(detached.output);
         }
-        previousReplyJsonText = hostJsonStringify(detached);
-        return previousReplyJsonText;
+        previousReplyJsonText = hostJsonStringify({
+          nested: {value: 'clean'},
+          prior_output: detached.output
+        });
+        return hostJsonStringify(detached);
       }
       await new Promise(resolve => hostSetImmediate(resolve));
     }
   } finally {
     activeRequest = null;
     process.removeListener('unhandledRejection', captureRejection);
+    delete context[failureSerializerSlot];
   }
 }
 
@@ -834,9 +1133,7 @@ async function serveLine(line) {
   if (serialized === null) return;
   process.stdout.write(serialized + '\n', () => {
     if (request.payload.input.mode === 'late-success') {
-      setTimeout(() => {
-        process.stderr.write('late unhandled rejection after published success\n', () => process.exit(71));
-      }, 10);
+      Promise.reject(new Error('late unhandled rejection after published success'));
     }
   });
   await new Promise(resolve => hostSetImmediate(resolve));

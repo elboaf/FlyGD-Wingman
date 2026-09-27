@@ -2218,6 +2218,16 @@ function localRequire(specifier) {
 localRequire.main = Object.freeze({kind: 'persistent-page-worker'});
 ```
 
+The code above is structural pseudocode, not permission to call mutable
+`JSON.stringify`, invoke `toJSON`, or retain all host-seeded globals. The Task 2
+hardening correction captures parsing, descriptor, array, scalar-string quoting,
+and failure-extraction intrinsics before source execution; detaches and encodes
+JSON through bounded manual data-descriptor walks; and deletes only the explicit
+startup seed names. Request-installed `document`, `process`, console, timer, and
+adapter globals remain available through asynchronous completion and are removed
+only during cleanup. Host-parsed input and host-required modules exist only as
+real mutation counterexamples; neither enters the restored realm.
+
 `module` and `exports` are created inside the request realm. Evaluate the
 selected source through `runCommonJS(source, filename, localRequire)` and await
 its exported completion inside the VM async body. The host must never receive
@@ -2252,28 +2262,34 @@ listener. The request listener ignores the promise argument and immediately
 serializes the reason through the originating VM:
 
 ```javascript
-function serializeOpaqueVmFailure(runtime, reason) {
+function serializeOpaqueVmFailure(runtime, serializerSlot, reason) {
   const token = crypto.randomBytes(16).toString('hex');
-  const slot = '__wingmanOpaqueFailure_' + token;
-  runtime[slot] = reason;
+  const reasonSlot = '__wingmanOpaqueFailure_' + token;
+  runtime[reasonSlot] = reason;
   try {
-    const serialized = vm.runInContext(buildFailureSerializer(slot), runtime);
-    return parseBoundedFailureJson(serialized);
+    const invocation = 'globalThis[' + hostJsonStringify(serializerSlot) + ']('
+      + hostJsonStringify(reasonSlot) + ')';
+    return parseBoundedFailureJson(vm.runInContext(invocation, runtime));
   } finally {
-    delete runtime[slot];
+    delete runtime[reasonSlot];
   }
 }
 
 const captureRejection = reason => {
-  rejectionMailbox.push(serializeOpaqueVmFailure(runtime, reason));
+  rejectionMailbox.push(
+    serializeOpaqueVmFailure(runtime, failureSerializerSlot, reason)
+  );
 };
 ```
 
-`buildFailureSerializer()` captures VM `String`, reads `name/message/stack`
-independently under `try/catch`, emits bounded primitive JSON, and deletes its
-reason/serializer slots in its own `finally`. No host getter/coercion touches the
-reason; no raw reason or promise enters an array or closure. Timer dispatch catches
-and serializes in the same realm immediately.
+The bootstrap installs the randomly named serializer before source execution;
+its closure has already captured the pristine VM descriptor and scalar encoding
+operations. It reads only own data descriptors for `name/message/stack`, emits
+bounded manual primitive JSON, and deletes each temporary reason slot in its own
+`finally`; the host removes the serializer slot after the request listener is
+detached. No host getter/coercion touches the reason; no raw reason or promise
+enters an array or retained closure. Timer dispatch catches and serializes in the
+same realm immediately.
 
 Before/boundary rejection records replace success with `ok:false` and same-PID
 recovery. After cleanup set the active request to null before publishing. The
@@ -2316,8 +2332,11 @@ input, prior reply, diagnostics arguments, `module.exports`, and cached-output
 sentinel; assert source execution counter `1` in each fresh realm.
 
 `test_request_cleanup_after_success` runs timer/interval/immediate, DOM/window
-listener, unresolved-promise, source-manifest/cache/children/export-poison, and
-six direct-CLI internal subcases. For every existing CJS script run:
+listener, unresolved-promise, source-manifest/cache/children/export-poison,
+request-global survival across a real Promise/timer await, all five structured
+console methods, completion `toJSON` forgery, and listener/timer cleanup failures
+that must publish no reply and restart only on the next call, plus six direct-CLI
+internal subcases. For every existing CJS script run:
 
 1. representative success with exact argv, exit zero, exact terminal, and exact
    stdout/stderr contract;
@@ -2401,9 +2420,9 @@ uv run --no-sync python /tmp/stage-b-baseline/verify_task2_identities.py \
 uv run --extra dev ruff check tests/node_scenario_worker.py tests/test_node_scenario_worker.py tests/test_preview_savedlayouts_page.py tests/test_persistent_page_workers.py
 uv run --extra dev ruff format --check tests/node_scenario_worker.py tests/test_node_scenario_worker.py tests/test_preview_savedlayouts_page.py tests/test_persistent_page_workers.py
 git diff --check
-git add tests/node_scenario_worker.py tests/test_node_scenario_worker.py tests/fixtures/page_scenario_worker.cjs tests/test_persistent_page_workers.py tests/test_preview_savedlayouts_page.py docs/ci-persistent-page-workers-stage-b-results.md
+git add tests/node_scenario_worker.py tests/test_node_scenario_worker.py tests/fixtures/page_scenario_worker.cjs tests/test_persistent_page_workers.py tests/test_preview_savedlayouts_page.py docs/ci-persistent-page-workers-stage-b-results.md docs/superpowers/plans/2026-09-26-persistent-page-workers-stage-b.md
 git diff --cached --name-only
-git commit -m "test: add persistent page worker foundation"
+git commit -m "test: harden persistent worker isolation"
 ```
 
 Expected runtime outcome: 13 helper IDs and seven qualification IDs pass; no

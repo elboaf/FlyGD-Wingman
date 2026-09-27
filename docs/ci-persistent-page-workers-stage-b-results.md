@@ -174,15 +174,31 @@ files as UTF-8 source before service; and retains no target entry in
 `require.cache` or `module.children`. Qualification requests execute synthetic
 source, DOM, CommonJS, timers, listeners, promises, errors, and assertions in a
 fresh VM context. The host receives only the VM poll function and primitive JSON
-completion. Malformed protocol is fatal with no reply; detached business failure
-retains the process.
+completion. Explicit startup seed globals are removed before program execution;
+request-installed globals survive real Promise/timer awaits and are removed only
+during cleanup. Malformed protocol is fatal with no reply; detached business
+failure retains the process.
+
+Reply, diagnostic, and failure serialization now use bounded manual walks over
+captured own data descriptors and scalar quoting rather than mutable
+`JSON.stringify` or `toJSON`. The permanent witnesses poison Object, Array,
+Error, Promise, and JSON behavior, attempt completion-envelope forgery, and use
+hostile getters/Proxy traps without changing the reply or escaping a raw reason.
+The request rejection listener is active before VM launch. Real
+`Promise.reject` calls before settlement and at the final timer boundary become
+the current request's business failure; the actual post-success rejection exits
+70, emits no second reply, and remains attributed to the prior request when the
+next call observes it.
 
 The four A-poison-A realm rows passed in one PID each with fresh execution count
 one, clean host and DOM prototypes, input/prior-reply/module-export isolation,
 and Promise-then poison survival. Cleanup success covered timeout, interval,
-immediate, listener, unresolved-promise, seven-source retention, and all six
-existing direct CLIs (including both saved-main terminal forms). Cleanup failure
-covered Error, primitive, null, hostile getters, Proxy, semantic business input,
+immediate, listener, unresolved-promise, async-global survival, all five console
+methods, seven-source retention, and all six existing direct CJS paths (including
+both saved-main terminal forms). Dedicated cleanup-failure workers proved
+listener and timer removal exceptions are fatal before reply and that a later
+call, not the failing call, starts recovery. Cleanup failure covered Error,
+poisoned Error, primitive, null, hostile getters, Proxy, semantic business input,
 before/boundary rejection, one fatal missing-input request, and late post-success
 exit. Its observed sequence was exactly three process starts, with the attempted
 `T` attributed to `before the next request` and recovery using request `N+2`.
@@ -194,7 +210,9 @@ existing production Api/controller/store/settings/atomicio sequence. It isolates
 `LOCALAPPDATA` with a session temporary root, forces and restores `_use_legacy`,
 delegates every `os.fsync`, restores `_save_locked`, validates durable strict
 UTF-8 JSON and the committed reader, shuts both Api objects down, clears created
-owners, runs GC, and proves no newly retained reader remains. The observed build
+owners, returns through a nested construction frame, runs GC, and proves every
+Stage-B-created Api/state/document/controller/reader weak reference is dead and
+no newly retained reader remains. The observed build
 used exactly 19 fsync calls, preserved production ID/revision continuity, captured
 the first Apply as pending, and retained the later persisted Apply. Fifty-five
 independent decodes had no alias.
@@ -220,7 +238,11 @@ owner, kind-specific masking rules, a literal edit with an explicit root, frozen
 mutated/restored expectations, and an explicit `available_from_task`. The six
 corrected owner mappings and three restored-only helper IDs are pinned explicitly.
 The deterministic registry manifest SHA-256 is
-`3c2a1bf7e361f93a513de800865f81628d7865bbb980ae46c8f1aaee922c8cd3`.
+`77803e6959f3d3e85b2a7ff2bb894bb91642d330c2d84f2981079fa76f9b2b24`.
+The regenerated recursive artifact manifest is
+`58939eb6cbd9fe83d2f19427762b3da4bb1eac5eaa3e21a22ae639152f5eae33`,
+and the refreshed Task 2 identity-gate record is
+`7ccf650d6af664a7087345cab21d182a8e36b05aaab6919db3efb904409ee515`.
 It also freezes the read-only external adapter at SHA-256
 `fb26c59c39029b5cebed6db086c8ca1bc1d9e1864081f169ab146e56ab50ca5c`.
 
@@ -276,17 +298,19 @@ The corrected tooling suites pass 60 checks: 19 collector/identity checks, 39
 registry/restoration/dispatcher checks, and two recursive-manifest checks.
 
 Task 2 additionally activated the canonical 14-name first implementation slice
-from the frozen registry without changing registry metadata. All 14 real edits
-ran through the typed dispatcher: 13 pytest probes and the external receipt-count
-probe each produced their exact sentinel, rejected masking, restored exact
-bytes/hash/diff/status, and passed the registered restored probe. The ordered
-result file is `/tmp/stage-b-task2-mutations.json`, SHA-256
-`10e7a2f951efca246a1d7f7bf4c506243976a49b437159199e2d0e7c0b859ace`.
-Because the unconverted baseline saved test still contains its own identical
-`pending = pending_states[-1]` line, activation temporarily expressed only that
-old caller line with an equivalent indexed form so the canonical provider edit
-remained match-once; the caller bytes were restored immediately afterward. No
-canonical recipe, owner, sentinel, regex, probe, or registry hash changed.
+from the corrected registry. The six realm recipes now perform real context
+cache/reuse, source-result reuse, host-parsed input injection, prior-reply alias,
+host `require`/module injection, and mutable Promise completion. The receipt
+recipes now alter the actual pending capture, production ID source, durable read,
+`os.fsync` delegation, writer/environment restoration, reader ownership, and
+once-provider construction; no recipe inverts its own assertion or uses a
+mutation-only worker flag. All 14 edits ran through the typed dispatcher: 13
+pytest probes and the external receipt-count probe each produced their exact
+sentinel, rejected masking, restored exact bytes/hash/diff/status, and passed the
+registered restored probe. The ordered result file is
+`/tmp/stage-b-task2-mutations.json`, SHA-256
+`b76dd920aab5014c43ab70783d8c6f727dede106aaced7df74be403c881a78f5`. The provider's `pending_receipt` literal is unique, so no
+unconverted business caller needed a temporary source edit.
 
 This is real foundation/receipt defect qualification, not real-family conversion
 acceptance. The later 16/41 slices and final 71-recipe aggregate remain pending.
@@ -316,9 +340,10 @@ symmetric-difference checks. This task did not run or claim the complete
 
 ## Reviews, final scope, and frozen heads
 
-Task 2 self-review found only its six approved paths: strict helper and helper
-contract, shared worker, seven-ID qualification module, receipt provider added
-without converting a business caller, and this ledger. No production, web,
+Task 2 self-review found only its six original approved implementation/result
+paths plus the authoritative plan correction: strict helper and helper contract,
+shared worker, seven-ID qualification module, receipt provider added without
+converting a business caller, this ledger, and the corrected Task 2 plan text. No production, web,
 workflow, dependency, lockfile, configuration, packaging, existing CJS adapter,
 or `screenshot_dom.cjs` byte changed. Protected hashes, Ruff, formatting, docs,
 syntax, focused tests, baseline 217, collection gates, diff checks, and canonical
