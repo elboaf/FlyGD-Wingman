@@ -218,7 +218,7 @@ fold the qualification `4` into 33 or 62.
 **Files:**
 - Create: `docs/ci-persistent-page-workers-stage-b-results.md`
 - Read: `/mnt/c/dev/flygd-wingman/tmp/stage-a-hosted-36258907685/**`
-- Materialize outside the repository: `/tmp/stage-b-baseline/collect.py`, `probe_plugin.py`, `hosted.py`, `restore.py`, `test_restore.py`, `mutations.py`, `test_mutations.py`, ID/map/shape JSON, one-shot NDJSON, fsync JSON, JUnit XML, and hash manifests
+- Materialize outside the repository: `/tmp/stage-b-baseline/collect.py`, `probe_plugin.py`, `hosted.py`, `restore.py`, `test_restore.py`, `mutations.py`, `test_mutations.py`, `verify_task2_identities.py`, ID/map/shape JSON, one-shot NDJSON, fsync JSON, JUnit XML, and hash manifests
 
 **Interfaces:**
 - Consumes: merged base `203d2068787cb3457916db6005afda0a7ce7a43a`, approved spec, current source, and accepted Stage A run `36258907685` attempt `1`.
@@ -493,6 +493,143 @@ from raw external JUnit, requires exactly one line to `fullmatch()` the recipe's
 anchored regex, and rejects setup/teardown/collection outcomes structurally.
 Literal edits are Python `bytes`, not line numbers, ellipses, pseudocode,
 search-only descriptions, or regex substitutions.
+
+#### Baseline and planned pytest identity domains
+
+Task 1's collection report defines `BASELINE_COLLECTED_IDS` as the exact 205
+target IDs followed by the exact 12 existing helper IDs—217 unique IDs, with the
+frozen constituent hashes and order already required above. Future IDs are not
+looked up in current pytest collection. They are declared separately and exactly
+from the approved spec:
+
+```python
+APPROVED_PLANNED_ID_ROWS = (
+    (
+        "tests/test_node_scenario_worker.py::test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration",
+        "tests/test_node_scenario_worker.py",
+        "test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration",
+        None,
+        "task2",
+    ),
+    (
+        "tests/test_persistent_page_workers.py::test_request_realm_is_fresh_and_program_is_reexecuted[saved-layouts]",
+        "tests/test_persistent_page_workers.py",
+        "test_request_realm_is_fresh_and_program_is_reexecuted",
+        "saved-layouts",
+        "task2",
+    ),
+    (
+        "tests/test_persistent_page_workers.py::test_request_realm_is_fresh_and_program_is_reexecuted[fleet-sharing]",
+        "tests/test_persistent_page_workers.py",
+        "test_request_realm_is_fresh_and_program_is_reexecuted",
+        "fleet-sharing",
+        "task2",
+    ),
+    (
+        "tests/test_persistent_page_workers.py::test_request_realm_is_fresh_and_program_is_reexecuted[group-backward]",
+        "tests/test_persistent_page_workers.py",
+        "test_request_realm_is_fresh_and_program_is_reexecuted",
+        "group-backward",
+        "task2",
+    ),
+    (
+        "tests/test_persistent_page_workers.py::test_request_realm_is_fresh_and_program_is_reexecuted[label-markers]",
+        "tests/test_persistent_page_workers.py",
+        "test_request_realm_is_fresh_and_program_is_reexecuted",
+        "label-markers",
+        "task2",
+    ),
+    (
+        "tests/test_persistent_page_workers.py::test_request_cleanup_after_success",
+        "tests/test_persistent_page_workers.py",
+        "test_request_cleanup_after_success",
+        None,
+        "task2",
+    ),
+    (
+        "tests/test_persistent_page_workers.py::test_request_cleanup_after_business_failure",
+        "tests/test_persistent_page_workers.py",
+        "test_request_cleanup_after_business_failure",
+        None,
+        "task2",
+    ),
+    (
+        "tests/test_persistent_page_workers.py::test_saved_layout_receipt_is_durable_and_detached",
+        "tests/test_persistent_page_workers.py",
+        "test_saved_layout_receipt_is_durable_and_detached",
+        None,
+        "task2",
+    ),
+)
+APPROVED_PLANNED_IDS = frozenset(row[0] for row in APPROVED_PLANNED_ID_ROWS)
+APPROVED_PLANNED_OWNERS = {
+    nodeid: (module, function, parameter, task)
+    for nodeid, module, function, parameter, task in APPROVED_PLANNED_ID_ROWS
+}
+assert len(APPROVED_PLANNED_ID_ROWS) == 8
+assert len(APPROVED_PLANNED_IDS) == 8
+assert set(APPROVED_PLANNED_OWNERS) == set(APPROVED_PLANNED_IDS)
+assert APPROVED_PLANNED_IDS == ids_parsed_from_approved_spec
+assert not (BASELINE_COLLECTED_IDS & APPROVED_PLANNED_IDS)
+```
+
+`validate_identity_domains()` parses every declared pytest ID with exact grammar
+`tests/<module>.py::test_<function>` plus at most one nonempty bracketed
+parameter, then requires the parsed module/function/parameter tuple and creation
+phase to equal `APPROVED_PLANNED_OWNERS`. For every non-`external::` registry
+selected ID it accepts exactly one of two states:
+
+1. the ID is in `BASELINE_COLLECTED_IDS`; or
+2. the ID is absent from baseline, is in `APPROVED_PLANNED_IDS`, and has its
+   exact declared Task 2 owner tuple.
+
+The set of non-baseline, non-external selected IDs across all 71 recipes must
+equal `APPROVED_PLANNED_IDS`—not merely be a subset. The executable check is:
+
+```python
+PLANNED_NODEID = re.compile(
+    r"\A(?P<module>tests(?:/[A-Za-z0-9_]+)+\.py)::"
+    r"(?P<function>test_[A-Za-z0-9_]+)"
+    r"(?:\[(?P<parameter>[^\[\]\r\n]+)\])?\Z"
+)
+
+
+def validate_identity_domains(
+    baseline_ids: frozenset[str],
+    planned_rows: tuple[tuple[str, str, str, str | None, str], ...],
+    selected_ids: frozenset[str],
+) -> None:
+    planned_ids = tuple(row[0] for row in planned_rows)
+    assert len(baseline_ids) == 217
+    assert len(planned_ids) == 8
+    assert len(set(planned_ids)) == 8
+    assert set(planned_ids) == set(APPROVED_PLANNED_IDS)
+    assert set(planned_ids).isdisjoint(baseline_ids)
+    for nodeid, module, function, parameter, task in planned_rows:
+        parsed = PLANNED_NODEID.fullmatch(nodeid)
+        assert parsed is not None
+        assert parsed.group("module") == module
+        assert parsed.group("function") == function
+        assert parsed.group("parameter") == parameter
+        assert task == "task2"
+        assert APPROVED_PLANNED_OWNERS[nodeid] == (
+            module,
+            function,
+            parameter,
+            task,
+        )
+    undeclared = selected_ids - baseline_ids - APPROVED_PLANNED_IDS
+    assert not undeclared
+    assert selected_ids - baseline_ids == APPROVED_PLANNED_IDS
+```
+
+Thus a typo future ID, an undeclared missing ID, a duplicate planned row, a wrong
+module/function/parameter owner, or a future ID unexpectedly present in the 217
+baseline fails Task 1, while a correctly declared future ID does not require
+collection before its file exists. Task 1 materializes
+`verify_task2_identities.py` from these same constants; its own fixture-based
+self-tests cover all five rejection cases, but the real 225/16,617 collection
+inputs do not exist until Task 2 and are not claimed here.
 
 #### One canonical mutation registry
 
@@ -830,7 +967,7 @@ from collections import Counter
 
 def validate_registry(
     worktree: Path,
-    known_pytest_ids: frozenset[str],
+    baseline_collected_ids: frozenset[str],
     phase: Phase | None = None,
 ) -> None:
     references = TASK3_RECIPES + TASK4_RECIPES + TASK5_RECIPES
@@ -839,6 +976,18 @@ def validate_registry(
     assert tuple(REGISTRY) == references
     assert all(name == recipe.name for name, recipe in REGISTRY.items())
     assert len({recipe.sentinel for recipe in REGISTRY.values()}) == 71
+    nonexternal_selected_ids = frozenset(
+        selected
+        for recipe in REGISTRY.values()
+        for selected in recipe.selected_ids
+        if not selected.startswith("external::")
+    )
+    validate_identity_domains(
+        baseline_collected_ids,
+        APPROVED_PLANNED_ID_ROWS,
+        nonexternal_selected_ids,
+    )
+    declared_ids = baseline_collected_ids | APPROVED_PLANNED_IDS
 
     for recipe in REGISTRY.values():
         assert recipe.selected_ids == EXPECTED_SELECTED_IDS[recipe.name]
@@ -846,7 +995,7 @@ def validate_registry(
         assert all(
             selected in ALLOWED_PHASES_BY_ID
             and recipe.phase in ALLOWED_PHASES_BY_ID[selected]
-            and (selected.startswith("external::") or selected in known_pytest_ids)
+            and (selected.startswith("external::") or selected in declared_ids)
             for selected in recipe.selected_ids
         )
         assert recipe.forbidden_masking == FORBIDDEN_MASKING
@@ -868,7 +1017,7 @@ def validate_registry(
     assert set(RESTORED_ONLY_BY_RECIPE) == {"late-rejection-attribution"}
     assert set(restored_references) == set(RESTORED_ONLY_IDS)
     assert all(count == 1 for count in restored_references.values())
-    assert all(nodeid in known_pytest_ids for nodeid in RESTORED_ONLY_IDS)
+    assert all(nodeid in baseline_collected_ids for nodeid in RESTORED_ONLY_IDS)
     for recipe_name, nodeids in RESTORED_ONLY_BY_RECIPE.items():
         recipe = REGISTRY[recipe_name]
         assert set(nodeids).isdisjoint(recipe.selected_ids)
@@ -931,7 +1080,12 @@ lists or disposable placeholder edits. It must prove before Task 3:
    `diagnostics-sharing-source-order -> SHARING_SOURCE_REJECTION_ID`,
    `group-dialog-owner-matrix -> GROUP_DIALOG_OWNERS_ID`,
    `group-own-dialog-matrix -> GROUP_OWN_DIALOG_ID`, and
-   `marker-deferred-roster -> MARKER_DEFERRED_ID`.
+   `marker-deferred-roster -> MARKER_DEFERRED_ID`; and
+9. isolated `validate_identity_domains()` mutants reject a one-character typo in
+   a future ID, any planned ID injected into `BASELINE_COLLECTED_IDS`, an
+   undeclared non-baseline selected ID, a duplicate planned row, and each wrong
+   module/function/parameter/task owner field at its own assertion. The
+   unmodified exact 217/8 declaration then passes.
 
 Serialize the complete registry deterministically with names, phases, exact IDs,
 sentinels, regexes, forbidden rules, edit paths plus old/new byte SHA-256 values,
@@ -1084,8 +1238,12 @@ uv run --no-sync python -m pytest \
 
 Expected: exactly `217 passed`, no skip/failure/error, with the 205 target IDs
 followed by all 12 helper IDs. Parse JUnit with longest-existing-module-prefix
-resolution and store ordered identity/outcome records and SHA-256. Do not infer
-node IDs from dotted classnames by unconditional dot replacement.
+resolution; write `/tmp/stage-b-baseline/baseline-217.txt`; define
+`BASELINE_COLLECTED_IDS` from those exact final-newline records; and store ordered
+identity/outcome records and SHA-256. Require 217 unique IDs and exact equality to
+`target-205.txt + helper-12.txt`. Do not infer node IDs from dotted classnames by
+unconditional dot replacement, and require all eight `APPROVED_PLANNED_IDS` to be
+absent from this baseline.
 
 - [ ] **Step 5: Re-audit accepted Stage A hosted inputs and exact file hashes**
 
@@ -1175,7 +1333,7 @@ invented values.
 - [ ] **Step 8: Verify and commit Task 1**
 
 ```bash
-python -m py_compile /tmp/stage-b-baseline/collect.py /tmp/stage-b-baseline/probe_plugin.py /tmp/stage-b-baseline/hosted.py /tmp/stage-b-baseline/restore.py /tmp/stage-b-baseline/test_restore.py /tmp/stage-b-baseline/mutations.py /tmp/stage-b-baseline/test_mutations.py
+python -m py_compile /tmp/stage-b-baseline/collect.py /tmp/stage-b-baseline/probe_plugin.py /tmp/stage-b-baseline/hosted.py /tmp/stage-b-baseline/restore.py /tmp/stage-b-baseline/test_restore.py /tmp/stage-b-baseline/mutations.py /tmp/stage-b-baseline/test_mutations.py /tmp/stage-b-baseline/verify_task2_identities.py
 uv run --no-sync python -m pytest /tmp/stage-b-baseline/test_restore.py /tmp/stage-b-baseline/test_mutations.py -q
 uv run --no-sync ruff check /tmp/stage-b-baseline/*.py
 uv run --no-sync ruff format --check /tmp/stage-b-baseline/*.py
@@ -1768,7 +1926,7 @@ restored environment/legacy/writer/reader baselines, production ID/revision
 continuity, pending first Apply, final persisted Apply, 55 independent decodes,
 and no alias after mutating one.
 
-- [ ] **Step 10: Run Task 2 GREEN and commit**
+- [ ] **Step 10: Run Task 2 GREEN, enforce the post-creation identity gate, and commit**
 
 ```bash
 node --check tests/fixtures/page_scenario_worker.cjs
@@ -1778,6 +1936,19 @@ uv run --no-sync python -m pytest \
   tests/test_node_scenario_worker.py \
   tests/test_persistent_page_workers.py \
   -q -rs --junitxml=/tmp/stage-b-task2.xml
+PYTHONPATH=/tmp/stage-b-baseline STAGE_B_COLLECTION_REPORT=/tmp/stage-b-baseline/task2-relevant-225.txt \
+  uv run --no-sync python -m pytest \
+  tests/test_preview_savedlayouts_page.py \
+  tests/test_fleetsharing_hydration.py \
+  tests/test_preview_group_backward.py \
+  tests/test_preview_labelmarkers_page.py \
+  tests/test_node_scenario_worker.py \
+  tests/test_persistent_page_workers.py \
+  --collect-only -q -p no:cacheprovider -p collect
+PYTHONPATH=/tmp/stage-b-baseline STAGE_B_COLLECTION_REPORT=/tmp/stage-b-baseline/task2-complete-16617.txt \
+  uv run --no-sync python -m pytest tests/ \
+  --collect-only -q -p no:cacheprovider -p collect
+uv run --no-sync python /tmp/stage-b-baseline/verify_task2_identities.py
 uv run --extra dev ruff check tests/node_scenario_worker.py tests/test_node_scenario_worker.py tests/test_preview_savedlayouts_page.py tests/test_persistent_page_workers.py
 uv run --extra dev ruff format --check tests/node_scenario_worker.py tests/test_node_scenario_worker.py tests/test_preview_savedlayouts_page.py tests/test_persistent_page_workers.py
 git diff --check
@@ -1786,9 +1957,33 @@ git diff --cached --name-only
 git commit -m "test: add persistent page worker foundation"
 ```
 
-Expected: 13 helper IDs and seven qualification IDs pass; no business family has
-been migrated; existing 217 rows remain green. Record synthetic qualification as
-staged foundation evidence, not final real-family acceptance.
+Expected runtime outcome: 13 helper IDs and seven qualification IDs pass; no
+business family has been migrated; existing 217 rows remain green. Record
+synthetic qualification as staged foundation evidence, not final real-family
+acceptance.
+
+`verify_task2_identities.py` is the hard pre-Task-3 gate. It imports the actual
+Task 1 declarations and requires:
+
+- `task2-relevant-225.txt` has 225 unique IDs; its old-ID subsequence is exactly
+  `baseline-217.txt`; its additions are exactly `APPROVED_PLANNED_IDS`; and each
+  of those eight appears once with the declared module/function/parameter owner;
+- `task2-complete-16617.txt` has 16,617 unique IDs; the accepted Stage A 16,609
+  IDs are an unchanged ordered subsequence; its additions are exactly the same
+  eight IDs, each once—no undeclared missing or extra ID;
+- all 217 baseline IDs retain their exact names/order, and the frozen 205/165/12
+  subsets and hashes remain unchanged;
+- the relevant-225 and complete-16,617 ordered final-newline SHA-256 values are
+  computed from these actual post-Task-2 lists and frozen in
+  `/tmp/stage-b-baseline/task2-identity-gate.json` plus the results ledger; no
+  candidate hash is invented in advance; and
+- the gate records hashes of the two new/changed test modules, the canonical
+  registry JSON/hash, exact counts, ordered hashes, and set-difference evidence.
+
+A future ID may be absent only during the Task 1 declaration check. After Task 2,
+all eight must be actually collectable exactly once. A typo, missing ID,
+duplicate, wrong owner/parameter, changed baseline subsequence, count drift, or
+collection error stops before commit and before any Task 3 registry consumer.
 
 ---
 
@@ -1803,15 +1998,23 @@ staged foundation evidence, not final real-family acceptance.
 - Modify: `docs/ci-persistent-page-workers-stage-b-results.md`
 
 **Interfaces:**
-- Consumes: `NodeScenarioWorker`, `page_scenario_worker.cjs`,
+- Consumes: the passing `/tmp/stage-b-baseline/task2-identity-gate.json`,
+  `NodeScenarioWorker`, `page_scenario_worker.cjs`,
   `_saved_layout_receipt_once()`, Text/structural page trees, and protocols
   `saved-main`, `saved-owner`, `saved-capture`, `saved-dev`.
 - Produces: `saved_layout_page_worker`, `saved_layout_receipt_json`, 62 worker
   requests, one family PID, and receipt build/fsync JUnit ownership.
 
-- [ ] **Step 1: Add the saved-family fixture substitutions as collectable RED**
+- [ ] **Step 1: Revalidate the Task 2 identity gate, then add the saved-family fixture substitutions as collectable RED**
 
-Create the manifest and worker fixtures:
+Before editing, rerun `verify_task2_identities.py` against fresh relevant and
+complete collection reports and require the same 225/16,617 counts, ordered
+hashes, exact eight additions, and unchanged baseline subsequences recorded in
+`task2-identity-gate.json`. Also require the recorded test-module and registry
+hashes to match the current tree. This is a hard gate: no Task 3 recipe or source
+edit starts if it fails.
+
+Then create the manifest and worker fixtures:
 
 ```python
 ROOT = Path(__file__).resolve().parents[1]
@@ -1944,8 +2147,10 @@ Load the canonical Task 1 registry and execute `TASK3_RECIPES` in its declared
 order. This phase references recipe names only; exact selected IDs, literal
 sentinels/anchored regexes, forbidden masking, byte edits, mutated probes, and
 restored probes come exclusively from `REGISTRY`. Before the first mutation,
-require `validate_registry(worktree, frozen_pytest_ids, phase="task3")` to match every Task 3 old
-literal exactly once. After each recipe, restore bytes/hash/diff/status and run
+require
+`validate_registry(worktree, BASELINE_COLLECTED_IDS, phase="task3")` to match
+every Task 3 old literal exactly once. After each recipe, restore
+bytes/hash/diff/status and run
 its registry-owned restored probe; the saved `reversed` anti-mask case is already
 part of the relevant `MutationProbe.restored_argv`, not a second prose recipe.
 Write one result per canonical name and reject a missing, duplicate, or extra
@@ -2153,8 +2358,8 @@ Load the same immutable registry and execute `TASK4_RECIPES` in its declared
 order. Do not restate or alias a Task 3 recipe: group source re-execution,
 business-failure retention, fatal no-replay, the four independent fatal variants,
 and the exact 165 inventory each have one canonical Task 4 name. Require
-`validate_registry(worktree, frozen_pytest_ids, phase="task4")` before execution and one result per
-canonical name afterward.
+`validate_registry(worktree, BASELINE_COLLECTED_IDS, phase="task4")` before
+execution and one result per canonical name afterward.
 
 The external fatal recipes launch and close only the processes in their
 registry-owned probes, record those starts as mutation overhead, restore, and run
@@ -2255,8 +2460,9 @@ Use the complete, compiled, Ruff-clean Task 1 registry and runner unchanged.
 First audit all 71 recipes as one immutable set, compare its SHA-256 with the
 Task 1 registry manifest, and require exactly 14 Task 3 plus 16 Task 4 result
 records with no missing, duplicate, or extra canonical name. Then call
-`validate_registry(worktree, frozen_pytest_ids, phase="task5")` and execute `TASK5_RECIPES` in its
-declared order. This task references recipe names only through that tuple; it
+`validate_registry(worktree, BASELINE_COLLECTED_IDS, phase="task5")` and execute
+`TASK5_RECIPES` in its declared order. This task references recipe names only
+through that tuple; it
 must not reconstruct a defect, owner, sentinel, regex, edit, or probe locally.
 
 For each Task 5 recipe, require its exact selected IDs and intended call phase,
@@ -2646,6 +2852,11 @@ Fresh checks performed while authoring this plan:
 - measured components reproduce candidate arithmetic `19 + 10 + 4 = 33` and
   `33 + 29 = 62`; the executor still must obtain integrated raw-JUnit evidence
   from the final implementation before claiming acceptance;
+- the disposable identity-order checker collected exactly 217 current baseline
+  IDs, proved all eight approved planned IDs absent, validated their exact
+  module/function/parameter/Task 2 declarations and selected-set equality, then
+  rejected typo, unexpectedly-present, undeclared, duplicate, and wrong-owner
+  mutants (`PASS baseline=217 planned=8 absent=8 identity-mutants=5`);
 - the disposable canonical-registry **schema checker** compiled and passed Ruff
   check/format, loaded the exact 71-name `14/16/41` partition, proved unique
   names/sentinels and zero regex cross-matches, and compared all 71
@@ -2703,10 +2914,12 @@ condition triggers, especially if:
    environment/writer/legacy/readers;
 10. worker/fsync evidence cannot be uniquely owned in raw JUnit without a print
     fallback;
-11. exact local 16,617 outcome or hosted platform outcomes/skips differ;
-12. a timing observation is being used as an acceptance threshold or causal
+11. the Task 1 217-collected/8-planned identity declaration or the post-Task-2
+    225/16,617 hard collection gate differs;
+12. exact local 16,617 outcome or hosted platform outcomes/skips differ;
+13. a timing observation is being used as an acceptance threshold or causal
     claim; or
-13. Stage C deletion/consolidation becomes entangled.
+14. Stage C deletion/consolidation becomes entangled.
 
 ## Plan Self-Review
 
@@ -2721,9 +2934,12 @@ condition triggers, especially if:
 - **Types and names:** fixture names, family names, protocol labels, request keys,
   reply cleanup keys, receipt dataclass/provider, JUnit keys, and added IDs are
   consistent across tasks.
-- **Identity arithmetic:** baseline `205 + 12 = 217`; additions `7 + 1 = 8`;
-  relevant `205 + 7 + 13 = 225`; complete `16,609 + 8 = 16,617`; Linux
-  `16,603 + 14 = 16,617`; Windows `16,550 + 67 = 16,617`.
+- **Identity arithmetic and ordering:** baseline `205 + 12 = 217`; additions
+  `7 + 1 = 8`; relevant `205 + 7 + 13 = 225`; complete `16,609 + 8 = 16,617`;
+  Linux `16,603 + 14 = 16,617`; Windows `16,550 + 67 = 16,617`. Task 1 validates
+  the disjoint 217-collected/8-planned domains without requiring future
+  collection; Task 2 then hard-gates actual 225 and 16,617 collection, exact
+  additions, unchanged baseline subsequences, and derived hashes before Task 3.
 - **Process/fsync arithmetic:** `62 + 65 + 17 + 21 = 165`; candidate saved
   `19 + 10 + 4 = 33`; candidate all `33 + 29 = 62`; baseline saved
   `1,045 + 10 + 4 = 1,059`; baseline all `1,059 + 29 = 1,088`.
