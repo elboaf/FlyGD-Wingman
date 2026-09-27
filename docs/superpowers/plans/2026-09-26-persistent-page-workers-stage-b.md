@@ -220,7 +220,7 @@ fold the qualification `4` into 33 or 62.
 **Files:**
 - Create: `docs/ci-persistent-page-workers-stage-b-results.md`
 - Read: `/mnt/c/dev/flygd-wingman/tmp/stage-a-hosted-36258907685/**`
-- Materialize outside the repository: `/tmp/stage-b-baseline/collect.py`, `probe_plugin.py`, `hosted.py`, `restore.py`, `test_restore.py`, `mutations.py`, `test_mutations.py`, `verify_task2_identities.py`, ID/map/shape JSON, one-shot NDJSON, fsync JSON, JUnit XML, and hash manifests
+- Materialize outside the repository: `/tmp/stage-b-baseline/collect.py`, `ids.sh`, `test_ids.sh`, `test_collect.py`, `probe_plugin.py`, `hosted.py`, `restore.py`, `test_restore.py`, `mutations.py`, `test_mutations.py`, `verify_task2_identities.py`, structured collection JSON, ID-only `.ids.txt`, map/shape JSON, one-shot NDJSON, fsync JSON, JUnit XML, and hash manifests
 
 **Interfaces:**
 - Consumes: merged base `203d2068787cb3457916db6005afda0a7ce7a43a`, approved spec, current source, and accepted Stage A run `36258907685` attempt `1`.
@@ -244,9 +244,10 @@ occur in the range; no executable path is dirty.
 - [ ] **Step 2: Materialize only the collection/map/signature and raw-JUnit parser**
 
 Start from a new `/tmp/stage-b-baseline` directory. Create
-`/tmp/stage-b-baseline/collect.py` and the collection plugin first, with these
-core checks; store complete records rather than terminal-only counts. This step
-also materializes the longest-existing-module-prefix raw-JUnit parser used by
+`/tmp/stage-b-baseline/collect.py`, `ids.sh`, `test_ids.sh`, and
+`test_collect.py` first, with
+these core checks; store complete records rather than terminal-only counts. This
+step also materializes the longest-existing-module-prefix raw-JUnit parser used by
 Step 3. It does **not** create, import, or run `restore.py`, `mutations.py`, or
 either tooling test suite; those are ordered after the exact 217 baseline is
 collected and bound.
@@ -283,8 +284,10 @@ NODE_FUNCTIONS = {
 }
 
 
-def ordered_hash(rows: list[str]) -> str:
-    return hashlib.sha256(("\n".join(rows) + "\n").encode()).hexdigest()
+def ordered_id_file_hash(path: Path) -> str:
+    data = path.read_bytes()
+    validate_id_bytes(data)
+    return hashlib.sha256(data).hexdigest()
 
 
 def shape(path: Path) -> dict[str, object]:
@@ -572,8 +575,10 @@ search-only descriptions, or regex substitutions.
 
 #### Baseline and planned pytest identity domains
 
-Task 1's collection report defines `BASELINE_COLLECTED_IDS` as the exact 205
-target IDs followed by the exact 12 existing helper IDs—217 unique IDs, with the
+Task 1's structured baseline collection report is converted through
+`ids-from-collection`; the resulting `baseline-217.ids.txt` defines
+`BASELINE_COLLECTED_IDS` as the exact 205 target IDs followed by the exact 12
+existing helper IDs—217 unique IDs, with the
 frozen constituent hashes and order already required above. Future IDs are not
 looked up in current pytest collection. They are declared separately and exactly
 from the approved spec:
@@ -706,15 +711,18 @@ module/function/parameter owner, or a future ID unexpectedly present in the 217
 baseline fails Task 1, while a correctly declared future ID does not require
 collection before its file exists. After binding the actual 217 IDs, Task 1
 materializes `verify_task2_identities.py` from these same constants. It writes
-`expected-task2-relevant-225.txt` by inserting the helper-contract ID immediately
-after the existing `wrong-duration-type` helper row and appending the seven
-qualification IDs in their declared source order after the 205 target plus
-13-helper sequence. It writes `expected-task2-complete-16617.txt` from the
-accepted exact 16,609 order by inserting the helper ID at that same module-local
-anchor and inserting the new `tests/test_persistent_page_workers.py` rows at that
-file's exact lexical collection position, between the existing `paths_engine`
-and `poll_tick` modules. Both expected files have one final newline and frozen
-SHA-256 values. Self-tests cover the five owner/domain rejections plus wrong
+`expected-task2-relevant-225.collection.json` by inserting the helper-contract
+record immediately after the existing `wrong-duration-type` helper row and
+appending the seven qualification records in their declared source order after
+the 205 target plus 13-helper sequence. It writes
+`expected-task2-complete-16617.collection.json` from the accepted exact 16,609
+order by inserting the helper record at that same module-local anchor and
+inserting the new `tests/test_persistent_page_workers.py` records at that file's
+exact lexical collection position, between the existing `paths_engine` and
+`poll_tick` modules. It then invokes `ids-from-collection` separately for each to
+produce `expected-task2-relevant-225.ids.txt` and
+`expected-task2-complete-16617.ids.txt`. Both ID files have one final newline and
+frozen SHA-256 values. Self-tests cover the five owner/domain rejections plus wrong
 insertion anchor/order; the real 225/16,617 collections do not exist until Task
 2 and are not claimed here.
 
@@ -1298,38 +1306,77 @@ In this Step 2, compile only the collector/parser before it is used:
 ```bash
 rm -rf /tmp/stage-b-baseline
 mkdir -p /tmp/stage-b-baseline
-# Materialize collect.py now; registry/restoration files remain absent.
-python -m py_compile /tmp/stage-b-baseline/collect.py
+# Materialize collector/ID-loader tooling now; registry/restoration files remain absent.
+python -m py_compile \
+  /tmp/stage-b-baseline/collect.py \
+  /tmp/stage-b-baseline/test_collect.py
+uv run --no-sync python -m pytest /tmp/stage-b-baseline/test_collect.py -q
+bash /tmp/stage-b-baseline/test_ids.sh
 test ! -e /tmp/stage-b-baseline/mutations.py
 test ! -e /tmp/stage-b-baseline/restore.py
 ```
 
-Add a `pytest_collection_finish` plugin in the same file that writes exact
-`item.nodeid` and sorted marker names to the path in
-`STAGE_B_COLLECTION_REPORT`. Derive the 165 rows only from the six named test
-functions and parameter mapping above; capture capture/dev program selection and
-saved-owner labels explicitly. Write:
+Add a `pytest_collection_finish` plugin in the same file. The path in
+`STAGE_B_COLLECTION_REPORT` must end in `.collection.json`; the plugin writes one
+deterministic UTF-8 JSON array, plus one final newline, whose ordered entries are
+exactly:
+
+```json
+[{"nodeid":"tests/test_module.py::test_name[param]","markers":["parametrize"]}]
+```
+
+Each entry has exactly `nodeid,markers`; `nodeid` is a nonempty string without
+CR/LF, and `markers` is a sorted unique list of nonempty strings. The report has
+no duplicate node ID. Structured collection JSON is the only source for marker,
+signature/owner, and mapping audits; it is never a pytest argument file and is
+never hashed as an ordered-ID list.
+
+`collect.py ids-from-collection INPUT.collection.json OUTPUT.ids.txt` is the one
+conversion path. It revalidates the schema/uniqueness and writes UTF-8 bytes
+`"".join(nodeid + "\\n" for nodeid in rows)`—one node ID and one LF per line,
+with a final LF, no header, blank line, CR, or duplicate. `ids.sh` exposes
+`load_ids INPUT.ids.txt ARRAY_NAME`; it rejects every other suffix, calls
+`collect.py validate-ids`, and only then invokes `mapfile -t`. Every mapfile,
+pytest argument-array expansion, ordered hash, and byte-equality check in this
+plan uses a validated `.ids.txt`; distinct `*_REPORT` and `*_IDS` variable names
+are mandatory. `test_collect.py` must reject malformed structured records,
+blank/CR-containing IDs, duplicate IDs, a missing final LF, and any mismatch in
+node IDs or order between a `.collection.json` report and its derived `.ids.txt`.
+`test_ids.sh` must call `load_ids` with a valid ID file, then prove a structured
+`.collection.json` path is rejected **before** its JSON can reach `mapfile`, and
+prove blank-line and duplicate-ID `.ids.txt` fixtures are rejected.
+
+Derive the 165 rows only from the six named test functions and parameter mapping
+above; capture capture/dev program selection and saved-owner labels explicitly.
+Write structured and ID-only pairs:
 
 ```text
-/tmp/stage-b-baseline/target-205.txt
-/tmp/stage-b-baseline/node-165.txt
-/tmp/stage-b-baseline/helper-12.txt
+/tmp/stage-b-baseline/target-205.collection.json
+/tmp/stage-b-baseline/target-205.ids.txt
+/tmp/stage-b-baseline/node-165.collection.json
+/tmp/stage-b-baseline/node-165.ids.txt
+/tmp/stage-b-baseline/helper-12.collection.json
+/tmp/stage-b-baseline/helper-12.ids.txt
+/tmp/stage-b-baseline/baseline-217.collection.json
+/tmp/stage-b-baseline/baseline-217.ids.txt
 /tmp/stage-b-baseline/node-map.json
 /tmp/stage-b-baseline/shapes.json
 ```
 
-Require exact counts `205/165/12`, uniqueness, the two frozen target hashes, and
-all four per-family counts `62/65/17/21`. Assert that every scenario, program,
-protocol, label, and timeout equals the approved spec, not merely that totals
-match.
+Require exact counts `205/165/12`, uniqueness, the two frozen target hashes from
+the corresponding `.ids.txt` bytes, and all four per-family counts
+`62/65/17/21`. Assert from structured JSON that every marker, scenario, program,
+protocol, label, signature owner, and timeout equals the approved spec, not
+merely that totals match.
 
 - [ ] **Step 3: Collect and bind exact 217 first, then capture one-shot evidence**
 
 Run the collection/parser path before importing any registry module:
 
 ```bash
+BASELINE_REPORT=/tmp/stage-b-baseline/target-helper-217.collection.json
 PYTHONPATH=/tmp/stage-b-baseline \
-  STAGE_B_COLLECTION_REPORT=/tmp/stage-b-baseline/target-helper-217.collect.json \
+  STAGE_B_COLLECTION_REPORT="$BASELINE_REPORT" \
   uv run --no-sync python -m pytest \
   tests/test_preview_savedlayouts_page.py \
   tests/test_fleetsharing_hydration.py \
@@ -1338,38 +1385,53 @@ PYTHONPATH=/tmp/stage-b-baseline \
   tests/test_node_scenario_worker.py \
   --collect-only -q -p no:cacheprovider -p collect
 uv run --no-sync python /tmp/stage-b-baseline/collect.py \
-  bind-baseline /tmp/stage-b-baseline/target-helper-217.collect.json
+  partition-baseline "$BASELINE_REPORT" /tmp/stage-b-baseline
+for stem in target-205 node-165 helper-12 baseline-217; do
+  uv run --no-sync python /tmp/stage-b-baseline/collect.py \
+    ids-from-collection \
+    "/tmp/stage-b-baseline/$stem.collection.json" \
+    "/tmp/stage-b-baseline/$stem.ids.txt"
+done
+uv run --no-sync python /tmp/stage-b-baseline/collect.py \
+  bind-baseline /tmp/stage-b-baseline/baseline-217.ids.txt
 ```
 
-The second command requires exactly 217 unique IDs in literal collection order,
-writes `target-205.txt`, `node-165.txt`, `helper-12.txt`,
-`baseline-217.txt`, `baseline_ids.py`, maps/shapes/hashes, and binds
-`BASELINE_COLLECTED_IDS` in `baseline_ids.py` from the actual final-newline
-records. It requires the 205 target rows followed by the 12 helper rows, exact
-205/165 frozen hashes and `62/65/17/21` mapping, and absence of all eight planned
-IDs. No registry/tooling import is permitted before this command succeeds.
+`partition-baseline` requires exactly 217 unique structured records in literal
+collection order and writes only the four `.collection.json` reports plus
+maps/shapes. The explicit conversion loop writes the four ID-only files. The
+final command binds `BASELINE_COLLECTED_IDS` in `baseline_ids.py` only from
+`baseline-217.ids.txt`. It requires the 205 target rows followed by the 12 helper
+rows, exact 205/165 frozen hashes from ID-only bytes and `62/65/17/21` mapping
+from structured records, and absence of all eight planned IDs. No registry/tooling
+import is permitted before this command succeeds.
 
 Immediately run the same exact 217 IDs once for outcomes through the already
 materialized raw-JUnit parser:
 
 ```bash
-mapfile -t BASELINE_IDS < /tmp/stage-b-baseline/baseline-217.txt
-uv run --no-sync python -m pytest "${BASELINE_IDS[@]}" \
+source /tmp/stage-b-baseline/ids.sh
+BASELINE_IDS_FILE=/tmp/stage-b-baseline/baseline-217.ids.txt
+load_ids "$BASELINE_IDS_FILE" BASELINE_NODEIDS
+uv run --no-sync python -m pytest "${BASELINE_NODEIDS[@]}" \
   -q -rs --junitxml=/tmp/stage-b-baseline/baseline-217.xml
 uv run --no-sync python /tmp/stage-b-baseline/collect.py \
   verify-baseline-junit /tmp/stage-b-baseline/baseline-217.xml
 ```
 
 Require `217 passed`, no skip/failure/error, and byte-for-byte JUnit identity
-order equal to `baseline-217.txt`. Do not infer node IDs from dotted classnames
+order equal to `baseline-217.ids.txt`. Do not infer node IDs from dotted classnames
 by unconditional dot replacement. Use that same parser on the accepted Ubuntu
 Stage A XML before registry materialization:
 
 ```bash
 uv run --no-sync python /tmp/stage-b-baseline/collect.py \
-  extract-accepted-order \
+  collection-from-junit \
   /mnt/c/dev/flygd-wingman/tmp/stage-a-hosted-36258907685/artifacts/ubuntu/pytest-result.xml \
-  /tmp/stage-b-baseline/accepted-complete-16609.txt
+  /tmp/stage-b-baseline/accepted-complete-16609.collection.json
+uv run --no-sync python /tmp/stage-b-baseline/collect.py \
+  ids-from-collection \
+  /tmp/stage-b-baseline/accepted-complete-16609.collection.json \
+  /tmp/stage-b-baseline/accepted-complete-16609.ids.txt
 ```
 
 Require exactly 16,609 unique rows and final-newline hash
@@ -1476,13 +1538,23 @@ the canonical registry manifest/hash, then run commands in this literal order:
 
 ```bash
 test -f /tmp/stage-b-baseline/baseline_ids.py
-test "$(wc -l < /tmp/stage-b-baseline/baseline-217.txt)" -eq 217
+test "$(wc -l < /tmp/stage-b-baseline/baseline-217.ids.txt)" -eq 217
 python -m py_compile \
   /tmp/stage-b-baseline/restore.py \
   /tmp/stage-b-baseline/mutations.py \
   /tmp/stage-b-baseline/test_restore.py \
   /tmp/stage-b-baseline/test_mutations.py \
   /tmp/stage-b-baseline/verify_task2_identities.py
+uv run --no-sync python /tmp/stage-b-baseline/verify_task2_identities.py \
+  build-expected-collections
+uv run --no-sync python /tmp/stage-b-baseline/collect.py \
+  ids-from-collection \
+  /tmp/stage-b-baseline/expected-task2-relevant-225.collection.json \
+  /tmp/stage-b-baseline/expected-task2-relevant-225.ids.txt
+uv run --no-sync python /tmp/stage-b-baseline/collect.py \
+  ids-from-collection \
+  /tmp/stage-b-baseline/expected-task2-complete-16617.collection.json \
+  /tmp/stage-b-baseline/expected-task2-complete-16617.ids.txt
 PYTHONPATH=/tmp/stage-b-baseline \
   uv run --no-sync python -m pytest \
   /tmp/stage-b-baseline/test_restore.py \
@@ -1495,9 +1567,11 @@ This run is registry metadata/owner/kind/schema smoke plus disposable runner
 coverage. It does not call phase-specific `validate_recipe()`, match edits
 against not-yet-created Stage B implementation bytes, execute a canonical
 mutation, or count as real-edit/representative defect qualification. Require
-`expected-task2-relevant-225.txt` and `expected-task2-complete-16617.txt` to have
-exact counts 225/16,617, unique rows, one final newline, exact approved insertion
-anchors, and recorded SHA-256 values before continuing.
+both expected `.collection.json` reports to match their derived
+`expected-task2-relevant-225.ids.txt` and
+`expected-task2-complete-16617.ids.txt` files row-for-row. Require the ID files to
+have exact counts 225/16,617, unique rows, one final newline, exact approved
+insertion anchors, and recorded SHA-256 values before continuing.
 
 - [ ] **Step 5: Re-audit accepted Stage A hosted inputs and exact file hashes**
 
@@ -1587,8 +1661,9 @@ invented values.
 - [ ] **Step 8: Verify and commit Task 1**
 
 ```bash
-python -m py_compile /tmp/stage-b-baseline/collect.py /tmp/stage-b-baseline/probe_plugin.py /tmp/stage-b-baseline/hosted.py /tmp/stage-b-baseline/restore.py /tmp/stage-b-baseline/test_restore.py /tmp/stage-b-baseline/mutations.py /tmp/stage-b-baseline/test_mutations.py /tmp/stage-b-baseline/verify_task2_identities.py
-uv run --no-sync python -m pytest /tmp/stage-b-baseline/test_restore.py /tmp/stage-b-baseline/test_mutations.py -q
+python -m py_compile /tmp/stage-b-baseline/collect.py /tmp/stage-b-baseline/test_collect.py /tmp/stage-b-baseline/probe_plugin.py /tmp/stage-b-baseline/hosted.py /tmp/stage-b-baseline/restore.py /tmp/stage-b-baseline/test_restore.py /tmp/stage-b-baseline/mutations.py /tmp/stage-b-baseline/test_mutations.py /tmp/stage-b-baseline/verify_task2_identities.py
+uv run --no-sync python -m pytest /tmp/stage-b-baseline/test_collect.py /tmp/stage-b-baseline/test_restore.py /tmp/stage-b-baseline/test_mutations.py -q
+bash /tmp/stage-b-baseline/test_ids.sh
 uv run --no-sync ruff check /tmp/stage-b-baseline/*.py
 uv run --no-sync ruff format --check /tmp/stage-b-baseline/*.py
 uv run --no-sync python -m pytest tests/test_documentation.py -q
@@ -1973,15 +2048,20 @@ failure cannot hide another:
 ```bash
 rm -rf /tmp/stage-b-task2-red
 mkdir -p /tmp/stage-b-task2-red
+QUALIFICATION_REPORT=/tmp/stage-b-task2-red/qualification-7.collection.json
+QUALIFICATION_IDS_FILE=/tmp/stage-b-task2-red/qualification-7.ids.txt
 PYTHONPATH=/tmp/stage-b-baseline \
-  STAGE_B_COLLECTION_REPORT=/tmp/stage-b-task2-red/qualification-7.txt \
+  STAGE_B_COLLECTION_REPORT="$QUALIFICATION_REPORT" \
   uv run --no-sync python -m pytest tests/test_persistent_page_workers.py \
   --collect-only -q -p no:cacheprovider -p collect
-mapfile -t QUALIFICATION_IDS < /tmp/stage-b-task2-red/qualification-7.txt
-test "${#QUALIFICATION_IDS[@]}" -eq 7
-for index in "${!QUALIFICATION_IDS[@]}"; do
+uv run --no-sync python /tmp/stage-b-baseline/collect.py \
+  ids-from-collection "$QUALIFICATION_REPORT" "$QUALIFICATION_IDS_FILE"
+source /tmp/stage-b-baseline/ids.sh
+load_ids "$QUALIFICATION_IDS_FILE" QUALIFICATION_NODEIDS
+test "${#QUALIFICATION_NODEIDS[@]}" -eq 7
+for index in "${!QUALIFICATION_NODEIDS[@]}"; do
   set +e
-  uv run --no-sync python -m pytest "${QUALIFICATION_IDS[$index]}" -q \
+  uv run --no-sync python -m pytest "${QUALIFICATION_NODEIDS[$index]}" -q \
     --junitxml="/tmp/stage-b-task2-red/red-$index.xml"
   status=$?
   set -e
@@ -2285,9 +2365,13 @@ registry entries to survive.
 - [ ] **Step 10: Run Task 2 GREEN, enforce the post-creation identity gate, and commit**
 
 ```bash
+TASK2_RELEVANT_REPORT=/tmp/stage-b-baseline/task2-relevant-225.collection.json
+TASK2_RELEVANT_IDS=/tmp/stage-b-baseline/task2-relevant-225.ids.txt
+TASK2_COMPLETE_REPORT=/tmp/stage-b-baseline/task2-complete-16617.collection.json
+TASK2_COMPLETE_IDS=/tmp/stage-b-baseline/task2-complete-16617.ids.txt
 rm -f \
-  /tmp/stage-b-baseline/task2-relevant-225.txt \
-  /tmp/stage-b-baseline/task2-complete-16617.txt
+  "$TASK2_RELEVANT_REPORT" "$TASK2_RELEVANT_IDS" \
+  "$TASK2_COMPLETE_REPORT" "$TASK2_COMPLETE_IDS"
 node --check tests/fixtures/page_scenario_worker.cjs
 uv run --no-sync python -m pytest tests/test_node_scenario_worker.py -q -rs
 uv run --no-sync python -m pytest tests/test_persistent_page_workers.py -q -rs
@@ -2295,7 +2379,7 @@ uv run --no-sync python -m pytest \
   tests/test_node_scenario_worker.py \
   tests/test_persistent_page_workers.py \
   -q -rs --junitxml=/tmp/stage-b-task2.xml
-PYTHONPATH=/tmp/stage-b-baseline STAGE_B_COLLECTION_REPORT=/tmp/stage-b-baseline/task2-relevant-225.txt \
+PYTHONPATH=/tmp/stage-b-baseline STAGE_B_COLLECTION_REPORT="$TASK2_RELEVANT_REPORT" \
   uv run --no-sync python -m pytest \
   tests/test_preview_savedlayouts_page.py \
   tests/test_fleetsharing_hydration.py \
@@ -2304,10 +2388,16 @@ PYTHONPATH=/tmp/stage-b-baseline STAGE_B_COLLECTION_REPORT=/tmp/stage-b-baseline
   tests/test_node_scenario_worker.py \
   tests/test_persistent_page_workers.py \
   --collect-only -q -p no:cacheprovider -p collect
-PYTHONPATH=/tmp/stage-b-baseline STAGE_B_COLLECTION_REPORT=/tmp/stage-b-baseline/task2-complete-16617.txt \
+PYTHONPATH=/tmp/stage-b-baseline STAGE_B_COLLECTION_REPORT="$TASK2_COMPLETE_REPORT" \
   uv run --no-sync python -m pytest tests/ \
   --collect-only -q -p no:cacheprovider -p collect
-uv run --no-sync python /tmp/stage-b-baseline/verify_task2_identities.py
+uv run --no-sync python /tmp/stage-b-baseline/collect.py \
+  ids-from-collection "$TASK2_RELEVANT_REPORT" "$TASK2_RELEVANT_IDS"
+uv run --no-sync python /tmp/stage-b-baseline/collect.py \
+  ids-from-collection "$TASK2_COMPLETE_REPORT" "$TASK2_COMPLETE_IDS"
+uv run --no-sync python /tmp/stage-b-baseline/verify_task2_identities.py \
+  "$TASK2_RELEVANT_REPORT" "$TASK2_RELEVANT_IDS" \
+  "$TASK2_COMPLETE_REPORT" "$TASK2_COMPLETE_IDS"
 uv run --extra dev ruff check tests/node_scenario_worker.py tests/test_node_scenario_worker.py tests/test_preview_savedlayouts_page.py tests/test_persistent_page_workers.py
 uv run --extra dev ruff format --check tests/node_scenario_worker.py tests/test_node_scenario_worker.py tests/test_preview_savedlayouts_page.py tests/test_persistent_page_workers.py
 git diff --check
@@ -2324,22 +2414,25 @@ acceptance.
 `verify_task2_identities.py` is the hard pre-Task-3 gate. It imports the actual
 Task 1 declarations and requires:
 
-- fresh `task2-relevant-225.txt` is byte-for-byte equal to frozen
-  `expected-task2-relevant-225.txt`, including one final newline—not merely an
+- fresh `task2-relevant-225.ids.txt` is byte-for-byte equal to frozen
+  `expected-task2-relevant-225.ids.txt`, including one final newline—not merely an
   old-ID subsequence plus an additions set;
-- fresh `task2-complete-16617.txt` is byte-for-byte equal to frozen
-  `expected-task2-complete-16617.txt`, including exact module-local insertion
+- fresh `task2-complete-16617.ids.txt` is byte-for-byte equal to frozen
+  `expected-task2-complete-16617.ids.txt`, including exact module-local insertion
   positions—not merely the accepted 16,609 as a subsequence;
-- both actual files have unique IDs and exact counts 225/16,617; all eight
-  additions occur once with the declared module/function/parameter owner, all
+- both actual ID-only files have unique IDs and exact counts 225/16,617; their
+  corresponding structured reports match them row-for-row and supply marker and
+  owner evidence; all eight additions occur once with the declared
+  module/function/parameter owner, all
   217 baseline IDs retain exact order, and the frozen 205/165/12 subsets and
   hashes remain unchanged;
 - the expected and fresh-actual ordered final-newline SHA-256 values are equal,
   then the actual bytes/hashes are frozen in
   `/tmp/stage-b-baseline/task2-identity-gate.json` plus the results ledger; and
 - the gate records hashes of the two new/changed test modules, canonical registry
-  JSON/hash, exact counts, expected/actual ordered hashes, and empty symmetric
-  differences.
+  JSON/hash, all four structured-report/ID-file pairs, exact counts, ID-only
+  expected/actual ordered hashes, row-for-row report/ID agreement, and empty
+  symmetric differences.
 
 A future ID may be absent only during the Task 1 declaration check. After Task 2,
 all eight must be actually collectable exactly once and in frozen order. A typo,
@@ -2369,10 +2462,11 @@ or collection error stops before commit and before any Task 3 registry consumer.
 
 - [ ] **Step 1: Revalidate the Task 2 identity gate, then add the saved-family fixture substitutions as collectable RED**
 
-Before editing, rerun both Task 2 collection commands and
-`verify_task2_identities.py`. Require the fresh relevant/full files to remain
-byte-for-byte equal to the frozen actual Task 2 files and their expected files,
-with the same 225/16,617 counts, ordered hashes, owners, and empty symmetric
+Before editing, rerun both Task 2 structured collection commands, both explicit
+`ids-from-collection` conversions, and `verify_task2_identities.py`. Require each
+fresh report/ID pair to agree row-for-row and both fresh `.ids.txt` files to
+remain byte-for-byte equal to the frozen actual Task 2 ID files and their expected
+ID files, with the same 225/16,617 counts, ordered ID-file hashes, owners, and empty symmetric
 differences recorded in `task2-identity-gate.json`. Also require the recorded
 test-module and registry hashes to match the current tree. This is a hard gate:
 no Task 3 recipe or source edit starts if it fails.
@@ -2649,8 +2743,10 @@ pytest invocations; each starts exactly one process and closes it.
 
 - [ ] **Step 5: Run saved order and isolation sequences**
 
-Materialize exact 62-ID normal, reverse, and `random.Random(20260926)` shuffle
-lists. Execute each in a fresh pytest process; require 62 passes, one family PID,
+Materialize exact 62-ID `normal.ids.txt`, `reverse.ids.txt`, and
+`shuffle-20260926.ids.txt` files through the canonical ID writer/validator. Load
+each pytest argument array through `load_ids` and execute it in a fresh process;
+require 62 passes, one family PID,
 request ordinals `1..62`, 33 total fsyncs, and exact output/diagnostic parity.
 Within one process run:
 
@@ -2741,32 +2837,178 @@ test fixture. Group and marker use `PageTree` plus `{"structural": tree.root}`.
 Each fixture uses `shutil.which("node")` and asserts availability; none skips.
 Each module adds its own autouse direct-fsync recorder and worker-property helper.
 
-Replace only the direct subprocess block:
+Fleet Sharing retains its production setup and therefore its approved `tmp_path`
+fixture. Its final signature is exactly:
 
 ```python
-reply = fleetsharing_page_worker.request(
-    f"fleet-sharing/page/{scenario}",
-    {
-        "protocol": "fleet-sharing",
-        "input": {
-            "scenario": scenario,
-            "missing": api.fleet_sharing_watch(True),
-            "live": live_api.fleet_sharing_state(),
-            "older": older,
-            "rejected": rejected,
-            "preference_case": preference_case,
-        },
-    },
-    timeout=20.0,
-)
-assert reply["output"] == f"PASS {scenario}"
+def test_sharing_watch_runtime(
+    tmp_path, fleetsharing_page_worker, request, scenario
+):
 ```
 
-Group and marker send `scenario` plus current `marker_choices()` and expect their
-exact prefixed terminals at `30.0` seconds. Preserve all Python setup/finally
-logic, including both Fleet Sharing shutdown assertions. Collect 205 and require
-no ID/order change. Run one representative per new family and require RED only at
-missing completion export.
+Keep the body from `api = Api(make_state(...))` through construction of
+`preference_case` and both `finally` shutdown assertions. Replace the exact tail
+beginning `page = SharingPageTree()` through the subprocess PASS assertion with:
+
+```python
+        reply = fleetsharing_page_worker.request(
+            f"fleet-sharing/page/{scenario}",
+            {
+                "protocol": "fleet-sharing",
+                "input": {
+                    "scenario": scenario,
+                    "page": "sharing",
+                    "missing": api.fleet_sharing_watch(True),
+                    "live": live_api.fleet_sharing_state(),
+                    "older": older,
+                    "rejected": rejected,
+                    "preference_case": preference_case,
+                },
+            },
+            timeout=20.0,
+        )
+        assert reply["output"] == f"PASS {scenario}"
+        assert reply["cleanup"] == ZERO_CLEANUP
+        _record_fleetsharing_worker(
+            request, fleetsharing_page_worker, reply
+        )
+```
+
+The group conversion replaces this exact complete baseline function body:
+
+```python
+def test_group_backward_page(tmp_path, scenario):
+    from tests.html_tree import PageTree
+    from wingman.preview.labelmarkers import marker_choices
+
+    root = Path(__file__).resolve().parents[1]
+    tree = PageTree()
+    tree.feed((root / "wingman/web/index.html").read_text(encoding="utf-8"))
+    data = tmp_path / "group-backward.json"
+    data.write_text(
+        json.dumps(
+            {"page": tree.root, "choices": marker_choices(), "scenario": scenario}
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            "node",
+            str(root / "tests/fixtures/preview_group_backward.cjs"),
+            str(data),
+            str(root / "wingman/web"),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"PASS group backward {scenario}" in result.stdout
+```
+
+Replace it exactly with:
+
+```python
+def test_group_backward_page(group_backward_page_worker, request, scenario):
+    from wingman.preview.labelmarkers import marker_choices
+
+    choices = json.loads(
+        json.dumps(marker_choices(), ensure_ascii=False, allow_nan=False)
+    )
+    reply = group_backward_page_worker.request(
+        f"preview-group-backward/page/{scenario}",
+        {
+            "protocol": "group-backward",
+            "input": {
+                "scenario": scenario,
+                "page": "structural",
+                "choices": choices,
+            },
+        },
+        timeout=30.0,
+    )
+    assert reply["output"] == f"PASS group backward {scenario}"
+    assert reply["cleanup"] == ZERO_CLEANUP
+    _record_group_worker(request, group_backward_page_worker, reply)
+```
+
+The marker conversion replaces this exact complete baseline function body:
+
+```python
+def test_marker_page_ownership(tmp_path, scenario):
+    tree = PageTree()
+    tree.feed((ROOT / "wingman/web/index.html").read_text(encoding="utf-8"))
+    data = tmp_path / "markers.json"
+    data.write_text(
+        json.dumps(
+            {"page": tree.root, "choices": marker_choices(), "scenario": scenario}
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            "node",
+            str(ROOT / "tests/fixtures/preview_labelmarkers.cjs"),
+            str(data),
+            str(ROOT / "wingman/web"),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"PASS marker page {scenario}" in result.stdout
+```
+
+Replace it exactly with:
+
+```python
+def test_marker_page_ownership(labelmarkers_page_worker, request, scenario):
+    choices = json.loads(
+        json.dumps(marker_choices(), ensure_ascii=False, allow_nan=False)
+    )
+    reply = labelmarkers_page_worker.request(
+        f"preview-label-markers/page/{scenario}",
+        {
+            "protocol": "label-markers",
+            "input": {
+                "scenario": scenario,
+                "page": "structural",
+                "choices": choices,
+            },
+        },
+        timeout=30.0,
+    )
+    assert reply["output"] == f"PASS marker page {scenario}"
+    assert reply["cleanup"] == ZERO_CLEANUP
+    _record_labelmarkers_worker(request, labelmarkers_page_worker, reply)
+```
+
+The primitive page selectors are replaced by fresh VM-side manifest decodes.
+`marker_choices()` remains scenario-request input and is round-tripped through
+strict finite JSON before each request, preserving the production expectation
+payload without mutable aliases. The final group and marker functions perform no
+per-row `Path` construction, `read_text`, `write_text`, file allocation, or Node
+subprocess and have no `tmp_path` or `monkeypatch` fixture/name.
+
+Extend the AST/source gate with the two exact permitted signature changes from
+the table. For each final function require unchanged decorator AST and reject the
+names `tmp_path`, `monkeypatch`, `Path`, `PageTree`, and `subprocess`; reject calls
+whose attribute is `read_text`, `write_text`, or `run`. Require exactly one
+family worker `.request`, exact protocol/label/timeout/output, the `scenario`,
+`page`, and detached `choices` payload keys, zero cleanup, and one property
+recording call. Fleet's gate instead requires exact
+`(tmp_path, fleetsharing_page_worker, request, scenario)`, retains all
+setup/finally state inputs, and rejects only its removed page-file/subprocess
+tail.
+
+Collect 205 and require no ID/order change. Before adding CJS completion exports,
+run one representative per new family. The Python request path and payload must
+reach real source evaluation; RED is the family program's missing completion
+export at its call-phase sentinel, never collection/setup failure or removed file
+scaffolding. This preserves the completion-export seam for Task 4 Step 2.
 
 - [ ] **Step 2: Convert the three CJS files to dual-entry completion**
 
@@ -2850,15 +3092,20 @@ while any(queues.values()):
     for family in round_robin_families:
         if queues[family]:
             cross_family.append(queues[family].popleft())
-assert ordered_hash(cross_family) == (
+write_ids_file(Path("/tmp/stage-b-orders/cross-family.ids.txt"), cross_family)
+cross_family_bytes = Path("/tmp/stage-b-orders/cross-family.ids.txt").read_bytes()
+assert hashlib.sha256(cross_family_bytes).hexdigest() == (
     "183ba77428ec2e3307d1b68716d3427aa75926fbcd1fbcc4b28682d0162131e1"
 )
 ```
 
-The generator script writes each list with one final newline, reads it back,
-recomputes its SHA-256 from those exact bytes, and refuses to invoke pytest if
-any count, uniqueness, set equality, family-prefix first cycle, or frozen hash
-self-check differs. The round-robin first cycle is exactly Fleet Sharing,
+The generator writes and validates
+`normal.ids.txt`, `reverse.ids.txt`, `shuffle-20260926.ids.txt`, and
+`cross-family.ids.txt` with one final newline, reads each back, computes SHA-256
+only from those exact ID-only bytes, loads pytest argv only through `load_ids`,
+and refuses to invoke pytest if any count, blank/duplicate ID, uniqueness, set
+equality, family-prefix first cycle, or frozen hash self-check differs. The
+round-robin first cycle is exactly Fleet Sharing,
 group-backward, label-markers, saved-layouts; do not rotate it while retaining
 the old hash literal.
 
@@ -2961,29 +3208,43 @@ def unique_property(case, owner, name):
 Before arithmetic, reject every missing key, duplicate key, unexpected owner,
 and unexpected extra `stage_b.*` key. Require the exact ownership/value table at
 the top of this plan. Group target rows by family and require one PID and exact
-ordinal sets. Sum direct fsync only over exact frozen ID sets, then add the one
-receipt value. Keep qualification properties and starts out of those sums.
+ordinal sets. Load exact frozen ID sets only from validated `.ids.txt` files,
+sum direct fsync over those sets, then add the one receipt value. Keep
+qualification properties and starts out of those sums; marker/signature checks
+read only the paired structured collection reports.
 
 - [ ] **Step 2: Run all 225 implementation-relevant identities**
 
 ```bash
-uv run --no-sync python -m pytest \
+FINAL_RELEVANT_REPORT=/tmp/stage-b-final/relevant-225.collection.json
+FINAL_RELEVANT_IDS=/tmp/stage-b-final/relevant-225.ids.txt
+PYTHONPATH=/tmp/stage-b-baseline \
+  STAGE_B_COLLECTION_REPORT="$FINAL_RELEVANT_REPORT" \
+  uv run --no-sync python -m pytest \
   tests/test_preview_savedlayouts_page.py \
   tests/test_fleetsharing_hydration.py \
   tests/test_preview_group_backward.py \
   tests/test_preview_labelmarkers_page.py \
   tests/test_node_scenario_worker.py \
   tests/test_persistent_page_workers.py \
+  --collect-only -q -p no:cacheprovider -p collect
+uv run --no-sync python /tmp/stage-b-baseline/collect.py \
+  ids-from-collection "$FINAL_RELEVANT_REPORT" "$FINAL_RELEVANT_IDS"
+source /tmp/stage-b-baseline/ids.sh
+load_ids "$FINAL_RELEVANT_IDS" RELEVANT_NODEIDS
+uv run --no-sync python -m pytest "${RELEVANT_NODEIDS[@]}" \
   -q -rs --junitxml=/tmp/stage-b-final/relevant-225.xml
 ```
 
 Require exactly 225 unique passed outcomes: 205 existing + 13 helper + seven
 qualification. Independently assert baseline `217 + 8 = 225`; do not misstate
-`205 + 8` as 225 without the helper baseline. Parse the fresh JUnit order and
-require its final-newline ID bytes to equal the frozen actual Task 2
-`task2-relevant-225.txt` byte-for-byte, including every module-local insertion;
-then compare its hash with `task2-identity-gate.json`. Set/subsequence agreement
-alone is insufficient.
+`205 + 8` as 225 without the helper baseline. Use
+`relevant-225.collection.json` for marker/signature/owner audits and raw JUnit
+for outcomes/properties; require JUnit node IDs to equal the derived ID file in
+order. Require the derived `relevant-225.ids.txt` bytes to equal the frozen actual Task 2
+`task2-relevant-225.ids.txt` byte-for-byte, including every module-local
+insertion; then compare its ID-file hash with `task2-identity-gate.json`.
+Set/subsequence agreement alone is insufficient.
 
 - [ ] **Step 3: Run the complete restoration-safe mutation matrix**
 
@@ -3009,8 +3270,8 @@ For each Task 5 recipe, `run_recipe()` dispatches by the immutable probe kind:
   result or exception class/message for mutated and restored calls, with no
   command or JUnit requirement.
 
-All three paths require kind-appropriate forbidden-masking rejection, literal
-match-once edits where present, rejection of every other sentinel, and exact
+All three paths require kind-appropriate forbidden-masking rejection, at least
+one literal match-once edit, rejection of every other sentinel, and exact
 bytes/SHA-256/binary-diff/NUL-status restoration before the restored probe.
 Afterward, read the completed Task 3/4/5 result records for
 `REPRESENTATIVE_EVIDENCE_RECIPES` and require seven actual defect executions:
@@ -3075,6 +3336,14 @@ cargo build --locked --release \
   --manifest-path packaging/settings-codec/Cargo.toml \
   --target-dir packaging/settings-codec/target
 uv run --no-sync python -c "import os, pathlib, shutil; from wingman.evesettings import codec; name = 'wingman-settings-codec' + ('.exe' if os.name == 'nt' else ''); source = pathlib.Path('packaging/settings-codec/target/release') / name; target = pathlib.Path('packaging/bin') / name; target.parent.mkdir(parents=True, exist_ok=True); shutil.copy2(source, target); assert codec.codec_available(), 'Native integration tests require the built codec'"
+FINAL_COMPLETE_REPORT=/tmp/stage-b-final/full-16617.collection.json
+FINAL_COMPLETE_IDS=/tmp/stage-b-final/full-16617.ids.txt
+PYTHONPATH=/tmp/stage-b-baseline \
+  STAGE_B_COLLECTION_REPORT="$FINAL_COMPLETE_REPORT" \
+  uv run --no-sync python -m pytest tests/ \
+  --collect-only -q -p no:cacheprovider -p collect
+uv run --no-sync python /tmp/stage-b-baseline/collect.py \
+  ids-from-collection "$FINAL_COMPLETE_REPORT" "$FINAL_COMPLETE_IDS"
 uv run --no-sync python -m pytest tests/ -q -rs --durations=50 \
   --junitxml=/tmp/stage-b-final/full-16617.xml
 uv run --no-sync python scripts/summarize_pytest_junit.py \
@@ -3082,8 +3351,10 @@ uv run --no-sync python scripts/summarize_pytest_junit.py \
 ```
 
 Require exactly `16,603 passed + 14 skipped`, zero failures/errors, and 16,617
-unique IDs. Parse the fresh full JUnit order and require its final-newline ID
-bytes to equal the frozen actual Task 2 `task2-complete-16617.txt` byte-for-byte;
+unique IDs. Use `full-16617.collection.json` for marker/signature/owner audits and
+raw JUnit for outcomes/skips/properties; require JUnit node IDs to equal the
+derived ID file in order. Require the derived `full-16617.ids.txt` bytes to equal
+the frozen actual Task 2 `task2-complete-16617.ids.txt` byte-for-byte;
 then require its hash to equal `task2-identity-gate.json`. The accepted 16,609
 subsequence and exact eight additions are supporting diagnostics, not a substitute
 for this full-order comparison. Require normalized Linux skip array equality to
@@ -3430,9 +3701,11 @@ Fresh checks performed while authoring this plan:
 - the repaired plan preflight checker found six tasks and 51 steps, exact
   `14/16/41 = 71` registry order, eight explicit non-pytest label owners, three
   typed dispatcher contracts, seven unique qualification RED sentinels, exact
-  collector-before-217-before-registry command order, byte-exact saved-main
-  baseline body replacement, frozen Task 2 expected/actual order gates, and zero
-  stale contradictions; documentation tests passed separately;
+  collector-before-217-before-registry command order, byte-exact saved-main,
+  group, and marker baseline body replacements, literal in-memory reachability
+  for all 17 group and 21 marker scenarios, structured-report/ID-only separation,
+  frozen Task 2 expected/actual order gates, and zero stale contradictions;
+  documentation tests passed separately;
 - placeholder/count review found no unresolved implementation value presented as
   fact: candidate full-suite hashes remain explicitly deferred, while IDs,
   outcomes, process/fsync arithmetic, six tasks, literal-recipe requirements,
@@ -3488,7 +3761,8 @@ condition triggers, especially if:
   provenance.
 - **Types and names:** fixture names, family names, protocol labels, request keys,
   reply cleanup keys, immutable receipt bytes/provider, typed mutation probes,
-  JUnit keys, non-pytest labels, and added IDs are consistent across tasks.
+  structured `.collection.json` reports, validated `.ids.txt` argument/hash
+  files, JUnit keys, non-pytest labels, and added IDs are consistent across tasks.
 - **Identity arithmetic and ordering:** baseline `205 + 12 = 217`; additions
   `7 + 1 = 8`; relevant `205 + 7 + 13 = 225`; complete `16,609 + 8 = 16,617`;
   Linux `16,603 + 14 = 16,617`; Windows `16,550 + 67 = 16,617`. Task 1 validates
