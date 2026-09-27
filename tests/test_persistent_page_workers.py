@@ -73,6 +73,12 @@ MUTATION_SENTINELS = {
     "identity": "stage-b mutation receipt-production-identity",
     "durable": "stage-b mutation receipt-durable-readback",
     "real-dom": "stage-b mutation real-dom-listener-tracking",
+    "saved-program": "stage-b mutation adapter-saved-program-selection",
+    "sharing-dom": "stage-b mutation adapter-sharing-dom-isolation",
+    "group-source": "stage-b mutation realm-group-source-reexecution",
+    "marker-root": "stage-b mutation adapter-marker-root-release",
+    "business-retention": "stage-b mutation business-failure-process-retention",
+    "fatal-no-replay": "stage-b mutation protocol-fatal-no-replay",
 }
 
 
@@ -440,8 +446,45 @@ def _realm_request(
 ) -> dict[str, object]:
     if family == "saved-layouts":
         return _saved_main_request(worker, inputs, mode="realm", run=run)
-    return _qualification_request(
-        worker, family, "realm", run=run, nested={"value": "clean"}
+    case_name, protocol, scenario, label, page, timeout = {
+        "fleet-sharing": (
+            "fleet-sharing",
+            "fleet-sharing",
+            "missing-worker",
+            "fleet-sharing/page/missing-worker",
+            "sharing",
+            20.0,
+        ),
+        "group-backward": (
+            "group-backward",
+            "group-backward",
+            "dev",
+            "preview-group-backward/page/dev",
+            "structural",
+            30.0,
+        ),
+        "label-markers": (
+            "label-markers",
+            "label-markers",
+            "hydration",
+            "preview-label-markers/page/hydration",
+            "structural",
+            30.0,
+        ),
+    }[family]
+    case = next(item for item in inputs.direct_cases if item.name == case_name)
+    payload = json.loads(case.input_json)
+    payload.update(
+        scenario=scenario,
+        page=page,
+        mode="realm",
+        run=run,
+        nested={"value": "clean"},
+    )
+    return worker.request(
+        label,
+        {"protocol": protocol, "input": payload},
+        timeout=timeout,
     )
 
 
@@ -515,8 +558,15 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
             _fail_mutation("module")
         raise
     except NodeScenarioFailure as error:
-        if family == "saved-layouts" and "business source" in str(error):
-            _fail_mutation("source")
+        rendered = str(error)
+        if family == "saved-layouts" and "business source" in rendered:
+            _fail_mutation("saved-program")
+        if family == "fleet-sharing" and "adapter-sharing-dom-isolation" in rendered:
+            _fail_mutation("sharing-dom")
+        if family == "group-backward" and "business source" in rendered:
+            _fail_mutation("group-source")
+        if family == "label-markers" and "adapter-marker-root-release" in rendered:
+            _fail_mutation("marker-root")
         raise
     process = worker._proc
     assert first["output"].get("serialization_safe") is True, REALM_SENTINELS[family]
@@ -535,9 +585,16 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
             _fail_mutation("context")
         raise
     except NodeScenarioFailure as error:
-        if family == "saved-layouts" and "business source" in str(error):
-            _fail_mutation("source")
-        if "poisoned" in str(error):
+        rendered = str(error)
+        if family == "saved-layouts" and "business source" in rendered:
+            _fail_mutation("saved-program")
+        if family == "fleet-sharing" and "adapter-sharing-dom-isolation" in rendered:
+            _fail_mutation("sharing-dom")
+        if family == "group-backward" and "business source" in rendered:
+            _fail_mutation("group-source")
+        if family == "label-markers" and "adapter-marker-root-release" in rendered:
+            _fail_mutation("marker-root")
+        if "poisoned" in rendered:
             _fail_mutation("context")
         raise
 
@@ -586,11 +643,21 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
     _assert_mutation(poison["output"]["promise_completion"] is True, "promise")
     assert poison["output"]["serialization_safe"] is True
     assert poison["output"]["mode"] == "realm"
+    expected_business_output = {
+        "saved-layouts": "PASS reversed",
+        "fleet-sharing": "PASS missing-worker",
+        "group-backward": "PASS group backward dev",
+        "label-markers": "PASS marker page hydration",
+    }[family]
+    business_output_matches = all(
+        reply["output"]["business_output"] == expected_business_output
+        for reply in (first, poison, final)
+    )
     if family == "saved-layouts":
-        assert all(
-            reply["output"]["business_output"] == "PASS reversed"
-            for reply in (first, poison, final)
-        )
+        _assert_mutation(business_output_matches, "saved-program")
+    else:
+        assert business_output_matches
+    if family == "saved-layouts":
         _assert_mutation(
             all(
                 reply["output"]["registered_real_listeners"] > 0
@@ -600,13 +667,23 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
             "real-dom",
         )
     assert poison["output"].get("output") != "forged"
-    assert poison["diagnostics"] == [
-        {
-            "level": "warn",
-            "rendered": 'realm poison {"nested":{"value":"before"}}',
-            "args": ["realm poison", {"nested": {"value": "before"}}],
-        }
-    ]
+    poison_diagnostics = poison["diagnostics"]
+    expected_poison = {
+        "level": "warn",
+        "rendered": 'realm poison {"nested":{"value":"before"}}',
+        "args": ["realm poison", {"nested": {"value": "before"}}],
+    }
+    if family == "group-backward":
+        logs = [row for row in poison_diagnostics if row["level"] == "log"]
+        assert len(logs) == 5
+        generated = [
+            str(logs[index]["rendered"]).split("( ", 1)[1].split(" ", 1)[0]
+            for index in (1, 2, 4)
+        ]
+        assert generated[0] == generated[1] == generated[2]
+        assert poison_diagnostics[-1] == expected_poison
+    else:
+        assert poison_diagnostics == [expected_poison]
     assert final["output"]["host_prototypes_clean"] is True
     assert final["output"]["realm_pristine"] is True
     assert final["output"]["dom_pristine"] is True
@@ -882,9 +959,16 @@ def _assert_business_failure(
     worker: NodeScenarioWorker, mode: str, *, expected: str
 ) -> NodeScenarioFailure:
     process = worker._proc
-    with pytest.raises(NodeScenarioFailure) as failure:
+    captured: NodeScenarioFailure | None = None
+    try:
         _qualification_request(worker, "saved-layouts", mode)
-    assert expected in str(failure.value)
+    except NodeScenarioFailure as failure:
+        assert expected in str(failure)
+        captured = failure
+    except NodeScenarioCrash:
+        _fail_mutation("business-retention")
+    else:
+        _fail_mutation("business-retention")
     assert worker._proc is not None
     if process is not None:
         assert worker._proc.pid == process.pid
@@ -893,7 +977,8 @@ def _assert_business_failure(
     assert worker._proc is not None
     if process is not None:
         assert worker._proc.pid == process.pid
-    return failure.value
+    assert captured is not None
+    return captured
 
 
 def _assert_final_timer_failure(worker: NodeScenarioWorker) -> None:
@@ -961,6 +1046,14 @@ def _assert_long_stack_failure(worker: NodeScenarioWorker) -> None:
     )
 
 
+def _request_invalid_payload(worker: NodeScenarioWorker) -> dict[str, object]:
+    return worker.request(
+        "qualification/saved-layouts/clean",
+        {"protocol": "qualification"},
+        timeout=5.0,
+    )
+
+
 def test_request_cleanup_after_business_failure(
     page_worker_factory, qualification_inputs, request
 ):
@@ -1017,14 +1110,13 @@ def test_request_cleanup_after_business_failure(
         "native-stack",
     )
     fatal_id = worker._next_id
-    with pytest.raises(NodeScenarioCrash) as fatal:
-        worker.request(
-            "qualification/saved-layouts/clean",
-            {"protocol": "qualification"},
-            timeout=5.0,
-        )
-    assert fatal.value.scenario == "qualification/saved-layouts/clean"
-    assert fatal.value.reply is None
+    try:
+        _request_invalid_payload(worker)
+    except NodeScenarioCrash as fatal:
+        assert fatal.scenario == "qualification/saved-layouts/clean"
+        assert fatal.reply is None
+    else:
+        _fail_mutation("fatal-no-replay")
     assert worker._proc is None
 
     late = _qualification_request(worker, "saved-layouts", "late-success")

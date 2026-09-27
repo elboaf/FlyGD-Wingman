@@ -6,6 +6,7 @@ const {createDOM} = require('./screenshot_dom.cjs');
 const data = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const web = process.argv[3];
 const {document, Element} = createDOM(data.page);
+globalThis.__markerRoot = document;
 // Match the browser's focus loss when a render removes the focused subtree.
 let active = document.body;
 Object.defineProperty(document, 'activeElement', {
@@ -59,7 +60,7 @@ const ok = marker => ({applied: true, persisted: true, error: null, marker});
 function push(value) { window.onPreviewHotkeys(clone(value)); }
 function section(name) { document.dispatchEvent({type: 'wm:section', detail: name}); }
 function tab(name) { document.dispatchEvent({type: 'wm:settings-tab', detail: {section: 'previews', tab: name}}); }
-(async () => {
+const scenarioCompletion = (async () => {
   assert.equal(writes.length, 0);
   assert.equal(select(), null);
   getters.shift()(payload()); await tick();
@@ -318,6 +319,7 @@ function tab(name) { document.dispatchEvent({type: 'wm:settings-tab', detail: {s
     const bind = configure('Alice').parentNode.querySelector('.bindbtn');
     bind.focus(); bind.click(); await tick();
     const p = payload({Alice: 'cyan'}); p.roster.push('New pilot'); push(p);
+    assert.ok(p.roster.includes('New pilot'), 'stage-b mutation marker-deferred-roster');
     assert.equal(configure('New pilot'), undefined);
     const fixture = payload({Alice: 'purple'});
     fixture.crops.definitions = {Alice: {enabled: false}};
@@ -347,5 +349,12 @@ function tab(name) { document.dispatchEvent({type: 'wm:settings-tab', detail: {s
     window.WM.previewCropScreenshot(null);
     writes[2].resolve(ok('green')); await tick(); assert.equal(field('Bob').value, 'green');
   } else throw new Error('Unknown scenario ' + scenario);
+  delete globalThis.__markerRoot;
+  assert.equal(globalThis.__markerRoot, undefined, 'stage-b mutation adapter-marker-root-release');
   console.log('PASS marker page ' + scenario);
-})().catch(error => { console.error(error); process.exitCode = 1; });
+})();
+if (require.main === module) {
+  scenarioCompletion.catch(error => { console.error(error); process.exitCode = 1; });
+} else {
+  module.exports = scenarioCompletion;
+}

@@ -144,8 +144,11 @@ unchanged non-Node rows      29
 all 205 total             1,088
 ```
 
-No call was suppressed by instrumentation. Candidate `33/62` persistence values
-were not run in this task.
+No call was suppressed by instrumentation. Task 4's final delegated property
+audits measured the candidate values exactly: `14` direct Node-row calls plus
+the one `19`-call receipt equals `33` across the healthy 165 rows; `43` direct
+calls plus that receipt equals `62` across all 205 existing rows. Qualification
+fsyncs remain separate.
 
 ## TDD RED and GREEN record
 
@@ -292,9 +295,42 @@ main/reversed` checks stayed in one PID, reported source execution count one for
 every request, zero cleanup, and stable A output apart from the deliberately
 fresh realm token.
 
-Fleet Sharing, group backward, and label-marker business callers remain on their
-original one-shot paths. Their real-family conversion and the final four-process
-evidence remain pending Task 4.
+Task 4 converted the remaining 65 Fleet Sharing, 17 group-backward, and 21
+label-marker Node rows to their module-local session workers. Fleet retains its
+real Python setup and both shutdown assertions; group and marker retain a fresh
+finite-JSON copy of production `marker_choices()` on every request. Their
+per-row page files, tree construction, and Node subprocesses are gone. The three
+CJS programs remain direct CLIs and now expose the same scenario completion only
+when evaluated by the worker. Fleet's one-shot path still suppresses controlled
+bridge diagnostics, while worker replies pin one Watch error or ordered Start/
+Stop errors only in their expected scenarios. Group dev retains five ordered log
+diagnostics and one generated ID in positions two, three, and five. The two
+dialog scenarios still execute exactly `12 + 132 = 144` inner combinations.
+
+The final healthy normal run passed all 165 Node rows in `21.24s` observation
+with exactly four process starts, one PID per family, request ordinal sets
+`1..62`, `1..65`, `1..17`, and `1..21`, zero cleanup, 14 direct fsyncs, and one
+19-fsync receipt for total 33. The four complete files passed all 205 rows in
+`24.79s` observation with the same four business PIDs, 43 direct fsyncs, and
+62 total production-case fsyncs. Their JUnit SHA-256 values are
+`f3352a2d93933be8e56bcf554eb7ecc94a7723b0c7ca55122967e19779c2322b`
+and `e40afd7cae3e08736edb539d73aef55a385cfcf632e32875ccbc9a514e18fe2b`.
+
+Fresh reverse, seed-`20260926` shuffle, and cross-family round-robin runs each
+passed all 165 rows with the same four starts, exact request sets, zero cleanup,
+and 33 fsyncs. Their observations were `21.04s`, `21.04s`, and `22.29s`; their
+JUnit hashes are `1b34eb8e310df4d76c4c00ad1fe36e23cd7f5480dfd043f73c5f373cd896bcd7`,
+`f1a6b9c351023f056d48b6be37029660fbcc5c825b482512e6be439deebfd24c`,
+and `66e79821243117ecd33d2e13c349836cf8dbdfe80d03e02b267e6081fc6956a8`.
+The final-newline argument-list hashes remain collected
+`60a253410671d0ac475c414940f007943ff96f4faebc30f0f1aaef9009e549fc`,
+reverse `2dff54f5b75dcc262527eedb319b5bf6a7d3def17dae212261b0696529caa718`,
+shuffle `44823cd4ec00d5e92da597845ac3c2e16b8de6c0edf3cac521b7dc4605fbe39c`,
+and cross-family `183ba77428ec2e3307d1b68716d3427aa75926fbcd1fbcc4b28682d0162131e1`.
+The cross-family first cycle is exactly Fleet Sharing, group backward, label
+markers, and saved layouts. The four real A-poison-A qualification rows supply
+same-PID repeated/A-B-A execution and no host, realm, input, result, module,
+diagnostic, or cached-execution poison.
 
 ## Mutation and restoration matrix
 
@@ -306,12 +342,14 @@ edits with an explicit root, frozen mutated/restored expectations, and an
 explicit `available_from_task`. Ordered internal variants carry their own exact
 sentinel/regex and restoration cycle without increasing the recipe count. The six
 corrected owner mappings and four restored-only IDs are pinned explicitly; exact
-saved-main `reversed` belongs to every Task 3 pytest restored command, while the
+saved-main `reversed` belongs to every Task 3 pytest restored command and every
+Task 4 pytest restoration unless it is already the selected owner, while the
 three helper IDs remain owned only by late-rejection restoration.
-The deterministic registry manifest SHA-256 is
-`9dafe422e56519571e19486c0ca14042a519708f00d5a69b7def381b687afb1d`.
+After the synchronized Task 4 literal/probe correction, the deterministic
+registry manifest SHA-256 is
+`6cdaf58e982decaf9256246b34a3dc68ec75f611e254514a231f4a8bf8e92c44`.
 The regenerated recursive artifact manifest is
-`8ec05069849f91976fdb78c5d792645aeda3b2cce7ebf4706d3500f52da7c47e`,
+`6460134c11c3d6b481ecbcf11cefcecfec5797d47118fa2a7119ae09548420b0`,
 and the refreshed Task 2 identity-gate record is
 `7ccf650d6af664a7087345cab21d182a8e36b05aaab6919db3efb904409ee515`.
 It also freezes the read-only external adapter at SHA-256
@@ -404,7 +442,23 @@ executions included and passed exact saved-main `reversed`; the external receipt
 probe supplied the sixteenth execution. The ordered result is
 `/tmp/stage-b-task3-mutations.json`, SHA-256
 `eb0e752901d09ef5e99601881f077169accdea6a19d162b6e88cf672c8cd2774`.
-The later 16/41 slices and final 71-recipe aggregate remain pending.
+Task 4 then validated and executed its exact 16 canonical recipes in declared
+order. The first six mutate real adapter selection/isolation, group source
+re-execution, marker root release, business-failure retention, and fatal
+no-replay boundaries. Four external fatal probes independently launch one bad
+process and one recovery process for malformed NDJSON, wrong family, unknown
+protocol, and unknown scenario; this overhead is not included in the permanent
+cleanup-failure property's exact value three. The final six pin Fleet diagnostic
+content/order, both group dialog matrix dimensions, deferred marker roster, and
+the exact 165-ID inventory. Every pytest restoration also passed saved-main
+`reversed` as an anti-mask companion unless that recipe already owned the saved
+realm row. All defects reached their unique sentinel without masking, then
+restored exact bytes, SHA-256, binary diff, and NUL-delimited status before their
+registered recovery probe. The ordered result is
+`/tmp/stage-b-task4-mutations.json`, SHA-256
+`c5668ea8a66769f191c62b50a5b417aa88e3199ee1421600b5dc527fd499f311`.
+Exactly 16 names and 16 results exist. The final Task 5 41-recipe slice and final
+71-recipe aggregate remain pending.
 
 ## JUnit property ownership
 
@@ -427,8 +481,15 @@ and `3bd52095da83c6da2ef626caf3cd72d33314beb06e1de58e94c7b2c7701fc517`.
 The qualification-first aggregate including all 13 helper rows passed 82 tests
 with the same 37-fsync arithmetic (XML SHA-256
 `90ef98d5f530d5b2a2083f31aef376e3f8f6b57cb288889e7a15fc7948b32acd`).
-Normal, reverse, and shuffle artifacts all passed the same cardinality and
-aggregate audit.
+Normal, reverse, shuffle, and cross-family artifacts all passed the same
+cardinality and aggregate audit. The final relevant JUnit contains exactly 225
+passes: 205 existing target rows, 13 helper rows, and seven qualification rows.
+Its existing target properties prove four business PIDs, request counts
+`62/65/17/21`, direct fsync sums 14 for the Node subset and 43 for all target
+rows, one receipt value 19, and totals 33/62. Qualification starts remain
+`1/1/1/1/1/3/0` and qualification fsync values remain `0/0/0/0/4/0/0`.
+Every property address is unique and helper rows own none. The JUnit SHA-256 is
+`cc3895d8b4b2010a77864f3b3666cee07a17dc2aa8d018a69a0e8114b65b5085`.
 
 ## Complete local endpoint
 
@@ -449,9 +510,13 @@ both frozen actual and expected files byte-for-byte with hashes
 `d04dff36b8cb278dac3c410bca86e271e17899ce16272c9062886a48f28220c3`.
 Task 3 review repeated those fresh collections after the ownership correction
 with the same counts, byte equality, and hashes. The 62 saved IDs and their
-decorator ASTs remained exact after conversion; only
-the three approved saved-function signature substitutions occurred. Task 3 did
-not run or claim the complete 16,617-case outcome; that remains Task 5.
+decorator ASTs remained exact after conversion; only the three approved
+saved-function signature substitutions occurred. Task 4 again collected the
+relevant selection as exactly 225 unique IDs,
+byte-for-byte equal to the frozen Task 2 order with final-newline SHA-256
+`bf6e8470cc470cd747015f2772d243e90b064b756984b09d2f0076fde1c6fffe`,
+and then passed all 225 in `31.39s` observation. Task 4 did not run or claim the
+complete 16,617-case outcome; that remains Task 5.
 
 ## Reviews, final scope, and frozen heads
 
@@ -473,9 +538,13 @@ globals to the canonical pytest Session and moved DOM/listener observation from
 the bootstrap-only DOM to every actual fixture-created DOM. The three saved
 fixture files changed only at their CommonJS completion wrappers; their scenario
 bodies and assertions are unchanged. No production, web, workflow, dependency,
-lockfile, configuration, packaging, or `screenshot_dom.cjs` byte changed. Final
-Stage B review, the other
-three real-family conversions, executable head, and evidence head remain pending.
+lockfile, configuration, packaging, or `screenshot_dom.cjs` byte changed.
+Task 4 added only the three remaining business modules, their three CJS
+programs, the qualification module, and this ledger. The shared worker needed no
+new committed change: Fleet's fixture supplies its missing assertion fallbacks,
+and marker root release is proved inside the marker program. All 15 protected
+hashes from the plan remain exact. Final Stage B review, executable head, and
+evidence head remain pending.
 
 ## Publication stop and hosted evidence
 
@@ -495,8 +564,10 @@ efficiency, job effect, or critical-path causation.
 Task 1 proves baseline identity, source, stream, launch, persistence, provenance,
 artifact, and evidence-tooling contracts. Task 2 proves the strict helper,
 synthetic shared-worker foundation, detached receipt, qualification properties,
-and exact post-creation identity orders. Task 3 additionally proves real saved-
-family execution, one healthy saved PID, 62 requests, and the saved `1,059 -> 33`
-fsync endpoint. It does not yet prove the other three real families, the final
-four-process/all-205 62-fsync endpoint, the complete-suite outcome, final Stage B
-scope, or hosted acceptance.
+and exact post-creation identity orders. Task 3 additionally proves real
+saved-family execution, one healthy saved PID,
+62 requests, and the saved `1,059 -> 33` fsync endpoint. Task 4 proves all four
+real families, four healthy business PIDs, 165 requests, the all-205 62-fsync
+endpoint, exact order independence, and its 16-recipe mutation slice. It does not
+claim the complete-suite outcome, Task 5's remaining mutations, final Stage B
+scope review, or hosted acceptance.
