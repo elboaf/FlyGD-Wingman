@@ -4,7 +4,7 @@
 
 **Goal:** Replace 165 one-shot Node launches in four page-test families with four isolated session workers, build the 55 saved-layout main rows from one detached production receipt, and preserve every approved business contract.
 
-**Architecture:** One hardened CommonJS host reads the six existing fixture programs and `screenshot_dom.cjs` as primitive UTF-8 source at startup, then executes the selected program through VM-owned CommonJS facades in a fresh realm for every request. Four module-local session fixtures retain only one `NodeScenarioWorker` process per family; the saved-layout module additionally owns one process-local, once-built, detached real receipt shared with the qualification module. Protocol failures destroy the process, business failures remain detached and recoverable in the same process, and raw JUnit `stage_b.*` properties are the authoritative worker/fsync evidence.
+**Architecture:** One hardened CommonJS host reads the six existing fixture programs and `screenshot_dom.cjs` as primitive UTF-8 source at startup, then executes the selected program through VM-owned CommonJS facades in a fresh realm for every request. Four module-local session fixtures retain only one `NodeScenarioWorker` process per family; one canonical attribute on the pytest `Session` owns the once-built, detached saved-layout receipt across both import identities of the saved-layout module and the qualification module. Protocol failures destroy the process, business failures remain detached and recoverable in the same process, and raw JUnit `stage_b.*` properties are the authoritative worker/fsync evidence.
 
 **Tech Stack:** Python 3.11, pytest 9, Node.js 26, CommonJS, `node:vm`, primitive NDJSON, `NodeScenarioWorker`, stdlib JSON/hash/XML/subprocess tooling, uv, Ruff, Cargo, and GitHub Actions JUnit artifacts.
 
@@ -20,11 +20,11 @@
 - A healthy 165-row run starts exactly four Node processes with request counts `62/65/17/21`; qualification starts and deliberate restarts are reported separately.
 - Retain request timeouts exactly: saved layouts `25.0`, Fleet Sharing `20.0`, group backward `30.0`, and label markers `30.0` seconds.
 - Retain direct one-shot execution of all six existing CJS paths with their positional argv, failure exits, stdout/stderr roles, and exact PASS terminals. The persistent host never replaces those CLIs.
-- Every worker request owns a fresh VM realm, VM-created DOM, VM-owned CommonJS module and limited `require`, VM promises/errors/assertions/callbacks/listeners/timers, and freshly decoded input/markup. Only primitive source, markup, hashes, labels, and JSON text survive requests.
+- Every worker request owns a fresh VM realm, VM-created DOM, VM-owned CommonJS module and limited `require`, VM promises/errors/assertions/callbacks/listeners/timers, and freshly decoded input/markup. The local `screenshot_dom.cjs` require is wrapped so every DOM actually created by a fixture is instrumented once, its real listener roots are removed before reply, and cleanup failure is fatal. Only primitive source, markup, hashes, labels, and JSON text survive requests.
 - The persistent host must not `require()` or cache-evict any of the six target fixtures or `tests/fixtures/screenshot_dom.cjs`; no target path may occur in `require.cache` or `module.children` before or after requests.
 - Request cleanup completes before reply publication. A valid `ok:false` business result keeps the process; malformed startup/NDJSON/schema/family/protocol/scenario, timeout, process death, serialization failure, double completion, or failed cleanup emits no valid success and destroys the process.
 - `NodeScenarioWorker` changes only in `_validate_reply`: first prove every required key is present without indexing any field, then require exact integer `id` (never `bool`) and exact integer-or-float, finite, nonnegative `duration_ms` (never `bool`). Every missing/type/range/nonfinite violation raises `_ProtocolError`, so the existing `missing-fields` case and every numeric defect retain the same discard/restart path. All lifecycle, timeout, discard, restart, close, stderr-tail, and late-exit behavior remains unchanged.
-- Build the saved-layout receipt exactly once, through production `Api`/controller/store/settings/atomicio behavior. It has exactly 22 ordered values, costs exactly 19 fsync calls, is detached before restoration, and is decoded afresh for each of 55 main rows.
+- Build the saved-layout receipt exactly once per pytest session, through production `Api`/controller/store/settings/atomicio behavior. Its canonical Session cache is shared by `test_preview_savedlayouts_page` and `tests.test_preview_savedlayouts_page`, registers one cleanup, exposes immutable bytes, and cannot survive a later pytest run. It has exactly 22 ordered values, costs exactly 19 fsync calls, is detached before restoration, and is decoded afresh for each of 55 main rows.
 - Healthy fsync acceptance is exact: Node-owning 165 rows `1,059 -> 33`, all 205 existing rows `1,088 -> 62`; qualification/helper/probe overhead is separate.
 - Raw JUnit properties, not terminal prints, are authoritative. Each `(exact node ID, property name)` has one owner and one value; duplicate identical values are still failures.
 - Node on `PATH` and the built release settings codec in `packaging/bin` are mandatory for complete-suite evidence. A Node, codec, target, qualification, or unexpected native-availability skip is a stopping failure.
@@ -32,7 +32,7 @@
 - Timing values are single-run observations only. Do not claim speedup, slowdown, lower bound, p95, runner efficiency, throughput, job impact, or critical-path causation.
 - The user authorized versioning the Stage B spec, plan, results, and evidence. This does not authorize a push, PR, workflow dispatch, rerun, or hosted artifact collection from an unspecified run.
 - Every temporary edit runs in disposable space or a bounded restoration wrapper and proves original bytes, SHA-256, binary diff, and NUL-delimited porcelain status in `finally`.
-- One immutable 71-recipe registry is the sole mutation authority. Tasks 3/4/5 reference its canonical names only; each recipe owns phase, typed probe kind, exact pytest IDs or non-pytest labels, one unique canonical sentinel and anchored regex, kind-appropriate forbidden masking, match-once edits, and mutated/restored probes. Approved internal variants remain inside that recipe count and own their exact edit, sentinel/regex, and restoration cycle. The property-cardinality recipe owns missing and duplicate-identical variants; the native-error-stack recipe owns stack-omission and encoded-envelope-bound variants.
+- One immutable 71-recipe registry is the sole mutation authority. Tasks 3/4/5 reference its canonical names only; each recipe owns phase, typed probe kind, exact pytest IDs or non-pytest labels, one unique canonical sentinel and anchored regex, kind-appropriate forbidden masking, match-once edits, and mutated/restored probes. Approved internal variants remain inside that recipe count and own their exact edit, sentinel/regex, and restoration cycle. The property-cardinality recipe owns missing and duplicate-identical variants; the native-error-stack recipe owns stack-omission and encoded-envelope-bound variants; and the saved-context recipe owns context-reuse and raw-`createDOM` bypass variants.
 - TDD RED must collect the intended IDs and fail in the call phase at its unique assertion. Undefined imports, a missing worker file, collection/setup errors, skips, timeouts, or later generic failures do not count as RED.
 - Task 1 materializes and runs collection/JUnit parsing first, freezes the actual 217-ID baseline, and binds `BASELINE_COLLECTED_IDS` before it imports or runs registry/restoration tooling. Its registry run is metadata/owner/schema smoke only; real edit qualification begins after each implementation phase exists.
 - Task 1 also freezes the exact expected Task 2 relevant-225 and complete-16,617 orders. Task 2 compares fresh actual collections byte-for-byte with those expected files; Task 5 compares final collection byte-for-byte with the frozen actual Task 2 order.
@@ -759,11 +759,25 @@ GROUP_OWN_DIALOG_ID = "tests/test_preview_group_backward.py::test_group_backward
 MARKER_DEFERRED_ID = "tests/test_preview_labelmarkers_page.py::test_marker_page_ownership[screenshot-deferred]"
 
 RESTORED_ONLY_IDS = frozenset({
+    SAVED_REVERSED_ID,
     "tests/test_node_scenario_worker.py::test_immediate_request_after_ok_reports_late_eof_context_and_recovers",
     "tests/test_node_scenario_worker.py::test_broken_write_after_ok_reaps_status_and_prior_context",
     "tests/test_node_scenario_worker.py::test_close_reports_exit_after_last_ok_reply_and_worker_remains_recoverable",
 })
 RESTORED_ONLY_BY_RECIPE = {
+    "realm-saved-context-reuse": (SAVED_REVERSED_ID,),
+    "realm-saved-source-reexecution": (SAVED_REVERSED_ID,),
+    "realm-saved-input-detachment": (SAVED_REVERSED_ID,),
+    "rejection-final-timer-drain": (SAVED_REVERSED_ID,),
+    "failure-native-error-stack": (SAVED_REVERSED_ID,),
+    "diagnostics-native-error-detachment": (SAVED_REVERSED_ID,),
+    "receipt-pending-first-apply": (SAVED_REVERSED_ID,),
+    "receipt-production-identity": (SAVED_REVERSED_ID,),
+    "receipt-durable-readback": (SAVED_REVERSED_ID,),
+    "receipt-atomic-writer-fsync": (SAVED_REVERSED_ID,),
+    "receipt-writer-restoration": (SAVED_REVERSED_ID,),
+    "receipt-environment-restoration": (SAVED_REVERSED_ID,),
+    "receipt-reader-release": (SAVED_REVERSED_ID,),
     "late-rejection-attribution": (
         "tests/test_node_scenario_worker.py::test_immediate_request_after_ok_reports_late_eof_context_and_recovers",
         "tests/test_node_scenario_worker.py::test_broken_write_after_ok_reaps_status_and_prior_context",
@@ -772,12 +786,13 @@ RESTORED_ONLY_BY_RECIPE = {
 }
 ```
 
-These three helper IDs are not selected failure owners and are not members of
-`EXPECTED_OWNERS["late-rejection-attribution"]`. They run only after the
-recipe's bytes/hash/diff/status restoration has succeeded; each must produce one
-passed JUnit testcase with no failure/error/skip. The registry runner never
-feeds them to the mutated side of `run_pytest_probe()` and never searches them
-for the mutation sentinel.
+The saved-main `reversed` ID is not a selected failure owner. It runs after
+restoration for every Task 3 pytest recipe and every such recipe variant; each
+run must pass the real saved business path. The three helper IDs likewise are
+not selected failure owners or members of
+`EXPECTED_OWNERS["late-rejection-attribution"]`; they run only in that recipe's
+restored command. Restored-only IDs never enter a mutated command or sentinel
+search.
 
 Non-pytest selected values are labels, never pytest IDs. External-process labels
 are the exact strings under `external::fatal/*`,
@@ -842,11 +857,12 @@ ALLOWED_PHASES_BY_ID = {
 }
 ```
 
-`test_mutations.py` checks every recipe's selected value against this map. A
-pytest restored argv may include an additional anti-mask ID from the map, but a
-pytest recipe's `pytest_ids` contains only testcases expected in its mutated
-JUnit result. External and synthetic recipes instead carry one exact
-`probe_label` and never pass that label to pytest.
+`test_mutations.py` checks every recipe's selected value against this map. Every
+Task 3 pytest recipe and variant includes exact `SAVED_REVERSED_ID` once in its
+restored argv and never in its mutated argv; later phases may register their own
+additional anti-mask IDs. A pytest recipe's `pytest_ids` contains only testcases
+expected in its mutated JUnit result. External and synthetic recipes carry one
+exact `probe_label` and never pass that label to pytest.
 
 The selected failure owner is defined only by the exhaustive
 `EXPECTED_OWNERS` map below; no recipe stores an owner nickname or relies
@@ -1178,18 +1194,28 @@ def validate_registry(
         for nodeids in RESTORED_ONLY_BY_RECIPE.values()
         for nodeid in nodeids
     )
-    assert set(RESTORED_ONLY_BY_RECIPE) == {"late-rejection-attribution"}
+    task3_pytest_recipes = {
+        name for name in TASK3_RECIPES if REGISTRY[name].probe.kind == "pytest"
+    }
+    assert set(RESTORED_ONLY_BY_RECIPE) == task3_pytest_recipes | {
+        "late-rejection-attribution"
+    }
     assert set(restored_references) == set(RESTORED_ONLY_IDS)
-    assert all(count == 1 for count in restored_references.values())
+    assert restored_references[SAVED_REVERSED_ID] == len(task3_pytest_recipes)
+    assert all(
+        restored_references[nodeid] == 1
+        for nodeid in RESTORED_ONLY_IDS - {SAVED_REVERSED_ID}
+    )
     assert all(nodeid in baseline_collected_ids for nodeid in RESTORED_ONLY_IDS)
     for recipe_name, nodeids in RESTORED_ONLY_BY_RECIPE.items():
         recipe = REGISTRY[recipe_name]
         assert set(nodeids).isdisjoint(recipe.pytest_ids)
         assert recipe.probe.kind == "pytest"
-        mutated_argv = Counter(recipe.probe.argv)
-        restored_argv = Counter(recipe.probe.restored_argv)
-        assert all(mutated_argv[nodeid] == 0 for nodeid in nodeids)
-        assert all(restored_argv[nodeid] == 1 for nodeid in nodeids)
+        for probe in (recipe.probe, *recipe.probe.variants):
+            mutated_argv = Counter(probe.argv)
+            restored_argv = Counter(probe.restored_argv)
+            assert all(mutated_argv[nodeid] == 0 for nodeid in nodeids)
+            assert all(restored_argv[nodeid] == 1 for nodeid in nodeids)
 
     if phase is not None:
         expected = {
@@ -1217,8 +1243,9 @@ smoke. It does not call `validate_recipe()` on future implementation bytes and
 does not report any real edit as qualified. A generic disposable fixture tests
 runner restoration separately. The exact-phase `validate_registry()` call is
 the first operation after that phase's GREEN implementation and requires every
-real old literal to match once before any mutation. This does not permit changing
-registry metadata after its Task 1 manifest hash is frozen.
+real old literal to match once before any mutation. A later review may change
+registry metadata only under the synchronized correction rule below and must
+regenerate both canonical manifests before rerunning the phase.
 
 `test_mutations.py` imports and validates the actual `REGISTRY` objects and
 serialized manifest; it must not construct a shadow registry from the phase-name
@@ -1246,10 +1273,11 @@ lists or disposable placeholder edits. It must prove before Task 3:
    defers real-target match-once qualification to the owning GREEN phase;
 6. no sentinel or regex contains a placeholder, generic timeout/setup/
    collection text, or `DID NOT RAISE`;
-7. all three `RESTORED_ONLY_IDS` exist in the frozen collection exactly once,
-   are disjoint from selected failure IDs, occur once only in
-   `late-rejection-attribution`'s restored argv, and are absent from its mutated
-   argv; and
+7. all four `RESTORED_ONLY_IDS` exist in the frozen collection, are disjoint
+   from each recipe's selected failure IDs, and are absent from mutated argv;
+   exact saved-main `reversed` occurs once in every Task 3 pytest recipe and
+   variant restored argv, while each late-rejection helper occurs once only in
+   that recipe's restored argv; and
 8. the six corrected mappings are literal equality checks:
    `receipt-once-construction -> external::saved-main/receipt-count-55`,
    `diagnostics-sharing-reject -> SHARING_REJECT_ID`,
@@ -1276,8 +1304,11 @@ fixture bytes, and hash are frozen together before Task 3. `prepare_scratch_root
 creates a fresh disposable Git repository for the requested phase from those
 bytes and returns its path; it never reuses a prior phase's dirty directory.
 Later tasks may populate result records but may not add, rename, alias, or locally
-reconstruct a recipe; an edit that cannot match the implemented or canonical
-scratch bytes is a stop-and-correct-registry event, not permission for an ad hoc
+reconstruct a recipe. A review correction may update an existing recipe's
+literal edit, internal variants, or restored-only command only when the canonical
+plan/spec, Python registry tests, JSON/hash manifests, and result evidence are
+updated together. An edit that cannot match implemented or canonical scratch
+bytes remains a stop-and-correct-registry event, not permission for an ad hoc
 mutation.
 
 Step 4 creates `/tmp/stage-b-baseline/test_restore.py` and runs both tooling
@@ -2589,12 +2620,21 @@ def saved_layout_page_worker(tmp_path_factory: pytest.TempPathFactory):
 @pytest.fixture(scope="session")
 def saved_layout_receipt_bytes(
     tmp_path_factory: pytest.TempPathFactory,
+    request: pytest.FixtureRequest,
 ) -> bytes:
-    return _saved_layout_receipt_once(tmp_path_factory).receipt_json.encode("utf-8")
+    evidence = _saved_layout_receipt_once(tmp_path_factory, request.session)
+    assert _saved_layout_receipt_build_count(request.session) == 1
+    return evidence.receipt_bytes
 ```
 
-Add the module-local autouse direct-fsync fixture. It captures and delegates the
-real `os.fsync`, counts only function-scope calls, and in `finally` appends one
+The plain provider stores its cache, lock, construction count, and one cleanup
+registration on the canonical pytest `Session`, not in a module global. This is
+load-bearing because pytest may load the file as both
+`test_preview_savedlayouts_page` and `tests.test_preview_savedlayouts_page`.
+Cleanup removes all four Session attributes, so a later pytest invocation cannot
+reuse stale receipt state. Add the module-local autouse direct-fsync fixture. It
+captures and delegates the real `os.fsync`, counts only function-scope calls, and
+in `finally` appends one
 `stage_b.direct_fsync_calls` property. Higher-scoped manifest/receipt setup must
 finish before this fixture starts. Add `_record_saved_worker()` to append family,
 PID, and reply ID once, plus the two receipt properties only when
@@ -2809,16 +2849,23 @@ catch path. The worker extracts exactly one terminal PASS diagnostic into
 
 The `saved-layouts` realm row uses `saved-main/reversed` and a fresh decode of the
 once receipt. Poison runs the real program before mutating realm/module/input/
-result state. The cleanup-success direct matrix continues to invoke all three
-saved CJS paths directly and also invokes `preview_savedlayouts.cjs` with the real
-owner-controls input.
+result state. The worker wraps the `createDOM` returned by the VM-local require,
+instruments each actual fixture-created Element prototype once, records that the
+real saved program registered more than zero listeners, removes those listeners,
+and proves zero remain before reply. A real-DOM removal failure emits no reply,
+destroys the process, and the next call starts a clean process. The cleanup-success
+direct matrix continues to invoke all three saved CJS paths directly and also
+invokes `preview_savedlayouts.cjs` with the real owner-controls input.
 
 - [ ] **Step 4: Run saved GREEN and exact count/property checks**
 
 Run all 62 in collected order with raw JUnit. Require all pass, one positive PID,
 request IDs `1..62`, exact outputs, zero cleanup, Node starts `62 -> 1`, direct
 fsync sum `14`, one receipt property owner with 19, and total saved candidate
-`19 + 14 = 33`. Run each of the four program representatives alone in fresh
+`19 + 14 = 33`. Run saved plus qualification in both module orders; each 69-row
+process must observe one canonical receipt construction and exact aggregate
+`19 + 14 + 4 = 37` fsyncs. Add the 13 helper rows to the review-order gate for
+an 82-row pass. Run each of the four program representatives alone in fresh
 pytest invocations; each starts exactly one process and closes it.
 
 - [ ] **Step 5: Run saved order and isolation sequences**
@@ -2851,10 +2898,14 @@ exactly once in its declared root. After each recipe, restore
 bytes/hash/diff/status and run
 its registry-owned restored probe through the typed dispatcher. The saved
 `reversed` anti-mask case is already part of the relevant
-`PytestProbe.restored_argv`, not a second prose recipe; the external receipt-count
-recipe instead uses its exact registered restored command/exit/stdout/stderr.
-Write one result per canonical name and reject a missing, duplicate, or extra
-Task 3 result. Every result records `kind` plus kind-specific evidence: pytest
+`PytestProbe.restored_argv` and every Task 3 pytest variant's restored argv, not a
+second prose recipe; the external receipt-count recipe instead imports both
+saved-module identities, runs both provider orderings on fresh fake Session
+owners, proves one construction/cleanup per owner and no cross-run reuse, and
+uses its exact registered restored command/exit/stdout/stderr. The saved-context
+recipe also owns a raw-`createDOM` bypass variant that must fail the real-listener
+witness. Write one result per canonical name and reject a missing, duplicate, or
+extra Task 3 result. Every result records `kind` plus kind-specific evidence: pytest
 IDs/JUnit phase/traceback, external command/exit/stdout/stderr, or synthetic
 callable/result/exception.
 
@@ -2872,6 +2923,29 @@ git diff --check
 git add tests/test_preview_savedlayouts_page.py tests/fixtures/preview_savedlayouts.cjs tests/fixtures/preview_capture_sessions.cjs tests/fixtures/preview_dev_capture.cjs tests/test_persistent_page_workers.py docs/ci-persistent-page-workers-stage-b-results.md
 git diff --cached --name-only
 git commit -m "test: reuse saved layout page worker"
+```
+
+#### Task 3 review correction
+
+A post-implementation review requires three hardening changes before Task 4:
+
+1. move once-receipt cache/lock/count/cleanup state from module globals to exact,
+   uniquely named pytest `Session` attributes, and exercise both saved-module
+   import identities in both provider orderings;
+2. instrument the `createDOM` returned by the VM-local require so actual
+   fixture-created DOMs and listeners are owned, require positive real-listener
+   counts and zero post-cleanup counts for saved-main `reversed`, and make a real
+   listener-removal failure fatal before reply; and
+3. update the existing saved-context recipe with a raw-`createDOM` bypass
+   variant, update receipt-once to bypass the canonical cache, and register exact
+   saved-main `reversed` in every Task 3 pytest restored command/variant.
+
+Re-run both 69-row module orders, the 82-row helper aggregate, saved-only 62,
+Task 2 identity collection, all 14 Task 3 recipes and 16 executions, registry and
+recursive manifests, syntax/Ruff/docs/scope checks, then commit:
+
+```bash
+git commit -m "test: share saved receipt and real DOM ownership"
 ```
 
 ---

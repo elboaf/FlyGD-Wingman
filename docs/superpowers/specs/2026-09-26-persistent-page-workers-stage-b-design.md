@@ -56,7 +56,11 @@ callback, timer handle, promise, error, or assertion object.
 
 The 55 `test_saved_layout_page_ordering` rows consume one real production
 receipt built once through the existing Api/controller/store/settings/atomicio
-sequence. The receipt is detached to strict UTF-8 JSON before its temporary
+sequence. The receipt cache, lock, construction count, and one cleanup
+registration live on the canonical pytest `Session`, so both possible import
+identities of the saved-layout module and the qualification module share one
+owner without retaining state into another pytest invocation. The receipt is
+detached to strict UTF-8 JSON and immutable bytes before its temporary
 environment and patches are restored, then freshly decoded for every request.
 The other seven saved-family cases continue to build their own source-specific
 real receipts because they exercise different production paths.
@@ -430,8 +434,12 @@ Every implementation decision is subordinate to these invariants:
 16. no production, web, workflow, dependency, lockfile, configuration,
     packaging, cadence, marker, timeout, or Stage C behavior changes;
 17. Node and the release settings codec remain mandatory full-suite
-    prerequisites; no new skip masks missing prerequisites; and
-18. timing evidence remains observational and is not an acceptance threshold.
+    prerequisites; no new skip masks missing prerequisites;
+18. every Task 3 pytest mutation and internal variant runs exact saved-main
+    `reversed` only after restoration, while the external receipt mutation
+    independently proves both module-import orderings and cleanup on fresh
+    Session owners; and
+19. timing evidence remains observational and is not an acceptance threshold.
 
 ## Worker topology and lifecycle
 
@@ -794,7 +802,11 @@ instance, host function, or native timer. It receives only the explicit
 VM-owned CommonJS `module`/`exports`/limited `require` and minimal VM-owned
 `process` substitutes needed by the source text. Assertions, `CustomEvent`,
 `URLSearchParams`, console, and the fixture-specific DOM are VM-owned
-implementations. Production scripts execute in that same fresh realm; there is
+implementations. The limited `require('./screenshot_dom.cjs')` returns a wrapped
+VM-local `createDOM`; every DOM actually created by a fixture is registered and
+each distinct Element prototype is instrumented once. Synthetic bootstrap DOMs
+exist only for qualification/realm modes and cannot substitute for the real DOM
+listener witness. Production scripts execute in that same fresh realm; there is
 no nested host-created page context.
 
 The initial VM bootstrap returns one VM-owned poll function to the host. The
@@ -825,7 +837,10 @@ published. The host poll sees completion only after:
 2. the microtask/request-timer rejection boundary is drained and queried;
 3. diagnostics and error/reason are detached;
 4. every request-local timer/interval/immediate is canceled;
-5. request-local listener roots and callback registries are released;
+5. every tracked real and synthetic DOM listener is removed with its owning
+   Element implementation, all real listener maps are verified empty, and
+   callback/DOM registries are released; a removal failure is fatal before any
+   reply;
 6. the reply is serialized with captured pristine intrinsics; and
 7. no host callback, timer handle, raw rejection, promise, or VM realm is
    retained by process state.
@@ -929,7 +944,11 @@ implementation.
 The session manifest contains one `TextPageTree` root and one `PageTree` root
 built from the current `index.html`. `saved-main` and `saved-owner` use the text
 root. `saved-capture` and `saved-dev` use the structural root. Each request gets
-a fresh decode and DOM.
+a fresh decode and a fixture-created DOM routed through the worker's tracking
+wrapper. The real `saved-main/reversed` realm witness requires more than zero
+real listeners before cleanup and zero after; a raw-`createDOM` bypass mutation
+must fail, while a real listener-removal exception must suppress the reply,
+destroy the process, and permit only a later request to start a clean process.
 
 The four program routes retain current assertions:
 
@@ -973,12 +992,16 @@ remain exact.
 
 ### Construction boundary
 
-Add one process-local once-provider and one session-scoped receipt fixture in
-`test_preview_savedlayouts_page.py`. The fixture and the qualification module
-both call the plain private provider, which memoizes only the detached JSON and
-immutable qualification metadata. This avoids importing a pytest fixture across
-modules—pytest would register a second fixture definition—while guaranteeing one
-construction whether the qualification ID or a main page ID runs first. It uses
+Add one canonical pytest-Session-owned once-provider and one session-scoped
+receipt fixture in `test_preview_savedlayouts_page.py`. The fixture and the
+qualification module both call the plain private provider. The provider uses
+explicit uniquely named Session attributes for the shared lock, detached
+receipt evidence, successful construction count, and cleanup registration.
+This avoids importing a pytest fixture across modules—pytest would register a
+second fixture definition—and remains correct when pytest loads the file as
+both `test_preview_savedlayouts_page` and
+`tests.test_preview_savedlayouts_page`. The one registered config cleanup deletes
+all cache attributes, preventing reuse by a later pytest invocation. It uses
 `tmp_path_factory`, never a function-scoped `tmp_path` or `monkeypatch`, and
 performs these steps before returning anything:
 
@@ -1001,7 +1024,8 @@ performs these steps before returning anything:
    prove no new committed-reader registry entry remains;
 10. restore `paths._use_legacy` in `finally`, exit the outer patch, and prove the
     environment, `os.fsync`, and patched attributes equal their baselines; then
-11. expose only the receipt JSON string plus detached qualification metadata.
+11. expose only the receipt JSON string, immutable encoded bytes, and detached
+    qualification metadata.
 
 No `Api`, controller, store, settings document, reader, path, monkeypatch,
 window, callback, or mutable receipt object escapes.
@@ -1108,7 +1132,9 @@ shared-main subcomponent is `1,045 -> 19`. The acceptance comparisons
 are the healthy 165 Node-owning rows, `1,059 -> 33`, and all 205 existing rows,
 `1,088 -> 62`. Qualification/helper-test processes, qualification fsyncs, and
 mutation-probe overhead are measured and reported in separate fields, never
-folded into either production-case count.
+folded into either production-case count. A combined saved-plus-qualification
+run in either module order is exactly `19 receipt + 14 saved direct + 4
+qualification = 37` fsyncs and one receipt construction; saved-only remains 33.
 
 ## Exact new identities
 

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import gc
+import importlib.util
 import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import weakref
@@ -29,7 +31,10 @@ from tests.test_fleetsharing_worker import drive
 from tests.test_preview_owner_eligibility import owner_api
 from tests.test_preview_savedlayouts_page import (
     SAVED_DEV_LINES,
+    SAVED_DIRECT_FSYNC_TOTAL,
     SavedLayoutReceiptEvidence,
+    _saved_layout_receipt_build_count,
+    _saved_layout_receipt_cleanup_registered,
     _saved_layout_receipt_once,
 )
 from wingman import paths, settings
@@ -67,6 +72,7 @@ MUTATION_SENTINELS = {
     "pending": "stage-b mutation receipt-pending-first-apply",
     "identity": "stage-b mutation receipt-production-identity",
     "durable": "stage-b mutation receipt-durable-readback",
+    "real-dom": "stage-b mutation real-dom-listener-tracking",
 }
 
 
@@ -107,8 +113,9 @@ def _reader_snapshot() -> dict[int, weakref.ReferenceType[object]]:
 
 def _build_qualification_inputs(
     tmp_path_factory: pytest.TempPathFactory,
+    session: pytest.Session,
 ) -> QualificationInputs:
-    receipt = _saved_layout_receipt_once(tmp_path_factory)
+    receipt = _saved_layout_receipt_once(tmp_path_factory, session)
     root = tmp_path_factory.mktemp("persistent-page-qualification")
     state_root = root / "state"
     state_root.mkdir()
@@ -343,8 +350,9 @@ def _build_qualification_inputs(
 @pytest.fixture(scope="session")
 def qualification_inputs(
     tmp_path_factory: pytest.TempPathFactory,
+    request: pytest.FixtureRequest,
 ) -> QualificationInputs:
-    return _build_qualification_inputs(tmp_path_factory)
+    return _build_qualification_inputs(tmp_path_factory, request.session)
 
 
 @pytest.fixture
@@ -402,21 +410,18 @@ def _qualification_request(
     )
 
 
-def _realm_request(
+def _saved_main_request(
     worker: NodeScenarioWorker,
-    family: str,
     inputs: QualificationInputs,
-    run: str,
+    *,
+    mode: str,
+    run: str = "",
 ) -> dict[str, object]:
-    if family != "saved-layouts":
-        return _qualification_request(
-            worker, family, "realm", run=run, nested={"value": "clean"}
-        )
     input_payload = json.loads(inputs.receipt.receipt_json)
     input_payload.update(
         scenario="reversed",
         page="text",
-        mode="realm",
+        mode=mode,
         run=run,
         nested={"value": "clean"},
     )
@@ -424,6 +429,19 @@ def _realm_request(
         "preview-saved-layouts/page/reversed",
         {"protocol": "saved-main", "input": input_payload},
         timeout=25.0,
+    )
+
+
+def _realm_request(
+    worker: NodeScenarioWorker,
+    family: str,
+    inputs: QualificationInputs,
+    run: str,
+) -> dict[str, object]:
+    if family == "saved-layouts":
+        return _saved_main_request(worker, inputs, mode="realm", run=run)
+    return _qualification_request(
+        worker, family, "realm", run=run, nested={"value": "clean"}
     )
 
 
@@ -444,6 +462,25 @@ def _assert_mutation(condition: object, key: str) -> None:
 
 def _fail_mutation(key: str) -> None:
     raise AssertionError(MUTATION_SENTINELS[key]) from None
+
+
+def _load_bare_saved_layout_module() -> tuple[object, bool]:
+    existing = sys.modules.get("test_preview_savedlayouts_page")
+    if existing is not None:
+        return existing, False
+    module_path = ROOT / "tests/test_preview_savedlayouts_page.py"
+    spec = importlib.util.spec_from_file_location(
+        "test_preview_savedlayouts_page", module_path
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:  # Remove the incomplete alias before rethrowing.
+        sys.modules.pop(spec.name, None)
+        raise
+    return module, True
 
 
 def _assert_finite_json(value: object) -> None:
@@ -553,6 +590,14 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
         assert all(
             reply["output"]["business_output"] == "PASS reversed"
             for reply in (first, poison, final)
+        )
+        _assert_mutation(
+            all(
+                reply["output"]["registered_real_listeners"] > 0
+                and reply["output"]["real_listeners_after_cleanup"] == 0
+                for reply in (first, poison, final)
+            ),
+            "real-dom",
         )
     assert poison["output"].get("output") != "forged"
     assert poison["diagnostics"] == [
@@ -665,11 +710,22 @@ def _run_direct_cli_matrix(inputs: QualificationInputs) -> None:
 def test_request_cleanup_after_success(
     page_worker_factory, qualification_inputs, request
 ):
+    assert qualification_inputs.receipt.fsync_calls == 19
+    assert _saved_layout_receipt_build_count(request.session) == 1
+    assert _saved_layout_receipt_cleanup_registered(request.session)
+    assert (
+        qualification_inputs.receipt.fsync_calls
+        + qualification_inputs.qualification_fsync_calls
+        + SAVED_DIRECT_FSYNC_TOTAL
+        == 37
+    )
     worker = page_worker_factory("saved-layouts")
     resources = _qualification_request(worker, "saved-layouts", "resources")
     process = worker._proc
     assert resources["output"]["registered_timer_handles"] >= 2
     assert resources["output"]["registered_listeners"] == 1
+    assert resources["output"]["registered_real_listeners"] == 0
+    assert resources["output"]["real_listeners_after_cleanup"] == 0
     assert resources["cleanup"] == ZERO_CLEANUP, (
         "stage-b qualification cleanup-success: retained resources"
     )
@@ -702,14 +758,19 @@ def test_request_cleanup_after_success(
         cwd=ROOT,
     )
     try:
+        cleanup_failure_worker._ensure_started("preview-saved-layouts/page/reversed")
+        real_listener_process = cleanup_failure_worker._proc
+        assert real_listener_process is not None
         with pytest.raises(NodeScenarioCrash) as cleanup_failure:
-            _qualification_request(
+            _saved_main_request(
                 cleanup_failure_worker,
-                "saved-layouts",
-                "cleanup-removal-failure",
+                qualification_inputs,
+                mode="real-listener-removal-failure",
             )
-        assert "synthetic listener removal failure" in str(cleanup_failure.value)
+        assert cleanup_failure.value.reply is None
+        assert "real listener removal failure" in str(cleanup_failure.value)
         assert cleanup_failure_worker._proc is None
+        assert real_listener_process.poll() is not None
         with pytest.raises(NodeScenarioCrash) as timer_failure:
             _qualification_request(
                 cleanup_failure_worker,
@@ -723,6 +784,7 @@ def test_request_cleanup_after_success(
         )
         assert cleanup_recovery["cleanup"] == ZERO_CLEANUP
         assert cleanup_failure_worker._proc is not None
+        assert cleanup_failure_worker._proc.pid != real_listener_process.pid
     finally:
         cleanup_failure_worker.close()
 
@@ -1034,7 +1096,25 @@ def test_request_cleanup_after_business_failure(
 
 
 def test_saved_layout_receipt_is_durable_and_detached(tmp_path_factory, request):
-    evidence = _saved_layout_receipt_once(tmp_path_factory)
+    evidence = _saved_layout_receipt_once(tmp_path_factory, request.session)
+    alias, remove_alias = _load_bare_saved_layout_module()
+    try:
+        alias_provider = getattr(alias, "_saved_layout_receipt_once")
+        for providers in (
+            (_saved_layout_receipt_once, alias_provider),
+            (alias_provider, _saved_layout_receipt_once),
+        ):
+            values = [
+                provider(tmp_path_factory, request.session) for provider in providers
+            ]
+            assert values == [evidence, evidence]
+            assert values[0] is values[1] is evidence
+            assert _saved_layout_receipt_build_count(request.session) == 1
+            assert _saved_layout_receipt_cleanup_registered(request.session)
+    finally:
+        if remove_alias:
+            sys.modules.pop("test_preview_savedlayouts_page", None)
+    assert evidence.receipt_bytes == evidence.receipt_json.encode("utf-8")
     receipt = json.loads(evidence.receipt_json)
     assert isinstance(receipt, dict) and receipt is not evidence, (
         "stage-b qualification receipt: detachment violated"

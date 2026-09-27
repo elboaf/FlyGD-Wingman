@@ -28,6 +28,16 @@ ZERO_CLEANUP = {
     "pending_rejection_records": 0,
     "retained_realms": 0,
 }
+SAVED_DIRECT_FSYNC_BY_CASE = {
+    ("owner", "saved"): 3,
+    ("owner", "retained"): 3,
+    ("owner", "excluded"): 4,
+    ("capture", "reversed"): 1,
+    ("capture", "local"): 1,
+    ("capture", "boundary"): 1,
+    ("capture", "dev"): 1,
+}
+SAVED_DIRECT_FSYNC_TOTAL = sum(SAVED_DIRECT_FSYNC_BY_CASE.values())
 SAVED_DEV_LINES = (
     "DEV api.get_preview_hotkey_state()",
     "DEV api.get_preview_hotkey_state()",
@@ -97,8 +107,11 @@ def saved_layout_page_worker(tmp_path_factory: pytest.TempPathFactory):
 @pytest.fixture(scope="session")
 def saved_layout_receipt_bytes(
     tmp_path_factory: pytest.TempPathFactory,
+    request: pytest.FixtureRequest,
 ) -> bytes:
-    return _saved_layout_receipt_once(tmp_path_factory).receipt_json.encode("utf-8")
+    evidence = _saved_layout_receipt_once(tmp_path_factory, request.session)
+    assert _saved_layout_receipt_build_count(request.session) == 1
+    return evidence.receipt_bytes
 
 
 @pytest.fixture(autouse=True)
@@ -116,6 +129,18 @@ def _record_direct_fsync_calls(request: pytest.FixtureRequest):
         yield
     finally:
         os.fsync = real_fsync
+        if "test_saved_layout_page_ordering" in request.node.nodeid:
+            expected = 0
+        elif "test_displayed_owner_controls" in request.node.nodeid:
+            expected = SAVED_DIRECT_FSYNC_BY_CASE[
+                ("owner", request.node.callspec.params["source"])
+            ]
+        else:
+            assert "test_capture_session_page_ordering" in request.node.nodeid
+            expected = SAVED_DIRECT_FSYNC_BY_CASE[
+                ("capture", request.node.callspec.params["scenario"])
+            ]
+        assert calls == expected
         request.node.user_properties.append(("stage_b.direct_fsync_calls", str(calls)))
 
 
@@ -148,6 +173,7 @@ def _record_saved_worker(
 @dataclass(frozen=True)
 class SavedLayoutReceiptEvidence:
     receipt_json: str
+    receipt_bytes: bytes
     durable_json: str
     keys: tuple[str, ...]
     fsync_calls: int
@@ -159,8 +185,18 @@ class SavedLayoutReceiptEvidence:
     pending_was_true: bool
 
 
-_SAVED_LAYOUT_RECEIPT_LOCK = threading.Lock()
-_SAVED_LAYOUT_RECEIPT: SavedLayoutReceiptEvidence | None = None
+_SAVED_LAYOUT_RECEIPT_ATTRIBUTE = "_flygd_stage_b_saved_layout_receipt_v1"
+_SAVED_LAYOUT_RECEIPT_LOCK_ATTRIBUTE = "_flygd_stage_b_saved_layout_receipt_lock_v1"
+_SAVED_LAYOUT_RECEIPT_BUILDS_ATTRIBUTE = "_flygd_stage_b_saved_layout_receipt_builds_v1"
+_SAVED_LAYOUT_RECEIPT_CLEANUP_ATTRIBUTE = (
+    "_flygd_stage_b_saved_layout_receipt_cleanup_v1"
+)
+_SAVED_LAYOUT_RECEIPT_SESSION_ATTRIBUTES = (
+    _SAVED_LAYOUT_RECEIPT_ATTRIBUTE,
+    _SAVED_LAYOUT_RECEIPT_LOCK_ATTRIBUTE,
+    _SAVED_LAYOUT_RECEIPT_BUILDS_ATTRIBUTE,
+    _SAVED_LAYOUT_RECEIPT_CLEANUP_ATTRIBUTE,
+)
 _RECEIPT_MUTATION_SENTINELS = {
     "durable": "stage-b mutation receipt-durable-readback",
     "fsync": "stage-b mutation receipt-atomic-writer-fsync",
@@ -168,18 +204,44 @@ _RECEIPT_MUTATION_SENTINELS = {
     "environment": "stage-b mutation receipt-environment-restoration",
     "reader": "stage-b mutation receipt-reader-release",
     "pending": "stage-b mutation receipt-pending-first-apply",
+    "once": "stage-b mutation receipt-once-construction",
 }
+
+
+def _saved_layout_receipt_build_count(session: pytest.Session) -> int:
+    return int(getattr(session, _SAVED_LAYOUT_RECEIPT_BUILDS_ATTRIBUTE, 0))
+
+
+def _saved_layout_receipt_cleanup_registered(session: pytest.Session) -> bool:
+    return bool(getattr(session, _SAVED_LAYOUT_RECEIPT_CLEANUP_ATTRIBUTE, False))
 
 
 def _saved_layout_receipt_once(
     tmp_path_factory: pytest.TempPathFactory,
+    session: pytest.Session,
 ) -> SavedLayoutReceiptEvidence:
-    global _SAVED_LAYOUT_RECEIPT
-    with _SAVED_LAYOUT_RECEIPT_LOCK:
-        if _SAVED_LAYOUT_RECEIPT is not None:
-            return _SAVED_LAYOUT_RECEIPT
-        _SAVED_LAYOUT_RECEIPT = _build_saved_layout_receipt(tmp_path_factory)
-        return _SAVED_LAYOUT_RECEIPT
+    lock = session.__dict__.setdefault(
+        _SAVED_LAYOUT_RECEIPT_LOCK_ATTRIBUTE, threading.Lock()
+    )
+    with lock:
+        if not getattr(session, _SAVED_LAYOUT_RECEIPT_CLEANUP_ATTRIBUTE, False):
+
+            def clear_session_receipt() -> None:
+                for name in _SAVED_LAYOUT_RECEIPT_SESSION_ATTRIBUTES:
+                    if hasattr(session, name):
+                        delattr(session, name)
+
+            session.config.add_cleanup(clear_session_receipt)
+            setattr(session, _SAVED_LAYOUT_RECEIPT_CLEANUP_ATTRIBUTE, True)
+        cached = getattr(session, _SAVED_LAYOUT_RECEIPT_ATTRIBUTE, None)
+        if cached is not None:
+            return cached
+        evidence = _build_saved_layout_receipt(tmp_path_factory)
+        builds = _saved_layout_receipt_build_count(session) + 1
+        assert builds == 1, _RECEIPT_MUTATION_SENTINELS["once"]
+        setattr(session, _SAVED_LAYOUT_RECEIPT_BUILDS_ATTRIBUTE, builds)
+        setattr(session, _SAVED_LAYOUT_RECEIPT_ATTRIBUTE, evidence)
+        return evidence
 
 
 def _construct_saved_layout_receipt(
@@ -375,6 +437,7 @@ def _construct_saved_layout_receipt(
                 assert delegated_fsync_calls == 19, _RECEIPT_MUTATION_SENTINELS["fsync"]
                 evidence = SavedLayoutReceiptEvidence(
                     receipt_json=receipt_json,
+                    receipt_bytes=receipt_json.encode("utf-8"),
                     durable_json=durable_json,
                     keys=tuple(receipt),
                     fsync_calls=fsync_calls,

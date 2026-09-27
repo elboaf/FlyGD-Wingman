@@ -215,8 +215,12 @@ and Promise-then poison survival. Cleanup success covered timeout, interval,
 immediate, listener, unresolved-promise, async-global survival, all five console
 methods, seven-source retention, and all six existing direct CJS paths (including
 both saved-main terminal forms). Dedicated cleanup-failure workers proved
-listener and timer removal exceptions are fatal before reply and that a later
-call, not the failing call, starts recovery. Cleanup failure covered ordinary and
+real fixture-DOM listener and synthetic timer removal exceptions are fatal before
+reply and that a later call, not the failing call, starts recovery. The worker
+wraps the VM-local `createDOM`, instruments every actual Element prototype once,
+observes nonzero real saved-main listeners, and proves their listener maps empty
+before reply; the raw-`createDOM` mutation fails this witness. Cleanup failure
+covered ordinary and
 accessor-backed native Errors, hostile native accessors, poisoned Error/Reflect
 intrinsics, primitive, null, hostile object getters, Proxy, semantic business
 input, before/boundary/nested-final-timer rejection, a recursively built native
@@ -232,17 +236,26 @@ new process.
 
 ## Saved-layout receipt and family conversion
 
-The process-local once-provider builds one detached 22-key receipt through the
-existing production Api/controller/store/settings/atomicio sequence. It isolates
+The once-provider stores its cache, lock, successful construction count, and one
+cleanup registration on the canonical pytest `Session`. Both
+`test_preview_savedlayouts_page` and `tests.test_preview_savedlayouts_page`
+therefore share one immutable-byte receipt, while cleanup removes the attributes
+so another pytest invocation cannot reuse stale state. It builds the detached
+22-key receipt through the existing production
+Api/controller/store/settings/atomicio sequence. It isolates
 `LOCALAPPDATA` with a session temporary root, forces and restores `_use_legacy`,
 delegates every `os.fsync`, restores `_save_locked`, validates durable strict
 UTF-8 JSON and the committed reader, shuts both Api objects down, clears created
 owners, returns through a nested construction frame, runs GC, and proves every
 Stage-B-created Api/state/document/controller/reader weak reference is dead and
-no newly retained reader remains. The observed build
-used exactly 19 fsync calls, preserved production ID/revision continuity, captured
+no newly retained reader remains. The observed single build used exactly 19
+fsync calls, preserved production ID/revision continuity, captured
 the first Apply as pending, and retained the later persisted Apply. Fifty-five
-independent decodes had no alias.
+independent decodes had no alias. Permanent duplicate-import witnesses exercise
+both provider orderings against one Session and require one object, one
+construction, one cleanup registration, and 19 receipt fsyncs. The external
+mutation probe repeats both orderings on two fresh Session owners, runs cleanup,
+and proves a new owner receives a new object.
 
 Task 3 converted all 62 saved-family rows to one session-scoped worker. The 55
 main rows now decode immutable receipt bytes afresh and no longer construct
@@ -253,7 +266,8 @@ once receipt's 19 calls, the saved-family candidate total is exactly 33 instead
 of the baseline 1,059. Raw JUnit proves the healthy family used one positive PID
 and request ordinals `1..62`, reducing its business Node starts from 62 to one.
 The qualification-only owner/capture setup remains a separately owned four
-fsync calls.
+fsync calls. Saved-only remains exactly 33; combined saved plus qualification is
+exactly `19 + 14 + 4 = 37` in either module order.
 
 ## Remaining family conversion and order evidence
 
@@ -291,15 +305,17 @@ pytest/external/synthetic owner, kind-specific masking rules, one or more litera
 edits with an explicit root, frozen mutated/restored expectations, and an
 explicit `available_from_task`. Ordered internal variants carry their own exact
 sentinel/regex and restoration cycle without increasing the recipe count. The six
-corrected owner mappings and three restored-only helper IDs are pinned explicitly.
+corrected owner mappings and four restored-only IDs are pinned explicitly; exact
+saved-main `reversed` belongs to every Task 3 pytest restored command, while the
+three helper IDs remain owned only by late-rejection restoration.
 The deterministic registry manifest SHA-256 is
-`b4cf86421baef2f0d95f104e8c929817a14b5c3f61bafbb6a35809e81c8c7189`.
+`9dafe422e56519571e19486c0ca14042a519708f00d5a69b7def381b687afb1d`.
 The regenerated recursive artifact manifest is
-`77089e961062761daa0b9a20b64eb03fcd07447a09e4d9944ee5135b875db4d7`,
+`8ec05069849f91976fdb78c5d792645aeda3b2cce7ebf4706d3500f52da7c47e`,
 and the refreshed Task 2 identity-gate record is
 `7ccf650d6af664a7087345cab21d182a8e36b05aaab6919db3efb904409ee515`.
 It also freezes the read-only external adapter at SHA-256
-`fb26c59c39029b5cebed6db086c8ca1bc1d9e1864081f169ab146e56ab50ca5c`.
+`4d8e99bf87cb07196f458e693a5cd97b3a5a9aa97630e772ab434591463a359b`.
 
 Task 1 validates match-once cardinality only for the inputs available now:
 `inventory-node-165`, `junit-property-cardinality`, and
@@ -318,8 +334,12 @@ the runner independently recomputes the phase-specific digest from the supplied
 root and rejects missing or mismatched evidence. Adapter path, mode, target-list
 position, and remaining mode-specific arguments are allowlisted.
 
-The receipt probe imports and calls the once-provider from that root 55 times
-through a measured builder and covers its owning Python file in the root digest.
+The receipt probe imports both saved-module identities from that root and calls
+them in both orders, 55 calls per fresh fake Session, through one measured
+builder. It requires one build and one cleanup registration per Session, runs
+the cleanup, proves all cache attributes absent, and proves the second Session
+does not reuse the first object. The cache-bypass edit must fail this probe. The
+owning Python file remains covered by the root digest.
 Fatal protocol probes launch that root's `page_scenario_worker.cjs` with pipes,
 write and flush one invalid request, and deliberately keep stdin open. A passing
 worker must exit from fatal handling within one second; only after that observed
@@ -374,12 +394,16 @@ The provider's `pending_receipt` literal is unique, so no unconverted business
 caller needed a temporary source edit.
 
 Task 3 revalidated the exact current 14-name `TASK3_RECIPES` partition after the
-real saved conversion, then ran all 14 names in declared order (15 mutation
-executions because the native-stack recipe owns two variants). Every mutation
-failed at its registry-owned sentinel, rejected masking, restored exact
-bytes/SHA-256/binary diff/NUL-delimited status, and passed its registered restored
-probe. The ordered result is `/tmp/stage-b-task3-mutations.json`, SHA-256
-`0a1d51a573972f09bc04d7bad2157deadf79d6873cb2456cb2024dbb8028c9d2`.
+real saved conversion, then ran all 14 names in declared order (16 mutation
+executions because the native-stack and saved-context recipes each own two
+variants). The added saved-context variant returns raw untracked `createDOM` and
+fails only the real-listener witness. Every mutation failed at its registry-owned
+sentinel, rejected masking, restored exact bytes/SHA-256/binary diff/NUL-delimited
+status, and passed its registered restored probe. All 15 restored pytest
+executions included and passed exact saved-main `reversed`; the external receipt
+probe supplied the sixteenth execution. The ordered result is
+`/tmp/stage-b-task3-mutations.json`, SHA-256
+`eb0e752901d09ef5e99601881f077169accdea6a19d162b6e88cf672c8cd2774`.
 The later 16/41 slices and final 71-recipe aggregate remain pending.
 
 ## JUnit property ownership
@@ -394,8 +418,17 @@ The Task 3 saved-family JUnit contains exactly one worker family, PID, request,
 and direct-fsync property on each of 62 rows. It has one positive PID, request
 ordinals `1..62`, direct fsync sum 14, and exactly one receipt owner: saved main
 `reversed` with build `saved-layout-main-v1` and receipt fsync value 19. The
-candidate saved total is therefore exactly 33. Normal, reverse, and shuffle
-artifacts all passed the same cardinality and aggregate audit.
+candidate saved total is therefore exactly 33. The final saved-only XML is
+SHA-256 `328c539e1b89ce7a9ffd1310d72b4a85b5838f7721e3105786b41a419059309f`.
+Saved-first and qualification-first 69-row runs each reported exactly 14 direct,
+19 receipt, and four qualification fsyncs for total 37; their XML hashes are
+`791f014f769c54fea5a5912a047e8a59a9862e94234b8120cbe493f71fc1b0b1`
+and `3bd52095da83c6da2ef626caf3cd72d33314beb06e1de58e94c7b2c7701fc517`.
+The qualification-first aggregate including all 13 helper rows passed 82 tests
+with the same 37-fsync arithmetic (XML SHA-256
+`90ef98d5f530d5b2a2083f31aef376e3f8f6b57cb288889e7a15fc7948b32acd`).
+Normal, reverse, and shuffle artifacts all passed the same cardinality and
+aggregate audit.
 
 ## Complete local endpoint
 
@@ -414,7 +447,9 @@ before editing: exact counts remained 225/16,617, and the actual ID files matche
 both frozen actual and expected files byte-for-byte with hashes
 `bf6e8470cc470cd747015f2772d243e90b064b756984b09d2f0076fde1c6fffe` and
 `d04dff36b8cb278dac3c410bca86e271e17899ce16272c9062886a48f28220c3`.
-The 62 saved IDs and their decorator ASTs remained exact after conversion; only
+Task 3 review repeated those fresh collections after the ownership correction
+with the same counts, byte equality, and hashes. The 62 saved IDs and their
+decorator ASTs remained exact after conversion; only
 the three approved saved-function signature substitutions occurred. Task 3 did
 not run or claim the complete 16,617-case outcome; that remains Task 5.
 
@@ -433,10 +468,13 @@ the worker replaces primitive page selectors with fresh VM-side manifest
 decodes, provides the VM-owned assertion and dev URL/Event seams used by the
 existing programs, requires an exported completion, extracts exactly one
 terminal PASS from diagnostics, and exposes real-program realm evidence for the
-saved qualification. The three saved fixture files changed only at their
-CommonJS completion wrappers; their scenario bodies and assertions are
-unchanged. No production, web, workflow, dependency, lockfile, configuration,
-packaging, or `screenshot_dom.cjs` byte changed. Final Stage B review, the other
+saved qualification. Review then moved receipt ownership from duplicate module
+globals to the canonical pytest Session and moved DOM/listener observation from
+the bootstrap-only DOM to every actual fixture-created DOM. The three saved
+fixture files changed only at their CommonJS completion wrappers; their scenario
+bodies and assertions are unchanged. No production, web, workflow, dependency,
+lockfile, configuration, packaging, or `screenshot_dom.cjs` byte changed. Final
+Stage B review, the other
 three real-family conversions, executable head, and evidence head remain pending.
 
 ## Publication stop and hosted evidence

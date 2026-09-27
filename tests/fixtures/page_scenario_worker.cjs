@@ -561,6 +561,9 @@ const BOOTSTRAP = String.raw`
   const safeArrayPush = Function.call.bind(Array.prototype.push);
   const safeArrayJoin = Function.call.bind(Array.prototype.join);
   const safeArrayPop = Function.call.bind(Array.prototype.pop);
+  const safeArraySplice = Function.call.bind(Array.prototype.splice);
+  const safeWeakSetAdd = Function.call.bind(WeakSet.prototype.add);
+  const safeWeakSetHas = Function.call.bind(WeakSet.prototype.has);
   const safeNumberIsFinite = Number.isFinite.bind(Number);
   const safeHasOwn = Function.call.bind(Object.prototype.hasOwnProperty);
   const safeIsPrototypeOf = Function.call.bind(Object.prototype.isPrototypeOf);
@@ -614,7 +617,11 @@ const BOOTSTRAP = String.raw`
   let virtualNow = localStartTime;
   const timers = new Map();
   const listenerRoots = [];
+  const realListenerTargets = [];
+  const domRoots = [];
+  const instrumentedDomPrototypes = new WeakSet();
   const diagnostics = [];
+  let domsWerePristine = true;
   let settled = false;
   let boundaryTurns = 0;
   let completionValue = null;
@@ -971,7 +978,40 @@ const BOOTSTRAP = String.raw`
     localDomFactoryFilename,
     specifier => { throw new SafeError('Unknown DOM require ' + specifier); }
   );
-  const createDOM = domModule.createDOM;
+  const rawCreateDOM = domModule.createDOM;
+  function createTrackedDOM(page, synthetic) {
+    const dom = rawCreateDOM(page);
+    const Element = dom.Element;
+    const prototype = Element.prototype;
+    domsWerePristine = domsWerePristine
+      && safeGetOwnPropertyDescriptor(prototype, '__wingmanPoison') === undefined;
+    if (!safeWeakSetHas(instrumentedDomPrototypes, prototype)) {
+      safeWeakSetAdd(instrumentedDomPrototypes, prototype);
+      const addEventListener = prototype.addEventListener;
+      const removeEventListener = prototype.removeEventListener;
+      prototype.addEventListener = function(name, callback) {
+        safeArrayPush(
+          listenerRoots,
+          [this, name, callback, removeEventListener, synthetic]
+        );
+        if (!synthetic) safeArrayPush(realListenerTargets, this);
+        return addEventListener.call(this, name, callback);
+      };
+      prototype.removeEventListener = function(name, callback) {
+        for (let index = listenerRoots.length - 1; index >= 0; index--) {
+          const row = listenerRoots[index];
+          if (row[0] === this && row[1] === name && row[2] === callback) {
+            safeArraySplice(listenerRoots, index, 1);
+          }
+        }
+        return removeEventListener.call(this, name, callback);
+      };
+    }
+    safeArrayPush(domRoots, dom);
+    globalThis.__wingmanElement = Element;
+    return dom;
+  }
+  const createDOM = page => createTrackedDOM(page, false);
   function localRequire(specifier) {
     if (specifier === 'node:assert/strict') return assertFacade;
     if (specifier === 'node:fs') return fsFacade;
@@ -1028,28 +1068,13 @@ const BOOTSTRAP = String.raw`
   const requestManifest = safeParse(localManifestJson);
   const page = requestManifest.pages[localPageSelector];
   decodedInput.page = detachJson(page);
-  const dom = createDOM(page);
-  const document = dom.document;
-  const Element = dom.Element;
-  const addEventListener = Element.prototype.addEventListener;
-  const removeEventListener = Element.prototype.removeEventListener;
   const objectWasPristine = safeGetOwnPropertyDescriptor(Object.prototype, '__wingmanPoison') === undefined;
   const arrayWasPristine = safeGetOwnPropertyDescriptor(Array.prototype, '__wingmanPoison') === undefined;
   const errorWasPristine = safeGetOwnPropertyDescriptor(Error.prototype, '__wingmanPoison') === undefined;
-  const domWasPristine = safeGetOwnPropertyDescriptor(Element.prototype, '__wingmanPoison') === undefined;
-  Element.prototype.addEventListener = function(name, callback) {
-    safeArrayPush(listenerRoots, [this, name, callback]);
-    return addEventListener.call(this, name, callback);
-  };
-  Element.prototype.removeEventListener = function(name, callback) {
-    for (let index = listenerRoots.length - 1; index >= 0; index--) {
-      const row = listenerRoots[index];
-      if (row[0] === this && row[1] === name && row[2] === callback) listenerRoots.splice(index, 1);
-    }
-    return removeEventListener.call(this, name, callback);
-  };
-  globalThis.document = document;
-  globalThis.__wingmanElement = Element;
+  if (localProtocol === 'qualification' || decodedInput.mode === 'realm') {
+    const syntheticDom = createTrackedDOM(page, true);
+    globalThis.document = syntheticDom.document;
+  }
   globalThis.__adapterInput = decodedInput;
   globalThis.__priorReply = detachedReply;
 
@@ -1098,13 +1123,30 @@ const BOOTSTRAP = String.raw`
         out.prior_reply_detached = detachedReply !== previousReply;
         out.module_export_isolated = moduleWasIsolated;
         out.realm_pristine = objectWasPristine && arrayWasPristine && errorWasPristine;
-        out.dom_pristine = domWasPristine;
+        out.dom_pristine = domsWerePristine;
         out.poison_absent = !globalThis.__wingmanRealmPoison;
         out.decoded_input_value = decodedInput.nested ? decodedInput.nested.value : null;
         out.prior_reply_value = previousReply.nested ? previousReply.nested.value : null;
         completionValue = out;
       } else {
         completionValue = terminalOutput;
+      }
+      if (localProtocol !== 'qualification'
+          && decodedInput.mode === 'real-listener-removal-failure') {
+        let realListenerTarget = null;
+        for (const row of listenerRoots) {
+          if (!row[4]) {
+            realListenerTarget = row[0];
+            break;
+          }
+        }
+        if (realListenerTarget === null) {
+          throw new SafeError('real fixture registered no listeners');
+        }
+        safeDefineProperty(realListenerTarget, 'listeners', {
+          configurable: true,
+          get() { throw new SafeError('real listener removal failure'); }
+        });
       }
     } catch (error) {
       completionFailure = failure(error);
@@ -1115,17 +1157,33 @@ const BOOTSTRAP = String.raw`
   function cleanup() {
     const registeredTimerHandles = timers.size;
     const registeredListeners = listenerRoots.length;
+    let registeredRealListeners = 0;
+    for (const row of listenerRoots) {
+      if (!row[4]) registeredRealListeners += 1;
+    }
     timers.clear();
     while (listenerRoots.length) {
-      const [target, name, callback] = safeArrayPop(listenerRoots);
+      const [target, name, callback, removeEventListener] = safeArrayPop(listenerRoots);
       removeEventListener.call(target, name, callback);
     }
-    if (timers.size || listenerRoots.length) {
+    let remainingRealListeners = 0;
+    for (const target of realListenerTargets) {
+      const listeners = target.listeners;
+      for (const name of safeKeys(listeners)) {
+        remainingRealListeners += listeners[name].length;
+      }
+    }
+    while (realListenerTargets.length) safeArrayPop(realListenerTargets);
+    while (domRoots.length) safeArrayPop(domRoots);
+    if (timers.size || listenerRoots.length || realListenerTargets.length
+        || domRoots.length || remainingRealListeners) {
       throw new SafeError('request cleanup retained resources');
     }
     if (completionValue !== null && typeof completionValue === 'object') {
       completionValue.registered_timer_handles = registeredTimerHandles;
       completionValue.registered_listeners = registeredListeners;
+      completionValue.registered_real_listeners = registeredRealListeners;
+      completionValue.real_listeners_after_cleanup = remainingRealListeners;
     }
     for (const key of [
       'clearImmediate', 'clearInterval', 'clearTimeout', 'console', 'document',
