@@ -32,8 +32,10 @@
 - Timing values are single-run observations only. Do not claim speedup, slowdown, lower bound, p95, runner efficiency, throughput, job impact, or critical-path causation.
 - The user authorized versioning the Stage B spec, plan, results, and evidence. This does not authorize a push, PR, workflow dispatch, rerun, or hosted artifact collection from an unspecified run.
 - Every temporary edit runs in disposable space or a bounded restoration wrapper and proves original bytes, SHA-256, binary diff, and NUL-delimited porcelain status in `finally`.
-- One immutable 71-recipe registry is the sole mutation authority. Tasks 3/4/5 reference its canonical names only; each recipe owns phase, exact IDs, one unique literal sentinel and anchored regex, forbidden masking, match-once edits, and mutated/restored probes. The one property-cardinality recipe owns both missing and duplicate-identical variants internally.
-- TDD RED must collect the intended IDs and fail in the call phase at its unique assertion. Undefined imports, collection/setup errors, skips, timeouts, or later generic failures do not count as RED.
+- One immutable 71-recipe registry is the sole mutation authority. Tasks 3/4/5 reference its canonical names only; each recipe owns phase, typed probe kind, exact pytest IDs or non-pytest labels, one unique literal sentinel and anchored regex, kind-appropriate forbidden masking, match-once edits, and mutated/restored probes. The one property-cardinality recipe owns both missing and duplicate-identical variants internally.
+- TDD RED must collect the intended IDs and fail in the call phase at its unique assertion. Undefined imports, a missing worker file, collection/setup errors, skips, timeouts, or later generic failures do not count as RED.
+- Task 1 materializes and runs collection/JUnit parsing first, freezes the actual 217-ID baseline, and binds `BASELINE_COLLECTED_IDS` before it imports or runs registry/restoration tooling. Its registry run is metadata/owner/schema smoke only; real edit qualification begins after each implementation phase exists.
+- Task 1 also freezes the exact expected Task 2 relevant-225 and complete-16,617 orders. Task 2 compares fresh actual collections byte-for-byte with those expected files; Task 5 compares final collection byte-for-byte with the frozen actual Task 2 order.
 - Every intermediate implementation commit is green for its changed component and all already-converted consumers.
 
 ---
@@ -77,7 +79,7 @@ No existing `test_*` signature may change except these six fixture substitutions
 ```text
 test_saved_layout_page_ordering:
   (tmp_path, scenario, monkeypatch)
-  -> (saved_layout_page_worker, saved_layout_receipt_json, request, scenario)
+  -> (saved_layout_page_worker, saved_layout_receipt_bytes, request, scenario)
 
 test_displayed_owner_controls_use_real_api_receipts:
   (tmp_path, source)
@@ -239,10 +241,15 @@ git diff --name-only origin/main...HEAD
 Expected before Task 1 implementation: only the approved Stage B spec and plan
 occur in the range; no executable path is dirty.
 
-- [ ] **Step 2: Materialize the exact collection/map/signature and restoration/JUnit tooling**
+- [ ] **Step 2: Materialize only the collection/map/signature and raw-JUnit parser**
 
-Create `/tmp/stage-b-baseline/collect.py` with these core checks; store complete
-records rather than terminal-only counts:
+Start from a new `/tmp/stage-b-baseline` directory. Create
+`/tmp/stage-b-baseline/collect.py` and the collection plugin first, with these
+core checks; store complete records rather than terminal-only counts. This step
+also materializes the longest-existing-module-prefix raw-JUnit parser used by
+Step 3. It does **not** create, import, or run `restore.py`, `mutations.py`, or
+either tooling test suite; those are ordered after the exact 217 baseline is
+collected and bound.
 
 ```python
 from __future__ import annotations
@@ -299,9 +306,10 @@ def shape(path: Path) -> dict[str, object]:
     return result
 ```
 
-Before any RED mutation is run in a later task, also create the complete
-`/tmp/stage-b-baseline/restore.py`; no later task may invent or patch a runner.
-It owns these frozen interfaces:
+The following restoration interface is the contract for Step 4, not an action
+in this step. Only after Step 3 has written and rebound the exact 217 IDs may
+Step 4 create `/tmp/stage-b-baseline/restore.py`; no later task may invent or
+patch a runner. It owns these frozen interfaces:
 
 ```python
 from __future__ import annotations
@@ -317,6 +325,8 @@ from types import TracebackType
 from typing import Literal
 
 Phase = Literal["task3", "task4", "task5"]
+ProbeKind = Literal["pytest", "external", "synthetic"]
+EditRoot = Literal["worktree", "scratch"]
 
 
 @dataclass(frozen=True)
@@ -327,17 +337,53 @@ class LiteralEdit:
 
 
 @dataclass(frozen=True)
-class MutationProbe:
-    kind: Literal["pytest-junit", "external-process", "synthetic-audit"]
+class PytestProbe:
+    kind: Literal["pytest"]
     argv: tuple[str, ...]
     restored_argv: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ExternalInvocation:
+    argv: tuple[str, ...]
+    exit_code: int
+    stdout: bytes
+    stderr: bytes
+    sentinel_stream: Literal["stdout", "stderr"] | None
+
+
+@dataclass(frozen=True)
+class ExternalProbe:
+    kind: Literal["external"]
+    mutated: ExternalInvocation
+    restored: ExternalInvocation
+
+
+@dataclass(frozen=True)
+class SyntheticInvocation:
+    callable_name: str
+    result_json: str | None
+    exception_type: str | None
+    exception_message: str | None
+
+
+@dataclass(frozen=True)
+class SyntheticProbe:
+    kind: Literal["synthetic"]
+    mutated: SyntheticInvocation
+    restored: SyntheticInvocation
+
+
+MutationProbe = PytestProbe | ExternalProbe | SyntheticProbe
 
 
 @dataclass(frozen=True)
 class MutationRecipe:
     name: str
     phase: Phase
-    selected_ids: tuple[str, ...]
+    edit_root: EditRoot
+    pytest_ids: tuple[str, ...]
+    probe_label: str | None
     sentinel: str
     failure_regex: str
     forbidden_masking: tuple[str, ...]
@@ -349,21 +395,38 @@ def git_bytes(worktree: Path, *args: str) -> bytes:
     return subprocess.check_output(["git", "-C", str(worktree), *args])
 
 
-def validate_recipe(recipe: MutationRecipe, worktree: Path) -> None:
+def validate_recipe(recipe: MutationRecipe, edit_root: Path) -> None:
     assert recipe.name
     assert recipe.phase in ("task3", "task4", "task5")
-    assert recipe.selected_ids
+    assert recipe.edit_root in ("worktree", "scratch")
+    if recipe.probe.kind == "pytest":
+        assert recipe.pytest_ids
+        assert recipe.probe_label is None
+    else:
+        assert not recipe.pytest_ids
+        assert recipe.probe_label is not None
     assert recipe.sentinel
     compiled = re.compile(recipe.failure_regex)
     assert recipe.failure_regex.startswith(r"\A")
     assert recipe.failure_regex.endswith(r"\Z")
     assert compiled.fullmatch(recipe.sentinel)
-    assert recipe.forbidden_masking
-    assert recipe.probe.argv and recipe.probe.restored_argv
-    assert recipe.edits or recipe.probe.kind == "synthetic-audit"
+    assert recipe.forbidden_masking == FORBIDDEN_MASKING_BY_KIND[recipe.probe.kind]
+    if recipe.probe.kind == "pytest":
+        assert recipe.probe.argv and recipe.probe.restored_argv
+    elif recipe.probe.kind == "external":
+        assert recipe.probe.mutated.argv and recipe.probe.restored.argv
+        assert recipe.probe.mutated.sentinel_stream in ("stdout", "stderr")
+        assert recipe.probe.restored.sentinel_stream is None
+    else:
+        assert recipe.probe.kind == "synthetic"
+        assert recipe.probe.mutated.callable_name
+        assert recipe.probe.restored.callable_name
+        assert exactly_one_synthetic_outcome(recipe.probe.mutated)
+        assert exactly_one_synthetic_outcome(recipe.probe.restored)
+    assert recipe.edits
     for path in {edit.path for edit in recipe.edits}:
         assert not path.is_absolute(), f"{recipe.name}: path was absolute"
-        source = (worktree / path).read_bytes()
+        source = (edit_root / path).read_bytes()
         spans = []
         for edit in (item for item in recipe.edits if item.path == path):
             assert edit.old, f"{recipe.name}: empty old literal"
@@ -396,27 +459,27 @@ def apply_literal_edits(original: bytes, edits: tuple[LiteralEdit, ...]) -> byte
 
 
 def mutate_once(
-    worktree: Path,
+    edit_root: Path,
     recipe: MutationRecipe,
     probe: Callable[[], None],
 ) -> None:
-    validate_recipe(recipe, worktree)
+    validate_recipe(recipe, edit_root)
     originals = {
-        edit.path: (worktree / edit.path).read_bytes() for edit in recipe.edits
+        edit.path: (edit_root / edit.path).read_bytes() for edit in recipe.edits
     }
     original_hashes = {
         path: hashlib.sha256(content).hexdigest() for path, content in originals.items()
     }
-    before_diff = git_bytes(worktree, "diff", "--binary", "HEAD", "--", ".")
+    before_diff = git_bytes(edit_root, "diff", "--binary", "HEAD", "--", ".")
     before_status = git_bytes(
-        worktree, "status", "--porcelain=v2", "--untracked-files=all", "-z"
+        edit_root, "status", "--porcelain=v2", "--untracked-files=all", "-z"
     )
     probe_error: BaseException | None = None
     probe_tb: TracebackType | None = None
     restore_error: BaseException | None = None
     try:
         for relative, original in originals.items():
-            path = worktree / relative
+            path = edit_root / relative
             edits = tuple(edit for edit in recipe.edits if edit.path == relative)
             mutated = apply_literal_edits(original, edits)
             assert mutated != original, f"{recipe.name}: mutation changed no bytes"
@@ -429,23 +492,23 @@ def mutate_once(
     finally:
         try:
             for relative, original in originals.items():
-                (worktree / relative).write_bytes(original)
+                (edit_root / relative).write_bytes(original)
             checks = {
                 "file bytes": all(
-                    (worktree / path).read_bytes() == original
+                    (edit_root / path).read_bytes() == original
                     for path, original in originals.items()
                 ),
                 "SHA-256": all(
-                    hashlib.sha256((worktree / path).read_bytes()).hexdigest()
+                    hashlib.sha256((edit_root / path).read_bytes()).hexdigest()
                     == original_hashes[path]
                     for path in originals
                 ),
                 "binary diff": git_bytes(
-                    worktree, "diff", "--binary", "HEAD", "--", "."
+                    edit_root, "diff", "--binary", "HEAD", "--", "."
                 )
                 == before_diff,
                 "porcelain status": git_bytes(
-                    worktree,
+                    edit_root,
                     "status",
                     "--porcelain=v2",
                     "--untracked-files=all",
@@ -467,30 +530,43 @@ def mutate_once(
         raise probe_error.with_traceback(probe_tb)
 ```
 
-On top of that exact restoration primitive, `restore.py` must contain:
+On top of that exact restoration primitive, `restore.py` must contain one
+strict dispatcher with three non-interchangeable probe paths:
 
-- longest-existing-module-prefix reconstruction of exact pytest node IDs;
-- raw external JUnit parsing that preserves `<property>` elements as a list;
-- `run_expected_failure(recipe, command, xml_path)`, which runs a fresh external
-  pytest process, requires nonzero exit, exactly the recipe's selected testcases,
-  exactly one intended call-phase `<failure>` and no setup/teardown `<error>` or
-  `<skipped>`, then requires exactly one extracted assertion-message line to
-  full-match `recipe.failure_regex`;
-- rejection of `ImportError`, `ModuleNotFoundError`, collection/fixture errors,
-  `NodeScenarioTimeout`, timeout text, and every other registered mutation
-  sentinel;
-- `run_restored_green(recipe, command, xml_path)`, which runs only after the
-  `finally` restoration checks and requires the exact node to pass once; and
-- `run_recipe()`, which validates the literal old/new recipe before mutation,
-  proves the mutated bytes differ, invokes the failure runner, restores exact
-  bytes/SHA-256/binary diff/NUL-delimited porcelain in `finally`, then invokes
-  the restored GREEN runner. A failure to restore any one of those surfaces
-  raises an error containing the exact sentinel `restoration bytes mismatch`.
+- `run_pytest_probe()` runs the exact registered pytest command in a fresh
+  process and parses only its raw JUnit. It requires the exact registered
+  testcase IDs, nonzero mutated exit, exactly one intended call-phase
+  `<failure>`, no setup/teardown `<error>` or `<skipped>`, traceback presence,
+  and exactly one extracted assertion-message line that full-matches the
+  recipe regex. Its restored command requires every registered restored ID to
+  pass exactly once. It never treats terminal prose as an outcome.
+- `run_external_probe()` runs the exact registered command without pytest or
+  JUnit interpretation. It requires the registered exit code and byte-exact
+  stdout and stderr for both mutated and restored invocations, requires the
+  sentinel in exactly the registered stream for the mutated invocation, and
+  rejects it from the other stream and restored outputs.
+- `run_synthetic_probe()` looks up the exact registered callable name in a
+  closed `SYNTHETIC_PROBES` map and invokes it in-process. It compares the
+  registered JSON result byte-for-byte or requires the registered exception
+  class and exact message; exactly one of result or exception is legal for
+  each mutated/restored invocation. It creates no JUnit and accepts no command.
 
-The runner never parses pytest terminal prose as an outcome and never imports a
-test module into its own process. It extracts call-phase assertion-message lines
-from raw external JUnit, requires exactly one line to `fullmatch()` the recipe's
-anchored regex, and rejects setup/teardown/collection outcomes structurally.
+`run_recipe()` validates literal old/new bytes before mutation, proves mutated
+bytes differ, dispatches strictly on `recipe.probe.kind`, applies the
+kind-specific masking rules, restores exact bytes/SHA-256/binary diff/NUL-
+delimited porcelain in `finally`, and only then dispatches the matching restored
+probe. A failure to restore any surface raises exact `restoration bytes
+mismatch`. Pytest-only rules such as testcase phase and JUnit traceback are
+never applied to `external` or `synthetic` probes; `external::...` and
+`synthetic::...` values are registry labels, never pytest node IDs. All three
+kinds share at least one literal match-once edit, rejection of every other
+registered sentinel, kind-appropriate forbidden masking, and exact restoration.
+Every recipe declares `edit_root`. `worktree` means the Stage B worktree;
+`scratch` means a freshly initialized disposable Git repository containing the
+canonical external/synthetic fixture bytes. The runner snapshots and restores
+the selected root identically, so an in-process probe cannot bypass literal edit
+or restoration evidence merely because it creates no JUnit.
+
 Literal edits are Python `bytes`, not line numbers, ellipses, pseudocode,
 search-only descriptions, or regex substitutions.
 
@@ -576,15 +652,17 @@ assert not (BASELINE_COLLECTED_IDS & APPROVED_PLANNED_IDS)
 `validate_identity_domains()` parses every declared pytest ID with exact grammar
 `tests/<module>.py::test_<function>` plus at most one nonempty bracketed
 parameter, then requires the parsed module/function/parameter tuple and creation
-phase to equal `APPROVED_PLANNED_OWNERS`. For every non-`external::` registry
-selected ID it accepts exactly one of two states:
+phase to equal `APPROVED_PLANNED_OWNERS`. It receives only selected IDs from
+recipes whose probe kind is `pytest`; non-pytest labels are validated separately
+against the exact external/synthetic allowlist. For every selected pytest ID it
+accepts exactly one of two states:
 
 1. the ID is in `BASELINE_COLLECTED_IDS`; or
 2. the ID is absent from baseline, is in `APPROVED_PLANNED_IDS`, and has its
    exact declared Task 2 owner tuple.
 
-The set of non-baseline, non-external selected IDs across all 71 recipes must
-equal `APPROVED_PLANNED_IDS`—not merely be a subset. The executable check is:
+The set of non-baseline selected pytest IDs across all 71 recipes must equal
+`APPROVED_PLANNED_IDS`—not merely be a subset. The executable check is:
 
 ```python
 PLANNED_NODEID = re.compile(
@@ -597,7 +675,7 @@ PLANNED_NODEID = re.compile(
 def validate_identity_domains(
     baseline_ids: frozenset[str],
     planned_rows: tuple[tuple[str, str, str, str | None, str], ...],
-    selected_ids: frozenset[str],
+    selected_pytest_ids: frozenset[str],
 ) -> None:
     planned_ids = tuple(row[0] for row in planned_rows)
     assert len(baseline_ids) == 217
@@ -618,29 +696,39 @@ def validate_identity_domains(
             parameter,
             task,
         )
-    undeclared = selected_ids - baseline_ids - APPROVED_PLANNED_IDS
+    undeclared = selected_pytest_ids - baseline_ids - APPROVED_PLANNED_IDS
     assert not undeclared
-    assert selected_ids - baseline_ids == APPROVED_PLANNED_IDS
+    assert selected_pytest_ids - baseline_ids == APPROVED_PLANNED_IDS
 ```
 
 Thus a typo future ID, an undeclared missing ID, a duplicate planned row, a wrong
 module/function/parameter owner, or a future ID unexpectedly present in the 217
 baseline fails Task 1, while a correctly declared future ID does not require
-collection before its file exists. Task 1 materializes
-`verify_task2_identities.py` from these same constants; its own fixture-based
-self-tests cover all five rejection cases, but the real 225/16,617 collection
-inputs do not exist until Task 2 and are not claimed here.
+collection before its file exists. After binding the actual 217 IDs, Task 1
+materializes `verify_task2_identities.py` from these same constants. It writes
+`expected-task2-relevant-225.txt` by inserting the helper-contract ID immediately
+after the existing `wrong-duration-type` helper row and appending the seven
+qualification IDs in their declared source order after the 205 target plus
+13-helper sequence. It writes `expected-task2-complete-16617.txt` from the
+accepted exact 16,609 order by inserting the helper ID at that same module-local
+anchor and inserting the new `tests/test_persistent_page_workers.py` rows at that
+file's exact lexical collection position, between the existing `paths_engine`
+and `poll_tick` modules. Both expected files have one final newline and frozen
+SHA-256 values. Self-tests cover the five owner/domain rejections plus wrong
+insertion anchor/order; the real 225/16,617 collections do not exist until Task
+2 and are not claimed here.
 
 #### One canonical mutation registry
 
-Task 1 also creates `/tmp/stage-b-baseline/mutations.py` and
-`test_mutations.py`. `mutations.py` is the only mutation authority for the rest
-of the plan. Each of its exactly **71** `MutationRecipe` objects contains its
-literal name, earliest execution phase, exact selected pytest node IDs (or an
-exact `external::...` probe ID), literal sentinel, anchored regex, forbidden
-masking rules, match-once byte edits, and complete mutated/restored probe argv.
-No Task 3/4/5 prose table may restate an owner, sentinel, regex, edit, or probe.
-Those tasks invoke only the phase tuples below by recipe name.
+After the 217 baseline is bound, Task 1 Step 4 creates
+`/tmp/stage-b-baseline/mutations.py` and `test_mutations.py`. `mutations.py` is
+the only mutation authority for the rest of the plan. Each of its exactly **71**
+`MutationRecipe` objects contains its literal name, earliest execution phase,
+typed `pytest`/`external`/`synthetic` probe, exact selected pytest node IDs or
+exact non-pytest labels, literal sentinel, anchored regex, kind-appropriate
+forbidden masking rules, match-once byte edits, and complete mutated/restored
+expectations. No Task 3/4/5 prose table may restate an owner, sentinel, regex,
+edit, or probe. Those tasks invoke only the phase tuples below by recipe name.
 
 The registry declares exact node-ID constants rather than aliases such as
 "saved realm row":
@@ -677,17 +765,46 @@ RESTORED_ONLY_BY_RECIPE = {
 ```
 
 These three helper IDs are not selected failure owners and are not members of
-`EXPECTED_SELECTED_IDS["late-rejection-attribution"]`. They run only after the
+`EXPECTED_OWNERS["late-rejection-attribution"]`. They run only after the
 recipe's bytes/hash/diff/status restoration has succeeded; each must produce one
 passed JUnit testcase with no failure/error/skip. The registry runner never
-feeds them to `run_expected_failure()` and never searches them for the mutation
-sentinel.
+feeds them to the mutated side of `run_pytest_probe()` and never searches them
+for the mutation sentinel.
 
-External selected IDs are exact strings under `external::fatal/*`,
-`external::inventory/node-165`, `external::saved-main/receipt-count-55`,
-`external::junit/property-cardinality`, and `external::runner/restoration`.
-Registry construction fails for any other
-non-pytest selected ID. The exact phase contract is:
+Non-pytest selected values are labels, never pytest IDs. External-process labels
+are the exact strings under `external::fatal/*`,
+`external::inventory/node-165`, and
+`external::saved-main/receipt-count-55`. In-process labels are exactly
+`synthetic::junit/property-cardinality` and
+`synthetic::runner/restoration`. Registry construction fails for any other
+non-pytest label or for a label whose prefix does not agree with its probe kind.
+The owner map is literal rather than inferred from a prefix:
+
+```python
+NONPYTEST_LABELS_BY_RECIPE = {
+    "receipt-once-construction": ("external::saved-main/receipt-count-55",),
+    "protocol-malformed-ndjson": ("external::fatal/malformed-ndjson",),
+    "protocol-wrong-family": ("external::fatal/wrong-family",),
+    "protocol-unknown-protocol": ("external::fatal/unknown-protocol",),
+    "protocol-unknown-scenario": ("external::fatal/unknown-scenario",),
+    "inventory-node-165": ("external::inventory/node-165",),
+    "junit-property-cardinality": ("synthetic::junit/property-cardinality",),
+    "restoration-byte-integrity": ("synthetic::runner/restoration",),
+}
+NONPYTEST_KIND_BY_LABEL = {
+    "external::saved-main/receipt-count-55": "external",
+    "external::fatal/malformed-ndjson": "external",
+    "external::fatal/wrong-family": "external",
+    "external::fatal/unknown-protocol": "external",
+    "external::fatal/unknown-scenario": "external",
+    "external::inventory/node-165": "external",
+    "synthetic::junit/property-cardinality": "synthetic",
+    "synthetic::runner/restoration": "synthetic",
+}
+assert len(NONPYTEST_KIND_BY_LABEL) == 8
+```
+
+The exact phase contract is:
 
 ```python
 ALLOWED_PHASES_BY_ID = {
@@ -712,17 +829,19 @@ ALLOWED_PHASES_BY_ID = {
     "external::fatal/unknown-scenario": frozenset({"task4"}),
     "external::inventory/node-165": frozenset({"task4"}),
     "external::saved-main/receipt-count-55": frozenset({"task3"}),
-    "external::junit/property-cardinality": frozenset({"task5"}),
-    "external::runner/restoration": frozenset({"task5"}),
+    "synthetic::junit/property-cardinality": frozenset({"task5"}),
+    "synthetic::runner/restoration": frozenset({"task5"}),
 }
 ```
 
-`test_mutations.py` checks every recipe's selected ID against this map. A
-restored argv may include an additional anti-mask ID from the map, but
-`selected_ids` contains only the testcases expected in the mutated JUnit result.
+`test_mutations.py` checks every recipe's selected value against this map. A
+pytest restored argv may include an additional anti-mask ID from the map, but a
+pytest recipe's `pytest_ids` contains only testcases expected in its mutated
+JUnit result. External and synthetic recipes instead carry one exact
+`probe_label` and never pass that label to pytest.
 
 The selected failure owner is defined only by the exhaustive
-`EXPECTED_SELECTED_IDS` map below; no recipe stores an owner nickname or relies
+`EXPECTED_OWNERS` map below; no recipe stores an owner nickname or relies
 on prefix inference.
 
 The three phase tuples partition the registry—each recipe name occurs here
@@ -814,7 +933,7 @@ assert len(TASK4_RECIPES) == 16
 assert len(TASK5_RECIPES) == 41
 assert len(TASK3_RECIPES + TASK4_RECIPES + TASK5_RECIPES) == 71
 
-EXPECTED_SELECTED_IDS = {
+EXPECTED_OWNERS = {
     "realm-saved-context-reuse": (REALM_SAVED_ID,),
     "realm-saved-source-reexecution": (REALM_SAVED_ID,),
     "realm-saved-input-detachment": (REALM_SAVED_ID,),
@@ -884,11 +1003,11 @@ EXPECTED_SELECTED_IDS = {
     "cleanup-before-reply": (CLEANUP_SUCCESS_ID,),
     "protocol-fatal-no-reply": (CLEANUP_FAILURE_ID,),
     "late-rejection-attribution": (CLEANUP_FAILURE_ID,),
-    "junit-property-cardinality": ("external::junit/property-cardinality",),
-    "restoration-byte-integrity": ("external::runner/restoration",),
+    "junit-property-cardinality": ("synthetic::junit/property-cardinality",),
+    "restoration-byte-integrity": ("synthetic::runner/restoration",),
 }
-assert len(EXPECTED_SELECTED_IDS) == 71
-assert set(EXPECTED_SELECTED_IDS) == set(
+assert len(EXPECTED_OWNERS) == 71
+assert set(EXPECTED_OWNERS) == set(
     TASK3_RECIPES + TASK4_RECIPES + TASK5_RECIPES
 )
 
@@ -900,7 +1019,7 @@ REPRESENTATIVE_EVIDENCE_RECIPES = (
     "junit-property-cardinality",
     "restoration-byte-integrity",
 )
-assert set(REPRESENTATIVE_EVIDENCE_RECIPES) <= set(EXPECTED_SELECTED_IDS)
+assert set(REPRESENTATIVE_EVIDENCE_RECIPES) <= set(EXPECTED_OWNERS)
 ```
 
 These six canonical recipes produce seven actual defect executions because
@@ -938,10 +1057,10 @@ duration rejected`, `numeric-schema float: valid duration rejected`,
 was not discarded`. These literals occur only in `REGISTRY` and their owning
 assertions; no shorter numeric regex is accepted.
 
-The exact masking tuple is stored unchanged on every recipe:
+Masking is exact and appropriate to probe kind:
 
 ```python
-FORBIDDEN_MASKING = (
+PYTEST_FORBIDDEN_MASKING = (
     r"\bImportError\b",
     r"\bModuleNotFoundError\b",
     r"\bNodeScenarioTimeout\b",
@@ -950,14 +1069,30 @@ FORBIDDEN_MASKING = (
     r"ERROR collecting",
     r"(?i:\btime(?:d)? out\b|\btimeout\b)",
 )
+EXTERNAL_FORBIDDEN_MASKING = (
+    r"\bNodeScenarioTimeout\b",
+    r"(?i:\btime(?:d)? out\b|\btimeout\b)",
+)
+SYNTHETIC_FORBIDDEN_MASKING = (
+    r"\bImportError\b",
+    r"\bModuleNotFoundError\b",
+    r"(?i:\btime(?:d)? out\b|\btimeout\b)",
+)
+FORBIDDEN_MASKING_BY_KIND = {
+    "pytest": PYTEST_FORBIDDEN_MASKING,
+    "external": EXTERNAL_FORBIDDEN_MASKING,
+    "synthetic": SYNTHETIC_FORBIDDEN_MASKING,
+}
 ```
 
-The JUnit parser separately requires the intended call phase and rejects
-setup/teardown `<error>` elements. No generic failure, timeout, missing exception,
-fixture error, or collection failure can satisfy a recipe. `REGISTRY` is a
-literal dict in exact `TASK3_RECIPES + TASK4_RECIPES + TASK5_RECIPES` insertion
-order; every value is a fully spelled `MutationRecipe(...)`, not a factory output
-or later override.
+Every path also rejects any other recipe sentinel. The JUnit parser additionally
+requires the intended call phase and rejects setup/teardown `<error>` elements;
+those pytest-specific concepts are not imposed on process or in-process probes.
+No generic failure or kind-appropriate masking event can satisfy a recipe.
+`REGISTRY` is a literal dict in exact
+`TASK3_RECIPES + TASK4_RECIPES + TASK5_RECIPES` insertion order; every value is a
+fully spelled `MutationRecipe(...)` with a typed probe, not a factory output or
+later override.
 
 `validate_registry()` is the mandatory preflight:
 
@@ -969,6 +1104,7 @@ def validate_registry(
     worktree: Path,
     baseline_collected_ids: frozenset[str],
     phase: Phase | None = None,
+    scratch_root: Path | None = None,
 ) -> None:
     references = TASK3_RECIPES + TASK4_RECIPES + TASK5_RECIPES
     assert len(references) == 71
@@ -976,29 +1112,49 @@ def validate_registry(
     assert tuple(REGISTRY) == references
     assert all(name == recipe.name for name, recipe in REGISTRY.items())
     assert len({recipe.sentinel for recipe in REGISTRY.values()}) == 71
-    nonexternal_selected_ids = frozenset(
-        selected
+    assert {
+        name for name, recipe in REGISTRY.items() if recipe.probe.kind != "pytest"
+    } == set(NONPYTEST_LABELS_BY_RECIPE)
+    assert {
+        label for labels in NONPYTEST_LABELS_BY_RECIPE.values() for label in labels
+    } == set(NONPYTEST_KIND_BY_LABEL)
+    expected_probe_type = {
+        "pytest": PytestProbe,
+        "external": ExternalProbe,
+        "synthetic": SyntheticProbe,
+    }
+    assert all(
+        type(recipe.probe) is expected_probe_type[recipe.probe.kind]
         for recipe in REGISTRY.values()
-        for selected in recipe.selected_ids
-        if not selected.startswith("external::")
+    )
+    pytest_selected_ids = frozenset(
+        nodeid
+        for recipe in REGISTRY.values()
+        for nodeid in recipe.pytest_ids
     )
     validate_identity_domains(
         baseline_collected_ids,
         APPROVED_PLANNED_ID_ROWS,
-        nonexternal_selected_ids,
+        pytest_selected_ids,
     )
     declared_ids = baseline_collected_ids | APPROVED_PLANNED_IDS
 
     for recipe in REGISTRY.values():
-        assert recipe.selected_ids == EXPECTED_SELECTED_IDS[recipe.name]
-        assert recipe.phase in ALLOWED_PHASES_BY_ID[recipe.selected_ids[0]]
+        owners = recipe.pytest_ids or (recipe.probe_label,)
+        assert owners == EXPECTED_OWNERS[recipe.name]
+        assert recipe.phase in ALLOWED_PHASES_BY_ID[owners[0]]
         assert all(
-            selected in ALLOWED_PHASES_BY_ID
-            and recipe.phase in ALLOWED_PHASES_BY_ID[selected]
-            and (selected.startswith("external::") or selected in declared_ids)
-            for selected in recipe.selected_ids
+            owner in ALLOWED_PHASES_BY_ID
+            and recipe.phase in ALLOWED_PHASES_BY_ID[owner]
+            for owner in owners
         )
-        assert recipe.forbidden_masking == FORBIDDEN_MASKING
+        if recipe.probe.kind == "pytest":
+            assert all(nodeid in declared_ids for nodeid in recipe.pytest_ids)
+            assert all(nodeid.startswith("tests/") for nodeid in recipe.pytest_ids)
+        else:
+            assert (recipe.probe_label,) == NONPYTEST_LABELS_BY_RECIPE[recipe.name]
+            assert NONPYTEST_KIND_BY_LABEL[recipe.probe_label] == recipe.probe.kind
+        assert recipe.forbidden_masking == FORBIDDEN_MASKING_BY_KIND[recipe.probe.kind]
         assert re.fullmatch(recipe.failure_regex, recipe.sentinel)
         assert sum(
             bool(re.fullmatch(other.failure_regex, recipe.sentinel))
@@ -1006,7 +1162,7 @@ def validate_registry(
         ) == 1
         assert not any(
             re.search(mask, recipe.sentinel) or re.search(mask, recipe.failure_regex)
-            for mask in FORBIDDEN_MASKING
+            for mask in recipe.forbidden_masking
         )
 
     restored_references = Counter(
@@ -1020,7 +1176,8 @@ def validate_registry(
     assert all(nodeid in baseline_collected_ids for nodeid in RESTORED_ONLY_IDS)
     for recipe_name, nodeids in RESTORED_ONLY_BY_RECIPE.items():
         recipe = REGISTRY[recipe_name]
-        assert set(nodeids).isdisjoint(recipe.selected_ids)
+        assert set(nodeids).isdisjoint(recipe.pytest_ids)
+        assert recipe.probe.kind == "pytest"
         mutated_argv = Counter(recipe.probe.argv)
         restored_argv = Counter(recipe.probe.restored_argv)
         assert all(mutated_argv[nodeid] == 0 for nodeid in nodeids)
@@ -1039,15 +1196,21 @@ def validate_registry(
         )
         assert tuple(recipe.name for recipe in selected) == expected
         for recipe in selected:
-            validate_recipe(recipe, worktree)
+            edit_root = worktree
+            if recipe.edit_root == "scratch":
+                assert scratch_root is not None
+                edit_root = scratch_root
+            validate_recipe(recipe, edit_root)
 ```
 
-For recipes whose future phase edits are not present yet, Task 1 runs the full
-structural/cross-match checks and only a generic disposable runner-restoration
-smoke test; the exact-phase `validate_registry()` call is the first operation after
-that phase's GREEN implementation and requires every real old literal to match
-once before any mutation. This does not permit changing registry metadata after
-its Task 1 manifest hash is frozen.
+Task 1 calls `validate_registry(..., phase=None)` only: metadata, kind,
+identity/label owner, phase, sentinel/regex, masking, and serialized-manifest
+smoke. It does not call `validate_recipe()` on future implementation bytes and
+does not report any real edit as qualified. A generic disposable fixture tests
+runner restoration separately. The exact-phase `validate_registry()` call is
+the first operation after that phase's GREEN implementation and requires every
+real old literal to match once before any mutation. This does not permit changing
+registry metadata after its Task 1 manifest hash is frozen.
 
 `test_mutations.py` imports and validates the actual `REGISTRY` objects and
 serialized manifest; it must not construct a shadow registry from the phase-name
@@ -1059,15 +1222,19 @@ lists or disposable placeholder edits. It must prove before Task 3:
    inside their one canonical recipe;
 3. every anchored regex full-matches its own sentinel, and no sentinel
    full-matches any other recipe's regex;
-4. all 71 `selected_ids` tuples equal `EXPECTED_SELECTED_IDS` exactly; every
-   selected ID exists in the frozen collection or external-ID allowlist and
-   permits that recipe's phase, with explicit assertions for the corrected
-   receipt-count, two sharing-diagnostic, two group-matrix, and marker-deferred
-   owners;
-5. every recipe carries the complete forbidden-masking tuple, exact mutated and
-   restored probe commands, and either literal real-target match-once edits or
-   the one synthetic property audit—generated `before:<name>`/`after:<name>`
-   bytes, fake argv, no-op probes, and placeholder paths are rejected;
+4. every recipe's typed `pytest_ids` or singleton `probe_label` equals its
+   `EXPECTED_OWNERS` tuple exactly; every
+   pytest ID exists in the frozen/planned identity domains, every external or
+   synthetic label exists in its explicit kind/owner allowlist, and each permits
+   that recipe's phase, with explicit assertions for the corrected receipt-count,
+   two sharing-diagnostic, two group-matrix, and marker-deferred owners;
+5. every recipe carries at least one literal edit with an exact edit root, its
+   exact typed probe, and kind-specific masking tuple: pytest commands plus
+   restored commands, external commands plus exact
+   exit/stdout/stderr/sentinel stream, or synthetic callable plus exact
+   result/exception; metadata smoke rejects generated `before:<name>`/`after:<name>`
+   bytes, fake commands, no-op callables, and placeholder paths, but deliberately
+   defers real-target match-once qualification to the owning GREEN phase;
 6. no sentinel or regex contains a placeholder, generic timeout/setup/
    collection text, or `DID NOT RAISE`;
 7. all three `RESTORED_ONLY_IDS` exist in the frozen collection exactly once,
@@ -1087,23 +1254,34 @@ lists or disposable placeholder edits. It must prove before Task 3:
    module/function/parameter/task owner field at its own assertion. The
    unmodified exact 217/8 declaration then passes.
 
-Serialize the complete registry deterministically with names, phases, exact IDs,
-sentinels, regexes, forbidden rules, edit paths plus old/new byte SHA-256 values,
-probe argv, `RESTORED_ONLY_IDS`, and `RESTORED_ONLY_BY_RECIPE`; write
+Serialize the complete registry deterministically with names, phases, exact
+`worktree`/`scratch` edit roots, probe kinds, exact pytest IDs/non-pytest labels,
+sentinels, regexes, forbidden rules,
+edit paths plus old/new byte SHA-256 values, pytest argv, external
+command/exit/stdout/stderr/sentinel-stream expectations, synthetic
+callable/result/exception expectations, `RESTORED_ONLY_IDS`, and
+`RESTORED_ONLY_BY_RECIPE`; write
 `mutation-registry.json` and its SHA-256 beside the Task 1 artifacts. The Python
-module, JSON manifest, phase tuples, restored-only mapping, and hash are frozen
-together before Task 3. Later tasks may populate result records but may not add,
-rename, alias, or locally reconstruct a recipe; an edit that cannot match the
-implemented bytes is a stop-and-correct-registry event, not permission for an
-ad hoc mutation.
+module, JSON manifest, phase tuples, restored-only mapping, canonical scratch
+fixture bytes, and hash are frozen together before Task 3. `prepare_scratch_root`
+creates a fresh disposable Git repository for the requested phase from those
+bytes and returns its path; it never reuses a prior phase's dirty directory.
+Later tasks may populate result records but may not add, rename, alias, or locally
+reconstruct a recipe; an edit that cannot match the implemented or canonical
+scratch bytes is a stop-and-correct-registry event, not permission for an ad hoc
+mutation.
 
-Create `/tmp/stage-b-baseline/test_restore.py` and run both tooling suites now in
-a disposable Git repository. They must additionally prove restoration after an
-intended generic probe failure; zero-match and two-match literal rejection;
+Step 4 creates `/tmp/stage-b-baseline/test_restore.py` and runs both tooling
+suites only after `BASELINE_COLLECTED_IDS` is bound, in a disposable Git
+repository. They must additionally prove all three dispatch paths plus
+restoration after an intended generic probe failure; zero-match and two-match
+literal rejection;
 detection of bytes/hash/diff/status mismatch at exact `restoration bytes
 mismatch`; exact-node mismatch rejection; longest-prefix parsing of a real
-external pass, call failure, setup error, and parametrized node; property-list
-preservation; sentinel mismatch rejection; and restored GREEN parsing.
+external pass, call failure, setup error, and parametrized node; property-list preservation; pytest call-phase/traceback/sentinel validation;
+external exact exit/stdout/stderr/sentinel validation without JUnit; synthetic
+exact callable result/exception/sentinel validation without JUnit; kind mismatch
+rejection; sentinel mismatch rejection; and restored GREEN parsing.
 
 This Task 1 evidence is **schema/name/regex/reference/owner smoke coverage for all
 71**, plus generic runner restoration coverage. The generic disposable fixture
@@ -1114,6 +1292,17 @@ phase's real targets exist; all 71 real recipes likewise run only in Tasks 3–5
 Task 3 may not start until both Task 1 smoke suites pass, and Task 5 does not
 report representative evidence until all seven actual subset variants have run
 and restored successfully.
+
+In this Step 2, compile only the collector/parser before it is used:
+
+```bash
+rm -rf /tmp/stage-b-baseline
+mkdir -p /tmp/stage-b-baseline
+# Materialize collect.py now; registry/restoration files remain absent.
+python -m py_compile /tmp/stage-b-baseline/collect.py
+test ! -e /tmp/stage-b-baseline/mutations.py
+test ! -e /tmp/stage-b-baseline/restore.py
+```
 
 Add a `pytest_collection_finish` plugin in the same file that writes exact
 `item.nodeid` and sorted marker names to the path in
@@ -1134,10 +1323,63 @@ all four per-family counts `62/65/17/21`. Assert that every scenario, program,
 protocol, label, and timeout equals the approved spec, not merely that totals
 match.
 
-- [ ] **Step 3: Capture all one-shot launches, streams, and fsync calls**
+- [ ] **Step 3: Collect and bind exact 217 first, then capture one-shot evidence**
 
-Create `/tmp/stage-b-baseline/probe_plugin.py`. Save the real functions before
-patching, delegate every call, and restore in `pytest_unconfigure`:
+Run the collection/parser path before importing any registry module:
+
+```bash
+PYTHONPATH=/tmp/stage-b-baseline \
+  STAGE_B_COLLECTION_REPORT=/tmp/stage-b-baseline/target-helper-217.collect.json \
+  uv run --no-sync python -m pytest \
+  tests/test_preview_savedlayouts_page.py \
+  tests/test_fleetsharing_hydration.py \
+  tests/test_preview_group_backward.py \
+  tests/test_preview_labelmarkers_page.py \
+  tests/test_node_scenario_worker.py \
+  --collect-only -q -p no:cacheprovider -p collect
+uv run --no-sync python /tmp/stage-b-baseline/collect.py \
+  bind-baseline /tmp/stage-b-baseline/target-helper-217.collect.json
+```
+
+The second command requires exactly 217 unique IDs in literal collection order,
+writes `target-205.txt`, `node-165.txt`, `helper-12.txt`,
+`baseline-217.txt`, `baseline_ids.py`, maps/shapes/hashes, and binds
+`BASELINE_COLLECTED_IDS` in `baseline_ids.py` from the actual final-newline
+records. It requires the 205 target rows followed by the 12 helper rows, exact
+205/165 frozen hashes and `62/65/17/21` mapping, and absence of all eight planned
+IDs. No registry/tooling import is permitted before this command succeeds.
+
+Immediately run the same exact 217 IDs once for outcomes through the already
+materialized raw-JUnit parser:
+
+```bash
+mapfile -t BASELINE_IDS < /tmp/stage-b-baseline/baseline-217.txt
+uv run --no-sync python -m pytest "${BASELINE_IDS[@]}" \
+  -q -rs --junitxml=/tmp/stage-b-baseline/baseline-217.xml
+uv run --no-sync python /tmp/stage-b-baseline/collect.py \
+  verify-baseline-junit /tmp/stage-b-baseline/baseline-217.xml
+```
+
+Require `217 passed`, no skip/failure/error, and byte-for-byte JUnit identity
+order equal to `baseline-217.txt`. Do not infer node IDs from dotted classnames
+by unconditional dot replacement. Use that same parser on the accepted Ubuntu
+Stage A XML before registry materialization:
+
+```bash
+uv run --no-sync python /tmp/stage-b-baseline/collect.py \
+  extract-accepted-order \
+  /mnt/c/dev/flygd-wingman/tmp/stage-a-hosted-36258907685/artifacts/ubuntu/pytest-result.xml \
+  /tmp/stage-b-baseline/accepted-complete-16609.txt
+```
+
+Require exactly 16,609 unique rows and final-newline hash
+`f468ba1954d3ff0ab693dd721ff8a7a4d12266e16d8568035de4245a6c616100`.
+Step 5 later re-audits full hosted provenance and retained bytes; this extraction
+only supplies the already-approved frozen order needed by Step 4.
+
+Only after `baseline_ids.py` exists, create
+`/tmp/stage-b-baseline/probe_plugin.py`. Save the real functions before patching,
+delegate every call, and restore in `pytest_unconfigure`:
 
 ```python
 from __future__ import annotations
@@ -1224,26 +1466,38 @@ stdout because their controlled errors are captured internally. Require fsync
 `1,088` for all 205, `1,059` for the 165 Node rows, saved main `1,045`, owner
 `10`, capture/dev `4`, and unchanged non-Node `29`.
 
-- [ ] **Step 4: Run and freeze the complete 217-row baseline**
+- [ ] **Step 4: Materialize and smoke-test typed registry/restoration tooling**
+
+Now—and only now—create `restore.py`, `mutations.py`, `test_restore.py`,
+`test_mutations.py`, and `verify_task2_identities.py`. Each imports
+`BASELINE_COLLECTED_IDS` from the Step 3 `baseline_ids.py`; none recollects or
+reconstructs the baseline. Build the two frozen expected Task 2 order files and
+the canonical registry manifest/hash, then run commands in this literal order:
 
 ```bash
-uv run --no-sync python -m pytest \
-  tests/test_preview_savedlayouts_page.py \
-  tests/test_fleetsharing_hydration.py \
-  tests/test_preview_group_backward.py \
-  tests/test_preview_labelmarkers_page.py \
-  tests/test_node_scenario_worker.py \
-  -q -rs --junitxml=/tmp/stage-b-baseline/baseline-217.xml
+test -f /tmp/stage-b-baseline/baseline_ids.py
+test "$(wc -l < /tmp/stage-b-baseline/baseline-217.txt)" -eq 217
+python -m py_compile \
+  /tmp/stage-b-baseline/restore.py \
+  /tmp/stage-b-baseline/mutations.py \
+  /tmp/stage-b-baseline/test_restore.py \
+  /tmp/stage-b-baseline/test_mutations.py \
+  /tmp/stage-b-baseline/verify_task2_identities.py
+PYTHONPATH=/tmp/stage-b-baseline \
+  uv run --no-sync python -m pytest \
+  /tmp/stage-b-baseline/test_restore.py \
+  /tmp/stage-b-baseline/test_mutations.py -q
+uv run --no-sync ruff check /tmp/stage-b-baseline/*.py
+uv run --no-sync ruff format --check /tmp/stage-b-baseline/*.py
 ```
 
-Expected: exactly `217 passed`, no skip/failure/error, with the 205 target IDs
-followed by all 12 helper IDs. Parse JUnit with longest-existing-module-prefix
-resolution; write `/tmp/stage-b-baseline/baseline-217.txt`; define
-`BASELINE_COLLECTED_IDS` from those exact final-newline records; and store ordered
-identity/outcome records and SHA-256. Require 217 unique IDs and exact equality to
-`target-205.txt + helper-12.txt`. Do not infer node IDs from dotted classnames by
-unconditional dot replacement, and require all eight `APPROVED_PLANNED_IDS` to be
-absent from this baseline.
+This run is registry metadata/owner/kind/schema smoke plus disposable runner
+coverage. It does not call phase-specific `validate_recipe()`, match edits
+against not-yet-created Stage B implementation bytes, execute a canonical
+mutation, or count as real-edit/representative defect qualification. Require
+`expected-task2-relevant-225.txt` and `expected-task2-complete-16617.txt` to have
+exact counts 225/16,617, unique rows, one final newline, exact approved insertion
+anchors, and recorded SHA-256 values before continuing.
 
 - [ ] **Step 5: Re-audit accepted Stage A hosted inputs and exact file hashes**
 
@@ -1389,7 +1643,10 @@ if (request.scenario === 'numeric-schema') {
 }
 ```
 
-Add exactly one non-parametrized test:
+Add exactly one non-parametrized test immediately after the existing four
+`test_invalid_reply_schema_discards_process_with_context_and_restarts` rows and
+before `test_startup_failure_names_the_calling_scenario`, matching the Task 1
+frozen insertion anchor:
 
 ```python
 def test_reply_numeric_schema_rejects_bool_id_and_nonfinite_or_negative_duration(
@@ -1479,8 +1736,11 @@ adding an ID: require exact crash text `reply missing 'id'`, then use explicit
 `missing-fields reply did not use _ProtocolError` and
 `missing-fields process was not discarded` assertion messages before its clean
 ID-3/distinct-PID recovery. Collect it with the existing 12 IDs first. Run only
-the new ID against the old validator and require the bool-ID RED above. Reject
-import/collection/setup error or a failure caused by an absent scenario branch.
+the new ID against the old validator in its own pytest process/JUnit file and
+require exactly one collected testcase and one call-phase failure at the bool-ID
+sentinel above. Reject import/collection/setup error or a failure caused by an
+absent scenario branch. Complete this helper RED and Step 2 GREEN before creating
+or executing any seven-ID qualification RED; their evidence is separate.
 
 - [ ] **Step 2: Harden only `_validate_reply` and run all 13 helper IDs**
 
@@ -1596,25 +1856,38 @@ receipt_json = json.dumps(
 )
 ```
 
-Use a session path from `tmp_path_factory.mktemp("saved-layout-receipt")`. Capture
-`LOCALAPPDATA`, `paths._use_legacy`, `settings._save_locked`, `os.fsync`, and
-`set(settings._COMMITTED_PREVIEWS)` before isolation. The outer
-`pytest.MonkeyPatch.context()` sets `LOCALAPPDATA`, wraps the exact captured
-`os.fsync` and delegates each call, and forces `_use_legacy=False`. The failed
-save uses a nested patch context. Validate `settings.paths.settings_file()` bytes
-as strict UTF-8 JSON, the committed reader, pending first Apply, persisted final
-Apply, exact production IDs/revisions, and 19 calls before shutdown.
+Use a session path only from
+`tmp_path_factory.mktemp("saved-layout-receipt")`; calling `make_state(tmp_path)`
+or relying on function-scoped autouse isolation is explicitly insufficient for a
+session provider. Capture the current presence/value of `LOCALAPPDATA`,
+`paths._use_legacy`, `settings._save_locked`, `os.fsync`, and the current weak
+reader entries before isolation. Enter a bounded outer
+`pytest.MonkeyPatch.context()` that sets `LOCALAPPDATA` to the unique session
+root, sets `paths._use_legacy = False`, and wraps the exact captured `os.fsync`
+while delegating every call. The failed save uses a nested bounded patch context.
+Validate `settings.paths.settings_file()` bytes as strict UTF-8 JSON, the
+committed reader, pending first Apply, persisted final Apply, exact production
+IDs/revisions, and 19 calls before shutdown.
 
 In one outer `try/finally`, call `shutdown_previews()` for both APIs when created,
-delete bound methods/controllers/readers, call `gc.collect()`, restore
-`paths._use_legacy`, exit patches, and then assert all five baselines and reader
-keys. Return only the frozen dataclass above; no path, Api, state, reader,
-callback, patch, or mutable receipt escapes.
+retain `weakref.ref` witnesses for every Stage-B-created Api/state/document/
+committed-reader/controller object that supports weak references, delete bound
+methods/controllers/readers and every other strong local owner, and call
+`gc.collect()` before exposure. Exit both patch contexts, then prove the exact
+prior environment presence/value, `paths._use_legacy`, `settings._save_locked`,
+and `os.fsync` identities are restored. Require every Stage-B-owned weak witness
+to be dead and no newly retained Stage-B reader key/value to remain in
+`settings._COMMITTED_PREVIEWS`. Do **not** require unrelated weak keys observed
+before setup to survive GC; their independent owners may disappear. Return only
+the frozen dataclass above; no path, Api, state, document, reader, callback,
+patch, or mutable receipt escapes.
 
-- [ ] **Step 4: Add all seven qualification identities as synthetic-runtime RED**
+- [ ] **Step 4: Add all seven qualification identities against a runnable unsafe RED seam**
 
 Create `tests/test_persistent_page_workers.py` with exactly the seven IDs from
-this plan. Parametrize only the four realm rows using:
+this plan and in their declared order: the four realm parameters, cleanup
+success, cleanup failure, then receipt. Parametrize only the four realm rows
+using:
 
 ```python
 @pytest.mark.parametrize(
@@ -1626,31 +1899,112 @@ def test_request_realm_is_fresh_and_program_is_reexecuted(
 ):
 ```
 
-Do not add a parameter to either cleanup test. Define one module session input
-bundle that builds Text, structural, and Sharing page manifests and direct-CLI
-representative payloads; it calls `_saved_layout_receipt_once()` rather than
-rebuilding the main receipt. Its extra real setup is exactly owner `saved` (3
-fsyncs) plus one shared capture input (1 fsync), reported by cleanup-success as
-qualification-only `4`. The receipt's 19 calls remain owned by the saved main
-`reversed` JUnit properties.
+Do not add a parameter to either cleanup test. Define the module session input
+bundle with this exact ownership signature:
 
-Initially point all four realm rows and both cleanup rows at synthetic modes in
-the new worker request input. The tests must already assert final contracts:
-A-poison-A same PID, source execution count one per fresh realm, clean host
-prototypes, input/result detachment, module-export isolation, zero cleanup,
-Error/primitive/hostile getter/Proxy failures, Promise-then poison, timer/listener/
-unresolved-promise cleanup, before/boundary rejection ownership, invalid business
-retention, fatal protocol no retry, late-rejection phase/recovery, and exact
-worker-start evidence. Task 3 switches saved to real execution and Task 4
-switches the other three without changing these IDs.
+```python
+@pytest.fixture(scope="session")
+def qualification_inputs(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> QualificationInputs:
+    return _build_qualification_inputs(tmp_path_factory)
+```
 
-Run collection first and require all seven exact IDs; then run them and require
-RED only because `page_scenario_worker.cjs` does not exist. Undefined Python
-imports are forbidden.
+`_build_qualification_inputs(tmp_path_factory)` owns the bounded context and
+returns only after its cleanup assertions. The implementation may not replace
+this with a `tmp_path` dependency. Every
+provider in this module that constructs owner, capture, or settings state
+must allocate a unique root with `tmp_path_factory.mktemp(...)`, then enter a
+bounded `pytest.MonkeyPatch.context()` that sets `LOCALAPPDATA` to that root and
+sets `paths._use_legacy = False` before the first `make_state(root)`/`owner_api`
+call. Depending on `make_state(tmp_path)` alone is forbidden because the
+function-scoped autouse fixtures do not isolate a session provider. Capture and
+restore environment presence/value, `_use_legacy`, `_save_locked`, `os.fsync`,
+and reader-registry ownership before returning anything. Shutdown every created
+Api, detach owner `saved` and shared-capture payloads through strict finite JSON
+bytes, release all state/document/reader/controller references, and run GC inside
+the bounded cleanup. After GC require no newly retained Stage-B-owned weak reader
+or owned-object reference; do not assert that unrelated old weak keys remain
+alive. Only then expose immutable primitive inputs.
 
-- [ ] **Step 5: Implement startup validation and the immutable source registry**
+The bundle builds Text, structural, and Sharing page manifests and direct-CLI
+representative payloads; it calls `_saved_layout_receipt_once(tmp_path_factory)`
+rather than rebuilding the main receipt. Its extra real setup is exactly owner
+`saved` (3 fsyncs) plus one shared capture input (1 fsync), reported by cleanup-
+success as qualification-only `4`. The receipt's 19 calls remain owned by the
+saved main `reversed` JUnit properties.
 
-Create `tests/fixtures/page_scenario_worker.cjs`. Require only builtins:
+Before the real host exists, create a runnable temporary
+`tests/fixtures/page_scenario_worker.cjs`. It accepts the exact worker argv,
+opens the supplied manifest, reads NDJSON, and returns a syntactically and
+schema-valid matching reply for every synthetic qualification request. It is
+intentionally unsafe: it reports one reused realm/source counter, retained
+cleanup state, and non-retainable business failure. It must not import any target
+fixture and must not fail startup, collection, framing, or schema validation.
+The receipt row uses a temporary in-process qualification seam that returns the
+real provider's detached evidence plus `detached: false`; it does not skip or
+raise during fixture setup.
+
+Each test's first contract assertion is a real final invariant and owns one
+literal call-phase RED sentinel:
+
+```text
+stage-b qualification realm saved-layouts: fresh execution violated
+stage-b qualification realm fleet-sharing: fresh execution violated
+stage-b qualification realm group-backward: fresh execution violated
+stage-b qualification realm label-markers: fresh execution violated
+stage-b qualification cleanup-success: retained resources
+stage-b qualification cleanup-failure: process retention violated
+stage-b qualification receipt: detachment violated
+```
+
+The tests already contain the remaining final assertions: A-poison-A same PID,
+source execution count one per fresh realm, clean host prototypes, input/result
+detachment, module-export isolation, zero cleanup, Error/primitive/hostile
+getter/Proxy failures, Promise-then poison, timer/listener/unresolved-promise
+cleanup, before/boundary rejection ownership, invalid business retention, fatal
+protocol no retry, late-rejection phase/recovery, and exact worker-start evidence.
+Task 3 switches saved to real execution and Task 4 switches the other three
+without changing these IDs.
+
+Collect first, then execute every ID independently through raw JUnit so one early
+failure cannot hide another:
+
+```bash
+rm -rf /tmp/stage-b-task2-red
+mkdir -p /tmp/stage-b-task2-red
+PYTHONPATH=/tmp/stage-b-baseline \
+  STAGE_B_COLLECTION_REPORT=/tmp/stage-b-task2-red/qualification-7.txt \
+  uv run --no-sync python -m pytest tests/test_persistent_page_workers.py \
+  --collect-only -q -p no:cacheprovider -p collect
+mapfile -t QUALIFICATION_IDS < /tmp/stage-b-task2-red/qualification-7.txt
+test "${#QUALIFICATION_IDS[@]}" -eq 7
+for index in "${!QUALIFICATION_IDS[@]}"; do
+  set +e
+  uv run --no-sync python -m pytest "${QUALIFICATION_IDS[$index]}" -q \
+    --junitxml="/tmp/stage-b-task2-red/red-$index.xml"
+  status=$?
+  set -e
+  test "$status" -eq 1
+done
+uv run --no-sync python /tmp/stage-b-baseline/collect.py \
+  verify-qualification-red /tmp/stage-b-task2-red
+```
+
+Require exactly the seven frozen IDs. Each execution must collect one testcase
+and produce exactly one call-phase `<failure>` at its own sentinel, with no
+collection/setup/teardown error, skip, timeout, missing import, missing CJS file,
+or cross-sentinel. Preserve the seven RED XML records and the temporary stub hash.
+Step 5 completely replaces the unsafe CJS file and receipt seam with the real
+implementation before GREEN; no stub branch, RED flag, or qualification bypass
+may remain.
+
+- [ ] **Step 5: Replace the RED stub with startup validation and the immutable source registry**
+
+Overwrite the temporary unsafe `tests/fixtures/page_scenario_worker.cjs` in full;
+do not layer production branches around the stub. Replace the temporary receipt
+qualification seam with the real detached-evidence predicate. Require no RED
+sentinel or unsafe marker remains, then require only builtins:
 
 ```javascript
 'use strict';
@@ -1922,13 +2276,18 @@ never added to, or described by, the permanent cleanup-failure value `3`.
 
 `test_saved_layout_receipt_is_durable_and_detached` consumes the private once-
 provider, asserts exact 22-key order, strict finite JSON, 19 fsyncs, durable JSON,
-restored environment/legacy/writer/reader baselines, production ID/revision
+restored environment/legacy/writer identities, no newly retained Stage-B-owned
+reader or owned-object weak references after GC, production ID/revision
 continuity, pending first Apply, final persisted Apply, 55 independent decodes,
-and no alias after mutating one.
+and no alias after mutating one. It does not require unrelated pre-existing weak
+registry entries to survive.
 
 - [ ] **Step 10: Run Task 2 GREEN, enforce the post-creation identity gate, and commit**
 
 ```bash
+rm -f \
+  /tmp/stage-b-baseline/task2-relevant-225.txt \
+  /tmp/stage-b-baseline/task2-complete-16617.txt
 node --check tests/fixtures/page_scenario_worker.cjs
 uv run --no-sync python -m pytest tests/test_node_scenario_worker.py -q -rs
 uv run --no-sync python -m pytest tests/test_persistent_page_workers.py -q -rs
@@ -1965,25 +2324,27 @@ acceptance.
 `verify_task2_identities.py` is the hard pre-Task-3 gate. It imports the actual
 Task 1 declarations and requires:
 
-- `task2-relevant-225.txt` has 225 unique IDs; its old-ID subsequence is exactly
-  `baseline-217.txt`; its additions are exactly `APPROVED_PLANNED_IDS`; and each
-  of those eight appears once with the declared module/function/parameter owner;
-- `task2-complete-16617.txt` has 16,617 unique IDs; the accepted Stage A 16,609
-  IDs are an unchanged ordered subsequence; its additions are exactly the same
-  eight IDs, each once—no undeclared missing or extra ID;
-- all 217 baseline IDs retain their exact names/order, and the frozen 205/165/12
-  subsets and hashes remain unchanged;
-- the relevant-225 and complete-16,617 ordered final-newline SHA-256 values are
-  computed from these actual post-Task-2 lists and frozen in
-  `/tmp/stage-b-baseline/task2-identity-gate.json` plus the results ledger; no
-  candidate hash is invented in advance; and
-- the gate records hashes of the two new/changed test modules, the canonical
-  registry JSON/hash, exact counts, ordered hashes, and set-difference evidence.
+- fresh `task2-relevant-225.txt` is byte-for-byte equal to frozen
+  `expected-task2-relevant-225.txt`, including one final newline—not merely an
+  old-ID subsequence plus an additions set;
+- fresh `task2-complete-16617.txt` is byte-for-byte equal to frozen
+  `expected-task2-complete-16617.txt`, including exact module-local insertion
+  positions—not merely the accepted 16,609 as a subsequence;
+- both actual files have unique IDs and exact counts 225/16,617; all eight
+  additions occur once with the declared module/function/parameter owner, all
+  217 baseline IDs retain exact order, and the frozen 205/165/12 subsets and
+  hashes remain unchanged;
+- the expected and fresh-actual ordered final-newline SHA-256 values are equal,
+  then the actual bytes/hashes are frozen in
+  `/tmp/stage-b-baseline/task2-identity-gate.json` plus the results ledger; and
+- the gate records hashes of the two new/changed test modules, canonical registry
+  JSON/hash, exact counts, expected/actual ordered hashes, and empty symmetric
+  differences.
 
 A future ID may be absent only during the Task 1 declaration check. After Task 2,
-all eight must be actually collectable exactly once. A typo, missing ID,
-duplicate, wrong owner/parameter, changed baseline subsequence, count drift, or
-collection error stops before commit and before any Task 3 registry consumer.
+all eight must be actually collectable exactly once and in frozen order. A typo,
+missing ID, duplicate, wrong owner/parameter, insertion-order drift, count drift,
+or collection error stops before commit and before any Task 3 registry consumer.
 
 ---
 
@@ -2002,17 +2363,19 @@ collection error stops before commit and before any Task 3 registry consumer.
   `NodeScenarioWorker`, `page_scenario_worker.cjs`,
   `_saved_layout_receipt_once()`, Text/structural page trees, and protocols
   `saved-main`, `saved-owner`, `saved-capture`, `saved-dev`.
-- Produces: `saved_layout_page_worker`, `saved_layout_receipt_json`, 62 worker
-  requests, one family PID, and receipt build/fsync JUnit ownership.
+- Produces: `saved_layout_page_worker`, immutable
+  `saved_layout_receipt_bytes`, 62 worker requests, one family PID, and receipt
+  build/fsync JUnit ownership.
 
 - [ ] **Step 1: Revalidate the Task 2 identity gate, then add the saved-family fixture substitutions as collectable RED**
 
-Before editing, rerun `verify_task2_identities.py` against fresh relevant and
-complete collection reports and require the same 225/16,617 counts, ordered
-hashes, exact eight additions, and unchanged baseline subsequences recorded in
-`task2-identity-gate.json`. Also require the recorded test-module and registry
-hashes to match the current tree. This is a hard gate: no Task 3 recipe or source
-edit starts if it fails.
+Before editing, rerun both Task 2 collection commands and
+`verify_task2_identities.py`. Require the fresh relevant/full files to remain
+byte-for-byte equal to the frozen actual Task 2 files and their expected files,
+with the same 225/16,617 counts, ordered hashes, owners, and empty symmetric
+differences recorded in `task2-identity-gate.json`. Also require the recorded
+test-module and registry hashes to match the current tree. This is a hard gate:
+no Task 3 recipe or source edit starts if it fails.
 
 Then create the manifest and worker fixtures:
 
@@ -2050,8 +2413,10 @@ def saved_layout_page_worker(tmp_path_factory: pytest.TempPathFactory):
 
 
 @pytest.fixture(scope="session")
-def saved_layout_receipt_json(tmp_path_factory: pytest.TempPathFactory) -> str:
-    return _saved_layout_receipt_once(tmp_path_factory).receipt_json
+def saved_layout_receipt_bytes(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> bytes:
+    return _saved_layout_receipt_once(tmp_path_factory).receipt_json.encode("utf-8")
 ```
 
 Add the module-local autouse direct-fsync fixture. It captures and delegates the
@@ -2061,24 +2426,180 @@ finish before this fixture starts. Add `_record_saved_worker()` to append family
 PID, and reply ID once, plus the two receipt properties only when
 `request.node.nodeid` is exact saved-main `reversed`.
 
-Replace only the three subprocess blocks with worker requests. Main is exact:
+The saved-main conversion replaces the **entire** current function body—not only
+its subprocess tail. The exact baseline body removed is:
 
 ```python
-input_payload = json.loads(saved_layout_receipt_json)
-input_payload["scenario"] = scenario
-reply = saved_layout_page_worker.request(
-    f"preview-saved-layouts/page/{scenario}",
-    {"protocol": "saved-main", "input": input_payload},
-    timeout=25.0,
-)
-assert reply["output"] == f"PASS {scenario}"
-assert reply["cleanup"] == ZERO_CLEANUP
-_record_saved_worker(request, saved_layout_page_worker, reply)
+def test_saved_layout_page_ordering(tmp_path, scenario, monkeypatch):
+    state = make_state(tmp_path)
+    with settings.update(state.settings) as doc:
+        doc.setdefault("preview", {}).update(seen=["Alice", "Bob"])
+    api = Api(state)
+    api._window = FakeWindow()
+    from wingman.preview.geometry import Rect
+    from wingman.preview.layout import Entry
+
+    api._preview_layout_store.replace("Alice", Entry(Rect(1, 2, 500, 300)))
+    initial = api.get_preview_hotkey_state()
+    hidden = api.set_preview_excluded("Alice", True)
+    both = api.set_preview_excluded("Bob", True)
+    created = api.create_preview_layout("Hidden")
+    record = created["state"]["layouts"][0]
+    api.set_preview_excluded("Bob", False)
+    visible = api.set_preview_excluded("Alice", False)
+    # A blocked native boundary lets the real shared presentation owner sample
+    # pending state deterministically; coalescing need not replay every transition.
+    pending_states = []
+    original = api._apply_preview_layout
+    from dataclasses import replace
+
+    def apply_pending(*args):
+        api._fleet_worker.iterate_once()
+        pending_states.extend(
+            payload
+            for handler, payload in pushes(api._window)
+            if handler == "onPreviewLayouts" and payload["operation"]["pending"]
+        )
+        return original(*args)
+
+    api._preview_layouts._ports = replace(
+        api._preview_layouts._ports, apply=apply_pending
+    )
+    bulk = api.apply_preview_layout(record["id"], record["revision"])
+    pending = pending_states[-1]
+    lease = api._preview_layout_admission.try_begin(exclusive=True)
+    refused = api.set_preview_excluded("Alice", False)
+    api._preview_layout_admission.finish(lease)
+    retry = api.set_preview_excluded("Alice", False)
+    size_ack = api.set_preview_size("Alice", 600, 400)
+    geometry_apply = api.apply_preview_layout(record["id"], record["revision"])
+    api.set_preview_size("Alice", 700, 450)
+    newer_geometry = api._sample_preview_geometry()
+    api._preview_layout_store.replace("Bob", Entry(Rect(5, 6, 640, 480)))
+    api.copy_preview_layout("Alice", "Bob")
+    newer_copy = api._sample_preview_geometry()
+    api.reset_preview_layouts()
+    newer_reset = api._sample_preview_geometry()
+    duplicate = api.create_preview_layout("HIDDEN")
+    stale = api.apply_preview_layout(record["id"], "stale")
+    updated = api.update_preview_layout(record["id"], record["revision"])
+    updated_record = updated["state"]["layouts"][0]
+    renamed = api.rename_preview_layout(
+        updated_record["id"], updated_record["revision"], "__proto__"
+    )
+    renamed_record = renamed["state"]["layouts"][0]
+    removed = api.remove_preview_layout(
+        renamed_record["id"], renamed_record["revision"]
+    )
+    with monkeypatch.context() as patch:
+
+        def fail_save(*args, **kwargs):
+            raise OSError("Disk unavailable")
+
+        patch.setattr(settings, "_save_locked", fail_save)
+        failed_save = api.create_preview_layout("Refused")
+    from wingman.preview.savedlayouts import PrimaryLayoutLiveResult
+
+    api._preview_layouts._ports = replace(
+        api._preview_layouts._ports,
+        refresh_visibility=lambda lease: api._settled_preview_layout(
+            PrimaryLayoutLiveResult(
+                "incomplete", "Saved, but one preview could not be shown."
+            )
+        ),
+    )
+    incomplete = api.set_preview_excluded("Alice", False)
+    empty_api = Api(make_state(tmp_path))
+    unavailable = empty_api.get_preview_hotkey_state()
+    web = Path(__file__).parents[1] / "wingman/web"
+    data = tmp_path / "page.json"
+    tree = TextPageTree()
+    tree.feed((web / "index.html").read_text(encoding="utf-8"))
+    data.write_text(
+        json.dumps(
+            {
+                "scenario": scenario,
+                "page": tree.root,
+                "initial": initial,
+                "hidden": hidden,
+                "both": both,
+                "visible": visible,
+                "bulk": bulk,
+                "pending": pending,
+                "refused": refused,
+                "retry": retry,
+                "created": created,
+                "duplicate": duplicate,
+                "stale": stale,
+                "updated": updated,
+                "renamed": renamed,
+                "removed": removed,
+                "size_ack": size_ack,
+                "geometry_apply": geometry_apply,
+                "newer_geometry": newer_geometry,
+                "newer_copy": newer_copy,
+                "newer_reset": newer_reset,
+                "failed_save": failed_save,
+                "incomplete": incomplete,
+                "unavailable": unavailable,
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            "node",
+            str(Path(__file__).parent / "fixtures/preview_savedlayouts.cjs"),
+            str(data),
+            str(web),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=25,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PASS " + scenario in result.stdout
 ```
 
-Owner passes `source`, `initial`, `marker`, `visible`, and `copied`, expects
-`PASS owner-controls`; capture passes `scenario` and real `initial`, selecting
-`saved-dev` only for `dev`. Keep owner/capture production setup and assertions.
+Replace it exactly with:
+
+```python
+def test_saved_layout_page_ordering(
+    saved_layout_page_worker,
+    saved_layout_receipt_bytes,
+    request,
+    scenario,
+):
+    input_payload = json.loads(saved_layout_receipt_bytes.decode("utf-8"))
+    input_payload["scenario"] = scenario
+    input_payload["page"] = "text"
+    reply = saved_layout_page_worker.request(
+        f"preview-saved-layouts/page/{scenario}",
+        {"protocol": "saved-main", "input": input_payload},
+        timeout=25.0,
+    )
+    assert reply["output"] == f"PASS {scenario}"
+    assert reply["cleanup"] == ZERO_CLEANUP
+    _record_saved_worker(request, saved_layout_page_worker, reply)
+```
+
+The primitive `page="text"` selects the startup manifest entry; the worker
+replaces it with a fresh VM-side decode before evaluating the fixture. The final
+saved-main function has no `tmp_path` or `monkeypatch` fixture, creates no state,
+Api, receipt value, page tree, data file, or subprocess, and decodes the immutable
+receipt bytes afresh for every row.
+
+Extend the AST/signature gate with one literal exception record for exactly
+`(saved_layout_page_worker, saved_layout_receipt_bytes, request, scenario)`.
+Require the decorator AST to remain byte-for-AST equal, and require the final
+function AST to contain none of `make_state`, `Api`, `settings.update`,
+`TextPageTree`, `subprocess.run`, `tmp_path`, or `monkeypatch`. For owner and
+capture rows only, keep their own production setup and assertions and replace
+only their subprocess blocks: owner passes `source`, `initial`, `marker`,
+`visible`, and `copied` and expects `PASS owner-controls`; capture passes
+`scenario` and real `initial`, selecting `saved-dev` only for `dev`.
+
 Run collection and require all 62 IDs unchanged. Run `reversed`, owner `saved`,
 capture `reversed`, and dev; RED must be a business source completion-export
 failure, not collection/import/setup failure.
@@ -2144,17 +2665,22 @@ shuffle hash only after writing the exact final-newline list.
 - [ ] **Step 6: Run the saved/receipt/realm mutation slice**
 
 Load the canonical Task 1 registry and execute `TASK3_RECIPES` in its declared
-order. This phase references recipe names only; exact selected IDs, literal
-sentinels/anchored regexes, forbidden masking, byte edits, mutated probes, and
+order. This phase references recipe names only; exact typed pytest IDs or probe
+labels, literal sentinels/anchored regexes, forbidden masking, byte edits, mutated probes, and
 restored probes come exclusively from `REGISTRY`. Before the first mutation,
 require
-`validate_registry(worktree, BASELINE_COLLECTED_IDS, phase="task3")` to match
-every Task 3 old literal exactly once. After each recipe, restore
+`validate_registry(worktree, BASELINE_COLLECTED_IDS, phase="task3",
+scratch_root=prepare_scratch_root("task3"))` to match every Task 3 old literal
+exactly once in its declared root. After each recipe, restore
 bytes/hash/diff/status and run
-its registry-owned restored probe; the saved `reversed` anti-mask case is already
-part of the relevant `MutationProbe.restored_argv`, not a second prose recipe.
+its registry-owned restored probe through the typed dispatcher. The saved
+`reversed` anti-mask case is already part of the relevant
+`PytestProbe.restored_argv`, not a second prose recipe; the external receipt-count
+recipe instead uses its exact registered restored command/exit/stdout/stderr.
 Write one result per canonical name and reject a missing, duplicate, or extra
-Task 3 result.
+Task 3 result. Every result records `kind` plus kind-specific evidence: pytest
+IDs/JUnit phase/traceback, external command/exit/stdout/stderr, or synthetic
+callable/result/exception.
 
 - [ ] **Step 7: Commit the independently green saved family**
 
@@ -2358,15 +2884,18 @@ Load the same immutable registry and execute `TASK4_RECIPES` in its declared
 order. Do not restate or alias a Task 3 recipe: group source re-execution,
 business-failure retention, fatal no-replay, the four independent fatal variants,
 and the exact 165 inventory each have one canonical Task 4 name. Require
-`validate_registry(worktree, BASELINE_COLLECTED_IDS, phase="task4")` before
-execution and one result per canonical name afterward.
+`validate_registry(worktree, BASELINE_COLLECTED_IDS, phase="task4",
+scratch_root=prepare_scratch_root("task4"))` before execution and one result per
+canonical name afterward.
 
 The external fatal recipes launch and close only the processes in their
-registry-owned probes, record those starts as mutation overhead, restore, and run
-their registry-owned recovery argv. They never run inside the permanent
+`ExternalProbe.mutated` commands, compare exact exit/stdout/stderr and sentinel
+stream without JUnit, record those starts as mutation overhead, restore, and run
+their exact `ExternalProbe.restored` commands. They never run inside the permanent
 cleanup-failure identity and never claim that their starts are part of that
-identity's exact value `3`. All other selected IDs and restored companions are
-read from their `MutationProbe`; no owner shorthand or local regex is allowed.
+identity's exact value `3`. Pytest IDs/restored companions and any synthetic
+callable expectations are read only from their typed registry probe; no owner
+shorthand, local regex, or external label passed as a pytest ID is allowed.
 
 - [ ] **Step 8: Commit the independently green four-family conversion**
 
@@ -2380,8 +2909,8 @@ uv run --no-sync python -m pytest \
   tests/test_fleetsharing_hydration.py \
   tests/test_preview_group_backward.py \
   tests/test_preview_labelmarkers_page.py \
-  tests/test_persistent_page_workers.py \
   tests/test_node_scenario_worker.py \
+  tests/test_persistent_page_workers.py \
   -q -rs --junitxml=/tmp/stage-b-task4-225.xml
 uv run --extra dev ruff check tests/test_preview_savedlayouts_page.py tests/test_fleetsharing_hydration.py tests/test_preview_group_backward.py tests/test_preview_labelmarkers_page.py tests/test_persistent_page_workers.py tests/node_scenario_worker.py tests/test_node_scenario_worker.py
 uv run --extra dev ruff format --check tests/test_preview_savedlayouts_page.py tests/test_fleetsharing_hydration.py tests/test_preview_group_backward.py tests/test_preview_labelmarkers_page.py tests/test_persistent_page_workers.py tests/node_scenario_worker.py tests/test_node_scenario_worker.py
@@ -2443,16 +2972,18 @@ uv run --no-sync python -m pytest \
   tests/test_fleetsharing_hydration.py \
   tests/test_preview_group_backward.py \
   tests/test_preview_labelmarkers_page.py \
-  tests/test_persistent_page_workers.py \
   tests/test_node_scenario_worker.py \
+  tests/test_persistent_page_workers.py \
   -q -rs --junitxml=/tmp/stage-b-final/relevant-225.xml
 ```
 
-Require exactly 225 unique passed outcomes: 205 existing + seven qualification +
-13 helper. Independently assert baseline `217 + 8 = 225`; do not misstate
-`205 + 8` as 225 without the helper baseline. Compare all 205 existing ordered
-IDs and markers; compare the 12 existing helper IDs; additions are exactly the
-eight listed above.
+Require exactly 225 unique passed outcomes: 205 existing + 13 helper + seven
+qualification. Independently assert baseline `217 + 8 = 225`; do not misstate
+`205 + 8` as 225 without the helper baseline. Parse the fresh JUnit order and
+require its final-newline ID bytes to equal the frozen actual Task 2
+`task2-relevant-225.txt` byte-for-byte, including every module-local insertion;
+then compare its hash with `task2-identity-gate.json`. Set/subsequence agreement
+alone is insufficient.
 
 - [ ] **Step 3: Run the complete restoration-safe mutation matrix**
 
@@ -2460,26 +2991,40 @@ Use the complete, compiled, Ruff-clean Task 1 registry and runner unchanged.
 First audit all 71 recipes as one immutable set, compare its SHA-256 with the
 Task 1 registry manifest, and require exactly 14 Task 3 plus 16 Task 4 result
 records with no missing, duplicate, or extra canonical name. Then call
-`validate_registry(worktree, BASELINE_COLLECTED_IDS, phase="task5")` and execute
-`TASK5_RECIPES` in its declared order. This task references recipe names only
+`validate_registry(worktree, BASELINE_COLLECTED_IDS, phase="task5",
+scratch_root=prepare_scratch_root("task5"))` and execute `TASK5_RECIPES` in its
+declared order. This task references recipe names only
 through that tuple; it
 must not reconstruct a defect, owner, sentinel, regex, edit, or probe locally.
 
-For each Task 5 recipe, require its exact selected IDs and intended call phase,
-exactly one assertion-message line matching only its own anchored regex, complete
-forbidden-masking rejection, literal match-once edits, restoration, and its
-registry-owned GREEN probe. Afterward, read the completed Task 3/4/5 result
-records for `REPRESENTATIVE_EVIDENCE_RECIPES` and require seven actual defect
-executions: their real registry edits/probes, intended selected IDs/phases,
-canonical sentinels, bytes/SHA-256/binary-diff/NUL-status restoration, restored
-GREEN commands, and zero cross-matches. This is the bounded representative
-execution report; the complete matrix remains all 71 canonical recipes.
+For each Task 5 recipe, `run_recipe()` dispatches by the immutable probe kind:
 
-The canonical `junit-property-cardinality` recipe
-runs missing and duplicate-identical property variants internally and both must
-produce exact `stage_b property cardinality`; there is no second property recipe
-or second phase reference. The canonical `restoration-byte-integrity` recipe
-likewise owns exact `restoration bytes mismatch`.
+- `pytest` requires exact selected testcase IDs, intended call-phase JUnit
+  failure, traceback, one matching assertion-message line, and the exact
+  restored pytest IDs passing;
+- `external` requires its exact command, exit, byte-exact stdout/stderr and
+  sentinel stream, then the exact restored command/exit/stdout/stderr, with no
+  pytest-ID, phase, traceback, or JUnit requirement; and
+- `synthetic` requires its exact registered in-process callable and exact JSON
+  result or exception class/message for mutated and restored calls, with no
+  command or JUnit requirement.
+
+All three paths require kind-appropriate forbidden-masking rejection, literal
+match-once edits where present, rejection of every other sentinel, and exact
+bytes/SHA-256/binary-diff/NUL-status restoration before the restored probe.
+Afterward, read the completed Task 3/4/5 result records for
+`REPRESENTATIVE_EVIDENCE_RECIPES` and require seven actual defect executions:
+their real registry edits/probes, typed owner IDs or labels, canonical sentinels,
+kind-specific evidence fields, restoration, restored checks, and zero cross-
+matches. This is the bounded representative execution report; the complete
+matrix remains all 71 canonical recipes.
+
+The canonical synthetic `junit-property-cardinality` recipe runs missing and
+duplicate-identical property variants internally; both in-process callable
+outcomes must produce exact `stage_b property cardinality`, with no fabricated
+pytest phase. There is no second property recipe or phase reference. The
+canonical synthetic `restoration-byte-integrity` callable likewise owns exact
+`restoration bytes mismatch` and its restored callable result.
 
 The `late-rejection-attribution` probe additionally checks `.scenario == T`,
 prior `S`, request `N`, and exact `before the next request`. Its restored argv
@@ -2536,12 +3081,13 @@ uv run --no-sync python scripts/summarize_pytest_junit.py \
   /tmp/stage-b-final/full-16617.xml /tmp/stage-b-final/full-16617.json
 ```
 
-Require exactly `16,603 passed + 14 skipped`, zero failures/errors, 16,617 unique
-IDs, the accepted 16,609 IDs as an unchanged ordered subsequence, and exactly the
-eight additions. Freeze the candidate full-order final-newline hash now; the spec
-intentionally does not invent it. Require normalized Linux skip array equality
-to accepted Stage A and no Node/codec/target/qualification/unexpected native
-skip.
+Require exactly `16,603 passed + 14 skipped`, zero failures/errors, and 16,617
+unique IDs. Parse the fresh full JUnit order and require its final-newline ID
+bytes to equal the frozen actual Task 2 `task2-complete-16617.txt` byte-for-byte;
+then require its hash to equal `task2-identity-gate.json`. The accepted 16,609
+subsequence and exact eight additions are supporting diagnostics, not a substitute
+for this full-order comparison. Require normalized Linux skip array equality to
+accepted Stage A and no Node/codec/target/qualification/unexpected native skip.
 
 - [ ] **Step 6: Run Cargo, smoke, global static, formatting, and docs gates**
 
@@ -2751,8 +3297,8 @@ is not a property source.
 Require all jobs success and:
 
 ```text
-complete IDs: 16,617 unique
-existing ordered subsequence: exact accepted 16,609
+complete IDs: 16,617 unique and byte-for-byte equal to frozen Task 2 full order
+accepted 16,609 subsequence: unchanged supporting diagnostic
 additions: exact eight IDs in this plan
 Ubuntu: 16,603 passed + 14 unchanged skips
 Windows: 16,550 passed + 67 unchanged skips
@@ -2839,8 +3385,10 @@ Fresh checks performed while authoring this plan:
   DEV lines plus PASS and its known stderr error, and group dev retained five DEV
   lines plus PASS and empty stderr;
 - the real receipt sequence produced 22 values, exactly 19 fsyncs, valid durable
-  UTF-8 JSON, restored environment/writer/legacy/reader state, 55 independent
-  decodes, and 55 passing saved-main requests in one PID;
+  UTF-8 JSON, restored environment/writer/legacy identities, no retained
+  Stage-B-owned reader/object weak reference after GC, 55 independent decodes,
+  and 55 passing saved-main requests in one PID; unrelated old weak keys were not
+  required to survive;
 - the source-compatible four-family overlay passed all 165 business rows in
   normal, reverse, seed-`20260926` shuffle, and cross-family orders; the
   cross-family generator's exact first-cycle order was Fleet Sharing,
@@ -2860,7 +3408,7 @@ Fresh checks performed while authoring this plan:
 - the disposable canonical-registry **schema checker** compiled and passed Ruff
   check/format, loaded the exact 71-name `14/16/41` partition, proved unique
   names/sentinels and zero regex cross-matches, and compared all 71
-  `EXPECTED_SELECTED_IDS` entries; explicit assertions covered the corrected
+  `EXPECTED_OWNERS` entries; explicit assertions covered the corrected
   receipt-count, two sharing-diagnostic, two group-matrix, and marker-deferred
   owners, while the three `RESTORED_ONLY_IDS` were separately exact, unique, and
   disjoint from all selected failure owners (`PASS registry-schema=71 owners=71
@@ -2879,6 +3427,12 @@ Fresh checks performed while authoring this plan:
   hash above, and rejected stale duplicate mutation tables, aliases, and the
   removed runner forward reference; the helper and fatal-variant disposable
   scripts also compiled, passed Ruff, and their CJS passed `node --check`;
+- the repaired plan preflight checker found six tasks and 51 steps, exact
+  `14/16/41 = 71` registry order, eight explicit non-pytest label owners, three
+  typed dispatcher contracts, seven unique qualification RED sentinels, exact
+  collector-before-217-before-registry command order, byte-exact saved-main
+  baseline body replacement, frozen Task 2 expected/actual order gates, and zero
+  stale contradictions; documentation tests passed separately;
 - placeholder/count review found no unresolved implementation value presented as
   fact: candidate full-suite hashes remain explicitly deferred, while IDs,
   outcomes, process/fsync arithmetic, six tasks, literal-recipe requirements,
@@ -2911,7 +3465,8 @@ condition triggers, especially if:
 8. late rejection cannot fail the next call before its business scenario runs
    with the existing new-scenario attribution and exact phase;
 9. one detached 19-fsync receipt cannot serve all 55 main rows while restoring
-   environment/writer/legacy/readers;
+   environment/writer/legacy identities and releasing every Stage-B-owned
+   reader/object reference without asserting survival of unrelated weak keys;
 10. worker/fsync evidence cannot be uniquely owned in raw JUnit without a print
     fallback;
 11. the Task 1 217-collected/8-planned identity declaration or the post-Task-2
@@ -2932,25 +3487,27 @@ condition triggers, especially if:
   durability, JUnit properties, mutation/order checks, complete suite, and hosted
   provenance.
 - **Types and names:** fixture names, family names, protocol labels, request keys,
-  reply cleanup keys, receipt dataclass/provider, JUnit keys, and added IDs are
-  consistent across tasks.
+  reply cleanup keys, immutable receipt bytes/provider, typed mutation probes,
+  JUnit keys, non-pytest labels, and added IDs are consistent across tasks.
 - **Identity arithmetic and ordering:** baseline `205 + 12 = 217`; additions
   `7 + 1 = 8`; relevant `205 + 7 + 13 = 225`; complete `16,609 + 8 = 16,617`;
   Linux `16,603 + 14 = 16,617`; Windows `16,550 + 67 = 16,617`. Task 1 validates
   the disjoint 217-collected/8-planned domains without requiring future
-  collection; Task 2 then hard-gates actual 225 and 16,617 collection, exact
-  additions, unchanged baseline subsequences, and derived hashes before Task 3.
+  collection; Task 2 then hard-gates fresh actual 225 and 16,617 collections
+  byte-for-byte against frozen expected orders, owners, and hashes before Task 3;
+  Task 5 compares final JUnit orders byte-for-byte with those frozen Task 2 files.
 - **Process/fsync arithmetic:** `62 + 65 + 17 + 21 = 165`; candidate saved
   `19 + 10 + 4 = 33`; candidate all `33 + 29 = 62`; baseline saved
   `1,045 + 10 + 4 = 1,059`; baseline all `1,059 + 29 = 1,088`.
 - **Mutation registry:** exactly 71 canonical recipes are partitioned once as
-  Task 3/4/5 `14/16/41`; names, phases, all 71 expected selected-ID tuples,
-  literal sentinels, anchored regexes, forbidden masking, literal real edits,
-  and probe commands have one owner. Restored-only IDs are validated separately.
-  No later task duplicates a regex table or alias, and property cardinality is
-  one recipe with two internal variants.
-- **No placeholders:** unknown candidate full-order/JUnit hashes are explicitly
-  derived and frozen only after the candidate exists; no fabricated hash or
-  timing value appears.
+  Task 3/4/5 `14/16/41`; names, phases, edit roots, all 71 expected typed owner
+  tuples, literal sentinels, anchored regexes, kind-specific masking, literal
+  match-once edits, and pytest/external/synthetic probe expectations have one
+  owner. Restored-only IDs are validated separately. No later task duplicates a
+  regex table or alias, external labels never enter pytest, and property
+  cardinality is one synthetic recipe with two internal variants.
+- **No placeholders:** expected Task 2 order hashes are derived from frozen
+  baseline/declarations and actual Task 2 hashes are frozen only after fresh
+  collection; no fabricated candidate hash or timing value appears.
 - **Scope:** no product, workflow, dependency, configuration, packaging, or Stage
   C work appears. Current authorization permits versioning but not push/PR/run.
